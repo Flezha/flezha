@@ -101,12 +101,13 @@ fn read_calls(path: &Path) -> Vec<String> {
         .collect()
 }
 
-/// The milliseconds a `boot_await(<ms>, [...])` expression asks the node for.
+/// The milliseconds a `Controller.boot_await` door call asks the node for: the
+/// one number in its argument array.
 fn budget_ms(expression: &str) -> u64 {
     let args = expression
-        .strip_prefix("Flezha.Service.CliManager.boot_await(")
+        .strip_prefix(r#"Flezha.Service.Cli.call("Controller.boot_await", "["#)
         .unwrap_or_else(|| panic!("not a boot_await call: {expression}"));
-    args.split(',').next().unwrap().trim().parse().expect("ms")
+    args.split(']').next().unwrap().trim().parse().expect("ms")
 }
 
 /// Three unreachable answers, then the node's own verdict, which is the answer.

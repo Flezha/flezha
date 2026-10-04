@@ -6,7 +6,7 @@ defmodule Flezha.Service.ObservabilityTest do
   alias Flezha.Observability.Bus
   alias Flezha.Observability.{PubSubSink, Registry, RingBufferSink, Signal}
   alias Flezha.Observability.TestSinks
-  alias Flezha.Service.{CliManager, Observability}
+  alias Flezha.Service.{Admin, Cli, Observability}
 
   setup do
     src = :"obs_svc_test_src_#{:erlang.unique_integer([:positive])}"
@@ -92,6 +92,22 @@ defmodule Flezha.Service.ObservabilityTest do
       :ok = Observability.enable_source(src, %{source: :ui})
       {:ok, %{status: :active}} = Registry.lookup_source(src)
     end
+
+    # Fails when: a known atom that names no source reaches the registry, which
+    # answers a bare `:not_found`, or a tail subscribes to nothing and prints nothing.
+    test "a word naming no registered source is refused with the sources that are", %{src: src} do
+      for call <- [
+            &Observability.enable_source/2,
+            &Observability.disable_source/2,
+            &Observability.tail/2
+          ] do
+        assert {:error, %Flezha.Error{code: "usage.unknown_word", message: message}} =
+                 call.(:obs_svc_never_a_source, %{source: :internal})
+
+        assert message =~ "unknown source 'obs_svc_never_a_source'"
+        assert message =~ Atom.to_string(src)
+      end
+    end
   end
 
   describe "master disable" do
@@ -143,7 +159,58 @@ defmodule Flezha.Service.ObservabilityTest do
     end
   end
 
-  describe "CliManager wrappers" do
+  describe "through the door" do
+    test "a source written as text reaches tail/2 as the atom it names", %{src: src} do
+      claim_pubsub_sink()
+
+      assert {:ok, :ok} =
+               Admin.run("Observability.tail", ~s(["#{src}"]), %{source: :cli}, :given)
+
+      Bus.emit(Signal.new(%{kind: :event, source: src, name: :door_probe}))
+      assert_receive {:flezha_signal, %Signal{source: ^src, name: :door_probe}}, 1_000
+
+      assert {:ok, :ok} = Admin.run("Observability.unsubscribe", [src], %{source: :cli}, :given)
+    end
+
+    # Fails when: the named fields keep their text, so the read can never find
+    # its source and always answers `missing_source`.
+    test "a query written as JSON reads the ring buffer for its source", %{src: src} do
+      Bus.emit(Signal.new(%{kind: :event, source: src, name: :door_query}))
+      TestSinks.settle(RingBufferSink)
+
+      assert {:ok, [%Signal{name: :door_query}]} =
+               Admin.run(
+                 "Observability.query",
+                 ~s([{"source": "#{src}"}]),
+                 %{source: :cli},
+                 :given
+               )
+    end
+
+    test "a source naming no atom is refused, and none is minted" do
+      refuse = fn ->
+        Admin.call(
+          "Observability.tail",
+          ~s(["obs_door_never_an_atom_7f3a"]),
+          %{source: :cli},
+          :given
+        )
+      end
+
+      # The first refusal loads what refusing needs; a word it had minted would
+      # be served the second time.
+      assert {:error, %Flezha.Error{code: "admin.unknown_parameter"}} = refuse.()
+      before = :erlang.system_info(:atom_count)
+
+      assert {:error, %Flezha.Error{code: "admin.unknown_parameter", details: details}} =
+               refuse.()
+
+      assert details["parameter"] == "obs_door_never_an_atom_7f3a"
+      assert :erlang.system_info(:atom_count) == before
+    end
+  end
+
+  describe "the CLI renderers" do
     test "observe tail --json renders a metadata key of any shape", %{src: src} do
       # `stringify_keys/1` was a fourth copy of the term->string decision and
       # applied `to_string/1` to the KEY: a tuple key raised
@@ -216,7 +283,10 @@ defmodule Flezha.Service.ObservabilityTest do
 
     out =
       ExUnit.CaptureIO.capture_io(fn ->
-        CliManager.observability_render_tail(Atom.to_string(src), output: "json", duration_ms: 1)
+        Cli.call("Observability.tail", Jason.encode!([Atom.to_string(src)]),
+          output: "json",
+          duration_ms: 1
+        )
       end)
 
     out |> String.split("\n", trim: true) |> List.first() |> Jason.decode!()

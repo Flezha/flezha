@@ -1,4 +1,4 @@
-defmodule FlezhaTest.Service.CliManagerHookTest do
+defmodule FlezhaTest.Plugin.HookVocabularyTest do
   @moduledoc """
   Guards the caller-facing hook vocabulary: the `--hook=NAME
   --NAME.key=value` and `--plugins` spec paths that carry every value as text.
@@ -19,7 +19,6 @@ defmodule FlezhaTest.Service.CliManagerHookTest do
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Plugin.Provider.Websocket
   alias Flezha.Plugin.SpecDecoder
-  alias Flezha.Service.Cli.Plugin, as: CliPlugin
   alias FlezhaTest.Helper.ProviderPrepare
 
   defmodule EveryKind do
@@ -38,7 +37,7 @@ defmodule FlezhaTest.Service.CliManagerHookTest do
   end
 
   defp cli_hooks(hooks) do
-    {:ok, read, _provider_opts} = CliPlugin.read_settings(%{"hooks" => hooks})
+    {:ok, read} = Plugin.optional_hooks(hooks)
     read
   end
 
@@ -54,21 +53,19 @@ defmodule FlezhaTest.Service.CliManagerHookTest do
   # `on_input` used to be that answer, and it is a SEND on every provider whose
   # two io callbacks are one function.
   test "an enable naming no hook has no hooks" do
-    assert CliPlugin.read_settings(%{}) == {:ok, [], %{}}
+    assert Plugin.optional_hooks(nil) == {:ok, []}
   end
 
-  # Fails when: the hooks a settings document names are not the hooks the
-  # plugin gets, so `--hook` enables a plugin that sends nothing.
-  test "a settings document's hooks are the plugin's hooks" do
-    assert CliPlugin.read_settings(%{"hooks" => [hook("on_output", %{})]}) ==
-             {:ok, [{"on_output", %{}}], %{}}
+  # Fails when: the hooks a caller names are not the hooks the plugin gets, so
+  # `--hook` enables a plugin that sends nothing.
+  test "the hooks a caller names are the plugin's hooks" do
+    assert Plugin.optional_hooks([hook("on_output", %{})]) == {:ok, [{"on_output", %{}}]}
   end
 
   # Fails when: a hook entry of no shape the boundary reads crashes the verb
   # instead of being refused as a value.
   test "a hook entry of no known shape is refused" do
-    assert CliPlugin.read_settings(%{"hooks" => [7]}) ==
-             {:error, {:invalid_hook, :unrecognised_shape, 7}}
+    assert Plugin.optional_hooks([7]) == {:error, {:invalid_hook, :unrecognised_shape, 7}}
   end
 
   # Fails when: an enable that names no hook reaches the provider bound in a
@@ -79,7 +76,7 @@ defmodule FlezhaTest.Service.CliManagerHookTest do
     plugin_id = "cli_source_only_#{System.unique_integer([:positive])}"
     ProviderPrepare.stub_sink_worker(Websocket, plugin_id)
 
-    assert {:ok, hooks, _provider_opts} = CliPlugin.read_settings(%{})
+    assert {:ok, hooks} = Plugin.optional_hooks(nil)
 
     {:ok, table} =
       subscribe(hooks,
@@ -103,10 +100,16 @@ defmodule FlezhaTest.Service.CliManagerHookTest do
   # Fails when: the hooks reach `init_provider/1` as a plugin option; a provider
   # with a strict allow-list (http_poll) then refuses every `flz plugin enable`
   # that names a hook.
-  test "the hooks are stripped from the provider's options" do
-    settings = %{"url" => "http://x", "hooks" => [hook("on_terminate", %{})]}
+  test "an enable's hooks stay out of the provider's options" do
+    assert {:ok, %Plugin{hooks: [{"on_terminate", %{}}], opts: opts}} =
+             Plugin.from_fields(
+               id: "p",
+               provider: "operator_stdout",
+               opts: %{"url" => "http://x"},
+               hooks: [hook("on_terminate", %{})]
+             )
 
-    assert CliPlugin.read_settings(settings) == {:ok, [{"on_terminate", %{}}], %{url: "http://x"}}
+    refute Map.has_key?(opts, :hooks) or Map.has_key?(opts, "hooks")
   end
 
   describe "the --hook vocabulary reaches the table typed" do

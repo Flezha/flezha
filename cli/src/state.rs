@@ -1,7 +1,8 @@
+use serde_json::Value;
+
 use crate::args::{Positional, Reading};
 use crate::dispatch::{self, Command, Missing, Verb};
-use crate::help;
-use crate::rpc::{self, text};
+use crate::{args, help, rpc};
 
 /// The Cell-scoped write verbs all name the same slot.
 const CELL: &[Positional] = &[Positional::required("<operator/tasklet/cell_key>")];
@@ -10,16 +11,16 @@ pub(crate) const TABLE: Command = Command {
     path: "flz state",
     help: help::STATE,
     verbs: &[
-        Verb::new("get", |read| scoped_verb(read, "state_get"))
+        Verb::new("get", |read| scoped_verb(read, "Steps.state_get"))
             .taking(&[Positional::required("<operator/tasklet[/cell_key]>")]),
-        Verb::new("list", |read| scoped_verb(read, "state_list"))
+        Verb::new("list", |read| scoped_verb(read, "Steps.cells"))
             .taking(&[Positional::required("<operator_class>")]),
         Verb::new("at", handle_at).taking(&[
             Positional::required("<operator/tasklet/cell_key>"),
             Positional::required("<seq | iso8601-timestamp>"),
         ]),
         Verb::new("rotate", |read| {
-            rpc::one_arg(read, CELL[0].name, "state_rotate")
+            rpc::one_arg(read, CELL[0].name, "Steps.rotate")
         })
         .taking(CELL),
         Verb::new("retention", handle_retention).taking(&[
@@ -27,16 +28,16 @@ pub(crate) const TABLE: Command = Command {
             Positional::number("<hours>"),
         ]),
         Verb::new("delete", |read| {
-            rpc::one_arg(read, CELL[0].name, "state_delete")
+            rpc::one_arg(read, CELL[0].name, "Steps.delete")
         })
         .taking(CELL),
         Verb::new("outbox", |read| {
-            rpc::one_arg(read, CELL[0].name, "state_outbox")
+            rpc::one_arg(read, CELL[0].name, "Steps.outbox")
         })
         .taking(CELL),
-        Verb::new("journal", |read| scoped_verb(read, "state_journal"))
+        Verb::new("journal", |read| scoped_verb(read, "Steps.journal"))
             .taking(&[Positional::required("<operator/instance>")]),
-        Verb::new("inbox", |read| scoped_verb(read, "state_inbox"))
+        Verb::new("inbox", |read| scoped_verb(read, "Steps.inbox"))
             .taking(&[Positional::required("<operator/instance>")]),
     ],
     help_verbs: dispatch::HELP_VERBS,
@@ -45,11 +46,11 @@ pub(crate) const TABLE: Command = Command {
 };
 
 fn handle_at(read: &Reading) {
-    rpc::run(
-        "state_at",
+    rpc::door(
+        "Steps.time_travel",
         &[
-            text(read.pos(CELL[0].name)),
-            text(read.pos("<seq | iso8601-timestamp>")),
+            Value::from(read.pos(CELL[0].name)),
+            Value::from(read.pos("<seq | iso8601-timestamp>")),
         ],
         &[],
         read,
@@ -57,22 +58,28 @@ fn handle_at(read: &Reading) {
 }
 
 fn handle_retention(read: &Reading) {
-    rpc::run(
-        "state_retention",
+    let hours = args::or_refuse(args::read_number::<i64>("<hours>", read.pos("<hours>")));
+    if hours < 0 {
+        rpc::fail(flz_transport::errors::FlezhaError::with(
+            "usage.negative",
+            [
+                ("option", Value::from("<hours>")),
+                ("value", Value::from(hours)),
+            ],
+        ));
+    }
+
+    rpc::door(
+        "Steps.set_retention",
         &[
-            text(read.pos("<operator_class>")),
-            text(read.pos("<hours>")),
+            Value::from(read.pos("<operator_class>")),
+            Value::from(hours),
         ],
         &[],
         read,
     );
 }
 
-/// The read verbs — `get`, `list`, `journal`, `inbox` — take one scope argument;
-/// they differ only in that argument's name and the CliManager function they
-/// call.
-fn scoped_verb(read: &Reading, rpc_fun: &str) {
-    let scope = read.positional_at(0);
-
-    rpc::run(rpc_fun, &[text(scope)], &[], read);
+fn scoped_verb(read: &Reading, name: &str) {
+    rpc::door(name, &[Value::from(read.positional_at(0))], &[], read);
 }

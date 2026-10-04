@@ -5,14 +5,13 @@ defmodule Flezha.AuthZ.Verbs do
   the audit it leaves. `Flezha.AuthZ.Verb.run/5` is the one function that
   applies a row, on every surface.
 
-  Rows are data and name no module. What needs one — the function a wire name
-  runs, the fetch a `{:row, _}` scope reads, the device a refusal prints on —
-  is supplied by the surface that binds the row.
+  Rows are data and name no module. What needs one, the fetch a `{:row, _}`
+  scope reads, is supplied by the published function that binds the row.
 
   A row's fields:
 
     * `action` — an atom of `Flezha.AuthZ.Action`, or `:public` for a read
-      served to any caller, or `:none` for a wire name that is not a verb.
+      served to any caller.
     * `scope` — where the action is judged: `{:argument, n}` (the nth positional
       argument is the namespace; `""` means `default`, `nil` means `_system`),
       `:system`, `:caller` (the context's own namespace, `_system` when it has
@@ -23,12 +22,13 @@ defmodule Flezha.AuthZ.Verbs do
     * `audit_name` — the record's name when it is not the action's verb.
     * `target` — labels for the leading positional arguments the audit records;
       `:_` skips one.
+    * `remote` — whether the verb may be reached over the network; true unless
+      the row says otherwise.
   """
 
   alias Flezha.AuthZ.Action
 
   @public [action: :public]
-  @none [action: :none]
 
   @rows [
     # Liveness surfaces and the helpers a consumer names: no policy question.
@@ -38,9 +38,8 @@ defmodule Flezha.AuthZ.Verbs do
     partition_report: @public,
     cron_arithmetic: @public,
     retention_default: @public,
-    authz_bootstrap: @none,
-    build_mem_top_snapshot: @none,
-    group_partition_rows: @none,
+    # The one-time token is its own credential.
+    authz_bootstrap: [action: :public, remote: false],
     # Audit log: every read is itself audited, under the function's own name.
     audit_list: [
       action: :"audit.read",
@@ -78,18 +77,20 @@ defmodule Flezha.AuthZ.Verbs do
     # issue and revoke; the role and namespace stores record nothing, so those
     # verbs are audited here.
     authz_whoami: [action: :"authz.whoami", scope: :caller],
-    token_issue: [action: :"authz.token_issue", scope: {:argument, 2}],
-    token_revoke: [action: :"authz.token_revoke", scope: {:row, :namespace}],
+    token_issue: [action: :"authz.token_issue", scope: {:argument, 2}, remote: false],
+    token_revoke: [action: :"authz.token_revoke", scope: {:row, :namespace}, remote: false],
     token_list: [action: :"authz.token_list", scope: :caller],
     role_bind: [
       action: :"authz.role_bind",
       scope: {:argument, 3},
+      remote: false,
       audit: {:after, :namespace_service},
       target: [:subject, :role]
     ],
     role_unbind: [
       action: :"authz.role_unbind",
       scope: {:row, :namespace},
+      remote: false,
       audit: {:after, :namespace_service},
       # An empty role in the record means the principal's whole binding.
       target: [:subject, :role]
@@ -103,6 +104,7 @@ defmodule Flezha.AuthZ.Verbs do
     namespace_delete: [
       action: :"authz.namespace_delete",
       scope: {:argument, 1},
+      remote: false,
       audit: {:after, :namespace_service}
     ],
     namespace_set_quota: [
@@ -122,6 +124,7 @@ defmodule Flezha.AuthZ.Verbs do
     controller_stop: [
       action: :"controller.stop",
       scope: :system,
+      remote: false,
       audit: {:after, :controller_service}
     ],
     cluster_status: [action: :"operator.list", scope: {:argument, 1}],
@@ -346,11 +349,12 @@ defmodule Flezha.AuthZ.Verbs do
           scope: scope() | nil,
           audit: audit(),
           audit_name: atom() | nil,
-          target: [atom()]
+          target: [atom()],
+          remote: boolean()
         }
 
-  @keys [:action, :scope, :audit, :audit_name, :target]
-  @unscoped [:public, :none]
+  @keys [:action, :scope, :audit, :audit_name, :target, :remote]
+  @unscoped [:public]
 
   for {verb, fields} <- @rows do
     unknown = Keyword.keys(fields) -- @keys
@@ -378,6 +382,9 @@ defmodule Flezha.AuthZ.Verbs do
                match?({order, s} when order in [:before, :after] and is_atom(s), audit)) ->
         raise ArgumentError, "verb #{inspect(verb)} has a malformed audit #{inspect(audit)}"
 
+      not is_boolean(Keyword.get(fields, :remote, true)) ->
+        raise ArgumentError, "verb #{inspect(verb)} has a remote that is not a boolean"
+
       true ->
         :ok
     end
@@ -391,7 +398,8 @@ defmodule Flezha.AuthZ.Verbs do
               scope: Keyword.get(fields, :scope),
               audit: Keyword.get(fields, :audit, :none),
               audit_name: Keyword.get(fields, :audit_name),
-              target: Keyword.get(fields, :target, [])
+              target: Keyword.get(fields, :target, []),
+              remote: Keyword.get(fields, :remote, true)
             }}
          end)
 
@@ -412,7 +420,7 @@ defmodule Flezha.AuthZ.Verbs do
   @spec fetch(atom()) :: {:ok, t()} | :error
   def fetch(verb) when is_atom(verb), do: Map.fetch(@table, verb)
 
-  @doc "The row named `verb`; raises when no row is declared, which is what makes a wire name without a row a compile error."
+  @doc "The row named `verb`; raises when no row is declared, which is what makes a binding without a row a compile error."
   @spec fetch!(atom()) :: t()
   def fetch!(verb) when is_atom(verb) do
     case Map.fetch(@table, verb) do

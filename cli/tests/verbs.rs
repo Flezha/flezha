@@ -27,41 +27,41 @@ const CASES: &[(&[&str], &str)] = &[
     // entirely; every verb below is the same invocation written both ways.
     (
         &["operator", "stop", "--token", "t", "op1"],
-        r#"Flezha.Service.CliManager.operator_stop("", "op1", [token: "t"])"#,
+        r#"Flezha.Service.Cli.call("Operator.stop", "[\"default\",\"op1\"]", [token: "t"])"#,
     ),
     (
         &["operator", "stop", "op1", "--token", "t"],
-        r#"Flezha.Service.CliManager.operator_stop("", "op1", [token: "t"])"#,
+        r#"Flezha.Service.Cli.call("Operator.stop", "[\"default\",\"op1\"]", [token: "t"])"#,
     ),
     (
         &["operator", "stop", "-n", "prod", "op1"],
-        r#"Flezha.Service.CliManager.operator_stop("prod", "op1", [])"#,
+        r#"Flezha.Service.Cli.call("Operator.stop", "[\"prod\",\"op1\"]", [])"#,
     ),
     (
         &["operator", "state", "--namespace=prod", "op1"],
-        r#"Flezha.Service.CliManager.cell_state("prod", "op1", [])"#,
+        r#"Flezha.Service.Cli.call("Operator.cell_state", "[\"prod\",\"op1\"]", [])"#,
     ),
     (
         &["state", "get", "--output", "json", "a/b/c"],
-        r#"Flezha.Service.CliManager.state_get("a/b/c", [output: "json"])"#,
+        r#"Flezha.Service.Cli.call("Steps.state_get", "[\"a/b/c\"]", [output: "json"])"#,
     ),
     // A verb that reaches no controller carries no token, wherever it is written.
     (
         &["plugin", "install", "--token", "t", "/tmp/p.fpz"],
-        r#"Flezha.Service.Cli.Plugin.eval("install", ["/tmp/p.fpz"], [])"#,
+        r#"Flezha.Plugin.Installer.Command.eval("install", ["/tmp/p.fpz"], [])"#,
     ),
     (
         &["token", "issue", "--ttl", "60", "p", "ns", "viewer"],
-        r#"Flezha.Service.CliManager.authz_render_token_issue("p", "ns", "viewer", [ttl: 60])"#,
+        r#"Flezha.Service.Cli.call("Namespace.issue_token", "[\"p\",\"ns\",\"viewer\",{\"ttl\":60}]", [])"#,
     ),
     // A switch and the credential read the same on either side of the operator.
     (
         &["operator", "listen", "--input", "--token", "t", "op1"],
-        r#"Flezha.Service.CliManager.operator_listen("", "op1", "input", [duration_ms: 30000, token: "t"])"#,
+        r#"Flezha.Service.Cli.call("Operator.listen", "[\"default\",\"op1\",\"input\",{\"window_ms\":30000}]", [token: "t"])"#,
     ),
     (
         &["operator", "listen", "op1", "--token", "t", "--input"],
-        r#"Flezha.Service.CliManager.operator_listen("", "op1", "input", [duration_ms: 30000, token: "t"])"#,
+        r#"Flezha.Service.Cli.call("Operator.listen", "[\"default\",\"op1\",\"input\",{\"window_ms\":30000}]", [token: "t"])"#,
     ),
     // A value carrying a quote, a backslash and a non-ASCII letter survives
     // whichever side of the positionals it was written on.
@@ -75,7 +75,7 @@ const CASES: &[(&[&str], &str)] = &[
             "prod",
             "op1",
         ],
-        r#"Flezha.Service.CliManager.operator_send("prod", "op1", "a\"b\\cä", "", [])"#,
+        r#"Flezha.Service.Cli.call("Operator.send", "[\"prod\",\"op1\",\"a\\\"b\\\\cä\",\"\",{}]", [])"#,
     ),
     (
         &[
@@ -87,12 +87,12 @@ const CASES: &[(&[&str], &str)] = &[
             "--text",
             "a\"b\\cä",
         ],
-        r#"Flezha.Service.CliManager.operator_send("prod", "op1", "a\"b\\cä", "", [])"#,
+        r#"Flezha.Service.Cli.call("Operator.send", "[\"prod\",\"op1\",\"a\\\"b\\\\cä\",\"\",{}]", [])"#,
     ),
     // `call`'s deadline defaults and has no short spelling: `-t` is `--text`.
     (
         &["operator", "call", "echo", "-t", "hello"],
-        r#"Flezha.Service.CliManager.operator_call("", "echo", "hello", "", [timeout_ms: 30000])"#,
+        r#"Flezha.Service.Cli.call("Operator.call", "[\"default\",\"echo\",\"hello\",\"\",{\"deadline_ms\":30000}]", [])"#,
     ),
     (
         &[
@@ -106,17 +106,17 @@ const CASES: &[(&[&str], &str)] = &[
             "--text",
             "x",
         ],
-        r#"Flezha.Service.CliManager.operator_call("", "prices", "x", "", [key: "EURUSD", timeout_ms: 100])"#,
+        r#"Flezha.Service.Cli.call("Operator.call", "[\"default\",\"prices\",\"x\",\"\",{\"deadline_ms\":100,\"key\":\"EURUSD\"}]", [])"#,
     ),
     (
         &[
             "operator", "send", "prices", "--key", "EURUSD", "--text", "x",
         ],
-        r#"Flezha.Service.CliManager.operator_send("", "prices", "x", "", [key: "EURUSD"])"#,
+        r#"Flezha.Service.Cli.call("Operator.send", "[\"default\",\"prices\",\"x\",\"\",{\"key\":\"EURUSD\"}]", [])"#,
     ),
     (
         &["audit", "read", "--source", "x\"y", "f.log"],
-        r#"Flezha.Service.CliManager.audit_log_render_read("f.log", [source: "x\"y"])"#,
+        r#"Flezha.Service.Cli.call("AuditLog.read", "[{\"file\":\"f.log\",\"source\":\"x\\\"y\"}]", [])"#,
     ),
 ];
 

@@ -74,6 +74,10 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnAuthzTest do
     }
   end
 
+  # The door as a runner connection reaches it: the namespace it proved.
+  defp door(verb, args),
+    do: Admin.call(verb, args, Session.runner_caller_context(@ns), {:proven, @ns})
+
   test "an identity that may not start an operator is refused, and nothing starts", ctx do
     assert Flezha.AuthZ.enabled?()
     assert RoleStore.lookup(@principal) == :error
@@ -183,7 +187,7 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnAuthzTest do
           {"PluginManager.disable", ~s(["p1", {}])}
         ] do
       assert {:error, %Flezha.Error{code: "authz.role_insufficient"}} =
-               Admin.call(@ns, verb, args),
+               door(verb, args),
              verb
     end
   end

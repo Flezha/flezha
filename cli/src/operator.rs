@@ -1,10 +1,10 @@
 use flz_transport::errors::FlezhaError;
+use serde_json::{Map, Value};
 
 use crate::args::{self, OptSpec, Positional, Reading, DURATION_MS, INIT_VALUES, NAMESPACE};
 use crate::dispatch::{self, Command, Missing, Verb};
 use crate::help;
-use crate::rpc::{self, text, Opt};
-use crate::settings::serialize_flags;
+use crate::rpc::{self, Opt};
 
 const OPERATOR_ID: &[Positional] = &[Positional::required("<operator_id>")];
 
@@ -23,7 +23,7 @@ const AWAIT: OptSpec = OptSpec::number("--await", "--await", "<ms>");
 const KEY: OptSpec = OptSpec::text("--key", "--key", "<key>");
 /// `call`'s deadline: no short spelling, since `-t` is `--text`.
 const CALL_TIMEOUT: OptSpec = OptSpec::number("--timeout", "--timeout", "<ms>");
-const CALL_TIMEOUT_DEFAULT_MS: &str = "30000";
+const CALL_TIMEOUT_DEFAULT_MS: u64 = 30_000;
 
 pub(crate) const TABLE: Command = Command {
     path: "flz operator",
@@ -55,11 +55,11 @@ pub(crate) const TABLE: Command = Command {
             .taking(OPERATOR_ID)
             .reading(&[NAMESPACE]),
         Verb::new("list", |read| {
-            rpc::scoped_read(read, "list_operators", Some("operators"))
+            rpc::scoped_read(read, "Operator.list", Some("operators"))
         })
         .reading(&[NAMESPACE]),
         Verb::new("info", |read| {
-            rpc::scoped_read(read, "operator_info", Some("operator information"))
+            rpc::scoped_read(read, "Operator.info", Some("operator information"))
         })
         .reading(&[NAMESPACE]),
         Verb::new("listen", handle_listen)
@@ -87,56 +87,69 @@ pub(crate) const TABLE: Command = Command {
     unknown_prints_help: false,
 };
 
-/// The JSON opts object `operator_start` takes: the flags that are neither
-/// the operator's identity nor its init values. Ordered, because the same
-/// invocation has to build the same request every run.
-fn start_opts(read: &Reading) -> String {
-    let mut opts: Vec<(String, String)> = Vec::new();
-
-    if let Some(count) = read.opt(PARTITIONS.long) {
-        opts.push(("partitions".to_string(), count.to_string()));
-    }
-
-    serialize_flags(&opts)
-}
-
-/// `--id`, `--plugins`, `--text` and `--channel` ride the options list, and
-/// only when written: an absent flag is absent from the request and the
-/// controller applies its default, which for the id is one it generates.
-/// `--text` is the instance's first message, on the entry channel `--channel`
-/// names; a channel with no text names nothing and is refused. How the operator
-/// runs is the factory's, announced by its runner, so no flag names it.
+/// `--id`, `--init-values`, `--plugins`, `--partitions`, `--text` and
+/// `--channel` ride the operator's fields, and only when written: an absent
+/// flag is absent from the request and the controller applies its default,
+/// which for the id is one it generates. `--text` is the instance's first
+/// message, on the entry channel `--channel` names; a channel with no text
+/// names nothing and is refused. How the operator runs is the factory's,
+/// announced by its runner, so no flag names it.
 fn handle_start(read: &Reading) {
-    let mut opts: Vec<Opt> = Vec::new();
+    let mut fields = Map::new();
+    fields.insert("factory_id".into(), Value::from(read.pos("<factory_id>")));
 
     if let Some(id) = read.opt(ID.long) {
-        opts.push(("id", text(id)));
+        fields.insert("id".into(), Value::from(id));
+    }
+    if read.opt(INIT_VALUES.long).is_some() {
+        fields.insert("init_values".into(), json_object(read, INIT_VALUES.long));
     }
     if let Some(plugins) = read.opt(PLUGINS.long) {
-        opts.push(("plugins", text(&plugins_json_or_refuse(plugins))));
+        let canonical = plugins_json_or_refuse(plugins);
+        fields.insert(
+            "plugins".into(),
+            serde_json::from_str(&canonical).expect("canonical JSON"),
+        );
     }
-    opts.extend(first_message_opts(read));
+    if let Some(count) = read.num::<u64>(PARTITIONS.long) {
+        fields.insert("partitions".into(), Value::from(count));
+    }
+    fields.extend(first_message(read));
 
-    rpc::run(
-        "operator_start",
-        &[
-            text(read.namespace()),
-            text(read.pos("<factory_id>")),
-            text(read.json(INIT_VALUES.long)),
-            text(&start_opts(read)),
-        ],
-        &opts,
+    rpc::door(
+        "Operator.start",
+        &[rpc::namespace(read), Value::Object(fields)],
+        &[],
         read,
     );
 }
 
+/// A JSON object the caller wrote behind `option`, refused here when it is
+/// not one.
+pub(crate) fn json_object(read: &Reading, option: &str) -> Value {
+    match serde_json::from_str::<Value>(read.json(option)) {
+        Ok(object @ Value::Object(_)) => object,
+        Ok(_) => rpc::fail(FlezhaError::with(
+            "usage.json_not_object",
+            [("option", Value::from(option))],
+        )),
+        Err(e) => rpc::fail(FlezhaError::with(
+            "usage.invalid_json",
+            [
+                ("option", Value::from(option)),
+                ("reason", Value::from(e.to_string())),
+            ],
+        )),
+    }
+}
+
 /// The first message a `start` or a `schedule add` carries: `text` and,
-/// when written, `channel`, as text; `--channel` without `--text` is refused.
-pub(crate) fn first_message_opts<'a>(read: &'a Reading) -> Vec<Opt<'a>> {
-    let mut opts: Vec<Opt> = Vec::new();
+/// when written, `channel`; `--channel` without `--text` is refused.
+pub(crate) fn first_message(read: &Reading) -> Vec<(String, Value)> {
+    let mut fields = Vec::new();
     let payload = read.opt(TEXT.long);
     if let Some(payload) = payload {
-        opts.push(("text", text(payload)));
+        fields.push(("text".to_string(), Value::from(payload)));
     }
     if let Some(channel) = read.opt(CHANNEL.long) {
         args::or_refuse(
@@ -144,9 +157,9 @@ pub(crate) fn first_message_opts<'a>(read: &'a Reading) -> Vec<Opt<'a>> {
                 FlezhaError::new("operator.channel_without_text", Default::default())
             }),
         );
-        opts.push(("channel", text(channel)));
+        fields.push(("channel".to_string(), Value::from(channel)));
     }
-    opts
+    fields
 }
 
 /// `flz operator scale <group> <partitions>` — rescale a partition group.
@@ -154,22 +167,28 @@ pub(crate) fn first_message_opts<'a>(read: &'a Reading) -> Vec<Opt<'a>> {
 /// and the new member set is started; a refusal changes nothing.
 fn handle_scale(read: &Reading) {
     let group_id = read.pos("<group>");
-    let partitions = read.pos("<partitions>");
+    let partitions = args::or_refuse(args::read_number::<u64>(
+        "<partitions>",
+        read.pos("<partitions>"),
+    ));
 
-    let mut opts: Vec<(String, String)> = Vec::new();
-    if let Some(timeout_ms) = read.opt(TIMEOUT.long) {
-        opts.push(("timeout_ms".to_string(), timeout_ms.to_string()));
+    let mut opts = Map::new();
+    if let Some(timeout_ms) = read.num::<u64>(TIMEOUT.long) {
+        opts.insert("quiesce_timeout_ms".into(), Value::from(timeout_ms));
     }
 
-    println!("Scaling operator group {} to {}...", group_id, partitions);
+    rpc::progress_line(
+        read,
+        &format!("Scaling operator group {} to {}...", group_id, partitions),
+    );
 
-    rpc::run(
-        "operator_scale",
+    rpc::door(
+        "Steps.rescale",
         &[
-            text(read.namespace()),
-            text(group_id),
-            text(partitions),
-            text(&serialize_flags(&opts)),
+            rpc::namespace(read),
+            Value::from(group_id),
+            Value::from(partitions),
+            Value::Object(opts),
         ],
         &[],
         read,
@@ -177,73 +196,76 @@ fn handle_scale(read: &Reading) {
 }
 
 fn handle_stop(read: &Reading) {
-    println!("Stopping operator...");
-
-    // operator_stop halts non-zero on error verdicts (not_found / refused).
-    rpc::run(
-        "operator_stop",
-        &[text(read.namespace()), text(read.pos(OPERATOR_ID[0].name))],
+    rpc::progress_line(read, "Stopping operator...");
+    rpc::door(
+        "Operator.stop",
+        &[rpc::namespace(read), operator_id(read)],
         &[],
         read,
     );
-
-    println!("Operator stopped successfully.");
+    rpc::progress_line(read, "Operator stopped successfully.");
 }
 
 /// `flz operator send <operator_id> --text <payload> [--channel <ch>]
 /// [--key <k>] [--await <ms>]`: inject a payload into an operator's input
 /// stream (the SDK-facing `send_io` route). Blocks for the confirming verdict
 /// so a parked or absent target is reported rather than silently dropped.
-/// `--key` and `--await` ride the options list only when written.
+/// `--await` rides the options list only when written.
 fn handle_send(read: &Reading) {
-    let mut opts: Vec<Opt> = key_opt(read);
+    let opts: Vec<Opt> = read
+        .opt(AWAIT.long)
+        .map(|ms| vec![("await_ms", ms.to_string())])
+        .unwrap_or_default();
 
-    if let Some(ms) = read.opt(AWAIT.long) {
-        opts.push(("await_ms", ms.to_string()));
-    }
-
-    // operator_send halts non-zero on error verdicts (not_found / not_ready / refused).
-    rpc::run(
-        "operator_send",
-        &[
-            text(read.namespace()),
-            text(read.pos(OPERATOR_ID[0].name)),
-            text(read.opt(PAYLOAD.long).unwrap_or_default()),
-            text(read.opt(CHANNEL.long).unwrap_or_default()),
-        ],
-        &opts,
-        read,
-    );
+    rpc::door("Operator.send", &input(read, key_fields(read)), &opts, read);
 }
 
 /// `flz operator call <operator_id> --text <payload> [--channel <ch>]
 /// [--key <k>] [--timeout <ms>]`: send one input and print the answer a
 /// `response()` end produced from it; a failure exits by its class.
 fn handle_call(read: &Reading) {
-    let mut opts: Vec<Opt> = key_opt(read);
-    let timeout = read
-        .opt(CALL_TIMEOUT.long)
+    let deadline_ms = read
+        .num::<u64>(CALL_TIMEOUT.long)
         .unwrap_or(CALL_TIMEOUT_DEFAULT_MS);
-    opts.push(("timeout_ms", timeout.to_string()));
+    if deadline_ms == 0 {
+        rpc::fail(FlezhaError::with(
+            "usage.invalid_number",
+            [
+                ("option", Value::from("--timeout")),
+                ("value", Value::from("0")),
+            ],
+        ));
+    }
 
-    rpc::run(
-        "operator_call",
-        &[
-            text(read.namespace()),
-            text(read.pos(OPERATOR_ID[0].name)),
-            text(read.opt(PAYLOAD.long).unwrap_or_default()),
-            text(read.opt(CHANNEL.long).unwrap_or_default()),
-        ],
-        &opts,
-        read,
-    );
+    let mut fields = key_fields(read);
+    fields.insert("deadline_ms".into(), Value::from(deadline_ms));
+
+    rpc::door("Operator.call", &input(read, fields), &[], read);
 }
 
-/// A partition group's member is named by `--key`; absent, no option rides.
-fn key_opt(read: &Reading) -> Vec<Opt<'static>> {
-    read.opt(KEY.long)
-        .map(|key| vec![("key", text(key))])
-        .unwrap_or_default()
+/// The arguments `send` and `call` share: where, which operator, the payload
+/// and its channel (`""` is none), then the named fields.
+fn input(read: &Reading, fields: Map<String, Value>) -> Vec<Value> {
+    vec![
+        rpc::namespace(read),
+        operator_id(read),
+        Value::from(read.opt(PAYLOAD.long).unwrap_or_default()),
+        Value::from(read.opt(CHANNEL.long).unwrap_or_default()),
+        Value::Object(fields),
+    ]
+}
+
+/// A partition group's member is named by `--key`; absent, no field rides.
+fn key_fields(read: &Reading) -> Map<String, Value> {
+    let mut fields = Map::new();
+    if let Some(key) = read.opt(KEY.long) {
+        fields.insert("key".into(), Value::from(key));
+    }
+    fields
+}
+
+fn operator_id(read: &Reading) -> Value {
+    Value::from(read.pos(OPERATOR_ID[0].name))
 }
 
 /// `flz operator rewind <instance> --to-iteration N` — take a steps loop back
@@ -251,13 +273,12 @@ fn key_opt(read: &Reading) -> Vec<Opt<'static>> {
 /// returns to that boundary, and the epoch is bumped so the re-run's output
 /// supersedes the unwound run's at a guarded sink.
 fn handle_rewind(read: &Reading) {
-    // operator_rewind halts non-zero on error verdicts (not_found / refused).
-    rpc::run(
-        "operator_rewind",
+    rpc::door(
+        "Steps.rewind",
         &[
-            text(read.namespace()),
-            text(read.pos(OPERATOR_ID[0].name)),
-            read.opt(TO_ITERATION.long).unwrap_or_default().to_string(),
+            rpc::namespace(read),
+            operator_id(read),
+            Value::from(read.num::<u64>(TO_ITERATION.long).unwrap_or_default()),
         ],
         &[],
         read,
@@ -268,17 +289,13 @@ fn handle_rewind(read: &Reading) {
 /// Cell's retained inputs from a point in the past through the current code,
 /// republishing under a bumped epoch so a guarded sink overwrites the stale rows
 /// by natural key. "Deploy a fix, heal the recent past."
-///
-/// The same transaction a late input triggers automatically; here the caller
-/// picks the baseline instead of a late event.
 fn handle_replay(read: &Reading) {
-    // operator_replay halts non-zero on error verdicts (not_found / refused).
-    rpc::run(
-        "operator_replay",
+    rpc::door(
+        "Operator.replay",
         &[
-            text(read.namespace()),
-            text(read.pos("<operator/tasklet/key>")),
-            text(read.opt(FROM.long).unwrap_or_default()),
+            rpc::namespace(read),
+            Value::from(read.pos("<operator/tasklet/key>")),
+            Value::from(read.opt(FROM.long).unwrap_or_default()),
         ],
         &[],
         read,
@@ -286,10 +303,9 @@ fn handle_replay(read: &Reading) {
 }
 
 fn handle_state(read: &Reading) {
-    // cell_state halts non-zero on error verdicts (not_found / refused).
-    rpc::run(
-        "cell_state",
-        &[text(read.namespace()), text(read.pos(OPERATOR_ID[0].name))],
+    rpc::door(
+        "Operator.cell_state",
+        &[rpc::namespace(read), operator_id(read)],
         &[],
         read,
     );
@@ -304,15 +320,17 @@ fn handle_listen(read: &Reading) {
     } else {
         "output"
     };
+    let window_ms = rpc::window_ms(read);
 
-    rpc::run(
-        "operator_listen",
+    rpc::door(
+        "Operator.listen",
         &[
-            text(read.namespace()),
-            text(read.pos(OPERATOR_ID[0].name)),
-            text(direction),
+            rpc::namespace(read),
+            operator_id(read),
+            Value::from(direction),
+            serde_json::json!({ "window_ms": window_ms }),
         ],
-        &[rpc::window(read)],
+        &[],
         read,
     );
 }

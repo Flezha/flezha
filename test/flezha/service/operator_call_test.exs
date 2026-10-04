@@ -18,7 +18,7 @@ defmodule Flezha.Service.OperatorCallTest do
   alias Flezha.Observability.{RingBufferSink, TestSinks}
   alias Flezha.Operator.PartitionGroup
   alias Flezha.Partition
-  alias Flezha.Service.{CliManager, HubManager, Operator, OperatorManager}
+  alias Flezha.Service.{Cli, HubManager, Operator, OperatorManager}
   alias FlezhaTest.Helper.CliCapture
 
   setup :set_mimic_global_until_exit
@@ -156,7 +156,11 @@ defmodule Flezha.Service.OperatorCallTest do
     test "prints the answer's payload and one newline" do
       assert {_outcome, "echo:hello\n", ""} =
                CliCapture.run(fn ->
-                 CliManager.operator_call("default", "echo", "hello", "", timeout_ms: 30_000)
+                 Cli.call(
+                   "Operator.call",
+                   Jason.encode!(["default", "echo", "hello", "", %{deadline_ms: 30_000}]),
+                   []
+                 )
                end)
 
       assert_received {:called, "echo", "hello", %{}, 30_000}
@@ -165,7 +169,11 @@ defmodule Flezha.Service.OperatorCallTest do
     test "a group without a key fails naming its members; a missing operator is not found" do
       {_outcome, out, err} =
         CliCapture.run(fn ->
-          CliManager.operator_call("default", "prices", "x", "", timeout_ms: 100)
+          Cli.call(
+            "Operator.call",
+            Jason.encode!(["default", "prices", "x", "", %{deadline_ms: 100}]),
+            []
+          )
         end)
 
       assert out == ""
@@ -174,7 +182,11 @@ defmodule Flezha.Service.OperatorCallTest do
 
       {_outcome, _out, err} =
         CliCapture.run(fn ->
-          CliManager.operator_call("default", "ghost", "x", "", timeout_ms: 100)
+          Cli.call(
+            "Operator.call",
+            Jason.encode!(["default", "ghost", "x", "", %{deadline_ms: 100}]),
+            []
+          )
         end)
 
       assert err =~ "(operator.not_found)"
@@ -183,7 +195,11 @@ defmodule Flezha.Service.OperatorCallTest do
     test "a deadline that is not positive is refused before anything is sent" do
       {_outcome, _out, err} =
         CliCapture.run(fn ->
-          CliManager.operator_call("default", "echo", "x", "", timeout_ms: 0)
+          Cli.call(
+            "Operator.call",
+            Jason.encode!(["default", "echo", "x", "", %{deadline_ms: 0}]),
+            []
+          )
         end)
 
       assert err =~ "(usage.invalid_number)"
@@ -194,7 +210,13 @@ defmodule Flezha.Service.OperatorCallTest do
   describe "flz operator send" do
     test "reaches a group's owning member by key", %{owned_by_p1: key} do
       {_outcome, out, ""} =
-        CliCapture.run(fn -> CliManager.operator_send("default", "prices", "x", "", key: key) end)
+        CliCapture.run(fn ->
+          Cli.call(
+            "Operator.send",
+            Jason.encode!(["default", "prices", "x", "", %{key: key}]),
+            []
+          )
+        end)
 
       assert out =~ "Delivered to 'prices#p1'"
       assert_received {:sent, "prices#p1", "x"}
@@ -202,7 +224,9 @@ defmodule Flezha.Service.OperatorCallTest do
 
     test "a group without a key names its members and is never 'not found'" do
       {_outcome, _out, err} =
-        CliCapture.run(fn -> CliManager.operator_send("default", "prices", "x", "") end)
+        CliCapture.run(fn ->
+          Cli.call("Operator.send", Jason.encode!(["default", "prices", "x", "", %{}]), [])
+        end)
 
       assert err =~ "(call.target_unkeyed)"
       assert err =~ "prices#p0, prices#p1"

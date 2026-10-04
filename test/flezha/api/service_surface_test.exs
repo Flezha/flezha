@@ -14,7 +14,7 @@ defmodule Flezha.Api.ServiceSurfaceTest do
   """
   use FlezhaTest.Case, fixtures: [], async: false
 
-  alias Flezha.AuthZ.{Verb, Verbs}
+  alias Flezha.AuthZ.Verbs
   alias Flezha.Service.Controller
   alias Flezha.Service.Dlq
   alias Flezha.Service.Fleet
@@ -24,6 +24,10 @@ defmodule Flezha.Api.ServiceSurfaceTest do
   alias Flezha.Service.Schedule
   alias Flezha.Service.Steps
   alias FlezhaTest.Helper.RpcSurface
+
+  # The two domains that had a service API before this surface existed keep
+  # their own suites, which drive them against live sinks.
+  @own_suites [Flezha.Service.AuditLog, Flezha.Service.Observability]
 
   @published %{
     Controller => [
@@ -35,7 +39,13 @@ defmodule Flezha.Api.ServiceSurfaceTest do
       {:durability_posture, []},
       {:durability_breaches, []},
       {:durability_status, []},
-      {:liveness_counters, []}
+      {:liveness_counters, []},
+      {:status, []},
+      {:mem_top, []},
+      {:boot_status, []},
+      {:boot_await, [10]},
+      {:cluster_status, ["default"]},
+      {:stop, [[]]}
     ],
     Dlq => [
       {:list, [nil]},
@@ -52,7 +62,9 @@ defmodule Flezha.Api.ServiceSurfaceTest do
       {:factories, ["default"]},
       {:runner_caller_context, ["default"]},
       {:hub_nodes, ["default"]},
-      {:installed_plugins, []}
+      {:installed_plugins, []},
+      {:providers, []},
+      {:provider, ["operator_stdout"]}
     ],
     Namespace => [
       {:list, []},
@@ -62,7 +74,15 @@ defmodule Flezha.Api.ServiceSurfaceTest do
       {:roles, ["default"]},
       {:create, ["ns_surface", []]},
       {:delete, ["ns_surface"]},
-      {:set_quotas, ["default", %{}]}
+      {:set_quotas, ["default", %{}]},
+      {:whoami, []},
+      {:bootstrap, ["token"]},
+      {:issue_token, ["p", "default", "admin", []]},
+      {:tokens, []},
+      {:revoke_token, ["id"]},
+      {:bind_role, ["p", "admin", "default"]},
+      {:unbind_role, ["p", nil]},
+      {:list_roles, []}
     ],
     Operator => [
       {:list_namespaces, []},
@@ -77,15 +97,21 @@ defmodule Flezha.Api.ServiceSurfaceTest do
       {:overwatch_state, ["default", "rc"]},
       {:start, ["default", %{}]},
       {:stop, ["default", "rc"]},
-      {:send, ["default", "rc", "payload", ""]},
-      {:call, ["default", "rc", "payload", "", [deadline_ms: 100]]}
+      {:call, ["default", "rc", "payload", "", [deadline_ms: 100]]},
+      {:send, ["default", "rc", "payload", "", []]},
+      {:list, ["default"]},
+      {:info, ["default"]},
+      {:listen, ["default", "rc", :output, []]},
+      {:replay, ["default", "path", "0"]}
     ],
     PluginManager => [
       {:list, []},
       {:enable, ["plug_1", [provider: Flezha.Plugin]]},
       {:bind, ["plug_1", [operator_id: "rc"]]},
       {:unbind, ["plug_1", [operator_id: "rc"]]},
-      {:disable, ["plug_1", []]}
+      {:disable, ["plug_1", []]},
+      {:enabled, ["default"]},
+      {:update, ["plug_1", []]}
     ],
     Schedule => [
       {:list, []},
@@ -95,7 +121,8 @@ defmodule Flezha.Api.ServiceSurfaceTest do
       {:assert_entry, [%{name: "s"}]},
       {:retract, ["s"]},
       {:parse_cron, ["* * * * *"]},
-      {:next_fire, [%{}, "Etc/UTC", ~U[2026-01-01 00:00:00Z]]}
+      {:next_fire, [%{}, "Etc/UTC", ~U[2026-01-01 00:00:00Z]]},
+      {:run, ["s"]}
     ],
     Steps => [
       {:operator_classes, []},
@@ -109,7 +136,14 @@ defmodule Flezha.Api.ServiceSurfaceTest do
       {:state_metrics, []},
       {:rescale, ["default", "group", 2, []]},
       {:rewind, ["default", "rc", 1]},
-      {:time_travel, ["cell", :latest]}
+      {:time_travel, ["cell", :latest]},
+      {:state_get, ["rc/task/key"]},
+      {:cells, ["rc"]},
+      {:delete, ["rc/task/key"]},
+      {:rotate, ["rc/task/key"]},
+      {:set_retention, ["rc", 2]},
+      {:outbox, ["rc/task/key"]},
+      {:inbox, ["instance"]}
     ]
   }
 
@@ -145,12 +179,11 @@ defmodule Flezha.Api.ServiceSurfaceTest do
         "docs/api/consumers/published.txt"
         |> RpcSurface.manifest()
         |> Enum.map(fn {module, fun, arity, _where} -> {module, fun, arity} end)
-        |> Enum.reject(fn {module, _fun, _arity} ->
-          # The two domains that had a service API before this surface existed
-          # keep their own suites, which drive them against live sinks.
-          module in [Flezha.Service.AuditLog, Flezha.Service.Observability]
-        end)
+        |> Enum.reject(fn {module, _fun, _arity} -> module in @own_suites end)
         |> MapSet.new()
+
+      assert Enum.sort(Map.keys(@published)) ==
+               Enum.sort(Flezha.Service.modules() -- @own_suites)
 
       missing = MapSet.difference(surface, recorded)
       extra = MapSet.difference(recorded, surface)
@@ -178,7 +211,7 @@ defmodule Flezha.Api.ServiceSurfaceTest do
       gated =
         for {module, functions} <- @published,
             {fun, args} <- functions,
-            {^fun, arity, verb, _opts} <- Verb.bindings(module),
+            {^fun, arity, verb, _opts} <- module.__verbs__(),
             arity == length(args) + 1,
             rows[verb].action not in [:public, :none],
             do: {module, fun, args}

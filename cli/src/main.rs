@@ -26,7 +26,8 @@ use dispatch::{Command, Missing, Verb};
 
 /// `flz` itself is a command table like the sixteen below it: same bare-invocation
 /// rule, same help spellings, same refusal. Fifteen of its rows are tables of
-/// their own; `reset` is the one verb the top level runs itself.
+/// their own; `reset` and `help`, which prints the catalogue under `--json`,
+/// are the verbs the top level runs itself.
 const FLZ: Command = Command {
     path: "flz",
     help: help::FLZ,
@@ -51,6 +52,7 @@ const FLZ: Command = Command {
         Verb::table("auth", &auth::TABLE),
         Verb::table("token", &token::TABLE),
         Verb::table("role", &role::TABLE),
+        Verb::new("help", help::handle_help),
     ],
     help_verbs: dispatch::HELP_VERBS,
     missing: Missing::Screen,

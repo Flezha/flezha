@@ -6,7 +6,7 @@ use serde_json::Value;
 use crate::args::{OptSpec, Reading};
 use crate::dispatch::{self, Command, Missing, Verb};
 use crate::help;
-use crate::rpc::{self, Opt, Out};
+use crate::rpc::{self, Out};
 
 const MODE: OptSpec = OptSpec::choice(
     "--mode",
@@ -28,9 +28,9 @@ pub(crate) const TABLE: Command = Command {
         Verb::new("stop", handle_stop)
             .reading(&[TIMEOUT_MS, NO_WAIT, FORCE])
             .screen(help::CONTROLLER_STOP),
-        Verb::new("status", |read| rpc::bare(read, "controller_status"))
+        Verb::new("status", |read| rpc::bare(read, "Controller.status"))
             .screen(help::CONTROLLER_STATUS),
-        Verb::new("mem-top", |read| rpc::bare(read, "controller_mem_top"))
+        Verb::new("mem-top", |read| rpc::bare(read, "Controller.mem_top"))
             .screen(help::CONTROLLER_MEM_TOP),
     ],
     help_verbs: dispatch::HELP_VERBS,
@@ -77,7 +77,7 @@ const STOP_MARKER: &str = "flz-controller-stop-result: ";
 fn handle_stop(read: &Reading) {
     // Built before the announcement: a refusal here means no shutdown starts,
     // and a line saying one has is the wrong thing to print above it.
-    let expression = rpc::expression("controller_stop", &[], &stop_opts(read), read);
+    let expression = rpc::door_expression("Controller.stop", &[stop_opts(read)], &[], read);
 
     eprintln!("Stopping flezha controller...");
 
@@ -113,20 +113,18 @@ fn unconfirmed(marker: &str) -> FlezhaError {
     )
 }
 
-/// The three options a shutdown carries; the credential joins them where
-/// every request's does.
-fn stop_opts(read: &Reading) -> Vec<Opt<'static>> {
-    let mut opts: Vec<Opt> = Vec::new();
+/// The stop's options, each only when written.
+fn stop_opts(read: &Reading) -> Value {
+    let mut opts = serde_json::Map::new();
 
-    if let Some(timeout_ms) = read.opt(TIMEOUT_MS.long) {
-        opts.push(("timeout_ms", timeout_ms.to_string()));
+    if let Some(timeout_ms) = read.num::<u64>(TIMEOUT_MS.long) {
+        opts.insert("timeout_ms".into(), Value::from(timeout_ms));
     }
-    if read.switch(NO_WAIT.long) {
-        opts.push(("no_wait", "true".to_string()));
-    }
-    if read.switch(FORCE.long) {
-        opts.push(("force", "true".to_string()));
+    for (spec, key) in [(NO_WAIT, "no_wait"), (FORCE, "force")] {
+        if read.switch(spec.long) {
+            opts.insert(key.into(), Value::from(true));
+        }
     }
 
-    opts
+    Value::Object(opts)
 }

@@ -249,7 +249,8 @@ defmodule Flezha.Service.PluginManagerTest do
           assert {:shutdown, 2} = catch_exit(cli_bind("unread", %{"trigger" => "on_output"}))
         end)
 
-      assert err =~ "--trigger"
+      assert err =~ "trigger"
+      assert err =~ "plugin.fields_unknown"
       assert [] = read_bindings(store)
 
       assert ExUnit.CaptureIO.capture_io(fn -> cli_bind("read_all", %{}) end) =~
@@ -260,8 +261,8 @@ defmodule Flezha.Service.PluginManagerTest do
   end
 
   defp cli_bind(name, extra_opts) do
-    scope = %{"namespace" => @namespace, "operator_id" => @operator_id}
-    Flezha.Service.CliManager.bind_plugin(name, "{}", Jason.encode!(Map.merge(scope, extra_opts)))
+    fields = Map.merge(%{"namespace" => @namespace, "operator_id" => @operator_id}, extra_opts)
+    Flezha.Service.Cli.call("PluginManager.bind", Jason.encode!([name, fields]), [])
   end
 
   describe "unbind_plugin/3" do

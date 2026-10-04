@@ -1,4 +1,4 @@
-defmodule Flezha.Service.CliManagerPartitionTest do
+defmodule Flezha.Service.Cli.PartitionTest do
   @moduledoc """
   The caller's view of a partition group: one row in `list`, per-member
   detail plus a read-time coverage check in `info`, a stop that reaches every
@@ -20,8 +20,9 @@ defmodule Flezha.Service.CliManagerPartitionTest do
   alias Flezha.Observability.TestSinks
   alias Flezha.Operator.PartitionGroup
   alias Flezha.Partition
-  alias Flezha.Service.CliManager
+  alias Flezha.Service.Cli
   alias Flezha.Service.HubManager
+  alias Flezha.Service.Operator
   alias Flezha.Service.OperatorManager
   alias FlezhaTest.Helper.ConvergenceFixtures
   alias FlezhaTest.Helper.CliCapture
@@ -48,11 +49,18 @@ defmodule Flezha.Service.CliManagerPartitionTest do
     %{id: id, health: :healthy, runner: "runner-9", factory: "f", partition: nil, node: node()}
   end
 
-  describe "group_partition_rows/1" do
+  # The rows `flz operator list` prints: a partition group collapsed into one.
+  defp grouped(rows) do
+    stub(HubManager, :operator_rows, fn _ns -> rows end)
+    {:ok, listed} = Operator.list("default", %{source: :cli})
+    listed
+  end
+
+  describe "a group in the operator list" do
     test "collapses a group's members into one row with per-member placement" do
       rows = for index <- 0..2, do: member_row("ohlc", index, 3)
 
-      assert [row] = CliManager.group_partition_rows(rows)
+      assert [row] = grouped(rows)
       assert row.id == "ohlc"
       assert row.partitions == "3/3"
       assert row.runner == "p0→runner-0, p1→runner-1, p2→runner-2"
@@ -62,7 +70,7 @@ defmodule Flezha.Service.CliManagerPartitionTest do
 
     test "shows a short group as such" do
       rows = [member_row("ohlc", 0, 3), member_row("ohlc", 2, 3)]
-      assert [row] = CliManager.group_partition_rows(rows)
+      assert [row] = grouped(rows)
       assert row.partitions == "2/3"
     end
 
@@ -73,7 +81,7 @@ defmodule Flezha.Service.CliManagerPartitionTest do
         member_row("ohlc", 2, 3, health: :failed)
       ]
 
-      assert [%{health: :failed}] = CliManager.group_partition_rows(rows)
+      assert [%{health: :failed}] = grouped(rows)
     end
 
     test "ranks a recovering member between degraded and parked" do
@@ -81,7 +89,7 @@ defmodule Flezha.Service.CliManagerPartitionTest do
         [%{health: health}] =
           healths
           |> Enum.with_index(fn h, i -> member_row("ohlc", i, length(healths), health: h) end)
-          |> CliManager.group_partition_rows()
+          |> grouped()
 
         health
       end
@@ -94,7 +102,7 @@ defmodule Flezha.Service.CliManagerPartitionTest do
     test "leaves ungrouped operators untouched" do
       rows = [plain_row("plain"), member_row("ohlc", 0, 2), member_row("ohlc", 1, 2)]
 
-      assert [group, plain] = CliManager.group_partition_rows(rows)
+      assert [group, plain] = grouped(rows)
       assert group.id == "ohlc"
       assert plain == plain_row("plain")
       refute Map.has_key?(plain, :partitions)
@@ -110,7 +118,7 @@ defmodule Flezha.Service.CliManagerPartitionTest do
         {:error, {:operator_not_found, ns, id}}
       end)
 
-      capture_io(fn -> CliManager.operator_info("default") end)
+      capture_io(fn -> Cli.call("Operator.info", Jason.encode!(["default"]), []) end)
     end
 
     test "renders each member's range and reports clean coverage" do
@@ -173,14 +181,18 @@ defmodule Flezha.Service.CliManagerPartitionTest do
     test "info reads recovering for the group's members and each operator", %{rows: rows} do
       ConvergenceFixtures.stub_registry_rows("trading", rows, 2_000)
 
-      text = capture_io(fn -> CliManager.operator_info("trading") end)
+      text = capture_io(fn -> Cli.call("Operator.info", Jason.encode!(["trading"]), []) end)
       assert text =~ ~r/p0  prices#p0 .*runner-0  recovering\n/
       assert length(Regex.scan(~r/Health: recovering\n/, text)) == 3
       assert text =~ "Health: healthy"
       refute text =~ "failed"
 
       json =
-        Jason.decode!(capture_io(fn -> CliManager.operator_info("trading", output: "json") end))
+        Jason.decode!(
+          capture_io(fn ->
+            Cli.call("Operator.info", Jason.encode!(["trading"]), output: "json")
+          end)
+        )
 
       [%{"members" => members}] = json["groups"]
       assert Enum.map(members, & &1["health"]) == List.duplicate("recovering", 3)
@@ -198,11 +210,19 @@ defmodule Flezha.Service.CliManagerPartitionTest do
       ConvergenceFixtures.stub_registry_rows("trading", rows, 2_000)
 
       json =
-        Jason.decode!(capture_io(fn -> CliManager.cluster_status("trading", output: "json") end))
+        Jason.decode!(
+          capture_io(fn ->
+            Cli.call("Controller.cluster_status", Jason.encode!(["trading"]), output: "json")
+          end)
+        )
 
       assert json["operator_health"] == %{"recovering" => 3, "healthy" => 1}
 
-      text = capture_io(fn -> CliManager.cluster_status("trading") end)
+      text =
+        capture_io(fn ->
+          Cli.call("Controller.cluster_status", Jason.encode!(["trading"]), [])
+        end)
+
       assert text =~ "recovering=3"
       refute text =~ "failed"
     end
@@ -211,20 +231,25 @@ defmodule Flezha.Service.CliManagerPartitionTest do
       ConvergenceFixtures.stub_registry_rows("trading", rows, 500_000)
 
       json =
-        Jason.decode!(capture_io(fn -> CliManager.cluster_status("trading", output: "json") end))
+        Jason.decode!(
+          capture_io(fn ->
+            Cli.call("Controller.cluster_status", Jason.encode!(["trading"]), output: "json")
+          end)
+        )
 
       assert json["operator_health"] == %{"failed" => 3, "healthy" => 1}
 
-      text = capture_io(fn -> CliManager.operator_info("trading") end)
+      text = capture_io(fn -> Cli.call("Operator.info", Jason.encode!(["trading"]), []) end)
       assert length(Regex.scan(~r/Health: failed\n/, text)) == 3
       refute text =~ "recovering"
     end
   end
 
   describe "operator start rendering" do
-    defp start(format, opts_json \\ "{}", opts),
-      do:
-        CliManager.operator_start("default", "candles", "{}", opts_json, [output: format] ++ opts)
+    defp start(format, fields) do
+      operator = Map.new([factory_id: "candles"] ++ fields)
+      Cli.call("Operator.start", Jason.encode!(["default", operator]), output: format)
+    end
 
     defp started_as(test_pid) do
       stub(OperatorManager, :start_operator, fn _ns, op, opts ->
@@ -322,7 +347,7 @@ defmodule Flezha.Service.CliManagerPartitionTest do
          }}
       end)
 
-      out = capture_io(fn -> start("text", ~s({"partitions": 3}), id: "ohlc") end)
+      out = capture_io(fn -> start("text", partitions: 3, id: "ohlc") end)
 
       assert out =~ "converged: started 1 missing member(s), 2 already running"
       assert out =~ "started ohlc#p2"
@@ -339,7 +364,7 @@ defmodule Flezha.Service.CliManagerPartitionTest do
          }}
       end)
 
-      out = capture_io(fn -> start("text", ~s({"partitions": 3}), id: "ohlc") end)
+      out = capture_io(fn -> start("text", partitions: 3, id: "ohlc") end)
 
       assert out =~ "already running with 3 partitions"
       assert out =~ "left untouched"
@@ -350,7 +375,7 @@ defmodule Flezha.Service.CliManagerPartitionTest do
         {:ok, %{group: "ohlc", members: ["ohlc#p0", "ohlc#p1", "ohlc#p2"]}}
       end)
 
-      out = capture_io(fn -> start("text", ~s({"partitions": 3}), id: "ohlc") end)
+      out = capture_io(fn -> start("text", partitions: 3, id: "ohlc") end)
 
       assert out =~ "Operator ohlc started with 3 partitions:"
       assert out =~ "  ohlc#p0"
@@ -365,11 +390,11 @@ defmodule Flezha.Service.CliManagerPartitionTest do
          }}
       end)
 
-      out = capture_io(fn -> start("text", ~s({"partitions": 3}), []) end)
+      out = capture_io(fn -> start("text", partitions: 3) end)
       assert out =~ "Operator candles-k7m2qzxw4pd3fn2a started with 3 partitions:"
 
-      json = capture_io(fn -> start("json", ~s({"partitions": 3}), []) end)
-      assert json == ~s({"id":"candles-k7m2qzxw4pd3fn2a","outcome":"started"}\n)
+      json = capture_io(fn -> start("json", partitions: 3) end)
+      assert %{"id" => "candles-k7m2qzxw4pd3fn2a", "outcome" => "started"} = Jason.decode!(json)
     end
   end
 
@@ -391,7 +416,10 @@ defmodule Flezha.Service.CliManagerPartitionTest do
          }}
       end)
 
-      out = capture_io(fn -> CliManager.operator_scale("default", "ohlc", "3", "{}") end)
+      out =
+        capture_io(fn ->
+          Cli.call("Steps.rescale", Jason.encode!(["default", "ohlc", 3, %{}]), [])
+        end)
 
       assert out =~ "Operator ohlc rescaled 2 -> 3"
       assert out =~ "1 cells moved, 1 trees removed"
@@ -413,7 +441,10 @@ defmodule Flezha.Service.CliManagerPartitionTest do
          }}
       end)
 
-      out = capture_io(fn -> CliManager.operator_scale("default", "orders", "3", "{}") end)
+      out =
+        capture_io(fn ->
+          Cli.call("Steps.rescale", Jason.encode!(["default", "orders", 3, %{}]), [])
+        end)
 
       assert out =~ "Sealed orders#p0, orders#p1 at their latest committed iteration"
       assert out =~ "no rewind or rollback reaches a pass committed before this rescale"
@@ -434,7 +465,8 @@ defmodule Flezha.Service.CliManagerPartitionTest do
         :ok
       end)
 
-      out = capture_io(fn -> CliManager.operator_stop("default", "ohlc") end)
+      out =
+        capture_io(fn -> Cli.call("Operator.stop", Jason.encode!(["default", "ohlc"]), []) end)
 
       assert out =~ "Operator group ohlc stopped (3 partitions)"
       assert_receive {:stopped, "ohlc#p0"}, 100
@@ -446,7 +478,9 @@ defmodule Flezha.Service.CliManagerPartitionTest do
       stub(PartitionGroup, :members, fn _ns, _id -> [] end)
       stub(OperatorManager, :request_stop, fn _ns, "plain" -> :ok end)
 
-      assert capture_io(fn -> CliManager.operator_stop("default", "plain") end) =~
+      assert capture_io(fn ->
+               Cli.call("Operator.stop", Jason.encode!(["default", "plain"]), [])
+             end) =~
                "Operator has been stopped"
     end
 
@@ -464,7 +498,7 @@ defmodule Flezha.Service.CliManagerPartitionTest do
       out =
         capture_io(:stderr, fn ->
           try do
-            CliManager.operator_stop("default", "ohlc")
+            Cli.call("Operator.stop", Jason.encode!(["default", "ohlc"]), [])
           catch
             :exit, _ -> :ok
           end
@@ -490,7 +524,9 @@ defmodule Flezha.Service.CliManagerPartitionTest do
     end
 
     defp run_state_get(path) do
-      {_outcome, out, _err} = CliCapture.run(fn -> CliManager.state_get(path) end)
+      {_outcome, out, _err} =
+        CliCapture.run(fn -> Cli.call("Steps.state_get", Jason.encode!([path]), []) end)
+
       out
     end
 

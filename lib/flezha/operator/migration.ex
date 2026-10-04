@@ -75,7 +75,7 @@ defmodule Flezha.Operator.Migration do
   eviction, so a crash mid-rewind resumes as a rewind rather than as a
   partially unwound loop.
 
-  The caller (`CliManager`) has already refused an uncommitted target and an
+  The caller (`Flezha.Service.Steps.rewind/4`) has already refused an uncommitted target and an
   iteration whose plugin output cannot be compensated.
   """
   @spec rewind(pid(), non_neg_integer()) :: :ok | {:error, term()}

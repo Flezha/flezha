@@ -3,38 +3,12 @@ defmodule Flezha.Service.Cli.Context do
   The identity a `flz` verb's trailing options carry, the one device a failure
   is written to, and the window a streaming verb receives for. Every other
   `Cli.*` module calls this one; it calls none of them. The authorization itself
-  is `Flezha.AuthZ.Verb`'s, bound in `Flezha.Service.CliManager`, and every
+  is the published function's, reached through `Flezha.Service.Admin`, and every
   failure reaches the caller through `render!/2`, in `Flezha.Error`'s words.
   """
 
   alias Flezha.AuthZ.TokenStore
   alias Flezha.Config.Durations
-
-  def atom_converter(orig_map) do
-    string_to_atom = %{
-      "on_input" => :on_input,
-      "on_output" => :on_output,
-      "on_interval" => :on_interval,
-      "on_operator_init" => :on_operator_init,
-      "on_message" => :on_message,
-      "on_snapshot" => :on_snapshot,
-      "on_terminate" => :on_terminate,
-      "plugins" => :plugins,
-      "partitions" => :partitions,
-      "group" => :group,
-      "partition" => :partition,
-      "key_group_from" => :key_group_from,
-      "key_group_to" => :key_group_to
-    }
-
-    Enum.reduce(orig_map, %{}, fn {key, value}, acc ->
-      new_key = Map.get(string_to_atom, key, key)
-      Map.put(acc, new_key, value)
-    end)
-  end
-
-  def put_unless_nil(map, _key, nil), do: map
-  def put_unless_nil(map, key, value), do: Map.put(map, key, value)
 
   def label_or(nil, default), do: default
   def label_or(value, _default), do: to_string(value)
@@ -75,21 +49,13 @@ defmodule Flezha.Service.Cli.Context do
   end
 
   @doc """
-  Leave the verb with `reason`. `Flezha.AuthZ.Verb.run/5` converts it at the
-  verb's action and `render!/2` prints it, so a family says what failed and
-  never how it is printed.
-  """
-  @spec fail!(term()) :: no_return()
-  def fail!(reason), do: Flezha.Error.throw!(reason)
-
-  @doc """
   The one printer: `error` rendered in the format the call's options asked for,
   on the caller's stderr, then the verb exits with the code of the error's
   class.
 
   Only the rpc process exits: `{:shutdown, n}` fails the surrounding `flzvm rpc`
   evaluation with exit code `n` and prints no banner. Never `System.halt`
-  here, because every `CliManager` call runs on the controller node and would
+  here, because every `Flezha.Service.Cli` call runs on the controller node and would
   stop it.
   """
   @spec render!(Flezha.Error.t(), keyword()) :: no_return()
@@ -199,68 +165,6 @@ defmodule Flezha.Service.Cli.Context do
       after
         remaining -> :window_closed
       end
-    end
-  end
-
-  @doc """
-  A JSON document the caller typed. Unlike `Payloader.json_to_map/1`, whose
-  moduledoc calls an undecodable document a defect, a caller's document that
-  will not decode is a refusal: `what` names the flag it was written behind.
-  """
-  @spec json!(String.t() | nil, String.t()) :: map()
-  def json!(written, what) do
-    case written do
-      nil -> %{}
-      "" -> %{}
-      text -> decode_json!(text, what)
-    end
-  end
-
-  defp decode_json!(text, what) do
-    case Jason.decode(text) do
-      {:ok, decoded} when is_map(decoded) ->
-        decoded
-
-      {:ok, _other} ->
-        fail!(Flezha.Error.new("usage.json_not_object", option: what))
-
-      {:error, reason} ->
-        fail!(
-          Flezha.Error.new("usage.invalid_json", option: what, reason: Exception.message(reason))
-        )
-    end
-  end
-
-  @doc """
-  A whole number the caller typed, refused rather than guessed: a `--limit`
-  nobody can read is not every record.
-  """
-  @spec integer!(term(), String.t()) :: integer()
-  def integer!(written, what) do
-    case Integer.parse(to_string(written)) do
-      {value, ""} ->
-        value
-
-      _ ->
-        fail!(Flezha.Error.new("usage.invalid_number", option: what, value: to_string(written)))
-    end
-  end
-
-  @doc """
-  A word the caller typed, as the atom this surface knows it by. Never
-  `String.to_atom/1`: a word nobody declared would mint an atom the node then
-  keeps for ever.
-  """
-  @spec atom!(String.t(), [atom()], String.t()) :: atom()
-  def atom!(written, allowed, what) do
-    case Enum.find(allowed, &(Atom.to_string(&1) == written)) do
-      nil ->
-        fail!(
-          Flezha.Error.new("usage.unknown_word", noun: what, value: written, allowed: allowed)
-        )
-
-      known ->
-        known
     end
   end
 end

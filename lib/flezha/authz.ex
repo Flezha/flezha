@@ -24,7 +24,7 @@ defmodule Flezha.AuthZ do
 
   `source: :internal` is pre-authorized and reserved for calls
   originating inside the controller's own BEAM. No wire- or CLI-facing
-  code path constructs it: `CliManager` stamps `:cli` (identity from a
+  code path constructs it: `Flezha.Service.Cli` stamps `:cli` (identity from a
   verified token only) and the runner connect seam stamps `:sdk`
   (identity from the authenticated connection's namespace handshake).
   The only way to present `:internal` from outside is arbitrary BEAM

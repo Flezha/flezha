@@ -3,38 +3,31 @@ defmodule Flezha.AuthZ.Verb do
   The one seam that applies a row of `Flezha.AuthZ.Verbs`, in one order for
   every surface: identity, scope, policy, act, audit.
 
-  `run/5` is the seam. A surface binds its functions to rows with `verb`:
+  `run/5` is the seam. A published module binds its functions to rows with
+  `verb`:
 
       use Flezha.AuthZ.Verb
 
-      verb drop(entry_ref, caller_context), verb: :dlq_drop, row: &locate/1 do
+      @doc "Discard a parked entry and its payload."
+      verb drop(entry_ref, caller_context),
+        verb: :dlq_drop,
+        row: &locate/1,
+        args: [entry_ref: [type: :string, doc: "The entry."]] do
         Store.drop(entry_ref)
       end
 
   defines `drop/2`, whose body runs only once the row has been applied to the
-  caller context in its last argument. A wire contract binds the other way,
-  naming the module that carries each body and taking its identity from the
-  trailing options list every wire verb ends with:
-
-      use Flezha.AuthZ.Verb, identity: &Context.cli_context/1, render: &Context.render!/2, sealed: true
-
-      verb dlq_drop(entry_ref, opts \\\\ []), to: Cli.Dlq, row: &Cli.Dlq.locate/1
-
-  which defines `dlq_drop/1,2` calling `Cli.Dlq.dlq_drop(entry_ref, call)` with
-  the bound `t:Call.t/0`, and hands a failure to `render`. A `sealed`
-  surface refuses to compile a public function that binds no row.
+  caller context in its last argument. The binding also describes the
+  operation for `Flezha.Service.catalogue/0`: `args:` the positional arguments
+  before the context, in the vocabulary plugin options use; `stream: true` for
+  a function that answers a subscription or reports as it goes; and the first
+  sentence of its `@doc`, captured while it compiles, because a release
+  strips the docs chunks.
 
   Every failure leaves `run/5` as `{:error, %Flezha.Error{}}`: a refusal, a
   fetch's reason, a body's `{:error, reason}` and a reason a body left with
   through `Flezha.Error.throw!/1` are all converted at the verb's action, once,
   before the audit record is written.
-
-  The two forms differ in one declared way that outlives compilation: a wire
-  contract binds `identity:`, because it mints a caller context from what its
-  own transport carried, and a published surface binds none, because it is
-  handed one. `__verb_surface__/0` answers what the module declared, so a
-  caller that may only enter a surface taking a context can tell them apart
-  without a list of module names.
 
   A `{:row, field}` scope needs a `row:` fetch, called with the positional
   arguments as a list and answering `{:ok, row}` or `{:error, reason}`; the
@@ -42,9 +35,7 @@ defmodule Flezha.AuthZ.Verb do
   says nothing about whether the row exists. `as:` names the fetched row inside
   a body, `call:` names the whole call. `target:` overrides the row's audit
   labels with a function of the argument list, or of the argument list and the
-  act's answer, for an act whose answer names what it acted on. A wire verb's
-  argument list for a target ends with its options list, without the
-  credential, because that is where its optional arguments ride.
+  act's answer, for an act whose answer names what it acted on.
   """
 
   alias Flezha.AuthZ
@@ -55,16 +46,14 @@ defmodule Flezha.AuthZ.Verb do
   defmodule Call do
     @moduledoc """
     What a bound body receives: the caller's context, the namespace the verb
-    was judged in, the row a `{:row, _}` scope fetched, and the trailing
-    options the wire carried (without the credential).
+    was judged in, and the row a `{:row, _}` scope fetched.
     """
-    defstruct [:context, :namespace, :row, opts: []]
+    defstruct [:context, :namespace, :row]
 
     @type t :: %__MODULE__{
             context: Flezha.Service.CallerContext.t(),
             namespace: String.t() | nil,
-            row: map() | nil,
-            opts: keyword()
+            row: map() | nil
           }
   end
 
@@ -75,11 +64,10 @@ defmodule Flezha.AuthZ.Verb do
 
   @doc """
   Apply the row `verb` to `caller_context` for the positional `args`, then run
-  `effect`. Options: `:row` (the fetch a `{:row, _}` scope reads), `:target`
+  `effect`. Options: `:row` (the fetch a `{:row, _}` scope reads) and `:target`
   (a function of `args`, or of `args` and the answer, answering the audit's
   target fields; the answer is `nil` for an act audited before it runs or one
-  that raised), `:wire_opts`
-  (the wire's trailing options, handed to the body on the call).
+  that raised).
 
   Answers every failure as `{:error, %Flezha.Error{}}`, converted at the row's
   action, and never exits.
@@ -91,24 +79,6 @@ defmodule Flezha.AuthZ.Verb do
     row
     |> apply_row(caller_context, args, converting(effect, row.action), opts)
     |> converted(row.action)
-  end
-
-  @doc """
-  The wire surface's `run/5`: bind the identity from the trailing options,
-  apply the row, and hand a failure to the surface's renderer with the
-  options it was asked in. `binding` carries `:identity`, `:render` and
-  optionally `:row`, `:target`.
-  """
-  @spec invoke(atom(), [term()], keyword(), effect(), keyword()) :: term()
-  def invoke(verb, args, wire_opts, effect, binding) do
-    caller_context = Keyword.fetch!(binding, :identity).(wire_opts)
-    target = wire_target(binding[:target], Keyword.delete(wire_opts, :token))
-    run_opts = [row: binding[:row], target: target, wire_opts: wire_opts]
-
-    case run(verb, caller_context, args, effect, run_opts) do
-      {:error, %Flezha.Error{} = error} -> Keyword.fetch!(binding, :render).(error, wire_opts)
-      other -> other
-    end
   end
 
   # The body's failure, returned or thrown, as the error it means here, so the
@@ -129,24 +99,9 @@ defmodule Flezha.AuthZ.Verb do
   defp converted({:error, reason}, action), do: {:error, Flezha.Error.from_reason(reason, action)}
   defp converted(result, _action), do: result
 
-  defp wire_target(target, options) when is_function(target, 2),
-    do: fn args, answer -> target.(args ++ [options], answer) end
-
-  defp wire_target(target, _options), do: target
-
-  @doc """
-  The bindings a surface module declared: `{function, arity, verb, opts}`.
-  """
-  @spec bindings(module()) :: [{atom(), arity(), atom(), keyword()}]
-  def bindings(module), do: module.__verbs__()
-
-  defp apply_row(%{action: :none}, caller_context, _args, effect, opts) do
-    effect.(call(caller_context, nil, nil, opts))
-  end
-
-  defp apply_row(%{action: :public}, caller_context, _args, effect, opts) do
+  defp apply_row(%{action: :public}, caller_context, _args, effect, _opts) do
     with :ok <- CallerContext.validate(caller_context) do
-      effect.(call(caller_context, nil, nil, opts))
+      effect.(call(caller_context, nil, nil))
     end
   end
 
@@ -154,18 +109,12 @@ defmodule Flezha.AuthZ.Verb do
     with :ok <- CallerContext.validate(caller_context),
          {:ok, namespace, fetched} <- resolve(row, caller_context, args, opts[:row]),
          :ok <- AuthZ.authorize(caller_context, row.action, Scope.build(namespace)) do
-      audited(row, call(caller_context, namespace, fetched, opts), args, opts, effect)
+      audited(row, call(caller_context, namespace, fetched), args, opts, effect)
     end
   end
 
-  defp call(caller_context, namespace, fetched, opts) do
-    %Call{
-      context: caller_context,
-      namespace: namespace,
-      row: fetched,
-      opts: Keyword.delete(Keyword.get(opts, :wire_opts, []), :token)
-    }
-  end
+  defp call(caller_context, namespace, fetched),
+    do: %Call{context: caller_context, namespace: namespace, row: fetched}
 
   # ---------- scope ----------
 
@@ -306,11 +255,10 @@ defmodule Flezha.AuthZ.Verb do
 
   # ---------- the bindings ----------
 
-  defmacro __using__(surface) do
+  defmacro __using__(_opts) do
     quote do
       import Flezha.AuthZ.Verb, only: [verb: 2, verb: 3]
       Module.register_attribute(__MODULE__, :verb_bindings, accumulate: true)
-      @verb_surface unquote(surface)
       @before_compile Flezha.AuthZ.Verb
     end
   end
@@ -318,32 +266,13 @@ defmodule Flezha.AuthZ.Verb do
   defmacro __before_compile__(env) do
     bindings = env.module |> Module.get_attribute(:verb_bindings) |> Enum.reverse()
 
-    if Module.get_attribute(env.module, :verb_surface)[:sealed] do
-      bound = MapSet.new(bindings, fn {name, arity, _verb, _opts} -> {name, arity} end)
-
-      for {name, arity} <- Module.definitions_in(env.module, :def),
-          not MapSet.member?(bound, {name, arity}) do
-        raise CompileError,
-          file: env.file,
-          line: env.line,
-          description:
-            "#{inspect(env.module)}.#{name}/#{arity} is a public function on a sealed " <>
-              "wire contract and binds no row of Flezha.AuthZ.Verbs; declare it with `verb`"
-      end
-    end
-
-    surface = Module.get_attribute(env.module, :verb_surface)
-
     quote do
       @doc false
       def __verbs__, do: unquote(Macro.escape(bindings))
-
-      @doc false
-      def __verb_surface__, do: unquote(Macro.escape(surface))
     end
   end
 
-  @doc "Bind a function to a row; see the module documentation for the two forms."
+  @doc "Bind a function to a row; see the module documentation."
   defmacro verb(head, opts) when is_list(opts) do
     {block, opts} = Keyword.pop(opts, :do)
     define(__CALLER__, head, opts, block)
@@ -365,18 +294,24 @@ defmodule Flezha.AuthZ.Verb do
           "#{name}/#{length(args)} binds #{inspect(verb_name)}, whose scope is a row, and supplies no row: fetch"
     end
 
-    body =
-      case Keyword.fetch(opts, :to) do
-        {:ok, target} -> wire_body(caller, name, verb_name, row, positional, args, target, opts)
-        :error -> published_body(caller, name, verb_name, row, positional, opts, block)
-      end
+    body = published_body(caller, name, verb_name, positional, opts, block)
 
-    records =
-      for arity <- arities(args), do: {name, arity, verb_name, []}
+    described =
+      quote do
+        [
+          args: unquote(Keyword.get(opts, :args)),
+          stream: unquote(Keyword.get(opts, :stream, false)),
+          doc: unquote(__MODULE__).first_sentence(Module.get_attribute(__MODULE__, :doc))
+        ]
+      end
 
     quote do
       unquote_splicing(
-        for record <- records, do: quote(do: @verb_bindings(unquote(Macro.escape(record))))
+        for arity <- arities(args) do
+          quote do
+            @verb_bindings {unquote(name), unquote(arity), unquote(verb_name), unquote(described)}
+          end
+        end
       )
 
       def unquote(head) do
@@ -385,48 +320,25 @@ defmodule Flezha.AuthZ.Verb do
     end
   end
 
-  # A wire verb: the last parameter is its options list, whatever else it
-  # takes, and the body lives in the `to:` module under the same name with the
-  # bound call appended. A `:none` row with no options list is a plain
-  # delegation: an internal name `flz` never calls with a caller's options.
-  defp wire_body(caller, name, verb_name, row, positional, args, target, opts) do
-    cond do
-      options_list?(List.last(args)) ->
-        invoked_body(name, verb_name, positional, target, opts)
-
-      row.action == :none ->
-        quote do: unquote(target).unquote(name)(unquote_splicing(positional))
-
-      true ->
-        raise CompileError,
-          file: caller.file,
-          line: caller.line,
-          description:
-            "wire verb #{name}/#{length(args)} must end with its options list (`opts \\\\ []`)"
-    end
+  # The description a catalogue entry carries: the first sentence of the
+  # function's `@doc`, read while it compiles, because a release strips the
+  # docs chunks.
+  def first_sentence({_line, doc}) when is_binary(doc) do
+    doc
+    |> String.split(~r/\n\s*\n/, parts: 2)
+    |> hd()
+    |> String.replace(~r/\s+/, " ")
+    |> String.split(~r/(?<=\.)\s/, parts: 2)
+    |> hd()
+    |> String.trim()
   end
 
-  defp invoked_body(name, verb_name, positional, target, opts) do
-    {wire_opts, verb_args} = List.pop_at(positional, -1)
-    binding = Keyword.take(opts, [:row, :target])
-
-    quote do
-      unquote(__MODULE__).invoke(
-        unquote(verb_name),
-        [unquote_splicing(verb_args)],
-        unquote(wire_opts),
-        fn call -> unquote(target).unquote(name)(unquote_splicing(verb_args), call) end,
-        Keyword.merge(@verb_surface, unquote(binding))
-      )
-    end
-  end
-
-  defp options_list?(arg), do: match?({:\\, _, [_, []]}, arg)
+  def first_sentence(_none), do: nil
 
   # A published function: the last parameter is the caller context, the
   # `do` block is the effect.
-  defp published_body(caller, name, verb_name, row, positional, opts, block) do
-    if row.action == :none or is_nil(block) do
+  defp published_body(caller, name, verb_name, positional, opts, block) do
+    if is_nil(block) do
       raise CompileError,
         file: caller.file,
         line: caller.line,

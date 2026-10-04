@@ -16,6 +16,8 @@ defmodule Flezha.Plugin.Providers do
   spec decode.
   """
 
+  alias Flezha.Config.Durations
+  alias Flezha.Plugin.Installer
   alias Flezha.Plugin.Provider
   alias Flezha.Plugin.Provider.WorkerSup
   alias Flezha.Plugin.ProviderBehaviour
@@ -59,6 +61,75 @@ defmodule Flezha.Plugin.Providers do
   @doc "The module behind `provider_id`, or `:error`."
   @spec fetch(binary()) :: {:ok, module()} | :error
   def fetch(provider_id) when is_binary(provider_id), do: Map.fetch(all(), provider_id)
+
+  @doc """
+  The module behind `provider_id`, or why there is none: a package that
+  declares it but did not load names itself and why, rather than the provider
+  being unknown.
+  """
+  @spec resolve(binary()) :: {:ok, module()} | {:error, term()}
+  def resolve(provider_id) when is_binary(provider_id) do
+    with :error <- fetch(provider_id),
+         do: {:error, Installer.unavailable(provider_id) || {:unknown_provider, provider_id}}
+  end
+
+  @doc "Every provider row, by id: its module and the plugin type it declares."
+  @spec describe_all() :: [map()]
+  def describe_all do
+    for {provider_id, module} <- Enum.sort(all()) do
+      %{id: provider_id, module: inspect(module), type: plugin_type(module)}
+    end
+  end
+
+  @doc """
+  What a caller is shown about one provider: its help text, its plugin type,
+  and the hooks it supports.
+  """
+  @spec help(binary()) :: {:ok, map()} | {:error, term()}
+  def help(provider_id) do
+    with {:ok, module} <- resolve(provider_id) do
+      {:ok,
+       %{
+         provider: provider_id,
+         help: provider_help(module, provider_id),
+         type: plugin_type(module),
+         hooks: module.__provider__().extensions
+       }}
+    end
+  rescue
+    e -> {:error, {:plugin_help_failed, provider_id, Exception.message(e)}}
+  end
+
+  @doc """
+  The controllers of `peers` whose provider table has no `provider_id`, or that
+  did not answer. A provider comes from a package installed per controller, so
+  another controller holding a namespace's hub may lack it.
+  """
+  @spec lacking([node()], binary()) :: [node()]
+  def lacking(peers, provider_id) do
+    answers =
+      :erpc.multicall(
+        peers,
+        __MODULE__,
+        :fetch,
+        [provider_id],
+        Durations.get(:plugin_peer_check_ms)
+      )
+
+    for {peer, answer} <- Enum.zip(peers, answers), not match?({:ok, {:ok, _}}, answer), do: peer
+  end
+
+  defp provider_help(module, provider_id) do
+    module.help(provider_id)
+  rescue
+    UndefinedFunctionError -> nil
+  end
+
+  defp plugin_type(module) do
+    module.plugin_type()
+  rescue
+    _ -> nil
+  end
 
   @doc "Register a plugin package's provider as a row, refusing an id that already is one."
   @spec add(binary(), module()) :: :ok | {:error, {:provider_id_taken, binary(), module()}}

@@ -13,7 +13,7 @@ defmodule Flezha.State.RemoteFlowCommitTest do
 
   import ExUnit.CaptureIO
 
-  alias Flezha.Service.Cli.Controller, as: ControllerCli
+  alias Flezha.Service.Cli
   alias Flezha.State.DurabilityTier
   alias Flezha.State.DurabilityTier.{Manifest, Shipper}
   alias FlezhaTest.Helper.DurabilityBackendStub, as: Stub
@@ -152,11 +152,11 @@ defmodule Flezha.State.RemoteFlowCommitTest do
     # the class's own declaration and do not read the backend.
     Application.put_env(:flezha, :durability_tier, backend: :none)
 
-    printed = capture_io(fn -> :ok = ControllerCli.controller_status(%{opts: []}) end)
+    printed = capture_io(fn -> :ok = Cli.call("Controller.status", "[]", []) end)
     assert printed =~ ~r/durability_rpo_breaches: +0\ndurability_levels: +.*\b#{ctx.rc}=remote\b/
     assert printed =~ "#{steps}=local"
 
-    json = capture_io(fn -> :ok = ControllerCli.controller_status(%{opts: [output: "json"]}) end)
+    json = capture_io(fn -> :ok = Cli.call("Controller.status", "[]", output: "json") end)
     assert %{^steps => "local"} = levels = Jason.decode!(json)["durability_levels"]
     assert levels[ctx.rc] == "remote"
   end

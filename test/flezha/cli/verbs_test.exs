@@ -1,12 +1,12 @@
-defmodule Flezha.Service.CliManager.MemTopTest do
+defmodule Flezha.Service.Controller.MemTopTest do
   # async: false: the live controller and its fleet.
   use ExUnit.Case, async: false
 
-  alias Flezha.Service.CliManager
+  alias Flezha.Service.Controller.MemTop
 
-  describe "build_mem_top_snapshot/0" do
+  describe "the mem-top snapshot" do
     test "returns the documented keys with reasonable shapes" do
-      snapshot = CliManager.build_mem_top_snapshot()
+      snapshot = MemTop.snapshot()
 
       assert is_binary(snapshot.captured_at)
       assert is_binary(snapshot.node)
@@ -61,12 +61,12 @@ defmodule Flezha.Service.CliManager.MemTopTest do
     end
 
     defp snapshot_json do
-      Jason.encode!(CliManager.build_mem_top_snapshot())
+      Jason.encode!(MemTop.snapshot())
     end
   end
 end
 
-defmodule Flezha.Service.CliManagerSendTest do
+defmodule Flezha.Service.Cli.SendTest do
   @moduledoc """
   `flz operator send <id> --text <payload> [--channel <ch>]` operations surface:
   the confirming verdict from `OperatorManager.send_io_confirming/5` is reported
@@ -83,7 +83,7 @@ defmodule Flezha.Service.CliManagerSendTest do
   import Mimic
   import FlezhaTest.Helper.MimicGlobal
 
-  alias Flezha.Service.CliManager
+  alias Flezha.Service.Cli
 
   setup :set_mimic_global_until_exit
 
@@ -104,7 +104,9 @@ defmodule Flezha.Service.CliManagerSendTest do
       verdict
     end)
 
-    capture_io(fn -> CliManager.operator_send("default", inst, "payload", channel) end)
+    capture_io(fn ->
+      Cli.call("Operator.send", Jason.encode!(["default", inst, "payload", channel, %{}]), [])
+    end)
   end
 
   test "a delivered payload is reported and carries empty metadata when no channel is given" do
@@ -137,7 +139,7 @@ defmodule Flezha.Service.CliManagerSendTest do
   end
 end
 
-defmodule Flezha.Service.CliManagerRewindTest do
+defmodule Flezha.Service.Cli.RewindTest do
   @moduledoc """
   `flz operator rewind <instance> --to-iteration N` operations surface: how a
   rewind that went through, and each verdict the Overwatch guard can return, is
@@ -150,7 +152,7 @@ defmodule Flezha.Service.CliManagerRewindTest do
   import Mimic
   import FlezhaTest.Helper.MimicGlobal
 
-  alias Flezha.Service.CliManager
+  alias Flezha.Service.Cli
   alias FlezhaTest.Helper.CliCapture
 
   setup :set_mimic_global_until_exit
@@ -177,7 +179,9 @@ defmodule Flezha.Service.CliManagerRewindTest do
   # so a test can assert on whichever this rewind produced.
   defp rewind(inst, to_iter) do
     {_outcome, out, err} =
-      CliCapture.run(fn -> CliManager.operator_rewind("default", inst, to_iter) end)
+      CliCapture.run(fn ->
+        Cli.call("Steps.rewind", Jason.encode!(["default", inst, to_iter]), [])
+      end)
 
     out <> err
   end
@@ -227,7 +231,7 @@ defmodule Flezha.Service.CliManagerRewindTest do
   end
 end
 
-defmodule Flezha.Service.CliManagerDlqTest do
+defmodule Flezha.Service.Cli.DlqTest do
   @moduledoc """
   `flz dlq list | show | replay | drop` controller-side behaviour: replay
   re-enters the ordinary `:io_in` input path, a clean replay removes the
@@ -243,7 +247,7 @@ defmodule Flezha.Service.CliManagerDlqTest do
   alias Flezha.Observability.RingBufferSink
   alias Flezha.Observability.TestSinks
   alias Flezha.Operator.ClassRegistry
-  alias Flezha.Service.CliManager
+  alias Flezha.Service.Cli
   alias FlezhaTest.Helper.DlqFixtures
 
   setup do
@@ -268,12 +272,14 @@ defmodule Flezha.Service.CliManagerDlqTest do
   test "list and show render the parked entry", %{entry: entry} do
     {:ok, ref} = Store.append(entry)
 
-    listing = capture_io(fn -> CliManager.dlq_list(entry.operator_class) end)
+    listing =
+      capture_io(fn -> Cli.call("Dlq.list", Jason.encode!([entry.operator_class]), []) end)
+
     assert listing =~ ref
     assert listing =~ "input"
     assert listing =~ "kaboom"
 
-    shown = capture_io(fn -> CliManager.dlq_show(ref) end)
+    shown = capture_io(fn -> Cli.call("Dlq.get", Jason.encode!([ref]), []) end)
     assert shown =~ ~s("kaboom")
     assert shown =~ "poison-bytes"
     assert shown =~ ~s("parked")
@@ -286,7 +292,7 @@ defmodule Flezha.Service.CliManagerDlqTest do
     {:ok, ref} = Store.append(entry)
     ClassRegistry.put_overwatch(rc, self(), nil)
 
-    output = capture_io(fn -> CliManager.dlq_replay(ref) end)
+    output = capture_io(fn -> Cli.call("Dlq.replay", Jason.encode!([ref]), []) end)
 
     assert_received {:"$gen_cast", {:io_in, "poison-bytes", %{"channel" => "input"}}}
     assert output =~ "replay succeeded"
@@ -300,7 +306,7 @@ defmodule Flezha.Service.CliManagerDlqTest do
 
     ClassRegistry.put_overwatch(rc, overwatch, nil)
 
-    output = capture_io(fn -> CliManager.dlq_replay(ref) end)
+    output = capture_io(fn -> Cli.call("Dlq.replay", Jason.encode!([ref]), []) end)
 
     assert_received :re_parked
     assert output =~ "re-parked with generation 2"
@@ -313,7 +319,7 @@ defmodule Flezha.Service.CliManagerDlqTest do
     {:ok, ref} = Store.append(entry)
     boundary = System.monotonic_time(:microsecond)
 
-    output = capture_io(fn -> CliManager.dlq_drop(ref) end)
+    output = capture_io(fn -> Cli.call("Dlq.drop", Jason.encode!([ref]), []) end)
 
     assert output =~ "dropped #{ref}"
     TestSinks.settle(RingBufferSink)
@@ -327,7 +333,7 @@ defmodule Flezha.Service.CliManagerDlqTest do
   end
 end
 
-defmodule Flezha.Service.CliManager.ClusterTest do
+defmodule Flezha.Service.Cli.ClusterTest do
   @moduledoc """
   CLI surface for `flz operator list` and `flz cluster status`. The data
   sources (`HubManager` registry access) are stubbed so the rendering
@@ -346,7 +352,7 @@ defmodule Flezha.Service.CliManager.ClusterTest do
   import ExUnit.CaptureIO
 
   alias Flezha.Convergence.Snapshot
-  alias Flezha.Service.CliManager
+  alias Flezha.Service.Cli
   alias Flezha.Service.HubManager
   alias FlezhaTest.Helper.ConvergenceFixtures
 
@@ -377,13 +383,17 @@ defmodule Flezha.Service.CliManager.ClusterTest do
         2_000
       )
 
-      text = capture_io(fn -> CliManager.list_operators("trading") end)
+      text = capture_io(fn -> Cli.call("Operator.list", Jason.encode!(["trading"]), []) end)
       assert text =~ ~r/prices\s+recovering\s+3\/3/
       assert text =~ ~r/quotes\s+recovering\s/
       refute text =~ "failed"
 
-      %{"operators" => rows} =
-        Jason.decode!(capture_io(fn -> CliManager.list_operators("trading", output: "json") end))
+      rows =
+        Jason.decode!(
+          capture_io(fn ->
+            Cli.call("Operator.list", Jason.encode!(["trading"]), output: "json")
+          end)
+        )
 
       assert Enum.map(rows, &{&1["id"], &1["health"]}) ==
                [{"prices", "recovering"}, {"quotes", "recovering"}]
@@ -392,7 +402,7 @@ defmodule Flezha.Service.CliManager.ClusterTest do
     test "a group still failed past the grace reads failed" do
       ConvergenceFixtures.stub_registry_rows("trading", partition_group(:failed), 500_000)
 
-      assert capture_io(fn -> CliManager.list_operators("trading") end) =~
+      assert capture_io(fn -> Cli.call("Operator.list", Jason.encode!(["trading"]), []) end) =~
                ~r/prices\s+failed\s+3\/3/
     end
 
@@ -406,12 +416,12 @@ defmodule Flezha.Service.CliManager.ClusterTest do
         500_000
       )
 
-      out = capture_io(fn -> CliManager.list_operators("shop", output: "json") end)
+      out =
+        capture_io(fn -> Cli.call("Operator.list", Jason.encode!(["shop"]), output: "json") end)
 
       assert {:ok, decoded} = Jason.decode(out)
-      assert decoded["namespace"] == "shop"
 
-      assert decoded["operators"] == [
+      assert Enum.map(decoded, &Map.take(&1, ["id", "health", "runner", "node"])) == [
                %{"id" => "r1", "health" => "healthy", "runner" => "e1", "node" => "a@h"},
                %{"id" => "r2", "health" => "failed", "runner" => nil, "node" => nil}
              ]
@@ -424,7 +434,7 @@ defmodule Flezha.Service.CliManager.ClusterTest do
         500_000
       )
 
-      out = capture_io(fn -> CliManager.list_operators("shop") end)
+      out = capture_io(fn -> Cli.call("Operator.list", Jason.encode!(["shop"]), []) end)
 
       assert out =~ "HEALTH"
       assert out =~ "r2"
@@ -434,7 +444,7 @@ defmodule Flezha.Service.CliManager.ClusterTest do
 
     test "empty registry renders a friendly message, not a crash" do
       stub(HubManager, :operator_rows, fn _ns -> [] end)
-      out = capture_io(fn -> CliManager.list_operators("shop") end)
+      out = capture_io(fn -> Cli.call("Operator.list", Jason.encode!(["shop"]), []) end)
       assert out =~ "No operators found"
     end
   end
@@ -453,7 +463,10 @@ defmodule Flezha.Service.CliManager.ClusterTest do
 
       stub(HubManager, :recovery_state, fn _hub_id -> {:ok, :normal} end)
 
-      out = capture_io(fn -> CliManager.cluster_status("shop", output: "json") end)
+      out =
+        capture_io(fn ->
+          Cli.call("Controller.cluster_status", Jason.encode!(["shop"]), output: "json")
+        end)
 
       assert {:ok, d} = Jason.decode(out)
       assert d["leader"] == to_string(node())
@@ -471,7 +484,8 @@ defmodule Flezha.Service.CliManager.ClusterTest do
 
       stub(HubManager, :recovery_state, fn _hub_id -> {:ok, :normal} end)
 
-      out = capture_io(fn -> CliManager.cluster_status("shop") end)
+      out =
+        capture_io(fn -> Cli.call("Controller.cluster_status", Jason.encode!(["shop"]), []) end)
 
       assert out =~ "Cluster status for namespace 'shop'"
       assert out =~ "Leader:"
@@ -483,7 +497,7 @@ defmodule Flezha.Service.CliManager.ClusterTest do
   end
 end
 
-defmodule Flezha.Service.CliManagerAuthzRenderTest do
+defmodule Flezha.Service.Cli.AuthzRenderTest do
   @moduledoc """
   finish-platform-authn-authz §8.1: the `flz auth|token|role|namespace` verb
   families as the caller sees them — thin renderers over the authorized
@@ -497,14 +511,16 @@ defmodule Flezha.Service.CliManagerAuthzRenderTest do
   alias Flezha.AuthZ.{AuthState, Bootstrap, Config, RoleStore, TokenStore}
   alias Flezha.Observability.{RingBufferSink, TestSinks}
 
-  alias Flezha.Service.CliManager
+  alias Flezha.Service.Cli
 
   test "the whole verb-family flow: bootstrap → namespace → role → token → whoami" do
     # `flz auth bootstrap <token>` — claims and prints the minted admin token.
     :ok = Bootstrap.check_and_write()
     raw_bootstrap = File.read!(Config.bootstrap_token_path()) |> String.trim()
 
-    bootstrap_out = capture_io(fn -> CliManager.authz_render_bootstrap(raw_bootstrap) end)
+    bootstrap_out =
+      capture_io(fn -> Cli.call("Namespace.bootstrap", Jason.encode!([raw_bootstrap]), []) end)
+
     assert bootstrap_out =~ "bootstrap claimed"
     assert bootstrap_out =~ "shown once"
     [admin_token] = Regex.run(~r/flzt_[a-z0-9]+/, bootstrap_out)
@@ -513,7 +529,8 @@ defmodule Flezha.Service.CliManagerAuthzRenderTest do
     # never an Elixir term or the file a claimed controller does not write.
     reclaim_err =
       capture_io(:stderr, fn ->
-        assert catch_exit(CliManager.authz_render_bootstrap(raw_bootstrap)) == {:shutdown, 6}
+        assert catch_exit(Cli.call("Namespace.bootstrap", Jason.encode!([raw_bootstrap]), [])) ==
+                 {:shutdown, 6}
       end)
 
     assert reclaim_err =~ "already claimed"
@@ -523,9 +540,9 @@ defmodule Flezha.Service.CliManagerAuthzRenderTest do
     # `flz namespace create` with quota overrides (the CLI's `--X` JSON).
     create_out =
       capture_io(fn ->
-        CliManager.authz_render_namespace_create(
-          "render-ns",
-          ~s({"max_runners": "2"}),
+        Cli.call(
+          "Namespace.create",
+          Jason.encode!(["render-ns", %{quotas: Jason.decode!(~s({"max_runners": "2"}))}]),
           token: admin_token
         )
       end)
@@ -536,16 +553,16 @@ defmodule Flezha.Service.CliManagerAuthzRenderTest do
     # `flz namespace show` / `set-quota`.
     show_out =
       capture_io(fn ->
-        CliManager.authz_render_namespace_show("render-ns", token: admin_token)
+        Cli.call("Namespace.get", Jason.encode!(["render-ns"]), token: admin_token)
       end)
 
     assert show_out =~ "namespace: render-ns"
 
     set_out =
       capture_io(fn ->
-        CliManager.authz_render_namespace_set_quota(
-          "render-ns",
-          ~s({"max_operators": 7}),
+        Cli.call(
+          "Namespace.set_quotas",
+          Jason.encode!(["render-ns", Jason.decode!(~s({"max_operators": 7}))]),
           token: admin_token
         )
       end)
@@ -555,19 +572,26 @@ defmodule Flezha.Service.CliManagerAuthzRenderTest do
     # `flz role bind` / `list`.
     bind_out =
       capture_io(fn ->
-        CliManager.authz_render_role_bind("carol", "ops", "render-ns", token: admin_token)
+        Cli.call("Namespace.bind_role", Jason.encode!(["carol", "ops", "render-ns"]),
+          token: admin_token
+        )
       end)
 
     assert bind_out =~ "bound carol as ops@render-ns"
 
-    role_list_out = capture_io(fn -> CliManager.authz_render_role_list(token: admin_token) end)
+    role_list_out =
+      capture_io(fn ->
+        Cli.call("Namespace.list_roles", Jason.encode!([]), token: admin_token)
+      end)
+
     assert role_list_out =~ "carol  ops@render-ns"
 
     # `flz token issue` / `whoami` / `list` / `revoke`.
     issue_out =
       capture_io(fn ->
-        CliManager.authz_render_token_issue("carol", "render-ns", "ops",
-          ttl: 3_600,
+        Cli.call(
+          "Namespace.issue_token",
+          Jason.encode!(["carol", "render-ns", "ops", %{ttl: 3_600}]),
           token: admin_token
         )
       end)
@@ -576,25 +600,33 @@ defmodule Flezha.Service.CliManagerAuthzRenderTest do
     [carol_token] = Regex.run(~r/flzt_[a-z0-9]+/, issue_out)
     [_, token_id] = Regex.run(~r/id:\s+([0-9a-f]+)/, issue_out)
 
-    whoami_out = capture_io(fn -> CliManager.authz_render_whoami(token: carol_token) end)
+    whoami_out =
+      capture_io(fn -> Cli.call("Namespace.whoami", Jason.encode!([]), token: carol_token) end)
+
     assert whoami_out =~ "principal: carol"
     assert whoami_out =~ "namespace: render-ns"
 
-    list_out = capture_io(fn -> CliManager.authz_render_token_list(token: admin_token) end)
+    list_out =
+      capture_io(fn -> Cli.call("Namespace.tokens", Jason.encode!([]), token: admin_token) end)
+
     assert list_out =~ "carol  ops@render-ns  active"
 
     revoke_out =
-      capture_io(fn -> CliManager.authz_render_token_revoke(token_id, token: admin_token) end)
+      capture_io(fn ->
+        Cli.call("Namespace.revoke_token", Jason.encode!([token_id]), token: admin_token)
+      end)
 
     assert revoke_out =~ "revoked token"
     assert {:error, %Flezha.Error{code: "authz.token_revoked"}} = TokenStore.verify(carol_token)
 
     # `flz role unbind` + `flz namespace delete` close the loop.
-    capture_io(fn -> CliManager.authz_render_role_unbind("carol", "", token: admin_token) end)
+    capture_io(fn ->
+      Cli.call("Namespace.unbind_role", Jason.encode!(["carol", nil]), token: admin_token)
+    end)
 
     delete_out =
       capture_io(fn ->
-        CliManager.authz_render_namespace_delete("render-ns", token: admin_token)
+        Cli.call("Namespace.delete", Jason.encode!(["render-ns"]), token: admin_token)
       end)
 
     assert delete_out =~ "namespace render-ns deleted"
@@ -607,7 +639,11 @@ defmodule Flezha.Service.CliManagerAuthzRenderTest do
     out =
       capture_io(:stderr, fn ->
         assert catch_exit(
-                 CliManager.authz_render_role_bind("dave", "superuser", "render-ns", token: admin)
+                 Cli.call(
+                   "Namespace.bind_role",
+                   Jason.encode!(["dave", "superuser", "render-ns"]),
+                   token: admin
+                 )
                ) == {:shutdown, 2}
       end)
 
@@ -624,7 +660,9 @@ defmodule Flezha.Service.CliManagerAuthzRenderTest do
     test "a bind reports the whole set the identity now holds", %{admin: admin} do
       bind = fn role ->
         capture_io(fn ->
-          CliManager.authz_render_role_bind("runner@render-ns", role, "render-ns", token: admin)
+          Cli.call("Namespace.bind_role", Jason.encode!(["runner@render-ns", role, "render-ns"]),
+            token: admin
+          )
         end)
       end
 
@@ -636,13 +674,17 @@ defmodule Flezha.Service.CliManagerAuthzRenderTest do
 
     test "a bind in another namespace is refused naming the one it holds", %{admin: admin} do
       capture_io(fn ->
-        CliManager.authz_render_role_bind("runner@render-ns", "app", "render-ns", token: admin)
+        Cli.call("Namespace.bind_role", Jason.encode!(["runner@render-ns", "app", "render-ns"]),
+          token: admin
+        )
       end)
 
       out =
         capture_io(:stderr, fn ->
           assert catch_exit(
-                   CliManager.authz_render_role_bind("runner@render-ns", "viewer", "_system",
+                   Cli.call(
+                     "Namespace.bind_role",
+                     Jason.encode!(["runner@render-ns", "viewer", "_system"]),
                      token: admin
                    )
                  ) == {:shutdown, 6}
@@ -657,13 +699,17 @@ defmodule Flezha.Service.CliManagerAuthzRenderTest do
     test "unbind takes one role, the last role, or every role", %{admin: admin} do
       for role <- ["spawner", "stopper"] do
         capture_io(fn ->
-          CliManager.authz_render_role_bind("runner@render-ns", role, "render-ns", token: admin)
+          Cli.call("Namespace.bind_role", Jason.encode!(["runner@render-ns", role, "render-ns"]),
+            token: admin
+          )
         end)
       end
 
       out =
         capture_io(fn ->
-          CliManager.authz_render_role_unbind("runner@render-ns", "stopper", token: admin)
+          Cli.call("Namespace.unbind_role", Jason.encode!(["runner@render-ns", "stopper"]),
+            token: admin
+          )
         end)
 
       assert out =~ "unbound stopper from runner@render-ns"
@@ -671,26 +717,34 @@ defmodule Flezha.Service.CliManagerAuthzRenderTest do
 
       # A role the identity does not hold succeeds and changes nothing.
       capture_io(fn ->
-        CliManager.authz_render_role_unbind("runner@render-ns", "stopper", token: admin)
+        Cli.call("Namespace.unbind_role", Jason.encode!(["runner@render-ns", "stopper"]),
+          token: admin
+        )
       end)
 
       assert {:ok, %{roles: [:spawner]}} = RoleStore.lookup("runner@render-ns")
 
       capture_io(fn ->
-        CliManager.authz_render_role_unbind("runner@render-ns", "spawner", token: admin)
+        Cli.call("Namespace.unbind_role", Jason.encode!(["runner@render-ns", "spawner"]),
+          token: admin
+        )
       end)
 
       assert :error = RoleStore.lookup("runner@render-ns")
 
       capture_io(fn ->
-        CliManager.authz_render_role_bind("runner@render-ns", "spawner", "render-ns",
+        Cli.call(
+          "Namespace.bind_role",
+          Jason.encode!(["runner@render-ns", "spawner", "render-ns"]),
           token: admin
         )
       end)
 
       out =
         capture_io(fn ->
-          CliManager.authz_render_role_unbind("runner@render-ns", "", token: admin)
+          Cli.call("Namespace.unbind_role", Jason.encode!(["runner@render-ns", nil]),
+            token: admin
+          )
         end)
 
       assert out =~ "unbound runner@render-ns"
@@ -705,7 +759,7 @@ defmodule Flezha.Service.CliManagerAuthzRenderTest do
       # failed is still an act, so the record is written either way.
       capture_io(:stderr, fn ->
         capture_io(fn ->
-          catch_exit(CliManager.operator_stop("render-ns", "o1", token: caller))
+          catch_exit(Cli.call("Operator.stop", Jason.encode!(["render-ns", "o1"]), token: caller))
         end)
       end)
 
@@ -719,7 +773,7 @@ defmodule Flezha.Service.CliManagerAuthzRenderTest do
       boundary = System.monotonic_time(:microsecond)
 
       capture_io(fn ->
-        CliManager.authz_render_role_unbind("carol", "", token: admin)
+        Cli.call("Namespace.unbind_role", Jason.encode!(["carol", nil]), token: admin)
       end)
 
       TestSinks.settle(RingBufferSink)
@@ -733,7 +787,9 @@ defmodule Flezha.Service.CliManagerAuthzRenderTest do
       out =
         capture_io(:stderr, fn ->
           assert catch_exit(
-                   CliManager.authz_render_role_unbind("carol", "superuser", token: admin)
+                   Cli.call("Namespace.unbind_role", Jason.encode!(["carol", "superuser"]),
+                     token: admin
+                   )
                  ) == {:shutdown, 2}
         end)
 
@@ -747,14 +803,37 @@ defmodule Flezha.Service.CliManagerAuthzRenderTest do
             {"alice", "ops"}
           ] do
         capture_io(fn ->
-          CliManager.authz_render_role_bind(principal, role, "render-ns", token: admin)
+          Cli.call("Namespace.bind_role", Jason.encode!([principal, role, "render-ns"]),
+            token: admin
+          )
         end)
       end
 
-      out = capture_io(fn -> CliManager.authz_render_role_list(token: admin) end)
+      out =
+        capture_io(fn -> Cli.call("Namespace.list_roles", Jason.encode!([]), token: admin) end)
 
       assert out =~ "runner@render-ns  spawner,stopper@render-ns"
       assert out =~ "alice  ops@render-ns"
+    end
+
+    # Fails when: a tenant's viewer reads every namespace's principals and roles.
+    test "a tenant-bound caller sees its own namespace's bindings only", %{admin: admin} do
+      for {principal, namespace} <- [{"bob", "render-ns"}, {"carol", "other-ns"}] do
+        capture_io(fn ->
+          Cli.call("Namespace.bind_role", Jason.encode!([principal, "ops", namespace]),
+            token: admin
+          )
+        end)
+      end
+
+      {:ok, viewer, _} = TokenStore.issue("render-viewer", "render-ns", :viewer, 3_600)
+
+      out =
+        capture_io(fn -> Cli.call("Namespace.list_roles", Jason.encode!([]), token: viewer) end)
+
+      assert out =~ "bob  ops@render-ns"
+      refute out =~ "carol"
+      refute out =~ "render-admin"
     end
   end
 
@@ -766,7 +845,9 @@ defmodule Flezha.Service.CliManagerAuthzRenderTest do
 
       out =
         capture_io(fn ->
-          CliManager.authz_render_role_bind("runner@render-ns", "#{role}", "render-ns",
+          Cli.call(
+            "Namespace.bind_role",
+            Jason.encode!(["runner@render-ns", "#{role}", "render-ns"]),
             token: admin
           )
         end)
@@ -785,8 +866,9 @@ defmodule Flezha.Service.CliManagerAuthzRenderTest do
       out =
         capture_io(:stderr, fn ->
           assert catch_exit(
-                   CliManager.authz_render_token_issue("carol", "render-ns", "#{role}",
-                     ttl: 3_600,
+                   Cli.call(
+                     "Namespace.issue_token",
+                     Jason.encode!(["carol", "render-ns", "#{role}", %{ttl: 3_600}]),
                      token: admin
                    )
                  ) == {:shutdown, 2}
@@ -797,7 +879,7 @@ defmodule Flezha.Service.CliManagerAuthzRenderTest do
   end
 end
 
-defmodule Flezha.Service.CliManagerReplayTest do
+defmodule Flezha.Service.Cli.ReplayTest do
   @moduledoc """
   `flz operator replay <cell> --from <seq|ts>` on a Cell of a steps class:
   refused before anything is rewound, naming the journal as the instance's
@@ -809,7 +891,7 @@ defmodule Flezha.Service.CliManagerReplayTest do
   import ExUnit.CaptureIO
 
   alias Flezha.Operator.ClassRegistry
-  alias Flezha.Service.CliManager
+  alias Flezha.Service.Cli
   alias Flezha.State.{TestHelpers, WalWriter}
 
   test "a steps Cell is refused, and nothing is rewound" do
@@ -823,7 +905,7 @@ defmodule Flezha.Service.CliManagerReplayTest do
     stderr =
       capture_io(:stderr, fn ->
         try do
-          CliManager.operator_replay("default", "#{class}/task/key", "0")
+          Cli.call("Operator.replay", Jason.encode!(["default", "#{class}/task/key", "0"]), [])
         catch
           :exit, _ -> :ok
         end

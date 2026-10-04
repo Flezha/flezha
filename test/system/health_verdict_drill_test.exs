@@ -35,7 +35,7 @@ defmodule FlezhaTest.System.HealthVerdictDrillTest do
   alias Flezha.Healthz.Server, as: Healthz
   alias Flezha.Operator.Migration
   alias Flezha.Plugin
-  alias Flezha.Service.{CliManager, OperatorManager, PluginManager}
+  alias Flezha.Service.{Cli, OperatorManager, PluginManager}
   alias FlezhaTest.Fixtures.OperatorFixture
 
   require Logger
@@ -376,7 +376,7 @@ defmodule FlezhaTest.System.HealthVerdictDrillTest do
   defp info_health(ctx, id) do
     out =
       ExUnit.CaptureIO.capture_io(fn ->
-        CliManager.operator_info(ctx.namespace, output: "json")
+        Cli.call("Operator.info", Jason.encode!([ctx.namespace]), output: "json")
       end)
 
     %{"operators" => rows} = Jason.decode!(out)
@@ -390,10 +390,10 @@ defmodule FlezhaTest.System.HealthVerdictDrillTest do
   defp list_health(ctx, id) do
     out =
       ExUnit.CaptureIO.capture_io(fn ->
-        CliManager.list_operators(ctx.namespace, output: "json")
+        Cli.call("Operator.list", Jason.encode!([ctx.namespace]), output: "json")
       end)
 
-    %{"operators" => rows} = Jason.decode!(out)
+    rows = Jason.decode!(out)
 
     case Enum.find(rows, &(&1["id"] == id)) do
       %{"health" => health} -> health

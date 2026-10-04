@@ -1,7 +1,8 @@
+use serde_json::Value;
+
 use crate::args::{Positional, Reading};
 use crate::dispatch::{self, Command, Missing, Verb};
-use crate::help;
-use crate::rpc::{self, text};
+use crate::{help, rpc};
 
 const ENTRY_REF: &[Positional] = &[Positional::required("<operator/tasklet/entry-id>")];
 
@@ -11,15 +12,15 @@ pub(crate) const TABLE: Command = Command {
     verbs: &[
         Verb::new("list", handle_list).taking(&[Positional::optional("<operator_class>")]),
         Verb::new("show", |read| {
-            rpc::one_arg(read, ENTRY_REF[0].name, "dlq_show")
+            rpc::one_arg(read, ENTRY_REF[0].name, "Dlq.get")
         })
         .taking(ENTRY_REF),
         Verb::new("replay", |read| {
-            rpc::one_arg(read, ENTRY_REF[0].name, "dlq_replay")
+            rpc::one_arg(read, ENTRY_REF[0].name, "Dlq.replay")
         })
         .taking(ENTRY_REF),
         Verb::new("drop", |read| {
-            rpc::one_arg(read, ENTRY_REF[0].name, "dlq_drop")
+            rpc::one_arg(read, ENTRY_REF[0].name, "Dlq.drop")
         })
         .taking(ENTRY_REF),
     ],
@@ -29,5 +30,8 @@ pub(crate) const TABLE: Command = Command {
 };
 
 fn handle_list(read: &Reading) {
-    rpc::run("dlq_list", &[text(read.pos("<operator_class>"))], &[], read);
+    let class = read
+        .maybe_pos("<operator_class>")
+        .map_or(Value::Null, Value::from);
+    rpc::door("Dlq.list", &[class], &[], read);
 }

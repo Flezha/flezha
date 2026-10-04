@@ -418,6 +418,34 @@ defmodule Flezha.Plugin.ProviderBehaviour.Options do
   defp coerce(:map, _field, value, _row) when is_map(value), do: {:ok, value}
   defp coerce(:map, field, value, _row), do: refuse_value(field, value)
 
+  # A word naming something this node already knows, never minted: an unknown
+  # word is refused naming the word.
+  defp coerce(:atom, _field, value, _row) when is_atom(value), do: {:ok, value}
+  defp coerce(:atom, field, value, _row) when is_binary(value), do: existing_atom(field, value)
+  defp coerce(:atom, field, value, _row), do: refuse_value(field, value)
+
+  # Named fields, written as an object whose keys this node already knows; what
+  # is nested inside stays as it was written. An unknown key is refused naming
+  # the key.
+  defp coerce(:keyword, field, value, _row) when is_list(value) do
+    if Keyword.keyword?(value), do: {:ok, value}, else: refuse_value(field, value)
+  end
+
+  defp coerce(:keyword, field, %{} = value, _row) when not is_struct(value) do
+    Enum.reduce_while(value, {:ok, []}, fn {key, nested}, {:ok, done} ->
+      case existing_atom(field, to_string(key)) do
+        {:ok, atom} -> {:cont, {:ok, [{atom, nested} | done]}}
+        refused -> {:halt, refused}
+      end
+    end)
+    |> case do
+      {:ok, done} -> {:ok, Enum.reverse(done)}
+      refused -> refused
+    end
+  end
+
+  defp coerce(:keyword, field, value, _row), do: refuse_value(field, value)
+
   # A JSON option is a map a user may also write as the string a CLI flag
   # delivers. A string that does not decode is refused as a string, never as the
   # decoder's own error struct: the callback promises `String.t()`.
@@ -434,6 +462,12 @@ defmodule Flezha.Plugin.ProviderBehaviour.Options do
   # `:any` is a deliberate verdict, not an omission: the value is whatever the
   # provider's own clause made of it, or a shape no type describes.
   defp coerce(_type, _field, value, _row), do: {:ok, value}
+
+  defp existing_atom(field, written) do
+    {:ok, String.to_existing_atom(written)}
+  rescue
+    ArgumentError -> refuse_value(field, written)
+  end
 
   # An empty member is a typo — `alerts,,audit`, `alerts,` — and dropping it
   # would select a set nobody wrote. A member that is not a string at all is

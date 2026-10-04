@@ -62,14 +62,6 @@ defmodule Flezha.Plugin.SpecDecoder do
   @spec valid_json_array?(binary() | nil) :: boolean()
   def valid_json_array?(plugins_json), do: match?({:ok, _}, decode_json(plugins_json))
 
-  @doc "String keys to atoms; the JSON wire format cannot carry atom keys."
-  @spec atomize_keys(map()) :: map()
-  def atomize_keys(map) when is_map(map) do
-    Map.new(map, fn {k, v} ->
-      {(is_binary(k) && String.to_atom(k)) || k, v}
-    end)
-  end
-
   ## ----- private -----
 
   defp decode_json(j) when j in [nil, "", "[]", "{}"], do: {:ok, []}
@@ -103,7 +95,7 @@ defmodule Flezha.Plugin.SpecDecoder do
        %Plugin{
          id: name,
          provider: provider_mod,
-         opts: atomize_keys(raw_opts),
+         opts: Plugin.option_keys(provider_mod, raw_opts),
          hooks: hooks,
          namespace: namespace,
          operator_id: operator_id,

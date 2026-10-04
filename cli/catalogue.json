@@ -1,0 +1,1798 @@
+{
+  "operations": [
+    {
+      "name": "AuditLog.list_files",
+      "doc": "The audit log's files: name, first and last record time, record count, size and digest.",
+      "action": "audit.read",
+      "remote": true,
+      "stream": false,
+      "args": []
+    },
+    {
+      "name": "AuditLog.read",
+      "doc": "The records of one audit file that match `params`, in the caller's namespace.",
+      "action": "audit.read",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "params",
+          "type": "keyword",
+          "required": true,
+          "doc": "`file`, `source`, `name`, `since_us`, `until_us` and `limit`."
+        }
+      ]
+    },
+    {
+      "name": "AuditLog.rotate",
+      "doc": "Close the current audit file and start a new one.",
+      "action": "audit.rotate",
+      "remote": true,
+      "stream": false,
+      "args": []
+    },
+    {
+      "name": "AuditLog.stats",
+      "doc": "The audit log's operational snapshot.",
+      "action": "audit.read",
+      "remote": true,
+      "stream": false,
+      "args": []
+    },
+    {
+      "name": "AuditLog.tail",
+      "doc": "Subscribe the calling process to every audit record as it is written.",
+      "action": "audit.read",
+      "remote": true,
+      "stream": true,
+      "args": [
+        {
+          "name": "params",
+          "type": "keyword",
+          "required": false,
+          "default": [],
+          "doc": "Unused."
+        }
+      ]
+    },
+    {
+      "name": "AuditLog.unsubscribe",
+      "doc": "Undo a `tail/2`.",
+      "action": "audit.read",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "ref",
+          "type": "any",
+          "required": true,
+          "doc": "The subscription `tail/2` answered."
+        }
+      ]
+    },
+    {
+      "name": "Controller.boot_await",
+      "doc": "Wait until the readiness verdict is `:ready`, or `timeout_ms` passes.",
+      "action": "public",
+      "remote": true,
+      "stream": true,
+      "args": [
+        {
+          "name": "timeout_ms",
+          "type": "int",
+          "required": false,
+          "default": 60000,
+          "min": 0,
+          "doc": "How long to wait, in milliseconds."
+        }
+      ]
+    },
+    {
+      "name": "Controller.boot_status",
+      "doc": "The readiness verdict and every precondition behind it, then each running namespace's recovery state and persistent-registry row count.",
+      "action": "public",
+      "remote": true,
+      "stream": false,
+      "args": []
+    },
+    {
+      "name": "Controller.cluster_status",
+      "doc": "The cluster as `namespace` sees it: its nodes, each one's operator count and recovery state, the unplaced operators and the operators' health.",
+      "action": "operator.list",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "namespace",
+          "type": "string",
+          "required": true,
+          "doc": "The namespace."
+        }
+      ]
+    },
+    {
+      "name": "Controller.durability_backend",
+      "doc": "The durability backend this controller is configured for.",
+      "action": "controller.status",
+      "remote": true,
+      "stream": false,
+      "args": []
+    },
+    {
+      "name": "Controller.durability_breaches",
+      "doc": "The durability breaches recorded since the controller started.",
+      "action": "controller.status",
+      "remote": true,
+      "stream": false,
+      "args": []
+    },
+    {
+      "name": "Controller.durability_posture",
+      "doc": "Whether durable state is shipped to a remote tier or stays local.",
+      "action": "controller.status",
+      "remote": true,
+      "stream": false,
+      "args": []
+    },
+    {
+      "name": "Controller.durability_status",
+      "doc": "The durability shipper's own status.",
+      "action": "controller.status",
+      "remote": true,
+      "stream": false,
+      "args": []
+    },
+    {
+      "name": "Controller.hub_id",
+      "doc": "The hub id for `namespace`, as this controller composes it.",
+      "action": "controller.status",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "namespace",
+          "type": "string",
+          "required": true,
+          "doc": "The namespace."
+        }
+      ]
+    },
+    {
+      "name": "Controller.liveness_counters",
+      "doc": "Every data-plane liveness counter this node holds.",
+      "action": "controller.status",
+      "remote": true,
+      "stream": false,
+      "args": []
+    },
+    {
+      "name": "Controller.mem_top",
+      "doc": "One snapshot of the controller's memory hot spots.",
+      "action": "controller.status",
+      "remote": true,
+      "stream": false,
+      "args": []
+    },
+    {
+      "name": "Controller.recovery_per_node",
+      "doc": "Each node's recovery state for `namespace`, keyed by node.",
+      "action": "operator.list",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "namespace",
+          "type": "string",
+          "required": true,
+          "doc": "The namespace."
+        },
+        {
+          "name": "nodes",
+          "type": "list",
+          "required": true,
+          "doc": "The nodes to ask."
+        }
+      ]
+    },
+    {
+      "name": "Controller.recovery_state",
+      "doc": "One hub's recovery state, by hub id.",
+      "action": "controller.status",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "hub_id",
+          "type": "atom",
+          "required": true,
+          "doc": "The hub's id."
+        }
+      ]
+    },
+    {
+      "name": "Controller.shutdown_status",
+      "doc": "Where the graceful shutdown sequence has reached.",
+      "action": "controller.status",
+      "remote": true,
+      "stream": false,
+      "args": []
+    },
+    {
+      "name": "Controller.status",
+      "doc": "The controller's status: its node, its shutdown state and settings, its durability, its state root and the folder file plugins may use.",
+      "action": "controller.status",
+      "remote": true,
+      "stream": false,
+      "args": []
+    },
+    {
+      "name": "Controller.stop",
+      "doc": "Drain this controller and stop it.",
+      "action": "controller.stop",
+      "remote": false,
+      "stream": true,
+      "args": [
+        {
+          "name": "opts",
+          "type": "keyword",
+          "required": false,
+          "default": [],
+          "doc": "`timeout_ms`, `force` and `no_wait`."
+        }
+      ]
+    },
+    {
+      "name": "Dlq.drop",
+      "doc": "Discard a parked entry and its payload.",
+      "action": "dlq.drop",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "entry_ref",
+          "type": "string",
+          "required": true,
+          "doc": "The entry, as `<operator>/<tasklet>/<id>`."
+        }
+      ]
+    },
+    {
+      "name": "Dlq.get",
+      "doc": "One entry and its payload bytes, or `nil` bytes when it carries none.",
+      "action": "dlq.show",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "entry_ref",
+          "type": "string",
+          "required": true,
+          "doc": "The entry, as `<operator>/<tasklet>/<id>`."
+        }
+      ]
+    },
+    {
+      "name": "Dlq.list",
+      "doc": "Parked entries, nearest-to-expiry first; `nil` for every class.",
+      "action": "dlq.list",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "operator_class",
+          "type": "string",
+          "required": false,
+          "default": null,
+          "doc": "The operator whose entries to read; every operator when absent."
+        }
+      ]
+    },
+    {
+      "name": "Dlq.replay",
+      "doc": "Re-dispatch a parked payload to its operator through the ordinary input path.",
+      "action": "dlq.replay",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "entry_ref",
+          "type": "string",
+          "required": true,
+          "doc": "The entry, as `<operator>/<tasklet>/<id>`."
+        }
+      ]
+    },
+    {
+      "name": "Dlq.stats",
+      "doc": "Entry and byte counts per parked tasklet.",
+      "action": "dlq.list",
+      "remote": true,
+      "stream": false,
+      "args": []
+    },
+    {
+      "name": "Dlq.tasklets",
+      "doc": "The `{operator_class, tasklet_id}` pairs that hold parked entries.",
+      "action": "dlq.list",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "operator_class",
+          "type": "string",
+          "required": false,
+          "default": null,
+          "doc": "The operator whose entries to read; every operator when absent."
+        }
+      ]
+    },
+    {
+      "name": "Fleet.factories",
+      "doc": "The factories declared in `namespace`.",
+      "action": "operator.list",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "namespace",
+          "type": "string",
+          "required": true,
+          "doc": "The namespace."
+        }
+      ]
+    },
+    {
+      "name": "Fleet.hub_nodes",
+      "doc": "The nodes holding a hub for `namespace`.",
+      "action": "operator.list",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "namespace",
+          "type": "string",
+          "required": true,
+          "doc": "The namespace."
+        }
+      ]
+    },
+    {
+      "name": "Fleet.installed_plugins",
+      "doc": "Every plugin package this controller loaded or refused at boot, and what its plugin root holds since.",
+      "action": "plugin.list",
+      "remote": true,
+      "stream": false,
+      "args": []
+    },
+    {
+      "name": "Fleet.provider",
+      "doc": "One plugin provider's help text, its plugin type and the hooks it supports.",
+      "action": "plugin.info",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "provider_id",
+          "type": "string",
+          "required": true,
+          "doc": "The provider's id."
+        }
+      ]
+    },
+    {
+      "name": "Fleet.providers",
+      "doc": "Every plugin provider this controller can enable, with its module and type, and how many plugin packages it refused at boot.",
+      "action": "plugin.list",
+      "remote": true,
+      "stream": false,
+      "args": []
+    },
+    {
+      "name": "Fleet.runner_caller_context",
+      "doc": "The caller context a runner in `namespace` connects with.",
+      "action": "operator.list",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "namespace",
+          "type": "string",
+          "required": true,
+          "doc": "The namespace."
+        }
+      ]
+    },
+    {
+      "name": "Fleet.runners",
+      "doc": "Every runner serving `namespace`, anywhere in the cluster, each with the process id of the runner on its socket where the transport can say, so a user can tell which process a runner is.",
+      "action": "operator.list",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "namespace",
+          "type": "string",
+          "required": true,
+          "doc": "The namespace."
+        }
+      ]
+    },
+    {
+      "name": "Fleet.runners_for_factory",
+      "doc": "The runners of one factory in `namespace`.",
+      "action": "operator.list",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "namespace",
+          "type": "string",
+          "required": true,
+          "doc": "The namespace."
+        },
+        {
+          "name": "factory_id",
+          "type": "string",
+          "required": true,
+          "doc": "The factory."
+        }
+      ]
+    },
+    {
+      "name": "Fleet.runners_on_this_node",
+      "doc": "The runners serving `namespace` **on this node only**.",
+      "action": "operator.list",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "namespace",
+          "type": "string",
+          "required": true,
+          "doc": "The namespace."
+        }
+      ]
+    },
+    {
+      "name": "Namespace.bind_role",
+      "doc": "Bind `principal` to `role` in `namespace`, answering the identity's binding after it.",
+      "action": "authz.role_bind",
+      "remote": false,
+      "stream": false,
+      "args": [
+        {
+          "name": "principal",
+          "type": "string",
+          "required": true,
+          "doc": "The principal."
+        },
+        {
+          "name": "role",
+          "type": "string",
+          "required": true,
+          "doc": "The role."
+        },
+        {
+          "name": "namespace",
+          "type": "string",
+          "required": true,
+          "doc": "The namespace."
+        }
+      ]
+    },
+    {
+      "name": "Namespace.bootstrap",
+      "doc": "Claim the first admin with the one-time bootstrap token, answering the principal bound as `admin@_system` and, when one was minted for it, its token, shown this once.",
+      "action": "public",
+      "remote": false,
+      "stream": false,
+      "args": [
+        {
+          "name": "token",
+          "type": "string",
+          "required": true,
+          "doc": "The one-time bootstrap token."
+        }
+      ]
+    },
+    {
+      "name": "Namespace.create",
+      "doc": "Create the namespace `name`, with `opts[:quotas]` its ceilings that differ from the defaults.",
+      "action": "authz.namespace_create",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "name",
+          "type": "string",
+          "required": true,
+          "doc": "The namespace."
+        },
+        {
+          "name": "opts",
+          "type": "keyword",
+          "required": false,
+          "default": [],
+          "doc": "`quotas`, the ceilings that differ from the defaults."
+        }
+      ]
+    },
+    {
+      "name": "Namespace.delete",
+      "doc": "Delete the namespace `name` and the quota counters keyed on it.",
+      "action": "authz.namespace_delete",
+      "remote": false,
+      "stream": false,
+      "args": [
+        {
+          "name": "name",
+          "type": "string",
+          "required": true,
+          "doc": "The namespace."
+        }
+      ]
+    },
+    {
+      "name": "Namespace.get",
+      "doc": "One namespace record.",
+      "action": "authz.namespace_show",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "name",
+          "type": "string",
+          "required": true,
+          "doc": "The namespace."
+        }
+      ]
+    },
+    {
+      "name": "Namespace.issue_token",
+      "doc": "Issue a token for `principal` holding `role` in `namespace`, answering its id and the token itself, shown this once.",
+      "action": "authz.token_issue",
+      "remote": false,
+      "stream": false,
+      "args": [
+        {
+          "name": "principal",
+          "type": "string",
+          "required": true,
+          "doc": "The principal."
+        },
+        {
+          "name": "namespace",
+          "type": "string",
+          "required": true,
+          "doc": "The namespace."
+        },
+        {
+          "name": "role",
+          "type": "string",
+          "required": true,
+          "doc": "The role the token holds."
+        },
+        {
+          "name": "opts",
+          "type": "keyword",
+          "required": false,
+          "default": [],
+          "doc": "`ttl`, in seconds or `\"never\"`, and `label`."
+        }
+      ]
+    },
+    {
+      "name": "Namespace.list",
+      "doc": "Every namespace record this controller holds.",
+      "action": "authz.namespace_list",
+      "remote": true,
+      "stream": false,
+      "args": []
+    },
+    {
+      "name": "Namespace.list_roles",
+      "doc": "The role bindings the caller may see, one per identity: every binding for `admin@_system`, otherwise those of the caller's own namespace.",
+      "action": "authz.role_list",
+      "remote": true,
+      "stream": false,
+      "args": []
+    },
+    {
+      "name": "Namespace.quota",
+      "doc": "One namespace's current count and ceiling for `kind`.",
+      "action": "authz.namespace_show",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "name",
+          "type": "string",
+          "required": true,
+          "doc": "The namespace."
+        },
+        {
+          "name": "kind",
+          "type": "atom",
+          "required": true,
+          "doc": "The quota kind."
+        }
+      ]
+    },
+    {
+      "name": "Namespace.quota_kinds",
+      "doc": "The quota kinds a namespace can be given a ceiling for.",
+      "action": "authz.namespace_list",
+      "remote": true,
+      "stream": false,
+      "args": []
+    },
+    {
+      "name": "Namespace.revoke_token",
+      "doc": "Revoke the token whose id starts with `token_id`.",
+      "action": "authz.token_revoke",
+      "remote": false,
+      "stream": false,
+      "args": [
+        {
+          "name": "token_id",
+          "type": "string",
+          "required": true,
+          "doc": "The token's id, or a prefix of it."
+        }
+      ]
+    },
+    {
+      "name": "Namespace.roles",
+      "doc": "The role bindings that reach `name`, including the ones bound cluster-wide.",
+      "action": "authz.role_list",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "name",
+          "type": "string",
+          "required": false,
+          "default": null,
+          "doc": "The namespace; every binding when absent."
+        }
+      ]
+    },
+    {
+      "name": "Namespace.set_quotas",
+      "doc": "Replace the namespace's quota overrides.",
+      "action": "authz.namespace_set_quota",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "name",
+          "type": "string",
+          "required": true,
+          "doc": "The namespace."
+        },
+        {
+          "name": "overrides",
+          "type": "map",
+          "required": false,
+          "default": {},
+          "doc": "The ceilings that differ from the defaults, by quota kind."
+        }
+      ]
+    },
+    {
+      "name": "Namespace.tokens",
+      "doc": "The tokens the caller may see, one row each: its id, principal, role, namespace, label and whether it is active, revoked or expired.",
+      "action": "authz.token_list",
+      "remote": true,
+      "stream": false,
+      "args": []
+    },
+    {
+      "name": "Namespace.unbind_role",
+      "doc": "Unbind `role` from `principal`, or the principal's whole binding when `role` is absent or empty: the one-command revocation for an identity that is compromised or retired, which can only take rights away.",
+      "action": "authz.role_unbind",
+      "remote": false,
+      "stream": false,
+      "args": [
+        {
+          "name": "principal",
+          "type": "string",
+          "required": true,
+          "doc": "The principal."
+        },
+        {
+          "name": "role",
+          "type": "string",
+          "required": false,
+          "default": null,
+          "doc": "The role; the whole binding when absent."
+        }
+      ]
+    },
+    {
+      "name": "Namespace.whoami",
+      "doc": "The identity the caller's credential resolves to.",
+      "action": "authz.whoami",
+      "remote": true,
+      "stream": false,
+      "args": []
+    },
+    {
+      "name": "Observability.disable_source",
+      "doc": "Disable the source `name`.",
+      "action": "observability.disable_source",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "name",
+          "type": "atom",
+          "required": true,
+          "doc": "A registered observability source."
+        }
+      ]
+    },
+    {
+      "name": "Observability.enable_source",
+      "doc": "Enable the source `name`.",
+      "action": "observability.enable_source",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "name",
+          "type": "atom",
+          "required": true,
+          "doc": "A registered observability source."
+        }
+      ]
+    },
+    {
+      "name": "Observability.list_sinks",
+      "doc": "Every registered observability sink.",
+      "action": "observability.query",
+      "remote": true,
+      "stream": false,
+      "args": []
+    },
+    {
+      "name": "Observability.list_sources",
+      "doc": "Every registered observability source and its status.",
+      "action": "observability.query",
+      "remote": true,
+      "stream": false,
+      "args": []
+    },
+    {
+      "name": "Observability.query",
+      "doc": "The signals the ring buffer holds for `params.source`, in the caller's namespace.",
+      "action": "observability.query",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "params",
+          "type": "keyword",
+          "required": true,
+          "doc": "`source`, `from_ts` and `limit`."
+        }
+      ]
+    },
+    {
+      "name": "Observability.subscribe",
+      "doc": "Subscribe the calling process to the live signals of `source`.",
+      "action": "observability.subscribe",
+      "remote": true,
+      "stream": true,
+      "args": [
+        {
+          "name": "source",
+          "type": "atom",
+          "required": true,
+          "doc": "A registered observability source."
+        }
+      ]
+    },
+    {
+      "name": "Observability.tail",
+      "doc": "Stream live signals for a single source to the caller process.",
+      "action": "observability.subscribe",
+      "remote": true,
+      "stream": true,
+      "args": [
+        {
+          "name": "source",
+          "type": "atom",
+          "required": true,
+          "doc": "A registered observability source."
+        }
+      ]
+    },
+    {
+      "name": "Observability.unsubscribe",
+      "doc": "Undo a `subscribe/2` or `tail/2`.",
+      "action": "observability.subscribe",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "source",
+          "type": "atom",
+          "required": true,
+          "doc": "A registered observability source."
+        }
+      ]
+    },
+    {
+      "name": "Operator.call",
+      "doc": "Call `operator_id` with `message` and wait for its answer: the one output a `response()` end produced from it, as `{:ok, payload, %{\"channel\" => channel}}`, or a coded error saying why none came.",
+      "action": "operator.send",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "namespace",
+          "type": "string",
+          "required": true,
+          "doc": "The namespace."
+        },
+        {
+          "name": "operator_id",
+          "type": "string",
+          "required": true,
+          "doc": "The operator's id."
+        },
+        {
+          "name": "message",
+          "type": "string",
+          "required": true,
+          "doc": "The input's payload."
+        },
+        {
+          "name": "channel",
+          "type": "string",
+          "required": false,
+          "default": "",
+          "doc": "The input channel; none when empty."
+        },
+        {
+          "name": "opts",
+          "type": "keyword",
+          "required": true,
+          "doc": "`deadline_ms`, and `key` for a partition group."
+        }
+      ]
+    },
+    {
+      "name": "Operator.cell_state",
+      "doc": "An operator's live state, as JSON, and the change sequence it was read at.",
+      "action": "state.get",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "namespace",
+          "type": "string",
+          "required": true,
+          "doc": "The namespace."
+        },
+        {
+          "name": "operator_id",
+          "type": "string",
+          "required": true,
+          "doc": "The operator's id."
+        },
+        {
+          "name": "cell",
+          "type": "string",
+          "required": false,
+          "default": null,
+          "doc": "`<tasklet>[/<cell_key>]`; every Cell when absent."
+        }
+      ]
+    },
+    {
+      "name": "Operator.info",
+      "doc": "Every operator in `namespace` as its Overwatch reports it, every finished one still inside its retention window, and every partition group with its key-group coverage.",
+      "action": "operator.list",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "namespace",
+          "type": "string",
+          "required": true,
+          "doc": "The namespace."
+        }
+      ]
+    },
+    {
+      "name": "Operator.list",
+      "doc": "The operators in `namespace`, one row each with its health, runner, node and, for a partition group, its width and members.",
+      "action": "operator.list",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "namespace",
+          "type": "string",
+          "required": true,
+          "doc": "The namespace."
+        }
+      ]
+    },
+    {
+      "name": "Operator.list_namespaces",
+      "doc": "The namespaces in the durable catalog that the caller may be shown (its own, or all of them for an admin in `_system`), each with whether this controller runs a hub for it.",
+      "action": "operator.list",
+      "remote": true,
+      "stream": false,
+      "args": []
+    },
+    {
+      "name": "Operator.list_operators",
+      "doc": "The operator ids running in `namespace`.",
+      "action": "operator.list",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "namespace",
+          "type": "string",
+          "required": true,
+          "doc": "The namespace."
+        }
+      ]
+    },
+    {
+      "name": "Operator.listen",
+      "doc": "Hand every frame `operator_id` emits (with its parts and dead-letter notices), or ingests when `direction` is `input`, to the context's `:emit`, until the window closes, the caller goes away or the operator ends.",
+      "action": "operator.listen",
+      "remote": true,
+      "stream": true,
+      "args": [
+        {
+          "name": "namespace",
+          "type": "string",
+          "required": true,
+          "doc": "The namespace."
+        },
+        {
+          "name": "operator_id",
+          "type": "string",
+          "required": true,
+          "doc": "The operator's id."
+        },
+        {
+          "name": "direction",
+          "type": "enum",
+          "required": false,
+          "default": "output",
+          "values": [
+            "output",
+            "input"
+          ],
+          "doc": "What to hear."
+        },
+        {
+          "name": "opts",
+          "type": "keyword",
+          "required": false,
+          "default": [],
+          "doc": "`window_ms`."
+        }
+      ]
+    },
+    {
+      "name": "Operator.operator_plugins",
+      "doc": "The plugin bindings each operator in `namespace` declares.",
+      "action": "operator.list",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "namespace",
+          "type": "string",
+          "required": true,
+          "doc": "The namespace."
+        }
+      ]
+    },
+    {
+      "name": "Operator.operator_rows",
+      "doc": "One row per operator in `namespace`: node, health and partition.",
+      "action": "operator.list",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "namespace",
+          "type": "string",
+          "required": true,
+          "doc": "The namespace."
+        }
+      ]
+    },
+    {
+      "name": "Operator.overwatch_state",
+      "doc": "One operator's Overwatch state.",
+      "action": "operator.list",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "namespace",
+          "type": "string",
+          "required": true,
+          "doc": "The namespace."
+        },
+        {
+          "name": "operator_id",
+          "type": "string",
+          "required": true,
+          "doc": "The operator's id."
+        }
+      ]
+    },
+    {
+      "name": "Operator.partition_coverage",
+      "doc": "Partition coverage over `{id, range}` pairs: gaps, overlaps and total.",
+      "action": "public",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "members",
+          "type": "list",
+          "required": true,
+          "doc": "The `{id, range}` pairs."
+        }
+      ]
+    },
+    {
+      "name": "Operator.partition_groups",
+      "doc": "The partition groups `rows` describe: group, declared width, members and key-group coverage.",
+      "action": "public",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "rows",
+          "type": "list",
+          "required": true,
+          "doc": "The operator rows."
+        }
+      ]
+    },
+    {
+      "name": "Operator.registry",
+      "doc": "The namespace's hub registry, as the hub reports it.",
+      "action": "operator.list",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "namespace",
+          "type": "string",
+          "required": true,
+          "doc": "The namespace."
+        }
+      ]
+    },
+    {
+      "name": "Operator.replay",
+      "doc": "Re-run a Cell's retained inputs from a point in the past through the current code: rewind the Cell to `from` (a WAL seq, or an ISO 8601 time), bump the epoch, and replay the input log forward, so a conforming keyed sink overwrites the stale rows by natural key.",
+      "action": "operator.replay",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "namespace",
+          "type": "string",
+          "required": true,
+          "doc": "The namespace."
+        },
+        {
+          "name": "path",
+          "type": "string",
+          "required": true,
+          "doc": "The Cell, as `<operator>/<tasklet>/<cell_key>`."
+        },
+        {
+          "name": "from",
+          "type": "string",
+          "required": true,
+          "doc": "A WAL seq, or an ISO 8601 time."
+        }
+      ]
+    },
+    {
+      "name": "Operator.run_known?",
+      "doc": "Whether `run` is a way an operator runs that this controller knows.",
+      "action": "public",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "run",
+          "type": "atom",
+          "required": true,
+          "doc": "The way an operator runs."
+        }
+      ]
+    },
+    {
+      "name": "Operator.send",
+      "doc": "Inject `message` into `operator_id`'s input stream, blocking for the confirming verdict so a parked or absent target is reported rather than silently dropped.",
+      "action": "operator.send",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "namespace",
+          "type": "string",
+          "required": true,
+          "doc": "The namespace."
+        },
+        {
+          "name": "operator_id",
+          "type": "string",
+          "required": true,
+          "doc": "The operator's id."
+        },
+        {
+          "name": "message",
+          "type": "string",
+          "required": true,
+          "doc": "The input's payload."
+        },
+        {
+          "name": "channel",
+          "type": "string",
+          "required": false,
+          "default": "",
+          "doc": "The input channel; none when empty."
+        },
+        {
+          "name": "opts",
+          "type": "keyword",
+          "required": false,
+          "default": [],
+          "doc": "`key`, for a partition group."
+        }
+      ]
+    },
+    {
+      "name": "Operator.start",
+      "doc": "Start `operator` in `namespace`, answering the id it runs under and whether this call started it (`:started`) or found a live instance already holding the id it named (`:already_running`).",
+      "action": "operator.start",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "namespace",
+          "type": "string",
+          "required": true,
+          "doc": "The namespace."
+        },
+        {
+          "name": "operator",
+          "type": "keyword",
+          "required": true,
+          "doc": "`factory_id`, `id`, `init_values`, `opts`, `plugins`, `text`, `channel` and `partitions`."
+        }
+      ]
+    },
+    {
+      "name": "Operator.stop",
+      "doc": "Stop `operator_id` in `namespace`, or every member of the partition group it names.",
+      "action": "operator.stop",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "namespace",
+          "type": "string",
+          "required": true,
+          "doc": "The namespace."
+        },
+        {
+          "name": "operator_id",
+          "type": "string",
+          "required": true,
+          "doc": "The operator's id."
+        }
+      ]
+    },
+    {
+      "name": "PluginManager.bind",
+      "doc": "Bind `fields[:operator_id]` to the plugin `name` with `:hooks` and `:channel`.",
+      "action": "plugin.enable",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "name",
+          "type": "string",
+          "required": true,
+          "doc": "The plugin's name."
+        },
+        {
+          "name": "fields",
+          "type": "keyword",
+          "required": false,
+          "default": [],
+          "doc": "The plugin's fields."
+        }
+      ]
+    },
+    {
+      "name": "PluginManager.disable",
+      "doc": "Disable the plugin `name`: every running copy stops, every binding stays.",
+      "action": "plugin.disable",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "name",
+          "type": "string",
+          "required": true,
+          "doc": "The plugin's name."
+        },
+        {
+          "name": "fields",
+          "type": "keyword",
+          "required": false,
+          "default": [],
+          "doc": "The plugin's fields."
+        }
+      ]
+    },
+    {
+      "name": "PluginManager.enable",
+      "doc": "Enable the plugin `name` built from `fields` (`:provider`, `:opts`, `:namespace`, `:single`, and `:operator_id`, `:hooks` and `:channel` to bind in the same call), answering how it was enabled and the controllers holding the namespace that lack its provider: the plugin does not run there.",
+      "action": "plugin.enable",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "name",
+          "type": "string",
+          "required": true,
+          "doc": "The plugin's name."
+        },
+        {
+          "name": "fields",
+          "type": "keyword",
+          "required": false,
+          "default": [],
+          "doc": "The plugin's fields."
+        }
+      ]
+    },
+    {
+      "name": "PluginManager.enabled",
+      "doc": "Every plugin enabled in `namespace`, as `list/1` answers for the caller's own.",
+      "action": "plugin.list",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "namespace",
+          "type": "string",
+          "required": true,
+          "doc": "The namespace."
+        }
+      ]
+    },
+    {
+      "name": "PluginManager.list",
+      "doc": "Every plugin enabled in the caller's namespace.",
+      "action": "plugin.list",
+      "remote": true,
+      "stream": false,
+      "args": []
+    },
+    {
+      "name": "PluginManager.unbind",
+      "doc": "Unbind `fields[:operator_id]` from the plugin `name`, which stays enabled.",
+      "action": "plugin.disable",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "name",
+          "type": "string",
+          "required": true,
+          "doc": "The plugin's name."
+        },
+        {
+          "name": "fields",
+          "type": "keyword",
+          "required": false,
+          "default": [],
+          "doc": "The plugin's fields."
+        }
+      ]
+    },
+    {
+      "name": "PluginManager.update",
+      "doc": "Change the plugin `name`'s options (`:opts`) and a controller plugin's `:hooks`, in place when every changed option is live, otherwise by restarting every running copy.",
+      "action": "plugin.enable",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "name",
+          "type": "string",
+          "required": true,
+          "doc": "The plugin's name."
+        },
+        {
+          "name": "fields",
+          "type": "keyword",
+          "required": false,
+          "default": [],
+          "doc": "The plugin's fields."
+        }
+      ]
+    },
+    {
+      "name": "Schedule.add",
+      "doc": "Store a schedule from `fields` (`name`, `cron`, `timezone`, `factory_id`, `namespace`, `init_values`, `text`, `channel`, `plugins`) and assert it on the hub, so it starts firing.",
+      "action": "schedule.add",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "fields",
+          "type": "keyword",
+          "required": true,
+          "doc": "The schedule's fields."
+        }
+      ]
+    },
+    {
+      "name": "Schedule.assert_entry",
+      "doc": "Assert `entry` on the hub, so it starts firing.",
+      "action": "schedule.assert",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "entry",
+          "type": "any",
+          "required": true,
+          "doc": "The stored schedule."
+        }
+      ]
+    },
+    {
+      "name": "Schedule.list",
+      "doc": "Every stored schedule, by name, each with what the hub holds for it: the node that fires it, its last fire and that fire's result, and when it fires next, in UTC.",
+      "action": "schedule.list",
+      "remote": true,
+      "stream": false,
+      "args": []
+    },
+    {
+      "name": "Schedule.next_fire",
+      "doc": "The next UTC instant a parsed cron fires after `after_utc`, in `tz`.",
+      "action": "public",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "cron",
+          "type": "any",
+          "required": true,
+          "doc": "A parsed cron."
+        },
+        {
+          "name": "tz",
+          "type": "string",
+          "required": true,
+          "doc": "The time zone."
+        },
+        {
+          "name": "after_utc",
+          "type": "any",
+          "required": true,
+          "doc": "The instant to count from."
+        }
+      ]
+    },
+    {
+      "name": "Schedule.parse_cron",
+      "doc": "Parse a cron expression, or say why it cannot be parsed.",
+      "action": "public",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "expression",
+          "type": "string",
+          "required": true,
+          "doc": "The cron expression."
+        }
+      ]
+    },
+    {
+      "name": "Schedule.remove",
+      "doc": "Forget the schedule `name` and retract it from the hub, so it stops firing.",
+      "action": "schedule.remove",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "name",
+          "type": "string",
+          "required": true,
+          "doc": "The schedule's name."
+        }
+      ]
+    },
+    {
+      "name": "Schedule.retract",
+      "doc": "Retract the schedule `name` from the hub, so it stops firing.",
+      "action": "schedule.retract",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "name",
+          "type": "string",
+          "required": true,
+          "doc": "The schedule's name."
+        }
+      ]
+    },
+    {
+      "name": "Schedule.run",
+      "doc": "Fire the schedule `name` once, now, judged as a start where its instance starts.",
+      "action": "operator.start",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "name",
+          "type": "string",
+          "required": true,
+          "doc": "The schedule's name."
+        }
+      ]
+    },
+    {
+      "name": "Schedule.statuses",
+      "doc": "What the hub currently holds for each schedule.",
+      "action": "schedule.list",
+      "remote": true,
+      "stream": false,
+      "args": []
+    },
+    {
+      "name": "Steps.cells",
+      "doc": "One row per Cell of `operator_class` with persisted state: its WAL and snapshot sequences, WAL size and the writer's counters.",
+      "action": "state.list",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "operator_class",
+          "type": "string",
+          "required": true,
+          "doc": "The operator class."
+        }
+      ]
+    },
+    {
+      "name": "Steps.committed_iterations",
+      "doc": "The iterations the instance's journal has committed.",
+      "action": "state.records",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "instance_id",
+          "type": "string",
+          "required": true,
+          "doc": "The steps instance."
+        }
+      ]
+    },
+    {
+      "name": "Steps.completed_retention_hours",
+      "doc": "How long a completed instance of `operator_class` is retained, in hours.",
+      "action": "public",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "operator_class",
+          "type": "string",
+          "required": true,
+          "doc": "The operator class."
+        },
+        {
+          "name": "metadata",
+          "type": "map",
+          "required": false,
+          "default": {},
+          "doc": "The instance's own metadata."
+        }
+      ]
+    },
+    {
+      "name": "Steps.completion",
+      "doc": "One steps instance's completion record.",
+      "action": "state.records",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "instance_id",
+          "type": "string",
+          "required": true,
+          "doc": "The steps instance."
+        }
+      ]
+    },
+    {
+      "name": "Steps.consumed_offset",
+      "doc": "The input-log offset the instance's last iteration consumed, `nil` for none.",
+      "action": "state.records",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "instance_id",
+          "type": "string",
+          "required": true,
+          "doc": "The steps instance."
+        }
+      ]
+    },
+    {
+      "name": "Steps.delete",
+      "doc": "Hard-delete one Cell's persisted state: WAL, snapshots and outbox dedup.",
+      "action": "state.delete",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "cell",
+          "type": "string",
+          "required": true,
+          "doc": "The Cell, as `<operator>/<tasklet>/<cell_key>`."
+        }
+      ]
+    },
+    {
+      "name": "Steps.inbox",
+      "doc": "An instance's durable input log, for a flow operator on the effectively-once tier and a durable steps operator alike: every retained record with its offset, whether it is at or below the instance's floor (consumed), its size and channel.",
+      "action": "state.records",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "instance_id",
+          "type": "string",
+          "required": true,
+          "doc": "The steps instance."
+        }
+      ]
+    },
+    {
+      "name": "Steps.journal",
+      "doc": "One instance's task journal in append order, the leaf tasklets that define \"done\" for it, and whether the in-flight iteration has committed every leaf.",
+      "action": "state.records",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "instance_id",
+          "type": "string",
+          "required": true,
+          "doc": "The steps instance."
+        }
+      ]
+    },
+    {
+      "name": "Steps.last_offset",
+      "doc": "The last offset written to the instance's input log, `-1` when it has none.",
+      "action": "state.records",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "instance_id",
+          "type": "string",
+          "required": true,
+          "doc": "The steps instance."
+        }
+      ]
+    },
+    {
+      "name": "Steps.operator_classes",
+      "doc": "Every operator class this controller holds persisted state for.",
+      "action": "operator.list",
+      "remote": true,
+      "stream": false,
+      "args": []
+    },
+    {
+      "name": "Steps.outbox",
+      "doc": "One Cell's outbox: durable seq, flush cursor, epoch, undispatched lag, the entries a steps Cell holds until its stage commits, and the operator's input-log min-watermark.",
+      "action": "state.records",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "cell",
+          "type": "string",
+          "required": true,
+          "doc": "The Cell, as `<operator>/<tasklet>/<cell_key>`."
+        }
+      ]
+    },
+    {
+      "name": "Steps.rescale",
+      "doc": "Rescale the partition group `group_id` in `namespace` to `target`.",
+      "action": "operator.scale",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "namespace",
+          "type": "string",
+          "required": true,
+          "doc": "The namespace."
+        },
+        {
+          "name": "group_id",
+          "type": "string",
+          "required": true,
+          "doc": "The partition group."
+        },
+        {
+          "name": "target",
+          "type": "int",
+          "required": true,
+          "min": 1,
+          "doc": "The new member count."
+        },
+        {
+          "name": "opts",
+          "type": "keyword",
+          "required": false,
+          "default": [],
+          "doc": "`quiesce_timeout_ms`."
+        }
+      ]
+    },
+    {
+      "name": "Steps.rewind",
+      "doc": "Rewind `operator_class` in `namespace` to the committed iteration `to_iter`.",
+      "action": "operator.rewind",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "namespace",
+          "type": "string",
+          "required": true,
+          "doc": "The namespace."
+        },
+        {
+          "name": "operator_class",
+          "type": "string",
+          "required": true,
+          "doc": "The steps operator."
+        },
+        {
+          "name": "to_iter",
+          "type": "int",
+          "required": true,
+          "min": 0,
+          "doc": "The committed iteration to rewind to."
+        }
+      ]
+    },
+    {
+      "name": "Steps.rotate",
+      "doc": "Force a compaction of one Cell by dispatching a `CompactCell` to its runner.",
+      "action": "state.rotate",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "cell",
+          "type": "string",
+          "required": true,
+          "doc": "The Cell, as `<operator>/<tasklet>/<cell_key>`."
+        }
+      ]
+    },
+    {
+      "name": "Steps.set_retention",
+      "doc": "Retain `operator_class`'s write-ahead history for `hours`, in this controller's memory: it lasts until the next boot unless the runtime configuration says so too.",
+      "action": "state.retention",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "operator_class",
+          "type": "string",
+          "required": true,
+          "doc": "The operator class."
+        },
+        {
+          "name": "hours",
+          "type": "int",
+          "required": true,
+          "min": 0,
+          "doc": "The hours to retain."
+        }
+      ]
+    },
+    {
+      "name": "Steps.state_get",
+      "doc": "The CURRENT in-memory state of one live Cell, or of one tasklet's Cells, as JSON, with the change sequence it was read at.",
+      "action": "state.get",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "path",
+          "type": "string",
+          "required": true,
+          "doc": "`<operator>/<tasklet>[/<cell_key>]`."
+        }
+      ]
+    },
+    {
+      "name": "Steps.state_metrics",
+      "doc": "Durable-state counters across every operator class.",
+      "action": "state.list",
+      "remote": true,
+      "stream": false,
+      "args": []
+    },
+    {
+      "name": "Steps.time_travel",
+      "doc": "One Cell's state as of `target` (a WAL seq, or an ISO 8601 time), replayed from its write-ahead log: the seq it resolves to, and the snapshot and change log bytes behind it.",
+      "action": "state.at",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "cell",
+          "type": "string",
+          "required": true,
+          "doc": "The Cell, as `<operator>/<tasklet>/<cell_key>`."
+        },
+        {
+          "name": "target",
+          "type": "string",
+          "required": true,
+          "doc": "A WAL seq, or an ISO 8601 time."
+        }
+      ]
+    },
+    {
+      "name": "Steps.undelivered",
+      "doc": "The input-log records above the instance's floor: what it has not consumed yet.",
+      "action": "state.records",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "instance_id",
+          "type": "string",
+          "required": true,
+          "doc": "The steps instance."
+        }
+      ]
+    }
+  ]
+}

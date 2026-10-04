@@ -1,6 +1,6 @@
-defmodule Flezha.Service.CliManagerScheduleTest do
+defmodule Flezha.Service.Cli.ScheduleTest do
   # Error verdicts `System.halt/1`, so only success paths are asserted
-  # in-process (the same posture as `cli_manager_send_test`); validation
+  # in-process; validation
   # failures are covered store-side in `Flezha.Schedule.StoreTest`.
   # async: false: Mimic stubs; a shared on-disk root.
   use ExUnit.Case, async: false
@@ -10,7 +10,7 @@ defmodule Flezha.Service.CliManagerScheduleTest do
 
   alias Flezha.Runner.FleetManager
   alias Flezha.Schedule.Store, as: ScheduleStore
-  alias Flezha.Service.CliManager
+  alias Flezha.Service.Cli
   alias Flezha.Service.OperatorManager
   alias FlezhaTest.Helper.ScheduleTestHelper
 
@@ -21,14 +21,21 @@ defmodule Flezha.Service.CliManagerScheduleTest do
   # `flz schedule add digest …` with `extra` overriding the defaults; answers
   # what the verb printed.
   defp add_digest(extra \\ []) do
-    flags = Keyword.merge([cron: "0 8 * * *", tz: "Etc/UTC", factory: "ai_digest"], extra)
-    capture_io(fn -> CliManager.schedule_add("digest", flags) end)
+    fields =
+      Map.new(
+        Keyword.merge(
+          [name: "digest", cron: "0 8 * * *", timezone: "Etc/UTC", factory_id: "ai_digest"],
+          extra
+        )
+      )
+
+    capture_io(fn -> Cli.call("Schedule.add", Jason.encode!([fields]), []) end)
   end
 
   test "schedule_add stores the entry and previews the next fire" do
     stub(FleetManager, :runners_for_factory, fn "default", "ai_digest" -> ["runner-1"] end)
 
-    output = add_digest(tz: "Europe/Tallinn")
+    output = add_digest(timezone: "Europe/Tallinn")
 
     assert output =~ "Schedule digest added"
     assert output =~ "next fire 20"
@@ -44,9 +51,9 @@ defmodule Flezha.Service.CliManagerScheduleTest do
 
     output =
       add_digest(
-        tz: "Europe/Tallinn",
+        timezone: "Europe/Tallinn",
         namespace: "prod",
-        init_values: ~s({"mode": "daily"})
+        init_values: %{"mode" => "daily"}
       )
 
     assert output =~ "warning: factory ai_digest has no live runner in namespace prod"
@@ -58,7 +65,7 @@ defmodule Flezha.Service.CliManagerScheduleTest do
 
     err =
       capture_io(:stderr, fn ->
-        assert catch_exit(add_digest(factory: "prices")) == {:shutdown, 2}
+        assert catch_exit(add_digest(factory_id: "prices")) == {:shutdown, 2}
       end)
 
     assert err =~ "factory 'prices' is a flow operator"
@@ -71,7 +78,7 @@ defmodule Flezha.Service.CliManagerScheduleTest do
 
     add_digest()
 
-    output = capture_io(fn -> CliManager.schedule_list() end)
+    output = capture_io(fn -> Cli.call("Schedule.list", Jason.encode!([]), []) end)
 
     assert output =~ "NAME"
     assert output =~ "NEXT FIRE (UTC)"
@@ -89,7 +96,7 @@ defmodule Flezha.Service.CliManagerScheduleTest do
 
     add_digest()
 
-    output = capture_io(fn -> CliManager.schedule_list() end)
+    output = capture_io(fn -> Cli.call("Schedule.list", Jason.encode!([]), []) end)
 
     assert output =~ "NODE"
     assert output =~ "flz@testhost"
@@ -101,7 +108,7 @@ defmodule Flezha.Service.CliManagerScheduleTest do
 
     add_digest()
 
-    output = capture_io(fn -> CliManager.schedule_list() end)
+    output = capture_io(fn -> Cli.call("Schedule.list", Jason.encode!([]), []) end)
 
     # The NODE column is padded to 22, so match the column — a bare "-" would also
     # match the ISO date in NEXT FIRE.
@@ -126,7 +133,7 @@ defmodule Flezha.Service.CliManagerScheduleTest do
 
     add_digest()
 
-    output = capture_io(fn -> CliManager.schedule_list() end)
+    output = capture_io(fn -> Cli.call("Schedule.list", Jason.encode!([]), []) end)
 
     assert output =~ "LAST FIRE (UTC)"
     assert output =~ "LAST RESULT"
@@ -154,7 +161,7 @@ defmodule Flezha.Service.CliManagerScheduleTest do
 
     add_digest()
 
-    output = capture_io(fn -> CliManager.schedule_list() end)
+    output = capture_io(fn -> Cli.call("Schedule.list", Jason.encode!([]), []) end)
 
     assert output =~ "retrying: no runners for factory"
     # Truncated to the column; the full reason stays in log/telemetry.
@@ -162,7 +169,8 @@ defmodule Flezha.Service.CliManagerScheduleTest do
   end
 
   test "schedule_list with no entries" do
-    assert capture_io(fn -> CliManager.schedule_list() end) =~ "no schedules"
+    assert capture_io(fn -> Cli.call("Schedule.list", Jason.encode!([]), []) end) =~
+             "no schedules"
   end
 
   # `--plugins` reaches the controller as the text the caller wrote, and the
@@ -190,7 +198,7 @@ defmodule Flezha.Service.CliManagerScheduleTest do
       {:ok, %{operator_id: id}}
     end)
 
-    output = capture_io(fn -> CliManager.schedule_run("digest") end)
+    output = capture_io(fn -> Cli.call("Schedule.run", Jason.encode!(["digest"]), []) end)
     assert output =~ "Spawned digest@manual-"
   end
 
@@ -201,7 +209,7 @@ defmodule Flezha.Service.CliManagerScheduleTest do
 
     add_digest()
 
-    assert capture_io(fn -> CliManager.schedule_remove("digest") end) =~
+    assert capture_io(fn -> Cli.call("Schedule.remove", Jason.encode!(["digest"]), []) end) =~
              "Schedule digest removed"
 
     assert ScheduleStore.list() == []

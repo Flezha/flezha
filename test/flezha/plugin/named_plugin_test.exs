@@ -16,7 +16,7 @@ defmodule FlezhaTest.Plugin.NamedPluginTest do
   alias Flezha.Plugin.Provider.Websocket
   alias Flezha.Plugin.Provider.WorkerSup
   alias Flezha.Runner.FleetManager
-  alias Flezha.Service.CliManager
+  alias Flezha.Service.Cli
   alias Flezha.Service.HubManager
   alias Flezha.Service.PluginManager
   alias Flezha.State.TestHelpers
@@ -207,12 +207,13 @@ defmodule FlezhaTest.Plugin.NamedPluginTest do
       err
     end
 
-    defp opts(extra), do: Jason.encode!(Map.merge(%{"namespace" => @namespace}, extra))
+    defp door(name, plugin, fields),
+      do: Cli.call(name, Jason.encode!([plugin, Map.put(fields, "namespace", @namespace)]), [])
 
     test "plugin.not_found" do
       op = start_operator("cli_nope_op")
 
-      err = cli(fn -> CliManager.bind_plugin("cli_nope", "{}", opts(%{"operator_id" => op})) end)
+      err = cli(fn -> door("PluginManager.bind", "cli_nope", %{"operator_id" => op}) end)
 
       assert err =~ "error: plugin 'cli_nope' is not enabled (plugin.not_found)"
     end
@@ -221,7 +222,7 @@ defmodule FlezhaTest.Plugin.NamedPluginTest do
       op = start_operator("cli_unbound_op")
       {:ok, _} = PluginManager.enable_plugin("cli_free", websocket("cli_free"))
 
-      err = cli(fn -> CliManager.unbind_plugin("cli_free", opts(%{"operator_id" => op})) end)
+      err = cli(fn -> door("PluginManager.unbind", "cli_free", %{"operator_id" => op}) end)
 
       assert err =~ "operator '#{op}' is not bound to plugin 'cli_free' (plugin.not_bound)"
     end
@@ -238,7 +239,7 @@ defmodule FlezhaTest.Plugin.NamedPluginTest do
 
       :ok = PluginManager.bind_plugin(@namespace, "cli_in", a)
 
-      err = cli(fn -> CliManager.bind_plugin("cli_in", "{}", opts(%{"operator_id" => b})) end)
+      err = cli(fn -> door("PluginManager.bind", "cli_in", %{"operator_id" => b}) end)
 
       assert err =~ "plugin 'cli_in' cannot be shared, and operator '#{a}' is already bound to it"
     end
@@ -247,9 +248,12 @@ defmodule FlezhaTest.Plugin.NamedPluginTest do
       op = start_operator("cli_single_op")
       one = %{plugin("cli_one", Flezha.Plugin.Provider.StdOut, %{}) | single: true}
       {:ok, _} = PluginManager.enable_plugin("cli_one", one)
-      hooks = ~s({"hooks":[{"name":"on_output","opts":{}}]})
+      hooks = [%{"name" => "on_output", "opts" => %{}}]
 
-      err = cli(fn -> CliManager.bind_plugin("cli_one", hooks, opts(%{"operator_id" => op})) end)
+      err =
+        cli(fn ->
+          door("PluginManager.bind", "cli_one", %{"operator_id" => op, "hooks" => hooks})
+        end)
 
       assert err =~
                "runs as one copy in the cluster, so it takes no on_output hook (plugin.single_sink)"
@@ -260,7 +264,7 @@ defmodule FlezhaTest.Plugin.NamedPluginTest do
 
       err =
         cli(fn ->
-          CliManager.enable_plugin("cli_taken", "operator_stdout", "{}", opts(%{}))
+          door("PluginManager.enable", "cli_taken", %{"provider" => "operator_stdout"})
         end)
 
       assert err =~

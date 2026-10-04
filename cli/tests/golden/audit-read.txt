@@ -1,7 +1,7 @@
 flz audit read <FILE> [OPTIONS]
 
 OPTIONS:
-    --json              Emit NDJSON
+    --json              Emit the matching records as one JSON array
     --source <S>        Match records whose source equals S
     --name <N>          Match records whose name equals N
     --since <TS_US>     Match records with ts_us >= TS_US (monotonic)

@@ -20,8 +20,7 @@ defmodule Flezha.Service.Cli.FailureStreamTest do
   import ExUnit.CaptureIO
 
   alias Flezha.Service.Cli
-  alias Flezha.Service.Cli.Controller
-  alias Flezha.Service.CliManager
+  alias Flezha.Service.Controller
   alias FlezhaTest.Helper.CliCapture
   alias FlezhaTest.Helper.NodeTestHelper
 
@@ -30,13 +29,26 @@ defmodule Flezha.Service.Cli.FailureStreamTest do
   # runner, no operator, no plugin.
   defp failures do
     [
-      {"operator", fn -> CliManager.operator_stop("default", "no-such-op-xyz") end},
-      {"operator", fn -> CliManager.cell_state("default", "no-such-op-xyz") end},
-      {"plugin", fn -> CliManager.disable_plugin("no-such-plugin-xyz", "{}") end},
-      {"state", fn -> CliManager.state_retention("some_class", "not-a-number") end},
-      {"observe", fn -> CliManager.observability_render_enable("no-such-source-xyz") end},
-      {"schedule", fn -> CliManager.schedule_add("s", cron: "* * * * *") end},
-      {"schedule", fn -> CliManager.schedule_add("s", init_values: "not json") end}
+      {"operator",
+       fn -> Cli.call("Operator.stop", Jason.encode!(["default", "no-such-op-xyz"]), []) end},
+      {"operator",
+       fn -> Cli.call("Operator.cell_state", Jason.encode!(["default", "no-such-op-xyz"]), []) end},
+      {"plugin",
+       fn -> Cli.call("PluginManager.disable", Jason.encode!(["no-such-plugin-xyz", %{}]), []) end},
+      {"state",
+       fn ->
+         Cli.call("Steps.set_retention", Jason.encode!(["some_class", "not-a-number"]), [])
+       end},
+      {"observe",
+       fn ->
+         Cli.call("Observability.enable_source", Jason.encode!(["no-such-source-xyz"]), [])
+       end},
+      {"schedule",
+       fn -> Cli.call("Schedule.add", Jason.encode!([%{name: "s", cron: "* * * * *"}]), []) end},
+      {"schedule",
+       fn ->
+         Cli.call("Schedule.add", Jason.encode!([%{name: "s", init_values: "not json"}]), [])
+       end}
     ]
   end
 
@@ -92,14 +104,20 @@ defmodule Flezha.Service.Cli.FailureStreamTest do
     # `cli/tests/dispatch.rs` and `cli/tests/exit_codes.rs`; a refusal for want
     # of a role in `test/flezha/authz/enforcement_test.exs`, a conflict in the
     # authz render tests, and a controller that is not ready in
-    # `cli_manager_boot_test.exs`.
+    # `boot_test.exs`.
     test "each refusal exits with its class's code" do
       Process.put(:flezha_uncatalogued_expected, true)
       injected = Flezha.Error.from_reason(:reason_no_catalogue_names, :"namespace.create")
 
       cases = [
-        {2, fn -> CliManager.state_retention("some_class", "not-a-number") end},
-        {5, fn -> CliManager.disable_plugin("no-such-plugin-xyz", "{}") end},
+        {2,
+         fn ->
+           Cli.call("Steps.set_retention", Jason.encode!(["some_class", "not-a-number"]), [])
+         end},
+        {5,
+         fn ->
+           Cli.call("PluginManager.disable", Jason.encode!(["no-such-plugin-xyz", %{}]), [])
+         end},
         {1, fn -> Cli.Context.render!(injected, []) end}
       ]
 
@@ -111,7 +129,9 @@ defmodule Flezha.Service.Cli.FailureStreamTest do
 
     test "under --json the error is one object on stderr, and stdout carries none of it" do
       {outcome, out, err} =
-        CliCapture.run(fn -> CliManager.disable_plugin("ghost", "{}", output: "json") end)
+        CliCapture.run(fn ->
+          Cli.call("PluginManager.disable", Jason.encode!(["ghost", %{}]), output: "json")
+        end)
 
       assert outcome == {:exit, {:shutdown, 5}}
       assert out == ""
@@ -165,21 +185,43 @@ defmodule Flezha.Service.Cli.FailureStreamTest do
     test "reaches the caller through the notifier bound at attach" do
       notify = Cli.Context.notifier()
 
+      emit = fn {:progress, _event, _measurements, %{phase: phase}} ->
+        notify.("phase=#{phase}")
+      end
+
       err =
         capture_io(:stderr, fn ->
           fn ->
-            Controller.controller_stop_progress_handler(
+            Controller.stop_progress(
               [:flezha, :shutdown, :phase_started],
               %{},
               %{phase: :quiesce},
-              %{caller: self(), notify: notify}
+              %{emit: emit}
             )
           end
           |> Task.async()
           |> Task.await()
         end)
 
-      assert err =~ "[shutdown] phase=quiesce started"
+      assert err =~ "phase=quiesce"
+    end
+  end
+
+  describe "a stop whose coordinator exits" do
+    # Fails when: a `failed` marker is printed, which `flz` does not know and
+    # reports as an unconfirmed stop on top of the refusal itself.
+    test "prints no marker and the refusal once, with its own code" do
+      Mimic.stub(Flezha.Shutdown.Coordinator, :shutdown_and_stop, fn :cli, _opts, report ->
+        report.({:exit, :killed})
+      end)
+
+      {outcome, out, err} = CliCapture.run(fn -> Cli.call("Controller.stop", "[]", []) end)
+
+      refute out =~ "flz-controller-stop-result"
+      assert [_one] = String.split(err, "error:", trim: true)
+      assert err =~ "(shutdown.coordinator_exited)"
+      assert {:exit, {:shutdown, code}} = outcome
+      assert code == 1
     end
   end
 
@@ -206,7 +248,7 @@ defmodule Flezha.Service.Cli.FailureStreamTest do
       assert offenders == [],
              "a CLI module writing to `:stderr` writes to the node it runs on, " <>
                "which under `flzvm rpc` is the controller. Use " <>
-               "`Context.fail!/1` or `Context.notifier/0`:\n" <>
+               "`Context.render!/2` or `Context.notifier/0`:\n" <>
                Enum.join(offenders, "\n")
     end
   end

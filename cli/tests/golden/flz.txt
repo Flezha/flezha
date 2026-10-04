@@ -24,8 +24,10 @@ COMMANDS:
 
 OUTPUT FORMAT:
     Every verb takes --json, or the same request spelled --output json / -o json.
-    A verb that answers data answers it as JSON; an acting verb's answer stays
-    text. Any other format is refused.
+    A verb that reaches a controller answers it as JSON whether it reads or
+    acts: the JSON its operation answers on every surface. Any other format is
+    refused. `flz help --json` prints every such operation, as data, with no
+    controller running.
 
 ERRORS:
     A failure is written on stderr as `error: <message> (<code>)`, with a

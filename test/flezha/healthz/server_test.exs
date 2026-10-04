@@ -643,7 +643,7 @@ defmodule Flezha.Healthz.ServerTest do
     end
 
     # A row added without a reader, or a reader inventing a key, fails here; the
-    # `flz boot status` half of the same pair is `CliManagerBootTest`.
+    # `flz boot status` half of the same pair is `Flezha.Service.Cli.BootTest`.
     test "the body's preconditions are exactly the rows the table declares", %{port: port} do
       Readiness.publish_sequence_complete()
 

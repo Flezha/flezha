@@ -209,7 +209,7 @@ defmodule Flezha.State.WalWriterOutboxTest do
 
     live =
       ExUnit.CaptureIO.capture_io(fn ->
-        CliManager.state_outbox("#{rc}/task/k1")
+        Cli.call("Steps.outbox", Jason.encode!(["#{rc}/task/k1"]), [])
       end)
 
     assert live =~ "outbox_flushed_seq 0"
@@ -220,7 +220,7 @@ defmodule Flezha.State.WalWriterOutboxTest do
 
     offline =
       ExUnit.CaptureIO.capture_io(fn ->
-        CliManager.state_outbox("#{rc}/task/k1")
+        Cli.call("Steps.outbox", Jason.encode!(["#{rc}/task/k1"]), [])
       end)
 
     assert offline =~ "unknown (writer not running)"

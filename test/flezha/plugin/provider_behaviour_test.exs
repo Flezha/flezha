@@ -676,7 +676,7 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
     test "every provider's screen names its registered id and lists its public options only" do
       checked =
         for {id, module} <- Flezha.Plugin.Providers.all(), Code.ensure_loaded?(module) do
-          screen = capture_io(fn -> Cli.Plugin.plugin_help(id, %{opts: []}) end)
+          screen = capture_io(fn -> Cli.call("Fleet.provider", Jason.encode!([id]), []) end)
 
           assert screen =~ "flz plugin enable <name> #{id} [OPTIONS]"
           assert screen =~ "SUPPORTED HOOKS:"

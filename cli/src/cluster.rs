@@ -12,5 +12,5 @@ pub(crate) const TABLE: Command = Command {
 };
 
 fn handle_status(read: &Reading) {
-    rpc::scoped_read(read, "cluster_status", None);
+    rpc::scoped_read(read, "Controller.cluster_status", None);
 }

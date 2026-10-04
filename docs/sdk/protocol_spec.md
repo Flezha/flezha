@@ -940,7 +940,9 @@ channel the request arrived on, and fills the namespace slot each verb's own
 row declares, so naming another namespace is unexpressible rather than
 validated. What the caller may reach follows from the role its
 `runner@<namespace>` principal is bound to, which the controller reads on every
-call. Unbound, that is `runner`, and every administration verb is refused.
+call. Unbound, that is `runner`, and every administration verb is refused. An
+operation the catalogue marks as not `remote`, or as streaming, is refused as
+`admin.unknown_function`: a request gets one reply, so a stream has nowhere to go.
 
 The hosts that share `flz_core` reach it through one verb-keyed C ABI entry,
 `flz_core_admin_call`; the Elixir SDK re-expresses the same frame over its own core.

@@ -1,4 +1,4 @@
-defmodule Flezha.Service.CliManagerBootTest do
+defmodule Flezha.Service.Cli.BootTest do
   @moduledoc """
   `flz boot status` and `flz boot await` read one verdict and derive nothing of
   their own.
@@ -21,7 +21,7 @@ defmodule Flezha.Service.CliManagerBootTest do
 
   alias Flezha.Boot.Readiness
   alias Flezha.Convergence.Snapshot
-  alias Flezha.Service.CliManager
+  alias Flezha.Service.Cli
   alias FlezhaTest.Helper.CliCapture
 
   setup do
@@ -41,7 +41,7 @@ defmodule Flezha.Service.CliManagerBootTest do
     test "renders the verdict and every row the table declares" do
       Readiness.publish_sequence_complete()
 
-      output = capture_io(fn -> CliManager.boot_status() end)
+      output = capture_io(fn -> Cli.call("Controller.boot_status", Jason.encode!([]), []) end)
       {verdict, rows} = Readiness.verdict()
 
       assert output =~ "readiness: #{verdict}"
@@ -55,7 +55,7 @@ defmodule Flezha.Service.CliManagerBootTest do
     test "names no precondition the table does not carry" do
       Readiness.publish_sequence_complete()
 
-      output = capture_io(fn -> CliManager.boot_status() end)
+      output = capture_io(fn -> Cli.call("Controller.boot_status", Jason.encode!([]), []) end)
       declared = for %{key: key} <- elem(Readiness.verdict(), 1), do: to_string(key)
 
       named =
@@ -72,7 +72,7 @@ defmodule Flezha.Service.CliManagerBootTest do
     end
 
     test "reports the unmet row while the boot sequence is not complete" do
-      output = capture_io(fn -> CliManager.boot_status() end)
+      output = capture_io(fn -> Cli.call("Controller.boot_status", Jason.encode!([]), []) end)
 
       assert output =~ "readiness: booting"
       assert output =~ "unmet  boot_sequence_complete"
@@ -114,7 +114,9 @@ defmodule Flezha.Service.CliManagerBootTest do
   # `boot_await` exits `{:shutdown, 7}` after printing on stderr, or returns after
   # printing on stdout; either outcome is one assertable string.
   defp await(timeout_ms) do
-    case CliCapture.run(fn -> CliManager.boot_await(timeout_ms) end) do
+    case CliCapture.run(fn ->
+           Cli.call("Controller.boot_await", Jason.encode!([timeout_ms]), [])
+         end) do
       {{:ok, _}, out, _err} -> {:ok, out}
       {{:exit, reason}, _out, err} -> {reason, err}
     end

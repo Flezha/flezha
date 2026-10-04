@@ -30,6 +30,7 @@ defmodule Flezha.Service.PluginManager do
   alias Flezha.Plugin.Installer
   alias Flezha.Plugin.ProviderBehaviour.Decl
   alias Flezha.Plugin.ProviderBehaviour.Options
+  alias Flezha.Plugin.Providers
   alias Flezha.Plugin.Shared
   alias Flezha.Process.Cspec
   alias Flezha.Service.CallerContext
@@ -47,32 +48,35 @@ defmodule Flezha.Service.PluginManager do
   Answers `{:ok, :already_enabled}` for a name enabled with the same provider,
   and refuses another provider with `plugin.id_taken`.
 
-  With `plugin.operator_id` set it also binds that operator with `plugin.hooks`,
-  in one call; a bind that fails answers its refusal and leaves the plugin
-  enabled.
+  With `plugin.operator_id` set it also binds that operator with `plugin.hooks`
+  and `channel`, in one call; a bind that fails answers its refusal and leaves
+  the plugin enabled.
   """
-  @spec enable_plugin(binary(), Plugin.t()) ::
+  @spec enable_plugin(binary(), Plugin.t(), binary() | nil) ::
           {:ok, binary() | :already_enabled} | {:error, term()}
-  def enable_plugin(name, %Plugin{} = plugin) when is_binary(name) do
+  def enable_plugin(name, %Plugin{} = plugin, channel \\ nil) when is_binary(name) do
     namespace = to_string(plugin.namespace || "default")
     plugin = %Plugin{plugin | id: name, namespace: namespace}
 
     with {:ok, entry} <- entry_of(plugin),
          {:ok, enabled} <-
            on_hub_node(namespace, :declare_entry, [entry], :registry_unavailable) do
-      bind_after_enable(plugin, enabled)
+      bind_after_enable(plugin, enabled, channel)
     end
   end
 
-  defp bind_after_enable(%Plugin{operator_id: nil}, :enabled), do: {:ok, "plugin enabled"}
-  defp bind_after_enable(%Plugin{operator_id: nil}, :already_enabled), do: {:ok, :already_enabled}
-
-  defp bind_after_enable(%Plugin{} = plugin, enabled) do
-    case {bind_plugin(plugin.namespace, plugin.id, plugin.operator_id, hooks: plugin.hooks),
-          enabled} do
-      {:already_bound, :already_enabled} -> {:ok, :already_enabled}
-      {{:error, _} = refused, _} -> refused
-      {_bound, _enabled} -> {:ok, "plugin enabled"}
+  # A controller plugin's operator is its entry's own, not a binding.
+  defp bind_after_enable(%Plugin{} = plugin, enabled, channel) do
+    if plugin.operator_id == nil or Plugin.controller?(plugin) do
+      {:ok, if(enabled == :already_enabled, do: :already_enabled, else: "plugin enabled")}
+    else
+      plugin.namespace
+      |> bind_plugin(plugin.id, plugin.operator_id, hooks: plugin.hooks, channel: channel)
+      |> case do
+        :already_bound when enabled == :already_enabled -> {:ok, :already_enabled}
+        {:error, _} = refused -> refused
+        _bound -> {:ok, "plugin enabled"}
+      end
     end
   end
 
@@ -177,8 +181,7 @@ defmodule Flezha.Service.PluginManager do
     on_hub_node(namespace, :bind_here, [binding], {:plugin_not_found, name})
   end
 
-  defp channel_opts(channel) when channel in [nil, ""], do: %{}
-  defp channel_opts(channel), do: %{channel: channel}
+  defp channel_opts(channel), do: if(channel in [nil, ""], do: %{}, else: %{channel: channel})
 
   @doc false
   @spec bind_here(Plugin.t()) :: :ok | :already_bound | {:error, term()}
@@ -474,7 +477,8 @@ defmodule Flezha.Service.PluginManager do
   def update_here(namespace, name, opts, hooks) do
     with {:ok, %Plugin{} = old} <- fetch_entry(namespace, name),
          {:ok, hooks} <- updated_hooks(old, hooks),
-         {:ok, new} <- entry_of(%Plugin{old | opts: Map.merge(old.opts, opts), hooks: hooks}) do
+         opts = Map.merge(old.opts, Plugin.option_keys(old.provider, opts)),
+         {:ok, new} <- entry_of(%Plugin{old | opts: opts, hooks: hooks}) do
       case change(old, new) do
         :none -> {:ok, %{applied: :unchanged, operators: bound_operators(namespace, name)}}
         mode -> apply_update(namespace, name, new, mode)
@@ -662,30 +666,14 @@ defmodule Flezha.Service.PluginManager do
     |> Enum.map(fn {{operator_id, _id, _binding}, _outcome} -> operator_id end)
   end
 
-  ## Committed values
-
   @doc """
-  Persist one value a running provider committed (a file reader's offset, a
-  websocket's applied subscription set) onto the binding it belongs to.
+  Persist a value a running provider committed onto the record it starts from:
+  `owner` is an operator, or `{:plugin, name}` for a shared plugin's copy.
   """
-  @spec persist_binding_opt(binary() | atom(), binary(), binary(), atom(), term()) ::
+  @spec persist_opt(binary() | atom(), binary() | {:plugin, binary()}, binary(), atom(), term()) ::
           :ok | {:error, term()}
-  def persist_binding_opt(namespace, operator_id, id, key, value),
-    do:
-      update_cspec_plugins(namespace, operator_id, RegistryUpdate.put_plugin_opt(id, key, value))
-
-  @doc """
-  Persist one value a shared plugin's running copy committed onto the plugin's
-  own entry, which every copy of it starts from.
-  """
-  @spec persist_plugin_opt(binary() | atom(), binary(), atom(), term()) :: :ok | {:error, term()}
-  def persist_plugin_opt(namespace, name, key, value),
-    do:
-      update_cspec_plugins(
-        namespace,
-        {:plugin, name},
-        RegistryUpdate.put_plugin_opt(name, key, value)
-      )
+  def persist_opt(namespace, owner, id, key, value),
+    do: update_cspec_plugins(namespace, owner, RegistryUpdate.put_plugin_opt(id, key, value))
 
   ## The durable write
 
@@ -717,12 +705,11 @@ defmodule Flezha.Service.PluginManager do
     _kind, _reason -> {:error, :registry_unavailable}
   end
 
-  # ---------- Published surface ----------
-  #
-  # The context-taking half a consumer is allowed to call. Each function binds
-  # the row `flz plugin` binds for the same verb, judged in the plugin's own
-  # namespace, and answers data. `fields` carries the namespace, which the
-  # admin entry stamps from the connection.
+  # ---------- Published surface: each function is judged in the plugin's own
+  # namespace, which `fields` carries and the door stamps from a connection.
+
+  @plugin_name [type: :string, doc: "The plugin's name."]
+  @fields [type: :keyword, default: [], doc: "The plugin's fields."]
 
   @doc "Every plugin enabled in the caller's namespace."
   @spec list(CallerContext.t()) :: {:ok, [map()]} | {:error, term()}
@@ -730,50 +717,94 @@ defmodule Flezha.Service.PluginManager do
     {:ok, plugins(Map.get(caller_context, :namespace) || "default")}
   end
 
+  @doc "Every plugin enabled in `namespace`, as `list/1` answers for the caller's own."
+  @spec enabled(String.t(), CallerContext.t()) :: {:ok, [map()]} | {:error, term()}
+  verb enabled(namespace, caller_context),
+    verb: :plugin_enabled,
+    args: [namespace: [type: :string, doc: "The namespace."]] do
+    {:ok, plugins(Flezha.AuthZ.Namespace.or_default(namespace))}
+  end
+
   @doc """
   Enable the plugin `name` built from `fields` (`:provider`, `:opts`,
-  `:namespace`, `:single`, and `:operator_id` and `:hooks` to bind in the same
-  call).
+  `:namespace`, `:single`, and `:operator_id`, `:hooks` and `:channel` to bind
+  in the same call), answering how it was enabled and the controllers holding
+  the namespace that lack its provider: the plugin does not run there.
   """
-  @spec enable(String.t(), keyword(), CallerContext.t()) :: term() | {:error, term()}
+  @spec enable(String.t(), keyword(), CallerContext.t()) :: {:ok, map()} | {:error, term()}
   verb enable(name, fields, caller_context) when is_binary(name) and is_list(fields),
     verb: :plugin_enable,
-    row: &fields_row/1 do
+    row: &fields_row/1,
+    args: [name: @plugin_name, fields: @fields] do
+    {channel, fields} = Keyword.pop(fields, :channel)
+
     with {:ok, plugin} <- Plugin.from_fields([{:id, name} | fields]),
-         do: enable_plugin(name, plugin)
+         :ok <- Plugin.targeted(plugin),
+         {:ok, outcome} <- enable_plugin(name, plugin, channel) do
+      {:ok,
+       %{
+         name: name,
+         outcome: if(outcome == :already_enabled, do: :already_enabled, else: :enabled),
+         bound: if(Plugin.controller?(plugin), do: nil, else: plugin.operator_id),
+         lacking: lacking(plugin.namespace, fields[:provider])
+       }}
+    end
   end
 
   @doc "Bind `fields[:operator_id]` to the plugin `name` with `:hooks` and `:channel`."
   @spec bind(String.t(), keyword(), CallerContext.t()) :: term() | {:error, term()}
   verb bind(name, fields, caller_context) when is_binary(name) and is_list(fields),
     verb: :plugin_bind,
-    row: &fields_row/1 do
-    with {:ok, hooks} <- read_hooks(Keyword.get(fields, :hooks)) do
-      bind_plugin(namespace(fields), name, Keyword.fetch!(fields, :operator_id),
-        hooks: hooks,
-        channel: Keyword.get(fields, :channel)
-      )
-    end
+    row: &fields_row/1,
+    args: [name: @plugin_name, fields: @fields] do
+    with {:ok, operator_id} <- Plugin.binding_target(fields, [:hooks, :channel]),
+         {:ok, hooks} <- Plugin.optional_hooks(fields[:hooks]),
+         do:
+           bind_plugin(namespace(fields), name, operator_id,
+             hooks: hooks,
+             channel: fields[:channel]
+           )
   end
 
-  @doc "Unbind `fields[:operator_id]` from the plugin `name`."
+  @doc "Unbind `fields[:operator_id]` from the plugin `name`, which stays enabled."
   @spec unbind(String.t(), keyword(), CallerContext.t()) :: term() | {:error, term()}
   verb unbind(name, fields, caller_context) when is_binary(name) and is_list(fields),
     verb: :plugin_unbind,
-    row: &fields_row/1 do
-    unbind_plugin(namespace(fields), name, Keyword.fetch!(fields, :operator_id))
+    row: &fields_row/1,
+    args: [name: @plugin_name, fields: @fields] do
+    with {:ok, operator_id} <- Plugin.binding_target(fields, []),
+         do: unbind_plugin(namespace(fields), name, operator_id)
   end
 
-  @doc "Disable the plugin `name`."
+  @doc """
+  Change the plugin `name`'s options (`:opts`) and a controller plugin's
+  `:hooks`, in place when every changed option is live, otherwise by
+  restarting every running copy.
+  """
+  @spec update(String.t(), keyword(), CallerContext.t()) :: {:ok, map()} | {:error, term()}
+  verb update(name, fields, caller_context) when is_binary(name) and is_list(fields),
+    verb: :plugin_update,
+    row: &fields_row/1,
+    args: [name: @plugin_name, fields: @fields] do
+    with :ok <- Plugin.read_only(fields, [:opts, :hooks]),
+         {:ok, hooks} <- Plugin.optional_hooks(fields[:hooks]) do
+      update_plugin(namespace(fields), name, Map.new(fields[:opts] || %{}), hooks)
+    end
+  end
+
+  @doc "Disable the plugin `name`: every running copy stops, every binding stays."
   @spec disable(String.t(), keyword(), CallerContext.t()) :: term() | {:error, term()}
   verb disable(name, fields, caller_context) when is_binary(name) and is_list(fields),
     verb: :plugin_disable,
-    row: &fields_row/1 do
-    disable_plugin(namespace(fields), name)
+    row: &fields_row/1,
+    args: [name: @plugin_name, fields: @fields] do
+    with :ok <- Plugin.read_only(fields, []), do: disable_plugin(namespace(fields), name)
   end
 
-  defp read_hooks(nil), do: {:ok, []}
-  defp read_hooks(written), do: Plugin.hooks(written)
+  defp lacking(namespace, provider) when is_binary(provider),
+    do: Providers.lacking(Directory.hub_nodes(to_string(namespace)) -- [node()], provider)
+
+  defp lacking(_namespace, _provider), do: []
 
   defp namespace(fields), do: Keyword.get(fields, :namespace, "default")
 

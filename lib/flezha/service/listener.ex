@@ -12,9 +12,8 @@ defmodule Flezha.Service.Listener do
   holds what the handler has not taken, inside `listener_pending_bytes` and
   `listener_pending_frames`, so a slow handler grows neither the operator's
   memory nor the caller's mailbox. Every way out unbinds and disables the
-  plugin by the operator's namespace and id
-  (`Flezha.Service.PluginManager.detach/3`), which holds wherever the operator
-  runs by then.
+  plugin by the operator's namespace and id (`detach/3`), which holds wherever
+  the operator runs by then.
 
   It does not authorize: the CLI's verbs authorize through their rows before
   they call it, and a plugin that calls it is trusted code that decides for
@@ -53,7 +52,8 @@ defmodule Flezha.Service.Listener do
     * `idle_ms` - a positive integer, or `:infinity` (the default): after that
       long with no event handed over, `handler` is called with `:idle`.
     * `before` - a function run once after the attach and before the first
-      event (`send --await` delivers its input there).
+      event (`send --await` delivers its input there); an answer other than
+      `:ok` ends the listener with that answer.
     * `watch` - a process whose exit ends the listener with `:caller_down`.
   """
   @spec listen(String.t(), String.t(), keyword(), (event() -> :continue | :done)) :: outcome()
@@ -96,9 +96,8 @@ defmodule Flezha.Service.Listener do
       })
 
     try do
-      with :ok <- attach(namespace, operator_id, plugin_id, t.direction, relay) do
-        Keyword.get(opts, :before, fn -> :ok end).()
-
+      with :ok <- attach(namespace, operator_id, plugin_id, t.direction, relay),
+           :ok <- Keyword.get(opts, :before, fn -> :ok end).() do
         loop(%{
           relay: relay,
           handler: handler,

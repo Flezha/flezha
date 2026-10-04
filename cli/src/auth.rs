@@ -3,18 +3,19 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use flz_transport::errors::FlezhaError;
+use serde_json::Value;
 
 use crate::args::{app_data_root, Positional, Reading, APP_DATA_ROOT};
 use crate::dispatch::{self, Command, Missing, Verb};
 use crate::help;
-use crate::rpc::{self, controller_is_up, text, DEFAULT_PROBE_TIMEOUT_MS};
+use crate::rpc::{self, controller_is_up, DEFAULT_PROBE_TIMEOUT_MS};
 
 pub(crate) const TABLE: Command = Command {
     path: "flz auth",
     help: help::AUTH,
     verbs: &[
         Verb::new("bootstrap", handle_bootstrap).taking(&[Positional::required("<token>")]),
-        Verb::new("whoami", |read| rpc::bare(read, "authz_render_whoami")),
+        Verb::new("whoami", |read| rpc::bare(read, "Namespace.whoami")),
         Verb::new("rebootstrap", handle_rebootstrap).reading(&[APP_DATA_ROOT]),
     ],
     help_verbs: dispatch::HELP_VERBS,
@@ -23,9 +24,9 @@ pub(crate) const TABLE: Command = Command {
 };
 
 fn handle_bootstrap(read: &Reading) {
-    rpc::run(
-        "authz_render_bootstrap",
-        &[text(read.pos("<token>"))],
+    rpc::door(
+        "Namespace.bootstrap",
+        &[Value::from(read.pos("<token>"))],
         &[],
         read,
     );

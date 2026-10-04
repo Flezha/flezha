@@ -25,7 +25,7 @@ defmodule FlezhaTest.System.PartitionedOperatorsE2ETest do
   alias Flezha.Partition
   alias Flezha.Runner.FleetManager
   alias Flezha.SDK.KeyGroup
-  alias Flezha.Service.CliManager
+  alias Flezha.Service.Cli
   alias Flezha.Service.OperatorManager
   alias Flezha.Service.PluginManager
   alias Flezha.Service.Steps
@@ -144,20 +144,22 @@ defmodule FlezhaTest.System.PartitionedOperatorsE2ETest do
     assert parked["error"] =~ "key_by"
 
     # --- the user's view ---
-    list_out = capture_io(fn -> CliManager.list_operators(namespace) end)
+    list_out = capture_io(fn -> Cli.call("Operator.list", Jason.encode!([namespace]), []) end)
     assert list_out =~ group
     assert list_out =~ "3/3"
 
     refute list_out =~ Partition.member_id(group, 0),
            "the group is one logical row; members are per-partition detail"
 
-    info_out = capture_io(fn -> CliManager.operator_info(namespace) end)
+    info_out = capture_io(fn -> Cli.call("Operator.info", Jason.encode!([namespace]), []) end)
     assert info_out =~ "Partition group: #{group} (3/3)"
     assert info_out =~ "key groups 0-84"
     assert info_out =~ "all 256 key groups owned exactly once"
 
     state_out =
-      capture_io(fn -> CliManager.state_get("#{group}/#{@relay_tasklet}/BTC-USD") end)
+      capture_io(fn ->
+        Cli.call("Steps.state_get", Jason.encode!(["#{group}/#{@relay_tasklet}/BTC-USD"]), [])
+      end)
 
     assert state_out =~ "BTC-USD:one",
            "a keyed read against the GROUP must resolve the owning member"
@@ -189,7 +191,7 @@ defmodule FlezhaTest.System.PartitionedOperatorsE2ETest do
     end
 
     # Coverage is clean again, and the vacated member's tree is gone.
-    info_after = capture_io(fn -> CliManager.operator_info(namespace) end)
+    info_after = capture_io(fn -> Cli.call("Operator.info", Jason.encode!([namespace]), []) end)
     assert info_after =~ "Partition group: #{group} (2/2)"
     assert info_after =~ "all 256 key groups owned exactly once"
     refute File.exists?(Paths.class_dir(Partition.member_id(group, 2)))
@@ -381,7 +383,7 @@ defmodule FlezhaTest.System.PartitionedOperatorsE2ETest do
              "#{key}'s Cell must exist under its owner and nowhere else"
     end
 
-    info = capture_io(fn -> CliManager.operator_info(namespace) end)
+    info = capture_io(fn -> Cli.call("Operator.info", Jason.encode!([namespace]), []) end)
     assert info =~ "Partition group: #{group} (2/2)"
     assert info =~ "all 256 key groups owned exactly once"
 
@@ -413,8 +415,8 @@ defmodule FlezhaTest.System.PartitionedOperatorsE2ETest do
     await_iterations(p0, [1])
     await_iterations(p1, [3])
 
-    assert {:error, {:uncommitted_iteration, [1]}} =
-             Steps.rewind_instance(namespace, p0, 0)
+    assert {:error, %Flezha.Error{code: "operator.iteration_not_committed"}} =
+             Steps.rewind(namespace, p0, 0, %{source: :internal})
 
     for text <- ["SOL-USD:3", "BTC-USD:4", "ETH-USD:2"] do
       [symbol | _] = String.split(text, ":")
@@ -430,7 +432,7 @@ defmodule FlezhaTest.System.PartitionedOperatorsE2ETest do
     await_iterations(p1, [3, 4])
     await_iterations(p2, [0])
 
-    info_after = capture_io(fn -> CliManager.operator_info(namespace) end)
+    info_after = capture_io(fn -> Cli.call("Operator.info", Jason.encode!([namespace]), []) end)
     assert info_after =~ "Partition group: #{group} (3/3)"
     assert info_after =~ "all 256 key groups owned exactly once"
   end

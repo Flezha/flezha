@@ -22,7 +22,7 @@ defmodule FlezhaTest.System.PartStreamE2ETest do
 
   alias Flezha.Operator.Builder
   alias Flezha.Runner.FleetManager
-  alias Flezha.Service.{CliManager, Listener, OperatorManager}
+  alias Flezha.Service.{Cli, Listener, OperatorManager}
   alias Flezha.Transport.LivenessCounters
   alias FlezhaTest.Fixtures.OperatorFixture
   alias FlezhaTest.Helper.NodeTestHelper
@@ -166,7 +166,8 @@ defmodule FlezhaTest.System.PartStreamE2ETest do
   end
 
   defp send!(ns, id, text) do
-    assert capture_io(fn -> CliManager.operator_send(ns, id, text, "", []) end) =~ "to '#{id}'"
+    assert capture_io(fn -> Cli.call("Operator.send", Jason.encode!([ns, id, text, ""]), []) end) =~
+             "to '#{id}'"
   end
 
   # `flz operator listen` in a process of its own whose group leader collects
@@ -177,7 +178,12 @@ defmodule FlezhaTest.System.PartStreamE2ETest do
     {pid, ref} =
       spawn_monitor(fn ->
         Process.group_leader(self(), device)
-        CliManager.operator_listen(ns, id, "output", output: format, duration_ms: 60_000)
+
+        Cli.call(
+          "Operator.listen",
+          Jason.encode!([ns, id, "output", %{"window_ms" => 60_000}]),
+          output: format
+        )
       end)
 
     assert wait_until(fn -> listeners(ns, id) != [] end, 30_000)

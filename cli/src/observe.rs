@@ -1,7 +1,8 @@
+use serde_json::Value;
+
 use crate::args::{Positional, Reading, DURATION_MS};
 use crate::dispatch::{self, Command, Missing, Verb};
-use crate::help;
-use crate::rpc::{self, text};
+use crate::{help, rpc};
 
 const SOURCE: &[Positional] = &[Positional::required("<source>")];
 
@@ -10,24 +11,22 @@ pub(crate) const TABLE: Command = Command {
     help: help::OBSERVE,
     verbs: &[
         Verb::new("sources", |read| {
-            rpc::bare(read, "observability_render_sources")
+            rpc::bare(read, "Observability.list_sources")
         })
         .screen(help::OBSERVE_SOURCES),
-        Verb::new("sinks", |read| {
-            rpc::bare(read, "observability_render_sinks")
-        })
-        .screen(help::OBSERVE_SINKS),
+        Verb::new("sinks", |read| rpc::bare(read, "Observability.list_sinks"))
+            .screen(help::OBSERVE_SINKS),
         Verb::new("tail", handle_tail)
             .taking(SOURCE)
             .reading(&[DURATION_MS])
             .screen(help::OBSERVE_TAIL),
         Verb::new("enable", |read| {
-            rpc::one_arg(read, SOURCE[0].name, "observability_render_enable")
+            rpc::one_arg(read, SOURCE[0].name, "Observability.enable_source")
         })
         .taking(SOURCE)
         .screen(help::OBSERVE_ENABLE),
         Verb::new("disable", |read| {
-            rpc::one_arg(read, SOURCE[0].name, "observability_render_disable")
+            rpc::one_arg(read, SOURCE[0].name, "Observability.disable_source")
         })
         .taking(SOURCE)
         .screen(help::OBSERVE_DISABLE),
@@ -38,9 +37,9 @@ pub(crate) const TABLE: Command = Command {
 };
 
 fn handle_tail(read: &Reading) {
-    rpc::run(
-        "observability_render_tail",
-        &[text(read.pos(SOURCE[0].name))],
+    rpc::door(
+        "Observability.tail",
+        &[Value::from(read.pos(SOURCE[0].name))],
         &[rpc::window(read)],
         read,
     );

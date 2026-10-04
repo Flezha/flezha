@@ -413,7 +413,7 @@ a dynamic one (`.key_by` / `.keyBy` on the wiring) as `<operator>/<tasklet>/<liv
 is proportional to the selector: a keyed read is one lookup, a Tasklet read serializes every
 live Cell of it.
 
-`Flezha.Service.CliManager.state_get/3` resolves the namespace holding the Operator
+`Flezha.Service.Steps.state_get/2` resolves the namespace holding the Operator
 (`OperatorManager.namespace_of/2`), authorizes as `:"state.get"` (viewer level, like `state.list`
 and `state.at`) and issues the round-trip. The seq rides the reply frame's `flz.change_seq`
 metadata, present only when the selector names exactly one Cell, so the JSON body keeps the
@@ -465,8 +465,8 @@ no single version and prints `change_seq: -` (JSON `null`).
 OperatorManager.get_cell_state("trading", "ohlc", %{tasklet: "candle", cell_key: "BTCUSD@1m"})
 # Whole Operator, seq-less: {:ok, json} — the migration/handover shape
 OperatorManager.get_cell_state("trading", "ohlc")
-# The CLI verb itself: path parsing, authz, rendering
-CliManager.state_get("ohlc/candle/BTCUSD@1m", "json")
+# The published operation the CLI calls: path parsing and authz
+Flezha.Service.Steps.state_get("ohlc/candle/BTCUSD@1m", caller_context)
 ```
 
 **Cost.** One control round-trip plus one state-lock acquisition, bounded by one invocation: a
@@ -494,7 +494,7 @@ flz state retention <operator_class> <hours>                            # admin
 flz state delete <operator/tasklet/cell_key>                            # admin
 ```
 
-The verbs live in `cli/src/state.rs` and RPC into `Flezha.Service.CliManager.state_*`.
+The verbs live in `cli/src/state.rs` and reach `Flezha.Service.Steps` through the door.
 `state list` reports each Cell's live writer counters (`Metrics.snapshot_all/0`: WAL size,
 snapshot seq, ...). `state at` runs `Flezha.State.TimeTravel.query/2`, which returns
 `%{snapshot_bytes, change_log_bytes, terminal_seq}` — the assembled baseline and change log at the

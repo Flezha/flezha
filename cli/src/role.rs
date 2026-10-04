@@ -1,7 +1,8 @@
+use serde_json::Value;
+
 use crate::args::{Positional, Reading};
 use crate::dispatch::{self, Command, Missing, Verb};
-use crate::help;
-use crate::rpc::{self, text};
+use crate::{help, rpc};
 
 /// The enumeration, spelled once: both verbs read the same label, so a role
 /// added to it cannot reach one of them and miss the other.
@@ -20,7 +21,7 @@ pub(crate) const TABLE: Command = Command {
             Positional::required("<principal>"),
             Positional::optional(ROLE),
         ]),
-        Verb::new("list", |read| rpc::bare(read, "authz_render_role_list")),
+        Verb::new("list", |read| rpc::bare(read, "Namespace.list_roles")),
     ],
     help_verbs: dispatch::HELP_VERBS,
     missing: Missing::Screen,
@@ -28,24 +29,26 @@ pub(crate) const TABLE: Command = Command {
 };
 
 fn handle_bind(read: &Reading) {
-    rpc::run(
-        "authz_render_role_bind",
+    rpc::door(
+        "Namespace.bind_role",
         &[
-            text(read.pos("<principal>")),
-            text(read.pos(ROLE)),
-            text(read.pos("<namespace>")),
+            Value::from(read.pos("<principal>")),
+            Value::from(read.pos(ROLE)),
+            Value::from(read.pos("<namespace>")),
         ],
         &[],
         read,
     );
 }
 
-/// The role is always sent, empty when none was named, so the controller reads
-/// the principal, the role and the options in fixed positions.
+/// An unbind with no role takes the principal's whole binding.
 fn handle_unbind(read: &Reading) {
-    rpc::run(
-        "authz_render_role_unbind",
-        &[text(read.pos("<principal>")), text(read.pos(ROLE))],
+    rpc::door(
+        "Namespace.unbind_role",
+        &[
+            Value::from(read.pos("<principal>")),
+            read.maybe_pos(ROLE).map_or(Value::Null, Value::from),
+        ],
         &[],
         read,
     );

@@ -15,9 +15,8 @@ COMMANDS:
     unbind     Take an operator's connection to a plugin away
     update     Change an enabled plugin's settings
     disable    Turn a plugin off
-    list       List the plugins enabled in a namespace (text or json),
-               `--installed` packages (text or json) or `--providers`
-               (text only)
+    list       List the plugins enabled in a namespace, the `--installed`
+               packages or the `--providers`
     help       Show help for a specific plugin provider
 
 PLUGINS:

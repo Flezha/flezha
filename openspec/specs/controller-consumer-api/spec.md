@@ -124,11 +124,11 @@ than being discovered by a consumer at runtime.
 ### Requirement: A published function SHALL bind a declared verb
 
 Every published service function that takes a caller context SHALL bind one row of
-the user-verb declaration and apply it through the one seam, so that the console
-and the terminal are judged by the same action, in the same scope, with the same audit.
-A published function SHALL NOT decide its own action, scope or audit inline, and a
-terminal verb body SHALL reach an effect the published function wraps rather than the
-published function itself, so that one request is judged once.
+the user-verb declaration and apply it through the one seam, so that the console, the
+terminal and every other surface are judged by the same action, in the same scope, with the
+same audit. A published function SHALL NOT decide its own action, scope or audit inline. No
+surface SHALL bind a row of its own: every surface SHALL call the published function, so
+that one request is judged once, by the published function's binding.
 
 #### Scenario: The console and the terminal read one declaration
 
@@ -146,20 +146,19 @@ published function itself, so that one request is judged once.
 
 #### Scenario: A request is judged once
 
-- **WHEN** a terminal verb whose effect the published surface also carries is invoked
-  with a valid credential
+- **WHEN** a terminal verb is invoked with a valid credential
 - **THEN** exactly one authorization decision and at most one audit record SHALL result
 
 ### Requirement: The published surface SHALL serve every caller that proves an identity
 
-The published consumer surface SHALL be reachable by any caller the controller can attribute an identity to, and the way an identity is proven SHALL be the only thing that differs between them. A terminal proves it with a verified token, a console with a verified token over its own transport, and a runner connection with what its connection proved. Each SHALL resolve to a `Flezha.Service.CallerContext` before the surface is called, and no caller SHALL supply its own principal, namespace or role.
+The published consumer surface SHALL be reachable by any caller the controller can attribute an identity to, and the way an identity is proven SHALL be the only thing that differs between them. A terminal proves it with a verified token, a console with a verified token over its own transport, an HTTP caller with a verified bearer token, and a runner connection with what its connection proved. Each SHALL resolve to a `Flezha.Service.CallerContext` before the surface is called, and no caller SHALL supply its own principal, namespace or role.
 
-A caller SHALL NOT be given a separate dispatch table, a separate policy point or a hand-maintained list of the functions it may call. What a caller may reach SHALL follow from the role its identity resolves to, so that changing a row's grant changes every caller at once.
+Every remote caller SHALL enter the surface through one door, `Flezha.Service.Admin`, which resolves an operation by its name, converts its arguments by the catalogue and applies the published function. A caller SHALL NOT be given a separate dispatch table, a separate policy point or a hand-maintained list of the functions it may call. What a caller may reach SHALL follow from the role its identity resolves to, so that changing a row's grant changes every caller at once.
 
 #### Scenario: One declaration judges every caller
 
 - **WHEN** the grant, scope rule or audit of a verb is changed in its row
-- **THEN** the next invocation from the terminal, the console or a runner
+- **THEN** the next invocation from the terminal, the console, HTTP or a runner
   connection SHALL reflect the change, with no edit to any of them
 
 #### Scenario: A runner connection reaches the surface as itself
@@ -168,6 +167,12 @@ A caller SHALL NOT be given a separate dispatch table, a separate policy point o
 - **THEN** the call SHALL be judged against the role its principal resolves to,
   in the namespace its connection proved, and SHALL produce the audit record its
   row declares
+
+#### Scenario: The terminal enters through the door
+
+- **WHEN** `flz dlq list` is run with a valid token
+- **THEN** the controller SHALL serve it by `Flezha.Service.Admin` resolving `Dlq.list`,
+  and by no CLI-specific binding
 
 #### Scenario: A caller cannot name its own identity
 
@@ -195,4 +200,17 @@ Every function on the published consumer surface SHALL answer a failure as `{:er
 
 - **WHEN** the consumer-surface test drives each published module's refusals
 - **THEN** every `{:error, _}` answer SHALL carry a `%Flezha.Error{}` whose code is in the catalogue
+
+### Requirement: Every CLI verb SHALL be a published function
+
+Every `flz` verb that reaches a controller SHALL be served by a function on the published
+consumer surface. No fact or effect the CLI offers SHALL be reachable only through the CLI.
+
+#### Scenario: A former CLI-only verb is on the surface
+
+- **WHEN** the published surface is enumerated
+- **THEN** it SHALL carry a function for each of token issue, list and revoke, role bind,
+  list and unbind, `whoami`, schedule run, state get, list, delete, rotate, retention and
+  outbox, operator listen and replay, plugin update and info, boot status and await,
+  controller status, memory top and stop, and cluster status
 

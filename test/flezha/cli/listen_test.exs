@@ -1,4 +1,4 @@
-defmodule Flezha.Service.CliManager.ListenTest do
+defmodule Flezha.Service.Cli.ListenTest do
   @moduledoc """
   `flz operator listen` and `flz operator send --await` on the controller,
   with the plugin manager and the delivery stubbed: what a frame, a part and a
@@ -19,7 +19,8 @@ defmodule Flezha.Service.CliManager.ListenTest do
   alias Flezha.Operator.PartitionGroup
   alias Flezha.Plugin
   alias Flezha.Plugin.Provider.MonitoredIOForward
-  alias Flezha.Service.{CliManager, HubManager, OperatorManager, PluginManager}
+  alias Flezha.Service.{Cli, HubManager, OperatorManager, PluginManager}
+  alias FlezhaTest.Helper.CliCapture
 
   setup :set_mimic_global_until_exit
 
@@ -67,7 +68,7 @@ defmodule Flezha.Service.CliManager.ListenTest do
           })
 
           forward("again", %{"input_type" => "2"})
-          CliManager.operator_listen("ns", "op", "output", duration_ms: 50)
+          Cli.call("Operator.listen", Jason.encode!(["ns", "op", "output", %{window_ms: 50}]), [])
         end)
 
       assert out ==
@@ -82,7 +83,7 @@ defmodule Flezha.Service.CliManager.ListenTest do
           preview("hel", %{"channel" => "answer", "flz.part" => "0", "flz.part_attempt" => "1"})
           forward("hello", %{"channel" => "answer"})
           notice("in")
-          CliManager.operator_listen("ns", "op", "output", duration_ms: 50)
+          Cli.call("Operator.listen", Jason.encode!(["ns", "op", "output", %{window_ms: 50}]), [])
         end)
 
       assert [part, output, notice] = String.split(out, "\n", trim: true)
@@ -100,7 +101,10 @@ defmodule Flezha.Service.CliManager.ListenTest do
           preview("hel", %{"channel" => "answer", "flz.part" => "0", "flz.part_attempt" => "1"})
           forward("hello", %{"channel" => "answer"})
           notice("in")
-          CliManager.operator_listen("ns", "op", "output", output: "json", duration_ms: 50)
+
+          Cli.call("Operator.listen", Jason.encode!(["ns", "op", "output", %{window_ms: 50}]),
+            output: "json"
+          )
         end)
 
       assert [part, output, notice] =
@@ -118,7 +122,10 @@ defmodule Flezha.Service.CliManager.ListenTest do
         in_caller(fn ->
           forward("hello", %{"channel" => "echo", "flz.key" => "k"})
           forward(<<255, 0>>, %{"flz.key" => <<255>>})
-          CliManager.operator_listen("ns", "op", "output", output: "json", duration_ms: 50)
+
+          Cli.call("Operator.listen", Jason.encode!(["ns", "op", "output", %{window_ms: 50}]),
+            output: "json"
+          )
         end)
 
       assert out |> String.split("\n", trim: true) |> Enum.map(&Jason.decode!/1) == [
@@ -138,7 +145,13 @@ defmodule Flezha.Service.CliManager.ListenTest do
     end
 
     test "the forwarder is attached to the chain the direction names, then detached" do
-      in_caller(fn -> CliManager.operator_listen("", "op", "input", duration_ms: 10) end)
+      in_caller(fn ->
+        Cli.call(
+          "Operator.listen",
+          Jason.encode!(["default", "op", "input", %{window_ms: 10}]),
+          []
+        )
+      end)
 
       assert [{:enable, {id, plugin, listener}}, {:detach, id}] = calls()
 
@@ -154,7 +167,10 @@ defmodule Flezha.Service.CliManager.ListenTest do
     end
 
     test "an output listener takes the output chain and the previews" do
-      in_caller(fn -> CliManager.operator_listen("ns", "op", "output", duration_ms: 10) end)
+      in_caller(fn ->
+        Cli.call("Operator.listen", Jason.encode!(["ns", "op", "output", %{window_ms: 10}]), [])
+      end)
+
       assert [{:enable, {_id, plugin, _}}, {:detach, _}] = calls()
       assert plugin.hooks == [{:on_output, []}, {:on_preview, []}]
     end
@@ -165,7 +181,12 @@ defmodule Flezha.Service.CliManager.ListenTest do
       listener =
         spawn(fn ->
           Process.group_leader(self(), leader)
-          CliManager.operator_listen("ns", "op", "output", duration_ms: 60_000)
+
+          Cli.call(
+            "Operator.listen",
+            Jason.encode!(["ns", "op", "output", %{window_ms: 60_000}]),
+            []
+          )
         end)
 
       assert_receive {:call, :enable, {id, _plugin, ^listener}}
@@ -185,7 +206,9 @@ defmodule Flezha.Service.CliManager.ListenTest do
         stub(PluginManager, :enable_plugin, fn _id, _plugin -> answer end)
 
         {reason, err} =
-          refused(fn -> CliManager.operator_listen("ns", "op", "output", []) end)
+          refused(fn ->
+            Cli.call("Operator.listen", Jason.encode!(["ns", "op", "output", %{}]), [])
+          end)
 
         assert reason == {:shutdown, exit}
         assert err =~ said
@@ -195,7 +218,10 @@ defmodule Flezha.Service.CliManager.ListenTest do
 
     test "a direction it does not know is refused before anything is attached" do
       for {direction, word} <- [{"sideways", "direction"}] do
-        {reason, err} = refused(fn -> CliManager.operator_listen("ns", "op", direction, []) end)
+        {reason, err} =
+          refused(fn ->
+            Cli.call("Operator.listen", Jason.encode!(["ns", "op", direction, %{}]), [])
+          end)
 
         assert reason == {:shutdown, 2}
         assert err =~ "unknown #{word} 'sideways'"
@@ -225,21 +251,48 @@ defmodule Flezha.Service.CliManager.ListenTest do
         {:ok, "plugin enabled"}
       end)
 
-      out = in_caller(fn -> CliManager.operator_send("ns", "op", "hello", "", await_ms: 50) end)
+      out =
+        in_caller(fn ->
+          Cli.call("Operator.send", Jason.encode!(["ns", "op", "hello", "", %{}]), await_ms: 50)
+        end)
 
       assert out == "Delivered to 'op'.\necho\thello\n"
       assert [:enable, :deliver, :detach] = Enum.map(calls(), &elem(&1, 0))
     end
 
     test "with nothing emitted it prints the verdict alone" do
-      out = in_caller(fn -> CliManager.operator_send("ns", "op", "hello", "", await_ms: 20) end)
+      out =
+        in_caller(fn ->
+          Cli.call("Operator.send", Jason.encode!(["ns", "op", "hello", "", %{}]), await_ms: 20)
+        end)
 
       assert out == "Delivered to 'op'.\n"
       assert [:enable, :deliver, :detach] = Enum.map(calls(), &elem(&1, 0))
     end
 
+    # Fails when: the refusal is rendered inside the listen, whose exit the door
+    # then reports a second time as an internal failure with the wrong exit code.
+    test "a refused send is reported once, with its own code, and detaches" do
+      stub(OperatorManager, :resolve_member, fn "ns", "op", nil ->
+        {:error, {:operator_not_found, "ns", "op"}}
+      end)
+
+      {reason, err} =
+        refused(fn ->
+          Cli.call("Operator.send", Jason.encode!(["ns", "op", "hello", "", %{}]), await_ms: 50)
+        end)
+
+      assert reason == {:shutdown, 5}
+      assert [_one] = String.split(err, "error:", trim: true)
+      assert err =~ "(operator.not_found)"
+      assert [:enable, :detach] = Enum.map(calls(), &elem(&1, 0))
+    end
+
     test "without it nothing is attached" do
-      out = in_caller(fn -> CliManager.operator_send("ns", "op", "hello", "", []) end)
+      out =
+        in_caller(fn ->
+          Cli.call("Operator.send", Jason.encode!(["ns", "op", "hello", "", %{}]), [])
+        end)
 
       assert out == "Delivered to 'op'.\n"
       assert [{:deliver, nil}] = calls()
@@ -251,14 +304,8 @@ defmodule Flezha.Service.CliManager.ListenTest do
   defp in_caller(fun), do: Task.await(Task.async(fn -> capture_io(fun) end), 5_000)
 
   defp refused(fun) do
-    Task.await(
-      Task.async(fn ->
-        err = capture_io(:stderr, fn -> send(self(), {:reason, catch_exit(fun.())}) end)
-        assert_received {:reason, reason}
-        {reason, err}
-      end),
-      5_000
-    )
+    {{:exit, reason}, _out, err} = Task.await(Task.async(fn -> CliCapture.run(fun) end), 5_000)
+    {reason, err}
   end
 
   # Staged in the verb's process; the enable stub hands them to the relay.

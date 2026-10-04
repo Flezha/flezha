@@ -11,9 +11,10 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
   row HAS a fixture, so a new provider cannot escape the drill by being absent
   from a list.
 
-  Per row, through `CliManager.enable_plugin/5` and `CliManager.disable_plugin/2`
-  in process (nothing under `test/` runs the released `flz` binary), plus the
-  published `PluginManager.enable/3` for one row so both surfaces are covered.
+  Per row, through `Flezha.Service.Cli.call/3` with `PluginManager.enable` and
+  `PluginManager.disable` in process (nothing under `test/` runs the released
+  `flz` binary), plus the published `PluginManager.enable/3` for one row so
+  both surfaces are covered.
   Authorization is off in this tier, so the verbs are called untokened; the
   token path is `multi_tenant_e2e_test`'s. Per row:
 
@@ -42,7 +43,7 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
   alias Flezha.Plugin.Provider
   alias Flezha.Plugin.Provider.WorkerSup
   alias Flezha.Plugin.Providers
-  alias Flezha.Service.CliManager
+  alias Flezha.Service.Cli
   alias Flezha.Service.HubManager
   alias Flezha.Service.OperatorManager
   alias Flezha.Service.PluginManager
@@ -235,25 +236,23 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
     for {flags, extension, entry, filter} <- rows do
       plugin_id = "drill-ws-channel-#{System.unique_integer([:positive])}"
 
-      opts =
-        flags
-        |> Map.merge(%{uri: ctx.ws_uri, idle_timeout_ms: 0, plugin_id: plugin_id})
-        |> cli_opts()
-        |> Map.put("hooks", [
+      fields = %{
+        "provider" => "operator_websocket",
+        "opts" =>
+          flags
+          |> Map.merge(%{uri: ctx.ws_uri, idle_timeout_ms: 0, plugin_id: plugin_id})
+          |> cli_opts(),
+        "hooks" => [
           %{"name" => Atom.to_string(extension), "opts" => subscription_opts(extension)}
-        ])
-
-      scope = %{"namespace" => ctx.namespace, "operator_id" => ctx.operator_id}
+        ],
+        "namespace" => ctx.namespace,
+        "operator_id" => ctx.operator_id
+      }
 
       # The verb prints its own confirmation; this test asserts on the table.
       assert {:ok, _printed} =
                ExUnit.CaptureIO.with_io(fn ->
-                 CliManager.enable_plugin(
-                   plugin_id,
-                   "operator_websocket",
-                   Jason.encode!(opts),
-                   Jason.encode!(scope)
-                 )
+                 Cli.call("PluginManager.enable", Jason.encode!([plugin_id, fields]), [])
                end)
 
       stored = plugin_table(ctx).plugins[plugin_id].opts
@@ -265,15 +264,8 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
       assert [{^plugin_id, %{targets: [%{channel: ^entry}]}}] =
                Provider.Websocket.worker_specs(stored)
 
-      assert {disabled, _printed} =
-               ExUnit.CaptureIO.with_io(fn ->
-                 CliManager.disable_plugin(
-                   plugin_id,
-                   Jason.encode!(%{"namespace" => ctx.namespace})
-                 )
-               end)
-
-      assert disabled in [:ok, {:ok, :disabled}]
+      assert {:ok, _printed} =
+               ExUnit.CaptureIO.with_io(fn -> disable(plugin_id, ctx) end)
     end
   end
 
@@ -296,22 +288,21 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
     plugin_id = "drill-#{id}-#{System.unique_integer([:positive])}"
     extension = hd(provider.__provider__().extensions)
 
-    # The CLI's two JSON arguments: the flags carry the provider's own options
-    # and the extensions it subscribes to; the user options carry the scope.
-    flags =
-      opts
-      |> with_plugin_id(provider, plugin_id)
-      |> cli_opts()
-      |> Map.put("hooks", [
+    # The CLI's fields: the provider's own options as text, the extensions it
+    # subscribes to, and the scope.
+    fields = %{
+      "provider" => id,
+      "opts" => opts |> with_plugin_id(provider, plugin_id) |> cli_opts(),
+      "hooks" => [
         %{"name" => Atom.to_string(extension), "opts" => subscription_opts(extension)}
-      ])
-
-    scope = %{"namespace" => ctx.namespace, "operator_id" => ctx.operator_id}
+      ],
+      "namespace" => ctx.namespace,
+      "operator_id" => ctx.operator_id
+    }
 
     # The verb prints and answers `:ok`; a refusal exits `{:shutdown, 1}`, which is
     # what makes an unasserted return safe to ignore here.
-    assert :ok =
-             CliManager.enable_plugin(plugin_id, id, Jason.encode!(flags), Jason.encode!(scope)),
+    assert :ok = Cli.call("PluginManager.enable", Jason.encode!([plugin_id, fields]), []),
            "provider `#{id}` refused a real enable"
 
     table = plugin_table(ctx)
@@ -332,10 +323,7 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
     assert :prepared in seen, "provider `#{id}` emitted no :prepared event"
     assert :running in seen, "provider `#{id}` emitted no :running event"
 
-    disabled =
-      CliManager.disable_plugin(plugin_id, Jason.encode!(%{"namespace" => ctx.namespace}))
-
-    assert disabled in [:ok, {:ok, :disabled}], "provider `#{id}` refused a real disable"
+    assert :ok = disable(plugin_id, ctx), "provider `#{id}` refused a real disable"
 
     if worker = provider.__provider__().worker do
       family = WorkerSup.family(provider)
@@ -439,11 +427,19 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
   defp assert_info_block(ctx, plugin_id) do
     output =
       ExUnit.CaptureIO.capture_io(fn ->
-        CliManager.operator_info(ctx.namespace)
+        Cli.call("Operator.info", Jason.encode!([ctx.namespace]), [])
       end)
 
     assert output =~ plugin_id, "flz operator info does not name the enabled plugin"
   end
+
+  defp disable(plugin_id, ctx),
+    do:
+      Cli.call(
+        "PluginManager.disable",
+        Jason.encode!([plugin_id, %{"namespace" => ctx.namespace}]),
+        []
+      )
 
   # A provider that declares `plugin_id` is told the id it was enabled under,
   # which is what a user writes as `--Xplugin_id`. One that does not

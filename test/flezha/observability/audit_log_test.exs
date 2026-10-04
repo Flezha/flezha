@@ -20,7 +20,7 @@ defmodule Flezha.Observability.AuditLogTest do
   }
 
   alias Flezha.Service.AuditLog, as: AuditSvc
-  alias Flezha.Service.CliManager
+  alias Flezha.Service.Cli
   alias FlezhaTest.Helper.NodeTestHelper
 
   @moduletag :audit_log
@@ -332,7 +332,7 @@ defmodule Flezha.Observability.AuditLogTest do
       tail =
         Task.async(fn ->
           ExUnit.CaptureIO.capture_io(fn ->
-            CliManager.audit_log_render_tail(output: "json", duration_ms: 60_000)
+            Cli.call("AuditLog.tail", "[]", output: "json", duration_ms: 60_000)
           end)
         end)
 
@@ -351,7 +351,7 @@ defmodule Flezha.Observability.AuditLogTest do
       {:ok, _} = start_audit_supervisor()
 
       ExUnit.CaptureIO.capture_io(fn ->
-        CliManager.audit_log_render_tail(duration_ms: 10)
+        Cli.call("AuditLog.tail", "[]", duration_ms: 10)
       end)
 
       assert :sys.get_state(Writer).subscribers == %{}
@@ -638,6 +638,21 @@ defmodule Flezha.Observability.AuditLogTest do
       content = File.read!(Path.join(dir, "audit-current.jsonl"))
       assert content =~ ~s("source":"audit_log")
       assert content =~ ~s("name":"list_files")
+    end
+
+    # Fails when: a name that walks out of the audit directory is joined onto
+    # it, and the answer tells a caller whether a file exists on the host.
+    test "read answers a name outside the audit directory as missing", %{dir: dir} do
+      configure(dir)
+      {:ok, _} = start_audit_supervisor()
+      outside = Path.join(Path.dirname(dir), "outside.jsonl")
+      File.write!(outside, "")
+      on_exit(fn -> File.rm(outside) end)
+
+      for file <- ["../outside.jsonl", outside, ".."] do
+        assert {:error, %Flezha.Error{code: "audit.file_not_found"}} =
+                 AuditSvc.read([file: file], %{source: :internal})
+      end
     end
 
     test "invalid caller_context is rejected", %{dir: dir} do

@@ -1,11 +1,11 @@
-use flz_transport::errors::FlezhaError;
+use serde_json::{Map, Value};
 
 use crate::args::{OptSpec, Positional, Reading, NAMESPACE};
 use crate::dispatch::{Command, Missing, Verb};
 use crate::help;
 use crate::rpc::{self, text};
 use crate::settings::{
-    extract_hook_flags, extract_opts, extract_x_flags, filter_out_hook_entries, serialize_flags,
+    extract_hook_flags, extract_opts, extract_x_flags, filter_out_hook_entries, flags_object,
 };
 
 const PLUGIN_ID: &[Positional] = &[Positional::required("<plugin_id>")];
@@ -16,7 +16,7 @@ const PROVIDERS: OptSpec = OptSpec::switch("--providers", "--providers");
 const SINGLE: OptSpec = OptSpec::switch("--single", "--single");
 
 /// Where the verbs that place packages run, in a VM of their own.
-const LOCAL: &str = "Flezha.Service.Cli.Plugin";
+const LOCAL: &str = "Flezha.Plugin.Installer.Command";
 
 pub(crate) const TABLE: Command = Command {
     path: "flz plugin",
@@ -29,16 +29,16 @@ pub(crate) const TABLE: Command = Command {
             ])
             .reading(&[SINGLE])
             .open(),
-        Verb::new("bind", |read| with_settings(read, "bind_plugin"))
+        Verb::new("bind", |read| named(read, "PluginManager.bind"))
             .taking(NAME)
             .open(),
-        Verb::new("unbind", |read| named(read, "unbind_plugin"))
+        Verb::new("unbind", |read| named(read, "PluginManager.unbind"))
             .taking(NAME)
             .open(),
-        Verb::new("update", |read| with_settings(read, "update_plugin"))
+        Verb::new("update", |read| named(read, "PluginManager.update"))
             .taking(NAME)
             .open(),
-        Verb::new("disable", |read| named(read, "disable_plugin"))
+        Verb::new("disable", |read| named(read, "PluginManager.disable"))
             .taking(NAME)
             .open(),
         // `help` is a verb here, not a spelling of the screen: with a provider
@@ -75,57 +75,60 @@ fn local(read: &Reading, verb: &str, args: &[&str]) {
 }
 
 fn handle_enable(read: &Reading) {
-    println!("Enabling plugin...");
+    rpc::progress_line(read, "Enabling plugin...");
 
-    let mut opts = plain_opts(read.rest());
+    let mut fields = fields(read.rest());
+    fields.insert("provider".into(), Value::from(read.pos("<provider_id>")));
     if read.switch(SINGLE.long) {
-        opts.push(("single".to_string(), "true".to_string()));
+        fields.insert("single".into(), Value::from(true));
     }
 
-    rpc::run(
-        "enable_plugin",
+    rpc::door(
+        "PluginManager.enable",
+        &[Value::from(read.pos(NAME[0].name)), Value::Object(fields)],
+        &[],
+        read,
+    );
+}
+
+/// The verbs that name a plugin and carry its fields: the plain options, the
+/// `X<key>=<value>` settings as `opts`, and the `--hook` families as `hooks`.
+/// A verb refuses a field it does not read, so each carries all of them.
+fn named(read: &Reading, name: &str) {
+    rpc::door(
+        name,
         &[
-            text(read.pos(NAME[0].name)),
-            text(read.pos("<provider_id>")),
-            text(&settings_json(read.rest())),
-            text(&serialize_flags(&opts)),
+            Value::from(read.pos(NAME[0].name)),
+            Value::Object(fields(read.rest())),
         ],
         &[],
         read,
     );
 }
 
-/// `unbind` and `disable`: the plugin's name and the plain options.
-fn named(read: &Reading, rpc_fun: &str) {
-    let opts = serialize_flags(&plain_opts(read.rest()));
-    let args = [text(read.pos(NAME[0].name)), text(&opts)];
-    rpc::run(rpc_fun, &args, &[], read);
-}
+fn fields(args: &[String]) -> Map<String, Value> {
+    let Value::Object(mut fields) = flags_object(&plain_opts(args)) else {
+        unreachable!("flags serialize to an object")
+    };
 
-/// `bind` and `update`: the plugin's name, its settings and the plain options.
-fn with_settings(read: &Reading, rpc_fun: &str) {
-    let settings = settings_json(read.rest());
-    let opts = serialize_flags(&plain_opts(read.rest()));
-    let args = [text(read.pos(NAME[0].name)), text(&settings), text(&opts)];
-    rpc::run(rpc_fun, &args, &[], read);
-}
-
-/// The plugin's own settings: the `--X` flags, with any declared
-/// `--hook=NAME` sub-options embedded so the Elixir side sees them.
-fn settings_json(args: &[String]) -> String {
-    let base = serialize_flags(&extract_x_flags(args));
-    let hooks = extract_hook_flags(args);
-
-    if hooks.is_empty() {
-        base
-    } else {
-        embed_hooks_into_json(&base, &hooks)
+    let settings = extract_x_flags(args);
+    if !settings.is_empty() {
+        fields.insert("opts".into(), flags_object(&settings));
     }
+
+    let hooks: Vec<Value> = extract_hook_flags(args)
+        .iter()
+        .map(|(name, opts)| serde_json::json!({ "name": name, "opts": flags_object(opts) }))
+        .collect();
+    if !hooks.is_empty() {
+        fields.insert("hooks".into(), Value::Array(hooks));
+    }
+
+    fields
 }
 
-/// The plain CLI options. The hook entries are removed first, so the
-/// option parser does not read them as options of their own; the credential is
-/// the walk's and never reaches this document.
+/// The plain `--key value` words: every word a row does not declare, less the
+/// `--hook` families and the settings.
 fn plain_opts(args: &[String]) -> Vec<(String, String)> {
     extract_opts(&filter_out_hook_entries(args))
 }
@@ -136,63 +139,20 @@ fn handle_help(read: &Reading) {
         return;
     };
 
-    println!("Getting help for plugin '{}'...", provider_id);
-
-    rpc::run("plugin_help", &[text(provider_id)], &[], read);
+    rpc::progress_line(
+        read,
+        &format!("Getting help for plugin '{}'...", provider_id),
+    );
+    rpc::door("Fleet.provider", &[Value::from(provider_id)], &[], read);
 }
 
-/// Three collections, and the flags that choose one must not do the format's
-/// job: `--installed` lists the packages, `--providers` the provider registry,
-/// and the default the plugins enabled in the namespace. The registry has one
-/// rendering, so asking it for JSON is refused rather than silently answered
-/// with another collection.
 fn handle_list(read: &Reading) {
     if read.switch(INSTALLED.long) {
-        rpc::run("list_installed_plugins", &[], &[], read);
+        rpc::bare(read, "Fleet.installed_plugins");
     } else if read.switch(PROVIDERS.long) {
-        if read.output_format() == "json" {
-            rpc::fail(FlezhaError::with(
-                "usage.text_only",
-                [
-                    ("what", "the provider registry".into()),
-                    ("alternative", "flz plugin list --installed --json".into()),
-                ],
-            ));
-        }
-
-        rpc::run("list_providers", &[], &[], read);
+        rpc::bare(read, "Fleet.providers");
     } else {
-        rpc::run("list_enabled_plugins", &[text(read.namespace())], &[], read);
-    }
-}
-
-// Serialize a `"hooks": [{"name": "...", "opts": {...}}, ...]` list into
-// the plugin_flags JSON object.
-fn embed_hooks_into_json(base_json: &str, hooks: &[(String, Vec<(String, String)>)]) -> String {
-    let entries: Vec<String> = hooks
-        .iter()
-        .map(|(name, opts)| {
-            let opts_json = serialize_flags(opts);
-            format!("{{\"name\":\"{}\",\"opts\":{}}}", name, opts_json)
-        })
-        .collect();
-
-    let hooks_fragment = format!("\"hooks\":[{}]", entries.join(","));
-
-    if base_json.trim() == "{}" {
-        return format!("{{{}}}", hooks_fragment);
-    }
-    // Splice before the object's OWN closing brace, not before every trailing
-    // one: a JSON-valued flag written last (`--Xheaders='{"k":"v"}'`) ends the
-    // payload with `}}`, and eating both leaves a body that cannot decode.
-    let body = base_json
-        .trim_end()
-        .strip_suffix('}')
-        .expect("plugin flags always serialize to a JSON object");
-    if body.trim_end().ends_with('{') {
-        format!("{}{}}}", body, hooks_fragment)
-    } else {
-        format!("{},{}}}", body, hooks_fragment)
+        rpc::door("PluginManager.enabled", &[rpc::namespace(read)], &[], read);
     }
 }
 
@@ -200,63 +160,42 @@ fn embed_hooks_into_json(base_json: &str, hooks: &[(String, Vec<(String, String)
 mod tests {
     use super::*;
 
-    #[test]
-    fn embed_hooks_into_empty_base() {
-        let got = embed_hooks_into_json("{}", &[("on_input".to_string(), vec![])]);
+    fn words(words: &[&str]) -> Vec<String> {
+        words.iter().map(|word| word.to_string()).collect()
+    }
 
-        assert_eq!(got, "{\"hooks\":[{\"name\":\"on_input\",\"opts\":{}}]}");
+    /// fails when: a JSON-valued setting loses its shape, which the controller
+    /// then refuses as an option of the wrong type.
+    #[test]
+    fn a_json_valued_setting_stays_an_object() {
+        let got = fields(&words(&[
+            r#"--Xheaders={"authorization":"Bearer t"}"#,
+            "--hook=on_terminate",
+        ]));
+
+        assert_eq!(got["opts"]["headers"]["authorization"], "Bearer t");
+        assert_eq!(got["hooks"][0]["name"], "on_terminate");
     }
 
     #[test]
-    fn embed_hooks_into_existing_json() {
-        let got = embed_hooks_into_json(
-            "{\"uri\": \"ws://x\"}",
-            &[(
-                "on_interval".to_string(),
-                vec![("interval_ms".to_string(), "5000".to_string())],
-            )],
-        );
+    fn hooks_keep_the_order_they_were_written_in() {
+        let got = fields(&words(&[
+            "--hook=on_input",
+            "--on_input.position=0",
+            "--hook=on_terminate",
+        ]));
 
-        assert!(got.starts_with("{\"uri\": \"ws://x\""));
-        assert!(got.contains(
-            "\"hooks\":[{\"name\":\"on_interval\",\"opts\":{\"interval_ms\": \"5000\"}}]"
-        ));
-        assert!(got.ends_with('}'));
-    }
-
-    /// fails when: a JSON-valued flag written last loses its closing brace —
-    /// the controller then rejects the whole enable with a decode error, which
-    /// is every attach that carries `--Xheaders`.
-    #[test]
-    fn embed_hooks_after_a_json_valued_flag_stays_decodable() {
-        let got = embed_hooks_into_json(
-            "{\"url\": \"http://x\", \"headers\": {\"authorization\": \"Bearer t\"}}",
-            &[("on_terminate".to_string(), vec![])],
-        );
-
-        let parsed: serde_json::Value = serde_json::from_str(&got).expect("decodable");
-        assert_eq!(parsed["headers"]["authorization"], "Bearer t");
-        assert_eq!(parsed["hooks"][0]["name"], "on_terminate");
+        assert_eq!(got["hooks"][0]["name"], "on_input");
+        assert_eq!(got["hooks"][0]["opts"]["position"], "0");
+        assert_eq!(got["hooks"][1]["name"], "on_terminate");
     }
 
     #[test]
-    fn embed_multiple_hooks_keeps_order() {
-        let got = embed_hooks_into_json(
-            "{}",
-            &[
-                (
-                    "on_input".to_string(),
-                    vec![("position".to_string(), "0".to_string())],
-                ),
-                ("on_terminate".to_string(), vec![]),
-            ],
-        );
+    fn plain_options_are_fields_and_nothing_else_is_added() {
+        let got = fields(&words(&["--operator_id", "op1", "--namespace=prod"]));
 
-        let input_pos = got.find("on_input").expect("has on_input");
-        let term_pos = got.find("on_terminate").expect("has on_terminate");
-        assert!(
-            input_pos < term_pos,
-            "on_input must precede on_terminate in serialized output"
-        );
+        assert_eq!(got["operator_id"], "op1");
+        assert_eq!(got["namespace"], "prod");
+        assert!(got.get("opts").is_none() && got.get("hooks").is_none());
     }
 }

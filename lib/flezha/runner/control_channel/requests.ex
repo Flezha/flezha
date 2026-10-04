@@ -398,7 +398,14 @@ defmodule Flezha.Runner.ControlChannel.Requests do
 
     answer_off_process(reference_id, fn ->
       response =
-        case once_admitted(state, fn -> Admin.call(namespace, verb, args) end) do
+        case once_admitted(state, fn ->
+               Admin.call(
+                 verb,
+                 args,
+                 Session.runner_caller_context(namespace),
+                 {:proven, namespace}
+               )
+             end) do
           {:ok, json} ->
             %RunnerCommands.AdminResponse{result: json}
 

@@ -1,8 +1,7 @@
+use flz_transport::errors::FlezhaError;
 use flz_transport::transport::config::{get_transport_type, TransportType};
 use flz_transport::utility::socket_dir::Role;
 use flz_transport::utility::socket_probe::diagnose;
-
-use flz_transport::errors::FlezhaError;
 
 use crate::args::{Reading, NAMESPACE};
 use crate::dispatch::{self, Command, Missing, Verb};
@@ -21,7 +20,7 @@ pub(crate) const TABLE: Command = Command {
 };
 
 fn handle_list(read: &Reading) {
-    rpc::scoped_read(read, "list_runners", Some("runners"));
+    rpc::scoped_read(read, "Fleet.runners", Some("runners"));
 }
 
 /// Where this host's controller is, and why a runner cannot reach it — the

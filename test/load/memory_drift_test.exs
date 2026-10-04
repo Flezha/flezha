@@ -57,7 +57,7 @@ defmodule Flezha.Load.MemoryDriftTest do
 
   alias Flezha.Diagnostics.MemoryReporter
   alias Flezha.Plugin
-  alias Flezha.Service.CliManager
+  alias Flezha.Service.Controller.MemTop
   alias Flezha.Service.OperatorManager
   alias Flezha.Service.PluginManager
   alias Flezha.Testnet
@@ -312,7 +312,7 @@ defmodule Flezha.Load.MemoryDriftTest do
   end
 
   defp capture_mem_top_snapshot do
-    snap = CliManager.build_mem_top_snapshot()
+    snap = MemTop.snapshot()
     write_artifact("mem_top", snap)
   end
 

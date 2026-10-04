@@ -20,11 +20,16 @@ defmodule Flezha.Service.Dlq do
   only for a caller that is bound and whose role grants the action: an unbound
   caller is not told whether a reference exists.
 
-  `Flezha.Service.Cli.Dlq` renders what this module answers and calls the same
-  effects — the store, `redrive/3` — under the same rows.
   """
 
   use Flezha.AuthZ.Verb
+
+  @entry_ref [type: :string, doc: "The entry, as `<operator>/<tasklet>/<id>`."]
+  @operator_class [
+    type: :string,
+    default: nil,
+    doc: "The operator whose entries to read; every operator when absent."
+  ]
 
   alias Flezha.Config.Durations
   alias Flezha.AuthZ.Namespace
@@ -39,22 +44,29 @@ defmodule Flezha.Service.Dlq do
 
   @typedoc """
   What became of a re-driven record: removed after a clean replay, or parked
-  again under the given generation.
+  again under a new generation.
   """
-  @type replay_outcome :: :removed | {:re_parked, pos_integer()}
+  @type replay_outcome :: %{outcome: :removed | :re_parked, generation: pos_integer() | nil}
 
   # ---------- Reads ----------
 
   @doc "Parked entries, nearest-to-expiry first; `nil` for every class."
   @spec list(String.t() | nil, caller_context()) :: {:ok, [entry()]} | {:error, term()}
-  verb list(operator_class, caller_context), verb: :dlq_list, row: &class_scope/1 do
+  verb list(operator_class, caller_context),
+    verb: :dlq_list,
+    row: &class_scope/1,
+    args: [operator_class: @operator_class] do
     {:ok, Store.list(operator_class)}
   end
 
   @doc "One entry and its payload bytes, or `nil` bytes when it carries none."
   @spec get(String.t(), caller_context()) ::
           {:ok, entry(), binary() | nil} | {:error, term()}
-  verb get(entry_ref, caller_context), verb: :dlq_show, row: &locate/1, as: located do
+  verb get(entry_ref, caller_context),
+    verb: :dlq_show,
+    row: &locate/1,
+    as: located,
+    args: [entry_ref: @entry_ref] do
     {:ok, located.entry, located.payload}
   end
 
@@ -67,7 +79,10 @@ defmodule Flezha.Service.Dlq do
   @doc "The `{operator_class, tasklet_id}` pairs that hold parked entries."
   @spec tasklets(String.t() | nil, caller_context()) ::
           {:ok, [{String.t(), String.t()}]} | {:error, term()}
-  verb tasklets(operator_class, caller_context), verb: :dlq_list, row: &class_scope/1 do
+  verb tasklets(operator_class, caller_context),
+    verb: :dlq_list,
+    row: &class_scope/1,
+    args: [operator_class: @operator_class] do
     {:ok, Store.tasklets(operator_class)}
   end
 
@@ -78,7 +93,10 @@ defmodule Flezha.Service.Dlq do
   authorized as `dlq.drop` and audited with the caller that asked.
   """
   @spec drop(String.t(), caller_context()) :: :ok | {:error, term()}
-  verb drop(entry_ref, caller_context), verb: :dlq_drop, row: &locate/1 do
+  verb drop(entry_ref, caller_context),
+    verb: :dlq_drop,
+    row: &locate/1,
+    args: [entry_ref: @entry_ref] do
     Store.drop(entry_ref)
   end
 
@@ -93,15 +111,17 @@ defmodule Flezha.Service.Dlq do
   under the current epoch.
   """
   @spec replay(String.t(), caller_context()) :: {:ok, replay_outcome()} | {:error, term()}
-  verb replay(entry_ref, caller_context), verb: :dlq_replay, row: &locate/1, as: located do
+  verb replay(entry_ref, caller_context),
+    verb: :dlq_replay,
+    row: &locate/1,
+    as: located,
+    args: [entry_ref: @entry_ref] do
     redrive(entry_ref, located.entry, located.payload)
   end
 
-  # ---------- The rows and the effects the terminal shares ----------
+  # ---------- The rows and the re-drive ----------
 
-  @doc false
-  @spec entry_row(String.t()) :: {:ok, map()} | {:error, term()}
-  def entry_row(entry_ref) do
+  defp locate([entry_ref]) do
     case Store.get(entry_ref) do
       {:ok, entry, payload} ->
         {:ok,
@@ -115,24 +135,22 @@ defmodule Flezha.Service.Dlq do
     end
   end
 
-  @doc false
-  @spec class_row(String.t() | nil) :: {:ok, map()}
-  def class_row(operator_class), do: {:ok, %{namespace: class_namespace(operator_class)}}
+  defp class_scope([operator_class]), do: {:ok, %{namespace: class_namespace(operator_class)}}
 
-  @doc false
-  @spec redrive(String.t(), entry(), binary() | nil) :: {:ok, replay_outcome()} | {:error, term()}
-  def redrive(entry_ref, entry, payload) do
+  defp redrive(entry_ref, entry, payload) do
     with :ok <- replayable(entry_ref, payload),
          {:ok, overwatch} <- resolve_overwatch(entry["operator_class"]) do
       generation_before = entry["generation"] || 1
       :ok = Store.mark_replaying(entry_ref)
       Host.inject(overwatch, payload, %{"channel" => entry["channel"]}, :fire_and_forget)
-      {:ok, await_replay_outcome(entry_ref, generation_before, replay_grace_ms())}
+
+      {:ok,
+       case await_replay_outcome(entry_ref, generation_before, replay_grace_ms()) do
+         :removed -> %{outcome: :removed, generation: nil}
+         {:re_parked, generation} -> %{outcome: :re_parked, generation: generation}
+       end}
     end
   end
-
-  defp locate([entry_ref]), do: entry_row(entry_ref)
-  defp class_scope([operator_class]), do: class_row(operator_class)
 
   # A verb that names a class is judged in that class's namespace; one that
   # names none reads across every namespace, which is a `_system` read.

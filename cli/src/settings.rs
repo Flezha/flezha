@@ -22,32 +22,26 @@ fn strip_quotes(value: &str) -> String {
     }
 }
 
-pub(crate) fn serialize_flags(flags: &[(String, String)]) -> String {
-    if flags.is_empty() {
-        return "{}".to_string();
-    }
-
-    let json_pairs: Vec<String> = flags
+/// The `--X` settings as the object a door call's arguments carry. A value is
+/// inlined as JSON only when it actually parses as an object or an array.
+/// Looking merely JSON-shaped is not enough: a subscription template is a
+/// JSON-shaped string carrying `{{items}}` / `{{req_id}}` placeholders, which
+/// no JSON parser accepts, so it stays the string it was written as.
+pub(crate) fn flags_object(flags: &[(String, String)]) -> serde_json::Value {
+    let object = flags
         .iter()
         .map(|(key, value)| {
-            // Inline a value as raw JSON only when it actually parses. Looking
-            // merely JSON-shaped is not enough: a subscription template is a
-            // JSON-shaped string carrying `{{items}}` / `{{req_id}}`
-            // placeholders, which no JSON parser accepts, and inlining it
-            // produced a document the controller could not decode.
             let inline = matches!(value.trim_start().chars().next(), Some('{') | Some('['))
-                && serde_json::from_str::<serde_json::Value>(value).is_ok();
-            if inline {
-                format!("\"{}\": {}", key, value)
-            } else {
-                // Serialize as a JSON string so quotes and backslashes in the
-                // value cannot break out of it.
-                format!("\"{}\": {}", key, serde_json::Value::String(value.clone()))
-            }
+                .then(|| serde_json::from_str::<serde_json::Value>(value).ok())
+                .flatten();
+            (
+                key.clone(),
+                inline.unwrap_or_else(|| serde_json::Value::String(value.clone())),
+            )
         })
         .collect();
 
-    format!("{{{}}}", json_pairs.join(", "))
+    serde_json::Value::Object(object)
 }
 
 /// The repeatable plugin settings: `--X<key>=<value>`, `--X<key> <value>`, and
@@ -242,8 +236,7 @@ mod tests {
     fn json_shaped_but_unparsable_values_are_quoted_as_strings() {
         let template =
             r#"{"method":"subscribe","params":{"symbol":{{items}}},"req_id":{{req_id}}}"#;
-        let out = serialize_flags(&[("subscribe_template".to_string(), template.to_string())]);
-        let parsed: serde_json::Value = serde_json::from_str(&out).expect("must stay decodable");
+        let parsed = flags_object(&[("subscribe_template".to_string(), template.to_string())]);
         assert_eq!(
             parsed["subscribe_template"],
             serde_json::Value::String(template.to_string())
@@ -254,22 +247,20 @@ mod tests {
     /// `subscription_headers` are objects the controller reads structurally.
     #[test]
     fn parsable_json_values_are_still_inlined() {
-        let out = serialize_flags(&[(
+        let parsed = flags_object(&[(
             "payload_metadata".to_string(),
             r#"{"channel":"trades_in"}"#.to_string(),
         )]);
-        let parsed: serde_json::Value = serde_json::from_str(&out).expect("decodable");
         assert_eq!(parsed["payload_metadata"]["channel"], "trades_in");
     }
 
     /// A plain value containing a quote must not break out of its own string.
     #[test]
     fn quotes_in_plain_values_are_escaped() {
-        let out = serialize_flags(&[(
+        let parsed = flags_object(&[(
             "ignore_pattern".to_string(),
             r#""event":"heartbeat""#.to_string(),
         )]);
-        let parsed: serde_json::Value = serde_json::from_str(&out).expect("decodable");
         assert_eq!(parsed["ignore_pattern"], r#""event":"heartbeat""#);
     }
     #[test]
@@ -483,7 +474,10 @@ mod tests {
             flags,
             vec![("channel".to_string(), "alerts,audit".to_string())]
         );
-        assert_eq!(serialize_flags(&flags), r#"{"channel": "alerts,audit"}"#);
+        assert_eq!(
+            flags_object(&flags),
+            serde_json::json!({ "channel": "alerts,audit" })
+        );
 
         assert_eq!(
             extract_x_flags(&v(&["--Xchannel_out", "alerts,audit"])),

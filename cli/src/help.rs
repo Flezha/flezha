@@ -13,12 +13,26 @@ pub(crate) fn render(help: Help) {
     println!("{}", help);
 }
 
+/// The catalogue of every operation a controller publishes, as
+/// `mix flezha.catalogue` wrote it: what `flz help --json` prints, and what
+/// every door call `flz` sends is held to.
+pub(crate) const CATALOGUE: &str = include_str!("../catalogue.json");
+
+/// `flz help`: the screen, or under `--json` the catalogue.
+pub(crate) fn handle_help(read: &crate::args::Reading) {
+    if read.output_format() == "json" {
+        print!("{}", CATALOGUE);
+    } else {
+        render(FLZ);
+    }
+}
+
 pub(crate) const AUDIT_LIST: Help = r#"flz audit list [--json]"#;
 
 pub(crate) const AUDIT_READ: Help = r#"flz audit read <FILE> [OPTIONS]
 
 OPTIONS:
-    --json              Emit NDJSON
+    --json              Emit the matching records as one JSON array
     --source <S>        Match records whose source equals S
     --name <N>          Match records whose name equals N
     --since <TS_US>     Match records with ts_us >= TS_US (monotonic)
@@ -45,8 +59,8 @@ COMMANDS:
     help      Show this help message
 
 OPTIONS:
-    --json    Emit machine-readable output (NDJSON for tail/read).
-              --output json is the same request."#;
+    --json    Emit machine-readable output (one JSON line per record for
+              tail). --output json is the same request."#;
 
 pub(crate) const AUTH: Help = r#"flz auth - Authentication bootstrap and identity
 
@@ -236,8 +250,10 @@ COMMANDS:
 
 OUTPUT FORMAT:
     Every verb takes --json, or the same request spelled --output json / -o json.
-    A verb that answers data answers it as JSON; an acting verb's answer stays
-    text. Any other format is refused.
+    A verb that reaches a controller answers it as JSON whether it reads or
+    acts: the JSON its operation answers on every surface. Any other format is
+    refused. `flz help --json` prints every such operation, as data, with no
+    controller running.
 
 ERRORS:
     A failure is written on stderr as `error: <message> (<code>)`, with a
@@ -473,9 +489,8 @@ COMMANDS:
     unbind     Take an operator's connection to a plugin away
     update     Change an enabled plugin's settings
     disable    Turn a plugin off
-    list       List the plugins enabled in a namespace (text or json),
-               `--installed` packages (text or json) or `--providers`
-               (text only)
+    list       List the plugins enabled in a namespace, the `--installed`
+               packages or the `--providers`
     help       Show help for a specific plugin provider
 
 PLUGINS:

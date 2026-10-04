@@ -1,7 +1,8 @@
+use serde_json::{Map, Value};
+
 use crate::args::{OptSpec, Positional, Reading, DURATION_MS};
 use crate::dispatch::{self, Command, Missing, Verb};
-use crate::help;
-use crate::rpc::{self, text, Opt};
+use crate::{help, rpc};
 
 /// The five filters `audit read` narrows a file with. Their long spelling is
 /// their own name, and the parse and its refusal are the walk's.
@@ -15,7 +16,7 @@ pub(crate) const TABLE: Command = Command {
     path: "flz audit",
     help: help::AUDIT,
     verbs: &[
-        Verb::new("list", |read| rpc::bare(read, "audit_log_render_list")).screen(help::AUDIT_LIST),
+        Verb::new("list", |read| rpc::bare(read, "AuditLog.list_files")).screen(help::AUDIT_LIST),
         Verb::new("read", handle_read)
             .taking(&[Positional::required("<file>")])
             .reading(&[SOURCE, NAME, SINCE, UNTIL, LIMIT])
@@ -23,10 +24,8 @@ pub(crate) const TABLE: Command = Command {
         Verb::new("tail", handle_tail)
             .reading(&[DURATION_MS])
             .screen(help::AUDIT_TAIL),
-        Verb::new("stats", |read| rpc::bare(read, "audit_log_render_stats"))
-            .screen(help::AUDIT_STATS),
-        Verb::new("rotate", |read| rpc::bare(read, "audit_log_render_rotate"))
-            .screen(help::AUDIT_ROTATE),
+        Verb::new("stats", |read| rpc::bare(read, "AuditLog.stats")).screen(help::AUDIT_STATS),
+        Verb::new("rotate", |read| rpc::bare(read, "AuditLog.rotate")).screen(help::AUDIT_ROTATE),
     ],
     help_verbs: dispatch::HELP_VERBS,
     missing: Missing::Screen,
@@ -34,32 +33,23 @@ pub(crate) const TABLE: Command = Command {
 };
 
 fn handle_read(read: &Reading) {
-    let mut opts: Vec<Opt> = Vec::new();
+    let mut params = Map::new();
+    params.insert("file".into(), Value::from(read.pos("<file>")));
 
-    if let Some(source) = read.opt(SOURCE.long) {
-        opts.push(("source", text(source)));
+    for (spec, key) in [(SOURCE, "source"), (NAME, "name")] {
+        if let Some(value) = read.opt(spec.long) {
+            params.insert(key.into(), Value::from(value));
+        }
     }
-    if let Some(name) = read.opt(NAME.long) {
-        opts.push(("name", text(name)));
-    }
-    if let Some(since) = read.opt(SINCE.long) {
-        opts.push(("since_us", since.to_string()));
-    }
-    if let Some(until) = read.opt(UNTIL.long) {
-        opts.push(("until_us", until.to_string()));
-    }
-    if let Some(limit) = read.opt(LIMIT.long) {
-        opts.push(("limit", limit.to_string()));
+    for (spec, key) in [(SINCE, "since_us"), (UNTIL, "until_us"), (LIMIT, "limit")] {
+        if let Some(value) = read.num::<i64>(spec.long) {
+            params.insert(key.into(), Value::from(value));
+        }
     }
 
-    rpc::run(
-        "audit_log_render_read",
-        &[text(read.pos("<file>"))],
-        &opts,
-        read,
-    );
+    rpc::door("AuditLog.read", &[Value::Object(params)], &[], read);
 }
 
 fn handle_tail(read: &Reading) {
-    rpc::run("audit_log_render_tail", &[], &[rpc::window(read)], read);
+    rpc::door("AuditLog.tail", &[], &[rpc::window(read)], read);
 }

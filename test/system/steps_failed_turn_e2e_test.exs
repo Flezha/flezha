@@ -20,7 +20,7 @@ defmodule FlezhaTest.System.StepsFailedTurnE2ETest do
   import FlezhaTest.Helper.StepsResumeHarness
 
   alias Flezha.Dlq.Store, as: DlqStore
-  alias Flezha.Service.CliManager
+  alias Flezha.Service.Cli
   alias Flezha.State.Completion
   alias Flezha.State.TaskJournal
   alias FlezhaTest.Helper.DlqFixtures
@@ -70,10 +70,10 @@ defmodule FlezhaTest.System.StepsFailedTurnE2ETest do
     assert [%{payload: %{cells_ran: [%{seq: seq}]}}] = compensated(operator_id, 0, 1)
     assert is_integer(seq)
 
-    info = capture_io(fn -> CliManager.operator_info(namespace) end)
+    info = capture_io(fn -> Cli.call("Operator.info", Jason.encode!([namespace]), []) end)
     assert info =~ "Failed turns: 1 (last: iteration 1)"
 
-    journal = capture_io(fn -> CliManager.state_journal(operator_id) end)
+    journal = capture_io(fn -> Cli.call("Steps.journal", Jason.encode!([operator_id]), []) end)
     assert journal =~ "dead_lettered task_idx=0 iter=1"
     assert journal =~ "parked as #{ref}"
 
@@ -89,7 +89,9 @@ defmodule FlezhaTest.System.StepsFailedTurnE2ETest do
     answered!(session, "re:heal")
     assert [entry] = DlqStore.list(operator_id)
 
-    assert capture_io(fn -> CliManager.dlq_replay(entry_ref(entry)) end) =~ "replay succeeded"
+    assert capture_io(fn -> Cli.call("Dlq.replay", Jason.encode!([entry_ref(entry)]), []) end) =~
+             "replay succeeded"
+
     answered!(session, "re:boom-until-healed")
 
     assert iteration_records(operator_id) ==
@@ -108,7 +110,11 @@ defmodule FlezhaTest.System.StepsFailedTurnE2ETest do
     assert NodeTestHelper.wait_until(fn -> compensated(operator_id, 0, 1) != [] end, 60_000),
            "the failed turn was never undone"
 
-    rewound = capture_io(fn -> CliManager.operator_rewind(namespace, operator_id, 0) end)
+    rewound =
+      capture_io(fn ->
+        Cli.call("Steps.rewind", Jason.encode!([namespace, operator_id, 0]), [])
+      end)
+
     assert rewound =~ "rewound to iteration 0"
 
     send_turn(namespace, operator_id, "again")

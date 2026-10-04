@@ -11,9 +11,9 @@ defmodule Flezha.Service.AuditLog do
   the subsystem flag off (`:audit_log, :enabled: false`) gives
   `{:error, :audit_log_disabled}`.
 
-  The effects — the catalog, a filtered read, the tail subscription, the stats
-  snapshot and a rotation — are public so `Flezha.Service.Cli.Audit` renders
-  the same answers under the same rows.
+  `tail/2` subscribes the calling process: each record arrives as
+  `{:audit_record, ref, record}`, and `{:audit_writer_closed, ref}` ends the
+  stream.
   """
 
   use Flezha.AuthZ.Verb
@@ -38,80 +38,46 @@ defmodule Flezha.Service.AuditLog do
 
   # ---------- Public API ----------
 
+  @doc "The audit log's files: name, first and last record time, record count, size and digest."
   @spec list_files(caller_context()) :: {:ok, [map()]} | {:error, term()}
   verb list_files(caller_context), verb: :audit_list do
-    catalog()
-  end
-
-  @spec read(read_params(), caller_context()) :: {:ok, [map()]} | {:error, term()}
-  verb read(params, caller_context) when is_map(params),
-    verb: :audit_read,
-    target: &read_target/1 do
-    read_records(params, caller_context)
-  end
-
-  @spec tail(map(), caller_context()) :: {:ok, reference()} | {:error, term()}
-  verb tail(params, caller_context), verb: :audit_tail do
-    subscribe_tail()
-  end
-
-  @spec unsubscribe(reference(), caller_context()) :: :ok | {:error, term()}
-  verb unsubscribe(ref, caller_context) when is_reference(ref), verb: :audit_unsubscribe do
-    with :ok <- check_enabled(), do: Writer.unsubscribe_tail(ref)
-  end
-
-  @spec stats(caller_context()) :: {:ok, map()} | {:error, term()}
-  verb stats(caller_context), verb: :audit_stats do
-    stats_snapshot()
-  end
-
-  @spec rotate(caller_context()) :: {:ok, map()} | {:error, term()}
-  verb rotate(caller_context), verb: :audit_rotate do
-    rotate_now()
-  end
-
-  # ---------- The effects the terminal shares ----------
-
-  @doc false
-  @spec catalog() :: {:ok, [map()]} | {:error, term()}
-  def catalog do
     with :ok <- check_enabled(), do: {:ok, Writer.catalog()}
   end
 
-  @doc false
-  @spec read_records(read_params(), caller_context()) :: {:ok, [map()]} | {:error, term()}
-  def read_records(params, caller_context) do
-    with :ok <- check_enabled() do
-      path = Path.join(audit_dir(), Map.get(params, :file) || "audit-current.jsonl")
-
-      if File.exists?(path) do
-        limit = Map.get(params, :limit, 1_000)
-
-        opts = [
-          source: Map.get(params, :source),
-          name: Map.get(params, :name),
-          since_us: Map.get(params, :since_us),
-          until_us: Map.get(params, :until_us),
-          limit: limit
-        ]
-
-        records = Reader.stream(path, opts) |> Enum.take(limit)
-        {:ok, filter_by_namespace(records, caller_context)}
-      else
-        {:error, {:file_not_found, Path.basename(path)}}
-      end
-    end
+  @doc "The records of one audit file that match `params`, in the caller's namespace."
+  @spec read(read_params() | keyword(), caller_context()) :: {:ok, [map()]} | {:error, term()}
+  verb read(params, caller_context),
+    verb: :audit_read,
+    target: &read_target/1,
+    args: [
+      params: [
+        type: :keyword,
+        doc: "`file`, `source`, `name`, `since_us`, `until_us` and `limit`."
+      ]
+    ] do
+    with :ok <- check_enabled(), do: read_records(Map.new(params), caller_context)
   end
 
-  @doc false
-  @spec subscribe_tail() :: {:ok, reference()} | {:error, term()}
-  def subscribe_tail do
+  @doc "Subscribe the calling process to every audit record as it is written."
+  @spec tail(map() | keyword(), caller_context()) :: {:ok, reference()} | {:error, term()}
+  verb tail(params, caller_context),
+    verb: :audit_tail,
+    stream: true,
+    args: [params: [type: :keyword, default: [], doc: "Unused."]] do
     with :ok <- check_enabled(), do: Writer.subscribe_tail()
   end
 
-  @doc false
-  @spec stats_snapshot() :: {:ok, map()} | {:error, term()}
-  def stats_snapshot do
+  @doc "Undo a `tail/2`."
+  @spec unsubscribe(reference(), caller_context()) :: :ok | {:error, term()}
+  verb unsubscribe(ref, caller_context),
+    verb: :audit_unsubscribe,
+    args: [ref: [type: :any, doc: "The subscription `tail/2` answered."]] do
+    with :ok <- check_enabled(), do: Writer.unsubscribe_tail(ref)
+  end
+
+  @doc "The audit log's operational snapshot."
+  @spec stats(caller_context()) :: {:ok, map()} | {:error, term()}
+  verb stats(caller_context), verb: :audit_stats do
     with :ok <- check_enabled() do
       snapshot = Writer.stats()
 
@@ -125,15 +91,39 @@ defmodule Flezha.Service.AuditLog do
     end
   end
 
-  @doc false
-  @spec rotate_now() :: {:ok, map()} | {:error, term()}
-  def rotate_now do
+  @doc "Close the current audit file and start a new one."
+  @spec rotate(caller_context()) :: {:ok, map()} | {:error, term()}
+  verb rotate(caller_context), verb: :audit_rotate do
     with :ok <- check_enabled(), do: Rotation.rotate_now()
+  end
+
+  defp read_records(params, caller_context) do
+    file = Map.get(params, :file) || "audit-current.jsonl"
+    path = Path.join(audit_dir(), file)
+
+    # Only a file of the audit directory itself: a name that walks out of it is
+    # answered as missing, so the read says nothing about the host's files.
+    if Path.basename(file) == file and file not in [".", ".."] and File.regular?(path) do
+      limit = Map.get(params, :limit, 1_000)
+
+      opts = [
+        source: Map.get(params, :source),
+        name: Map.get(params, :name),
+        since_us: Map.get(params, :since_us),
+        until_us: Map.get(params, :until_us),
+        limit: limit
+      ]
+
+      records = Reader.stream(path, opts) |> Enum.take(limit)
+      {:ok, filter_by_namespace(records, caller_context)}
+    else
+      {:error, {:file_not_found, Path.basename(file)}}
+    end
   end
 
   # ---------- Internal helpers ----------
 
-  defp read_target([params | _]), do: %{file: Map.get(params, :file)}
+  defp read_target([params | _]), do: %{file: params |> Map.new() |> Map.get(:file)}
 
   # Filter JSONL records to the caller's namespace except for
   # `admin@_system` and internal callers. Records that pre-date the

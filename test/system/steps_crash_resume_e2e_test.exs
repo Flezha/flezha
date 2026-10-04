@@ -64,7 +64,7 @@ defmodule FlezhaTest.System.StepsCrashResumeE2ETest do
   alias Flezha.Operator.Replay
   alias Flezha.Runner.FleetManager
   alias Flezha.State.Completion
-  alias Flezha.Service.CliManager
+  alias Flezha.Service.Cli
   alias Flezha.State.Paths
   alias Flezha.SDK.Wire
   alias Flezha.State.Outbox
@@ -110,7 +110,7 @@ defmodule FlezhaTest.System.StepsCrashResumeE2ETest do
         # Operations surface: `flz state journal <instance>` renders the entries.
         rendered =
           ExUnit.CaptureIO.capture_io(fn ->
-            CliManager.state_journal(operator_id)
+            Cli.call("Steps.journal", Jason.encode!([operator_id]), [])
           end)
 
         assert rendered =~ "task_committed"
@@ -543,7 +543,7 @@ defmodule FlezhaTest.System.StepsCrashResumeE2ETest do
 
       rendered =
         ExUnit.CaptureIO.capture_io(fn ->
-          CliManager.state_journal(operator_id)
+          Cli.call("Steps.journal", Jason.encode!([operator_id]), [])
         end)
 
       assert rendered =~ "ran: #{operator_id}/commit_a/ record=#{seq} channels=mid"

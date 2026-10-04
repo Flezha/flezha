@@ -1,267 +1,98 @@
 defmodule Flezha.Service.Cli.Authz do
   @moduledoc """
-  `flz auth | token | role | namespace` — bootstrap, token issue/revoke/list,
-  role bind/unbind/list, namespace create/delete/show/set-quota, and the
-  renderers `flz` calls for each. Each body receives the bound call, so the
-  actor a store records is the principal the verb was judged as.
+  `flz auth | token | role | namespace` — the text forms of the answers
+  `Flezha.Service.Namespace` gives for identity, tokens, role bindings and
+  namespaces.
   """
 
-  alias Flezha.AuthZ.Bootstrap
-  alias Flezha.AuthZ.NamespaceStore
-  alias Flezha.AuthZ.Policy
-  alias Flezha.AuthZ.Role
-  alias Flezha.AuthZ.RoleStore
-  alias Flezha.AuthZ.TokenStore
-  alias Flezha.Service.Cli.Context
-  alias Flezha.Service.Namespace
-
-  @doc "The token a `token revoke` names: its own namespace is the scope."
-  def token_row([token_id | _]) do
-    case find_token_by_id(token_id) do
-      {:ok, entry} -> {:ok, %{namespace: entry.namespace, entry: entry}}
-      :error -> {:error, {:token_not_found, token_id}}
-    end
-  end
-
-  @doc "The binding a `role unbind` names; a principal bound nowhere is judged in `_system`."
-  def binding_row([principal | _]) do
-    case RoleStore.lookup(principal) do
-      {:ok, %{namespace: namespace}} -> {:ok, %{namespace: namespace}}
-      :error -> {:ok, %{namespace: Flezha.AuthZ.Namespace.system_name()}}
-    end
-  end
-
-  @doc "CLI entry: `flz auth bootstrap <token>`. The one-time token is its own credential."
-  def authz_render_bootstrap(token, %{opts: opts}) when is_binary(token) do
-    case Bootstrap.claim(token, opts) do
-      {:ok, %{principal: principal, minted_token: nil}} ->
-        IO.puts("bootstrap claimed; admin@_system bound to #{principal}")
-
-      {:ok, %{principal: principal, minted_token: minted}} ->
-        IO.puts("bootstrap claimed; admin@_system bound to #{principal}")
-        IO.puts("admin token (shown once, store it now): #{minted}")
-
-      {:error, _reason} = refused ->
-        refused
-    end
-  end
-
-  @doc "The identity a verified token resolves to."
-  def authz_whoami(%{context: context}) do
-    {:ok,
-     %{
-       principal: Map.get(context, :principal),
-       namespace: Map.get(context, :namespace),
-       role: Map.get(context, :role)
-     }}
-  end
-
-  @doc "CLI entry: `flz auth whoami`."
-  def authz_render_whoami(call) do
-    {:ok, identity} = authz_whoami(call)
+  @doc "`flz auth whoami`."
+  def whoami(identity, _args, _opts) do
     IO.puts("principal: #{identity.principal || "(unbound — supply --token / FLEZHA_TOKEN)"}")
     IO.puts("namespace: #{identity.namespace || "-"}")
     IO.puts("role:      #{identity.role || "-"}")
   end
 
-  @doc "CLI entry: `flz token issue <principal> <namespace> <role> [--ttl <seconds>]`."
-  def authz_render_token_issue(principal, namespace, role_string, call) do
-    # A role carrying `runner.connect` is what a runner principal is bound to,
-    # and a runner proves itself with a `runner` credential, so no credential is
-    # issued for any of them. Worked out from the grant, so a role added to the
-    # enumeration with the connect needs no list edited here.
-    issuable = [:runner | Enum.reject(Role.all(), &Policy.runner_principal_role?/1)]
-
-    with {:ok, role} <- parse_role(role_string, issuable),
-         {:ok, raw, entry} <-
-           TokenStore.issue(principal, namespace, role, Keyword.fetch!(call.opts, :ttl),
-             created_by_principal: actor(call),
-             label: Keyword.get(call.opts, :label)
-           ) do
-      IO.puts("token issued for #{principal} (#{role}@#{namespace})")
-      IO.puts("id:    #{String.slice(entry.token_hash, 0, 12)}")
-      IO.puts("token (shown once, store it now): #{raw}")
-    end
+  @doc "`flz auth bootstrap <token>`."
+  def bootstrap(%{principal: principal, minted_token: minted}, _args, _opts) do
+    IO.puts("bootstrap claimed; admin@_system bound to #{principal}")
+    if minted, do: IO.puts("admin token (shown once, store it now): #{minted}")
   end
 
-  @doc "CLI entry: `flz token revoke <id>`."
-  def authz_render_token_revoke(token_id, call) do
-    with {:ok, entry} <- TokenStore.revoke(token_id, revoked_by_principal: actor(call)) do
-      IO.puts("revoked token #{String.slice(entry.token_hash, 0, 12)}")
-    end
+  @doc "`flz token issue`."
+  def issue_token(token, _args, _opts) do
+    IO.puts("token issued for #{token.principal} (#{token.role}@#{token.namespace})")
+    IO.puts("id:    #{token.id}")
+    IO.puts("token (shown once, store it now): #{token.token}")
   end
 
-  @doc "CLI entry: `flz token list`."
-  def authz_render_token_list(%{context: context}) do
-    case TokenStore.list(Flezha.AuthZ.Namespace.listing_scope(context)) do
-      [] ->
-        IO.puts("no tokens")
+  @doc "`flz token list`."
+  def tokens([], _args, _opts), do: IO.puts("no tokens")
 
-      entries ->
-        Enum.each(entries, fn entry ->
-          status =
-            cond do
-              is_integer(entry.revoked_at) ->
-                "revoked"
-
-              entry.expires_at != :never and entry.expires_at <= System.system_time(:second) ->
-                "expired"
-
-              true ->
-                "active"
-            end
-
-          IO.puts(
-            "#{String.slice(entry.token_hash, 0, 12)}  #{entry.principal}  " <>
-              "#{entry.role}@#{entry.namespace}  #{status}#{token_label_suffix(entry)}"
-          )
-        end)
-    end
+  def tokens(tokens, _args, _opts) do
+    Enum.each(tokens, fn token ->
+      IO.puts(
+        "#{token.id}  #{token.principal}  #{token.role}@#{token.namespace}  " <>
+          "#{token.status}#{label_suffix(token.label)}"
+      )
+    end)
   end
 
-  defp token_label_suffix(%{label: label}) when is_binary(label) and label != "",
-    do: "  (#{label})"
+  @doc "`flz token revoke <id>`."
+  def revoke_token(token, _args, _opts), do: IO.puts("revoked token #{token.id}")
 
-  defp token_label_suffix(_), do: ""
-
-  @doc "CLI entry: `flz role bind <principal> <role> <namespace>`."
-  def authz_render_role_bind(principal, role_string, namespace, call) do
-    with {:ok, role} <- parse_role(role_string),
-         :ok <- RoleStore.bind(principal, namespace, role, bound_by: actor(call)) do
-      IO.puts("bound #{principal} as #{role}@#{namespace}")
-      print_identity(principal)
-    end
+  @doc "`flz role bind`."
+  def bind_role(bound, _args, _opts) do
+    IO.puts("bound #{bound.principal} as #{bound.role}@#{bound.namespace}")
+    print_identity(bound.binding)
   end
 
-  @doc """
-  CLI entry: `flz role unbind <principal> [<role>]`.
+  @doc "`flz role unbind`."
+  def unbind_role(%{principal: principal, role: nil}, _args, _opts),
+    do: IO.puts("unbound #{principal}")
 
-  An empty role is every role, which is what the bare command has always meant:
-  the one-command revocation for an identity that is compromised or retired, and
-  a mistake with it can only take rights away.
-  """
-  def authz_render_role_unbind(principal, "", _call) do
-    :ok = RoleStore.unbind(principal)
-    IO.puts("unbound #{principal}")
+  def unbind_role(unbound, _args, _opts) do
+    IO.puts("unbound #{unbound.role} from #{unbound.principal}")
+    print_identity(unbound.binding)
   end
 
-  def authz_render_role_unbind(principal, role_string, _call) do
-    with {:ok, role} <- parse_role(role_string),
-         :ok <- RoleStore.unbind(principal, role) do
-      IO.puts("unbound #{role} from #{principal}")
-      print_identity(principal)
-    end
+  @doc "`flz role list`."
+  def list_roles([], _args, _opts), do: IO.puts("no role bindings")
+  def list_roles(bindings, _args, _opts), do: Enum.each(bindings, &print_identity/1)
+
+  @doc "`flz namespace create`."
+  def create(entry, _args, _opts) do
+    IO.puts("namespace #{entry.name} created")
+    print_namespace(entry)
   end
 
-  @doc "CLI entry: `flz role list`."
-  def authz_render_role_list(_call) do
-    case RoleStore.list() do
-      [] -> IO.puts("no role bindings")
-      bindings -> Enum.each(bindings, &IO.puts(identity_line(&1)))
-    end
+  @doc "`flz namespace delete`."
+  def delete(:ok, [name | _], _opts), do: IO.puts("namespace #{name} deleted")
+
+  @doc "`flz namespace show`."
+  def get(entry, _args, _opts), do: print_namespace(entry)
+
+  @doc "`flz namespace set-quota`."
+  def set_quotas(entry, _args, _opts) do
+    IO.puts("namespace #{entry.name} quotas updated")
+    print_namespace(entry)
   end
+
+  defp label_suffix(label) when is_binary(label) and label != "", do: "  (#{label})"
+  defp label_suffix(_none), do: ""
 
   # One line per identity, shared by the three role verbs. An identity holding
   # one role prints the line `role list` has always printed.
-  defp identity_line(%{principal: principal, roles: roles, namespace: namespace}),
-    do: "#{principal}  #{Enum.join(roles, ",")}@#{namespace}"
+  defp print_identity(nil), do: :ok
 
-  defp print_identity(principal) do
-    case RoleStore.lookup(principal) do
-      {:ok, binding} -> IO.puts(identity_line(binding))
-      :error -> :ok
-    end
-  end
+  defp print_identity(%{principal: principal, roles: roles, namespace: namespace}),
+    do: IO.puts("#{principal}  #{Enum.join(roles, ",")}@#{namespace}")
 
-  @doc "CLI entry: `flz namespace create <name> [--Xquota=value ...]`."
-  def authz_render_namespace_create(name, quotas_json, call) do
-    with {:ok, quotas} <- parse_quota_overrides(quotas_json),
-         {:ok, entry} <-
-           NamespaceStore.create(name, quotas: quotas, created_by_principal: actor(call)) do
-      IO.puts("namespace #{name} created")
-      print_namespace_entry(entry)
-    end
-  end
-
-  @doc "CLI entry: `flz namespace delete <name>`."
-  def authz_render_namespace_delete(name, _call) do
-    with :ok <- Namespace.remove(name), do: IO.puts("namespace #{name} deleted")
-  end
-
-  @doc "CLI entry: `flz namespace show <name>`."
-  def authz_render_namespace_show(name, _call) do
-    case NamespaceStore.get(name) do
-      {:ok, entry} -> print_namespace_entry(entry)
-      :error -> {:error, {:not_found, name}}
-    end
-  end
-
-  @doc "CLI entry: `flz namespace set-quota <name> --X<quota>=<value> ...`."
-  def authz_render_namespace_set_quota(name, quotas_json, _call) do
-    with {:ok, overrides} <- parse_quota_overrides(quotas_json),
-         {:ok, entry} <- NamespaceStore.set_quotas(name, overrides) do
-      IO.puts("namespace #{name} quotas updated")
-      print_namespace_entry(entry)
-    end
-  end
-
-  defp actor(%{context: context}), do: Map.get(context, :principal)
-
-  defp print_namespace_entry(entry) do
+  defp print_namespace(entry) do
     IO.puts("namespace: #{entry.name}")
     IO.puts("quotas:")
 
     entry.quotas
     |> Enum.sort()
     |> Enum.each(fn {k, v} -> IO.puts("  #{k}: #{v}") end)
-  end
-
-  # Resolved against the one enumeration, so a name nobody declared never
-  # becomes an atom and a declared role is never missing here.
-  defp parse_role(role, roles \\ Role.all())
-
-  defp parse_role(role_string, roles) when is_binary(role_string) do
-    case Enum.find(roles, &(Atom.to_string(&1) == role_string)) do
-      nil -> {:error, {:unknown_role, role_string}}
-      role -> {:ok, role}
-    end
-  end
-
-  defp parse_role(role, roles) when is_atom(role) do
-    if role in roles, do: {:ok, role}, else: {:error, {:unknown_role, role}}
-  end
-
-  # Quota overrides arrive as the CLI's `--X` JSON object; keys must name
-  # documented quota fields, values must be non-negative integers (validated
-  # again by `Namespace.build_quotas/1`).
-  defp parse_quota_overrides(quotas_json) when is_binary(quotas_json) do
-    quotas_json
-    |> Context.json!("quota overrides")
-    |> Enum.reduce_while({:ok, %{}}, fn {key, value}, {:ok, acc} ->
-      case quota_field(key) do
-        {:ok, field} -> {:cont, {:ok, Map.put(acc, field, parse_quota_value(value))}}
-        :error -> {:halt, {:error, {:unknown_quota_field, key}}}
-      end
-    end)
-  end
-
-  defp parse_quota_overrides(%{} = quotas), do: {:ok, quotas}
-
-  defp quota_field(key) do
-    {:ok, String.to_existing_atom(key)}
-  rescue
-    ArgumentError -> :error
-  end
-
-  defp parse_quota_value(v) when is_integer(v), do: v
-  defp parse_quota_value(v) when is_binary(v), do: Context.integer!(v, "quota value")
-
-  defp find_token_by_id(id) do
-    TokenStore.list(:all)
-    |> Enum.find(fn entry -> String.starts_with?(entry.token_hash, id) end)
-    |> case do
-      nil -> :error
-      entry -> {:ok, entry}
-    end
   end
 end

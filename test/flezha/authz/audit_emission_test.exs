@@ -30,7 +30,7 @@ defmodule Flezha.AuthZ.AuditEmissionTest do
 
   alias Flezha.AuthZ.{AuthState, Bootstrap, RoleStore, TokenStore}
   alias Flezha.Observability.{RingBufferSink, TestSinks}
-  alias Flezha.Service.CliManager
+  alias Flezha.Service.Cli
   alias FlezhaTest.Helper.AuthTestHelper
 
   @source :platform_authz
@@ -105,7 +105,9 @@ defmodule Flezha.AuthZ.AuditEmissionTest do
 
     output =
       ExUnit.CaptureIO.capture_io(fn ->
-        CliManager.authz_render_namespace_create("tenant-a", "{}", token: raw)
+        Cli.call("Namespace.create", Jason.encode!(["tenant-a", %{quotas: Jason.decode!("{}")}]),
+          token: raw
+        )
       end)
 
     assert output =~ "namespace tenant-a created"

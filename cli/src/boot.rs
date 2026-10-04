@@ -1,6 +1,8 @@
 use std::thread;
 use std::time::{Duration, Instant};
 
+use serde_json::Value;
+
 use crate::args::{OptSpec, Reading};
 use crate::dispatch::{self, Command, Missing, Verb};
 use crate::{help, rpc};
@@ -26,7 +28,7 @@ pub(crate) const TABLE: Command = Command {
 };
 
 fn handle_status(read: &Reading) {
-    rpc::run("boot_status", &[], &[], read);
+    rpc::bare(read, "Controller.boot_status");
 }
 
 const DEFAULT_TIMEOUT_MS: u64 = 60_000;
@@ -50,9 +52,9 @@ fn handle_await(read: &Reading) {
 
     // Still unreachable when the budget runs out is `controller.unreachable`,
     // whose message names what a failed connect cannot tell apart.
-    while rpc::run_if_reachable(&rpc::expression(
-        "boot_await",
-        &[budget_ms.to_string()],
+    while rpc::run_if_reachable(&rpc::door_expression(
+        "Controller.boot_await",
+        &[Value::from(budget_ms)],
         &[],
         read,
     ))

@@ -33,7 +33,7 @@ defmodule FlezhaTest.System.KnobDrillTest do
   alias Flezha.Observability.AuditLog.Writer, as: AuditWriter
   alias Flezha.Observability.Export.PrometheusHttp
   alias Flezha.Plugin.Provider.File, as: FilePlugin
-  alias Flezha.Service.Cli.Controller, as: ControllerCli
+  alias Flezha.Service.Cli
   alias Flezha.Socket.Support
   alias Flezha.State.Paths
   alias FlezhaTest.Helper.NodeTestHelper
@@ -100,7 +100,7 @@ defmodule FlezhaTest.System.KnobDrillTest do
 
     printed =
       ExUnit.CaptureIO.capture_io(fn ->
-        :ok = ControllerCli.controller_status(%{opts: []})
+        :ok = Cli.call("Controller.status", "[]", [])
       end)
 
     Paths.state_root() == resolved and
@@ -116,7 +116,7 @@ defmodule FlezhaTest.System.KnobDrillTest do
 
     printed =
       ExUnit.CaptureIO.capture_io(fn ->
-        :ok = ControllerCli.controller_status(%{opts: []})
+        :ok = Cli.call("Controller.status", "[]", [])
       end)
 
     {:ok, %{path: path}} = FilePlugin.prepare(%{path: "x.ndjson", plugin_id: "knob_drill"})

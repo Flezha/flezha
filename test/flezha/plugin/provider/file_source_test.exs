@@ -29,7 +29,7 @@ defmodule Flezha.Plugin.Provider.FileSourceTest do
   alias Flezha.Plugin.Host
   alias Flezha.Plugin.Provider.File.Source
   alias Flezha.Plugin.Providers
-  alias Flezha.Service.Cli.Controller
+  alias Flezha.Service.Cli
   alias FlezhaTest.Helper.Minio
   alias FlezhaTest.Helper.ProviderPrepare
 
@@ -384,7 +384,7 @@ defmodule Flezha.Plugin.Provider.FileSourceTest do
           settle(reader)
         end)
 
-      status = capture_io(fn -> Controller.controller_status(%{opts: []}) end)
+      status = capture_io(fn -> Cli.call("Controller.status", "[]", []) end)
 
       assert log =~ "reason={:stat, {:http, 403}}"
       assert status =~ ~r/file_plugin_root: +#{Regex.escape(root)}\n/

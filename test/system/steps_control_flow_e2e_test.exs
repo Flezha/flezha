@@ -30,7 +30,7 @@ defmodule FlezhaTest.System.StepsControlFlowE2ETest do
   alias Flezha.Operator.ClassRegistry
   alias Flezha.Runner.FleetManager
   alias Flezha.SDK.Wire
-  alias Flezha.Service.CliManager
+  alias Flezha.Service.Cli
   alias Flezha.Service.OperatorManager
   alias Flezha.State.Completion
   alias Flezha.State.Paths
@@ -139,7 +139,7 @@ defmodule FlezhaTest.System.StepsControlFlowE2ETest do
       # marked undelivered — this is what survives the SIGKILL below.
       pending_inbox =
         ExUnit.CaptureIO.capture_io(fn ->
-          CliManager.state_inbox(operator_id)
+          Cli.call("Steps.inbox", Jason.encode!([operator_id]), [])
         end)
 
       assert pending_inbox =~ "durable input log for #{operator_id}"
@@ -184,7 +184,7 @@ defmodule FlezhaTest.System.StepsControlFlowE2ETest do
       # --- operations surface ---
       journal =
         ExUnit.CaptureIO.capture_io(fn ->
-          CliManager.state_journal(operator_id)
+          Cli.call("Steps.journal", Jason.encode!([operator_id]), [])
         end)
 
       assert journal =~ "iter_committed"
@@ -480,7 +480,7 @@ defmodule FlezhaTest.System.StepsControlFlowE2ETest do
       # --- rewind to iteration 0 ---
       rewind_out =
         ExUnit.CaptureIO.capture_io(fn ->
-          CliManager.operator_rewind(namespace, operator_id, 0)
+          Cli.call("Steps.rewind", Jason.encode!([namespace, operator_id, 0]), [])
         end)
 
       assert rewind_out =~ "rewound to iteration 0"
@@ -633,7 +633,7 @@ defmodule FlezhaTest.System.StepsControlFlowE2ETest do
 
       rendered =
         ExUnit.CaptureIO.capture_io(fn ->
-          CliManager.state_journal(operator_id)
+          Cli.call("Steps.journal", Jason.encode!([operator_id]), [])
         end)
 
       assert rendered =~ "leaves: 2,3  complete: true"

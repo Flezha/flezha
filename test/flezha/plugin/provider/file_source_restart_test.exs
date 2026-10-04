@@ -65,7 +65,7 @@ defmodule Flezha.Plugin.Provider.FileSourceRestartTest do
 
     # The durable half of what the Overwatch does with a reader's commit: a
     # reader's offset is its operator's position, so it is the binding's.
-    assert :ok = PluginManager.persist_binding_opt(@namespace, operator_id, plugin_id, :offset, 6)
+    assert :ok = PluginManager.persist_opt(@namespace, operator_id, plugin_id, :offset, 6)
 
     HubRegistryTestHelper.stop_hub_keeping_registry(@namespace)
     {:ok, _} = HubManager.start_hub(@namespace)

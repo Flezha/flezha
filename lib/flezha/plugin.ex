@@ -82,12 +82,39 @@ defmodule Flezha.Plugin do
 
   @fields [:id, :provider, :opts, :hooks, :namespace, :operator_id, :single]
 
+  @doc """
+  Refuse any of a caller's named `fields` but the namespace and those in
+  `read`: a field a verb does not read is refused, never dropped.
+  """
+  @spec read_only(keyword(), [atom()]) :: :ok | {:error, term()}
+  def read_only(fields, read) do
+    case Keyword.keys(fields) -- [:namespace | read] do
+      [] -> :ok
+      unknown -> {:error, {:plugin_fields_unknown, unknown}}
+    end
+  end
+
+  @doc """
+  The operator a binding's named `fields` target (`:operator_id`), after
+  `read_only/2` with `read` and the operator.
+  """
+  @spec binding_target(keyword(), [atom()]) :: {:ok, binary()} | {:error, term()}
+  def binding_target(fields, read) do
+    with :ok <- read_only(fields, [:operator_id | read]) do
+      case fields[:operator_id] do
+        operator_id when is_binary(operator_id) and operator_id != "" ->
+          {:ok, operator_id}
+
+        _none ->
+          {:error, {:plugin_target_missing, Keyword.get(fields, :namespace, "default"), nil}}
+      end
+    end
+  end
+
   defp required_fields(fields) do
-    case {Enum.reject([:id, :provider], &Keyword.has_key?(fields, &1)),
-          Enum.reject(Keyword.keys(fields), &(&1 in @fields))} do
-      {[], []} -> :ok
-      {[], unknown} -> {:error, {:plugin_fields_unknown, unknown}}
-      {missing, _unknown} -> {:error, {:plugin_fields_missing, missing}}
+    case Enum.reject([:id, :provider], &Keyword.has_key?(fields, &1)) do
+      [] -> read_only(fields, @fields)
+      missing -> {:error, {:plugin_fields_missing, missing}}
     end
   end
 
@@ -99,27 +126,32 @@ defmodule Flezha.Plugin do
   defp named_provider(fields) do
     case Keyword.fetch!(fields, :provider) do
       provider when is_binary(provider) ->
-        case Flezha.Plugin.Providers.fetch(provider) do
-          {:ok, module} -> {:ok, Keyword.put(fields, :provider, module)}
-          :error -> {:error, {:unknown_provider, provider}}
-        end
+        with {:ok, module} <- Flezha.Plugin.Providers.resolve(provider),
+             do: {:ok, Keyword.put(fields, :provider, module)}
 
       _module ->
         {:ok, fields}
     end
   end
 
-  # Only a key the provider names becomes its atom, so a caller cannot create
-  # atoms, and any other key reaches the provider's refusal as it was written.
   defp read_opts(fields) do
     with {:ok, %{} = opts} <- Keyword.fetch(fields, :opts),
          true <- Enum.any?(Map.keys(opts), &is_binary/1) do
-      names = Map.new(Options.known_names(fields[:provider]), &{Atom.to_string(&1), &1})
-      read = Map.new(opts, fn {key, value} -> {Map.get(names, key, key), value} end)
-      Keyword.put(fields, :opts, read)
+      Keyword.put(fields, :opts, option_keys(fields[:provider], opts))
     else
       _atom_keys_or_none -> fields
     end
+  end
+
+  @doc """
+  `opts` with each key written as text that `provider` names turned into its
+  atom. Only a key the provider names becomes an atom, so a caller cannot
+  create atoms, and any other key reaches the provider's refusal as written.
+  """
+  @spec option_keys(module(), map()) :: map()
+  def option_keys(provider, opts) do
+    names = Map.new(Options.known_names(provider), &{Atom.to_string(&1), &1})
+    Map.new(opts, fn {key, value} -> {Map.get(names, key, key), value} end)
   end
 
   defp read_hooks(fields) do
@@ -159,6 +191,25 @@ defmodule Flezha.Plugin do
 
   def hooks([]), do: {:error, {:invalid_hook, :empty}}
   def hooks(_other), do: {:error, {:invalid_hook, :not_a_list}}
+
+  @doc "`hooks/1` for a field that may be absent, which names no hooks."
+  @spec optional_hooks(term()) :: {:ok, [hook()]} | {:error, term()}
+  def optional_hooks(nil), do: {:ok, []}
+  def optional_hooks(written), do: hooks(written)
+
+  @doc """
+  Whether `plugin`'s hooks have an operator to send to: an operator plugin's
+  hooks say what it sends to an operator, so they belong to a binding, which
+  needs one. A controller plugin's hooks are its own.
+  """
+  @spec targeted(t()) :: :ok | {:error, term()}
+  def targeted(%__MODULE__{hooks: [_ | _], operator_id: nil} = plugin) do
+    if controller?(plugin),
+      do: :ok,
+      else: {:error, {:plugin_target_missing, plugin.namespace, nil}}
+  end
+
+  def targeted(%__MODULE__{}), do: :ok
 
   defp hook({name, opts}) when is_binary(name) or is_atom(name), do: {:ok, {name, opts}}
 

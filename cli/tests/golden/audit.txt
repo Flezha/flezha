@@ -12,5 +12,5 @@ COMMANDS:
     help      Show this help message
 
 OPTIONS:
-    --json    Emit machine-readable output (NDJSON for tail/read).
-              --output json is the same request.
+    --json    Emit machine-readable output (one JSON line per record for
+              tail). --output json is the same request.

@@ -7,7 +7,7 @@ defmodule Flezha.State.Commands do
   mailbox is full are all one thing: a control command the State subsystem
   issues on behalf of an operator it does not own a process for. Its callers —
   `Watchdog`, `Recovery`, `WalWriter`, `Runner.ControlChannel`,
-  `Service.CliManager` — are none of them an Overwatch and none of them holding
+  `Service.Steps` — are none of them an Overwatch and none of them holding
   operator state.
 
   Each cell-scoped function takes the controller-side `runner_id` and a

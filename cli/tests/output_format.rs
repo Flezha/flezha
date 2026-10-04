@@ -31,7 +31,7 @@ const ECHOING: &str = "#!/bin/sh\nprintf '%s\\n' \"$@\"\nexit 0\n";
 const NO_ROOT: &str = "--app-data-root=/nonexistent/flz-output-format-test";
 
 enum Want {
-    /// The `CliManager` call the verb must reach.
+    /// The door call the verb must reach.
     Rpc(&'static str),
     /// A verb that renders locally: this text on stdout, no RPC.
     Local(&'static str),
@@ -46,27 +46,37 @@ const CASES: &[(&[&str], Want)] = &[
     // value plus the switch.
     (
         &["cluster", "status"],
-        Rpc(r#"Flezha.Service.CliManager.cluster_status("", [])"#),
+        Rpc(r#"Flezha.Service.Cli.call("Controller.cluster_status", "[\"default\"]", [])"#),
     ),
     (
         &["cluster", "status", "--json"],
-        Rpc(r#"Flezha.Service.CliManager.cluster_status("", [output: "json"])"#),
+        Rpc(
+            r#"Flezha.Service.Cli.call("Controller.cluster_status", "[\"default\"]", [output: "json"])"#,
+        ),
     ),
     (
         &["cluster", "status", "--output", "json"],
-        Rpc(r#"Flezha.Service.CliManager.cluster_status("", [output: "json"])"#),
+        Rpc(
+            r#"Flezha.Service.Cli.call("Controller.cluster_status", "[\"default\"]", [output: "json"])"#,
+        ),
     ),
     (
         &["cluster", "status", "--output=json"],
-        Rpc(r#"Flezha.Service.CliManager.cluster_status("", [output: "json"])"#),
+        Rpc(
+            r#"Flezha.Service.Cli.call("Controller.cluster_status", "[\"default\"]", [output: "json"])"#,
+        ),
     ),
     (
         &["cluster", "status", "-o", "json"],
-        Rpc(r#"Flezha.Service.CliManager.cluster_status("", [output: "json"])"#),
+        Rpc(
+            r#"Flezha.Service.Cli.call("Controller.cluster_status", "[\"default\"]", [output: "json"])"#,
+        ),
     ),
     (
         &["cluster", "status", "-o=json"],
-        Rpc(r#"Flezha.Service.CliManager.cluster_status("", [output: "json"])"#),
+        Rpc(
+            r#"Flezha.Service.Cli.call("Controller.cluster_status", "[\"default\"]", [output: "json"])"#,
+        ),
     ),
     // A spelling nobody recognises is refused, not rendered as text.
     (
@@ -77,20 +87,34 @@ const CASES: &[(&[&str], Want)] = &[
     // reader, so the switch has to reach them too.
     (
         &["runner", "list", "--json"],
-        Rpc(r#"Flezha.Service.CliManager.list_runners("", [output: "json"])"#),
+        Rpc(r#"Flezha.Service.Cli.call("Fleet.runners", "[\"default\"]", [output: "json"])"#),
     ),
     (
         &["operator", "list", "--output", "json"],
-        Rpc(r#"Flezha.Service.CliManager.list_operators("", [output: "json"])"#),
+        Rpc(r#"Flezha.Service.Cli.call("Operator.list", "[\"default\"]", [output: "json"])"#),
     ),
     // `flz operator listen`: output by default, the window always carried.
     (
         &["operator", "listen", "op"],
-        Rpc(r#"Flezha.Service.CliManager.operator_listen("", "op", "output", [duration_ms: 30000])"#),
+        Rpc(
+            r#"Flezha.Service.Cli.call("Operator.listen", "[\"default\",\"op\",\"output\",{\"window_ms\":30000}]", [])"#,
+        ),
     ),
     (
-        &["operator", "listen", "op", "--input", "--json", "--duration-ms", "500", "-n", "prod"],
-        Rpc(r#"Flezha.Service.CliManager.operator_listen("prod", "op", "input", [duration_ms: 500, output: "json"])"#),
+        &[
+            "operator",
+            "listen",
+            "op",
+            "--input",
+            "--json",
+            "--duration-ms",
+            "500",
+            "-n",
+            "prod",
+        ],
+        Rpc(
+            r#"Flezha.Service.Cli.call("Operator.listen", "[\"prod\",\"op\",\"input\",{\"window_ms\":500}]", [output: "json"])"#,
+        ),
     ),
     (
         &["operator", "listen", "op", "--duration", "5"],
@@ -103,119 +127,142 @@ const CASES: &[(&[&str], Want)] = &[
     // `--await` rides the options list only when written.
     (
         &["operator", "send", "op", "--text", "hi"],
-        Rpc(r#"Flezha.Service.CliManager.operator_send("", "op", "hi", "", [])"#),
+        Rpc(
+            r#"Flezha.Service.Cli.call("Operator.send", "[\"default\",\"op\",\"hi\",\"\",{}]", [])"#,
+        ),
     ),
     (
         &["operator", "send", "op", "--text", "hi", "--await", "2000"],
-        Rpc(r#"Flezha.Service.CliManager.operator_send("", "op", "hi", "", [await_ms: 2000])"#),
+        Rpc(
+            r#"Flezha.Service.Cli.call("Operator.send", "[\"default\",\"op\",\"hi\",\"\",{}]", [await_ms: 2000])"#,
+        ),
     ),
     // `flz audit` — the `--json` dialect.
     (
         &["audit", "list"],
-        Rpc(r#"Flezha.Service.CliManager.audit_log_render_list([])"#),
+        Rpc(r#"Flezha.Service.Cli.call("AuditLog.list_files", "[]", [])"#),
     ),
     (
         &["audit", "list", "--json"],
-        Rpc(r#"Flezha.Service.CliManager.audit_log_render_list([output: "json"])"#),
+        Rpc(r#"Flezha.Service.Cli.call("AuditLog.list_files", "[]", [output: "json"])"#),
     ),
     (
         &["audit", "list", "--output", "json"],
-        Rpc(r#"Flezha.Service.CliManager.audit_log_render_list([output: "json"])"#),
+        Rpc(r#"Flezha.Service.Cli.call("AuditLog.list_files", "[]", [output: "json"])"#),
     ),
     (
         &["audit", "tail", "--json"],
-        Rpc(r#"Flezha.Service.CliManager.audit_log_render_tail([duration_ms: 30000, output: "json"])"#),
+        Rpc(
+            r#"Flezha.Service.Cli.call("AuditLog.tail", "[]", [duration_ms: 30000, output: "json"])"#,
+        ),
     ),
     (
         &["audit", "tail", "--output", "json"],
-        Rpc(r#"Flezha.Service.CliManager.audit_log_render_tail([duration_ms: 30000, output: "json"])"#),
+        Rpc(
+            r#"Flezha.Service.Cli.call("AuditLog.tail", "[]", [duration_ms: 30000, output: "json"])"#,
+        ),
     ),
     (
         &["audit", "stats", "-o", "json"],
-        Rpc(r#"Flezha.Service.CliManager.audit_log_render_stats([output: "json"])"#),
+        Rpc(r#"Flezha.Service.Cli.call("AuditLog.stats", "[]", [output: "json"])"#),
     ),
     // `flz controller` — the predicate that was inlined twice.
     (
         &["controller", "status", "--json"],
-        Rpc(r#"Flezha.Service.CliManager.controller_status([output: "json"])"#),
+        Rpc(r#"Flezha.Service.Cli.call("Controller.status", "[]", [output: "json"])"#),
     ),
     (
         &["controller", "status", "--output", "json"],
-        Rpc(r#"Flezha.Service.CliManager.controller_status([output: "json"])"#),
+        Rpc(r#"Flezha.Service.Cli.call("Controller.status", "[]", [output: "json"])"#),
     ),
     (
         &["controller", "mem-top", "--json"],
-        Rpc(r#"Flezha.Service.CliManager.controller_mem_top([output: "json"])"#),
+        Rpc(r#"Flezha.Service.Cli.call("Controller.mem_top", "[]", [output: "json"])"#),
     ),
     (
         &["controller", "mem-top", "--output", "json"],
-        Rpc(r#"Flezha.Service.CliManager.controller_mem_top([output: "json"])"#),
+        Rpc(r#"Flezha.Service.Cli.call("Controller.mem_top", "[]", [output: "json"])"#),
     ),
     // `flz observe` — the second byte-identical copy of that predicate.
     (
         &["observe", "sources", "--json"],
-        Rpc(r#"Flezha.Service.CliManager.observability_render_sources([output: "json"])"#),
+        Rpc(r#"Flezha.Service.Cli.call("Observability.list_sources", "[]", [output: "json"])"#),
     ),
     (
         &["observe", "sources", "--output", "json"],
-        Rpc(r#"Flezha.Service.CliManager.observability_render_sources([output: "json"])"#),
+        Rpc(r#"Flezha.Service.Cli.call("Observability.list_sources", "[]", [output: "json"])"#),
     ),
     (
         &["observe", "tail", "beam_vm", "--output", "json"],
-        Rpc(r#"Flezha.Service.CliManager.observability_render_tail("beam_vm", [duration_ms: 30000, output: "json"])"#),
+        Rpc(
+            r#"Flezha.Service.Cli.call("Observability.tail", "[\"beam_vm\"]", [duration_ms: 30000, output: "json"])"#,
+        ),
     ),
     // `flz namespace list` and `flz state` — the `--output` dialect again.
     (
         &["namespace", "list", "--json"],
-        Rpc(r#"Flezha.Service.CliManager.list_namespaces([output: "json"])"#),
+        Rpc(r#"Flezha.Service.Cli.call("Operator.list_namespaces", "[]", [output: "json"])"#),
     ),
     // An acting verb takes the format too: it rides the list, and only the
     // form of a failure changes.
     (
         &["namespace", "delete", "ghost", "--json"],
-        Rpc(r#"Flezha.Service.CliManager.authz_render_namespace_delete("ghost", [output: "json"])"#),
+        Rpc(r#"Flezha.Service.Cli.call("Namespace.delete", "[\"ghost\"]", [output: "json"])"#),
     ),
     (
-        &["schedule", "add", "s1", "--cron", "* * * * *", "--tz", "UTC", "--factory", "f", "--json"],
-        Rpc(r#"Flezha.Service.CliManager.schedule_add("s1", [cron: "* * * * *", tz: "UTC", factory: "f", output: "json"])"#),
+        &[
+            "schedule",
+            "add",
+            "s1",
+            "--cron",
+            "* * * * *",
+            "--tz",
+            "UTC",
+            "--factory",
+            "f",
+            "--json",
+        ],
+        Rpc(
+            r#"Flezha.Service.Cli.call("Schedule.add", "[{\"cron\":\"* * * * *\",\"factory_id\":\"f\",\"name\":\"s1\",\"timezone\":\"UTC\"}]", [output: "json"])"#,
+        ),
     ),
     (
         &["namespace", "list", "--output", "json"],
-        Rpc(r#"Flezha.Service.CliManager.list_namespaces([output: "json"])"#),
+        Rpc(r#"Flezha.Service.Cli.call("Operator.list_namespaces", "[]", [output: "json"])"#),
     ),
     (
         &["state", "list", "MarketOperator", "--json"],
-        Rpc(r#"Flezha.Service.CliManager.state_list("MarketOperator", [output: "json"])"#),
+        Rpc(r#"Flezha.Service.Cli.call("Steps.cells", "[\"MarketOperator\"]", [output: "json"])"#),
     ),
     (
         &["state", "list", "MarketOperator", "--output", "json"],
-        Rpc(r#"Flezha.Service.CliManager.state_list("MarketOperator", [output: "json"])"#),
+        Rpc(r#"Flezha.Service.Cli.call("Steps.cells", "[\"MarketOperator\"]", [output: "json"])"#),
     ),
     // `flz plugin list` — the format flag renders; `--installed` and
     // `--providers` choose the collection. Neither may do the other's job.
     (
         &["plugin", "list"],
-        Rpc(r#"Flezha.Service.CliManager.list_enabled_plugins("", [])"#),
+        Rpc(r#"Flezha.Service.Cli.call("PluginManager.enabled", "[\"default\"]", [])"#),
     ),
     (
         &["plugin", "list", "--namespace", "n", "--json"],
-        Rpc(r#"Flezha.Service.CliManager.list_enabled_plugins("n", [output: "json"])"#),
+        Rpc(r#"Flezha.Service.Cli.call("PluginManager.enabled", "[\"n\"]", [output: "json"])"#),
     ),
     (
         &["plugin", "list", "--providers"],
-        Rpc("Flezha.Service.CliManager.list_providers([])"),
+        Rpc(r#"Flezha.Service.Cli.call("Fleet.providers", "[]", [])"#),
     ),
     (
         &["plugin", "list", "--installed"],
-        Rpc(r#"Flezha.Service.CliManager.list_installed_plugins([])"#),
+        Rpc(r#"Flezha.Service.Cli.call("Fleet.installed_plugins", "[]", [])"#),
     ),
     (
         &["plugin", "list", "--installed", "--json"],
-        Rpc(r#"Flezha.Service.CliManager.list_installed_plugins([output: "json"])"#),
+        Rpc(r#"Flezha.Service.Cli.call("Fleet.installed_plugins", "[]", [output: "json"])"#),
     ),
     (
         &["plugin", "list", "--installed", "--output", "json"],
-        Rpc(r#"Flezha.Service.CliManager.list_installed_plugins([output: "json"])"#),
+        Rpc(r#"Flezha.Service.Cli.call("Fleet.installed_plugins", "[]", [output: "json"])"#),
     ),
     // `flz plugin enable` passes its options on rather than rendering them,
     // and reads them through the second scanner. An option's four spellings
@@ -223,11 +270,15 @@ const CASES: &[(&[&str], Want)] = &[
     // caller typed.
     (
         &["plugin", "enable", "p", "prov", "--output=json"],
-        Rpc(r#"Flezha.Service.CliManager.enable_plugin("p", "prov", "{}", "{\"namespace\": \"default\"}", [output: "json"])"#),
+        Rpc(
+            r#"Flezha.Service.Cli.call("PluginManager.enable", "[\"p\",{\"namespace\":\"default\",\"provider\":\"prov\"}]", [output: "json"])"#,
+        ),
     ),
     (
         &["plugin", "enable", "p", "prov", "-o=json"],
-        Rpc(r#"Flezha.Service.CliManager.enable_plugin("p", "prov", "{}", "{\"namespace\": \"default\"}", [output: "json"])"#),
+        Rpc(
+            r#"Flezha.Service.Cli.call("PluginManager.enable", "[\"p\",{\"namespace\":\"default\",\"provider\":\"prov\"}]", [output: "json"])"#,
+        ),
     ),
     // A plugin setting is one setting in both its spellings, and the bare one
     // is what `flz help` and the enable usage line teach (KI-167).
@@ -241,7 +292,7 @@ const CASES: &[(&[&str], Want)] = &[
             "Xtopic=my_topic",
         ],
         Rpc(
-            r#"Flezha.Service.CliManager.enable_plugin("p", "prov", "{\"hosts\": \"kafka:9092\", \"topic\": \"my_topic\"}", "{\"namespace\": \"default\"}", [])"#,
+            r#"Flezha.Service.Cli.call("PluginManager.enable", "[\"p\",{\"namespace\":\"default\",\"opts\":{\"hosts\":\"kafka:9092\",\"topic\":\"my_topic\"},\"provider\":\"prov\"}]", [])"#,
         ),
     ),
     (
@@ -254,15 +305,18 @@ const CASES: &[(&[&str], Want)] = &[
             "--Xtopic=my_topic",
         ],
         Rpc(
-            r#"Flezha.Service.CliManager.enable_plugin("p", "prov", "{\"hosts\": \"kafka:9092\", \"topic\": \"my_topic\"}", "{\"namespace\": \"default\"}", [])"#,
+            r#"Flezha.Service.Cli.call("PluginManager.enable", "[\"p\",{\"namespace\":\"default\",\"opts\":{\"hosts\":\"kafka:9092\",\"topic\":\"my_topic\"},\"provider\":\"prov\"}]", [])"#,
         ),
     ),
-    // The provider registry has no JSON rendering, so asking for one is
-    // refused rather than answered with a different query.
-    (&["plugin", "list", "--providers", "--json"], Refused("--installed")),
+    // The provider registry answers as JSON like every other operation, and
+    // the switch still chooses which collection is listed.
+    (
+        &["plugin", "list", "--providers", "--json"],
+        Rpc(r#"Flezha.Service.Cli.call("Fleet.providers", "[]", [output: "json"])"#),
+    ),
     (
         &["plugin", "list", "--providers", "--output", "json"],
-        Refused("--installed"),
+        Rpc(r#"Flezha.Service.Cli.call("Fleet.providers", "[]", [output: "json"])"#),
     ),
     // The verbs that name a plugin carry its plain options on as one
     // document; `bind` and `update` carry its settings beside them.
@@ -278,29 +332,45 @@ const CASES: &[(&[&str], Want)] = &[
             "ticks",
         ],
         Rpc(
-            r#"Flezha.Service.CliManager.bind_plugin("trades", "{\"hooks\":[{\"name\":\"on_output\",\"opts\":{}}]}", "{\"operator_id\": \"a\", \"channel\": \"ticks\", \"namespace\": \"default\"}", [])"#,
+            r#"Flezha.Service.Cli.call("PluginManager.bind", "[\"trades\",{\"channel\":\"ticks\",\"hooks\":[{\"name\":\"on_output\",\"opts\":{}}],\"namespace\":\"default\",\"operator_id\":\"a\"}]", [])"#,
         ),
     ),
     (
-        &["plugin", "unbind", "trades", "--operator_id", "a", "-n", "n"],
+        &[
+            "plugin",
+            "unbind",
+            "trades",
+            "--operator_id",
+            "a",
+            "-n",
+            "n",
+        ],
         Rpc(
-            r#"Flezha.Service.CliManager.unbind_plugin("trades", "{\"operator_id\": \"a\", \"namespace\": \"n\"}", [])"#,
+            r#"Flezha.Service.Cli.call("PluginManager.unbind", "[\"trades\",{\"namespace\":\"n\",\"operator_id\":\"a\"}]", [])"#,
         ),
     ),
     (
         &["plugin", "update", "trades", "Xsubscription_items=[\"a\"]"],
         Rpc(
-            r#"Flezha.Service.CliManager.update_plugin("trades", "{\"subscription_items\": [\"a\"]}", "{\"namespace\": \"default\"}", [])"#,
+            r#"Flezha.Service.Cli.call("PluginManager.update", "[\"trades\",{\"namespace\":\"default\",\"opts\":{\"subscription_items\":[\"a\"]}}]", [])"#,
         ),
     ),
     (
         &["plugin", "disable", "trades"],
-        Rpc(r#"Flezha.Service.CliManager.disable_plugin("trades", "{\"namespace\": \"default\"}", [])"#),
+        Rpc(
+            r#"Flezha.Service.Cli.call("PluginManager.disable", "[\"trades\",{\"namespace\":\"default\"}]", [])"#,
+        ),
     ),
     (
-        &["plugin", "enable", "trades", "operator_websocket", "--single"],
+        &[
+            "plugin",
+            "enable",
+            "trades",
+            "operator_websocket",
+            "--single",
+        ],
         Rpc(
-            r#"Flezha.Service.CliManager.enable_plugin("trades", "operator_websocket", "{}", "{\"namespace\": \"default\", \"single\": \"true\"}", [])"#,
+            r#"Flezha.Service.Cli.call("PluginManager.enable", "[\"trades\",{\"namespace\":\"default\",\"provider\":\"operator_websocket\",\"single\":true}]", [])"#,
         ),
     ),
     // `flz boot await` takes one option, and it is one option in all four of
@@ -309,23 +379,23 @@ const CASES: &[(&[&str], Want)] = &[
     // coincidence.
     (
         &["boot", "await"],
-        Rpc("Flezha.Service.CliManager.boot_await(60000, [])"),
+        Rpc(r#"Flezha.Service.Cli.call("Controller.boot_await", "[60000]", [])"#),
     ),
     (
         &["boot", "await", "--timeout", "90"],
-        Rpc("Flezha.Service.CliManager.boot_await(90000, [])"),
+        Rpc(r#"Flezha.Service.Cli.call("Controller.boot_await", "[90000]", [])"#),
     ),
     (
         &["boot", "await", "--timeout=90"],
-        Rpc("Flezha.Service.CliManager.boot_await(90000, [])"),
+        Rpc(r#"Flezha.Service.Cli.call("Controller.boot_await", "[90000]", [])"#),
     ),
     (
         &["boot", "await", "-t", "90"],
-        Rpc("Flezha.Service.CliManager.boot_await(90000, [])"),
+        Rpc(r#"Flezha.Service.Cli.call("Controller.boot_await", "[90000]", [])"#),
     ),
     (
         &["boot", "await", "-t=90"],
-        Rpc("Flezha.Service.CliManager.boot_await(90000, [])"),
+        Rpc(r#"Flezha.Service.Cli.call("Controller.boot_await", "[90000]", [])"#),
     ),
     // Reading every spelling may not cost the refusals the same reader gives:
     // a word it cannot act on, and a flag with no value, are still refused by
@@ -362,13 +432,13 @@ const CASES: &[(&[&str], Want)] = &[
     (
         &["token", "issue", "p", "ns", "viewer"],
         Rpc(
-            "Flezha.Service.CliManager.authz_render_token_issue(\"p\", \"ns\", \"viewer\", [ttl: 86400])",
+            r#"Flezha.Service.Cli.call("Namespace.issue_token", "[\"p\",\"ns\",\"viewer\",{}]", [])"#,
         ),
     ),
     (
         &["token", "issue", "p", "ns", "viewer", "--ttl", "60"],
         Rpc(
-            "Flezha.Service.CliManager.authz_render_token_issue(\"p\", \"ns\", \"viewer\", [ttl: 60])",
+            r#"Flezha.Service.Cli.call("Namespace.issue_token", "[\"p\",\"ns\",\"viewer\",{\"ttl\":60}]", [])"#,
         ),
     ),
     (
@@ -385,7 +455,10 @@ const CASES: &[(&[&str], Want)] = &[
         &["cluster", "status", "--namespace"],
         Refused("--namespace requires a value"),
     ),
-    (&["token", "list", "--token"], Refused("--token requires a value")),
+    (
+        &["token", "list", "--token"],
+        Refused("--token requires a value"),
+    ),
     (
         &["operator", "start", "fac", "--id"],
         Refused("--id requires a value"),
@@ -414,7 +487,9 @@ const CASES: &[(&[&str], Want)] = &[
     // and `json`'s own rule for an empty value still answers `{}`.
     (
         &["operator", "start", "fac", "--init-values", ""],
-        Rpc(r#"Flezha.Service.CliManager.operator_start("", "fac", "{}", "{}", [])"#),
+        Rpc(
+            r#"Flezha.Service.Cli.call("Operator.start", "[\"default\",{\"factory_id\":\"fac\",\"init_values\":{}}]", [])"#,
+        ),
     ),
     // A NUMBER the reader cannot parse is the same request as one nobody
     // wrote, and `.parse().ok()` made them the same answer (KI-176). Each bad
@@ -423,11 +498,11 @@ const CASES: &[(&[&str], Want)] = &[
     // it.
     (
         &["audit", "read", "f"],
-        Rpc(r#"Flezha.Service.CliManager.audit_log_render_read("f", [])"#),
+        Rpc(r#"Flezha.Service.Cli.call("AuditLog.read", "[{\"file\":\"f\"}]", [])"#),
     ),
     (
         &["audit", "read", "f", "--limit", "5"],
-        Rpc(r#"Flezha.Service.CliManager.audit_log_render_read("f", [limit: 5])"#),
+        Rpc(r#"Flezha.Service.Cli.call("AuditLog.read", "[{\"file\":\"f\",\"limit\":5}]", [])"#),
     ),
     (
         &["audit", "read", "f", "--limit", "abc"],
@@ -435,7 +510,9 @@ const CASES: &[(&[&str], Want)] = &[
     ),
     (
         &["audit", "read", "f", "--since", "10", "--until", "20"],
-        Rpc(r#"Flezha.Service.CliManager.audit_log_render_read("f", [since_us: 10, until_us: 20])"#),
+        Rpc(
+            r#"Flezha.Service.Cli.call("AuditLog.read", "[{\"file\":\"f\",\"since_us\":10,\"until_us\":20}]", [])"#,
+        ),
     ),
     (
         &["audit", "read", "f", "--since", "abc"],
@@ -447,7 +524,7 @@ const CASES: &[(&[&str], Want)] = &[
     ),
     (
         &["audit", "tail", "--duration-ms", "5000"],
-        Rpc(r#"Flezha.Service.CliManager.audit_log_render_tail([duration_ms: 5000])"#),
+        Rpc(r#"Flezha.Service.Cli.call("AuditLog.tail", "[]", [duration_ms: 5000])"#),
     ),
     (
         &["audit", "tail", "--duration-ms", "abc"],
@@ -455,7 +532,9 @@ const CASES: &[(&[&str], Want)] = &[
     ),
     (
         &["observe", "tail", "beam_vm", "--duration-ms", "5000"],
-        Rpc(r#"Flezha.Service.CliManager.observability_render_tail("beam_vm", [duration_ms: 5000])"#),
+        Rpc(
+            r#"Flezha.Service.Cli.call("Observability.tail", "[\"beam_vm\"]", [duration_ms: 5000])"#,
+        ),
     ),
     (
         &["observe", "tail", "beam_vm", "--duration-ms", "abc"],
@@ -473,7 +552,9 @@ const CASES: &[(&[&str], Want)] = &[
             "--partitions",
             "4",
         ],
-        Rpc(r#"Flezha.Service.CliManager.operator_start("", "fac", "{}", "{\"partitions\": \"4\"}", [id: "op"])"#),
+        Rpc(
+            r#"Flezha.Service.Cli.call("Operator.start", "[\"default\",{\"factory_id\":\"fac\",\"id\":\"op\",\"partitions\":4}]", [])"#,
+        ),
     ),
     (
         &["operator", "start", "fac", "--partitions", "abc"],
@@ -486,12 +567,12 @@ const CASES: &[(&[&str], Want)] = &[
     ),
     (
         &["operator", "scale", "g", "2"],
-        Rpc("Flezha.Service.CliManager.operator_scale(\"\", \"g\", \"2\", \"{}\", [])"),
+        Rpc(r#"Flezha.Service.Cli.call("Steps.rescale", "[\"default\",\"g\",2,{}]", [])"#),
     ),
     (
         &["operator", "scale", "g", "2", "--timeout", "5000"],
         Rpc(
-            r#"Flezha.Service.CliManager.operator_scale("", "g", "2", "{\"timeout_ms\": \"5000\"}", [])"#,
+            r#"Flezha.Service.Cli.call("Steps.rescale", "[\"default\",\"g\",2,{\"quiesce_timeout_ms\":5000}]", [])"#,
         ),
     ),
     (
@@ -512,7 +593,7 @@ const CASES: &[(&[&str], Want)] = &[
     ),
     (
         &["state", "retention", "MyClass", "2"],
-        Rpc("Flezha.Service.CliManager.state_retention(\"MyClass\", \"2\", [])"),
+        Rpc(r#"Flezha.Service.Cli.call("Steps.set_retention", "[\"MyClass\",2]", [])"#),
     ),
     (
         &["state", "retention", "MyClass", "abc"],
@@ -534,32 +615,50 @@ const CASES: &[(&[&str], Want)] = &[
     // expiry, and this is the spelling that reaches it.
     (
         &["token", "issue", "p", "ns", "viewer", "--ttl", "never"],
-        Rpc("Flezha.Service.CliManager.authz_render_token_issue(\"p\", \"ns\", \"viewer\", [ttl: :never])"),
+        Rpc(
+            r#"Flezha.Service.Cli.call("Namespace.issue_token", "[\"p\",\"ns\",\"viewer\",{\"ttl\":\"never\"}]", [])"#,
+        ),
     ),
     (
-        &["token", "issue", "runner@ns", "ns", "runner", "--ttl", "never"],
-        Rpc("Flezha.Service.CliManager.authz_render_token_issue(\"runner@ns\", \"ns\", \"runner\", [ttl: :never])"),
+        &[
+            "token",
+            "issue",
+            "runner@ns",
+            "ns",
+            "runner",
+            "--ttl",
+            "never",
+        ],
+        Rpc(
+            r#"Flezha.Service.Cli.call("Namespace.issue_token", "[\"runner@ns\",\"ns\",\"runner\",{\"ttl\":\"never\"}]", [])"#,
+        ),
     ),
     // The binding an application needs: the role comes before the namespace,
     // which is the order the controller reads them in.
     (
         &["role", "bind", "runner@ns", "app", "ns"],
-        Rpc("Flezha.Service.CliManager.authz_render_role_bind(\"runner@ns\", \"app\", \"ns\", [])"),
+        Rpc(
+            r#"Flezha.Service.Cli.call("Namespace.bind_role", "[\"runner@ns\",\"app\",\"ns\"]", [])"#,
+        ),
     ),
     (
         &["role", "bind", "runner@ns", "stopper", "ns"],
-        Rpc("Flezha.Service.CliManager.authz_render_role_bind(\"runner@ns\", \"stopper\", \"ns\", [])"),
+        Rpc(
+            r#"Flezha.Service.Cli.call("Namespace.bind_role", "[\"runner@ns\",\"stopper\",\"ns\"]", [])"#,
+        ),
     ),
     // The role an unbind names is optional, and the terminal always sends the
     // slot, so the controller reads principal, role and options in fixed
     // positions.
     (
         &["role", "unbind", "runner@ns", "spawner"],
-        Rpc("Flezha.Service.CliManager.authz_render_role_unbind(\"runner@ns\", \"spawner\", [])"),
+        Rpc(
+            r#"Flezha.Service.Cli.call("Namespace.unbind_role", "[\"runner@ns\",\"spawner\"]", [])"#,
+        ),
     ),
     (
         &["role", "unbind", "runner@ns"],
-        Rpc("Flezha.Service.CliManager.authz_render_role_unbind(\"runner@ns\", \"\", [])"),
+        Rpc(r#"Flezha.Service.Cli.call("Namespace.unbind_role", "[\"runner@ns\",null]", [])"#),
     ),
     (
         &["controller", "stop", "--timeout-ms", "abc"],
@@ -579,34 +678,63 @@ const CASES: &[(&[&str], Want)] = &[
     // other.
     (
         &["operator", "start", "fac", "--id", "op", "--plugins", "[]"],
-        Rpc(r#"Flezha.Service.CliManager.operator_start("", "fac", "{}", "{}", [id: "op", plugins: "[]"])"#),
+        Rpc(
+            r#"Flezha.Service.Cli.call("Operator.start", "[\"default\",{\"factory_id\":\"fac\",\"id\":\"op\",\"plugins\":[]}]", [])"#,
+        ),
     ),
     // A start without an id carries no id at all: the controller generates it.
     (
         &["operator", "start", "echo"],
-        Rpc(r#"Flezha.Service.CliManager.operator_start("", "echo", "{}", "{}", [])"#),
+        Rpc(
+            r#"Flezha.Service.Cli.call("Operator.start", "[\"default\",{\"factory_id\":\"echo\"}]", [])"#,
+        ),
     ),
     (
         &["operator", "start", "echo", "-i", "my_echo"],
-        Rpc(r#"Flezha.Service.CliManager.operator_start("", "echo", "{}", "{}", [id: "my_echo"])"#),
+        Rpc(
+            r#"Flezha.Service.Cli.call("Operator.start", "[\"default\",{\"factory_id\":\"echo\",\"id\":\"my_echo\"}]", [])"#,
+        ),
     ),
     (
         &["operator", "start", "echo", "-o", "json"],
-        Rpc(r#"Flezha.Service.CliManager.operator_start("", "echo", "{}", "{}", [output: "json"])"#),
+        Rpc(
+            r#"Flezha.Service.Cli.call("Operator.start", "[\"default\",{\"factory_id\":\"echo\"}]", [output: "json"])"#,
+        ),
     ),
     (
-        &["operator", "start", "echo", "--json", "--init-values", r#"{"a":1}"#],
-        Rpc(r#"Flezha.Service.CliManager.operator_start("", "echo", "{\"a\":1}", "{}", [output: "json"])"#),
+        &[
+            "operator",
+            "start",
+            "echo",
+            "--json",
+            "--init-values",
+            r#"{"a":1}"#,
+        ],
+        Rpc(
+            r#"Flezha.Service.Cli.call("Operator.start", "[\"default\",{\"factory_id\":\"echo\",\"init_values\":{\"a\":1}}]", [output: "json"])"#,
+        ),
     ),
     // A first message rides the options list as text, with the entry channel
     // it names; a channel with no message names nothing.
     (
-        &["operator", "start", "order_executor", "--text", r#"{"symbol":"EUR/USD","quantity":10}"#, "--channel", "order"],
-        Rpc(r#"Flezha.Service.CliManager.operator_start("", "order_executor", "{}", "{}", [text: "{\"symbol\":\"EUR/USD\",\"quantity\":10}", channel: "order"])"#),
+        &[
+            "operator",
+            "start",
+            "order_executor",
+            "--text",
+            r#"{"symbol":"EUR/USD","quantity":10}"#,
+            "--channel",
+            "order",
+        ],
+        Rpc(
+            r#"Flezha.Service.Cli.call("Operator.start", "[\"default\",{\"channel\":\"order\",\"factory_id\":\"order_executor\",\"text\":\"{\\\"symbol\\\":\\\"EUR/USD\\\",\\\"quantity\\\":10}\"}]", [])"#,
+        ),
     ),
     (
         &["operator", "start", "echo", "-t", "hello"],
-        Rpc(r#"Flezha.Service.CliManager.operator_start("", "echo", "{}", "{}", [text: "hello"])"#),
+        Rpc(
+            r#"Flezha.Service.Cli.call("Operator.start", "[\"default\",{\"factory_id\":\"echo\",\"text\":\"hello\"}]", [])"#,
+        ),
     ),
     (
         &["operator", "start", "echo", "--channel", "order"],
@@ -633,31 +761,57 @@ const CASES: &[(&[&str], Want)] = &[
         Refused("unknown option '--kind'"),
     ),
     (
-        &["schedule", "add", "n", "--cron", "* * * * *", "--tz", "UTC", "--factory", "f", "--kind", "steps"],
+        &[
+            "schedule",
+            "add",
+            "n",
+            "--cron",
+            "* * * * *",
+            "--tz",
+            "UTC",
+            "--factory",
+            "f",
+            "--kind",
+            "steps",
+        ],
         Refused("unknown option '--kind'"),
     ),
     (
-        &["schedule", "add", "d", "--cron", "* * * * *", "--tz", "Etc/UTC", "--factory", "f", "-iv", "{}"],
+        &[
+            "schedule",
+            "add",
+            "d",
+            "--cron",
+            "* * * * *",
+            "--tz",
+            "Etc/UTC",
+            "--factory",
+            "f",
+            "-iv",
+            "{}",
+        ],
         Refused("unknown option '-iv'"),
     ),
     (
         &["operator", "scale", "g", "2", "--token", "t"],
-        Rpc(r#"Flezha.Service.CliManager.operator_scale("", "g", "2", "{}", [token: "t"])"#),
+        Rpc(
+            r#"Flezha.Service.Cli.call("Steps.rescale", "[\"default\",\"g\",2,{}]", [token: "t"])"#,
+        ),
     ),
     (
         &["audit", "stats", "--token", "t"],
-        Rpc(r#"Flezha.Service.CliManager.audit_log_render_stats([token: "t"])"#),
+        Rpc(r#"Flezha.Service.Cli.call("AuditLog.stats", "[]", [token: "t"])"#),
     ),
     // `flz schedule` — `add`'s flags travel as one keyword list in which an
     // absent flag is absent, `--plugins` stays the text the caller wrote
     // whatever it parses as, and `run` carries the token like its siblings.
     (
         &["schedule", "run", "digest"],
-        Rpc("Flezha.Service.CliManager.schedule_run(\"digest\", [])"),
+        Rpc(r#"Flezha.Service.Cli.call("Schedule.run", "[\"digest\"]", [])"#),
     ),
     (
         &["schedule", "run", "digest", "--token", "t"],
-        Rpc("Flezha.Service.CliManager.schedule_run(\"digest\", [token: \"t\"])"),
+        Rpc(r#"Flezha.Service.Cli.call("Schedule.run", "[\"digest\"]", [token: "t"])"#),
     ),
     // A quote escaped inside the JSON stays escaped inside the Elixir literal.
     (
@@ -675,24 +829,84 @@ const CASES: &[(&[&str], Want)] = &[
             r#"{"a":"x\"y"}"#,
         ],
         Rpc(
-            r#"Flezha.Service.CliManager.schedule_add("digest", [cron: "0 8 * * *", tz: "Etc/UTC", factory: "f", init_values: "{\"a\":\"x\\\"y\"}"])"#,
+            r#"Flezha.Service.Cli.call("Schedule.add", "[{\"cron\":\"0 8 * * *\",\"factory_id\":\"f\",\"init_values\":{\"a\":\"x\\\"y\"},\"name\":\"digest\",\"timezone\":\"Etc/UTC\"}]", [])"#,
         ),
     ),
     (
-        &["schedule", "add", "digest", "--cron", "0 8 * * *", "--tz", "Etc/UTC", "--factory", "f"],
-        Rpc(r#"Flezha.Service.CliManager.schedule_add("digest", [cron: "0 8 * * *", tz: "Etc/UTC", factory: "f"])"#),
+        &[
+            "schedule",
+            "add",
+            "digest",
+            "--cron",
+            "0 8 * * *",
+            "--tz",
+            "Etc/UTC",
+            "--factory",
+            "f",
+        ],
+        Rpc(
+            r#"Flezha.Service.Cli.call("Schedule.add", "[{\"cron\":\"0 8 * * *\",\"factory_id\":\"f\",\"name\":\"digest\",\"timezone\":\"Etc/UTC\"}]", [])"#,
+        ),
     ),
     (
-        &["schedule", "add", "nightly", "--cron", "0 2 * * *", "--tz", "UTC", "--factory", "report", "--text", "hello", "--channel", "requests"],
-        Rpc(r#"Flezha.Service.CliManager.schedule_add("nightly", [cron: "0 2 * * *", tz: "UTC", factory: "report", text: "hello", channel: "requests"])"#),
+        &[
+            "schedule",
+            "add",
+            "nightly",
+            "--cron",
+            "0 2 * * *",
+            "--tz",
+            "UTC",
+            "--factory",
+            "report",
+            "--text",
+            "hello",
+            "--channel",
+            "requests",
+        ],
+        Rpc(
+            r#"Flezha.Service.Cli.call("Schedule.add", "[{\"channel\":\"requests\",\"cron\":\"0 2 * * *\",\"factory_id\":\"report\",\"name\":\"nightly\",\"text\":\"hello\",\"timezone\":\"UTC\"}]", [])"#,
+        ),
     ),
     (
-        &["schedule", "add", "nightly", "--cron", "0 2 * * *", "--tz", "UTC", "--factory", "report", "--channel", "requests"],
+        &[
+            "schedule",
+            "add",
+            "nightly",
+            "--cron",
+            "0 2 * * *",
+            "--tz",
+            "UTC",
+            "--factory",
+            "report",
+            "--channel",
+            "requests",
+        ],
         Refused("(operator.channel_without_text)"),
     ),
     (
-        &["schedule", "add", "digest", "--cron", "0 8 * * *", "--tz", "Etc/UTC", "--factory", "f", "-n", "prod", "--init-values", r#"{"a":1}"#, "-p", r#"[{"name":"p","provider":"x","hooks":["on_output"]}]"#, "--token", "t"],
-        Rpc(r#"Flezha.Service.CliManager.schedule_add("digest", [cron: "0 8 * * *", tz: "Etc/UTC", factory: "f", namespace: "prod", init_values: "{\"a\":1}", plugins: "[{\"hooks\":[\"on_output\"],\"name\":\"p\",\"provider\":\"x\"}]", token: "t"])"#),
+        &[
+            "schedule",
+            "add",
+            "digest",
+            "--cron",
+            "0 8 * * *",
+            "--tz",
+            "Etc/UTC",
+            "--factory",
+            "f",
+            "-n",
+            "prod",
+            "--init-values",
+            r#"{"a":1}"#,
+            "-p",
+            r#"[{"name":"p","provider":"x","hooks":["on_output"]}]"#,
+            "--token",
+            "t",
+        ],
+        Rpc(
+            r#"Flezha.Service.Cli.call("Schedule.add", "[{\"cron\":\"0 8 * * *\",\"factory_id\":\"f\",\"init_values\":{\"a\":1},\"name\":\"digest\",\"namespace\":\"prod\",\"plugins\":\"[{\\\"hooks\\\":[\\\"on_output\\\"],\\\"name\\\":\\\"p\\\",\\\"provider\\\":\\\"x\\\"}]\",\"timezone\":\"Etc/UTC\"}]", [token: "t"])"#,
+        ),
     ),
 ];
 
@@ -791,11 +1005,11 @@ const REPEATED: &[&str] = &[
 ];
 const REPEATS: usize = 32;
 
-/// The one `CliManager` call the run reached, as the shim echoed it.
+/// The one door call the run reached, as the shim echoed it.
 fn rpc_expression(stdout: &str) -> Option<&str> {
     stdout
         .lines()
-        .find(|l| l.starts_with("Flezha.Service.CliManager."))
+        .find(|l| l.starts_with("Flezha.Service.Cli.call("))
 }
 
 fn run(cli: &Shim, argv: &[&str]) -> Output {

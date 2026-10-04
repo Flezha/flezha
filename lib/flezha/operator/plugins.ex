@@ -341,11 +341,8 @@ defmodule Flezha.Operator.Plugins do
   def persist_opt(%Overwatch{} = state, plugin_id, key, value) do
     shared? = Table.joined?(state.extensions, plugin_id)
 
-    Task.start(fn ->
-      if shared?,
-        do: PluginManager.persist_plugin_opt(state.namespace, plugin_id, key, value),
-        else: PluginManager.persist_binding_opt(state.namespace, state.id, plugin_id, key, value)
-    end)
+    owner = if shared?, do: {:plugin, plugin_id}, else: state.id
+    Task.start(fn -> PluginManager.persist_opt(state.namespace, owner, plugin_id, key, value) end)
 
     %{state | extensions: Table.put_plugin_opt(state.extensions, plugin_id, key, value)}
   end

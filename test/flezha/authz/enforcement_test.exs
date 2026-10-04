@@ -15,7 +15,7 @@ defmodule Flezha.AuthZ.EnforcementTest do
   alias Flezha.AuthZ.{AuthState, Config, RoleStore, Scope, TokenStore}
   alias Flezha.Observability.{RingBufferSink, TestSinks}
   alias Flezha.Runner.FleetManager
-  alias Flezha.Service.CliManager
+  alias Flezha.Service.{Admin, Cli}
   alias FlezhaTest.Helper.AuthTestHelper
 
   defp claim!() do
@@ -36,7 +36,8 @@ defmodule Flezha.AuthZ.EnforcementTest do
 
       output =
         capture_io(:stderr, fn ->
-          assert catch_exit(CliManager.state_delete("op/task/key", [])) == {:shutdown, 4}
+          assert catch_exit(Cli.call("Steps.delete", Jason.encode!(["op/task/key"]), [])) ==
+                   {:shutdown, 4}
         end)
 
       # The path is logged only on the boot that WRITES the file; on every later
@@ -84,7 +85,7 @@ defmodule Flezha.AuthZ.EnforcementTest do
       {:ok, raw, _} = TokenStore.issue("caller-1", "team-orders", :ops, 3600)
 
       assert {:ok, %{principal: "caller-1", namespace: "team-orders", role: :ops}} =
-               CliManager.authz_whoami(token: raw)
+               Admin.run("Namespace.whoami", "[]", Cli.Context.cli_context(token: raw), :given)
     end
 
     test "a caller-supplied principal without a token is not trusted" do
@@ -95,8 +96,14 @@ defmodule Flezha.AuthZ.EnforcementTest do
       forged = [principal: "forged-admin", namespace: "_system", role: :admin]
 
       for verb <- [
-            fn -> CliManager.authz_render_whoami(forged) end,
-            fn -> CliManager.authz_render_namespace_create("forged-ns", "{}", forged) end
+            fn -> Cli.call("Namespace.whoami", "[]", forged) end,
+            fn ->
+              Cli.call(
+                "Namespace.create",
+                Jason.encode!(["forged-ns", %{quotas: %{}}]),
+                []
+              )
+            end
           ] do
         output = capture_io(:stderr, fn -> assert catch_exit(verb.()) == {:shutdown, 4} end)
         assert output =~ "no verifiable identity (authz.principal_not_bound)"
@@ -108,7 +115,9 @@ defmodule Flezha.AuthZ.EnforcementTest do
 
       output =
         capture_io(:stderr, fn ->
-          assert catch_exit(CliManager.authz_render_whoami(token: "flzt_not_a_real_token")) ==
+          assert catch_exit(
+                   Cli.call("Namespace.whoami", Jason.encode!([]), token: "flzt_not_a_real_token")
+                 ) ==
                    {:shutdown, 4}
         end)
 
@@ -138,7 +147,8 @@ defmodule Flezha.AuthZ.EnforcementTest do
 
       output =
         capture_io(:stderr, fn ->
-          assert catch_exit(CliManager.state_delete("op/task/key", [])) == {:shutdown, 4}
+          assert catch_exit(Cli.call("Steps.delete", Jason.encode!(["op/task/key"]), [])) ==
+                   {:shutdown, 4}
         end)
 
       assert output =~ "flz auth bootstrap"
@@ -151,11 +161,16 @@ defmodule Flezha.AuthZ.EnforcementTest do
       output =
         capture_io(:stderr, fn ->
           assert catch_exit(
-                   CliManager.enable_plugin(
-                     "some_plugin",
-                     "operator_stdout",
-                     "{}",
-                     ~s({"namespace": "_system", "operator_id": "some_op"}),
+                   Cli.call(
+                     "PluginManager.enable",
+                     Jason.encode!([
+                       "some_plugin",
+                       %{
+                         provider: "operator_stdout",
+                         namespace: "_system",
+                         operator_id: "some_op"
+                       }
+                     ]),
                      token: raw
                    )
                  ) == {:shutdown, 4}
@@ -173,7 +188,7 @@ defmodule Flezha.AuthZ.EnforcementTest do
 
       output =
         capture_io(fn ->
-          CliManager.state_delete("enf_test_op/task/key", token: raw)
+          Cli.call("Steps.delete", Jason.encode!(["enf_test_op/task/key"]), token: raw)
         end)
 
       assert output =~ "deleted persisted state"

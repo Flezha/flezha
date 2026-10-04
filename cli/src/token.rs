@@ -1,9 +1,9 @@
 use flz_transport::errors::FlezhaError;
+use serde_json::{json, Value};
 
 use crate::args::{OptSpec, Positional, Reading};
 use crate::dispatch::{self, Command, Missing, Verb};
-use crate::help;
-use crate::rpc::{self, text};
+use crate::{help, rpc};
 
 /// How long an issued token lives. An option, not a positional: it is optional
 /// and the request carries it in the options list like every other one. Its
@@ -25,10 +25,10 @@ pub(crate) const TABLE: Command = Command {
             ])
             .reading(&[TTL]),
         Verb::new("revoke", |read| {
-            rpc::one_arg(read, "<token-id>", "authz_render_token_revoke")
+            rpc::one_arg(read, "<token-id>", "Namespace.revoke_token")
         })
         .taking(&[Positional::required("<token-id>")]),
-        Verb::new("list", |read| rpc::bare(read, "authz_render_token_list")),
+        Verb::new("list", |read| rpc::bare(read, "Namespace.tokens")),
     ],
     help_verbs: dispatch::HELP_VERBS,
     missing: Missing::Screen,
@@ -36,32 +36,35 @@ pub(crate) const TABLE: Command = Command {
 };
 
 fn handle_issue(read: &Reading) {
-    rpc::run(
-        "authz_render_token_issue",
+    let opts = match ttl(read.opt(TTL.long)) {
+        Some(ttl) => json!({ "ttl": ttl }),
+        None => json!({}),
+    };
+
+    rpc::door(
+        "Namespace.issue_token",
         &[
-            text(read.pos("<principal>")),
-            text(read.pos("<namespace>")),
-            text(read.pos("<viewer|ops|admin|runner>")),
+            Value::from(read.pos("<principal>")),
+            Value::from(read.pos("<namespace>")),
+            Value::from(read.pos("<viewer|ops|admin|runner>")),
+            opts,
         ],
-        &[("ttl", ttl_literal(read.opt(TTL.long)))],
+        &[],
         read,
     );
 }
 
-/// The `--ttl` value as the literal the store takes: `:never` for an entry that
-/// must not lapse, else a positive number of seconds. The parse is the walk's;
-/// the range is this option's own rule, as it always was.
-fn ttl_literal(written: Option<&str>) -> String {
-    match written {
-        // Default CLI-token TTL (config `:token_ttl_default_seconds`).
-        None => "86400".to_string(),
-        Some(NEVER) => ":never".to_string(),
-        Some(seconds) => match seconds.parse::<u64>() {
+/// The lifetime written, refused here when it is not one: the controller
+/// applies its own default when none was.
+fn ttl(written: Option<&str>) -> Option<Value> {
+    match written? {
+        NEVER => Some(Value::from(NEVER)),
+        seconds => match seconds.parse::<u64>() {
             Ok(0) | Err(_) => rpc::fail(FlezhaError::with(
                 "authz.invalid_ttl",
                 [("ttl", seconds.into())],
             )),
-            Ok(positive) => positive.to_string(),
+            Ok(positive) => Some(Value::from(positive)),
         },
     }
 }

@@ -1,24 +1,20 @@
-defmodule Flezha.Service.CliManagerNamespaceListTest do
+defmodule Flezha.Service.NamespaceListTest do
   @moduledoc """
-  What a caller may be shown when it asks which namespaces there are, on both
-  spellings of the question: `flz namespace list`, which answers the durable
-  catalog, and `Flezha.Service.Operator.list_namespaces/1`, the published
-  read a console calls, which answers the running hub set.
+  What a caller may be shown when it asks which namespaces there are:
+  `Flezha.Service.Operator.list_namespaces/1`, which `flz namespace list` and a
+  console both reach, answers the durable catalog with whether each namespace
+  runs a hub here.
 
-  The catalog is the terminal's source because reading the running hub set
-  left a namespace created a moment earlier invisible until something
-  connected to it, so `create` followed by `list` disagreed. The verb row is
-  deliberately untouched: routing the body through the published
-  `Flezha.Service.Namespace.list/1` would have swapped `:list_namespaces`
-  (`operator.list` at `:caller` scope) for `:namespace_list`
-  (`authz.namespace_list` at `:system` scope) and taken the verb away from
-  every namespace-scoped caller who has it today.
+  The catalog is the source because reading the running hub set left a
+  namespace created a moment earlier invisible until something connected to
+  it, so `create` followed by `list` disagreed. The verb row is deliberately
+  `:list_namespaces` (`operator.list` at `:caller` scope) rather than
+  `:namespace_list` (`authz.namespace_list` at `:system` scope), which would
+  take the verb away from every namespace-scoped caller who has it.
 
-  Both spellings apply one rule, `Flezha.AuthZ.Namespace.visible/3`, so a
-  scoped caller and the console it uses cannot disagree about which
-  namespaces exist. Both pass `unbound: :all`, which is the rule's fail-open
-  branch and is opt-in for that reason; the last describe pins what it means
-  at the `:enforced` posture the rest of this module does not run at.
+  The rule is `Flezha.AuthZ.Namespace.visible/3` with `unbound: :all`, the
+  rule's fail-open branch, opt-in for that reason; the last describe pins what
+  it means at the `:enforced` posture the rest of this module does not run at.
   """
 
   # async: false: writes Application env; the auth stores are node-global singletons.
@@ -32,9 +28,8 @@ defmodule Flezha.Service.CliManagerNamespaceListTest do
   alias Flezha.AuthZ.AuthState
   alias Flezha.AuthZ.NamespaceStore
   alias Flezha.AuthZ.RoleStore
-  alias Flezha.AuthZ.Verb.Call
   alias Flezha.AuthZ.Verbs
-  alias Flezha.Service.Cli.Listing
+  alias Flezha.Service.Cli
   alias Flezha.Service.HubManager
   alias Flezha.Service.Operator
 
@@ -42,7 +37,7 @@ defmodule Flezha.Service.CliManagerNamespaceListTest do
     test "a namespace created a moment ago is listed" do
       {:ok, _} = NamespaceStore.create("billing")
 
-      output = capture_io(fn -> Listing.list_namespaces(unbound_call()) end)
+      output = capture_io(fn -> Cli.call("Operator.list_namespaces", "[]", []) end)
 
       assert output =~ "billing"
       assert output =~ "_system"
@@ -54,8 +49,8 @@ defmodule Flezha.Service.CliManagerNamespaceListTest do
       {:ok, _} = HubManager.start_hub("with-hub")
       on_exit(fn -> HubManager.stop_hub("with-hub") end)
 
-      %{"namespaces" => rows} =
-        capture_io(fn -> Listing.list_namespaces(%{unbound_call() | opts: [output: "json"]}) end)
+      rows =
+        capture_io(fn -> Cli.call("Operator.list_namespaces", "[]", output: "json") end)
         |> Jason.decode!()
 
       by_name = Map.new(rows, &{&1["namespace"], &1["running"]})
@@ -65,9 +60,10 @@ defmodule Flezha.Service.CliManagerNamespaceListTest do
     end
 
     test "an empty answer says so rather than rendering a headerless table" do
-      output = capture_io(fn -> Listing.list_namespaces(bound_call("nothing-here")) end)
+      output = capture_io(fn -> Cli.render({:ok, []}, "Operator.list_namespaces", "[]", []) end)
 
       assert output =~ "No namespaces found."
+      assert {:ok, []} = Operator.list_namespaces(bound("nothing-here"))
     end
   end
 
@@ -79,20 +75,20 @@ defmodule Flezha.Service.CliManagerNamespaceListTest do
     end
 
     test "a namespace-scoped caller sees its own namespace and no other" do
-      output = capture_io(fn -> Listing.list_namespaces(bound_call("team-orders")) end)
-
-      assert output =~ "team-orders"
-      refute output =~ "team-billing"
-      refute output =~ "_system"
+      assert {:ok, [%{namespace: "team-orders"}]} =
+               Operator.list_namespaces(bound("team-orders"))
     end
 
     test "an admin in the system namespace sees them all" do
-      call = %Call{context: %{role: :admin, namespace: "_system", principal: "root"}}
-      output = capture_io(fn -> Listing.list_namespaces(call) end)
+      assert {:ok, rows} =
+               Operator.list_namespaces(%{
+                 source: :cli,
+                 role: :admin,
+                 namespace: "_system",
+                 principal: "root"
+               })
 
-      assert output =~ "team-orders"
-      assert output =~ "team-billing"
-      assert output =~ "_system"
+      assert ["_system", "team-billing", "team-orders"] = names(rows)
     end
   end
 
@@ -108,7 +104,7 @@ defmodule Flezha.Service.CliManagerNamespaceListTest do
     end
 
     test "a namespace-scoped caller sees its own namespace and no other" do
-      assert {:ok, ["team-orders"]} =
+      assert {:ok, [%{namespace: "team-orders", running: true}]} =
                Operator.list_namespaces(%{
                  source: :ui,
                  role: :viewer,
@@ -126,8 +122,8 @@ defmodule Flezha.Service.CliManagerNamespaceListTest do
                  principal: "root"
                })
 
-      assert "team-orders" in running
-      assert "team-billing" in running
+      assert "team-orders" in names(running)
+      assert "team-billing" in names(running)
     end
   end
 
@@ -145,6 +141,8 @@ defmodule Flezha.Service.CliManagerNamespaceListTest do
 
       assert AuthZ.enforcement_posture() == :enforced
 
+      {:ok, _} = NamespaceStore.create("team-orders")
+      {:ok, _} = NamespaceStore.create("team-billing")
       {:ok, _} = HubManager.start_hub("team-orders")
       {:ok, _} = HubManager.start_hub("team-billing")
       on_exit(fn -> Enum.each(["team-orders", "team-billing"], &HubManager.stop_hub/1) end)
@@ -152,7 +150,7 @@ defmodule Flezha.Service.CliManagerNamespaceListTest do
     end
 
     test "a tenant-bound caller is judged, runs, and sees only its own namespace" do
-      assert {:ok, ["team-orders"]} =
+      assert {:ok, [%{namespace: "team-orders"}]} =
                Operator.list_namespaces(%{
                  source: :ui,
                  role: :viewer,
@@ -179,22 +177,16 @@ defmodule Flezha.Service.CliManagerNamespaceListTest do
       assert {:ok, running} =
                Operator.list_namespaces(%{source: :ui, principal: "system-alice"})
 
-      assert "team-orders" in running
-      assert "team-billing" in running
+      assert "team-orders" in names(running)
+      assert "team-billing" in names(running)
     end
   end
 
-  # The assertion that the data source moved and the authorization did not:
-  # green on both sides of the change, which is what makes it worth pinning.
-  test "the verb binds the same row, action and scope it bound before" do
+  test "the verb is judged as an operator listing in the caller's own scope" do
     assert %{action: :"operator.list", scope: :caller} = Verbs.fetch!(:list_namespaces)
   end
 
-  # An unbound call at the `:open` posture: the deployment `unbound: :all` is
-  # for, where narrowing to `_system` would hide the caller's own
-  # namespaces.
-  defp unbound_call(), do: %Call{context: %{source: :cli}}
+  defp bound(namespace), do: %{source: :cli, role: :ops, namespace: namespace, principal: "op"}
 
-  defp bound_call(namespace),
-    do: %Call{context: %{role: :ops, namespace: namespace, principal: "op"}}
+  defp names(rows), do: rows |> Enum.map(& &1.namespace) |> Enum.sort()
 end

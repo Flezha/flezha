@@ -15,6 +15,8 @@ defmodule Flezha.Service.Observability do
 
   use Flezha.AuthZ.Verb
 
+  @source [type: :atom, doc: "A registered observability source."]
+
   alias Flezha.AuthZ
   alias Flezha.Config
   alias Flezha.Observability
@@ -31,9 +33,15 @@ defmodule Flezha.Service.Observability do
 
   # ---------- Subscriptions ----------
 
+  @doc "Subscribe the calling process to the live signals of `source`."
   @spec subscribe(atom(), caller_context()) :: :ok | {:error, term()}
-  verb subscribe(source, caller_context) when is_atom(source), verb: :observability_subscribe do
-    with :ok <- check_enabled(), do: Observability.subscribe(source)
+  verb subscribe(source, caller_context) when is_atom(source),
+    verb: :observability_subscribe,
+    stream: true,
+    args: [source: @source] do
+    with :ok <- check_enabled(),
+         {:ok, _} <- registered(source),
+         do: Observability.subscribe(source)
   end
 
   @doc """
@@ -45,7 +53,8 @@ defmodule Flezha.Service.Observability do
   """
   @spec unsubscribe(atom(), caller_context()) :: :ok | {:error, term()}
   verb unsubscribe(source, caller_context) when is_atom(source),
-    verb: :observability_unsubscribe do
+    verb: :observability_unsubscribe,
+    args: [source: @source] do
     with :ok <- check_enabled(), do: Observability.unsubscribe(source)
   end
 
@@ -60,17 +69,29 @@ defmodule Flezha.Service.Observability do
   not enabled (it cannot stream without the underlying broadcast).
   """
   @spec tail(atom(), caller_context()) :: :ok | {:error, term()}
-  verb tail(source, caller_context) when is_atom(source), verb: :observability_tail do
-    tail_source(source)
+  verb tail(source, caller_context) when is_atom(source),
+    verb: :observability_tail,
+    stream: true,
+    args: [source: @source] do
+    with :ok <- check_enabled(),
+         {:ok, _} <- registered(source),
+         :ok <- check_pubsub_sink(),
+         do: Observability.subscribe(source)
   end
 
   # ---------- Reads ----------
 
-  @spec query(query_params(), caller_context()) ::
+  @doc "The signals the ring buffer holds for `params.source`, in the caller's namespace."
+  @spec query(query_params() | keyword(), caller_context()) ::
           {:ok, [Signal.t()]} | {:error, term()}
-  verb query(params, caller_context) when is_map(params), verb: :observability_query do
+  verb query(params, caller_context),
+    verb: :observability_query,
+    args: [params: [type: :keyword, doc: "`source`, `from_ts` and `limit`."]] do
+    params = Map.new(params)
+
     with :ok <- check_enabled(),
-         {:ok, source} <- Map.fetch(params, :source) do
+         {:ok, written} <- Map.fetch(params, :source),
+         {:ok, source} <- registered(written) do
       from_ts = Map.get(params, :from_ts, 0)
       opts = if l = Map.get(params, :limit), do: [limit: l], else: []
 
@@ -82,56 +103,52 @@ defmodule Flezha.Service.Observability do
     end
   end
 
+  @doc "Every registered observability source and its status."
   @spec list_sources(caller_context()) :: {:ok, [map()]} | {:error, term()}
   verb list_sources(caller_context), verb: :observability_sources do
-    sources()
+    with :ok <- check_enabled(), do: {:ok, Registry.list_sources()}
   end
 
+  @doc "Every registered observability sink."
   @spec list_sinks(caller_context()) :: {:ok, [map()]} | {:error, term()}
   verb list_sinks(caller_context), verb: :observability_sinks do
-    sinks()
+    with :ok <- check_enabled(), do: {:ok, Registry.list_sinks()}
   end
 
   # ---------- Mutations ----------
 
+  @doc "Enable the source `name`."
   @spec enable_source(atom(), caller_context()) :: :ok | {:error, term()}
-  verb enable_source(name, caller_context) when is_atom(name), verb: :observability_enable do
-    enable(name)
+  verb enable_source(name, caller_context) when is_atom(name),
+    verb: :observability_enable,
+    args: [name: @source] do
+    with :ok <- check_enabled(), {:ok, _} <- registered(name), do: Registry.enable_source(name)
   end
 
+  @doc "Disable the source `name`."
   @spec disable_source(atom(), caller_context()) :: :ok | {:error, term()}
-  verb disable_source(name, caller_context) when is_atom(name), verb: :observability_disable do
-    disable(name)
-  end
-
-  # ---------- The effects the terminal shares ----------
-
-  @doc false
-  @spec sources() :: {:ok, [map()]} | {:error, term()}
-  def sources, do: with(:ok <- check_enabled(), do: {:ok, Registry.list_sources()})
-
-  @doc false
-  @spec sinks() :: {:ok, [map()]} | {:error, term()}
-  def sinks, do: with(:ok <- check_enabled(), do: {:ok, Registry.list_sinks()})
-
-  @doc false
-  @spec enable(atom()) :: :ok | {:error, term()}
-  def enable(name), do: with(:ok <- check_enabled(), do: Registry.enable_source(name))
-
-  @doc false
-  @spec disable(atom()) :: :ok | {:error, term()}
-  def disable(name), do: with(:ok <- check_enabled(), do: Registry.disable_source(name))
-
-  @doc false
-  @spec tail_source(atom()) :: :ok | {:error, term()}
-  def tail_source(source) do
-    with :ok <- check_enabled(),
-         :ok <- check_pubsub_sink() do
-      Observability.subscribe(source)
-    end
+  verb disable_source(name, caller_context) when is_atom(name),
+    verb: :observability_disable,
+    args: [name: @source] do
+    with :ok <- check_enabled(), {:ok, _} <- registered(name), do: Registry.disable_source(name)
   end
 
   # ---------- Internal helpers ----------
+
+  # The registered source `written` names, as an atom or as its text; one the
+  # registry does not hold is refused naming the ones it does.
+  defp registered(written) do
+    sources = Enum.map(Registry.list_sources(), & &1.name)
+
+    case Enum.find(sources, &(&1 == written or Atom.to_string(&1) == written)) do
+      nil ->
+        {:error,
+         Flezha.Error.new("usage.unknown_word", noun: "source", value: written, allowed: sources)}
+
+      source ->
+        {:ok, source}
+    end
+  end
 
   defp check_pubsub_sink() do
     if Config.get(:observability_pubsub_sink_enabled),

@@ -1,15 +1,15 @@
 //! The one place `flz` starts the sibling `flzvm`, the one place a request is
 //! built, and the one place a failure becomes an exit code.
 //!
-//! Every verb is the same shape: a `CliManager` wire name, its positional
-//! arguments and the options it carries, run as `flzvm rpc <expr>`. The verb's
-//! body on the controller renders its own failure on this process's stderr and
-//! exits with its class's code, so `flz` passes that code through and adds
-//! nothing. `flz` renders only what it decides itself: its command line, a
-//! controller it cannot reach, and an `flzvm` it cannot start. Every request
-//! ends with one options list, and the caller's token and output format join
-//! that list here and nowhere else: no verb can be gated on the controller and
-//! token-less on the wire.
+//! Every verb that reaches a controller is the same shape: one door call
+//! naming a published operation, its arguments as one JSON array and the
+//! options it carries, run as `flzvm rpc <expr>`. The controller renders the
+//! answer, and a failure on this process's stderr with its class's exit code,
+//! so `flz` passes that code through and adds nothing. `flz` renders only what
+//! it decides itself: its command line, a controller it cannot reach, and an
+//! `flzvm` it cannot start. Every request ends with one options list, and the
+//! caller's token and output format join that list here and nowhere else: no
+//! verb can be gated on the controller and token-less on the wire.
 
 use std::io::{BufRead, BufReader, Write};
 use std::process::{exit, ChildStderr, Command, ExitStatus, Stdio};
@@ -47,26 +47,38 @@ pub(crate) fn fail(error: FlezhaError) -> ! {
     exit(error.exit_code());
 }
 
-/// The module every request to a running controller calls.
-const CLI_MANAGER: &str = "Flezha.Service.CliManager";
+/// The one function every request to a running controller calls: the door's
+/// own name for the operation, its arguments as one JSON array, and the
+/// options list.
+const DOOR: &str = "Flezha.Service.Cli.call";
 
-/// Run one `CliManager` call on the controller: `fun` with `positional` (each
-/// an Elixir literal) and `opts`, the caller's token and format appended.
-/// Returns only when the child succeeded, so the caller's next line is its
-/// success path.
-pub(crate) fn run(fun: &str, positional: &[String], opts: &[Opt], read: &Reading) {
-    settle(call(&expression(fun, positional, opts, read), Out::Inherit));
+/// Run the published operation `name` on the controller with `args`, the
+/// caller's token and format appended to `opts`. Returns only when the child
+/// succeeded, so the caller's next line is its success path.
+pub(crate) fn door(name: &str, args: &[Value], opts: &[Opt], read: &Reading) {
+    settle(call(&door_expression(name, args, opts, read), Out::Inherit));
 }
 
-/// The request `run` sends, for the calls that do not go through `run`.
-pub(crate) fn expression(fun: &str, positional: &[String], opts: &[Opt], read: &Reading) -> String {
-    build(
-        CLI_MANAGER,
-        fun,
-        positional,
+/// The request `door` sends, for the calls that do not go through `door`.
+pub(crate) fn door_expression(name: &str, args: &[Value], opts: &[Opt], read: &Reading) -> String {
+    door_call(
+        name,
+        args,
         opts,
         read.token(),
         read.output_format() == "json",
+    )
+}
+
+/// `serde_json` keeps an object's keys sorted, so one invocation builds one
+/// request, byte for byte.
+fn door_call(name: &str, args: &[Value], opts: &[Opt], token: Option<&str>, json: bool) -> String {
+    format!(
+        "{}({}, {}, {})",
+        DOOR,
+        text(name),
+        text(&Value::Array(args.to_vec()).to_string()),
+        keyword_opts_fragment(opts, token, json)
     )
 }
 
@@ -75,29 +87,15 @@ pub(crate) fn expression(fun: &str, positional: &[String], opts: &[Opt], read: &
 /// it carries no token. The child prints its own answer and exits with its
 /// class's code, which `flz` passes through.
 pub(crate) fn eval(module: &str, fun: &str, positional: &[String], read: &Reading) {
-    let expression = build(
-        module,
-        fun,
-        positional,
+    let mut parts = positional.to_vec();
+    parts.push(keyword_opts_fragment(
         &[],
         None,
         read.output_format() == "json",
-    );
+    ));
+    let expression = format!("{}.{}({})", module, fun, parts.join(", "));
 
     verdict(flzvm().arg("eval").arg(expression).status());
-}
-
-fn build(
-    module: &str,
-    fun: &str,
-    positional: &[String],
-    opts: &[Opt],
-    token: Option<&str>,
-    json: bool,
-) -> String {
-    let mut parts: Vec<String> = positional.to_vec();
-    parts.push(keyword_opts_fragment(opts, token, json));
-    format!("{}.{}({})", module, fun, parts.join(", "))
 }
 
 /// What `elixir --rpc-eval` says, with exit 1, whenever it could not reach the
@@ -228,48 +226,64 @@ pub(crate) fn not_runnable(e: io::Error) -> ! {
     ))
 }
 
-/// The read verbs — a namespace, an output format, a progress line only text
-/// mode prints, and one RPC taking both. `progress` names what is being
-/// fetched; `None` prints no line, which is what `flz cluster status` does.
-pub(crate) fn scoped_read(read: &Reading, rpc_fun: &str, progress: Option<&str>) {
-    let namespace = read.namespace();
-    let output_format = read.output_format();
-
-    if let Some(noun) = progress {
-        if output_format == "text" {
-            let display_namespace = if namespace.is_empty() {
-                "default"
-            } else {
-                namespace
-            };
-            println!("Fetching {} for namespace '{}'...", noun, display_namespace);
-        }
+/// The namespace a scoped verb names: the one written, `default` when none was.
+pub(crate) fn namespace(read: &Reading) -> Value {
+    match read.namespace() {
+        "" => Value::from("default"),
+        written => Value::from(written),
     }
-
-    run(rpc_fun, &[text(namespace)], &[], read);
 }
 
-/// The window a bounded stream runs for, as the option its request carries.
-/// The two verbs that tail name different subjects and share this.
-pub(crate) fn window(read: &Reading) -> Opt<'static> {
-    let ms = read
-        .num::<u64>(DURATION_MS.long)
-        .unwrap_or(DEFAULT_WINDOW_MS);
+/// The read verbs — a namespace, an output format, a progress line only text
+/// mode prints, and one operation taking the namespace. `progress` names what
+/// is being fetched; `None` prints no line, which is what `flz cluster status`
+/// does.
+pub(crate) fn scoped_read(read: &Reading, name: &str, progress: Option<&str>) {
+    let namespace = namespace(read);
 
-    ("duration_ms", ms.to_string())
+    if let Some(noun) = progress {
+        let shown = namespace.as_str().unwrap_or_default();
+        progress_line(
+            read,
+            &format!("Fetching {} for namespace '{}'...", noun, shown),
+        );
+    }
+
+    door(name, &[namespace], &[], read);
+}
+
+/// A line that says what `flz` is about to do, printed in text mode only: under
+/// `--json`, stdout carries the answer and nothing else.
+pub(crate) fn progress_line(read: &Reading, line: &str) {
+    if read.output_format() == "text" {
+        println!("{}", line);
+    }
+}
+
+/// The window a bounded stream runs for, in milliseconds: `--duration-ms`, or
+/// the default every streaming verb shares.
+pub(crate) fn window_ms(read: &Reading) -> u64 {
+    read.num::<u64>(DURATION_MS.long)
+        .unwrap_or(DEFAULT_WINDOW_MS)
+}
+
+/// The window, as the option a tail's request carries: the two tails name
+/// different subjects and their print loop owns the window.
+pub(crate) fn window(read: &Reading) -> Opt<'static> {
+    ("duration_ms", window_ms(read).to_string())
 }
 
 /// The verbs that name one thing and do one thing to it: a dead-letter entry,
 /// a Cell path, a schedule, a plugin, a namespace, an observability source.
 /// They differ in the slot's name and in nothing else.
-pub(crate) fn one_arg(read: &Reading, slot: &str, rpc_fun: &str) {
-    run(rpc_fun, &[text(read.pos(slot))], &[], read);
+pub(crate) fn one_arg(read: &Reading, slot: &str, name: &str) {
+    door(name, &[Value::from(read.pos(slot))], &[], read);
 }
 
 /// The verbs that take nothing but the options every call carries: the authz
 /// list and identity reads, `flz audit stats`, `flz controller status`.
-pub(crate) fn bare(read: &Reading, rpc_fun: &str) {
-    run(rpc_fun, &[], &[], read);
+pub(crate) fn bare(read: &Reading, name: &str) {
+    door(name, &[], &[], read);
 }
 
 /// A `Command` for the sibling `flzvm`, for the three verbs that read its
@@ -348,7 +362,7 @@ pub(crate) fn controller_is_up(probe_timeout_ms: u64) -> bool {
 
     let mut child = match flzvm()
         .arg("rpc")
-        .arg(build(CLI_MANAGER, "boot_status", &[], &[], None, false))
+        .arg(door_call("Controller.boot_status", &[], &[], None, false))
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
         .spawn()
@@ -390,30 +404,30 @@ mod tests {
     use super::*;
 
     /// A token with a quote must not break out of the Elixir keyword literal,
-    /// and a verb with nothing else still ends with the list.
+    /// and a call with nothing else still ends with the list.
     #[test]
     fn the_token_closes_the_options_list_and_is_escaped() {
         assert_eq!(
-            build(CLI_MANAGER, "x", &[], &[], Some("abc\"def"), false),
-            "Flezha.Service.CliManager.x([token: \"abc\\\"def\"])"
+            door_call("Dlq.list", &[], &[], Some("abc\"def"), false),
+            r#"Flezha.Service.Cli.call("Dlq.list", "[]", [token: "abc\"def"])"#
         );
         assert_eq!(
-            build(CLI_MANAGER, "x", &[], &[], None, false),
-            "Flezha.Service.CliManager.x([])"
+            door_call("Dlq.list", &[Value::Null], &[], None, false),
+            r#"Flezha.Service.Cli.call("Dlq.list", "[null]", [])"#
         );
     }
 
-    /// Options keep the order they were given, a quote and a backslash inside a
-    /// value both stay inside it, and the token closes the list.
+    /// The arguments are one JSON array inside one Elixir string: a quote and a
+    /// backslash inside a value stay inside it, an object's keys come out in one
+    /// order, and the options keep theirs with the token last.
     #[test]
-    fn options_keep_their_order_and_every_value_is_escaped() {
-        let opts = [
-            ("cron", text("0 8 * * *")),
-            ("init_values", text("{\"a\":\"x\\\"y\"}")),
-        ];
+    fn arguments_are_one_escaped_json_array_and_options_keep_their_order() {
+        let fields =
+            serde_json::json!({ "name": "d", "init_values": { "a": "x\"y" }, "cron": "0 8 * * *" });
+        let opts = [("duration_ms", "500".to_string())];
         assert_eq!(
-            build(CLI_MANAGER, "schedule_add", &[text("d")], &opts, Some("t"), false),
-            "Flezha.Service.CliManager.schedule_add(\"d\", [cron: \"0 8 * * *\", init_values: \"{\\\"a\\\":\\\"x\\\\\\\"y\\\"}\", token: \"t\"])"
+            door_call("Schedule.add", &[fields], &opts, Some("t"), true),
+            r#"Flezha.Service.Cli.call("Schedule.add", "[{\"cron\":\"0 8 * * *\",\"init_values\":{\"a\":\"x\\\"y\"},\"name\":\"d\"}]", [duration_ms: 500, output: "json", token: "t"])"#
         );
     }
 

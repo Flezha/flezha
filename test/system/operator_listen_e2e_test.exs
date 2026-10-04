@@ -1,13 +1,13 @@
 defmodule FlezhaTest.System.OperatorListenE2ETest do
   @moduledoc """
   `flz operator listen` and `flz operator send --await` against live
-  operators bound to a live runner, through `CliManager` in process the way
-  `flz` reaches it: what a named sink, a keyed sink and the input chain print,
-  a partition group on one stream, the plugin gone however the listener ends,
-  and the order `send --await` attaches in.
+  operators bound to a live runner, through `Flezha.Service.Cli.call/3` in
+  process the way `flz` reaches it: what a named sink, a keyed sink and the
+  input chain print, a partition group on one stream, the plugin gone however
+  the listener ends, and the order `send --await` attaches in.
 
   The same verbs with the plugin manager stubbed are
-  `test/flezha/cli/cli_manager_listen_test.exs`.
+  `test/flezha/cli/listen_test.exs`.
 
   Tagged `:system`; run with
   `mix test --include system test/system/operator_listen_e2e_test.exs`.
@@ -26,7 +26,7 @@ defmodule FlezhaTest.System.OperatorListenE2ETest do
   alias Flezha.Partition
   alias Flezha.Plugin
   alias Flezha.SDK.KeyGroup
-  alias Flezha.Service.{CliManager, OperatorManager}
+  alias Flezha.Service.{Cli, OperatorManager}
   alias FlezhaTest.Fixtures.OperatorFixture
 
   # The listener, the plugin it enables and what detaches it are controller
@@ -152,7 +152,7 @@ defmodule FlezhaTest.System.OperatorListenE2ETest do
     test "prints the delivery verdict, then what came back", %{namespace: ns} do
       id = start!(ns, "bench_echo")
 
-      out = capture_io(fn -> CliManager.operator_send(ns, id, "hello", "", await_ms: 2_000) end)
+      out = capture_io(fn -> send_input(ns, id, "hello", await_ms: 2_000) end)
 
       assert lines(out) == ["Delivered to '#{id}'.", "echo\thello"]
       assert listeners(ns, id) == []
@@ -161,7 +161,7 @@ defmodule FlezhaTest.System.OperatorListenE2ETest do
     test "with nothing emitted it prints the verdict alone", %{namespace: ns} do
       id = start!(ns, "compare_filter")
 
-      out = capture_io(fn -> CliManager.operator_send(ns, id, "nope", "", await_ms: 500) end)
+      out = capture_io(fn -> send_input(ns, id, "nope", await_ms: 500) end)
 
       assert lines(out) == ["Delivered to '#{id}'."]
     end
@@ -206,8 +206,11 @@ defmodule FlezhaTest.System.OperatorListenE2ETest do
   end
 
   defp deliver!(ns, id, payload) do
-    assert capture_io(fn -> CliManager.operator_send(ns, id, payload, "", []) end) =~ "Delivered"
+    assert capture_io(fn -> send_input(ns, id, payload, []) end) =~ "Delivered"
   end
+
+  defp send_input(ns, id, payload, opts),
+    do: Cli.call("Operator.send", Jason.encode!([ns, id, payload, ""]), opts)
 
   # A listener the way `flz` runs one: a process of its own, whose group leader
   # stands in for the `flz` node and collects what it prints. Answers once the
@@ -219,12 +222,15 @@ defmodule FlezhaTest.System.OperatorListenE2ETest do
       spawn_monitor(fn ->
         Process.group_leader(self(), device)
 
-        CliManager.operator_listen(
-          ns,
-          id,
-          Keyword.get(opts, :direction, "output"),
-          output: Keyword.get(opts, :format, "text"),
-          duration_ms: Keyword.get(opts, :window, 60_000)
+        Cli.call(
+          "Operator.listen",
+          Jason.encode!([
+            ns,
+            id,
+            Keyword.get(opts, :direction, "output"),
+            %{"window_ms" => Keyword.get(opts, :window, 60_000)}
+          ]),
+          output: Keyword.get(opts, :format, "text")
         )
       end)
 
@@ -250,7 +256,9 @@ defmodule FlezhaTest.System.OperatorListenE2ETest do
   # The listener plugins `flz operator info --json` shows on `id`.
   defp listeners(ns, id) do
     %{"operators" => operators} =
-      Jason.decode!(capture_io(fn -> CliManager.operator_info(ns, output: "json") end))
+      Jason.decode!(
+        capture_io(fn -> Cli.call("Operator.info", Jason.encode!([ns]), output: "json") end)
+      )
 
     for %{"id" => ^id, "plugins" => plugins} <- operators,
         %{"id" => "io_listener_" <> _ = plugin} <- plugins,

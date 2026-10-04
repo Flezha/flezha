@@ -1,71 +1,22 @@
 defmodule Flezha.Service.Cli.Dlq do
   @moduledoc """
-  `flz dlq` — list, show, replay and drop for parked records.
-
-  Rendering only: the store call and the re-drive are `Flezha.Service.Dlq`'s,
-  and the authorization and audit are the verb's row, so the terminal and the
-  console reach the store through one gate.
+  `flz dlq` — the text forms of list, show, replay and drop for parked records.
   """
 
-  alias Flezha.Dlq.Store
-  alias Flezha.Service.Dlq, as: DlqSvc
+  @doc "`flz dlq replay`."
+  def replay(%{outcome: :removed}, [entry_ref | _], _opts),
+    do: IO.puts("replay succeeded; #{entry_ref} removed")
 
-  @doc "The row a `dlq list` is judged by: the named class's namespace, `_system` for none."
-  def class_row([operator_class | _]), do: DlqSvc.class_row(class_filter(operator_class))
+  def replay(%{outcome: :re_parked, generation: generation}, [entry_ref | _], _opts),
+    do: IO.puts("replay failed; #{entry_ref} re-parked with generation #{generation}")
 
-  @doc "The entry a `dlq show | replay | drop` names, or the refusal naming it."
-  def locate([entry_ref | _]), do: DlqSvc.entry_row(entry_ref)
+  @doc "`flz dlq drop`."
+  def drop(:ok, [entry_ref | _], _opts), do: IO.puts("dropped #{entry_ref}")
 
-  @doc """
-  `flz dlq list [operator]` — parked entries, nearest-to-expiry (oldest)
-  first.
-  """
-  def dlq_list(operator_class, _call) do
-    case Store.list(class_filter(operator_class)) do
-      [] -> IO.puts("dead-letter queue is empty")
-      entries -> render_listing(entries)
-    end
-  end
+  @doc "`flz dlq list`: parked entries, nearest-to-expiry first."
+  def list([], _args, _opts), do: IO.puts("dead-letter queue is empty")
 
-  @doc """
-  `flz dlq show <operator/tasklet/id>` — entry metadata + payload preview.
-  """
-  def dlq_show(_entry_ref, %{row: %{entry: entry, payload: payload}}) do
-    render_entry(entry, payload)
-  end
-
-  @doc """
-  `flz dlq replay <operator/tasklet/id>` — re-dispatch a parked payload
-  to its operator through the ordinary input path. A successful replay
-  removes the entry; a failing one re-parks it with `generation`
-  incremented.
-  """
-  def dlq_replay(entry_ref, %{row: %{entry: entry, payload: payload}}) do
-    case DlqSvc.redrive(entry_ref, entry, payload) do
-      {:ok, :removed} ->
-        IO.puts("replay succeeded; #{entry_ref} removed")
-
-      {:ok, {:re_parked, generation}} ->
-        IO.puts("replay failed; #{entry_ref} re-parked with generation #{generation}")
-
-      {:error, _reason} = refused ->
-        refused
-    end
-  end
-
-  @doc """
-  `flz dlq drop <operator/tasklet/id>` — discard a parked entry and its
-  payload. Audited: the drop is deliberate data loss.
-  """
-  def dlq_drop(entry_ref, _call) do
-    :ok = Store.drop(entry_ref)
-    IO.puts("dropped #{entry_ref}")
-  end
-
-  defp class_filter(""), do: nil
-  defp class_filter(operator_class), do: operator_class
-
-  defp render_listing(entries) do
+  def list(entries, _args, _opts) do
     IO.puts(
       String.pad_trailing("ENTRY", 60) <>
         String.pad_trailing("CELL", 16) <>
@@ -88,7 +39,8 @@ defmodule Flezha.Service.Cli.Dlq do
     end)
   end
 
-  defp render_entry(entry, payload) do
+  @doc "`flz dlq show`: the entry's fields and a preview of its payload."
+  def show([entry, payload], _args, _opts) do
     Enum.each(
       ~w(id operator_class tasklet_id cell_key channel origin_offset error attempts generation status ts_ms payload_bytes),
       fn key ->

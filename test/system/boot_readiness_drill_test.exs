@@ -32,7 +32,7 @@ defmodule FlezhaTest.System.BootReadinessDrillTest do
   alias Flezha.Config.Durations
   alias Flezha.Convergence.Snapshot
   alias Flezha.Healthz.Server
-  alias Flezha.Service.{CliManager, HubManager}
+  alias Flezha.Service.{Cli, HubManager}
   alias Flezha.Service.HubManager.Starter
   alias Flezha.State.TestHelpers
   alias FlezhaTest.Helper.HubRegistryTestHelper
@@ -165,7 +165,7 @@ defmodule FlezhaTest.System.BootReadinessDrillTest do
           {"flz boot await --timeout 0", &verb_await/0},
           {"HEALTHCHECK", &healthcheck/0}
         ] do
-      assert {{:shutdown, 1}, out} = run.(), "#{name} reported ready while #{unmet} is unmet"
+      assert {{:shutdown, 7}, out} = run.(), "#{name} reported ready while #{unmet} is unmet"
       assert out =~ verdict
       assert out =~ unmet
     end
@@ -217,7 +217,7 @@ defmodule FlezhaTest.System.BootReadinessDrillTest do
           capture_io(fn ->
             outcome =
               try do
-                CliManager.boot_await(timeout_ms)
+                Cli.call("Controller.boot_await", Jason.encode!([timeout_ms]), [])
                 :ok
               catch
                 :exit, reason -> reason

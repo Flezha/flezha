@@ -18,7 +18,7 @@ defmodule Flezha.State.DurabilityTierTest do
   alias Flezha.AuthZ.{AuthState, NamespaceStore, QuotaCounters, RoleStore, TokenStore}
   alias Flezha.Dlq
   alias Flezha.Operator.ClassRegistry
-  alias Flezha.Service.Cli.Controller, as: ControllerCli
+  alias Flezha.Service.Cli
   alias Flezha.State.DurabilityTier
   alias Flezha.State.DurabilityTier.{Artifact, Hydrator, Manifest, Shipper}
   alias Flezha.State.{InputLog, Outbox, Paths, TaskJournal, TestHelpers}
@@ -101,7 +101,7 @@ defmodule Flezha.State.DurabilityTierTest do
       assert DurabilityTier.posture() == :local_only
 
       printed =
-        ExUnit.CaptureIO.capture_io(fn -> :ok = ControllerCli.controller_status(%{opts: []}) end)
+        ExUnit.CaptureIO.capture_io(fn -> :ok = Cli.call("Controller.status", "[]", []) end)
 
       assert printed =~ "durability_posture:            local_only"
     end

@@ -26,7 +26,7 @@ defmodule FlezhaTest.System.ListenerSurvivalDrillTest do
   alias Flezha.Partition
   alias Flezha.Plugin.Extension.Table
   alias Flezha.SDK.KeyGroup
-  alias Flezha.Service.{CliManager, HubManager, Listener, OperatorManager, PluginManager}
+  alias Flezha.Service.{Cli, HubManager, Listener, OperatorManager, PluginManager}
   alias FlezhaTest.Fixtures.OperatorFixture
   alias FlezhaTest.Helper.{FleetStateHelper, NodeTestHelper, TierE2EHarness}
 
@@ -339,7 +339,8 @@ defmodule FlezhaTest.System.ListenerSurvivalDrillTest do
   end
 
   defp send!(ns, id, text) do
-    assert capture_io(fn -> CliManager.operator_send(ns, id, text, "", []) end) =~ "'#{id}'"
+    assert capture_io(fn -> Cli.call("Operator.send", Jason.encode!([ns, id, text, ""]), []) end) =~
+             "'#{id}'"
   end
 
   # A listener in a task of its own: every event comes back as `{:heard, _}`,

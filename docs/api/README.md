@@ -19,9 +19,11 @@ Both are read-only. `consumers/published.txt` names them.
 
 ## How a function is governed
 
-Every published function binds one row of `Flezha.AuthZ.Verbs` — the same row
-the `flz` verb for that effect binds — and `Flezha.AuthZ.Verb.run/5` applies it
-in one order: identity, scope, policy, act, audit. The row names the action the
+Every published function binds one row of `Flezha.AuthZ.Verbs`, and
+`Flezha.AuthZ.Verb.run/5` applies it in one order: identity, scope, policy, act,
+audit. No surface binds a row of its own: `flz` and a runner's `AdminRequest`
+reach the function through one door, `Flezha.Service.Admin`, so one request is
+judged once, by the function's own row. The row names the action the
 policy judges, the rule that resolves its namespace, and the audit it leaves;
 `docs/topics/basics/authorization.md` carries the whole table. A published function
 that took a caller context and bound no row would fail
@@ -33,6 +35,17 @@ The namespace a mutation is judged in is **resolved by the callee** from what is
 being acted on — a dead-letter entry's own namespace, a plugin's own namespace —
 never taken from the context. A consumer cannot choose the scope its own request
 is judged in.
+
+## The catalogue
+
+Where a function binds its row it also describes itself: its arguments before the
+context (`args:`, in the vocabulary plugin options use), whether it streams
+(`stream: true`), and the first sentence of its `@doc`. Its row says whether it may
+be reached over the network (`remote`). `Flezha.Service.catalogue/0` builds the
+catalogue from those declarations; the door resolves an operation's name
+(`"Dlq.list"`) through it and converts the JSON arguments by its rows.
+`mix flezha.catalogue` writes the copy `flz` embeds, `cli/catalogue.json`, which
+`flz help --json` prints and `test/flezha/api/catalogue_test.exs` holds to the code.
 
 ## Why a consumer's calls are recorded here
 

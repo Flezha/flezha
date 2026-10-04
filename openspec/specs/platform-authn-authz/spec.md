@@ -589,16 +589,16 @@ it attaches to print what came back is that verb's own mechanism, not a second v
 
 Every administration verb SHALL be one row of a declaration table in the policy directory,
 naming its action (an atom of the authorizable-action enumeration, or `:public` for a
-read the policy calls public, or `:none` for a function that is not a verb), the rule
+read the policy calls public), the rule
 that resolves its scope (an argument, `_system`, the caller's own namespace, or a field
 of a stored row), and its audit (none, before the act, or after the act with its
-outcome, on a named source). A row SHALL name no module.
+outcome, on a named source), and whether the verb may be reached over the network
+(`remote`, true unless declared otherwise). A row SHALL name no module.
 
-One function SHALL apply a row for every surface — the `flz` wire, the published
-service API, the runner session — in one order: identity, scope, policy, act, audit.
-A surface SHALL bind its function to a row, and a function on a surface that binds no
-row SHALL NOT exist: a wire name with no row is a compile error, and a published
-function with no row fails the suite. Every action in the enumeration SHALL be named
+One function SHALL apply a row, in one order: identity, scope, policy, act, audit. Only a
+published service function SHALL bind a row; every surface (the `flz` wire, the runner
+session, HTTP) SHALL reach the published function through the door and SHALL bind no row of
+its own. A published function with no row fails the suite. Every action in the enumeration SHALL be named
 by at least one row, so an action can neither outlive its verbs nor be declared without
 one.
 
@@ -606,11 +606,11 @@ A verb whose scope is a field of a stored row SHALL refuse a caller with no boun
 principal, and a caller whose role does not grant the action, before the row is read,
 so that the refusal says nothing about whether the name exists.
 
-#### Scenario: A wire name without a row does not compile
+#### Scenario: A surface that binds its own row fails the suite
 
-- **WHEN** a delegate is added to `Flezha.Service.CliManager` beside the declared verbs
-  without a row for it
-- **THEN** compilation SHALL fail naming the wire name and the missing row
+- **WHEN** a module of the `flz` wire, the runner session or the HTTP surface declares a
+  binding to a row
+- **THEN** the declaration test SHALL fail naming the module and the row
 
 #### Scenario: A published function without a row fails the suite
 
@@ -625,8 +625,8 @@ so that the refusal says nothing about whether the name exists.
 
 #### Scenario: Every gated row refuses an unbound caller
 
-- **WHEN** authorization is enforced and every row whose action is not `:public` or
-  `:none` is invoked with a caller context carrying no principal
+- **WHEN** authorization is enforced and every row whose action is not `:public` is
+  invoked with a caller context carrying no principal
 - **THEN** every invocation SHALL be refused, no effect SHALL run, and each refusal SHALL
   be audited as a denial once
 

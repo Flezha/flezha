@@ -1,8 +1,9 @@
+use serde_json::{Map, Value};
+
 use crate::args::{OptSpec, Positional, Reading, INIT_VALUES, NAMESPACE};
 use crate::dispatch::{self, Command, Missing, Verb};
-use crate::help;
-use crate::operator::{first_message_opts, plugins_json_or_refuse, CHANNEL, TEXT};
-use crate::rpc::{self, text, Opt};
+use crate::operator::{first_message, json_object, plugins_json_or_refuse, CHANNEL, TEXT};
+use crate::{help, rpc};
 
 const CRON: OptSpec = OptSpec::text("--cron", "--cron", "<expr>").required();
 const TZ: OptSpec = OptSpec::text("--tz", "--tz", "<iana>").required();
@@ -28,13 +29,13 @@ pub(crate) const TABLE: Command = Command {
                 PLUGINS,
             ])
             .strict(),
-        Verb::new("list", |read| rpc::run("schedule_list", &[], &[], read)),
+        Verb::new("list", |read| rpc::bare(read, "Schedule.list")),
         Verb::new("remove", |read| {
-            rpc::one_arg(read, NAME[0].name, "schedule_remove")
+            rpc::one_arg(read, NAME[0].name, "Schedule.remove")
         })
         .taking(NAME),
         Verb::new("run", |read| {
-            rpc::one_arg(read, NAME[0].name, "schedule_run")
+            rpc::one_arg(read, NAME[0].name, "Schedule.run")
         })
         .taking(NAME),
     ],
@@ -50,26 +51,29 @@ pub(crate) const TABLE: Command = Command {
 /// as: the controller's decoder reads the JSON itself, at every firing, and
 /// the message is stored verbatim.
 fn handle_add(read: &Reading) {
-    let plugins = read.opt(PLUGINS.long).map(plugins_json_or_refuse);
-
-    let mut opts: Vec<Opt> = vec![
-        ("cron", text(read.opt(CRON.long).unwrap_or_default())),
-        ("tz", text(read.opt(TZ.long).unwrap_or_default())),
-        ("factory", text(read.opt(FACTORY.long).unwrap_or_default())),
-    ];
+    let mut fields = Map::new();
 
     for (key, value) in [
+        ("name", Some(read.pos(NAME[0].name))),
+        ("cron", read.opt(CRON.long)),
+        ("timezone", read.opt(TZ.long)),
+        ("factory_id", read.opt(FACTORY.long)),
         ("namespace", read.opt(NAMESPACE.long)),
-        ("init_values", read.opt(INIT_VALUES.long)),
     ] {
         if let Some(value) = value {
-            opts.push((key, text(value)));
+            fields.insert(key.into(), Value::from(value));
         }
     }
-    opts.extend(first_message_opts(read));
-    if let Some(plugins) = plugins.as_deref() {
-        opts.push(("plugins", text(plugins)));
+    if read.opt(INIT_VALUES.long).is_some() {
+        fields.insert("init_values".into(), json_object(read, INIT_VALUES.long));
+    }
+    fields.extend(first_message(read));
+    if let Some(plugins) = read.opt(PLUGINS.long) {
+        fields.insert(
+            "plugins".into(),
+            Value::from(plugins_json_or_refuse(plugins)),
+        );
     }
 
-    rpc::run("schedule_add", &[text(read.pos(NAME[0].name))], &opts, read);
+    rpc::door("Schedule.add", &[Value::Object(fields)], &[], read);
 }

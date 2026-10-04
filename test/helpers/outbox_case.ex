@@ -50,7 +50,7 @@ defmodule FlezhaTest.OutboxCase do
       alias Flezha.Dlq.Store, as: DlqStore
       alias Flezha.Operator.ClassRegistry
       alias Flezha.SDK.{RecordFrame, Wire}
-      alias Flezha.Service.CliManager
+      alias Flezha.Service.Cli
 
       alias Flezha.State.{
         FsyncBatcher,

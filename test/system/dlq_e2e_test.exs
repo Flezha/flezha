@@ -28,7 +28,7 @@ defmodule FlezhaTest.System.DlqE2ETest do
   alias Flezha.Dlq.Store
   alias Flezha.Operator.Builder
   alias Flezha.Operator.ClassRegistry
-  alias Flezha.Service.CliManager
+  alias Flezha.Service.Cli
   alias Flezha.Service.OperatorManager
   alias Flezha.State.InputLog
   alias FlezhaTest.Fixtures.OperatorFixture
@@ -104,14 +104,14 @@ defmodule FlezhaTest.System.DlqE2ETest do
 
     # Entry inspectable: payload bytes round-tripped exactly.
     assert {:ok, _meta, "poison"} = Store.get(ref)
-    shown = capture_io(fn -> CliManager.dlq_show(ref) end)
+    shown = capture_io(fn -> Cli.call("Dlq.get", Jason.encode!([ref]), []) end)
     assert shown =~ "poison"
 
     # Fix the tasklet, then replay through the normal input path.
     send_inputs(operator_id, namespace, ["antidote"])
     assert await_output("ok:antidote", 30_000)
 
-    output = capture_io(fn -> CliManager.dlq_replay(ref) end)
+    output = capture_io(fn -> Cli.call("Dlq.replay", Jason.encode!([ref]), []) end)
     assert output =~ "replay succeeded"
     assert await_output("ok:poison", 30_000), "replayed payload never processed"
     assert {:error, :not_found} = Store.get(ref)

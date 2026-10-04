@@ -15,7 +15,7 @@ defmodule FlezhaTest.System.MultiTenantE2ETest do
   alias Flezha.AuthZ.{NamespaceStore, QuotaCounters, RoleStore, Scope, TokenStore}
   alias Flezha.Operator.Builder
   alias Flezha.Runner.FleetManager
-  alias Flezha.Service.CliManager
+  alias Flezha.Service.Cli
   alias Flezha.Service.OperatorManager
   alias FlezhaTest.Helper.AuthTestHelper
   alias FlezhaTest.Helper.NodeTestHelper
@@ -84,8 +84,13 @@ defmodule FlezhaTest.System.MultiTenantE2ETest do
   end
 
   test "a token-authenticated CLI round-trip resolves the tenant identity", %{token_a: token_a} do
-    assert {:ok, %{principal: "op-alpha", namespace: @ns_a, role: :ops}} =
-             CliManager.authz_whoami(token: token_a)
+    printed =
+      ExUnit.CaptureIO.capture_io(fn ->
+        Cli.call("Namespace.whoami", "[]", token: token_a, output: "json")
+      end)
+
+    assert %{"principal" => "op-alpha", "namespace" => @ns_a, "role" => "ops"} =
+             Jason.decode!(printed)
   end
 
   test "a cross-namespace verb is refused and the tenant's own succeeds", %{
@@ -98,15 +103,14 @@ defmodule FlezhaTest.System.MultiTenantE2ETest do
     # tenant-beta's user cannot stop tenant-alpha's operator...
     output =
       ExUnit.CaptureIO.capture_io(:stderr, fn ->
-        assert catch_exit(CliManager.operator_stop(@ns_a, "alpha_op_stop_target", token: token_b)) ==
-                 {:shutdown, 1}
+        assert catch_exit(stop(token_b)) == {:shutdown, 4}
       end)
 
-    assert output =~ "refused"
+    assert output =~ "authz.namespace_mismatch"
 
     # ...its own user can.
     ExUnit.CaptureIO.capture_io(fn ->
-      CliManager.operator_stop(@ns_a, "alpha_op_stop_target", token: token_a)
+      stop(token_a)
     end)
   end
 
@@ -115,11 +119,11 @@ defmodule FlezhaTest.System.MultiTenantE2ETest do
   } do
     output =
       ExUnit.CaptureIO.capture_io(:stderr, fn ->
-        assert catch_exit(CliManager.list_operators(@ns_a, token: token_b)) ==
-                 {:shutdown, 1}
+        assert catch_exit(Cli.call("Operator.list", Jason.encode!([@ns_a]), token: token_b)) ==
+                 {:shutdown, 4}
       end)
 
-    assert output =~ "refused"
+    assert output =~ "authz.namespace_mismatch"
   end
 
   test "an over-quota namespace refuses a new operator allocation", %{token_b: _} do
@@ -143,7 +147,11 @@ defmodule FlezhaTest.System.MultiTenantE2ETest do
     :ok = QuotaCounters.set(@ns_a, :runners, 1)
 
     # A proven namespace, so the refusal is the quota's and not the proof's.
-    assert {:error, {:quota_exceeded, :max_runners, %{current: 1, limit: 1}}} =
+    assert {:error,
+            %Flezha.Error{
+              code: "quota.exceeded",
+              details: %{"kind" => "max_runners", "current" => 1, "limit" => 1}
+            }} =
              FleetManager.connect_handler(
                make_ref(),
                @ns_a,
@@ -160,4 +168,12 @@ defmodule FlezhaTest.System.MultiTenantE2ETest do
     assert {:error, {:forbidden, :namespace_mismatch}} =
              AuthZ.authorize(ctx, :"runner.connect", Scope.build(@ns_b))
   end
+
+  defp stop(token),
+    do:
+      Cli.call(
+        "Operator.stop",
+        Jason.encode!([@ns_a, "alpha_op_stop_target"]),
+        token: token
+      )
 end

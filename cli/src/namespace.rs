@@ -1,8 +1,9 @@
+use serde_json::{json, Value};
+
 use crate::args::{Positional, Reading};
 use crate::dispatch::{self, Command, Missing, Verb};
-use crate::help;
-use crate::rpc::{self, text};
-use crate::settings::{extract_x_flags, serialize_flags};
+use crate::settings::{extract_x_flags, flags_object};
+use crate::{help, rpc};
 
 const NAME: &[Positional] = &[Positional::required("<name>")];
 
@@ -11,24 +12,16 @@ pub(crate) const TABLE: Command = Command {
     help: help::NAMESPACE,
     verbs: &[
         Verb::new("list", handle_list),
-        Verb::new("create", |read| {
-            quota_verb(read, "authz_render_namespace_create")
-        })
-        .taking(NAME)
-        .open(),
+        Verb::new("create", handle_create).taking(NAME).open(),
         Verb::new("delete", |read| {
-            rpc::one_arg(read, NAME[0].name, "authz_render_namespace_delete")
+            rpc::one_arg(read, NAME[0].name, "Namespace.delete")
         })
         .taking(NAME),
         Verb::new("show", |read| {
-            rpc::one_arg(read, NAME[0].name, "authz_render_namespace_show")
+            rpc::one_arg(read, NAME[0].name, "Namespace.get")
         })
         .taking(NAME),
-        Verb::new("set-quota", |read| {
-            quota_verb(read, "authz_render_namespace_set_quota")
-        })
-        .taking(NAME)
-        .open(),
+        Verb::new("set-quota", handle_set_quota).taking(NAME).open(),
     ],
     help_verbs: dispatch::HELP_VERBS,
     missing: Missing::Refuse,
@@ -38,24 +31,33 @@ pub(crate) const TABLE: Command = Command {
 /// The only list verb whose RPC takes no namespace: the namespaces ARE the
 /// scope, so `rpc::scoped_read`'s shape does not fit it.
 fn handle_list(read: &Reading) {
-    if read.output_format() == "text" {
-        println!("Fetching namespaces...");
-    }
-
-    rpc::run("list_namespaces", &[], &[], read);
+    rpc::progress_line(read, "Fetching namespaces...");
+    rpc::bare(read, "Operator.list_namespaces");
 }
 
-/// The two verbs that carry quota overrides. They ride the repeatable
-/// `--X<field>=<value>` settings (e.g. `--Xmax_runners=4`), serialized to the
-/// same JSON object shape every other `--X` surface uses.
-fn quota_verb(read: &Reading, rpc_fun: &str) {
-    rpc::run(
-        rpc_fun,
-        &[
-            text(read.pos(NAME[0].name)),
-            text(&serialize_flags(&extract_x_flags(read.rest()))),
-        ],
+fn handle_create(read: &Reading) {
+    rpc::door(
+        "Namespace.create",
+        &[name(read), json!({ "quotas": quotas(read) })],
         &[],
         read,
     );
+}
+
+fn handle_set_quota(read: &Reading) {
+    rpc::door(
+        "Namespace.set_quotas",
+        &[name(read), quotas(read)],
+        &[],
+        read,
+    );
+}
+
+fn name(read: &Reading) -> Value {
+    Value::from(read.pos(NAME[0].name))
+}
+
+/// The `--X<quota>=<value>` settings, by quota name.
+fn quotas(read: &Reading) -> Value {
+    flags_object(&extract_x_flags(read.rest()))
 }
