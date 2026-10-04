@@ -4,8 +4,7 @@
 
 Every failure Flezha reports carries one shape, on every surface: the `flz` CLI, the
 published consumer API, the SDK administration door, spawn, a runner connect and every
-SDK. A program acts on the `code` and the `class`; the `message` is for a person and may
-be reworded.
+SDK. A program acts on the `code` and the `class`.
 
 | Field | Meaning |
 |---|---|
