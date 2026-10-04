@@ -50,7 +50,7 @@ $ flz plugin enable web http_server \
 
 | | |
 | --- | --- |
-| Package | `flezha_http`, built on Bandit and Plug, installed with `flz plugin install` and loaded at the next boot (see [installing_plugins.md](../topics/advanced/installing_plugins.md)) |
+| Package | `flezha_http`, built on Bandit and Plug, installed with `flz plugin install` and loaded at the next boot (see [installing_plugins.md](../topics/plugins/installing_plugins.md)) |
 | Hooks | none needed: the server drives itself, so a binding names no hook (the provider also defines `:on_terminate`) |
 | Server | HTTP/1.1 only, on `bind` and `port`, started when the plugin activates and stopped when it is disabled or its operator stops |
 | Request | one outside call of the operator the plugin is enabled on, on its entry channel, with a JSON request envelope as the input |
@@ -271,5 +271,5 @@ events.addEventListener("ended", () => events.close());
 
 - [streamed_answers.md](../topics/advanced/streamed_answers.md): parts and server-sent events
 - [operator_calls.md](../topics/advanced/operator_calls.md): outside calls and the `response()` answer
-- [installing_plugins.md](../topics/advanced/installing_plugins.md): installing a plugin package
-- [plugins.md](../topics/basics/plugins.md): the plugin model
+- [installing_plugins.md](../topics/plugins/installing_plugins.md): installing a plugin package
+- [plugins.md](../topics/plugins/plugins.md): the plugin model

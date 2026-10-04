@@ -335,7 +335,7 @@ A sink names the channel it ends: in Rust, `sink_named("signals")` names it and
 `sink()` leaves it the tasklet's name. Naming the same channel again with
 `named(...)` is refused (`topology.channel_named_twice`). Where results go
 from a sink (a file, Kafka, an HTTP endpoint, a listener) is the plugin
-attached to it ([`plugins.md`](plugins.md)).
+attached to it ([`plugins.md`](../plugins/plugins.md)).
 
 ## Edge options
 
@@ -483,7 +483,7 @@ allowed and wires one edge, not two.
 - [`state.md`](state.md): cells and their state.
 - [`workflows.md`](workflows.md): the other run.
 - [`durability.md`](durability.md): what a stream keeps through a crash.
-- [`plugins.md`](plugins.md): what feeds an entry channel and what a sink delivers to.
+- [`plugins.md`](../plugins/plugins.md): what feeds an entry channel and what a sink delivers to.
 - [`../advanced/partitioning.md`](../advanced/partitioning.md), [`../advanced/merged_inputs.md`](../advanced/merged_inputs.md),
   [`../advanced/timers.md`](../advanced/timers.md), [`../advanced/effectively_once.md`](../advanced/effectively_once.md).
 - [`../../sdk/stream_transforms.md`](https://github.com/flezha/flezha/blob/main/docs/sdk/stream_transforms.md): where the transform code lives, for contributors.

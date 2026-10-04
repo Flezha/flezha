@@ -234,4 +234,4 @@ shape: never deliver from the worker's own `handle_call`, and pick `restart` del
 - [`durability.md`](../topics/basics/durability.md): the cross-hop guarantee and what survives a controller restart
 - [`operator_calls.md`](../topics/advanced/operator_calls.md): asking an operator and waiting for its answer
 - [`partitioning.md`](../topics/advanced/partitioning.md): key groups and rescale
-- [`plugins.md`](../topics/basics/plugins.md): the plugin model
+- [`plugins.md`](../topics/plugins/plugins.md): the plugin model

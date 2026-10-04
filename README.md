@@ -48,7 +48,7 @@ tomorrow with no rebuild.
 
 | Stage | What carries it |
 | --- | --- |
-| Extract | A file read line by line, resuming from its last committed offset ([`file.md`](docs/plugins/file.md)); an HTTP resource, injected only when it changes ([`http_poll.md`](docs/plugins/http_poll.md)); a WebSocket feed ([`websocket_subscription.md`](docs/plugins/websocket_subscription.md)); another operator's output ([`operator_forward.md`](docs/plugins/operator_forward.md)); or a plugin of your own ([`docs/topics/advanced/installing_plugins.md`](docs/topics/advanced/installing_plugins.md)) |
+| Extract | A file read line by line, resuming from its last committed offset ([`file.md`](docs/plugins/file.md)); an HTTP resource, injected only when it changes ([`http_poll.md`](docs/plugins/http_poll.md)); a WebSocket feed ([`websocket_subscription.md`](docs/plugins/websocket_subscription.md)); another operator's output ([`operator_forward.md`](docs/plugins/operator_forward.md)); or a plugin of your own ([`docs/topics/plugins/installing_plugins.md`](docs/topics/plugins/installing_plugins.md)) |
 | Transform | `map`, `filter`, `flat_map` and `key_by` declared on the edges ([`docs/topics/basics/streams.md`](docs/topics/basics/streams.md)); tasklets with durable per-key state for aggregation and deduplication; joins and enrichment by merging channels ([`docs/topics/advanced/merged_inputs.md`](docs/topics/advanced/merged_inputs.md)); windows and timeouts from per-key timers ([`docs/topics/advanced/timers.md`](docs/topics/advanced/timers.md)) |
 | Load | Postgres, each batch writing its rows and its progress watermark in one transaction ([`postgres_sink.md`](docs/plugins/postgres_sink.md)); Kafka, with retries, batching and an idempotent producer ([`kafka_producer.md`](docs/plugins/kafka_producer.md)); a file; or the next operator |
 
@@ -157,7 +157,7 @@ kernel, the two operator profiles, and the diagrams. Vocabulary:
 - Per-Cell durable state — WAL + snapshot, crash-resume, point-in-time query ([`docs/internals/state_persistence.md`](docs/internals/state_persistence.md))
 - Opt-in effectively-once delivery — durable input log, atomic effect record, fsync-gated outbox ([`docs/architecture/kernel.md`](docs/architecture/kernel.md))
 - Steps operators — a tasklet tree with saga compensation, a durable loop, and suspension ([`docs/architecture/steps_profile.md`](docs/architecture/steps_profile.md))
-- Installable plugin subsystem ([`docs/topics/advanced/installing_plugins.md`](docs/topics/advanced/installing_plugins.md))
+- Installable plugin subsystem ([`docs/topics/plugins/installing_plugins.md`](docs/topics/plugins/installing_plugins.md))
 - A Kafka producer, as a plugin package, with key partitioning, retries, idempotence, batching, and bounded queueing ([`docs/plugins/kafka_producer.md`](docs/plugins/kafka_producer.md))
 - Transactional Postgres sink — upsert + progress watermark in one transaction ([`docs/topics/basics/durability.md`](docs/topics/basics/durability.md))
 
@@ -352,13 +352,13 @@ _build/dev/rel/flezha/bin/flz operator stop my_operator
 ### Installable plugins
 ```bash
 # Full lifecycle reference (install / upgrade / uninstall / enable / disable)
-# lives in docs/topics/advanced/installing_plugins.md — including package layout, manifest
+# lives in docs/topics/plugins/installing_plugins.md — including package layout, manifest
 # schema, checksum generation, and Ed25519 signing.
 _build/dev/rel/flezha/bin/flz plugin install /path/to/my_plugin-1.0.0.fpz
 _build/dev/rel/flezha/bin/flz plugin enable my_plugin
 ```
 
-See [`docs/topics/advanced/installing_plugins.md`](docs/topics/advanced/installing_plugins.md) for the
+See [`docs/topics/plugins/installing_plugins.md`](docs/topics/plugins/installing_plugins.md) for the
 full authoring guide and [`examples/plugins/hello_world/`](examples/plugins/hello_world/)
 for a minimal copy-paste starting point.
 

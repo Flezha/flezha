@@ -232,4 +232,4 @@ plugin's health verdict, not on a failure-rate metric.
 
 - [websocket_subscription.md](websocket_subscription.md): the same fetch semantics used for a subscription source
 - [partitioning.md](../topics/advanced/partitioning.md): the partition identity behind `{{partition_index}}`
-- [plugins.md](../topics/basics/plugins.md): the plugin model, sharing and `--single`
+- [plugins.md](../topics/plugins/plugins.md): the plugin model, sharing and `--single`

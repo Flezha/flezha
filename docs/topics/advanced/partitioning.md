@@ -475,7 +475,7 @@ sub-key, not the pair, or the guard above refuses the first record.
 - [Configuring an operator](../basics/configuring_an_operator.md): flow and steps, and `key_by`
 - [Streams](../basics/streams.md): keys and cells
 - [State](../basics/state.md): what a moved cell carries
-- [Plugins](../basics/plugins.md): sharing, and which plugins refuse a group member
+- [Plugins](../plugins/plugins.md): sharing, and which plugins refuse a group member
 - [Operator calls](operator_calls.md): calling a group by key
 - [Clustering](clustering.md): several controllers
 - [`websocket_subscription`](../../plugins/websocket_subscription.md),

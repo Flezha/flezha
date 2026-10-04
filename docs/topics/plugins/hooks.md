@@ -153,7 +153,7 @@ An operator that parks in `prod` then produces one request whose body is:
 
 `text` lets a Slack-style incoming webhook take the event as it is.
 [`hook_webhook.md`](../../plugins/hook_webhook.md) has its options, retries and telemetry.
-An operator hook is shown on [`plugins.md`](../basics/plugins.md): a file sink bound with
+An operator hook is shown on [`plugins.md`](plugins.md): a file sink bound with
 `--hook=on_output`.
 
 ## Limits
@@ -172,7 +172,7 @@ An operator hook is shown on [`plugins.md`](../basics/plugins.md): a file sink b
 
 ## See also
 
-- [`plugins.md`](../basics/plugins.md): the plugin model, enabling and binding
+- [`plugins.md`](plugins.md): the plugin model, enabling and binding
 - [`writing_a_plugin.md`](writing_a_plugin.md): implementing a hook, and a controller plugin of your own
 - [`hook_webhook.md`](../../plugins/hook_webhook.md): the webhook plugin
 - [Controller environment variables](../../configuration/environment_variables.md#runner-and-operator-lifecycle): `FLEZHA_PLUGIN_BACKLOG_BYTES` and `FLEZHA_PLUGIN_BACKLOG_FRAMES`

@@ -173,7 +173,7 @@ enabled plugins in a durable registry, so whatever you do not stop or disable
 comes back the next time the controller and its runners start. To shut
 everything down so the next start is empty, go in reverse order:
 
-1. Disable the plugins: `flz plugin disable <name>` ([`plugins.md`](plugins.md)).
+1. Disable the plugins: `flz plugin disable <name>` ([`plugins.md`](../plugins/plugins.md)).
 2. Stop the operators: `flz operator stop <id>`.
 3. Stop the runners: SIGTERM, or Ctrl-C in a terminal. An in-node Elixir
    runner stops with the controller.

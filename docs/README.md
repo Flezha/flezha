@@ -62,7 +62,11 @@ type and what you should see; the topic pages say how each piece works.
 | [`deploying_a_controller.md`](topics/basics/deploying_a_controller.md) | The release, the Docker image, an Elixir application; shutdown and its grace periods |
 | [`connecting_a_runner.md`](topics/basics/connecting_a_runner.md) | How a runner reaches its controller, and how to run one |
 | [`topics/basics/running_operators.md`](topics/basics/running_operators.md) | Starting, watching and stopping operators, from `flz` and from code; what a restart brings back |
-| [`topics/basics/plugins.md`](topics/basics/plugins.md) | The plugin model: enabled by name, operators bound, sharing, hooks |
+| [`topics/plugins/plugins.md`](topics/plugins/plugins.md) | The plugin model: installed, enabled by name, operators bound; the plugins that ship |
+| [`where_plugins_run.md`](topics/plugins/where_plugins_run.md) | Shared and single copies, partitioned operators, when a copy stops, durability |
+| [`enabling_and_binding.md`](topics/plugins/enabling_and_binding.md) | The `flz plugin` commands, their flags, hooks, updates, seeing what runs |
+| [`plugins_from_code.md`](topics/plugins/plugins_from_code.md) | Enabling and binding plugins from an SDK's admin handle |
+| [`plugin_examples.md`](topics/plugins/plugin_examples.md) | The echo's file plugins and the tradedesk's live feed; limits and gotchas |
 | [`topics/basics/namespaces.md`](topics/basics/namespaces.md) | Namespaces, joining one from a runner, quotas, and administering one from code |
 | [`topics/basics/authorization.md`](topics/basics/authorization.md) | The admin, tokens, roles, certificates and recovery |
 | [`topics/basics/durability.md`](topics/basics/durability.md) | What survives what, and the durability levels |
@@ -75,9 +79,9 @@ type and what you should see; the topic pages say how each piece works.
 | [`topics/advanced/sessions.md`](topics/advanced/sessions.md) | A session per user: steps, one pass per message, sleeping when idle |
 | [`topics/advanced/rewinding_a_turn.md`](topics/advanced/rewinding_a_turn.md) | Taking iterations back, and a failed turn that fails alone |
 | [`topics/advanced/streamed_answers.md`](topics/advanced/streamed_answers.md) | An answer sent in parts while the turn runs |
-| [`installing_plugins.md`](topics/advanced/installing_plugins.md) | Plugin packages: installing, loading at boot, versions, signing |
-| [`hooks.md`](topics/advanced/hooks.md) | Hooks and controller plugins |
-| [`writing_a_plugin.md`](topics/advanced/writing_a_plugin.md) | Writing and packaging a plugin of your own |
+| [`installing_plugins.md`](topics/plugins/installing_plugins.md) | Plugin packages: installing, loading at boot, versions, signing |
+| [`hooks.md`](topics/plugins/hooks.md) | Hooks and controller plugins |
+| [`writing_a_plugin.md`](topics/plugins/writing_a_plugin.md) | Writing and packaging a plugin of your own |
 | [`topics/advanced/clustering.md`](topics/advanced/clustering.md) | Several controllers as one cluster, and stopping one |
 | [`topics/advanced/effectively_once.md`](topics/advanced/effectively_once.md) | The delivery guarantee, what it requires and what it costs |
 | [`kubernetes.md`](topics/advanced/kubernetes.md) | Running controllers and runners on Kubernetes |

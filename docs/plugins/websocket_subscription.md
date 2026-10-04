@@ -427,4 +427,4 @@ in the source.
 
 - [`http_poll.md`](http_poll.md): the other `HttpFetch` consumer
 - [`partitioning.md`](../topics/advanced/partitioning.md): key groups and the `key_by` contract
-- [`plugins.md`](../topics/basics/plugins.md): the plugin model, sharing and `--single`
+- [`plugins.md`](../topics/plugins/plugins.md): the plugin model, sharing and `--single`

@@ -488,4 +488,4 @@ under source `:flezha_file_source`, and the sink's as `flushed` under
 - [http_poll.md](http_poll.md): the smallest source provider, which the reader follows
 - [postgres_sink.md](postgres_sink.md): the batching sink the writer follows
 - [Controller environment variables](../configuration/environment_variables.md#plugins-dlq-and-schedules): `FLEZHA_FILE_PLUGIN_ROOT` among every other knob
-- [plugins.md](../topics/basics/plugins.md): the plugin model
+- [plugins.md](../topics/plugins/plugins.md): the plugin model

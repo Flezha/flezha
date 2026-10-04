@@ -153,7 +153,7 @@ Flezha.Plugin.Host.inject(overwatch, message, metadata, :call, deadline_ms)
 A plugin calls the operator it is enabled on and receives what `Operator.call/6` answers. Its wait
 is bounded the same way, and an operator it cannot reach answers `call.unavailable`. A
 `flz.reply_to` in `metadata` is dropped: the answer reaches this call and no other. See
-[writing a plugin](writing_a_plugin.md).
+[writing a plugin](../plugins/writing_a_plugin.md).
 
 ### A partition group
 

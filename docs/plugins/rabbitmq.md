@@ -275,4 +275,4 @@ verbs every provider shares, and `reconnected` (an event) on both. The consumer 
 
 - [kafka_consumer.md](kafka_consumer.md) and [kafka_producer.md](kafka_producer.md): the Kafka package, laid out the same way
 - [http_push.md](http_push.md): the HTTP sink, whose queue rows the producer shares
-- [plugins.md](../topics/basics/plugins.md): the plugin model
+- [plugins.md](../topics/plugins/plugins.md): the plugin model

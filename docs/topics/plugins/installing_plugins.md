@@ -9,7 +9,7 @@ A controller loads the packages in its plugin root once, when it starts, and nev
 a running system's code. Installing, upgrading or removing a package takes effect at the
 next restart. Packages are installed per controller: give every controller of a cluster
 the same list, because a controller that lacks a package does not run that plugin, and an
-operator bound to it there runs without it ([`plugins.md`](../basics/plugins.md#a-controller-without-the-provider)).
+operator bound to it there runs without it ([`where_plugins_run.md`](where_plugins_run.md#a-controller-without-the-provider)).
 
 ## How it works
 
@@ -171,7 +171,7 @@ controller that has the package.
 - **Kubernetes:** the reference ConfigMap puts `FLEZHA_PLUGIN_ROOT` on the recovery volume
   and declares `FLEZHA_PLUGINS`; a change is a `kubectl rollout restart`.
   [`kubernetes/README.md`](https://github.com/flezha/flezha/blob/main/kubernetes/README.md) has the steps, and
-  [`kubernetes.md`](kubernetes.md) the deployment.
+  [`kubernetes.md`](../advanced/kubernetes.md) the deployment.
 
 ### Signed packages
 
@@ -308,8 +308,8 @@ the package, the provider and the package's own text in `details`. The full cata
 
 ## See also
 
-- [`plugins.md`](../basics/plugins.md): enabling and binding a plugin once its package is loaded
+- [`plugins.md`](plugins.md): enabling and binding a plugin once its package is loaded
 - [`writing_a_plugin.md`](writing_a_plugin.md): building a package of your own
-- [`kubernetes.md`](kubernetes.md) and [`clustering.md`](clustering.md): several controllers
+- [`kubernetes.md`](../advanced/kubernetes.md) and [`clustering.md`](../advanced/clustering.md): several controllers
 - [`../../configuration.md`](../../configuration.md) and [`../../errors.md`](../../errors.md)
 - Tutorial: [`add_your_own_plugin.md`](../../tutorials/agentdesk/add_your_own_plugin.md)

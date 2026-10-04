@@ -433,6 +433,6 @@ window to the head of its queue; the duplicate bound is the window, as above.
 
 - [durability.md](../topics/basics/durability.md): the outbox, confirmation and the effectively-once tier
 - [effectively_once.md](../topics/advanced/effectively_once.md): writing each output once
-- [installing_plugins.md](../topics/advanced/installing_plugins.md): installing a plugin package
+- [installing_plugins.md](../topics/plugins/installing_plugins.md): installing a plugin package
 - [kafka_consumer.md](kafka_consumer.md): reading Kafka topics
 - [Plugin options](../configuration/plugin_options.md): plugin options as a configuration layer

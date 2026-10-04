@@ -2,7 +2,7 @@
 
 `flz plugin` installs plugin packages, enables plugins and connects operators
 to them. What a plugin is, and how its settings and hooks work, is explained in
-[`plugins.md`](../basics/plugins.md); this page shows the commands.
+[`plugins.md`](../plugins/plugins.md); this page shows the commands.
 
 Each section shows what the group's help prints and, for the verbs used most,
 a command with its answer. Unless a section names another page, the answers
@@ -13,7 +13,7 @@ How `flz` reaches the controller, its options and its exit codes are on the
 
 ## `flz plugin`
 
-Installs plugin packages, enables plugins and connects operators to them. Explained in [`plugins.md`](../basics/plugins.md), [`hooks.md`](../advanced/hooks.md), [`installing_plugins.md`](../advanced/installing_plugins.md), tutorial [Feed the echo a file](../../tutorials/echo/feed_the_echo_a_file.md).
+Installs plugin packages, enables plugins and connects operators to them. Explained in [`plugins.md`](../plugins/plugins.md), [`hooks.md`](../plugins/hooks.md), [`installing_plugins.md`](../plugins/installing_plugins.md), tutorial [Feed the echo a file](../../tutorials/echo/feed_the_echo_a_file.md).
 
 ```sh
 $ flz plugin help
@@ -103,7 +103,7 @@ EXAMPLES:
 
 `flz plugin help <provider>` lists one provider's settings and hooks, and
 `flz plugin list --providers` the providers there are. The echo's file plugins
-from [`plugins.md`](../basics/plugins.md#examples): a sink that writes everything the
+from [`plugin_examples.md`](../plugins/plugin_examples.md#a-file-in-a-file-out): a sink that writes everything the
 echo emits to a file, then the plugins and their operators, then the plugin
 taken away again:
 

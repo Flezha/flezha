@@ -4,7 +4,7 @@ On this page you attach a file to each side of `my_echo`: lines added to one
 file go in, and their echoes land in another. The operator declared where its
 data comes in (`in`) and goes out (`out`); a plugin decides what is on the
 other side, so the code does not change.
-[Plugins](../../topics/basics/plugins.md) explains how plugins are enabled and
+[Plugins](../../topics/plugins/plugins.md) explains how plugins are enabled and
 bound, and [the file plugin](../../plugins/file.md) lists its options.
 
 File plugins read and write only inside one folder, `app_data/files` under the

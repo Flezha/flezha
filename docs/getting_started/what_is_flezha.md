@@ -28,7 +28,7 @@ as a single copy or as one copy per user or device, and what it reads from and
 writes to. The code inside stays plain logic in your own language, and the
 form comes from how the operator around it is set up.
 
-Operators are extended with [plugins](../topics/basics/plugins.md): pieces
+Operators are extended with [plugins](../topics/plugins/plugins.md): pieces
 you attach to an operator from outside, to add to what it can do without
 touching its code. The most common are data connectors, which feed an operator
 from a file, an S3 bucket, an HTTP endpoint, a WebSocket, Kafka, RabbitMQ or
@@ -36,7 +36,7 @@ Postgres, and deliver its results to another. Other plugins serve an operator
 over HTTP, or tell another service by webhook what happens in the system.
 Plugins can be added, swapped and removed while the operator runs, and when the
 one you need does not exist, you can
-[write your own](../topics/advanced/writing_a_plugin.md).
+[write your own](../topics/plugins/writing_a_plugin.md).
 
 You write the code in Java, Rust, Node, Python, Ruby, PHP or Elixir, and
 operators in different languages run side by side in one deployment.
@@ -181,7 +181,7 @@ Code that keeps no state gets everything else all the same. It is placed on a
 runner and moved when that runner goes away, a failed message is retried, and
 one that keeps failing waits in a dead-letter queue, where you can inspect it
 and send it through again. Operators can feed each other directly, and
-[a plugin of your own](../topics/advanced/writing_a_plugin.md) connects Flezha to any system
+[a plugin of your own](../topics/plugins/writing_a_plugin.md) connects Flezha to any system
 you can reach from code.
 
 ### Where it fits

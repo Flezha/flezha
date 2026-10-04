@@ -221,4 +221,4 @@ producer's worker can answer a stats call up to 5 s late, and loses nothing.
 
 - [kafka_producer.md](kafka_producer.md): the producer, its connection options and installing the package
 - [postgres_poll.md](postgres_poll.md): the Postgres poll source, whose health verdicts this one shares
-- [plugins.md](../topics/basics/plugins.md): the plugin model and every source and sink
+- [plugins.md](../topics/plugins/plugins.md): the plugin model and every source and sink

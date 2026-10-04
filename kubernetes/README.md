@@ -256,7 +256,7 @@ Every entry is a path inside the container or an `https://` URL the pods can rea
 verified against the operating system's CA store. Nothing is published before
 go-live, so serve the archive from a host of your own, or mount it: a ConfigMap
 holding the archive under `binaryData`, mounted read-only at `/pkgs`, is named as
-`/pkgs/<file>.fpz#sha256=<hex>`. `docs/topics/advanced/installing_plugins.md` covers building a
+`/pkgs/<file>.fpz#sha256=<hex>`. `docs/topics/plugins/installing_plugins.md` covers building a
 package with the `plugin-builder` image, statuses, errors and signing.
 
 ## Logs

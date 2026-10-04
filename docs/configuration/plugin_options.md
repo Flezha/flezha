@@ -3,7 +3,7 @@
 A plugin's options are its own settings: the URL it polls, the topic it publishes
 to, the file it writes. They belong to one enabled plugin, are given when it is
 enabled, and are changed with `flz plugin update`; nothing else on the node moves.
-How plugins work is taught in [Plugins](../topics/basics/plugins.md).
+How plugins work is taught in [Plugins](../topics/plugins/plugins.md).
 
 ## Setting options
 
@@ -28,7 +28,7 @@ $ flz operator start order_executor --id order_1 --namespace trading \
 
 An option the provider does not declare is refused at enable rather than
 ignored, so a typo fails loudly. JSON values and quoting are covered in
-[Three kinds of flags](../topics/basics/plugins.md#three-kinds-of-flags).
+[Three kinds of flags](../topics/plugins/enabling_and_binding.md#three-kinds-of-flags).
 
 ## Providers and their options
 
@@ -47,7 +47,7 @@ ignored, so a typo fails loudly. JSON values and quoting are covered in
 > The first lists every provider it can enable, the second one provider's
 > options as the running version declares them. A package not listed here
 > documents its own options; installing one is covered in
-> [Installing plugin packages](../topics/advanced/installing_plugins.md).
+> [Installing plugin packages](../topics/plugins/installing_plugins.md).
 
 | Provider | Comes with | What it does | Options |
 |---|---|---|---|

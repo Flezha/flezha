@@ -259,7 +259,7 @@ Runners in namespace 'default':
 
 ## `flz observe`
 
-Lists the controller's sources of metrics and events, and streams their signals live. Explained in [`hooks.md`](../advanced/hooks.md#controller-plugins-and-their-hooks).
+Lists the controller's sources of metrics and events, and streams their signals live. Explained in [`hooks.md`](../plugins/hooks.md#controller-plugins-and-their-hooks).
 
 ```sh
 $ flz observe help

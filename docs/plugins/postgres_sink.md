@@ -109,5 +109,5 @@ so a sink on an operator whose SDK side never binds costs nothing.
 ## See also
 
 - [`postgres_poll.md`](postgres_poll.md) and [`postgres_cdc.md`](postgres_cdc.md): Postgres as an input
-- [`plugins.md`](../topics/basics/plugins.md): the plugin model
+- [`plugins.md`](../topics/plugins/plugins.md): the plugin model
 - [`effectively_once.md`](../topics/advanced/effectively_once.md): writing each output once

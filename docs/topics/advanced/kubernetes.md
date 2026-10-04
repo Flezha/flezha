@@ -26,7 +26,7 @@ and its runners as deployments beside it.
   answers that from inside the container, and the controller's `GET /readyz` on port 9569
   answers it over HTTP.
 - **Images.** The controller's image is Flezha's own plus any plugin packages
-  ([installing_plugins.md](installing_plugins.md)); the runner's is the application's.
+  ([installing_plugins.md](../plugins/installing_plugins.md)); the runner's is the application's.
 
 ## Example: one pod
 
@@ -332,7 +332,7 @@ in short:
   graceful shutdown.
 - [connecting_a_runner.md](../basics/connecting_a_runner.md): how a runner reaches its
   controller.
-- [clustering.md](clustering.md), [installing_plugins.md](installing_plugins.md).
+- [clustering.md](clustering.md), [installing_plugins.md](../plugins/installing_plugins.md).
 - [configuration.md](../../configuration/environment_variables.md#cluster-and-nodes): the Kubernetes discovery
   settings.
 - Tutorial: [run_on_kubernetes.md](../../tutorials/agentdesk/run_on_kubernetes.md).

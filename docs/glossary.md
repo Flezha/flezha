@@ -142,7 +142,7 @@ owns the mechanism; for concepts, [`architecture/`](https://github.com/flezha/fl
   (`flz plugin enable|disable`) and **bound** to each operator it serves (`flz plugin
   bind|unbind`). A provider declared `shareable` runs one copy per controller for every bound
   operator, or one in the cluster with `--single`. See
-  [`topics/advanced/installing_plugins.md`](topics/advanced/installing_plugins.md).
+  [`topics/plugins/installing_plugins.md`](topics/plugins/installing_plugins.md).
 - **Hook**: a named point at which the platform calls a plugin, named by the provider callback it
   runs: `on_input`, `on_output`, `on_interval`, `on_message`, `on_snapshot`, `on_terminate`, and
   `on_operator_init` at operator start only. Chosen with `--hook=<name>` on `flz plugin enable` or `bind`,

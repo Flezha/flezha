@@ -139,6 +139,6 @@ plugin for a second receiver.
 
 ## See also
 
-- [`hooks.md`](../topics/advanced/hooks.md): hooks and controller plugins
-- [`plugins.md`](../topics/basics/plugins.md): the plugin model
-- [`writing_a_plugin.md`](../topics/advanced/writing_a_plugin.md): a controller plugin of your own
+- [`hooks.md`](../topics/plugins/hooks.md): hooks and controller plugins
+- [`plugins.md`](../topics/plugins/plugins.md): the plugin model
+- [`writing_a_plugin.md`](../topics/plugins/writing_a_plugin.md): a controller plugin of your own

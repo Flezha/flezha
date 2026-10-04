@@ -200,7 +200,7 @@ one object whose `kind` is `output`, `input`, `part` or `dead_lettered`.
 
 A browser follows an answer as it is written over server-sent events, through the HTTP
 server plugin ([http_server.md](../../plugins/http_server.md)). The plugin is installed in
-the controller's image ([installing_plugins.md](installing_plugins.md)) and enabled on an
+the controller's image ([installing_plugins.md](../plugins/installing_plugins.md)) and enabled on an
 operator that answers HTTP requests.
 
 > #### Not a production setup {: .warning}
@@ -495,7 +495,7 @@ the few lines that show a growing answer.
   [operator_calls.md](operator_calls.md).
 - [http_server.md](../../plugins/http_server.md): the HTTP plugin's options, envelopes,
   statuses, streams, security and deployment.
-- [installing_plugins.md](installing_plugins.md), [plugins.md](../basics/plugins.md).
+- [installing_plugins.md](../plugins/installing_plugins.md), [plugins.md](../plugins/plugins.md).
 - [`operator_commands.md`](../cli/operator_commands.md#flz-operator) for `flz operator listen`.
 - Tutorials: [stream_an_answer.md](../../tutorials/agentdesk/stream_an_answer.md),
   [serve_http.md](../../tutorials/agentdesk/serve_http.md).

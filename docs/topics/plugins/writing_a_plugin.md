@@ -327,7 +327,7 @@ option table equal to its declaration.
 ## See also
 
 - [`installing_plugins.md`](installing_plugins.md): putting the package on a controller
-- [`plugins.md`](../basics/plugins.md): enabling, binding, sharing and `--single`
+- [`plugins.md`](plugins.md): enabling, binding, sharing and `--single`
 - [`hooks.md`](hooks.md): every hook a provider can implement
 - [`http_server.md`](../../plugins/http_server.md), [`kafka_consumer.md`](../../plugins/kafka_consumer.md): package plugins to compare with
 - Tutorial: [`add_your_own_plugin.md`](../../tutorials/agentdesk/add_your_own_plugin.md)
