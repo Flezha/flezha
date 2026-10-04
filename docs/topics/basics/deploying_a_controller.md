@@ -266,7 +266,7 @@ which defaults it took. A real deployment sets these:
 | `FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS` | 60 000 by default, paired with the orchestrator's grace period ([below](#graceful-shutdown)). |
 | `FLEZHA_AUTHZ_ENABLED`, `FLEZHA_TRANSPORT_AUTH`, `FLEZHA_DIST_TLS_OPTFILE`, `FLEZHA_CA_CERT_PATH`, `FLEZHA_SERVER_CERT_PATH`, `FLEZHA_SERVER_KEY_PATH`, `FLEZHA_QUIC_CLIENT_CA` | Authorization is enforced by default in a release and peer authentication is required by default; turning either off warns on every boot. The TLS material must persist across restarts ([`authorization.md`](authorization.md)). |
 
-Every variable is in the [configuration reference](../../configuration.md).
+Every variable is in [Controller environment variables](../../configuration/environment_variables.md).
 
 ## Where a daemon's output goes
 
@@ -296,7 +296,7 @@ exporting it in a shell profile enlarges those short-lived nodes too. A
 dedicated machine is the one place scheduler binding (`+stbt`) is worth
 trying; it is wrong wherever a CPU quota or a cpuset can move underneath the
 VM. The full list, including the flags deliberately left unset, is in the
-[configuration reference](../../configuration.md#erlang-vm-arguments).
+[configuration reference](../../configuration/vm_arguments.md).
 
 ## Several controllers on one machine
 

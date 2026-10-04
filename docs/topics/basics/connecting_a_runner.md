@@ -337,6 +337,6 @@ onto it again.
 - [`deploying_a_controller.md`](deploying_a_controller.md): the controller the runner attaches to.
 - [`namespaces.md`](namespaces.md): the namespace a runner serves.
 - [`../advanced/kubernetes.md`](../advanced/kubernetes.md), [`../advanced/clustering.md`](../advanced/clustering.md).
-- [`../../configuration.md`](../../configuration.md#the-socket-directory-ladder): the socket-directory settings.
+- [Files and sockets](../../configuration/files_and_sockets.md#the-socket-directory-ladder): the socket-directory settings.
 - [`../../troubleshooting/runner_cannot_connect.md`](../../troubleshooting/runner_cannot_connect.md).
 - Tutorial: [`write_the_echo_runner.md`](../../tutorials/echo/write_the_echo_runner.md) starts the echo runner.

@@ -14,7 +14,7 @@
   path carries interleaved A/B numbers taken on this box, or it does not land.
 - **Flezha is a general purpose open source system.** A change must not shape it
   to this deployment. Behaviour that only we need is off by default, and every
-  knob it adds is documented in `docs/configuration.md` in the same commit.
+  knob it adds is documented in the `docs/configuration/` pages in the same commit.
 
 ## Reproduce before you fix
 

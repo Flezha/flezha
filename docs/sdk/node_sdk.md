@@ -505,7 +505,7 @@ can call it with no runner started and no controller running.
 | `FLEZHA_LOG_LEVEL` | `debug` / `info` / `warn` / `error` for the default logger | `warn` |
 
 Transport configuration rides the same environment every poll host reads —
-`docs/configuration.md`.
+[Runner environment variables](../configuration/runner_environment.md).
 
 ## See also
 

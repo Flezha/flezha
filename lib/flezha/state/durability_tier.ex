@@ -237,8 +237,8 @@ defmodule Flezha.State.DurabilityTier do
       FLEZHA_DURABILITY_BACKEND=none       # explicit opt-out: the local disk is
                                            # the only copy, and that is accepted
 
-    Defaulting to none. See docs/configuration.md for the backend
-    options.
+    Defaulting to none. See docs/configuration/environment_variables.md for
+    the backend options.
     """
   end
 
@@ -262,7 +262,7 @@ defmodule Flezha.State.DurabilityTier do
       raise "FLEZHA_DURABILITY_BACKEND selects #{inspect(module)}, which cannot " <>
               "work without #{Enum.map_join(missing, ", ", &naming/1)}. Set what is " <>
               "missing, or set FLEZHA_DURABILITY_BACKEND=none to accept local-only " <>
-              "durability. See docs/configuration.md."
+              "durability. See docs/configuration/environment_variables.md."
     end
   end
 

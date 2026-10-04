@@ -569,7 +569,7 @@ is dropped and counted.
 | `call_retention_margin_ms` (`FLEZHA_CALL_RETENTION_MARGIN_MS`) | 300 000 | how long an input log keeps a record carrying an operator call past the call's deadline |
 | `call_worker_idle_ms` | 30 000 | how long an operator call's delivery worker (one per caller and target) waits with an empty queue before it stops |
 
-All are in [configuration](../../configuration.md). A long deadline makes the called operator keep
+All are in [Application env keys](../../configuration/application_env.md#runner-and-operator-lifecycle). A long deadline makes the called operator keep
 that much input: the `input_log_frozen_watermark` signal reports a log that keeps growing.
 
 ## Observing calls

@@ -34,7 +34,7 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, "scripts")
 import naming_gate
 
-REFERENCE = "docs/configuration.md"
+REFERENCE = "docs/configuration/vm_arguments.md"
 TEMPLATES = ["rel/vm.args.eex", "rel/remote.vm.args.eex"]
 
 # The first column of a table row: `| `+sbwt none` | why |`. Anchored there so the

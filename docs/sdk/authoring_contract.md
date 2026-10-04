@@ -611,7 +611,7 @@ Java, a base class in Python, Ruby and PHP, `defineOperator` in Node and a `use`
 macro in Elixir. Its members are `factory_id()`, `channels` (the graph, on the
 same builder in every SDK) and one settings tree: `run` (`flow` or `steps` with
 their members), `durable`, `max_duration_ms` and `description`
-([`../configuration.md`](../configuration.md#class-settings)).
+([Operator settings](../configuration/operator_settings.md#class-settings)).
 
 An operator declares how it runs where it is written, so a runner call that
 names it again says nothing new and can disagree with the declaration. Every

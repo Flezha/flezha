@@ -175,5 +175,5 @@ An operator hook is shown on [`plugins.md`](../basics/plugins.md): a file sink b
 - [`plugins.md`](../basics/plugins.md): the plugin model, enabling and binding
 - [`writing_a_plugin.md`](writing_a_plugin.md): implementing a hook, and a controller plugin of your own
 - [`hook_webhook.md`](../../plugins/hook_webhook.md): the webhook plugin
-- [`../../configuration.md`](../../configuration.md): `FLEZHA_PLUGIN_BACKLOG_BYTES` and `FLEZHA_PLUGIN_BACKLOG_FRAMES`
+- [Controller environment variables](../../configuration/environment_variables.md#runner-and-operator-lifecycle): `FLEZHA_PLUGIN_BACKLOG_BYTES` and `FLEZHA_PLUGIN_BACKLOG_FRAMES`
 - [`../../errors.md`](../../errors.md): every `plugin.*` code

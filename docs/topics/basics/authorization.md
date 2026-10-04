@@ -506,5 +506,5 @@ again with the older `flz`; one holding a single role behaves as before.
 - [`connecting_a_runner.md`](connecting_a_runner.md): the socket and QUIC transports.
 - [`cli.md`](cli.md): `flz auth`, `flz token`, `flz role`.
 - [`../../errors.md`](../../errors.md): every `authz.*` code.
-- [`../../configuration.md`](../../configuration.md#security): every security variable.
+- [Controller environment variables](../../configuration/environment_variables.md#security): every security variable.
 - Tutorial: [`open_the_desk.md`](../../tutorials/tradedesk/open_the_desk.md) claims the admin and gives the runner its key.

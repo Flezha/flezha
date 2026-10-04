@@ -25,7 +25,8 @@ in reading order; everything after them is grouped by who reads it.
 | [`publishing/`](#publishing) | the maintainer before the first public release; every user after it | The decisions publishing makes irreversible, which of them block a release, and which parts are not yet settled |
 
 Three references sit at the top level: [`glossary.md`](glossary.md) (vocabulary),
-[`configuration.md`](configuration.md) (every knob, by layer) and
+[`configuration.md`](configuration.md) (every knob, by layer, one page per layer
+under `configuration/`) and
 [`code_standards.md`](code_standards.md) (the rules a change to this repository is
 held to, in every language it carries).
 

@@ -164,7 +164,7 @@ is never read as covering documentation it cannot see.
 
 #### Scenario: The configuration reference marks the QUIC settings
 
-- **WHEN** `docs/configuration.md` is read
+- **WHEN** a page under `docs/configuration/` is read
 - **THEN** each row for a setting that selects or configures the QUIC transport SHALL carry
   the QUIC entry's marker
 

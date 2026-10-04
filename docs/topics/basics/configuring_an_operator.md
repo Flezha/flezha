@@ -107,7 +107,7 @@ refused at start with a message naming `FLEZHA_DURABILITY_BACKEND`, and no
 instance is created.
 
 Beside the tree, the code declares two smaller sets of options, which the
-[configuration reference](../../configuration.md#layer-3-operator-declarations-sdk)
+[configuration reference](../../configuration/operator_settings.md)
 lists in full:
 
 - **Edge options**, on the channel that feeds a tasklet: `retry_max` (3
@@ -560,7 +560,7 @@ member at its default: `ack: per_input`, no correction window.
 - [`../advanced/effectively_once.md`](../advanced/effectively_once.md): the
   effectively-once tier, checkpoints and late-input correction.
 - [`../advanced/timers.md`](../advanced/timers.md): cell timers in either run.
-- [`../../configuration.md`](../../configuration.md#class-settings): the
+- [Operator settings](../../configuration/operator_settings.md#class-settings): the
   reference tables for class, edge and tasklet settings.
 - [`../../errors.md`](../../errors.md): every refusal code.
 - Tutorials: [`watch_the_trades.md`](../../tutorials/tradedesk/watch_the_trades.md)

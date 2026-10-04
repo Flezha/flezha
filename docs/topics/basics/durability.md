@@ -439,7 +439,7 @@ without the tier, reported as `durability: local_only`.
 | `local_path` | a folder that outlives the controller's disk, such as a network mount (`FLEZHA_DURABILITY_PATH`) |
 
 A backend selected without its settings refuses the boot, naming the missing
-option ([`../../configuration.md`](../../configuration.md#state-wal-and-durability)).
+option ([Controller environment variables](../../configuration/environment_variables.md#state-wal-and-durability)).
 
 With a backend, immutable copies (snapshots, log bundles, journal suffixes, the
 input log, the registry, parked dead-letter records, the authorization and
@@ -522,5 +522,5 @@ whose record is on local disk but not yet shipped.
 - [`running_operators.md`](running_operators.md#after-a-controller-restart): what comes back after a restart.
 - [`deploying_a_controller.md`](deploying_a_controller.md): the variables a deployment sets, graceful shutdown.
 - [`../advanced/effectively_once.md`](../advanced/effectively_once.md), [`../advanced/timers.md`](../advanced/timers.md), [`../advanced/partitioning.md`](../advanced/partitioning.md).
-- [`../../configuration.md`](../../configuration.md#state-wal-and-durability): the durability settings.
+- [Controller environment variables](../../configuration/environment_variables.md#state-wal-and-durability): the durability settings.
 - Tutorial: [`crash_the_desk.md`](../../tutorials/tradedesk/crash_the_desk.md) crashes the tradedesk on purpose.

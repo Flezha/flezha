@@ -69,5 +69,5 @@ data:
   # override seam: no rebuild and no mounted file, and it wins over the
   # release's own vm.args. A flag the VM does not accept refuses the boot with
   # the reason on stderr, so a typo here crash-loops the pod rather than being
-  # ignored. Unset by default. See configuration.md, "Erlang VM arguments".
+  # ignored. Unset by default. See docs/configuration/vm_arguments.md.
   # ERL_FLAGS: "+S 4:4"

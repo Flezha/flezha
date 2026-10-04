@@ -795,6 +795,6 @@ its worker pool. `max_duration_ms` costs no thread either.
   [`../advanced/rewinding_a_turn.md`](../advanced/rewinding_a_turn.md),
   [`../advanced/sessions.md`](../advanced/sessions.md),
   [`../advanced/timers.md`](../advanced/timers.md).
-- [`../../configuration.md`](../../configuration.md#channel-and-edge-options): edge options, retry included.
+- [Operator settings](../../configuration/operator_settings.md#channel-and-edge-options): edge options, retry included.
 - [`../../resilience/steps_operator.md`](https://github.com/flezha/flezha/blob/main/docs/resilience/steps_operator.md): how the controller and the runner carry it out.
 - Tutorial: [`place_orders.md`](../../tutorials/tradedesk/place_orders.md) builds `order_executor`.

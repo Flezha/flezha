@@ -333,6 +333,6 @@ in short:
 - [connecting_a_runner.md](../basics/connecting_a_runner.md): how a runner reaches its
   controller.
 - [clustering.md](clustering.md), [installing_plugins.md](installing_plugins.md).
-- [configuration.md](../../configuration.md#cluster-and-nodes): the Kubernetes discovery
+- [configuration.md](../../configuration/environment_variables.md#cluster-and-nodes): the Kubernetes discovery
   settings.
 - Tutorial: [run_on_kubernetes.md](../../tutorials/agentdesk/run_on_kubernetes.md).

@@ -252,8 +252,15 @@ defmodule Flezha.MixProject do
         "docs/topics/advanced/effectively_once.md",
         "docs/topics/advanced/kubernetes.md",
         "docs/topics/advanced/building_from_source.md",
-        "docs/configuration.md",
         "docs/errors.md",
+        "docs/configuration.md",
+        "docs/configuration/environment_variables.md",
+        "docs/configuration/application_env.md",
+        "docs/configuration/operator_settings.md",
+        "docs/configuration/plugin_options.md",
+        "docs/configuration/runner_environment.md",
+        "docs/configuration/vm_arguments.md",
+        "docs/configuration/files_and_sockets.md",
         "docs/plugins/file.md",
         "docs/plugins/http_poll.md",
         "docs/plugins/http_push.md",
@@ -315,8 +322,18 @@ defmodule Flezha.MixProject do
           "docs/topics/advanced/kubernetes.md",
           "docs/topics/advanced/building_from_source.md"
         ],
+        Configuration: [
+          "docs/configuration.md",
+          "docs/configuration/environment_variables.md",
+          "docs/configuration/application_env.md",
+          "docs/configuration/operator_settings.md",
+          "docs/configuration/plugin_options.md",
+          "docs/configuration/runner_environment.md",
+          "docs/configuration/vm_arguments.md",
+          "docs/configuration/files_and_sockets.md"
+        ],
         "Plugin catalogue": ~r"docs/plugins/",
-        Reference: ~r"docs/(configuration|errors|troubleshooting/|publishing/maturity)"
+        Reference: ~r"docs/(errors|troubleshooting/|publishing/maturity)"
       ]
     ]
   end

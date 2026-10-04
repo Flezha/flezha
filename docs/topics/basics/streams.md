@@ -352,7 +352,7 @@ and a workflow alike:
 
 A cell's mailbox holds 1024 messages unless the tasklet sets
 `mailbox_capacity` or the environment sets `FLEZHA_MAILBOX_CAPACITY`. The
-[configuration reference](../../configuration.md#channel-and-edge-options) has
+[configuration reference](../../configuration/operator_settings.md#channel-and-edge-options) has
 the full table.
 
 ## Starting work from a stream

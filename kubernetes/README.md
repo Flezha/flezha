@@ -144,7 +144,8 @@ mount. Those are:
 | `/tmp` | emptyDir | general scratch |
 
 The socket directory is one of the paths a runner can also discover on its own,
-through the ladder in [`../docs/configuration.md`](../docs/configuration.md).
+through the ladder in
+[`../docs/configuration/files_and_sockets.md`](../docs/configuration/files_and_sockets.md#the-socket-directory-ladder).
 These manifests need no change for that: both the DaemonSet and
 `service-template.yaml` set `FLEZHA_SOCKET_FILES_PATH` explicitly, which is the
 ladder's first rung and wins outright — a default moving underneath them

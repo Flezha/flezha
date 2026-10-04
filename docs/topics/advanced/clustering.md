@@ -54,9 +54,9 @@ Every controller of the cluster sets:
 | `FLEZHA_DURABILITY_BACKEND` | `postgres`, `s3` or `local_path`, with that backend's settings |
 | the orchestrator's grace period | longer than `FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS`: Compose `stop_grace_period`, Kubernetes `terminationGracePeriodSeconds` |
 
-[configuration.md](../../configuration.md#cluster-and-nodes) lists every cluster setting
+[configuration.md](../../configuration/environment_variables.md#cluster-and-nodes) lists every cluster setting
 (reconnects, formation timeout, Kubernetes discovery), and
-[its durability section](../../configuration.md#state-wal-and-durability) every backend's
+[its durability section](../../configuration/environment_variables.md#state-wal-and-durability) every backend's
 settings.
 
 ## Example
@@ -268,5 +268,5 @@ $ flz operator call anna --namespace agents --text 'Are you still there?'
 - [durability.md](../basics/durability.md): durability levels and backends.
 - [kubernetes.md](kubernetes.md): controllers on Kubernetes.
 - [effectively_once.md](effectively_once.md): what a crash may repeat.
-- [configuration.md](../../configuration.md#cluster-and-nodes).
+- [configuration.md](../../configuration/environment_variables.md#cluster-and-nodes).
 - Tutorial: [run_a_cluster.md](../../tutorials/agentdesk/run_a_cluster.md).

@@ -201,7 +201,7 @@ recorded as the telemetry events `[:flezha, :plugin_package, :loaded]` and
 | `FLEZHA_PLUGIN_REQUIRE_SIGNATURE` | `false` | refuse unsigned packages |
 | `FLEZHA_PLUGIN_MAX_PACKAGE_BYTES` | `50000000` | a package's unpacked size and a download alike |
 
-[`configuration.md`](../../configuration.md) has each row.
+[Controller environment variables](../../configuration/environment_variables.md#plugins-dlq-and-schedules) has each row.
 
 ## Example
 

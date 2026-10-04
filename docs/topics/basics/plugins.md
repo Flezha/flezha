@@ -748,6 +748,6 @@ refused at boot.
 - [`writing_a_plugin.md`](../advanced/writing_a_plugin.md): a plugin of your own
 - [`partitioning.md`](../advanced/partitioning.md): partitioned operators and their plugins
 - [`durability.md`](durability.md) and [`effectively_once.md`](../advanced/effectively_once.md): what a sink can promise
-- [`../../configuration.md`](../../configuration.md): `FLEZHA_PLUGIN_IDLE_STOP_MS`, `FLEZHA_FILE_PLUGIN_ROOT` and the other plugin settings
+- [Controller environment variables](../../configuration/environment_variables.md): `FLEZHA_PLUGIN_IDLE_STOP_MS`, `FLEZHA_FILE_PLUGIN_ROOT` and the other plugin settings
 - [`../../errors.md`](../../errors.md): every `plugin.*` code
 - Tutorials: [`feed_the_echo_a_file.md`](../../tutorials/echo/feed_the_echo_a_file.md) and [`watch_the_trades.md`](../../tutorials/tradedesk/watch_the_trades.md)

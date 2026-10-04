@@ -84,7 +84,7 @@ is read only, mount one and point `RELEASE_VM_ARGS` at it. `ELIXIR_ERL_OPTIONS`
 is not a third route: it is placed before the args file, so it cannot override a
 flag the release sets. What the release ships, and which flags are worth
 setting, are in
-[`docs/configuration.md`](../../docs/configuration.md#erlang-vm-arguments).
+[`docs/configuration/vm_arguments.md`](../../docs/configuration/vm_arguments.md).
 
 ## Image size budget
 
