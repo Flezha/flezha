@@ -66,6 +66,16 @@ pub(crate) const TABLE: Command = Command {
             rpc::scoped_read(read, "Relay.info", Some("relay information"))
         })
         .reading(&[NAMESPACE]),
+        Verb::new("diagnose", |read| {
+            rpc::door(
+                "Relay.diagnose",
+                &[rpc::namespace(read), relay_id(read)],
+                &[],
+                read,
+            )
+        })
+        .taking(RELAY_ID)
+        .reading(&[NAMESPACE]),
         Verb::new("listen", handle_listen)
             .taking(RELAY_ID)
             .reading(&[INPUT, DURATION_MS, NAMESPACE])

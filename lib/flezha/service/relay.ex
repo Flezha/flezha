@@ -18,8 +18,10 @@ defmodule Flezha.Service.Relay do
 
   use Flezha.AuthZ.Verb
 
+  alias Flezha.AuthZ
   alias Flezha.AuthZ.Namespace
   alias Flezha.AuthZ.NamespaceStore
+  alias Flezha.AuthZ.Scope
   alias Flezha.Convergence.Verdict
   alias Flezha.Relay.Builder
   alias Flezha.Relay.ClassRegistry
@@ -31,6 +33,7 @@ defmodule Flezha.Service.Relay do
   alias Flezha.Service.CallerContext
   alias Flezha.Service.HubManager
   alias Flezha.Service.Listener
+  alias Flezha.Service.Relay.Diagnose
   alias Flezha.Service.Relay.Info
   alias Flezha.Service.RelayManager
   alias Flezha.Service.PluginManager
@@ -100,6 +103,22 @@ defmodule Flezha.Service.Relay do
   @spec info(String.t(), caller_context()) :: {:ok, map()} | {:error, term()}
   verb info(namespace, caller_context), verb: :relay_info, args: [namespace: @namespace] do
     {:ok, namespace |> Namespace.or_default() |> Info.report()}
+  end
+
+  @doc """
+  What is wrong with `relay_id` and what to do about it: a `verdict` of `ok`,
+  `warning` or `problem`, and the findings that explain it, each a catalogued
+  `diagnose.*` code with its message, details and hint. Read from the facts
+  the controller already keeps; it changes nothing. Dead letters' error texts
+  are shown only to a caller that may also list dead letters (`dlq.list`).
+  """
+  @spec diagnose(String.t(), String.t(), caller_context()) :: {:ok, map()} | {:error, term()}
+  verb diagnose(namespace, relay_id, caller_context),
+    verb: :relay_info,
+    args: [namespace: @namespace, relay_id: @relay_id] do
+    namespace = Namespace.or_default(namespace)
+    errors? = AuthZ.authorize(caller_context, :"dlq.list", Scope.build(namespace)) == :ok
+    Diagnose.report(namespace, relay_id, errors?)
   end
 
   @doc "One row per relay in `namespace`: node, health and partition."

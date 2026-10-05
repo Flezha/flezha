@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Added: `flz relay diagnose`, what is wrong with a relay and what to do
+
+`Relay.diagnose` reads what the controller already keeps about one relay (the convergence
+loop's verdicts for the relay, its runner and its plugins, the runners that announce its
+factory, its dead letters, its input log, its completion record) and answers a verdict,
+`ok`, `warning` or `problem`, with findings, each a code, a message, details and a hint
+([`docs/topics/basics/running_relays.md`](docs/topics/basics/running_relays.md#diagnose-a-relay)).
+It is `flz relay diagnose <id>`, the MCP tool `relay_diagnose` and
+`POST /v1/call/Relay.diagnose`, judged as `relay.list`. Eighteen `diagnose.*` codes join
+the error catalogue, and the assistant rules say to call it first when a relay misbehaves.
+
 ### Added: `ctx.effect`, an outside call kept across re-runs
 
 A tasklet calls a model, a tool or a service through `ctx.effect(name, fn)` in every SDK

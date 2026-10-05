@@ -53,4 +53,13 @@ defmodule Flezha.McpTest do
     refute tools["Dlq.replay"].annotations.destructiveHint
     assert tools["Relay.start"].description =~ "`relay.start`"
   end
+
+  test "a relay's diagnosis is a read-only tool naming the relay" do
+    entry = Enum.find(Flezha.Service.catalogue(), &(&1.name == "Relay.diagnose"))
+    tool = Mcp.tool(entry)
+
+    assert tool.name == "relay_diagnose"
+    assert tool.annotations.readOnlyHint
+    assert tool.inputSchema.required == ["namespace", "relay_id"]
+  end
 end

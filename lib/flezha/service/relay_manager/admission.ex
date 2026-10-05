@@ -27,29 +27,35 @@ defmodule Flezha.Service.RelayManager.Admission do
 
   def cluster_wide_refusal(namespace, _factory_id), do: {:no_runners, namespace}
 
-  # A factory that exists in another language or run the other way is not a
-  # factory nobody has: reporting it as missing sends the user looking for a
-  # runner that is already connected. Both refusal sites read this, so the two
-  # cannot drift.
-  defp placement_reason({:language, established}, namespace, factory_id),
+  @doc """
+  The reason a start of `factory_id` is refused with, for a
+  `FleetManager.placement_refusal/2` answer other than `:none`.
+
+  A factory that exists in another language or run the other way is not a
+  factory nobody has: reporting it as missing sends the user looking for a
+  runner that is already connected. Every refusal site reads this, so they
+  cannot drift.
+  """
+  @spec placement_reason(term(), String.t(), String.t()) :: tuple()
+  def placement_reason({:language, established}, namespace, factory_id),
     do: {:factory_language_unserved, namespace, factory_id, established}
 
-  defp placement_reason(:no_language_declared, namespace, factory_id),
+  def placement_reason(:no_language_declared, namespace, factory_id),
     do: {:factory_language_undeclared, namespace, factory_id}
 
-  defp placement_reason(:ambiguous_language, namespace, factory_id),
+  def placement_reason(:ambiguous_language, namespace, factory_id),
     do: {:factory_language_ambiguous, namespace, factory_id}
 
-  defp placement_reason({:run, established}, namespace, factory_id),
+  def placement_reason({:run, established}, namespace, factory_id),
     do: {:factory_run_unserved, namespace, factory_id, established}
 
-  defp placement_reason(:no_run_declared, namespace, factory_id),
+  def placement_reason(:no_run_declared, namespace, factory_id),
     do: {:factory_run_undeclared, namespace, factory_id}
 
-  defp placement_reason(:ambiguous_run, namespace, factory_id),
+  def placement_reason(:ambiguous_run, namespace, factory_id),
     do: {:factory_run_ambiguous, namespace, factory_id}
 
-  defp placement_reason(_absent, namespace, factory_id),
+  def placement_reason(_absent, namespace, factory_id),
     do: {:factory_unknown, namespace, factory_id}
 
   @doc """

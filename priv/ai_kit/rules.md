@@ -17,7 +17,9 @@ that connects to a controller. These rules hold for every task.
    `dlq_list` and the rest), use them rather than the shell. A call answered
    `controller.unreachable` means no controller runs yet: its hint names the
    command that starts one.
-5. Never ask for an admin token, and never stop the controller, reset its data
+5. When a relay misbehaves, call `relay_diagnose` before anything else, and
+   act on its findings' hints, problems first.
+6. Never ask for an admin token, and never stop the controller, reset its data
    or drop dead letters unless the user asks for that.
-6. `flezha_guide` lists every guide page with one line on each. Open only the
+7. `flezha_guide` lists every guide page with one line on each. Open only the
    pages a task needs, with `flezha_docs`, rather than guessing what one says.

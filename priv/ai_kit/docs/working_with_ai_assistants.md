@@ -83,7 +83,7 @@ always match the version you run:
 The rules also go in the server's instructions, which most clients show the
 model before it does anything: read the SDK example before writing SDK code, try
 a relay in [local mode](basics/local_mode.md) first, act on an error's
-`code` and `hint`.
+`code` and `hint`, and call `relay_diagnose` first when a relay misbehaves.
 
 Once a controller answers, each operation the token's role allows is a tool as
 well: `relay_list`, `relay_start`, `relay_send`, `dlq_list`,
@@ -93,6 +93,11 @@ so the assistant can correct itself. Before a controller runs, every operation
 an assistant could reach is listed, whatever the token, and a call answers
 `controller.unreachable` with the command that starts one; the next call after
 it starts reaches it, with no restart.
+
+`relay_diagnose` is the tool to start from when a relay misbehaves. It answers
+one relay's verdict (`ok`, `warning` or `problem`) and its findings, each with
+a code, a message and a hint, as
+[`flz relay diagnose`](basics/running_relays.md#diagnose-a-relay) prints them.
 
 ## Which token to give it
 

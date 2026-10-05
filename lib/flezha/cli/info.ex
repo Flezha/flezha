@@ -1,7 +1,8 @@
 defmodule Flezha.Service.Cli.Info do
   @moduledoc """
   `flz relay info` — the text form of the relay report: the partition
-  groups and their coverage, then every live and finished relay.
+  groups and their coverage, then every live and finished relay — and
+  `flz relay diagnose`, one relay's findings.
   """
 
   alias Flezha.Service.Cli.Context
@@ -16,6 +17,21 @@ defmodule Flezha.Service.Cli.Info do
 
     Enum.each(report.groups, &print_group(&1, report.key_groups))
     Enum.each(report.relays, &print_relay/1)
+  end
+
+  @doc """
+  `flz relay diagnose`: one block per finding, its level, code and message,
+  then its hint indented; a healthy relay is the one line that says so.
+  """
+  def diagnose(%{findings: findings}, _args, _opts), do: Enum.each(findings, &print_finding/1)
+
+  defp print_finding(%{code: "diagnose.healthy", message: message}),
+    do: IO.puts(String.pad_trailing("OK", 9) <> message)
+
+  defp print_finding(finding) do
+    level = finding.level |> to_string() |> String.upcase()
+    IO.puts(String.pad_trailing(level, 9) <> "#{finding.code}  #{finding.message}")
+    if finding.hint, do: IO.puts(String.duplicate(" ", 9) <> "hint: #{finding.hint}")
   end
 
   defp print_group(group, key_groups) do

@@ -35,6 +35,29 @@ defmodule Flezha.Service.Relay.Info do
     }
   end
 
+  @doc """
+  One relay of `namespace`: `{:live, state}` with its Overwatch state,
+  `{:finished, row}` as `report/1` lists a completion record still inside its
+  retention window, `relay_not_found` when it is neither, or the error a live
+  relay's Overwatch read answered.
+  """
+  @spec relay(String.t(), String.t()) :: {:live, map()} | {:finished, map()} | {:error, term()}
+  def relay(namespace, relay_id) do
+    case RelayManager.get_overwatch_state(namespace, relay_id) do
+      {:ok, state} ->
+        {:live, state}
+
+      {:error, reason} when elem(reason, 0) in [:relay_not_found, :hub_down] ->
+        case retained_record(namespace, relay_id, System.system_time(:second)) do
+          nil -> {:error, {:relay_not_found, namespace, relay_id}}
+          record -> {:finished, finished(relay_id, record)}
+        end
+
+      {:error, _reason} = refused ->
+        refused
+    end
+  end
+
   defp live(namespace, relay_id) do
     case RelayManager.get_overwatch_state(namespace, relay_id) do
       {:ok, state} ->
@@ -72,16 +95,23 @@ defmodule Flezha.Service.Relay.Info do
     Paths.relay_classes()
     |> Enum.reject(&(&1 in live_ids))
     |> Enum.flat_map(fn relay_id ->
-      case Completion.read(relay_id) do
-        {:ok, %{namespace: ^namespace, finished_at: finished_at} = record}
-        when is_integer(finished_at) ->
-          window = PersistenceResolver.completed_retention_hours(relay_id)
-          if finished_at + window * 3600 >= now, do: [{relay_id, record}], else: []
-
-        _ ->
-          []
+      case retained_record(namespace, relay_id, now) do
+        nil -> []
+        record -> [{relay_id, record}]
       end
     end)
+  end
+
+  defp retained_record(namespace, relay_id, now) do
+    case Completion.read(relay_id) do
+      {:ok, %{namespace: ^namespace, finished_at: finished_at} = record}
+      when is_integer(finished_at) ->
+        window = PersistenceResolver.completed_retention_hours(relay_id)
+        if finished_at + window * 3600 >= now, do: record
+
+      _ ->
+        nil
+    end
   end
 
   defp finished(relay_id, record) do
@@ -145,8 +175,9 @@ defmodule Flezha.Service.Relay.Info do
   defp run(%{builder: %{run: :steps}}), do: "steps"
   defp run(_state), do: "flow"
 
-  # The class an instance's durable records live under.
-  defp class_of(relay_id, state),
+  @doc "The class an instance's durable records live under."
+  @spec class_of(String.t(), map()) :: String.t()
+  def class_of(relay_id, state),
     do:
       state
       |> Map.get(:builder, %{})

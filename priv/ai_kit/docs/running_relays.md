@@ -157,6 +157,44 @@ Listening leaves nothing behind. It stops when the time is up, on Ctrl-C, when
 the terminal closes, or when the relay ends. A partition group is listened
 to by its group id.
 
+## Diagnose a relay
+
+When a relay misbehaves, `flz relay diagnose` says what is wrong and what to do
+next, from what the controller already knows about it: the convergence loop's
+verdict, the runners that announce its factory, its dead letters, its bound
+plugins and the inputs waiting in its input log.
+
+```sh
+$ flz relay diagnose my_echo
+```
+
+```output
+OK       relay 'my_echo' is healthy, bound to runner 'default_23fc85126379' on controller flezha@127.0.0.1
+```
+
+A relay with something wrong prints one block per finding, problems first,
+each with its code and the hint to act on:
+
+```output
+WARNING  diagnose.dead_letters  relay 'turns' has dead letters: 3, the newest 42s old
+         hint: flz dlq list turns
+NOTE     diagnose.asleep  relay 'turns' is asleep, and the next message wakes it
+```
+
+- **`PROBLEM`** needs action: no runner announces the factory, the runner is
+  gone, a bound plugin is unhealthy or missing, the outputs are not read.
+- **`WARNING`** is worth a look: dead letters, a parked relay, inputs that
+  wait while nothing moves.
+- **`NOTE`** is information: the relay sleeps, it is being bound again, it
+  finished.
+
+Every code is in the [error reference](../../errors.md). `--json` prints the
+`verdict` (`ok`, `warning` or `problem`) and the findings, for a script to read;
+for a caller whose role may list dead letters, the dead-letter finding also
+carries their most common errors. The command exits 0 whenever the diagnosis
+itself ran. A relay that is neither running nor kept as finished answers
+`relay.not_found`, exit 5.
+
 ## Stop it
 
 ```sh

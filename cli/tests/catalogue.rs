@@ -64,6 +64,7 @@ const INVOCATIONS: &[&[&str]] = &[
     &["relay", "call", "op", "--text", "hi"],
     &["relay", "state", "op"],
     &["relay", "info"],
+    &["relay", "diagnose", "op"],
     &["relay", "list"],
     &["relay", "listen", "op"],
     &["namespace", "list"],

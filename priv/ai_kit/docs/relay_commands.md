@@ -32,6 +32,7 @@ COMMANDS:
     state       Get relay state
     list        List relays
     info        Get relay info
+    diagnose    Say what is wrong with a relay and what to do
     listen      Print the frames a relay emits or ingests
     send        Send a payload to a relay's input stream
     call        Send one input and print the relay's answer
@@ -47,6 +48,7 @@ EXAMPLES:
     flz relay send prices --key EURUSD --text x
     flz relay send orders --text x --msg-id orders/0/41
     flz relay call echo --text hello
+    flz relay diagnose orders-eu
     flz relay listen my_echo --duration-ms 10000
     flz relay rewind chat-1 --to-iteration 3
     flz relay replay candles/aggregate/BTC --from 1720000000000
@@ -63,6 +65,7 @@ flz relay stop <relay_id> [--namespace | -n <namespace>]
 flz relay state <relay_id> [--namespace | -n <namespace>]
 flz relay list [--namespace | -n <namespace>]
 flz relay info [--namespace | -n <namespace>]
+flz relay diagnose <relay_id> [--namespace | -n <namespace>]
 flz relay send <relay_id> --text | -t <payload> [--channel | -c <ch>] [--key <key>] [--msg-id <id>] [--await <ms>] [--namespace | -n <namespace>]
 flz relay scale <group> <partitions> [--namespace | -n <namespace>] [--timeout | -t <ms>]
 flz relay rewind <relay_id> --to-iteration <N> [--namespace | -n <namespace>]
@@ -204,6 +207,19 @@ Relay: my_echo
         hook: on_output []
         path: /opt/flezha/app_data/files/echo-out.txt
         health: :healthy
+```
+
+`diagnose` says what is wrong with one relay and what to do, one block per
+finding, and exits 0 whatever it found
+([`running_relays.md`](../basics/running_relays.md#diagnose-a-relay)):
+
+```sh
+$ flz relay diagnose orders-eu
+```
+
+```output
+PROBLEM  diagnose.no_runner  no connected runner announces factory 'do_nothing', so relay 'orders-eu' has nowhere to run
+         hint: start a runner that defines 'do_nothing', then check it with flz runner list --namespace default
 ```
 
 A name that is not running fails with its code, exit 5:

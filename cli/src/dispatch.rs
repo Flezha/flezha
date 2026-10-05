@@ -527,6 +527,32 @@ mod tests {
         out
     }
 
+    /// fails when: an error's hint names a `flz` command no row defines, so
+    /// the next step it gives cannot be typed.
+    #[test]
+    fn every_hint_that_names_flz_names_a_verb_it_has() {
+        let verbs: Vec<String> = leaves()
+            .iter()
+            .map(|(path, verb)| format!("{} {}", path, verb.name))
+            .collect();
+        let named = |at: &str| {
+            verbs
+                .iter()
+                .any(|v| at == v || at.starts_with(&format!("{v} ")))
+        };
+
+        let stale: Vec<String> = flz_transport::errors::codes()
+            .filter_map(|code| Some((code, flz_transport::errors::entry(code)?.hint.as_deref()?)))
+            .filter(|(_code, hint)| {
+                hint.match_indices("flz ")
+                    .any(|(at, _)| !named(&hint[at..]))
+            })
+            .map(|(code, hint)| format!("{code}: {hint}"))
+            .collect();
+
+        assert!(stale.is_empty(), "hints naming no flz verb: {stale:#?}");
+    }
+
     /// Every command in the tree, `flz` itself included.
     fn commands() -> Vec<&'static Command> {
         fn walk(cmd: &'static Command, out: &mut Vec<&'static Command>) {

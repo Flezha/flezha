@@ -43,27 +43,44 @@ defmodule Flezha.State.InputLog.Sweep do
   end
 
   defp do_sweep(relay_class, pid) do
-    watermark = InputLog.watermark(relay_class)
-    floor = relay_class |> truncation_floor(watermark) |> below_live_calls(relay_class)
+    {watermark, floor} = watermark_and_floor(relay_class)
 
-    # The *floor* decides whether there is work, not the watermark: under a hold
-    # window the floor advances with the clock even while every reporter's
-    # consumed-offset stands still, and gating on the watermark would mean a
-    # fully-consumed, fully-aged-out log is never reclaimed.
-    advanced? = floor != last_sweep_floor(relay_class)
-
-    if is_integer(floor) and floor > 0 and advanced? do
+    if reclaimable?(relay_class, floor) do
       # A cast: the sweeper is housekeeping and must never die because a log is
       # busy. The log truncates in its turn; the floor remembered below is what
       # the next sweep compares against.
       GenServer.cast(pid, {:truncate_below, floor})
     else
-      maybe_warn_frozen(relay_class, Paths.input_log_path(relay_class), watermark)
+      maybe_warn_frozen(relay_class, watermark)
     end
 
     remember_sweep(relay_class, watermark, floor)
     :ok
   end
+
+  @doc """
+  The input log's size in bytes when a sweep run now would emit the
+  frozen-watermark event instead of truncating: nothing became reclaimable
+  since the last sweep, the watermark stands where it left it, and the log is
+  past the size threshold. `nil` otherwise.
+  """
+  @spec frozen_size(binary()) :: non_neg_integer() | nil
+  def frozen_size(relay_class) do
+    {watermark, floor} = watermark_and_floor(relay_class)
+    unless reclaimable?(relay_class, floor), do: size_if_frozen(relay_class, watermark)
+  end
+
+  defp watermark_and_floor(relay_class) do
+    watermark = InputLog.watermark(relay_class)
+    {watermark, relay_class |> truncation_floor(watermark) |> below_live_calls(relay_class)}
+  end
+
+  # The *floor* decides whether there is work, not the watermark: under a hold
+  # window the floor advances with the clock even while every reporter's
+  # consumed-offset stands still, and gating on the watermark would mean a
+  # fully-consumed, fully-aged-out log is never reclaimed.
+  defp reclaimable?(relay_class, floor),
+    do: is_integer(floor) and floor > 0 and floor != last_sweep_floor(relay_class)
 
   defp last_sweep_floor(relay_class), do: last_sweep(relay_class, :last_sweep_floor)
 
@@ -120,16 +137,8 @@ defmodule Flezha.State.InputLog.Sweep do
 
   defp frozen_size_threshold(), do: PersistenceResolver.wal_high_watermark_bytes()
 
-  defp maybe_warn_frozen(relay_class, path, watermark) do
-    size =
-      case File.stat(path) do
-        {:ok, %{size: size}} -> size
-        {:error, _} -> 0
-      end
-
-    frozen? = last_sweep_watermark(relay_class) == watermark
-
-    if frozen? and size >= frozen_size_threshold() do
+  defp maybe_warn_frozen(relay_class, watermark) do
+    with size when is_integer(size) <- size_if_frozen(relay_class, watermark) do
       :telemetry.execute(
         [:flezha, :state, :input_log_frozen_watermark],
         %{size_bytes: size},
@@ -142,6 +151,17 @@ defmodule Flezha.State.InputLog.Sweep do
     end
 
     :ok
+  end
+
+  defp size_if_frozen(relay_class, watermark) do
+    size =
+      case File.stat(Paths.input_log_path(relay_class)) do
+        {:ok, %{size: size}} -> size
+        {:error, _} -> 0
+      end
+
+    if last_sweep_watermark(relay_class) == watermark and size >= frozen_size_threshold(),
+      do: size
   end
 
   # Two memos, two questions: the floor answers "is there anything left to

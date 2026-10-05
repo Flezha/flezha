@@ -1025,6 +1025,27 @@
       ]
     },
     {
+      "name": "Relay.diagnose",
+      "doc": "What is wrong with `relay_id` and what to do about it: a `verdict` of `ok`, `warning` or `problem`, and the findings that explain it, each a catalogued `diagnose.*` code with its message, details and hint.",
+      "action": "relay.list",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "namespace",
+          "type": "string",
+          "required": true,
+          "doc": "The namespace."
+        },
+        {
+          "name": "relay_id",
+          "type": "string",
+          "required": true,
+          "doc": "The relay's id."
+        }
+      ]
+    },
+    {
       "name": "Relay.info",
       "doc": "Every relay in `namespace` as its Overwatch reports it, every finished one still inside its retention window, and every partition group with its key-group coverage.",
       "action": "relay.list",

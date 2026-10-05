@@ -63,6 +63,7 @@ on the command line.
 | `flz relay stop <relay_id>` | Stops a relay |
 | `flz relay list` | Lists the relays in a namespace, with their health |
 | `flz relay info` | Shows each relay's details and plugins |
+| `flz relay diagnose <relay_id>` | Says what is wrong with a relay and what to do |
 | `flz relay state <relay_id>` | Prints a relay's state |
 | `flz relay send <relay_id> --text <payload>` | Sends an input |
 | `flz relay call <relay_id> --text <payload>` | Sends an input and prints the relay's answer |

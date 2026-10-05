@@ -39,6 +39,8 @@ defmodule Flezha.Convergence.VerdictSeamTest do
     "lib/flezha/convergence/probe.ex" => "the probe the readers read",
     "lib/flezha/convergence/diff.ex" => "reads the record's states, mints none",
     "lib/flezha/convergence/snapshot.ex" => "publishes the record and documents its states",
+    "lib/flezha/service/relay/diagnose.ex" =>
+      "reads the relay and plugin records' states to name a finding, mints none",
     # facts in another sense
     "lib/flezha/runner/control_channel/requests.ex" =>
       "`:failed`/`:parked` are steps EVENT segments",
