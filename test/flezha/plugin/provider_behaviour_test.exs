@@ -447,7 +447,7 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
             do: id
 
       assert Enum.sort(feeding) == [
-               "relay_file_source",
+               "relay_file_input",
                "relay_http_poll",
                "relay_postgres_poll",
                "relay_websocket"

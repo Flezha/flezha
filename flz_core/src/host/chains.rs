@@ -112,7 +112,7 @@ fn refuse_double_name(
             // declaration arrived with.
             channel: channel_decl.name.clone(),
             named: named.clone(),
-            sink: sink.clone(),
+            output: sink.clone(),
         });
     }
 }
@@ -243,7 +243,7 @@ fn close_chain(
         // name cannot be two different answers.
         HostLink::Sink { .. } => {
             if derived.sink.is_some() {
-                issues.push(TopologyIssue::DuplicatePluginSink { channel });
+                issues.push(TopologyIssue::DuplicatePluginOutput { channel });
             } else if derived.ends() {
                 issues.push(TopologyIssue::ChannelEndsTwice { channel });
             } else {

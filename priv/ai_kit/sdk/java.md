@@ -213,14 +213,14 @@ public final class EchoRelay implements Relay {
      *
      * <p>The expression below declares an entry channel named {@code in} carrying strings, routes
      * it to the echo tasklet, and terminates that tasklet's output on the plugin layer under
-     * the name {@code out}. The name a sink carries is the channel's own: an identity rather than
+     * the name {@code out}. The name an output carries is the channel's own: an identity rather than
      * documentation, and what a plugin filter matches or a test reads.
      */
     @Override
     public void channels(@Nonnull ChannelBuilder c) {
         c.input(String.class, "in")          // messages arrive on the entry channel "in"
                 .into(Echo.class)            // each one runs through the echo tasklet
-                .sink("out");                // the result leaves on "out", for a plugin to pick up
+                .output("out");              // the result leaves on "out", for a plugin to pick up
     }
 }
 ````
@@ -263,7 +263,7 @@ public final class Main {
         // control.startRelay(RelaySpec.of("echo").id("my_echo"));
         //
         // ObjectNode opts = JsonNodeFactory.instance.objectNode().put("path", "echo-out.txt");
-        // control.enablePlugin("writer", PluginSpec.of("relay_file_sink").opts(opts));
+        // control.enablePlugin("writer", PluginSpec.of("relay_file_output").opts(opts));
         // ArrayNode hooks = JsonNodeFactory.instance.arrayNode();
         // hooks.addArray().add("on_output").addObject();
         // control.bindPlugin("writer", "my_echo", hooks, null);
@@ -288,7 +288,7 @@ public final class Main {
  * routes each message into, and a main that serves it.
  *
  * <p>This example deliberately introduces nothing else. A line of text arrives on an entry channel,
- * the tasklet prefixes it, and the result is delivered to a plugin sink.
+ * the tasklet prefixes it, and the result is delivered to a plugin output.
  *
  * <p>{@link com.flezha.examples.echo.EchoRelay} declares the graph and is the unit the cluster
  * actually schedules. {@link com.flezha.examples.echo.Echo} is the processing stage invoked once per

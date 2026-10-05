@@ -37,7 +37,7 @@ path discards a frame without an error.
 - **THEN** the inbound frame SHALL be injected into the relay as it is for a receive-only plugin
 - **AND** both directions SHALL use the same socket
 
-#### Scenario: A channel-restricted sink ignores other channels
+#### Scenario: A channel-restricted output plugin ignores other channels
 - **GIVEN** a plugin configured with `channel: "prices"`
 - **WHEN** an output whose metadata names a different channel is dispatched
 - **THEN** no frame SHALL be sent, and the output SHALL pass through the chain unchanged
@@ -64,7 +64,7 @@ without either being sent, being parked in the dead-letter store, or refusing th
 
 The queue SHALL be bounded by `sink_queue_max` (default `10000`). When the queue is at its
 bound the enqueueing caller SHALL be parked until the queue drains, applying back-pressure
-rather than dropping, which is the policy the other bounded sinks share. A frame whose
+rather than dropping, which is the policy the other bounded output plugins share. A frame whose
 retry budget is permanently exhausted SHALL be parked through the dead-letter store,
 attributed to the output's own cell and channel, and SHALL NOT be silently lost.
 
@@ -150,7 +150,7 @@ and no key to overwrite.
 - **THEN** the frame SHALL carry the output's `flz.cell` and `flz.seq` stamps
 - **AND** the published documentation SHALL state that the consumer deduplicates on them
 
-### Requirement: A websocket sink on an effectively-once relay SHALL warn at enable time
+### Requirement: A websocket output plugin on an effectively-once relay SHALL warn at enable time
 
 A websocket output binding enabled on an effectively-once relay SHALL warn and SHALL
 NOT be refused. The warning SHALL name the plugin and the acknowledgement mode, and SHALL

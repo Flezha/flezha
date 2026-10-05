@@ -236,7 +236,7 @@ fn handle_send(read: &Reading) {
 
 /// `flz relay call <relay_id> --text <payload> [--channel <ch>]
 /// [--answer-channel <ch>] [--key <k>] [--timeout <ms>]`: send one input and
-/// print the first output it caused on a sink (on the answer channel when one
+/// print the first output it caused (on the answer channel when one
 /// is named); a failure exits by its class.
 fn handle_call(read: &Reading) {
     let deadline_ms = read
@@ -289,7 +289,7 @@ fn relay_id(read: &Reading) -> Value {
 /// `flz relay rewind <instance> --to-iteration N` — take a steps loop back
 /// to a committed iteration: the ones above it are compensated in reverse, state
 /// returns to that boundary, and the epoch is bumped so the re-run's output
-/// supersedes the unwound run's at a guarded sink.
+/// supersedes the unwound run's at a guarded output plugin.
 fn handle_rewind(read: &Reading) {
     rpc::door(
         "Steps.rewind",
@@ -305,7 +305,7 @@ fn handle_rewind(read: &Reading) {
 
 /// `flz relay replay <relay/tasklet/key> --from <seq|ts>` — re-run a
 /// Cell's retained inputs from a point in the past through the current code,
-/// republishing under a bumped epoch so a guarded sink overwrites the stale rows
+/// republishing under a bumped epoch so a guarded output plugin overwrites the stale rows
 /// by natural key. "Deploy a fix, heal the recent past."
 fn handle_replay(read: &Reading) {
     rpc::door(

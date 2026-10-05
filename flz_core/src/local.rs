@@ -2,7 +2,7 @@
 //!
 //! A [`LocalRun`] adds no engine. It builds the `RelayInstance` a deployed
 //! runner builds, feeds it through the [`RelayDispatchHandle::dispatch`]
-//! a stream reader uses, and takes sink output where production frames it —
+//! a stream reader uses, and takes output where production frames it —
 //! a [`FlezhaStream::Local`] whose writes are parsed in process instead of
 //! reaching a socket. Cell lifecycle, key resolution, routing, mailboxes,
 //! overflow and the retry ladder are the deployed ones, untouched.
@@ -46,40 +46,40 @@ exits. Durability, plugins, placement and migration, the dead-letter queue, obse
 multi-runner scale all need a controller.";
 
 static NOTICES_EMITTED: AtomicU64 = AtomicU64::new(0);
-static UNHANDLED_SINK_OUTPUTS: AtomicU64 = AtomicU64::new(0);
+static UNHANDLED_OUTPUTS: AtomicU64 = AtomicU64::new(0);
 
 /// Non-durability notices emitted in this process; one per started run.
 pub fn notices_emitted() -> u64 {
     NOTICES_EMITTED.load(Ordering::Relaxed)
 }
 
-/// Values released on a sink no callback claimed. Each is reported as it
+/// Values released on an output no callback claimed. Each is reported as it
 /// happens; the count is what a run can assert on afterwards.
-pub fn unhandled_sink_outputs() -> u64 {
-    UNHANDLED_SINK_OUTPUTS.load(Ordering::Relaxed)
+pub fn unhandled_outputs() -> u64 {
+    UNHANDLED_OUTPUTS.load(Ordering::Relaxed)
 }
 
-/// One value a graph released on a plugin-bound sink, carrying the identity
+/// One value a graph released on a plugin-bound output, carrying the identity
 /// and metadata a deployed run would have put on the wire.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SinkOutput {
+pub struct LocalOutput {
     pub channel: String,
     pub payload: Vec<u8>,
     pub metadata: HashMap<String, String>,
 }
 
-/// What a caller registers for one declared sink name.
-pub type SinkCallback = Arc<dyn Fn(SinkOutput) + Send + Sync>;
+/// What a caller registers for one declared output name.
+pub type OutputCallback = Arc<dyn Fn(LocalOutput) + Send + Sync>;
 
 /// The registered callbacks, and the parse a written frame goes through to
 /// reach one.
 #[derive(Default)]
-struct SinkTable {
-    by_channel: RwLock<HashMap<String, SinkCallback>>,
+struct OutputTable {
+    by_channel: RwLock<HashMap<String, OutputCallback>>,
 }
 
-impl SinkTable {
-    fn register(&self, channel: &str, callback: SinkCallback) {
+impl OutputTable {
+    fn register(&self, channel: &str, callback: OutputCallback) {
         self.by_channel
             .write()
             .unwrap_or_else(|p| p.into_inner())
@@ -87,7 +87,7 @@ impl SinkTable {
     }
 
     /// One framed plugin write, decoded exactly as the controller decodes it
-    /// and handed to the callback the sink's declared name registered.
+    /// and handed to the callback the output's declared name registered.
     fn deliver(&self, frame: &[u8]) -> std::io::Result<()> {
         let (payload_id, payload, metadata) = payloader::extract_payload(frame)?;
         let channel = metadata
@@ -101,15 +101,15 @@ impl SinkTable {
             .get(&channel)
             .map(Arc::clone);
         match callback {
-            Some(callback) => callback(SinkOutput {
+            Some(callback) => callback(LocalOutput {
                 channel,
                 payload,
                 metadata,
             }),
             None => {
-                UNHANDLED_SINK_OUTPUTS.fetch_add(1, Ordering::Relaxed);
+                UNHANDLED_OUTPUTS.fetch_add(1, Ordering::Relaxed);
                 eprintln!(
-                    "[flezha] local mode: {} bytes were released on sink `{channel}`, \
+                    "[flezha] local mode: {} bytes were released on output `{channel}`, \
                      which has no registered callback",
                     payload.len()
                 );
@@ -124,7 +124,7 @@ pub struct LocalRun {
     instance: Arc<RelayInstance>,
     dispatch: RelayDispatchHandle,
     stream: Arc<FlezhaStream>,
-    sinks: Arc<SinkTable>,
+    outputs: Arc<OutputTable>,
 }
 
 impl LocalRun {
@@ -134,8 +134,8 @@ impl LocalRun {
     pub fn start(factory_id: &str, relay_id: &str) -> Result<Self, Error> {
         refuse_controller_only(factory_id)?;
         let instance = RelayInstance::of_class(factory_id, relay_id)?;
-        let sinks = Arc::new(SinkTable::default());
-        let frames = Arc::clone(&sinks);
+        let outputs = Arc::new(OutputTable::default());
+        let frames = Arc::clone(&outputs);
         let stream = Arc::new(FlezhaStream::Local(Arc::new(move |frame: &[u8]| {
             frames.deliver(frame)
         })));
@@ -151,15 +151,15 @@ impl LocalRun {
             instance,
             dispatch: RelayDispatchHandle { registry },
             stream,
-            sinks,
+            outputs,
         })
     }
 
-    /// Deliver every value released on the sink `channel` to `callback`, in
+    /// Deliver every value released on the output `channel` to `callback`, in
     /// release order, on the thread that released it.
-    pub fn on_sink(&self, channel: &str, callback: SinkCallback) -> Result<(), Error> {
+    pub fn on_output(&self, channel: &str, callback: OutputCallback) -> Result<(), Error> {
         self.channel_of_kind(channel, ChannelKind::PluginBound)?;
-        self.sinks.register(channel, callback);
+        self.outputs.register(channel, callback);
         Ok(())
     }
 

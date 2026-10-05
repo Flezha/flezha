@@ -102,9 +102,9 @@ The min-watermark advance that drains the ledger SHALL be computed by the input-
 - **WHEN** one Cell stops advancing its consumed offset so the Relay's min-watermark freezes while ingestion continues
 - **THEN** the source credit ledger drains to zero and the source adapter parks, bounding input-log growth, until the watermark advances again
 
-#### Scenario: A sink outage longer than the window does not wedge the relay
+#### Scenario: An output outage longer than the window does not wedge the relay
 
-- **WHEN** the sink stops confirming for longer than `window / ingest rate`, so source credit reaches zero with outputs still owed, and then recovers
+- **WHEN** the output stops confirming for longer than `window / ingest rate`, so source credit reaches zero with outputs still owed, and then recovers
 - **THEN** the host keeps delivering the owed outputs while the source is parked, their confirmations mint credit, and ingestion resumes without a restart
 
 #### Scenario: A burst of advances drains the ledger once

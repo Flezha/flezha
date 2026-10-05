@@ -81,7 +81,7 @@ class WordCount < Flezha::Relay
      # not this file's.
      .key_by { |word| word }
      .into(Tally).keyed
-     .sink("totals")
+     .output("totals")
   end
 end
 ```
@@ -97,7 +97,7 @@ drop its `nil`.
 sends `value` on the tasklet's own output channel, encoded as `ctx.emit(value)`
 would encode it, and returns without waiting. It works in `run` and in
 `on_timer`, in a flow relay and in a steps relay's stage. The
-relay's listeners receive the parts before the output; a sink never does,
+relay's listeners receive the parts before the output; an output never does,
 and a part is never durable or replayed. Parts are numbered from 0 within each
 attempt, so a retry starts its preview again.
 
@@ -109,8 +109,8 @@ end
 ```
 
 A part that cannot leave at once, such as in a local run, is dropped. A
-channel that does not end in a sink (it only feeds another tasklet, or ends in
-`response`) raises a `Flezha::Error` coded `part.no_sink`, and a context kept
+channel that does not end in an output (it only feeds another tasklet, or ends in
+`response`) raises a `Flezha::Error` coded `part.no_output`, and a context kept
 after its invocation returned raises `part.outside_invocation`. The testing
 harness sends nothing.
 
@@ -163,16 +163,16 @@ same reasons, as the Rust builder's `TopologyIssue`.
 
 A `Flezha::Relay` subclass that defines `run` instead of `channels` is a
 whole relay: the class carries its one tasklet's body, and no
-`Flezha::Tasklet` stands beside it. `factory_id` is required; `sink`, `input`
+`Flezha::Tasklet` stands beside it. `factory_id` is required; `output`, `input`
 and `codec` are optional, each its own call, and `codec` is the entry codec the
-builder's `input` takes. A `sink` written on a `Flezha::Tasklet` is refused,
+builder's `input` takes. An `output` written on a `Flezha::Tasklet` is refused,
 naming the relay base. The class-body `run :steps` is a class setting and
 the instance method `run` the tasklet's body; Ruby keeps the two apart.
 
 ```ruby
 class Upcase < Flezha::Relay
   factory_id "upcase"
-  sink "out"
+  output "out"
   codec :text
 
   def run(value, ctx) = ctx.emit(value.upcase)
@@ -181,7 +181,7 @@ end
 class Place < Flezha::Relay
   factory_id "place"
   run :steps
-  sink "placed"
+  output "placed"
   input "order"
   codec :text
 
@@ -193,7 +193,7 @@ Flezha.create_runner("default").register_factory(Upcase).register_factory(Place)
 
 The generated relay is the one you would have written by hand with that
 single tasklet: an entry channel named `input`, or the `input` value,
-decoded by `codec`, the tasklet, a plugin sink named by `sink` when one is
+decoded by `codec`, the tasklet, a plugin output named by `output` when one is
 written, a factory id equal to `factory_id`, and the class settings it
 writes, as the full form takes them. The tasklet is named after the factory id, so a full form that
 names its tasklet the same keeps every cell where it was. A steps relay short
@@ -205,7 +205,7 @@ second message to a `once` instance is accepted and never read. With
 ```ruby
 class Chat < Flezha::Relay
   factory_id "chat"
-  sink "replies"
+  output "replies"
   codec :text
   run steps: { each: :per_input }
 
@@ -213,7 +213,7 @@ class Chat < Flezha::Relay
 end
 ```
 
-With no `sink`, the relay declares the entry channel and the tasklet and
+With no `output`, the relay declares the entry channel and the tasklet and
 no plugin channel: the relay that only keeps state.
 
 ```ruby
@@ -238,7 +238,7 @@ short form's `run` emits through its `ctx` exactly as a tasklet's does, and
 what it answers is ignored.
 
 Anything more is the full form: a second tasklet, a fan-out, a merge, a keyed
-edge or an edge's retry budget. A `sink`, `input`, `codec` or tasklet setting
+edge or an edge's retry budget. An `output`, `input`, `codec` or tasklet setting
 written beside `channels` is refused rather than ignored.
 
 `factory_id` must be written: the factory id is an address a user types,
@@ -260,7 +260,7 @@ class Orders < Flezha::Relay
   run steps: { each: :per_input, on_failure: :keep_progress }
   durable local: { sleep_after: 10_000 }
   max_duration_ms 600_000
-  channels { |c| c.input("order", codec: :text).into(Place).sink("placed") }
+  channels { |c| c.input("order", codec: :text).into(Place).output("placed") }
 end
 ```
 
@@ -294,9 +294,9 @@ naming a flow factory resolves its handle to a `Flezha::Error` with the code `re
 ### Channel payloads
 
 A channel names the format of its payload with `codec:` on `input` and on
-`sink`, as a symbol:
+`output`, as a symbol:
 
-| Codec | An entry hands the tasklet | A sink sends |
+| Codec | An entry hands the tasklet | An output sends |
 | --- | --- | --- |
 | `:text` | a UTF-8 `String`; invalid UTF-8 fails the decode | a `String` as its bytes if it is valid UTF-8; any other value fails the emit |
 | `:bytes` | a binary `String`, the bytes unchanged | any `String` unchanged; any other value fails the emit |
@@ -305,16 +305,16 @@ A channel names the format of its payload with `codec:` on `input` and on
 
 An entry with no codec and no `decode:` reads JSON: `{"a":1}` arrives as
 `{ a: 1 }`, and plain text fails its decode and rides the retry and dead-letter
-ladder. A sink with no codec and no `encode:` follows the value: a `String` is
-sent as its bytes and anything else as JSON. So a sink needs no codec for a
+ladder. An output with no codec and no `encode:` follows the value: a `String` is
+sent as its bytes and anything else as JSON. So an output needs no codec for a
 string or a JSON value, and names one only to pick another format, `:json` to
 quote a string or `:msgpack`. A `decode:` or `encode:` callable takes the place
 of a codec for anything else. A codec name outside the four, or a codec named
 beside a callable on one channel, is refused when the class is declared, naming
 the class and the channel.
 
-`.response` ends a channel on the answer to an outside call instead of a sink,
-and takes the sink's `encode:` and `codec:`: [`../topics/advanced/relay_calls.md`](../topics/advanced/relay_calls.md).
+`.response` ends a channel on the answer to an outside call instead of an output,
+and takes the output's `encode:` and `codec:`: [`../topics/advanced/relay_calls.md`](../topics/advanced/relay_calls.md).
 `.call("pricing", deadline_ms: 500)` or `.call(factory: "agent", deadline_ms: ..., create: false, codec: ...)`
 ends a chain on a call to another relay and answers an edge of `Flezha::Response`s:
 [`../topics/advanced/relay_calls.md`](../topics/advanced/relay_calls.md).
@@ -391,7 +391,7 @@ member on the class:
 ```ruby
 run = Flezha::LocalRelay.start(WordCount)
 begin
-  run.on_sink("totals") { |output| puts output.payload }
+  run.on_output("totals") { |output| puts output.payload }
   run.feed("lines", "the quick brown fox")
   run.run_until_idle(10_000)
 ensure
@@ -399,7 +399,7 @@ ensure
 end
 ```
 
-`on_sink` registers against the sink's **channel** name, which is the producing
+`on_output` registers against the output's **channel** name, which is the producing
 tasklet's name unless the declaration named it. The run brings the same
 thread executor a booted runner brings, so the tasklets run on its workers
 while the caller waits in `run_until_idle`; `close` stops those workers on the

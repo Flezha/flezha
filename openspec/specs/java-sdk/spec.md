@@ -478,7 +478,7 @@ On resume, the SDK SHALL read the journal state shipped on `AddRelay.task_journa
 #### Scenario: A Java steps tasklet's emit rides its cell's record
 
 - **WHEN** a durable Java steps tasklet calls `ctx.emitKeyedWithMeta("k", v, Map.of("trace", "t1"))` and reaches its barrier
-- **THEN** the cell's `cell_effect_record` carries the output with channel, key `k` and the metadata, the `TaskCommit` names that record's seq for the cell, and the sink receives the frame with `flz.key` `k` and `trace` once the controller acks the commit
+- **THEN** the cell's `cell_effect_record` carries the output with channel, key `k` and the metadata, the `TaskCommit` names that record's seq for the cell, and the output receives the frame with `flz.key` `k` and `trace` once the controller acks the commit
 
 #### Scenario: An opted-out class re-runs from the top
 
@@ -515,12 +515,12 @@ When the loop is idle past the park hysteresis, the SDK SHALL ship `IterPark` (t
 
 #### Scenario: A durable chained loop whose terminal task releases nothing is refused
 
-- **WHEN** a durable `CHAINED` steps class's terminal task has no output channel, or has one whose only wiring is a plugin sink
+- **WHEN** a durable `CHAINED` steps class's terminal task has no output channel, or has one whose only wiring is a plugin output
 - **THEN** declaring the class to the core SHALL fail, with an error naming the terminal tasklet and stating that it releases no inter-tasklet handoff
 
 ### Requirement: Java SDK implements the steps cell retry ladder
 
-The Java SDK SHALL implement the `steps-cell-retry` capability. The ladder's budget SHALL be the consuming edge's `retryMax()` / `retryBackoffMs()` (default 3 total attempts, 50 ms base), the same builder calls and the same `RetryPolicy` a flow relay's edge declares; `Relay` SHALL declare no `retryAttempts()` or `retryBackoff()`. Only the failing cell SHALL re-run its batch; siblings SHALL stay buffered at the barrier, and each attempt SHALL use a fresh sink so a failed attempt's staged output is dropped rather than double-emitted.
+The Java SDK SHALL implement the `steps-cell-retry` capability. The ladder's budget SHALL be the consuming edge's `retryMax()` / `retryBackoffMs()` (default 3 total attempts, 50 ms base), the same builder calls and the same `RetryPolicy` a flow relay's edge declares; `Relay` SHALL declare no `retryAttempts()` or `retryBackoff()`. Only the failing cell SHALL re-run its batch; siblings SHALL stay buffered at the barrier, and each attempt SHALL use a fresh output so a failed attempt's staged output is dropped rather than double-emitted.
 
 Backoff SHALL reuse the dead-letter ladder's helper (`base × 2^(n-1)` with ±50% jitter, capped at 5 s) and the wait SHALL be cancellation-aware, so a stop or `maxDuration` ends it at once. Retry is strictly pre-commit: a journaled task SHALL never be retried. `retryMax(1)` SHALL be a single attempt and `retryMax(0)` SHALL be refused at registration with `topology.retry_max_zero`, as on a flow relay. A `StepsException` SHALL carry a `nonRetryable` flag; a thrown `RuntimeException` SHALL stay retryable.
 
@@ -668,7 +668,7 @@ The Java SDK SHALL allow at most one runner to be **started** per JVM process. `
 - **GIVEN** a JVM process where `Flezha.createRunner("ns1").registerFactory(A.class).start()` has already succeeded
 - **WHEN** code in the same process calls `Flezha.createRunner("ns2").registerFactory(B.class).start()`
 - **THEN** the call SHALL throw `IllegalStateException` whose message names `"ns1"` as the already-running namespace
-- **AND** no connection SHALL be attempted for `"ns2"`, and the process's stable identity, cell-state sink, and credit window SHALL remain exclusively `"ns1"`'s
+- **AND** no connection SHALL be attempted for `"ns2"`, and the process's stable identity, cell-state output, and credit window SHALL remain exclusively `"ns1"`'s
 
 #### Scenario: Creating runners never claims the slot
 - **GIVEN** a JVM process where a runner for `"ns1"` is already started
@@ -929,7 +929,7 @@ The Java SDK SHALL emit its diagnostics through a logger it owns, with a working
 
 A library that declares a logging facade without a provider is silent by
 construction, and one that bundles a provider collides with whatever the host
-already uses. Owning a small logger with a default sink is how the Node, Ruby
+already uses. Owning a small logger with a default output is how the Node, Ruby
 and PHP SDKs avoid both, and the failure paths this SDK logs on (a dead fetcher
 thread, a failed core poll, a failed activation decode, a drain that timed out)
 are the ones a user most needs to see.
@@ -962,7 +962,7 @@ of them.
 #### Scenario: Diagnostics reach the host's logger
 
 - **WHEN** a logger is supplied through the runner builder before start
-- **THEN** every SDK diagnostic at or above the active level SHALL be emitted through it, and none SHALL be written to the default sink
+- **THEN** every SDK diagnostic at or above the active level SHALL be emitted through it, and none SHALL be written to the default output
 
 #### Scenario: A supplied logger survives the runner's close
 

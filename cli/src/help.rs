@@ -414,7 +414,7 @@ OPTIONS:
 
 OUTPUT:
     One line per frame: the channel, a tab and the payload. A frame from a
-    keyed sink adds a third field, cell=... seq=... key=..., and a frame
+    keyed output adds a third field, cell=... seq=... key=..., and a frame
     with no channel prints - in its place. A part, a preview a tasklet sent
     while it ran, begins its third field part=<n> attempt=<a>; a dead-lettered
     input prints the channel, the error's message and error=<code>
@@ -446,8 +446,8 @@ OPTIONS:
     --namespace <ns>          Namespace the relay runs in (default: default)
 
 OUTPUT:
-    The answer's payload and a newline: the first output the input caused
-    on a sink, or on the answer channel when one is named. The output also
+    The answer's payload and a newline: the first output the input caused,
+    or its first on the answer channel when one is named. The output also
     reaches the relay's plugins and listeners. A failure is printed on stderr
     with its code and exits by its class: call.timeout 7, a denied call 4,
     relay.not_found 5, call.target_unkeyed 2.

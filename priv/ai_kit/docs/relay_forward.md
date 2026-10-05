@@ -3,8 +3,8 @@
 The relay-forward plugin sends one relay's outputs into another relay's input, in
 the same namespace. It is a configuration change on the source relay only: the payload
 arrives on the target's ordinary input stream, and the target cannot tell a peer from a
-source plugin. It is the sink whose destination is another relay rather than an
-external endpoint, and the shape to copy for a plugin author who needs a sink like it.
+input plugin. It is the output plugin whose destination is another relay rather than an
+external endpoint, and the shape to copy for a plugin author who needs an output plugin like it.
 `Flezha.Plugin.Provider.RelayForward` is its provider, under the provider id
 `relay_forward`. The cross-hop delivery guarantee itself is specified in
 [`durability.md`](../topics/basics/durability.md) and is not repeated here.
@@ -226,7 +226,7 @@ queued-but-undelivered payloads survive it.
 The worker is built from the seams every queue-holding provider shares:
 `WorkerSup` for supervision, `ProviderBehaviour.park_or_reply/2` /
 `release_waiters/1` for the overflow policy, and the `:forward_deliver` row of
-`Flezha.Config.Backoff` for the ladder. Two rules are load-bearing for a sink of this
+`Flezha.Config.Backoff` for the ladder. Two rules are load-bearing for an output plugin of this
 shape: never deliver from the worker's own `handle_call`, and pick `restart` deliberately.
 
 ## See also

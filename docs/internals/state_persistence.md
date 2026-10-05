@@ -376,7 +376,7 @@ session minted per attach. The SDK answers `CreditWindowAck`; from then on:
   fall below the low watermark or a low-watermark's worth has been freed; a stalled fsync mints
   nothing.
 - **The sender parks** — `flz_core/src/credit.rs` (one implementation for every host) debits
-  before the sink write and parks until the next grant; the `credit_parked` counter rides
+  before the output plugin write and parks until the next grant; the `credit_parked` counter rides
   `data_heartbeat` metadata so a parked runner classifies as fed-but-parked, not frozen.
 - **Reconnect resets the ledger** — a re-attach re-runs the handshake with a fresh session;
   reports and grants tagged with a dead session are dropped.
@@ -471,7 +471,7 @@ Flezha.Service.Steps.state_get("ohlc/candle/BTCUSD@1m", caller_context)
 
 **Cost.** One control round-trip plus one state-lock acquisition, bounded by one invocation: a
 point read for users and low-rate readers, not a serving API and not a subscription — a
-high-rate path is a sink (`.sink(...)` into Kafka or Postgres). Worked examples:
+high-rate path is an output plugin (`.output(...)` into Kafka or Postgres). Worked examples:
 `sdk/rust/examples/live_state_read.rs`,
 `sdk/java/flezha-sdk-examples/src/main/java/com/flezha/examples/state/`.
 

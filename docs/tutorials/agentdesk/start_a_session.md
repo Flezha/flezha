@@ -37,7 +37,7 @@ public final class AgentRelay implements Relay {
     public void channels(ChannelBuilder c) {
         c.input(String.class, "turn")                    // entry 1: `flz relay call`
                 .into(Reply.class)
-                .sink("answer");                         // to whoever called, and whoever listens
+                .output("answer");                       // to whoever called, and whoever listens
         c.input(Message.class, "message")                // entry 2: the gateway, into the same Reply
                 .map(String.class, Message::text)
                 .into(Reply.class);
@@ -86,7 +86,7 @@ defmodule Agentdesk.AgentRelay do
     |> input("turn")
     |> into(Reply)
     # to whoever called, and whoever listens
-    |> sink("answer")
+    |> output("answer")
 
     # entry 2: the gateway, into the same Reply
     c

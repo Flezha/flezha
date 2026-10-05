@@ -95,7 +95,7 @@ A consumer that reports a runtime's dispatch topology or toolchain version SHALL
 
 ### Requirement: A scenario has one fixture id in every SDK
 
-A fixture that implements the same scenario SHALL register the same factory id in every SDK test app, and its sink channel names, output bytes and declared options SHALL match the reference. No test app SHALL register a fixture id prefixed with its SDK's name, and no test under `test/system/` SHALL select a fixture by runtime. A test app SHALL NOT register a fixture id absent from the reference.
+A fixture that implements the same scenario SHALL register the same factory id in every SDK test app, and its output channel names, output bytes and declared options SHALL match the reference. No test app SHALL register a fixture id prefixed with its SDK's name, and no test under `test/system/` SHALL select a fixture by runtime. A test app SHALL NOT register a fixture id absent from the reference.
 
 #### Scenario: A generic test drives the same fixture on every SDK
 - **WHEN** `cell_timers_e2e_test.exs` starts the `session_timeout` fixture under `FLEZHA_E2E_RUNTIME=rust` and again under `FLEZHA_E2E_RUNTIME=java`
@@ -193,7 +193,7 @@ The smoke tier SHALL assert that the factory ids the controller lists for a fres
 
 ### Requirement: The declared surface matches a golden snapshot
 
-`test/system/topology_refusal_e2e_test.exs` SHALL bind every fixture that has a golden under `test/fixtures/declarations/`, in every runtime whose manifest lists it (the selected runtime in the ordinary `:system` pass, every other runtime under `:interop`), capture the `AddRelayResponse.metadata` map as decoded at `ClassRegistry.decode_declarations/1`, and assert it equals the committed golden file `test/fixtures/declarations/<fixture>.json` — key set and values. The smoke tier SHALL bind one keyed fixture, deliver one input, and assert the set of identity-stamp keys on the sink output (`flz.cell`, `flz.seq`, `flz.key`) equals the committed golden. Each snapshot test SHALL carry the capability of the declaration it pins. Goldens SHALL be regenerated only with `FLEZHA_E2E_SNAPSHOT=update` under the reference runtime; any other runtime SHALL refuse the update.
+`test/system/topology_refusal_e2e_test.exs` SHALL bind every fixture that has a golden under `test/fixtures/declarations/`, in every runtime whose manifest lists it (the selected runtime in the ordinary `:system` pass, every other runtime under `:interop`), capture the `AddRelayResponse.metadata` map as decoded at `ClassRegistry.decode_declarations/1`, and assert it equals the committed golden file `test/fixtures/declarations/<fixture>.json` — key set and values. The smoke tier SHALL bind one keyed fixture, deliver one input, and assert the set of identity-stamp keys on the output (`flz.cell`, `flz.seq`, `flz.key`) equals the committed golden. Each snapshot test SHALL carry the capability of the declaration it pins. Goldens SHALL be regenerated only with `FLEZHA_E2E_SNAPSHOT=update` under the reference runtime; any other runtime SHALL refuse the update.
 
 #### Scenario: A differing default is a diff
 - **WHEN** an SDK's `tier_store` declares `effectively_once` with a value or key spelling that differs from `test/fixtures/declarations/tier_store.json`
@@ -743,11 +743,11 @@ end-to-end.
 - **THEN** the gate SHALL fail on the missing manifest as it would for any absent test app, naming the path
 
 ### Requirement: The short form is a required capability every manifest carries and every app spells
-`shorthand` SHALL be in the required set. Every manifest SHALL list it under `fixtures` with exactly the reference's ids, `sugar_do_nothing`, `sugar_store_input`, `sugar_named_input`, `sugar_steps` and `sugar_state_only`, and those ids SHALL NOT appear under `graph_builder` or `steps`. Every test app SHALL declare each of the five through its SDK's short form, which is **one relay declaration** at the kind-named relay entry point carrying its factory id and a tasklet body (a `sink` on all but `sugar_state_only`, and a text entry codec where the SDK's builder names codecs), and SHALL register each with one call; no app SHALL declare a tasklet beside them, and no app SHALL name a generated artefact in its registration call. `test/system/shorthand_e2e_test.exs` SHALL be tagged `capability: :shorthand` and SHALL drive all five fixtures on the selected runtime. Goldens under `test/fixtures/declarations/` SHALL pin `sugar_do_nothing`, `sugar_named_input`, `sugar_steps` and `sugar_state_only`.
+`shorthand` SHALL be in the required set. Every manifest SHALL list it under `fixtures` with exactly the reference's ids, `sugar_do_nothing`, `sugar_store_input`, `sugar_named_input`, `sugar_steps` and `sugar_state_only`, and those ids SHALL NOT appear under `graph_builder` or `steps`. Every test app SHALL declare each of the five through its SDK's short form, which is **one relay declaration** at the kind-named relay entry point carrying its factory id and a tasklet body (an `output` on all but `sugar_state_only`, and a text entry codec where the SDK's builder names codecs), and SHALL register each with one call; no app SHALL declare a tasklet beside them, and no app SHALL name a generated artefact in its registration call. `test/system/shorthand_e2e_test.exs` SHALL be tagged `capability: :shorthand` and SHALL drive all five fixtures on the selected runtime. Goldens under `test/fixtures/declarations/` SHALL pin `sugar_do_nothing`, `sugar_named_input`, `sugar_steps` and `sugar_state_only`.
 
-`sugar_state_only` SHALL be a flow short form with the entry channel `ticks`, no `sink`, and a body that records its input in declared state. It has no sink frame to observe, so its proof SHALL be the cell state read back through the live cell-state query rather than a sink assertion.
+`sugar_state_only` SHALL be a flow short form with the entry channel `ticks`, no `output`, and a body that records its input in declared state. It has no output frame to observe, so its proof SHALL be the cell state read back through the live cell-state query rather than an output assertion.
 
-The refusal table SHALL carry one row per short-form refusal with the step `shorthand(<id>|-, <sink>|-, <input>|-)` (and the `.noout` modifier for a body declaring no output), needing the surface `shorthand`, and `shorthand_typed_output` for the row only an SDK that can read a body's output type at declaration time can write. The rows SHALL be `shorthand_with_topology` and `shorthand_sink_without_output`. The `shorthand_omittable_sink` surface SHALL be removed from the `needs` vocabulary and from every manifest, because a sink is optional in every SDK's short form and no spelling has to omit a key that rides it. Every manifest SHALL list `shorthand` under `topology_surfaces`. A row whose `needs` begins with `shorthand` SHALL be exempt from the pairing with `flz_core`'s issue variants; its name SHALL instead be one the authoring contract lists.
+The refusal table SHALL carry one row per short-form refusal with the step `shorthand(<id>|-, <sink>|-, <input>|-)` (and the `.noout` modifier for a body declaring no output), needing the surface `shorthand`, and `shorthand_typed_output` for the row only an SDK that can read a body's output type at declaration time can write. The rows SHALL be `shorthand_with_topology` and `shorthand_output_without_type`. The `shorthand_omittable_sink` surface SHALL be removed from the `needs` vocabulary and from every manifest, because an output is optional in every SDK's short form and no spelling has to omit a key that rides it. Every manifest SHALL list `shorthand` under `topology_surfaces`. A row whose `needs` begins with `shorthand` SHALL be exempt from the pairing with `flz_core`'s issue variants; its name SHALL instead be one the authoring contract lists.
 
 #### Scenario: A manifest carrying the old grouping fails the gate
 
@@ -762,7 +762,7 @@ The refusal table SHALL carry one row per short-form refusal with the step `shor
 #### Scenario: The named entry channel is reached by name on every runtime
 
 - **WHEN** the scenario injects a frame naming channel `prices` on a `sugar_named_input` relay under any runtime
-- **THEN** the sink `sugar_named_input_sink` carries the input's bytes
+- **THEN** the output `sugar_named_input_sink` carries the input's bytes
 
 #### Scenario: The default entry channel is reached on every runtime
 
@@ -781,7 +781,7 @@ The refusal table SHALL carry one row per short-form refusal with the step `shor
 
 #### Scenario: A row an untyped SDK cannot write skips by name
 
-- **WHEN** the Ruby app is booted under `FLEZHA_REFUSAL_FIXTURE=shorthand_sink_without_output`
+- **WHEN** the Ruby app is booted under `FLEZHA_REFUSAL_FIXTURE=shorthand_output_without_type`
 - **THEN** it prints that its builder carries no `shorthand_typed_output` and the drill counts the skip against the Ruby manifest, which does not list that surface
 
 #### Scenario: A retired surface is gone from every manifest
@@ -836,27 +836,27 @@ compensation-done markers.
 
 ### Requirement: Timers inside a steps relay are proven on every runtime
 
-Every manifest SHALL list two fixtures under `steps`, registered under the same ids in every test app: `timer_loop_steps`, a `per_input` steps relay `in -> tick -> tock -> out` whose `tick` registers a processing-time timer of the delay its message names (`after:<ms>`), sleeps for the duration a `slow:<ms>` message names, emits `armed:<at>` from `run` and `fired:<at>` from `on_timer`, and whose `tock` prefixes what it receives with `tock:` onto the sink; and `event_timer_steps`, a `per_input` steps relay whose entry-fed tasklet declares an event-time clock read from the message, registers `timer_at_event_time` at the message's event time plus 100 and emits `fired:<at>` from `on_timer`, onto a sink. A `test/system/` module tagged `capability: :steps` SHALL drive both on every runtime and assert: a firing reaches the sink through `tock` with no second message; a firing due while a `slow` pass runs reaches the sink after that pass's output; an instance whose class sleeps after a short `sleep_after` (the test app reads it from `FLEZHA_FIXTURE_SLEEP_AFTER_MS`) parked with a timer pending is reported `suspended` with the timer's timestamp as its park record's wake deadline, rehydrates at it and the firing reaches the sink; a runner killed with a timer pending and restarted fires it; an event-time timer fires ahead of the message that advanced the high-water. The interim timer-in-steps refusal scenario and its fixture SHALL NOT exist.
+Every manifest SHALL list two fixtures under `steps`, registered under the same ids in every test app: `timer_loop_steps`, a `per_input` steps relay `in -> tick -> tock -> out` whose `tick` registers a processing-time timer of the delay its message names (`after:<ms>`), sleeps for the duration a `slow:<ms>` message names, emits `armed:<at>` from `run` and `fired:<at>` from `on_timer`, and whose `tock` prefixes what it receives with `tock:` onto the output; and `event_timer_steps`, a `per_input` steps relay whose entry-fed tasklet declares an event-time clock read from the message, registers `timer_at_event_time` at the message's event time plus 100 and emits `fired:<at>` from `on_timer`, onto an output. A `test/system/` module tagged `capability: :steps` SHALL drive both on every runtime and assert: a firing reaches the output through `tock` with no second message; a firing due while a `slow` pass runs reaches the output after that pass's output; an instance whose class sleeps after a short `sleep_after` (the test app reads it from `FLEZHA_FIXTURE_SLEEP_AFTER_MS`) parked with a timer pending is reported `suspended` with the timer's timestamp as its park record's wake deadline, rehydrates at it and the firing reaches the output; a runner killed with a timer pending and restarted fires it; an event-time timer fires ahead of the message that advanced the high-water. The interim timer-in-steps refusal scenario and its fixture SHALL NOT exist.
 
 #### Scenario: The processing-time fixture is driven on every runtime
 
 - **WHEN** `timer_loop_steps` is started under any runtime and `after:300` is sent
-- **THEN** the sink SHALL receive `tock:armed:<at>` and, about 300 ms later with nothing else sent, `tock:fired:<at>` with the same `<at>`
+- **THEN** the output SHALL receive `tock:armed:<at>` and, about 300 ms later with nothing else sent, `tock:fired:<at>` with the same `<at>`
 
 #### Scenario: A firing waits behind a running pass on every runtime
 
 - **WHEN** `after:500` is sent and `slow:1500` immediately after it
-- **THEN** the sink SHALL receive the slow pass's output before `tock:fired:<at>`, on every runtime
+- **THEN** the output SHALL receive the slow pass's output before `tock:fired:<at>`, on every runtime
 
 #### Scenario: A sleeper wakes at its timer on every runtime
 
 - **WHEN** `after:2000` is sent to an instance whose class sleeps after 200 ms (`FLEZHA_FIXTURE_SLEEP_AFTER_MS=200`)
-- **THEN** the instance SHALL be reported `suspended` with its park record's wake deadline equal to `<at>` before the firing, and the sink SHALL receive `tock:fired:<at>` after it, on every runtime
+- **THEN** the instance SHALL be reported `suspended` with its park record's wake deadline equal to `<at>` before the firing, and the output SHALL receive `tock:fired:<at>` after it, on every runtime
 
 #### Scenario: The event-time fixture is driven on every runtime
 
 - **WHEN** `event_timer_steps` receives a message with event time 1000 and then one with event time 1150
-- **THEN** the sink SHALL receive `fired:1100` before whatever the second message produces, on every runtime
+- **THEN** the output SHALL receive `fired:1100` before whatever the second message produces, on every runtime
 
 ### Requirement: A keyed per-input steps relay is a fixture every manifest carries and proves partitioned
 
@@ -864,7 +864,7 @@ Every SDK test app SHALL register `keyed_loop_steps`, and every manifest SHALL l
 `steps` and under `partitioned` in the reference's order. `keyed_loop_steps` SHALL be a
 durable `per_input` steps relay with one entry channel `trades` whose entry edge declares `key_by`
 over the message's symbol (the text before the first `:`), one tasklet that counts the
-messages it has seen for its key in declared state and emits `<symbol>:<count>` on a sink
+messages it has seen for its key in declared state and emits `<symbol>:<count>` on an output
 named `keyed_loop_steps_out`, and no compensation hook. The refusal of a `once` steps relay SHALL
 be proven on `echo_steps`, the `once` fixture every manifest already carries, so no fixture
 exists for a refusal alone. The scenarios that drive them SHALL live in
@@ -878,7 +878,7 @@ the coverage report.
 - **WHEN** `keyed_loop_steps` is started with `--partitions 2` under any of the seven runtimes
   and five messages for three keys are sent, each to the member owning its key
 - **THEN** each key's Cell exists under its owner and nowhere else, each member's journal holds
-  one committed iteration per message it received, the sink carries `<symbol>:<count>` per
+  one committed iteration per message it received, the output carries `<symbol>:<count>` per
   message, and `flz relay info` reports the group `2/2` with full coverage
 
 #### Scenario: A mis-routed key parks and opens no pass on every runtime
@@ -907,14 +907,14 @@ the coverage report.
 ### Requirement: A steps relay's keyed output is a fixture every manifest carries
 
 Every SDK test app SHALL register `outbox_block_steps` as a durable steps relay whose first
-tasklet emits once on a keyed sink channel with a key and one user metadata pair and commits an
+tasklet emits once on a keyed output channel with a key and one user metadata pair and commits an
 idempotent change in the same invocation, and whose second tasklet blocks until
 `FLEZHA_STEPS_E2E_RELEASE` is set; every manifest SHALL list it under `steps` in the
 reference's order. The scenarios that drive it SHALL live in
 `test/system/steps_crash_resume_e2e_test.exs`, tagged `capability: :steps` and pinned to
 no runtime, and SHALL assert through the controller: that the first tasklet's Cell WAL holds one
 effect record carrying the change and the output; that the `task_committed` entry names that
-record's seq and channel and carries no payload; that the sink received the output once, after
+record's seq and channel and carries no payload; that the output received the output once, after
 the commit's ack, stamped `flz.cell`, `flz.seq = <seq>.0`, `flz.epoch` `0`, `flz.key`, `channel`
 and the metadata pair; and that a rebind with the Cell's flush cursor moved back re-drives the
 same output with identical stamps. A second scenario SHALL raise `FLEZHA_FLUSH_LINGER_MS` on the
@@ -923,12 +923,12 @@ runner and assert, on every host runtime, that the record precedes the entry nam
 #### Scenario: A steps output carries its identity on every runtime
 
 - **WHEN** `outbox_block_steps` is started under any of the seven runtimes with the release set and sent one message
-- **THEN** the sink receives exactly one frame carrying `flz.key`, the metadata pair and `channel`, its `flz.seq` equals the first tasklet's record seq with ordinal `0`, and `flz state journal` shows the stage naming that seq and channel and no `outbox` or `flushes` line
+- **THEN** the output receives exactly one frame carrying `flz.key`, the metadata pair and `channel`, its `flz.seq` equals the first tasklet's record seq with ordinal `0`, and `flz state journal` shows the stage naming that seq and channel and no `outbox` or `flushes` line
 
 #### Scenario: A crash before the flush re-drives with identical stamps
 
 - **WHEN** the instance is killed after the commit's ack, the Cell's `outbox_flushed_seq` is moved back below the record, and a runner with the release is bound
-- **THEN** the sink receives the output a second time with stamps byte-identical to the first, and the instance completes `ok`
+- **THEN** the output receives the output a second time with stamps byte-identical to the first, and the instance completes `ok`
 
 #### Scenario: The record precedes the marker under a long linger
 
@@ -939,10 +939,10 @@ runner and assert, on every host runtime, that the record precedes the entry nam
 
 `call_response` SHALL join the capability vocabulary and the required set, so no manifest may defer
 it. Every manifest SHALL list it under `fixtures` with exactly the reference's ids: `call_echo`, a
-flow relay whose one tasklet emits its input on a sink; `call_downstream`, a flow relay whose
-second tasklet emits on a sink; `call_split`, a flow relay whose one tasklet feeds two filtered
-paths, each ending in a sink of its own through a tasklet of its own; and `call_turn`, a durable
-`:per_input` steps relay whose turn emits on a sink. Every test app SHALL declare each fixture
+flow relay whose one tasklet emits its input on an output; `call_downstream`, a flow relay whose
+second tasklet emits on an output; `call_split`, a flow relay whose one tasklet feeds two filtered
+paths, each ending in an output of its own through a tasklet of its own; and `call_turn`, a durable
+`:per_input` steps relay whose turn emits on an output. Every test app SHALL declare each fixture
 through its SDK's builder. `test/system/call_response_e2e_test.exs` SHALL be tagged
 `capability: :call_response` and SHALL drive every fixture on the selected runtime through
 `Flezha.Service.Relay.call/6`, and the reference refusal rows for `ChannelEndsTwice` SHALL be
@@ -961,7 +961,7 @@ driven through every runtime's real boot like every other reference refusal.
 #### Scenario: Every runtime also delivers the answer to a listener
 
 - **WHEN** the scenario attaches a listener to `call_echo` and calls it with `hello`
-- **THEN** the caller SHALL receive `hello`, and the listener SHALL receive the same output on `call_echo`'s sink channel, with no `flz.reply_to` key
+- **THEN** the caller SHALL receive `hello`, and the listener SHALL receive the same output on `call_echo`'s output channel, with no `flz.reply_to` key
 
 #### Scenario: A manifest deferring the capability fails the gate
 
@@ -973,13 +973,13 @@ driven through every runtime's real boot like every other reference refusal.
 `parts` SHALL be in the capability vocabulary and in the required set. Every manifest SHALL
 list it under `fixtures` with exactly the reference's ids, `part_echo` and
 `part_echo_steps`. `part_echo` SHALL be a flow relay whose one tasklet, for an
-input `n`, sends the parts `1` to `n` as text and then emits `done:<n>` on its sink `answer`.
+input `n`, sends the parts `1` to `n` as text and then emits `done:<n>` on its output `answer`.
 `part_echo_steps` SHALL be a `per_input` steps relay doing the same per message.
 For the input `retry:<n>` both SHALL send the same parts and fail their first attempt
 retryably, then send them again and succeed on the second attempt.
 `test/system/part_stream_e2e_test.exs` SHALL be tagged `capability: :parts` and SHALL drive both fixtures on the selected runtime through
 `flz relay listen` in text and JSON modes, through `Flezha.Service.Listener.listen/4`,
-and with a file sink attached beside the listener.
+and with a file output attached beside the listener.
 
 #### Scenario: A manifest without the fixtures fails the gate
 
@@ -990,7 +990,7 @@ and with a file sink attached beside the listener.
 
 - **WHEN** `part_stream_e2e_test.exs` runs under each of the seven runtimes with input `3`
 - **THEN** each run SHALL see the parts `1`, `2`, `3` with `flz.part` `0`, `1`, `2`, then
-  `done:3`, and the file sink SHALL hold `done:3` alone
+  `done:3`, and the file output SHALL hold `done:3` alone
 
 #### Scenario: A retried attempt's parts start again
 
@@ -1002,8 +1002,8 @@ and with a file sink attached beside the listener.
 
 `relay_call` SHALL join the capability vocabulary and the required set, so no manifest may defer
 it. Every manifest SHALL list it under `fixtures` with exactly the reference's ids: `call_pricing`,
-a flow callee emitting on a sink; `call_orders`, a flow caller calling `call_pricing` by name and
-naming `call_pricing`'s sink channel as its answer channel; `call_agent`, a durable `:per_input`
+a flow callee emitting on an output; `call_orders`, a flow caller calling `call_pricing` by name and
+naming `call_pricing`'s output channel as its answer channel; `call_agent`, a durable `:per_input`
 steps callee; `call_gateway`, a flow caller calling `call_agent` by key through its factory, with
 its Response channel wired back into its calling tasklet; and `call_tool_session`, a durable
 `:per_input` steps caller calling `call_pricing` from a turn. Every test app SHALL declare each
@@ -1022,7 +1022,7 @@ runtime's real boot.
 #### Scenario: Every runtime spells the answer channel
 
 - **WHEN** the scenario runs `call_orders` on any runtime
-- **THEN** each request frame SHALL carry `flz.call_answer_channel` naming `call_pricing`'s sink channel, and each `Response` SHALL carry that channel's output
+- **THEN** each request frame SHALL carry `flz.call_answer_channel` naming `call_pricing`'s output channel, and each `Response` SHALL carry that channel's output
 
 #### Scenario: A crash drill holds on every runtime
 

@@ -118,10 +118,10 @@ plugins() {
   step info "flz relay info trade_watcher --namespace $NS"
   step state "flz state get trade_watcher/track_prices --namespace $NS"
   step dlq-list "flz dlq list 'trade_watcher#p1' --namespace $NS"
-  step enable-signals "flz plugin enable signals relay_file_sink --relay_id=trade_watcher --namespace $NS --hook=on_output --Xpath=signals.txt --Xchannel_out=signals"
+  step enable-signals "flz plugin enable signals relay_file_output --relay_id=trade_watcher --namespace $NS --hook=on_output --Xpath=signals.txt --Xchannel_out=signals"
   until_ok 120 "[ \$(wc -l <$FLEZHA_CTL_DIR/app_data/files/signals.txt) -ge 4 ]"
   step signals "cd $FLEZHA_CTL_DIR && head -4 app_data/files/signals.txt"
-  step start-order-with-plugin "flz relay start order_executor --id order_1 --namespace $NS --text '{\"symbol\": \"EUR/USD\", \"quantity\": 10}' --channel order --plugins '[{\"name\": \"order_1_file\", \"provider\": \"relay_file_sink\", \"opts\": {\"path\": \"order_1.txt\"}, \"hooks\": [[\"on_output\", {}]]}]'"
+  step start-order-with-plugin "flz relay start order_executor --id order_1 --namespace $NS --text '{\"symbol\": \"EUR/USD\", \"quantity\": 10}' --channel order --plugins '[{\"name\": \"order_1_file\", \"provider\": \"relay_file_output\", \"opts\": {\"path\": \"order_1.txt\"}, \"hooks\": [[\"on_output\", {}]]}]'"
   finished order_1 30
   step order-file "cd $FLEZHA_CTL_DIR && wc -c app_data/files/order_1.txt"
   runner_log_since "$mark" plugins

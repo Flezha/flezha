@@ -308,7 +308,7 @@ wire.
 runner builds, feeds it through the same dispatch entry a stream reader uses,
 and differs in one thing: where output goes. A `FlezhaStream::Local` passes
 what production would write to a callback in the same process, and a null
-state sink discards every durable record at the outbound edge, so the record
+state output discards every durable record at the outbound edge, so the record
 path still runs and still costs what it costs (`flz_core/src/local.rs`).
 There is no second routing path and no second cell implementation. Timers work
 through the core's own wake list.

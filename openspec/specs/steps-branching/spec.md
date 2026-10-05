@@ -132,5 +132,5 @@ single-branch case with unchanged behavior.
 #### Scenario: Fan-out does not multiply the released batch
 
 - **WHEN** the root of a diamond A→(B1→B2, C)→Join emits once on a channel with two consumers
-- **THEN** its journaled handoff SHALL hold ONE value, each of B1, C, B2 and the join SHALL run once per contribution, and the sink SHALL receive exactly the five payloads a single-consumer chain would produce — on every SDK that carries the `steps` capability
+- **THEN** its journaled handoff SHALL hold ONE value, each of B1, C, B2 and the join SHALL run once per contribution, and the output SHALL receive exactly the five payloads a single-consumer chain would produce — on every SDK that carries the `steps` capability
 

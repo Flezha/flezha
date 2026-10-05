@@ -62,14 +62,14 @@ Declaration SHALL be a pure expansion onto the shared authoring contract's surfa
 - **THEN** the tasklet SHALL still be named `tally`, and its cells SHALL restore the state saved under that name
 
 #### Scenario: A function short form's body stays callable
-- **WHEN** a module declares `@flezha.relay(id="upcase", sink="out") def upcase(value: str) -> str` and a plain unit test calls `upcase.tasklet("a")` with no runner started
+- **WHEN** a module declares `@flezha.relay(id="upcase", output="out") def upcase(value: str) -> str` and a plain unit test calls `upcase.tasklet("a")` with no runner started
 - **THEN** the call SHALL run the function as an ordinary Python function and return `"A"`
 
 ### Requirement: Type Hints Drive Graph Wiring, And The Graph Is Statically Checkable
 
 The Python SDK SHALL derive a tasklet's input type from the annotation on `run`'s value parameter, and its output type from the output argument of the `Ctx[State, Output]` annotation on `run`'s context parameter (for a function short form, from the function's return annotation), and SHALL use them to wire the relay graph. The package SHALL ship `py.typed` and a fully annotated public surface, such that a wrong edge type is reported by a standard type checker before the program runs. The decorator SHALL be typed so that `@flezha.tasklet(name=...)` over a class answers `Tasklet[I, O]` with `I` and `O` read from that class's `run`, so a named tasklet is checked at the edge like any other.
 
-A handler whose value parameter annotation is missing SHALL raise `FlezhaError` where the decorator runs, and one whose annotated types cannot be connected into a valid graph SHALL raise at the `register_factory` call site, both before any input is served, with an error naming the offending handler and the specific defect. Registration-time refusals SHALL cover the defect classes Rust catches at compile time: wrong input type on a wired edge, missing entry channel, multiple entry channels, graph cycle, unreachable tasklet, node identity collision, two clocks declared on one tasklet, unservable clock, keyed channel without a plugin wire, tier channel not keyed, checkpoint ack without the effectively-once tier, correction window without its preconditions, branch with too few arms, and duplicate plugin sink.
+A handler whose value parameter annotation is missing SHALL raise `FlezhaError` where the decorator runs, and one whose annotated types cannot be connected into a valid graph SHALL raise at the `register_factory` call site, both before any input is served, with an error naming the offending handler and the specific defect. Registration-time refusals SHALL cover the defect classes Rust catches at compile time: wrong input type on a wired edge, missing entry channel, multiple entry channels, graph cycle, unreachable tasklet, node identity collision, two clocks declared on one tasklet, unservable clock, keyed channel without a plugin wire, tier channel not keyed, checkpoint ack without the effectively-once tier, correction window without its preconditions, branch with too few arms, and duplicate plugin output.
 
 #### Scenario: A wrong edge type is a type error before it is a runtime error
 - **WHEN** a user wires a tasklet whose context is `Ctx[None, Invoice]` into a tasklet whose `run` accepts `Shipment`, and runs a standard type checker
@@ -129,7 +129,7 @@ The SDK SHALL detect ambient non-deterministic calls — including `time.time()`
 
 ### Requirement: Emit Semantics and Reserved Metadata
 
-`ctx.emit(value)` SHALL route to the tasklet's declared output channel; `ctx.emit(channel, value)` SHALL select a channel explicitly. Emitting SHALL respect the keyed-channel rules: a channel declared keyed SHALL require a key, a channel not declared keyed SHALL refuse one, and both refusals SHALL name the channel. Metadata on a pure inter-tasklet channel with no plugin sink SHALL be refused.
+`ctx.emit(value)` SHALL route to the tasklet's declared output channel; `ctx.emit(channel, value)` SHALL select a channel explicitly. Emitting SHALL respect the keyed-channel rules: a channel declared keyed SHALL require a key, a channel not declared keyed SHALL refuse one, and both refusals SHALL name the channel. Metadata on a pure inter-tasklet channel with no plugin output SHALL be refused.
 
 User-supplied metadata keys in the reserved `flz.` namespace SHALL be rejected with an error naming the key, so identity stamps can neither be spoofed nor clobbered. The runtime SHALL stamp `flz.cell`, `flz.seq`, and on keyed emits `flz.key`, onto plugin-bound frames, applied after user metadata.
 
@@ -298,25 +298,25 @@ The SDK SHALL prove the set by one conformance run over every row of
 - **THEN** exactly one `("A", document)` and one `("B", document)` SHALL be emitted, and the repeated document SHALL be inert
 
 ### Requirement: The single-tasklet short form is four decorator keywords
-The short form SHALL be declared with `@flezha.relay`, the same decorator that declares a full-form relay, and SHALL NOT be declared with `flezha.tasklet`, which SHALL accept none of `sink`, `input` or `codec` and SHALL raise `FlezhaError` naming the keyword and the relay decorator when one is passed. Each decorator SHALL accept `id`, `sink`, `input` and `codec`, and the keywords `flezha.tasklet` takes but `name`, which it hands to the generated tasklet; how it runs is the `run` keyword, as on the full form.
+The short form SHALL be declared with `@flezha.relay`, the same decorator that declares a full-form relay, and SHALL NOT be declared with `flezha.tasklet`, which SHALL accept none of `output`, `input` or `codec` and SHALL raise `FlezhaError` naming the keyword and the relay decorator when one is passed. Each decorator SHALL accept `id`, `output`, `input` and `codec`, and the keywords `flezha.tasklet` takes but `name`, which it hands to the generated tasklet; how it runs is the `run` keyword, as on the full form.
 
-A decorated object SHALL be a short form when it is a tasklet body rather than a `Channels` body: a class, which is never a channels body, or any function but a channels body, which is a function whose one parameter is annotated `flezha.Channels` or not annotated at all, the shape the SDK already reads as a builder body. `sink` SHALL be optional. With `sink`, the decorator SHALL build a relay whose factory id is `id`, wiring an entry channel named `input` (or the `input` keyword's value) into a generated tasklet named `id` and that tasklet to the `sink` plugin channel; with no `sink`, it SHALL wire the entry channel into the tasklet and declare no plugin channel. A short form SHALL take the class settings as the full form does; a steps short form SHALL be a `once` steps relay unless its `run` writes another `each`, fed by its first message on the entry channel and taking `init_values` as the tasklet's initial state. A value outside its choice (`each` other than `"once"`, `"per_input"` and `"chained"`, `on_failure` other than `"undo_all"` and `"keep_progress"`) SHALL be refused naming the setting and the value, on the short form and the full form alike. `codec` SHALL take the vocabulary of `Channels.input(name, codec=)` and SHALL be lowered to that call, whether or not a `sink` is written. Declaring SHALL still perform no I/O.
+A decorated object SHALL be a short form when it is a tasklet body rather than a `Channels` body: a class, which is never a channels body, or any function but a channels body, which is a function whose one parameter is annotated `flezha.Channels` or not annotated at all, the shape the SDK already reads as a builder body. `output` SHALL be optional. With `output`, the decorator SHALL build a relay whose factory id is `id`, wiring an entry channel named `input` (or the `input` keyword's value) into a generated tasklet named `id` and that tasklet to the `output` plugin channel; with no `output`, it SHALL wire the entry channel into the tasklet and declare no plugin channel. A short form SHALL take the class settings as the full form does; a steps short form SHALL be a `once` steps relay unless its `run` writes another `each`, fed by its first message on the entry channel and taking `init_values` as the tasklet's initial state. A value outside its choice (`each` other than `"once"`, `"per_input"` and `"chained"`, `on_failure` other than `"undo_all"` and `"keep_progress"`) SHALL be refused naming the setting and the value, on the short form and the full form alike. `codec` SHALL take the vocabulary of `Channels.input(name, codec=)` and SHALL be lowered to that call, whether or not an `output` is written. Declaring SHALL still perform no I/O.
 
-At decoration the SDK SHALL raise `FlezhaError` whose code is the refusal's code: `topology.sink_without_output` for a `sink` on a body whose return annotation is absent or `None`, and `topology.short_form_with_topology` for a decorated object carrying both a tasklet body and a `Channels` body. An absent `id` SHALL be refused naming the required keyword, and the SDK SHALL NOT derive a factory id from `__name__`. `Runner.register_factory` SHALL accept a short form and register its relay, and `Runner.register_modules` SHALL register the relays a named module carries, short or full. A duplicate factory id SHALL raise `FlezhaError` with the code `topology.duplicate_factory_id`.
+At decoration the SDK SHALL raise `FlezhaError` whose code is the refusal's code: `topology.output_without_type` for an `output` on a body whose return annotation is absent or `None`, and `topology.short_form_with_topology` for a decorated object carrying both a tasklet body and a `Channels` body. An absent `id` SHALL be refused naming the required keyword, and the SDK SHALL NOT derive a factory id from `__name__`. `Runner.register_factory` SHALL accept a short form and register its relay, and `Runner.register_modules` SHALL register the relays a named module carries, short or full. A duplicate factory id SHALL raise `FlezhaError` with the code `topology.duplicate_factory_id`.
 
 #### Scenario: A decorated function is a whole flow relay
 
-- **WHEN** a module declares `@flezha.relay(id="upcase", sink="out", codec="text") def upcase(s: str) -> str` and the runner is given `register_factory(upcase)`
-- **THEN** the runner declares a flow relay `upcase` with entry channel `input` decoding text, a tasklet named `upcase` and sink `out`, and the module declares no `flezha.tasklet`
+- **WHEN** a module declares `@flezha.relay(id="upcase", output="out", codec="text") def upcase(s: str) -> str` and the runner is given `register_factory(upcase)`
+- **THEN** the runner declares a flow relay `upcase` with entry channel `input` decoding text, a tasklet named `upcase` and output `out`, and the module declares no `flezha.tasklet`
 
 #### Scenario: A decorated function is a whole steps relay
 
-- **WHEN** a module declares `@flezha.relay(id="place", sink="placed", input="order", codec="text") def place(s: str) -> str`, the runner is given `register_factory(place)`, an instance is started, and one message is sent on `order`
+- **WHEN** a module declares `@flezha.relay(id="place", output="placed", input="order", codec="text") def place(s: str) -> str`, the runner is given `register_factory(place)`, an instance is started, and one message is sent on `order`
 - **THEN** the tasklet receives the message as text on `order`, its return value reaches `placed`, and the instance completes
 
 #### Scenario: A short-form steps relay declares its loop mode
 
-- **WHEN** a module declares `@flezha.relay(id="chat", sink="replies", codec="text", each="per_input") def chat(s: str) -> str` and two messages reach its entry channel
+- **WHEN** a module declares `@flezha.relay(id="chat", output="replies", codec="text", each="per_input") def chat(s: str) -> str` and two messages reach its entry channel
 - **THEN** the declaration carries `each` `per_input`, the tasklet runs once per message, and the instance does not complete after the first
 
 #### Scenario: An unknown loop mode is refused at decoration
@@ -324,14 +324,14 @@ At decoration the SDK SHALL raise `FlezhaError` whose code is the refusal's code
 - **WHEN** a module declares `@flezha.relay(id="w", each="forever")` over any body, or `on_failure="best_effort"`
 - **THEN** importing it raises `FlezhaError` naming the keyword and the value, and nothing is declared
 
-#### Scenario: A short form with no sink is declared
+#### Scenario: A short form with no output is declared
 
 - **WHEN** a module declares `@flezha.relay(id="counter", input="ticks", codec="text")` over a class with `run` and `apply_change` and the runner is given `register_factory`
 - **THEN** the relay declares `ticks` into the tasklet and no plugin channel, and the tasklet's changes are journaled as any tasklet's are
 
-#### Scenario: A codec needs no sink
+#### Scenario: A codec needs no output
 
-- **WHEN** a short form declares `codec="text"` and no `sink`
+- **WHEN** a short form declares `codec="text"` and no `output`
 - **THEN** the declaration is accepted and the entry channel decodes text
 
 #### Scenario: register_modules collects a short form
@@ -351,18 +351,18 @@ At decoration the SDK SHALL raise `FlezhaError` whose code is the refusal's code
 
 #### Scenario: A relay keyword on a tasklet is refused
 
-- **WHEN** a module declares `@flezha.tasklet(name="upcase", sink="out")`
-- **THEN** importing it raises `FlezhaError` naming `sink` and `flezha.relay`
+- **WHEN** a module declares `@flezha.tasklet(name="upcase", output="out")`
+- **THEN** importing it raises `FlezhaError` naming `output` and `flezha.relay`
 
 #### Scenario: A derived id is refused
 
-- **WHEN** a module declares `@flezha.relay(sink="out") def upcase(s: str) -> str`
+- **WHEN** a module declares `@flezha.relay(output="out") def upcase(s: str) -> str`
 - **THEN** importing it raises `FlezhaError` naming the required `id`, and no socket is opened
 
-#### Scenario: A sink on a body with no output is refused
+#### Scenario: An output on a body with no output is refused
 
-- **WHEN** a module declares `@flezha.relay(id="drain", sink="out") def drain(s: str) -> None`
-- **THEN** importing it raises `FlezhaError` whose code is `topology.sink_without_output`
+- **WHEN** a module declares `@flezha.relay(id="drain", output="out") def drain(s: str) -> None`
+- **THEN** importing it raises `FlezhaError` whose code is `topology.output_without_type`
 
 #### Scenario: The generated tasklet composes in another topology
 
@@ -371,18 +371,18 @@ At decoration the SDK SHALL raise `FlezhaError` whose code is the refusal's code
 
 #### Scenario: A function short form that returns None emits nothing
 
-- **WHEN** a function short form with a `sink` returns `None` for one input and `"b"` for the next
-- **THEN** nothing SHALL be emitted for the first input, and `"b"` SHALL reach the sink for the second
+- **WHEN** a function short form with an `output` returns `None` for one input and `"b"` for the next
+- **THEN** nothing SHALL be emitted for the first input, and `"b"` SHALL reach the output for the second
 
 #### Scenario: A function short form taking a context is refused
 
-- **WHEN** a module declares `@flezha.relay(id="stamp", sink="out") def stamp(value: str, ctx: flezha.Ctx[None, str]) -> str`
+- **WHEN** a module declares `@flezha.relay(id="stamp", output="out") def stamp(value: str, ctx: flezha.Ctx[None, str]) -> str`
 - **THEN** importing it raises `FlezhaError` naming the parameter `ctx` and directing the author to a class body
 
 #### Scenario: A class short form emits through its context
 
-- **WHEN** `@flezha.relay(id="store_input", sink="sink")` decorates a class whose `run(self, value: str, ctx: flezha.Ctx[Stored, str]) -> None` calls `ctx.change(...)` and `ctx.emit(value)`, and the runner is given `register_factory(store_input)`
-- **THEN** the relay declares a tasklet named `store_input`, its changes are journaled, and the emitted value reaches `sink`
+- **WHEN** `@flezha.relay(id="store_input", output="sink")` decorates a class whose `run(self, value: str, ctx: flezha.Ctx[Stored, str]) -> None` calls `ctx.change(...)` and `ctx.emit(value)`, and the runner is given `register_factory(store_input)`
+- **THEN** the relay declares a tasklet named `store_input`, its changes are journaled, and the emitted value reaches `output`
 
 ### Requirement: A Python class carries the settings tree it wrote
 

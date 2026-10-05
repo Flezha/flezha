@@ -54,10 +54,10 @@ The relay names that class: `.into(TrackPrices.class)`.
   producing, which leaves now instead of when `run` returns. It previews the
   tasklet's own output channel, is encoded as `ctx.emit(value)` would be, and
   never waits: a part that cannot leave at once is dropped. A listener receives
-  it, numbered from 0 within each attempt; a sink never does, and nothing about
+  it, numbered from 0 within each attempt; an output never does, and nothing about
   it is durable. It works in `run` and in `onTimer`, for a flow tasklet
-  and a steps stage alike. It throws `part.no_sink` when the output channel
-  does not end in a sink (a call end is not one), and
+  and a steps stage alike. It throws `part.no_output` when the output channel
+  does not end in an output (a call end is not one), and
   `part.outside_invocation` through a context kept past its invocation.
 - **State** is read with `ctx.state()` and changed only with `ctx.change(change)`.
   A change is a record implementing `Change<State>`; its `applyTo(state)` is the
@@ -176,9 +176,9 @@ runner.logger((level, format, args) ->
 ```
 
 A supplied logger decides for itself what it writes, so `FLEZHA_LOG_LEVEL`
-filters the default sink and nothing else. A sink that renders the line itself
+filters the default output and nothing else. An output that renders the line itself
 reuses the SDK's substitution through `Logger.render(format, args)` rather than
-writing a second one. The sink is JVM-wide and survives `close()`,
+writing a second one. The output is JVM-wide and survives `close()`,
 because a runner's most interesting diagnostics are the ones it writes while
 shutting down. A write that fails is swallowed, so a standard error closed
 during a drain cannot turn a clean drain into a crash.
@@ -233,7 +233,7 @@ what you register. `registerFactory` reads the annotation and declares the
 relay; nothing is generated.
 
 ```java
-@Relay(id = "upcase", sink = "out")
+@Relay(id = "upcase", output = "out")
 public class Upcase implements Tasklet<String, Void, String> {
     @Override
     public void run(String value, Ctx<Void, String> ctx) throws TaskletException {
@@ -241,7 +241,7 @@ public class Upcase implements Tasklet<String, Void, String> {
     }
 }
 
-@Relay(id = "place", sink = "placed", input = "order", run = @Run(steps = @Steps))
+@Relay(id = "place", output = "placed", input = "order", run = @Run(steps = @Steps))
 public class Place implements Tasklet<String, Void, String> {
     @Override
     public void run(String order, Ctx<Void, String> ctx) throws TaskletException {
@@ -257,7 +257,7 @@ Flezha.createRunner("default")
 
 The relay is the one you would have written by hand with that single
 tasklet: an entry channel named `input`, or the `input` element's value; the
-class; a plugin sink named by `sink` when one is written; a `factoryId()` equal
+class; a plugin output named by `output` when one is written; a `factoryId()` equal
 to `id`; and the settings tree the annotation writes. The short form takes the
 class settings the full form takes, as nested annotations whose members exist
 only under their parent: `run = @Run(flow = @Flow(effectivelyOnce =
@@ -279,7 +279,7 @@ its `name` must equal the `id`, or registration fails with
 `ShortFormNameMismatch`: one relay, one name. The output type is the class's
 `Output`, and a keyed emit is the body's `ctx.emitKeyed`.
 
-`sink` is optional. With none, the relay declares the entry channel and the
+`output` is optional. With none, the relay declares the entry channel and the
 tasklet and no plugin channel: the relay that only keeps state.
 
 ```java
@@ -308,7 +308,7 @@ Anything more is the full form: a second tasklet, a fan-out, a merge, a keyed
 edge, an edge's retry ladder, a `.call(...)` end. Java names no entry codec: an
 entry decodes by its declared type, so the short form takes no `codec` element.
 
-A called input's first sink output answers its caller and still reaches the sink's plugins:
+A called input's first output answers its caller and still reaches the output's plugins:
 [`../topics/advanced/relay_calls.md`](../topics/advanced/relay_calls.md). `.call(CallTarget.id("pricing"), Answer.class, deadlineMs)`
 (or `CallTarget.factory("agent").create(false)` after a `keyBy`, and
 `.answerChannel("quotes")` to name the callee's answering channel) ends a tasklet's
@@ -320,7 +320,7 @@ class rename must not move it. The written `id` also names the tasklet, so a
 Java tasklet's state is saved under the same name its Rust twin uses. The
 refusals are raised when the class is registered, each naming the class: an
 absent `id`; `topology.short_form_with_topology` (an annotated class that also implements
-`Relay`); `topology.sink_without_output` (a `sink` on a
+`Relay`); `topology.output_without_type` (an `output` on a
 class whose `Output` is `Void`); and `ShortFormNameMismatch`. A second relay
 under a factory id the runner holds fails `registerFactory` with
 `topology.duplicate_factory_id`, and a class that is neither a relay nor a

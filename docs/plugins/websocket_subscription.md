@@ -286,7 +286,7 @@ has. That is the only place the dedup can work.
 
 An enable on an **effectively-once** relay warns, naming the plugin and the
 mode, and proceeds. The relay's internal guarantee is unchanged; its
-websocket output hop is not effectively-once. A durable sink alongside a live
+websocket output hop is not effectively-once. A durable output plugin alongside a live
 websocket view is the standard topology, so this is a warning and not a refusal.
 
 ### While the socket is down

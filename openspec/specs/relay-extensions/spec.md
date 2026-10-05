@@ -504,8 +504,8 @@ system.
 - **THEN** that fact SHALL reach the judge unchanged and the record SHALL be `healthy` or `degraded` accordingly
 - **AND** no fail-open telemetry SHALL be emitted
 
-#### Scenario: the fail-open event reaches a sink
-- **GIVEN** the observability subsystem is running with its default sinks
+#### Scenario: the fail-open event reaches an output plugin
+- **GIVEN** the observability subsystem is running with its default output plugins
 - **WHEN** a provider's `health/1` times out and the fail-open event is emitted
 - **THEN** a signal carrying the plugin id, the provider and the reason SHALL appear on the bus with no hand-written bridge line for the event
 
@@ -1019,7 +1019,7 @@ rather than created.
 
 An empty hook list is a supported state everywhere below the CLI:
 canonicalisation folds it to an empty canonical list, the io-bound predicate
-answers false for it, and no sink is built.
+answers false for it, and no output plugin is built.
 
 The inbound half of a relay plugin does not depend on any hook. A
 provider's declared worker holds the connection and injects what arrives
@@ -1088,7 +1088,7 @@ the enable's plain options are read. Provider settings are written `--X<key>`
 and hooks `--hook`, so neither is affected.
 
 #### Scenario: A removed flag is refused
-- **WHEN** `flz plugin enable p relay_file_sink --relay_id op --trigger on_output --Xpath=out.ndjson` is issued
+- **WHEN** `flz plugin enable p relay_file_output --relay_id op --trigger on_output --Xpath=out.ndjson` is issued
 - **THEN** the command MUST fail naming `trigger`
 - **AND** no plugin entry MUST be written to the relay's declared plugin manifest
 
@@ -1105,7 +1105,7 @@ and hooks `--hook`, so neither is affected.
 `flz plugin help <provider_id>` and `flz relay info` SHALL name a plugin's hooks as hooks, in text and in JSON.
 
 #### Scenario: Plugin help lists hooks as the flag a user types
-- **WHEN** `flz plugin help relay_file_sink` is run
+- **WHEN** `flz plugin help relay_file_output` is run
 - **THEN** it SHALL list `SUPPORTED HOOKS:` with one `--hook=<name>` line per hook callback the provider declares
 - **AND** its common options SHALL name neither `--trigger` nor `--position`
 
@@ -1127,10 +1127,10 @@ dispatched on `on_output` or `on_input`. Because it is a `:fanout` hook, a subsc
 see every frame, no subscriber's answer SHALL change what another sees, and a raising
 subscriber SHALL be logged and SHALL NOT stop the others. `MonitoredIOForward` SHALL be the
 one first-party provider implementing `on_preview/2`, and a listener attached for outputs
-SHALL subscribe it to both `on_output` and `on_preview`. No first-party sink provider SHALL
+SHALL subscribe it to both `on_output` and `on_preview`. No first-party output plugin provider SHALL
 implement `on_preview/2`.
 
-#### Scenario: A sink cannot subscribe to previews
+#### Scenario: An output plugin cannot subscribe to previews
 
 - **WHEN** `flz plugin enable` is asked to attach the Kafka producer with the hook
   `on_preview`
@@ -1139,9 +1139,9 @@ implement `on_preview/2`.
 
 #### Scenario: A preview reaches every listener and nothing else
 
-- **GIVEN** a relay with a file sink and two listeners
+- **GIVEN** a relay with a file output plugin and two listeners
 - **WHEN** it produces one part
-- **THEN** both listeners SHALL receive it and the file sink's callbacks SHALL NOT be
+- **THEN** both listeners SHALL receive it and the file output plugin's callbacks SHALL NOT be
   called
 
 ### Requirement: A bind SHALL bring up every declared plugin its table does not hold
@@ -1158,10 +1158,10 @@ started with its reason and SHALL NOT stop the bind.
 
 #### Scenario: A runtime plugin on a sleeper found at boot
 
-- **GIVEN** a relay bound to a file sink plugin that was asleep when the controller
+- **GIVEN** a relay bound to a file output plugin that was asleep when the controller
   restarted, so its table is empty, and a listener then attached to it
 - **WHEN** an input wakes it
-- **THEN** its table SHALL hold both the file sink and the listener, running, before its
+- **THEN** its table SHALL hold both the file output plugin and the listener, running, before its
   first output is dispatched, and the file SHALL hold that output
 
 #### Scenario: A rebind re-initialises nothing
@@ -1191,7 +1191,7 @@ authorized in the namespace the resolution finds.
 
 #### Scenario: Unbinding a plugin from a moved relay
 
-- **GIVEN** a file sink plugin bound through controller node A to a relay that A hosted
+- **GIVEN** a file output plugin bound through controller node A to a relay that A hosted
 - **WHEN** the relay migrates to node B and `flz plugin unbind <name> --relay_id <op>`
   is then run through A (and, in a second run of the same setup, through a third node C that
   never held it)

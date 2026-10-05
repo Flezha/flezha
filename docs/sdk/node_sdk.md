@@ -88,7 +88,7 @@ const Ohlc = defineTasklet({
 export default defineRelay({
   factoryId: 'candles',
   channels: (c) => {
-    c.input<Trade>('trades').keyBy((trade) => trade.symbol).into(Ohlc).keyed().sink('candles');
+    c.input<Trade>('trades').keyBy((trade) => trade.symbol).into(Ohlc).keyed().output('candles');
   },
 });
 ```
@@ -111,10 +111,10 @@ expression was its output emits nothing.
 working.** It previews the tasklet's own output channel, is encoded as
 `ctx.emit(value)` would encode it there, and never waits: a part that cannot
 leave at once is dropped. A listener receives it, numbered from 0 within each
-attempt; a sink never does, and nothing about it is durable. It works in `run`
+attempt; an output never does, and nothing about it is durable. It works in `run`
 and `onTimer`, for a flow tasklet and a steps stage alike. It throws a
-`FlezhaError` with code `part.no_sink` when the output channel does not end in
-a sink (a call end is not one), and `part.outside_invocation` through a
+`FlezhaError` with code `part.no_output` when the output channel does not end in
+an output (a call end is not one), and `part.outside_invocation` through a
 context kept past its invocation.
 
 **The output type is declared, never read off the body.** Name it with the
@@ -154,7 +154,7 @@ mismatched wiring is rejected before the program runs. Those refusals are
 pinned by fixtures under `sdk/node/types-tests/`, which fail the build if a
 refusal stops working. Everything static typing cannot see — cycles, missing
 entry channels, unservable clocks, keyed-channel rules, branch arity, duplicate
-sinks — is refused at registration, naming the handler and the defect.
+outputs — is refused at registration, naming the handler and the defect.
 
 **The class settings are one tree.** `defineRelay` takes them beside
 `factoryId`, in either form:
@@ -165,7 +165,7 @@ export default defineRelay({
   steps: { each: 'per_input', onFailure: 'keep_progress' },
   durable: { local: { sleepAfter: 10_000 } },
   maxDurationMs: 600_000,
-  channels: (c) => c.input('order', { codec: 'text' }).into(Place).sink('placed'),
+  channels: (c) => c.input('order', { codec: 'text' }).into(Place).output('placed'),
 });
 ```
 
@@ -211,7 +211,7 @@ is what makes enabling worker threads a flag rather than a rewrite.
 ### The short form
 
 A relay of one tasklet can be one declaration: `defineRelay` carrying
-that tasklet's `run` body in place of `channels`. `factoryId` is required, `sink` is optional,
+that tasklet's `run` body in place of `channels`. `factoryId` is required, `output` is optional,
 `input` names the entry channel, and `codec` is the entry codec `c.input`
 takes. The tasklet's own fields (`initState`, `applyChange`, `cells`,
 `eventTime`, `mailboxCapacity`, `schemaVersion` and the rest `defineTasklet`
@@ -223,7 +223,7 @@ form unchanged.
 // upcase.mjs
 export const upcase = defineRelay({
   factoryId: 'upcase',
-  sink: 'out',
+  output: 'out',
   codec: 'text',
   run: (value, ctx) => ctx.emit(value.toUpperCase()),
 });
@@ -232,7 +232,7 @@ export const upcase = defineRelay({
 export const place = defineRelay({
   factoryId: 'place',
   steps: {},
-  sink: 'placed',
+  output: 'placed',
   input: 'order',
   codec: 'text',
   run: (order, ctx) => ctx.emit(order),
@@ -249,8 +249,8 @@ await runner.run();
 The generated relay is the one you would have written by hand with that
 single tasklet: an entry channel named `input`, or the `input` field's value,
 decoded by `codec`; the tasklet, named `factoryId` verbatim, so its cells
-keep their state path when it grows into the full form; a plugin sink named by
-`sink`; and the class settings it writes, as the full form takes them. A steps
+keep their state path when it grows into the full form; a plugin output named by
+`output`; and the class settings it writes, as the full form takes them. A steps
 short form is a `once` steps relay unless it writes `each`, run once over its first
 message: `flz relay start --text '<payload>'`, or a start followed by
 `flz relay send`; a second message to a `once` instance is accepted and
@@ -260,14 +260,14 @@ not complete after the first:
 ```javascript
 export const chat = defineRelay({
   factoryId: 'chat',
-  sink: 'replies',
+  output: 'replies',
   codec: 'text',
   steps: { each: 'per_input' },
   run: (turn, ctx) => ctx.emit(turn),
 });
 ```
 
-With no `sink` there is no plugin channel, so the tasklet has no output
+With no `output` there is no plugin channel, so the tasklet has no output
 channel either: its `run` keeps state and emits nothing.
 
 ```javascript
@@ -293,9 +293,9 @@ malformed short form is refused while the module loads rather than inside
 `run()`. Two refusals name themselves: `topology.short_form_with_topology` (`run` beside
 `channels`), and `topology.duplicate_factory_id`, raised when the runner declares a second
 relay under a factory id it holds, whatever either runs. A key written where it
-does not belong is refused naming the key: `name` beside `run`, `sink`, `input`,
+does not belong is refused naming the key: `name` beside `run`, `output`, `input`,
 `codec` or a tasklet field beside `channels`, and `flow`, `steps`, `durable`,
-`sink`, `input` or `codec` on a `defineTasklet`. There is no `topology.sink_without_output`: a plain `.mjs` definition
+`output`, `input` or `codec` on a `defineTasklet`. There is no `topology.output_without_type`: a plain `.mjs` definition
 declares no output type the SDK can read, a TypeScript one names it only in
 types erased before the SDK runs, and no `run` returns output, so nothing the
 SDK can see says whether a short form emits. The manifest leaves
@@ -385,9 +385,9 @@ invocation.
 ## Channel payloads
 
 A channel names the format of its payload with `{ codec }` on `input` and on
-`sink`, typed as the `ChannelCodec` union:
+`output`, typed as the `ChannelCodec` union:
 
-| Codec | An entry hands the tasklet | A sink sends |
+| Codec | An entry hands the tasklet | An output sends |
 | --- | --- | --- |
 | `'text'` | a `string` (`Stream<string>`); invalid UTF-8 fails the decode | a `string` as UTF-8; any other value fails the emit |
 | `'bytes'` | a `Uint8Array` (`Stream<Uint8Array>`) | a `Uint8Array` or `Buffer` unchanged; any other value fails the emit |
@@ -395,13 +395,13 @@ A channel names the format of its payload with `{ codec }` on `input` and on
 | `'msgpack'` | the value MessagePack decodes to | any value as MessagePack |
 
 ```ts
-c.input('in', { codec: 'text' }).into(Echo).sink('out');
+c.input('in', { codec: 'text' }).into(Echo).output('out');
 ```
 
 An entry with no codec and no decoder reads JSON: `{"a":1}` arrives as
 `{ a: 1 }`, and plain text fails its decode and rides the retry and dead-letter
-ladder. A sink with no codec and no encoder follows the value: a `Uint8Array`
-passes through, a string is sent as UTF-8, and anything else as JSON. So a sink
+ladder. An output with no codec and no encoder follows the value: a `Uint8Array`
+passes through, a string is sent as UTF-8, and anything else as JSON. So an output
 needs no codec for a string, bytes or a JSON value, and names one only to pick
 another format, `'json'` to quote a string or `'msgpack'`. A decoder or encoder
 function takes the place of a codec for anything else. A codec name outside the
@@ -409,7 +409,7 @@ four does not type-check, and from JavaScript it is refused when the relay
 is declared, as is a codec given beside a function on one channel, naming the
 relay and the channel.
 
-A called input's first sink output answers its caller and still reaches the sink's plugins:
+A called input's first output answers its caller and still reaches the output's plugins:
 [`../topics/advanced/relay_calls.md`](../topics/advanced/relay_calls.md).
 `.call("pricing", { deadlineMs, answerChannel, codec })` or `.call({ factory: "agent", create: false }, { deadlineMs })`
 ends a chain on a call to another relay and answers a stream of `Response`s:
@@ -455,7 +455,7 @@ import { LocalRelay } from '@flezha/sdk';
 
 const run = LocalRelay.start(WordCount);
 try {
-  run.onSink('totals', (out) => console.log(out.payload.toString('utf8')));
+  run.onOutput('totals', (out) => console.log(out.payload.toString('utf8')));
   await run.feed('lines', 'the quick brown fox');
   await run.runUntilIdle(10_000);
 } finally {
@@ -463,9 +463,9 @@ try {
 }
 ```
 
-`onSink` registers against the sink's **channel** name, which is the producing
+`onOutput` registers against the output's **channel** name, which is the producing
 tasklet's name unless the declaration `named` it. `feed`, `runUntilIdle` and
-the sink drain are promises because each parks in the core, and the fetchers
+the output drain are promises because each parks in the core, and the fetchers
 that run the tasklets need this event loop free. Worked example:
 [`examples/node/local_word_count.mjs`](../../examples/node/local_word_count.mjs).
 

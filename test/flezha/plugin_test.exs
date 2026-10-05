@@ -47,7 +47,7 @@ defmodule Flezha.PluginTest do
       plugin =
         Plugin.new(
           id: "writer",
-          provider: "relay_file_sink",
+          provider: "relay_file_output",
           opts: %{"path" => "echo-out.txt", "not_an_option" => 1}
         )
 

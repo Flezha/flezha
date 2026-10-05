@@ -44,8 +44,8 @@ defmodule Flezha.Boot.ApplicationChildrenTest do
     # table, in its order.
     Flezha.Plugin.Provider.HookWebhook.WorkerSup,
     Flezha.Plugin.Provider.MonitoredIOForward.WorkerSup,
-    Flezha.Plugin.Provider.File.Sink.WorkerSup,
     Flezha.Plugin.Provider.File.Source.WorkerSup,
+    Flezha.Plugin.Provider.File.Sink.WorkerSup,
     Flezha.Plugin.Provider.RelayForward.WorkerSup,
     Flezha.Plugin.Provider.HttpPoll.WorkerSup,
     Flezha.Plugin.Provider.HttpPush.WorkerSup,

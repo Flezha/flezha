@@ -87,7 +87,7 @@ Every exit trigger SHALL drive the single existing `RelayCompleted` teardown, in
 #### Scenario: The last output is delivered before the teardown
 
 - **WHEN** a durable chain completes with its final tasklet's outbox journaled but not yet flushed
-- **THEN** the Controller SHALL flush it to the sink before the instance is deregistered
+- **THEN** the Controller SHALL flush it to the output before the instance is deregistered
 
 #### Scenario: An opted-out instance's last output is delivered before the teardown
 

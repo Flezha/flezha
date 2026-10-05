@@ -103,12 +103,12 @@ EXAMPLES:
 
 `flz plugin help <provider>` lists one provider's settings and hooks, and
 `flz plugin list --providers` the providers there are. The echo's file plugins
-from [`plugin_examples.md`](../plugins/plugin_examples.md#a-file-in-a-file-out): a sink that writes everything the
+from [`plugin_examples.md`](../plugins/plugin_examples.md#a-file-in-a-file-out): an output that writes everything the
 echo emits to a file, then the plugins and their relays, then the plugin
 taken away again:
 
 ```sh
-$ flz plugin enable writer relay_file_sink --relay_id=my_echo --hook=on_output --Xpath=echo-out.txt
+$ flz plugin enable writer relay_file_output --relay_id=my_echo --hook=on_output --Xpath=echo-out.txt
 ```
 
 ```output

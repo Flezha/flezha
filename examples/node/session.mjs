@@ -77,6 +77,6 @@ export default defineRelay({
       .keyBy((event) => event.user)
       .into(Session)
       .keyed()
-      .sink('closed_sessions');
+      .output('closed_sessions');
   },
 });

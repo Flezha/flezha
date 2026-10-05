@@ -46,12 +46,12 @@ defmodule Flezha.Plugin.Provider.FileSourceTest do
   end
 
   describe "the provider id" do
-    test "an enable naming relay_file_source prepares and activates on a relay's table",
+    test "an enable naming relay_file_input prepares and activates on a relay's table",
          %{events: file} do
       File.write!(file, "")
 
-      assert {:ok, provider} = Providers.fetch("relay_file_source"),
-             "relay_file_source is not a provider id the system can enable"
+      assert {:ok, provider} = Providers.fetch("relay_file_input"),
+             "relay_file_input is not a provider id the system can enable"
 
       plugin = %Plugin{
         id: "file-source-enable",

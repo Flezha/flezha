@@ -116,7 +116,7 @@ is full the oldest events are dropped, and `flz plugin list` shows the controlle
 plugin lags on.
 
 Delivery is best effort. An event waiting on a controller that stops is lost, and so is one
-that happens in the first moments after an enable, before the controller's hook sink has
+that happens in the first moments after an enable, before the controller's hook output plugin has
 heard of the new copy. While a `single` copy moves to another controller, the old and the
 new copy both run for a moment, so an event can be sent twice. The DLQ and
 `flz relay list` remain the record of what happened.

@@ -263,6 +263,6 @@ lag read; and `snapshot_done` (an event, `%{count: rows}`) when the first copy e
 ## See also
 
 - [postgres_poll.md](postgres_poll.md): reading a table by polling, whose JSON mapping this plugin shares
-- [postgres_sink.md](postgres_sink.md): Postgres as an output
+- [postgres_output.md](postgres_output.md): Postgres as an output
 - [kafka_consumer.md](kafka_consumer.md) and [rabbitmq.md](rabbitmq.md): the other source packages
-- [plugins.md](../topics/plugins/plugins.md): the plugin model and every source and sink
+- [plugins.md](../topics/plugins/plugins.md): the plugin model and every source and output plugin

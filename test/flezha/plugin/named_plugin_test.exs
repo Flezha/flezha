@@ -244,7 +244,7 @@ defmodule FlezhaTest.Plugin.NamedPluginTest do
       assert err =~ "plugin 'cli_in' cannot be shared, and relay '#{a}' is already bound to it"
     end
 
-    test "plugin.single_sink" do
+    test "plugin.single_output" do
       op = start_relay("cli_single_op")
       one = %{plugin("cli_one", Flezha.Plugin.Provider.StdOut, %{}) | single: true}
       {:ok, _} = PluginManager.enable_plugin("cli_one", one)
@@ -256,7 +256,7 @@ defmodule FlezhaTest.Plugin.NamedPluginTest do
         end)
 
       assert err =~
-               "runs as one copy in the cluster, so it takes no on_output hook (plugin.single_sink)"
+               "runs as one copy in the cluster, so it takes no on_output hook (plugin.single_output)"
     end
 
     test "plugin.id_taken" do

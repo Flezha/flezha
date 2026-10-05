@@ -316,7 +316,7 @@ defmodule Flezha.MixProject do
         "docs/plugins/http_push.md",
         "docs/plugins/websocket_subscription.md",
         "docs/plugins/relay_forward.md",
-        "docs/plugins/postgres_sink.md",
+        "docs/plugins/postgres_output.md",
         "docs/plugins/postgres_poll.md",
         "docs/plugins/hook_webhook.md",
         "docs/plugins/http_server.md",

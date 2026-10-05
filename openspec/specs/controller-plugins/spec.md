@@ -168,8 +168,8 @@ waiting in a copy whose controller dies SHALL be lost.
 
 - **GIVEN** a controller with no controller plugin
 - **WHEN** a relay starts and parks there
-- **THEN** no message SHALL be sent to any hook sink, and the observability registry SHALL hold
-  no hook sink on that controller
+- **THEN** no message SHALL be sent to any hook output plugin, and the observability registry SHALL hold
+  no hook output plugin on that controller
 
 #### Scenario: A stuck plugin
 

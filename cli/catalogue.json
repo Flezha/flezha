@@ -1214,7 +1214,7 @@
     },
     {
       "name": "Relay.replay",
-      "doc": "Re-run a Cell's retained inputs from a point in the past through the current code: rewind the Cell to `from` (a WAL seq, or an ISO 8601 time), bump the epoch, and replay the input log forward, so a conforming keyed sink overwrites the stale rows by natural key.",
+      "doc": "Re-run a Cell's retained inputs from a point in the past through the current code: rewind the Cell to `from` (a WAL seq, or an ISO 8601 time), bump the epoch, and replay the input log forward, so a conforming keyed output plugin overwrites the stale rows by natural key.",
       "action": "relay.replay",
       "remote": true,
       "stream": false,

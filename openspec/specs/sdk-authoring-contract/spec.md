@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The sdk-authoring-contract capability is the single, language-agnostic source of truth for SDK authoring sugar. It defines the canonical mapping from a sugared tasklet/relay declaration to the existing `Relay`/`Tasklet`/`Change`/`Channel` trait (or interface) surface: signature → associated types, mutable-state parameter → `State`, `State` → `Change` derivation with an explicit hand-written boundary, explicit cell-mode opt-ins (single/static/dynamic), single-tasklet input-to-sink auto-wiring, and auto-registration. All sugar is pure expansion — it introduces no new runtime path, protocol message, or WAL change, and sugared tasklets compose with hand-written ones. The contract binds Rust, Java, and the forward-looking Python and Elixir SDKs so the same boilerplate collapses identically across every binding.
+The sdk-authoring-contract capability is the single, language-agnostic source of truth for SDK authoring sugar. It defines the canonical mapping from a sugared tasklet/relay declaration to the existing `Relay`/`Tasklet`/`Change`/`Channel` trait (or interface) surface: signature → associated types, mutable-state parameter → `State`, `State` → `Change` derivation with an explicit hand-written boundary, explicit cell-mode opt-ins (single/static/dynamic), single-tasklet input-to-output auto-wiring, and auto-registration. All sugar is pure expansion — it introduces no new runtime path, protocol message, or WAL change, and sugared tasklets compose with hand-written ones. The contract binds Rust, Java, and the forward-looking Python and Elixir SDKs so the same boilerplate collapses identically across every binding.
 ## Requirements
 ### Requirement: Sugar expands to existing trait surface
 The authoring sugar in every SDK SHALL be pure expansion over the existing `Relay`/`Tasklet`/`Change`/`Channel` trait (or interface) surface. The generated code MUST be equivalent to a valid hand-written implementation, and MUST NOT introduce any new runtime path, protocol message, or WAL change.
@@ -98,38 +98,38 @@ The declarations are named for the Cell, not the Tasklet. Static mode is declare
 - **THEN** it SHALL offer no `cell_key`-style hook, and declaring one SHALL fail at compile time (Rust) or annotation processing (Java) with an error directing the author to `key_by` on the wiring
 
 ### Requirement: Single-tasklet auto-wiring and registration
-The contract SHALL define exactly one topology that may be written short, a single tasklet from a controller input to at most one sink, and every SDK SHALL carry it for both relay kinds: Rust, Java, Python, Node, Ruby, PHP and Elixir. **The short form SHALL be a relay declaration**, written at the SDK's kind-named relay entry point, and SHALL NOT be a tasklet declaration that becomes a relay: `#[flezha::relay]` / `#[flezha::relay]` in Rust, `@Relay` / `@Relay` in Java, `@flezha.relay` / `@flezha.relay` in Python, `defineRelay` / `defineRelay` in Node, a `Flezha::Relay` / `Flezha::Relay` subclass in Ruby, `#[Relay]` on a class extending `Flezha\Relay` / `Flezha\Relay` in PHP, `use Flezha.SDK.Relay` / `use Flezha.SDK.Relay` in Elixir.
+The contract SHALL define exactly one topology that may be written short, a single tasklet from a controller input to at most one output, and every SDK SHALL carry it for both relay kinds: Rust, Java, Python, Node, Ruby, PHP and Elixir. **The short form SHALL be a relay declaration**, written at the SDK's kind-named relay entry point, and SHALL NOT be a tasklet declaration that becomes a relay: `#[flezha::relay]` / `#[flezha::relay]` in Rust, `@Relay` / `@Relay` in Java, `@flezha.relay` / `@flezha.relay` in Python, `defineRelay` / `defineRelay` in Node, a `Flezha::Relay` / `Flezha::Relay` subclass in Ruby, `#[Relay]` on a class extending `Flezha\Relay` / `Flezha\Relay` in PHP, `use Flezha.SDK.Relay` / `use Flezha.SDK.Relay` in Elixir.
 
-A relay declaration SHALL be a short form exactly when it carries its one tasklet's body **instead of** a topology body, a topology body being `channels`, the one name both kinds give it in every SDK. The body SHALL be named `run`, as every SDK names a tasklet's body. The kind SHALL be the entry point's own name (in PHP, the base class its `#[Relay]` class extends) and SHALL NOT be a key on the declaration. The identity SHALL be the relay's factory id, spelled as that SDK's full-form relay already spells it (`id` in Rust, Java and Python, `factoryId` in Node and PHP, `factory_id` in Ruby and Elixir), and SHALL be written by the author; an SDK that otherwise derives a name SHALL NOT derive a factory id. The declaration MAY carry a `sink`, an entry channel name `input`, and, in an SDK whose channel builder names an entry codec (Python, Node, Ruby, PHP), that SDK's `codec` with the builder's vocabulary.
+A relay declaration SHALL be a short form exactly when it carries its one tasklet's body **instead of** a topology body, a topology body being `channels`, the one name both kinds give it in every SDK. The body SHALL be named `run`, as every SDK names a tasklet's body. The kind SHALL be the entry point's own name (in PHP, the base class its `#[Relay]` class extends) and SHALL NOT be a key on the declaration. The identity SHALL be the relay's factory id, spelled as that SDK's full-form relay already spells it (`id` in Rust, Java and Python, `factoryId` in Node and PHP, `factory_id` in Ruby and Elixir), and SHALL be written by the author; an SDK that otherwise derives a name SHALL NOT derive a factory id. The declaration MAY carry an `output`, an entry channel name `input`, and, in an SDK whose channel builder names an entry codec (Python, Node, Ruby, PHP), that SDK's `codec` with the builder's vocabulary.
 
-`sink` SHALL be optional. With a `sink`, the generated relay SHALL declare an entry channel, the tasklet, and a plugin sink of that name; with no `sink`, it SHALL declare the entry channel and the tasklet and no plugin channel, which is the topology a full-form relay already declares when its channel ends at a tasklet. `input` and `codec` SHALL be accepted whether or not a `sink` is written, because an entry channel exists either way.
+`output` SHALL be optional. With an `output`, the generated relay SHALL declare an entry channel, the tasklet, and a plugin output of that name; with no `output`, it SHALL declare the entry channel and the tasklet and no plugin channel, which is the topology a full-form relay already declares when its channel ends at a tasklet. `input` and `codec` SHALL be accepted whether or not an `output` is written, because an entry channel exists either way.
 
-The generated relay SHALL otherwise be the relay an author would hand-write with that one tasklet: an entry channel named by `input`, or `input` when none is written, decoded by `codec` where one is written; the tasklet; a factory id equal to the written identity; and every class-level setting at the SDK's default for its kind. A steps short form SHALL therefore be a `once` steps relay unless it declares its loop mode, its entry channel receiving its first message, from a spawn, `flz relay send` or `flz relay start --text`, and its `init_values` being the tasklet's initial state as on a flow relay: the loop mode SHALL be accepted on a steps short form in every SDK, in the spelling that SDK's full form gives the setting (`each` on the Rust attribute, `each()` on `@Relay`, `each` on the Node definition, `each=` on the Python decorator, `each` in the Ruby class body, `#[Steps(each: ...)]` beside `#[Relay]` in PHP, `each:` on the Elixir `use`), and SHALL reach the generated relay as the full form's loop mode does. Every other class-level setting (the retry ladder is no longer one, being an edge's; a duration, persistence, the effectively-once tier, a correction window, rollback mode, synchronous durability) SHALL NOT be expressible on the short form; it is the full form, and where an SDK's spelling lets an author write one on a short form it SHALL be refused naming the setting. A loop mode or rollback mode outside the declared set (`once`, `per_input`, `chained`; `undo_all`, `keep_progress`) SHALL be refused at declaration naming the value, in every SDK whose spelling can write one. The tasklet's own settings (cell keys and `cells_for`, mailbox capacity, clock, schema version, the state and change declarations) SHALL be accepted on the short form and SHALL reach the generated tasklet. A short-form key (`sink`, `input`, `codec`) or a tasklet setting written on a declaration that carries a topology body SHALL be refused rather than ignored.
+The generated relay SHALL otherwise be the relay an author would hand-write with that one tasklet: an entry channel named by `input`, or `input` when none is written, decoded by `codec` where one is written; the tasklet; a factory id equal to the written identity; and every class-level setting at the SDK's default for its kind. A steps short form SHALL therefore be a `once` steps relay unless it declares its loop mode, its entry channel receiving its first message, from a spawn, `flz relay send` or `flz relay start --text`, and its `init_values` being the tasklet's initial state as on a flow relay: the loop mode SHALL be accepted on a steps short form in every SDK, in the spelling that SDK's full form gives the setting (`each` on the Rust attribute, `each()` on `@Relay`, `each` on the Node definition, `each=` on the Python decorator, `each` in the Ruby class body, `#[Steps(each: ...)]` beside `#[Relay]` in PHP, `each:` on the Elixir `use`), and SHALL reach the generated relay as the full form's loop mode does. Every other class-level setting (the retry ladder is no longer one, being an edge's; a duration, persistence, the effectively-once tier, a correction window, rollback mode, synchronous durability) SHALL NOT be expressible on the short form; it is the full form, and where an SDK's spelling lets an author write one on a short form it SHALL be refused naming the setting. A loop mode or rollback mode outside the declared set (`once`, `per_input`, `chained`; `undo_all`, `keep_progress`) SHALL be refused at declaration naming the value, in every SDK whose spelling can write one. The tasklet's own settings (cell keys and `cells_for`, mailbox capacity, clock, schema version, the state and change declarations) SHALL be accepted on the short form and SHALL reach the generated tasklet. A short-form key (`output`, `input`, `codec`) or a tasklet setting written on a declaration that carries a topology body SHALL be refused rather than ignored.
 
 The expansion SHALL produce an ordinary tasklet and an ordinary relay, and the generated tasklet's node name SHALL be the factory id verbatim, with no suffix, case change or decoration, because a tasklet's name is a durable component of every cell's state path. Where an SDK generates code, the two SHALL be separate types, and the author-facing name SHALL be the relay's, because that is what the declaration declares.
 
 Registration SHALL be explicit in every SDK: the author hands the declaration to the runner's `register_factory`, which reads its kind as it reads any relay's, and nothing is harvested, scanned or collected. No SDK SHALL require the author to name a generated artefact.
 
-A relay declaration carrying both a tasklet body and a topology body SHALL be refused. A written `sink` on a body the SDK can see declares no output SHALL be refused; an SDK whose tasklets declare no output type owes no such refusal and says so in its conformance manifest.
+A relay declaration carrying both a tasklet body and a topology body SHALL be refused. A written `output` on a body the SDK can see declares no output SHALL be refused; an SDK whose tasklets declare no output type owes no such refusal and says so in its conformance manifest.
 
 #### Scenario: A flow short form is the hand-written single-tasklet stream
 
-- **WHEN** a flow relay declaration carries its identity, a `sink` and a tasklet body, and the author registers it
-- **THEN** the runner declares a flow relay wiring the controller input to the tasklet to the named sink, with every class setting at its default, and the declaration equals the one a hand-written single-tasklet stream produces
+- **WHEN** a flow relay declaration carries its identity, an `output` and a tasklet body, and the author registers it
+- **THEN** the runner declares a flow relay wiring the controller input to the tasklet to the named output, with every class setting at its default, and the declaration equals the one a hand-written single-tasklet stream produces
 
 #### Scenario: A steps short form runs once on its first message
 
-- **WHEN** a steps relay declaration carries its identity, a `sink` and a tasklet body, is registered, an instance is started, and one message is sent to it
-- **THEN** the entry channel receives the message, the tasklet runs once, its output reaches the sink, and the instance completes
+- **WHEN** a steps relay declaration carries its identity, an `output` and a tasklet body, is registered, an instance is started, and one message is sent to it
+- **THEN** the entry channel receives the message, the tasklet runs once, its output reaches the output, and the instance completes
 
-#### Scenario: A short form with no sink declares an entry channel and a tasklet
+#### Scenario: A short form with no output declares an entry channel and a tasklet
 
-- **WHEN** a flow relay declaration carries its identity and a tasklet body and no `sink`
+- **WHEN** a flow relay declaration carries its identity and a tasklet body and no `output`
 - **THEN** the generated relay SHALL declare the entry channel and the tasklet and no plugin channel, and the declaration SHALL be accepted, as a full-form relay whose channel ends at a tasklet is accepted
 
-#### Scenario: An entry channel name and codec need no sink
+#### Scenario: An entry channel name and codec need no output
 
-- **WHEN** a short form declares `input` or a `codec` and no `sink`
+- **WHEN** a short form declares `input` or a `codec` and no `output`
 - **THEN** the declaration SHALL be accepted and the entry channel SHALL take that name and codec
 
 #### Scenario: The generated tasklet is named after the factory id
@@ -159,7 +159,7 @@ A relay declaration carrying both a tasklet body and a topology body SHALL be re
 
 #### Scenario: A short-form key beside a topology body is refused
 
-- **WHEN** a relay declaration carries a `channels` body and also a `sink`, an `input` or a `codec`
+- **WHEN** a relay declaration carries a `channels` body and also an `output`, an `input` or a `codec`
 - **THEN** the SDK SHALL refuse the declaration rather than ignore the key
 
 #### Scenario: The kind is read from the entry point, not from a key
@@ -197,10 +197,10 @@ A relay declaration carrying both a tasklet body and a topology body SHALL be re
 - **WHEN** a relay declaration carries a tasklet body and also a `channels` body
 - **THEN** the SDK SHALL refuse naming `topology.short_form_with_topology`, at compile time where the language has one and at declaration or registration otherwise
 
-#### Scenario: A sink on a body with no output is refused
+#### Scenario: An output on a body with no output is refused
 
-- **WHEN** a short form declares a `sink` and its body is one the SDK can see declares no output
-- **THEN** the SDK SHALL refuse naming `topology.sink_without_output`
+- **WHEN** a short form declares an `output` and its body is one the SDK can see declares no output
+- **THEN** the SDK SHALL refuse naming `topology.output_without_type`
 
 #### Scenario: Multi-tasklet topology stays explicit
 
@@ -215,7 +215,7 @@ A relay declaration carrying both a tasklet body and a topology body SHALL be re
 #### Scenario: The same declaration in every SDK
 
 - **WHEN** the reference short-form fixtures `sugar_do_nothing`, `sugar_store_input`, `sugar_named_input`, `sugar_steps` and `sugar_state_only` are authored in each SDK's test app
-- **THEN** each is one relay declaration carrying its factory id and a tasklet body (a `sink` on all but `sugar_state_only`, and `prices` or `order` for the named entries), no separate tasklet declaration and one registration call, and every runtime's declaration equals the reference golden
+- **THEN** each is one relay declaration carrying its factory id and a tasklet body (an `output` on all but `sugar_state_only`, and `prices` or `order` for the named entries), no separate tasklet declaration and one registration call, and every runtime's declaration equals the reference golden
 
 ### Requirement: Contract binds all current and future SDKs
 The contract SHALL be the single source of truth for authoring sugar across the Rust, Java, Elixir, Node, Ruby, PHP and Python SDKs and any future binding, including non-normative target sketches for bindings not yet built. Every SDK's flow and steps authoring surfaces SHALL be rooted in the shared `Relay` base (see below). Beyond the sugar, every surface that more than one SDK carries SHALL change in lockstep: a change to the authoring or declaration surface (builder, ctx, the `HostClassDecl` keys), to the wire protocol or its metadata keys, to a default (overflow policy, retry ladder, mailbox capacity, heartbeat keys), or to a fixture that proves one of these (the regression and round-trip bench factories, the end-to-end runtime matrix) SHALL land in every SDK in the same change, or SHALL name in its spec delta the SDK it defers and the follow-up change that owes it. An SDK that carries a capability another SDK neither carries nor names as deferred is a defect of the change, not a backlog item. A performance change SHALL state in its notes which layer it changed (controller, shared kernel, or host SDK); a measurement taken with one runtime SHALL be reported as that runtime's number, and a claim that holds for every SDK SHALL be backed by the same bench run on each runtime that carries the tier.
@@ -493,7 +493,7 @@ statically typed SDK cannot demote it to a runtime check by omission.
 ### Requirement: Every topology is judged once, by the reference check, from the reference fixture
 
 Every SDK's builder SHALL submit the topology it was given, as a record of the authoring
-calls (the channels, the ordered links of each chain — transform, key, sink, name,
+calls (the channels, the ordered links of each chain — transform, key, output, name,
 consumer — the merges and branches, the class flags and the tasklet facts), to one
 reference check that holds every named refusal once: `flz_core::host::register::check`
 for the Rust, Java, Node, Python, Ruby and PHP SDKs, and the Elixir SDK's re-expression of
@@ -530,9 +530,9 @@ requirement by one conformance run over every row, not by a set of tests of its 
   acknowledgement granularity and judges its preconditions, with no per-SDK helper doing so
 
 ### Requirement: Short-form refusals carry one name per refusal in every SDK
-The three short-form refusals SHALL be named `topology.short_form_with_topology`, `topology.sink_without_output` and `topology.duplicate_factory_id` in every SDK, and the name SHALL be the code the author reads: in the compile error text in Rust, Java and an Elixir `use` declaration, and as the `code` of the SDK's one error type in Python, Node, Ruby, PHP and an Elixir registration. The names SHALL be listed in `docs/sdk/authoring_contract.md` §5, which the conformance check reads as the source of the row names.
+The three short-form refusals SHALL be named `topology.short_form_with_topology`, `topology.output_without_type` and `topology.duplicate_factory_id` in every SDK, and the name SHALL be the code the author reads: in the compile error text in Rust, Java and an Elixir `use` declaration, and as the `code` of the SDK's one error type in Python, Node, Ruby, PHP and an Elixir registration. The names SHALL be listed in `docs/sdk/authoring_contract.md` §5, which the conformance check reads as the source of the row names.
 
-`SinkWithoutId`, `SinkWithoutKind` and `ShorthandKeyWithoutSink` SHALL NOT exist. A short form's identity is a relay's factory id, which every relay has always been required to carry, so the first is the full form's own rule; the kind is the entry point's name, so the second is unrepresentable; and `input` and `codec` are meaningful with no `sink`, so the third refuses nothing.
+`SinkWithoutId`, `SinkWithoutKind` and `ShorthandKeyWithoutSink` SHALL NOT exist. A short form's identity is a relay's factory id, which every relay has always been required to carry, so the first is the full form's own rule; the kind is the entry point's name, so the second is unrepresentable; and `input` and `codec` are meaningful with no `output`, so the third refuses nothing.
 
 #### Scenario: A refusal is recognisable across languages
 

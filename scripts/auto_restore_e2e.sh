@@ -33,7 +33,7 @@ step_register() {
   for relay in "${RELAYS[@]}"; do
     note "registering $relay"
     $DC exec -T controller flz relay start "$relay" rust_factory --namespace prod
-    $DC exec -T controller flz plugin enable "${relay}_sink" relay_file_sink "$relay" --namespace prod \
+    $DC exec -T controller flz plugin enable "${relay}_sink" relay_file_output "$relay" --namespace prod \
       --hook=on_output --Xpath="${relay}.ndjson" \
       || true
   done

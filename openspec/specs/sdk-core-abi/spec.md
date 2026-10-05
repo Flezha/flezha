@@ -472,7 +472,7 @@ activation's token and `item` is the index, within that activation, of the work 
 invocation sends the part. The entry SHALL number the part, stamp it, apply the drop rules
 of `output-parts` and write its frame, and SHALL return without waiting for the controller.
 It SHALL answer `FLZ_OK` for a part that left and for a part it dropped, and `FLZ_ERR` with
-the error document in `flz_core_last_error` for a refusal (`part.no_sink`,
+the error document in `flz_core_last_error` for a refusal (`part.no_output`,
 `part.outside_invocation`, an item index the activation does not hold). The per-item
 sequence counters SHALL live with the outstanding activation and SHALL be released with it,
 so a token that is no longer outstanding is `part.outside_invocation`.
@@ -486,7 +486,7 @@ frame it receives, so each veneer's tests can assert what a part carried.
 #### Scenario: A part returns before the controller answers anything
 
 - **WHEN** a host calls `flz_core_part` for the second item of an outstanding activation
-  whose tasklet has a sink
+  whose tasklet has an output
 - **THEN** the call SHALL answer `FLZ_OK`, and the fake controller SHALL record one
   `output_part` frame carrying `flz.part` `0`, that item's attempt and its Cell's label
 

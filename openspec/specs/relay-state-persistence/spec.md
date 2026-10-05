@@ -424,9 +424,9 @@ The SDK SHALL verify the header at read time on **every** restore path — the t
 
 ### Requirement: Idempotent emits with stable dedup keys
 
-The Rust SDK runtime SHALL automatically attach `flezha.dedup_key = "{relay_class}/{tasklet_id}/{cell_key}/{change_seq}"` to outgoing plugin-bound emit metadata for any emit issued during a `Tasklet::run` invocation that records changes through `ctx.change(...)`. The agent's plugin-provider path SHALL NOT alter or strip this metadata key; it SHALL flow through to the sink verbatim.
+The Rust SDK runtime SHALL automatically attach `flezha.dedup_key = "{relay_class}/{tasklet_id}/{cell_key}/{change_seq}"` to outgoing plugin-bound emit metadata for any emit issued during a `Tasklet::run` invocation that records changes through `ctx.change(...)`. The agent's plugin-provider path SHALL NOT alter or strip this metadata key; it SHALL flow through to the output verbatim.
 
-The Kafka producer plugin (`FlezhaKafka.Producer`, from the Kafka plugin package) SHALL use the `flezha.dedup_key` value as the Kafka producer key when the output carries neither a `flz.key` nor the effectively-once `flz.epoch` stamp. Other plugin providers MAY use the key for sink-specific dedup purposes; the contract is that the key is opaque metadata.
+The Kafka producer plugin (`FlezhaKafka.Producer`, from the Kafka plugin package) SHALL use the `flezha.dedup_key` value as the Kafka producer key when the output carries neither a `flz.key` nor the effectively-once `flz.epoch` stamp. Other plugin providers MAY use the key for output-specific dedup purposes; the contract is that the key is opaque metadata.
 
 User-supplied metadata via `ctx.emit_with_meta(value, meta)` SHALL have its `flezha.dedup_key` entry silently dropped (matching the existing reserved-key behavior for `channel`); the SDK runtime stamps its own value.
 
@@ -438,7 +438,7 @@ User-supplied metadata via `ctx.emit_with_meta(value, meta)` SHALL have its `fle
 #### Scenario: Replayed Change preserves dedup key
 
 - **WHEN** a Cell is restored from snapshot + WAL and re-issues an emit for `seq = 12345`
-- **THEN** the re-issued Kafka producer message SHALL carry the identical key `"MarketRelay/OhlcTasklet/M1/12345"` as the original emit; downstream sink dedup (e.g. Kafka log compaction by key) SHALL collapse the duplicates
+- **THEN** the re-issued Kafka producer message SHALL carry the identical key `"MarketRelay/OhlcTasklet/M1/12345"` as the original emit; downstream output dedup (e.g. Kafka log compaction by key) SHALL collapse the duplicates
 
 #### Scenario: Agent-side outbox dedupes by (cell, change_seq)
 

@@ -1,7 +1,7 @@
 # The durable-compute kernel
 
 This page describes the machinery under every relay: how a change to a cell's state reaches
-the controller's disk, how an output gets an identity a sink can deduplicate on, how the
+the controller's disk, how an output gets an identity an output plugin can deduplicate on, how the
 controller slows a sender down, who may write a cell's log, and how the controller knows work
 is flowing. A flow relay and a steps relay use the same machinery; the pages on
 [running in flow](flow_profile.md) and [running in steps](steps_profile.md) cover what each
@@ -41,7 +41,7 @@ section says what happens first, then names the code that does it.
 
 ## The write path
 
-This is one input on its way from a source to a sink, for a flow relay with
+This is one input on its way from a source to an output plugin, for a flow relay with
 `exactly: effectively_once`. A steps relay follows the same path, except that its outputs
 wait for the stage commit ([running in steps](steps_profile.md#one-outbox)).
 
@@ -52,7 +52,7 @@ sequenceDiagram
     participant L as input log
     participant C as cell on the runner
     participant W as wal writer
-    participant K as sink
+    participant K as output plugin
 
     S->>O: input
     O->>O: on_input hooks
@@ -73,7 +73,7 @@ the diagram are rules, not details:
 - **Append before forward.** An input is written to the input log before it reaches a runner,
   and an append that fails is not forwarded. A sender can retry an input it was refused; it
   cannot recover one it believes was accepted.
-- **Fsync before release.** Under `exactly: effectively_once`, an output reaches a sink only
+- **Fsync before release.** Under `exactly: effectively_once`, an output reaches an output plugin only
   after the record that produced it is on disk, so state and output cannot disagree.
 - **Release before the offset moves.** The consumed offset moves last, so a crash resumes at
   or before the input whose outputs are already out.
@@ -159,7 +159,7 @@ sequenceDiagram
     participant C as cell
     participant W as wal writer
     participant D as disk
-    participant K as sink
+    participant K as output plugin
 
     C->>W: changes and outputs 1 to 3
     alt at_least_once (default)
@@ -182,22 +182,22 @@ Under effectively once, each cell's writer keeps its released outputs as an outb
 cursors:
 
 - `outbox_durable_seq`: how far the fsync has reached. Outputs up to here may be released.
-- `outbox_flushed_seq`: how far the sinks have **confirmed**.
+- `outbox_flushed_seq`: how far the output plugins have **confirmed**.
 - the epoch, described in [the epoch rule](#the-epoch-rule).
 
 The confirmed cursor and the epoch, with the last persisted sequence, are kept in a small
 `<cell>.outbox.dedup` file beside the WAL. A restarted controller re-sends every output that was
-durable but not confirmed. A stale cursor only widens that re-send, which a deduplicating sink
+durable but not confirmed. A stale cursor only widens that re-send, which a deduplicating output plugin
 absorbs; it never skips an output.
 
-Sending is not delivery. Each released output carries an opaque `flz.ack` token. A sink that
-guarantees delivery holds the token and answers once its write is durable; an output no sink
+Sending is not delivery. Each released output carries an opaque `flz.ack` token. An output plugin that
+guarantees delivery holds the token and answers once its write is durable; an output no output plugin
 held completes when the hook chain has run it. The cursor moves over the leading run of
 completed entries, so an answer that arrives out of order cannot carry it past an output still
 in flight. At most `:outbox_inflight_max` entries (1000 by default) wait unconfirmed; past that
 the release waits, while ingest goes on. This is `Flezha.State.Outbox`.
 
-Releases are batched: one pass hands its whole window to the hooks at once, and a sink can
+Releases are batched: one pass hands its whole window to the hooks at once, and an output plugin can
 confirm a batch in one answer. A batch carries the same facts as single answers would.
 
 A class can also hold its outputs until a checkpoint closes, with `ack: checkpoint` and
@@ -354,7 +354,7 @@ view: [durability](../topics/basics/durability.md).
 Flezha does not promise exactly-once effects on the outside world. It promises the parts that
 together give the same result:
 
-> **at-least-once delivery + a deterministic key + a deduplicating sink = effectively once.**
+> **at-least-once delivery + a deterministic key + a deduplicating output plugin = effectively once.**
 
 ```mermaid
 flowchart LR
@@ -362,17 +362,17 @@ flowchart LR
     L --> R["runner"]
     R --> W[("WAL: state is durable")]
     W --> O["outbox identity: cell, seq, epoch, key"]
-    O --> K["sink: upsert by key, guard on epoch and seq"]
+    O --> K["output plugin: upsert by key, guard on epoch and seq"]
 ```
 
-The end-to-end guarantee is only as strong as the weakest part. Two sinks conform: the built-in
-**Postgres** sink upserts a whole batch and moves a per-cell progress row in one transaction,
+The end-to-end guarantee is only as strong as the weakest part. Two output plugins conform: the built-in
+**Postgres** output plugin upserts a whole batch and moves a per-cell progress row in one transaction,
 guarded by `(epoch, seq)`, so a re-send or a stale epoch changes nothing; the **Kafka** producer
 (the Kafka plugin package) uses `flz.key` as the message key and carries the full identity in a
 `flezha.dedup_key` header.
 
 The tier is set per class with `exactly: effectively_once`. It requires every channel that
-reaches a plugin to be keyed: an unkeyed output gives a sink nothing to deduplicate on, so the
+reaches a plugin to be keyed: an unkeyed output gives an output plugin nothing to deduplicate on, so the
 runner refuses the relay at registration
 (`topology.unkeyed_channel_under_effectively_once`).
 
@@ -384,7 +384,7 @@ determinism needs (see [`poll_core.md`](https://github.com/flezha/flezha/blob/ma
 ## Determinism
 
 Recovery runs the tasklet again. If the tasklet read the wall clock or made a random id, the
-second run would give different outputs, and a sink could not deduplicate them. So the runtime
+second run would give different outputs, and an output plugin could not deduplicate them. So the runtime
 computes time and identity once per invocation, and the tasklet reads them from its context:
 
 | Call | What it returns | Stable across a replay because |
@@ -439,12 +439,12 @@ record and are stamped by the same controller code.
 ## The epoch rule
 
 Each cell's writer has an epoch, and the durable identity of an output is
-`(cell, seq, epoch)`. A sink drops an output whose `(epoch, seq)` is not above what it already
+`(cell, seq, epoch)`. An output plugin drops an output whose `(epoch, seq)` is not above what it already
 holds, and admits a higher one, overwriting by natural key.
 
 | Event | Epoch | Why |
 | --- | --- | --- |
-| a retry or re-send from the same runner session | kept | the same identity comes back and the sink drops it |
+| a retry or re-send from the same runner session | kept | the same identity comes back and the output plugin drops it |
 | the outbox re-send after a controller restart | kept | the same |
 | `flz dlq replay` | kept | the payload comes back as a new input, with a new offset and a new seq |
 | a runner restart that rewrites the cell's history (realign) | raised | the new run replaces the old one |
@@ -452,13 +452,13 @@ holds, and admits a higher one, overwriting by natural key.
 | `flz relay replay` | raised | the same |
 
 The test is intent. An accident must not change what the world sees, so it repeats the same
-identity. A deliberate re-run must change it, so it raises the epoch and the sink lets it
+identity. A deliberate re-run must change it, so it raises the epoch and the output plugin lets it
 through. A runner restart counts as a re-run: the writer adopts the new session's history and
 raises the epoch (`Flezha.State.WalWriter.Epoch`).
 
 A steps relay's `flz relay rewind` does not move the cell epoch. It raises only the
 journal's epoch, which keys the re-run's commits; the re-run's output is a newer record of the
-same cell, so its higher `flz.seq` passes the sink's guard.
+same cell, so its higher `flz.seq` passes the output plugin's guard.
 
 ## Flow control
 
@@ -529,7 +529,7 @@ credit back and answers the waiting appends in the order they came.
 The Overwatch never waits on that answer itself. It hands the append to the log
 (`Flezha.State.InputLog.append_async/5`), keeps the source's call owed, and forwards the input
 when the log answers, in offset order. So only the source's call waits: the Overwatch keeps
-running its output hooks, control calls and timers, and it is those hooks' sink confirmations
+running its output hooks, control calls and timers, and it is those hooks' output plugin confirmations
 that move the watermark and give the credit back. An Overwatch that waited on its own log could
 never earn the credit it waits for.
 
@@ -733,7 +733,7 @@ and has no setting of its own.
 ## Limits and gotchas
 
 - **At least once is the default.** A crash inside the 5 ms fsync window can send an output
-  again. Use `exactly: effectively_once` with a deduplicating sink when that matters.
+  again. Use `exactly: effectively_once` with a deduplicating output plugin when that matters.
 - **A restore ships the whole tail after the snapshot.** A cell that rarely compacts restores
   slowly; lower its size or age floor.
 - **A frozen watermark holds the input log.** A cell that never consumes keeps the log growing

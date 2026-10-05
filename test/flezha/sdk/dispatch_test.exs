@@ -38,7 +38,7 @@ defmodule Flezha.SDK.DispatchTest do
         |> Channels.input("in")
         |> Channels.into(EchoTask)
         |> Channels.named("e")
-        |> Channels.sink()
+        |> Channels.output()
   end
 
   defmodule MetaEchoTask do
@@ -56,7 +56,7 @@ defmodule Flezha.SDK.DispatchTest do
     def factory_id, do: "unnamed_meta_op"
 
     def channels(c),
-      do: c |> Channels.input("in") |> Channels.into(MetaEchoTask) |> Channels.sink()
+      do: c |> Channels.input("in") |> Channels.into(MetaEchoTask) |> Channels.output()
   end
 
   defmodule OrderedTask do
@@ -79,7 +79,7 @@ defmodule Flezha.SDK.DispatchTest do
       |> Channels.key_by(fn _ -> "k" end)
       |> Channels.into(OrderedTask)
       |> Channels.named("o")
-      |> Channels.sink()
+      |> Channels.output()
     end
   end
 
@@ -93,7 +93,7 @@ defmodule Flezha.SDK.DispatchTest do
       |> Channels.key_by(fn v -> v end)
       |> Channels.into(OrderedTask)
       |> Channels.named("o")
-      |> Channels.sink()
+      |> Channels.output()
     end
   end
 
@@ -126,7 +126,7 @@ defmodule Flezha.SDK.DispatchTest do
         |> Channels.input("in")
         |> Channels.into(FlakyTask)
         |> Channels.named("f")
-        |> Channels.sink()
+        |> Channels.output()
   end
 
   defmodule PoisonTask do
@@ -153,7 +153,7 @@ defmodule Flezha.SDK.DispatchTest do
         |> Channels.retry_backoff_ms(1)
         |> Channels.into(RaiserTask)
         |> Channels.named("r")
-        |> Channels.sink()
+        |> Channels.output()
   end
 
   defmodule PoisonOp do
@@ -166,7 +166,7 @@ defmodule Flezha.SDK.DispatchTest do
         |> Channels.input("in")
         |> Channels.into(PoisonTask)
         |> Channels.named("p")
-        |> Channels.sink()
+        |> Channels.output()
   end
 
   # Blocks until released, so a dispatch can be observed mid-flight; the input
@@ -200,7 +200,7 @@ defmodule Flezha.SDK.DispatchTest do
         |> Channels.input("in")
         |> Channels.into(GatedTask)
         |> Channels.named("g")
-        |> Channels.sink()
+        |> Channels.output()
   end
 
   # Two entries merged into one tasklet, each source's mapping tagging its
@@ -220,7 +220,7 @@ defmodule Flezha.SDK.DispatchTest do
       |> Channels.key_by(&(&1 |> String.split(":") |> Enum.at(1)))
       |> Channels.into(EchoTask)
       |> Channels.named("labels")
-      |> Channels.sink()
+      |> Channels.output()
     end
   end
 
@@ -235,7 +235,7 @@ defmodule Flezha.SDK.DispatchTest do
       |> Channels.key_by(&(&1 |> String.split(":") |> hd()))
       |> Channels.into(EchoTask)
       |> Channels.named("fanned")
-      |> Channels.sink()
+      |> Channels.output()
     end
   end
 
@@ -409,7 +409,7 @@ defmodule Flezha.SDK.DispatchTest do
           |> Channels.on_full(:drop_newest)
           |> Channels.into(SlowTask)
           |> Channels.named("s")
-          |> Channels.sink()
+          |> Channels.output()
     end
 
     probe!()
@@ -458,7 +458,7 @@ defmodule Flezha.SDK.DispatchTest do
           |> Channels.input("in")
           |> Channels.into(DefaultSlowTask)
           |> Channels.named("s")
-          |> Channels.sink()
+          |> Channels.output()
     end
 
     probe!()

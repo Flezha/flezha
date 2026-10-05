@@ -29,18 +29,18 @@ ladder, and the delivery between tasklets.
 
 ## How it is used
 
-Every SDK has the same four calls: start the relay, register a callback on a
-sink, feed an input channel, and run until the graph is idle.
+Every SDK has the same four calls: start the relay, register a callback on an
+output, feed an input channel, and run until the graph is idle.
 
 - **`feed(channel, bytes)`** enters where a frame off the wire enters, so the
   channel's declared decoder runs. It blocks while the consumer's mailbox is
   full, which is the deployed entry path's own backpressure.
-- **`on_sink(channel, callback)`** registers against the sink's channel name. A
-  sink names the channel it ends, which is why the Rust example below says
-  `.sink_named("totals")` and registers `"totals"`. A sink without a name is
+- **`on_output(channel, callback)`** registers against the output's channel name. An
+  output names the channel it ends, which is why the Rust example below says
+  `.output_named("totals")` and registers `"totals"`. An output without a name is
   named after the tasklet that feeds it.
 - A channel name the declaration does not carry is refused, naming the channel,
-  the relay and the channels that are declared. A value released on a sink
+  the relay and the channels that are declared. A value released on an output
   with no callback is reported rather than discarded. A declaration that needs
   a controller is refused at startup, naming the capability.
 - **`run_until_idle(budget)`** blocks until the graph has nothing left to do. A
@@ -73,13 +73,13 @@ impl Relay for WordCount {
             .key_by(|word: &String| word.clone())  // one Cell per word
             .into::<Tally>()                       // counts what it is handed
             .keyed()
-            .sink_named("totals");
+            .output_named("totals");
     }
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let run = LocalRelay::start::<WordCount>()?;
-    run.on_sink("totals", |out| {
+    run.on_output("totals", |out| {
         println!("{}", String::from_utf8_lossy(&out.payload));
     })?;
     run.feed("lines", "the quick brown fox")?;
@@ -104,7 +104,7 @@ The same run in Java:
 
 ```java
 try (LocalRelay run = LocalRelay.start(WordCount.class)) {
-    run.onSink("totals", out -> System.out.println(new String(out.payload(), UTF_8)));
+    run.onOutput("totals", out -> System.out.println(new String(out.payload(), UTF_8)));
     run.feed("lines", "the quick brown fox");
     run.runUntilIdle(Duration.ofSeconds(5));
 }
@@ -122,7 +122,7 @@ And in Elixir:
 
 ```elixir
 {:ok, run} = Flezha.SDK.Local.start(WordCount)
-:ok = Flezha.SDK.Local.on_sink(run, "counts", &IO.puts(&1.payload))
+:ok = Flezha.SDK.Local.on_output(run, "counts", &IO.puts(&1.payload))
 :ok = Flezha.SDK.Local.feed(run, "lines", "the quick brown fox")
 :ok = Flezha.SDK.Local.run_until_idle(run, 5_000)
 :ok = Flezha.SDK.Local.stop(run)

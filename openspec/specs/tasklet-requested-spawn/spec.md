@@ -31,7 +31,7 @@ Java SHALL construct `SpawnOptions` only from an id, so `if_running` without an 
 written there; Elixir, Python, Ruby, PHP and Node SHALL raise an argument error at the call when
 `if_running` is given without an `id`, and SHALL send nothing.
 
-The payload SHALL be encoded as the SDK's sink with no codec encodes a value, the rule `ctx.complete`
+The payload SHALL be encoded as the SDK's output with no codec encodes a value, the rule `ctx.complete`
 already applies: bytes as they are, a string as UTF-8, any other value as JSON. It SHALL be an ordinary
 entry message of the spawned instance, delivered through the entrance every message takes: it names no
 channel, so it SHALL enter the instance's first declared entry channel, be decoded by that channel's

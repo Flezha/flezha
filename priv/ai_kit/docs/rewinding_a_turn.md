@@ -28,7 +28,7 @@ A rewind is refused when it cannot undo what it would have to:
 
 | Code | When |
 | --- | --- |
-| `relay.rewind_uncovered` | a tasklet whose output left the instance (through a sink) between the target and now declares no `compensate` |
+| `relay.rewind_uncovered` | a tasklet whose output left the instance (through an output) between the target and now declares no `compensate` |
 | `relay.iteration_not_committed` | the target iteration has not committed, so there is no boundary to rewind to |
 
 A steps instance is taken back only as a whole: `flz relay replay` of one of its cells is

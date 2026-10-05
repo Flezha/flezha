@@ -124,7 +124,7 @@ pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_localOnSink(
     channel: JString,
 ) {
     let ctx = ctx_of(ctx);
-    let outcome = c_string(&mut env, "sink channel", &channel)
+    let outcome = c_string(&mut env, "output channel", &channel)
         .and_then(|channel| veneer::local_on_sink(ctx, &channel));
     report(&mut env, outcome);
 }
@@ -162,7 +162,7 @@ pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_localNextOutput(
             Err(e) => {
                 throw(
                     &mut env,
-                    &Refusal::Shape(format!("sink output copy failed: {e}")),
+                    &Refusal::Shape(format!("output copy failed: {e}")),
                 );
                 std::ptr::null_mut()
             }
@@ -423,7 +423,7 @@ pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_spawnRequest<'l>(
 }
 
 /// Send a part of the invocation of the live activation `token`'s work item
-/// `item`; never waits. Throws for `part.no_sink` and
+/// `item`; never waits. Throws for `part.no_output` and
 /// `part.outside_invocation`.
 #[no_mangle]
 pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_part<'l>(

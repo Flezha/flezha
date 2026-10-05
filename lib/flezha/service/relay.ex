@@ -381,7 +381,7 @@ defmodule Flezha.Service.Relay do
   @doc """
   Re-run a Cell's retained inputs from a point in the past through the
   current code: rewind the Cell to `from` (a WAL seq, or an ISO 8601 time),
-  bump the epoch, and replay the input log forward, so a conforming keyed sink
+  bump the epoch, and replay the input log forward, so a conforming keyed output plugin
   overwrites the stale rows by natural key. A Cell of a steps relay is
   refused before anything is rewound.
   """

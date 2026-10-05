@@ -30,16 +30,16 @@ line SHALL carry `kind`, one of `output`, `input`, `part` and `dead_lettered`; a
 `dead_lettered` line SHALL carry `error`, the error model's JSON object, in place of the
 payload. An input listener (`--input`) SHALL print neither parts nor notices.
 
-#### Scenario: A named sink is readable
+#### Scenario: A named output is readable
 
-- **WHEN** a listener is attached to a relay whose tasklet emits on a sink
+- **WHEN** a listener is attached to a relay whose tasklet emits on an output
   named `echo`, and the relay is sent `hello`
 - **THEN** the listener SHALL print a line whose first field is `echo` and whose second
   is `hello`
 
-#### Scenario: A keyed sink's stamps are printed
+#### Scenario: A keyed output's stamps are printed
 
-- **WHEN** a listener is attached to a relay whose keyed sink emits `k1=v1` for
+- **WHEN** a listener is attached to a relay whose keyed output emits `k1=v1` for
   input `k1:v1`
 - **THEN** the printed line SHALL carry the channel, the payload and a third field
   naming the frame's `flz.cell`, `flz.seq` and `flz.key` values
@@ -60,7 +60,7 @@ payload. An input listener (`--input`) SHALL print neither parts nor notices.
 #### Scenario: A part is told from an output
 
 - **WHEN** a listener is attached to a relay whose tasklet sends the part `hel` and
-  then emits `hello` on its sink `answer`
+  then emits `hello` on its output `answer`
 - **THEN** the listener SHALL print `answer`, `hel` and a third field beginning
   `part=0 attempt=1`, and then `answer` and `hello` with no `part=` field
 
@@ -184,7 +184,7 @@ does today and SHALL carry no `await_ms` in its request.
 - **WHEN** `flz relay send my_echo --text hello --await 2000` runs against a
   running echo relay
 - **THEN** the output SHALL carry the delivery verdict followed by a frame line whose
-  channel is the echo sink's and whose payload is `hello`, and the verb SHALL exit 0
+  channel is the echo output's and whose payload is `hello`, and the verb SHALL exit 0
 
 #### Scenario: Attaching after the send misses the frame
 
@@ -312,10 +312,10 @@ bring up every declared plugin its table does not hold").
 
 #### Scenario: A wake after a boot brings up the declared plugins
 
-- **GIVEN** a relay with a file sink plugin that was asleep when the controller
+- **GIVEN** a relay with a file output plugin that was asleep when the controller
   restarted, and a listener attached to it before it wakes
 - **WHEN** an input wakes it
-- **THEN** the file sink SHALL receive the relay's output, as the listener does
+- **THEN** the file output SHALL receive the relay's output, as the listener does
 
 ### Requirement: A listener's backlog SHALL be bounded
 
@@ -362,7 +362,7 @@ details name the relay, the channel, the DLQ entry, the tasklet, the attempts an
 author's error text, and whose hint is `flz dlq show <entry>`, and SHALL carry the metadata
 `channel` and, when known, the input's `flz.offset`. The notice SHALL be as durable as a
 part is (not at all) and SHALL be kept like an output by a listener's backlog. A payload
-parked by a sink or a forward, which is an output that could not be delivered, SHALL NOT
+parked by an output or a forward, which is an output that could not be delivered, SHALL NOT
 raise a notice.
 
 #### Scenario: A poison input of a stream is announced
@@ -380,9 +380,9 @@ raise a notice.
 - **THEN** the listener SHALL receive the `input.dead_lettered` notice only after the turn's
   `dead_lettered` record is durable
 
-#### Scenario: A sink's park raises no notice
+#### Scenario: An output's park raises no notice
 
-- **WHEN** an output of a listened-to relay is parked by its sink plugin
+- **WHEN** an output of a listened-to relay is parked by its output plugin
 - **THEN** the listener SHALL receive the output and no notice
 
 ### Requirement: A listener SHALL hand its handler an idle event when asked

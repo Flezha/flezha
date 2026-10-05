@@ -147,7 +147,7 @@ relay, which the plugin's options tell it:
 | --- | --- | --- | --- |
 | a flow relay without `effectively_once` that does not sleep | `durable_input: false` | the relay took the record | every few seconds |
 | a durable steps relay, or a flow relay that sleeps | `durable_input: true` | the record is in the relay's input log | after every confirmed batch |
-| a flow relay with `effectively_once` | `durable_input: true`, `effectively_once: true` | the record is in the relay's input log | after every confirmed batch; a sink that honours `effectively_once` writes each output once |
+| a flow relay with `effectively_once` | `durable_input: true`, `effectively_once: true` | the record is in the relay's input log | after every confirmed batch; an output plugin that honours `effectively_once` writes each output once |
 
 Both are set by the controller when the plugin starts, over anything its stored options
 say. A source that cannot tell which member of a partition group a record's key belongs to,
@@ -155,13 +155,13 @@ as a consumer or a table reader cannot, refuses a group member from `init_provid
 `ProviderBehaviour.refuse_partitioned(opts, __MODULE__)`, whose code is
 `plugin.partitioned_host`.
 
-### A sink
+### An output plugin
 
-A sink implements `on_output` (and `on_input`, to act on what the relay ingests) and
+An output plugin implements `on_output` (and `on_input`, to act on what the relay ingests) and
 hands each payload to its worker, returning at once. A delivery-guaranteed output is held
-in the relay's outbox until the sink confirms it; a sink that gives one up parks it as a
+in the relay's outbox until the output plugin confirms it; an output plugin that gives one up parks it as a
 dead letter rather than dropping it, as the HTTP push and Kafka producer plugins do. The
-Postgres sink and the relay-forward plugin
+Postgres output plugin and the relay-forward plugin
 are the shapes to read: their catalogue pages describe the queue, the confirmation and the
 overflow policy each one follows.
 

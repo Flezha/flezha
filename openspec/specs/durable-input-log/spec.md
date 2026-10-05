@@ -15,7 +15,7 @@ ingest path SHALL perform no journaling work.
 
 #### Scenario: Payload journaled before forward
 
-- **WHEN** a source plugin delivers a payload to a flow relay on the tier
+- **WHEN** a input plugin delivers a payload to a flow relay on the tier
 - **THEN** the payload is appended to the instance's input log with offset N before the runner
   receives it
 
@@ -323,7 +323,7 @@ The host process of an effectively-once relay SHALL NOT wait on the input log: i
 
 #### Scenario: The host's own confirmations free its parked appends
 
-- **WHEN** the appends of a relay are parked and the sink confirms outputs the host's chain delivered while parked
+- **WHEN** the appends of a relay are parked and the output plugin confirms outputs the host's chain delivered while parked
 - **THEN** the resulting watermark advance mints credit, the log answers the parked appends in arrival order, and the host forwards the inputs and answers their verdicts in the same order
 
 #### Scenario: Forward order is offset order
@@ -412,7 +412,7 @@ metadata the record already holds.
 
 On every bind of an instance with durable input, of either kind, the controller SHALL re-forward
 the retained records strictly above the instance's floor, in offset order, each stamped with its
-original `flz.offset` and never re-journaled, before the instance's source plugins are brought
+original `flz.offset` and never re-journaled, before the instance's input plugins are brought
 up. There SHALL be one such re-forward function, shared by a fresh bind, a crash resume, a
 migration, a rehydrate from suspension and the bind of a flow relay that could not carry
 an earlier input. A re-forward SHALL be safe to repeat: every receiver, a Cell or a steps

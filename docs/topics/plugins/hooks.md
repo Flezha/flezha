@@ -6,7 +6,7 @@ A controller plugin is called when something happens in its namespace: a relay
 started, stopped or failed, an input was dead-lettered, a plugin turned unhealthy. A hook
 named `on_...` tells the plugin that something happened.
 
-Hooks exist so that a plugin does only the work it was asked for. A file sink is handed
+Hooks exist so that a plugin does only the work it was asked for. A file output plugin is handed
 what a relay emits because its binding names `on_output`; the same provider bound on
 `on_input` writes what the relay ingests instead. A source needs no hook at all: its
 connection is held by its provider's own worker, which no hook governs.
@@ -37,15 +37,15 @@ type does not compile. `flz plugin help <provider>` lists the hooks a provider s
 | --- | --- | --- |
 | none | never; a source pushes its input in by itself | |
 | `on_input` | with every record the relay takes in | `position` |
-| `on_output` | with every record the relay sends out on a sink | `position` |
+| `on_output` | with every record the relay sends out on an output plugin | `position` |
 | `on_interval` | on a timer | `interval_ms`, required: it has no default |
 | `on_message` | with a request addressed to its `key`, which it answers | `key`, required |
 | `on_relay_init` | once, when the relay starts, to contribute to its initial values | `position`, `timeout_ms` (default `5000`), `on_error` (`fail`, the default, or `empty`) |
 | `on_snapshot` | with each snapshot of the relay's state, or nothing when one failed | |
 | `on_terminate` | when the relay terminates, with the reason | |
-| `on_preview` | with a part or a dead-letter notice, for listeners; no sink implements it | |
+| `on_preview` | with a part or a dead-letter notice, for listeners; no output plugin implements it | |
 
-An output reaches `on_output` only when it leaves the relay on a sink: a relay
+An output reaches `on_output` only when it leaves the relay on an output plugin: a relay
 decides in its code what leaves it, and a plugin can only take what does. An
 `on_relay_init` plugin can only be attached when its relay starts, with
 `flz relay start <factory> --plugins '<json-array>'` (`plugin.init_after_start`
@@ -156,7 +156,7 @@ A relay that parks in `prod` then produces one request whose body is:
 
 `text` lets a Slack-style incoming webhook take the event as it is.
 [`hook_webhook.md`](../../plugins/hook_webhook.md) has its options, retries and telemetry.
-A relay hook is shown on [`plugins.md`](plugins.md): a file sink bound with
+A relay hook is shown on [`plugins.md`](plugins.md): a file output plugin bound with
 `--hook=on_output`.
 
 ## Limits

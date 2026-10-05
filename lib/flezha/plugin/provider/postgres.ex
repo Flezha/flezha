@@ -9,7 +9,7 @@ defmodule Flezha.Plugin.Provider.Postgres do
   `docs/resilience/data_durability.md` "Delivery semantics".
 
   Required opts `:database` and `:username`; the rest, with their defaults, are
-  the option rows below and `docs/plugins/postgres_sink.md`.
+  the option rows below and `docs/plugins/postgres_output.md`.
   """
 
   alias Flezha.Plugin.Extension.Ctx
@@ -24,7 +24,7 @@ defmodule Flezha.Plugin.Provider.Postgres do
       Connection.rows() ++
         [
           plugin_id: [type: :string, doc: "Plugin id; defaults to a generated one"],
-          pool_size: [type: :int, default: 2, min: 1, doc: "Connections in the sink's pool"],
+          pool_size: [type: :int, default: 2, min: 1, doc: "Connections in the plugin's pool"],
           linger_ms: [type: :int, default: 25, min: 1, doc: "How long a batch waits to fill"],
           max_batch: [type: :int, default: 500, min: 1, doc: "Records in one flush transaction"],
           queue_max: [
@@ -49,7 +49,7 @@ defmodule Flezha.Plugin.Provider.Postgres do
             type: :int,
             default: 30_000,
             min: 1,
-            doc: "Age of the last commit past which a backed-up sink is unhealthy"
+            doc: "Age of the last commit past which a backed-up output plugin is unhealthy"
           ],
           auto_create: [type: :bool, default: false, doc: "Create the target tables when missing"]
         ],
@@ -113,7 +113,7 @@ defmodule Flezha.Plugin.Provider.Postgres do
   def health(opts) do
     ProviderBehaviour.worker_health(
       opts,
-      [absent: :no_sink, dead: :worker_dead],
+      [absent: :no_worker, dead: :worker_dead],
       &health_from_stats(&1, opts)
     )
   end

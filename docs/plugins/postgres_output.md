@@ -1,6 +1,6 @@
-# Postgres sink
+# Postgres output
 
-The Postgres sink writes what a relay emits into a PostgreSQL database, in
+The Postgres output plugin writes what a relay emits into a PostgreSQL database, in
 transactions. Per flush batch, one database transaction upserts every record into
 `flezha_records`, keyed by `flz.key`, and advances the per-cell `flezha_sink_progress`
 watermark row. That single transaction is the guarantee: effectively-once into the
@@ -28,13 +28,13 @@ id is `relay_postgres`.
 | `port` | int | `5432` | no | TCP port |
 | `ssl` | bool | `false` | no | TLS to the server |
 | `plugin_id` | string | none | no | Plugin id; defaults to a generated one |
-| `pool_size` | int | `2` | no | Connections in the sink's pool |
+| `pool_size` | int | `2` | no | Connections in the plugin's pool |
 | `linger_ms` | int | `25` | no | How long a batch waits to fill |
 | `max_batch` | int | `500` | no | Records in one flush transaction |
 | `queue_max` | int | `10000` | no | Records held before enqueue blocks |
 | `retry_backoff_ms` | int | `250` | no | First delay after a failed flush |
 | `retry_max_backoff_ms` | int | `5000` | no | Ceiling for that delay |
-| `unhealthy_after_ms` | int | `30000` | no | Age of the last commit past which a backed-up sink is unhealthy |
+| `unhealthy_after_ms` | int | `30000` | no | Age of the last commit past which a backed-up output plugin is unhealthy |
 | `auto_create` | bool | `false` | no | Create the target tables when missing |
 <!-- provider-options:end -->
 
@@ -60,7 +60,7 @@ Delivery semantics in general are in [`durability.md`](../topics/basics/durabili
 ## Options in detail
 
 Every other key is refused at enable rather than ignored, so a config asking for
-something the sink does not offer fails loudly instead of reading as accepted.
+something the output plugin does not offer fails loudly instead of reading as accepted.
 
 The password is resolved inside the connection closure at every connect: it never
 lands in the worker's state, the supervisor's child arguments, a log line or a
@@ -93,18 +93,18 @@ escalates.
 
 | Verdict | When |
 | --- | --- |
-| `{:unhealthy, :no_sink}` | the worker was never started |
+| `{:unhealthy, :no_worker}` | the worker was never started |
 | `{:unhealthy, :worker_dead}` | the worker died and has not come back |
 | `{:unhealthy, {:missing_tables, tables}}` | `auto_create` is off and a target table is absent |
 | `{:unhealthy, {:commit_stalled, error}}` | records are pending, flushes are failing, and nothing has committed within `unhealthy_after_ms` |
-| `:healthy` | anything else, including an idle sink |
+| `:healthy` | anything else, including an idle output plugin |
 
 ## Lifecycle
 
-The sink worker is this provider's declared worker: the extension table starts it
+The output plugin worker is this provider's declared worker: the extension table starts it
 at activation, under the provider's own family, keyed by `plugin_id`, with
 `restart: :permanent`. A `:prepared` plugin holds no connection and no process,
-so a sink on a relay whose SDK side never binds costs nothing.
+so an output plugin on a relay whose SDK side never binds costs nothing.
 
 ## See also
 

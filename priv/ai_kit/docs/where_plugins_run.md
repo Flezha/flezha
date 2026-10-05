@@ -20,7 +20,7 @@ A plugin's provider declares whether one running copy can serve several relays:
 
 - **Shareable** (a websocket, an HTTP poll, an HTTP push, the Kafka and RabbitMQ
   producers): each controller runs one copy for every unpartitioned relay bound to the
-  plugin there, so a source opens one upstream connection and a sink runs one worker,
+  plugin there, so a source opens one upstream connection and an output plugin runs one worker,
   however many relays share it.
 - **Not shareable** (a file reader with one offset, a server on one port, a consumer
   holding one group member): the plugin serves one relay. Binding a second relay is
@@ -29,8 +29,8 @@ A plugin's provider declares whether one running copy can serve several relays:
 
 `--single` at enable runs one copy in the whole cluster instead, on a controller the
 cluster chooses, delivering to every bound relay on any controller. It applies to both
-types. A `single` plugin takes no `on_output` hook (`plugin.single_sink`): one copy cannot
-be every relay's sink. When its controller leaves gracefully, the copy moves with a
+types. A `single` plugin takes no `on_output` hook (`plugin.single_output`): one copy cannot
+be every relay's output plugin. When its controller leaves gracefully, the copy moves with a
 hand-over that opens the new connection before the old one closes; when its controller
 fails, it starts on another and its relays are served again without being bound again.
 
@@ -86,7 +86,7 @@ processes its inputs, without the plugin:
 
 - its health reports `plugin_unhealthy` with `plugin.provider_not_loaded`, naming the
   controller, and one warning is logged naming the plugin and why;
-- a delivery-guaranteed output to that sink waits in the outbox and is delivered once the
+- a delivery-guaranteed output to that output plugin waits in the outbox and is delivered once the
   binding starts; a plain output is dropped and counted;
 - the binding is tried again at the relay's next bring-up, so it comes up on a
   controller that has the package.
@@ -104,13 +104,13 @@ the relay:
 | --- | --- | --- |
 | a flow relay without `effectively_once` that does not sleep | the relay took the record | every few seconds |
 | a durable steps relay, or a flow relay that sleeps | the record is in the relay's input log | after every confirmed batch |
-| a flow relay with `effectively_once` | the record is in the relay's input log | after every confirmed batch; a sink that honours `effectively_once` writes each output once |
+| a flow relay with `effectively_once` | the record is in the relay's input log | after every confirmed batch; an output plugin that honours `effectively_once` writes each output once |
 
 A relay whose input is durable (effectively-once, sleeping or durable steps) does not
 share a shareable source: it runs the source on its own, so every record is confirmed to
 it, and a slow one holds back only its own upstream connection.
 
-On the sink side, a delivery-guaranteed output is held in the relay's outbox until the
-sink confirms it. What each sink honours (written once, at least once, or best effort) is
+On the output plugin side, a delivery-guaranteed output is held in the relay's outbox until the
+output plugin confirms it. What each output plugin honours (written once, at least once, or best effort) is
 the Durability row of its catalogue page. [`durability.md`](../basics/durability.md) has the levels,
 and [`effectively_once.md`](../advanced/effectively_once.md) the tier.

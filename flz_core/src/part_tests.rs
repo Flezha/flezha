@@ -160,7 +160,7 @@ fn a_channel_without_a_sink_refuses_a_part() {
         let refusal = send(&slot, &work(stream, 1, false), &mut sequence, b"x")
             .expect_err("only a sink satisfies a part");
         let error = refusal.to_error();
-        assert_eq!(error.code, "part.no_sink", "{end}");
+        assert_eq!(error.code, "part.no_output", "{end}");
         assert_eq!(error.details["channel"], channel);
         assert_eq!(error.details["tasklet"], "p0");
         assert_eq!(sequence, 0, "a refused part takes no number");
@@ -228,7 +228,7 @@ fn a_context_past_its_invocation_is_refused_with_the_catalogue_code() {
     assert_eq!(error.code, "part.outside_invocation");
     assert_eq!(error.class, flz_transport::errors::Class::Invalid);
     assert_eq!(
-        flz_transport::errors::entry("part.no_sink").map(|e| e.class),
+        flz_transport::errors::entry("part.no_output").map(|e| e.class),
         Some(flz_transport::errors::Class::Invalid)
     );
 }

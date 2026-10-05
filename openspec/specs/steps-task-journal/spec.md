@@ -124,7 +124,7 @@ accept a declaration of it. No SDK SHALL offer a way to declare one, so a channe
 structured class cannot lack it and there is no registration refusal for a missing codec.
 
 The codec SHALL ride an **inter-tasklet** channel and no other kind. A channel whose only
-wiring is a plugin sink is the class's terminal egress: nothing re-seeds from it, and journaling
+wiring is a plugin output is the class's terminal egress: nothing re-seeds from it, and journaling
 every plugin payload at every barrier would be journal volume no reader asks for. Registration of
 a durable handoff-chained loop SHALL therefore fail when its terminal tasklet releases no
 inter-tasklet channel — whether it owns no output channel at all or only a plugin-bound one —
@@ -141,12 +141,12 @@ a typed error directing the author to keep bulk data in Cell state.
 
 #### Scenario: A plugin-bound terminal carries no journal codec
 
-- **WHEN** a tasklet's only output wiring is a plugin sink, so the channel derives plugin-bound
+- **WHEN** a tasklet's only output wiring is a plugin output, so the channel derives plugin-bound
 - **THEN** that channel SHALL carry no journal codec, and the commit SHALL ship an empty handoff for it
 
 #### Scenario: A durable chained loop whose terminal releases no inter-task handoff is refused
 
-- **WHEN** a durable `Chained` steps class's terminal tasklet owns no output channel, or owns one whose only wiring is a plugin sink
+- **WHEN** a durable `Chained` steps class's terminal tasklet owns no output channel, or owns one whose only wiring is a plugin output
 - **THEN** registration SHALL fail with an error naming the terminal tasklet
 
 #### Scenario: Oversized handoff fails the commit with a typed error

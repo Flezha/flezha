@@ -476,8 +476,8 @@ shared between them.
 ## 5. The single-tasklet short form, and registration
 
 Exactly **one** topology may be written short: a single tasklet from a
-controller input to at most one named sink (`input → tasklet → plugin(sink)`,
-or `input → tasklet` with no sink), as a relay of either run. **Every
+controller input to at most one named output (`input → tasklet → plugin(output)`,
+or `input → tasklet` with no output), as a relay of either run. **Every
 SDK carries it**: Rust, Java, Python, Node, Ruby, PHP and Elixir.
 
 **The short form is a relay declaration**, written at the SDK's one
@@ -493,16 +493,16 @@ is an address a user types and a rename must not move it.
 
 | SDK | Flow short form | Steps short form |
 | --- | --- | --- |
-| Rust | `#[flezha::relay(id = "echo", sink = "out", input = "in")] fn echo(s: String) -> String`, or the same attribute on an `impl Tasklet for Echo` block | `#[flezha::relay(..., run = steps)]` |
-| Java | `@Relay(id = "echo", sink = "out", input = "in") class Echo implements Tasklet<String, Void, String> { void run(String s, Ctx<Void, String> ctx) }` | `@Relay(..., run = @Run(steps = @Steps))` |
-| Python | `@flezha.relay(id="echo", sink="out", input="in", codec="text") def echo(s: str) -> str`, or the same decorator on a class whose `run(self, s, ctx)` emits through `ctx` | `@flezha.relay(..., run="steps")` |
-| Node | `defineRelay({ factoryId: 'echo', sink: 'out', input: 'in', codec: 'text', run: (s, ctx) => ctx.emit(s) })` | `defineRelay({ ..., steps: {} })` |
-| Ruby | `class Echo < Flezha::Relay; factory_id "echo"; sink "out"; input "in"; codec :text; def run(s, ctx) = ctx.emit(s); end` | `run :steps` in the class body |
-| PHP | `#[Relay(factoryId: 'echo', sink: 'out', input: 'in', codec: ChannelCodec::Text)] final class Echo extends \Flezha\Relay { public function run(mixed $s, Ctx $ctx): void }` | `#[Relay(..., run: 'steps')]` |
-| Elixir | `use Flezha.SDK.Relay, factory_id: "echo", sink: "out", input: "in"` with `run/3` | `use Flezha.SDK.Relay, ..., run: :steps` |
+| Rust | `#[flezha::relay(id = "echo", output = "out", input = "in")] fn echo(s: String) -> String`, or the same attribute on an `impl Tasklet for Echo` block | `#[flezha::relay(..., run = steps)]` |
+| Java | `@Relay(id = "echo", output = "out", input = "in") class Echo implements Tasklet<String, Void, String> { void run(String s, Ctx<Void, String> ctx) }` | `@Relay(..., run = @Run(steps = @Steps))` |
+| Python | `@flezha.relay(id="echo", output="out", input="in", codec="text") def echo(s: str) -> str`, or the same decorator on a class whose `run(self, s, ctx)` emits through `ctx` | `@flezha.relay(..., run="steps")` |
+| Node | `defineRelay({ factoryId: 'echo', output: 'out', input: 'in', codec: 'text', run: (s, ctx) => ctx.emit(s) })` | `defineRelay({ ..., steps: {} })` |
+| Ruby | `class Echo < Flezha::Relay; factory_id "echo"; output "out"; input "in"; codec :text; def run(s, ctx) = ctx.emit(s); end` | `run :steps` in the class body |
+| PHP | `#[Relay(factoryId: 'echo', output: 'out', input: 'in', codec: ChannelCodec::Text)] final class Echo extends \Flezha\Relay { public function run(mixed $s, Ctx $ctx): void }` | `#[Relay(..., run: 'steps')]` |
+| Elixir | `use Flezha.SDK.Relay, factory_id: "echo", output: "out", input: "in"` with `run/3` | `use Flezha.SDK.Relay, ..., run: :steps` |
 
-**`sink` is optional.** With a `sink`, the generated relay declares an
-entry channel, the tasklet, and a plugin sink of that name. With no `sink`,
+**`output` is optional.** With an `output`, the generated relay declares an
+entry channel, the tasklet, and a plugin output of that name. With no `output`,
 it declares the entry channel and the tasklet and no plugin channel, which is
 the topology a full-form relay declares when its channel ends at a
 tasklet: the relay that only keeps state is one declaration. `input` and
@@ -510,13 +510,13 @@ tasklet: the relay that only keeps state is one declaration. `input` and
 
 **The generated relay is the hand-written one, nothing more.** One entry
 channel named by `input` (or `input` when none is written) and decoded by
-`codec` where one is written (Python, Node, Ruby, PHP); the tasklet; the sink
+`codec` where one is written (Python, Node, Ruby, PHP); the tasklet; the output
 when one is written; a factory id equal to the identity; and the class
 settings it writes, as the full form takes them. A flow short form is a default
 stream. A steps short form is a `once` steps relay unless it declares another
 loop shape: its entry channel receives the instance's first message, from a
 spawn, `flz relay send` or `flz relay start --text`, the tasklet runs
-once, its output reaches the sink after the commit, and the instance
+once, its output reaches the output after the commit, and the instance
 completes; `--init-values` is the tasklet's initial state, as on a flow relay.
 With `each: per_input` the tasklet runs once per message and the instance
 stays. The tree is written in the spelling the SDK's full form gives it:
@@ -568,7 +568,7 @@ struct Echo;
 impl Relay for Echo {
     fn factory_id() -> &'static str { "echo" }
     fn channels(c: &ChannelBuilder) {
-        c.input::<String>("in").into::<EchoTasklet>().sink_named("out");
+        c.input::<String>("in").into::<EchoTasklet>().output_named("out");
     }
 }
 ```
@@ -671,12 +671,12 @@ against:
 | Code | Condition |
 | --- | --- |
 | `topology.short_form_with_topology` | a relay declaration carries a tasklet body and also a `channels` body |
-| `topology.sink_without_output` | a `sink` on a body the SDK can see declares no output |
+| `topology.output_without_type` | an `output` on a body the SDK can see declares no output |
 | `topology.duplicate_factory_id` | a second relay, of either run, under a factory id the runner holds |
 
 They are not `TopologyIssue` variants: the core never sees a short form. An SDK
 whose tasklet bodies declare no output type the SDK can read (Node, Ruby,
-PHP, Elixir) owes no `topology.sink_without_output` and says so in its conformance
+PHP, Elixir) owes no `topology.output_without_type` and says so in its conformance
 manifest. In Ruby no `run` answers output either: what it answers is ignored and
 a value leaves only through `ctx.emit`, so nothing in a class says whether it
 emits. A Node definition names its output type only in TypeScript types, erased
@@ -684,7 +684,7 @@ before the SDK runs, and its `run` returns nothing either, so nothing the SDK
 can see says whether a short form emits. A declaration with neither body, or with no written identity, is
 refused by the rule every relay already obeys, not by a short-form name.
 There is no other short-form refusal: a relay declaration always has a
-run, the default `flow` when it writes none, and `input` and `codec` need no sink.
+run, the default `flow` when it writes none, and `input` and `codec` need no output.
 
 **Duplicate factory id fails fast across runs.** Declaring a second relay
 under a factory id the runner already holds fails at that call, however
@@ -763,11 +763,11 @@ flezha::relay! {
 
 **Expected expanded topology** (identical across SDKs):
 
-| Channel | Kind            | Payload   | Producer           | Consumer / sink     |
+| Channel | Kind            | Payload   | Producer           | Consumer / output     |
 | ------- | --------------- | --------- | ------------------ | ------------------- |
 | `input` | entry           | `String`  | controller         | `StaticEntry`       |
 | (hop)   | inter-tasklet | `String`  | `StaticEntry`      | `StaticDownstream`  |
-| (sink)  | plugin-bound    | `Vec<u8>` | `StaticDownstream` | plugin `test_kafka` |
+| (output)  | plugin-bound    | `Vec<u8>` | `StaticDownstream` | plugin `test_kafka` |
 
 **Expected associated-type mapping:**
 

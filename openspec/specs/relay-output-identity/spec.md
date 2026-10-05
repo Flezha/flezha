@@ -6,20 +6,20 @@ Replay-stable identity on emitted outputs: per-channel `.keyed()` opt-in, `emit_
 ### Requirement: Keyed channel declaration
 
 The channel builder SHALL support a `.keyed()` declaration on plugin-bound
-(a `sink` with no consumers) and hybrid (a `sink` with consumers) channels, recorded on
+(an `output` with no consumers) and hybrid (an `output` with consumers) channels, recorded on
 the channel entry. Declaring `.keyed()` on a pure inter-tasklet channel (no
 plugin wire) SHALL be a build error. The channel declaration is the single
 source of truth for whether output identity exists on that channel.
 
 #### Scenario: Keyed plugin channel accepted
 
-- **WHEN** a topology declares `.sink_with("kafka", ser).keyed()` on an
+- **WHEN** a topology declares `.output_with("kafka", ser).keyed()` on an
   `OhlcTask` output stream
 - **THEN** the relay builds and the channel entry is marked keyed
 
 #### Scenario: Keyed inter-tasklet channel rejected
 
-- **WHEN** a topology declares `.keyed()` on a channel with no plugin sink
+- **WHEN** a topology declares `.keyed()` on a channel with no output plugin
 - **THEN** the build fails with a typed error naming the channel
 
 ### Requirement: `emit_keyed` supplies the natural key on keyed channels
@@ -47,7 +47,7 @@ cell key being part of the invocation's identity.
 #### Scenario: Keyed emit from a steps tasklet
 
 - **WHEN** a durable steps tasklet's `run` calls `ctx.emit_keyed("order-7", ticket)` on a keyed channel, in any SDK
-- **THEN** the output is recorded with the key and reaches the sink stamped `flz.key` `order-7`, and the same call on a non-keyed channel fails with the same typed error a flow tasklet gets
+- **THEN** the output is recorded with the key and reaches the output plugin stamped `flz.key` `order-7`, and the same call on a non-keyed channel fails with the same typed error a flow tasklet gets
 
 #### Scenario: Un-keyed emit in a keyed cell defaults to the cell key
 
@@ -140,7 +140,7 @@ SHALL show no regression on non-keyed emit paths.
 
 An SDK whose tasklets run above the erased host boundary SHALL mint the identity stamps itself, on the output list it hands the core, rather than relying on the core to derive them. The stamps SHALL be written when, and only when, an output is plugin-targeted, its channel is declared keyed, and its class records no effects: a flow class that does not declare effectively-once and a steps class that opted out of persistence. Under the tier, and for a durable steps class, the controller derives the identity from the durable effect record at flush, and a host that also stamped would produce a second answer to the same question. The per-invocation emit ordinal SHALL advance on every plugin-targeted output, whether or not that output was stamped, so a class carrying both a keyed and a non-keyed plugin channel yields the same ordinal sequence on every host. The ordinal SHALL be distinct from the ordinal `stable_id` consumes, SHALL start at zero for each work item, and SHALL NOT be reset within one item. `flz.cell` SHALL be spelled `<relay>/<tasklet>/<cell_key or empty>`, matching the label the core derives for the same Cell, and `flz.seq` SHALL read the change sequence the activation carried at handout.
 
-An SDK that cannot yet carry the stamps SHALL defer `keyed_channels` by name in its own conformance manifest, naming the follow-up that owes it. The Elixir SDK — not a poll host, inheriting nothing from `flz_core` — mints them in its own core at the routing seam where a sink frame is built: the same three keys, the seq the invocation started at, the ordinal advancing per plugin output of the invocation, appended after the user's metadata; when the class records effects, under the tier or as a durable steps relay, it stamps nothing and captures the sink frame into the invocation's effect record, the controller deriving the identity at flush.
+An SDK that cannot yet carry the stamps SHALL defer `keyed_channels` by name in its own conformance manifest, naming the follow-up that owes it. The Elixir SDK — not a poll host, inheriting nothing from `flz_core` — mints them in its own core at the routing seam where an output plugin frame is built: the same three keys, the seq the invocation started at, the ordinal advancing per plugin output of the invocation, appended after the user's metadata; when the class records effects, under the tier or as a durable steps relay, it stamps nothing and captures the output plugin frame into the invocation's effect record, the controller deriving the identity at flush.
 
 #### Scenario: The ordinal advances across emits within one invocation
 
@@ -165,7 +165,7 @@ An SDK that cannot yet carry the stamps SHALL defer `keyed_channels` by name in 
 #### Scenario: A host writes no stamps for a durable steps class
 
 - **WHEN** a durable steps class's tasklet on a Java runner emits on its keyed plugin channel
-- **THEN** the output the host hands the core carries no `flz.cell`, `flz.seq` or `flz.key`, and the sink receives them from the controller's flush of the Cell's record
+- **THEN** the output the host hands the core carries no `flz.cell`, `flz.seq` or `flz.key`, and the output plugin receives them from the controller's flush of the Cell's record
 
 #### Scenario: A host stamps an opted-out steps relay's output
 
@@ -179,10 +179,10 @@ An SDK that cannot yet carry the stamps SHALL defer `keyed_channels` by name in 
 
 #### Scenario: The Elixir SDK mints the same stamps in its own core
 
-- **WHEN** a dynamic Cell on an Elixir runner emits twice on a sink declared `keyed/1` in one invocation that started at change sequence 5
+- **WHEN** a dynamic Cell on an Elixir runner emits twice on an output plugin declared `keyed/1` in one invocation that started at change sequence 5
 - **THEN** the two frames carry `flz.cell` as `<relay>/<tasklet>/<key>`, `flz.seq` `"5.0"` then `"5.1"`, and `flz.key` as the Cell's key, after the user's metadata
 
 #### Scenario: The Elixir SDK writes no stamps under the tier
-- **WHEN** a class declaring `effectively_once/1` on an Elixir runner emits on its keyed sink
-- **THEN** the effect record's output carries no `flz.cell`, `flz.seq` or `flz.key`, and the sink receives them from the controller's flush
+- **WHEN** a class declaring `effectively_once/1` on an Elixir runner emits on its keyed output plugin
+- **THEN** the effect record's output carries no `flz.cell`, `flz.seq` or `flz.key`, and the output plugin receives them from the controller's flush
 

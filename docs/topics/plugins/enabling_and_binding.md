@@ -193,7 +193,7 @@ only binds may name the binding's `channel` in its `opts`. Any other key is refu
 ```sh
 $ flz relay start order_executor --id order_1 --namespace trading \
   --text '{"symbol": "EUR/USD", "quantity": 10}' --channel order \
-  --plugins '[{"name": "order_1_file", "provider": "relay_file_sink", "opts": {"path": "order_1.txt"}, "hooks": [["on_output", {}]]}]'
+  --plugins '[{"name": "order_1_file", "provider": "relay_file_output", "opts": {"path": "order_1.txt"}, "hooks": [["on_output", {}]]}]'
 ```
 
 ```output

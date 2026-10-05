@@ -17,7 +17,7 @@ The change SHALL add `test/apps/ruby_runner/` with a `conformance.json` declarin
 
 ### Requirement: The Ruby manifest matches the reference for what it carries and names what it defers
 
-For every capability the Ruby manifest does not defer, its fixture set SHALL equal the Rust reference manifest's. Fixture ids SHALL be the reference's ids, unprefixed, and each SHALL implement the same scenario with the same sink channel names, output bytes and declared options. Every deferred capability SHALL be named in `deferred`, and the SDK's documentation SHALL name the follow-up change that owes it.
+For every capability the Ruby manifest does not defer, its fixture set SHALL equal the Rust reference manifest's. Fixture ids SHALL be the reference's ids, unprefixed, and each SHALL implement the same scenario with the same output channel names, output bytes and declared options. Every deferred capability SHALL be named in `deferred`, and the SDK's documentation SHALL name the follow-up change that owes it.
 
 #### Scenario: Fixture parity with the reference
 - **WHEN** the gate compares `test/apps/ruby_runner/conformance.json` against `test/apps/rust_runner/conformance.json`

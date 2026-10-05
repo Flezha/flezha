@@ -48,13 +48,13 @@ defmodule Flezha.SDK.ParkUnresolvedChannelTest do
       |> Channels.input("prices")
       |> Channels.into(TaskA)
       |> Channels.named("a")
-      |> Channels.sink()
+      |> Channels.output()
 
       c
       |> Channels.input("volumes")
       |> Channels.into(TaskB)
       |> Channels.named("b")
-      |> Channels.sink()
+      |> Channels.output()
     end
   end
 
@@ -70,13 +70,13 @@ defmodule Flezha.SDK.ParkUnresolvedChannelTest do
       |> Channels.input("volumes")
       |> Channels.into(TaskB)
       |> Channels.named("b")
-      |> Channels.sink()
+      |> Channels.output()
 
       c
       |> Channels.input("prices")
       |> Channels.into(TaskA)
       |> Channels.named("a")
-      |> Channels.sink()
+      |> Channels.output()
     end
   end
 
@@ -149,7 +149,7 @@ defmodule Flezha.SDK.ParkUnresolvedChannelTest do
 
     Inbox.input(op, nil, "defaulted", %{})
 
-    # `named/2` is what names the channel an output rides; `sink/2` names the
+    # `named/2` is what names the channel an output rides; `output/2` names the
     # plugin sink on it.
     assert_receive {:flz_data, _id, _payload_id, "defaulted", %{"channel" => "a"}}, 2_000
     refute_received {:"$gen_cast", {:park, _, _, _}}

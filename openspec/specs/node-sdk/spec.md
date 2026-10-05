@@ -73,7 +73,7 @@ The SDK SHALL refuse, at registration, every defect class the authoring contract
 typing cannot see: a missing or duplicated entry channel, a cycle, an unreachable tasklet, an
 identity collision, an unservable clock, a keyed channel without a plugin wire, a tier channel
 that is not keyed, checkpoint acknowledgement without the tier, a correction window without its
-preconditions, branch arity violations, and a duplicate plugin sink. The verdict SHALL be the
+preconditions, branch arity violations, and a duplicate plugin output. The verdict SHALL be the
 reference check's, reached through `flz_core_check_class` over the record the builder writes; the
 builder SHALL carry no rule of its own, and SHALL refuse every code of the reference vocabulary,
 not a subset. The clock SHALL be read from the fields the tasklet writes, so no clock can be
@@ -183,35 +183,35 @@ The Node channel builder SHALL offer `merge()`, returning a merge handle with `f
 - **THEN** exactly one `{key: 'A', document}` and one `{key: 'B', document}` SHALL be emitted, and the repeated document SHALL be inert
 
 ### Requirement: The single-tasklet short form is four definition fields
-The short form SHALL be declared with `defineRelay`, the same function that declares a full-form relay, and SHALL NOT be declared with `defineTasklet`, which SHALL accept none of `sink`, `input` or `codec` and SHALL throw `FlezhaError` naming the field and the relay function when one is given. Each SHALL accept `factoryId`, `sink`, `input`, `codec` and `run` beside the tasklet fields it already reads; how it runs is the run branch it writes (`flow` or `steps`), as on the full form.
+The short form SHALL be declared with `defineRelay`, the same function that declares a full-form relay, and SHALL NOT be declared with `defineTasklet`, which SHALL accept none of `output`, `input` or `codec` and SHALL throw `FlezhaError` naming the field and the relay function when one is given. Each SHALL accept `factoryId`, `output`, `input`, `codec` and `run` beside the tasklet fields it already reads; how it runs is the run branch it writes (`flow` or `steps`), as on the full form.
 
-A definition SHALL be a short form exactly when it carries `run` and not `channels`; carrying both SHALL throw `FlezhaError` whose code is `topology.short_form_with_topology`, and carrying neither SHALL throw naming the missing body. `sink` SHALL be optional. With `sink`, the definition SHALL return a `ClassSpec` whose factory id is `factoryId`, wiring an entry channel named `input` (or the `input` field's value) into a generated tasklet named `factoryId` and that tasklet to the `sink` plugin channel; with no `sink`, it SHALL wire the entry channel into the tasklet and declare no plugin channel. A short form SHALL take the class settings as the full form does and SHALL refuse only `name` (`topology.setting_on_short_form`); a steps short form SHALL be a `once` steps relay unless `steps` writes another `each`, fed by its first message on the entry channel and taking `init_values` as the tasklet's initial state. `codec` SHALL take the vocabulary of `c.input(name, { codec })` and SHALL be lowered to that call, whether or not a `sink` is written. The spec SHALL be built at definition time so a refusal is raised while the module loads, as a `dup_node` graph already is.
+A definition SHALL be a short form exactly when it carries `run` and not `channels`; carrying both SHALL throw `FlezhaError` whose code is `topology.short_form_with_topology`, and carrying neither SHALL throw naming the missing body. `output` SHALL be optional. With `output`, the definition SHALL return a `ClassSpec` whose factory id is `factoryId`, wiring an entry channel named `input` (or the `input` field's value) into a generated tasklet named `factoryId` and that tasklet to the `output` plugin channel; with no `output`, it SHALL wire the entry channel into the tasklet and declare no plugin channel. A short form SHALL take the class settings as the full form does and SHALL refuse only `name` (`topology.setting_on_short_form`); a steps short form SHALL be a `once` steps relay unless `steps` writes another `each`, fed by its first message on the entry channel and taking `init_values` as the tasklet's initial state. `codec` SHALL take the vocabulary of `c.input(name, { codec })` and SHALL be lowered to that call, whether or not an `output` is written. The spec SHALL be built at definition time so a refusal is raised while the module loads, as a `dup_node` graph already is.
 
-An absent or empty `factoryId` SHALL throw naming the required field. The runner's `registerFactory(specifier)` SHALL register the `ClassSpec` of every short form the module exports, as it registers every exported spec. A duplicate factory id SHALL throw with a message beginning `topology.duplicate_factory_id`. Whether `topology.sink_without_output` can be raised at TypeScript's type level without a build step SHALL be decided at implementation and reflected in the manifest's `topology_surfaces`, as it is today.
+An absent or empty `factoryId` SHALL throw naming the required field. The runner's `registerFactory(specifier)` SHALL register the `ClassSpec` of every short form the module exports, as it registers every exported spec. A duplicate factory id SHALL throw with a message beginning `topology.duplicate_factory_id`. Whether `topology.output_without_type` can be raised at TypeScript's type level without a build step SHALL be decided at implementation and reflected in the manifest's `topology_surfaces`, as it is today.
 
 #### Scenario: A module exporting one definition is a whole flow relay
 
-- **WHEN** `./upcase.mjs` default-exports `defineRelay({ factoryId: 'upcase', sink: 'out', codec: 'text', run })` and the runner is given `registerFactory('./upcase.mjs')`
-- **THEN** the runner declares a flow relay `upcase` with entry channel `input` decoding text, a tasklet named `upcase` and sink `out`, and the module calls no `defineTasklet`
+- **WHEN** `./upcase.mjs` default-exports `defineRelay({ factoryId: 'upcase', output: 'out', codec: 'text', run })` and the runner is given `registerFactory('./upcase.mjs')`
+- **THEN** the runner declares a flow relay `upcase` with entry channel `input` decoding text, a tasklet named `upcase` and output `out`, and the module calls no `defineTasklet`
 
 #### Scenario: A module exporting one definition is a whole steps relay
 
-- **WHEN** `./place.mjs` exports `defineRelay({ factoryId: 'place', sink: 'placed', input: 'order', codec: 'text', run })`, the runner is given `registerFactory('./place.mjs')`, an instance is started, and one message is sent on `order`
+- **WHEN** `./place.mjs` exports `defineRelay({ factoryId: 'place', output: 'placed', input: 'order', codec: 'text', run })`, the runner is given `registerFactory('./place.mjs')`, an instance is started, and one message is sent on `order`
 - **THEN** `run` receives the message as text, the value it passes to `ctx.emit` reaches `placed`, and the instance completes
 
 #### Scenario: A short-form steps relay declares its loop mode
 
-- **WHEN** a module exports `defineRelay({ factoryId: 'chat', sink: 'replies', codec: 'text', each: 'per_input', run })` and two messages reach its entry channel
+- **WHEN** a module exports `defineRelay({ factoryId: 'chat', output: 'replies', codec: 'text', each: 'per_input', run })` and two messages reach its entry channel
 - **THEN** the spec's `steps.each` is `per_input`, `run` runs once per message, and the instance does not complete after the first
 
-#### Scenario: A short form with no sink is declared
+#### Scenario: A short form with no output is declared
 
 - **WHEN** a module exports `defineRelay({ factoryId: 'counter', input: 'ticks', codec: 'text', initState, applyChange, run })`
 - **THEN** the relay declares `ticks` into the generated tasklet and no plugin channel
 
-#### Scenario: A codec needs no sink
+#### Scenario: A codec needs no output
 
-- **WHEN** a definition carries `codec: 'text'` and no `sink`
+- **WHEN** a definition carries `codec: 'text'` and no `output`
 - **THEN** it is accepted and the entry channel decodes text
 
 #### Scenario: A run body beside a channels body is refused
@@ -226,12 +226,12 @@ An absent or empty `factoryId` SHALL throw naming the required field. The runner
 
 #### Scenario: A relay field on a tasklet is refused
 
-- **WHEN** a module calls `defineTasklet({ name: 'upcase', sink: 'out', run })`
-- **THEN** loading it throws `FlezhaError` naming `sink` and `defineRelay`
+- **WHEN** a module calls `defineTasklet({ name: 'upcase', output: 'out', run })`
+- **THEN** loading it throws `FlezhaError` naming `output` and `defineRelay`
 
 #### Scenario: A definition with no factory id is refused
 
-- **WHEN** a module calls `defineRelay({ sink: 'out', run })`
+- **WHEN** a module calls `defineRelay({ output: 'out', run })`
 - **THEN** loading it throws `FlezhaError` naming the required `factoryId`
 
 #### Scenario: One function defines every relay
@@ -246,12 +246,12 @@ An absent or empty `factoryId` SHALL throw naming the required field. The runner
 
 #### Scenario: A short form emits only through its context
 
-- **WHEN** a module exports `defineRelay({ factoryId: 'upcase', sink: 'out', codec: 'text', run: (line, ctx) => ctx.emit(line.toUpperCase()) })` and a second exports the same with `run: (line) => line.toUpperCase()`
+- **WHEN** a module exports `defineRelay({ factoryId: 'upcase', output: 'out', codec: 'text', run: (line, ctx) => ctx.emit(line.toUpperCase()) })` and a second exports the same with `run: (line) => line.toUpperCase()`
 - **THEN** `hello` sent to the first SHALL reach `out` as `HELLO`, nothing SHALL reach the second's `out`, and the second written in TypeScript SHALL fail to type-check
 
 #### Scenario: A short form grows into its full form unchanged
 
-- **WHEN** a short form's `initState`, `applyChange` and `run` are moved verbatim into `defineTasklet({ name: <the factory id>, ... })` wired by a `channels` body with the same entry and sink
+- **WHEN** a short form's `initState`, `applyChange` and `run` are moved verbatim into `defineTasklet({ name: <the factory id>, ... })` wired by a `channels` body with the same entry and output
 - **THEN** the full form SHALL declare the same record and SHALL restore the Cells the short form saved
 
 ### Requirement: A Node runner registers a factory with one awaited call
@@ -315,8 +315,8 @@ The output type SHALL NOT be inferred from a body. A tasklet that emits SHALL na
 
 #### Scenario: A returned value is ignored in plain JavaScript
 
-- **WHEN** a `.mjs` tasklet wired to a sink declares `run: (input) => input.toUpperCase()` and receives `hello`
-- **THEN** it SHALL run, nothing SHALL reach the sink, and no error SHALL be raised
+- **WHEN** a `.mjs` tasklet wired to an output declares `run: (input) => input.toUpperCase()` and receives `hello`
+- **THEN** it SHALL run, nothing SHALL reach the output, and no error SHALL be raised
 
 #### Scenario: A returned value does not type-check
 

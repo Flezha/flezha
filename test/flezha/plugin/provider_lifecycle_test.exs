@@ -424,7 +424,7 @@ defmodule Flezha.Plugin.ProviderLifecycleTest do
 
   defp page_for(provider) do
     case provider do
-      Flezha.Plugin.Provider.Postgres -> "docs/plugins/postgres_sink.md"
+      Flezha.Plugin.Provider.Postgres -> "docs/plugins/postgres_output.md"
       Flezha.Plugin.Provider.HttpPoll -> "docs/plugins/http_poll.md"
       Flezha.Plugin.Provider.Websocket -> "docs/plugins/websocket_subscription.md"
       Flezha.Plugin.Provider.RelayForward -> "docs/plugins/relay_forward.md"

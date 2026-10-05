@@ -45,7 +45,7 @@ public final class EchoRelay implements Relay {
     public void channels(@Nonnull ChannelBuilder c) {
         c.input(String.class, "in")          // messages arrive on the entry channel "in"
                 .into(Echo.class)            // each one runs through the echo tasklet
-                .sink("out");                // the result leaves on "out", for a plugin to pick up
+                .output("out");              // the result leaves on "out", for a plugin to pick up
     }
 }
 ```
@@ -104,7 +104,7 @@ impl Relay for EchoRelay {
     fn channels(c: &ChannelBuilder) {
         c.input::<String>("in") // messages arrive on the entry channel "in"
             .into::<Echo>() // each one runs through the echo tasklet
-            .sink_named("out"); // the result leaves on "out", for a plugin to pick up
+            .output_named("out"); // the result leaves on "out", for a plugin to pick up
     }
 }
 ```
@@ -150,7 +150,7 @@ export default defineRelay({
   channels: (c) => {
     c.input('in', { codec: 'text' }) // messages arrive on the entry channel "in"
       .into(EchoTasklet) // each one runs through the echo tasklet
-      .sink('out'); // the result leaves on "out", for a plugin to pick up
+      .output('out'); // the result leaves on "out", for a plugin to pick up
   },
 });
 ```
@@ -190,7 +190,7 @@ def echo_relay(c: flezha.Channels) -> None:
     (
         c.input("in", codec="text")  # messages arrive on the entry channel "in"
         .into(Echo)  # each one runs through the echo tasklet
-        .sink("out")  # the result leaves on "out", for a plugin to pick up
+        .output("out")  # the result leaves on "out", for a plugin to pick up
     )
 ```
 
@@ -238,7 +238,7 @@ class EchoRelay < Flezha::Relay
   channels do |c|
     c.input("in", codec: :text) # messages arrive on the entry channel "in"
      .into(EchoTasklet)          # each one runs through the echo tasklet
-     .sink("out")                # the result leaves on "out", for a plugin to pick up
+     .output("out")   # the result leaves on "out", for a plugin to pick up
   end
 end
 ```
@@ -286,7 +286,7 @@ final class EchoRelay extends \Flezha\Relay
     {
         $c->input('in', codec: ChannelCodec::Text) // messages arrive on the entry channel "in"
             ->into(EchoTasklet::class)             // each one runs through the echo tasklet
-            ->sink('out');                         // the result leaves on "out", for a plugin to pick up
+            ->output('out');                       // the result leaves on "out", for a plugin to pick up
     }
 }
 ```
@@ -339,7 +339,7 @@ defmodule Echo.Relay do
     # each one runs through the echo tasklet
     |> into(Echo.Tasklet)
     # the result leaves on "out", for a plugin to pick up
-    |> sink("out")
+    |> output("out")
   end
 end
 ```

@@ -671,7 +671,7 @@ pub unsafe extern "C" fn flz_core_spawn_request(
 /// Send a part of the invocation of `item`, the index of a work item of the
 /// live activation `token`, with the payload the host encoded as that
 /// tasklet's emit. Never waits. [`FLZ_OK`] for a part that left and for one
-/// the drop rules dropped; [`FLZ_ERR`] with `part.no_sink`, or with
+/// the drop rules dropped; [`FLZ_ERR`] with `part.no_output`, or with
 /// `part.outside_invocation` for a token that is not outstanding or an item
 /// its activation does not hold.
 ///

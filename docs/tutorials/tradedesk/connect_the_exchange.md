@@ -65,12 +65,12 @@ an order is booked, and the runner's terminal shows it:
 [book] USD/JPY 21 as ord-3d5fdddd0094fb3152e57ef05b02be57
 ```
 
-> Enable a file sink as `signals`, bound to `trade_watcher`, that writes every
+> Enable a file output as `signals`, bound to `trade_watcher`, that writes every
 > signal to `signals.txt`.
 > {: .step}
 
 ```sh
-$ ./bin/flz plugin enable signals relay_file_sink \
+$ ./bin/flz plugin enable signals relay_file_output \
   --relay_id=trade_watcher --namespace trading \
   --hook=on_output \
   --Xpath=signals.txt \

@@ -2,8 +2,8 @@
 
 A plugin connects a relay to something outside Flezha: a file, a websocket, an HTTP
 endpoint, Kafka, a database. It runs in the controller, at the edge of the relay. A
-**source** plugin feeds one of the relay's entry channels, and a **sink** plugin takes
-what the relay sends out on one of its sinks. A third sort, the controller plugin, is
+**source** plugin feeds one of the relay's entry channels, and a **output plugin** plugin takes
+what the relay sends out on one of its output plugins. A third sort, the controller plugin, is
 bound to no relay at all: it is told what happens in a namespace.
 
 Plugins exist so that a relay's code never names where its data comes from or goes.
@@ -76,12 +76,12 @@ about relay plugins.
 
 | Plugin | Provider id | Connects | Type | Ships | Shareable | Partitioned relays |
 |---|---|---|---|---|---|---|
-| [File](../../plugins/file.md) | `relay_file_source`, `relay_file_sink` | lines of a file in, one line per value out | relay | built in | no | allowed |
+| [File](../../plugins/file.md) | `relay_file_input`, `relay_file_output` | lines of a file in, one line per value out | relay | built in | no | allowed |
 | [WebSocket](../../plugins/websocket_subscription.md) | `relay_websocket` | a live socket, both directions | relay | built in | yes | allowed |
 | [HTTP poll](../../plugins/http_poll.md) | `relay_http_poll` | an HTTP resource as an input, whenever its answer changes | relay | built in | yes | allowed |
 | [HTTP push](../../plugins/http_push.md) | `relay_http_push` | an HTTP endpoint as an output | relay | built in | yes | allowed |
 | [Relay forward](../../plugins/relay_forward.md) | `relay_forward` | one relay's output into another's input | relay | built in | no | allowed |
-| [Postgres sink](../../plugins/postgres_sink.md) | `relay_postgres` | rows in a table as an output | relay | built in | no | allowed |
+| [Postgres output plugin](../../plugins/postgres_output.md) | `relay_postgres` | rows in a table as an output | relay | built in | no | allowed |
 | [Postgres poll](../../plugins/postgres_poll.md) | `relay_postgres_poll` | a table as an input, read by polling | relay | built in | no | refused |
 | [Webhook](../../plugins/hook_webhook.md) | `hook_webhook` | hook events to an HTTP endpoint | controller | built in | no | not applicable |
 | [HTTP server](../../plugins/http_server.md) | `http_server` | a relay behind HTTP | relay | package `flezha_http` | no | refused |
@@ -99,7 +99,7 @@ refused at boot.
 ## See also
 
 - [`partitioning.md`](../advanced/partitioning.md): partitioned relays and their plugins
-- [`durability.md`](../basics/durability.md) and [`effectively_once.md`](../advanced/effectively_once.md): what a sink can promise
+- [`durability.md`](../basics/durability.md) and [`effectively_once.md`](../advanced/effectively_once.md): what an output plugin can promise
 - [Controller environment variables](../../configuration/environment_variables.md): `FLEZHA_PLUGIN_IDLE_STOP_MS`, `FLEZHA_FILE_PLUGIN_ROOT` and the other plugin settings
 - [`../../errors.md`](../../errors.md): every `plugin.*` code
 - Tutorials: [`feed_the_echo_a_file.md`](../../tutorials/echo/feed_the_echo_a_file.md) and [`watch_the_trades.md`](../../tutorials/tradedesk/watch_the_trades.md)

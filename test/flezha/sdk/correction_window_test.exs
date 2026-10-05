@@ -54,7 +54,7 @@ defmodule Flezha.SDK.CorrectionWindowTest do
         |> Channels.into(SpawningCorrectionTask)
         |> Channels.named("sink")
         |> Channels.keyed()
-        |> Channels.sink()
+        |> Channels.output()
   end
 
   defp push(op, input, offset),

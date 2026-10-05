@@ -67,7 +67,7 @@ only the pages a task needs: each link is that page's full Markdown, next to thi
 - [Merged inputs](merged_inputs.md): A tasklet takes one type of input, and `into` connects it to one channel.
 - [Timers](timers.md): Some work is triggered by time rather than by input: a session that closes after 30 seconds of quiet, an idle buffer that flushes, a join that gives up waiting, a window that closes.
 - [Spawning from a tasklet](spawning_from_a_tasklet.md): A running tasklet can start a steps relay with one call: `ctx.spawn_steps`.
-- [Relay calls](relay_calls.md): A call sends one input to a relay and gets one answer back: the first output that input caused on a sink of the relay's graph, or one coded error saying why none came.
+- [Relay calls](relay_calls.md): A call sends one input to a relay and gets one answer back: the first output that input caused on an output of the relay's graph, or one coded error saying why none came.
 - [Sending from runner code](sending_from_runner_code.md): Application code in a runner process often holds a source of its own: a Kafka consumer, a queue client, a poll loop.
 - [Sessions](sessions.md): A session is a relay instance that lives for as long as a conversation does: it has a beginning, it takes one message after another, and it remembers what was said.
 - [Rewinding a turn](rewinding_a_turn.md): A conversation sometimes has to go back.
@@ -122,7 +122,7 @@ only the pages a task needs: each link is that page's full Markdown, next to thi
 - [HTTP push plugin](http_push.md): The HTTP push plugin sends a relay's outputs to an HTTP endpoint: a REST API, a webhook receiver, or any service that takes a request per record.
 - [Websocket subscription source and output binding](websocket_subscription.md): The websocket plugin holds one websocket connection open for a relay: it injects every frame it receives into the relay's input, can change what the socket is subscribed to without tearing it down, and can send the relay's outputs back out on the same socket.
 - [Relay-forward plugin](relay_forward.md): The relay-forward plugin sends one relay's outputs into another relay's input, in the same namespace.
-- [Postgres sink](postgres_sink.md): The Postgres sink writes what a relay emits into a PostgreSQL database, in transactions.
+- [Postgres output](postgres_output.md): The Postgres output plugin writes what a relay emits into a PostgreSQL database, in transactions.
 - [Postgres poll source](postgres_poll.md): The Postgres poll source delivers the new, and optionally the changed, rows of one Postgres table onto a relay's entry channel, with no replication rights: it works on a managed database and on a read replica.
 - [Webhook plugin](hook_webhook.md): The webhook plugin tells another service what happens in a namespace: a chat channel, an alerting tool, or any service that takes an HTTP POST.
 - [HTTP server plugin](http_server.md): The HTTP server plugin puts a relay behind HTTP: a client sends a request, the relay's graph decides the answer, and the same connection can instead carry a stream of another relay's parts and outputs as server-sent events.

@@ -313,7 +313,7 @@ defmodule Flezha.Service.PluginManager do
         {:error, {:plugin_not_bindable, name}}
 
       entry.single and Enum.any?(binding.hooks, &(elem(&1, 0) == :on_output)) ->
-        {:error, {:plugin_single_sink, name}}
+        {:error, {:plugin_single_output, name}}
 
       shareable?(entry) ->
         :ok

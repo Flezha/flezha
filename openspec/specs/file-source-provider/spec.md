@@ -5,7 +5,7 @@ TBD - created by archiving change add-a-file-plugin. Update Purpose after archiv
 ## Requirements
 ### Requirement: A file source SHALL inject one entry frame per line through the confirming ingest
 
-A built-in provider `relay_file_source` SHALL be attachable as a plugin with options
+A built-in provider `relay_file_input` SHALL be attachable as a plugin with options
 `{path, channel | channel_in, start_at? (beginning | end, default beginning), poll_interval_ms?
 (default 1000), max_line_bytes? (default 1 MiB), read_chunk_bytes? (default 64 KiB),
 commit_interval_ms? (default 1000), failure_threshold? (default 3), idle_after_ms? (default 0,

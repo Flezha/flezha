@@ -120,9 +120,9 @@ naming the status; no line SHALL be skipped.
 - **THEN** health SHALL report a failure naming `403`, not `file_missing`, and the offset SHALL
   be unchanged
 
-### Requirement: A file sink under an S3 root SHALL commit each roll as one object and guard the sidecar
+### Requirement: A file output plugin under an S3 root SHALL commit each roll as one object and guard the sidecar
 
-Under an S3 root the sink SHALL accept only `commit: rename`, and `path` SHALL name the key
+Under an S3 root the output plugin SHALL accept only `commit: rename`, and `path` SHALL name the key
 prefix that stands for the directory. A `roll_bytes` above 5 GiB SHALL be refused at attach
 naming `roll_bytes`. The open roll's records SHALL be held in memory with their holds open. A
 roll SHALL be committed by one PUT of `<path>/part-<N>`, with `N` zero-padded to 8 digits, then
@@ -130,14 +130,14 @@ the sidecar `<path>/.progress` SHALL be written by a conditional put carrying `N
 when the stored part number is higher, and the roll's holds SHALL be confirmed only after both
 writes succeed.
 
-On start the sink SHALL list the keys under `<path>/`, delete a part numbered one above the
+On start the output plugin SHALL list the keys under `<path>/`, delete a part numbered one above the
 sidecar, and refuse the start naming both numbers when a part is two or more above it. A worker
 whose sidecar write is refused because the stored number is higher SHALL NOT confirm the roll's
 holds, and SHALL stop reporting the stored number.
 
 #### Scenario: A roll becomes one object
 
-- **GIVEN** a sink under `s3://events/flezha` with `path: "out"` whose open roll holds `a` and `b`
+- **GIVEN** an output plugin under `s3://events/flezha` with `path: "out"` whose open roll holds `a` and `b`
 - **WHEN** the roll closes as part 1
 - **THEN** the object `out/part-00000001` SHALL hold `a\nb\n`, `out/.progress` SHALL name part 1,
   and the holds SHALL be confirmed only after both writes
@@ -145,13 +145,13 @@ holds, and SHALL stop reporting the stored number.
 #### Scenario: A crash between the part and the sidecar writes once
 
 - **GIVEN** `out/part-00000004` was written and `out/.progress` still names part 3
-- **WHEN** the sink starts
+- **WHEN** the output plugin starts
 - **THEN** `out/part-00000004` SHALL be deleted, and the re-driven records SHALL be written once
 
 #### Scenario: A part two ahead refuses the start
 
 - **GIVEN** `out/.progress` names part 3 and `out/part-00000005` exists
-- **WHEN** the sink starts
+- **WHEN** the output plugin starts
 - **THEN** the start SHALL be refused naming parts 5 and 3, and nothing SHALL be deleted
 
 #### Scenario: A worker behind a newer sidecar stops
@@ -164,6 +164,6 @@ holds, and SHALL stop reporting the stored number.
 #### Scenario: An oversized roll is refused
 
 - **GIVEN** the root is `s3://events/flezha`
-- **WHEN** a sink is attached with `commit: "rename"` and a `roll_bytes` of 6 GiB
+- **WHEN** an output plugin is attached with `commit: "rename"` and a `roll_bytes` of 6 GiB
 - **THEN** the attach SHALL fail naming `roll_bytes`
 

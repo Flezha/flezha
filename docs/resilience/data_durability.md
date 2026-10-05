@@ -24,7 +24,7 @@ names is refused at the call rather than given a default. See
 
 ## Effectively-once tier (opt-in, `exactly: effectively_once` in the class's run)
 
-The built-in composition *at-least-once delivery + deterministic key + idempotent sink =
+The built-in composition *at-least-once delivery + deterministic key + idempotent output plugin =
 effectively-once*. Every plugin-bound channel must be `.keyed()` (refused at build time
 otherwise), and the tier is built by the shared runner core, so Rust and Java earn the same
 guarantee.
@@ -59,23 +59,23 @@ guarantee.
   fsynced, stamped `(flz.cell, flz.seq = outbox_seq, flz.epoch, flz.key)` — a sufficient handle
   for exact dedup. On restart the controller re-drives every record above the per-Cell
   `outbox_flushed_seq` cursor in order under identical identity: **never lost, never applied
-  twice at a conforming sink**.
+  twice at a conforming output plugin**.
 - **The cursor advances on confirmation, not on dispatch.** Each flushed output carries an
   opaque `flz.ack` token naming the writer that owns its cursor (`Flezha.State.Outbox`). A
-  delivery-guaranteed sink takes a *hold* as it accepts the record and *confirms* when its write
+  delivery-guaranteed output plugin takes a *hold* as it accepts the record and *confirms* when its write
   is durable — Kafka produce acked, Postgres transaction committed, forwarded ingest confirmed.
-  A record no sink held completes as soon as the chain has run it, so a chain without a
-  guaranteed sink behaves as before. A batch whose retry budget is exhausted **parks** through
+  A record no output plugin held completes as soon as the chain has run it, so a chain without a
+  guaranteed output plugin behaves as before. A batch whose retry budget is exhausted **parks** through
   the dead-letter path with its identity attached, and only then may the cursor pass it. A
   delivery whose settlement is lost is re-dispatched by the resettle tick after
   `:outbox_resettle_ms` (60 s); at most `:outbox_inflight_max` (1 000) entries are in flight per
   Cell. Unconfirmed output is visible as `outbox_unconfirmed_ms` in the Cell's stall status
   and reaches the convergence loop as the `outbox_flat` verdict.
 - **Reports are batched, never the facts.** One dispatch pass hands its window to the chain in
-  one cast and settles it with one report; a sink confirms a completed batch with one report
+  one cast and settles it with one report; an output plugin confirms a completed batch with one report
   naming every entry (a park stays per record). A chain that crashes mid-batch settles nothing,
   and the resettle re-drives every pending entry under identical identity.
-- **Conforming sinks out of the box.** The **Postgres** sink (`relay_postgres`,
+- **Conforming output plugins out of the box.** The **Postgres** output plugin (`relay_postgres`,
   `Flezha.Plugin.Provider.Postgres`) upserts every record of a flush batch into
   `flezha_records` (keyed by `flz.key`, else the durable identity) and advances the per-Cell
   `flezha_sink_progress` row in ONE transaction; every upsert is guarded by `(epoch, seq)`
@@ -87,14 +87,14 @@ guarantee.
   records become plain inserts. The **Kafka** producer (`kafka_producer`, from the Kafka plugin package) uses
   `flz.key` as the message key and carries the durable identity in the `flezha.dedup_key`
   header; see [`../plugins/kafka_producer.md`](../plugins/kafka_producer.md).
-- **The websocket sink is not a conforming sink, and does not claim to be.** A plugin bound as
+- **The websocket output plugin is not a conforming output plugin, and does not claim to be.** A plugin bound as
   an output (`relay_websocket`, `Flezha.Plugin.Provider.Websocket`) ships each dispatched
   payload as a frame on the connection it already holds, and answers the hold by its declared
   `sink_ack_mode`: `"none"` (default) confirms when the frame reaches the established socket,
   which is **at-most-once** past that point; `"required"` confirms only when an inbound frame
   echoes the correlation id, which is **at-least-once**. Neither is effectively-once and no
   mode that claims to be is offered — a websocket exposes no transaction to enlist and no key
-  to overwrite, so the destination cannot participate. What the sink can do is carry
+  to overwrite, so the destination cannot participate. What the output plugin can do is carry
   `flz.cell` and `flz.seq` in the frame template, and the consumer that tracks the last
   sequence it has applied per cell is the only place the dedup can work. Frames are queued
   while the socket is down (`sink_queue_max`, 10 000; callers park at the bound) and a frame
@@ -105,10 +105,10 @@ guarantee.
 - **Source back-pressure.** Ingestion debits a per-relay source credit window
   (`:source_credit_window_bytes`, default = `:wal_high_watermark_bytes`); the min-watermark
   advance mints it back. At zero credit the source adapter's ingest call parks (a websocket
-  stops reading its socket), bounding input-log growth against a stalled Cell. A sink outage
+  stops reading its socket), bounding input-log growth against a stalled Cell. An output plugin outage
   longer than `window / ingest rate` delays ingestion; it never wedges it.
 - **Cost-free default.** Relays without the flag keep every path byte-identical. Under the
-  tier a slow or unreachable sink backs the outbox up on disk, never in memory.
+  tier a slow or unreachable output plugin backs the outbox up on disk, never in memory.
 - **Steps relays** do not declare the tier (it is a member of the flow run only): a durable
   steps relay's Cells write the same effect record as their ordinary durability, released at the
   stage commit below.

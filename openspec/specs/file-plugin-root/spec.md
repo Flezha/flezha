@@ -79,27 +79,27 @@ telemetry event and health verdict names one spelling.
 - **WHEN** a plugin is enabled with a path whose parent directory does not exist
 - **THEN** the enable SHALL be refused naming the missing directory
 
-### Requirement: A file the sink creates SHALL be private and SHALL NOT be created through a symlink
+### Requirement: A file the output plugin creates SHALL be private and SHALL NOT be created through a symlink
 
-A file the sink creates SHALL have mode `0600`. A file that already exists SHALL keep the mode
+A file the output plugin creates SHALL have mode `0600`. A file that already exists SHALL keep the mode
 it has. If the path names a symlink at open time, the open SHALL be refused rather than
 followed, even when the link resolves inside the root.
 
 #### Scenario: A created file is private
 
-- **WHEN** the sink opens a path that does not exist
+- **WHEN** the output plugin opens a path that does not exist
 - **THEN** the file SHALL exist afterwards with mode `0600`
 
 #### Scenario: An existing file keeps its mode
 
-- **GIVEN** a file with mode `0644` at the sink's path
-- **WHEN** the sink opens it and appends
+- **GIVEN** a file with mode `0644` at the output plugin's path
+- **WHEN** the output plugin opens it and appends
 - **THEN** its mode SHALL still be `0644`
 
 #### Scenario: A symlink is not opened
 
-- **GIVEN** the sink's path is a symlink to a file inside the root
-- **WHEN** the sink attempts to open it
+- **GIVEN** the output plugin's path is a symlink to a file inside the root
+- **WHEN** the output plugin attempts to open it
 - **THEN** the open SHALL be refused and the plugin SHALL report unhealthy naming the path
 
 ### Requirement: A file plugin SHALL NOT log file contents

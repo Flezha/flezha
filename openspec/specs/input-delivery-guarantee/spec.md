@@ -100,7 +100,7 @@ suite SHALL fail on a delivery regression rather than settling around it.
 
 A frame whose metadata names an entry channel SHALL be delivered to that channel, or parked when the
 relay declares no ENTRY channel of that name. A name the relay declares as a channel of
-another kind — a plugin sink, an inter-tasklet channel — is not an entry channel and SHALL be
+another kind — a output plugin, an inter-tasklet channel — is not an entry channel and SHALL be
 parked the same way, because channel names are one namespace across every kind. The frame SHALL NOT
 be discarded, and it SHALL NOT be delivered to a different channel. Every SDK SHALL answer the same
 way: the six hosted on `flz_core` through the core's one resolution, and the Elixir SDK, which is
@@ -116,7 +116,7 @@ resolves against the same declared set and fails identically; walking the channe
 would delay the report without changing it.
 
 A frame carrying no channel in its metadata SHALL continue to resolve to the first declared entry
-channel. That is the default a source plugin relies on and it is not an unresolved name.
+channel. That is the default a input plugin relies on and it is not an unresolved name.
 
 A relay that declares no entry channel at all SHALL park such a frame with a reason naming that
 condition, rather than reporting an unresolved name against an empty set.
@@ -147,7 +147,7 @@ condition, rather than reporting an unresolved name against an empty set.
 
 #### Scenario: A name the relay declares as another kind of channel is parked
 
-- **GIVEN** a relay declaring one entry channel `prices` and one plugin sink `out`
+- **GIVEN** a relay declaring one entry channel `prices` and one output plugin `out`
 - **WHEN** a frame arrives whose metadata carries `channel = "out"`
 - **THEN** the frame SHALL be parked under the name `out`, and SHALL NOT reach any tasklet
 

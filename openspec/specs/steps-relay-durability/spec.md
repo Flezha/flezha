@@ -24,8 +24,8 @@ A steps relay class SHALL be **durable by default**; an author MAY **opt out** p
 
 #### Scenario: An opted-out steps relay's output keeps its identity
 
-- **WHEN** a steps relay class that opted out of persistence emits with a key and metadata on a keyed sink
-- **THEN** the sink receives the frame with `channel`, `flz.key` and the metadata, exactly as from an opted-out flow relay
+- **WHEN** a steps relay class that opted out of persistence emits with a key and metadata on a keyed output
+- **THEN** the output receives the frame with `channel`, `flz.key` and the metadata, exactly as from an opted-out flow relay
 
 ### Requirement: A durable steps relay resumes from the WAL on crash, at-least-once
 
@@ -49,7 +49,7 @@ When a durable steps relay's runner or controller restarts mid-run, the relay SH
 #### Scenario: A crash between a record and its marker re-runs the stage over its own record
 
 - **WHEN** a durable steps relay Cell's effect record for tasklet B is durable, its `task_committed` entry is not, and the instance is respawned
-- **THEN** B re-runs over the restored state, its new record supersedes the interrupted one, the marker names the new record, and only the new record's output reaches the sink
+- **THEN** B re-runs over the restored state, its new record supersedes the interrupted one, the marker names the new record, and only the new record's output reaches the output
 
 #### Scenario: Exhausted or non-retryable error is terminal
 

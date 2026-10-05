@@ -163,7 +163,7 @@ naming the gap or the contested key group.
 ## The one rule: route by the `key_by` value
 
 For a partitioned relay, whatever routes a record to a member must equal the value `key_by`
-extracts: a source plugin's subscription string, or the `flz.key` an upstream relay's emit
+extracts: a input plugin's subscription string, or the `flz.key` an upstream relay's emit
 carries.
 
 A plain `emit` on a keyed channel keeps this rule by construction. What is left to get wrong
@@ -285,7 +285,7 @@ Relay trade_watcher rescaled 2 -> 3 (2 cells moved, 0 trees removed):
 
 A rescale runs in these steps:
 
-1. **Quiesce.** Every member's source plugins are turned off. The command refuses while any
+1. **Quiesce.** Every member's input plugins are turned off. The command refuses while any
    member holds parked dead-letter entries (`relay.rescale_parked_entries`: replay or drop
    them first, `flz dlq list`), then waits until every member has consumed its input log. The
    wait is bounded by `--timeout` in milliseconds (default 30000). On timeout it stops with
@@ -464,7 +464,7 @@ sub-key, not the pair, or the guard above refuses the first record.
   and two members can share one when the fleet is already uneven. `flz relay info` shows
   where each landed.
 - **One partition's whole state lives on one controller.** Each partition opens its own source
-  connections, and each partition's sink plugins open their own connections too.
+  connections, and each partition's output plugins open their own connections too.
 - **A rescale stops the group** and restores it cold: no warm handoff and no rescale while
   input keeps flowing.
 - **Assignment is contiguous and even.** There is no way to weight it.

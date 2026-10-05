@@ -289,37 +289,37 @@ The SDK SHALL prove the set by one conformance run over every row of
 - **THEN** it authors the row with `$c->merge()->from(...)…->into(...)` rather than throwing, registration refuses with `topology.merge_too_few_sources` or `topology.duplicate_merge_source`, and the manifest's `topology_surfaces` lists `merge`
 
 ### Requirement: The single-tasklet short form is four attribute arguments
-The short form SHALL be declared with the `#[Relay]` attribute a full-form relay already carries, on a class extending `Flezha\Relay`, and SHALL NOT be declared with `#[Task]`, which SHALL accept none of `run`, `durable`, `sink`, `input` or `codec` and SHALL throw naming the argument and `#[Relay]` when one is given. `#[Relay]` SHALL accept `sink`, `input` and `codec` (a `ChannelCodec`) beside the `factoryId` and the class settings it already takes; how the class runs is its `run` argument.
+The short form SHALL be declared with the `#[Relay]` attribute a full-form relay already carries, on a class extending `Flezha\Relay`, and SHALL NOT be declared with `#[Task]`, which SHALL accept none of `run`, `durable`, `output`, `input` or `codec` and SHALL throw naming the argument and `#[Relay]` when one is given. `#[Relay]` SHALL accept `output`, `input` and `codec` (a `ChannelCodec`) beside the `factoryId` and the class settings it already takes; how the class runs is its `run` argument.
 
 A class SHALL be a short form exactly when it defines the tasklet body `run(mixed $input, Ctx $ctx): mixed` and does not override the topology body `channels`, which is the mechanism `Definition` already uses to read which hooks a class overrides; defining `run` and overriding `channels` SHALL throw `FlezhaException` naming `topology.short_form_with_topology`, and doing neither SHALL throw naming the missing body. A short-form class MAY define the tasklet hooks a `Flezha\Tasklet` subclass defines (`state`, `applyChange`), which the generated tasklet takes.
 
-`sink` SHALL be optional. The class SHALL carry a generated relay whose factory id is `factoryId`, wiring an entry channel named `input` (or the `input` argument's value) into a generated tasklet named `factoryId` and, when a `sink` is written, that tasklet to the `sink` plugin channel; with no `sink`, it SHALL wire the entry channel into the tasklet and declare no plugin channel. A short form SHALL take the class settings on `#[Relay]` as the full form does; a steps short form SHALL be a `once` steps relay unless its `run` writes another `each`, fed by its first message on the entry channel and taking `init_values` as the tasklet's initial state. The entry SHALL be decoded by `codec` where one is written, whether or not a `sink` is. An absent `factoryId` SHALL throw naming the required argument, and the SDK SHALL NOT derive one from the class.
+`output` SHALL be optional. The class SHALL carry a generated relay whose factory id is `factoryId`, wiring an entry channel named `input` (or the `input` argument's value) into a generated tasklet named `factoryId` and, when an `output` is written, that tasklet to the `output` plugin channel; with no `output`, it SHALL wire the entry channel into the tasklet and declare no plugin channel. A short form SHALL take the class settings on `#[Relay]` as the full form does; a steps short form SHALL be a `once` steps relay unless its `run` writes another `each`, fed by its first message on the entry channel and taking `init_values` as the tasklet's initial state. The entry SHALL be decoded by `codec` where one is written, whether or not an `output` is. An absent `factoryId` SHALL throw naming the required argument, and the SDK SHALL NOT derive one from the class.
 
-`Runner::registerFactory` SHALL accept such a class string and register the generated relay, throwing `FlezhaException` at registration whose code is the refusal's code. A duplicate factory id SHALL throw `FlezhaException` with the code `topology.duplicate_factory_id`. The PHP SDK owes no `topology.sink_without_output`: `Flezha\Tasklet::run` is declared `: mixed` and PHP refuses an override narrowing that to `: void`, so a tasklet declaring no output cannot be written; the manifest SHALL NOT list `shorthand_typed_output`.
+`Runner::registerFactory` SHALL accept such a class string and register the generated relay, throwing `FlezhaException` at registration whose code is the refusal's code. A duplicate factory id SHALL throw `FlezhaException` with the code `topology.duplicate_factory_id`. The PHP SDK owes no `topology.output_without_type`: `Flezha\Tasklet::run` is declared `: mixed` and PHP refuses an override narrowing that to `: void`, so a tasklet declaring no output cannot be written; the manifest SHALL NOT list `shorthand_typed_output`.
 
 #### Scenario: An attributed class is a whole flow relay
 
-- **WHEN** a class extending `Flezha\Relay` is attributed `#[Relay(factoryId: 'upcase', sink: 'out', codec: ChannelCodec::Text)]`, defines `run`, and the runner is given `registerFactory(Upcase::class)`
-- **THEN** the runner declares a flow relay `upcase` with entry channel `input` decoding text, a tasklet named `upcase` and sink `out`, and no `Flezha\Tasklet` subclass exists for it
+- **WHEN** a class extending `Flezha\Relay` is attributed `#[Relay(factoryId: 'upcase', output: 'out', codec: ChannelCodec::Text)]`, defines `run`, and the runner is given `registerFactory(Upcase::class)`
+- **THEN** the runner declares a flow relay `upcase` with entry channel `input` decoding text, a tasklet named `upcase` and output `out`, and no `Flezha\Tasklet` subclass exists for it
 
 #### Scenario: An attributed class is a whole steps relay
 
-- **WHEN** a class extending `Flezha\Relay` is attributed `#[Relay(factoryId: 'place', sink: 'placed', input: 'order', codec: ChannelCodec::Text)]` and defines `run`, the runner is given `registerFactory(Place::class)`, an instance is started, and one message is sent on `order`
+- **WHEN** a class extending `Flezha\Relay` is attributed `#[Relay(factoryId: 'place', output: 'placed', input: 'order', codec: ChannelCodec::Text)]` and defines `run`, the runner is given `registerFactory(Place::class)`, an instance is started, and one message is sent on `order`
 - **THEN** `run` receives the message as text, the value it passes to `$ctx->emit` reaches `placed`, and the instance completes
 
 #### Scenario: A short-form steps relay declares its loop mode
 
-- **WHEN** a class extending `Flezha\Relay` is attributed `#[Relay(factoryId: 'chat', sink: 'replies', codec: ChannelCodec::Text)]` and `#[Steps(each: Each::PerInput)]`, defines `run`, is registered, and two messages reach its entry channel
+- **WHEN** a class extending `Flezha\Relay` is attributed `#[Relay(factoryId: 'chat', output: 'replies', codec: ChannelCodec::Text)]` and `#[Steps(each: Each::PerInput)]`, defines `run`, is registered, and two messages reach its entry channel
 - **THEN** the declaration carries `each` `per_input`, `run` runs once per message, and the instance does not complete after the first
 
-#### Scenario: A short form with no sink is declared
+#### Scenario: A short form with no output is declared
 
 - **WHEN** a class extending `Flezha\Relay` is attributed `#[Relay(factoryId: 'counter', input: 'ticks', codec: ChannelCodec::Text)]` and defines `run`, `state` and `applyChange`
 - **THEN** the relay declares `ticks` into the generated tasklet and no plugin channel
 
-#### Scenario: An input and codec need no sink
+#### Scenario: An input and codec need no output
 
-- **WHEN** a class extending `Flezha\Relay` is attributed `#[Relay(factoryId: 'counter', input: 'ticks', codec: ChannelCodec::Text)]` with no `sink`
+- **WHEN** a class extending `Flezha\Relay` is attributed `#[Relay(factoryId: 'counter', input: 'ticks', codec: ChannelCodec::Text)]` with no `output`
 - **THEN** `registerFactory` accepts it and the entry channel takes that name and codec
 
 #### Scenario: A run body beside a channels override is refused
@@ -330,12 +330,12 @@ A class SHALL be a short form exactly when it defines the tasklet body `run(mixe
 #### Scenario: A tasklet cannot declare no output
 
 - **WHEN** a class extending `Flezha\Tasklet` declares `public function run(mixed $input, Ctx $ctx): void`
-- **THEN** it SHALL fail to load, because `Tasklet::run` is declared `: mixed`, so no PHP tasklet can declare no output and the SDK owes no `topology.sink_without_output`
+- **THEN** it SHALL fail to load, because `Tasklet::run` is declared `: mixed`, so no PHP tasklet can declare no output and the SDK owes no `topology.output_without_type`
 
-#### Scenario: A sink on a tasklet attribute is refused
+#### Scenario: An output on a tasklet attribute is refused
 
-- **WHEN** a class is attributed `#[Task(name: 'upcase', sink: 'out')]`
-- **THEN** `registerFactory` throws naming `sink` and `#[Relay]`
+- **WHEN** a class is attributed `#[Task(name: 'upcase', output: 'out')]`
+- **THEN** `registerFactory` throws naming `output` and `#[Relay]`
 
 #### Scenario: A derived factory id is refused
 

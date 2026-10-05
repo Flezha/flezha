@@ -101,7 +101,7 @@ class Tally:
 def word_count(c: Channels) -> None:
     # One Cell per word: the hop from `Split` to `Tally` is the runtime's,
     # not this file's.
-    c.input("lines", codec="text").into(Split).key_by(lambda word: word).into(Tally).keyed().sink(
+    c.input("lines", codec="text").into(Split).key_by(lambda word: word).into(Tally).keyed().output(
         "totals"
     )
 ```
@@ -124,10 +124,10 @@ def word_count(c: Channels) -> None:
   working.** It previews the tasklet's own output channel, is encoded as
   `ctx.emit(value)` would encode it there, and never waits: a part that cannot
   leave at once is dropped. A listener receives it, numbered from 0 within each
-  attempt; a sink never does, and nothing about it is durable. It works in
+  attempt; an output never does, and nothing about it is durable. It works in
   `run` and `on_timer`, for a flow tasklet and a steps stage alike. It
-  raises `FlezhaError` coded `part.no_sink` when the output channel does not
-  end in a sink (a call end is not one), and `part.outside_invocation`
+  raises `FlezhaError` coded `part.no_output` when the output channel does not
+  end in an output (a call end is not one), and `part.outside_invocation`
   through a context kept past its invocation.
 - **State starts from the state class.** It is `state=`, else the state
   argument of `run`'s context hint, else what `init_state` returns. A new
@@ -164,18 +164,18 @@ The keywords `flezha.tasklet` takes beside `name`:
 
 `@flezha.relay` declares a whole single-tasklet relay when it decorates
 a tasklet's body instead of a channels body: one declaration, no
-`flezha.tasklet` beside it. `id` is the factory id and is always written; `sink`, `input`
+`flezha.tasklet` beside it. `id` is the factory id and is always written; `output`, `input`
 and `codec` (the entry codec `Channels.input` takes) are optional, and so are
 the tasklet's own keywords (`cell_keys`, `logical_clock`, `idle_ttl_seconds`,
 `mailbox_capacity` and the rest `flezha.tasklet` takes, except `name`).
 
 ```python
-@flezha.relay(id="upcase", sink="out", codec="text")
+@flezha.relay(id="upcase", output="out", codec="text")
 def upcase(value: str) -> str:
     return value.upper()
 
 
-@flezha.relay(id="place", run="steps", sink="placed", input="order", codec="text")
+@flezha.relay(id="place", run="steps", output="placed", input="order", codec="text")
 def place(order: str) -> str:
     return order
 
@@ -203,7 +203,7 @@ A class body is how a one-tasklet relay with state is written, from
 `sdk/python/test_app/fixtures.py`:
 
 ```python
-@flezha.relay(id="sugar_store_input", sink="sugar_store_sink", codec="text")
+@flezha.relay(id="sugar_store_input", output="sugar_store_sink", codec="text")
 class SugarStoreInput:
     def run(self, value: str, ctx: flezha.Ctx[dict[str, Any], str]) -> None:
         ctx.change({"push": value})
@@ -216,12 +216,12 @@ class SugarStoreInput:
         state["text_inputs"].append(change["push"])
 ```
 
-With no `sink`, the relay declares its entry channel and the tasklet and no
+With no `output`, the relay declares its entry channel and the tasklet and no
 plugin channel, which is how a relay that only keeps state is written.
 
 The generated relay is the one you would have written by hand with that
 single tasklet: an entry channel named `input` (or the `input` keyword's
-value) decoded by `codec`, the tasklet, a plugin sink named by `sink` when one
+value) decoded by `codec`, the tasklet, a plugin output named by `output` when one
 is written, a factory id equal to `id`, and the class settings it writes, as
 the full form takes them. The tasklet is named `id` verbatim, so growing out of the short form
 keeps every cell's state where it was, and `upcase.tasklet` wires it into
@@ -232,7 +232,7 @@ instance is accepted and never read. With `each` written it loops, still
 one declaration:
 
 ```python
-@flezha.relay(id="chat", run={"steps": {"each": "per_input"}}, sink="replies", codec="text")
+@flezha.relay(id="chat", run={"steps": {"each": "per_input"}}, output="replies", codec="text")
 def chat(turn: str) -> str:
     return turn
 ```
@@ -243,13 +243,13 @@ none of them, and nothing is harvested: a relay a runner declares is one
 you registered.
 
 Three refusals name themselves. `topology.short_form_with_topology` (a class with `run`
-that also declares `channels`) and `topology.sink_without_output` (a `sink` on a function
+that also declares `channels`) and `topology.output_without_type` (an `output` on a function
 with no return annotation, or `None`, or on a class whose context names no
 output) are raised where the decorator runs, and
 `topology.duplicate_factory_id` where a second relay under one factory id is
-registered. A missing `id`, and `sink`, `input`, `codec` or a tasklet keyword
+registered. A missing `id`, and `output`, `input`, `codec` or a tasklet keyword
 on a channels body, are refused where the decorator runs too, as is `run`,
-`durable`, `sink`, `input` or `codec` on `flezha.tasklet`.
+`durable`, `output`, `input` or `codec` on `flezha.tasklet`.
 
 ### Class settings
 
@@ -264,7 +264,7 @@ the tree's own data:
     max_duration_ms=600_000,
 )
 def orders(c: flezha.Channels) -> None:
-    c.input("order", codec="text").into(Place).sink("placed")
+    c.input("order", codec="text").into(Place).output("placed")
 ```
 
 - `run` is `"flow"` (the default) or `"steps"`, bare or with its members.
@@ -302,7 +302,7 @@ The graph is wired from the annotations, and the package ships `py.typed`, so a
 wrong edge is a **type error before it is a runtime error**:
 
 ```python
-c.input("orders").into(Bill).named("invoices").into(Dispatch).sink()
+c.input("orders").into(Bill).named("invoices").into(Dispatch).output()
 #                                              ^^^^ Bill emits Invoice,
 #                                                   Dispatch takes Shipment
 ```
@@ -353,9 +353,9 @@ only while an invocation runs and only on the thread running it.
 ## Channel payloads
 
 A channel names the format of its payload with `codec=` on `input` and on
-`sink`, a string typed as `flezha.ChannelCodec`:
+`output`, a string typed as `flezha.ChannelCodec`:
 
-| Codec | An entry hands the tasklet | A sink sends |
+| Codec | An entry hands the tasklet | An output sends |
 | --- | --- | --- |
 | `"text"` | a `str`; invalid UTF-8 fails the decode | a `str` as UTF-8; any other value fails the emit |
 | `"bytes"` | `bytes`, unchanged | `bytes`, `bytearray` or `memoryview` unchanged; any other value fails the emit |
@@ -364,22 +364,22 @@ A channel names the format of its payload with `codec=` on `input` and on
 
 An entry with no codec and no `decode=` reads JSON: `{"a":1}` arrives as
 `{"a": 1}`, and plain text fails its decode and rides the retry and dead-letter
-ladder. A sink with no codec and no `encode=` follows the value: bytes pass
-through, a `str` is sent as UTF-8, and anything else as JSON. So a sink needs no
+ladder. An output with no codec and no `encode=` follows the value: bytes pass
+through, a `str` is sent as UTF-8, and anything else as JSON. So an output needs no
 codec for a string, bytes or a JSON value, and names one only to pick another
 format, `"json"` to quote a string or `"msgpack"`. A `decode=` or `encode=`
 callable takes the place of a codec for anything else. A codec name outside the
 four, or a codec named beside a callable on one channel, is refused when the
 relay is declared, naming the relay and the channel.
 
-A called input's first sink output answers its caller and still reaches the sink's plugins:
+A called input's first output answers its caller and still reaches the output's plugins:
 [`../topics/advanced/relay_calls.md`](../topics/advanced/relay_calls.md).
 `.call("pricing", deadline_ms=500)` or `.call(factory="agent", deadline_ms=..., create=False, answer_channel="quotes", codec=...)`
 ends a chain on a call to another relay and answers an edge of `Response`s:
 [`../topics/advanced/relay_calls.md`](../topics/advanced/relay_calls.md).
 
 Python's integers survive JSON at any width. A `datetime`, a set, a dataclass,
-`NaN` or an infinity has no JSON form, so sending one to a sink that names no
+`NaN` or an infinity has no JSON form, so sending one to an output that names no
 codec fails the emit naming the channel; `codec="msgpack"` or an encoder carries
 it.
 
@@ -543,12 +543,12 @@ class:
 from flezha import LocalRelay
 
 with LocalRelay.start(word_count) as run:
-    run.on_sink("totals", lambda out: print(out.payload.decode()))
+    run.on_output("totals", lambda out: print(out.payload.decode()))
     run.feed("lines", "the quick brown fox")
     run.run_until_idle(10_000)
 ```
 
-`on_sink` registers against the sink's **channel** name, which is the producing
+`on_output` registers against the output's **channel** name, which is the producing
 tasklet's name unless the declaration named it. The run brings the same
 executor a started runner brings, so the tasklets run on its worker threads
 while the caller waits in `run_until_idle`. Worked example:

@@ -35,10 +35,10 @@ same input both ways:
 
 ```mermaid
 sequenceDiagram
-    participant SRC as source plugin
+    participant SRC as input plugin
     participant CTRL as controller
     participant EX as cell on the runner
-    participant SINK as sink plugin
+    participant SINK as output plugin
 
     SRC->>CTRL: message
     alt exactly: effectively_once
@@ -59,7 +59,7 @@ sequenceDiagram
 ```
 
 On the effectively-once tier, the outputs leave only after the record that
-holds them is on disk, so a crash re-sends the same identity and a sink that
+holds them is on disk, so a crash re-sends the same identity and an output that
 deduplicates by key drops the repeat. The cost is the wait for one fsync
 batch. By default the controller sends outputs on as they arrive and writes
 the changes in batches about every 5 ms, so there is no added wait, and a
@@ -191,7 +191,7 @@ tasklet calls `ctx.checkpoint()`, whichever comes first
 sequenceDiagram
     participant CTRL as controller
     participant EX as cell on the runner
-    participant SINK as sink plugin
+    participant SINK as output plugin
 
     CTRL->>EX: input at offset 100
     EX->>EX: changes are held for the interval
@@ -210,7 +210,7 @@ What follows from that:
 - **Outputs still leave as they are produced**, unless the class also sets
   `outputs: at_checkpoint`, which holds them and ships them inside the
   checkpoint record. Without it, a crash re-sends the interval's outputs under
-  the same epoch, and the keyed sink the tier requires drops the repeats.
+  the same epoch, and the keyed output the tier requires drops the repeats.
 - **A park closes the interval.** The record that parks a poison input also
   carries the state before it, so the parked input is never replayed and the
   state behind it is never lost (`flz_core/src/effect.rs`).
@@ -242,10 +242,10 @@ rewound to an earlier point, and the replayed slice is sorted by event time.
 
 ```mermaid
 sequenceDiagram
-    participant SRC as source plugin
+    participant SRC as input plugin
     participant CTRL as controller
     participant EX as cell on the runner
-    participant SINK as sink plugin
+    participant SINK as output plugin
 
     SRC->>CTRL: a late message
     CTRL->>CTRL: append to the input log at offset N
@@ -335,7 +335,7 @@ $ flz relay replay <relay/tasklet/key> --from <seq|time>
 
 Deploy a fix, then heal the recent past with it: the command rewinds the cell
 to the given point, runs the kept inputs through the current code, and sends
-the results under a raised epoch, so a keyed sink overwrites the stale rows.
+the results under a raised epoch, so a keyed output overwrites the stale rows.
 
 A correction overwrites the keys it sends again. It does not remove a key the
 stale run sent and the corrected run does not. That is safe for keys derived
@@ -358,7 +358,7 @@ convergence, rebinding, moving and recovery all work per member, unchanged.
 
 ```mermaid
 flowchart TB
-    SRC["source plugin: each member asks upstream only for its own keys"]
+    SRC["input plugin: each member asks upstream only for its own keys"]
     FWD["relay_forward into the group: routes by the key group of flz.key"]
     subgraph GROUP["group trade_watcher, worked out from three ordinary instances"]
         P0["trade_watcher#p0, key groups 0 to 84"]
@@ -420,7 +420,7 @@ flowchart TB
 - **Partitions spread over runners by hashing**, with a fair-share cap, not by
   measured load.
 - **A correction does not remove keys.** A set of output keys that shrinks
-  after a correction leaves the stale keys in the sink.
+  after a correction leaves the stale keys in the output.
 - **A class that never checkpoints** stops truncating its input log and in time
   holds back its own source.
 

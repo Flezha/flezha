@@ -51,7 +51,7 @@ and nothing else is kept locally too, and sleeps after six idle hours.
 | `description` | none | Free text. |
 | `max_duration_ms` | none | A wall-clock stop for either run. A steps instance still running then unwinds and ends `cancelled`; a flow instance ends `cancelled` once its cells hold nothing. |
 | `run` | `flow` | How an instance runs. `flow` takes inputs for as long as it lives, and its commit point is one input (or one checkpoint). `steps` runs a chain of tasklets, and its commit point is a finished step, written to a journal. |
-| `run.flow.exactly` | `at_least_once` | The flow run's duplicate rule. `effectively_once` puts the relay on the effectively-once tier: every emit rides an atomic effect record, and an output leaves only on a sink's confirmation ([`../advanced/effectively_once.md`](../advanced/effectively_once.md)). |
+| `run.flow.exactly` | `at_least_once` | The flow run's duplicate rule. `effectively_once` puts the relay on the effectively-once tier: every emit rides an atomic effect record, and an output leaves only on an output plugin's confirmation ([`../advanced/effectively_once.md`](../advanced/effectively_once.md)). |
 | `exactly.effectively_once.ack` | `per_input` | When the consumed input is acknowledged. `checkpoint` holds it until the interval closes, so state and offset advance together. Its members: `every` (close after `n` inputs; an explicit `ctx.checkpoint()` still closes it early), `max_delay_ms` (close after this long) and `outputs: at_checkpoint` (hold the interval's outputs and ship them inside its checkpoint record; needs `max_delay_ms`). |
 | `exactly.effectively_once.correction_ms` | none: a late input is just an input | A late input inside the window rewinds the cell to a baseline and replays the affected inputs in event-time order. Needs an event-time clock on the tasklet. |
 | `exactly.effectively_once.beyond_window` | `process_as_arrival` | What an input later than the window becomes: processed as an arrival, or `drop`ped. |
@@ -185,7 +185,7 @@ ignores it.
   `topology.correction_window_zero` (a `beyond_window` with no `correction_ms`
   is a zero window) and `topology.correction_without_event_time`.
 - **The tier's graph rules**: under `effectively_once`, every channel with a
-  plugin sink must be declared `keyed`
+  plugin output must be declared `keyed`
   (`topology.unkeyed_channel_under_effectively_once`), and no channel may
   declare a dropping overflow policy, `DropNewest` or `DropOldest`
   (`topology.dropping_policy_under_effectively_once`); the same holds for a

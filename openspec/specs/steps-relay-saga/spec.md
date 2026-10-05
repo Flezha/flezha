@@ -90,7 +90,7 @@ hook rather than losing its undo output.
 #### Scenario: Undo output is durable and released at the compensated entry
 
 - **WHEN** tasklet B is compensated and its hook emits an undo record
-- **THEN** the undo output is in B's Cell's effect record before the `compensated` entry is appended, reaches the sink only after that entry is acked, and carries `flz.seq` above B's forward output's
+- **THEN** the undo output is in B's Cell's effect record before the `compensated` entry is appended, reaches the output only after that entry is acked, and carries `flz.seq` above B's forward output's
 
 #### Scenario: Undo delivery survives a crash
 

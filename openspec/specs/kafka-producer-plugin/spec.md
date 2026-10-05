@@ -457,7 +457,7 @@ work. The plugin SHALL NOT claim broker-side exactly-once.
 
 #### Scenario: Docs state the boundary
 
-- **WHEN** a user reads the Kafka sink documentation for the tier
+- **WHEN** a user reads the Kafka output plugin documentation for the tier
 - **THEN** the changelog-vs-append exactness contract and the consumer-side
   header check are stated explicitly
 

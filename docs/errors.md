@@ -277,7 +277,7 @@ SDK raises or returns its one error type carrying them.
 
 | Code | Class | Exit | Message | Hint |
 |---|---|---|---|---|
-| `part.no_sink` | invalid | 2 | tasklet '{tasklet}' of relay '{relay}' sent a part, but its output channel '{channel}' has no sink | `declare a sink on the tasklet's channel` |
+| `part.no_output` | invalid | 2 | tasklet '{tasklet}' of relay '{relay}' sent a part, but its output channel '{channel}' has no output | `declare an output on the tasklet's channel` |
 | `part.outside_invocation` | invalid | 2 | a part was sent through a context whose invocation has already returned |  |
 
 ### plugin
@@ -366,7 +366,7 @@ SDK raises or returns its one error type carrying them.
 | `plugin.service_unavailable` | unavailable | 7 | the plugin service did not answer; try again |  |
 | `plugin.signature_invalid` | denied | 4 | the package signature does not verify against any trusted key |  |
 | `plugin.signature_required` | denied | 4 | the controller requires signed plugin packages, and this one carries no signature.sig | `package it with mix flezha.plugin.package --sign <key.pem>` |
-| `plugin.single_sink` | invalid | 2 | plugin '{plugin}' runs as one copy in the cluster, so it takes no on_output hook |  |
+| `plugin.single_output` | invalid | 2 | plugin '{plugin}' runs as one copy in the cluster, so it takes no on_output hook |  |
 | `plugin.source_unsupported` | invalid | 2 | '{source}' is neither a local path nor an https:// URL |  |
 | `plugin.spec_field_missing` | invalid | 2 | a plugin spec needs a non-empty '{field}' string |  |
 | `plugin.spec_field_not_object` | invalid | 2 | a plugin spec's '{field}' must be a JSON object |  |
@@ -641,11 +641,11 @@ SDK raises or returns its one error type carrying them.
 | `topology.call_without_key` | invalid | 2 | channel '{channel}' calls a factory with create: false and no key_by before the call, so nothing names the instance it may reach; key the chain, or let the call create its callee |  |
 | `topology.cell_keys_without_static_mode` | invalid | 2 | tasklet '{tasklet}' declares cell_keys without static mode |  |
 | `topology.cells_for_missing` | invalid | 2 | tasklet '{name}' declares non-empty cell_keys but does not override cells_for; write its cells_for (a Rust tasklet also sets CELLS_FOR_OVERRIDDEN) |  |
-| `topology.chained_loop_terminal_without_handoff` | invalid | 2 | a durable handoff-chained loop's terminal tasklet '{tasklet}' releases no inter-tasklet handoff; iteration N+1 is seeded from iteration N's terminal batch, and a tasklet that owns no output channel, or whose only output is plugin-bound, has nothing the journal carries. Take the sink off the terminal's own channel, or declare the loop per_input; wiring another tasklet behind the sink only moves the rule onto that one |  |
+| `topology.chained_loop_terminal_without_handoff` | invalid | 2 | a durable handoff-chained loop's terminal tasklet '{tasklet}' releases no inter-tasklet handoff; iteration N+1 is seeded from iteration N's terminal batch, and a tasklet that owns no output channel, or whose only output is plugin-bound, has nothing the journal carries. Take the output off the terminal's own channel, or declare the loop per_input; wiring another tasklet behind the output only moves the rule onto that one |  |
 | `topology.change_without_state` | invalid | 2 | tasklet '{tasklet}' declares applyChange but no initial state, so there is nothing for a change to fold into |  |
-| `topology.channel_ends_twice` | invalid | 2 | channel '{channel}' declares two plugin ends; a channel ends in one sink or one call, so route the value through a second tasklet to give it both |  |
+| `topology.channel_ends_twice` | invalid | 2 | channel '{channel}' declares two plugin ends; a channel ends in one output or one call, so route the value through a second tasklet to give it both |  |
 | `topology.channel_name_too_long` | invalid | 2 | channel '{channel}' has a {len}-byte name; the name rides every frame this channel produces, under a one-byte length prefix, so it may be at most {max} bytes |  |
-| `topology.channel_named_twice` | invalid | 2 | channel '{channel}' is named twice: named('{named}') and sink('{sink}') both name it. A sink names the channel it terminates, so write the name once: sink('{named}') to keep the channel's name, or named('{named}') with a sink that takes no name |  |
+| `topology.channel_named_twice` | invalid | 2 | channel '{channel}' is named twice: named('{named}') and output('{output}') both name it. An output names the channel it terminates, so write the name once: output('{named}') to keep the channel's name, or named('{named}') with an output that takes no name |  |
 | `topology.checkpoint_every_zero` | invalid | 2 | the relay declares checkpoint_every(0); an interval that closes every zero inputs is not an interval, so omit it to close only on an explicit checkpoint call |  |
 | `topology.checkpoint_max_delay_zero` | invalid | 2 | checkpoint_max_delay_ms must be greater than zero |  |
 | `topology.class_not_constructible` | invalid | 2 | class '{class}' could not be constructed through a public no-argument constructor: {reason} |  |
@@ -662,9 +662,9 @@ SDK raises or returns its one error type carrying them.
 | `topology.duplicate_factory_id` | invalid | 2 | factory '{factory_id}' is already declared on this runner |  |
 | `topology.duplicate_key_by` | invalid | 2 | channel '{channel}' declares key_by twice before one into |  |
 | `topology.duplicate_merge_source` | invalid | 2 | merge subscribes channel '{channel}' twice; each merge source must be a distinct channel (one mapping per channel into the merged input) |  |
+| `topology.duplicate_output_name` | invalid | 2 | channel '{channel}' is named by two outputs; an output names the channel it terminates, so two channels cannot name one output. Give each its own name; a plugin still reaches both by attaching to the relay with no channel filter |  |
 | `topology.duplicate_persistent_tasklet` | invalid | 2 | tasklet '{tasklet}' journals changes and is wired as more than one node; a changeful tasklet may appear once per class |  |
-| `topology.duplicate_plugin_sink` | invalid | 2 | channel '{channel}' was declared with sink more than once; only one plugin sink per channel is allowed |  |
-| `topology.duplicate_sink_name` | invalid | 2 | channel '{channel}' is named by two plugin sinks; a sink names the channel it terminates, so two channels cannot name one sink. Give each its own name; a plugin still reaches both by attaching to the relay with no channel filter |  |
+| `topology.duplicate_plugin_output` | invalid | 2 | channel '{channel}' was declared with output more than once; only one output per channel is allowed |  |
 | `topology.edge_already_wired` | invalid | 2 | channel '{channel}' already feeds tasklet '{tasklet}'; an edge carries exactly one transform and one key or neither, so a re-declaration where either side carries one is refused rather than silently keeping the first |  |
 | `topology.effectively_once_without_persistence` | invalid | 2 | exactly: effectively_once needs a durable other than false: the tier is durable state |  |
 | `topology.entry_channel_with_producer` | invalid | 2 | entry channel '{channel}' cannot name a producer |  |
@@ -674,7 +674,7 @@ SDK raises or returns its one error type carrying them.
 | `topology.invalid_setting` | invalid | 2 | {declaration} sets {setting} to {value}, and it must be {expected} |  |
 | `topology.invalid_tasklet` | invalid | 2 | tasklet '{tasklet}' cannot be declared: {reason} |  |
 | `topology.key_by_on_unkeyable_target` | invalid | 2 | channel '{channel}' declares key_by into tasklet '{tasklet}', which declares non-empty cell_keys (static mode); static keying routes by cells_for and may name several Cells, edge keying names exactly one, so declare one or the other, not both |  |
-| `topology.keyed_channel_without_plugin_wire` | invalid | 2 | channel '{channel}' is declared keyed but has no plugin wire; output identity stamps only exist on plugin-bound frames, so add a sink |  |
+| `topology.keyed_channel_without_plugin_wire` | invalid | 2 | channel '{channel}' is declared keyed but has no plugin wire; output identity stamps only exist on plugin-bound frames, so add an output |  |
 | `topology.keyed_on_entry` | invalid | 2 | entry channel '{channel}' is declared keyed; only a plugin-bound output channel carries a natural key |  |
 | `topology.mailbox_capacity_too_large` | invalid | 2 | tasklet '{tasklet}' declared mailbox_capacity {value}; capacity must be between 1 and 1048576 |  |
 | `topology.mailbox_capacity_zero` | invalid | 2 | tasklet '{tasklet}' declared mailbox_capacity 0; capacity must be between 1 and 1048576 |  |
@@ -690,6 +690,8 @@ SDK raises or returns its one error type carrying them.
 | `topology.no_steps_body` | invalid | 2 | steps class '{factory_id}' declares no channels body, so it has no tasklets to run |  |
 | `topology.no_tasklets` | invalid | 2 | the class declares no tasklet; a host class declares at least one |  |
 | `topology.node_identity_collision` | invalid | 2 | node identity '{name}' is declared by two distinct nodes; a node name must be unique per relay and distinct from every tasklet name |  |
+| `topology.output_on_entry` | invalid | 2 | entry channel '{channel}' is given an output, and an output is fed by a tasklet; wire the entry channel into one first |  |
+| `topology.output_without_type` | invalid | 2 | relay '{factory_id}' names an output, and its tasklet produces no value to feed it |  |
 | `topology.partitions_without_keyed_tasklet` | invalid | 2 | factory '{factory}' has no keyed entry-fed tasklet, so each partition would fold a slice of the input into its own copy of the same state; declare key_by on the entry edge before partitioning |  |
 | `topology.partitions_without_per_input_loop` | invalid | 2 | factory '{factory}' reads one message (each {each}), so its {partitions} partitions would each wait for a message that reaches only one of them; declare each per_input before partitioning |  |
 | `topology.payload_type_mismatch` | invalid | 2 | channel '{channel}' delivers {delivered}, which does not match the input type {input} of tasklet '{tasklet}' |  |
@@ -701,19 +703,17 @@ SDK raises or returns its one error type carrying them.
 | `topology.schema_floor_above_version` | invalid | 2 | tasklet '{tasklet}' reads back to schema version {floor}, above its own schema version {version} |  |
 | `topology.schema_floor_without_migration` | invalid | 2 | tasklet '{tasklet}' reads back to schema version {floor} but supplies no migration, so the first older record would fail instead of the start |  |
 | `topology.setting_on_short_form` | invalid | 2 | short form '{factory_id}' declares {fields}, which a short form does not carry: its kind is its declaration's, its tasklet is named after its id, and every class-level setting keeps its default |  |
-| `topology.short_form_field_on_full_form` | invalid | 2 | relay '{factory_id}' declares {fields} beside its channels body; a full form wires entry channels, codecs and sinks in channels and declares each tasklet's fields on the tasklet |  |
+| `topology.short_form_field_on_full_form` | invalid | 2 | relay '{factory_id}' declares {fields} beside its channels body; a full form wires entry channels, codecs and outputs in channels and declares each tasklet's fields on the tasklet |  |
 | `topology.short_form_name_mismatch` | invalid | 2 | '{class}' declares relay id '{factory_id}' and tasklet name '{name}'; a short form's tasklet is named after its id, so the two must be equal |  |
 | `topology.short_form_not_a_tasklet` | invalid | 2 | '{class}' is declared a short-form relay with {annotation} but is not a tasklet |  |
 | `topology.short_form_with_topology` | invalid | 2 | relay '{factory_id}' is a single-tasklet short form and also declares a channels body; declare one or the other |  |
-| `topology.sink_on_entry` | invalid | 2 | entry channel '{channel}' is given a plugin sink, and a sink is fed by a tasklet; wire the entry channel into one first |  |
-| `topology.sink_without_output` | invalid | 2 | relay '{factory_id}' names a sink, and its tasklet declares no output to feed it |  |
 | `topology.state_not_constructible` | invalid | 2 | tasklet '{tasklet}' has state class '{state}' with no accessible no-argument constructor; add one, or write initState |  |
 | `topology.state_type_id_collision` | invalid | 2 | tasklet '{tasklet}' has state types '{first}' and '{second}' that derive the same encoding id {id}; rename one, or list the types to own their ids |  |
 | `topology.state_unrepresentable` | invalid | 2 | {path} cannot be encoded for durable state: {reason} |  |
 | `topology.static_tasklet_without_cell_keys` | invalid | 2 | static tasklet '{tasklet}' declares no cell_keys |  |
 | `topology.tasklet_name_missing` | invalid | 2 | tasklet class '{tasklet}' declares no name, and the name is where its state is saved |  |
 | `topology.transform_after_key_by` | invalid | 2 | channel '{channel}' declares a transform after key_by; the key is evaluated on the final post-transform value, so it must be the last link before into |  |
-| `topology.transform_after_terminal` | invalid | 2 | channel '{channel}' declares a transform or key_by after a plugin sink; the sink serializes the channel's own value, so nothing downstream of it can be reshaped |  |
+| `topology.transform_after_terminal` | invalid | 2 | channel '{channel}' declares a transform or key_by after an output; the output serializes the channel's own value, so nothing downstream of it can be reshaped |  |
 | `topology.two_clocks` | invalid | 2 | tasklet '{tasklet}' declares two clocks: it exports event_time and its logical_clock answers true; declare one |  |
 | `topology.unkeyed_channel_under_effectively_once` | invalid | 2 | channel '{channel}' has a plugin wire but is not declared keyed; the effectively-once tier deduplicates by output identity, so every plugin-bound channel of an effectively_once relay must opt in with keyed |  |
 | `topology.unkeyed_edge_into_dynamic_tasklet` | invalid | 2 | channel '{channel}' feeds tasklet '{tasklet}' without a key_by, but another edge keys it into dynamic mode; every edge into a dynamic-mode tasklet must name the Cell its inputs reach |  |

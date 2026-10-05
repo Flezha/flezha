@@ -83,7 +83,7 @@ struct Greet;
 impl flezha_runner::Relay for Greet {
     fn factory_id() -> &'static str { "greet" }
     fn channels(c: &flezha_runner::ChannelBuilder) {
-        c.input::<String>("in").into::<SayHello>().sink_named("out");
+        c.input::<String>("in").into::<SayHello>().output_named("out");
     }
 }
 flezha_runner::Flezha::create_runner("my_app")?.register_factory(Greet)?.run()?;
@@ -243,12 +243,12 @@ suffixed `Tasklet`. The function returns its output: a value emits, an
 `Option` emits when present, `()` declares no output.
 
 ```rust
-#[flezha_runner::relay(id = "upcase", sink = "out")]
+#[flezha_runner::relay(id = "upcase", output = "out")]
 fn upcase(value: String) -> String {
     value.to_uppercase()
 }
 
-#[flezha_runner::relay(id = "place", sink = "placed", input = "order")]
+#[flezha_runner::relay(id = "place", output = "placed", input = "order")]
 fn place(order: String) -> String {
     order
 }
@@ -261,7 +261,7 @@ Flezha::create_runner("default")?
 
 The generated relay is the one you would have written by hand with that
 single tasklet: an entry channel named `input` (or the `input` key's value),
-the tasklet, a plugin sink named by `sink` when one is written, a factory id
+the tasklet, a plugin output named by `output` when one is written, a factory id
 equal to `id`, and every class-level setting at its trait default. The
 tasklet (`UpcaseTasklet`) is named `id` verbatim, so its cells keep their
 state path when the relay grows into the full form, and it wires into
@@ -269,14 +269,14 @@ another relay's `channels()` body like any tasklet. A steps short form
 is a `once` steps relay, run once over its first message: `flz relay start
 <id> --text '<payload>'`, or a start followed by `flz relay send`; a second
 message to a `once` instance is accepted and never read. It may declare
-another loop mode, `#[flezha_runner::relay(id = "chat", sink =
+another loop mode, `#[flezha_runner::relay(id = "chat", output =
 "replies", each = "per_input")]`, and then runs once per message.
 
 A one-tasklet relay with state or hooks puts the same attribute on its
 `impl Tasklet` block. The attribute completes the block as `#[tasklet]` does,
 names the tasklet after the `id`, takes the tasklet setting keys beside the
 relay keys, and implements the relay trait on your own type, which is
-what you register. `sink` is optional; with none, the entry channel feeds the
+what you register. `output` is optional; with none, the entry channel feeds the
 tasklet and no plugin channel is declared: the relay that only keeps state.
 
 ```rust
@@ -313,14 +313,14 @@ edge, a retry ladder, the effectively-once tier, a correction
 window. Rust names no entry codec — an entry decodes by its declared type — so
 the short form takes no `codec` key.
 
-The refusals are compile errors. A `sink` on a unit return, or on a block
-whose `Output` is `()`, fails with a message beginning `topology.sink_without_output`; a
+The refusals are compile errors. An `output` on a unit return, or on a block
+whose `Output` is `()`, fails with a message beginning `topology.output_without_type`; a
 function with a `&mut` parameter fails with one beginning
 `ShortFormStateOnFunction`; a missing `id` names the attribute. A hand-written
 `Relay` impl beside a short form is rustc's
 conflicting-implementation error, which the contract calls
 `topology.short_form_with_topology`. `#[flezha_runner::tasklet]` declares a tasklet only:
-it refuses `sink`, `input`, `kind` and `on_full`, a function target, and a
+it refuses `output`, `input`, `kind` and `on_full`, a function target, and a
 block that also carries a short-form attribute.
 
 ## The reference form
@@ -363,7 +363,7 @@ impl Relay for MarketRelay {
             .into::<ParseTask>()          // ParseTask's output stream handle
             .named("trade.parsed")
             .into::<OhlcTask>()           // static-mode consumer, see below
-            .sink_named("ohlc.candles");  // plugin-bound terminal, named here
+            .output_named("ohlc.candles");  // plugin-bound terminal, named here
     }
 }
 
@@ -422,7 +422,7 @@ Changes declare `sdk_lang = 2`, `change_format_id = 4` (Kryo). A Java
    `RelayTopology::name_to_id` (`HashMap<&'static str, ChannelId>`), then
    a `Vec` index into `topology.channels`. A frame with no `channel` key goes
    to the class's first declared `Entry` channel; a name that is not one of the
-   class's `Entry` channels — undeclared, or declared as a sink or an
+   class's `Entry` channels — undeclared, or declared as an output or an
    inter-tasklet channel — is parked to the dead-letter store under the name
    it asked for, with one attempt and no retry wait. The channel's `wrap_input` turns the bytes into
    `Arc<dyn Any + Send + Sync>` (see "Entry decoding").
@@ -633,10 +633,10 @@ fan-out pays one value clone per consumer.
 
 ### Plugin-bound emit
 
-On a channel with a plugin sink the dispatcher serializes the value once
-(`sink()` / `sink_named(name)` use the default rules — passthrough for
-`Vec<u8>`, UTF-8 for `String`, JSON otherwise; `sink_with(serializer)` /
-`sink_named_with(name, serializer)` supply a `Fn(&T) -> Vec<u8>`), builds a frame with `payloader::build_from_binary`
+On a channel with a plugin output the dispatcher serializes the value once
+(`output()` / `output_named(name)` use the default rules — passthrough for
+`Vec<u8>`, UTF-8 for `String`, JSON otherwise; `output_with(serializer)` /
+`output_named_with(name, serializer)` supply a `Fn(&T) -> Vec<u8>`), builds a frame with `payloader::build_from_binary`
 carrying `channel = <channel name>` in the metadata, and writes it on the
 `FlezhaStream` the originating input arrived on. The controller's plugin
 layer (for example the Kafka plugin package's producer with its `:channel` option)
@@ -644,10 +644,10 @@ gates on `metadata["channel"]`.
 
 `ctx.emit_with_meta::<C>(value, meta)` appends user metadata to the plugin
 frame only; it returns `runtime.metadata_on_inter_tasklet_channel` on an
-inter-tasklet channel without a sink, `runtime.reserved_metadata_key` for any key
+inter-tasklet channel without an output, `runtime.reserved_metadata_key` for any key
 under the reserved `flz.` prefix, and silently replaces a user-supplied
 `channel` entry with the real channel name. A channel declared `.keyed()`
-(requires a sink) stamps `flz.cell` / `flz.seq` / `flz.key` on every plugin
+(requires an output) stamps `flz.cell` / `flz.seq` / `flz.key` on every plugin
 frame: `emit` carries the Cell's own key (a single-cell Tasklet fails
 with `runtime.key_required_on_keyed_channel`), `emit_keyed(key, value)` carries a
 replay-stable natural key (`runtime.key_not_allowed_on_non_keyed_channel` elsewhere).
@@ -662,7 +662,7 @@ would be. The context calls `flz_core::part::send`, which frames the part under
 the payload id `output_part` with `channel`, `flz.part` (from 0, per attempt),
 `flz.part_attempt`, `flz.cell`, `flz.relay` and, for a keyed Cell,
 `flz.key`, and writes it without waiting. The relay's listeners receive it;
-a sink never does, and it is never durable, replayed or counted as an output.
+an output never does, and it is never durable, replayed or counted as an output.
 
 ```rust
 fn run(&mut self, input: String, ctx: &mut Ctx<'_, Self>) -> Result<(), TaskletError> {
@@ -675,26 +675,26 @@ fn run(&mut self, input: String, ctx: &mut Ctx<'_, Self>) -> Result<(), TaskletE
 
 A part that cannot leave at once (no stream, a local run, a stream that would
 block, a frame over the limit) is dropped and counted, and a replayed input
-sends none. A channel that does not end in a sink (it only feeds another
+sends none. A channel that does not end in an output (it only feeds another
 tasklet, or ends in `call(...)`) answers `TaskletError::Part` with the code
-`part.no_sink`. A `compensate` hook previews no work item and answers
+`part.no_output`. A `compensate` hook previews no work item and answers
 `part.outside_invocation`; the testing harness sends nothing.
 
-### Hybrid and terminal: one `sink` method
+### Hybrid and terminal: one `output` method
 
-`sink` / `sink_named` / `sink_with` / `sink_named_with` on a producer's output
+`output` / `output_named` / `output_with` / `output_named_with` on a producer's output
 handle attach the channel's `plugin_sink: Option<PluginSink>` — the one
 representation of plugin egress. The `_named` half names the channel, which is
-what rides the frame; naming one channel with both a sink and `.named(...)` is
+what rides the frame; naming one channel with both an output and `.named(...)` is
 `TopologyIssue::ChannelNamedTwice`. `kind` is derived at build time: `InterTasklet` when consumers are wired
-after the sink (hybrid — one typed value reaches the consumer mailboxes and,
+after the output (hybrid — one typed value reaches the consumer mailboxes and,
 serialized, the plugin), `PluginBound` when nothing consumes the channel
-(terminal). Order of `sink_with` and `.into::<S>()` is irrelevant; a second
-sink on one channel is `TopologyIssue::DuplicatePluginSink`.
+(terminal). Order of `output_with` and `.into::<S>()` is irrelevant; a second
+output on one channel is `TopologyIssue::DuplicatePluginOutput`.
 
 ```rust
 sma_stream                       // SmaTask's output handle, from `.into::<SmaTask>()`
-    .sink_named_with("sma_out", sma_to_pb_bytes)
+    .output_named_with("sma_out", sma_to_pb_bytes)
     .into::<BollingerTask>();
 ```
 
@@ -710,7 +710,7 @@ by the `channel` metadata key; Rust and Java frames are byte-identical there.
 `.call::<A>(target, deadline_ms)` is the channel's other plugin end, one per
 channel. A call end keeps the transform and key of the chain
 that closed on it, as an edge does: each value emitted on the channel becomes the
-requests that chain yields, each serialized by the sink rule and stamped with the
+requests that chain yields, each serialized by the output rule and stamped with the
 call's target, deadline, Response channel and key before it leaves as a plugin
 output. `call` answers an `EntryStream<Response<T, A>>` on the channel
 `<channel>.response` ([`calls.md`](calls.md#relay-calls-call)).
@@ -761,7 +761,7 @@ port: [`state_persistence.md`](state_persistence.md).
 | `ChannelBuilder`, `Stream<T>`, `TopologyIssue` | `sdk/rust/src/channel/builder/`, `sdk/rust/src/channel/mod.rs` (kernel types: `flz_core/src/channel.rs`) |
 | Topology builder, mailbox-capacity resolution | `sdk/rust/src/relay/builder.rs` |
 | Authoring macros | `sdk/rust/macros/src/{tasklet,short_form,relay}.rs` |
-| Typed dispatcher and plugin-sink tail; poll-worker pool | `sdk/rust/src/relay/dispatcher.rs`, `poll_pool.rs` |
+| Typed dispatcher and plugin-output tail; poll-worker pool | `sdk/rust/src/relay/dispatcher.rs`, `poll_pool.rs` |
 | Poll engine (handout, admission, ladder, deferred wakes) | `flz_core/src/poll_core/` |
 | `RelayInstance`, `KeyGroupRange`; `RelayTopology`, `CellMode`; registries | `flz_core/src/relay/{instance,topology,registry}.rs` |
 | `CellSlot`, `CellCounters`; `Mailbox`, `Waiters`; dynamic registry and reaper | `flz_core/src/cell.rs`, `mailbox.rs`, `dynamic.rs` |

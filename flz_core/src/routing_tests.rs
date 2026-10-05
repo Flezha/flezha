@@ -37,7 +37,7 @@ fn handle_over(instance: &Arc<RelayInstance>) -> RelayDispatchHandle {
 }
 
 /// One frame off the wire into `instance`, naming `channel` when it is
-/// `Some` — a `None` is the metadata a source plugin sends by default.
+/// `Some` — a `None` is the metadata a input plugin sends by default.
 fn feed(instance: &Arc<RelayInstance>, channel: Option<&str>, payload: &[u8]) {
     feed_with(
         instance,

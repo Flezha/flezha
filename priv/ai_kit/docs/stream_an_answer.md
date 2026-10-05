@@ -3,8 +3,8 @@
 On this page you watch Anna's answer arrive token by token while the turn runs.
 
 `reply` sends each token as a part, through `ctx.part`, while it works. Parts
-reach whoever listens on the `answer` sink at once; the whole answer follows on
-the same sink once the turn's step is done, and also answers the caller.
+reach whoever listens on the `answer` output at once; the whole answer follows on
+the same output once the turn's step is done, and also answers the caller.
 [Streamed answers](../../topics/advanced/streamed_answers.md) explains parts.
 
 <!-- tabs-open -->
@@ -12,10 +12,10 @@ the same sink once the turn's step is done, and also answers the caller.
 ### Java
 
 ```java
-// AgentRelay.java: reply's sink answers the caller and the listeners
+// AgentRelay.java: reply's output answers the caller and the listeners
         c.input(String.class, "turn")                    // entry 1: `flz relay call`
                 .into(Reply.class)
-                .sink("answer");                         // to whoever called, and whoever listens
+                .output("answer");                       // to whoever called, and whoever listens
 ```
 
 [`AgentRelay.java`](https://github.com/flezha/flezha_java_sdk/blob/main/examples/agentdesk/src/main/java/com/flezha/examples/agentdesk/AgentRelay.java)
@@ -43,13 +43,13 @@ TODO: this page is not yet written for PHP.
 ### Elixir
 
 ```elixir
-# lib/agentdesk/agent_relay.ex: reply's sink answers the caller and the listeners
+# lib/agentdesk/agent_relay.ex: reply's output answers the caller and the listeners
     c
     # entry 1: `flz relay call`
     |> input("turn")
     |> into(Reply)
     # to whoever called, and whoever listens
-    |> sink("answer")
+    |> output("answer")
 ```
 
 [`lib/agentdesk/agent_relay.ex`](https://github.com/flezha/flezha_elixir_sdk/blob/main/examples/agentdesk/lib/agentdesk/agent_relay.ex)

@@ -69,8 +69,8 @@ commit_block_chain | 1 | mid | inter_task | 0 | 1 | mid
 #   <x>.flat_map.into(<task>)  the same link, declared with the SDK's flat_map
 #   <x>.key.into(<task>)       a key link before the terminator
 #   <x>.map                    a chain nothing closes
-#   <x>.sink(<name>)           terminate x on the plugin layer, naming it
-#   <x>.sink                   the same, leaving the name derived
+#   <x>.output(<name>)           terminate x on the plugin layer, naming it
+#   <x>.output                   the same, leaving the name derived
 #   <x>.call(<target>)         end x in a call to the instance <target>, with a
 #                              500 ms deadline, its Response channel
 #                              (`<x's channel>.response`) wired into the
@@ -94,7 +94,7 @@ commit_block_chain | 1 | mid | inter_task | 0 | 1 | mid
 #   class.durable(<tree>)      the class's `durable`, as the tree's JSON: false,
 #                              "local", "remote", {"local":{"sleep_after":ms}};
 #                              absent is local
-#   shorthand(<id>|-, <sink>|-, <input>|-)
+#   shorthand(<id>|-, <output>|-, <input>|-)
 #                              one §5 short form, a flow relay declaration
 #                              carrying a tasklet body: the factory id, the
 #                              plugin sink and the entry channel name, each `-`
@@ -142,7 +142,7 @@ commit_block_chain | 1 | mid | inter_task | 0 | 1 | mid
 # metadata region's one-byte length prefix, which is the whole of what the row
 # is testing. It is the one row whose steps column carries a literal that long.
 
-topology.duplicate_channel         | dup_channel      | entry(in); in.into(plain); plain.named(in); plain.sink                                | -
+topology.duplicate_channel         | dup_channel      | entry(in); in.into(plain); plain.named(in); plain.output                                | -
 topology.node_identity_collision   | dup_node         | entry(in); in.into(plain); in.into(twin)                                              | -
 topology.channel_name_too_long     | long_channel_name| entry(in); in.into(plain); plain.named(nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn) | -
 topology.branch_too_few_arms       | branch_one_arm   | entry(in); in.into(plain); branch(plain, 1)                                           | branch
@@ -151,23 +151,23 @@ topology.unreachable_tasklet     | detached_node    | entry(in); in.into(plain);
 topology.cells_for_missing      | keys_no_router   | entry(in); in.into(static)                                                            | -
 topology.key_by_on_unkeyable_target | key_on_static    | entry(in); in.key.into(routed)                                                        | -
 topology.duplicate_key_by          | dup_key_by       | entry(in); in.key.key.into(plain)                                                     | -
-topology.transform_after_terminal  | map_after_sink   | entry(in); in.into(plain); plain.sink(out); plain.map.into(second)                    | -
+topology.transform_after_terminal  | map_after_sink   | entry(in); in.into(plain); plain.output(out); plain.map.into(second)                    | -
 topology.transform_after_key_by    | map_after_key    | entry(in); in.key.map.into(plain)                                                     | -
 topology.dangling_transform_chain  | dangling_chain   | entry(in); in.into(plain); in.map                                                     | -
 topology.unkeyed_edge_into_dynamic_tasklet | unkeyed_dynamic  | entry(in); entry(other); in.key.into(dynamic); other.into(dynamic)                    | -
 topology.mailbox_capacity_zero     | mailbox_zero     | entry(in); in.into(plain); plain.mailbox(0)                                           | -
 topology.mailbox_capacity_too_large | mailbox_huge     | entry(in); in.into(plain); plain.mailbox(2000000)                                     | -
-topology.duplicate_plugin_sink     | dup_sink         | entry(in); in.into(plain); plain.sink(out); plain.sink(out)                           | -
-topology.channel_ends_twice        | call_beside_sink | entry(in); in.into(plain); plain.sink(out); plain.call(pricing)                    | call
+topology.duplicate_plugin_output     | dup_sink         | entry(in); in.into(plain); plain.output(out); plain.output(out)                           | -
+topology.channel_ends_twice        | call_beside_sink | entry(in); in.into(plain); plain.output(out); plain.call(pricing)                    | call
 topology.call_outside_per_input_loop | call_once_steps | class.run("steps"); entry(in); in.into(plain); plain.named(ask); plain.call(pricing)   | steps
 topology.call_without_key          | call_nocreate_unkeyed | entry(in); in.into(plain); plain.named(ask); plain.call_factory_nocreate(agent) | call
 topology.call_deadline_zero        | call_deadline_zero | entry(in); in.into(plain); plain.named(ask); plain.call_deadline(0)             | call
 topology.call_response_unread      | call_unread      | entry(in); in.into(plain); plain.named(ask); plain.call_unread(pricing)             | call
 topology.keyed_channel_without_plugin_wire | keyed_no_wire    | entry(in); in.into(plain); plain.keyed; plain.into(second)                            | -
-topology.channel_named_twice       | named_twice      | entry(in); in.into(plain); plain.named(a); plain.sink(b)                              | -
-topology.duplicate_sink_name       | two_channels_one_sink | entry(in); in.into(plain); in.into(second); plain.sink(out); second.sink(out)    | -
+topology.channel_named_twice       | named_twice      | entry(in); in.into(plain); plain.named(a); plain.output(b)                              | -
+topology.duplicate_output_name       | two_channels_one_sink | entry(in); in.into(plain); in.into(second); plain.output(out); second.output(out)    | -
 topology.unservable_clock          | logical_nochange | entry(in); in.into(nochange)                                                          | -
-topology.unkeyed_channel_under_effectively_once | eo_unkeyed_sink  | class.run({"flow":{"exactly":"effectively_once"}}); entry(in); in.into(plain); plain.sink(out)  | -
+topology.unkeyed_channel_under_effectively_once | eo_unkeyed_sink  | class.run({"flow":{"exactly":"effectively_once"}}); entry(in); in.into(plain); plain.output(out)  | -
 topology.retry_max_zero            | retry_zero       | entry(in); in.retry_max(0); in.into(plain)                                            | -
 topology.dropping_policy_under_effectively_once | eo_sheds         | class.run({"flow":{"exactly":"effectively_once"}}); entry(in); in.on_full(drop_newest); in.into(plain) | -
 topology.correction_without_event_time | correction_wall  | class.run({"flow":{"exactly":{"effectively_once":{"correction_ms":60000}}}}); entry(in); in.into(plain) | -
@@ -193,7 +193,7 @@ topology.invalid_setting           | kind_literal     | class.run("bounded"); en
 # `flz_core`'s: the core never sees a short form, so these rows are exempt from
 # the issue-variant pairing and checked against §5's list instead.
 topology.short_form_with_topology  | shorthand_with_topology       | shorthand(plain, out, -).topology                                         | shorthand
-topology.sink_without_output       | shorthand_sink_without_output | shorthand(plain, out, -).noout                                            | shorthand_typed_output
+topology.output_without_type       | shorthand_output_without_type | shorthand(plain, out, -).noout                                            | shorthand_typed_output
 topology.duplicate_factory_id      | shorthand_duplicate_id        | shorthand(plain, out, -); shorthand(plain, twin_sink, -)                  | shorthand
 
 # The well-formed rows. `hybrid_channel` and `commit_block_chain` are the two
@@ -202,8 +202,8 @@ topology.duplicate_factory_id      | shorthand_duplicate_id        | shorthand(p
 ok                                 | fan_in_noop      | entry(in); in.into(plain); in.into(plain)                                             | -
 ok                                 | filter_then_into | entry(in); in.filter.into(plain)                                                      | -
 ok                                 | flat_map_then_into | entry(in); in.flat_map.into(plain)                                                  | -
-ok                                 | named_sink       | entry(in); in.into(plain); plain.named(renamed); plain.sink                            | -
-ok                                 | sink_names_channel | entry(in); in.into(plain); plain.sink(items_output)                                  | -
+ok                                 | named_sink       | entry(in); in.into(plain); plain.named(renamed); plain.output                            | -
+ok                                 | sink_names_channel | entry(in); in.into(plain); plain.output(items_output)                                  | -
 ok                                 | ack_checkpoint   | class.run({"flow":{"exactly":{"effectively_once":{"ack":"checkpoint"}}}}); entry(in); in.into(plain) | -
 ok                                 | checkpoint_every | class.run({"flow":{"exactly":{"effectively_once":{"ack":{"checkpoint":{"every":500}}}}}}); entry(in); in.into(plain) | -
 ok                                 | hold_outputs     | class.run({"flow":{"exactly":{"effectively_once":{"ack":{"checkpoint":{"outputs":"at_checkpoint","max_delay_ms":50}}}}}}); entry(in); in.into(plain) | -

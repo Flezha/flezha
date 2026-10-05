@@ -14,7 +14,7 @@ steps once and ends, a session runs them again for every message, and each run i
 
 ```mermaid
 flowchart LR
-    M(["message"]) --> E["entry channel"] --> T["tasklets (one turn)"] --> R(["sink"])
+    M(["message"]) --> E["entry channel"] --> T["tasklets (one turn)"] --> R(["output"])
     T -. "change" .-> S[("session state")]
     S -. "read" .-> T
 ```
@@ -29,8 +29,8 @@ flowchart LR
   exactly as any tasklet keeps state ([state.md](../basics/state.md)). The next turn reads
   the state the previous one left.
 - **An answer to the sender.** When the message came from a call, for example `flz relay call`
-  or another relay's call, the turn's first sink output goes back to the caller, and on to the
-  sink's plugins and listeners ([relay_calls.md](relay_calls.md)).
+  or another relay's call, the turn's first output goes back to the caller, and on to the
+  output's plugins and listeners ([relay_calls.md](relay_calls.md)).
 - **An idle session sleeps.** A session waiting for its next message still holds a place on
   its runner, and with many sessions that adds up. So an instance that keeps its state on
   the controller sleeps when it has been idle for a while: it leaves its runner, the
@@ -122,7 +122,7 @@ public final class AgentRelay implements Relay {
     public void channels(ChannelBuilder c) {
         c.input(String.class, "turn")
                 .into(Reply.class)
-                .sink("answer");                         // to whoever called, and whoever listens
+                .output("answer");                       // to whoever called, and whoever listens
 ```
 
 Full file: [`AgentRelay.java`](https://github.com/flezha/flezha_java_sdk/blob/main/examples/agentdesk/src/main/java/com/flezha/examples/agentdesk/AgentRelay.java)
@@ -172,7 +172,7 @@ defmodule Agentdesk.AgentRelay do
     |> input("turn")
     |> into(Reply)
     # to whoever called, and whoever listens
-    |> sink("answer")
+    |> output("answer")
 ```
 
 Full file: [`agent_relay.ex`](https://github.com/flezha/flezha_elixir_sdk/blob/main/examples/agentdesk/lib/agentdesk/agent_relay.ex)
@@ -197,7 +197,7 @@ $ flz relay start agent --id anna --namespace agents
 Started anna
 ```
 
-`flz relay call` sends one message and waits for the first output the turn sends to its sink
+`flz relay call` sends one message and waits for the first output the turn sends to its output
 ([relay_calls.md](relay_calls.md) is its contract):
 
 ```sh

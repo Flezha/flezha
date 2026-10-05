@@ -22,7 +22,7 @@ refused by name (`topology.unknown_field`), and a value outside its choice as
 | Setting | Default if absent | What it does |
 |---|---|---|
 | `run` | `flow` | How an instance runs: `flow` takes inputs for as long as it lives, `steps` runs a chain of tasklets whose every step is journaled. |
-| `run.flow.exactly` | `at_least_once` | `effectively_once` puts every emit on an atomic effect record through the WAL; the outbox cursor advances only on a sink's confirmation. Registration refuses it unless every plugin-bound channel is `.keyed()`, and refuses it on a class with `durable: false`. |
+| `run.flow.exactly` | `at_least_once` | `effectively_once` puts every emit on an atomic effect record through the WAL; the outbox cursor advances only on an output plugin's confirmation. Registration refuses it unless every plugin-bound channel is `.keyed()`, and refuses it on a class with `durable: false`. |
 | `exactly.effectively_once.ack` | `per_input` | `checkpoint` holds the consumed offset until the interval closes, so state and offset advance together; its members are `every` (close after `n` inputs; an explicit `ctx.checkpoint()` still closes it early), `outputs` (`at_checkpoint` holds the interval's outputs and ships them inside its checkpoint record) and `max_delay_ms` (required with `at_checkpoint`; bounds how long a quiet Cell holds an output). |
 | `exactly.effectively_once.correction_ms` | absent — a late input is just an input | A late input inside the window rewinds the Cell to a baseline and replays the affected slice in event-time order. Needs an event-time clock. |
 | `exactly.effectively_once.beyond_window` | `process_as_arrival` | Fate of an input later than the window: process it as an arrival, or `drop` it. |
@@ -48,9 +48,9 @@ Declared on the stream handle returned by `input(...)` or a node's output.
 | `.on_full(OverflowPolicy)` (`onFull`) | `DropNothing` | What a full Cell mailbox discards: `DropNothing`, `DropNewest`, `DropOldest`. Nothing drops by default; `DropNothing` slows the producer to the consumer's rate instead. |
 | `.retry_max(n)` (`retryMax`) | `3` attempts | Attempts before a failing payload is parked to the dead-letter queue, or, into a steps tasklet, before the tasklet fails and the run compensates (a `per_input` keep-progress session parks the turn instead and goes on). `0` is refused (`topology.retry_max_zero`). |
 | `.retry_backoff_ms(ms)` (`retryBackoffMs`) | `50` | Base of the exponential backoff between attempts, for both runs; the wait holds no thread. |
-| `.keyed()` (`keyed`) | off | Every plugin emit must carry a natural key; the runtime stamps `flz.cell` / `flz.seq` / `flz.key`. Requires a `sink`; required on every plugin channel under `effectively_once`. |
+| `.keyed()` (`keyed`) | off | Every plugin emit must carry a natural key; the runtime stamps `flz.cell` / `flz.seq` / `flz.key`. Requires an `output`; required on every plugin channel under `effectively_once`. |
 | `.key_by(f)` (`keyBy`) | absent — one Cell | Route by a key function, making the consumer dynamic-cell. |
-| `.sink(name)` / `.sink_with(name, f)` (`sink`) | — | Wire the channel to a named plugin; a second sink on one channel is a registration error. |
+| `.output(name)` / `.output_with(name, f)` (`output`) | — | Wire the channel to a named plugin; a second output on one channel is a registration error. |
 
 ## Tasklet-level options
 

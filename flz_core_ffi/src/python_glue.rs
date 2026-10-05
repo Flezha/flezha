@@ -446,7 +446,7 @@ impl Core {
     /// the declaration does not carry is refused here, by name.
     fn local_on_sink(&self, channel: &str) -> PyResult<()> {
         let ctx = self.ptr()?;
-        let channel = veneer::c_string("sink channel", channel)?;
+        let channel = veneer::c_string("output channel", channel)?;
         Ok(veneer::local_on_sink(ctx, &channel)?)
     }
 

@@ -49,7 +49,7 @@ already in its mailbox has been routed to an Overwatch — so an opted-out class
 last direct output is run before its Overwatch is stopped, however the two sockets interleave on
 arrival, and even when an output of that run was lost rather than delivered. The Cells'
 outboxes are *waited for*: up to `drain_owed_ms` (60 s), polling every 50 ms, until every live
-Cell writer of the instance reports nothing pending and nothing awaiting a sink's confirmation
+Cell writer of the instance reports nothing pending and nothing awaiting an output plugin's confirmation
 (`WalWriter.outbox_status/2`). An entry still held for a stage marker belongs to a stage that
 never committed and is owed nothing. A deadline hit is logged (`... still owed`) and the
 retained WAL keeps the debt. `status = "error"` tears down identically: there is no
@@ -68,8 +68,8 @@ before the loop's next carry-fed pass.
 Loop modes are declared with `each()` / `each()`. Registration refuses a class that
 declares no tasklet (`topology.no_tasklets`) and a durable `Chained` loop whose terminal tasklet
 releases no inter-tasklet channel (`LoopTerminalWithoutHandoff`). Two shapes fail that: a
-terminal nothing consumes and that names no sink owns no output channel at all, and one whose only
-wiring is a plugin sink gets no journal codec, because the runtime attaches one to inter-tasklet
+terminal nothing consumes and that names no output plugin owns no output channel at all, and one whose only
+wiring is a output plugin gets no journal codec, because the runtime attaches one to inter-tasklet
 channels and nothing else. Either way a crash would re-seed empty, read as converged.
 
 **The iteration boundary.** `IterCommit` rides the same commit worker as `TaskCommit` (below).

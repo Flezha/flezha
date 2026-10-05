@@ -134,7 +134,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // control.start_relay(&flezha_runner::RelaySpec::new("echo").id("my_echo"))?;
     // control.enable_plugin(
     //     "writer",
-    //     &flezha_runner::PluginSpec::new("relay_file_sink")
+    //     &flezha_runner::PluginSpec::new("relay_file_output")
     //         .opts(serde_json::json!({ "path": "echo-out.txt" })),
     // )?;
     // control.bind_plugin("writer", "my_echo", serde_json::json!([["on_output", {}]]), "")?;
@@ -182,7 +182,7 @@ impl Relay for EchoRelay {
     fn channels(c: &ChannelBuilder) {
         c.input::<String>("in") // messages arrive on the entry channel "in"
             .into::<Echo>() // each one runs through the echo tasklet
-            .sink_named("out"); // the result leaves on "out", for a plugin to pick up
+            .output_named("out"); // the result leaves on "out", for a plugin to pick up
     }
 }
 ````

@@ -137,7 +137,7 @@ $runner = Flezha::createRunner($argv[1] ?? 'default')
 //
 // $control = $runner->control();
 // $control->startRelay('echo', id: 'my_echo');
-// $control->enablePlugin('writer', 'relay_file_sink', ['path' => 'echo-out.txt']);
+// $control->enablePlugin('writer', 'relay_file_output', ['path' => 'echo-out.txt']);
 // $control->bindPlugin('writer', 'my_echo', hooks: [['on_output', new stdClass()]]);
 // $runner->send('my_echo', 'hello world', 'in', msgId: 'hello-1');
 //
@@ -173,7 +173,7 @@ use Flezha\Graph\Builder;
  * declares it, so one that cannot work is refused at startup.
  *
  * The entry names the text codec, so what `flz relay send --text` sends
- * arrives as that string. The sink names nothing: a string is sent as it
+ * arrives as that string. The output names nothing: a string is sent as it
  * stands, so the output is the text itself, and any other value would be JSON.
  */
 #[Relay(factoryId: 'echo')] // the name `flz relay start` takes
@@ -183,7 +183,7 @@ final class EchoRelay extends \Flezha\Relay
     {
         $c->input('in', codec: ChannelCodec::Text) // messages arrive on the entry channel "in"
             ->into(EchoTasklet::class)             // each one runs through the echo tasklet
-            ->sink('out');                         // the result leaves on "out", for a plugin to pick up
+            ->output('out');                       // the result leaves on "out", for a plugin to pick up
     }
 }
 ````

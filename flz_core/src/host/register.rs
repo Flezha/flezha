@@ -191,7 +191,7 @@ fn refuse_names(
     for channel in channels {
         if !seen.insert(channel.name.as_str()) {
             issues.push(if from_sink.get(channel.name.as_str()) >= Some(&2) {
-                TopologyIssue::DuplicateSinkName {
+                TopologyIssue::DuplicateOutputName {
                     channel: channel.name.clone(),
                 }
             } else {

@@ -123,8 +123,8 @@ flz plugin enable "${PLUGIN_WS_ID}" relay_websocket \
   --relay_id="${PROCESSOR_ID}" \
   --Xuri="ws://localhost:4500"
 
-note "enabling file sink plugin ${PLUGIN_SINK_ID}"
-flz plugin enable "${PLUGIN_SINK_ID}" relay_file_sink \
+note "enabling file output plugin ${PLUGIN_SINK_ID}"
+flz plugin enable "${PLUGIN_SINK_ID}" relay_file_output \
   --relay_id="${PROCESSOR_ID}" \
   --hook=on_output \
   --Xpath="${PROCESSOR_ID}.test.ndjson"

@@ -22,7 +22,7 @@ flowchart LR
     subgraph R["runner (your process)"]
         subgraph O["relay: one instance of a factory"]
             direction LR
-            I(["entry channel"]) --> T1["tasklet"] --> T2["tasklet"] --> S(["sink"])
+            I(["entry channel"]) --> T1["tasklet"] --> T2["tasklet"] --> S(["output"])
         end
     end
     C["controller"] -. "places, restarts, moves" .- R
@@ -74,7 +74,7 @@ starts, places on a runner, restarts after a crash, and moves when a runner
 disappears.
 
 **Channel names are addresses, not labels.** An entry channel's name is what
-`flz relay send --channel` writes to, and a sink's name is stamped on
+`flz relay send --channel` writes to, and an output's name is stamped on
 everything that channel delivers. Something outside the code uses both, so
 changing one is a breaking change rather than a rename.
 
@@ -142,7 +142,7 @@ what they are.
 ## Example: the echo
 
 The echo example is the smallest relay: one tasklet that answers each
-message with `echo: ` in front of it, between an entry channel `in` and a sink
+message with `echo: ` in front of it, between an entry channel `in` and an output
 `out`. Its tasklet keeps no state and takes no configuration.
 
 <!-- tabs-open -->
@@ -175,7 +175,7 @@ public final class EchoRelay implements Relay {
 
     @Override
     public void channels(@Nonnull ChannelBuilder c) {
-        c.input(String.class, "in").into(Echo.class).sink("out");
+        c.input(String.class, "in").into(Echo.class).output("out");
     }
 }
 ```
@@ -198,7 +198,7 @@ Full file: [`Main.java`](https://github.com/flezha/flezha_java_sdk/blob/main/exa
 **The class is the tasklet.** It implements `Tasklet<String, Void, String>`: a
 string in, no state, a string out. With `Void` state it keeps nothing between
 messages and journals nothing. `@Tasklet.Spec` gives it its name, and the
-relay names the class itself: nothing is generated. `sink(name)` both names
+relay names the class itself: nothing is generated. `output(name)` both names
 the output channel and ends it on the plugin layer, so naming the channel again
 with `named(...)` is refused at registration. `start()` connects and hands back
 the runner, and `awaitTermination()` blocks until shutdown, a SIGTERM or a
@@ -234,7 +234,7 @@ impl Relay for EchoRelay {
     }
 
     fn channels(c: &ChannelBuilder) {
-        c.input::<String>("in").into::<Echo>().sink_named("out");
+        c.input::<String>("in").into::<Echo>().output_named("out");
     }
 }
 ```
@@ -262,8 +262,8 @@ Full file: [`src/main.rs`](https://github.com/flezha/flezha_rust_sdk/blob/main/e
 fills in what the block leaves out. With no `type State` written, it keeps
 nothing and journals nothing. `input::<String>("in")` is the entry channel and
 the type it carries: a `String` or a `Vec<u8>` passes through as its bytes, and
-any other type is parsed from JSON. `sink_named("out")` names the channel it
-ends on the plugin layer; `sink()` would leave it the tasklet's name. A graph
+any other type is parsed from JSON. `output_named("out")` names the channel it
+ends on the plugin layer; `output()` would leave it the tasklet's name. A graph
 whose types do not line up is refused when the runner declares it. The runner
 is bound to a name because a chained temporary would be dropped, and shut down,
 at the end of its statement.
@@ -285,7 +285,7 @@ Full file: [`echo_tasklet.mjs`](https://github.com/flezha/flezha_node_sdk/blob/m
 export default defineRelay({
   factoryId: 'echo',
   channels: (c) => {
-    c.input('in', { codec: 'text' }).into(EchoTasklet).sink('out');
+    c.input('in', { codec: 'text' }).into(EchoTasklet).output('out');
   },
 });
 ```
@@ -306,7 +306,7 @@ Full file: [`runner.mjs`](https://github.com/flezha/flezha_node_sdk/blob/main/ex
 
 What `run` returns is not output; a value leaves only through `ctx.emit`.
 `{ codec: 'text' }` hands the tasklet the bytes `flz relay send --text`
-delivers as a string; an entry that names no codec reads JSON. The sink names
+delivers as a string; an entry that names no codec reads JSON. The output names
 no codec, so a string leaves as its UTF-8 bytes and any other value as JSON.
 The relay is registered by **module specifier**, a path rather than an
 imported value, because every dispatch loop imports the module itself; that is
@@ -329,7 +329,7 @@ Full file: [`echo_tasklet.py`](https://github.com/flezha/flezha_python_sdk/blob/
 # echo_relay.py: the relay. The graph, and the unit the controller schedules.
 @flezha.relay("echo")  # the stable identity `flz relay start` takes
 def echo_relay(c: flezha.Channels) -> None:
-    c.input("in", codec="text").into(Echo).sink("out")
+    c.input("in", codec="text").into(Echo).output("out")
 ```
 
 Full file: [`echo_relay.py`](https://github.com/flezha/flezha_python_sdk/blob/main/examples/echo/echo_relay.py).
@@ -375,7 +375,7 @@ class EchoRelay < Flezha::Relay
   channels do |c|
     c.input("in", codec: :text)
      .into(EchoTasklet)
-     .sink("out")
+     .output("out")
   end
 end
 ```
@@ -426,7 +426,7 @@ final class EchoRelay extends \Flezha\Relay
     {
         $c->input('in', codec: ChannelCodec::Text)
             ->into(EchoTasklet::class)
-            ->sink('out');
+            ->output('out');
     }
 }
 ```
@@ -476,7 +476,7 @@ defmodule Echo.Relay do
 
   @impl true
   def channels(c) do
-    c |> input("in") |> into(Echo.Tasklet) |> sink("out")
+    c |> input("in") |> into(Echo.Tasklet) |> output("out")
   end
 end
 ```
@@ -509,11 +509,11 @@ steps.
 
 ## The short form
 
-A relay that is exactly one tasklet between one input and one sink can be
+A relay that is exactly one tasklet between one input and one output can be
 declared in one piece, with the tasklet's body in place of a `channels` graph.
 It is the same relay you would write by hand with that single tasklet: an
 entry channel (named `input` unless the declaration names it), the tasklet, a
-plugin sink when one is named, the factory id, and the settings tree the
+plugin output when one is named, the factory id, and the settings tree the
 declaration writes. It takes the place of both the tasklet and the relay,
 under the relay's name, so the runner does not change.
 
@@ -522,25 +522,25 @@ way, needs it. The echo examples are written long.
 
 | SDK | The echo, written short |
 | --- | --- |
-| Java | a tasklet class annotated `@Relay(id = "echo", input = "in", sink = "out")` |
-| Rust | a function annotated `#[flezha_runner::relay(id = "echo", input = "in", sink = "out")]`, whose return value is its output; `fn echo_relay` becomes the type `EchoRelay` |
-| Node | `defineRelay({ factoryId: 'echo', input: 'in', sink: 'out', codec: 'text', run: ... })` |
-| Python | a function decorated `@flezha.relay(id="echo", input="in", sink="out", codec="text")`, whose return value is its output |
-| Ruby | an `Flezha::Relay` class with `factory_id "echo"`, `input "in"`, `sink "out"`, `codec :text` and a `run` method |
-| PHP | `#[Relay(factoryId: 'echo', input: 'in', sink: 'out', codec: ChannelCodec::Text)]` on a class with a `run` method |
-| Elixir | `use Flezha.SDK.Relay, factory_id: "echo", input: "in", sink: "out"` in a module with a `run/3` |
+| Java | a tasklet class annotated `@Relay(id = "echo", input = "in", output = "out")` |
+| Rust | a function annotated `#[flezha_runner::relay(id = "echo", input = "in", output = "out")]`, whose return value is its output; `fn echo_relay` becomes the type `EchoRelay` |
+| Node | `defineRelay({ factoryId: 'echo', input: 'in', output: 'out', codec: 'text', run: ... })` |
+| Python | a function decorated `@flezha.relay(id="echo", input="in", output="out", codec="text")`, whose return value is its output |
+| Ruby | an `Flezha::Relay` class with `factory_id "echo"`, `input "in"`, `output "out"`, `codec :text` and a `run` method |
+| PHP | `#[Relay(factoryId: 'echo', input: 'in', output: 'out', codec: ChannelCodec::Text)]` on a class with a `run` method |
+| Elixir | `use Flezha.SDK.Relay, factory_id: "echo", input: "in", output: "out"` in a module with a `run/3` |
 
 Rules every SDK shares:
 
 - A declaration that carries both a tasklet body and a `channels` body is
   refused (`topology.short_form_with_topology`).
-- A `sink` on a body that, as far as the SDK can see, declares no output is
-  refused (`topology.sink_without_output`). Node, Ruby, PHP and Elixir cannot
+- An `output` on a body that, as far as the SDK can see, declares no output is
+  refused (`topology.output_without_type`). Node, Ruby, PHP and Elixir cannot
   see an output type, so they do not check this.
 - A second relay under a factory id the runner already holds, written short
   or long, is refused at the call that declares it
   (`topology.duplicate_factory_id`).
-- `sink` is optional: with none, the relay declares the entry channel and
+- `output` is optional: with none, the relay declares the entry channel and
   the tasklet, and keeps state without sending anything out.
 - A steps short form runs once over its first message unless it writes `each`;
   a second message to it is accepted and never read.

@@ -65,7 +65,7 @@ pub enum TopologyIssue {
         tasklet: String,
         value: usize,
     },
-    DuplicatePluginSink {
+    DuplicatePluginOutput {
         channel: String,
     },
     /// Two plugin ends (a `sink` and a `call(...)`, or two calls) on one
@@ -94,9 +94,9 @@ pub enum TopologyIssue {
     ChannelNamedTwice {
         channel: String,
         named: String,
-        sink: String,
+        output: String,
     },
-    DuplicateSinkName {
+    DuplicateOutputName {
         channel: String,
     },
     KeyedChannelWithoutPluginWire {
@@ -228,14 +228,14 @@ impl TopologyIssue {
             Self::UnkeyedEdgeIntoDynamicTasklet { .. } => Code::UnkeyedEdgeIntoDynamicTasklet,
             Self::MailboxCapacityZero { .. } => Code::MailboxCapacityZero,
             Self::MailboxCapacityTooLarge { .. } => Code::MailboxCapacityTooLarge,
-            Self::DuplicatePluginSink { .. } => Code::DuplicatePluginSink,
+            Self::DuplicatePluginOutput { .. } => Code::DuplicatePluginOutput,
             Self::ChannelEndsTwice { .. } => Code::ChannelEndsTwice,
             Self::CallOutsidePerInputLoop { .. } => Code::CallOutsidePerInputLoop,
             Self::CallWithoutKey { .. } => Code::CallWithoutKey,
             Self::CallDeadlineZero { .. } => Code::CallDeadlineZero,
             Self::CallResponseUnread { .. } => Code::CallResponseUnread,
             Self::ChannelNamedTwice { .. } => Code::ChannelNamedTwice,
-            Self::DuplicateSinkName { .. } => Code::DuplicateSinkName,
+            Self::DuplicateOutputName { .. } => Code::DuplicateOutputName,
             Self::KeyedChannelWithoutPluginWire { .. } => Code::KeyedChannelWithoutPluginWire,
             Self::UnservableClock { .. } => Code::UnservableClock,
             Self::UnkeyedChannelUnderEffectivelyOnce { .. } => {
@@ -308,7 +308,7 @@ impl TopologyIssue {
                 ("tasklet", tasklet.clone().into()),
                 ("value", (*value).into()),
             ],
-            Self::DuplicatePluginSink { channel }
+            Self::DuplicatePluginOutput { channel }
             | Self::ChannelEndsTwice { channel }
             | Self::CallOutsidePerInputLoop { channel }
             | Self::CallWithoutKey { channel }
@@ -320,13 +320,13 @@ impl TopologyIssue {
             Self::ChannelNamedTwice {
                 channel,
                 named,
-                sink,
+                output,
             } => vec![
                 ("channel", channel.clone().into()),
                 ("named", named.clone().into()),
-                ("sink", sink.clone().into()),
+                ("output", output.clone().into()),
             ],
-            Self::DuplicateSinkName { channel } => vec![("channel", channel.clone().into())],
+            Self::DuplicateOutputName { channel } => vec![("channel", channel.clone().into())],
             Self::KeyedChannelWithoutPluginWire { channel } => {
                 vec![("channel", channel.clone().into())]
             }

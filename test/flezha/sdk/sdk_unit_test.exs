@@ -36,7 +36,7 @@ defmodule Flezha.SDK.UnitTest do
         |> Channels.input("in")
         |> Channels.into(EchoTask)
         |> Channels.named("echo")
-        |> Channels.sink()
+        |> Channels.output()
   end
 
   defmodule KeyedTask do
@@ -58,7 +58,7 @@ defmodule Flezha.SDK.UnitTest do
       |> Channels.key_by(fn s -> s end)
       |> Channels.into(KeyedTask)
       |> Channels.named("k")
-      |> Channels.sink()
+      |> Channels.output()
     end
   end
 
@@ -93,7 +93,7 @@ defmodule Flezha.SDK.UnitTest do
         |> Channels.input("in")
         |> Channels.into(StaticTask)
         |> Channels.named("s")
-        |> Channels.sink()
+        |> Channels.output()
   end
 
   # --- cell mode derivation ---
@@ -197,7 +197,7 @@ defmodule Flezha.SDK.UnitTest do
   test "KeyedOnEntry — an entry channel has no output of its own to stamp" do
     defmodule KeyedEntry do
       def factory_id, do: "keyed_entry"
-      def channels(c), do: c |> Channels.input("in") |> Channels.keyed() |> Channels.sink()
+      def channels(c), do: c |> Channels.input("in") |> Channels.keyed() |> Channels.output()
     end
 
     assert [{"topology.keyed_on_entry", %{"channel" => "in"}}] =
@@ -266,7 +266,7 @@ defmodule Flezha.SDK.UnitTest do
       |> input("in")
       |> map(&String.upcase/1)
       |> branch([&into(&1, EchoTask), &into(&1, KeyedTask)])
-      |> sink()
+      |> output()
     end
   end
 
@@ -278,7 +278,7 @@ defmodule Flezha.SDK.UnitTest do
       upper = c |> Channels.input("in") |> Channels.map(&String.upcase/1)
       Channels.into(upper, EchoTask)
       Channels.into(upper, KeyedTask)
-      Channels.sink(upper)
+      Channels.output(upper)
     end
   end
 
@@ -373,7 +373,7 @@ defmodule Flezha.SDK.UnitTest do
         |> Channels.into(KeyedTask)
         |> Channels.named("sink")
         |> Channels.keyed()
-        |> Channels.sink()
+        |> Channels.output()
       end
     end
 
@@ -400,7 +400,7 @@ defmodule Flezha.SDK.UnitTest do
           |> Channels.into(KeyedTask)
           |> Channels.named("sink")
           |> Channels.keyed()
-          |> Channels.sink()
+          |> Channels.output()
     end
 
     assert {"topology.checkpoint_max_delay_zero", _} = one_issue(DelayZero)
@@ -418,7 +418,7 @@ defmodule Flezha.SDK.UnitTest do
           |> Channels.into(EventTimeTask)
           |> Channels.named("sink")
           |> Channels.keyed()
-          |> Channels.sink()
+          |> Channels.output()
     end
 
     assert {"topology.correction_window_zero", _} = one_issue(PolicyWithoutWindow)
@@ -440,7 +440,7 @@ defmodule Flezha.SDK.UnitTest do
           |> Channels.into(EventTimeTask)
           |> Channels.named("sink")
           |> Channels.keyed()
-          |> Channels.sink()
+          |> Channels.output()
     end
 
     assert {"topology.dropping_policy_under_effectively_once",
@@ -461,7 +461,7 @@ defmodule Flezha.SDK.UnitTest do
           |> Channels.into(EventTimeTask)
           |> Channels.named("sink")
           |> Channels.keyed()
-          |> Channels.sink()
+          |> Channels.output()
     end
 
     assert {:ok, %{correction: %{window_ms: 600_000, beyond_window: :drop}}} =
@@ -480,7 +480,7 @@ defmodule Flezha.SDK.UnitTest do
           |> Channels.into(EventTimeTask)
           |> Channels.named("sink")
           |> Channels.keyed()
-          |> Channels.sink()
+          |> Channels.output()
     end
 
     assert {:ok, topo} = Topology.build(CandleShape)

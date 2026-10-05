@@ -47,8 +47,8 @@ defmodule Flezha.SDK.TopologyWiringTest do
 
     def channels(c) do
       s = c |> Channels.input("in") |> Channels.into(EchoTask)
-      Channels.sink(s, "same")
-      Channels.sink(s, "same")
+      Channels.output(s, "same")
+      Channels.output(s, "same")
     end
   end
 
@@ -57,8 +57,8 @@ defmodule Flezha.SDK.TopologyWiringTest do
 
     def channels(c) do
       s = c |> Channels.input("in") |> Channels.into(EchoTask)
-      Channels.sink(s, "a")
-      Channels.sink(s, "b")
+      Channels.output(s, "a")
+      Channels.output(s, "b")
     end
   end
 
@@ -70,7 +70,7 @@ defmodule Flezha.SDK.TopologyWiringTest do
       |> Channels.input("in")
       |> Channels.into(EchoTask)
       |> Channels.named("same")
-      |> Channels.sink("same")
+      |> Channels.output("same")
     end
   end
 
@@ -79,8 +79,8 @@ defmodule Flezha.SDK.TopologyWiringTest do
 
     def channels(c) do
       node = c |> Channels.input("in") |> Channels.into(EchoTask)
-      node |> Channels.keyed() |> Channels.sink("stamped")
-      node |> Channels.sink()
+      node |> Channels.keyed() |> Channels.output("stamped")
+      node |> Channels.output()
     end
   end
 
@@ -91,9 +91,9 @@ defmodule Flezha.SDK.TopologyWiringTest do
       c
       |> Channels.input("in")
       |> Channels.into(EchoTask)
-      |> Channels.sink("shared")
+      |> Channels.output("shared")
       |> Channels.into(KeyedTask)
-      |> Channels.sink("shared")
+      |> Channels.output("shared")
     end
   end
 
@@ -102,7 +102,7 @@ defmodule Flezha.SDK.TopologyWiringTest do
 
     def channels(c) do
       s = c |> Channels.input("in") |> Channels.into(EchoTask)
-      s |> Channels.named("shared") |> Channels.into(KeyedTask) |> Channels.sink("shared")
+      s |> Channels.named("shared") |> Channels.into(KeyedTask) |> Channels.output("shared")
     end
   end
 
@@ -110,7 +110,7 @@ defmodule Flezha.SDK.TopologyWiringTest do
     def factory_id, do: "snc"
 
     def channels(c) do
-      c |> Channels.input("in") |> Channels.into(EchoTask) |> Channels.sink("items_output")
+      c |> Channels.input("in") |> Channels.into(EchoTask) |> Channels.output("items_output")
     end
   end
 
@@ -118,12 +118,12 @@ defmodule Flezha.SDK.TopologyWiringTest do
     def factory_id, do: "ns"
 
     def channels(c) do
-      c |> Channels.input("in") |> Channels.into(EchoTask) |> Channels.sink()
+      c |> Channels.input("in") |> Channels.into(EchoTask) |> Channels.output()
     end
   end
 
-  test "DuplicatePluginSink — one channel wired twice with the same stamping mode" do
-    assert [{"topology.duplicate_plugin_sink", %{"channel" => "same", "plugin" => "same"}}] =
+  test "DuplicatePluginOutput — one channel wired twice with the same stamping mode" do
+    assert [{"topology.duplicate_plugin_output", %{"channel" => "same", "plugin" => "same"}}] =
              refusal_issues(Topology.build(DuplicateSink))
   end
 
@@ -136,29 +136,32 @@ defmodule Flezha.SDK.TopologyWiringTest do
            "both wires are on one channel, and the sink named it"
   end
 
-  test "the sink names the channel, and sink/1 leaves the name derived" do
+  test "the sink names the channel, and output/1 leaves the name derived" do
     assert {:ok, named} = Topology.build(SinkNamesTheChannel)
     assert sink_channels(named) == ["items_output"]
 
     assert {:ok, derived} = Topology.build(NamelessSink)
-    assert sink_channels(derived) == ["echo"], "sink/1 derives exactly as a channel with no sink"
+
+    assert sink_channels(derived) == ["echo"],
+           "output/1 derives exactly as a channel with no sink"
   end
 
   test "ChannelNamedTwice — named/2 beside a sink that names, even when they agree" do
     assert {"topology.channel_named_twice",
-            %{"channel" => "echo", "named" => "same", "sink" => "same"}} in refusal_issues(
+            %{"channel" => "echo", "named" => "same", "output" => "same"}} in refusal_issues(
              Topology.build(NamedAndSinkNamed)
            )
   end
 
   test "ChannelNamedTwice — two sinks naming one channel differently" do
-    assert {"topology.channel_named_twice", %{"channel" => "echo", "named" => "a", "sink" => "b"}} in refusal_issues(
+    assert {"topology.channel_named_twice",
+            %{"channel" => "echo", "named" => "a", "output" => "b"}} in refusal_issues(
              Topology.build(TwoNamedSinks)
            )
   end
 
-  test "DuplicateSinkName — two channels naming one sink" do
-    assert {"topology.duplicate_sink_name", %{"channel" => "shared"}} in refusal_issues(
+  test "DuplicateOutputName — two channels naming one sink" do
+    assert {"topology.duplicate_output_name", %{"channel" => "shared"}} in refusal_issues(
              Topology.build(TwoChannelsOneSink)
            )
   end
@@ -187,7 +190,7 @@ defmodule Flezha.SDK.TopologyWiringTest do
       |> Channels.from(fills, &{:fill, &1})
       |> Channels.key_by(fn {_source, value} -> value |> String.split(":") |> hd() end)
       |> Channels.into(KeyedTask)
-      |> Channels.sink("merged")
+      |> Channels.output("merged")
     end
   end
 

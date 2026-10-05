@@ -62,7 +62,7 @@ pub enum Sent {
 
 /// Send one part of the invocation `work` on `slot`, numbered `*sequence`,
 /// which is advanced for every part the call accepts, dropped or not, so a
-/// listener reads a drop as a gap. Refused with `part.no_sink` when the
+/// listener reads a drop as a gap. Refused with `part.no_output` when the
 /// tasklet's output channel does not end in a sink.
 pub fn send(
     slot: &CellSlot,
@@ -140,7 +140,7 @@ fn previewed_channel(slot: &CellSlot) -> Result<&str, Error> {
         .and_then(|id| slot.topology.channel(id));
     match channel {
         Some(channel) if channel.sink => Ok(&channel.name),
-        _ => Err(Error::Part(Code::PartNoSink.with([
+        _ => Err(Error::Part(Code::PartNoOutput.with([
             ("tasklet", slot.dispatcher.tasklet_name().into()),
             ("relay", slot.instance_id.as_ref().into()),
             ("channel", channel.map_or("", |c| c.name.as_ref()).into()),

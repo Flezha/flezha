@@ -3,7 +3,7 @@
 ## Purpose
 A part: a preview of the output a tasklet's invocation is producing, sent while it runs, what it
 carries, how it leaves the runner and the controller, when it is dropped or refused, and that it is
-never durable and never reaches a sink or a waiting caller.
+never durable and never reaches an output or a waiting caller.
 ## Requirements
 ### Requirement: A tasklet SHALL be able to send a part while it runs
 
@@ -21,7 +21,7 @@ channel argument.
 #### Scenario: A flow tasklet streams parts before its output
 
 - **GIVEN** a flow relay whose tasklet sends the parts `he`, `hel` and `hell` and
-  then emits `hello` on its sink `answer`
+  then emits `hello` on its output `answer`
 - **WHEN** a listener is attached and the relay is sent one input
 - **THEN** the listener SHALL receive the three parts in order, each on channel `answer`,
   and then the output `hello`
@@ -29,7 +29,7 @@ channel argument.
 #### Scenario: A steps session streams parts within its turn
 
 - **GIVEN** a `per_input` steps relay whose tasklet sends two parts and then emits its
-  answer on the sink `answer`
+  answer on the output `answer`
 - **WHEN** a listener is attached and the instance is sent one message
 - **THEN** the listener SHALL receive both parts before the answer, and the answer SHALL
   leave at the stage's commit as it does today
@@ -79,20 +79,20 @@ preview for its channel and Cell. No user code SHALL be able to set a `flz.` key
 - **THEN** the part SHALL carry `flz.key` `s-7` and a `flz.cell` naming the relay, the
   tasklet and `s-7`
 
-### Requirement: A part SHALL never be durable and SHALL never reach a sink
+### Requirement: A part SHALL never be durable and SHALL never reach an output
 
 A part SHALL NOT be written into an effect record, a Cell's WAL, an outbox, a task journal,
 the input log or the dead-letter store, SHALL NOT be replayed, re-forwarded or re-sent by
 any recovery path, SHALL NOT be counted as an output by any counter, and SHALL NOT be
-offered to any plugin hook but `on_preview`. A sink plugin SHALL never receive a part. A
+offered to any plugin hook but `on_preview`. A output plugin SHALL never receive a part. A
 part SHALL NOT change the invocation's outputs, state changes, timers, completion or
 retry outcome: an invocation that sends parts SHALL produce exactly the outputs and effects
 it would produce without them. The part SHALL NOT be the answer: the output is.
 
-#### Scenario: A sink sees only the output
+#### Scenario: An output plugin sees only the output
 
-- **GIVEN** a relay whose tasklet sends three parts and emits one output on a sink with
-  a file sink plugin attached, and a listener attached beside it
+- **GIVEN** a relay whose tasklet sends three parts and emits one output on a channel with
+  a file output plugin attached, and a listener attached beside it
 - **WHEN** one input is processed
 - **THEN** the file SHALL hold exactly the one output, and the listener SHALL have received
   three parts and one output
@@ -144,26 +144,26 @@ reason, and the count SHALL be readable where the runner's other liveness counte
 ### Requirement: A part SHALL be refused when it has nowhere to preview or no invocation
 
 The part call SHALL raise the SDK's one error type (in Elixir, answer the error) and send
-nothing when the tasklet's output channel does not end in a sink, with the code
-`part.no_sink`: only a sink satisfies a part, and a `call` end
+nothing when the tasklet's output channel does not end in an output, with the code
+`part.no_output`: only an output satisfies a part, and a `call` end
 is not one, since its output is a request taken aside
 before any listener. It SHALL also refuse when it is made through a context whose invocation has
 already returned, with the code `part.outside_invocation`. Both codes SHALL be of class `invalid`
 and SHALL be listed in the error catalogue. A raise from the part call inside `run` SHALL fail the
 invocation as any raise does.
 
-#### Scenario: A tasklet with no sink cannot send a part
+#### Scenario: A tasklet with no output cannot send a part
 
 - **GIVEN** a tasklet whose output channel only feeds another tasklet
 - **WHEN** it sends a part
-- **THEN** the call SHALL fail with `part.no_sink` naming the tasklet and its channel, and
+- **THEN** the call SHALL fail with `part.no_output` naming the tasklet and its channel, and
   no frame SHALL leave the runner
 
 #### Scenario: A tasklet whose channel calls another relay cannot send a part
 
-- **GIVEN** a tasklet whose output channel ends in a `call` end, and no sink
+- **GIVEN** a tasklet whose output channel ends in a `call` end, and no output
 - **WHEN** it sends a part
-- **THEN** the call SHALL fail with `part.no_sink`, and no frame SHALL leave the runner
+- **THEN** the call SHALL fail with `part.no_output`, and no frame SHALL leave the runner
 
 #### Scenario: A context kept past its invocation cannot send a part
 
@@ -195,7 +195,7 @@ whose metadata names the instance under `flz.relay`. The stream channel SHALL ro
 by that id through the same per-session route an output frame uses, so a part from a
 session that no longer owns the instance is dropped. The instance's Overwatch SHALL run the
 `on_preview` hook over it and nothing else: it SHALL NOT enter `on_output`, the outbox, the
-held-output list of a binding in flight or any sink. A relay with no subscriber on
+held-output list of a binding in flight or any output. A relay with no subscriber on
 `on_preview` SHALL drop a part at the hook's active-bit check. A part SHALL be handed to
 each listener without making the Overwatch wait on that listener or on the distribution
 link to it.
@@ -222,7 +222,7 @@ link to it.
 
 Because a part travels under its own payload id, a controller without this change SHALL
 read the frame as addressed to an instance named `output_part`, find no route and drop it.
-No part SHALL reach a sink of a controller that does not know parts, unless a user has named
+No part SHALL reach an output of a controller that does not know parts, unless a user has named
 a relay `output_part` on the same runner session, which the older controller cannot
 tell from a part's destination.
 
@@ -230,7 +230,7 @@ tell from a part's destination.
 
 - **GIVEN** a runner with this change connected to a controller without it
 - **WHEN** a tasklet sends a part and then emits
-- **THEN** the controller SHALL drop the part, and its sinks SHALL receive the output alone
+- **THEN** the controller SHALL drop the part, and its outputs SHALL receive the output alone
 
 ### Requirement: A caller waiting for an answer SHALL NOT receive parts
 
@@ -241,7 +241,7 @@ attaches a listener.
 
 #### Scenario: An outside caller sees the answer alone
 
-- **GIVEN** a relay declaring `input("turn") |> into(Turn) |> sink("events")`,
+- **GIVEN** a relay declaring `input("turn") |> into(Turn) |> output("events")`,
   whose `Turn` sends parts and then emits its answer
 - **WHEN** an outside caller sends it an input and waits, with a listener attached beside it
 - **THEN** the caller SHALL receive `Turn`'s output only, and the listener SHALL receive

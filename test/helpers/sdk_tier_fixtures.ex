@@ -60,7 +60,7 @@ defmodule FlezhaTest.Helper.SdkTierFixtures do
         |> Channels.into(TierStoreTask)
         |> Channels.named("sink")
         |> Channels.keyed()
-        |> Channels.sink()
+        |> Channels.output()
   end
 
   defmodule CheckpointBatchedOp do
@@ -80,7 +80,7 @@ defmodule FlezhaTest.Helper.SdkTierFixtures do
       |> Channels.into(TierStoreTask)
       |> Channels.named("sink")
       |> Channels.keyed()
-      |> Channels.sink()
+      |> Channels.output()
     end
   end
 
@@ -97,7 +97,7 @@ defmodule FlezhaTest.Helper.SdkTierFixtures do
         |> Channels.into(TierStoreTask)
         |> Channels.named("sink")
         |> Channels.keyed()
-        |> Channels.sink()
+        |> Channels.output()
   end
 
   defmodule CheckpointEveryOp do
@@ -113,7 +113,7 @@ defmodule FlezhaTest.Helper.SdkTierFixtures do
         |> Channels.into(TierStoreTask)
         |> Channels.named("sink")
         |> Channels.keyed()
-        |> Channels.sink()
+        |> Channels.output()
   end
 
   defmodule CheckpointHeldOp do
@@ -134,7 +134,7 @@ defmodule FlezhaTest.Helper.SdkTierFixtures do
         |> Channels.into(TierStoreTask)
         |> Channels.named("sink")
         |> Channels.keyed()
-        |> Channels.sink()
+        |> Channels.output()
   end
 
   defmodule TierTimerTask do
@@ -178,7 +178,7 @@ defmodule FlezhaTest.Helper.SdkTierFixtures do
         |> Channels.into(TierTimerTask)
         |> Channels.named("sink")
         |> Channels.keyed()
-        |> Channels.sink()
+        |> Channels.output()
   end
 
   defmodule HeldConsumerTask do
@@ -265,7 +265,7 @@ defmodule FlezhaTest.Helper.SdkTierFixtures do
         |> Channels.into(StatelessTierTask)
         |> Channels.named("sink")
         |> Channels.keyed()
-        |> Channels.sink()
+        |> Channels.output()
   end
 
   # The correction probes. Deliberately NOT the reference's `candle`: no bucket
@@ -310,7 +310,7 @@ defmodule FlezhaTest.Helper.SdkTierFixtures do
         |> Channels.into(CorrectionTask)
         |> Channels.named("sink")
         |> Channels.keyed()
-        |> Channels.sink()
+        |> Channels.output()
   end
 
   defmodule CorrectionDropOp do
@@ -328,6 +328,6 @@ defmodule FlezhaTest.Helper.SdkTierFixtures do
         |> Channels.into(CorrectionTask)
         |> Channels.named("sink")
         |> Channels.keyed()
-        |> Channels.sink()
+        |> Channels.output()
   end
 end

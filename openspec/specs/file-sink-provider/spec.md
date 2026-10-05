@@ -1,11 +1,11 @@
-# file-sink-provider Specification
+# file-output plugin-provider Specification
 
 ## Purpose
 TBD - created by archiving change add-a-file-plugin. Update Purpose after archive.
 ## Requirements
-### Requirement: A file sink SHALL append one line per record and confirm the hold only once the batch is durable
+### Requirement: A file output plugin SHALL append one line per record and confirm the hold only once the batch is durable
 
-A built-in provider `relay_file_sink` SHALL be attachable as a plugin with options `{path,
+A built-in provider `relay_file_output` SHALL be attachable as a plugin with options `{path,
 channel_out?, commit? (append), linger_ms? (default 25), max_batch? (default 500), queue_max?
 (default 10000), retry_backoff_ms?, retry_max_backoff_ms?, unhealthy_after_ms? (default
 30000), plugin_id?}` and the hooks `on_input` and `on_output`. It SHALL NOT declare that it
@@ -20,12 +20,12 @@ the batch and retry under the shared backoff ladder; no record SHALL be dropped.
 enqueuing past `queue_max` SHALL park until a flush frees space.
 
 A record whose message contains a newline SHALL NOT be written and SHALL be parked in the
-dead-letter store under the plugin id with reason `embedded_newline`; the sink SHALL NOT
+dead-letter store under the plugin id with reason `embedded_newline`; the output plugin SHALL NOT
 rewrite bytes.
 
 #### Scenario: Three records become three lines
 
-- **WHEN** records `a`, `b`, `c` pass through the sink
+- **WHEN** records `a`, `b`, `c` pass through the output plugin
 - **THEN** the file SHALL end with `a\nb\nc\n`
 
 #### Scenario: The hold is confirmed after the sync
@@ -43,13 +43,13 @@ rewrite bytes.
 
 #### Scenario: Only the filtered channel is written
 
-- **GIVEN** a sink with `channel_out: "alerts"` on a relay also producing `metrics`
+- **GIVEN** an output plugin with `channel_out: "alerts"` on a relay also producing `metrics`
 - **WHEN** one record is released on each
 - **THEN** only the `alerts` record SHALL be written
 
 #### Scenario: An embedded newline is parked
 
-- **WHEN** a record whose message is `a\nb` reaches the sink
+- **WHEN** a record whose message is `a\nb` reaches the output plugin
 - **THEN** nothing SHALL be written for it and it SHALL be parked with reason
   `embedded_newline`
 
@@ -58,9 +58,9 @@ rewrite bytes.
 - **WHEN** a plugin is attached with `channel` or `channel_in`
 - **THEN** the attach SHALL fail, naming the option as one this provider does not offer
 
-### Requirement: A file sink SHALL self-report health
+### Requirement: A file output plugin SHALL self-report health
 
-The sink SHALL report `{:unhealthy, :no_sink}` with no worker, `{:unhealthy, :worker_dead}`
+The output plugin SHALL report `{:unhealthy, :no_worker}` with no worker, `{:unhealthy, :worker_dead}`
 with a dead one, `{:unhealthy, {:open_failed, reason}}` when the file cannot be opened, and
 `{:unhealthy, {:write_stalled, error}}` when records are pending, the failure run is non-zero,
 and no durable flush has completed within `unhealthy_after_ms`. Otherwise it SHALL report
@@ -72,7 +72,7 @@ and no durable flush has completed within `unhealthy_after_ms`. Otherwise it SHA
 - **WHEN** health is queried
 - **THEN** it SHALL report `{:unhealthy, {:write_stalled, error}}`
 
-#### Scenario: An idle sink is healthy
+#### Scenario: An idle output plugin is healthy
 
 - **GIVEN** no pending records
 - **WHEN** health is queried
@@ -86,7 +86,7 @@ written and synced before a crash, whose confirmation did not reach the outbox, 
 after the restart and appended a second time. No record is lost. `rename` is a directory of
 immutable part files committed by rename with a progress sidecar, under which a record the
 outbox guarantees, carrying a confirmation token and a replay-stable identity, SHALL be written
-exactly once across a sink crash, a plugin restart and a controller restart, and any other
+exactly once across an output plugin crash, a plugin restart and a controller restart, and any other
 record is written at least once. A value the option does not declare SHALL be refused at attach
 naming the option.
 
@@ -120,12 +120,12 @@ naming `commit`, and `rename` SHALL commit parts as `file-plugin-s3` requires.
 #### Scenario: Append under an S3 root is refused
 
 - **GIVEN** the root is `s3://events/flezha`
-- **WHEN** a sink is attached without `commit`, or with `commit: "append"`
+- **WHEN** an output plugin is attached without `commit`, or with `commit: "append"`
 - **THEN** the attach SHALL fail naming `commit`
 
-### Requirement: Under `rename` the sink SHALL commit immutable parts and reconcile the directory by one rule
+### Requirement: Under `rename` the output plugin SHALL commit immutable parts and reconcile the directory by one rule
 
-Under `commit: "rename"` the sink SHALL write records into a hidden temp file in the directory
+Under `commit: "rename"` the output plugin SHALL write records into a hidden temp file in the directory
 `path` names, syncing each batch as it flushes. It SHALL close a roll when `roll_after_ms`
 (default 10 000) or `roll_bytes` (default 64 MiB) is reached, whichever first, by renaming the
 temp file to `part-<N>` with `N` zero-padded and strictly increasing, then writing a sidecar
@@ -133,14 +133,14 @@ temp file to `part-<N>` with `N` zero-padded and strictly increasing, then writi
 part up to `N`, and only then confirming every hold the part carries. A temp file SHALL NOT be
 visible under a final name.
 
-On start the sink SHALL delete every temp file and every part whose number is greater than the
+On start the output plugin SHALL delete every temp file and every part whose number is greater than the
 sidecar's, because their records were never confirmed and the outbox re-drive returns them. A
 part more than one ahead of the sidecar SHALL refuse the start naming both numbers, and SHALL
 delete nothing. A guaranteed record whose `(epoch, seq)` is at or below the sidecar's watermark
 for its Cell SHALL NOT be written and its hold SHALL be confirmed; one at or below the open
 roll's watermark SHALL NOT be written and its hold SHALL be confirmed with the roll. Only a
 record carrying an outbox confirmation token is judged, because any other record's seq may
-repeat. The identity a record carries SHALL be read by the same function the Postgres sink
+repeat. The identity a record carries SHALL be read by the same function the Postgres output plugin
 reads it with.
 
 #### Scenario: A roll becomes one immutable part
@@ -165,20 +165,20 @@ reads it with.
 #### Scenario: A crash between the two renames writes once
 
 - **GIVEN** `part-00000005` present and `.progress` naming `4`
-- **WHEN** the sink starts and the part's records are re-driven
+- **WHEN** the output plugin starts and the part's records are re-driven
 - **THEN** `part-00000005` SHALL be deleted at start and its records SHALL appear in exactly
   one part afterwards
 
 #### Scenario: A crash after the sidecar writes once
 
 - **GIVEN** `.progress` naming `5` with a watermark covering `part-00000005`
-- **WHEN** the sink starts and `part-00000005`'s records are re-driven
+- **WHEN** the output plugin starts and `part-00000005`'s records are re-driven
 - **THEN** nothing SHALL be written for them and each hold SHALL be confirmed
 
 #### Scenario: A part two ahead refuses the start
 
 - **GIVEN** `part-00000007` present and `.progress` naming `5`
-- **WHEN** the sink starts
+- **WHEN** the output plugin starts
 - **THEN** it SHALL refuse naming `7` and `5`, health SHALL report
   `{:unhealthy, {:open_failed, reason}}`, and every part SHALL remain
 

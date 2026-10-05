@@ -2,7 +2,7 @@
 
 On this page you start the gateway, a relay that runs in flow behind the
 HTTP plugin, and stream Anna's answer to an HTTP client. Each request is an
-input on the channel `http`, and the first output the graph sends to a sink is
+input on the channel `http`, and the first output the graph sends to an output is
 the answer. [The HTTP server plugin](../../plugins/http_server.md) covers its
 options.
 
@@ -34,7 +34,7 @@ public final class GatewayRelay implements Relay {
         http.filter(request -> !request.sends())
                 .into(Watch.class)
                 .keyed()
-                .sink();                                     // a stream, or 404
+                .output();                                   // a stream, or 404
         // route 2: POST .../messages is checked against the user's budget
         Stream<Verdict> verdicts = http.filter(Request::sends)
                 .map(Event.class, request -> new Sent(request.message()))
@@ -44,7 +44,7 @@ public final class GatewayRelay implements Relay {
         // use 1: answer the POST
         verdicts.into(Admit.class)
                 .keyed()
-                .sink();                                     // 202, or 429 over the budget
+                .output();                                   // 202, or 429 over the budget
         // use 2: pass an admitted message on to the user's session
         verdicts.filter(Verdict::admitted)
                 .map(Message.class, Verdict::message)
@@ -103,7 +103,7 @@ defmodule Agentdesk.GatewayRelay do
     |> into(Watch)
     |> keyed()
     # a stream, or 404
-    |> sink()
+    |> output()
 
     # route 2: POST .../messages is checked against the user's budget
     verdicts =
@@ -120,7 +120,7 @@ defmodule Agentdesk.GatewayRelay do
     |> into(Admit)
     |> keyed()
     # 202, or 429 over the budget
-    |> sink()
+    |> output()
 
     # use 2: pass an admitted message on to the user's session
     verdicts
@@ -150,7 +150,7 @@ end
 
 The first route answers a request for a session's events with that session's
 stream. The other routes are the next page's. The gateway runs effectively once,
-so each sink is `keyed()`, and `Watch` and `Admit` key what they emit by the
+so each output is `keyed()`, and `Watch` and `Admit` key what they emit by the
 user.
 
 > Start the gateway, and enable the HTTP plugin on it.

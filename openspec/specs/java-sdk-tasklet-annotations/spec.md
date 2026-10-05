@@ -6,28 +6,28 @@ The java-sdk-tasklet-annotations capability is the Java realization of the SDK a
 ## Requirements
 ### Requirement: `@Relay` carries the short form
 
-The Java SDK SHALL provide the annotation `@Relay` in `com.flezha.sdk.authoring`, retained at runtime, applied to a class that implements `Tasklet`, declaring a whole single-tasklet relay that runs as its `run` member says (`flow` when unwritten). It SHALL require a non-empty `id`, SHALL accept an optional `sink`, an optional `onFull`, and an optional `input` defaulting to the empty string, which registration SHALL lower to the entry channel name `input`, and SHALL NOT accept a `kind` member. `@Relay` SHALL additionally accept `each()`, a `Each` defaulting to `ONCE`. No other member SHALL exist on either annotation: the output type comes from the tasklet's `Output`, keyed emits are the body's `ctx.emitKeyed`, and cell keys and mailbox capacity are `@Tasklet.Spec` members.
+The Java SDK SHALL provide the annotation `@Relay` in `com.flezha.sdk.authoring`, retained at runtime, applied to a class that implements `Tasklet`, declaring a whole single-tasklet relay that runs as its `run` member says (`flow` when unwritten). It SHALL require a non-empty `id`, SHALL accept an optional `output`, an optional `onFull`, and an optional `input` defaulting to the empty string, which registration SHALL lower to the entry channel name `input`, and SHALL NOT accept a `kind` member. `@Relay` SHALL additionally accept `each()`, a `Each` defaulting to `ONCE`. No other member SHALL exist on either annotation: the output type comes from the tasklet's `Output`, keyed emits are the body's `ctx.emitKeyed`, and cell keys and mailbox capacity are `@Tasklet.Spec` members.
 
-`FlezhaRunner.registerFactory` and `unregisterFactory` SHALL accept such a class and build, at registration, a relay whose `factoryId()` is the `id`, whose topology wires the entry channel into the class and, when a `sink` is written, the class to that plugin sink, whose `run()` is the annotation's, and whose every other relay method is at its interface default. With no `sink`, the topology SHALL declare the entry channel and the tasklet and no plugin channel. The tasklet's name SHALL be the `id`. The class SHALL need no `@Tasklet.Spec`; one written there carries the tasklet's settings, and its `name` SHALL equal the `id`, or registration SHALL fail with a `FlezhaException` whose code is `topology.short_form_name_mismatch`, naming both. Nothing SHALL be generated and nothing SHALL register itself.
+`FlezhaRunner.registerFactory` and `unregisterFactory` SHALL accept such a class and build, at registration, a relay whose `factoryId()` is the `id`, whose topology wires the entry channel into the class and, when an `output` is written, the class to that plugin output, whose `run()` is the annotation's, and whose every other relay method is at its interface default. With no `output`, the topology SHALL declare the entry channel and the tasklet and no plugin channel. The tasklet's name SHALL be the `id`. The class SHALL need no `@Tasklet.Spec`; one written there carries the tasklet's settings, and its `name` SHALL equal the `id`, or registration SHALL fail with a `FlezhaException` whose code is `topology.short_form_name_mismatch`, naming both. Nothing SHALL be generated and nothing SHALL register itself.
 
-Registration SHALL refuse, each with a `FlezhaException` naming the class: an empty or absent `id` as `topology.missing_factory_id`; a `sink` on a class whose `Output` is `Void` as `topology.sink_without_output`; and an annotated class that also implements `Relay` as `topology.short_form_with_topology`.
+Registration SHALL refuse, each with a `FlezhaException` naming the class: an empty or absent `id` as `topology.missing_factory_id`; an `output` on a class whose `Output` is `Void` as `topology.output_without_type`; and an annotated class that also implements `Relay` as `topology.short_form_with_topology`.
 
 #### Scenario: An annotated class is a whole flow relay
 
-- **WHEN** a class `Echo implements Tasklet<String, Void, String>` carries only `@Relay(id = "echo", sink = "out")`, and the runner is given `registerFactory(Echo.class)`
-- **THEN** the runner declares a flow relay `echo` with entry channel `input` and sink `out`, backed by the tasklet `echo`
+- **WHEN** a class `Echo implements Tasklet<String, Void, String>` carries only `@Relay(id = "echo", output = "out")`, and the runner is given `registerFactory(Echo.class)`
+- **THEN** the runner declares a flow relay `echo` with entry channel `input` and output `out`, backed by the tasklet `echo`
 
 #### Scenario: An annotated class is a whole steps relay
 
-- **WHEN** a class `Place` is annotated `@Relay(id = "place", sink = "placed", input = "order")`, is registered, an instance is started, and one message is sent on `order`
+- **WHEN** a class `Place` is annotated `@Relay(id = "place", output = "placed", input = "order")`, is registered, an instance is started, and one message is sent on `order`
 - **THEN** `run` receives the message on `order`, what it emits reaches `placed`, and the instance completes as a `once` steps relay
 
 #### Scenario: A short-form steps relay declares its loop mode
 
-- **WHEN** a class is annotated `@Relay(id = "chat", sink = "replies", each = Each.PER_INPUT)`, is registered, and two messages reach its entry channel
+- **WHEN** a class is annotated `@Relay(id = "chat", output = "replies", each = Each.PER_INPUT)`, is registered, and two messages reach its entry channel
 - **THEN** the relay's `each()` returns `PER_INPUT`, `run` runs once per message, and the instance does not complete after the first
 
-#### Scenario: A short form with no sink is declared
+#### Scenario: A short form with no output is declared
 
 - **WHEN** a class is annotated `@Relay(id = "counter", input = "ticks")` and registered
 - **THEN** the relay declares `ticks` into the tasklet and no plugin channel
@@ -44,17 +44,17 @@ Registration SHALL refuse, each with a `FlezhaException` naming the class: an em
 
 #### Scenario: The entry channel keeps its default name
 
-- **WHEN** a class annotated `@Relay(id = "echo", sink = "out")` declares no `input` element
+- **WHEN** a class annotated `@Relay(id = "echo", output = "out")` declares no `input` element
 - **THEN** the relay's entry channel SHALL be named `input`
 
 #### Scenario: The annotation names the entry channel
 
-- **WHEN** a class is annotated `@Relay(id = "echo", sink = "out", input = "prices")`
+- **WHEN** a class is annotated `@Relay(id = "echo", output = "out", input = "prices")`
 - **THEN** the relay's entry channel SHALL be named `prices`
 
 #### Scenario: An annotation with no id is refused
 
-- **WHEN** a class `Upcase` is annotated `@Relay(sink = "out")` with no `id`
+- **WHEN** a class `Upcase` is annotated `@Relay(output = "out")` with no `id`
 - **THEN** registration SHALL fail with the code `topology.missing_factory_id`, and SHALL NOT derive a factory id from the class name
 
 #### Scenario: An annotated class implementing a relay interface is refused
@@ -72,10 +72,10 @@ Registration SHALL refuse, each with a `FlezhaException` naming the class: an em
 - **WHEN** a class carries `@Relay(id = "counter")` and `@Tasklet.Spec(name = "tally")`
 - **THEN** registration SHALL fail with the code `topology.short_form_name_mismatch`, naming `counter` and `tally`
 
-#### Scenario: A sink on a Void output is refused
+#### Scenario: An output on a Void output is refused
 
-- **WHEN** a class `Drain implements Tasklet<String, Void, Void>` is annotated `@Relay(id = "drain", sink = "out")`
-- **THEN** registration SHALL fail with the code `topology.sink_without_output`
+- **WHEN** a class `Drain implements Tasklet<String, Void, Void>` is annotated `@Relay(id = "drain", output = "out")`
+- **THEN** registration SHALL fail with the code `topology.output_without_type`
 
 ### Requirement: `@Tasklet.Spec` declares a tasklet's name and settings
 

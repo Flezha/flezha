@@ -53,7 +53,7 @@ the chapter take one part each:
 - **Tasklet**: a processing stage of your own inside a relay.
 - **Cell**: one running copy of a tasklet with its own state.
 - **Channel**: the typed edge data travels on.
-- **Plugin**: a piece attached to a relay from outside. Sources and sinks
+- **Plugin**: a piece attached to a relay from outside. Sources and output plugins
   (a WebSocket, a file, Kafka, Postgres, HTTP) are plugins, and they run on the
   controller.
 
@@ -75,8 +75,8 @@ the edges between tasklets:
 ```mermaid
 flowchart TB
     CTRL["controller: routing and placement"]
-    SRC["source plugin"]
-    SINK["sink plugin"]
+    SRC["input plugin"]
+    SINK["output plugin"]
     subgraph RUN["runner"]
         subgraph OPV["relay instance"]
             subgraph P1["tasklet parse"]
@@ -108,7 +108,7 @@ flowchart TB
   cell.
 - **Channel.** An entry channel brings input from outside, a channel between
   tasklets carries one stage's output to the next, and a channel to a plugin
-  carries output to a sink.
+  carries output to an output plugin.
 
 ### The three cell modes
 
@@ -149,8 +149,8 @@ The full vocabulary is in the
 
 ```mermaid
 flowchart TB
-    SRC["source plugin"]
-    SINK["sink plugin"]
+    SRC["input plugin"]
+    SINK["output plugin"]
     subgraph CTRL["controller"]
         INLOG[("input log")]
         ROUTE["routing, mailboxes, credit"]
@@ -179,7 +179,7 @@ runner sends back its state changes and outputs (4), within a byte credit the
 controller grants. The controller writes the changes, the outputs and the
 offset of the input they came from as **one record under one fsync** (5), so
 state and output cannot come apart. A steps relay also records each
-finished step in its task journal (6). Outputs reach the sink only once that
+finished step in its task journal (6). Outputs reach the output plugin only once that
 record is on disk (7). After a crash, the controller restores each cell's
 state and a steps relay's position (dashed lines).
 
@@ -207,7 +207,7 @@ input goes through the same input log an effectively-once flow relay uses.
 
 These eight rules hold for every relay, whatever SDK it is written in.
 
-1. **Sources and sinks are plugins.** The core assumes no particular outside
+1. **Sources and output plugins are plugins.** The core assumes no particular outside
    system. Kafka, for example, is a plugin package with a consumer and a
    producer. The input log, the write-ahead log, the outbox, the watermark
    and credit do not depend on any plugin.
@@ -225,9 +225,9 @@ These eight rules hold for every relay, whatever SDK it is written in.
    from its own consumed offset.
 4. **Output identity and the epoch rule.** An output's identity is
    `flz.cell`, `flz.seq` and `flz.key`; the outbox adds `flz.epoch`. A crash
-   retry, a re-send or a runner takeover keeps the epoch, so a sink that
+   retry, a re-send or a runner takeover keeps the epoch, so an output plugin that
    deduplicates drops the repeat. A late-input correction or a manual replay
-   raises it, so the corrected output passes the sink's check and overwrites
+   raises it, so the corrected output passes the output plugin's check and overwrites
    the stale row by its key. See [`kernel.md`](kernel.md#the-epoch-rule).
 5. **One owner writes a cell's log.** A runner has a stable identity that
    survives its restarts, and the controller gives each connection a session
@@ -301,7 +301,7 @@ flowchart TB
 `Flezha.Relay.Overwatch` is the process at the centre of the control
 plane. There is one per relay instance, as a ProcessHub child: it binds a
 runner, starts the relay's plugins, writes every incoming input to the
-input log when there is one, and receives every output on its way to a sink.
+input log when there is one, and receives every output on its way to an output plugin.
 `Flezha.State.WalWriter` writes one cell's log and its outbox position.
 `Flezha.Convergence.Loop` is the only process that repairs the fleet: every
 5 seconds (`FLEZHA_CONVERGENCE_TICK_MS`), and at once when something reports a
@@ -400,7 +400,7 @@ Each risk on the left is closed by one mechanism on the right.
 | A runner crashes and its in-memory state is gone | The write-ahead log and snapshots on the controller; the state is restored on the next bind |
 | The controller crashes with changes not yet fsynced | Credit: the amount not yet on disk is limited by the credit window |
 | An output leaves before its state is on disk | The effectively-once tier: the flush waits for the fsync |
-| The same input is handled twice after a replay | A stable output key, and a sink that deduplicates by it |
+| The same input is handled twice after a replay | A stable output key, and an output plugin that deduplicates by it |
 | The write buffer grows without bound under load | Credit flow control: senders wait, nothing is dropped |
 | A poison payload freezes the watermark, or disappears | The dead-letter queue: retry, park on disk, move on |
 | A controller with no copy restores a live cell to empty | A baseline pull: the controller asks the runner for a full snapshot (`CompactCell`) instead of sending an empty restore |

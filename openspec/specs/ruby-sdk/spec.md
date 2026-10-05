@@ -50,7 +50,7 @@ A value SHALL leave a tasklet only through its context: `ctx.emit` (with its `ke
 - **THEN** registration SHALL raise naming the class and `run`
 
 #### Scenario: A returned value is not emitted
-- **WHEN** a tasklet's `run` answers `"echo: hi"` without calling `ctx.emit`, and another tasklet's `run` ends in `ctx.change({ seen: 1 })`, each wired to a sink
+- **WHEN** a tasklet's `run` answers `"echo: hi"` without calling `ctx.emit`, and another tasklet's `run` ends in `ctx.change({ seen: 1 })`, each wired to an output
 - **THEN** neither SHALL emit anything for that input, under the dispatcher and under `Flezha::Testing::Harness` alike
 
 #### Scenario: A value emitted through the context leaves once
@@ -131,16 +131,16 @@ The SDK SHALL prove the set by one conformance run over every row of
 - **THEN** it authors the row with `c.merge.from(...)…into(...)` rather than raising, registration refuses with `topology.merge_too_few_sources` or `topology.duplicate_merge_source`, and the manifest's `topology_surfaces` lists `merge`
 
 ### Requirement: The single-tasklet short form is a class-body declaration
-The short form SHALL be a `Flezha::Relay` subclass, the same base a full-form relay subclasses, and SHALL NOT be a `Flezha::Tasklet` subclass; `Flezha::Tasklet` SHALL lose its `sink` class-body declaration and SHALL raise naming the relay base when one is written. The class body SHALL declare `factory_id "name"`, as a full-form relay already does, and MAY declare `sink "name"`, `input "name"` and `codec :text`, each its own class-body call so that none rides another. How it runs is the `run` class setting, written as on the full form.
+The short form SHALL be a `Flezha::Relay` subclass, the same base a full-form relay subclasses, and SHALL NOT be a `Flezha::Tasklet` subclass; `Flezha::Tasklet` SHALL lose its `output` class-body declaration and SHALL raise naming the relay base when one is written. The class body SHALL declare `factory_id "name"`, as a full-form relay already does, and MAY declare `sink "name"`, `input "name"` and `codec :text`, each its own class-body call so that none rides another. How it runs is the `run` class setting, written as on the full form.
 
-Such a class SHALL be a short form exactly when it defines `run` and not `channels`; defining both SHALL be refused, and defining neither SHALL be refused naming the missing body. `sink` SHALL be optional. The class SHALL carry a generated relay whose factory id is `factory_id`, wiring an entry channel named `input` (or the `input` value) into a generated tasklet named `factory_id` and, when a `sink` is declared, that tasklet to the `sink` plugin channel; with no `sink`, it SHALL wire the entry channel into the tasklet and declare no plugin channel. A short form SHALL take the class settings as the full form does; a steps short form SHALL be a `once` steps relay unless its `run` writes another `each`, fed by its first message on the entry channel and taking `init_values` as the tasklet's initial state. The entry SHALL be decoded by `codec` where one is declared, whether or not a `sink` is.
+Such a class SHALL be a short form exactly when it defines `run` and not `channels`; defining both SHALL be refused, and defining neither SHALL be refused naming the missing body. `output` SHALL be optional. The class SHALL carry a generated relay whose factory id is `factory_id`, wiring an entry channel named `input` (or the `input` value) into a generated tasklet named `factory_id` and, when an `output` is declared, that tasklet to the `output` plugin channel; with no `output`, it SHALL wire the entry channel into the tasklet and declare no plugin channel. A short form SHALL take the class settings as the full form does; a steps short form SHALL be a `once` steps relay unless its `run` writes another `each`, fed by its first message on the entry channel and taking `init_values` as the tasklet's initial state. The entry SHALL be decoded by `codec` where one is declared, whether or not an `output` is.
 
-`Runner#register_factory` SHALL accept such a class and register the generated relay; the refusals SHALL be raised there, at registration, as the Ruby contract places every refusal: `Flezha::Error` whose code is `topology.short_form_with_topology`. A class with no `factory_id` SHALL be refused naming the required declaration, and SHALL NOT take a factory id from the class constant. The Ruby SDK cannot see a tasklet's output type, owes no `topology.sink_without_output`, and SHALL NOT list `shorthand_typed_output` in its manifest. A duplicate factory id SHALL raise `Flezha::Error` with the code `topology.duplicate_factory_id`.
+`Runner#register_factory` SHALL accept such a class and register the generated relay; the refusals SHALL be raised there, at registration, as the Ruby contract places every refusal: `Flezha::Error` whose code is `topology.short_form_with_topology`. A class with no `factory_id` SHALL be refused naming the required declaration, and SHALL NOT take a factory id from the class constant. The Ruby SDK cannot see a tasklet's output type, owes no `topology.output_without_type`, and SHALL NOT list `shorthand_typed_output` in its manifest. A duplicate factory id SHALL raise `Flezha::Error` with the code `topology.duplicate_factory_id`.
 
 #### Scenario: A relay class with a run body is a whole flow relay
 
 - **WHEN** `class Upcase < Flezha::Relay` declares `factory_id "upcase"`, `sink "out"`, `codec :text` and `run`, and the runner is given `register_factory(Upcase)`
-- **THEN** the runner declares a flow relay `upcase` with entry channel `input` decoding text, a tasklet named `upcase` and sink `out`, and no `Flezha::Tasklet` subclass exists for it
+- **THEN** the runner declares a flow relay `upcase` with entry channel `input` decoding text, a tasklet named `upcase` and output `out`, and no `Flezha::Tasklet` subclass exists for it
 
 #### Scenario: A relay class with a run body is a whole steps relay
 
@@ -152,14 +152,14 @@ Such a class SHALL be a short form exactly when it defines `run` and not `channe
 - **WHEN** `class Chat < Flezha::Relay` declares `factory_id "chat"`, `sink "replies"`, `codec :text`, `each :per_input` and `run`, is registered, and two messages reach its entry channel
 - **THEN** the declaration carries `each` `per_input`, `run` runs once per message, and the instance does not complete after the first
 
-#### Scenario: A short form with no sink is declared
+#### Scenario: A short form with no output is declared
 
-- **WHEN** a class declares `factory_id "counter"`, `input "ticks"`, `codec :text`, `initial_state`, `apply_change` and `run`, with no `sink`
+- **WHEN** a class declares `factory_id "counter"`, `input "ticks"`, `codec :text`, `initial_state`, `apply_change` and `run`, with no `output`
 - **THEN** the relay declares `ticks` into the generated tasklet and no plugin channel
 
-#### Scenario: An input and codec need no sink
+#### Scenario: An input and codec need no output
 
-- **WHEN** a class declares `input "ticks"` and `codec :text` and no `sink`
+- **WHEN** a class declares `input "ticks"` and `codec :text` and no `output`
 - **THEN** `register_factory` accepts it and the entry channel takes that name and codec
 
 #### Scenario: A short form's returned value is not emitted
@@ -172,7 +172,7 @@ Such a class SHALL be a short form exactly when it defines `run` and not `channe
 - **WHEN** a `Flezha::Relay` subclass defines both `channels` and `run`
 - **THEN** `register_factory` raises `Flezha::Error` whose code is `topology.short_form_with_topology`
 
-#### Scenario: A sink on a tasklet is refused
+#### Scenario: An output on a tasklet is refused
 
 - **WHEN** a `Flezha::Tasklet` subclass declares `sink "out"`
 - **THEN** loading it raises naming `Flezha::Relay`

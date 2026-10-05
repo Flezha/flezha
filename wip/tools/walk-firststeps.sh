@@ -65,11 +65,11 @@ relays() {
 
 plugins() {
   step root "flz controller status | grep file_plugin_root"
-  step enable-writer "flz plugin enable writer relay_file_sink --relay_id=my_echo --hook=on_output --Xpath=echo-out.txt"
+  step enable-writer "flz plugin enable writer relay_file_output --relay_id=my_echo --hook=on_output --Xpath=echo-out.txt"
   step send "flz relay send my_echo --text hello"
   until_ok 30 "grep -q 'echo: hello' $FILES/echo-out.txt"
   step cat-out "cd $FLEZHA_CTL_DIR && cat app_data/files/echo-out.txt"
-  step enable-reader "flz plugin enable reader relay_file_source --relay_id=my_echo --Xpath=echo-in.txt --Xchannel_in=in"
+  step enable-reader "flz plugin enable reader relay_file_input --relay_id=my_echo --Xpath=echo-in.txt --Xchannel_in=in"
   step append "cd $FLEZHA_CTL_DIR && echo 'from a file' >> app_data/files/echo-in.txt"
   until_ok 30 "grep -q 'from a file' $FILES/echo-out.txt"
   step cat-out-again "cd $FLEZHA_CTL_DIR && cat app_data/files/echo-out.txt"

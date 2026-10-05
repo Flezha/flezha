@@ -33,7 +33,7 @@ The payload is the new instance's first message by construction: it is taken in 
 binds, ahead of anything else in its mailbox, through the same entrance every message takes. It
 names no channel, so it enters the first declared entry channel, is decoded by that channel's
 codec or parser, and runs the chain that channel starts, whichever way the relay loops. Every
-SDK encodes it the way a sink with no codec encodes a value, the rule `ctx.complete` uses:
+SDK encodes it the way an output with no codec encodes a value, the rule `ctx.complete` uses:
 bytes as they are, a string as UTF-8, anything else as JSON, so a `text` or `json` entry reads
 it. A durable instance whose input log already holds records is a restart, not a spawn, and is
 not given the payload again.

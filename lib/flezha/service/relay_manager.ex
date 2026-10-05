@@ -480,7 +480,7 @@ defmodule Flezha.Service.RelayManager do
 
   @doc """
   Call `relay_id` (a partition group's member by `key`) with one input and
-  wait for its answer: the first output it caused on a sink (on the channel
+  wait for its answer: the first output it caused (on the channel
   `metadata` names under `flz.call_answer_channel`, when it names one), or a
   coded error saying why none came by `deadline_ms`.
   """

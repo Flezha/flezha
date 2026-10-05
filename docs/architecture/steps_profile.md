@@ -43,7 +43,7 @@ flowchart LR
     A -->|"records"| C["archive"]
     B --> D["reconcile"]
     C --> D
-    D --> S(["sink"])
+    D --> S(["output"])
 ```
 
 A tasklet receives exactly the values sent on the channels it consumes. A join collects every
@@ -127,7 +127,7 @@ it. The journal is `Flezha.State.TaskJournal`.
 sequenceDiagram
     participant C as controller
     participant R as runner
-    participant K as sink
+    participant K as output
 
     C->>R: start, and the first message enters the root tasklet
     R->>R: the root's cells run
@@ -178,7 +178,7 @@ disk before the stage commit; its outputs wait for the commit.
 sequenceDiagram
     participant R as runner
     participant C as controller
-    participant K as sink
+    participant K as output
 
     R->>C: each item's effect record
     C->>C: the cell's writer syncs it and holds its outputs
@@ -191,9 +191,9 @@ The cell writer's outbox is the only outbox, for flow and steps alike: the same 
 confirmations and restart re-send ([the outbox](kernel.md#the-outbox)). Only the commit point
 differs. A flow cell's record is committed by its own fsync; a steps cell's record is committed
 by the stage entry that names it. A record no entry will name (a failed stage, a stage a crash
-interrupted and ran again, an iteration a rewind removed) is dropped without reaching a sink,
+interrupted and ran again, an iteration a rewind removed) is dropped without reaching an output,
 so a failed stage leaks nothing. A crash between the commit and the release costs only a
-duplicate the sink absorbs, since the re-sent output carries the same identity.
+duplicate the output absorbs, since the re-sent output carries the same identity.
 
 A class with `durable: false`, or one running without a controller (a unit test, a benchmark),
 writes no record: outputs go out as they are produced.
@@ -240,7 +240,7 @@ When a pass fails for good, the controller undoes what already committed, in rev
 sequenceDiagram
     participant C as controller
     participant R as runner
-    participant K as sink
+    participant K as output
 
     Note over C: A, then B and C under it, committed
     R->>C: D fails for good
@@ -375,7 +375,7 @@ sequenceDiagram
     participant U as user
     participant C as controller
     participant R as runner
-    participant K as sink
+    participant K as output
 
     U->>C: rewind --to-iteration 2
     C->>C: check: is 2 committed, and does every unwound tasklet that wrote plugin output have an undo?
@@ -392,7 +392,7 @@ above the target, minus those with a `compensated` entry written after their own
 "after its own commit" test tells a re-run apart from the original it replaced, and makes a
 second rewind work. A crash in the middle of a rewind resumes with exactly the work still
 outstanding. When the instance binds again, outputs of the removed iterations that had not yet
-reached a sink are dropped.
+reached an output are dropped.
 
 **The check runs before anything durable changes.** A tasklet that wrote plugin output and has no
 `compensate` hook cannot be rewound: a rewind runs nothing again over the removed inputs, so no

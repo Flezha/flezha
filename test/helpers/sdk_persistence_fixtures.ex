@@ -88,7 +88,7 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
 
     def channels(c) do
       import Flezha.SDK.Channels
-      c |> input_with("in", &parse/1) |> into(CounterTask) |> sink("c")
+      c |> input_with("in", &parse/1) |> into(CounterTask) |> output("c")
     end
 
     def parse("kill"), do: {:ok, :kill}
@@ -110,7 +110,7 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
 
     def channels(c) do
       import Flezha.SDK.Channels
-      c |> input("in") |> into(EchoTask) |> sink("e")
+      c |> input("in") |> into(EchoTask) |> output("e")
     end
   end
 
@@ -125,7 +125,7 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
       c
       |> input_with("in", &CounterOp.parse/1)
       |> into(StaticCounterTask)
-      |> sink("s")
+      |> output("s")
     end
   end
 
@@ -141,7 +141,7 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
       |> input_with("in", &CounterOp.parse/1)
       |> key_by(fn n -> "k#{rem(n, 2)}" end)
       |> into(CounterTask)
-      |> sink("c")
+      |> output("c")
     end
   end
 
@@ -152,8 +152,8 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
 
     def channels(c) do
       import Flezha.SDK.Channels
-      c |> input("a") |> into_named(CounterTask, "first") |> sink()
-      c |> input("b") |> into_named(CounterTask, "second") |> sink()
+      c |> input("a") |> into_named(CounterTask, "first") |> output()
+      c |> input("b") |> into_named(CounterTask, "second") |> output()
     end
   end
 
@@ -165,7 +165,7 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
 
     def channels(c) do
       import Flezha.SDK.Channels
-      c |> input("in") |> into(ThriftyTask) |> into(CounterTask) |> sink()
+      c |> input("in") |> into(ThriftyTask) |> into(CounterTask) |> output()
     end
   end
 
@@ -216,7 +216,7 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
       |> key_by(fn n -> "k#{rem(n, 2)}" end)
       |> into(StampedTask)
       |> keyed()
-      |> sink("c")
+      |> output("c")
     end
   end
 
@@ -237,8 +237,8 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
         |> into(StampedTask)
         |> named("c")
 
-      node |> keyed() |> sink()
-      node |> sink()
+      node |> keyed() |> output()
+      node |> output()
     end
   end
 
@@ -256,7 +256,7 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
       |> input("in")
       |> into(RefusingTask)
       |> keyed()
-      |> sink("r")
+      |> output("r")
     end
   end
 
@@ -287,7 +287,7 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
       |> input_with("in", &CounterOp.parse/1)
       |> key_by(&"k#{&1}")
       |> into(CappedTask)
-      |> sink("c")
+      |> output("c")
     end
   end
 
@@ -573,7 +573,7 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
 
     def channels(c) do
       import Flezha.SDK.Channels
-      c |> input_with("in", &parse/1) |> into(EventTimerTask) |> sink("e")
+      c |> input_with("in", &parse/1) |> into(EventTimerTask) |> output("e")
     end
 
     def parse("arm:" <> at), do: {:ok, {:arm, String.to_integer(at)}}
@@ -587,7 +587,7 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
 
     def channels(c) do
       import Flezha.SDK.Channels
-      c |> input("in") |> into(GatedTimerTask) |> sink("g")
+      c |> input("in") |> into(GatedTimerTask) |> output("g")
     end
   end
 
@@ -598,7 +598,7 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
 
     def channels(c) do
       import Flezha.SDK.Channels
-      c |> input("in") |> into(PoisonTimerTask) |> sink("p")
+      c |> input("in") |> into(PoisonTimerTask) |> output("p")
     end
   end
 
@@ -609,7 +609,7 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
 
     def channels(c) do
       import Flezha.SDK.Channels
-      c |> input("in") |> into(NoHandlerTask) |> sink("n")
+      c |> input("in") |> into(NoHandlerTask) |> output("n")
     end
   end
 
@@ -620,7 +620,7 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
 
     def channels(c) do
       import Flezha.SDK.Channels
-      c |> input("in") |> into(CancelTask) |> sink("c")
+      c |> input("in") |> into(CancelTask) |> output("c")
     end
   end
 
@@ -631,7 +631,7 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
 
     def channels(c) do
       import Flezha.SDK.Channels
-      c |> input("in") |> into(KillableTimerTask) |> sink("k")
+      c |> input("in") |> into(KillableTimerTask) |> output("k")
     end
   end
 
@@ -647,7 +647,7 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
       |> input("in")
       |> key_by(&hd(String.split(&1, ":")))
       |> into(TtlTimerTask)
-      |> sink("t")
+      |> output("t")
     end
   end
 
@@ -662,7 +662,7 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
       c
       |> input_with("in", &CounterOp.parse/1)
       |> into(CappedTimersTask)
-      |> sink("c")
+      |> output("c")
     end
   end
 
@@ -677,7 +677,7 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
       c
       |> input_with("in", &CounterOp.parse/1)
       |> into(LogicalClockTask)
-      |> sink("l")
+      |> output("l")
     end
   end
 
@@ -692,7 +692,7 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
       c
       |> input_with("in", &CounterOp.parse/1)
       |> into(EventTimeTask)
-      |> sink("t")
+      |> output("t")
     end
   end
 
@@ -703,7 +703,7 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
 
     def channels(c) do
       import Flezha.SDK.Channels
-      c |> input("in") |> into(NowTask) |> sink("n")
+      c |> input("in") |> into(NowTask) |> output("n")
     end
   end
 
@@ -714,7 +714,7 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
 
     def channels(c) do
       import Flezha.SDK.Channels
-      c |> input_with("in", &CounterOp.parse/1) |> into(TimerTask) |> sink("t")
+      c |> input_with("in", &CounterOp.parse/1) |> into(TimerTask) |> output("t")
     end
   end
 
@@ -745,7 +745,7 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
       |> input_with("in", &CounterOp.parse/1)
       |> key_by(&"k#{&1}")
       |> into(TtlTask)
-      |> sink("c")
+      |> output("c")
     end
   end
 
@@ -773,7 +773,7 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
 
     def channels(c) do
       import Flezha.SDK.Channels
-      c |> input("in") |> key_by(& &1) |> into(GatedTtlTask) |> sink("g")
+      c |> input("in") |> key_by(& &1) |> into(GatedTtlTask) |> output("g")
     end
   end
 
@@ -830,7 +830,7 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
       c
       |> input_with("in", &CounterOp.parse/1)
       |> into(CounterV2Task)
-      |> sink("c")
+      |> output("c")
     end
   end
 end

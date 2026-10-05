@@ -37,7 +37,7 @@ public final class TradeWatcherRelay implements Relay {
                 .keyBy(Trade::symbol)                                // one cell per symbol
                 .into(TrackPrices.class)
                 .into(BuyAboveAverage.class)                         // fed by the tasklet above
-                .sink("signals");                                    // out to the file plugin
+                .output("signals");                                  // out to the file plugin
     }
 }
 ```
@@ -71,7 +71,7 @@ impl Relay for TradeWatcherRelay {
             .key_by(|trade| trade.symbol.clone()) // one cell per symbol
             .into::<TrackPrices>()
             .into::<BuyAboveAverage>() // fed by the tasklet above
-            .sink_named("signals"); // out to the file plugin
+            .output_named("signals"); // out to the file plugin
     }
 }
 ```
@@ -92,7 +92,7 @@ export default defineRelay({
       .keyBy((trade) => trade.symbol) // one cell per symbol
       .into(TrackPrices)
       .into(BuyAboveAverage) // fed by the tasklet above
-      .sink('signals'); // out to the file plugin
+      .output('signals'); // out to the file plugin
   },
 });
 ```
@@ -113,7 +113,7 @@ def trade_watcher(c: flezha.Channels) -> None:
         .key_by(lambda trade: trade["symbol"])  # one cell per symbol
         .into(TrackPrices)
         .into(BuyAboveAverage)  # fed by the tasklet above
-        .sink("signals")  # out to the file plugin
+        .output("signals")  # out to the file plugin
     )
 ```
 
@@ -134,7 +134,7 @@ class TradeWatcherRelay < Flezha::Relay
      .key_by { |trade| trade[:symbol] }                      # one cell per symbol
      .into(TrackPrices)
      .into(BuyAboveAverage)                                  # fed by the tasklet above
-     .sink("signals")                                        # out to the file plugin
+     .output("signals")   # out to the file plugin
   end
 end
 ```
@@ -157,7 +157,7 @@ final class TradeWatcherRelay extends \Flezha\Relay
             ->keyBy(fn (array $trade) => $trade['symbol'])                             // one cell per symbol
             ->into(TrackPrices::class)
             ->into(BuyAboveAverage::class)                                             // fed by the tasklet above
-            ->sink('signals');                                                         // out to the file plugin
+            ->output('signals');                                                       // out to the file plugin
     }
 }
 ```
@@ -188,7 +188,7 @@ defmodule Tradedesk.TradeWatcher do
     # fed by the tasklet above
     |> into(Tradedesk.BuyAboveAverage)
     # out to the file plugin
-    |> sink("signals")
+    |> output("signals")
   end
 end
 ```

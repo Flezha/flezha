@@ -1,13 +1,13 @@
-# postgres-sink-plugin Specification
+# postgres-output plugin-plugin Specification
 
 ## Purpose
 
-Transactional upsert + watermark PostgreSQL sink adapter consuming the
+Transactional upsert + watermark PostgreSQL output plugin adapter consuming the
 effectively-once tier (`Flezha.Plugin.Provider.Postgres`).
 ## Requirements
-### Requirement: PostgreSQL sink plugin with transactional upsert + watermark
+### Requirement: PostgreSQL output plugin with transactional upsert + watermark
 
-The controller SHALL provide a `postgres` relay sink plugin
+The controller SHALL provide a `postgres` relay output plugin
 (`Flezha.Plugin.Provider.Postgres`, backed by `postgrex`) that, per flush batch,
 executes ONE database transaction containing (a) an upsert of every record keyed
 by `flz.key` and (b) an upsert of the per-Cell progress row
@@ -69,7 +69,7 @@ environment and SHALL never appear in logs or telemetry.
 
 The plugin SHALL implement the provider `health/1` callback reporting connection
 pool state and last successful commit age, so the existing plugin-health →
-convergence escalation path covers the sink.
+convergence escalation path covers the output plugin.
 
 #### Scenario: Unhealthy on sustained commit failure
 
@@ -133,9 +133,9 @@ inserted under a unique synthetic key, unchanged.
 - **THEN** the row is overwritten, because a non-empty sequence outranks an empty
   one — no backfill or migration is required
 
-### Requirement: The sink's option set is strict and its tunables are validated at preparation
+### Requirement: The output plugin's option set is strict and its tunables are validated at preparation
 
-`init_provider/1` SHALL refuse an option key the provider does not offer, and SHALL refuse a tunable whose value it cannot interpret, before the sink worker or its connection pool is started. Both refusals SHALL be returned as `{:error, binary()}` naming the key or the option and the offered value.
+`init_provider/1` SHALL refuse an option key the provider does not offer, and SHALL refuse a tunable whose value it cannot interpret, before the output plugin worker or its connection pool is started. Both refusals SHALL be returned as `{:error, binary()}` naming the key or the option and the offered value.
 
 The strict option set SHALL be declared, so that the check runs on the path a user's stored configuration travels. A plugin spec and a stored capability row reach `init_provider/1` without ever constructing the provider struct, so a check reachable only from the CLI string-map builder does not satisfy this requirement.
 
@@ -143,10 +143,10 @@ The health threshold SHALL be validated at preparation and read as a plain value
 
 #### Scenario: An unknown option is refused at enable time
 
-- **GIVEN** a plugin configured with a key the sink does not offer
+- **GIVEN** a plugin configured with a key the output plugin does not offer
 - **WHEN** the plugin is enabled
 - **THEN** `init_provider/1` SHALL return `{:error, message}` naming the key
-- **AND** no sink worker and no connection pool SHALL have been started
+- **AND** no output plugin worker and no connection pool SHALL have been started
 
 #### Scenario: An uninterpretable health threshold is refused at enable time
 
@@ -159,5 +159,5 @@ The health threshold SHALL be validated at preparation and read as a plain value
 
 - **GIVEN** a plugin enabled on a relay, so that the host merges its identity keys into the provider's opts
 - **WHEN** the plugin is enabled
-- **THEN** those keys SHALL be accepted, and the sink SHALL start exactly as it does today
+- **THEN** those keys SHALL be accepted, and the output plugin SHALL start exactly as it does today
 

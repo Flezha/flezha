@@ -12,8 +12,8 @@ OPTIONS:
     --namespace <ns>          Namespace the relay runs in (default: default)
 
 OUTPUT:
-    The answer's payload and a newline: the first output the input caused
-    on a sink, or on the answer channel when one is named. The output also
+    The answer's payload and a newline: the first output the input caused,
+    or its first on the answer channel when one is named. The output also
     reaches the relay's plugins and listeners. A failure is printed on stderr
     with its code and exits by its class: call.timeout 7, a denied call 4,
     relay.not_found 5, call.target_unkeyed 2.

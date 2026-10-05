@@ -68,7 +68,7 @@ stages they pass through and where results leave:
 ```python
 @flezha.relay("echo")
 def echo_relay(c: flezha.Channels) -> None:
-    c.input("in", codec="text").into(Echo).sink("out")
+    c.input("in", codec="text").into(Echo).output("out")
 ```
 
 **3. Serve it from a runner,** a process that connects to the controller:
@@ -128,7 +128,7 @@ runtime for AI services.
   builds one.
 
 <!-- TODO: AI plugins, for example a model-call plugin (one place for provider keys,
-retries, rate limits and token accounting) and a vector-store source and sink.
+retries, rate limits and token accounting) and a vector-store source and output.
 Decide which ones, then specify each in OpenSpec. -->
 
 ## Documentation

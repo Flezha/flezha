@@ -62,7 +62,7 @@ A declaration that cannot hold is refused when the relay is registered:
 | Code | When |
 | --- | --- |
 | `topology.effectively_once_without_persistence` | the relay is kept in memory only (`durable: false`): the tier is durable state |
-| `topology.unkeyed_channel_under_effectively_once` | a channel that ends in a sink plugin is not declared `.keyed()`: the tier drops a repeated output by its identity, so a sink plugin's channel must be keyed, a channel whose outputs answer calls included. A tasklet with no key of its own names one with its SDK's keyed emit |
+| `topology.unkeyed_channel_under_effectively_once` | a channel that ends in a output plugin is not declared `.keyed()`: the tier drops a repeated output by its identity, so a output plugin's channel must be keyed, a channel whose outputs answer calls included. A tasklet with no key of its own names one with its SDK's keyed emit |
 | `topology.dropping_policy_under_effectively_once` | a channel declares a dropping overflow policy: a shed input would be lost for good and reported nowhere |
 
 ## Example
@@ -255,8 +255,8 @@ $ flz state inbox gateway --namespace agents
   invocation, and never from the system clock. `ctx.now()` follows the tasklet's clock: wall
   time by default, the event time the tasklet extracts from its input, or a logical clock (the
   change sequence).
-- **Keyed sinks.** On a relay that declares the guarantee, a channel that ends in a sink
-  plugin must be `.keyed()`, so the sink can drop a record it has already written. Requests
+- **Keyed output plugins.** On a relay that declares the guarantee, a channel that ends in an output plugin
+  plugin must be `.keyed()`, so the output plugin can drop a record it has already written. Requests
   and calls need no key.
 - **The controller's disk.** The logs are on it. A durability backend
   ([clustering.md](../deploying/clustering.md)) is what carries them past losing that disk, a little behind

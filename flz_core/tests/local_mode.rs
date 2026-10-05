@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use flz_core::local::{self, LocalRun, SinkOutput};
+use flz_core::local::{self, LocalOutput, LocalRun};
 use flz_core::poll_core::{self, Polled};
 use flz_core::relay::instance::KeyGroupRange;
 use flz_core::runner::RunnerNode;
@@ -222,16 +222,16 @@ fn two_step_answer(activation: &Activation, payload: &[u8]) -> Vec<Output> {
 }
 
 /// Every value the sink released, in release order.
-fn recorder() -> (Arc<Mutex<Vec<SinkOutput>>>, local::SinkCallback) {
+fn recorder() -> (Arc<Mutex<Vec<LocalOutput>>>, local::OutputCallback) {
     let seen = Arc::new(Mutex::new(Vec::new()));
     let into = Arc::clone(&seen);
-    let callback: local::SinkCallback = Arc::new(move |output: SinkOutput| {
+    let callback: local::OutputCallback = Arc::new(move |output: LocalOutput| {
         into.lock().unwrap_or_else(|p| p.into_inner()).push(output);
     });
     (seen, callback)
 }
 
-fn payloads(seen: &Arc<Mutex<Vec<SinkOutput>>>) -> Vec<String> {
+fn payloads(seen: &Arc<Mutex<Vec<LocalOutput>>>) -> Vec<String> {
     seen.lock()
         .unwrap_or_else(|p| p.into_inner())
         .iter()
@@ -246,7 +246,7 @@ fn a_two_tasklet_graph_runs_with_no_controller() {
     let _host = Host::spawn(two_step_answer);
     let run = LocalRun::start("local_two_step", "two-step-1").expect("the run starts");
     let (seen, callback) = recorder();
-    run.on_sink("totals", callback)
+    run.on_output("totals", callback)
         .expect("`totals` is declared");
 
     run.feed("lines", b"a1".to_vec()).expect("`lines` accepts");
@@ -350,7 +350,7 @@ fn a_filtered_value_never_reaches_the_consumer_and_a_fan_out_reaches_it_twice() 
     });
     let run = LocalRun::start("local_two_step", "two-step-2").expect("the run starts");
     let (seen, callback) = recorder();
-    run.on_sink("totals", callback)
+    run.on_output("totals", callback)
         .expect("`totals` is declared");
 
     run.feed("lines", b"x-dropped".to_vec()).expect("accepted");
@@ -373,7 +373,7 @@ fn a_keyed_sink_value_carries_the_stamps_a_deployed_run_stamps() {
     let _host = Host::spawn(two_step_answer);
     let run = LocalRun::start("local_two_step", "two-step-3").expect("the run starts");
     let (seen, callback) = recorder();
-    run.on_sink("totals", callback)
+    run.on_output("totals", callback)
         .expect("`totals` is declared");
 
     run.feed("lines", b"z9".to_vec()).expect("accepted");
@@ -404,14 +404,14 @@ fn a_value_released_on_a_sink_nobody_claimed_is_reported() {
     declare(TWO_STEP);
     let _host = Host::spawn(two_step_answer);
     let run = LocalRun::start("local_two_step", "two-step-4").expect("the run starts");
-    let before = local::unhandled_sink_outputs();
+    let before = local::unhandled_outputs();
 
     run.feed("lines", b"q1".to_vec()).expect("accepted");
     run.run_until_idle(Duration::from_secs(10))
         .expect("the graph settles");
 
     assert_eq!(
-        local::unhandled_sink_outputs(),
+        local::unhandled_outputs(),
         before + 1,
         "an unclaimed sink value is reported, not discarded in silence"
     );
@@ -457,7 +457,9 @@ fn a_channel_the_declaration_does_not_carry_is_refused_by_name() {
         "an inter-tasklet channel is not an entry"
     );
 
-    let not_sink = run.on_sink("lines", Arc::new(|_| {})).expect_err("refused");
+    let not_sink = run
+        .on_output("lines", Arc::new(|_| {}))
+        .expect_err("refused");
     assert_eq!(
         not_sink.to_error().details["channel"],
         "lines",
@@ -615,7 +617,8 @@ fn a_local_run_fires_a_processing_time_timer() {
     let (_host, armed) = timer_host(TimerKind::ProcessingTime, 30);
     let run = LocalRun::start("local_pt_timer", "pt-1").expect("the run starts");
     let (seen, callback) = recorder();
-    run.on_sink("fired", callback).expect("`fired` is declared");
+    run.on_output("fired", callback)
+        .expect("`fired` is declared");
 
     run.feed("ticks", b"arm".to_vec()).expect("`ticks` accepts");
     // The registration and the firing are 30 ms apart, and the graph is idle
@@ -637,7 +640,8 @@ fn a_local_run_fires_an_event_time_timer_on_the_advancing_high_water() {
     let (_host, armed) = timer_host(TimerKind::EventTime, 50);
     let run = LocalRun::start("local_et_timer", "et-1").expect("the run starts");
     let (seen, callback) = recorder();
-    run.on_sink("fired", callback).expect("`fired` is declared");
+    run.on_output("fired", callback)
+        .expect("`fired` is declared");
 
     // The deadline lands at 1_050, so the first input leaves it pending and
     // the second one carries the high-water past it.
@@ -706,7 +710,7 @@ fn echo_keyed(_activation: &Activation, item: &WorkItem) -> ItemEffect {
 fn keyed_run(factory_id: &str, relay_id: &str) -> Vec<String> {
     let run = LocalRun::start(factory_id, relay_id).expect("the run starts");
     let (seen, callback) = recorder();
-    run.on_sink("out", callback).expect("`out` is declared");
+    run.on_output("out", callback).expect("`out` is declared");
     for payload in ["a:1", "b:1", "a:2"] {
         run.feed("in", payload.as_bytes().to_vec())
             .expect("accepted");

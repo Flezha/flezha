@@ -10,7 +10,7 @@ deployment so that a planned action loses nothing.
 Two things can be lost: a relay's **state**, and its **output**. The live
 copy of the state is in the cells on the relay's runner; it is copied to a
 log per cell on the controller, in batches about every 5 ms. Output is routed
-through the controller to its sinks (Kafka, Postgres, HTTP, another relay).
+through the controller to its output plugins (Kafka, Postgres, HTTP, another relay).
 The core rule: **a graceful stop loses no state; a hard kill can lose the last
 few milliseconds of changes that were not yet on the controller's disk.**
 
@@ -19,12 +19,12 @@ few milliseconds of changes that were not yet on the controller's disk.**
 How far a relay's work is kept is its class's `durable` setting
 ([`configuring_a_relay.md`](configuring_a_relay.md)). A class that runs
 in flow also has a duplicate rule, `exactly`, which says how often a value may
-reach a sink:
+reach an output plugin:
 
 | `durable` | Where the work is kept | After a runner or controller crash | After the controller's disk is lost | Flow, `exactly: at_least_once` (default) | Flow, `exactly: effectively_once` |
 | --- | --- | --- | --- | --- | --- |
-| `false` | the runner's memory only | the work starts over | lost | a value can reach a sink again | refused: the tier needs a disk (`topology.effectively_once_without_persistence`) |
-| `local` (default) | the controller's disk | carries on | lost, unless a copy was shipped | a value sent just before a crash can reach a sink again | once at a conforming sink: outputs wait until the change behind them is on disk |
+| `false` | the runner's memory only | the work starts over | lost | a value can reach an output plugin again | refused: the tier needs a disk (`topology.effectively_once_without_persistence`) |
+| `local` (default) | the controller's disk | carries on | lost, unless a copy was shipped | a value sent just before a crash can reach an output plugin again | once at a conforming output plugin: outputs wait until the change behind them is on disk |
 | `remote` | the controller's disk, and a remote copy that each commit point waits for | carries on | carries on from the copy | as for `local` | as for `local`, and nothing acknowledged is lost with the disk |
 
 A workflow has no duplicate rule to choose: its outputs are released only when
@@ -76,7 +76,7 @@ is no ship, so at `local` the disk is the only copy.
 
 Output and state changes travel separately, and by default the controller
 sends output on before the matching state change is synced to disk. So after a
-hard kill, output can outlive the state that produced it (a sink holds
+hard kill, output can outlive the state that produced it (an output plugin holds
 `total=135` while the log holds `128`), and the restored relay comes back
 slightly behind. A planned stop drains to zero loss; a relay that needs the
 gap closed declares `exactly: effectively_once`.
@@ -112,9 +112,9 @@ on `flz.key` absorbs duplicates exactly. That holds only if `run`, `apply_to`
 and `compensate` read no clock, random value or outside system: use
 `ctx.now()` and `ctx.stableId()` ([`state.md`](state.md#rules-for-state-and-changes)).
 
-Two limits: `flz.seq` is not an exact dedup handle for append-only sinks (two
+Two limits: `flz.seq` is not an exact dedup handle for append-only output plugins (two
 invocations that change no state can share one), and there is no `flz.epoch`
-at this level. A conforming sink reads a keyed record without an epoch as epoch
+at this level. A conforming output plugin reads a keyed record without an epoch as epoch
 `0` and orders by `flz.seq`; a sequence that goes backwards, from a cell that
 cold-started without a baseline, is refused rather than guessed.
 
@@ -136,7 +136,7 @@ it.
 ### Effectively once
 
 `exactly: effectively_once` combines at-least-once delivery, a deterministic
-key and an idempotent sink into effectively-once delivery. Each plugin-bound
+key and an idempotent output plugin into effectively-once delivery. Each plugin-bound
 channel must be `keyed()`, which registration checks. The tier works the same
 in every SDK.
 
@@ -152,12 +152,12 @@ in every SDK.
 - **A value handed to the next tasklet is kept in its producer's record**, so
   a value lost with the consumer's mailbox in a crash is delivered again, and a
   consumer that already took it drops it.
-- **Outputs reach the sinks only once their record is on disk**, stamped
+- **Outputs reach the output plugins only once their record is on disk**, stamped
   `flz.cell`, `flz.seq`, `flz.epoch` and `flz.key`: enough for exact dedup.
   After a restart, every record past the cell's flushed cursor is sent again,
   in order, under the same identity: never lost, never applied twice at a
-  conforming sink.
-- **The cursor moves on the sink's confirmation**, not on dispatch: a Kafka
+  conforming output plugin.
+- **The cursor moves on the output plugin's confirmation**, not on dispatch: a Kafka
   produce acknowledged, a Postgres transaction committed, a forward confirmed.
   A batch whose retries run out is parked in the dead-letter queue, and only
   then may the cursor pass it. A delivery whose confirmation is lost is sent
@@ -169,9 +169,9 @@ in every SDK.
   relay has a source credit window (`:source_credit_window_bytes`, 16 MiB by
   default); at zero, the source waits (a WebSocket source stops reading).
 - **Classes without the tier pay nothing for it.** Under the tier, a slow or
-  unreachable sink backs output up on disk, not in memory.
+  unreachable output plugin backs output up on disk, not in memory.
 
-**Conforming sinks.** The Postgres sink upserts each batch into
+**Conforming output plugins.** The Postgres output plugin upserts each batch into
 `flezha_records` (keyed by `flz.key`) and advances its progress row in one
 transaction, guarded by `(epoch, seq)`, so repeats and stale epochs do nothing;
 an unreachable database delays the flush (callers wait past `queue_max`,
@@ -179,7 +179,7 @@ an unreachable database delays the flush (callers wait past `queue_max`,
 naming the missing tables). The Kafka producer uses `flz.key` as the message
 key and carries the identity in the `flezha.dedup_key` header
 ([`../../plugins/kafka_producer.md`](../../plugins/kafka_producer.md)).
-**The WebSocket sink is not a conforming sink**: with `sink_ack_mode: "none"`
+**The WebSocket output plugin is not a conforming output plugin**: with `sink_ack_mode: "none"`
 (the default) it is at-most-once past the socket, with `"required"`
 at-least-once; it can carry `flz.cell` and `flz.seq` in the frame for the
 consumer to dedup ([`../../plugins/websocket_subscription.md`](../../plugins/websocket_subscription.md)).
@@ -203,7 +203,7 @@ On the tier, a relay with an event-time clock can declare `correction_ms`.
 An input that arrives late, behind the cell's event-time high-water but inside
 the window, is not run on arrival. Instead the cell is rewound to a baseline
 before it, and the inputs since are replayed in event-time order (ties by
-offset); outputs are re-sent under a bumped epoch, so a keyed sink overwrites
+offset); outputs are re-sent under a bumped epoch, so a keyed output plugin overwrites
 the stale rows. Requests for one cell merge into the one replay that reaches
 furthest back. Prerequisites, each refused at build time when missing: the
 tier, an event-time clock, and keyed plugin channels.
@@ -214,7 +214,7 @@ emitted as `[:flezha, :correction, :retention_derived]`. A crash during a
 correction needs nothing: the correction simply runs again. An input later
 than the window follows `beyond_window`: `process_as_arrival` (the default) or
 `drop`; neither moves the high-water back. A correction overwrites the keys it
-sends again but does not retract keys it no longer sends; treat the sink as
+sends again but does not retract keys it no longer sends; treat the output plugin as
 append-with-overwrite. A downstream relay sees corrected outputs as ordinary
 keyed updates.
 
@@ -232,13 +232,13 @@ is on disk; and the outputs are released after that. A step that failed, was
 interrupted and re-run, or was rewound releases nothing. Each released output
 carries `flz.cell`, `flz.seq`, `flz.epoch`, its channel and `flz.key` when the
 channel is keyed; `emit_keyed` and metadata work in a step too. A crash re-send
-keeps every stamp, so a dedup sink absorbs it; a rewind leaves `flz.epoch` and
-its re-run's outputs sort above the old ones, so an `(epoch, seq)`-guarded sink
+keeps every stamp, so a dedup output plugin absorbs it; a rewind leaves `flz.epoch` and
+its re-run's outputs sort above the old ones, so an `(epoch, seq)`-guarded output plugin
 overwrites. An undo's output is a newer record too. A workflow kept in memory
 sends outputs straight on.
 
 The guarantee: never lost, never released before commit, and at-least-once
-with stable keys in the window between a sink's confirmation and the cursor's
+with stable keys in the window between an output plugin's confirmation and the cursor's
 write. Inspect a step's records with `flz state journal <relay/instance>`
 and what a cell still owes with `flz state outbox <relay/tasklet/key>`
 (`outbox_lag`, `held_for_stage`).
@@ -492,7 +492,7 @@ whose record is on local disk but not yet shipped.
   `recovering` until then, and until replayed relays are bound again; a
   relay whose runner has not reconnected waits unbound. That is the design,
   not a fault.
-- **Make sinks idempotent where duplicates matter.** Declare channels
+- **Make output plugins idempotent where duplicates matter.** Declare channels
   `keyed()` so a re-sent output carries the same `flz.key` and `flz.seq` to
   upsert on, or use `exactly: effectively_once`; the Kafka and Postgres plugins
   conform out of the box.
@@ -512,7 +512,7 @@ whose record is on local disk but not yet shipped.
   their outputs.
 - **`durable: false` loses everything on a crash.**
 - **The dead-letter queue has retention**: 30 days or 4 GiB.
-- **The WebSocket sink is not exactly-once** under any setting.
+- **The WebSocket output plugin is not exactly-once** under any setting.
 
 ## See also
 

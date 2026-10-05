@@ -242,7 +242,7 @@ Converging needs the group's id. A partitioned start with no `--id` generates a 
 
 ### Requirement: Group-base and singleton id collisions SHALL be refused in both directions
 
-A plain (unpartitioned) start of an id that names an existing group's base SHALL be refused, naming the group's member count and `--partitions N` as the way to address it: the base id itself is unclaimed (only member ids are), so without the guard a rogue singleton starts beside the group. Symmetrically, a partitioned start of an id currently held by a live unpartitioned relay SHALL be refused before any member starts. The plain-start guard SHALL live in the single start-authority seam so every starter path (CLI, schedules, tasklet-requested spawns, routed starts) is covered. A generated id that meets either guard SHALL be drawn again rather than refused. A tasklet-requested spawn and a schedule carry no key and SHALL therefore address an unpartitioned instance only: a spawn naming a group's base id finds no instance under it, takes the start path and is refused by this guard, and the requester's result SHALL be `refused` with that sentence; a tasklet feeds a partitioned steps relay through a keyed sink forwarded by `relay_forward`, which resolves the member from the group's ranges.
+A plain (unpartitioned) start of an id that names an existing group's base SHALL be refused, naming the group's member count and `--partitions N` as the way to address it: the base id itself is unclaimed (only member ids are), so without the guard a rogue singleton starts beside the group. Symmetrically, a partitioned start of an id currently held by a live unpartitioned relay SHALL be refused before any member starts. The plain-start guard SHALL live in the single start-authority seam so every starter path (CLI, schedules, tasklet-requested spawns, routed starts) is covered. A generated id that meets either guard SHALL be drawn again rather than refused. A tasklet-requested spawn and a schedule carry no key and SHALL therefore address an unpartitioned instance only: a spawn naming a group's base id finds no instance under it, takes the start path and is refused by this guard, and the requester's result SHALL be `refused` with that sentence; a tasklet feeds a partitioned steps relay through a keyed output forwarded by `relay_forward`, which resolves the member from the group's ranges.
 
 #### Scenario: A plain start of a group base is refused
 
@@ -261,7 +261,7 @@ A plain (unpartitioned) start of an id that names an existing group's base SHALL
 
 #### Scenario: A keyed forward reaches the member
 
-- **WHEN** a flow relay's keyed sink is forwarded by `relay_forward` to the group `demo` and emits a value whose `flz.key` hashes into `demo#p1`'s range
+- **WHEN** a flow relay's keyed output is forwarded by `relay_forward` to the group `demo` and emits a value whose `flz.key` hashes into `demo#p1`'s range
 - **THEN** `demo#p1` receives the message and runs its pass over it, and no other member receives it
 
 ### Requirement: Partitioning SHALL be refused for a steps relay that reads one message

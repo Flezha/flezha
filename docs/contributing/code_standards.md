@@ -51,7 +51,7 @@ Four rules about the checks themselves. Each was learned by shipping the
 opposite.
 
 **A reason describes a property of the thing, never a change that owes it a
-fix.** An exemption justified by "the change that will give this a sink has not
+fix.** An exemption justified by "the change that will give this an output has not
 landed yet" is stale the moment that change lands, and nothing notices: the list
 still parses, the gate still passes, and the reason is now false. Write what is
 true about the entry instead, so that the day it stops being true is the day

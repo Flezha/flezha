@@ -1,7 +1,7 @@
 # Relay calls
 
 A call sends one input to a relay and gets one answer back: the first output that input caused
-on a sink of the relay's graph, or one coded error saying why none came.
+on an output of the relay's graph, or one coded error saying why none came.
 There are two kinds:
 
 - An **outside call** comes from outside Flezha and waits for its answer: `flz relay call`,
@@ -13,7 +13,7 @@ There are two kinds:
   Response channel. A call to a factory can also start the instance it calls.
 
 Flow and steps relays both answer calls and make them. Calls exist so that a request and its
-answer can cross relays without the caller polling state or listening to a sink: a gateway
+answer can cross relays without the caller polling state or listening to an output: a gateway
 calls a user's session and counts the tokens its answer used; an order desk calls a pricing
 relay; a script calls a relay and prints what it answered.
 
@@ -23,7 +23,7 @@ relay; a script calls a relay and prints what it answered.
 flowchart LR
     P(["request"]) --> G["calling relay"]
     G -->|"call"| S["called relay"]
-    S -->|"first sink output"| A{{"answer"}}
+    S -->|"first output"| A{{"answer"}}
     A -.->|"Response, later, as an input"| G
 ```
 
@@ -32,35 +32,35 @@ The controller ties an input to the outputs it causes with a token in the input'
 caller's metadata carried. Every other way into a relay drops that key, so no hook, plugin or
 sender can add, drop or change one. The token is journaled with the input wherever the relay
 journals input, so a sleep, a move to another runner or a crash re-run deliver it again. The
-runner carries it from the input to every value derived from it and stamps it on each sink
+runner carries it from the input to every value derived from it and stamps it on each output
 output the input causes; a tasklet never sees it, and a timer firing carries none. `flz relay
 listen --input` shows it on the arriving input, but it is of no use there: an answer only ever
 goes to the caller waiting for it, and no plugin or listener sees it on an output.
 
 The answer may come from any tasklet downstream of the input, not only the one that received it:
-in `input("in") |> into(Parse) |> into(Price) |> sink("quotes")` the value `Price` emits answers
+in `input("in") |> into(Parse) |> into(Price) |> output("quotes")` the value `Price` emits answers
 the call. In a steps relay the answer comes from the pass the call's input opened.
 
 ## Answering: the relay's outputs
 
 A relay does not say which of its channels answers a caller. Whether an answer is wanted is a
-fact of how an input arrived: when it came from a call, the first output it causes on a sink
-answers the call. That output then goes on to the sink's plugins and to `flz relay listen` like
+fact of how an input arrived: when it came from a call, the first output it causes on an output
+answers the call. That output then goes on to the output's plugins and to `flz relay listen` like
 any other output, so one tasklet answers a caller and records the answer with no extra step.
 Tasklets do not change.
 
 - **The caller may name the answering channel.** `flz relay call --answer-channel quotes`,
   `answer_channel` in the options of `Relay.call/6`, or the answer channel of a `call(...)` end
   (see [below](#where-a-call-goes)). Then only an output on that channel answers, and every other
-  output the input causes is an ordinary output. Without a name, the first sink output answers.
-- **Several sinks per graph.** An accepted path and a refused path may each end in a sink;
+  output the input causes is an ordinary output. Without a name, the first output answers.
+- **Several outputs per graph.** An accepted path and a refused path may each end in an output;
   whichever output comes first answers, unless the caller names a channel.
 - **One answer per call.** Later outputs of the same input are ordinary outputs.
 - **Parts never answer.** A [part](streamed_answers.md) goes to listeners while the tasklet works;
   only a finished emit answers.
-- **Every sink is keyed under the effectively-once tier**, answering ones included, because an
-  answer also reaches the sink's plugins, which drop a duplicate by its key.
-- **One plugin end per channel.** A sink and a `call(...)` on one channel, or two `call(...)`
+- **Every output is keyed under the effectively-once tier**, answering ones included, because an
+  answer also reaches the output's plugins, which drop a duplicate by its key.
+- **One plugin end per channel.** An output and a `call(...)` on one channel, or two `call(...)`
   ends, are refused when the relay is declared, as `topology.channel_ends_twice`.
 
 ### Where an answer leaves
@@ -77,7 +77,7 @@ never answered before the state change its turn made is durable, where the relay
 | a steps relay that journals nothing | at settle |
 
 An output that answers a call goes to its caller first, and then on to the `on_output` hooks
-without the token, so sink plugins and `flz relay listen` see it as an ordinary output. Then:
+without the token, so output plugins and `flz relay listen` see it as an ordinary output. Then:
 
 - the first matching output for a waiting call goes to its caller and ends the call;
 - every later output of the same input, and every output whose input nobody waits for (it came
@@ -158,7 +158,7 @@ its members; a member named directly (`prices#p0`) is called directly. `flz rela
 
 A call through `flz relay call` or `Relay.call/6` is judged as `relay.send` in the
 relay's namespace and audited like a send, naming the relay, with the error code on a
-failure. A caller allowed to send can so read any output its own input causes on a sink, and
+failure. A caller allowed to send can so read any output its own input causes on an output, and
 pick which one with the answer channel; outputs of other inputs stay behind `relay.listen`. A refused call delivers no input and keeps its own `authz.*` code (exit 4). A plugin's
 call on its own relay is that relay's own input and is not judged again. See
 [authorization](../basics/authorization.md).
@@ -182,7 +182,7 @@ into the calling tasklet is fan-in, not a cycle.
 - The request enters the called relay on the entry channel `channel` names, or on its first
   declared entry channel.
 - The called relay's output on the channel the answer channel names answers the call, or, when
-  the end names none, its first sink output for the request.
+  the end names none, its first output for the request.
 - A target is always in the caller's namespace.
 - Creating and delivering go through the controller's one spawn-or-deliver (the one
   [`ctx.spawn_steps`](spawning_from_a_tasklet.md) uses), so two calls racing for one absent id
@@ -208,17 +208,17 @@ into the calling tasklet is fan-in, not a cycle.
 | PHP | `->call(target: 'pricing', deadlineMs: 500)`, `->call(factory: 'agent', deadlineMs: ..., create: false, channel: 'turn', codec: ...)` | `answerChannel: 'quotes'` |
 | Elixir | `call(s, "pricing", deadline_ms: 500)`, `call(s, factory: "agent", deadline_ms: ..., create: false, channel: "turn", serialize: f, decode: g)` | `answer_channel: "quotes"` |
 
-The request is written the way a `sink` writes, and the answer read the way an `input` reads: the
+The request is written the way an `output` writes, and the answer read the way an `input` reads: the
 answer type in Rust and Java, one named codec for both directions in Node, Python, Ruby and PHP
 (JSON by default), and optional `serialize:` and `decode:` functions in Elixir (by default the
-sink rule and the raw binary; the Elixir `Response` carries the request as the bytes that were
+output rule and the raw binary; the Elixir `Response` carries the request as the bytes that were
 sent).
 
 Registration refuses:
 
 | Code | When |
 | --- | --- |
-| `topology.channel_ends_twice` | the channel already ends in a sink or another call |
+| `topology.channel_ends_twice` | the channel already ends in an output or another call |
 | `topology.call_deadline_zero` | the deadline is zero |
 | `topology.call_without_key` | a factory call with `create: false` and no `key_by` before it |
 | `topology.call_response_unread` | the Response channel feeds no tasklet, so every outcome would be journaled and read by nobody; use `relay_forward` when no outcome is wanted |
@@ -269,7 +269,7 @@ timer and `ctx.complete`) no longer holds its id: a call creates a new empty ins
 In the agentdesk example, a `gateway` relay takes HTTP requests from the
 [HTTP server plugin](../../plugins/http_server.md). A POST to `/sessions/<user>/messages` is a
 message for the user's session. The gateway keeps each user's daily token budget in a `budget`
-cell per user, answers the request itself with 202 or 429 on a sink, and,
+cell per user, answers the request itself with 202 or 429 on an output, and,
 when the message is admitted, **calls** the user's session with it. The tokens the answer used
 come back as a `Response` into the same `budget` tasklet.
 
@@ -285,7 +285,7 @@ come back as a `Response` into the same `budget` tasklet.
                 .into(Budget.class);
         verdicts.into(Admit.class)
                 .keyed()
-                .sink();                                     // 202, or 429 over the budget
+                .output();                                   // 202, or 429 over the budget
         verdicts.filter(Verdict::admitted)
                 .map(Message.class, Verdict::message)
                 .keyBy(Message::user)                        // the user's session
@@ -305,7 +305,7 @@ come back as a `Response` into the same `budget` tasklet.
     |> into(Admit)
     |> keyed()
     # 202, or 429 over the budget
-    |> sink()
+    |> output()
 
     verdicts
     |> filter(&Budget.admitted?/1)
@@ -333,9 +333,9 @@ come back as a `Response` into the same `budget` tasklet.
   `flz relay start`. `channel("message")` is the entry channel it arrives on.
 - **The call waits for nothing.** Its outcome comes back later as a `Response` on the gateway's
   Response channel, within the 60-second deadline at the latest.
-- **Two sinks** in one graph (the other answers the non-message requests): whichever output
+- **Two outputs** in one graph (the other answers the non-message requests): whichever output
   comes first answers the request. The 202 leaves before the session has read the message. Both
-  are `keyed()`, as every sink of an effectively-once relay is.
+  are `keyed()`, as every output of an effectively-once relay is.
 
 The `Response` carries the request it answers, which is where the user comes from. A turn that
 failed, or took too long, used no tokens:
@@ -373,7 +373,7 @@ failed, or took too long, used no tokens:
 <!-- tabs-close -->
 
 On the called side, the session takes the gateway's message on an entry channel of its own,
-`message`, beside the `turn` channel the CLI uses, and answers from its sink `answer`, which
+`message`, beside the `turn` channel the CLI uses, and answers from its output `answer`, which
 listeners read too. Both channels reach the same `reply` tasklet, with the same conversation:
 
 <!-- tabs-open -->
@@ -384,7 +384,7 @@ listeners read too. Both channels reach the same `reply` tasklet, with the same 
 // AgentRelay.java: one conversation, answering whoever called.
         c.input(String.class, "turn")
                 .into(Reply.class)
-                .sink("answer");                         // to whoever called, and whoever listens
+                .output("answer");                       // to whoever called, and whoever listens
         c.input(Message.class, "message")                // from the gateway
                 .map(String.class, Message::text)
                 .into(Reply.class);
@@ -400,7 +400,7 @@ listeners read too. Both channels reach the same `reply` tasklet, with the same 
     |> input("turn")
     |> into(Reply)
     # to whoever called, and whoever listens
-    |> sink("answer")
+    |> output("answer")
 
     # from the gateway
     c

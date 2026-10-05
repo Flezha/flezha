@@ -4,7 +4,7 @@
 //
 // `Split` and `Tally` are ordinary tasklets with nothing local-mode about
 // them: the same definition deploys against a controller unchanged. What
-// local mode supplies is the sink — the values `Tally` releases arrive here
+// local mode supplies is the output — the values `Tally` releases arrive here
 // instead of on a socket.
 //
 // State is held in memory and nothing is durable; the run says so on stderr.
@@ -44,13 +44,13 @@ const WordCount = defineRelay({
       .keyBy((word) => word)
       .into(Tally)
       .keyed()
-      .sink('totals');
+      .output('totals');
   },
 });
 
 const run = LocalRelay.start(WordCount);
 try {
-  run.onSink('totals', (output) => console.log(output.payload.toString('utf8')));
+  run.onOutput('totals', (output) => console.log(output.payload.toString('utf8')));
   await run.feed('lines', 'the quick brown fox');
   await run.feed('lines', 'the lazy dog');
   await run.runUntilIdle(10_000);

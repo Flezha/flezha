@@ -7,7 +7,7 @@ TBD - created by archiving change effectively-once-output. Update Purpose after 
 
 In tier mode the SDK SHALL ship an invocation's state change(s), plugin emits,
 and consumed input offset as ONE `cell_effect_record` on the reliable state
-sink, and the controller SHALL persist it as ONE WAL record covered by ONE fsync
+output plugin, and the controller SHALL persist it as ONE WAL record covered by ONE fsync
 window. A Cell of a durable steps class SHALL ship the same record for every
 invocation, with no consumed offset, and the controller SHALL persist it the same way.
 
@@ -23,7 +23,7 @@ durable without every record it names being durable first.
 Outputs are not part of that pair. A record MAY carry outputs with no offset —
 which is how a checkpoint-mode relay's mid-interval emits reach their
 plugins without acknowledging an input whose state is not durable yet. Such
-outputs are emitted again when the interval replays, and the keyed-sink dedup
+outputs are emitted again when the interval replays, and the keyed-output plugin dedup
 the tier requires absorbs them.
 
 #### Scenario: Record cannot tear
@@ -47,7 +47,7 @@ the tier requires absorbs them.
 #### Scenario: Emits leave the primary stream in tier mode
 
 - **WHEN** an opted-in relay's invocation emits on a keyed channel
-- **THEN** the output travels inside the effect record on the reliable sink, and
+- **THEN** the output travels inside the effect record on the reliable output plugin, and
   no output frame for it appears on the primary stream
 
 ### Requirement: Fsync-gated outbox flush
@@ -105,13 +105,13 @@ time, never the pump that drains a burst.
 - **WHEN** ingest has stopped, so no further fsync occurs, while more durable
   entries are pending than the window admits
 - **THEN** each completed confirmation dispatches the next pending entry and
-  the whole backlog drains at the sink's confirmation rate, not one window
+  the whole backlog drains at the output plugin's confirmation rate, not one window
   per retry tick
 
 ### Requirement: Restart re-drives unflushed outbox entries
 
 The controller SHALL maintain a per-Cell `outbox_flushed_seq` cursor that
-never runs ahead of what the external sink has confirmed delivered, for a tier flow relay Cell and
+never runs ahead of what the external output plugin has confirmed delivered, for a tier flow relay Cell and
 a durable steps relay Cell alike. An
 in-memory hand-off (a cast to the relay or an async admission into a
 plugin queue) SHALL NOT advance the cursor. On restart the controller SHALL
@@ -120,43 +120,43 @@ release only the re-driven entries a live journal entry names, SHALL drop those 
 range it names that no entry names, and SHALL hold the rest until the instance's bind, which
 drops them. The writer SHALL learn that its Cell commits by stage from the class registry,
 which records the kind before the instance's runner starts. Re-driven
-entries carry identical identity so idempotent/dedup sinks absorb them:
-outputs are never lost and never applied twice at a conforming sink.
+entries carry identical identity so idempotent/dedup output plugins absorb them:
+outputs are never lost and never applied twice at a conforming output plugin.
 
 #### Scenario: Crash between fsync and flush
 
 - **WHEN** the controller crashes after fsyncing an effect record but before
   dispatching its outputs, then restarts
 - **THEN** the outputs are dispatched to the plugin chain with their original
-  identity and confirmed by the sink exactly once
+  identity and confirmed by the output plugin exactly once
 
-#### Scenario: Crash after dispatch but before sink confirmation
+#### Scenario: Crash after dispatch but before output plugin confirmation
 
 - **WHEN** the controller crashes after handing outputs to the plugin chain
-  but before the sink confirms the write, then restarts
+  but before the output plugin confirms the write, then restarts
 - **THEN** the cursor has not advanced past those entries and they are
-  re-driven with identical identity; a conforming sink deduplicates any
+  re-driven with identical identity; a conforming output plugin deduplicates any
   duplicate that did reach it
 
 #### Scenario: Crash between confirmation and cursor write
 
-- **WHEN** the controller crashes after the sink confirmed a batch but before
+- **WHEN** the controller crashes after the output plugin confirmed a batch but before
   the advanced cursor is durable, then restarts
 - **THEN** the same outputs are re-dispatched with identical identity and the
-  sink deduplicates them
+  output plugin deduplicates them
 
 #### Scenario: A steps relay's committed output re-drives, its uncommitted output does not
 
 - **WHEN** the controller crashes after journaling `task_committed(A)` naming A's Cell record at seq 3 but before dispatching its output, while B's Cell holds a record at seq 1 that no entry names, then restarts and the instance rebinds
 - **THEN** A's output is dispatched with its original identity and confirmed once, and B's record's output is dropped from the queue and never dispatched
 
-### Requirement: Sink delivery confirmation gates the outbox cursor
+### Requirement: Output plugin delivery confirmation gates the outbox cursor
 
-Delivery-guaranteed sinks SHALL confirm delivery per batch, keyed by the
-outbox range the batch covers, once the write is durable at the sink (e.g. a
+Delivery-guaranteed output plugins SHALL confirm delivery per batch, keyed by the
+outbox range the batch covers, once the write is durable at the output plugin (e.g. a
 Kafka produce acknowledged, a Postgres transaction committed, a forwarded
 ingest confirmed). The confirmation gates only the cursor advance: emits, the
-effect-record fsync, and runner acknowledgements SHALL NOT wait on sink
+effect-record fsync, and runner acknowledgements SHALL NOT wait on output plugin
 confirmation. A batch whose retry budget is permanently exhausted SHALL be
 parked through the existing dead-letter retry-then-park with its outbox range
 attached — recorded and replayable, never silently dropped — and only a parked
@@ -165,18 +165,18 @@ observable and feed the output-stall verdict.
 
 Every flushed output SHALL carry an opaque confirmation token (`flz.ack`)
 naming the writer that owns the cursor and the entry one confirmation
-completes. A delivery-guaranteed sink SHALL hold the token as it takes
+completes. A delivery-guaranteed output plugin SHALL hold the token as it takes
 ownership of the output and SHALL confirm it once its write is durable (or
 park it). The dispatcher SHALL run each output's chain as one run that counts
 the holds the run takes and settles the entry with that count; an entry
 completes when every output has settled and every hold has been answered, so
-a chain with no guaranteed sink completes as soon as it has run. A chain that
+a chain with no guaranteed output plugin completes as soon as it has run. A chain that
 crashes SHALL settle nothing — the entry stays pending and the resettle
 re-dispatches it under identical identity. A hold taken outside a dispatcher
-run (a sink fed by something other than the dispatcher) SHALL report through
+run (an output plugin fed by something other than the dispatcher) SHALL report through
 the token itself.
 
-The reports SHALL be batched, never the facts: a sink SHALL confirm a
+The reports SHALL be batched, never the facts: an output plugin SHALL confirm a
 completed batch with one report covering every entry the batch completed, and
 the dispatcher SHALL hand an fsync window's outputs to the chain as one batch
 that settles with one report carrying each entry's holds. A batch report is
@@ -186,14 +186,14 @@ superseded are unchanged by batching.
 
 #### Scenario: Confirmation is off the hot path
 
-- **WHEN** a sink is slow to confirm while inputs keep arriving
+- **WHEN** an output plugin is slow to confirm while inputs keep arriving
 - **THEN** ingest, effect-record fsync, and runner acks proceed unchanged;
   only `outbox_flushed_seq` lags, visibly
 
 #### Scenario: Permanent failure parks loudly instead of dropping
 
 - **WHEN** a batch exhausts its retry ladder against a permanently failing
-  sink
+  output plugin
 - **THEN** the batch parks via the dead-letter path with its outbox range, an
   alarm-grade event fires, and the cursor advances past exactly the parked
   range
@@ -201,28 +201,28 @@ superseded are unchanged by batching.
 #### Scenario: A filtered output completes on settlement
 
 - **WHEN** an `:on_output` plugin filters an output so no delivery-guaranteed
-  sink takes it
+  output plugin takes it
 - **THEN** the dispatcher's settlement carries zero holds and the entry
   completes without waiting on any confirmation
 
 #### Scenario: A crashed chain run leaves its entry owed
 
 - **WHEN** the relay host crashes while running an output's chain, after
-  a sink held the token
+  an output plugin held the token
 - **THEN** no settlement is reported, the entry stays pending with its holds
   unanswered, and the resettle re-dispatches its outputs under identical
   identity instead of completing a run that never finished
 
 #### Scenario: A hold outside a dispatcher run still counts
 
-- **WHEN** a sink holds an output's token from a process that is not running
+- **WHEN** an output plugin holds an output's token from a process that is not running
   the dispatcher's chain
 - **THEN** the hold reaches the owning writer through the token and the entry
   waits for its confirmation exactly as for a hold taken inside a run
 
 #### Scenario: A batch of outputs costs one confirmation report
 
-- **WHEN** a sink's batch of 200 guaranteed outputs spanning 200 entries is
+- **WHEN** an output plugin's batch of 200 guaranteed outputs spanning 200 entries is
   acknowledged
 - **THEN** the writer receives one report naming the 200 entries, each entry
   completes exactly as it would have from 200 single reports, and the cursor
@@ -237,8 +237,8 @@ superseded are unchanged by batching.
 ### Requirement: End-to-end effectively-once over crash-replay
 
 A tier-enabled keyed-channel pipeline SHALL deliver each logical output
-effectively once, source to conforming sink, across runner crash, controller
-crash, and input replay: the sink's final visible state contains no duplicates
+effectively once, source to conforming output plugin, across runner crash, controller
+crash, and input replay: the output plugin's final visible state contains no duplicates
 and no gaps. The end-to-end property SHALL be exercised by an
 integration test that kills each party at every phase boundary.
 
@@ -246,13 +246,13 @@ integration test that kills each party at every phase boundary.
 
 - **WHEN** the runner is killed while processing and the Cell is restored
   and replays from its durable consumed-offset
-- **THEN** the conforming sink's final state equals the no-crash run's final
+- **THEN** the conforming output plugin's final state equals the no-crash run's final
   state
 
 #### Scenario: Controller kill mid-flush
 
-- **WHEN** the controller is killed between fsync and sink flush and restarts
-- **THEN** the conforming sink's final state equals the no-crash run's final
+- **WHEN** the controller is killed between fsync and output plugin flush and restarts
+- **THEN** the conforming output plugin's final state equals the no-crash run's final
   state
 
 ### Requirement: An inter-tasklet output's offset is never durable ahead of the output

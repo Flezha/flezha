@@ -782,7 +782,7 @@ The convergence loop SHALL publish one verdict record per connected runner whose
 - **WHEN** the convergence loop ticks
 - **THEN** the runner's record and every one of its channel records SHALL be `unknown` with reason `{:unobserved, :active_runners}`, and `/healthz` SHALL NOT join `dead_runner` into its reason for that runner
 
-#### Scenario: the watchdog is unchanged and its event reaches a sink
+#### Scenario: the watchdog is unchanged and its event reaches an output
 
 - **GIVEN** no inbound control frame arrives for longer than the configured liveness window
 - **WHEN** the watchdog fires

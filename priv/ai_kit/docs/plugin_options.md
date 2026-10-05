@@ -23,7 +23,7 @@ object of a `--plugins` spec:
 ```sh
 $ flz relay start order_executor --id order_1 --namespace trading \
   --text '{"symbol": "EUR/USD", "quantity": 10}' --channel order \
-  --plugins '[{"name": "order_1_file", "provider": "relay_file_sink", "opts": {"path": "order_1.txt"}, "hooks": [["on_output", {}]]}]'
+  --plugins '[{"name": "order_1_file", "provider": "relay_file_output", "opts": {"path": "order_1.txt"}, "hooks": [["on_output", {}]]}]'
 ```
 
 An option the provider does not declare is refused at enable rather than
@@ -51,12 +51,12 @@ ignored, so a typo fails loudly. JSON values and quoting are covered in
 
 | Provider | Comes with | What it does | Options |
 |---|---|---|---|
-| `relay_file_source` | built in | Reads a file onto a relay's input, one line per input. | [file](../plugins/file.md#options) |
-| `relay_file_sink` | built in | Writes a relay's records to a file, one line each. | [file](../plugins/file.md#options) |
+| `relay_file_input` | built in | Reads a file onto a relay's input, one line per input. | [file](../plugins/file.md#options) |
+| `relay_file_output` | built in | Writes a relay's records to a file, one line each. | [file](../plugins/file.md#options) |
 | `relay_http_poll` | built in | Polls a URL on an interval and injects the body when it changed. | [http_poll](../plugins/http_poll.md#options) |
 | `relay_http_push` | built in | Sends each output, or each input, of a relay as an HTTP request. | [http_push](../plugins/http_push.md#options) |
 | `relay_websocket` | built in | Holds a websocket open, injects its frames and can send outputs back on it. | [websocket](../plugins/websocket_subscription.md#options) |
-| `relay_postgres` | built in | Writes a relay's outputs into Postgres, one transaction per batch. | [postgres_sink](../plugins/postgres_sink.md#options) |
+| `relay_postgres` | built in | Writes a relay's outputs into Postgres, one transaction per batch. | [postgres_sink](../plugins/postgres_output.md#options) |
 | `relay_postgres_poll` | built in | Reads the new, and optionally changed, rows of a Postgres table by polling. | [postgres_poll](../plugins/postgres_poll.md#options) |
 | `relay_forward` | built in | Sends one relay's outputs into another relay's input. | [relay_forward](../plugins/relay_forward.md#options) |
 | `hook_webhook` | built in | Posts the hook events it is enabled for as JSON to a URL; a controller plugin. | [hook_webhook](../plugins/hook_webhook.md#options) |

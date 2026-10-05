@@ -42,7 +42,7 @@ arriving on a transport uses, and an inter-tasklet value SHALL travel the same
 routing seam that live delivery and replay travel.
 
 Where local mode differs from a deployed runner, the difference SHALL be
-expressed by supplying a different outbound sink, never by branching the routing
+expressed by supplying a different outbound output, never by branching the routing
 or cell path on whether a controller is attached.
 
 #### Scenario: The routing seam is shared
@@ -77,22 +77,22 @@ multi-runner scale.
 - **WHEN** a host SDK's local-mode entry point is invoked
 - **THEN** the notice SHALL originate from the shared runtime core, so that adding a new host SDK cannot produce a local mode that is silent about durability
 
-### Requirement: Sink output SHALL be delivered to a caller-supplied callback
+### Requirement: Outputs SHALL be delivered to a caller-supplied callback
 
-A graph terminating in a plugin-bound sink SHALL run in local mode, and each
-value released on that sink SHALL be delivered to a callback the caller registers
-by the sink's declared name. The value SHALL carry the identity and metadata a
+A graph terminating in a plugin-bound output SHALL run in local mode, and each
+value released on that output SHALL be delivered to a callback the caller registers
+by the output's declared name. The value SHALL carry the identity and metadata a
 deployed run would stamp on it, because local mode intercepts output at the point
 production frames it rather than before.
 
-#### Scenario: A registered callback receives sink output
+#### Scenario: A registered callback receives output
 
-- **WHEN** a caller registers a callback for the sink named `totals` and the graph emits two values on it
+- **WHEN** a caller registers a callback for the output named `totals` and the graph emits two values on it
 - **THEN** the callback SHALL be invoked twice, in release order, with those values
 
 #### Scenario: Output carries production identity stamps
 
-- **WHEN** a keyed sink releases a value in local mode
+- **WHEN** a keyed output releases a value in local mode
 - **THEN** the delivered value SHALL carry the same cell, sequence and key stamps a deployed run would attach
 
 ### Requirement: Input SHALL be supplied by the caller on a named entry channel
@@ -118,7 +118,7 @@ source of its own.
 ### Requirement: Local mode SHALL refuse what it cannot honour
 
 Local mode MUST fail loudly rather than degrade silently when a declaration
-requires a capability it does not provide. A declared sink with no registered
+requires a capability it does not provide. A declared output with no registered
 callback SHALL be reported rather than discarded, and a declaration requiring a
 controller-side capability — an installed plugin, partitioning, a remote
 durability backend — SHALL fail with an error naming the capability and stating
@@ -126,10 +126,10 @@ that it requires a controller.
 
 A local run SHALL NOT report success for work it did not perform.
 
-#### Scenario: An unregistered sink is reported
+#### Scenario: An unregistered output is reported
 
-- **WHEN** a graph declares a sink for which the caller registered no callback and a value is released on it
-- **THEN** the run SHALL report the unhandled sink by name rather than discarding the value silently
+- **WHEN** a graph declares an output for which the caller registered no callback and a value is released on it
+- **THEN** the run SHALL report the unhandled output by name rather than discarding the value silently
 
 #### Scenario: A controller-only declaration is refused
 
@@ -192,7 +192,7 @@ deferred.
 #### Scenario: Equivalent behaviour across the in-scope SDKs
 
 - **WHEN** an equivalent two-tasklet declaration is run in local mode on each SDK with the same inputs
-- **THEN** each SHALL execute both tasklets, perform the inter-tasklet hop in the runtime, and deliver the same sink output
+- **THEN** each SHALL execute both tasklets, perform the inter-tasklet hop in the runtime, and deliver the same output
 
 #### Scenario: No SDK claims a deferral
 

@@ -78,7 +78,7 @@ any others do.
 
 - **WHEN** application code sends `hello` locally to the entry channel `in` of a bound echo
   relay
-- **THEN** the relay SHALL handle it and its output SHALL reach its sink as an output
+- **THEN** the relay SHALL handle it and its output SHALL reach its output channel as an output
   from controller-delivered input does
 
 #### Scenario: State changes are kept as usual

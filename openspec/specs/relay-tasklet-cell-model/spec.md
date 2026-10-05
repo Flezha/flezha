@@ -333,21 +333,21 @@ When a Channel connects two Tasklets inside the same Relay, the SDK SHALL transp
 - **THEN** the IndicatorTasklet's `run(...)` SHALL receive the same `Arc<Candle>` instance OhlcTasklet emitted (or an `Arc` to byte-identical content with no intermediate serialization step)
 
 ### Requirement: Plugin emission semantics
-Channels declared with `.sink("name")` / `.sink_with("name", serializer)` — in **either** the Rust SDK or the Java SDK (`.sink(...)`) — SHALL route a value, whether or not the channel also has inter-tasklet consumers, through the agent's plugin layer using the channel name as the wire identifier. The numeric `plugin_group: u8` metadata field is removed from the wire format. The replacement metadata field SHALL be `channel: String` — the literal channel name as a string in v1. A per-channel integer fast-path (sending an interned `u32` instead of the string) MAY be added by a future change as an opt-in alternative, but SHALL NOT be in v1.
+Channels declared with `.output("name")` / `.output_with("name", serializer)` — in **either** the Rust SDK or the Java SDK (`.output(...)`) — SHALL route a value, whether or not the channel also has inter-tasklet consumers, through the agent's plugin layer using the channel name as the wire identifier. The numeric `plugin_group: u8` metadata field is removed from the wire format. The replacement metadata field SHALL be `channel: String` — the literal channel name as a string in v1. A per-channel integer fast-path (sending an interned `u32` instead of the string) MAY be added by a future change as an opt-in alternative, but SHALL NOT be in v1.
 
-The wire bytes are produced by the channel's `pluginSink.serializer` / `plugin_sink.serializer` (set by `sink(...)` / `sink_with(...)`), the one representation of plugin egress for both shapes. The byte buffer SHALL be sent through the same wire framing path (`channel: String` metadata + payload bytes) so the agent's plugin layer SHALL NOT distinguish between pure and hybrid channels at the wire — both arrive identically and route by channel name. **Furthermore, the agent's plugin layer SHALL NOT distinguish between Rust-SDK and Java-SDK frames** — hybrid frames produced by either SDK are byte-indistinguishable for the same plugin name and serializer-output bytes.
+The wire bytes are produced by the channel's `pluginSink.serializer` / `plugin_sink.serializer` (set by `output(...)` / `output_with(...)`), the one representation of plugin egress for both shapes. The byte buffer SHALL be sent through the same wire framing path (`channel: String` metadata + payload bytes) so the agent's plugin layer SHALL NOT distinguish between pure and hybrid channels at the wire — both arrive identically and route by channel name. **Furthermore, the agent's plugin layer SHALL NOT distinguish between Rust-SDK and Java-SDK frames** — hybrid frames produced by either SDK are byte-indistinguishable for the same plugin name and serializer-output bytes.
 
 #### Scenario: Pure-plugin emit reaches the agent's plugin layer
-- **WHEN** a Tasklet publishes to a channel declared with `.sink("ohlc_kafka")` and no consumers
+- **WHEN** a Tasklet publishes to a channel declared with `.output("ohlc_kafka")` and no consumers
 - **THEN** the agent's `ohlc_kafka` plugin SHALL receive the bytes with `channel = <channel name>` in the metadata
 
 #### Scenario: Hybrid emit reaches the agent's plugin layer with identical framing
-- **WHEN** a Tasklet publishes via `.sink_with("indicators", sma_to_pb_bytes)` on a channel that also has inter-tasklet consumers
+- **WHEN** a Tasklet publishes via `.output_with("indicators", sma_to_pb_bytes)` on a channel that also has inter-tasklet consumers
 - **THEN** the agent's `indicators` plugin SHALL receive the serializer-output bytes with `channel = <channel name>` in the metadata
 - **AND** the wire frame SHALL be byte-indistinguishable from a pure-plugin channel's frame for the same plugin name and bytes
 
 #### Scenario: Two channels sharing a plugin name fan in at the agent
-- **WHEN** a Relay declares two hybrid channels (e.g. an `sma_out` stream with `sink_with("indicators", sma_serde)` and an `ema_out` stream with `sink_with("indicators", ema_serde)`)
+- **WHEN** a Relay declares two hybrid channels (e.g. an `sma_out` stream with `output_with("indicators", sma_serde)` and an `ema_out` stream with `output_with("indicators", ema_serde)`)
 - **THEN** the agent's `indicators` plugin SHALL receive frames from both channels, distinguishable only by the `channel: String` metadata key
 - **AND** the SDK's topology builder SHALL NOT reject this declaration, because each channel still has exactly one producer Tasklet
 
@@ -356,7 +356,7 @@ The wire bytes are produced by the channel's `pluginSink.serializer` / `plugin_s
 - **THEN** that plugin SHALL receive every message whose channel name matches `"ohlc_kafka"`, regardless of which Tasklet produced it
 
 #### Scenario: Hybrid emit reaches the agent's plugin layer with identical framing across SDKs
-- **WHEN** a Rust Tasklet publishes via `.sink_with("indicators", sma_to_pb_bytes)` and a Java Tasklet publishes via `.sink("indicators", SmaCodec::toBytes)` with identical serializer output for an identical input value
+- **WHEN** a Rust Tasklet publishes via `.output_with("indicators", sma_to_pb_bytes)` and a Java Tasklet publishes via `.output("indicators", SmaCodec::toBytes)` with identical serializer output for an identical input value
 - **THEN** the agent's `indicators` plugin SHALL receive byte-equal wire frames from both SDKs (the only on-wire difference being TCP/UDS interleaving — the framed payload bytes are identical)
 - **AND** the SDK's topology builder on either side SHALL NOT reject either declaration, because each channel still has exactly one producer Tasklet within its own SDK
 
@@ -388,27 +388,27 @@ When `emit_with_meta` is used on a plugin-bound channel, the supplied `HashMap<S
 - **THEN** the call SHALL return `Err(TaskletError::MetadataNotAllowedOnInterTaskletChannel { channel })`, and the value `p` SHALL NOT be propagated to the downstream Tasklet
 
 ### Requirement: Hybrid channel builder method
-The Rust SDK SHALL expose `sink_with<F>(plugin_name: &'static str, serializer: F)` where `F: Fn(&T) -> Vec<u8> + Send + Sync + 'static`, and `sink(plugin_name: &'static str)` (default serialization: passthrough for `Vec<u8>`, UTF-8 for `String`, the SDK's default JSON codec otherwise), on the graph builder's stream handle. Calling either SHALL attach a plugin sink (the named plugin and the serializer, type-erased to `PluginSerializeFn`) alongside the channel's existing consumer fan-out. After the call, further `.into::<S>()` consumer wiring SHALL chain naturally — the method returns the same stream handle.
+The Rust SDK SHALL expose `output_with<F>(plugin_name: &'static str, serializer: F)` where `F: Fn(&T) -> Vec<u8> + Send + Sync + 'static`, and `output(plugin_name: &'static str)` (default serialization: passthrough for `Vec<u8>`, UTF-8 for `String`, the SDK's default JSON codec otherwise), on the graph builder's stream handle. Calling either SHALL attach a plugin output (the named plugin and the serializer, type-erased to `PluginSerializeFn`) alongside the channel's existing consumer fan-out. After the call, further `.into::<S>()` consumer wiring SHALL chain naturally — the method returns the same stream handle.
 
-The plugin sink SHALL be stored on the channel descriptor as a `plugin_sink: Option<PluginSink>` field where `PluginSink { name: &'static str, serializer: PluginSerializeFn }`. Pure-`PluginBound` channels (produced by `output(...)`) SHALL continue to populate the existing `plugin_name` and `plugin_serializer` fields and SHALL NOT populate `plugin_sink`. Hybrid channels SHALL populate `plugin_sink` and SHALL NOT populate `plugin_name`/`plugin_serializer`. The two paths SHALL stay textually distinct so existing pattern matches over `ChannelKind` continue to compile unchanged.
+The plugin output SHALL be stored on the channel descriptor as a `plugin_sink: Option<PluginSink>` field where `PluginSink { name: &'static str, serializer: PluginSerializeFn }`. Pure-`PluginBound` channels (produced by `output(...)`) SHALL continue to populate the existing `plugin_name` and `plugin_serializer` fields and SHALL NOT populate `plugin_sink`. Hybrid channels SHALL populate `plugin_sink` and SHALL NOT populate `plugin_name`/`plugin_serializer`. The two paths SHALL stay textually distinct so existing pattern matches over `ChannelKind` continue to compile unchanged.
 
 #### Scenario: Hybrid wiring is accepted at registration
-- **WHEN** a Relay declares an `SmaTasklet` output stream with `.sink_with("indicators", sma_to_pb_bytes).into::<BollingerTasklet>()`
+- **WHEN** a Relay declares an `SmaTasklet` output stream with `.output_with("indicators", sma_to_pb_bytes).into::<BollingerTasklet>()`
 - **THEN** registration SHALL succeed
 - **AND** the resulting `ChannelDescriptor` SHALL have `kind = InterTasklet`, exactly one entry in `consumers` (the `BollingerTasklet` tasklet id), and `plugin_sink = Some(PluginSink { name: "indicators", serializer: <fn-ptr> })`
 
-#### Scenario: sink_with chains in either order with into::<S>()
-- **WHEN** a Relay declares `.into::<MacdTasklet>().sink_with("indicators", ema_to_pb_bytes)` on an `EmaTasklet` output stream
+#### Scenario: output_with chains in either order with into::<S>()
+- **WHEN** a Relay declares `.into::<MacdTasklet>().output_with("indicators", ema_to_pb_bytes)` on an `EmaTasklet` output stream
 - **THEN** registration SHALL succeed
 - **AND** the resulting descriptor SHALL be identical to the same declaration with the calls swapped
 
-#### Scenario: sink without a serializer uses the default codec
-- **WHEN** a Relay declares `.sink("indicators")` on a stream of a serde-serializable type
-- **THEN** the plugin sink SHALL serialize each value with the SDK's default JSON codec, identically to what `output("indicators")` would produce for the same value
+#### Scenario: output without a serializer uses the default codec
+- **WHEN** a Relay declares `.output("indicators")` on a stream of a serde-serializable type
+- **THEN** the plugin output SHALL serialize each value with the SDK's default JSON codec, identically to what `output("indicators")` would produce for the same value
 
-#### Scenario: Calling sink_with twice on the same channel is a topology error
-- **WHEN** a Relay chains `.sink_with("p1", f1).sink_with("p2", f2)` on one stream
-- **THEN** registration SHALL fail with `TopologyIssue::DuplicatePluginSink { channel }` naming the channel
+#### Scenario: Calling output_with twice on the same channel is a topology error
+- **WHEN** a Relay chains `.output_with("p1", f1).output_with("p2", f2)` on one stream
+- **THEN** registration SHALL fail with `TopologyIssue::DuplicatePluginOutput { channel }` naming the channel
 
 ### Requirement: Hybrid channel emission — consumer fan-out then single serializer call
 When a Tasklet's `Tasklet::run` calls `ctx.emit(value)` on a hybrid channel (`kind = InterTasklet, plugin_sink = Some(_)`), the dispatcher SHALL execute the following sequence on the producer thread:
@@ -439,8 +439,8 @@ The serializer SHALL run exactly once per `ctx.emit` invocation regardless of co
 #### Scenario: Serializer runs after consumer fan-out, not before
 - **WHEN** an `OverflowPolicy::DropNothing` consumer mailbox is full and the producer emits on a hybrid channel
 - **THEN** the producer SHALL park on the consumer mailbox
-- **AND** the plugin sink SHALL NOT receive any bytes until the consumer drains and the producer unparks
-- **AND** when the producer unparks, the serializer SHALL be invoked exactly once and the plugin sink SHALL receive the corresponding bytes
+- **AND** the plugin output SHALL NOT receive any bytes until the consumer drains and the producer unparks
+- **AND** when the producer unparks, the serializer SHALL be invoked exactly once and the plugin output SHALL receive the corresponding bytes
 
 ### Requirement: emit_with_meta is valid on hybrid channels
 `ctx.emit_with_meta(value, meta)` SHALL accept the call when either:
@@ -448,12 +448,12 @@ The serializer SHALL run exactly once per `ctx.emit` invocation regardless of co
 - the channel is `kind = PluginBound` (existing rule), OR
 - the channel has `plugin_sink = Some(_)` (new rule for hybrid channels).
 
-On a hybrid channel, the inter-tasklet consumers SHALL receive the typed value with no metadata (metadata is plugin-framing only and has no place in the typed delivery model). The plugin sink SHALL receive bytes (via the channel's serializer) with the supplied `HashMap<String, String>` attached to the wire frame using the existing `[key_len][val_len][key][value]` block format. The reserved `channel: String` key SHALL be set automatically and SHALL NOT be overridable by user-supplied keys; an attempt to set a reserved key SHALL be silently dropped during framing (matches the existing rule for `PluginBound` channels).
+On a hybrid channel, the inter-tasklet consumers SHALL receive the typed value with no metadata (metadata is plugin-framing only and has no place in the typed delivery model). The plugin output SHALL receive bytes (via the channel's serializer) with the supplied `HashMap<String, String>` attached to the wire frame using the existing `[key_len][val_len][key][value]` block format. The reserved `channel: String` key SHALL be set automatically and SHALL NOT be overridable by user-supplied keys; an attempt to set a reserved key SHALL be silently dropped during framing (matches the existing rule for `PluginBound` channels).
 
-On a pure-`InterTasklet` channel with no plugin sink, `emit_with_meta` SHALL continue to return `TaskletError::MetadataNotAllowedOnInterTaskletChannel { channel }` without delivering the value or the metadata.
+On a pure-`InterTasklet` channel with no plugin output, `emit_with_meta` SHALL continue to return `TaskletError::MetadataNotAllowedOnInterTaskletChannel { channel }` without delivering the value or the metadata.
 
 #### Scenario: emit_with_meta on a hybrid channel forwards metadata to plugin only
-- **WHEN** a producer Tasklet's `run` calls `ctx.emit_with_meta(value, {"trace_id": "abc123"})` on a hybrid channel wired to one consumer and one plugin sink
+- **WHEN** a producer Tasklet's `run` calls `ctx.emit_with_meta(value, {"trace_id": "abc123"})` on a hybrid channel wired to one consumer and one plugin output
 - **THEN** the consumer SHALL receive the typed `value` with no `trace_id` visible
 - **AND** the plugin wire frame SHALL contain `trace_id = "abc123"` plus the implicit `channel = <channel name>` key
 
@@ -466,22 +466,22 @@ On a pure-`InterTasklet` channel with no plugin sink, `emit_with_meta` SHALL con
 - **WHEN** a producer calls `ctx.emit_with_meta(value, {"channel": "spoof", "trace_id": "abc"})` on a hybrid channel
 - **THEN** the wire frame SHALL contain `channel = <real channel name>` (the reserved value, not "spoof") and `trace_id = "abc"`
 
-### Requirement: New TopologyIssue variant — `DuplicatePluginSink`
-`TopologyIssue` SHALL carry a `DuplicatePluginSink { channel: String }` variant, and the
+### Requirement: New TopologyIssue variant — `DuplicatePluginOutput`
+`TopologyIssue` SHALL carry a `DuplicatePluginOutput { channel: String }` variant, and the
 type SHALL live in `flz_core::host::issue` with the Rust SDK re-exporting it from
 `sdk/rust/src/channel/builder/issue.rs`. The variant SHALL be raised by the reference check
-when a channel's record carries more than one `sink` link, for every SDK; the Rust SDK's
+when a channel's record carries more than one `output` link, for every SDK; the Rust SDK's
 `register_stream::<R>()` SHALL surface it in the standard "topology rejected" message that
 lists every accumulated `TopologyIssue`, and SHALL NOT register the topology.
 
-#### Scenario: Second sink_with call is rejected at registration
-- **WHEN** a Relay's `channels(c)` method calls `sink_with("p1", f1)` followed by `sink_with("p2", f2)` on the same channel
-- **THEN** `register_stream::<R>()` SHALL panic with the topology error including `DuplicatePluginSink { channel: "<name>" }`
+#### Scenario: Second output_with call is rejected at registration
+- **WHEN** a Relay's `channels(c)` method calls `output_with("p1", f1)` followed by `output_with("p2", f2)` on the same channel
+- **THEN** `register_stream::<R>()` SHALL panic with the topology error including `DuplicatePluginOutput { channel: "<name>" }`
 - **AND** the registered topology SHALL be discarded
 
 #### Scenario: The same shape is refused on an erased host
-- **WHEN** a Node, Python, Ruby, PHP or Java builder records two `sink` links on one channel
-- **THEN** the core's check refuses `topology.duplicate_plugin_sink` naming the channel and the class is not registered
+- **WHEN** a Node, Python, Ruby, PHP or Java builder records two `output` links on one channel
+- **THEN** the core's check refuses `topology.duplicate_plugin_output` naming the channel and the class is not registered
 
 ### Requirement: New TaskletError variant — `PluginSerializerPanic`
 `TaskletError` (in `sdk/rust/src/tasklet/error.rs`) SHALL gain a `PluginSerializerPanic { channel: String, message: String }` variant. The variant SHALL be returned from `ctx.emit(...)` (and `ctx.emit_with_meta(...)`) on a hybrid channel when the user-supplied serializer panics. `channel` SHALL be the channel name as declared in `ChannelBuilder`; `message` SHALL be the panic payload formatted via the existing panic-message helper (a string description, not the raw `Box<dyn Any>` payload).
@@ -495,23 +495,23 @@ The producing Tasklet's `Tasklet::run` SHALL receive the error via the normal `R
 - **AND** the inter-tasklet consumer fan-out SHALL have already completed before the panic was caught
 
 ### Requirement: Hybrid channel builder method (Java SDK)
-The Java SDK SHALL expose `sink(String pluginName, Function<T, byte[]> serializer)` and `sink(String pluginName)` (default serialization: passthrough for `byte[]`, UTF-8 for `String`, Jackson JSON otherwise) on the graph builder's stream handle. Calling either SHALL attach a plugin sink (the named plugin and the serializer, type-erased to `Function<Object, byte[]>`) alongside the channel's existing consumer fan-out. After the call, further `.into(...)` consumer wiring SHALL chain naturally — the method returns the same stream handle.
+The Java SDK SHALL expose `output(String pluginName, Function<T, byte[]> serializer)` and `output(String pluginName)` (default serialization: passthrough for `byte[]`, UTF-8 for `String`, Jackson JSON otherwise) on the graph builder's stream handle. Calling either SHALL attach a plugin output (the named plugin and the serializer, type-erased to `Function<Object, byte[]>`) alongside the channel's existing consumer fan-out. After the call, further `.into(...)` consumer wiring SHALL chain naturally — the method returns the same stream handle.
 
-The plugin sink SHALL be stored on the channel descriptor as `Optional<PluginSink> pluginSink` where `PluginSink` is a public record `(String name, Function<Object, byte[]> serializer)`. Pure-`PLUGIN_BOUND` channels (produced by `output(...)`) SHALL continue to populate the existing `pluginName` and `pluginSerializer` fields and SHALL NOT populate `pluginSink`. Hybrid channels SHALL populate `pluginSink` and SHALL NOT populate `pluginName`/`pluginSerializer`. The two paths SHALL stay textually distinct so existing pattern matches over `ChannelKind` continue to compile unchanged.
+The plugin output SHALL be stored on the channel descriptor as `Optional<PluginSink> pluginSink` where `PluginSink` is a public record `(String name, Function<Object, byte[]> serializer)`. Pure-`PLUGIN_BOUND` channels (produced by `output(...)`) SHALL continue to populate the existing `pluginName` and `pluginSerializer` fields and SHALL NOT populate `pluginSink`. Hybrid channels SHALL populate `pluginSink` and SHALL NOT populate `pluginName`/`pluginSerializer`. The two paths SHALL stay textually distinct so existing pattern matches over `ChannelKind` continue to compile unchanged.
 
 #### Scenario: Hybrid wiring is accepted at registration (Java)
-- **WHEN** a Relay declares an `SmaTasklet` output stream with `.sink("indicators", SmaCodec::toBytes).into(BollingerTasklet.class)`
+- **WHEN** a Relay declares an `SmaTasklet` output stream with `.output("indicators", SmaCodec::toBytes).into(BollingerTasklet.class)`
 - **THEN** registration SHALL succeed
 - **AND** the resulting `ChannelDescriptor` SHALL have `kind() == INTER_TASKLET`, exactly one entry in `consumers()` (the `BollingerTasklet` tasklet id), and `pluginSink() == Optional.of(new PluginSink("indicators", <fn>))`
 
-#### Scenario: sink chains in either order with into(...) (Java)
-- **WHEN** a Relay declares `.into(MacdTasklet.class).sink("indicators", EmaCodec::toBytes)` on an `EmaTasklet` output stream
+#### Scenario: output chains in either order with into(...) (Java)
+- **WHEN** a Relay declares `.into(MacdTasklet.class).output("indicators", EmaCodec::toBytes)` on an `EmaTasklet` output stream
 - **THEN** registration SHALL succeed
 - **AND** the resulting descriptor SHALL be identical to the same declaration with the calls swapped
 
-#### Scenario: sink without a serializer uses the default codec (Java)
-- **WHEN** a Relay declares `.sink("indicators")` on a stream of a Jackson-serializable type
-- **THEN** the plugin sink SHALL serialize each value with Jackson JSON, identically to what `output("indicators")` would produce for the same value
+#### Scenario: output without a serializer uses the default codec (Java)
+- **WHEN** a Relay declares `.output("indicators")` on a stream of a Jackson-serializable type
+- **THEN** the plugin output SHALL serialize each value with Jackson JSON, identically to what `output("indicators")` would produce for the same value
 
 ### Requirement: Hybrid channel emission — consumer fan-out then single serializer call (Java SDK)
 When a Tasklet's `Tasklet.run` calls `ctx.emit(value)` on a hybrid channel (`kind == INTER_TASKLET`, `pluginSink.isPresent()`), the dispatcher SHALL execute the following sequence on the producer thread:
@@ -545,12 +545,12 @@ The serializer SHALL run exactly once per `ctx.emit` invocation regardless of co
 - the channel is `kind == PLUGIN_BOUND` (existing rule), OR
 - the channel has `pluginSink.isPresent()` (new rule for hybrid channels).
 
-On a hybrid channel, the inter-tasklet consumers SHALL receive the typed value with no metadata (metadata is plugin-framing only). The plugin sink SHALL receive bytes (via the channel's serializer) with the supplied `Map<String, String>` attached to the wire frame using the existing `[key_len][val_len][key][value]` block format. The reserved `channel` key SHALL be set automatically and SHALL NOT be overridable by user-supplied keys; an attempt to set it SHALL be silently dropped during framing (matches the existing rule for `PLUGIN_BOUND` channels).
+On a hybrid channel, the inter-tasklet consumers SHALL receive the typed value with no metadata (metadata is plugin-framing only). The plugin output SHALL receive bytes (via the channel's serializer) with the supplied `Map<String, String>` attached to the wire frame using the existing `[key_len][val_len][key][value]` block format. The reserved `channel` key SHALL be set automatically and SHALL NOT be overridable by user-supplied keys; an attempt to set it SHALL be silently dropped during framing (matches the existing rule for `PLUGIN_BOUND` channels).
 
-On a pure-`INTER_TASKLET` channel with no plugin sink, `emitWithMeta` SHALL continue to throw `TaskletException.MetadataNotAllowedOnInterTaskletChannel` without delivering the value or the metadata.
+On a pure-`INTER_TASKLET` channel with no plugin output, `emitWithMeta` SHALL continue to throw `TaskletException.MetadataNotAllowedOnInterTaskletChannel` without delivering the value or the metadata.
 
 #### Scenario: emitWithMeta on a hybrid channel forwards metadata to plugin only (Java)
-- **WHEN** a producer Tasklet's `run` calls `ctx.emitWithMeta(value, Map.of("trace_id", "abc123"))` on a hybrid channel wired to one consumer and one plugin sink
+- **WHEN** a producer Tasklet's `run` calls `ctx.emitWithMeta(value, Map.of("trace_id", "abc123"))` on a hybrid channel wired to one consumer and one plugin output
 - **THEN** the consumer SHALL receive `value` with no `trace_id` visible
 - **AND** the plugin wire frame SHALL contain `trace_id = "abc123"` plus the implicit `channel = <channel name>` key
 
@@ -694,7 +694,7 @@ Each dynamic-mode Tasklet SHALL expose the following monotonically-increasing co
 - `cells_evicted_total` — incremented once per eviction.
 - `inputs_dropped_capped_total` — incremented when an input is dropped due to the soft cap.
 
-Counters SHALL be observable via the same per-Cell / per-Tasklet observability surface as the bounded-mailbox counters from `relay-tasklet-cell-model`'s "Per-Cell mailbox is bounded with declared capacity" requirement. Export to a metrics sink is not in scope for this requirement; this requirement only mandates the data is captured.
+Counters SHALL be observable via the same per-Cell / per-Tasklet observability surface as the bounded-mailbox counters from `relay-tasklet-cell-model`'s "Per-Cell mailbox is bounded with declared capacity" requirement. Export to a metrics output is not in scope for this requirement; this requirement only mandates the data is captured.
 
 #### Scenario: Counter shape after a churn cycle
 - **GIVEN** a dynamic-mode Tasklet with a TTL set
@@ -772,7 +772,7 @@ Cell selection and lifetime declarations SHALL therefore be named for the Cell: 
 
 ### Requirement: Durable and wire artifacts are named for the level that owns them
 
-Wire message names, data-stream payload ids, sink metadata keys, and on-disk filenames SHALL use the same vocabulary as the source and the documentation, with no separate protocol-level or storage-level spelling.
+Wire message names, data-stream payload ids, output metadata keys, and on-disk filenames SHALL use the same vocabulary as the source and the documentation, with no separate protocol-level or storage-level spelling.
 
 Per-Cell durable state SHALL live at `state/{relay_class}/{tasklet_id}/{cell_key}.*`. Per-Tasklet journal and inbox artifacts SHALL be named for the Tasklet.
 
@@ -780,7 +780,7 @@ Per-Cell durable state SHALL live at `state/{relay_class}/{tasklet_id}/{cell_key
 - **WHEN** a runner ships a state change, a snapshot, a delete, or a compaction request for a Cell
 - **THEN** the payload id MUST name the Cell, and MUST match the term used for that concept in `docs/`
 
-#### Scenario: Sink metadata names the Cell
+#### Scenario: Output metadata names the Cell
 - **WHEN** a released output carries the identity of the Cell that produced it
 - **THEN** the metadata key MUST be `flz.cell`
 
@@ -873,9 +873,9 @@ A `DropOldest` eviction that admits its item SHALL increment `pushes_total`, bec
 - **WHEN** a mailbox at capacity accepts N items under `DropOldest`, evicting N heads
 - **THEN** `pushes_total` SHALL have increased by N and `drops_oldest_total` SHALL have increased by N
 
-### Requirement: A second plugin sink is refused by the reference check, in every SDK
-A channel's record SHALL carry one `sink` link per `sink(...)` call, and
-`flz_core::host::register::check` SHALL answer `topology.duplicate_plugin_sink` naming the
+### Requirement: A second plugin output is refused by the reference check, in every SDK
+A channel's record SHALL carry one `output` link per `output(...)` call, and
+`flz_core::host::register::check` SHALL answer `topology.duplicate_plugin_output` naming the
 channel when a channel's chains carry more than one. No SDK SHALL carry a rule
 or a sentence of its own for the shape:
 each SDK SHALL raise its one error type (Java `FlezhaException`), built from the core's
@@ -883,9 +883,9 @@ error document: its code SHALL be the first issue's `topology.*` code and its
 `details.issues` SHALL list every accumulated issue by code, which is what the veneer
 suites assert, never a substring of the message. Registration SHALL be refused and the topology discarded.
 
-#### Scenario: Second sink call is rejected at registration (Java)
-- **WHEN** a Relay's `channels(c)` method calls `c.channel(T.class, "foo").from(S.class).sink("p1", f1).sink("p2", f2)`
-- **THEN** `FlezhaRunner.registerFactory(R.class)` SHALL throw `FlezhaException` whose code is `topology.duplicate_plugin_sink` and whose details name the channel `"foo"`
+#### Scenario: Second output call is rejected at registration (Java)
+- **WHEN** a Relay's `channels(c)` method calls `c.channel(T.class, "foo").from(S.class).output("p1", f1).output("p2", f2)`
+- **THEN** `FlezhaRunner.registerFactory(R.class)` SHALL throw `FlezhaException` whose code is `topology.duplicate_plugin_output` and whose details name the channel `"foo"`
 - **AND** the registered topology SHALL be discarded
 
 ### Requirement: A Rust change applies itself through the context

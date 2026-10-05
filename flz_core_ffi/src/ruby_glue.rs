@@ -366,7 +366,7 @@ fn local_on_sink(channel: String) -> Result<(), Error> {
     let ruby = ruby();
     let ctx = context(&ruby)?;
     let refused = |r| raise(&ruby, r);
-    let channel = veneer::c_string("sink channel", &channel).map_err(refused)?;
+    let channel = veneer::c_string("output channel", &channel).map_err(refused)?;
     veneer::local_on_sink(ctx, &channel).map_err(refused)
 }
 

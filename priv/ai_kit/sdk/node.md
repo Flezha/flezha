@@ -88,7 +88,7 @@ import { EchoTasklet } from './echo_tasklet.mjs';
  * declares it, so one that cannot work is refused at startup.
  *
  * The entry names the text codec, so what `flz relay send --text` sends
- * arrives as a string. The sink names no codec, and a sink sends a string as its
+ * arrives as a string. The output names no codec, and an output sends a string as its
  * UTF-8 bytes, so the output is the text itself.
  */
 export default defineRelay({
@@ -96,7 +96,7 @@ export default defineRelay({
   channels: (c) => {
     c.input('in', { codec: 'text' }) // messages arrive on the entry channel "in"
       .into(EchoTasklet) // each one runs through the echo tasklet
-      .sink('out'); // the result leaves on "out", for a plugin to pick up
+      .output('out'); // the result leaves on "out", for a plugin to pick up
   },
 });
 ````
@@ -172,7 +172,7 @@ await runner.run(); // connects to the controller
 //
 // const control = runner.control();
 // await control.startRelay('echo', { id: 'my_echo' });
-// await control.enablePlugin('writer', 'relay_file_sink', { opts: { path: 'echo-out.txt' } });
+// await control.enablePlugin('writer', 'relay_file_output', { opts: { path: 'echo-out.txt' } });
 // await control.bindPlugin('writer', 'my_echo', { hooks: [['on_output', {}]] });
 // await runner.send('my_echo', 'hello world', 'in', { msgId: 'hello-1' });
 //

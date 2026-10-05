@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The steps-loop-rewind capability lets a user take a looping steps relay back to a committed iteration: `flz relay rewind <instance> --to-iteration N` compensates the tasklets of every iteration above N in reverse order, restores the inter-task handoff and consumed inbox offset to the iteration-N boundary, bumps the instance's epoch so re-run output supersedes the unwound output at conforming sinks, and resumes the loop at iteration N+1. It is undo-and-continue, not replay — the unwound iterations' inputs are gone with the truncated inbox. The rewind is refused, with no durable change, when the target iteration never committed or when an unwound tasklet staged plugin output it declares no `compensate` hook to undo.
+The steps-loop-rewind capability lets a user take a looping steps relay back to a committed iteration: `flz relay rewind <instance> --to-iteration N` compensates the tasklets of every iteration above N in reverse order, restores the inter-task handoff and consumed inbox offset to the iteration-N boundary, bumps the instance's epoch so re-run output supersedes the unwound output at conforming outputs, and resumes the loop at iteration N+1. It is undo-and-continue, not replay — the unwound iterations' inputs are gone with the truncated inbox. The rewind is refused, with no durable change, when the target iteration never committed or when an unwound tasklet staged plugin output it declares no `compensate` hook to undo.
 ## Requirements
 ### Requirement: Rewind to a committed iteration
 
@@ -91,16 +91,16 @@ a re-run's `TaskCommit` for a `(task_idx, iter)` the rewind unwound is a new ent
 re-send of the old one. Outputs carry no journal epoch: an output's `flz.epoch` is its Cell's
 realign epoch, unchanged by a rewind, and an output emitted after a rewind is a newer record of
 the same Cell, so its `flz.seq` sorts above every output of the unwound iterations and a
-conforming sink accepts it as newer. Crash-retry re-emits within an un-rewound run SHALL keep
+conforming output accepts it as newer. Crash-retry re-emits within an un-rewound run SHALL keep
 their identity and be deduplicated. This is the same ordering rule a flow relay's outputs follow,
 and a stream correction's epoch bump stays the one thing that moves a Cell's `flz.epoch`.
 
 #### Scenario: A re-run turn's output sorts above the unwound turn's
 
 - **WHEN** iteration 4 re-runs after a rewind and emits on a channel that iteration
-  4's original run had already written to a guarded sink
+  4's original run had already written to a guarded output
 - **THEN** the re-run's output carries the same `flz.epoch` and a higher `flz.seq` than the original, and the
-  sink's final visible value for the affected identity is the re-run's
+  output's final visible value for the affected identity is the re-run's
 
 #### Scenario: A re-sent barrier after a rewind is a new entry
 
@@ -117,7 +117,7 @@ and a stream correction's epoch bump stays the one thing that moves a Cell's `fl
 A rewind SHALL be refused with a typed error when any tasklet being unwound
 wrote plugin output and its tasklet declares no `compensate` hook. A rewind is undo-and-continue:
 nothing re-runs over the unwound iterations' inputs, so no later output overwrites the original
-at a sink by its key, and a semantic undo is
+at an output by its key, and a semantic undo is
 therefore the only coverage the engine can guarantee. The channels a tasklet wrote on SHALL be
 read from the journal's stage entries, which name them per Cell, never from the Cell WALs,
 which compaction may have truncated. The error SHALL name

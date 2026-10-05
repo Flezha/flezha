@@ -2,13 +2,13 @@
 
 The file plugin makes a file a relay's input, to replay a log or load an export, or its
 output, to watch what a relay emits land somewhere `tail` can read.
-`Flezha.Plugin.Provider.File` is one family with two provider ids: `relay_file_source`
+`Flezha.Plugin.Provider.File` is one family with two provider ids: `relay_file_input`
 (`File.Source`) reads a file onto an entry channel, one line per frame, and
-`relay_file_sink` (`File.Sink`) writes one line per record. This page covers the root
+`relay_file_output` (`File.Sink`) writes one line per record. This page covers the root
 folder both share, then each direction: its contract, options, delivery, failure semantics
 and health, then telemetry and limits.
 
-| | `relay_file_source` | `relay_file_sink` |
+| | `relay_file_input` | `relay_file_output` |
 | --- | --- | --- |
 | Type | relay plugin | relay plugin |
 | Ships | built in | built in |
@@ -18,7 +18,7 @@ and health, then telemetry and limits.
 
 ## Options
 
-### `relay_file_source`
+### `relay_file_input`
 
 <!-- provider-options:begin file_source -->
 | Option | Type | Default | Required | Description |
@@ -36,7 +36,7 @@ and health, then telemetry and limits.
 | `idle_after_ms` | int | `0` | no | Age of the last settled poll past which the reader is idle; 0 derives it from `poll_interval_ms` |
 <!-- provider-options:end -->
 
-### `relay_file_sink`
+### `relay_file_output`
 
 <!-- provider-options:begin file_sink -->
 | Option | Type | Default | Required | Description |
@@ -52,15 +52,15 @@ and health, then telemetry and limits.
 | `queue_max` | int | `10000` | no | Records held before enqueue blocks |
 | `retry_backoff_ms` | int | `250` | no | First delay after a failed write |
 | `retry_max_backoff_ms` | int | `5000` | no | Ceiling for that delay |
-| `unhealthy_after_ms` | int | `30000` | no | Age of the last durable write past which a backed-up sink is unhealthy |
+| `unhealthy_after_ms` | int | `30000` | no | Age of the last durable write past which a backed-up output plugin is unhealthy |
 <!-- provider-options:end -->
 
 ## Example
 
 ```sh
-$ flz plugin enable reader relay_file_source --relay_id=op1 \
+$ flz plugin enable reader relay_file_input --relay_id=op1 \
   --Xpath=events.ndjson --Xchannel_in=events
-$ flz plugin enable writer relay_file_sink --relay_id=op1 --hook=on_output \
+$ flz plugin enable writer relay_file_output --relay_id=op1 --hook=on_output \
   --Xpath=out/alerts.ndjson --Xchannel_out=alerts
 ```
 
@@ -159,7 +159,7 @@ What each direction does differently is under
 [reading an object](#reading-an-object-under-an-s3-root) and
 [writing parts to a bucket](#writing-parts-to-a-bucket).
 
-## Reading a file: `relay_file_source`
+## Reading a file: `relay_file_input`
 
 ### Contract
 
@@ -175,7 +175,7 @@ What each direction does differently is under
 | Failure posture | stop at a line it cannot deliver; keep polling a missing file |
 
 ```sh
-$ flz plugin enable reader relay_file_source \
+$ flz plugin enable reader relay_file_input \
   --relay_id=op1 \
   --Xpath=events.ndjson \
   --Xchannel_in=events
@@ -187,7 +187,7 @@ As a plugin spec at relay start (`flz relay start --plugins`):
 [
   {
     "name": "reader",
-    "provider": "relay_file_source",
+    "provider": "relay_file_input",
     "opts": {"path": "events.ndjson", "channel_in": "events"},
     "hooks": ["on_terminate"]
   }
@@ -294,7 +294,7 @@ health are the file's.
 | `{:unhealthy, :no_reader}` / `{:unhealthy, :reader_dead}` | no worker, or a dead one |
 | `:healthy` | otherwise, including a file that does not grow |
 
-## Writing a file: `relay_file_sink`
+## Writing a file: `relay_file_output`
 
 ### Contract
 
@@ -309,16 +309,16 @@ health are the file's.
 | Failure posture | a failed write is cut back and retried under the backoff ladder; nothing is dropped |
 
 ```sh
-$ flz plugin enable writer relay_file_sink \
+$ flz plugin enable writer relay_file_output \
   --relay_id=op1 \
   --hook=on_output \
   --Xpath=out/alerts.ndjson \
   --Xchannel_out=alerts
 ```
 
-`channel_out` restricts the sink to records whose metadata channel matches; absent, it
+`channel_out` restricts the output plugin to records whose metadata channel matches; absent, it
 writes every record its hook hands it. Several names, comma-separated, write them
-all. `channel` and `channel_in` are not parameters here: the sink feeds nothing.
+all. `channel` and `channel_in` are not parameters here: the output plugin feeds nothing.
 
 ### One record, one line
 
@@ -346,7 +346,7 @@ twice. Choose `rename` where a duplicate line matters.
 ### `commit: rename`: parts written once
 
 ```bash
-flz plugin enable writer relay_file_sink \
+flz plugin enable writer relay_file_output \
   --relay_id=op1 \
   --hook=on_output \
   --Xpath=out/alerts \
@@ -355,7 +355,7 @@ flz plugin enable writer relay_file_sink \
 ```
 
 Under `rename`, `path` names a directory, made with mode `0700` when it does not exist;
-a `path` that is a regular file is refused at enable, naming the layout. The sink owns
+a `path` that is a regular file is refused at enable, naming the layout. The output plugin owns
 everything in the directory:
 
 ```text
@@ -374,10 +374,10 @@ out/alerts/
   sidecar are created `0600`.
 - **What a roll costs.** A guaranteed record waits up to `roll_after_ms` for its
   confirmation, so an entry on the effectively-once tier completes that much later. At
-  the default of 10 000 ms a steadily busy sink commits a part every 10 seconds, 8 640
+  the default of 10 000 ms a steadily busy output plugin commits a part every 10 seconds, 8 640
   parts a day; raise `roll_after_ms` for fewer, larger parts, lower it for a shorter
   wait. Nothing merges or removes old parts.
-- **The reconcile.** When the sink starts it deletes every temp file and a part numbered
+- **The reconcile.** When the output plugin starts it deletes every temp file and a part numbered
   one past `.progress`, because their records were never confirmed and the outbox brings
   them back to be written once. A part further ahead is nothing a crash leaves, so it
   refuses the start, deleting nothing, with
@@ -406,7 +406,7 @@ the only layout. `commit: append`, given or taken as the default, is refused at 
 naming `commit`, because an object cannot be appended to:
 
 ```bash
-flz plugin enable writer relay_file_sink \
+flz plugin enable writer relay_file_output \
   --relay_id=op1 \
   --hook=on_output \
   --Xpath=echo-out \
@@ -414,13 +414,13 @@ flz plugin enable writer relay_file_sink \
 ```
 
 - **The open roll is held in memory.** Batches join the roll in the controller's memory
-  with their holds open, rather than a temp file, so `roll_bytes` is memory the sink holds:
+  with their holds open, rather than a temp file, so `roll_bytes` is memory the output plugin holds:
   64 MiB by default, and at most 5 GiB, the most one upload carries. A larger `roll_bytes`
   is refused at enable naming it.
 - **A roll, then a part.** The roll is committed by one `PUT` of `<path>/part-<N>`, then the
   sidecar `<path>/.progress` is written by a conditional put carrying `N`, and only then are
   the roll's holds confirmed. No temp object is ever written.
-- **The reconcile** is the folder's: on start the sink lists the keys under `<path>/`,
+- **The reconcile** is the folder's: on start the output plugin lists the keys under `<path>/`,
   deletes a part one past the sidecar, and refuses a start with a part further ahead.
 - **A worker left behind stops.** The sidecar write is refused while the stored part number
   is higher, which is what another worker leaves when a move started it while this one
@@ -430,19 +430,19 @@ flz plugin enable writer relay_file_sink \
 
 ### The file it opens
 
-- **A file the sink creates is private.** Erlang opens a file with no creation mode, so
-  the sink creates it exclusively and then sets mode `0600`. For the moment between the
+- **A file the output plugin creates is private.** Erlang opens a file with no creation mode, so
+  the output plugin creates it exclusively and then sets mode `0600`. For the moment between the
   two, the empty file carries the controller's own umask.
-- **A file that already exists keeps its mode.** The sink does not own a file it did
+- **A file that already exists keeps its mode.** The output plugin does not own a file it did
   not create.
 - **A symbolic link is not opened.** The root check follows a link that is there when
   the plugin is enabled and writes to where it lands; a path that is a link when the
-  sink opens it is refused, reported as `{:unhealthy, {:open_failed, {:symlink, path}}}`.
-- **A file moved away is reopened.** Before each batch the sink checks that the path
+  output plugin opens it is refused, reported as `{:unhealthy, {:open_failed, {:symlink, path}}}`.
+- **A file moved away is reopened.** Before each batch the output plugin checks that the path
   still names the file it holds, and opens the path again when it does not, so a
   rotated or deleted file does not take later writes somewhere no reader looks.
-- **One sink per path.** Two sinks appending to one file, from one controller or two,
-  interleave their batches, and under `rename` each sink's start deletes the other's
+- **One output plugin per path.** Two output plugins appending to one file, from one controller or two,
+  interleave their batches, and under `rename` each output plugin's start deletes the other's
   open roll. Nothing prevents it: a plugin cannot see another controller's writer.
 
 ### Health
@@ -451,8 +451,8 @@ flz plugin enable writer relay_file_sink \
 | --- | --- |
 | `{:unhealthy, {:open_failed, reason}}` | the file cannot be opened, or under `rename` the directory refuses its reconcile |
 | `{:unhealthy, {:write_stalled, error}}` | records are pending, in the queue or in an open roll, writes or a roll's commit are failing, and no batch has synced within `unhealthy_after_ms` |
-| `{:unhealthy, :no_sink}` / `{:unhealthy, :worker_dead}` | no worker, or a dead one |
-| `:healthy` | otherwise, including an idle sink |
+| `{:unhealthy, :no_worker}` / `{:unhealthy, :worker_dead}` | no worker, or a dead one |
+| `:healthy` | otherwise, including an idle output plugin |
 
 ## Telemetry
 
@@ -466,7 +466,7 @@ flz plugin enable writer relay_file_sink \
 | `[:flezha, :plugin, :file_sink, :failed]` | `consecutive_failures` | `plugin_id`, `path`, `reason` |
 
 The source's `shipped` is bridged to the observability bus as the metric `injected`
-under source `:flezha_file_source`, and the sink's as `flushed` under
+under source `:flezha_file_source`, and the output plugin's as `flushed` under
 `:flezha_file_sink`; the rest are events, because a `reason` is read one at a time.
 
 ## Limits
@@ -486,6 +486,6 @@ under source `:flezha_file_source`, and the sink's as `flushed` under
 ## See also
 
 - [http_poll.md](http_poll.md): the smallest source provider, which the reader follows
-- [postgres_sink.md](postgres_sink.md): the batching sink the writer follows
+- [postgres_output.md](postgres_output.md): the batching output plugin the writer follows
 - [Controller environment variables](../configuration/environment_variables.md#plugins-dlq-and-schedules): `FLEZHA_FILE_PLUGIN_ROOT` among every other knob
 - [plugins.md](../topics/plugins/plugins.md): the plugin model

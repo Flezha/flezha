@@ -319,7 +319,7 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
   Feed `input` until `expected` comes back on the sink, or the deadline passes.
 
   One frame is not enough to prove a relay cannot produce: a freshly bound
-  relay's sink plugin activates asynchronously, and an emit that beats its
+  relay's output plugin activates asynchronously, and an emit that beats its
   subscription is dropped with nothing to re-drive it. A drill asserts that the
   relay CAN produce, never that one particular frame sufficed — so the
   input is re-sent, exactly as a real producer would.

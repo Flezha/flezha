@@ -50,7 +50,7 @@ pub unsafe extern "C" fn flz_core_local_start(
     FLZ_OK
 }
 
-/// Queue every value released on sink `channel` for
+/// Queue every value released on output `channel` for
 /// [`flz_core_local_next_output`]. A sink with no registered interest is
 /// reported by the core rather than discarded.
 ///
@@ -63,15 +63,15 @@ pub unsafe extern "C" fn flz_core_local_on_sink(
 ) -> i32 {
     let ctx = &*ctx;
     let Ok(channel) = CStr::from_ptr(channel).to_str() else {
-        return ctx.fail(Error::Utf8("local sink channel"));
+        return ctx.fail(Error::Utf8("local output channel"));
     };
     let (run, releases) = match ctx.local_session() {
         Ok(session) => session,
         Err(e) => return ctx.fail(e),
     };
-    let registered = run.on_sink(
+    let registered = run.on_output(
         channel,
-        Arc::new(move |output: flz_core::local::SinkOutput| {
+        Arc::new(move |output: flz_core::local::LocalOutput| {
             // The host reads its own language's `Output`, which is the shape
             // it already decodes off a completion. The key rides `flz.key` in
             // the metadata, exactly where a deployed keyed sink carries it.

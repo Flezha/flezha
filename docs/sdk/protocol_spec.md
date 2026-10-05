@@ -222,8 +222,8 @@ than at emit.
 | `flz.cell` | runner → controller | Output-identity stamp on `.keyed()` channels: `<relay_instance_id>/<tasklet_name>/<cell_key>` (empty key for single-mode). |
 | `flz.seq` | runner → controller | Output-identity stamp: `<change_seq>.<emit_ordinal>`; for a Cell that records effects (a flow relay on the effectively-once tier, or a durable steps relay Cell) the controller stamps `<record seq>.<emit_ordinal>` from the effect record. |
 | `flz.key` | runner → controller | Output-identity stamp: the emitting Cell's own key, or the caller's natural key from `emit_keyed(key, value)`. |
-| `flz.epoch` | controller → plugins | The Cell's WAL realign epoch, for a flow relay on the effectively-once tier and a durable steps relay Cell alike; a steps relay rewind does not move it. `(flz.cell, flz.seq, flz.epoch)` is the exact dedup identity a conforming sink deduplicates on. |
-| `flz.ack` | controller → plugins | Delivery-confirmation token minted by a durable outbox flush; the owning writer advances its cursor when the sink confirms or parks it. Absent on live non-durable output. |
+| `flz.epoch` | controller → plugins | The Cell's WAL realign epoch, for a flow relay on the effectively-once tier and a durable steps relay Cell alike; a steps relay rewind does not move it. `(flz.cell, flz.seq, flz.epoch)` is the exact dedup identity a conforming output deduplicates on. |
+| `flz.ack` | controller → plugins | Delivery-confirmation token minted by a durable outbox flush; the owning writer advances its cursor when the output confirms or parks it. Absent on live non-durable output. |
 | `flz.offset` | controller → runner | The durable input-log offset of this forwarded input, for an instance with durable input: a flow relay on the effectively-once tier or a durable steps relay (§11). A flow relay's invocation carries it back as its effect record's `consumed_offset`, a steps relay's iteration as `IterCommit.consumed_offset`. |
 | `flz.msg_id` | sender → controller | Sender-supplied message id: an append whose id the instance's input log still retains is absorbed (§11). |
 | `flz.replay`, `flz.replay_end` | controller → runner | Replayed-slice markers for late-input correction (§11). |
@@ -238,7 +238,7 @@ runtime stamps can never be spoofed or clobbered. Stamps are appended after
 user metadata; channels not declared `.keyed()` carry none.
 
 Channel names on the wire are hand-written identity strings (a non-entry
-channel's name derives from its producer node unless a `sink("...")` name or a
+channel's name derives from its producer node unless an `output("...")` name or a
 `.named(...)` override supplies one; declaring both is refused), so renaming a
 language class never changes a wire or on-disk name. A
 plugin-bound frame is byte-identical whether or not the channel also fans out
@@ -584,7 +584,7 @@ retries forever with full-jitter exponential backoff:
 capped at 30 s, each drawn from `[base/2, base]`. Reasons (logged, and carried
 by `[:flezha, :runner, :reconnected]`): `control_stream_broken`, `read_error`,
 `write_error`, `keepalive_timeout`, `controller_requested`, and
-`broken_pipe_flood` from the reliable state sink (§7).
+`broken_pipe_flood` from the reliable state output (§7).
 
 The attempt count belongs to the runner, not to one connect: it resets only
 when a handshake completed, meaning the runner answered `ConnectSocket` with its
@@ -881,7 +881,7 @@ string, identity: string }` travels runner → controller (tag 34) when a taskle
 steps instance (`ctx.spawn_steps` / `ctx.spawnSteps`). The controller
 spawns `factory_id` under `instance_id` when free, with `payload` as its first
 message (empty = spawn only): an ordinary entry message naming no channel, so
-it enters the first declared entry channel, encoded by the SDK's no-codec sink
+it enters the first declared entry channel, encoded by the SDK's no-codec output
 rule (bytes as they are, a string as UTF-8, anything else as JSON); otherwise
 `if_running` applies: `"deliver"` (default; any unrecognised value reads as
 deliver) sends `payload` to the running instance as one more message,
@@ -1022,7 +1022,7 @@ Its write verdict feeds the reconnect ladder instead. A payload id no class
 table names is refused at the call rather than given a default, which is what
 makes a write site with a policy of its own impossible.
 
-**Reliable state sink.** The held classes queue in a ring of
+**Reliable state output.** The held classes queue in a ring of
 `FLEZHA_RECONNECT_RING_CAPACITY` (default 1024; the oldest is dropped on
 overflow, counted as a drop-oldest shed) and are replayed once a stream is back
 — a record re-framed under its own payload id, a frame a writer built itself
@@ -1333,7 +1333,7 @@ channel would be, and the metadata is:
 
 | Key | Value |
 |-----|-------|
-| `channel` | the tasklet's output channel, which must end in a sink |
+| `channel` | the tasklet's output channel, which must end in an output |
 | `flz.part` | the part's number within the attempt, from `0` |
 | `flz.part_attempt` | the invocation's attempt, from `1` |
 | `flz.cell` | the Cell's label, `<instance>/<tasklet>/<key>` |
@@ -1342,7 +1342,7 @@ channel would be, and the metadata is:
 
 The payload id is reserved rather than the instance id, so a controller that
 does not know parts routes the frame to an instance named `output_part`, finds
-no route and drops it; it never reaches that controller's sinks. The
+no route and drops it; it never reaches that controller's outputs. The
 controller routes a part by `flz.relay` through the session's own route, so
 a part from a session that no longer owns the instance is dropped, and hands it
 to the Overwatch's `on_preview` hook, which only a listener implements.
@@ -1830,7 +1830,7 @@ journal.
 
 ### Plugin metadata: output identity stamps (`flz.*`)
 
-Channels declared `.keyed()` (valid on `output` and `sink` / `sink_with`
+Channels declared `.keyed()` (valid on `output` and `output` / `output_with`
 wires only — a keyed channel without a plugin wire is a build error) stamp
 every plugin-bound emit with three reserved keys, appended after user
 metadata:
@@ -1856,9 +1856,9 @@ append-only dedup: consecutive invocations that apply no state change can
 produce colliding `<change_seq>.<emit_ordinal>` pairs. Exact dedup needs a
 durable outbox: the Cell writer's outbox stamps `flz.epoch` for the
 effectively-once tier and for a durable steps relay alike, and `(flz.cell, flz.seq, flz.epoch)` is the identity a
-conforming sink deduplicates on (the Kafka producer uses `flz.key` as the
+conforming output deduplicates on (the Kafka producer uses `flz.key` as the
 record key and ships `<cell>/<outbox_seq>/<epoch>` in its
-`flezha.dedup_key` header; the Postgres sink guards on `(epoch, seq)`). See
+`flezha.dedup_key` header; the Postgres output guards on `(epoch, seq)`). See
 [`../topics/basics/durability.md`](../topics/basics/durability.md).
 
 ## See also

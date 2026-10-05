@@ -130,7 +130,7 @@ final class SessionRelay extends \Flezha\Relay
         $c->input('events')
             ->keyBy(static fn (array $e): string => (string) $e['session'])
             ->into(Session::class)->keyed()
-            ->sink('closed');
+            ->output('closed');
     }
 }
 
@@ -157,12 +157,12 @@ implementation therefore cannot disagree.
   It sends `$value` on the tasklet's own output channel, encoded as
   `$ctx->emit($value)` would encode it, and returns without waiting. It works
   in `run` and `onTimer`, in a flow relay and in a steps relay's
-  stage. The relay's listeners receive the parts before the output; a sink
+  stage. The relay's listeners receive the parts before the output; an output
   never does, and a part is never durable or replayed. Parts are numbered from
   0 within each attempt, so a retry starts its preview again. A part that
   cannot leave at once, such as in a local run, is dropped. A channel that
-  does not end in a sink (it only feeds another tasklet, or ends in a
-  call) throws a `FlezhaException` coded `part.no_sink`, and a context
+  does not end in an output (it only feeds another tasklet, or ends in a
+  call) throws a `FlezhaException` coded `part.no_output`, and a context
   kept after its invocation returned throws `part.outside_invocation`. The
   testing harness sends nothing.
 - **`initState(?string $cellKey)`** is a cell's state before anything has
@@ -240,11 +240,11 @@ only inside a `compensate` hook do `timerAfter`, `timerAtEventTime` and
 
 A relay class that defines its one tasklet's `run` instead of
 `channels()` is a whole relay: one class, no tasklet class beside it.
-`#[Relay]` names the channels around that tasklet: `sink` is the plugin sink its output reaches, `input` the entry
+`#[Relay]` names the channels around that tasklet: `output` is the plugin output its output reaches, `input` the entry
 channel, and `codec` the entry codec the builder's `input` takes.
 
 ```php
-#[Relay(factoryId: 'upcase', sink: 'out', codec: ChannelCodec::Text)]
+#[Relay(factoryId: 'upcase', output: 'out', codec: ChannelCodec::Text)]
 final class Upcase extends \Flezha\Relay
 {
     public function run(mixed $input, Ctx $ctx): void
@@ -253,7 +253,7 @@ final class Upcase extends \Flezha\Relay
     }
 }
 
-#[Relay(factoryId: 'place', run: 'steps', sink: 'placed', input: 'order', codec: ChannelCodec::Text)]
+#[Relay(factoryId: 'place', run: 'steps', output: 'placed', input: 'order', codec: ChannelCodec::Text)]
 final class Place extends \Flezha\Relay
 {
     public function run(mixed $input, Ctx $ctx): void
@@ -270,7 +270,7 @@ Flezha::createRunner('default')
 
 The generated relay is the one you would have written by hand with that
 single tasklet: an entry channel named `input` (or the `input` argument's
-value) decoded by `codec`, the tasklet, a plugin sink named by `sink`, a
+value) decoded by `codec`, the tasklet, a plugin output named by `output`, a
 factory id equal to `factoryId`, and the class settings it writes, as the
 full form takes them.
 The tasklet is named `factoryId` verbatim, so the full form that wires a
@@ -286,7 +286,7 @@ never read. With `each` written it loops, still one class:
 #[Relay(
     factoryId: 'chat',
     run: ['steps' => ['each' => 'per_input']],
-    sink: 'replies',
+    output: 'replies',
     codec: ChannelCodec::Text,
 )]
 final class Chat extends \Flezha\Relay
@@ -298,7 +298,7 @@ final class Chat extends \Flezha\Relay
 }
 ```
 
-`sink` is optional. Without one, the relay declares its entry channel into
+`output` is optional. Without one, the relay declares its entry channel into
 the tasklet and no plugin channel, which is all a relay that only keeps
 state needs:
 
@@ -332,13 +332,13 @@ any relay is. `registerFactory`, where this SDK places every refusal,
 refuses a class defining both `run` and `channels()` naming
 `topology.short_form_with_topology`, and one defining neither naming both. A second
 relay, flow or steps, under a factory id the runner holds is refused naming
-`topology.duplicate_factory_id`. `#[Task]` takes no `run`, `durable`, `sink`, `input` or `codec`,
+`topology.duplicate_factory_id`. `#[Task]` takes no `run`, `durable`, `output`, `input` or `codec`,
 and a tasklet carrying one is refused naming `#[Relay]`. `#[Task]` on a
 class defining `channels()` is refused too: a full form's tasklet settings go
 on its tasklet classes. A hook a short form defines is held to the signature
 `Tasklet` gives it, and one PHP would refuse on a tasklet is refused naming
 the hook. There is no
-`topology.sink_without_output`: `run` is declared `: void` on both `Tasklet` and
+`topology.output_without_type`: `run` is declared `: void` on both `Tasklet` and
 `Relay`, a value leaves only through `$ctx->emit()`, and no body declares
 an output type, so nothing in a class says whether it emits. The manifest
 leaves `shorthand_typed_output` off and the conformance row skips by name.
@@ -346,29 +346,29 @@ leaves `shorthand_typed_output` off and the conformance row skips by name.
 ### Channel payloads
 
 A channel names the format of its payload with `codec:` on `input` and on
-`sink`, a case of the `Flezha\ChannelCodec` enum:
+`output`, a case of the `Flezha\ChannelCodec` enum:
 
-| Codec | An entry hands the tasklet | A sink sends |
+| Codec | An entry hands the tasklet | An output sends |
 | --- | --- | --- |
 | `ChannelCodec::Text` | the string, if it is valid UTF-8; otherwise the decode fails | a valid UTF-8 string as it is; any other value fails the emit |
 | `ChannelCodec::Bytes` | the string as it arrived | any string as it is; any other value fails the emit |
 | `ChannelCodec::Json` | the decoded JSON, an object as an array | any value as JSON, a string quoted |
 
 ```php
-$c->input('in', codec: ChannelCodec::Text)->into(EchoTasklet::class)->sink('out');
+$c->input('in', codec: ChannelCodec::Text)->into(EchoTasklet::class)->output('out');
 ```
 
 An entry with no codec and no decoder reads JSON: `{"a":1}` arrives as
 `['a' => 1]`, and plain text fails its decode and rides the retry and
-dead-letter ladder. A sink with no codec and no encoder follows the value: a
-string is sent as it is and anything else as JSON. So a sink needs no codec for
+dead-letter ladder. An output with no codec and no encoder follows the value: a
+string is sent as it is and anything else as JSON. So an output needs no codec for
 a string or a JSON value, and names one only to quote a string, with
 `ChannelCodec::Json`. A decoder or encoder callable takes the place of a codec
 for anything else, and a codec given beside a callable on one channel is refused
 when the relay is declared, naming the relay and the channel. PHP ships
 no MessagePack library, so the enum has no MessagePack case.
 
-A called input's first sink output answers its caller and still reaches the sink's plugins:
+A called input's first output answers its caller and still reaches the output's plugins:
 [`../topics/advanced/relay_calls.md`](../topics/advanced/relay_calls.md). `->call(target: 'pricing', deadlineMs: 500)`
 or `->call(factory: 'agent', deadlineMs: ..., create: false, answerChannel: 'quotes', codec: ...)` ends a chain on a
 call to another relay and answers an edge of readonly `Flezha\Response` values:
@@ -376,7 +376,7 @@ call to another relay and answers an edge of readonly `Flezha\Response` values:
 
 A JSON integer outside PHP's 64-bit range decodes as a `float`. `NAN`, `INF`, a
 string that is not valid UTF-8 or an object that is not `Codable` has no JSON
-form, and sending one to a sink that names no codec fails the emit naming the
+form, and sending one to an output that names no codec fails the emit naming the
 channel.
 
 A value passed between two tasklets of one relay never crosses a channel
@@ -454,7 +454,7 @@ on the class:
 $run = LocalRelay::start(WordCountRelay::class);
 
 try {
-    $run->onSink('totals', static fn (SinkOutput $out) => print($out->payload . PHP_EOL));
+    $run->onOutput('totals', static fn (LocalOutput $out) => print($out->payload . PHP_EOL));
     $run->feed('lines', 'the quick brown fox');
     $run->runUntilIdle(10_000);
 } finally {
@@ -462,13 +462,13 @@ try {
 }
 ```
 
-`onSink` registers against the sink's **channel** name, which is the producing
+`onOutput` registers against the output's **channel** name, which is the producing
 tasklet's name unless the declaration named it.
 
 **This host has one thread, so `runUntilIdle` drives the loop rather than
 parking in the core.** Under the default `sync` executor the caller *is* the
 poll loop: one turn takes an activation if the core has one, answers it, and
-hands on whatever the sinks released; a turn that hands nothing back asks the
+hands on whatever the outputs released; a turn that hands nothing back asks the
 core whether the graph has settled. A thread parked inside the core's own idle
 wait would be waiting on work it had stopped doing. Worked example:
 [`../../sdk/php/examples/E07_LocalMode.php`](../../sdk/php/examples/E07_LocalMode.php).

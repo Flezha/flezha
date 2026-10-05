@@ -92,7 +92,7 @@ require_relative "echo_tasklet"
 #
 # The graph is checked as a whole when the runner declares it, so one that
 # cannot work is refused at startup. The entry names the text codec, so the
-# tasklet is handed a String, and the sink names none, so a String result
+# tasklet is handed a String, and the output names none, so a String result
 # leaves as its own bytes.
 class EchoRelay < Flezha::Relay
   # The relay's stable identity, and the name `flz relay start` takes.
@@ -101,7 +101,7 @@ class EchoRelay < Flezha::Relay
   channels do |c|
     c.input("in", codec: :text) # messages arrive on the entry channel "in"
      .into(EchoTasklet)          # each one runs through the echo tasklet
-     .sink("out")                # the result leaves on "out", for a plugin to pick up
+     .output("out")              # the result leaves on "out", for a plugin to pick up
   end
 end
 ````
@@ -158,7 +158,7 @@ runner.boot # connects to the controller
 #
 # control = runner.control
 # control.start_relay("echo", id: "my_echo")
-# control.enable_plugin("writer", "relay_file_sink", opts: { "path" => "echo-out.txt" })
+# control.enable_plugin("writer", "relay_file_output", opts: { "path" => "echo-out.txt" })
 # control.bind_plugin("writer", "my_echo", hooks: [["on_output", {}]])
 # runner.send_to("my_echo", "hello world", "in", msg_id: "hello-1")
 #

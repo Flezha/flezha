@@ -375,7 +375,7 @@ pub fn local_start(factory_id: String, relay_id: String) -> Result<()> {
 #[napi]
 pub fn local_on_sink(channel: String) -> Result<()> {
     let ctx = context()?;
-    let channel = veneer::c_string("sink channel", &channel)?;
+    let channel = veneer::c_string("output channel", &channel)?;
     Ok(veneer::local_on_sink(ctx, &channel)?)
 }
 

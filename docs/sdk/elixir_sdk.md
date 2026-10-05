@@ -16,17 +16,17 @@ a live deployment, passes the full conformance run in CI and is permanently supp
 The shortest way to see a relay work, and a third way to run one beside
 the two modes below: **no controller at all**. `Flezha.SDK.Local.start/2` takes
 the `Flezha.SDK.Relay` module you deploy, compiles the topology its
-`channels/1` already declares, and hands sink output to a function:
+`channels/1` already declares, and hands output to a function:
 
 ```elixir
 {:ok, run} = Flezha.SDK.Local.start(WordCount)
-:ok = Flezha.SDK.Local.on_sink(run, "counts", &IO.puts(&1.payload))
+:ok = Flezha.SDK.Local.on_output(run, "counts", &IO.puts(&1.payload))
 :ok = Flezha.SDK.Local.feed(run, "lines", "the quick brown fox")
 :ok = Flezha.SDK.Local.run_until_idle(run, 5_000)
 :ok = Flezha.SDK.Local.stop(run)
 ```
 
-`on_sink/3` registers against the sink's **channel** name, which is the
+`on_output/3` registers against the output's **channel** name, which is the
 producing tasklet's name unless the declaration `named/2` gave it one.
 `feed/3` enters through the same `Flezha.SDK.Relay.Inbox.input/4` a frame
 off a bound data stream enters, so the channel's declared decode and admission
@@ -98,7 +98,7 @@ defmodule MyRelay do
   use Flezha.SDK.Relay, factory_id: "my_op"
 
   @impl true
-  def channels(c), do: c |> input("in") |> into(MyTask) |> sink("out")
+  def channels(c), do: c |> input("in") |> into(MyTask) |> output("out")
 end
 
 defmodule MyTask do
@@ -185,7 +185,7 @@ A relay module that writes its one tasklet's `run/3` instead of
 
 ```elixir
 defmodule Upcase do
-  use Flezha.SDK.Relay, factory_id: "upcase", sink: "out"
+  use Flezha.SDK.Relay, factory_id: "upcase", output: "out"
 
   def run(input, state, ctx) do
     emit(ctx, String.upcase(input))
@@ -194,7 +194,7 @@ defmodule Upcase do
 end
 
 defmodule Place do
-  use Flezha.SDK.Relay, factory_id: "place", sink: "placed", input: "order", run: :steps
+  use Flezha.SDK.Relay, factory_id: "place", output: "placed", input: "order", run: :steps
 
   def run(input, state, ctx) do
     emit(ctx, input)
@@ -208,8 +208,8 @@ children = [{Flezha.SDK, namespace: "default", relays: [Upcase, Place]}]
 The module generates the nested tasklet module `Upcase.Tasklet`, whose
 `name/0` is the factory id verbatim and which delegates to the tasklet
 callbacks the module defines, and a `channels/1` wiring an entry channel
-named `"input"` (or the `input` option's value) into it and, with `sink`, it
-to that plugin sink. The class settings it takes are the full form's, and every
+named `"input"` (or the `input` option's value) into it and, with `output`, it
+to that plugin output. The class settings it takes are the full form's, and every
 one it does not write keeps its default. Because the tasklet is named after the
 factory id, its cells keep their state path when the module grows into the full
 form. `Place` runs in steps with `each: :once`, run once over its first message:
@@ -219,7 +219,7 @@ never read.
 
 ```elixir
 defmodule Chat do
-  use Flezha.SDK.Relay, factory_id: "chat", sink: "replies", run: {:steps, each: :per_input}
+  use Flezha.SDK.Relay, factory_id: "chat", output: "replies", run: {:steps, each: :per_input}
 
   def run(turn, state, ctx) do
     emit(ctx, turn)
@@ -232,7 +232,7 @@ end
 
 `run/3` is written as in a tasklet: the ctx functions are imported, a `state`
 block and `defchange` work, and the options `use Flezha.SDK.Tasklet` takes
-(`max_cells:`, `logical_clock:`, ...) apply to the generated tasklet. `sink` is
+(`max_cells:`, `logical_clock:`, ...) apply to the generated tasklet. `output` is
 optional; with none, nothing leaves the tasklet but its state:
 
 ```elixir
@@ -259,9 +259,9 @@ parser — so the short form takes no `codec` option.
 The refusals are `CompileError`s. `run/3` beside `channels/1` begins
 `topology.short_form_with_topology`, and writing neither names both. A
 short-form option on a full form names the option, and `use Flezha.SDK.Tasklet`
-refuses `sink` and `input`, naming the relay macro. `event_time/1` beside
+refuses `output` and `input`, naming the relay macro. `event_time/1` beside
 `logical_clock: true` names both and the module the author wrote. This SDK cannot see a tasklet's
-output type, so it owes no `topology.sink_without_output` and its manifest does not list
+output type, so it owes no `topology.output_without_type` and its manifest does not list
 `shorthand_typed_output`.
 
 ### The behaviours beneath
@@ -303,7 +303,7 @@ defmodule HandWrittenRelay do
 
   @impl true
   def channels(c) do
-    c |> Channels.input("in") |> Channels.into(HandWritten) |> Channels.sink("out")
+    c |> Channels.input("in") |> Channels.into(HandWritten) |> Channels.output("out")
   end
 end
 ```
@@ -332,15 +332,15 @@ timer four — `logical_clock/0` (`false`), `event_time/1`, `on_timer/4`, `max_t
 `retry_max` / `retry_backoff_ms`, as a flow relay's is.
 `Flezha.SDK.Ctx`: `emit/2`, `emit_with_meta/3` (a reserved `flz.` key answers
 `runtime.reserved_metadata_key`), `emit_keyed/3` and `emit_keyed_with_meta/4` (the
-output's natural key on a sink declared `keyed/1`; on a node with no keyed sink they answer
+output's natural key on an output declared `keyed/1`; on a node with no keyed output they answer
 `runtime.key_not_allowed_on_non_keyed_channel`, and a keyless emit from a
-Single Cell on a keyed sink answers `runtime.key_required_on_keyed_channel`),
+Single Cell on a keyed output answers `runtime.key_required_on_keyed_channel`),
 `part/2` (a preview of the invocation's output, sent at once rather than when `run/3`
 returns: encoded as an emit of the value would be, numbered `flz.part` from `0` within the
 attempt and stamped with `flz.part_attempt`, `flz.cell` and `flz.key`; it goes to the
 relay's listeners and to nothing else, never waits, is dropped and counted when the wire
-cannot take it at once, and is sent by no replayed input; it answers `part.no_sink` when the
-node's channel ends in no sink, a `call/3` end included, and `part.outside_invocation`
+cannot take it at once, and is sent by no replayed input; it answers `part.no_output` when the
+node's channel ends in no output, a `call/3` end included, and `part.outside_invocation`
 through a ctx whose invocation returned),
 `apply/3` (fold a change and record it; a `defchange` recorder calls it),
 `complete/2` (end the instance with a result, encoded as `spawn_steps` encodes its
@@ -353,7 +353,7 @@ inside `on_timer/4`), `cell_key/1`, and the timer four
 `runtime.timer_cap_exceeded`; inside a steps relay's tasklet all four answer
 `runtime.timers_unavailable` (see [Timers and clocks](#timers-and-clocks)).
 `spawn_steps(ctx, factory_id, payload, opts)` requests spawn-or-deliver of a steps relay
-instance, `id:` and `if_running:` optional, with `payload` sent as a sink with no codec sends a
+instance, `id:` and `if_running:` optional, with `payload` sent as an output with no codec sends a
 value (bytes as they are, anything else as JSON; a term with no JSON form raises), and answers
 a `Flezha.SDK.Spawn` handle at once that resolves to `{:ok, %{id: id, outcome: outcome}}`; the contract is
 `docs/topics/advanced/spawning_from_a_tasklet.md`. A spawn without `id:` always starts a new
@@ -362,16 +362,16 @@ skipped on replay; pass `id:` when that matters.
 
 ## Graph builder (v1 subset)
 
-`input`/`input_with` → `into`/`into_named` → `keyed` → `sink`/`sink_with`, with
+`input`/`input_with` → `into`/`into_named` → `keyed` → `output`/`output_with`, with
 `map`/`filter`/`flat_map`/`key_by` as edge transforms (fused into one closure per consumer
 edge), plus `named`, `on_full`, `retry_max`, `retry_backoff_ms`, and `merge/1` with
 `route_latest/4` ([`../topics/advanced/merged_inputs.md`](../topics/advanced/merged_inputs.md)). Fan-out is handle reuse,
 or `branch/2`, which calls each arm of a list with the same stream and answers it;
-unnamed mentions of one module unify (fan-in). A sink names the channel it terminates:
-`sink("input")` makes the frame `channel = "input"`, which is what reaches a forward
-target's `input` entry, and `sink/1` leaves the name derived — `named/2`'s name, else the
-tasklet's `name/0`. Naming one channel twice is refused. A called input's first sink output
-answers its caller and still reaches the sink's plugins
+unnamed mentions of one module unify (fan-in). An output names the channel it terminates:
+`output("input")` makes the frame `channel = "input"`, which is what reaches a forward
+target's `input` entry, and `output/1` leaves the name derived — `named/2`'s name, else the
+tasklet's `name/0`. Naming one channel twice is refused. A called input's first output
+answers its caller and still reaches the output's plugins
 ([`../topics/advanced/relay_calls.md`](../topics/advanced/relay_calls.md)). `call(handle, "pricing", deadline_ms: 500)`, or
 `call(handle, factory: "agent", deadline_ms: ..., create: false)` after a `key_by/2`, with
 `answer_channel:` to name the callee's answering channel, ends a
@@ -380,8 +380,8 @@ values are `%Flezha.SDK.Response{}` ([`../topics/advanced/relay_calls.md`](../to
 keyless tasklet → dynamic; else single. Refusals accumulate into one
 `{:error, %Flezha.SDK.Error{}}` carrying the first issue's code and every issue in
 `details.issues` — e.g. `topology.transform_after_key_by`, `topology.retry_max_zero`,
-`topology.channel_named_twice` (`named/2` beside a `sink` that names),
-`topology.keyed_channel_without_plugin_wire` (`keyed/1` on a channel with no sink),
+`topology.channel_named_twice` (`named/2` beside an `output` that names),
+`topology.keyed_channel_without_plugin_wire` (`keyed/1` on a channel with no output),
 `topology.deferred_builder_surface` (names the relay module).
 
 The names are the reference vocabulary every SDK answers with
@@ -396,20 +396,20 @@ The effectively-once tier is a class setting, not a builder call
 is a zero window, refused, because a fate for a window nobody declared is an authoring
 error. The tier's refusals are `topology.checkpoint_every_zero`,
 `topology.at_checkpoint_without_max_delay`, `topology.unkeyed_channel_under_effectively_once`
-(naming the sink's channel), `topology.dropping_policy_under_effectively_once` (naming the node's inbound
+(naming the output's channel), `topology.dropping_policy_under_effectively_once` (naming the node's inbound
 channel and the policy), `topology.correction_without_event_time` (naming a
 Tasklet and the clock it declares) and `topology.correction_window_zero`.
 
 ## Keyed channels
 
-`keyed/1` on the handle before `sink/2` declares output identity on that sink — the
+`keyed/1` on the handle before `output/2` declares output identity on that output — the
 reference's `.keyed()`. Every frame it produces carries `flz.cell`
 (`<relay id>/<tasklet name>/<cell key or empty>`), `flz.seq`
 (`<change_seq at handout>.<emit ordinal>` — the seq the invocation started at, before its own
 records advanced it, and the ordinal counting the invocation's plugin outputs from zero,
 stamped or not) and `flz.key`, appended after the user's metadata so a stamp cannot be
-clobbered. The key is the emit's own (`emit_keyed/3`), else the sink route's `key_by`, else
-the emitting Cell's; a Single Cell with none is refused at the emit. A sink not declared
+clobbered. The key is the emit's own (`emit_keyed/3`), else the output route's `key_by`, else
+the emitting Cell's; a Single Cell with none is refused at the emit. An output not declared
 keyed carries no `flz.` key. The stamps are minted at the routing seam in the Relay, this
 SDK's own core. Under the effectively-once tier the Cell captures the same output through
 the same seam into its effect record and stamps nothing: the controller derives
@@ -737,7 +737,7 @@ preceded it and runs no author code; a stale one finds nothing open.
 
 **Held outputs.** Under `outputs: :at_checkpoint`, which needs a `max_delay_ms`, the interval's outputs are held with its
 changes and ride the closing record in production order under one seq. Under the default
-they flush as they happen, so a sink sees an interval's outputs long before its offsets are
+they flush as they happen, so an output sees an interval's outputs long before its offsets are
 acknowledged.
 
 **The park holds nothing.** A poison input parks inside the record as its `dlq` entry — with

@@ -12,7 +12,7 @@ OPTIONS:
 
 OUTPUT:
     One line per frame: the channel, a tab and the payload. A frame from a
-    keyed sink adds a third field, cell=... seq=... key=..., and a frame
+    keyed output adds a third field, cell=... seq=... key=..., and a frame
     with no channel prints - in its place. A part, a preview a tasklet sent
     while it ran, begins its third field part=<n> attempt=<a>; a dead-lettered
     input prints the channel, the error's message and error=<code>

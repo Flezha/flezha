@@ -49,8 +49,8 @@ flowchart LR
     W(["a websocket"]) --> S1
     F(["a file"]) --> S2
     subgraph CI["controller"]
-        S1["source plugin"]
-        S2["source plugin"]
+        S1["input plugin"]
+        S2["input plugin"]
     end
     subgraph R["runner: your process"]
         subgraph OA["relay A"]
@@ -61,8 +61,8 @@ flowchart LR
         end
     end
     subgraph CO["controller"]
-        K1["sink plugin"]
-        K2["sink plugin"]
+        K1["output plugin"]
+        K2["output plugin"]
     end
     S1 --> A1
     S2 --> B1
@@ -90,8 +90,8 @@ flowchart LR
   relay passes its data through one or more of them.
 - A **cell** is where a tasklet's state lives. A tasklet whose input is keyed,
   by user or by device, gets one cell per key, each with its own state.
-- A **plugin** connects a relay to the outside: a source feeds it and a
-  sink takes what it sends out. They ship with Flezha and attach with one
+- A **plugin** connects a relay to the outside: an input plugin feeds it and an
+  output plugin takes what it sends out. They ship with Flezha and attach with one
   command.
 
 ## Thousands of relays, each with its own settings
@@ -139,8 +139,8 @@ Read from files, HTTP endpoints, WebSockets or another relay, reshape each
 message with `map`, `filter`, `flat_map` and `key_by`, and write the results to
 Postgres, Kafka or a file. State kept per key survives a crash, per-key timers
 give you windows and timeouts, merged channels give you joins, and a message can
-be timed by when it happened rather than when it arrived. The source and the
-sink are plugins, so moving from a file to a live feed is a command, not a
+be timed by when it happened rather than when it arrived. The input and the
+output are plugins, so moving from a file to a live feed is a command, not a
 rebuild. [Streams](../topics/basics/streams.md) covers how one is built, and
 the tradedesk tutorial builds one.
 

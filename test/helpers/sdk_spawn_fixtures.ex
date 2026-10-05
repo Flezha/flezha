@@ -32,6 +32,6 @@ defmodule FlezhaTest.Helper.SdkSpawnFixtures do
     def factory_id, do: "spawner"
 
     def channels(c),
-      do: c |> Channels.input("in") |> Channels.into(Spawner) |> Channels.sink("out")
+      do: c |> Channels.input("in") |> Channels.into(Spawner) |> Channels.output("out")
   end
 end

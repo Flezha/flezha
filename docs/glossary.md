@@ -29,7 +29,7 @@ owns the mechanism; for concepts, [`architecture/`](https://github.com/flezha/fl
 - **Native transport** — the in-node `:native` mode of the Elixir SDK: pid-backed
   `Flezha.SDK.LocalStream` handles and `{:flz_data, ...}` messages instead of a socket. A
   standalone Elixir runner speaks the binary protocol over UDS/QUIC. See [`sdk/elixir_sdk.md`](https://github.com/flezha/flezha/blob/main/docs/sdk/elixir_sdk.md).
-- **Source adapter / sink adapter** — where input comes from and where output goes. Both are
+- **Source adapter / output adapter** — where input comes from and where output goes. Both are
   plugins at the edge (a websocket, an HTTP endpoint, Kafka, Postgres), never core components.
 
 ## Workload model
@@ -80,16 +80,16 @@ owns the mechanism; for concepts, [`architecture/`](https://github.com/flezha/fl
   `cell_keys()`, one input fanning out via `cells_for`) or **dynamic** (one cell per key on
   a keyed edge, created lazily, evicted after `cell_idle_ttl()`).
 - **Channel** — the typed edge between stages: **entry** (input from outside), **inter-tasklet**,
-  or **plugin-bound** (output to a sink, declared with `.sink(name)`). Terminality is derived from
+  or **plugin-bound** (sent to the plugin layer, declared with `.output(name)`). Terminality is derived from
   the wiring, never declared.
 - **Answer channel**: the channel whose output answers a call. A caller may name it
   (`--answer-channel`, `answer_channel` in `Relay.call/6`'s options, or the option of a
-  `call(...)` end); without one, the first sink output the call's input causes answers. The
-  answer still reaches the sink's plugins and listeners. See [`topics/advanced/relay_calls.md`](topics/advanced/relay_calls.md).
+  `call(...)` end); without one, the first output the call's input causes answers. The
+  answer still reaches the output's plugins and listeners. See [`topics/advanced/relay_calls.md`](topics/advanced/relay_calls.md).
 - **Part**: a preview of the output an invocation is producing, sent from inside `run` with
   `ctx.part(value)` (`part(ctx, value)` in Elixir) and delivered at once to the relay's
   listeners, and to nothing else. It carries its channel, a number from `0` within its attempt
-  and the attempt; it is never durable, may be dropped, and never reaches a sink or a waiting
+  and the attempt; it is never durable, may be dropped, and never reaches an output plugin or a waiting
   caller. The output is the answer. See [`sdk/protocol_spec.md`](https://github.com/flezha/flezha/blob/main/docs/sdk/protocol_spec.md#data-stream-payload-id-output_part).
 - **Listener**: a reader of a relay's frames, `flz relay listen` or a plugin through
   `Flezha.Service.Listener.listen/4`: its outputs, its parts and its dead-letter notices (or,
@@ -97,7 +97,7 @@ owns the mechanism; for concepts, [`architecture/`](https://github.com/flezha/fl
   `listener_pending_frames`, it survives the relay sleeping, being rebound, restarted,
   moved or rescaled, ends when the relay ends, and leaves no plugin row behind.
 - **Call**: one input an outside caller (`flz relay call`, `Flezha.Service.Relay.call/6`
-  or a feeding plugin) sends to a relay, waiting up to a deadline for the first sink output it
+  or a feeding plugin) sends to a relay, waiting up to a deadline for the first output it
   causes (on the answer channel, when the caller names one); or one request a relay's `call(...)` end sends to another
   relay, whose outcome comes back as a Response. See [`topics/advanced/relay_calls.md`](topics/advanced/relay_calls.md).
 - **Call token**: `flz.reply_to`, the input metadata key the controller mints for each call
@@ -161,7 +161,7 @@ owns the mechanism; for concepts, [`architecture/`](https://github.com/flezha/fl
 - **`:on_message`** — the synchronous request/reply hook (`RelayMessage` /
   `RelayMessageResponse` on the control channel, `flz relay send`), as opposed to data
   flow into the input stream.
-- **First-party source plugins** — `HttpPoll` feeds an entry channel from a URL, injecting the
+- **First-party input plugins** — `HttpPoll` feeds an entry channel from a URL, injecting the
   body only when its SHA-256 changes plus one seed per (re)start, so consumers must be idempotent
   ([`plugins/http_poll.md`](plugins/http_poll.md)); `Websocket` re-subscribes a live socket
   without reconnecting by diffing a polled item set, committing each delta only on an ack carrying
@@ -169,7 +169,7 @@ owns the mechanism; for concepts, [`architecture/`](https://github.com/flezha/fl
 - **HTTP server plugin** — the `flezha_http` package's provider `http_server`, built outside this
   repository: every HTTP request becomes one call of the relay it is enabled on, carrying a
   **request envelope** (method, path, query, the allowed headers, the body), and the relay's
-  first sink output answers with an **answer envelope**, a status, headers and a body, or a **stream
+  first output answers with an **answer envelope**, a status, headers and a body, or a **stream
   answer** naming a relay whose parts and outputs the plugin writes as server-sent events
   through a listener ([`plugins/http_server.md`](plugins/http_server.md)).
 
@@ -191,19 +191,19 @@ owns the mechanism; for concepts, [`architecture/`](https://github.com/flezha/fl
 - **At-least-once / effectively-once** — the default tier adds no latency and permits a duplicate
   output on replay; `exactly: effectively_once` in a flow class's run turns on the input log, the
   effect record and the outbox and forces every plugin-bound channel to be `.keyed()`. It is
-  at-least-once delivery + a deterministic key + an idempotent sink, never exactly-once effects.
+  at-least-once delivery + a deterministic key + an idempotent output plugin, never exactly-once effects.
 - **Checkpoint ack-granularity** — `ack: checkpoint` moves the acknowledgement from per input to
   `ctx.checkpoint()`; the **interval** is the retention floor, the recovery work and the credit
   cadence. A park closes the interval, a restore discards the open one, and
   `outputs: at_checkpoint` with its `max_delay_ms` holds the interval's outputs with its changes.
-- **Outbox** — the per-cell record of which outputs are durable and which a sink has confirmed
+- **Outbox** — the per-cell record of which outputs are durable and which an output has confirmed
   (`Flezha.State.Outbox`, the `<key>.outbox.dedup` side-file): `outbox_durable_seq` gates the
-  flush, `outbox_flushed_seq` advances on the sink's confirmation of the `flz.ack` token,
+  flush, `outbox_flushed_seq` advances on the output plugin's confirmation of the `flz.ack` token,
   `outbox_epoch` names the lineage. A restart re-drives what was durable but unconfirmed.
 - **Output identity** — the replay-stable stamps on a keyed output: `flz.cell`, `flz.seq`,
   `flz.key`, and `flz.epoch` for a Cell that records effects (the tier, a durable steps relay). `flz.` is reserved; a user emit carrying one is rejected.
 - **Epoch** — the lineage counter in the outbox identity. An accident (crash retry, takeover,
-  re-drive, `flz dlq replay`) **keeps** it so the sink swallows the repeat; a deliberate correction
+  re-drive, `flz dlq replay`) **keeps** it so the output plugin swallows the repeat; a deliberate correction
   (late-input correction, `flz relay replay`) **bumps** it so the new output passes
   dedup and overwrites by natural key. A steps relay rewind bumps only the journal epoch; its re-run's
   output is a newer record and passes on its higher `flz.seq`.
@@ -368,7 +368,7 @@ owns the mechanism; for concepts, [`architecture/`](https://github.com/flezha/fl
 
 - **Overwatch** — `Flezha.Relay.Overwatch`, the controller-side process owning one relay
   instance: it binds a runner, owns the plugins, journals every input and receives every output
-  on its way to a sink.
+  on its way to an output plugin.
 - **Convergence loop** — `Flezha.Convergence.Loop`, the controller's only self-healer. Every 5 s
   and on declared events it runs `Intent → Probe → Diff → Planner → Heal` and publishes a
   `Convergence.Snapshot` that `/healthz` and the CLI read. See [`internals/convergence_loop.md`](internals/convergence_loop.md).

@@ -37,7 +37,7 @@ defmodule Flezha.SDK.InNodeE2ETest do
 
     def channels(c) do
       import Flezha.SDK.Channels
-      c |> input("in") |> into(ProbeTask) |> sink("probe")
+      c |> input("in") |> into(ProbeTask) |> output("probe")
     end
   end
 
@@ -176,7 +176,7 @@ defmodule Flezha.SDK.SocketRoundtripTest do
 
     def channels(c) do
       import Flezha.SDK.Channels
-      c |> input("in") |> into(ProbeTask) |> sink("probe")
+      c |> input("in") |> into(ProbeTask) |> output("probe")
     end
   end
 
@@ -362,7 +362,7 @@ defmodule Flezha.SDK.LivenessReconnectE2ETest do
 
     def channels(c) do
       import Flezha.SDK.Channels
-      c |> input("in") |> into(EchoTask) |> sink("echo")
+      c |> input("in") |> into(EchoTask) |> output("echo")
     end
   end
 
@@ -372,7 +372,7 @@ defmodule Flezha.SDK.LivenessReconnectE2ETest do
 
     def channels(c) do
       import Flezha.SDK.Channels
-      c |> input("in") |> into(EchoTask) |> sink("echo")
+      c |> input("in") |> into(EchoTask) |> output("echo")
     end
   end
 
@@ -395,7 +395,7 @@ defmodule Flezha.SDK.LivenessReconnectE2ETest do
 
     def channels(c) do
       import Flezha.SDK.Channels
-      c |> input("in") |> into(StoreTask) |> sink("store")
+      c |> input("in") |> into(StoreTask) |> output("store")
     end
   end
 
@@ -761,7 +761,7 @@ defmodule Flezha.SDK.SpawnStepsE2ETest do
 
     def channels(c) do
       import Flezha.SDK.Channels
-      c |> input("in") |> into(Requester) |> sink("requested")
+      c |> input("in") |> into(Requester) |> output("requested")
     end
   end
 

@@ -1,8 +1,8 @@
 defmodule Flezha.Plugin.Provider.File do
   @moduledoc """
   A file as a relay's input and as its output: `File.Source` (provider id
-  `relay_file_source`) reads one line per entry frame, and `File.Sink`
-  (`relay_file_sink`) writes one line per record.
+  `relay_file_input`) reads one line per entry frame, and `File.Sink`
+  (`relay_file_output`) writes one line per record.
 
   What both directions share lives here: the preparation that resolves a
   plugin's `path` inside `FLEZHA_FILE_PLUGIN_ROOT`, a folder or an `s3://`
@@ -274,7 +274,7 @@ defmodule Flezha.Plugin.Provider.File do
           type: :int,
           default: 30_000,
           min: 1,
-          doc: "Age of the last durable write past which a backed-up sink is unhealthy"
+          doc: "Age of the last durable write past which a backed-up output plugin is unhealthy"
         ]
       ],
       worker: [module: WriteWorker, restart: :temporary]
@@ -320,7 +320,7 @@ defmodule Flezha.Plugin.Provider.File do
     def health(opts) do
       ProviderBehaviour.worker_health(
         opts,
-        [absent: :no_sink, dead: :worker_dead],
+        [absent: :no_worker, dead: :worker_dead],
         &writer_health(&1, opts.unhealthy_after_ms)
       )
     end

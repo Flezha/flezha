@@ -102,23 +102,23 @@ inventing one: `create` (Beam `Pipeline.create`), `start` / `awaitTermination`
 (gRPC `Server`, Spark `StreamingQuery`), `close` (Kafka Streams). A novel name
 is only justified when the concept itself is novel.
 
-### 9. Graph authoring is producer-first: `input` → `into` → `sink`
+### 9. Graph authoring is producer-first: `input` → `into` → `output`
 
 Topology declaration reads in flow order on a **stream handle**. `input`
 declares an entry channel (its name is explicit — an external address of the
 relay; a relay may declare several, one per external source, and the
 controller routes each inbound frame to its entry by `metadata["channel"]`),
 `.into(Task)` wires a consumer and returns *that tasklet's* output stream,
-and plugin egress is `sink()` / `sink(name)` / `sink(name, serializer)` (Rust,
-which has no overloading: `sink()` / `sink_named(name)` / `sink_with(f)` /
-`sink_named_with(name, f)`). The name a sink carries IS the channel's name —
+and plugin egress is `output()` / `output(name)` / `output(name, serializer)` (Rust,
+which has no overloading: `output()` / `output_named(name)` / `output_with(f)` /
+`output_named_with(name, f)`). The name an output carries IS the channel's name —
 the metadata the controller routes by and a plugin filter matches — so a
-channel is named by at most one sink, two channels cannot name one sink, and
-naming a channel with both a sink and `named(...)` is refused. The no-name form
-leaves the channel named as it would be without a sink. Without a serializer
+channel is named by at most one output, two channels cannot name one output, and
+naming a channel with both an output and `named(...)` is refused. The no-name form
+leaves the channel named as it would be without an output. Without a serializer
 the defaults are passthrough for bytes, UTF-8 for strings, JSON otherwise.
 
-**There is exactly one egress method.** `sink` always returns the stream
+**There is exactly one egress method.** `output` always returns the stream
 handle, so consumers wire after it; a channel is the plugin-bound terminal by
 having no further wiring, not by a second method.
 
@@ -162,7 +162,7 @@ discard at `warn`.
 Anything an SDK surface says about an event carries the `on<Event>` prefix,
 whichever shape it takes: `on_full` / `onFull` declares the policy for a full
 mailbox, `on_timer` / `onTimer` is the Tasklet hook a timer firing calls, and
-`on_sink` / `onSink` registers a local-mode sink callback. `on*` is that prefix
+`on_output` / `onOutput` registers a local-mode output callback. `on*` is that prefix
 in every SDK, so `addListener`, `subscribe` and `watch` synonyms are not used
 for any of those shapes.
 

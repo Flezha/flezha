@@ -17,7 +17,7 @@
 # streams would silently drop on the agent side.
 #
 # Output delivery is intentionally NOT verified by this script: wiring an
-# output relay and a sink plugin into the dev compose default bootstrap is
+# output relay and a output plugin into the dev compose default bootstrap is
 # out of scope for the connection-healing change.
 #
 # Usage:

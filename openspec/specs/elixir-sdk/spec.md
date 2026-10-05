@@ -31,7 +31,7 @@ The SDK SHALL support both deployment modes from a single dispatch core, differi
 
 #### Scenario: Standalone runner over UDS
 - **WHEN** an Elixir runner node (own OS process) starts with `transport: :uds` against a controller on the same machine
-- **THEN** it completes the standard handshake, binds N primary/secondary data sockets on the per-runner paths, receives placements, dispatches, and emits sink outputs — with no controller code path differing from a rust_runner session
+- **THEN** it completes the standard handshake, binds N primary/secondary data sockets on the per-runner paths, receives placements, dispatches, and emits outputs — with no controller code path differing from a rust_runner session
 
 #### Scenario: Standalone runner over QUIC from another machine
 - **WHEN** an Elixir runner node starts with `transport: :quic` and `FLEZHA_QUIC_ADDRESS` pointing at a remote controller
@@ -83,11 +83,11 @@ Each runner handle SHALL own its declared factory set, starting empty. `register
 - **THEN** the call returns the in-use error and the declared set is unchanged
 
 ### Requirement: Relay and Tasklet behaviours mirror the current cross-SDK model
-The SDK SHALL define `Flezha.SDK.Relay` (callbacks: `factory_id/0`, `channels/1` receiving the graph builder; optional `description/0`, `max_duration_ms/0`, `run/0`, `durable/0`) and `Flezha.SDK.Tasklet` (mandatory callbacks: `name/0`, `init_state/1` receiving the cell key or nil, `run/3` receiving input, state, and a ctx, returning `{:ok, new_state} | {:error, reason} | {:error, {:non_retryable, reason}}`; optional callbacks with defaults: `cell_keys/0` → `[]`, `cells_for/1`, `mailbox_capacity/0` → 1024 with env override `FLEZHA_MAILBOX_CAPACITY` and range 1..=1_048_576, `max_cells/0` → 100_000 and ENFORCED on a dynamic node — at the cap a new key's input is dropped without a Cell and counted, an existing key's input is unaffected — `cell_idle_ttl_ms/0` → `nil` (no eviction), `schema_version/0` → 1, `min_readable_schema_version/0` → the schema version, `migrate_state/2` and `migrate_change/2` → refuse, `apply_change/2`, `compact_after_bytes/0`, `state_from_json/1`, `clock/0` → `:wall` — the declared clock `now/1` serves: `:wall` (epoch milliseconds at dispatch entry), `:logical` (the Cell's durable change seq, `terminal + 1` after a restore) or `:event_time` (what `event_time_of/1` extracts from the input) — `event_time_of/1`, `on_timer/4` receiving the scheduled timestamp, the kind, the state and a ctx and returning what `run/3` returns, and `max_timers_per_cell/0` → 10_000). The ctx SHALL provide `emit/2`, `emit_with_meta/3` (refusing reserved `flz.`-prefixed metadata keys), `emit_keyed/3` and `emit_keyed_with_meta/4` (the output's natural key on a keyed sink), `apply/3`, `now/1` (the declared clock's value, evaluated once per invocation; inside `on_timer/4` it equals the scheduled timestamp under every clock), `cell_key/1`, the timer surface `timer_after/2`, `timer_at_event_time/2`, `cancel_processing_time_timer/2` and `cancel_event_time_timer/2` (the `cell_timers` requirement below), `checkpoint/1` (closes the open checkpoint interval of a class declaring checkpoint acknowledgement — every input folded in since the last close, this one included, is acknowledged by the record that closes it; a no-op on any other class, as the reference's is) and `stable_id/1` (thirty-two lowercase hex characters of the frozen FNV-1a-128 over the Cell's wire identity, the big-endian change seq the invocation started at and a big-endian per-invocation ordinal — the cross-language fixture every SDK pins, so the n-th call of a replayed invocation equals the n-th call of the original). On a node whose sink is declared keyed, a keyless emit from a Single Cell SHALL be refused at call time with `{:error, %Flezha.SDK.Error{code: "runtime.key_required_on_keyed_channel"}}` naming the channel and nothing emitted; `emit_keyed` on a node with no keyed sink SHALL be refused with `{:error, %Flezha.SDK.Error{code: "runtime.key_not_allowed_on_non_keyed_channel"}}` naming the channel. Emits SHALL accumulate per invocation, with their metadata and key, and flush only on `{:ok, _}` — a failing invocation discards its partial emits. `AddRelay` SHALL instantiate the relay's topology with one process per Cell; `RemRelay` SHALL stop it. Inputs to the same Cell SHALL be processed in arrival order; distinct Cells MAY process concurrently.
+The SDK SHALL define `Flezha.SDK.Relay` (callbacks: `factory_id/0`, `channels/1` receiving the graph builder; optional `description/0`, `max_duration_ms/0`, `run/0`, `durable/0`) and `Flezha.SDK.Tasklet` (mandatory callbacks: `name/0`, `init_state/1` receiving the cell key or nil, `run/3` receiving input, state, and a ctx, returning `{:ok, new_state} | {:error, reason} | {:error, {:non_retryable, reason}}`; optional callbacks with defaults: `cell_keys/0` → `[]`, `cells_for/1`, `mailbox_capacity/0` → 1024 with env override `FLEZHA_MAILBOX_CAPACITY` and range 1..=1_048_576, `max_cells/0` → 100_000 and ENFORCED on a dynamic node — at the cap a new key's input is dropped without a Cell and counted, an existing key's input is unaffected — `cell_idle_ttl_ms/0` → `nil` (no eviction), `schema_version/0` → 1, `min_readable_schema_version/0` → the schema version, `migrate_state/2` and `migrate_change/2` → refuse, `apply_change/2`, `compact_after_bytes/0`, `state_from_json/1`, `clock/0` → `:wall` — the declared clock `now/1` serves: `:wall` (epoch milliseconds at dispatch entry), `:logical` (the Cell's durable change seq, `terminal + 1` after a restore) or `:event_time` (what `event_time_of/1` extracts from the input) — `event_time_of/1`, `on_timer/4` receiving the scheduled timestamp, the kind, the state and a ctx and returning what `run/3` returns, and `max_timers_per_cell/0` → 10_000). The ctx SHALL provide `emit/2`, `emit_with_meta/3` (refusing reserved `flz.`-prefixed metadata keys), `emit_keyed/3` and `emit_keyed_with_meta/4` (the output's natural key on a keyed output), `apply/3`, `now/1` (the declared clock's value, evaluated once per invocation; inside `on_timer/4` it equals the scheduled timestamp under every clock), `cell_key/1`, the timer surface `timer_after/2`, `timer_at_event_time/2`, `cancel_processing_time_timer/2` and `cancel_event_time_timer/2` (the `cell_timers` requirement below), `checkpoint/1` (closes the open checkpoint interval of a class declaring checkpoint acknowledgement — every input folded in since the last close, this one included, is acknowledged by the record that closes it; a no-op on any other class, as the reference's is) and `stable_id/1` (thirty-two lowercase hex characters of the frozen FNV-1a-128 over the Cell's wire identity, the big-endian change seq the invocation started at and a big-endian per-invocation ordinal — the cross-language fixture every SDK pins, so the n-th call of a replayed invocation equals the n-th call of the original). On a node whose output is declared keyed, a keyless emit from a Single Cell SHALL be refused at call time with `{:error, %Flezha.SDK.Error{code: "runtime.key_required_on_keyed_channel"}}` naming the channel and nothing emitted; `emit_keyed` on a node with no keyed output SHALL be refused with `{:error, %Flezha.SDK.Error{code: "runtime.key_not_allowed_on_non_keyed_channel"}}` naming the channel. Emits SHALL accumulate per invocation, with their metadata and key, and flush only on `{:ok, _}` — a failing invocation discards its partial emits. `AddRelay` SHALL instantiate the relay's topology with one process per Cell; `RemRelay` SHALL stop it. Inputs to the same Cell SHALL be processed in arrival order; distinct Cells MAY process concurrently.
 
 #### Scenario: End-to-end dispatch
 - **WHEN** the Controller starts a relay on the Elixir runner and a frame is sent to its input channel
-- **THEN** the owning Cell's `run/3` executes and sink-bound outputs arrive back at the relay's Overwatch via the secondary stream, serialized by the sink serializer
+- **THEN** the owning Cell's `run/3` executes and output-bound outputs arrive back at the relay's Overwatch via the secondary stream, serialized by the output serializer
 
 #### Scenario: Per-Cell ordering
 - **WHEN** N inputs with the same cell key are dispatched
@@ -106,8 +106,8 @@ The SDK SHALL define `Flezha.SDK.Relay` (callbacks: `factory_id/0`, `channels/1`
 - **WHEN** inputs for three distinct keys arrive
 - **THEN** two Cells exist, the third key's input is dropped without a Cell and counted, and a later input for either live key is dispatched normally
 
-#### Scenario: A keyless emit on a keyed sink is refused in a Single Cell
-- **WHEN** a Single Cell whose node's sink is declared `keyed/1` calls `Ctx.emit/2`
+#### Scenario: A keyless emit on a keyed output is refused in a Single Cell
+- **WHEN** a Single Cell whose node's output is declared `keyed/1` calls `Ctx.emit/2`
 - **THEN** the call answers `{:error, %Flezha.SDK.Error{code: "runtime.key_required_on_keyed_channel"}}` naming the channel and nothing is emitted, while the same call in a dynamic Cell emits under that Cell's own key
 
 #### Scenario: The declared clock is what now/1 serves
@@ -123,10 +123,10 @@ The SDK SHALL define `Flezha.SDK.Relay` (callbacks: `factory_id/0`, `channels/1`
 - **THEN** the two ids are `bbf81fd4955afd1724203700a240e822` then `bbf81fd4965afd1724203700a240e95d` (the values the Rust and Python SDKs pin), and the Cell ships the interval's closing record at that invocation's end
 
 ### Requirement: The graph builder carries the v1 subset of the producer-first surface
-`channels/1` SHALL author topologies with: `input/2` and `input_with/3` (bytes passthrough, String UTF-8, custom parser; a parse failure rides the entry channel's retry→park ladder), `into/2` and `into_named/3` (unnamed mentions of one Tasklet module unify into one node — fan-in; node-identity collisions refuse), edge transforms `map/2`, `filter/2`, `flat_map/2` and edge keying `key_by/2` (fused structurally into one composed closure per consumer edge — the runtime applies at most one transform + one key per edge and never observes a chain), `named/2`, `keyed/1` (declares output identity on the sink the handle reaches — the reference's `.keyed()`; on an entry handle, or on a handle that reaches `into/2` before any sink, registration refuses with `topology.keyed_on_entry` / `topology.keyed_channel_without_plugin_wire`), `sink/2` and `sink_with/3` (returning the stream handle — hybrid by default; default serialization bytes/UTF-8/JSON), `on_full/2`, `retry_max/2`, `retry_backoff_ms/2`, and fan-out by handle reuse. Every plugin frame SHALL carry `channel` = the producing node's identity — the tasklet's `name/0`, or the name `named/2` gave the node — never the plugin's name, so a `named/2` survives the plugin terminator and a forward target resolves its entry channel by the name the author declared; an entry routed straight to a sink carries the entry's name. User metadata from `emit_with_meta/3` SHALL ride the frame. Cell mode SHALL be derived from the wiring exactly as in the Rust SDK: non-empty `cell_keys/0` → Static; a keyed edge into a keyless tasklet → Dynamic; otherwise Single. Registration SHALL accumulate refusals into one `{:error, %Flezha.SDK.Error{}}` (never a raise), its `details.issues` every issue, using the shared issue codes, including `topology.key_by_on_unkeyable_target`, `topology.unkeyed_edge_into_dynamic_tasklet`, `topology.transform_after_key_by`, `topology.duplicate_channel`, `topology.cycle`, `topology.unreachable_tasklet`, `topology.node_identity_collision`, `topology.mailbox_capacity_zero`/`topology.mailbox_capacity_too_large`, `topology.retry_max_zero`, `topology.duplicate_plugin_sink`, `topology.keyed_on_entry`, `topology.keyed_channel_without_plugin_wire`, `topology.unservable_clock` (a `:logical` clock on a Tasklet without `apply_change/2` — the reference's build refusal), `topology.two_clocks` (a hand-written Tasklet exporting `event_time/1` whose `logical_clock/0` answers `true`), `topology.retired_callback` (a callback that no longer exists, naming its replacement), and the tier's — `topology.checkpoint_every_zero`, `topology.checkpoint_max_delay_zero`, `topology.unkeyed_channel_under_effectively_once` (naming the sink's channel) and `topology.dropping_policy_under_effectively_once` (naming the node's inbound channel and the policy) — the reference's names for the same contradictions. Edge type mismatch is the documented per-language asymmetry: with no type tokens, a mis-typed payload surfaces at dispatch and rides the retry→park ladder. The tier, its checkpoint and its correction window SHALL be members of the class's `run` tree (`{:flow, exactly: {:effectively_once, ack: ..., correction_ms: ms, beyond_window: ...}}`), never builder calls, so none can be written without the tier or under a steps run; a `beyond_window` with no `correction_ms` is a zero window and therefore a refusal, exactly as the shared core's tree is. Registration SHALL refuse with the reference's names: `topology.correction_without_event_time` (no Tasklet in the class declares an `:event_time` clock, naming the first Tasklet and the clock it declares) and `topology.correction_window_zero` (`correction_ms: 0`, or a `beyond_window` with no window). A shedding overflow policy under a declared window SHALL be refused by the tier's existing `topology.dropping_policy_under_effectively_once`, because a window requires the tier — no second check is added for a program the first already refuses. `merge/1` SHALL return a `%Flezha.SDK.Merge{}` handle that the same `Flezha.SDK.Channels` functions carry forward: `from/3` (a source stream and its mapping), `key_by/2` (declared once, on the merge) and `into/2` / `into_named/3`, each dispatching on the handle it receives, so one import of `Flezha.SDK.Channels` writes a pipe with a merge and `Flezha.SDK.Merge` exports none of the four, with the `multi-input-tasklets` semantics: each mapping composes after that source's own transforms, the key is applied to the mapped value on every source's edge, and the merged node's output stream chains like any other; `Topology.build/1` judges the merge groups. `route_latest/4` and `route_latest_named/5` SHALL expand to a merge into an SDK-packaged single-cell router tasklet with journaled `{document, version, delivered}` state, as the reference's do. `branch` SHALL NOT exist in v1 (fan-out is handle reuse); calling it fails registration with an error naming the module. `sealed/1` SHALL NOT exist: `sdk-graph-authoring` gives `sealed` only to the SDKs whose type system can enforce it, and an identity that seals nothing is a misleading surface.
+`channels/1` SHALL author topologies with: `input/2` and `input_with/3` (bytes passthrough, String UTF-8, custom parser; a parse failure rides the entry channel's retry→park ladder), `into/2` and `into_named/3` (unnamed mentions of one Tasklet module unify into one node — fan-in; node-identity collisions refuse), edge transforms `map/2`, `filter/2`, `flat_map/2` and edge keying `key_by/2` (fused structurally into one composed closure per consumer edge — the runtime applies at most one transform + one key per edge and never observes a chain), `named/2`, `keyed/1` (declares output identity on the output the handle reaches — the reference's `.keyed()`; on an entry handle, or on a handle that reaches `into/2` before any output, registration refuses with `topology.keyed_on_entry` / `topology.keyed_channel_without_plugin_wire`), `output/2` and `output_with/3` (returning the stream handle — hybrid by default; default serialization bytes/UTF-8/JSON), `on_full/2`, `retry_max/2`, `retry_backoff_ms/2`, and fan-out by handle reuse. Every plugin frame SHALL carry `channel` = the producing node's identity — the tasklet's `name/0`, or the name `named/2` gave the node — never the plugin's name, so a `named/2` survives the plugin terminator and a forward target resolves its entry channel by the name the author declared; an entry routed straight to an output carries the entry's name. User metadata from `emit_with_meta/3` SHALL ride the frame. Cell mode SHALL be derived from the wiring exactly as in the Rust SDK: non-empty `cell_keys/0` → Static; a keyed edge into a keyless tasklet → Dynamic; otherwise Single. Registration SHALL accumulate refusals into one `{:error, %Flezha.SDK.Error{}}` (never a raise), its `details.issues` every issue, using the shared issue codes, including `topology.key_by_on_unkeyable_target`, `topology.unkeyed_edge_into_dynamic_tasklet`, `topology.transform_after_key_by`, `topology.duplicate_channel`, `topology.cycle`, `topology.unreachable_tasklet`, `topology.node_identity_collision`, `topology.mailbox_capacity_zero`/`topology.mailbox_capacity_too_large`, `topology.retry_max_zero`, `topology.duplicate_plugin_output`, `topology.keyed_on_entry`, `topology.keyed_channel_without_plugin_wire`, `topology.unservable_clock` (a `:logical` clock on a Tasklet without `apply_change/2` — the reference's build refusal), `topology.two_clocks` (a hand-written Tasklet exporting `event_time/1` whose `logical_clock/0` answers `true`), `topology.retired_callback` (a callback that no longer exists, naming its replacement), and the tier's — `topology.checkpoint_every_zero`, `topology.checkpoint_max_delay_zero`, `topology.unkeyed_channel_under_effectively_once` (naming the output's channel) and `topology.dropping_policy_under_effectively_once` (naming the node's inbound channel and the policy) — the reference's names for the same contradictions. Edge type mismatch is the documented per-language asymmetry: with no type tokens, a mis-typed payload surfaces at dispatch and rides the retry→park ladder. The tier, its checkpoint and its correction window SHALL be members of the class's `run` tree (`{:flow, exactly: {:effectively_once, ack: ..., correction_ms: ms, beyond_window: ...}}`), never builder calls, so none can be written without the tier or under a steps run; a `beyond_window` with no `correction_ms` is a zero window and therefore a refusal, exactly as the shared core's tree is. Registration SHALL refuse with the reference's names: `topology.correction_without_event_time` (no Tasklet in the class declares an `:event_time` clock, naming the first Tasklet and the clock it declares) and `topology.correction_window_zero` (`correction_ms: 0`, or a `beyond_window` with no window). A shedding overflow policy under a declared window SHALL be refused by the tier's existing `topology.dropping_policy_under_effectively_once`, because a window requires the tier — no second check is added for a program the first already refuses. `merge/1` SHALL return a `%Flezha.SDK.Merge{}` handle that the same `Flezha.SDK.Channels` functions carry forward: `from/3` (a source stream and its mapping), `key_by/2` (declared once, on the merge) and `into/2` / `into_named/3`, each dispatching on the handle it receives, so one import of `Flezha.SDK.Channels` writes a pipe with a merge and `Flezha.SDK.Merge` exports none of the four, with the `multi-input-tasklets` semantics: each mapping composes after that source's own transforms, the key is applied to the mapped value on every source's edge, and the merged node's output stream chains like any other; `Topology.build/1` judges the merge groups. `route_latest/4` and `route_latest_named/5` SHALL expand to a merge into an SDK-packaged single-cell router tasklet with journaled `{document, version, delivered}` state, as the reference's do. `branch` SHALL NOT exist in v1 (fan-out is handle reuse); calling it fails registration with an error naming the module. `sealed/1` SHALL NOT exist: `sdk-graph-authoring` gives `sealed` only to the SDKs whose type system can enforce it, and an identity that seals nothing is a misleading surface.
 
 #### Scenario: Linear chain with a transform and a key
-- **WHEN** a relay declares `c |> input("trades") |> filter(pred) |> key_by(key_fn) |> into(Candle) |> sink("candles")`
+- **WHEN** a relay declares `c |> input("trades") |> filter(pred) |> key_by(key_fn) |> into(Candle) |> output("candles")`
 - **THEN** registration succeeds with exactly one Tasklet node in Dynamic mode, and the entry→Candle edge carries one fused closure applying predicate then key
 
 #### Scenario: Transforms fuse structurally
@@ -161,12 +161,12 @@ The SDK SHALL define `Flezha.SDK.Relay` (callbacks: `factory_id/0`, `channels/1`
 - **WHEN** `route_latest(c, config, trades, &(&1.symbol))` is declared and a unit test feeds a document, trades for `"A"` and `"B"`, the same document, then a trade for `"A"`
 - **THEN** exactly one `{"A", document}` and one `{"B", document}` are emitted, the repeated document is inert, and the node's identity is `route_latest`
 
-#### Scenario: The frame carries the node's channel name, and `named/2` survives the sink
-- **WHEN** a node named `"e"` is wired `|> named("e") |> sink("out")` and its Cell emits
+#### Scenario: The frame carries the node's channel name, and `named/2` survives the output
+- **WHEN** a node named `"e"` is wired `|> named("e") |> output("out")` and its Cell emits
 - **THEN** the plugin frame's metadata carries `channel: "e"`, and an unnamed node's frame carries its tasklet's `name/0`
 
-#### Scenario: A keyed handle with no plugin sink is refused
-- **WHEN** `channels/1` declares `keyed/1` on a handle and then routes it with `into/2` before any sink
+#### Scenario: A keyed handle with no plugin output is refused
+- **WHEN** `channels/1` declares `keyed/1` on a handle and then routes it with `into/2` before any output
 - **THEN** registration returns `{:error, %Flezha.SDK.Error{code: "topology.keyed_channel_without_plugin_wire"}}`
 
 #### Scenario: A clock the runtime cannot serve is refused at registration
@@ -174,8 +174,8 @@ The SDK SHALL define `Flezha.SDK.Relay` (callbacks: `factory_id/0`, `channels/1`
 - **THEN** registration returns `{:error, %Flezha.SDK.Error{code: "topology.unservable_clock"}}` for the first and `topology.two_clocks` for the second, naming the tasklet, and no Cell is started
 
 #### Scenario: The tier declarations register, compose and refuse by the reference's names
-- **WHEN** a class declares `run: {:flow, exactly: :effectively_once}` with a keyed sink; another declares `{:effectively_once, ack: {:checkpoint, every: 4, outputs: :at_checkpoint, max_delay_ms: 250}}`; a third writes `ack` under `:at_least_once`; a fourth declares the tier over an unkeyed sink; a fifth declares the tier over an entry with `on_full(:drop_newest)`
-- **THEN** the first two register with the tier and the checkpoint policy carrying all three members, the third fails to compile naming `ack` and `at_least_once`, and the last two are refused with `topology.unkeyed_channel_under_effectively_once` naming the sink's channel and `topology.dropping_policy_under_effectively_once` naming the channel and `drop_newest`
+- **WHEN** a class declares `run: {:flow, exactly: :effectively_once}` with a keyed output; another declares `{:effectively_once, ack: {:checkpoint, every: 4, outputs: :at_checkpoint, max_delay_ms: 250}}`; a third writes `ack` under `:at_least_once`; a fourth declares the tier over an unkeyed output; a fifth declares the tier over an entry with `on_full(:drop_newest)`
+- **THEN** the first two register with the tier and the checkpoint policy carrying all three members, the third fails to compile naming `ack` and `at_least_once`, and the last two are refused with `topology.unkeyed_channel_under_effectively_once` naming the output's channel and `topology.dropping_policy_under_effectively_once` naming the channel and `drop_newest`
 
 #### Scenario: The correction declarations register, compose and refuse by the reference's names
 - **WHEN** a class declares `{:effectively_once, correction_ms: 600_000}` and a Tasklet with an `:event_time` clock; a second adds `beyond_window: :drop` beside it; a third writes `correction_ms` under a steps run; a fourth declares the window over a `:wall`-clocked Tasklet; a fifth declares `correction_ms: 0` and a sixth only `beyond_window: :drop`
@@ -362,7 +362,7 @@ The bounded call SHALL be the package's own `Flezha.SDK.SafeCall`, which the con
 - **THEN** `Flezha.SDK.SafeCall` SHALL resolve inside it, and no SDK file but `Flezha.SDK.Call` SHALL call it
 
 ### Requirement: Bench harness covers the elixir runtime on all three transports
-`mix bench --runtime elixir` SHALL run the `regression`, `cell`, and `dynamic` shapes over the `native` transport (in-process SDK start; one runner, because the runner slot is process-wide) and over `uds`/`quic` (spawning the `test/apps/elixir_runner` app via the same fleet mechanism as the rust/java runners), registering factories `do_nothing`, `cell_stress`, and `dynamic_cell` with the rust_runner topologies, producing the same `Throughput: <n> messages/second` output measured by the unchanged controller-side code. The transport SHALL be selected exactly as today — `scripts/bench.sh -t native|uds|quic` exporting `FLEZHA_TRANSPORT`, read by `mix bench` from the application env — with no new `mix bench` flag. The harness SHALL reject `--runtime rust|java` with the native transport; `scripts/bench.sh -t` SHALL accept `native`. The recorded results SHALL include the same-runtime uds-vs-native comparison (the transport measurement) and the elixir-vs-rust comparison on uds (the runtime measurement). `mix bench.roundtrip --runtime elixir` SHALL run the `identity` and `keyed` workloads at durability `off` through the same fleet mechanism, registering `bench_echo` and `bench_keyed_nopersist` as twins of the rust_runner fixtures (same factory ids, sink names, output bytes and key function), over `uds`, `quic` and `native`, at durability `state` registering `bench_keyed`, the persistent twin, at durability `on` registering `tier_store` (the same upsert under `exactly: :effectively_once` with the reference's 300 ms retry backoff) and at durability `checkpoint` registering `bench_checkpoint` (the upsert acknowledging every `FLEZHA_BENCH_CHECKPOINT_EVERY` inputs, holding its outputs when `FLEZHA_BENCH_CHECKPOINT_OUTPUTS` is `at_checkpoint` for `FLEZHA_BENCH_CHECKPOINT_DELAY_MS`, read in `channels/1` as the reference reads them); a round-trip run combining a `--runtime` with a durability posture whose capability that runtime's manifest defers SHALL be refused at the task with an error naming that capability, before any runner starts.
+`mix bench --runtime elixir` SHALL run the `regression`, `cell`, and `dynamic` shapes over the `native` transport (in-process SDK start; one runner, because the runner slot is process-wide) and over `uds`/`quic` (spawning the `test/apps/elixir_runner` app via the same fleet mechanism as the rust/java runners), registering factories `do_nothing`, `cell_stress`, and `dynamic_cell` with the rust_runner topologies, producing the same `Throughput: <n> messages/second` output measured by the unchanged controller-side code. The transport SHALL be selected exactly as today — `scripts/bench.sh -t native|uds|quic` exporting `FLEZHA_TRANSPORT`, read by `mix bench` from the application env — with no new `mix bench` flag. The harness SHALL reject `--runtime rust|java` with the native transport; `scripts/bench.sh -t` SHALL accept `native`. The recorded results SHALL include the same-runtime uds-vs-native comparison (the transport measurement) and the elixir-vs-rust comparison on uds (the runtime measurement). `mix bench.roundtrip --runtime elixir` SHALL run the `identity` and `keyed` workloads at durability `off` through the same fleet mechanism, registering `bench_echo` and `bench_keyed_nopersist` as twins of the rust_runner fixtures (same factory ids, output names, output bytes and key function), over `uds`, `quic` and `native`, at durability `state` registering `bench_keyed`, the persistent twin, at durability `on` registering `tier_store` (the same upsert under `exactly: :effectively_once` with the reference's 300 ms retry backoff) and at durability `checkpoint` registering `bench_checkpoint` (the upsert acknowledging every `FLEZHA_BENCH_CHECKPOINT_EVERY` inputs, holding its outputs when `FLEZHA_BENCH_CHECKPOINT_OUTPUTS` is `at_checkpoint` for `FLEZHA_BENCH_CHECKPOINT_DELAY_MS`, read in `channels/1` as the reference reads them); a round-trip run combining a `--runtime` with a durability posture whose capability that runtime's manifest defers SHALL be refused at the task with an error naming that capability, before any runner starts.
 
 #### Scenario: Comparable bench run in-process
 - **WHEN** `mix bench --runtime elixir -n 100 -m 1000` runs with the native transport configured
@@ -545,14 +545,14 @@ The Elixir SDK SHALL carry the `state_persistence` capability by re-expressing t
 
 ### Requirement: The Elixir SDK mints the identity stamps on keyed plugin output
 
-The Elixir SDK SHALL carry `keyed_channels` in its own core: every plugin frame from a sink declared `keyed/1` SHALL carry `flz.cell` (`<relay id>/<tasklet name>/<cell key or empty>`, the label the shared core derives for the same Cell), `flz.seq` (`<change_seq at handout>.<emit ordinal>`, the seq the invocation started at, before its own changes advanced it) and `flz.key` (the emit's key, else the sink route's `key_by` over the value, else the emitting Cell's own key), appended after the user's metadata so a stamp cannot be clobbered. The ordinal SHALL start at zero for each work item, SHALL advance on every plugin-targeted output the invocation produces — stamped or not, each output of a `flat_map` counted — and SHALL NOT advance for an inter-tasklet output. A sink not declared keyed SHALL carry no `flz.` key. Under the effectively-once tier the Cell SHALL capture each sink output into its invocation's effect record unstamped — the producing node's channel name, the resolved key, the user's metadata key-sorted with any `channel` key dropped, and the serialised payload — through the same sink leaf the router uses, and the router SHALL deliver no sink frame for that class; the controller derives `flz.cell`, `flz.seq` and `flz.epoch` from the durable record at flush, as it does for every other SDK. `test/apps/elixir_runner`'s `partition_pass` SHALL declare its sink keyed and name its channel `input`, and the manifest SHALL list `keyed_channels` under `fixtures` with the reference's id.
+The Elixir SDK SHALL carry `keyed_channels` in its own core: every plugin frame from an output declared `keyed/1` SHALL carry `flz.cell` (`<relay id>/<tasklet name>/<cell key or empty>`, the label the shared core derives for the same Cell), `flz.seq` (`<change_seq at handout>.<emit ordinal>`, the seq the invocation started at, before its own changes advanced it) and `flz.key` (the emit's key, else the output route's `key_by` over the value, else the emitting Cell's own key), appended after the user's metadata so a stamp cannot be clobbered. The ordinal SHALL start at zero for each work item, SHALL advance on every plugin-targeted output the invocation produces — stamped or not, each output of a `flat_map` counted — and SHALL NOT advance for an inter-tasklet output. An output not declared keyed SHALL carry no `flz.` key. Under the effectively-once tier the Cell SHALL capture each output into its invocation's effect record unstamped — the producing node's channel name, the resolved key, the user's metadata key-sorted with any `channel` key dropped, and the serialised payload — through the same output leaf the router uses, and the router SHALL deliver no output frame for that class; the controller derives `flz.cell`, `flz.seq` and `flz.epoch` from the durable record at flush, as it does for every other SDK. `test/apps/elixir_runner`'s `partition_pass` SHALL declare its output keyed and name its channel `input`, and the manifest SHALL list `keyed_channels` under `fixtures` with the reference's id.
 
-#### Scenario: A keyed sink's frame carries the three stamps after user metadata
-- **WHEN** a dynamic Cell keyed `"k1"` at change_seq 4 calls `Ctx.emit_with_meta/3` with `%{"tag" => "a"}` on a node whose sink is keyed
+#### Scenario: A keyed output's frame carries the three stamps after user metadata
+- **WHEN** a dynamic Cell keyed `"k1"` at change_seq 4 calls `Ctx.emit_with_meta/3` with `%{"tag" => "a"}` on a node whose output is keyed
 - **THEN** the frame carries `tag: "a"`, `flz.cell: "op-1/counter/k1"`, `flz.seq: "4.0"` and `flz.key: "k1"`, and a second emit in the same invocation carries `flz.seq: "4.1"`
 
 #### Scenario: A fresh work item restarts the ordinal, and an inter-tasklet output does not advance it
-- **WHEN** the next input for the same Cell emits once on the keyed sink after emitting once towards a consumer node
+- **WHEN** the next input for the same Cell emits once on the keyed output after emitting once towards a consumer node
 - **THEN** its plugin frame carries ordinal `0`
 
 #### Scenario: A keyed output forwards to the partition of the target group that owns its key
@@ -560,12 +560,12 @@ The Elixir SDK SHALL carry `keyed_channels` in its own core: every plugin frame 
 - **THEN** every key lands on the downstream member owning its key group and nowhere else, because the frame carries `flz.key` and `channel: "input"`
 
 #### Scenario: The smoke golden pins the stamp keys
-- **WHEN** `partition_pass` on an Elixir runner emits under a sink with `include_metadata`
+- **WHEN** `partition_pass` on an Elixir runner emits under an output with `include_metadata`
 - **THEN** the sorted `flz.*` keys of the frame equal `keyed_output_stamps.json`
 
 #### Scenario: No stamps under the tier
-- **WHEN** a class declaring `exactly: :effectively_once` emits with `%{"tag" => "a"}` on its keyed sink
-- **THEN** no output frame leaves on the primary stream, and the effect record's output carries channel `sink`, the key, metadata `[{"tag", "a"}]` and the payload with no `flz.` key
+- **WHEN** a class declaring `exactly: :effectively_once` emits with `%{"tag" => "a"}` on its keyed output
+- **THEN** no output frame leaves on the primary stream, and the effect record's output carries channel `output`, the key, metadata `[{"tag", "a"}]` and the payload with no `flz.` key
 
 ### Requirement: The Elixir SDK evicts idle dynamic Cells and caps them
 
@@ -647,11 +647,11 @@ The Elixir SDK SHALL carry the `cell_timers` capability by re-expressing the ker
 
 ### Requirement: The Elixir SDK carries the effectively-once tier in its own core
 
-The Elixir SDK SHALL carry the `effectively_once` capability by re-expressing the kernel's rules in Elixir, inheriting nothing from `flz_core` and changing nothing in the controller, which SHALL keep being unable to tell an Elixir runner from a Rust one. A class declaring `exactly: :effectively_once` SHALL, for every effectful invocation — one that applied a change, emitted, committed a timer op or parked — ship ONE `cell_effect_record` frame at the next seq in place of its change records: the 16-byte header stamped `format_id = 2` over the postcard `EffectRecordBody` `Flezha.SDK.Wire.encode_effect_body/1` writes, enclosing the changes as External Term Format bodies, the captured sink outputs, the input's `flz.offset` as `consumed_offset` (absent for a firing), the park as `dlq`, the declared clock's value as `event_time` and the committed timer ops, under the credit window's `acquire`; an invocation with no effect SHALL ship nothing unless it parked. The Cell SHALL read the offset the router threads from the frame's `flz.offset` metadata onto its queue item, SHALL skip an input whose offset is at or below its consumed floor as a completed dispatch, and SHALL hand an inter-tasklet emit the offset of the input that produced it. Under checkpoint acknowledgement the Cell SHALL keep one staged interval — the changes, the timer ops, the offset of the last input folded, the input count, when it opened, and the outputs when `outputs: :at_checkpoint` is declared — that ships as one closing record carrying the interval's last offset when `Ctx.checkpoint/1` was called, when `every` inputs have folded in, when a park closes it, or when `max_delay_ms` has elapsed since it opened (a close message from the BEAM's timer service that rides the Cell's own queue and runs no author code, a stale one finding nothing open); a mid-interval as-produced emit SHALL ship in a record acknowledging nothing; a restore SHALL discard the open interval and rebuild the consumed floor and the event-time high-water from the log's effect records; the replacement of a Cell killed untrappably SHALL re-hold the open interval and the floor from the slot. A compaction SHALL re-state pending timers as a `format_id = 3` record under the tier as it does outside it. Held effect records of an invocation with inter-tasklet outputs (the `effectively-once-output` requirement on edge outputs) SHALL ship in seq order once the router reports the pushes admitted. `test/apps/elixir_runner` SHALL carry `tier_store`, `checkpoint_store`, `checkpoint_batched_store` and `bench_checkpoint` as the reference's twins, and the manifest SHALL list `effectively_once` under `fixtures` with those four ids.
+The Elixir SDK SHALL carry the `effectively_once` capability by re-expressing the kernel's rules in Elixir, inheriting nothing from `flz_core` and changing nothing in the controller, which SHALL keep being unable to tell an Elixir runner from a Rust one. A class declaring `exactly: :effectively_once` SHALL, for every effectful invocation — one that applied a change, emitted, committed a timer op or parked — ship ONE `cell_effect_record` frame at the next seq in place of its change records: the 16-byte header stamped `format_id = 2` over the postcard `EffectRecordBody` `Flezha.SDK.Wire.encode_effect_body/1` writes, enclosing the changes as External Term Format bodies, the captured outputs, the input's `flz.offset` as `consumed_offset` (absent for a firing), the park as `dlq`, the declared clock's value as `event_time` and the committed timer ops, under the credit window's `acquire`; an invocation with no effect SHALL ship nothing unless it parked. The Cell SHALL read the offset the router threads from the frame's `flz.offset` metadata onto its queue item, SHALL skip an input whose offset is at or below its consumed floor as a completed dispatch, and SHALL hand an inter-tasklet emit the offset of the input that produced it. Under checkpoint acknowledgement the Cell SHALL keep one staged interval — the changes, the timer ops, the offset of the last input folded, the input count, when it opened, and the outputs when `outputs: :at_checkpoint` is declared — that ships as one closing record carrying the interval's last offset when `Ctx.checkpoint/1` was called, when `every` inputs have folded in, when a park closes it, or when `max_delay_ms` has elapsed since it opened (a close message from the BEAM's timer service that rides the Cell's own queue and runs no author code, a stale one finding nothing open); a mid-interval as-produced emit SHALL ship in a record acknowledging nothing; a restore SHALL discard the open interval and rebuild the consumed floor and the event-time high-water from the log's effect records; the replacement of a Cell killed untrappably SHALL re-hold the open interval and the floor from the slot. A compaction SHALL re-state pending timers as a `format_id = 3` record under the tier as it does outside it. Held effect records of an invocation with inter-tasklet outputs (the `effectively-once-output` requirement on edge outputs) SHALL ship in seq order once the router reports the pushes admitted. `test/apps/elixir_runner` SHALL carry `tier_store`, `checkpoint_store`, `checkpoint_batched_store` and `bench_checkpoint` as the reference's twins, and the manifest SHALL list `effectively_once` under `fixtures` with those four ids.
 
 #### Scenario: An effectful invocation ships one effect record and no output frame
 - **WHEN** a `tier_store` Cell on an Elixir runner receives `k1:a` at `flz.offset` 3
-- **THEN** one `cell_effect_record` frame ships at its seq, enclosing the `{:set, "k1", "a"}` body, one output on channel `sink` keyed `k1` with payload `k1=a`, consumed offset 3, and the wall clock's value as event time; no `cell_state_change` and no output frame leave
+- **THEN** one `cell_effect_record` frame ships at its seq, enclosing the `{:set, "k1", "a"}` body, one output on channel `output` keyed `k1` with payload `k1=a`, consumed offset 3, and the wall clock's value as event time; no `cell_state_change` and no output frame leave
 
 #### Scenario: An open interval acknowledges nothing and closes on the checkpoint
 - **WHEN** a `checkpoint_store` Cell folds `k1:a` and `k2:a` at offsets 0 and 1, then `commit:1` at offset 2
@@ -780,16 +780,16 @@ resolution the flow relay routes with, one barrier queued behind each Cell the s
 handed a value to, and the stage done when those reply; a Cell that exits before replying SHALL
 fail its stage as an exhausted ladder does, and an undo's Cell that exits SHALL count as a failed
 hook, the rest of the plan still running. Every stage Cell SHALL be started with
-the same ctx facts a flow Cell gets from its node's sink routes (`channel`, `keyed_sink?`,
+the same ctx facts a flow Cell gets from its node's output routes (`channel`, `keyed_sink?`,
 `key_required?`), so `Flezha.SDK.Ctx.emit_keyed/3` and `emit_with_meta/3` answer in a steps relay
-tasklet exactly as in a flow tasklet. A durable class's Cell SHALL capture each sink output
-into its invocation's effect record, unstamped, through the same sink leaf and the same record
+tasklet exactly as in a flow tasklet. A durable class's Cell SHALL capture each output
+into its invocation's effect record, unstamped, through the same output leaf and the same record
 path a tier flow relay Cell uses, and SHALL ship the record on its own record stream before the
 stage's barrier; the driver SHALL keep no outbox of its own, and a class that journals nothing
-SHALL route its sink outputs to the wire with their channel, key and metadata as a
+SHALL route its outputs to the wire with their channel, key and metadata as a
 non-persistent flow Cell does. A stage's record SHALL name the Cells
 it dispatched to, by identity, whether or not they emitted, each with the seq of its last effect
-record in the stage and the sink channels it wrote on; its `TaskCommit.cells_ran`, its
+record in the stage and the output channels it wrote on; its `TaskCommit.cells_ran`, its
 intent markers and its undo SHALL read that record, so the undo runs on exactly the Cells that
 ran and on no declared Cell that received nothing. A restore naming a keyed Cell SHALL
 materialise it through the same lookup a flow relay's restore uses, refusing past the cap, and the
@@ -851,19 +851,19 @@ declared to the controller in the `AddRelay` response.
   while a third declared Cell of that tasklet that received no value is neither named nor
   compensated
 
-#### Scenario: A steps tasklet emits to a keyed sink as a flow tasklet does
+#### Scenario: A steps tasklet emits to a keyed output as a flow tasklet does
 
-- **WHEN** a durable steps tasklet wired `into(Emitter) |> named("out") |> keyed() |> sink()` calls `Ctx.emit_keyed(ctx, "k", value)` and then `Ctx.emit(ctx, value)`
+- **WHEN** a durable steps tasklet wired `into(Emitter) |> named("out") |> keyed() |> output()` calls `Ctx.emit_keyed(ctx, "k", value)` and then `Ctx.emit(ctx, value)`
 - **THEN** the first answers `:ok` and the second `{:error, %Flezha.SDK.Error{code: "runtime.key_required_on_keyed_channel"}}` naming `"out"`, exactly as under `use Flezha.SDK.Relay`
 
-#### Scenario: A stage's sink output rides its Cell's record and waits for the commit
+#### Scenario: A stage's output rides its Cell's record and waits for the commit
 
-- **WHEN** a tasklet on a sink channel emits with `%{"tag" => "a"}` while the class journals
-- **THEN** the Cell's effect record for that invocation carries channel `out`, the key, metadata `[{"tag", "a"}]` and the payload with no `flz.` key, the record is on the Cell's stream before the stage's `TaskCommit`, the `TaskCommit` names that record's seq for the Cell, and the sink receives the frame with `flz.cell`, `flz.seq`, `flz.key` and `tag` only after the controller acks the commit
+- **WHEN** a tasklet on an output channel emits with `%{"tag" => "a"}` while the class journals
+- **THEN** the Cell's effect record for that invocation carries channel `out`, the key, metadata `[{"tag", "a"}]` and the payload with no `flz.` key, the record is on the Cell's stream before the stage's `TaskCommit`, the `TaskCommit` names that record's seq for the Cell, and the output receives the frame with `flz.cell`, `flz.seq`, `flz.key` and `tag` only after the controller acks the commit
 
 #### Scenario: A class that journals nothing sends its output to the wire
 
-- **WHEN** a steps class with `durable: false` emits on its sink
+- **WHEN** a steps class with `durable: false` emits on its output
 - **THEN** the frame leaves on the wire with `channel`, the key and the metadata during the pass, and nothing of it is dropped with the iteration
 
 #### Scenario: A tasklet ends its steps relay
@@ -897,23 +897,23 @@ declared to the controller in the `AddRelay` response.
 - **WHEN** a `:per_input` instance's Cells hold processing-time timers at 90 000 and 60 000 when the park-idle window elapses
 - **THEN** the driver ships `IterPark` with `wake_deadline_ms` 60 000
 
-### Requirement: One plugin sink per channel and plugin
+### Requirement: One plugin output per channel and plugin
 
-`sink/2` and `sink_with/3` SHALL refuse a second sink declared on the same channel to the same
-plugin with `topology.duplicate_plugin_sink`, naming both. Neither half alone is the duplicate: one channel
+`output/2` and `output_with/3` SHALL refuse a second output declared on the same channel to the same
+plugin with `topology.duplicate_plugin_output`, naming both. Neither half alone is the duplicate: one channel
 MAY reach several plugins — a keyed wire beside a plain one — and one plugin MAY be fed by
 several channels, which is how a chain reports every stage to one place with a different encoder
-each time. This is a deliberate departure from the reference, whose `sink` closes its channel
+each time. This is a deliberate departure from the reference, whose `output` closes its channel
 and therefore refuses per channel alone.
 
 #### Scenario: The same channel and plugin twice is refused
 
-- **WHEN** a class declares `sink(s, "out")` twice on one handle
-- **THEN** registration fails with `topology.duplicate_plugin_sink` naming the channel and the plugin
+- **WHEN** a class declares `output(s, "out")` twice on one handle
+- **THEN** registration fails with `topology.duplicate_plugin_output` naming the channel and the plugin
 
 #### Scenario: A plugin fed by several channels is not a duplicate
 
-- **WHEN** two named channels of one class each declare a sink to the plugin `"branch_sink"`
+- **WHEN** two named channels of one class each declare an output to the plugin `"branch_sink"`
   with different encoders
 - **THEN** registration succeeds and each channel's frames carry its own encoder's bytes
 
@@ -984,7 +984,7 @@ builder records. The single checkpoint implication site SHALL remain
 
 #### Scenario: A keyed channel without a plugin wire is refused
 
-- **WHEN** a channel is declared `keyed` and no `sink` closes it
+- **WHEN** a channel is declared `keyed` and no `output` closes it
 - **THEN** `build/1` returns `{:error, %Flezha.SDK.Error{code: "topology.keyed_channel_without_plugin_wire"}}`
 
 #### Scenario: A merge row refuses with the reference name
@@ -1289,7 +1289,7 @@ The SDK SHALL provide `use Flezha.SDK.Tasklet` and `use Flezha.SDK.Relay`. Each 
 #### Scenario: A stateless tasklet needs no init_state
 
 - **WHEN** a module writes `use Flezha.SDK.Tasklet, name: "echo"` and only `run/3`
-- **THEN** it compiles, `init_state(nil)` answers `nil`, and a flow relay wiring it into a sink echoes its input
+- **THEN** it compiles, `init_state(nil)` answers `nil`, and a flow relay wiring it into an output echoes its input
 
 #### Scenario: A nested tasklet does not see the relay's builder
 
@@ -1337,42 +1337,42 @@ The SDK SHALL provide `use Flezha.SDK.Tasklet` and `use Flezha.SDK.Relay`. Each 
 - **THEN** it compiles, and registering a relay that wires it is refused with `topology.unservable_clock` naming `nochange`
 
 ### Requirement: The single-tasklet short form is three `use` options
-The short form SHALL be declared with `use Flezha.SDK.Relay`, the same macro that declares a full-form relay, and SHALL NOT be declared with `use Flezha.SDK.Tasklet`, which SHALL accept none of `run`, `sink` or `input` and SHALL raise a `CompileError` naming the option and the relay macro when one is given. The relay macro SHALL accept `sink` and `input` beside the `factory_id` it already requires. How it runs is the `run` setting, written as on a full form.
+The short form SHALL be declared with `use Flezha.SDK.Relay`, the same macro that declares a full-form relay, and SHALL NOT be declared with `use Flezha.SDK.Tasklet`, which SHALL accept none of `run`, `output` or `input` and SHALL raise a `CompileError` naming the option and the relay macro when one is given. The relay macro SHALL accept `output` and `input` beside the `factory_id` it already requires. How it runs is the `run` setting, written as on a full form.
 
 A module SHALL be a short form exactly when it defines `run/3` and no `channels/1`, the one topology body every relay shares. Defining both SHALL be a `CompileError` beginning `topology.short_form_with_topology`, and defining neither SHALL be a `CompileError` naming the missing body; both SHALL be decided at `@before_compile`, where the module's definitions are known. A short form MAY write the class settings (`run`, `durable`, `max_duration_ms`, `description`), which the macro defines exactly as it does for a full form.
 
-With `sink`, the macro SHALL generate `factory_id/0` equal to the `factory_id` option and `channels/1` wiring an entry channel named `"input"` (or the `input` value) into a generated nested tasklet module and that module to the `sink` plugin channel; with no `sink`, it SHALL wire the entry channel into the tasklet module and declare no plugin channel. The nested module SHALL implement `Flezha.SDK.Tasklet`, SHALL answer the `factory_id` verbatim from `name/0`, and SHALL delegate `run/3` to the declaring module, so the expansion is a separate tasklet and a separate relay rather than one module in both roles. Every other relay callback SHALL be left undefined so its default applies, and a steps short form SHALL be a `once` steps relay unless it writes `each:`. The module SHALL be registered as any relay is: listed under `relays:` in the child spec, or passed to `register_factory/2`.
+With `output`, the macro SHALL generate `factory_id/0` equal to the `factory_id` option and `channels/1` wiring an entry channel named `"input"` (or the `input` value) into a generated nested tasklet module and that module to the `output` plugin channel; with no `output`, it SHALL wire the entry channel into the tasklet module and declare no plugin channel. The nested module SHALL implement `Flezha.SDK.Tasklet`, SHALL answer the `factory_id` verbatim from `name/0`, and SHALL delegate `run/3` to the declaring module, so the expansion is a separate tasklet and a separate relay rather than one module in both roles. Every other relay callback SHALL be left undefined so its default applies, and a steps short form SHALL be a `once` steps relay unless it writes `each:`. The module SHALL be registered as any relay is: listed under `relays:` in the child spec, or passed to `register_factory/2`.
 
-The Elixir SDK cannot see a tasklet's output type, owes no `topology.sink_without_output`, and SHALL NOT list `shorthand_typed_output` in its manifest. A duplicate factory id SHALL be refused as `{:error, %Flezha.SDK.Error{code: "topology.duplicate_factory_id"}}` naming the id in its details.
+The Elixir SDK cannot see a tasklet's output type, owes no `topology.output_without_type`, and SHALL NOT list `shorthand_typed_output` in its manifest. A duplicate factory id SHALL be refused as `{:error, %Flezha.SDK.Error{code: "topology.duplicate_factory_id"}}` naming the id in its details.
 
 #### Scenario: A relay module with a run body is a whole flow relay
 
-- **WHEN** a module writes `use Flezha.SDK.Relay, factory_id: "upcase", sink: "out"` and `run/3`, and the child spec lists it under `relays:`
-- **THEN** the runner declares a flow relay `upcase` with entry channel `input` and sink `out`, backed by a generated nested tasklet whose `name/0` is `upcase`
+- **WHEN** a module writes `use Flezha.SDK.Relay, factory_id: "upcase", output: "out"` and `run/3`, and the child spec lists it under `relays:`
+- **THEN** the runner declares a flow relay `upcase` with entry channel `input` and output `out`, backed by a generated nested tasklet whose `name/0` is `upcase`
 
 #### Scenario: A relay module with a run body is a whole steps relay
 
-- **WHEN** a module writes `use Flezha.SDK.Relay, factory_id: "place", sink: "placed", input: "order"` and `run/3`, is listed under `relays:`, an instance is started, and one message is sent on `order`
+- **WHEN** a module writes `use Flezha.SDK.Relay, factory_id: "place", output: "placed", input: "order"` and `run/3`, is listed under `relays:`, an instance is started, and one message is sent on `order`
 - **THEN** `run/3` receives the message on `order`, what it emits reaches `placed`, and the instance completes
 
 #### Scenario: A short-form steps relay declares its loop mode
 
-- **WHEN** a module writes `use Flezha.SDK.Relay, factory_id: "chat", sink: "replies", each: :per_input` and `run/3`, and two messages reach its entry channel
+- **WHEN** a module writes `use Flezha.SDK.Relay, factory_id: "chat", output: "replies", each: :per_input` and `run/3`, and two messages reach its entry channel
 - **THEN** the module exports `each/0` returning `:per_input`, `run/3` runs once per message, and the instance does not complete after the first
 
-#### Scenario: A short form with no sink is declared
+#### Scenario: A short form with no output is declared
 
 - **WHEN** a module writes `use Flezha.SDK.Relay, factory_id: "counter", input: "ticks"`, a `state do ... end` block, a `defchange` and `run/3`
 - **THEN** the relay declares `ticks` into the generated tasklet module and no plugin channel, and the `defchange` recorder journals as it does on any tasklet
 
-#### Scenario: An input needs no sink
+#### Scenario: An input needs no output
 
 - **WHEN** a module writes `use Flezha.SDK.Relay, factory_id: "counter", input: "ticks"` and `run/3`
 - **THEN** it compiles and the entry channel is named `ticks`
 
 #### Scenario: register reads a short form's run
 
-- **WHEN** a module written with `use Flezha.SDK.Relay`, `run: :steps` and a `sink` is passed to `register_factory/2`
+- **WHEN** a module written with `use Flezha.SDK.Relay`, `run: :steps` and an `output` is passed to `register_factory/2`
 - **THEN** it is declared as a steps relay, because the macro defined `run/0` from the option, and its generated body is `channels/1` as a flow relay's is
 
 #### Scenario: The generated tasklet is a module of its own
@@ -1382,13 +1382,13 @@ The Elixir SDK cannot see a tasklet's output type, owes no `topology.sink_withou
 
 #### Scenario: A run body beside a channels body does not compile
 
-- **WHEN** a module writes `use Flezha.SDK.Relay, factory_id: "upcase", sink: "out"` and defines both `run/3` and `channels/1`
+- **WHEN** a module writes `use Flezha.SDK.Relay, factory_id: "upcase", output: "out"` and defines both `run/3` and `channels/1`
 - **THEN** compilation fails with a `CompileError` whose message begins `topology.short_form_with_topology`
 
-#### Scenario: A sink on a tasklet does not compile
+#### Scenario: An output on a tasklet does not compile
 
-- **WHEN** a module writes `use Flezha.SDK.Tasklet, name: "upcase", sink: "out"`
-- **THEN** compilation fails with a `CompileError` naming `sink` and `Flezha.SDK.Relay`
+- **WHEN** a module writes `use Flezha.SDK.Tasklet, name: "upcase", output: "out"`
+- **THEN** compilation fails with a `CompileError` naming `output` and `Flezha.SDK.Relay`
 
 #### Scenario: A relay with neither body does not compile
 

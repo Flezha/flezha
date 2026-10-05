@@ -34,7 +34,7 @@ the C ABI and where the code lives; the system-level picture is
 | `flz_core/src/cell.rs`, `mailbox.rs` | `CellSlot`, bounded mailbox + inflight CAS, shared slot assembly |
 | `flz_core/src/routing.rs`              | `enqueue` + overflow policies, consumer-edge delivery, entry-parse and edge ladders, end-of-slice broadcast |
 | `flz_core/src/retry.rs`, `park.rs`     | The retry→park ladder: backoff computation, `RETRIES_TOTAL`, DLQ parks |
-| `flz_core/src/flusher.rs`, `state_sink.rs`, `credit.rs`, `correction.rs`, `timer.rs`, `restore.rs`, `header.rs` | Durability: WAL framing + linger drain, the reliable sink, credit windows, late-input machinery, timers, restore payloads, record headers |
+| `flz_core/src/flusher.rs`, `state_sink.rs`, `credit.rs`, `correction.rs`, `timer.rs`, `restore.rs`, `header.rs` | Durability: WAL framing + linger drain, the reliable output, credit windows, late-input machinery, timers, restore payloads, record headers |
 | `flz_core/src/coordinator.rs`, `control_unit.rs`, `runner.rs`, `command/` | RunnerNode, wire readers, control channel + reconnect, one handler module per controller command |
 | `flz_core/src/steps/`               | A steps instance's run: `instance.rs` (the pass sheet a journal resume fills), `run.rs` (the events that advance it), `commit.rs` (the barrier frames), `resume.rs` (the journal readers), `compensation.rs` (the undo plan), `spec.rs` (the spec/DAG kernel) |
 | `flz_core_ffi/src/lib.rs`              | The `flz_core_*` C entry points (crate types `cdylib`, `staticlib`, `rlib`) |
@@ -346,7 +346,7 @@ Context lifecycle: `flz_core_context_new(shim_schema_version)` →
 | `flz_core_declare_class`, `flz_core_start`, `flz_core_shutdown`, `flz_core_context_free` | Context lifecycle |
 | `flz_core_poll`, `flz_core_complete`, `flz_core_abandon`, `flz_core_wait_starvation`, `flz_core_buf_free` | The loop |
 | `flz_core_spawn_request`, `flz_core_spawn_result` | Tasklet-requested spawn: a request that answers a handle at once, and a read of that handle with a timeout (0 never waits) |
-| `flz_core_part` | A part of the invocation of work item `item` of the live activation `token`: numbered, stamped and written at once, never waited on. `FLZ_OK` for a part sent or dropped; `FLZ_ERR` with `part.no_sink` or `part.outside_invocation` (a token no longer outstanding, an item it does not hold) |
+| `flz_core_part` | A part of the invocation of work item `item` of the live activation `token`: numbered, stamped and written at once, never waited on. `FLZ_OK` for a part sent or dropped; `FLZ_ERR` with `part.no_output` or `part.outside_invocation` (a token no longer outstanding, an item it does not hold) |
 | `flz_core_monotonic_nanos`, `flz_core_entry_last_delivery_nanos` | Context-free reads |
 | `flz_core_set_log_callback` | The one host callback the core ever invokes |
 

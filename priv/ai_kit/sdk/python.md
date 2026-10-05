@@ -93,14 +93,14 @@ import flezha
 #
 # The graph is checked as a whole when the runner declares it, so one that
 # cannot work is refused at startup. The entry names the text codec, so the
-# tasklet is handed a str, and the sink names none, so a str result leaves
+# tasklet is handed a str, and the output names none, so a str result leaves
 # as its own bytes.
 @flezha.relay("echo")  # the name `flz relay start` takes
 def echo_relay(c: flezha.Channels) -> None:
     (
         c.input("in", codec="text")  # messages arrive on the entry channel "in"
         .into(Echo)  # each one runs through the echo tasklet
-        .sink("out")  # the result leaves on "out", for a plugin to pick up
+        .output("out")  # the result leaves on "out", for a plugin to pick up
     )
 ````
 
@@ -164,7 +164,7 @@ def main() -> None:
     #
     # control = runner.control()
     # control.start_relay("echo", id="my_echo")
-    # control.enable_plugin("writer", "relay_file_sink", opts={"path": "echo-out.txt"})
+    # control.enable_plugin("writer", "relay_file_output", opts={"path": "echo-out.txt"})
     # control.bind_plugin("writer", "my_echo", hooks=[["on_output", {}]])
     # runner.send("my_echo", "hello world", "in", msg_id="hello-1")
     #

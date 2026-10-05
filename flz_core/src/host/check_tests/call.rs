@@ -59,8 +59,8 @@ fn a_call_closes_only_its_own_chain() {
 #[test]
 fn a_call_counts_as_a_plugin_end() {
     for steps in [
-        "entry(in); in.into(plain); plain.named(ask); plain.call(pricing); plain.sink",
-        "entry(in); in.into(plain); plain.named(ask); plain.sink; plain.call(pricing)",
+        "entry(in); in.into(plain); plain.named(ask); plain.call(pricing); plain.output",
+        "entry(in); in.into(plain); plain.named(ask); plain.output; plain.call(pricing)",
         "entry(in); in.into(plain); plain.named(ask); plain.call(pricing); plain.call(orders)",
     ] {
         let issues = check(record(steps)).expect_err("two plugin ends");

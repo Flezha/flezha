@@ -603,7 +603,7 @@ and SHALL exit with the code of its class: `call.timeout` 7, a denied act 4,
 
 #### Scenario: An answer is printed
 
-- **WHEN** `flz relay call echo --text hello` is run against a relay that emits its input on a sink
+- **WHEN** `flz relay call echo --text hello` is run against a relay that emits its input on an output
 - **THEN** stdout SHALL be `hello` and one newline, stderr SHALL be empty, and the exit code SHALL be 0
 
 #### Scenario: The answer channel picks the answer

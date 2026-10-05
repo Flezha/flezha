@@ -542,7 +542,7 @@ passes must stay undoable across a rescale must not be rescaled.
 The graph of a workflow is built with the same calls as a stream's
 ([`streams.md`](streams.md)): `input` names the entry channel, `into` adds a
 step, `branch` splits the path into arms that run side by side. There is
-usually no `sink`: the last step ends the instance with its result through
+usually no `output`: the last step ends the instance with its result through
 `complete`, and `flz relay info` shows it. A channel between steps that has
 no name of its own is named after the step that feeds it, which is the name in
 the journal and in an error; `named(...)` gives one a stable name.

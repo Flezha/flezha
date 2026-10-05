@@ -406,7 +406,7 @@ so the conformance app runs the standalone binary protocol like the other six.
 every SDK carries, so no manifest may defer it. Five fixtures, each one
 relay declaration in every app, with no hand-written relay beside it:
 
-| Id | Kind | Entry | Sink |
+| Id | Kind | Entry | Output |
 | --- | --- | --- | --- |
 | `sugar_do_nothing` | stream | `input`, text | `sugar_do_nothing_echo` |
 | `sugar_store_input` | stream | `input`, text | `sugar_store_sink` |
@@ -414,14 +414,14 @@ relay declaration in every app, with no hand-written relay beside it:
 | `sugar_steps` | steps relay | `order`, text | `sugar_steps_placed` |
 | `sugar_state_only` | stream | `ticks`, text | none |
 
-Text entries, so the bytes a sink carries are equal across runtimes: a JSON
+Text entries, so the bytes an output carries are equal across runtimes: a JSON
 round trip re-spaces the start values in some languages.
 `test/system/shorthand_e2e_test.exs` drives all five on the selected runtime;
-`sugar_state_only` has no sink, so its proof is the cell state it keeps, read
+`sugar_state_only` has no output, so its proof is the cell state it keeps, read
 back through the live cell-state query.
 
 The refusal table carries one row per short-form refusal, written with the step
-`shorthand(<id>|-, <sink>|-, <input>|-)`, the `.noout` modifier for a body
+`shorthand(<id>|-, <output>|-, <input>|-)`, the `.noout` modifier for a body
 declaring no output and the `.topology` modifier for a declaration that also
 carries a topology body. Their names are the authoring contract's, not
 `flz_core`'s — the core never sees a short form — so a row whose `needs` begins
@@ -468,7 +468,7 @@ The committed goldens are `candle`, `checkpoint_batched_store`,
 `static_cell`, `store_input`, `sugar_do_nothing`, `sugar_named_input`,
 `sugar_state_only`, `sugar_static_cell`, `sugar_steps` and `tier_store`.
 The four short-form ones (every `sugar_*` but `sugar_static_cell`) pin that a
-short form declares the entry channel, the sink when one is written and the
+short form declares the entry channel, the output when one is written and the
 kind its author wrote, in every runtime.
 
 Regenerate with `FLEZHA_E2E_SNAPSHOT=update` under the reference runtime; any
@@ -567,7 +567,7 @@ artifact is missing, and `mix bench` runs the bench line from the root.
 
 Judging a topology is one job, and `flz_core::host::register::check` is where it
 is done. A builder records the links its author declared — a `transform`, a
-`key`, a `named`, a `sink`, an `into`, a `merge`, a `branch` — and submits the
+`key`, a `named`, an `output`, an `into`, a `merge`, a `branch` — and submits the
 record; the core answers with the derived declaration or with a list of named
 refusals. The C ABI entry is `flz_core_check_class`, read-only beside
 `flz_core_declare_class`; the Elixir SDK is its own core and re-expresses the

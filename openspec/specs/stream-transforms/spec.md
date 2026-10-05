@@ -14,14 +14,14 @@ return a stream handle carrying the post-transform payload type, and SHALL NOT
 create a Tasklet, a Cell, a mailbox, or a dispatch hop. A transform SHALL be
 stored on the consumer edge that the chain terminates in, and a chain of
 transforms not terminated by `.into(<tasklet>)` SHALL fail definition with an
-error naming the dangling stream. A plugin sink SHALL NOT terminate a chain: it
+error naming the dangling stream. A plugin output SHALL NOT terminate a chain: it
 serializes the channel's own value and closes no consumer edge, so a chain
-followed only by a sink is dangling.
+followed only by an output is dangling.
 
 Every SDK SHALL additionally refuse, naming the channel: a second edge key
 before one `.into(...)`; a transform declared after an edge key, the key being
 evaluated on the final post-transform value; and a transform or key declared on
-a handle whose channel already carries a plugin sink.
+a handle whose channel already carries a plugin output.
 
 #### Scenario: A filter costs no Tasklet
 
@@ -40,7 +40,7 @@ a handle whose channel already carries a plugin sink.
 
 #### Scenario: A dangling transform chain is refused
 
-- **WHEN** a flow relay declares `.map(...)` and the resulting handle is never wired to a Tasklet, whether it is left unwired or is followed only by a plugin sink
+- **WHEN** a flow relay declares `.map(...)` and the resulting handle is never wired to a Tasklet, whether it is left unwired or is followed only by a plugin output
 - **THEN** definition SHALL fail with an error naming the dangling stream
 
 #### Scenario: A second edge key is refused rather than replacing the first
@@ -53,10 +53,10 @@ a handle whose channel already carries a plugin sink.
 - **WHEN** a flow relay declares an edge key and then a transform, and wires the result into a Tasklet
 - **THEN** definition SHALL fail naming the channel, because the key is evaluated on the final post-transform value and so must be the last link
 
-#### Scenario: A transform behind an attached plugin sink is refused
+#### Scenario: A transform behind an attached plugin output is refused
 
-- **WHEN** a stream attaches a plugin sink and then declares a transform or an edge key on the returned handle, even where that chain is closed by a later `.into(...)`
-- **THEN** definition SHALL fail naming the channel; declaring the transform and its `.into(...)` before attaching the sink SHALL succeed and SHALL produce the same topology
+- **WHEN** a stream attaches a plugin output and then declares a transform or an edge key on the returned handle, even where that chain is closed by a later `.into(...)`
+- **THEN** definition SHALL fail naming the channel; declaring the transform and its `.into(...)` before attaching the output SHALL succeed and SHALL produce the same topology
 
 #### Scenario: A fanned value answers every key at the crossing
 
@@ -66,7 +66,7 @@ a handle whose channel already carries a plugin sink.
 #### Scenario: The transform chain is proven on every runtime
 
 - **WHEN** the `transform_chain` fixture is started on any of the seven runtimes and the frames `a:1,b:2` and `drop` are injected on `trades`
-- **THEN** exactly `A:1` and `B:2` SHALL reach the `transformed` sink, on the keys `A` and `B` (the key is read after the upper-casing `map`), and nothing SHALL reach it for `drop`
+- **THEN** exactly `A:1` and `B:2` SHALL reach the `transformed` output, on the keys `A` and `B` (the key is read after the upper-casing `map`), and nothing SHALL reach it for `drop`
 
 ### Requirement: Cell keying SHALL be declared on the edge, not on the Tasklet
 
@@ -154,7 +154,7 @@ Every SDK SHALL refuse the following at topology build time with the same error
 names: `topology.key_by_on_unkeyable_target` — a `key_by` whose consumer declares a non-empty
 `cell_keys()`; `topology.duplicate_key_by` — more than one `key_by` on one consumer edge;
 `topology.transform_after_terminal` — a transform declared on a handle already closed by a
-plugin sink; `topology.edge_already_wired` — an existing consumer edge re-declared where
+plugin output; `topology.edge_already_wired` — an existing consumer edge re-declared where
 either the existing or the new declaration carries a transform or a key, named
 by the channel and the tasklet it already feeds. A re-declaration carrying
 neither SHALL remain the legal fan-in no-op.

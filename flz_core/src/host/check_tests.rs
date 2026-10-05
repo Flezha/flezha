@@ -226,8 +226,8 @@ impl Interpreter {
                 "map" | "filter" | "flat_map" => r#"{"link":"transform"}"#.to_string(),
                 "key" => r#"{"link":"key"}"#.to_string(),
                 "named" => format!(r#"{{"link":"named","name":"{arg}"}}"#),
-                "sink" if arg.is_empty() => r#"{"link":"sink"}"#.to_string(),
-                "sink" => format!(r#"{{"link":"sink","name":"{arg}"}}"#),
+                "output" if arg.is_empty() => r#"{"link":"sink"}"#.to_string(),
+                "output" => format!(r#"{{"link":"sink","name":"{arg}"}}"#),
                 "into" => {
                     let tasklet = self.tasklet(arg);
                     format!(r#"{{"link":"into","tasklet":{tasklet}}}"#)
@@ -548,7 +548,7 @@ mod derivation {
 
     #[test]
     fn a_named_link_renames_the_channel_for_every_terminator() {
-        let derived = derive("entry(in); in.into(plain); plain.named(renamed); plain.sink");
+        let derived = derive("entry(in); in.into(plain); plain.named(renamed); plain.output");
 
         assert_eq!(
             derived.channels[1].name, "renamed",
@@ -568,7 +568,7 @@ mod derivation {
 
     #[test]
     fn a_sink_names_the_channel() {
-        let derived = derive("entry(in); in.into(plain); plain.sink(items_output)");
+        let derived = derive("entry(in); in.into(plain); plain.output(items_output)");
 
         assert_eq!(
             derived.channels[1].name, "items_output",
@@ -579,7 +579,7 @@ mod derivation {
 
     #[test]
     fn a_nameless_sink_leaves_the_derived_name_alone() {
-        let derived = derive("entry(in); in.into(plain); plain.sink");
+        let derived = derive("entry(in); in.into(plain); plain.output");
 
         assert_eq!(
             derived.channels[1].name, "plain_out",
@@ -589,11 +589,11 @@ mod derivation {
     }
 
     #[test]
-    fn only_two_sink_named_channels_collide_as_a_duplicate_sink() {
+    fn only_two_output_named_channels_collide_as_a_duplicate_output() {
         // A `named(...)` channel colliding with a `sink(...)` one is a bare
         // duplicate: nobody pointed two channels at one sink.
         let mixed = refuse(
-            "entry(in); in.into(plain); in.into(second); plain.named(out); plain.sink;              second.sink(out)",
+            "entry(in); in.into(plain); in.into(second); plain.named(out); plain.output;              second.output(out)",
         );
         assert!(
             mixed
@@ -605,12 +605,12 @@ mod derivation {
 
     #[test]
     fn a_channel_named_twice_is_refused_even_when_the_names_agree() {
-        let issues = refuse("entry(in); in.into(plain); plain.named(same); plain.sink(same)");
+        let issues = refuse("entry(in); in.into(plain); plain.named(same); plain.output(same)");
 
         assert!(
             issues.iter().any(|i| matches!(
                 i,
-                TopologyIssue::ChannelNamedTwice { named, sink, .. } if named == "same" && sink == "same"
+                TopologyIssue::ChannelNamedTwice { named, output, .. } if named == "same" && output == "same"
             )),
             "an agreeing pair is still two declarations, read {issues:?}"
         );
@@ -618,7 +618,7 @@ mod derivation {
 
     #[test]
     fn two_sinks_stay_a_duplicate_sink_and_never_ends_twice() {
-        let issues = refuse("entry(in); in.into(plain); plain.sink(out); plain.sink(out)");
+        let issues = refuse("entry(in); in.into(plain); plain.output(out); plain.output(out)");
         assert!(
             issues
                 .iter()
@@ -629,7 +629,7 @@ mod derivation {
 
     #[test]
     fn a_hybrid_channel_keeps_the_kind_it_declared() {
-        let derived = derive("entry(in); in.into(plain); plain.sink(out); plain.into(second)");
+        let derived = derive("entry(in); in.into(plain); plain.output(out); plain.into(second)");
         assert_eq!(
             derived.channels[1].kind,
             HostChannelKind::InterTask,

@@ -8,7 +8,7 @@ typical case: take data from one place, change it into what you need, and
 deliver it somewhere else.
 
 A stream's graph is a path: messages enter on a channel, pass through
-transforms and tasklets, and leave on sinks. Each result goes out as soon as it
+transforms and tasklets, and leave on outputs. Each result goes out as soon as it
 is ready. Messages with the same key are handled one at a time, in the order
 they arrived, while different keys are handled side by side, and each key can
 keep state of its own.
@@ -20,7 +20,7 @@ flowchart LR
     I(["entry channel"]) --> T["transforms:<br/>filter, map, flatMap"] --> K["keyBy"]
     K --> A["tasklet A<br/>one cell per key"]
     A --> B["tasklet B"]
-    B --> S(["sink"])
+    B --> S(["output"])
 ```
 
 - **An entry channel** is where messages come in: from a plugin such as a
@@ -32,7 +32,7 @@ flowchart LR
 - **`keyBy`** decides which cell of the next tasklet each message goes to.
 - **`into`** hands each message to a tasklet. What a tasklet emits flows on
   like any other message, so the next tasklet is added with another `into`.
-- **A sink** is a named exit where results leave the relay for whatever
+- **An output** is a named exit where results leave the relay for whatever
   listens there: a plugin, `flz relay listen`, another relay.
 
 A stream's commit point is one input. Each input's state changes and outputs
@@ -105,7 +105,7 @@ trade message says `"channel": "trade"` and carries one or more trades in its
 confirmation of a subscription. The relay keeps the trade messages, splits
 each into its trades, keeps the market orders, and keys them by symbol into
 `track_prices`, which keeps each symbol's last ten prices. `buy_above_average`
-then decides whether to buy, and its lines leave on the sink `signals`.
+then decides whether to buy, and its lines leave on the output `signals`.
 
 ```mermaid
 flowchart LR
@@ -133,7 +133,7 @@ public void channels(@Nonnull ChannelBuilder c) {
             .keyBy(Trade::symbol)                                // one cell per symbol
             .into(TrackPrices.class)
             .into(BuyAboveAverage.class)
-            .sink("signals");
+            .output("signals");
 }
 ```
 
@@ -165,7 +165,7 @@ fn channels(c: &ChannelBuilder) {
         .key_by(|trade| trade.symbol.clone()) // one cell per symbol
         .into::<TrackPrices>()
         .into::<BuyAboveAverage>()
-        .sink_named("signals");
+        .output_named("signals");
 }
 ```
 
@@ -188,7 +188,7 @@ channels: (c) => {
     .keyBy((trade) => trade.symbol) // one cell per symbol
     .into(TrackPrices)
     .into(BuyAboveAverage)
-    .sink('signals');
+    .output('signals');
 },
 ```
 
@@ -211,7 +211,7 @@ and drops it.
     .key_by(lambda trade: trade["symbol"])  # one cell per symbol
     .into(TrackPrices)
     .into(BuyAboveAverage)
-    .sink("signals")
+    .output("signals")
 )
 ```
 
@@ -233,7 +233,7 @@ channels do |c|
    .key_by { |trade| trade[:symbol] }                      # one cell per symbol
    .into(TrackPrices)
    .into(BuyAboveAverage)
-   .sink("signals")
+   .output("signals")
 end
 ```
 
@@ -256,7 +256,7 @@ public static function channels(Builder $c): void
         ->keyBy(fn (array $trade) => $trade['symbol'])                             // one cell per symbol
         ->into(TrackPrices::class)
         ->into(BuyAboveAverage::class)
-        ->sink('signals');
+        ->output('signals');
 }
 ```
 
@@ -279,7 +279,7 @@ def channels(c) do
   |> key_by(& &1["symbol"])
   |> into(Tradedesk.TrackPrices)
   |> into(Tradedesk.BuyAboveAverage)
-  |> sink("signals")
+  |> output("signals")
 end
 ```
 
@@ -323,18 +323,18 @@ messages in order. `track_prices` keeps its window in the cell
 fed by a plain `into`, has one cell for every symbol, which is fine for a
 tasklet that keeps nothing.
 
-## Sinks
+## Outputs
 
-`sink(name)` ends a path on a named exit. A sink can also sit in the middle of
+`output(name)` ends a path on a named exit. An output can also sit in the middle of
 a path: a value leaves there and still carries on to the next tasklet, and a
-path can have several sinks. A second sink on one channel is refused at
-registration. The sink's name is stamped on everything it delivers, so like an
+path can have several outputs. A second output on one channel is refused at
+registration. The output's name is stamped on everything it delivers, so like an
 entry channel's name it is an address: changing it is a breaking change.
 
-A sink names the channel it ends: in Rust, `sink_named("signals")` names it and
-`sink()` leaves it the tasklet's name. Naming the same channel again with
+An output names the channel it ends: in Rust, `output_named("signals")` names it and
+`output()` leaves it the tasklet's name. Naming the same channel again with
 `named(...)` is refused (`topology.channel_named_twice`). Where results go
-from a sink (a file, Kafka, an HTTP endpoint, a listener) is the plugin
+from an output (a file, Kafka, an HTTP endpoint, a listener) is the plugin
 attached to it ([`plugins.md`](../plugins/plugins.md)).
 
 ## Edge options
@@ -347,7 +347,7 @@ and a workflow alike:
 | `on_full(policy)` (`onFull`) | `DropNothing` | What a full cell mailbox does: `DropNothing` slows the producer to the consumer's rate, `DropNewest` and `DropOldest` discard. Nothing is dropped by default. |
 | `retry_max(n)` (`retryMax`) | 3 | Attempts before a failing input is parked in the dead-letter queue. `0` is refused (`topology.retry_max_zero`). |
 | `retry_backoff_ms(ms)` (`retryBackoffMs`) | 50 | Base of the exponential wait between attempts; the wait holds no thread. |
-| `keyed()` | off | Every plugin output must carry a natural key. Requires a sink; required on every plugin channel under `effectively_once`. |
+| `keyed()` | off | Every plugin output must carry a natural key. Requires an output; required on every plugin channel under `effectively_once`. |
 | `key_by(f)` (`keyBy`) | none: one cell | Route by a key function. |
 
 A cell's mailbox holds 1024 messages unless the tasklet sets
@@ -449,7 +449,7 @@ every SDK:
 | Code | When |
 | --- | --- |
 | `topology.duplicate_key_by` | two `keyBy` on one edge, or on one merge |
-| `topology.transform_after_terminal` | a transform or key declared on a handle a plugin sink already closed |
+| `topology.transform_after_terminal` | a transform or key declared on a handle a plugin output already closed |
 | `topology.transform_after_key_by` | a transform declared after the key it would feed |
 | `topology.dangling_transform_chain` | a transform chain that no `into` closes |
 | `topology.key_by_on_unkeyable_target` | a `keyBy` edge into a tasklet that declares fixed cell keys |
@@ -457,8 +457,8 @@ every SDK:
 | `topology.edge_already_wired` | a consumer edge declared again where either side carries a transform or a key |
 
 `topology.transform_after_terminal` makes the order of declarations matter
-where a channel carries both a sink and a transformed consumer: close the
-transform on its `into(...)` first, then attach the sink to the handle you
+where a channel carries both an output and a transformed consumer: close the
+transform on its `into(...)` first, then attach the output to the handle you
 kept. Declaring the same plain `into` twice, with no transform or key, is
 allowed and wires one edge, not two.
 
@@ -483,7 +483,7 @@ allowed and wires one edge, not two.
 - [`state.md`](state.md): cells and their state.
 - [`workflows.md`](workflows.md): the other run.
 - [`durability.md`](durability.md): what a stream keeps through a crash.
-- [`plugins.md`](../plugins/plugins.md): what feeds an entry channel and what a sink delivers to.
+- [`plugins.md`](../plugins/plugins.md): what feeds an entry channel and what an output delivers to.
 - [`../advanced/partitioning.md`](../advanced/partitioning.md), [`../advanced/merged_inputs.md`](../advanced/merged_inputs.md),
   [`../advanced/timers.md`](../advanced/timers.md), [`../advanced/effectively_once.md`](../advanced/effectively_once.md).
 - [`../../sdk/stream_transforms.md`](https://github.com/flezha/flezha/blob/main/docs/sdk/stream_transforms.md): where the transform code lives, for contributors.

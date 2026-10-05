@@ -73,7 +73,7 @@ NOT be shared with any other relay.
 
 #### Scenario: A file reader is not shared
 
-- **GIVEN** a file source plugin `in` bound to `a`
+- **GIVEN** a file input plugin `in` bound to `a`
 - **WHEN** `in` is bound to `b`
 - **THEN** the bind SHALL be refused with `plugin.not_shareable` naming `a`
 
@@ -92,7 +92,7 @@ NOT be shared with any other relay.
 A shareable plugin without `single` SHALL run one copy on each controller where at least one
 unpartitioned relay bound to it runs, and SHALL NOT run on any other controller. Every
 unpartitioned bound relay on that controller SHALL be served by that one copy: one
-upstream connection for a source, one worker for a sink.
+upstream connection for a source, one worker for an output plugin.
 
 #### Scenario: Two relays on one controller share one connection
 
@@ -130,7 +130,7 @@ bound relay on any controller. When its controller leaves gracefully, the plugin
 move with a hand-over that opens the new connection before the old one closes and keeps its
 bound relays. When its controller fails, it SHALL start on another and its relays SHALL
 be served again without being bound again. A binding with an `on_output` hook to a `single`
-plugin SHALL be refused with `plugin.single_sink`.
+plugin SHALL be refused with `plugin.single_output`.
 
 #### Scenario: One connection for relays on three controllers
 
@@ -146,14 +146,14 @@ plugin SHALL be refused with `plugin.single_sink`.
 - **THEN** `trades` SHALL run on another controller, the server SHALL see the new connection
   open before the old one closes, and the relays on 2 and 3 SHALL ingest the next frame
 
-#### Scenario: A sink hook on a single plugin
+#### Scenario: An output plugin hook on a single plugin
 
 - **WHEN** a binding with the `on_output` hook is made to a `single` plugin
-- **THEN** it SHALL be refused with `plugin.single_sink`
+- **THEN** it SHALL be refused with `plugin.single_output`
 
 ### Requirement: Every bound relay SHALL get every record, and a slow one SHALL fall behind alone
 
-A shareable source plugin SHALL hand every record to every relay that shares it, straight
+A shareable input plugin SHALL hand every record to every relay that shares it, straight
 from the worker that reads it, with no process between the worker and the relay and without
 waiting on any relay: a slow one SHALL fall behind in its own input queue and lose nothing,
 and the other relays' delivery SHALL NOT slow down. A relay whose input is durable (an
@@ -246,13 +246,13 @@ counted.
   `plugin.provider_not_loaded` naming the second controller, and the log SHALL hold one
   warning
 
-#### Scenario: A guaranteed output waits for its sink
+#### Scenario: A guaranteed output waits for its output plugin
 
-- **GIVEN** a relay with guaranteed outputs bound to a sink whose provider is missing on
+- **GIVEN** a relay with guaranteed outputs bound to an output plugin whose provider is missing on
   its controller
 - **WHEN** it emits an output, and the relay then moves to a controller that has the
   provider
-- **THEN** the sink SHALL receive the output there
+- **THEN** the output plugin SHALL receive the output there
 
 ### Requirement: A running plugin's options SHALL be changeable
 

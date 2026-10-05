@@ -48,10 +48,10 @@ codes! {
     UnkeyedEdgeIntoDynamicTasklet => "topology.unkeyed_edge_into_dynamic_tasklet",
     MailboxCapacityZero => "topology.mailbox_capacity_zero",
     MailboxCapacityTooLarge => "topology.mailbox_capacity_too_large",
-    DuplicatePluginSink => "topology.duplicate_plugin_sink",
+    DuplicatePluginOutput => "topology.duplicate_plugin_output",
     ChannelEndsTwice => "topology.channel_ends_twice",
     ChannelNamedTwice => "topology.channel_named_twice",
-    DuplicateSinkName => "topology.duplicate_sink_name",
+    DuplicateOutputName => "topology.duplicate_output_name",
     KeyedChannelWithoutPluginWire => "topology.keyed_channel_without_plugin_wire",
     UnservableClock => "topology.unservable_clock",
     UnkeyedChannelUnderEffectivelyOnce => "topology.unkeyed_channel_under_effectively_once",
@@ -150,7 +150,7 @@ codes! {
     QuicAddressesInvalid => "runner.quic_addresses_invalid",
     DataStreamsFailed => "runner.data_streams_failed",
 
-    PartNoSink => "part.no_sink",
+    PartNoOutput => "part.no_output",
     PartOutsideInvocation => "part.outside_invocation",
 
     SpawnTimeout => "spawn.timeout",

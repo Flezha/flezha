@@ -154,7 +154,7 @@ A relay placed on a controller that did not load a bound plugin's provider runs
 without that plugin. It logs one warning naming the plugin and why: the package that
 declared the provider and whether it was refused or is pending, or that no installed
 package provides it. Its health reports `plugin_unhealthy` with
-`plugin.provider_not_loaded`, a guaranteed output to the missing sink waits, and a plain
+`plugin.provider_not_loaded`, a guaranteed output to the missing output plugin waits, and a plain
 one is dropped and counted. The plugin comes up with the relay's next start on a
 controller that has the package.
 

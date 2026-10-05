@@ -5,7 +5,7 @@ For SDK implementers and contributors. How to use it is on
 
 ## The stamps
 
-The runner core stamps `flz.reply_to` on every sink output whose input carried a call's token,
+The runner core stamps `flz.reply_to` on every output whose input carried a call's token,
 and on no other output: an output of an input nobody called carries no such key at all. The
 Elixir SDK stamps the same in its own routing. A call end's request carries the target
 (`flz.call`), the Response channel (`flz.call_response`), the deadline (`flz.deadline_at`), the

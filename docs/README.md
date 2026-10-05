@@ -143,9 +143,9 @@ type and what you should see; the topic pages say how each piece works.
 
 | Doc | Covers |
 | --- | --- |
-| [`kafka_producer.md`](plugins/kafka_producer.md) | The Kafka producer sink, a plugin package: partitioning, idempotence, batching, the in-flight window |
+| [`kafka_producer.md`](plugins/kafka_producer.md) | The Kafka producer output, a plugin package: partitioning, idempotence, batching, the in-flight window |
 | [`kafka_consumer.md`](plugins/kafka_consumer.md) | The Kafka consumer source in the same package: a consumer group's share of topics, commits by input durability, lag |
-| [`rabbitmq.md`](plugins/rabbitmq.md) | The RabbitMQ consumer source and producer sink, a plugin package: acknowledgement by input durability, message ids, publisher confirms, reconnects |
+| [`rabbitmq.md`](plugins/rabbitmq.md) | The RabbitMQ consumer source and producer output, a plugin package: acknowledgement by input durability, message ids, publisher confirms, reconnects |
 | [`http_poll.md`](plugins/http_poll.md) | An HTTP resource as a relay input |
 | [`http_push.md`](plugins/http_push.md) | Each output sent as one HTTP request, a guaranteed one held until a 2xx |
 | [`postgres_poll.md`](plugins/postgres_poll.md) | The new, and optionally the changed, rows of a Postgres table as a relay input |

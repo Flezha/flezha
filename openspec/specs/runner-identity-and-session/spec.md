@@ -66,7 +66,7 @@ When a new session presents a stable identity that already has a currently-live 
 
 - **GIVEN** a flow relay bound to session `sess_old` of identity `S`
 - **WHEN** the runner process is killed and its replacement presents `S` with a new incarnation before `sess_old` is evicted, and an input is sent after the replacement connected
-- **THEN** the relay SHALL have been bound onto the replacement through the one bind path and the input SHALL produce its sink output
+- **THEN** the relay SHALL have been bound onto the replacement through the one bind path and the input SHALL produce its output
 
 #### Scenario: a misconfiguration sharing one persistence path is contained
 
@@ -236,7 +236,7 @@ bound session's channels by it; no other mechanism SHALL seed a route.
 - **THEN** the first frame A's copy of `X` sends SHALL be refused and reported with
   A's new session and `X`, A SHALL be sent `RemRelay` for `X` once, no
   `[:flezha, :state, :wal_realign]` SHALL name A's new session, no output of A's copy
-  SHALL reach `X`'s sinks, and `X`'s WAL SHALL keep the lineage B wrote
+  SHALL reach `X`'s outputs, and `X`'s WAL SHALL keep the lineage B wrote
 
 #### Scenario: A rebind names its target as the owner before the start
 

@@ -47,7 +47,7 @@ SURFACE = (
     "sdk/rust/src/local.rs",
     "sdk/rust/examples/local_word_count.rs",
     "sdk/java/flezha-sdk-api/src/main/java/com/flezha/sdk/LocalRelay.java",
-    "sdk/java/flezha-sdk-api/src/main/java/com/flezha/sdk/SinkOutput.java",
+    "sdk/java/flezha-sdk-api/src/main/java/com/flezha/sdk/LocalOutput.java",
     "sdk/java/flezha-sdk-api/src/main/java/com/flezha/sdk/internal/LocalRunHandle.java",
     "sdk/java/flezha-sdk-runtime/src/main/java/com/flezha/sdk/runtime/LocalImpl.java",
     "sdk/java/flezha-sdk-examples/src/main/java/com/flezha/examples/local/Main.java",
@@ -60,7 +60,7 @@ SURFACE = (
     "sdk/ruby/lib/flezha/local.rb",
     "sdk/ruby/examples/local_word_count.rb",
     "sdk/php/src/LocalRelay.php",
-    "sdk/php/src/SinkOutput.php",
+    "sdk/php/src/LocalOutput.php",
     "sdk/php/examples/E07_LocalMode.php",
     "docs/topics/basics/local_mode.md",
 )

@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The effectively-once-correction capability lets a flow relay fix the past when a source sends a late or corrected event: a relay with the effectively-once tier, an event-time clock, and keyed plugin channels may declare a `correction_window`, and an input that lands behind the Cell's event-time high-water but inside that window triggers an automatic restore-and-replay of the input-log slice above a rewound baseline, event-time-ordered, under a bumped epoch — so conforming sinks overwrite the stale rows by natural key and converge on the corrected values. Inputs are journaled before they are forwarded, so the late input is already in the log at its arrival offset and the slice contains it by construction. Beyond-window inputs follow a declared policy, bursts of late inputs coalesce into one correction per Cell, and the same transaction backs the administration verb `flz relay replay`.
+The effectively-once-correction capability lets a flow relay fix the past when a source sends a late or corrected event: a relay with the effectively-once tier, an event-time clock, and keyed plugin channels may declare a `correction_window`, and an input that lands behind the Cell's event-time high-water but inside that window triggers an automatic restore-and-replay of the input-log slice above a rewound baseline, event-time-ordered, under a bumped epoch — so conforming output plugins overwrite the stale rows by natural key and converge on the corrected values. Inputs are journaled before they are forwarded, so the late input is already in the log at its arrival offset and the slice contains it by construction. Beyond-window inputs follow a declared policy, bursts of late inputs coalesce into one correction per Cell, and the same transaction backs the administration verb `flz relay replay`.
 ## Requirements
 ### Requirement: Late inputs inside the window trigger automatic correction
 
@@ -27,7 +27,7 @@ time, before it advances the high-water; a correctable input is withheld and one
 `correction_request` frame — seq zero, a zero record header, a body of the target
 event time alone — leaves on the Cell's own state stream. A run with no state
 stream dispatches the input as an arrival instead, as the reference does when no
-sink is installed. A marked member is buffered when the Cell pops it, and the
+output plugin is installed. A marked member is buffered when the Cell pops it, and the
 end-of-slice broadcast is placed on that Cell's queue behind the members rather
 than executed on arrival, so the close can never overtake a member it was meant to
 include; the flush sorts by extracted event time with the input-log offset as the
@@ -97,14 +97,14 @@ effect records SHALL supersede WAL history above the correction boundary via a
 non-destructive rewind that retains records at or below the baseline seq and
 drops only the snapshots above it; the epoch bump SHALL be durable before any
 output can be re-emitted under it. Corrected outputs SHALL flow through the
-normal outbox flush carrying the new epoch so conforming sinks overwrite stale
+normal outbox flush carrying the new epoch so conforming output plugins overwrite stale
 rows by natural key. Crash-driven re-emits SHALL NOT bump the epoch.
 
-#### Scenario: Sink converges to corrected values
+#### Scenario: Output plugin converges to corrected values
 
 - **WHEN** a correction replays a window that had already published candle
   `BTC/1m/14:05` to a changelog Kafka topic and a guarded Postgres table
-- **THEN** both sinks' final visible row for `BTC/1m/14:05` is the corrected
+- **THEN** both output plugins' final visible row for `BTC/1m/14:05` is the corrected
   value, with no duplicate rows
 
 #### Scenario: Crash during correction resumes without a second bump
@@ -112,7 +112,7 @@ rows by natural key. Crash-driven re-emits SHALL NOT bump the epoch.
 - **WHEN** the controller crashes mid-correction and the correction re-runs
   after restart
 - **THEN** the re-run reuses the same bumped epoch (no double increment) and the
-  sink outcome is identical to an uninterrupted correction
+  output plugin outcome is identical to an uninterrupted correction
 
 ### Requirement: Correction requests coalesce per Cell
 
@@ -143,11 +143,11 @@ retention at each iteration commit, so there is no retained window to re-process
 SHALL name `flz relay rewind` as the steps relay's verb for taking a loop back. The
 instance's input log SHALL be untouched by the refusal.
 
-#### Scenario: Replay heals a sink after a code fix
+#### Scenario: Replay heals an output plugin after a code fix
 
 - **WHEN** a relay with a calculation bug is fixed and redeployed, and the
   user runs `flz relay replay` from a point inside retention
-- **THEN** the sink's rows for the replayed range converge to values computed by
+- **THEN** the output plugin's rows for the replayed range converge to values computed by
   the fixed code
 
 #### Scenario: Replay outside retention refused

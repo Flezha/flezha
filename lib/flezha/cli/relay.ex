@@ -139,7 +139,7 @@ defmodule Flezha.Service.Cli.Relay do
   def replay(%{cell: cell, from_seq: seq}, _args, _opts) do
     IO.puts(
       "Replaying #{cell} from seq #{seq}. Outputs republish under a " <>
-        "bumped epoch; a keyed sink overwrites the stale rows by natural key."
+        "bumped epoch; a keyed output plugin overwrites the stale rows by natural key."
     )
   end
 

@@ -40,7 +40,7 @@ By default an emit made before the interval closes SHALL be flushed by the
 controller as soon as its record is fsynced, in a record carrying NO
 consumed-offset. Checkpointing moves the acknowledgement, not the output. An
 interval's outputs are therefore emitted again when the interval replays, and
-the keyed-sink dedup the tier already requires SHALL absorb them.
+the keyed-output plugin dedup the tier already requires SHALL absorb them.
 
 A checkpoint-ack relay MAY declare `outputs: :at_checkpoint` with a
 `max_delay_ms`: its mid-interval outputs SHALL then ride the interval's
@@ -50,7 +50,7 @@ first un-checkpointed input, whichever comes first, so a quiet Cell never
 holds an output longer than `max_delay_ms`. Replay semantics SHALL be
 unchanged by the option: outputs of an interval that did not checkpoint are
 re-produced when the interval replays, outputs of a checkpointed record are
-re-driven with identical identity from the cursor, and a conforming keyed sink
+re-driven with identical identity from the cursor, and a conforming keyed output plugin
 absorbs both.
 
 #### Scenario: An emit does not wait for the checkpoint
@@ -80,7 +80,7 @@ absorbs both.
 - **WHEN** an `outputs: :at_checkpoint` Cell crashes after emitting but
   before its interval checkpoints
 - **THEN** no output of that interval reached a plugin, the interval replays
-  from the checkpointed offset, and the re-produced outputs reach the sink once
+  from the checkpointed offset, and the re-produced outputs reach the output plugin once
 
 ### Requirement: A dead-letter park closes the interval
 

@@ -237,6 +237,6 @@ would cost more than the read.
 
 ## See also
 
-- [postgres_sink.md](postgres_sink.md): the Postgres sink, which shares the connection options
+- [postgres_output.md](postgres_output.md): the Postgres output plugin, which shares the connection options
 - [file.md](file.md): the file source, whose cursor and commit cadence this reader follows
-- [plugins.md](../topics/plugins/plugins.md): the plugin model and every source and sink
+- [plugins.md](../topics/plugins/plugins.md): the plugin model and every source and output plugin

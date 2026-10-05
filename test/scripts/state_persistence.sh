@@ -418,8 +418,8 @@ flz plugin enable "${PLUGIN_WS_ID}" relay_websocket \
   --Xuri="ws://localhost:4500" \
   --Xpost_connect='{"payload":{"type":"text","message":"{\"event_type\":\"subscribe\",\"event_data\":{\"default_message\":\"hello world\",\"interval\":500}}"}}'
 
-note "enabling file sink plugin ${PLUGIN_SINK_ID}"
-flz plugin enable "${PLUGIN_SINK_ID}" relay_file_sink \
+note "enabling file output plugin ${PLUGIN_SINK_ID}"
+flz plugin enable "${PLUGIN_SINK_ID}" relay_file_output \
   --relay_id="${RELAY_ID}" \
   --hook=on_output \
   --Xpath="${RELAY_ID}.test.ndjson"
