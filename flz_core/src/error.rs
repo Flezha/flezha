@@ -153,6 +153,12 @@ codes! {
     PartNoOutput => "part.no_output",
     PartOutsideInvocation => "part.outside_invocation",
 
+    EffectBadName => "effect.bad_name",
+    EffectNested => "effect.nested",
+    EffectNotRecorded => "effect.not_recorded",
+    EffectOutsideInvocation => "effect.outside_invocation",
+    EffectTooLarge => "effect.too_large",
+
     SpawnTimeout => "spawn.timeout",
     SpawnUnavailable => "spawn.unavailable",
     OptionsConflict => "usage.options_conflict",

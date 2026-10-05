@@ -29,8 +29,8 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
   @doc """
   Hydrate every shipped reference of `relay_class` whose local files are
   absent. Called from the bind-time restore enumeration, so a fresh controller
-  binding a remote-only relay finds its Cells, task-journal, input log and
-  parked failures on disk by the time it enumerates them.
+  binding a remote-only relay finds its Cells, task-journal, input log, effect
+  log and parked failures on disk by the time it enumerates them.
   """
   @spec hydrate_relay(module(), keyword(), binary()) :: :ok
   def hydrate_relay(module, opts, relay_class) when is_binary(relay_class) do
@@ -42,6 +42,10 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
     # the next input lands at offset 0, below the floor, and is silently
     # skipped as already-consumed.
     hydrate_ref(module, opts, {:input_log, relay_class})
+
+    # The effect results kept for the inputs that log still holds, so a
+    # hydrated instance's re-run is served them.
+    hydrate_ref(module, opts, {:effects_log, relay_class})
 
     # Parked failures belong to the relay that produced them, so they come
     # back with it rather than at boot: a replacement controller's `flz dlq`

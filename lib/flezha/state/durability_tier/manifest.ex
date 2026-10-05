@@ -33,6 +33,7 @@ defmodule Flezha.State.DurabilityTier.Manifest do
   @type ref ::
           {:cell, Paths.cell_id()}
           | {:input_log, binary()}
+          | {:effects_log, binary()}
           | {:cspec, {binary(), binary()}}
           | {:dlq, {binary(), binary()}}
           | {:control, {binary(), binary()}}
@@ -247,6 +248,7 @@ defmodule Flezha.State.DurabilityTier.Manifest do
   @classes %{
     "e" => {:cell, 3},
     "i" => {:input_log, 1},
+    "f" => {:effects_log, 1},
     "c" => {:cspec, 2},
     "d" => {:dlq, 2},
     "p" => {:control, 2}

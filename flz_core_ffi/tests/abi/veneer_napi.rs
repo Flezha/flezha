@@ -24,6 +24,7 @@ fn the_native_surface_is_the_declared_one() {
             "localNextOutput",
             "localRunUntilIdle",
             "complete",
+            "effectEnd",
             "spawnWait",
             "adminCall",
             "sendMessage",

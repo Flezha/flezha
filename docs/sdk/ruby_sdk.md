@@ -291,6 +291,10 @@ only inside a `compensate` hook do `ctx.timer_after`, `ctx.timer_at_event_time`
 and `ctx.cancel_timer` raise a `Flezha::Error` with the code `runtime.timers_unavailable`. A `ctx.spawn_steps`
 naming a flow factory resolves its handle to a `Flezha::Error` with the code `relay.factory_not_steps`.
 
+A call to anything outside the instance goes through `ctx.effect("name") { value }`, which
+keeps its result so a re-run reads it instead of calling again
+([`recorded_effects.md`](../topics/advanced/recorded_effects.md)).
+
 ### Channel payloads
 
 A channel names the format of its payload with `codec:` on `input` and on

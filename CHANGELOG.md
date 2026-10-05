@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Added: `ctx.effect`, an outside call kept across re-runs
+
+A tasklet calls a model, a tool or a service through `ctx.effect(name, fn)` in every SDK
+(`effect/4` in Elixir), and a re-run of the invocation (a crash, a replay, a wake, a move)
+reads the kept result instead of calling again
+([`docs/topics/advanced/recorded_effects.md`](docs/topics/advanced/recorded_effects.md)).
+The controller keeps results in `effects.log` beside the input log, as long as their
+input, ships them with it to the durability backend, and sends them to the runner on every
+bind. Where an input has no input-log offset, nothing is kept. New codes `effect.bad_name`,
+`effect.nested`, `effect.outside_invocation`, `effect.too_large` and `effect.not_recorded`;
+the cap is `FLEZHA_EFFECT_MAX_BYTES` (4 MiB). The test harnesses serve kept results on
+their replay pass and name an effect whose function runs there.
+
 ### Added: `runner.send`, with a message id, a partition key or `local`
 
 Application code on a runner sends to a relay with `runner.send` (`send_to` in Ruby,

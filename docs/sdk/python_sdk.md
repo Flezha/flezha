@@ -350,6 +350,10 @@ invocation, and reproduce on replay. `time.time()`, `datetime.now()` and
 the file and line, and the invocation completes normally. Detection is armed
 only while an invocation runs and only on the thread running it.
 
+A call to anything outside the instance goes through `ctx.effect(name, fn)`,
+which keeps its result so a re-run reads it instead of calling again
+([`recorded_effects.md`](../topics/advanced/recorded_effects.md)).
+
 ## Channel payloads
 
 A channel names the format of its payload with `codec=` on `input` and on

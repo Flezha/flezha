@@ -10,20 +10,30 @@ The SDK SHALL define a determinism contract binding `Tasklet::run`,
 sequence, the code SHALL produce identical state changes and identical emitted
 outputs. Ambient non-determinism (wall-clock reads, random number / UUID
 generation, reads of external mutable state) inside these functions is a contract
-violation; time and identifiers SHALL be obtained through the tasklet context (`Ctx`). The
-contract SHALL bind all current and future SDK languages.
+violation; time and identifiers SHALL be obtained through the tasklet context (`Ctx`). A call
+to anything outside the instance (a model, a tool, a service) inside `run` or `compensate`
+SHALL go through `ctx.effect(name, fn)`, which keeps its result so a re-run reads the same
+value; `Change::apply_to` SHALL make no outside call at all. The contract SHALL bind all
+current and future SDK languages.
 
 #### Scenario: Contract is documented on the authoring surface
 
 - **WHEN** an author reads the `Tasklet` trait / `run` documentation
 - **THEN** the determinism contract is stated, including the ctx-mediated
-  alternatives for time (`ctx.now()`) and identifiers (`ctx.stable_id()`)
+  alternatives for time (`ctx.now()`), identifiers (`ctx.stable_id()`) and outside calls
+  (`ctx.effect`)
 
 #### Scenario: Violation surfaces as a replay difference in the harness
 
 - **WHEN** a Tasklet whose `run` calls `SystemTime::now()` to build its output
   is checked with the harness replay-emit verification
 - **THEN** the check fails because the two replay passes emit different bytes
+
+#### Scenario: An outside call through `effect` replays equal
+
+- **WHEN** a Tasklet whose `run` builds its output from `ctx.effect("model", fn)` where `fn`
+  answers differently on each call is checked with the harness replay-emit verification
+- **THEN** the check passes, because the replay pass is served the live pass's result
 
 ### Requirement: Runtime-evaluated Clock served via `ctx.now()`
 

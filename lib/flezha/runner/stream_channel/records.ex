@@ -168,6 +168,14 @@ defmodule Flezha.Runner.StreamChannel.Records do
     do: ownership(state, relay_class, kind) != :refused
 
   @doc """
+  Whether the session behind `state` is the owner the relay's ownership record
+  names: unlike `admit/3`, a relay with no record on this node is not its.
+  """
+  @spec owned?(map(), binary(), atom()) :: boolean()
+  def owned?(state, relay_class, kind),
+    do: match?({:owner, _pid}, ownership(state, relay_class, kind))
+
+  @doc """
   How the instance `relay_id` runs, read from its class's record, which this
   module already consults for ownership. An `:relay_class` override names a
   class other than the id, and the record is the class's.

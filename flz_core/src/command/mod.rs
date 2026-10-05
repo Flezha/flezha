@@ -15,6 +15,7 @@ pub mod cell_state;
 mod cell_status;
 mod compact;
 mod credit;
+mod effect_results;
 mod migration_deserialization;
 mod migration_serialization;
 mod park_ack;
@@ -133,6 +134,7 @@ fn classify(command: Option<Command>) -> Result<CommandActionType, CommandDecode
         Some(Command::CreditWindowInit(c)) => regular(c),
         Some(Command::CreditGrant(c)) => regular(c),
         Some(Command::ParkPayloadAck(c)) => regular(c),
+        Some(Command::EffectResults(c)) => regular(c),
         Some(Command::RunnerShutdownNotification(_))
         | Some(Command::RestoreInitStateResponse(_))
         | Some(Command::CompactCellResponse(_))
@@ -147,12 +149,17 @@ fn classify(command: Option<Command>) -> Result<CommandActionType, CommandDecode
         | Some(Command::SpawnStepsRequest(_))
         | Some(Command::AdminRequest(_))
         | Some(Command::RelayExited(_))
+        | Some(Command::EffectResult(_))
         // The control reader answers a refusal itself, before the handshake
         // it ends; one arriving later has no session to refuse.
         | Some(Command::ConnectRefused(_)) => CommandActionType::NotificationIgnore,
         Some(Command::RunnerShutdownAck(_)) => CommandActionType::AckSignal(Ok(String::new())),
         Some(Command::SpawnStepsResponse(reply)) => CommandActionType::AckSignal(ack_result(
             crate::spawn::encode_ack(&reply.outcome, &reply.instance_id),
+            reply.error,
+        )),
+        Some(Command::EffectResultAck(reply)) => CommandActionType::AckSignal(ack_result(
+            crate::effect_result::encode_ack(reply.first, &reply.payload),
             reply.error,
         )),
         Some(Command::AdminResponse(reply)) => {

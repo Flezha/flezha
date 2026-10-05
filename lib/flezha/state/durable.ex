@@ -65,6 +65,7 @@ defmodule Flezha.State.Durable do
   @table [
     {:wal, "lib/flezha/state/wal_writer.ex", :record, :batched, ".rewriting", false, true},
     {:input_log, "lib/flezha/state/input_log.ex", :record, :batched, ".rewriting", false, true},
+    {:effects_log, "lib/flezha/state/input_log.ex", :record, :inline, ".rewriting", false, true},
     {:task_journal, "lib/flezha/state/task_journal.ex", :record, :batched, ".rewriting", false,
      true},
     {:snapshot, "lib/flezha/state/snapshot.ex", :whole, :inline, ".tmp", false, true},

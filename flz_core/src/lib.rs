@@ -34,6 +34,7 @@ pub mod credit;
 pub mod dynamic;
 #[doc(hidden)]
 pub mod effect;
+pub mod effect_result;
 pub mod error;
 #[doc(hidden)]
 pub mod flusher;
@@ -42,6 +43,7 @@ pub mod host;
 pub mod local;
 #[doc(hidden)]
 pub mod mailbox;
+pub mod origin;
 #[doc(hidden)]
 pub mod park;
 pub mod part;

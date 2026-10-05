@@ -177,6 +177,7 @@ impl RunnerNode {
             Some(instance) => {
                 instance.shutdown_background_threads();
                 crate::steps::removed(&instance);
+                crate::effect_result::forget(instance_id);
                 true
             }
             None => false,

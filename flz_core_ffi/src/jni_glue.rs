@@ -439,6 +439,85 @@ pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_part<'l>(
     report(&mut env, outcome);
 }
 
+/// A byte answer as a Java `byte[]`, `null` for none; a refusal is thrown and
+/// answers `null`.
+fn bytes_or_throw(env: &mut JNIEnv, answer: Result<Option<Vec<u8>>, Refusal>) -> jbyteArray {
+    let copied = answer.and_then(|bytes| {
+        bytes
+            .map(|bytes| env.byte_array_from_slice(&bytes))
+            .transpose()
+            .map_err(|e| Refusal::Shape(format!("result copy failed: {e}")))
+    });
+    match copied {
+        Ok(Some(array)) => array.into_raw(),
+        Ok(None) => std::ptr::null_mut(),
+        Err(refusal) => {
+            throw(env, &refusal);
+            std::ptr::null_mut()
+        }
+    }
+}
+
+/// Begin `ctx.effect(name)` in the live activation `token`'s work item `item`.
+/// The first byte is the status (`FLZ_EFFECT_RUN`, `FLZ_EFFECT_KEPT`,
+/// `FLZ_EFFECT_UNRECORDED`) and the rest, for a kept one, its result. Throws
+/// for a refused call.
+#[no_mangle]
+pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_effectBegin<'l>(
+    mut env: JNIEnv<'l>,
+    _class: JClass,
+    ctx: jlong,
+    token: jlong,
+    item: jint,
+    name: JString,
+) -> jbyteArray {
+    let started = c_string(&mut env, "effect name", &name)
+        .map_err(|_| Refusal::Shape("effect name unreadable".to_string()))
+        .and_then(|name| veneer::effect_begin(ctx_of(ctx), token as u64, item as u32, &name));
+    let tagged = started.map(|start| {
+        Some(match start {
+            veneer::EffectStart::Kept(result) => {
+                let mut tagged = vec![crate::FLZ_EFFECT_KEPT as u8];
+                tagged.extend(result);
+                tagged
+            }
+            veneer::EffectStart::Run => vec![crate::FLZ_EFFECT_RUN as u8],
+            veneer::EffectStart::Unrecorded => vec![crate::FLZ_EFFECT_UNRECORDED as u8],
+        })
+    });
+    bytes_or_throw(&mut env, tagged)
+}
+
+/// Keep the encoded result of the function a run begin ran, waiting for the
+/// controller: `null` to return the call's own result, or the result the
+/// controller kept first. Throws for `effect.too_large` and
+/// `effect.not_recorded`.
+#[no_mangle]
+pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_effectEnd<'l>(
+    mut env: JNIEnv<'l>,
+    _class: JClass,
+    ctx: jlong,
+    token: jlong,
+    item: jint,
+    payload: JByteArray,
+) -> jbyteArray {
+    let first = bytes_of(&mut env, "effect result", &payload)
+        .and_then(|bytes| veneer::effect_end(ctx_of(ctx), token as u64, item as u32, &bytes));
+    bytes_or_throw(&mut env, first)
+}
+
+/// End a begun effect without keeping anything.
+#[no_mangle]
+pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_effectRelease(
+    _env: JNIEnv,
+    _class: JClass,
+    ctx: jlong,
+    token: jlong,
+    item: jint,
+) {
+    veneer::effect_release(ctx_of(ctx), token as u64, item as u32);
+}
+
 /// Read a spawn handle, waiting up to `timeoutMs`: `null` while pending,
 /// otherwise its answer as JSON. Throws for a released handle.
 #[no_mangle]

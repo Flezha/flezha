@@ -308,7 +308,8 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
     :call_response,
     :relay_call,
     :parts,
-    :local_send
+    :local_send,
+    :recorded_effects
   ]
 
   # The surface every SDK carries; a manifest cannot defer these, and every
@@ -341,7 +342,8 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
     :shorthand,
     :call_response,
     :relay_call,
-    :parts
+    :parts,
+    :recorded_effects
   ]
 
   def capabilities, do: @capabilities

@@ -859,6 +859,82 @@ defmodule Flezha.State.InputLogTest do
     end
   end
 
+  describe "effect results" do
+    test "results follow the floor", %{class: class} do
+      for i <- 0..9, do: {:ok, _} = InputLog.append(class, "m#{i}", %{})
+      assert InputLog.keep_effect(class, 4, "id-4", "cell", "four") == :kept
+      assert InputLog.keep_effect(class, 7, "id-7", "cell", "seven") == :kept
+
+      InputLog.record_consumed(class, {class, "task", "a"}, 5)
+      :ok = Sweep.run(class)
+
+      assert InputLog.effect_results(class, -1) == [{7, "id-7", "cell", "seven"}]
+      stop_log(class)
+
+      assert InputLog.effect_results(class, -1) == [{7, "id-7", "cell", "seven"}],
+             "the rewritten file holds only what is kept"
+    end
+
+    test "the first result for an identity wins", %{class: class} do
+      for i <- 0..2, do: {:ok, _} = InputLog.append(class, "m#{i}", %{})
+      assert InputLog.keep_effect(class, 2, "id", "cell", "first") == :kept
+      assert InputLog.keep_effect(class, 2, "id", "cell", "first") == :kept
+      assert InputLog.keep_effect(class, 2, "id", "cell", "second") == {:first, "first"}
+      assert InputLog.effect_results(class, -1) == [{2, "id", "cell", "first"}]
+    end
+
+    test "a restarted log reads its results back and ships only those above a floor",
+         %{class: class} do
+      for i <- 0..3, do: {:ok, _} = InputLog.append(class, "m#{i}", %{})
+      assert InputLog.keep_effect(class, 1, "b", "cell", <<0, 1>>) == :kept
+      assert InputLog.keep_effect(class, 1, "a", "cell", "x") == :kept
+      assert InputLog.keep_effect(class, 3, "c", "other", "y") == :kept
+      stop_log(class)
+
+      assert InputLog.effect_results(class, -1) == [
+               {1, "a", "cell", "x"},
+               {1, "b", "cell", <<0, 1>>},
+               {3, "c", "other", "y"}
+             ]
+
+      assert InputLog.effect_results(class, 1) == [{3, "c", "other", "y"}]
+      assert InputLog.keep_effect(class, 3, "c", "other", "z") == {:first, "y"}
+    end
+
+    test "a result for an input the log does not hold, or over the cap, is refused",
+         %{class: class} do
+      {:ok, 0} = InputLog.append(class, "m0", %{})
+      assert {:error, _} = InputLog.keep_effect(class, 1, "id", "cell", "beyond the head")
+      on_exit(TestHelpers.override_env(:effect_max_bytes, 4))
+      stop_log(class)
+      assert {:error, _} = InputLog.keep_effect(class, 0, "id", "cell", "too long")
+      assert InputLog.effect_results(class, -1) == []
+    end
+
+    test "results follow the floor while the inputs wait for the cut threshold", %{class: class} do
+      on_exit(TestHelpers.override_env(:record_log_cut_after_bytes, 65_536))
+      for i <- 0..9, do: {:ok, _} = InputLog.append(class, "m#{i}", %{})
+      assert InputLog.keep_effect(class, 4, "id-4", "cell", "four") == :kept
+      assert InputLog.keep_effect(class, 7, "id-7", "cell", "seven") == :kept
+
+      InputLog.record_consumed(class, {class, "task", "a"}, 5)
+      :ok = Sweep.run(class)
+
+      assert InputLog.read_range(class, 0, 9) |> length() == 10, "the inputs wait for the cut"
+      assert InputLog.effect_results(class, -1) == [{7, "id-7", "cell", "seven"}]
+    end
+
+    test "an instance that never keeps one has no effect log", %{class: class} do
+      for i <- 0..4, do: {:ok, _} = InputLog.append(class, "m#{i}", %{})
+      InputLog.record_consumed(class, {class, "task", "a"}, 3)
+      :ok = Sweep.run(class)
+
+      assert InputLog.effect_results(class, -1) == []
+      refute File.exists?(Paths.effects_log_path(class))
+      assert InputLog.read_range(class, 0, 9) |> Enum.map(&elem(&1, 0)) == [3, 4]
+    end
+  end
+
   describe "the fsync companion's death" do
     test "no fsync tick is sent to a companion that has exited", %{class: class} do
       {log, syncer} = live_log(class)

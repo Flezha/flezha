@@ -63,6 +63,13 @@ defmodule FlezhaTest.Runner.ControlUnitAddRelayTest do
     assert add.dead_letter_turns
   end
 
+  test "a bind carries how many effect results it ships", %{runner_id: runner_id} do
+    start_relay(runner_id, effect_results: List.duplicate(%RunnerCommands.EffectResult{}, 3))
+
+    assert_receive {:sent, {:add_relay, add}}, 500
+    assert add.effect_result_count == 3
+  end
+
   test "a fresh bind carries no journal", %{runner_id: runner_id} do
     start_relay(runner_id, [])
 

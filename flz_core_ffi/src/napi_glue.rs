@@ -497,6 +497,60 @@ pub fn part(token: BigInt, item: u32, payload: Buffer) -> Result<()> {
     Ok(veneer::part(ctx, token, item, &payload)?)
 }
 
+/// What `effectBegin` says to do: `status` is `kept` (with `result`, which the
+/// call returns without running its function), `run` or `unrecorded`.
+#[napi(object)]
+pub struct JsEffectStart {
+    pub status: String,
+    pub result: Option<Buffer>,
+}
+
+/// Begin `ctx.effect(name)` in the live activation `token`'s work item `item`.
+/// Synchronous: a begin never waits.
+#[napi]
+pub fn effect_begin(token: BigInt, item: u32, name: String) -> Result<JsEffectStart> {
+    let ctx = context()?;
+    let token = from_big("token", &token)?;
+    let name = veneer::c_string("effect name", &name)?;
+    let (status, result) = match veneer::effect_begin(ctx, token, item, &name)? {
+        veneer::EffectStart::Kept(result) => ("kept", Some(Buffer::from(result))),
+        veneer::EffectStart::Run => ("run", None),
+        veneer::EffectStart::Unrecorded => ("unrecorded", None),
+    };
+    Ok(JsEffectStart {
+        status: status.to_string(),
+        result,
+    })
+}
+
+/// Keep the encoded result of the function a `run` begin ran: resolves `null`
+/// to return the call's own result, or with the result the controller kept
+/// first. Asynchronous: it waits for the controller.
+#[napi(ts_return_type = "Promise<Buffer | null>")]
+pub fn effect_end<'a>(
+    env: &'a Env,
+    token: BigInt,
+    item: u32,
+    payload: Buffer,
+) -> Result<Object<'a>> {
+    let token = from_big("token", &token)?;
+    let payload = payload.to_vec();
+    off_loop_building(
+        env,
+        context()?,
+        move |ctx| Ok(veneer::effect_end(ctx, token, item, &payload)?),
+        |_, first| Ok(first.map(Buffer::from)),
+    )
+}
+
+/// End a begun effect without keeping anything. Synchronous.
+#[napi]
+pub fn effect_release(token: BigInt, item: u32) -> Result<()> {
+    let ctx = context()?;
+    veneer::effect_release(ctx, from_big("token", &token)?, item);
+    Ok(())
+}
+
 /// A spawn handle's answer as JSON if it has arrived, or `null`. Synchronous:
 /// the read it makes has a timeout of zero, which never waits.
 #[napi]
@@ -648,6 +702,9 @@ pub fn native_surface() -> Vec<JsNativeExport> {
         veneer("shutdown", "flz_core_shutdown"),
         veneer("spawnRequest", "flz_core_spawn_request"),
         veneer("part", "flz_core_part"),
+        veneer("effectBegin", "flz_core_effect_begin"),
+        veneer("effectEnd", "flz_core_effect_end"),
+        veneer("effectRelease", "flz_core_effect_release"),
         // A read that always passes a timeout of zero never waits.
         host("spawnTryResult", Some("flz_core_spawn_result"), false),
         veneer("spawnWait", "flz_core_spawn_result"),

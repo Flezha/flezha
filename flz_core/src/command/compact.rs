@@ -61,10 +61,6 @@ fn snapshot_slot(slot: &Arc<CellSlot>) -> Result<(Vec<u8>, u64, usize), crate::E
         .snapshot_frame(&mut state_guard, &mut buffer_guard, &timers)
 }
 
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
-}
-
 impl CommandAction for CompactCell {
     fn handle(
         &self,
@@ -86,7 +82,8 @@ impl CommandAction for CompactCell {
                 }
             }
             None => errors.push(crate::Error::State(
-                crate::Code::CellNotLive.with([("cell_id", hex(&self.cell_id).into())]),
+                crate::Code::CellNotLive
+                    .with([("cell_id", crate::util::hex(&self.cell_id).into())]),
             )),
         }
 

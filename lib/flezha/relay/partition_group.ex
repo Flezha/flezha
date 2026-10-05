@@ -486,13 +486,17 @@ defmodule Flezha.Relay.PartitionGroup do
         do: {member_node(member), {:cell, cell}, {:cell, {new_class, tasklet, key}}}
   end
 
-  # A steps relay member's journal and input log, gathered here under its own id
+  # A steps relay member's journal, input log and effect log, gathered here under its own id
   # when it sits on another node. They move together: the journal's floor
   # counts offsets in that one log. A vacated member's then go with its tree.
   defp instance_moves(members) do
     for member <- members,
         remote?(member),
-        ref <- [{:cell, Paths.journal_id(member.id)}, {:input_log, member.id}],
+        ref <- [
+          {:cell, Paths.journal_id(member.id)},
+          {:input_log, member.id},
+          {:effects_log, member.id}
+        ],
         do: {member_node(member), ref, ref}
   end
 

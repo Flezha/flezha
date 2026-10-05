@@ -73,6 +73,7 @@ only the pages a task needs: each link is that page's full Markdown, next to thi
 - [Rewinding a turn](rewinding_a_turn.md): A conversation sometimes has to go back.
 - [Streamed answers](streamed_answers.md): A model writes its answer a token at a time, and a long answer takes a while.
 - [Effectively once](effectively_once.md): A message that is lost is a question nobody answers.
+- [Recorded effects](recorded_effects.md): A tasklet that calls something outside its relay (a model, a tool, a payment service) runs that call again whenever the invocation runs again: after a crash, on a replay, when a sleeping instance wakes or a relay moves to another runner.
 - [Feature maturity](maturity.md): This record says which parts of Flezha are not yet settled.
 
 ## Deploying

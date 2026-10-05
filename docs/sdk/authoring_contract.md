@@ -155,6 +155,12 @@ fn run(&mut self, trade: Trade, ctx: &mut Ctx<'_, Self>) -> Result<(), TaskletEr
 A value of any other type does not compile. Only a function short form (§5)
 returns its output instead.
 
+A call to anything outside the instance (a model, a tool, a service) goes
+through the same context: `ctx.effect(name, fn)` in every SDK keeps the call's
+result, so a re-run of the invocation reads it instead of calling again
+([`recorded_effects.md`](../topics/advanced/recorded_effects.md)). `apply_to`
+makes no outside call at all.
+
 ### 2.2 One form, completed by what it declares
 
 - **Java** — one tier, the author's own class. `Input`, `State` and `Output` are

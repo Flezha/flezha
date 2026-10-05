@@ -17,8 +17,9 @@ use std::fmt;
 use flz_core::schema;
 
 use crate::{
-    FlzContext, FLZ_OK, FLZ_POLL_ACTIVATION, FLZ_POLL_SHUTTING_DOWN, FLZ_POLL_TIMEOUT,
-    FLZ_SPAWN_PENDING, FLZ_STARVATION_OBSERVED,
+    FlzContext, FLZ_EFFECT_KEPT, FLZ_EFFECT_RUN, FLZ_EFFECT_UNRECORDED, FLZ_OK,
+    FLZ_POLL_ACTIVATION, FLZ_POLL_SHUTTING_DOWN, FLZ_POLL_TIMEOUT, FLZ_SPAWN_PENDING,
+    FLZ_STARVATION_OBSERVED,
 };
 
 /// The entry points that can park the calling thread. A host whose unit of
@@ -32,6 +33,8 @@ pub const BLOCKING_ENTRY_POINTS: &[&str] = &[
     // host may make that one on any thread.
     "flz_core_spawn_result",
     "flz_core_admin_call",
+    // For the controller to keep the result.
+    "flz_core_effect_end",
     // For the controller's answer, or while a local consumer's mailbox is full.
     "flz_core_send_message",
     // A local run parks the caller in all three: `feed` while the consumer's
@@ -360,6 +363,77 @@ pub fn part(ctx: CtxPtr, token: u64, item: u32, payload: &[u8]) -> Result<(), Re
     verdict(ctx, unsafe {
         crate::flz_core_part(ctx.get(), token, item, payload.as_ptr(), payload.len())
     })
+}
+
+/// What a begun `ctx.effect` does next.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EffectStart {
+    /// The result kept for this call: return it, run nothing.
+    Kept(Vec<u8>),
+    /// Run the function, then [`effect_end`] or [`effect_release`].
+    Run,
+    /// Nothing re-runs the invocation: run the function, return its result,
+    /// then [`effect_release`].
+    Unrecorded,
+}
+
+/// Begin `ctx.effect(name)` in the work item `item` of the live activation
+/// `token`.
+pub fn effect_begin(
+    ctx: CtxPtr,
+    token: u64,
+    item: u32,
+    name: &CStr,
+) -> Result<EffectStart, Refusal> {
+    let (status, kept) = with_buffer(
+        &[FLZ_EFFECT_KEPT],
+        |out, out_len| unsafe {
+            crate::flz_core_effect_begin(ctx.get(), token, item, name.as_ptr(), out, out_len)
+        },
+        <[u8]>::to_vec,
+    );
+    match status {
+        FLZ_EFFECT_KEPT => Ok(EffectStart::Kept(kept.unwrap_or_default())),
+        FLZ_EFFECT_RUN => Ok(EffectStart::Run),
+        FLZ_EFFECT_UNRECORDED => Ok(EffectStart::Unrecorded),
+        _ => Err(core(ctx)),
+    }
+}
+
+/// Keep the encoded result of a function [`effect_begin`] ran; blocks for the
+/// controller. `None`: the call returns its own result; `Some`: the result the
+/// controller kept first, which it returns instead.
+pub fn effect_end(
+    ctx: CtxPtr,
+    token: u64,
+    item: u32,
+    payload: &[u8],
+) -> Result<Option<Vec<u8>>, Refusal> {
+    let (status, first) = with_buffer(
+        &[FLZ_EFFECT_KEPT],
+        |out, out_len| unsafe {
+            crate::flz_core_effect_end(
+                ctx.get(),
+                token,
+                item,
+                payload.as_ptr(),
+                payload.len(),
+                out,
+                out_len,
+            )
+        },
+        <[u8]>::to_vec,
+    );
+    match status {
+        FLZ_OK => Ok(None),
+        FLZ_EFFECT_KEPT => Ok(first),
+        _ => Err(core(ctx)),
+    }
+}
+
+/// End a begun effect without keeping anything.
+pub fn effect_release(ctx: CtxPtr, token: u64, item: u32) {
+    unsafe { crate::flz_core_effect_release(ctx.get(), token, item) };
 }
 
 /// Read a spawn handle, waiting up to `timeout_ms`: `None` while pending,

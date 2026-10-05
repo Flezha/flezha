@@ -269,6 +269,16 @@ pub fn spawn_request(payload_id: &str, message: &[u8]) -> Option<(String, pb::Sp
     }
 }
 
+/// The `EffectResult` in a captured frame, with its reference id.
+pub fn effect_result(payload_id: &str, message: &[u8]) -> Option<(String, pb::EffectResult)> {
+    match command_in(payload_id, message)? {
+        (reference_id, pb::command_request::Command::EffectResult(result)) => {
+            Some((reference_id, result))
+        }
+        _ => None,
+    }
+}
+
 /// The command a runner→controller frame carries, with its reference id.
 fn command_in(payload_id: &str, message: &[u8]) -> Option<(String, pb::command_request::Command)> {
     if payload_id != COMMAND_PAYLOAD_ID {

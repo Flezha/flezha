@@ -60,6 +60,16 @@ pub fn nonce_suffix() -> u128 {
     (nanos << 32) | u128::from(count)
 }
 
+/// `bytes` as lowercase hex, two digits a byte.
+pub fn hex(bytes: &[u8]) -> String {
+    use std::fmt::Write;
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        let _ = write!(out, "{byte:02x}");
+    }
+    out
+}
+
 pub fn read_u32_be(buf: &[u8], off: usize) -> u32 {
     u32::from_be_bytes(buf[off..off + 4].try_into().unwrap())
 }

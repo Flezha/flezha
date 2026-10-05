@@ -18,6 +18,8 @@
 
 #[path = "abi/admin.rs"]
 mod admin;
+#[path = "abi/effect.rs"]
+mod effect;
 #[path = "abi/harness.rs"]
 mod harness;
 #[path = "abi/lifecycle.rs"]

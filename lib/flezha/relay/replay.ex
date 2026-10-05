@@ -371,6 +371,59 @@ defmodule Flezha.Relay.Replay do
     if refused, do: {:error, refused}, else: {:ok, state}
   end
 
+  # ---------- effect results ----------
+
+  # Batches stay well under the 64 MiB frame cap; one result is at most the
+  # runner's 4 MiB effect cap.
+  @effect_batch_bytes 16 * 1024 * 1024
+
+  @doc """
+  The effect results the bind ships: the ones the instance's input log keeps
+  for its inputs above its floor. Their count rides
+  `AddRelay.effect_result_count`, so a steps driver holds its first Tasklet
+  until they have landed; `[]` for an instance that keeps none.
+  """
+  @spec effect_results(binary()) :: [RunnerCommands.EffectResult.t()]
+  def effect_results(relay_class) do
+    case InputLog.effect_results(relay_class, InputLog.watermark(relay_class) || -1) do
+      results when is_list(results) ->
+        for {offset, identity, cell, payload} <- results,
+            do: %RunnerCommands.EffectResult{
+              identity: identity,
+              offset: offset,
+              cell_identity: cell,
+              payload: payload
+            }
+
+      {:error, _refused} ->
+        []
+    end
+  end
+
+  @doc """
+  Ship `results` (`effect_results/1`, counted on the bind's `AddRelay`) to the
+  bound runner in batches, awaiting each, before the bind re-forwards the input
+  tail: a flow relay's re-run then finds them, and a steps relay's gate counts
+  them.
+  """
+  @spec ship_effect_results(Overwatch.t(), [RunnerCommands.EffectResult.t()]) :: :ok
+  def ship_effect_results(%Overwatch{} = state, results) do
+    results
+    |> Enum.chunk_while({[], 0}, &batch_result/2, &close_batch/1)
+    |> Enum.each(&Commands.ship_effect_results(state.runner_id, state.id, &1))
+  end
+
+  defp batch_result(result, {batch, bytes}) do
+    size = byte_size(result.payload)
+
+    if batch != [] and bytes + size > @effect_batch_bytes,
+      do: {:cont, Enum.reverse(batch), {[result], size}},
+      else: {:cont, {[result | batch], bytes + size}}
+  end
+
+  defp close_batch({[], _bytes}), do: {:cont, {[], 0}}
+  defp close_batch({batch, _bytes}), do: {:cont, Enum.reverse(batch), {[], 0}}
+
   # ---------- the instance's floor ----------
 
   @doc """

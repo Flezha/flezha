@@ -451,10 +451,16 @@ pub trait TaskletDispatcher: Send + Sync + 'static {
     fn event_time_of(&self, payload: &CellPayload) -> Option<u64>;
 
     /// A steps relay undo served in process: `compensate` over the outputs this
-    /// Cell recorded forward, its emits through the Cell's own sink. A host
-    /// serves the `CompensateRun` activation itself and never reaches this.
-    fn compensate(&self, slot: &Arc<CellSlot>, outputs: Vec<Arc<dyn Any + Send + Sync>>) {
-        let _ = (slot, outputs);
+    /// Cell recorded forward, its emits through the Cell's own sink, in the
+    /// iteration that took the input-log `offset`. A host serves the
+    /// `CompensateRun` activation itself and never reaches this.
+    fn compensate(
+        &self,
+        slot: &Arc<CellSlot>,
+        outputs: Vec<Arc<dyn Any + Send + Sync>>,
+        offset: Option<u64>,
+    ) {
+        let _ = (slot, outputs, offset);
     }
 
     /// Rebuild `state` and `timers` in place from a snapshot (with its stored

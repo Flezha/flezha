@@ -294,6 +294,9 @@ defmodule Flezha.Runner.ControlChannel do
       {:spawn_steps_request, %{} = request, reference_id} ->
         Requests.spawn_steps(state, request, reference_id)
 
+      {:effect_result, %{} = result, reference_id} ->
+        Requests.effect_result(state, result, reference_id)
+
       {:admin_request, %{} = request, reference_id} ->
         Requests.admin(state, request, reference_id)
 
@@ -446,6 +449,7 @@ defmodule Flezha.Runner.ControlChannel do
     :relay_exited,
     :update_factories,
     :spawn_steps_request,
+    :effect_result,
     :admin_request
   ]
 

@@ -29,6 +29,7 @@ SDK. A program acts on the `code` and the `class`.
    1. [controller](#controller)
    1. [dlq](#dlq)
    1. [durability](#durability)
+   1. [effect](#effect)
    1. [http](#http)
    1. [http_push](#http_push)
    1. [input](#input)
@@ -203,6 +204,17 @@ SDK raises or returns its one error type carrying them.
 | Code | Class | Exit | Message | Hint |
 |---|---|---|---|---|
 | `durability.sync_ship_failed` | unavailable | 7 | relay '{relay}' declares durable: remote, and shipping its state to the durability backend failed: {reason} |  |
+
+### effect
+
+| Code | Class | Exit | Message | Hint |
+|---|---|---|---|---|
+| `effect.bad_name` | invalid | 2 | an effect's name must be a non-empty string of at most 255 bytes, and {name} is not | `name the call after what it reaches, for example "model" or "search"` |
+| `effect.nested` | invalid | 2 | effect {name} was called inside the function of another effect | `call ctx.effect once for the whole outside call, or one after the other` |
+| `effect.not_recorded` | unavailable | 7 | the controller did not keep the result of effect {name}: {reason} | `the invocation runs again; give the outside service ctx.stable_id() as an idempotency key` |
+| `effect.outside_invocation` | invalid | 2 | effect {name} was called through a context whose invocation has already returned | `call ctx.effect from run or compensate, before it returns` |
+| `effect.refused` | invalid | 2 | the controller keeps no result of {bytes} bytes for input {offset}: it is over the size cap, past the input log's last input, or one result too many for that input | `keep a reference to the result rather than the result, or raise FLEZHA_EFFECT_MAX_BYTES` |
+| `effect.too_large` | invalid | 2 | the result of effect {name} is {bytes} bytes, over the {limit}-byte limit | `keep a reference to the result rather than the result, or raise FLEZHA_EFFECT_MAX_BYTES` |
 
 ### http
 

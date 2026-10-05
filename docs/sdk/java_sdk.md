@@ -49,7 +49,9 @@ The relay names that class: `.into(TrackPrices.class)`.
 - **`run(input, ctx)`** returns nothing. `ctx` is the one way out: `ctx.emit(value)`
   typed by `Output`, `ctx.emit(channel, value)` for a named channel,
   `ctx.emitKeyed(key, value)`, and the rest of the context (`now()`, `stableId()`,
-  `cellKey()`, `checkpoint()`, the timer calls, `spawnSteps`, `complete`).
+  `cellKey()`, `checkpoint()`, the timer calls, `spawnSteps`, `complete`, and
+  `effect(name, type, supplier)`, which keeps an outside call's result so a re-run reads it
+  instead of calling again; [`recorded_effects.md`](../topics/advanced/recorded_effects.md)).
 - **`ctx.part(value)`** sends a part: a preview of the output the invocation is
   producing, which leaves now instead of when `run` returns. It previews the
   tasklet's own output channel, is encoded as `ctx.emit(value)` would be, and

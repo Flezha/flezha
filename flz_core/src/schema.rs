@@ -349,6 +349,7 @@ mod tests {
 #[cfg(test)]
 mod fixture_tests {
     use super::*;
+    use crate::util::hex;
 
     /// The canonical work activation every shim's fixture suite pins.
     fn work_activation() -> Activation {
@@ -491,9 +492,5 @@ mod fixture_tests {
             assert_eq!(hex(&bytes[5..]), expected);
             assert_eq!(decode_activation(&bytes).unwrap(), act);
         }
-    }
-
-    fn hex(bytes: &[u8]) -> String {
-        bytes.iter().map(|b| format!("{b:02x}")).collect()
     }
 }

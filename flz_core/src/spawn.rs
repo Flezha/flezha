@@ -16,6 +16,7 @@ use std::time::{Duration, Instant};
 use flz_transport::errors::{ErrorModel, FlezhaError};
 
 use crate::error::Code;
+use crate::origin::InvocationOrigin;
 use crate::shutdown::AckResult;
 
 /// How long after its request a spawn result is awaited before it is reported
@@ -72,42 +73,6 @@ impl SpawnOptions {
     pub fn if_running(mut self, if_running: IfRunning) -> Self {
         self.if_running = if_running;
         self
-    }
-}
-
-/// Where a tasklet's spawn came from, which names it across a re-run of the
-/// invocation: the requesting Cell, the input-log offset the invocation was
-/// taking and the call's position in it. A crash re-run of an input that was
-/// not durably consumed runs live and asks again with the same origin.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SpawnOrigin<'a> {
-    pub cell_identity: &'a [u8],
-    pub offset: Option<u64>,
-    pub position: u32,
-}
-
-impl SpawnOrigin<'_> {
-    /// The request's identity: the origin, the factory and the payload, which
-    /// is what makes a re-run that asks for something else a new request.
-    /// Empty for an invocation that took no input-log offset: nothing re-runs
-    /// it, and two of its inputs with one payload are two requests.
-    fn identity(&self, factory_id: &str, payload: &[u8]) -> String {
-        use crate::relay::instance::{fnv1a128, FNV128_OFFSET_BASIS};
-        let Some(offset) = self.offset else {
-            return String::new();
-        };
-        let mut hash = FNV128_OFFSET_BASIS;
-        for part in [
-            self.cell_identity,
-            &offset.to_be_bytes(),
-            &self.position.to_be_bytes(),
-            factory_id.as_bytes(),
-            payload,
-        ] {
-            hash = fnv1a128(hash, &(part.len() as u64).to_be_bytes());
-            hash = fnv1a128(hash, part);
-        }
-        format!("{hash:032x}")
     }
 }
 
@@ -414,7 +379,8 @@ pub fn request(
     payload: Vec<u8>,
     options: Option<SpawnOptions>,
     replay: bool,
-    origin: SpawnOrigin<'_>,
+    origin: InvocationOrigin<'_>,
+    position: u32,
 ) -> SpawnHandle {
     let SpawnOptions { id, if_running } = options.unwrap_or_else(|| SpawnOptions::id(""));
     if replay {
@@ -429,7 +395,7 @@ pub fn request(
     let command =
         crate::pb::command_request::Command::SpawnStepsRequest(crate::pb::SpawnStepsRequest {
             instance_id: id.clone(),
-            identity: origin.identity(&factory_id, &payload),
+            identity: origin.spawn_identity(position, &factory_id, &payload),
             factory_id: factory_id.clone(),
             payload,
             if_running: if_running.as_wire().to_string(),
@@ -473,39 +439,11 @@ mod tests {
         })
     }
 
-    fn origin(offset: Option<u64>, position: u32) -> SpawnOrigin<'static> {
-        SpawnOrigin {
+    fn origin(offset: Option<u64>) -> InvocationOrigin<'static> {
+        InvocationOrigin {
             cell_identity: b"cell-a",
             offset,
-            position,
         }
-    }
-
-    /// A re-run asks again with the same identity; anything that makes it a
-    /// different request makes it a different identity.
-    #[test]
-    fn an_origin_names_its_request_and_nothing_else() {
-        let first = origin(Some(7), 0).identity("worker", b"p");
-        assert_eq!(
-            first, "ea4e9a44a7709f773c348f9751fccf29",
-            "every core derives this"
-        );
-        assert_eq!(first, origin(Some(7), 0).identity("worker", b"p"));
-        for other in [
-            origin(Some(8), 0).identity("worker", b"p"),
-            origin(Some(7), 1).identity("worker", b"p"),
-            origin(Some(7), 0).identity("other", b"p"),
-            origin(Some(7), 0).identity("worker", b"q"),
-        ] {
-            assert_ne!(first, other);
-        }
-    }
-
-    /// Nothing re-runs an invocation that took no offset, and two of its
-    /// inputs with one payload are two requests.
-    #[test]
-    fn an_origin_without_an_offset_names_nothing() {
-        assert_eq!(origin(None, 0).identity("worker", b"p"), "");
     }
 
     #[test]
@@ -620,14 +558,16 @@ mod tests {
             b"p".to_vec(),
             Some(SpawnOptions::id("w1")),
             true,
-            origin(Some(7), 0),
+            origin(Some(7)),
+            0,
         );
         let unnamed = request(
             "worker".to_string(),
             b"p".to_vec(),
             None,
             true,
-            origin(Some(7), 1),
+            origin(Some(7)),
+            1,
         );
 
         assert_eq!(named.wait(), resolved("w1", SpawnOutcome::SkippedOnReplay));

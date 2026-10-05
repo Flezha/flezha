@@ -45,6 +45,7 @@ fn the_native_surface_is_the_declared_one() {
             "wait_starvation",
             "complete",
             "spawn_result",
+            "effect_end",
             "admin_call",
             "send_message"
         ]

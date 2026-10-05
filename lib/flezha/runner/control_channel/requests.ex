@@ -4,7 +4,7 @@ defmodule Flezha.Runner.ControlChannel.Requests do
   act on one relay (a graceful-shutdown notification, a steps relay
   completion, an iteration park, an exit report, a durability barrier) and the ones scoped to
   the runner or its namespace (a factory update, a tasklet-requested spawn,
-  an admin call).
+  an admin call). A tasklet's effect result acts on one relay too.
 
   A relay request is judged first by the relay's ownership record
   (`Flezha.Runner.StreamChannel.Records.admit/3`), so a runner acts only on the
@@ -26,6 +26,7 @@ defmodule Flezha.Runner.ControlChannel.Requests do
   alias Flezha.Runner.FleetManager.Session
   alias Flezha.Runner.StreamChannel.Records
   alias Flezha.Runner.StreamPool
+  alias Flezha.SDK.Wire
   alias Flezha.Service.Admin
   alias Flezha.Service.HubManager
   alias Flezha.Service.RelayManager
@@ -385,6 +386,50 @@ defmodule Flezha.Runner.ControlChannel.Requests do
 
   defp outcome_name({:refused, error}), do: error.code
   defp outcome_name(outcome), do: outcome
+
+  @doc """
+  A tasklet's `ctx.effect` result, kept in its instance's effect log (synced,
+  and shipped first at `durable: remote`) before the `EffectResultAck`
+  answers it. The ack names the result kept first when the identity already
+  held another. A result for a relay this runner does not own keeps nothing
+  and is refused as a commit from it is.
+  """
+  @spec effect_result(map(), RunnerCommands.EffectResult.t(), binary()) :: :ok
+  def effect_result(state, result, reference_id) do
+    %RunnerCommands.EffectResult{relay_id: relay_id, cell_identity: cell} = result
+
+    answer_off_process(reference_id, fn ->
+      # Only the owner keeps a result, and only for a Cell of that relay: the
+      # id names a directory, and a relay this node holds no record of is not
+      # this runner's to write into.
+      ack =
+        if Records.owned?(state, relay_id, :effect_result) and
+             match?({:ok, {^relay_id, _, _}}, Wire.decode_cell_id(cell)),
+           do: keep_effect(result),
+           else: effect_refused({:not_owner, relay_id})
+
+      {{:effect_result_ack, ack}, "EffectResultAck relay=#{inspect(relay_id)}"}
+    end)
+  end
+
+  defp keep_effect(%RunnerCommands.EffectResult{} = result) do
+    case RelayManager.keep_effect(
+           result.relay_id,
+           result.offset,
+           result.identity,
+           result.cell_identity,
+           result.payload
+         ) do
+      :kept -> %RunnerCommands.EffectResultAck{}
+      {:first, first} -> %RunnerCommands.EffectResultAck{first: true, payload: first}
+      {:error, reason} -> effect_refused(reason)
+    end
+  end
+
+  defp effect_refused(reason),
+    do: %RunnerCommands.EffectResultAck{
+      error: Flezha.Error.to_wire(Flezha.Error.from_reason(reason, :"wire.commit"))
+    }
 
   @doc """
   Application code administering the namespace this channel proved. The door

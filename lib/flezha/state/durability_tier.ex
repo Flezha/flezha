@@ -425,9 +425,10 @@ defmodule Flezha.State.DurabilityTier do
   caller can withhold the acknowledgement: a failure stalls the instance at its
   commit point, loudly, which is what RPO 0 means.
 
-  The commit point is a steps instance's barrier, named by its relay id, or
-  a flow Cell's synced records, named by its Cell id: the Cell and the input
-  log its consumed offsets point into. The wait is reported as
+  The commit point is a steps instance's barrier, named by its relay id, a
+  flow Cell's synced records, named by its Cell id: the Cell and the input log
+  its consumed offsets point into, or a kept effect result, named by its
+  `{:effects_log, relay_class}` reference. The wait is reported as
   `[:flezha, :state, :remote_commit]` for both.
   """
   @spec commit_sync(binary() | tuple()) :: :ok | {:error, term()}
@@ -478,6 +479,8 @@ defmodule Flezha.State.DurabilityTier do
   # remotely ahead of the inputs above it.
   defp commit_target(relay_id) when is_binary(relay_id),
     do: {relay_id, refs_of_relay(relay_id)}
+
+  defp commit_target({:effects_log, relay_class} = ref), do: {relay_class, [ref]}
 
   defp commit_target({relay_class, _, _} = cell_id),
     do: {relay_class, [{:input_log, relay_class}, {:cell, cell_id}]}

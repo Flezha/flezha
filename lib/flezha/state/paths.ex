@@ -340,6 +340,15 @@ defmodule Flezha.State.Paths do
   end
 
   @doc """
+  Path of an instance's effect log beside its input log: the results its
+  tasklets' `ctx.effect` calls kept, retained as long as their inputs.
+  """
+  @spec effects_log_path(binary()) :: binary()
+  def effects_log_path(relay_class) when is_binary(relay_class) do
+    Path.join(class_dir(relay_class), "effects.log")
+  end
+
+  @doc """
   Path of a per-Cell saga compensation marker (`relay-saga`
   §4.3). `:intent` marks that the Cell's tasklet completed forward and may
   need undo; `:done` marks that its compensation already ran. Presence is the
@@ -400,7 +409,7 @@ defmodule Flezha.State.Paths do
   Cell's file set (a steps relay's journal is this shape, under its reserved
   identity) or the instance's input log.
   """
-  @type durable_ref :: {:cell, cell_id()} | {:input_log, binary()}
+  @type durable_ref :: {:cell, cell_id()} | {:input_log, binary()} | {:effects_log, binary()}
 
   @doc """
   The durable references this node holds for `relay_class`: its Cells, a
@@ -411,18 +420,22 @@ defmodule Flezha.State.Paths do
     journal =
       if File.exists?(journal_path(relay_class)), do: [journal_id(relay_class)], else: []
 
-    log =
-      if File.exists?(input_log_path(relay_class)),
-        do: [{:input_log, relay_class}],
-        else: []
+    logs =
+      for {kind, path} <- [
+            input_log: input_log_path(relay_class),
+            effects_log: effects_log_path(relay_class)
+          ],
+          File.exists?(path),
+          do: {kind, relay_class}
 
-    for(cell <- Enum.uniq(cells_of(relay_class) ++ journal), do: {:cell, cell}) ++ log
+    for(cell <- Enum.uniq(cells_of(relay_class) ++ journal), do: {:cell, cell}) ++ logs
   end
 
   @doc "Every path `ref` is made of, whether or not the file exists."
   @spec durable_files(durable_ref()) :: [binary()]
   def durable_files({:cell, cell_id}), do: cell_files(cell_id)
   def durable_files({:input_log, relay_class}), do: [input_log_path(relay_class)]
+  def durable_files({:effects_log, relay_class}), do: [effects_log_path(relay_class)]
 
   @doc """
   Resolve one basename of `ref` back to its full path, or `nil` when the
@@ -439,8 +452,9 @@ defmodule Flezha.State.Paths do
     named(ref, name) || snapshot_file_path(pid, cell_key, name)
   end
 
-  def durable_file_path({:input_log, _relay_class} = ref, name) when is_binary(name),
-    do: named(ref, name)
+  def durable_file_path({kind, _relay_class} = ref, name)
+      when kind in [:input_log, :effects_log] and is_binary(name),
+      do: named(ref, name)
 
   defp named(ref, name), do: Enum.find(durable_files(ref), &(Path.basename(&1) == name))
 
@@ -448,7 +462,7 @@ defmodule Flezha.State.Paths do
   @spec delete_durable(durable_ref()) :: :ok
   def delete_durable({:cell, cell_id}), do: delete_files(cell_id)
 
-  def delete_durable({:input_log, relay_class} = ref) do
+  def delete_durable({kind, relay_class} = ref) when kind in [:input_log, :effects_log] do
     ref |> durable_files() |> Enum.each(&File.rm/1)
     prune_class_dir(relay_class)
   end

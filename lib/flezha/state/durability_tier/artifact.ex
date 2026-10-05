@@ -9,8 +9,10 @@ defmodule Flezha.State.DurabilityTier.Artifact do
   task-journal is this shape too, under `Paths`'s reserved cell key) and
   `{:input_log, relay_class}`. **Whole-payload** ones are the
   files they name, packed by `pack/1`: `{:cspec, {hub_id, writer}}`, `{:dlq,
-  {relay_class, tasklet_id}}` and `{:control, {store, writer}}`, each
-  keyed by its writer or claim-fenced because their replicas are per-node.
+  {relay_class, tasklet_id}}`, `{:effects_log, relay_class}` and `{:control,
+  {store, writer}}`, each keyed by its writer or claim-fenced because their
+  replicas are per-node. The effect log is whole because a truncation rewrites
+  it, renumbering its records.
 
   Record bundles are read at ship time and re-framed, never copied as file byte
   ranges: compaction and correction rewrite the live WAL in place, so a byte
@@ -27,7 +29,7 @@ defmodule Flezha.State.DurabilityTier.Artifact do
 
   @type ref :: Manifest.ref()
 
-  @whole_payload_kinds [:cspec, :dlq, :control]
+  @whole_payload_kinds [:cspec, :dlq, :effects_log, :control]
 
   # The control-plane stores that ship, as `store => files`. Each is a
   # node-local DETS registry a replacement controller needs in order to come
@@ -77,6 +79,9 @@ defmodule Flezha.State.DurabilityTier.Artifact do
       {:error, _} -> {root, []}
     end
   end
+
+  def payload_files({:effects_log, relay_class}),
+    do: present(Paths.class_dir(relay_class), ["effects.log"])
 
   def payload_files({:control, {store, _writer}}),
     do: present(control_root(store), Store.filenames_in(subtree_of(store)))
@@ -157,6 +162,7 @@ defmodule Flezha.State.DurabilityTier.Artifact do
   @spec state_key(ref()) :: binary()
   def state_key({:cell, {class, _tasklet, _cell_key}}), do: class
   def state_key({:input_log, class}), do: class
+  def state_key({:effects_log, class}), do: class
   def state_key({:cspec, {hub_id, _writer}}), do: hub_id
   def state_key({:dlq, {class, _tasklet}}), do: class
   def state_key({:control, {store, _writer}}), do: store

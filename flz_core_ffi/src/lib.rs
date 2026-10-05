@@ -88,15 +88,45 @@ pub const FLZ_ERR: i32 = -1;
 pub const FLZ_OK: i32 = 0;
 /// A spawn result read found no answer yet; the out buffer is untouched.
 pub const FLZ_SPAWN_PENDING: i32 = 1;
+/// [`flz_core_effect_begin`]: run the function, then answer
+/// [`flz_core_effect_end`] or [`flz_core_effect_release`].
+pub const FLZ_EFFECT_RUN: i32 = 0;
+/// [`flz_core_effect_begin`]: the out buffer holds the kept result; the
+/// function does not run. [`flz_core_effect_end`]: the out buffer holds the
+/// result kept first, which the call returns instead of its own.
+pub const FLZ_EFFECT_KEPT: i32 = 1;
+/// [`flz_core_effect_begin`]: nothing re-runs this invocation, so nothing is
+/// kept; run the function, return its result and answer
+/// [`flz_core_effect_release`].
+pub const FLZ_EFFECT_UNRECORDED: i32 = 2;
+
+/// What a call's place in its invocation is counted by: spawns by offset,
+/// effects by work item and name.
+#[derive(Hash, PartialEq, Eq)]
+enum Counted {
+    Spawn(i64),
+    Effect(u32, String),
+}
+
+/// An effect whose function is running, by work item.
+struct Running {
+    name: String,
+    identity: String,
+    offset: Option<u64>,
+}
 
 /// A polled activation the host has not answered, with the spawn handles its
 /// tasklets made: they live exactly as long as it does.
 struct Outstanding {
     activation: EngineActivation,
     spawns: Vec<u64>,
-    /// Spawns asked for so far per input-log offset: a spawn's position in
-    /// the invocation that took that offset.
-    spawn_positions: HashMap<i64, u32>,
+    /// Calls made so far per [`Counted`] key: a spawn's position and an
+    /// effect's ordinal in the invocation.
+    positions: HashMap<Counted, u32>,
+    /// The effects whose functions are running, by work item. A list rather
+    /// than a map: built for every activation, it must cost nothing until an
+    /// effect runs.
+    effects: Vec<(u32, Running)>,
     /// The next part number per work item: counted per invocation attempt,
     /// and a retry is handed out in an activation of its own.
     part_sequences: HashMap<u32, u32>,
@@ -158,6 +188,25 @@ unsafe fn hand_out(bytes: Vec<u8>, buf_out: *mut *mut u8, len_out: *mut usize) {
     *buf_out = bytes.as_mut_ptr();
     *len_out = bytes.len();
     std::mem::forget(bytes);
+}
+
+impl Outstanding {
+    /// The effect running in `item`, which no longer is.
+    fn take_effect(&mut self, item: u32) -> Option<Running> {
+        let at = self
+            .effects
+            .iter()
+            .position(|(running, _)| *running == item)?;
+        Some(self.effects.swap_remove(at).1)
+    }
+
+    /// The next call's place among those counted under `counted`.
+    fn next_position(&mut self, counted: Counted) -> u32 {
+        let position = self.positions.entry(counted).or_insert(0);
+        let next = *position;
+        *position += 1;
+        next
+    }
 }
 
 impl FlzContext {
@@ -444,7 +493,8 @@ pub unsafe extern "C" fn flz_core_poll(
             let outstanding = Outstanding {
                 activation: act,
                 spawns: Vec::new(),
-                spawn_positions: HashMap::new(),
+                positions: HashMap::new(),
+                effects: Vec::new(),
                 part_sequences: HashMap::new(),
             };
             ctx.outstanding
@@ -646,13 +696,10 @@ pub unsafe extern "C" fn flz_core_spawn_request(
         std::slice::from_raw_parts(payload, payload_len).to_vec()
     };
     let options = (!id.is_empty()).then(|| SpawnOptions::id(id).if_running(if_running));
-    let position = outstanding.spawn_positions.entry(offset).or_insert(0);
-    let origin_position = *position;
-    *position += 1;
-    let origin = flz_core::spawn::SpawnOrigin {
+    let origin_position = outstanding.next_position(Counted::Spawn(offset));
+    let origin = flz_core::origin::InvocationOrigin {
         cell_identity: outstanding.activation.cell_identity(),
         offset: u64::try_from(offset).ok(),
-        position: origin_position,
     };
     let spawn = flz_core::spawn::request(
         factory_id.to_string(),
@@ -660,11 +707,158 @@ pub unsafe extern "C" fn flz_core_spawn_request(
         options,
         replay != 0,
         origin,
+        origin_position,
     );
     let handle = ctx.last_spawn.fetch_add(1, Ordering::Relaxed) + 1;
     ctx.spawns.insert(handle, Arc::new(Mutex::new(spawn)));
     outstanding.spawns.push(handle);
     *handle_out = handle;
+    FLZ_OK
+}
+
+/// Begin `ctx.effect(name)` in `item`, the index of a work item of the live
+/// activation `token` (any index for a compensation). [`FLZ_EFFECT_KEPT`]: the
+/// out buffer holds the result kept for this call, which the host decodes and
+/// returns without running the function; free it with [`flz_core_buf_free`].
+/// [`FLZ_EFFECT_RUN`]: run the function, then answer [`flz_core_effect_end`]
+/// with its encoded result, or [`flz_core_effect_release`] when it raised.
+/// [`FLZ_EFFECT_UNRECORDED`]: the invocation took no input-log offset, so the
+/// host runs the function, returns its result and answers
+/// [`flz_core_effect_release`]. [`FLZ_ERR`]: `effect.bad_name`,
+/// `effect.nested` while the item's function is still running, or
+/// `effect.outside_invocation` for a token that is not outstanding.
+///
+/// # Safety
+/// `ctx` must be live; `name` NUL-terminated; `out`/`out_len` writable.
+#[no_mangle]
+pub unsafe extern "C" fn flz_core_effect_begin(
+    ctx: *mut FlzContext,
+    token: u64,
+    item: u32,
+    name: *const c_char,
+    out: *mut *mut u8,
+    out_len: *mut usize,
+) -> i32 {
+    use flz_core::effect_result;
+    let Some(ctx) = ctx.as_ref() else {
+        return FLZ_ERR;
+    };
+    let Ok(name) = CStr::from_ptr(name).to_str() else {
+        return ctx.fail(Error::Utf8("effect name"));
+    };
+    if let Err(refusal) = effect_result::check_name(name) {
+        return ctx.fail(Error::Effect(refusal));
+    }
+    let Some(mut outstanding) = ctx.outstanding.get_mut(&token) else {
+        return ctx.fail(Error::Effect(effect_result::outside_invocation(name)));
+    };
+    if outstanding
+        .effects
+        .iter()
+        .any(|(running, _)| *running == item)
+    {
+        return ctx.fail(Error::Effect(effect_result::nested(name)));
+    }
+    let Some((offset, phase, attempt)) = outstanding.activation.invocation(item as usize) else {
+        return ctx.fail(Error::Effect(effect_result::outside_invocation(name)));
+    };
+    let counted = Counted::Effect(item, name.to_string());
+    let ordinal = outstanding.positions.get(&counted).copied().unwrap_or(0);
+    let origin = flz_core::origin::InvocationOrigin {
+        cell_identity: outstanding.activation.cell_identity(),
+        offset,
+    };
+    let resolved = effect_result::resolve(origin, phase, name, ordinal, attempt);
+    outstanding.positions.insert(counted, resolved.ordinal + 1);
+    let identity = resolved.identity;
+    if let Some(result) = resolved.kept {
+        hand_out(result, out, out_len);
+        return FLZ_EFFECT_KEPT;
+    }
+    let status = if identity.is_empty() {
+        FLZ_EFFECT_UNRECORDED
+    } else {
+        FLZ_EFFECT_RUN
+    };
+    let running = Running {
+        name: name.to_string(),
+        identity,
+        offset,
+    };
+    outstanding.effects.push((item, running));
+    status
+}
+
+/// Keep the encoded result of the function an [`FLZ_EFFECT_RUN`] begin ran,
+/// waiting for the controller to keep it. [`FLZ_OK`]: the host returns its own
+/// result. [`FLZ_EFFECT_KEPT`]: the out buffer holds the result the controller
+/// kept first for this call, which the host decodes and returns instead; free
+/// it with [`flz_core_buf_free`]. [`FLZ_ERR`]: `effect.too_large`,
+/// `effect.not_recorded`, or `effect.outside_invocation` for an item with no
+/// effect begun.
+///
+/// # Safety
+/// `ctx` must be live; `payload`/`payload_len` readable (`payload` may be null
+/// when `payload_len` is 0); `out`/`out_len` writable.
+#[no_mangle]
+pub unsafe extern "C" fn flz_core_effect_end(
+    ctx: *mut FlzContext,
+    token: u64,
+    item: u32,
+    payload: *const u8,
+    payload_len: usize,
+    out: *mut *mut u8,
+    out_len: *mut usize,
+) -> i32 {
+    let Some(ctx) = ctx.as_ref() else {
+        return FLZ_ERR;
+    };
+    let taken = ctx.outstanding.get_mut(&token).and_then(|mut outstanding| {
+        let running = outstanding.take_effect(item)?;
+        Some((running, outstanding.activation.cell_identity().to_vec()))
+    });
+    let Some((running, cell)) = taken else {
+        return ctx.fail(Error::Effect(flz_core::effect_result::outside_invocation(
+            "",
+        )));
+    };
+    let payload = if payload_len == 0 {
+        Vec::new()
+    } else {
+        std::slice::from_raw_parts(payload, payload_len).to_vec()
+    };
+    let origin = flz_core::origin::InvocationOrigin {
+        cell_identity: &cell,
+        offset: running.offset,
+    };
+    match flz_core::effect_result::keep(origin, &running.name, running.identity, payload) {
+        Ok(None) => FLZ_OK,
+        Ok(Some(first)) => {
+            hand_out(first, out, out_len);
+            FLZ_EFFECT_KEPT
+        }
+        Err(refusal) => ctx.fail(Error::Effect(refusal)),
+    }
+}
+
+/// End an effect begun in `item` without keeping anything: its function raised,
+/// or the begin answered [`FLZ_EFFECT_UNRECORDED`]. A token or item with no
+/// effect begun is a no-op, so a host may answer it from a `finally`.
+///
+/// # Safety
+/// `ctx` must be live.
+#[no_mangle]
+pub unsafe extern "C" fn flz_core_effect_release(
+    ctx: *mut FlzContext,
+    token: u64,
+    item: u32,
+) -> i32 {
+    let Some(ctx) = ctx.as_ref() else {
+        return FLZ_ERR;
+    };
+    if let Some(mut outstanding) = ctx.outstanding.get_mut(&token) {
+        outstanding.take_effect(item);
+    }
     FLZ_OK
 }
 

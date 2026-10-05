@@ -572,6 +572,47 @@ impl Core {
         Ok(veneer::part(self.ptr()?, token, item, payload)?)
     }
 
+    /// Begin `ctx.effect(name)` in the live activation `token`'s work item
+    /// `item`: `("kept", result)`, `("run", None)` or `("unrecorded", None)`.
+    /// Never waits, so it holds the GIL.
+    fn effect_begin<'py>(
+        &self,
+        py: Python<'py>,
+        token: u64,
+        item: u32,
+        name: &str,
+    ) -> PyResult<(&'static str, Option<Bound<'py, PyBytes>>)> {
+        let name = veneer::c_string("effect name", name)?;
+        Ok(
+            match veneer::effect_begin(self.ptr()?, token, item, &name)? {
+                veneer::EffectStart::Kept(result) => ("kept", Some(PyBytes::new(py, &result))),
+                veneer::EffectStart::Run => ("run", None),
+                veneer::EffectStart::Unrecorded => ("unrecorded", None),
+            },
+        )
+    }
+
+    /// Keep the encoded result of the function a `run` begin ran, waiting with
+    /// the GIL released for the controller: `None` to return the call's own
+    /// result, or the result the controller kept first.
+    fn effect_end<'py>(
+        &self,
+        py: Python<'py>,
+        token: u64,
+        item: u32,
+        payload: Vec<u8>,
+    ) -> PyResult<Option<Bound<'py, PyBytes>>> {
+        let ctx = self.ptr()?;
+        let first = py.detach(move || veneer::effect_end(ctx, token, item, &payload))?;
+        Ok(first.map(|first| PyBytes::new(py, &first)))
+    }
+
+    /// End a begun effect without keeping anything. Never waits.
+    fn effect_release(&self, token: u64, item: u32) -> PyResult<()> {
+        veneer::effect_release(self.ptr()?, token, item);
+        Ok(())
+    }
+
     /// Read a spawn handle: `None` while pending, otherwise its answer as JSON.
     /// A nonzero timeout waits with the GIL released.
     fn spawn_result(
@@ -718,6 +759,9 @@ pub const NATIVE_SURFACE: &[(&str, &str)] = &[
     ("Core.spawn_request", "flz_core_spawn_request"),
     ("Core.spawn_result", "flz_core_spawn_result"),
     ("Core.part", "flz_core_part"),
+    ("Core.effect_begin", "flz_core_effect_begin"),
+    ("Core.effect_end", "flz_core_effect_end"),
+    ("Core.effect_release", "flz_core_effect_release"),
     ("Core.admin_call", "flz_core_admin_call"),
     ("Core.send_message", "flz_core_send_message"),
     ("Core.relays", "flz_core_relays"),

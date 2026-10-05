@@ -250,6 +250,19 @@ defmodule Flezha.State.DurabilityTierTest do
       assert File.dir?(Path.dirname(log_path)), "hydration must not replace the class dir"
     end
 
+    test "a kept effect result survives losing the disk", ctx do
+      for i <- 0..3, do: {:ok, _} = InputLog.append(ctx.class, "m#{i}", %{})
+      assert InputLog.keep_effect(ctx.class, 3, "id-3", "cell", "answer") == :kept
+      assert :ok = DurabilityTier.commit_sync({:effects_log, ctx.class})
+
+      TestHelpers.close_input_log(ctx.class)
+      File.rm!(Paths.effects_log_path(ctx.class))
+      assert :ok = DurabilityTier.hydrate_relay(ctx.class)
+
+      assert InputLog.effect_results(ctx.class, -1) == [{3, "id-3", "cell", "answer"}]
+      TestHelpers.close_input_log(ctx.class)
+    end
+
     test "a steps relay's commit ships its input log beside its journal", ctx do
       # A steps keys its journal, Cells and input log by its instance id, so
       # the commit's refs name all three under the one key.

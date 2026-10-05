@@ -274,8 +274,9 @@ leaves, for each kind of relay.
 
 ## Limits and gotchas
 
-- **Effects outside Flezha are not covered.** A tasklet that calls an outside service is run
-  again on a replay; the outside call happens again unless that service drops repeats itself.
+- **An outside call is covered only through `ctx.effect`.** A tasklet that calls an outside
+  service directly calls it again on a replay. [`recorded_effects.md`](recorded_effects.md)
+  keeps such a call's result, so a re-run reads it instead of calling again.
 - **A default flow relay is at least once.** Declare the tier where a repeat or a loss
   matters.
 - **Memory-only relays cannot have it** (`topology.effectively_once_without_persistence`).

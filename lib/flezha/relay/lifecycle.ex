@@ -196,6 +196,9 @@ defmodule Flezha.Relay.Lifecycle do
            }
            |> Map.put(:init_error, nil),
          :ok <- await_stream_bound(state),
+         # Before anything re-runs: the kept effect results reach the runner
+         # ahead of the restores and the input tail.
+         :ok <- Replay.ship_effect_results(state, Keyword.get(relay.opts, :effect_results, [])),
          # BEFORE the restore: a refused restore parks the relay, so a
          # correction running after it would never run at all — the factory
          # would park every attempt at its wrong language forever.
@@ -345,15 +348,16 @@ defmodule Flezha.Relay.Lifecycle do
 
   # Stamp everything a resuming bind carries onto the relay's opts so
   # `control_unit` can set the `AddRelay` fields: how many Cell restores
-  # to wait for, the task-journal the run resumes its iteration from, and how
+  # to wait for, the task-journal the run resumes its iteration from, how
   # many inputs the bind's re-forward owes it, for any instance whose input is
-  # journaled. A class without a journal or an input log reads `nil` and `0`.
+  # journaled, and how many kept effect results it ships. A class without a journal or an input log reads `nil` and `0`.
   defp with_resume_state(relay, relay_class) do
     opts =
       relay.opts
       |> Keyword.put(:resume_cell_count, Replay.resume_cell_count(relay_class))
       |> Keyword.put(:task_journal, Commands.task_journal_state(relay_class))
       |> Keyword.put(:inbox_tail_count, Replay.owed_count(relay_class))
+      |> Keyword.put(:effect_results, Replay.effect_results(relay_class))
 
     %{relay | opts: opts}
   end

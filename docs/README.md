@@ -84,6 +84,7 @@ type and what you should see; the topic pages say how each piece works.
 | [`hooks.md`](topics/plugins/hooks.md) | Hooks and controller plugins |
 | [`writing_a_plugin.md`](topics/plugins/writing_a_plugin.md) | Writing and packaging a plugin of your own |
 | [`topics/advanced/effectively_once.md`](topics/advanced/effectively_once.md) | The delivery guarantee, what it requires and what it costs |
+| [`topics/advanced/recorded_effects.md`](topics/advanced/recorded_effects.md) | Keeping an outside call's result so a re-run reads it instead of calling again |
 
 ## Deploying
 

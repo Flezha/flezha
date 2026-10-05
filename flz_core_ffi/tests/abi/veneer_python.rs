@@ -51,6 +51,7 @@ fn the_native_surface_is_the_declared_one() {
             "Core.wait_starvation",
             "Core.complete",
             "Core.spawn_result",
+            "Core.effect_end",
             "Core.admin_call",
             "Core.send_message"
         ]

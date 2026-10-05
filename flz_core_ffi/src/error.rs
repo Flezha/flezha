@@ -29,6 +29,8 @@ pub enum Error {
     /// An administration call's refusal: the controller's own for a policy
     /// refusal, or the kernel's for a call that reached nothing.
     Admin(flz_core::admin::AdminError),
+    /// A `ctx.effect` the core refused or could not keep.
+    Effect(FlezhaError),
     /// A shim built against another activation schema, refused at creation.
     SchemaMismatch {
         shim: u32,
@@ -63,6 +65,7 @@ impl ErrorModel for Error {
                 Code::ConnectUnconfirmed.with([("seconds", CONNECT_CONFIRM_SECS.into())])
             }
             Error::Admin(error) => error.to_error(),
+            Error::Effect(error) => error.clone(),
             Error::SchemaMismatch { shim, core } => {
                 Code::SchemaMismatch.with([("shim", (*shim).into()), ("core", (*core).into())])
             }

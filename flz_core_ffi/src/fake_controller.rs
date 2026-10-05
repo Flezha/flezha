@@ -20,7 +20,9 @@ use std::time::Duration;
 #[cfg(unix)]
 mod uds;
 #[cfg(unix)]
-pub use uds::{part_line, shutdown_notification, spawn_request, CapturedFrame, Controller};
+pub use uds::{
+    effect_result, part_line, shutdown_notification, spawn_request, CapturedFrame, Controller,
+};
 
 /// What a smoke run drives a runner through, and what it expects back.
 pub struct Scenario {

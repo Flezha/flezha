@@ -436,6 +436,11 @@ view of a value — the Node SDK's guard is a `Proxy`, which has no counterpart
 here that does not cost an allocation per field read — so this assertion is what
 makes the mutate-only-through-changes rule safe. Put it in your suite.
 
+A call to anything outside the instance goes through `$ctx->effect('name', fn () => $value)`,
+which keeps its result so a re-run reads it instead of calling again
+([`recorded_effects.md`](../topics/advanced/recorded_effects.md)). The harness keeps each
+result of a live `feed()` and serves it to a replayed one.
+
 ## One runner per process
 
 The SDK starts exactly one runner per process and never forks, spawns,

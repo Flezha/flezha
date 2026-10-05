@@ -139,6 +139,7 @@ fn the_blocking_entry_points_are_the_declared_ones() {
             "complete",
             "waitStarvation",
             "spawnResult",
+            "effectEnd",
             "adminCall",
             "sendMessage"
         ]

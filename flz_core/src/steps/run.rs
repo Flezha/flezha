@@ -148,12 +148,15 @@ pub fn restore_landed(inst: &RelayInstance, cell_id: &[u8], intent: bool, done: 
         if done {
             d.s.compensation_done.insert(cell_id.to_vec());
         }
-        d.s.restored += 1;
-        if d.s.bound && d.s.phase == Phase::Gated && d.s.restored >= d.s.expected {
-            d.disarm(Deadline::RestoreGate);
-            d.open_gate();
-        }
+        d.landed(1);
     });
+}
+
+/// `count` effect results the bind shipped landed; the gate counts them with
+/// the Cell restores.
+pub fn results_landed(inst: &RelayInstance, count: usize) {
+    let Some(r) = Run::of(inst) else { return };
+    r.decide(|d| d.landed(count));
 }
 
 /// A cooperative stop (`StepsStop`, or `max_duration`).
@@ -221,6 +224,15 @@ pub fn pass_call(slot: &CellSlot) -> Option<Arc<str>> {
     let r = Run::of(&inst)?;
     let sheet = r.run.sheet();
     sheet.pass.as_ref()?.call.clone()
+}
+
+/// The input-log offset the pass `slot` is running in took, if any: a stage's
+/// items carry none of their own, and its effects are named by it.
+pub fn pass_offset(slot: &CellSlot) -> Option<u64> {
+    let inst = slot.instance.upgrade()?;
+    let r = Run::of(&inst)?;
+    let sheet = r.run.sheet();
+    sheet.pass.as_ref()?.effect_offset()
 }
 
 /// A message on its way into the dead-letter queue instead of a pass; the
@@ -990,6 +1002,16 @@ impl Decide<'_, '_, '_> {
     }
 
     // -- the restore gate and the journal's resume point --------------------
+
+    /// `count` more of what the bind announced has landed: open the gate once
+    /// all of it has.
+    fn landed(&mut self, count: usize) {
+        self.s.restored += count;
+        if self.s.bound && self.s.phase == Phase::Gated && self.s.restored >= self.s.expected {
+            self.disarm(Deadline::RestoreGate);
+            self.open_gate();
+        }
+    }
 
     /// The journal's plan, as the bind's state and markers describe it.
     fn open_gate(&mut self) {
@@ -1975,7 +1997,11 @@ impl Decide<'_, '_, '_> {
             let next = match undo.steps.front() {
                 None => None,
                 Some(UndoStep::Cell { cell, outputs, .. }) => {
-                    self.fx.run_undo = Some((Arc::clone(cell), outputs.clone()));
+                    let offset = match &self.s.pass {
+                        Some(pass) => pass.effect_offset(),
+                        None => self.s.entry.and_then(|(_, offset)| offset),
+                    };
+                    self.fx.run_undo = Some((Arc::clone(cell), outputs.clone(), offset));
                     return;
                 }
                 Some(UndoStep::Record {
@@ -2162,7 +2188,7 @@ struct Effects {
     cancel_retries: Vec<Arc<CellSlot>>,
     parked: Option<MessagePark>,
     completed: Option<(String, String, Vec<u8>)>,
-    run_undo: Option<(Arc<CellSlot>, Vec<Value>)>,
+    run_undo: Option<(Arc<CellSlot>, Vec<Value>, Option<u64>)>,
     start: Option<Source>,
     /// Firing removals a stage's commit made durable, per Cell.
     removals: Vec<(Arc<CellSlot>, Vec<TimerOp>)>,
@@ -2241,8 +2267,8 @@ impl Run<'_> {
                 result,
             );
         }
-        if let Some((slot, outputs)) = run_undo {
-            self.run_undo(slot, outputs);
+        if let Some((slot, outputs, offset)) = run_undo {
+            self.run_undo(slot, outputs, offset);
         }
         if let Some(source) = start {
             self.begin_pass(source);
@@ -2445,7 +2471,7 @@ impl Run<'_> {
 
     /// Submit one Cell's undo as a `CompensateRun`, holding the Cell's gate
     /// from here to its answer; a Cell still handed out is tried again.
-    fn run_undo(&self, slot: Arc<CellSlot>, outputs: Vec<Value>) {
+    fn run_undo(&self, slot: Arc<CellSlot>, outputs: Vec<Value>, offset: Option<u64>) {
         if slot.drain_active.swap(true, Ordering::AcqRel) {
             return self.decide(|d| d.arm(Deadline::UndoGate, UNDO_GATE_RETRY));
         }
@@ -2454,6 +2480,7 @@ impl Run<'_> {
         crate::poll_core::global().submit_undo(
             &slot,
             outputs,
+            offset,
             crate::poll_core::CommandReply::new(move |outcome| {
                 undo_answered(&weak, &answered, outcome)
             }),

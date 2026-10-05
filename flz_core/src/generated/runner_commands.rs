@@ -5,7 +5,7 @@ pub struct CommandRequest {
     pub reference_id: ::prost::alloc::string::String,
     #[prost(
         oneof = "command_request::Command",
-        tags = "2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39"
+        tags = "2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42"
     )]
     pub command: ::core::option::Option<command_request::Command>,
 }
@@ -89,6 +89,12 @@ pub mod command_request {
         RelayExited(super::RelayExited),
         #[prost(message, tag = "39")]
         ConnectRefused(super::ConnectRefused),
+        #[prost(message, tag = "40")]
+        EffectResult(super::EffectResult),
+        #[prost(message, tag = "41")]
+        EffectResultAck(super::EffectResultAck),
+        #[prost(message, tag = "42")]
+        EffectResults(super::EffectResults),
     }
 }
 /// A failure in the error model's one shape (docs/errors.md): a stable `code`
@@ -195,6 +201,12 @@ pub struct AddRelay {
     /// an older controller would journal the commit and drop the message.
     #[prost(bool, tag = "12")]
     pub dead_letter_turns: bool,
+    /// Effect results the Controller ships as `EffectResults` after this bind:
+    /// the ones it keeps for the instance's inputs above its floor. A steps
+    /// driver holds its first Tasklet until they have landed, as it does for
+    /// `resume_cell_count`; a flow relay's re-forwarded input follows them.
+    #[prost(uint32, tag = "13")]
+    pub effect_result_count: u32,
 }
 /// SDK -> Controller, as the CommandResponse raw_data of AddRelay.
 /// Carries the relay class's settings and SDK-side declarations (relay
@@ -872,6 +884,49 @@ pub struct SpawnStepsRequest {
     pub if_running: ::prost::alloc::string::String,
     #[prost(string, tag = "5")]
     pub identity: ::prost::alloc::string::String,
+}
+/// SDK -> Controller. A tasklet's `ctx.effect` result, which the Controller
+/// keeps in the instance's effect log, synced, before it answers
+/// `EffectResultAck` under the same reference_id. `identity` names the call
+/// across re-runs of the invocation; `offset` is the input-log offset the
+/// invocation was taking, and the result is kept exactly as long as that input;
+/// `cell_identity` is the Cell that made the call.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct EffectResult {
+    #[prost(string, tag = "1")]
+    pub relay_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub identity: ::prost::alloc::string::String,
+    #[prost(uint64, tag = "3")]
+    pub offset: u64,
+    #[prost(string, tag = "4")]
+    pub name: ::prost::alloc::string::String,
+    #[prost(bytes = "vec", tag = "5")]
+    pub payload: ::prost::alloc::vec::Vec<u8>,
+    #[prost(bytes = "vec", tag = "6")]
+    pub cell_identity: ::prost::alloc::vec::Vec<u8>,
+}
+/// Controller -> SDK reply to EffectResult. `error` is the refusal, absent once
+/// the result is kept. `first` is set when the identity was already kept with
+/// another payload: `payload` is then that first result, which the call returns.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct EffectResultAck {
+    #[prost(message, optional, tag = "1")]
+    pub error: ::core::option::Option<Error>,
+    #[prost(bool, tag = "2")]
+    pub first: bool,
+    #[prost(bytes = "vec", tag = "3")]
+    pub payload: ::prost::alloc::vec::Vec<u8>,
+}
+/// Controller -> SDK, after a bind: the effect results the instance keeps for
+/// its inputs above its floor, in batches each under the frame cap. Answered
+/// with a CommandResponse once the batch is stored.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct EffectResults {
+    #[prost(string, tag = "1")]
+    pub relay_id: ::prost::alloc::string::String,
+    #[prost(message, repeated, tag = "2")]
+    pub results: ::prost::alloc::vec::Vec<EffectResult>,
 }
 /// Controller -> SDK reply to SpawnStepsRequest, carrying the originating
 /// request's reference_id so the SDK wakes the requester's result handle.

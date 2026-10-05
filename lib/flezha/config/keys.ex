@@ -547,6 +547,8 @@ defmodule Flezha.Config.Keys do
      runtimes: [:elixir_sdk, :rust], env: "FLEZHA_RECONNECT_RING_CAPACITY"},
     {:max_frame_bytes, :int, 67_108_864,
      runtimes: [:elixir_sdk, :rust], env: "FLEZHA_MAX_FRAME_BYTES"},
+    {:effect_max_bytes, :int, 4_194_304,
+     key: true, runtimes: [:controller, :elixir_sdk, :rust], env: "FLEZHA_EFFECT_MAX_BYTES"},
     {:max_write_buffer_bytes, :int, 8_388_608,
      runtimes: [:rust], env: "FLEZHA_MAX_WRITE_BUFFER_BYTES"},
     {:send_gate_high_water, :int, nil, runtimes: [:rust], env: "FLEZHA_SEND_GATE_HIGH_WATER"},

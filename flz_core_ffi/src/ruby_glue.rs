@@ -16,7 +16,8 @@ use std::sync::atomic::{AtomicPtr, Ordering};
 
 use magnus::prelude::*;
 use magnus::{
-    function, Error, Exception, IntoValue, RArray, RClass, RHash, RString, Ruby, TryConvert, Value,
+    function, Error, Exception, IntoValue, RArray, RClass, RHash, RString, Ruby, Symbol,
+    TryConvert, Value,
 };
 
 use crate::veneer::{self, shape, CtxPtr, Polled, Refusal};
@@ -507,6 +508,45 @@ fn part(token: u64, item: u32, payload: RString) -> Result<(), Error> {
     veneer::part(ctx, token, item, payload).map_err(|r| raise(&ruby, r))
 }
 
+/// Begin `ctx.effect(name)` in the live activation `token`'s work item `item`:
+/// `[:kept, result]`, `[:run, nil]` or `[:unrecorded, nil]`. Never waits, so it
+/// holds the GVL.
+fn effect_begin(token: u64, item: u32, name: String) -> Result<(Symbol, Option<RString>), Error> {
+    let ruby = ruby();
+    let ctx = context(&ruby)?;
+    let refused = |r| raise(&ruby, r);
+    let name = veneer::c_string("effect name", &name).map_err(refused)?;
+    Ok(
+        match veneer::effect_begin(ctx, token, item, &name).map_err(refused)? {
+            veneer::EffectStart::Kept(result) => {
+                (ruby.to_symbol("kept"), Some(ruby.str_from_slice(&result)))
+            }
+            veneer::EffectStart::Run => (ruby.to_symbol("run"), None),
+            veneer::EffectStart::Unrecorded => (ruby.to_symbol("unrecorded"), None),
+        },
+    )
+}
+
+/// Keep the encoded result of the function a `run` begin ran, waiting with the
+/// GVL released for the controller: `nil` to return the call's own result, or
+/// the result the controller kept first.
+fn effect_end(token: u64, item: u32, payload: RString) -> Result<Option<RString>, Error> {
+    let ruby = ruby();
+    let ctx = context(&ruby)?;
+    // Copied while the GVL is held: the wait below releases it.
+    let payload = unsafe { payload.as_slice() }.to_vec();
+    let first = without_gvl(move || veneer::effect_end(ctx, token, item, &payload))
+        .map_err(|r| raise(&ruby, r))?;
+    Ok(first.map(|first| ruby.str_from_slice(&first)))
+}
+
+/// End a begun effect without keeping anything. Never waits.
+fn effect_release(token: u64, item: u32) -> Result<(), Error> {
+    let ruby = ruby();
+    veneer::effect_release(context(&ruby)?, token, item);
+    Ok(())
+}
+
 /// Read a spawn handle: `nil` while pending, otherwise its answer as JSON. A
 /// nonzero timeout waits with the GVL released.
 fn spawn_result(handle: u64, timeout_ms: u64) -> Result<Option<String>, Error> {
@@ -634,6 +674,9 @@ pub const NATIVE_SURFACE: &[(&str, &str)] = &[
     ("spawn_request", "flz_core_spawn_request"),
     ("spawn_result", "flz_core_spawn_result"),
     ("part", "flz_core_part"),
+    ("effect_begin", "flz_core_effect_begin"),
+    ("effect_end", "flz_core_effect_end"),
+    ("effect_release", "flz_core_effect_release"),
     ("admin_call", "flz_core_admin_call"),
     ("send_message", "flz_core_send_message"),
     ("relays", "flz_core_relays"),
@@ -672,6 +715,9 @@ pub fn init(ruby: &Ruby) -> Result<(), Error> {
     native.define_module_function("spawn_request", function!(spawn_request, 7))?;
     native.define_module_function("spawn_result", function!(spawn_result, 2))?;
     native.define_module_function("part", function!(part, 3))?;
+    native.define_module_function("effect_begin", function!(effect_begin, 3))?;
+    native.define_module_function("effect_end", function!(effect_end, 3))?;
+    native.define_module_function("effect_release", function!(effect_release, 2))?;
     native.define_module_function("admin_call", function!(admin_call, 2))?;
     native.define_module_function("send_message", function!(send_message, 6))?;
     native.define_module_function("relays", function!(relays, 0))?;

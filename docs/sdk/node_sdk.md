@@ -382,6 +382,11 @@ expecting the same effects — so a handler that reads `Date.now()`,
 warned about by file and line, once per site. The warning never aborts the
 invocation.
 
+A call to anything outside the instance goes through
+`await ctx.effect(name, async () => value, { codec })`, which keeps its result so a re-run
+reads it instead of calling again
+([`recorded_effects.md`](../topics/advanced/recorded_effects.md)).
+
 ## Channel payloads
 
 A channel names the format of its payload with `{ codec }` on `input` and on

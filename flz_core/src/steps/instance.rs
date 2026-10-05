@@ -381,6 +381,15 @@ pub(crate) struct Pass {
 }
 
 impl Pass {
+    /// The input-log offset that names this pass's effects: its message's,
+    /// and none for a firing, which took no input of its own.
+    pub(crate) fn effect_offset(&self) -> Option<u64> {
+        match self.origin {
+            PassOrigin::Timer { .. } => None,
+            PassOrigin::Message { .. } => self.consumed_offset,
+        }
+    }
+
     pub(crate) fn new(
         origin: PassOrigin,
         channel: ChannelId,

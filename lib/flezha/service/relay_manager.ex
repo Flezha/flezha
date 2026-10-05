@@ -10,6 +10,7 @@ defmodule Flezha.Service.RelayManager do
   alias Flezha.Identificator
   alias Flezha.Relay.Builder, as: RelayBuilder
   alias Flezha.Relay.Calls
+  alias Flezha.Relay.ClassRegistry
   alias Flezha.Relay.PartitionGroup
   alias Flezha.Partition
   alias Flezha.Plugin.Host
@@ -23,6 +24,8 @@ defmodule Flezha.Service.RelayManager do
   alias Flezha.Service.RelayManager.Spawn
   alias Flezha.Service.RelayManager.Teardown
   alias Flezha.Shutdown
+  alias Flezha.State.DurabilityTier
+  alias Flezha.State.InputLog
   alias Flezha.State.Completion
   alias Flezha.State.Paths
 
@@ -416,6 +419,29 @@ defmodule Flezha.Service.RelayManager do
 
   @doc "Whether a finished steps instance of `relay_class` left a completion record."
   defdelegate completed?(relay_class), to: Completion, as: :exists?
+
+  @doc """
+  Keep a `ctx.effect` result of `relay_id` in its instance's effect log,
+  synced, and shipped first at `durable: remote`: `:kept`, `{:first, payload}`
+  when the identity already held another, or `{:error, reason}`. The input
+  log is keyed by the relay's class, the last of its state keys.
+  """
+  @spec keep_effect(String.t(), non_neg_integer(), String.t(), binary(), binary()) ::
+          :kept | {:first, binary()} | {:error, term()}
+  def keep_effect(relay_id, offset, identity, cell, payload) do
+    relay_class = relay_id |> ClassRegistry.state_keys() |> List.last()
+
+    case InputLog.keep_effect(relay_class, offset, identity, cell, payload) do
+      {:error, _reason} = refused -> refused
+      kept -> with :ok <- ship_effects(relay_id, relay_class), do: kept
+    end
+  end
+
+  defp ship_effects(relay_id, relay_class) do
+    if DurabilityTier.sync_class?(relay_id),
+      do: DurabilityTier.commit_sync({:effects_log, relay_class}),
+      else: :ok
+  end
 
   def send_io(relay_id, namespace, message, metadata) do
     with_relay_pid(namespace, relay_id, fn pid ->

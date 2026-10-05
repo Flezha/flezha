@@ -71,6 +71,9 @@ pub enum EnginePayload {
         /// The recorded outputs a typed worker's in-process `CompensateRun`
         /// reads; a host reads their bytes in `kind`. Empty otherwise.
         values: Vec<Arc<dyn std::any::Any + Send + Sync>>,
+        /// The input-log offset an undo's iteration took, which names the
+        /// effects its `compensate` calls; `None` for every other command.
+        offset: Option<u64>,
         reply: CommandReply,
     },
     /// A batched prepare crossing for one entry channel, bound to no cell.
@@ -110,6 +113,34 @@ impl EngineActivation {
             EnginePayload::Work { slot, items } => {
                 host_items(items).nth(index).map(|work| (slot, work))
             }
+            _ => None,
+        }
+    }
+
+    /// The input-log offset, the phase and the attempt of the invocation a
+    /// host numbers `item`: a work item's input, or for a steps stage its
+    /// pass's, or an undo's iteration, which is never retried. `None` for an
+    /// item the activation does not hold.
+    pub fn invocation(&self, item: usize) -> Option<(Option<u64>, crate::origin::Phase, u32)> {
+        use crate::origin::Phase;
+        match &self.payload {
+            EnginePayload::Work { .. } => {
+                let (slot, work) = self.host_item(item)?;
+                let offset = match &work.item {
+                    crate::cell::CellItem::Input(input) => input.consumed_offset,
+                    _ => None,
+                };
+                Some((
+                    offset.or_else(|| crate::steps::pass_offset(slot)),
+                    Phase::Run,
+                    work.attempt,
+                ))
+            }
+            EnginePayload::Command {
+                kind: crate::schema::ActivationKind::CompensateRun { .. },
+                offset,
+                ..
+            } => Some((*offset, Phase::Compensate, 1)),
             _ => None,
         }
     }
@@ -633,6 +664,7 @@ impl PollCore {
             change_seq: slot.change_seq.load(Ordering::Acquire),
             kind,
             values: Vec::new(),
+            offset: None,
             reply: CommandReply::new(move |outcome| {
                 let _ = tx.send(outcome);
             }),
@@ -657,6 +689,7 @@ impl PollCore {
         &self,
         slot: &Arc<CellSlot>,
         values: Vec<Arc<dyn std::any::Any + Send + Sync>>,
+        offset: Option<u64>,
         reply: CommandReply,
     ) {
         let outputs = values
@@ -669,6 +702,7 @@ impl PollCore {
             change_seq: slot.change_seq.load(Ordering::Acquire),
             kind: crate::schema::ActivationKind::CompensateRun { outputs },
             values,
+            offset,
             reply,
         });
     }

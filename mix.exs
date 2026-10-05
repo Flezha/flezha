@@ -294,6 +294,7 @@ defmodule Flezha.MixProject do
         "docs/topics/advanced/rewinding_a_turn.md",
         "docs/topics/advanced/streamed_answers.md",
         "docs/topics/advanced/effectively_once.md",
+        "docs/topics/advanced/recorded_effects.md",
         "docs/errors.md",
         "docs/configuration.md",
         "docs/configuration/environment_variables.md",
@@ -379,6 +380,7 @@ defmodule Flezha.MixProject do
           "docs/topics/advanced/rewinding_a_turn.md",
           "docs/topics/advanced/streamed_answers.md",
           "docs/topics/advanced/effectively_once.md",
+          "docs/topics/advanced/recorded_effects.md",
           "docs/publishing/maturity.md"
         ],
         Deploying: ~r"docs/topics/deploying/",

@@ -78,6 +78,31 @@ defmodule Flezha.State.Commands do
     end
   end
 
+  @doc """
+  Ship one batch of an instance's kept effect results to the runner it is
+  bound to and await the runner's answer, through the same awaited round trip
+  a restore takes. A failure is logged and answered: the runner's gate stops
+  waiting for the batch on its own deadline.
+  """
+  @spec ship_effect_results(binary(), binary(), [RunnerCommands.EffectResult.t()]) ::
+          :ok | {:error, term()}
+  def ship_effect_results(runner_id, relay_id, results) do
+    command =
+      {:effect_results, %RunnerCommands.EffectResults{relay_id: relay_id, results: results}}
+
+    case ControlUnit.send_control_await(runner_id, command, timeout: restore_await_timeout_ms()) do
+      {:ok, _raw} ->
+        :ok
+
+      {:error, reason} = err ->
+        Logger.warning(
+          "[Overwatch] effect results unshipped relay=#{inspect(relay_id)}: #{inspect(reason)}"
+        )
+
+        err
+    end
+  end
+
   # A restore that migrated records leaves the Cell current in memory and
   # stale on disk: its baseline is still the bytes an older schema version
   # wrote, so every future restore would migrate them again. Compaction is

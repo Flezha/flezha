@@ -23,6 +23,13 @@ defmodule Flezha.State.InputLog do
   nothing holds the watermark at the log start; a frozen watermark over a
   growing log emits `[:flezha, :state, :input_log_frozen_watermark]` naming the
   lagging reporter instead of silently accumulating.
+
+  The same server keeps the instance's effect results (`keep_effect/5`) in a
+  second file, `effects.log`, created on the first one: the results a
+  tasklet's `ctx.effect` calls returned, each kept under its identity for as
+  long as the input whose offset it names, and dropped by the truncation that
+  drops that input. An append is answered once the sync companion has synced
+  it; the input appends never wait on it.
   """
 
   use GenServer
@@ -45,7 +52,7 @@ defmodule Flezha.State.InputLog do
     Supervisor
   }
 
-  alias Flezha.State.InputLog.MsgIndex
+  alias Flezha.State.InputLog.{Effects, MsgIndex}
 
   # Input-log records reuse the WalWriter framing, so they carry its 16-byte
   # header slot. The wire never fills it, which leaves it free for the append
@@ -111,7 +118,11 @@ defmodule Flezha.State.InputLog do
     owed: [],
     dirty: false,
     # A multi-stream processed-prefix marker's confirmations so far, by offset.
-    prefix_votes: %{}
+    prefix_votes: %{},
+    # The effect log (`Flezha.State.InputLog.Effects`), `nil` until the first
+    # result, and the largest result it keeps.
+    effects: nil,
+    effects_cap: 0
   ]
 
   # Cap on how many queued messages of one kind a handler folds into one pass
@@ -119,6 +130,10 @@ defmodule Flezha.State.InputLog do
   # recompute). High enough to amortize a burst, low enough that nothing queued
   # behind them waits on an unbounded amount of other work.
   @max_append_batch 256
+
+  # The results one input may keep: a bound on what a runner can make the
+  # controller hold, and ship on every bind, for one input.
+  @max_effects_per_offset 1024
 
   # ---------- Public API ----------
 
@@ -505,6 +520,35 @@ defmodule Flezha.State.InputLog do
     end
   end
 
+  @doc """
+  Keep a `ctx.effect` result under `identity` for the input at `offset`,
+  answering once it is synced: `:kept` when this payload was kept, or
+  `{:first, payload}` when the identity already held another, which the call
+  then returns. Starts the log server on first use.
+  """
+  @spec keep_effect(binary(), non_neg_integer(), binary(), binary(), binary()) ::
+          :kept | {:first, binary()} | {:error, term()}
+  def keep_effect(relay_class, offset, identity, cell, payload) do
+    {:ok, pid} = Supervisor.find_or_start({relay_class, :input_log})
+    call(pid, {:keep_effect, offset, identity, cell, payload})
+  end
+
+  @doc """
+  The kept effect results for inputs above `above`, in offset order, as
+  `{offset, identity, cell, payload}`: what a bind ships. `[]` for a key with
+  no effect log, which starts no log.
+  """
+  @spec effect_results(binary(), integer()) ::
+          [{non_neg_integer(), binary(), binary(), binary()}] | {:error, term()}
+  def effect_results(relay_class, above) do
+    if File.exists?(Paths.effects_log_path(relay_class)) do
+      {:ok, pid} = Supervisor.find_or_start({relay_class, :input_log})
+      call(pid, {:effect_results, above})
+    else
+      []
+    end
+  end
+
   # ---------- GenServer ----------
 
   # The log for a class is found or started per call, so `pid` can be a writer
@@ -533,7 +577,8 @@ defmodule Flezha.State.InputLog do
       offset_sizes: :queue.new(),
       waiters: :queue.new(),
       consumed: %{},
-      positions: SeqIndex.new()
+      positions: SeqIndex.new(),
+      effects_cap: Flezha.Config.get(:effect_max_bytes)
     }
 
     {:ok, state, {:continue, :open}}
@@ -572,6 +617,7 @@ defmodule Flezha.State.InputLog do
         syncer: start_syncer(state.path),
         positions: SeqIndex.new(size)
     }
+    |> open_effects(File.exists?(Paths.effects_log_path(state.relay_class)))
   end
 
   # A log whose file refused a record refuses to serve the class, and stays
@@ -624,6 +670,40 @@ defmodule Flezha.State.InputLog do
     {:reply, scan_offset_before(state.file_handle, state.path, ts_ms), state}
   end
 
+  # The first payload kept for an identity wins. Either answer leaves through
+  # the companion behind a sync of the effect log, so it never names a result
+  # that is not on disk.
+  def handle_call({:keep_effect, offset, _identity, _cell, payload}, _from, state)
+      when offset >= state.next_offset or byte_size(payload) > state.effects_cap,
+      do: {:reply, {:error, {:effect_refused, offset, byte_size(payload)}}, state}
+
+  def handle_call({:keep_effect, offset, identity, cell, payload}, from, state) do
+    case Effects.judge(state.effects, offset, identity, payload, @max_effects_per_offset) do
+      :kept ->
+        {:noreply, owe_effect(state, from, :kept)}
+
+      {:first, first} ->
+        {:noreply, owe_effect(state, from, {:first, first})}
+
+      :full ->
+        {:reply, {:error, {:effect_refused, offset, byte_size(payload)}}, state}
+
+      :new ->
+        case open_effects(state, true) do
+          %{refusal: nil} = state ->
+            result = {offset, identity, cell, payload}
+            effects = Effects.append(state.effects, result, now_header())
+            {:noreply, owe_effect(%{state | effects: effects}, from, :kept)}
+
+          state ->
+            {:reply, {:error, state.refusal}, state}
+        end
+    end
+  end
+
+  def handle_call({:effect_results, above}, _from, state),
+    do: {:reply, Effects.above(state.effects, above), state}
+
   # A refused log has no companion to sync, no cut to make and no watermark to
   # advance: every cast is dropped rather than reaching a `nil` companion.
   @impl true
@@ -644,10 +724,17 @@ defmodule Flezha.State.InputLog do
         _ = companion_call(state.syncer, &{:reopen, state.path, &1, &2})
 
         {:noreply,
-         %{state | file_handle: file, positions: positions, msg_ids: trim_ids(state, floor)}}
+         %{state | file_handle: file, positions: positions, msg_ids: trim_ids(state, floor)}
+         |> drop_effects_below(floor)}
 
-      # Nothing (or too little) below the floor, or the file is gone from under
-      # a queued truncation (its class directory removed): nothing to cut.
+      # Too little below the floor to cut the inputs yet; the results of inputs
+      # below it are dropped all the same, so a log of small inputs with large
+      # results does not keep them past their inputs.
+      :none ->
+        {:noreply, drop_effects_below(state, floor)}
+
+      # The file is gone from under a queued truncation (its class directory
+      # removed): nothing to cut.
       _ ->
         {:noreply, state}
     end
@@ -724,6 +811,8 @@ defmodule Flezha.State.InputLog do
       _ = :file.close(state.file_handle)
     end
 
+    Effects.close(state.effects)
+
     # Linked, but a `:normal` exit would not take it along.
     if state.syncer, do: send(state.syncer, :stop)
     :ok
@@ -736,7 +825,7 @@ defmodule Flezha.State.InputLog do
   # while the log's loop keeps answering appends — which every durable-input
   # source is waiting on, one record at a time.
   defp start_syncer(path) do
-    spawn_link(fn -> syncer_loop(open_raw(path)) end)
+    spawn_link(fn -> syncer_loop(open_raw(path), nil) end)
   end
 
   defp open_raw(path) do
@@ -744,29 +833,42 @@ defmodule Flezha.State.InputLog do
     fh
   end
 
-  defp syncer_loop(fh) do
+  # `effects` is a second handle, on the effect log, once it exists; only an
+  # effect append syncs it.
+  defp syncer_loop(fh, effects) do
     receive do
       {:sync, answers} ->
         # A backlog of ticks is one sync: datasync covers every write before it.
         answers = drain_syncs([answers])
         :ok = :file.datasync(fh)
         answer(answers)
-        syncer_loop(fh)
+        syncer_loop(fh, effects)
 
       {:sync, answers, from, ref} ->
         :ok = :file.datasync(fh)
         answer(answers)
         send(from, {ref, :ok})
-        syncer_loop(fh)
+        syncer_loop(fh, effects)
+
+      {:sync_effects, answers} ->
+        :ok = :file.datasync(effects)
+        answer(answers)
+        syncer_loop(fh, effects)
 
       {:reopen, path, from, ref} ->
         _ = :file.close(fh)
         fh = open_raw(path)
         send(from, {ref, :ok})
-        syncer_loop(fh)
+        syncer_loop(fh, effects)
+
+      {:reopen_effects, path, from, ref} ->
+        if effects, do: _ = :file.close(effects)
+        send(from, {ref, :ok})
+        syncer_loop(fh, open_raw(path))
 
       :stop ->
         _ = :file.close(fh)
+        if effects, do: _ = :file.close(effects)
         :ok
     end
   end
@@ -929,6 +1031,43 @@ defmodule Flezha.State.InputLog do
          msg_ids: MsgIndex.note(state.msg_ids, id, offset)
      }}
   end
+
+  # ---------- Effect results ----------
+
+  # The effect log, opened once it is wanted: on start when the file exists, or
+  # on the first result. The companion takes a handle of its own to sync it.
+  defp open_effects(%{effects: nil} = state, true) do
+    path = Paths.effects_log_path(state.relay_class)
+
+    case Effects.open(path) do
+      {:ok, effects} ->
+        _ = companion_call(state.syncer, &{:reopen_effects, path, &1, &2})
+        %{state | effects: effects}
+
+      {:error, refusal} ->
+        %{state | refusal: refusal}
+    end
+  end
+
+  defp open_effects(state, _wanted), do: state
+
+  defp owe_effect(state, from, reply) do
+    send(state.syncer, {:sync_effects, [{from, reply}]})
+    state
+  end
+
+  # A truncation drops the results of the inputs it passed; a rewritten file
+  # needs the companion's descriptor moved onto it.
+  defp drop_effects_below(state, floor) do
+    effects = Effects.drop_below(state.effects, floor, now_header())
+
+    if effects && effects.file != state.effects.file,
+      do: _ = companion_call(state.syncer, &{:reopen_effects, effects.path, &1, &2})
+
+    %{state | effects: effects}
+  end
+
+  defp now_header, do: record_header(System.system_time(:millisecond))
 
   # ---------- Message-id index ----------
 

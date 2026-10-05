@@ -319,6 +319,7 @@ defmodule Flezha.Runner.ControlUnit do
       # `nil` unless the instance has a journal to resume from.
       resume_cell_count: Keyword.get(relay.opts, :resume_cell_count, 0),
       inbox_tail_count: Keyword.get(relay.opts, :inbox_tail_count, 0),
+      effect_result_count: length(Keyword.get(relay.opts, :effect_results, [])),
       task_journal: Keyword.get(relay.opts, :task_journal),
       # This controller parks a failed turn a steps driver sends on
       # `IterCommit.dead_letter`, whatever the bind.

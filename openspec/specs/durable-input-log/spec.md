@@ -513,3 +513,33 @@ deadline SHALL truncate exactly as it did before.
 - **WHEN** no record of a log carries `flz.deadline_at`
 - **THEN** the sweep SHALL truncate below `min(watermark, now - hold_window)` as before
 
+### Requirement: The log's server SHALL keep effect results under the input's retention
+
+The input log's server SHALL own a second file, `effects.log`, beside `input.log`, holding
+effect results as `{offset, identity, payload}` in the `WalWriter` framing. It SHALL answer
+an effect result's append once a sync covers it, synced by the sync companion it already
+has through a descriptor of its own, so an input append never waits on it, and at
+`durable: remote` once the durability tier has also
+shipped it. It SHALL keep the first payload for an identity and answer a later append for
+that identity with the first. A truncation below a floor SHALL drop the effect results of
+every offset below it, and rewrite `effects.log` under the same cut threshold as `input.log`.
+On start it SHALL read the retained effect results back. The durability tier SHALL ship and
+hydrate `effects.log` with the input log's artifacts.
+
+#### Scenario: Results follow the floor
+
+- **WHEN** effect results are kept for offsets 4 and 7 and the floor moves to 5
+- **THEN** after the truncation the log keeps only the results of offset 7
+
+#### Scenario: Results survive losing the disk under the tier
+
+- **WHEN** the durability backend is on, an effect result is kept, and the controller is
+  replaced with an empty disk
+- **THEN** the hydrated instance's re-run invocation is served the kept result
+
+#### Scenario: The input path is unchanged
+
+- **WHEN** an instance never calls `effect`
+- **THEN** no `effects.log` is created and the input log's appends, reads and truncation
+  behave exactly as before
+

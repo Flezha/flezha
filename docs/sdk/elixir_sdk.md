@@ -756,6 +756,10 @@ the seq the invocation started at and a per-invocation ordinal — the same valu
 SDK derives for the same three facts, so an effect re-driven after a crash carries the id it
 carried before.
 
+**`Ctx.effect/4`** (`effect(ctx, name, fun)` in a `use` tasklet) runs an outside call once per
+re-run of the invocation and answers `{:ok, result}`, or an error `run/3` returns as it is
+([`recorded_effects.md`](../topics/advanced/recorded_effects.md)).
+
 **The restore and the slot.** A restore discards the open interval, cancels its deadline and
 sets the floor and the event-time high-water from the log. The Relay's slot table carries
 the staged interval and the floor beside `{state, seq}`, so a Cell killed untrappably comes
