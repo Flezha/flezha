@@ -34,8 +34,8 @@ owns the mechanism; for concepts, [`architecture/`](https://github.com/flezha/fl
 
 ## Workload model
 
-- **Relay** — a small processing unit, a worker with its own state, that carries data through
-  its tasklets. Flezha runs thousands of relays in parallel. A relay is never the SDK process,
+- **Relay** — a processing unit that works like a worker: it keeps its own state and carries
+  data through its tasklets. Flezha runs thousands of relays in parallel. A relay is never the SDK process,
   which is a **Runner**. It is the unit you start and stop (`flz relay start|stop|list|info`), registered
   under a **factory id** (`factory_id()` on the Rust `Relay` trait, `factoryId()` on Java's
   `Relay`), with a **run**, `flow` or `steps`, that its class declares in its settings tree and

@@ -3,9 +3,9 @@
 Flezha is a durable, distributed runtime for stateless and stateful data processing.
 
 It runs many small, independent pieces of work in parallel, on one machine or
-across many. Each piece is a **relay**: a small processing unit, a worker with
-its own state, that runs code you write. It takes messages in, carries them
-through its tasklets and sends results on. One piece of code can run as one relay or as thousands, one per
+across many. Each piece is a **relay**, running code you write. A relay is a
+processing unit that works like a worker: it keeps its own state and carries
+data through its tasklets, taking messages in and sending results on. One piece of code can run as one relay or as thousands, one per
 user, device, order or job. Flezha decides which machine each relay runs
 on, keeps its state on disk, and when a process crashes or a machine goes
 away, starts it again elsewhere and carries on from where it stopped.

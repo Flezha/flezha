@@ -36,10 +36,11 @@ The same building blocks carry many shapes of data processing:
   its state on disk, and starts it again elsewhere when something fails.
 - **A runner** is your own program, written with one of the seven SDKs. It
   connects to the controller and runs the code you registered.
-- **A relay** is one running copy of that code: a small processing unit, a
-  worker with its own state, that carries data through its tasklets. Flezha runs
-  thousands of relays in parallel. Inside a relay, your logic is split into small
-  processing stages, called tasklets, wired into a graph.
+- **A relay** is one running copy of that code. A relay is a processing unit
+  that works like a worker: it keeps its own state and carries data through its
+  tasklets. Flezha runs thousands of relays in parallel. Inside a relay, your
+  logic is split into small processing stages, called tasklets, wired into a
+  graph.
 - **Plugins** connect relays to the outside world (files, HTTP, Kafka,
   Postgres, RabbitMQ and more) without changing their code.
 

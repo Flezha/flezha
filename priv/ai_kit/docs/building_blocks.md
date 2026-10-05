@@ -2,10 +2,10 @@
 
 Code that runs on Flezha is made of three pieces: tasklets, relays and
 runners. A **tasklet** is a processing stage of your own. A **relay** is a
-small processing unit, a worker with its own state, that carries data through
-its tasklets: it declares the graph that moves data between them, and is the
-unit the controller starts, places and restarts. Flezha runs thousands of
-relays in parallel. A **runner** is a process you run,
+processing unit that works like a worker: it keeps its own state and carries
+data through its tasklets. It declares the graph that moves data between them,
+and is the unit the controller starts, places and restarts. Flezha runs
+thousands of relays in parallel. A **runner** is a process you run,
 which connects to the controller and runs the relays the controller hands
 it. The pieces mean the same thing in all seven SDKs.
 

@@ -273,8 +273,8 @@ The CLI SHALL expose a single `flz relay` verb tree for lifecycle management of 
 The unit SHALL be the Relay, which carries data through its Tasklets, each holding Cells of state.
 A relay SHALL be described by how it runs, in flow or in steps, and by where its work is kept,
 in memory, on the controller's disk or in the remote copy. Documentation SHALL introduce a relay on
-first use as a small processing unit or a worker with its own state; "processing unit" and
-"worker" SHALL describe a relay and SHALL NOT name a type, a CLI verb, an API field or a heading.
+first use, in one sentence, as a processing unit that works like a worker, keeping its own state
+and carrying data through its tasklets; "processing unit" and "worker" SHALL describe a relay and SHALL NOT name a type, a CLI verb, an API field or a heading.
 The word `relay` SHALL name only the unit: no identifier, file, sentence or test fixture in the
 repository SHALL use it in another sense.
 
@@ -286,7 +286,7 @@ repository SHALL use it in another sense.
 #### Scenario: A newcomer reads what a relay is
 
 - **WHEN** `README.md`, `docs/getting_started/what_is_flezha.md` and the glossary's Relay entry are read
-- **THEN** each SHALL introduce a relay as a small processing unit or a worker with its own state before using the word on its own
+- **THEN** each SHALL introduce a relay as a processing unit that works like a worker, keeping its own state, before using the word on its own
 
 #### Scenario: The word has one sense
 
