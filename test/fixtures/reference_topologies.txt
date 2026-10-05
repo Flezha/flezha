@@ -8,7 +8,7 @@
 # derives is not a golden, it is a second copy of the thing under test. The two
 # sources, read at `c6f5dbfa`:
 #
-#   hybrid_channel      test/apps/rust_runner/src/channel.rs, HybridChannelOperator
+#   hybrid_channel      test/apps/rust_runner/src/channel.rs, HybridChannelRelay
 #   commit_block_chain  test/apps/rust_runner/src/steps.rs, TierCommitBlockSteps
 #
 # `commit_block_chain` is this file's name for the second shape because no
@@ -96,12 +96,12 @@ commit_block_chain | 1 | mid | inter_task | 0 | 1 | mid
 #                              "local", "remote", {"local":{"sleep_after":ms}};
 #                              absent is local
 #   shorthand(<id>|-, <sink>|-, <input>|-)
-#                              one §5 short form, a flow operator declaration
+#                              one §5 short form, a flow relay declaration
 #                              carrying a tasklet body: the factory id, the
 #                              plugin sink and the entry channel name, each `-`
 #                              when the row leaves it unwritten. The step
 #                              declares NO builder topology — it is the whole
-#                              operator. A second step in one row declares a
+#                              relay. A second step in one row declares a
 #                              short form that runs in steps, so a collision
 #                              crosses runs
 #   shorthand(...).noout       the same, on a body declaring no output

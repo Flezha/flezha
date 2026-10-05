@@ -211,6 +211,6 @@ consumer surface. No fact or effect the CLI offers SHALL be reachable only throu
 - **WHEN** the published surface is enumerated
 - **THEN** it SHALL carry a function for each of token issue, list and revoke, role bind,
   list and unbind, `whoami`, schedule run, state get, list, delete, rotate, retention and
-  outbox, operator listen and replay, plugin update and info, boot status and await,
+  outbox, relay listen and replay, plugin update and info, boot status and await,
   controller status, memory top and stop, and cluster status
 

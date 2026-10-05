@@ -21,7 +21,7 @@ defmodule Flezha.Service.Cli.Plugin do
     if enabled.lacking != [] do
       IO.puts(
         "warning: #{Enum.join(enabled.lacking, ", ")} hold the namespace and lack the " <>
-          "provider or did not answer; the plugin will not run there, and an operator " <>
+          "provider or did not answer; the plugin will not run there, and a relay " <>
           "bound to it there runs without it"
       )
     end
@@ -31,18 +31,18 @@ defmodule Flezha.Service.Cli.Plugin do
 
   @doc "`flz plugin bind`."
   def bind(:already_bound, [name, fields | _], _opts),
-    do: IO.puts("Plugin #{name} is already bound to #{fields["operator_id"]}.")
+    do: IO.puts("Plugin #{name} is already bound to #{fields["relay_id"]}.")
 
   def bind(_bound, [name, fields | _], _opts),
-    do: IO.puts("Plugin #{name} bound to #{fields["operator_id"]}.")
+    do: IO.puts("Plugin #{name} bound to #{fields["relay_id"]}.")
 
   @doc "`flz plugin unbind`."
   def unbind(_unbound, [name, fields | _], _opts),
-    do: IO.puts("Plugin #{name} unbound from #{fields["operator_id"]}; it stays enabled.")
+    do: IO.puts("Plugin #{name} unbound from #{fields["relay_id"]}; it stays enabled.")
 
   @doc "`flz plugin update`."
-  def update(%{applied: applied, operators: operators}, [name | _], _opts) do
-    case {applied, operators} do
+  def update(%{applied: applied, relays: relays}, [name | _], _opts) do
+    case {applied, relays} do
       {:unchanged, _} ->
         IO.puts("Plugin #{name} is unchanged.")
 
@@ -52,9 +52,9 @@ defmodule Flezha.Service.Cli.Plugin do
       {:restarted, []} ->
         IO.puts("Plugin #{name} updated; its running copies restarted.")
 
-      {:restarted, operators} ->
+      {:restarted, relays} ->
         IO.puts("Plugin #{name} updated; its running copies restarted.")
-        IO.puts("warning: restarted under #{Enum.join(operators, ", ")}")
+        IO.puts("warning: restarted under #{Enum.join(relays, ", ")}")
     end
   end
 
@@ -68,7 +68,7 @@ defmodule Flezha.Service.Cli.Plugin do
   defp enabled_line(row) do
     single = if row.single, do: " single", else: ""
     where = if row.controllers == [], do: "idle", else: Enum.join(row.controllers, ", ")
-    bound = if row.operators == [], do: "none", else: Enum.join(row.operators, ", ")
+    bound = if row.relays == [], do: "none", else: Enum.join(row.relays, ", ")
     "#{row.name}  #{row.provider}#{single}  bound: #{bound}  runs on: #{where}" <> hooks(row)
   end
 

@@ -123,7 +123,7 @@ jobs:
             echo "Measured ratio (pool=8 / pool=1): **${RATIO}**"
             echo
             echo "Spec target: ≥ 4× on real 8-core hardware. CI ratio is informational"
-            echo "per operator-bench-harness/design.md Decision 9 — GitHub Actions runners"
+            echo "per relay-bench-harness/design.md Decision 9 — GitHub Actions runners"
             echo "are virtualized and don't reliably expose 8 physical cores."
           } >> "$GITHUB_STEP_SUMMARY"
 

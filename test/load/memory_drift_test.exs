@@ -1,7 +1,7 @@
 defmodule Flezha.Load.MemoryDriftTest do
   @moduledoc """
   Long-running load harness that measures Controller BEAM memory
-  growth under realistic WebSocket traffic. Drives an operator with a
+  growth under realistic WebSocket traffic. Drives a relay with a
   configurable WS source (synthetic testnet or a live exchange feed). A
   workload that also publishes each frame through a sink of a plugin package
   runs from that package.
@@ -58,7 +58,7 @@ defmodule Flezha.Load.MemoryDriftTest do
   alias Flezha.Diagnostics.MemoryReporter
   alias Flezha.Plugin
   alias Flezha.Service.Controller.MemTop
-  alias Flezha.Service.OperatorManager
+  alias Flezha.Service.RelayManager
   alias Flezha.Service.PluginManager
   alias Flezha.Testnet
   alias FlezhaTest.Helper.NodeTestHelper
@@ -68,13 +68,13 @@ defmodule Flezha.Load.MemoryDriftTest do
   # The Flezha.Testnet child (test config has testnet_enabled: true) spawns
   # `npm start --prefix test/apps/testnet` on the port the run derives, and
   # `Testnet.ws_port/0` is where both sides read it. The harness waits for the
-  # daemon to be reachable before starting the load operator.
+  # daemon to be reachable before starting the load relay.
   @testnet_wait_timeout_ms 30_000
 
   @namespace "default"
-  @operator_id "memory_drift_load"
+  @relay_id "memory_drift_load"
   @ws_plugin_id "memory_drift_ws"
-  @operator_factory "do_nothing"
+  @relay_factory "do_nothing"
 
   setup_all do
     File.mkdir_p!(@artifact_dir)
@@ -96,8 +96,8 @@ defmodule Flezha.Load.MemoryDriftTest do
     )
 
     if ws_source == "testnet", do: wait_for_ws_endpoint!()
-    start_load_operator!(ws_source)
-    on_exit(&stop_load_operator/0)
+    start_load_relay!(ws_source)
+    on_exit(&stop_load_relay/0)
 
     ensure_reporter_started(sample_interval_ms)
 
@@ -174,15 +174,15 @@ defmodule Flezha.Load.MemoryDriftTest do
     end
   end
 
-  ## ----- operator + plugin wiring ---------------------------------------------
+  ## ----- relay + plugin wiring ---------------------------------------------
 
-  defp start_load_operator!(ws_source) do
-    operator = %Flezha.Operator.Builder{id: @operator_id, factory_id: @operator_factory}
-    {:ok, _} = OperatorManager.start_operator(@namespace, operator)
+  defp start_load_relay!(ws_source) do
+    relay = %Flezha.Relay.Builder{id: @relay_id, factory_id: @relay_factory}
+    {:ok, _} = RelayManager.start_relay(@namespace, relay)
 
     enable_ws_plugin!(ws_source)
 
-    IO.puts("[memory_drift] load operator '#{@operator_id}' up; ws source=#{ws_source}")
+    IO.puts("[memory_drift] load relay '#{@relay_id}' up; ws source=#{ws_source}")
   end
 
   defp enable_ws_plugin!(ws_source) do
@@ -192,7 +192,7 @@ defmodule Flezha.Load.MemoryDriftTest do
       PluginManager.enable_plugin(@ws_plugin_id, %Plugin{
         id: @ws_plugin_id,
         namespace: @namespace,
-        operator_id: @operator_id,
+        relay_id: @relay_id,
         provider: Flezha.Plugin.Provider.Websocket,
         opts: %{
           uri: uri,
@@ -215,7 +215,7 @@ defmodule Flezha.Load.MemoryDriftTest do
     {Testnet.ws_uri(), msg}
   end
 
-  defp stop_load_operator do
+  defp stop_load_relay do
     for plugin_id <- [@ws_plugin_id] do
       try do
         _ = PluginManager.disable_plugin(@namespace, plugin_id)
@@ -225,7 +225,7 @@ defmodule Flezha.Load.MemoryDriftTest do
     end
 
     try do
-      _ = OperatorManager.stop_operator(@namespace, @operator_id)
+      _ = RelayManager.stop_relay(@namespace, @relay_id)
     catch
       _, _ -> :ok
     end

@@ -1,7 +1,7 @@
 defmodule Flezha.Process.Backlog do
   @moduledoc """
   A FIFO bounded by payload bytes and by entries, for a process that holds what
-  its consumer has not taken yet: a listener's relay, a shared plugin's
+  its consumer has not taken yet: a listener's receiver, a shared plugin's
   forwarder, a sink's queue of outputs to send.
 
   It holds and it makes room. Room is made by dropping the oldest entries a

@@ -321,7 +321,7 @@ under the condition it reports is not observability.
 
 #### Scenario: A metric signal carrying a tuple does not kill the registry
 
-- **GIVEN** the `[:flezha, :state, :wal, :backpressure]` telemetry event, whose metadata carries `cell_id` as an `{operator_class, tasklet_id, cell_key}` tuple
+- **GIVEN** the `[:flezha, :state, :wal, :backpressure]` telemetry event, whose metadata carries `cell_id` as an `{relay_class, tasklet_id, cell_key}` tuple
 - **WHEN** it reaches the Prometheus registry through the telemetry bridge
 - **THEN** the registry process SHALL remain alive, its aggregation tables SHALL survive, and the metric SHALL appear in the exposition with a readable rendering of the tuple
 

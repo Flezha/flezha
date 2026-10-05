@@ -9,10 +9,10 @@ defmodule Flezha.Runner.FleetManager do
   `Factories` (the factory table and each factory's SDK language) and
   `Session` (the handshake, connect, disconnect, evict, reroute) — while the
   public API stays here. `Marks` also holds each live session's stable
-  identity, which an operator's ownership record names.
+  identity, which a relay's ownership record names.
 
   Invariant: a disconnect drops the runner from the active set
-  unconditionally; what varies is only what becomes of its operators.
+  unconditionally; what varies is only what becomes of its relays.
   """
 
   alias Flezha.AuthZ.RunnerProof
@@ -129,7 +129,7 @@ defmodule Flezha.Runner.FleetManager do
   @doc """
   Atomically evict a dead/orphaned runner binding: stop its runner supervisor
   (its stream channels, and every route they held, go with it), drop its
-  factory refs, and remove it from `runner_namespaces`. Its operators become
+  factory refs, and remove it from `runner_namespaces`. Its relays become
   misbound and rebind onto
   a live runner on the next convergence tick. Idempotent — an unknown
   id returns `:ok`. Driven by `Flezha.Convergence.Heal.execute/1` and by the
@@ -154,7 +154,7 @@ defmodule Flezha.Runner.FleetManager do
 
   The inverse of `runners_for_factory/3`, for the caller that holds a runner
   and asks what it can take: the convergence loop's release path, deciding
-  which waiting operators a runner arriving in the namespace is news for. An
+  which waiting relays a runner arriving in the namespace is news for. An
   empty set is a runner that has advertised nothing yet, which the caller must
   not read as "serves nothing"; a fleet that could not be read at all answers
   `:unknown`, because a refused read is evidence of nothing.
@@ -170,10 +170,10 @@ defmodule Flezha.Runner.FleetManager do
   @doc """
   Returns active compute engines in `namespace` that advertise `factory_id`.
 
-  Used by `OperatorManager.assign_runner/3` so we never route a
-  operator to a node that doesn't own its factory — without this filter
-  every input frame for a misrouted operator hits a dead registry entry
-  on the foreign node and generates a `enqueue: operator X not found`
+  Used by `RelayManager.assign_runner/3` so we never route a
+  relay to a node that doesn't own its factory — without this filter
+  every input frame for a misrouted relay hits a dead registry entry
+  on the foreign node and generates a `enqueue: relay X not found`
   warning on every input.
   """
   def runners_for_factory(namespace, factory_id, timeout \\ Durations.get(:runner_lookup_ms)) do
@@ -181,7 +181,7 @@ defmodule Flezha.Runner.FleetManager do
   end
 
   @doc """
-  The runner `operator_id` is placed on in `namespace`, or `nil` when the
+  The runner `relay_id` is placed on in `namespace`, or `nil` when the
   candidate set is empty.
 
   Candidates come from the same filter `runners_for_factory/3` answers with — a
@@ -197,12 +197,12 @@ defmodule Flezha.Runner.FleetManager do
   def resolve_runner(
         namespace,
         factory_id,
-        operator_id,
+        relay_id,
         timeout \\ Durations.get(:runner_lookup_ms)
       ) do
     GenServer.call(
       __MODULE__,
-      {:resolve_runner, namespace, factory_id, operator_id},
+      {:resolve_runner, namespace, factory_id, relay_id},
       timeout
     )
   end
@@ -284,7 +284,7 @@ defmodule Flezha.Runner.FleetManager do
   Clear the `stream_ref` on this runner's `ControlChannel` so the existing
   rebind machinery (see `runner-controller-connection-healing`) picks up
   the next data stream the SDK opens. Called by
-  `Flezha.Operator.Overwatch` after an end-to-end ping fails, indicating the
+  `Flezha.Relay.Overwatch` after an end-to-end ping fails, indicating the
   controller-side `ControlChannel` is alive but its underlying transport
   handle is stale.
 
@@ -424,7 +424,7 @@ defmodule Flezha.Runner.FleetManager do
   # to count — lets another batch member's read overtake the count, and the
   # batch is exactly where the spread matters.
   @impl true
-  def handle_call({:resolve_runner, namespace, factory_id, operator_id}, _from, state) do
+  def handle_call({:resolve_runner, namespace, factory_id, relay_id}, _from, state) do
     case candidates(state, namespace, factory_id) do
       [] ->
         {:reply, nil, state}
@@ -433,7 +433,7 @@ defmodule Flezha.Runner.FleetManager do
         {cache, entry} =
           Load.refreshed(state.runner_loads, namespace, fn -> rebuild_loads(state, namespace) end)
 
-        {entry, runner_id} = Load.place(entry, candidates, operator_id)
+        {entry, runner_id} = Load.place(entry, candidates, relay_id)
 
         {:reply, runner_id, %{state | runner_loads: Map.put(cache, namespace, entry)}}
     end
@@ -467,7 +467,7 @@ defmodule Flezha.Runner.FleetManager do
           {:namespace_not_found, state.runner_namespaces}
 
         _ ->
-          # The `:namespace` walk: the operators, the runners, the plugin
+          # The `:namespace` walk: the relays, the runners, the plugin
           # registrations and the hub, in that order, with the namespace read
           # as quiesced for its duration.
           target = %{
@@ -593,7 +593,7 @@ defmodule Flezha.Runner.FleetManager do
   end
 
   # The grace elapsed with no runner for the factory back. Withdrawing it is
-  # what hands its operators to a controller that can still run them.
+  # what hands its relays to a controller that can still run them.
   @impl true
   def handle_info({:withdraw_group, namespace, factory_id}, state) do
     {:noreply, Announce.withdraw(state, namespace, [factory_id])}
@@ -658,7 +658,7 @@ defmodule Flezha.Runner.FleetManager do
   defp candidates(state, namespace, factory_id) when is_binary(factory_id),
     do: MapSet.to_list(Factories.placeable_runners(state, namespace, factory_id))
 
-  # Counted from the hub registry's own record of who owns each operator, over
+  # Counted from the hub registry's own record of who owns each relay, over
   # the same universe a placement chooses from. A namespace whose hub is not up
   # holds no recorded binding, so every active runner counts zero and the
   # handouts alone spread the work.
@@ -693,7 +693,7 @@ defmodule Flezha.Runner.FleetManager do
   end
 
   # Which of `namespace`'s inactive runners have outlived the keepalive. The hub
-  # is reclaimed on the way past only when it holds no (suspended) operators.
+  # is reclaimed on the way past only when it holds no (suspended) relays.
   defp expired_runners(state, namespace, now, keep_alive) do
     state
     |> Roster.get_runner_ids(namespace, :inactive)

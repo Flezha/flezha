@@ -131,11 +131,11 @@ defmodule Flezha.Plugin.Installer.LoaderTest do
   test "a provider id that is already a row is refused, and the row stays first-party", ctx do
     archive =
       edited(ctx, "stdout.fpz", [
-        {:manifest, &%{&1 | providers: %{"operator_stdout" => FlezhaExamplePlugin.Stamp}}}
+        {:manifest, &%{&1 | providers: %{"relay_stdout" => FlezhaExamplePlugin.Stamp}}}
       ])
 
     assert refused_code(PluginPackage.load!(ctx.root, [archive])) == "plugin.provider_conflict"
-    assert Providers.fetch("operator_stdout") == {:ok, Flezha.Plugin.Provider.StdOut}
+    assert Providers.fetch("relay_stdout") == {:ok, Flezha.Plugin.Provider.StdOut}
     refute List.keymember?(Application.started_applications(), :stamp_lib, 0)
   end
 
@@ -280,14 +280,14 @@ defmodule Flezha.Plugin.Installer.LoaderTest do
     assert {:provider_refused, "flezha_example_plugin", "example_stamp", ":closed"} =
              Loader.refusal(:provider_refused, FlezhaExamplePlugin.Stamp, :closed)
 
-    partitioned = {:partitioned_host, %{provider: "example_stamp", operator: "pg#p0"}}
+    partitioned = {:partitioned_host, %{provider: "example_stamp", relay: "pg#p0"}}
 
     assert Loader.refusal(:provider_refused, FlezhaExamplePlugin.Stamp, partitioned) ==
              partitioned
 
     # A worker that stopped at start with a detailed reason keeps that code; a
     # bare term that shares a catalogued tag is wrapped.
-    detailed = {:http_listen_failed, %{operator: "op", port: 1}}
+    detailed = {:http_listen_failed, %{relay: "op", port: 1}}
 
     assert Loader.refusal(
              :provider_failed,

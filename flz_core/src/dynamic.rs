@@ -14,8 +14,8 @@ use dashmap::DashMap;
 use crate::cell::CellSlot;
 use crate::channel::{BuildCellArgs, TaskletId};
 use crate::flusher::CellFlusher;
-use crate::operator::instance::OperatorInstance;
-use crate::operator::topology::OperatorTopology;
+use crate::relay::instance::RelayInstance;
+use crate::relay::topology::RelayTopology;
 use crate::state_sink;
 
 const ENV_REAP_INTERVAL_MS: &str = "FLEZHA_REAP_INTERVAL_MS";
@@ -39,8 +39,8 @@ pub struct DynamicCellRegistry {
     evicted: Mutex<VecDeque<String>>,
     tasklet_id: TaskletId,
     max_cells: usize,
-    topology: Arc<OperatorTopology>,
-    instance: Weak<OperatorInstance>,
+    topology: Arc<RelayTopology>,
+    instance: Weak<RelayInstance>,
     instance_id: Arc<str>,
     keeps_state: bool,
     prefix: Option<Arc<crate::prefix::PrefixLedger>>,
@@ -51,8 +51,8 @@ impl DynamicCellRegistry {
     pub fn new(
         tasklet_id: TaskletId,
         max_cells: usize,
-        topology: Arc<OperatorTopology>,
-        instance: Weak<OperatorInstance>,
+        topology: Arc<RelayTopology>,
+        instance: Weak<RelayInstance>,
         instance_id: Arc<str>,
         keeps_state: bool,
         prefix: Option<Arc<crate::prefix::PrefixLedger>>,
@@ -93,7 +93,7 @@ impl DynamicCellRegistry {
     }
 
     /// Evict every Cell idle longer than `idle_ttl`, each under its drain
-    /// gate with an empty mailbox; a steps operator's only between passes, and
+    /// gate with an empty mailbox; a steps relay's only between passes, and
     /// never one a rollback could still reach.
     pub fn reap_sweep(&self, idle_ttl: Duration) {
         let now = crate::util::monotonic_ms();

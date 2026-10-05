@@ -14,10 +14,10 @@ received them.
 #### Scenario: An event reaches the URL
 
 - **GIVEN** a local HTTP test server and `hook_webhook` enabled with its URL and
-  `--hook on_operator_started`
-- **WHEN** an operator starts in the plugin's namespace
+  `--hook on_relay_started`
+- **WHEN** a relay starts in the plugin's namespace
 - **THEN** the server SHALL receive one POST whose JSON body holds `hook`
-  `on_operator_started`, the operator, and a non-empty `text`
+  `on_relay_started`, the relay, and a non-empty `text`
 
 #### Scenario: Slack-style receivers
 
@@ -61,6 +61,6 @@ path, query or headers.
 #### Scenario: A slow server does not stop Flezha
 
 - **GIVEN** a test server that never answers, `timeout_ms` 500 and a queue of 10 frames
-- **WHEN** 50 operators park in the plugin's namespace
+- **WHEN** 50 relays park in the plugin's namespace
 - **THEN** every park SHALL complete, and the plugin SHALL report `plugin_lagging`
 

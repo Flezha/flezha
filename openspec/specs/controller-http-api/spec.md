@@ -6,7 +6,7 @@ The controller's published operations over HTTP, for AI tools and scripts: the `
 ### Requirement: The HTTP API SHALL be a controller plugin enabled in `_system`
 
 The `http_api` provider of the `flezha_http_plugin` package SHALL be a controller plugin that
-needs no operator and no hook, and SHALL run one listener on every controller that holds
+needs no relay and no hook, and SHALL run one listener on every controller that holds
 `_system`. An enable in any other namespace SHALL be refused, and disabling it SHALL stop
 every listener before the disable returns.
 
@@ -42,7 +42,7 @@ error's details.
 
 #### Scenario: The audit names the token's principal
 
-- **WHEN** an authorized `tools/call` of `operator_start` succeeds
+- **WHEN** an authorized `tools/call` of `relay_start` succeeds
 - **THEN** the audit record SHALL name the token's principal and the source `http`, in the
   shape a `flz` start writes
 
@@ -55,12 +55,12 @@ no dispatch table of its own.
 
 #### Scenario: A quota is enforced unchanged
 
-- **WHEN** a start over HTTP would exceed the namespace's `max_operators`
+- **WHEN** a start over HTTP would exceed the namespace's `max_relays`
 - **THEN** the answer SHALL carry `quota.exceeded` with the details a `flz` start receives
 
 #### Scenario: A role that does not grant the action
 
-- **WHEN** a namespace `viewer` token calls `Operator.start`
+- **WHEN** a namespace `viewer` token calls `Relay.start`
 - **THEN** the call SHALL be refused at the policy point with an `authz.*` code, and the
   refusal SHALL be audited as a `flz` refusal is
 
@@ -126,9 +126,9 @@ listed for every token, and the server's `instructions` SHALL carry the working 
 #### Scenario: The schema follows the rows
 
 - **WHEN** `tools/list` is read and the entry `Dlq.list` declares one optional string argument
-  `operator_class`
+  `relay_class`
 - **THEN** the tool `dlq_list` SHALL have an input schema with one optional string property
-  `operator_class` and `additionalProperties: false`
+  `relay_class` and `additionalProperties: false`
 
 #### Scenario: A role sees only what it may call
 
@@ -168,10 +168,10 @@ answer the same entries `tools/list` would, in the catalogue's own form.
 
 #### Scenario: A listing over plain JSON
 
-- **WHEN** `POST /v1/call/Operator.list` is sent with `["default"]` and a token whose role
+- **WHEN** `POST /v1/call/Relay.list` is sent with `["default"]` and a token whose role
   grants listing
-- **THEN** the answer SHALL be `200` with the operators of `default` as JSON, the same JSON
-  `flz operator list --json` prints
+- **THEN** the answer SHALL be `200` with the relays of `default` as JSON, the same JSON
+  `flz relay list --json` prints
 
 #### Scenario: A failure's status follows its class
 

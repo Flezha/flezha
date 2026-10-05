@@ -6,10 +6,10 @@ defmodule Flezha.Plugin.Provider.PostgresPoll.Reader do
 
   Each read runs in a monitored child (`PostgresPoll.Query.read/4`), so the
   worker answers its health probe while a slow query is outstanding. The rows
-  it answers are handed to the operator with `Host.inject_many/4` in
-  `:verdict` mode, and the cursor moves past the longest prefix the operator
+  it answers are handed to the relay with `Host.inject_many/4` in
+  `:verdict` mode, and the cursor moves past the longest prefix the relay
   took: a refused row is read again. The committed cursor follows
-  `Host.commit_position/3`: after every confirmed batch when the operator's
+  `Host.commit_position/3`: after every confirmed batch when the relay's
   input is durable, otherwise once caught up and at most every
   `commit_interval_ms` before, and at stop.
 
@@ -68,7 +68,7 @@ defmodule Flezha.Plugin.Provider.PostgresPoll.Reader do
   The facts the provider's `health/1` judges: a missing table or column, the
   failure run, its last error and the time of the last settled read.
   `:timeout` when the worker does not answer, which is also what a reader
-  waiting out a parked operator's ingest looks like.
+  waiting out a parked relay's ingest looks like.
   """
   @spec probe(pid()) :: {:ok, map()} | :timeout
   def probe(pid), do: ProviderBehaviour.ask(pid, :health_probe)
@@ -119,7 +119,7 @@ defmodule Flezha.Plugin.Provider.PostgresPoll.Reader do
   def handle_info({:DOWN, ref, :process, _child, reason}, %{read: {_pid, ref}} = state),
     do: {:noreply, settle(%{state | read: nil}, {:error, {:exit, reason}})}
 
-  # The operator this reader feeds is gone.
+  # The relay this reader feeds is gone.
   def handle_info({:DOWN, ref, :process, _pid, _reason}, state) do
     case Watch.down(state.watch, ref) do
       {[:host], _watch} -> {:stop, :normal, state}

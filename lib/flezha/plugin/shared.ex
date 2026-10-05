@@ -1,23 +1,23 @@
 defmodule Flezha.Plugin.Shared do
   @moduledoc """
   The running copy of a shareable plugin: one per `(namespace, name)` on each
-  controller where an operator bound to it runs, started and found through
+  controller where a relay bound to it runs, started and found through
   `Flezha.Plugin.Provider.WorkerSup`, or the cluster's one copy of a `single`
   plugin, which its `Flezha.Plugin.Home` starts beside itself.
 
   It holds the plugin in an extension table of its own, which owns the
   provider's workers. It is no stop on the record path: a feeding worker
-  injects each record straight into every bound operator without waiting
-  (`Flezha.Plugin.Host.targets/1`), and the copy only tells it which operators
-  are bound, at each join and leave. An operator whose input is durable runs
+  injects each record straight into every bound relay without waiting
+  (`Flezha.Plugin.Host.targets/1`), and the copy only tells it which relays
+  are bound, at each join and leave. A relay whose input is durable runs
   such a source on its own (`Workers.own_source?/2`).
 
-  When its last operator leaves it stops: at once when the leave was
-  deliberate, after `plugin_idle_stop_ms` when the operator went down or moved,
+  When its last relay leaves it stops: at once when the leave was
+  deliberate, after `plugin_idle_stop_ms` when the relay went down or moved,
   unless one joins first. Every copy is a member of the plugin's directory
   group, which is how a disable, an update and `flz plugin list` find it.
 
-  A controller plugin's copy is the same host with no operator: its table holds
+  A controller plugin's copy is the same host with no relay: its table holds
   the controller catalogue declared here, each hook of which takes the event
   `Flezha.Observability.HookSink` hands over; it listens by joining its hooks'
   directory groups, and it never stops idle. Its home places it
@@ -33,9 +33,9 @@ defmodule Flezha.Plugin.Shared do
 
   use Flezha.Plugin.Host,
     extensions: [
-      {:on_operator_started, :fanout, Flezha.Plugin.Shared},
-      {:on_operator_stopped, :fanout, Flezha.Plugin.Shared},
-      {:on_operator_failed, :fanout, Flezha.Plugin.Shared},
+      {:on_relay_started, :fanout, Flezha.Plugin.Shared},
+      {:on_relay_stopped, :fanout, Flezha.Plugin.Shared},
+      {:on_relay_failed, :fanout, Flezha.Plugin.Shared},
       {:on_dead_letter, :fanout, Flezha.Plugin.Shared},
       {:on_plugin_unhealthy, :fanout, Flezha.Plugin.Shared}
     ]
@@ -45,7 +45,7 @@ defmodule Flezha.Plugin.Shared do
   alias Flezha.Cluster.Directory
   alias Flezha.Config.Durations
   alias Flezha.Identificator
-  alias Flezha.Operator.Overwatch
+  alias Flezha.Relay.Overwatch
   alias Flezha.Plugin
   alias Flezha.Plugin.Extension
   alias Flezha.Plugin.Extension.Table
@@ -63,9 +63,9 @@ defmodule Flezha.Plugin.Shared do
   # Its subscribers read the reason as "join the copy that runs now".
   @retired {:shutdown, :retired}
 
-  @task_sup Flezha.Operator.MessageHandlerTaskSup
+  @task_sup Flezha.Relay.MessageHandlerTaskSup
 
-  # An operator whose input is durable runs a source of its own
+  # A relay whose input is durable runs a source of its own
   # (`Workers.own_source?/2`), so the copy's workers serve none.
   @activation_env %{durable_input: false}
 
@@ -83,7 +83,7 @@ defmodule Flezha.Plugin.Shared do
     # Whether its provider ever injected into the copy itself.
     :misfed,
     hook_groups: MapSet.new(),
-    # Each bound operator's `Flezha.Plugin.Host.target/3`, by its pid.
+    # Each bound relay's `Flezha.Plugin.Host.target/3`, by its pid.
     subscribers: %{},
     watch: Watch.new(),
     dropped: nil,
@@ -94,7 +94,7 @@ defmodule Flezha.Plugin.Shared do
 
   @doc """
   Subscribe `overwatch` to the running copy of `plugin`, starting the one on
-  this controller when none runs. `plugin` is the binding as the operator's
+  this controller when none runs. `plugin` is the binding as the relay's
   table resolved it: the copy's workers stamp its entry channel on what they
   inject. Its input is not durable, or it would run the source on its own.
   """
@@ -106,7 +106,7 @@ defmodule Flezha.Plugin.Shared do
     # The one copy of a `single` plugin runs beside its home, wherever the hub
     # placed it: the running one is taken first, so a copy retiring in a
     # hand-over, which refuses, is passed over for its successor; one that
-    # stopped when its last operator left is started again by the home.
+    # stopped when its last relay left is started again by the home.
     Enum.find_value(Directory.plugin_hosts(namespace, name), &joined(join_copy(&1, target))) ||
       with({:ok, copy} <- home_copy(namespace, name), do: join_copy(copy, target))
   end
@@ -151,11 +151,11 @@ defmodule Flezha.Plugin.Shared do
   A controller plugin's entry with its hooks canonical and checked against the
   catalogue and its provider, and its options against its declaration and its
   provider's preparation, which does no I/O. A controller plugin is never bound
-  to an operator, and names a hook unless its provider runs a worker and takes
+  to a relay, and names a hook unless its provider runs a worker and takes
   no hook at all.
   """
   @spec checked_entry(Plugin.t()) :: {:ok, Plugin.t()} | {:error, term()}
-  def checked_entry(%Plugin{id: name, operator_id: operator_id}) when operator_id != nil,
+  def checked_entry(%Plugin{id: name, relay_id: relay_id}) when relay_id != nil,
     do: {:error, {:plugin_not_bindable, name}}
 
   def checked_entry(%Plugin{provider: provider} = plugin) do
@@ -201,10 +201,10 @@ defmodule Flezha.Plugin.Shared do
   end
 
   # What a copy runs: the plugin with only the options a user writes, no
-  # operator, and every hook it can be bound on, so it holds what any binding
+  # relay, and every hook it can be bound on, so it holds what any binding
   # needs (a websocket's outbound half); a controller plugin's hooks are its
   # entry's own. It keeps the channel it was started with, which a provider may
-  # require; each bound operator's own is its target's.
+  # require; each bound relay's own is its target's.
   @doc false
   def entry(%Plugin{provider: provider} = plugin) do
     hooks =
@@ -212,7 +212,7 @@ defmodule Flezha.Plugin.Shared do
         do: plugin.hooks,
         else: for(hook <- Decl.io_hooks(provider.__provider__()), do: {hook, []})
 
-    %Plugin{Plugin.declared_opts_only(plugin) | operator_id: nil, hooks: hooks}
+    %Plugin{Plugin.declared_opts_only(plugin) | relay_id: nil, hooks: hooks}
   end
 
   # A changed entry keeps the channel the running copy was started with.
@@ -267,11 +267,11 @@ defmodule Flezha.Plugin.Shared do
     :exit, _gone -> :ok
   end
 
-  @doc "The targets of the operators subscribed to `copy`: a `single` hand-over's state."
+  @doc "The targets of the relays subscribed to `copy`: a `single` hand-over's state."
   @spec subscribers(pid()) :: [Host.target()]
   def subscribers(copy), do: call(copy, :subscribers)
 
-  @doc "Subscribe every operator a hand-over carried."
+  @doc "Subscribe every relay a hand-over carried."
   @spec adopt(pid(), [Host.target()]) :: :ok
   def adopt(copy, targets), do: Enum.each(targets, &call(copy, {:join, &1}))
 
@@ -409,8 +409,8 @@ defmodule Flezha.Plugin.Shared do
     end
   end
 
-  # A committed value describes the one copy every operator shares, so it
-  # belongs to the plugin's entry: it is written through an operator bound to
+  # A committed value describes the one copy every relay shares, so it
+  # belongs to the plugin's entry: it is written through a relay bound to
   # it, the one path that holds the start authority's write.
   def handle_cast({:plugin_opt_persist, id, key, value}, state) do
     table = Table.put_plugin_opt(state.table, id, key, value)
@@ -527,7 +527,7 @@ defmodule Flezha.Plugin.Shared do
 
   ## Private
 
-  # A feeding provider's workers inject into the bound operators themselves;
+  # A feeding provider's workers inject into the bound relays themselves;
   # each is told of every change of them, so none looks them up per record.
   defp retarget(%{plugin: %Plugin{provider: provider}, table: table, name: name} = state) do
     if provider.__provider__().feeds do
@@ -607,7 +607,7 @@ defmodule Flezha.Plugin.Shared do
     do: match?(%{connected: false}, Health.inspect_state(table, name))
 
   # The provider's own worker went down: the copy restarts it after a probe
-  # window, since no convergence loop watches a table that belongs to no operator.
+  # window, since no convergence loop watches a table that belongs to no relay.
   defp worker_down(state, ref, pid, reason) do
     case Table.handle_down(state.table, ref, pid, reason) do
       {:ok, table} ->

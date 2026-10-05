@@ -48,13 +48,13 @@ start_runner() {
   until_ok 90 "flz runner list --namespace $NS | grep -q ${NS}_"
 }
 healthy() { # seconds, partitions
-  until_ok "$1" "flz operator info trade_watcher --namespace $NS | grep -cE '^  p[0-9]+ .* healthy\$' | grep -qx $2"
+  until_ok "$1" "flz relay info trade_watcher --namespace $NS | grep -cE '^  p[0-9]+ .* healthy\$' | grep -qx $2"
 }
-finished() { # operator id, seconds
-  until_ok "$2" "flz operator info $1 --namespace $NS | awk '/^Operator: $1\$/{f=1} f && /Phase:/{print \$2; exit}' | grep -qx finished"
+finished() { # relay id, seconds
+  until_ok "$2" "flz relay info $1 --namespace $NS | awk '/^Relay: $1\$/{f=1} f && /Phase:/{print \$2; exit}' | grep -qx finished"
 }
 trade() { # partition, symbol, price
-  echo "flz operator send 'trade_watcher#$1' --namespace $NS --channel trades --text '{\"channel\": \"trade\", \"data\": [{\"symbol\": \"$2\", \"price\": $3, \"ord_type\": \"market\"}]}'"
+  echo "flz relay send 'trade_watcher#$1' --namespace $NS --channel trades --text '{\"channel\": \"trade\", \"data\": [{\"symbol\": \"$2\", \"price\": $3, \"ord_type\": \"market\"}]}'"
 }
 
 authorization() {
@@ -80,9 +80,9 @@ partitioning() {
   runner_log_since "$mark" start
   step runner-list "flz runner list --namespace $NS"
   step role-bind "flz role bind runner@$NS spawner $NS"
-  step start "flz operator start trade_watcher --id trade_watcher --partitions 2 --namespace $NS"
+  step start "flz relay start trade_watcher --id trade_watcher --partitions 2 --namespace $NS"
   healthy 60 2
-  step info "flz operator info trade_watcher --namespace $NS"
+  step info "flz relay info trade_watcher --namespace $NS"
   mark=$(runner_log_mark)
   step send-p0-1 "$(trade p0 EUR/USD 1.0850)"
   step send-p0-2 "$(trade p0 EUR/USD 1.0853)"
@@ -92,36 +92,36 @@ partitioning() {
   runner_log_since "$mark" sends
   step state-eurusd "flz state get trade_watcher/track_prices/EUR/USD --namespace $NS"
   step state-all "flz state get trade_watcher/track_prices --namespace $NS"
-  step scale "flz operator scale trade_watcher 3 --namespace $NS"
+  step scale "flz relay scale trade_watcher 3 --namespace $NS"
   healthy 60 3
-  step info-after-scale "flz operator info trade_watcher --namespace $NS"
+  step info-after-scale "flz relay info trade_watcher --namespace $NS"
   step state-eurusd-after-scale "flz state get trade_watcher/track_prices/EUR/USD --namespace $NS"
 }
 
 orders() {
   local mark
   mark=$(runner_log_mark)
-  step start-filled "flz operator start order_executor --id order_by_hand --namespace $NS --text '{\"symbol\": \"EUR/USD\", \"quantity\": 10}' --channel order"
+  step start-filled "flz relay start order_executor --id order_by_hand --namespace $NS --text '{\"symbol\": \"EUR/USD\", \"quantity\": 10}' --channel order"
   finished order_by_hand 30
-  step info-filled "flz operator info order_by_hand --namespace $NS"
-  step start-refused "flz operator start order_executor --id order_too_big --namespace $NS --text '{\"symbol\": \"EUR/USD\", \"quantity\": 500}' --channel order"
+  step info-filled "flz relay info order_by_hand --namespace $NS"
+  step start-refused "flz relay start order_executor --id order_too_big --namespace $NS --text '{\"symbol\": \"EUR/USD\", \"quantity\": 500}' --channel order"
   finished order_too_big 60
-  step info-refused "flz operator info order_too_big --namespace $NS"
+  step info-refused "flz relay info order_too_big --namespace $NS"
   runner_log_since "$mark" orders
 }
 
 plugins() {
   local mark
   mark=$(runner_log_mark)
-  step enable-exchange "flz plugin enable exchange operator_websocket --operator_id=trade_watcher --namespace $NS --Xuri=ws://localhost:$FLEZHA_TESTNET_WS_PORT/ --Xchannel=trades --Xsubscription_items='[\"EUR/USD\", \"GBP/USD\", \"USD/JPY\"]' --Xsubscribe_template='{\"method\": \"subscribe\", \"params\": {\"channel\": \"trade\", \"symbol\": {{items}}}, \"req_id\": {{req_id}}}' --Xunsubscribe_template='{\"method\": \"unsubscribe\", \"params\": {\"channel\": \"trade\", \"symbol\": {{items}}}, \"req_id\": {{req_id}}}'"
+  step enable-exchange "flz plugin enable exchange relay_websocket --relay_id=trade_watcher --namespace $NS --Xuri=ws://localhost:$FLEZHA_TESTNET_WS_PORT/ --Xchannel=trades --Xsubscription_items='[\"EUR/USD\", \"GBP/USD\", \"USD/JPY\"]' --Xsubscribe_template='{\"method\": \"subscribe\", \"params\": {\"channel\": \"trade\", \"symbol\": {{items}}}, \"req_id\": {{req_id}}}' --Xunsubscribe_template='{\"method\": \"unsubscribe\", \"params\": {\"channel\": \"trade\", \"symbol\": {{items}}}, \"req_id\": {{req_id}}}'"
   sleep 20
-  step info "flz operator info trade_watcher --namespace $NS"
+  step info "flz relay info trade_watcher --namespace $NS"
   step state "flz state get trade_watcher/track_prices --namespace $NS"
   step dlq-list "flz dlq list 'trade_watcher#p1' --namespace $NS"
-  step enable-signals "flz plugin enable signals operator_file_sink --operator_id=trade_watcher --namespace $NS --hook=on_output --Xpath=signals.txt --Xchannel_out=signals"
+  step enable-signals "flz plugin enable signals relay_file_sink --relay_id=trade_watcher --namespace $NS --hook=on_output --Xpath=signals.txt --Xchannel_out=signals"
   until_ok 120 "[ \$(wc -l <$FLEZHA_CTL_DIR/app_data/files/signals.txt) -ge 4 ]"
   step signals "cd $FLEZHA_CTL_DIR && head -4 app_data/files/signals.txt"
-  step start-order-with-plugin "flz operator start order_executor --id order_1 --namespace $NS --text '{\"symbol\": \"EUR/USD\", \"quantity\": 10}' --channel order --plugins '[{\"name\": \"order_1_file\", \"provider\": \"operator_file_sink\", \"opts\": {\"path\": \"order_1.txt\"}, \"hooks\": [[\"on_output\", {}]]}]'"
+  step start-order-with-plugin "flz relay start order_executor --id order_1 --namespace $NS --text '{\"symbol\": \"EUR/USD\", \"quantity\": 10}' --channel order --plugins '[{\"name\": \"order_1_file\", \"provider\": \"relay_file_sink\", \"opts\": {\"path\": \"order_1.txt\"}, \"hooks\": [[\"on_output\", {}]]}]'"
   finished order_1 30
   step order-file "cd $FLEZHA_CTL_DIR && wc -c app_data/files/order_1.txt"
   runner_log_since "$mark" plugins
@@ -136,12 +136,12 @@ durability-runner() {
   mark=$(runner_log_mark)
   "$ENV" stop desk TERM
   runner_log_since "$mark" clean-stop
-  until_ok 60 "! flz operator info trade_watcher --namespace $NS | grep -qE '^  p[0-9]+ .* healthy\$'"
-  step info-no-runner "flz operator info trade_watcher --namespace $NS"
+  until_ok 60 "! flz relay info trade_watcher --namespace $NS | grep -qE '^  p[0-9]+ .* healthy\$'"
+  step info-no-runner "flz relay info trade_watcher --namespace $NS"
   step state-no-runner "flz state get trade_watcher/track_prices --namespace $NS"
   start_runner
   healthy 90 3
-  step info-back "flz operator info trade_watcher --namespace $NS"
+  step info-back "flz relay info trade_watcher --namespace $NS"
   step state-after-clean-stop "flz state get trade_watcher/track_prices --namespace $NS"
 
   step runner-list "flz runner list --namespace $NS"
@@ -151,7 +151,7 @@ durability-runner() {
   step state-after-crash "flz state get trade_watcher/track_prices --namespace $NS"
 
   mark=$(runner_log_mark)
-  step order-start "flz operator start order_executor --id order_2 --namespace $NS --text '{\"symbol\": \"EUR/USD\", \"quantity\": 10}' --channel order"
+  step order-start "flz relay start order_executor --id order_2 --namespace $NS --text '{\"symbol\": \"EUR/USD\", \"quantity\": 10}' --channel order"
   sleep 2
   step order-journal "flz state journal order_2 --namespace $NS"
   "$ENV" stop desk KILL
@@ -160,7 +160,7 @@ durability-runner() {
   start_runner
   finished order_2 60
   step order-journal-after "flz state journal order_2 --namespace $NS"
-  step order-info "flz operator info order_2 --namespace $NS"
+  step order-info "flz relay info order_2 --namespace $NS"
   runner_log_since "$mark" order-after-crash
 }
 
@@ -179,7 +179,7 @@ durability-controller() {
 durability-undo() {
   local mark
   mark=$(runner_log_mark)
-  step send-poison "flz operator send 'trade_watcher#p1' --namespace $NS --channel trades --text '{\"channel\": \"trade\", \"data\": [{\"symbol\": \"EUR/USD\", \"price\": \"one euro\", \"ord_type\": \"market\"}]}'"
+  step send-poison "flz relay send 'trade_watcher#p1' --namespace $NS --channel trades --text '{\"channel\": \"trade\", \"data\": [{\"symbol\": \"EUR/USD\", \"price\": \"one euro\", \"ord_type\": \"market\"}]}'"
   until_ok 30 "flz dlq list 'trade_watcher#p1' --namespace $NS | grep -q '^trade_watcher'"
   runner_log_since "$mark" poison
   step dlq-list "flz dlq list 'trade_watcher#p1' --namespace $NS"

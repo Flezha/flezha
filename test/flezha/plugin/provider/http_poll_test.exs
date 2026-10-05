@@ -69,7 +69,7 @@ defmodule Flezha.Plugin.Provider.HttpPollTest do
 
       # Handover / plugin restart: the table stops the worker it started and the
       # next activation starts a fresh one, which carries no hash, so it
-      # re-seeds the rejoining operator with content that never changed.
+      # re-seeds the rejoining relay with content that never changed.
       ref = Process.monitor(poller)
       :ok = stop_worker(poller)
       assert_receive {:DOWN, ^ref, :process, ^poller, _}, 2_000
@@ -104,7 +104,7 @@ defmodule Flezha.Plugin.Provider.HttpPollTest do
                       %{reason: {:ingest, :refused}}},
                      2_000
 
-      # Nothing about the endpoint changed, but the operator never took the
+      # Nothing about the endpoint changed, but the relay never took the
       # payload — so the poller must offer it again rather than read it as
       # delivered and go silent forever.
       send(poller, :poll)
@@ -311,7 +311,7 @@ defmodule Flezha.Plugin.Provider.HttpPollTest do
       assert {"cfg-v1", _} = take_ingest(:ok, 5_000)
     end
 
-    test "the poller stops when the host operator goes down" do
+    test "the poller stops when the host relay goes down" do
       origin = start_origin(body: "cfg-v1")
       parent = self()
 
@@ -339,7 +339,7 @@ defmodule Flezha.Plugin.Provider.HttpPollTest do
         opts: base_opts(origin),
         hooks: [{:on_terminate, []}],
         namespace: "default",
-        operator_id: "detector"
+        relay_id: "detector"
       }
 
       assert {:ok, table} = Table.bulk_subscribe(Table.new(@catalog), [{"cfg", plugin}])

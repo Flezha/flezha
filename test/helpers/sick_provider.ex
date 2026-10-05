@@ -1,6 +1,6 @@
 defmodule FlezhaTest.SickProvider do
   @moduledoc """
-  A plugin-health test double: an operator plugin whose health verdict a test
+  A plugin-health test double: a relay plugin whose health verdict a test
   sets and whose activations it counts, through `:persistent_term`.
   """
   use Flezha.Plugin.ProviderBehaviour

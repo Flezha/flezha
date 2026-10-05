@@ -1,7 +1,7 @@
 defmodule FlezhaTest.Helper.StepsResumeHarness do
   @moduledoc """
   What a durable-steps end-to-end scenario drives: a runner on its
-  transport, a steps operator on it, an output sink that collects into a
+  transport, a steps relay on it, an output sink that collects into a
   process, and the full SIGKILL-mid-run to respawn to resume flow.
 
   Boots on `ctx.transport` rather than the UDS the tier harness pins, and waits
@@ -15,15 +15,15 @@ defmodule FlezhaTest.Helper.StepsResumeHarness do
   import FlezhaTest.Helper.TierE2EHarness,
     only: [cleanup: 3, os_pid: 1, sigkill: 1, unique: 1, unique_id_path: 0]
 
-  alias Flezha.Operator.Builder
+  alias Flezha.Relay.Builder
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.HubManager
-  alias Flezha.Service.OperatorManager
+  alias Flezha.Service.RelayManager
   alias Flezha.State.Completion
   alias Flezha.State.Paths
   alias Flezha.State.TaskJournal
   alias Flezha.SDK.RecordFrame
-  alias FlezhaTest.Fixtures.OperatorFixture
+  alias FlezhaTest.Fixtures.RelayFixture
   alias FlezhaTest.Helper.NodeTestHelper
 
   def collect_loop(acc) do
@@ -51,7 +51,7 @@ defmodule FlezhaTest.Helper.StepsResumeHarness do
     %Flezha.Plugin{
       id: id,
       namespace: nil,
-      operator_id: nil,
+      relay_id: nil,
       provider: Flezha.Plugin.Provider.BeamMsgForward,
       opts: %{recv_pid: collector, include_metadata: true},
       hooks: [{:on_output, []}]
@@ -62,52 +62,52 @@ defmodule FlezhaTest.Helper.StepsResumeHarness do
   # Cell writers to owe nothing more, then take everything: an unexpected EXTRA
   # delivery still fails the exact-count assertions, because it lands before
   # the outboxes are settled.
-  def await_outputs(collector, count, operator_id) do
+  def await_outputs(collector, count, relay_id) do
     NodeTestHelper.wait_until(fn -> length(collected(collector)) >= count end, 30_000)
-    assert outboxes_settled?(operator_id), "a Cell writer still owes output"
+    assert outboxes_settled?(relay_id), "a Cell writer still owes output"
     collected_with_meta(collector)
   end
 
-  def outboxes_settled?(operator_id),
+  def outboxes_settled?(relay_id),
     do:
       NodeTestHelper.wait_until(
-        fn -> TaskJournal.owed_outputs(operator_id) == 0 end,
+        fn -> TaskJournal.owed_outputs(relay_id) == 0 end,
         30_000
       )
 
   # --- durable-loop helpers ---------------------------------------------------
 
-  def send_turn(namespace, operator_id, text, channel \\ "in") do
-    :ok = OperatorManager.send_io(operator_id, namespace, text, %{"channel" => channel})
+  def send_turn(namespace, relay_id, text, channel \\ "in") do
+    :ok = RelayManager.send_io(relay_id, namespace, text, %{"channel" => channel})
   end
 
-  def committed_iters(operator_id) do
-    {:ok, entries} = TaskJournal.read(operator_id)
+  def committed_iters(relay_id) do
+    {:ok, entries} = TaskJournal.read(relay_id)
     for %{type: :iter_committed, iter: iter} <- entries, do: iter
   end
 
-  def committed_tasks(operator_id) do
-    {:ok, entries} = TaskJournal.read(operator_id)
+  def committed_tasks(relay_id) do
+    {:ok, entries} = TaskJournal.read(relay_id)
     for %{type: :task_committed, task_idx: idx} <- entries, do: idx
   end
 
   # Compensation-done markers the controller wrote, one per compensated Cell,
-  # across the operator or under one tasklet.
-  def comp_done_count(operator_id, tasklet \\ "**") do
-    [Paths.class_dir(operator_id), tasklet, "*.comp_done"]
+  # across the relay or under one tasklet.
+  def comp_done_count(relay_id, tasklet \\ "**") do
+    [Paths.class_dir(relay_id), tasklet, "*.comp_done"]
     |> Path.join()
     |> Path.wildcard()
     |> length()
   end
 
-  def consumed_offsets(operator_id) do
-    {:ok, entries} = TaskJournal.read(operator_id)
+  def consumed_offsets(relay_id) do
+    {:ok, entries} = TaskJournal.read(relay_id)
     for %{type: :iter_committed, payload: %{consumed_offset: o}} <- entries, do: o
   end
 
   # A pass in flight: its root committed, the iteration not yet.
-  def root_committed_without_iteration?(operator_id) do
-    {:ok, entries} = TaskJournal.read(operator_id)
+  def root_committed_without_iteration?(relay_id) do
+    {:ok, entries} = TaskJournal.read(relay_id)
 
     Enum.any?(entries, &(&1.type == :task_committed and &1.task_idx == 0)) and
       not Enum.any?(entries, &(&1.type == :iter_committed))
@@ -132,93 +132,93 @@ defmodule FlezhaTest.Helper.StepsResumeHarness do
     {port, runner_id}
   end
 
-  # Start one steps operator of `factory_id` on `namespace`, returning the
+  # Start one steps relay of `factory_id` on `namespace`, returning the
   # start info. Every once chain here takes the same first message,
-  # `{"seed":"go"}`, delivered as `flz operator start --text` delivers one; a
+  # `{"seed":"go"}`, delivered as `flz relay start --text` delivers one; a
   # loop passes `first_message: nil` and sends its turns itself.
   #
-  # `plugins:` are enabled for this operator and bound
-  # (`FlezhaTest.Fixtures.OperatorFixture.bindings/3`).
-  def start_steps(namespace, operator_id, factory_id, opts) do
+  # `plugins:` are enabled for this relay and bound
+  # (`FlezhaTest.Fixtures.RelayFixture.bindings/3`).
+  def start_steps(namespace, relay_id, factory_id, opts) do
     {first_message, opts} = Keyword.pop(opts, :first_message, ~s({"seed":"go"}))
     opts = if first_message, do: [{:seed_input, {first_message, %{}}} | opts], else: opts
-    opts = bound(namespace, operator_id, opts)
+    opts = bound(namespace, relay_id, opts)
 
     builder = %Builder{
-      id: operator_id,
+      id: relay_id,
       factory_id: factory_id,
       run: :steps,
       init_values: %{},
       opts: opts
     }
 
-    assert {:ok, info} = OperatorManager.start_operator(namespace, builder)
+    assert {:ok, info} = RelayManager.start_relay(namespace, builder)
     info
   end
 
-  # Start one flow operator of `factory_id` on `namespace`.
-  def start_stream(namespace, operator_id, factory_id, opts) do
-    opts = bound(namespace, operator_id, opts)
-    builder = %Builder{id: operator_id, factory_id: factory_id, init_values: %{}, opts: opts}
-    assert {:ok, info} = OperatorManager.start_operator(namespace, builder)
+  # Start one flow relay of `factory_id` on `namespace`.
+  def start_stream(namespace, relay_id, factory_id, opts) do
+    opts = bound(namespace, relay_id, opts)
+    builder = %Builder{id: relay_id, factory_id: factory_id, init_values: %{}, opts: opts}
+    assert {:ok, info} = RelayManager.start_relay(namespace, builder)
     info
   end
 
-  # One input on the operator's first entry channel.
-  def send_input(namespace, operator_id, text),
-    do: :ok = OperatorManager.send_io(operator_id, namespace, text, %{})
+  # One input on the relay's first entry channel.
+  def send_input(namespace, relay_id, text),
+    do: :ok = RelayManager.send_io(relay_id, namespace, text, %{})
 
   # Wait for the run's terminal completion record to carry `status`.
-  def await_status(operator_id, status, timeout_ms) do
+  def await_status(relay_id, status, timeout_ms) do
     assert NodeTestHelper.wait_until(
-             fn -> match?({:ok, %{status: ^status}}, Completion.read(operator_id)) end,
+             fn -> match?({:ok, %{status: ^status}}, Completion.read(relay_id)) end,
              timeout_ms
            ),
            "run never completed with status #{inspect(status)}"
   end
 
   # Asleep: evicted from its runner, its Overwatch kept.
-  def suspended?(namespace, operator_id) do
+  def suspended?(namespace, relay_id) do
     match?(
       {:ok, %{suspended: true}},
-      OperatorManager.get_overwatch_state(namespace, operator_id)
+      RelayManager.get_overwatch_state(namespace, relay_id)
     )
   end
 
-  def registered?(namespace, operator_id) do
-    match?({:ok, pid} when is_pid(pid), HubManager.get_pid(namespace, operator_id))
+  def registered?(namespace, relay_id) do
+    match?({:ok, pid} when is_pid(pid), HubManager.get_pid(namespace, relay_id))
   end
 
-  # Drive one operator through the full SIGKILL-mid-run → respawn → resume flow
-  # and assert the terminal outcome. `mid_run?` is a predicate on the operator
+  # Drive one relay through the full SIGKILL-mid-run → respawn → resume flow
+  # and assert the terminal outcome. `mid_run?` is a predicate on the relay
   # id that becomes true once the durable mid-run point is reached on the first
   # runner (which never completes it — the release env is unset there).
   # `rebind:` is how the instance reaches the replacement: `:restart` (its
   # connect on the same identity binds it) or `:heal` (a replacement on a new
   # identity, which the running convergence loop moves it onto).
-  # Returns the operator id for scenario-specific assertions.
+  # Returns the relay id for scenario-specific assertions.
   def drive_crash_resume(ctx, factory_id, terminal_status, mid_run?, opts \\ []) do
     {before_rebind, opts} = Keyword.pop(opts, :before_rebind)
     {rebind, builder_opts} = Keyword.pop(opts, :rebind, :restart)
     namespace = unique("steps_crash")
-    operator_id = unique(factory_id)
+    relay_id = unique(factory_id)
     id_path = unique_id_path()
 
-    on_exit(fn -> cleanup(namespace, operator_id, id_path) end)
+    on_exit(fn -> cleanup(namespace, relay_id, id_path) end)
 
-    # Runner A (no release env): the operator commits, then blocks mid-chain.
+    # Runner A (no release env): the relay commits, then blocks mid-chain.
     {port_a, exec_a} = boot_runner(namespace, ctx, id_path, release?: false)
 
-    info = start_steps(namespace, operator_id, factory_id, builder_opts)
+    info = start_steps(namespace, relay_id, factory_id, builder_opts)
     assert info.runner_id == exec_a
 
-    assert NodeTestHelper.wait_until(fn -> mid_run?.(operator_id) end, 30_000),
-           "operator never reached its durable mid-run point on the first runner"
+    assert NodeTestHelper.wait_until(fn -> mid_run?.(relay_id) end, 30_000),
+           "relay never reached its durable mid-run point on the first runner"
 
-    refute Completion.exists?(operator_id),
-           "operator terminated before the crash — it did not block mid-chain"
+    refute Completion.exists?(relay_id),
+           "relay terminated before the crash — it did not block mid-chain"
 
-    assert registered?(namespace, operator_id)
+    assert registered?(namespace, relay_id)
 
     # `before_rebind` reads the durable state the crash left, before the rebind
     # (which is what triggers the restore); `:heal` gives the replacement an
@@ -226,16 +226,16 @@ defmodule FlezhaTest.Helper.StepsResumeHarness do
     id_path_b = if rebind == :heal, do: unique_id_path(), else: id_path
 
     replace_runner(namespace, ctx, {port_a, exec_a}, id_path_b,
-      before_boot: fn -> if before_rebind, do: before_rebind.(operator_id) end
+      before_boot: fn -> if before_rebind, do: before_rebind.(relay_id) end
     )
 
-    # The resumed operator completes with the expected terminal status.
-    await_status(operator_id, terminal_status, 60_000)
+    # The resumed relay completes with the expected terminal status.
+    await_status(relay_id, terminal_status, 60_000)
 
-    assert NodeTestHelper.wait_until(fn -> not registered?(namespace, operator_id) end, 15_000),
-           "completed operator was never deregistered"
+    assert NodeTestHelper.wait_until(fn -> not registered?(namespace, relay_id) end, 15_000),
+           "completed relay was never deregistered"
 
-    operator_id
+    relay_id
   end
 
   # SIGKILL the runner; a released replacement booted on `id_path` re-presents
@@ -271,13 +271,13 @@ defmodule FlezhaTest.Helper.StepsResumeHarness do
     seqs
   end
 
-  defp bound(namespace, operator_id, opts) do
+  defp bound(namespace, relay_id, opts) do
     case Keyword.pop(opts, :plugins) do
       {nil, opts} ->
         opts
 
       {plugins, opts} ->
-        [{:bindings, OperatorFixture.bindings(namespace, operator_id, plugins)} | opts]
+        [{:bindings, RelayFixture.bindings(namespace, relay_id, plugins)} | opts]
     end
   end
 end

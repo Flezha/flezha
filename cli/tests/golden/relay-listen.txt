@@ -1,0 +1,31 @@
+flz relay listen - Print the frames a relay emits or ingests
+
+USAGE:
+    flz relay listen <relay_id> [OPTIONS]
+
+OPTIONS:
+    --input                   Listen to what the relay ingests, not what it emits
+    --duration-ms <N>         Stop after N milliseconds (default 30000)
+    --output <text|json>      Output format (default: text)
+    --json                    The same as --output json
+    --namespace <ns>          Namespace the relay runs in (default: default)
+
+OUTPUT:
+    One line per frame: the channel, a tab and the payload. A frame from a
+    keyed sink adds a third field, cell=... seq=... key=..., and a frame
+    with no channel prints - in its place. A part, a preview a tasklet sent
+    while it ran, begins its third field part=<n> attempt=<a>; a dead-lettered
+    input prints the channel, the error's message and error=<code>
+    entry=<entry>. With --json each frame is one object carrying kind
+    (output, input, part or dead_lettered), channel, payload (payload_base64
+    for bytes that are not text, error for a dead-lettered input) and the
+    frame's whole metadata map.
+
+    The listener is detached when the window closes, on Ctrl-C, when the
+    caller goes away and when the relay ends. A partition group is
+    listened to by its group id.
+
+EXAMPLES:
+    flz relay listen my_echo --duration-ms 10000
+    flz relay listen my_echo --input
+    flz relay listen ohlc --json

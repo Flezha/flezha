@@ -6,7 +6,7 @@ defmodule Flezha.Shutdown.SignalHandler do
   place before any other service can observe a delivered signal.
 
   Signals reach this GenServer through `erl_signal_server`, the kernel
-  `gen_event` that ERTS notifies. `Relay` is registered there and
+  `gen_event` that ERTS notifies. `Forwarder` is registered there and
   **replaces** kernel's own `erl_signal_handler`: that handler calls
   `init:stop()` on `sigterm` by itself, which would drive the shutdown
   through `Flezha.Application.prep_stop/1` and record it as
@@ -56,7 +56,7 @@ defmodule Flezha.Shutdown.SignalHandler do
 
   defstruct count: 0, enabled: true, status: :ok, signal_server: :erl_signal_server
 
-  defmodule Relay do
+  defmodule Forwarder do
     @moduledoc false
     # `erl_signal_server` gen_event callback. Forwards and nothing else:
     # gen_event removes a handler that raises, and with kernel's handler
@@ -152,7 +152,7 @@ defmodule Flezha.Shutdown.SignalHandler do
         # SIGTERM is already `handle` by default; assert it explicitly so the
         # disposition is not left to the platform.
         :os.set_signal(:sigterm, :handle)
-        :ok = Relay.install(state.signal_server, self())
+        :ok = Forwarder.install(state.signal_server, self())
 
         Logger.info("[shutdown] OS signal handlers installed (SIGTERM)")
         %{state | status: :ok}
@@ -173,7 +173,7 @@ defmodule Flezha.Shutdown.SignalHandler do
   def handle_info(signal, state) when signal in [:sigterm, :sigint],
     do: handle_signal(signal, state)
 
-  # Kernel's `erl_signal_handler` owned these before Relay replaced it;
+  # Kernel's `erl_signal_handler` owned these before Forwarder replaced it;
   # its behaviour is reproduced so only SIGTERM's disposition changes.
   def handle_info(:sigquit, state) do
     :erlang.halt()

@@ -3,8 +3,8 @@ defmodule Flezha.Plugin.ProviderBehaviour do
   The plugin provider contract, and the shared helpers every provider uses to
   honour it.
 
-  A provider is ONE declaration, of an operator plugin (`type: :operator`, the
-  default), which acts on the records passing through the operators it is bound
+  A provider is ONE declaration, of a relay plugin (`type: :relay`, the
+  default), which acts on the records passing through the relays it is bound
   to, or of a controller plugin (`type: :controller`), which is bound to none
   and is told what happened in its namespace. `use ProviderBehaviour, options:
   rows, worker: spec` names every option the provider takes — type, default, whether it is
@@ -32,9 +32,9 @@ defmodule Flezha.Plugin.ProviderBehaviour do
     host can trust without asking the code loader.
 
     `feeds` is the one fact the module cannot be read for: whether the provider's
-    own worker injects payloads into the operator. It is declared, because a
+    own worker injects payloads into the relay. It is declared, because a
     callback list cannot say it — see `channel_jobs/2`. `shareable` is the other:
-    whether one running copy can serve several bound operators, which a file
+    whether one running copy can serve several bound relays, which a file
     reader with one offset or a server on one port cannot. `telemetry` names the
     verbs a provider emits beyond the shared vocabulary, each a metric or an
     event, which the telemetry bridge exports under the provider's name.
@@ -90,8 +90,8 @@ defmodule Flezha.Plugin.ProviderBehaviour do
       do: for({name, row} <- options, Keyword.get(row, :transient, false), do: name)
 
     @doc """
-    The hooks on which the provider acts on records passing through an
-    operator, of those it defines: what any binding of a plugin may hook it on.
+    The hooks on which the provider acts on records passing through a
+    relay, of those it defines: what any binding of a plugin may hook it on.
     """
     @spec io_hooks(t()) :: [atom()]
     def io_hooks(%__MODULE__{extensions: extensions}),
@@ -122,7 +122,7 @@ defmodule Flezha.Plugin.ProviderBehaviour do
 
   alias Flezha.Config.Durations
 
-  @callback plugin_type() :: :operator | :controller
+  @callback plugin_type() :: :relay | :controller
   @callback build(map()) :: {:ok, struct()} | {:error, term()}
   @callback help(provider_id :: String.t()) :: String.t()
   @callback provider_info() :: map()
@@ -136,7 +136,7 @@ defmodule Flezha.Plugin.ProviderBehaviour do
   @doc """
   Validate and normalise the plugin's options. Deliberately performs NO upstream
   I/O and starts no process — a declared worker is started by the table at
-  activation, so a plugin on an operator whose SDK side never binds holds
+  activation, so a plugin on a relay whose SDK side never binds holds
   nothing.
 
   Default: the options as given.
@@ -146,7 +146,7 @@ defmodule Flezha.Plugin.ProviderBehaviour do
 
   @doc """
   Acquire the provider's upstream resources — TLS connect, subscribe handshake,
-  downstream attach — after the operator's SDK side has confirmed bound.
+  downstream attach — after the relay's SDK side has confirmed bound.
 
   Default: nothing to acquire. A declared worker is already started by the table
   before this is called, so a provider whose activation IS its worker overrides
@@ -182,7 +182,7 @@ defmodule Flezha.Plugin.ProviderBehaviour do
 
   @doc """
   Optional user-facing detail for a *running* provider instance, rendered
-  by `flz operator info` beneath the plugin that reported it. `opts` is the
+  by `flz relay info` beneath the plugin that reported it. `opts` is the
   provider's stored opts with `:owned_pid` injected, exactly as for `health/1`.
 
   This is for state a user must be able to see and the plugin's static
@@ -199,7 +199,7 @@ defmodule Flezha.Plugin.ProviderBehaviour do
   @doc """
   Optional teardown for a provider that holds something the table cannot see.
   The declared workers are stopped by the table on both exits — a plugin disable
-  and an operator teardown — so this is only for what is neither a worker nor
+  and a relay teardown — so this is only for what is neither a worker nor
   an option.
 
   Default `:ok`. It must be idempotent, since a disable followed by a stop calls
@@ -208,7 +208,7 @@ defmodule Flezha.Plugin.ProviderBehaviour do
   @callback terminate_provider(opts :: map()) :: :ok
 
   @doc "Dispatch callbacks. A provider implements the ones it can be hooked on."
-  @callback on_operator_init(ctx :: struct(), opts :: map()) :: term()
+  @callback on_relay_init(ctx :: struct(), opts :: map()) :: term()
   @callback on_input(ctx :: struct(), opts :: map()) :: term()
   @callback on_output(ctx :: struct(), opts :: map()) :: term()
   @callback on_interval(ctx :: struct(), opts :: map()) :: term()
@@ -224,9 +224,9 @@ defmodule Flezha.Plugin.ProviderBehaviour do
   `controller`, `at`, `text` and the hook's own fields) and returns quickly; a
   provider that does slow I/O hands the event to its own worker.
   """
-  @callback on_operator_started(event :: map(), opts :: map()) :: term()
-  @callback on_operator_stopped(event :: map(), opts :: map()) :: term()
-  @callback on_operator_failed(event :: map(), opts :: map()) :: term()
+  @callback on_relay_started(event :: map(), opts :: map()) :: term()
+  @callback on_relay_stopped(event :: map(), opts :: map()) :: term()
+  @callback on_relay_failed(event :: map(), opts :: map()) :: term()
   @callback on_dead_letter(event :: map(), opts :: map()) :: term()
   @callback on_plugin_unhealthy(event :: map(), opts :: map()) :: term()
 
@@ -246,7 +246,7 @@ defmodule Flezha.Plugin.ProviderBehaviour do
   ]
 
   @extension_callbacks [
-    :on_operator_init,
+    :on_relay_init,
     :on_input,
     :on_output,
     :on_interval,
@@ -257,9 +257,9 @@ defmodule Flezha.Plugin.ProviderBehaviour do
   ]
 
   @controller_callbacks [
-    :on_operator_started,
-    :on_operator_stopped,
-    :on_operator_failed,
+    :on_relay_started,
+    :on_relay_stopped,
+    :on_relay_failed,
     :on_dead_letter,
     :on_plugin_unhealthy
   ]
@@ -271,7 +271,7 @@ defmodule Flezha.Plugin.ProviderBehaviour do
     health: 1,
     inspect_state: 1,
     terminate_provider: 1,
-    on_operator_init: 2,
+    on_relay_init: 2,
     on_input: 2,
     on_output: 2,
     on_interval: 2,
@@ -279,9 +279,9 @@ defmodule Flezha.Plugin.ProviderBehaviour do
     on_snapshot: 2,
     on_terminate: 2,
     on_preview: 2,
-    on_operator_started: 2,
-    on_operator_stopped: 2,
-    on_operator_failed: 2,
+    on_relay_started: 2,
+    on_relay_stopped: 2,
+    on_relay_failed: 2,
     on_dead_letter: 2,
     on_plugin_unhealthy: 2,
     reconfigure: 2
@@ -291,7 +291,7 @@ defmodule Flezha.Plugin.ProviderBehaviour do
   @spec lifecycle_callbacks() :: keyword(arity())
   def lifecycle_callbacks(), do: @lifecycle_callbacks
 
-  @doc "The dispatch callbacks an operator plugin's hook can name."
+  @doc "The dispatch callbacks a relay plugin's hook can name."
   @spec extension_callbacks() :: [atom()]
   def extension_callbacks(), do: @extension_callbacks
 
@@ -391,12 +391,12 @@ defmodule Flezha.Plugin.ProviderBehaviour do
 
   @doc """
   The jobs a plugin's channel option can name: `:in` when its provider feeds the
-  operator, `:out` when the plugin acts on the records passing through it.
+  relay, `:out` when the plugin acts on the records passing through it.
   Both, one, or neither.
 
   The two are independent and neither implies the other. A hook on
-  `on_input` means "act on a payload entering the operator", never "inject
-  one": an HTTP sink hooked on `on_input` sends what the operator ingested and
+  `on_input` means "act on a payload entering the relay", never "inject
+  one": an HTTP sink hooked on `on_input` sends what the relay ingested and
   feeds nothing. So feeding is a provider DECLARATION and acting on
   the chain is read from the host-injected `:subscribed_extensions`, which is
   what `io_bound?/1` answers — the `:out` half, and the one read of that list.
@@ -429,7 +429,7 @@ defmodule Flezha.Plugin.ProviderBehaviour do
     do:
       {:error,
        {:partitioned_host,
-        %{provider: provider.__provider__().name, operator: opts[:source_operator_id]}}}
+        %{provider: provider.__provider__().name, relay: opts[:source_relay_id]}}}
 
   def refuse_partitioned(_opts, _provider), do: :ok
 
@@ -462,7 +462,7 @@ defmodule Flezha.Plugin.ProviderBehaviour do
 
   The ONE reading of a resolved `:filter_channel`. A provider that read the
   option rows here and re-derived their meaning would let two sinks on one
-  operator disagree about which records a channel names, and would pay the
+  relay disagree about which records a channel names, and would pay the
   resolution once per record instead of once per enable. The set is what the
   resolution answers however the user spelled it, so one name and a list of
   one are the same thing here and no provider can tell them apart.
@@ -508,7 +508,7 @@ defmodule Flezha.Plugin.ProviderBehaviour do
   end
 
   @doc """
-  The per-plugin health-probe budget. Callers that time-box a whole operator's
+  The per-plugin health-probe budget. Callers that time-box a whole relay's
   probe sweep size their allowance from this rather than from a provider's own
   call timeout.
   """
@@ -688,10 +688,10 @@ defmodule Flezha.Plugin.ProviderBehaviour do
   @host_opts [
     :overwatcher_pid,
     :source_namespace,
-    :source_operator_id,
+    :source_relay_id,
     :source_plugin_id,
     :effectively_once,
-    # Whether the operator journals its input (`Replay.floor_reporter/1`), which
+    # Whether the relay journals its input (`Replay.floor_reporter/1`), which
     # decides how often a source moves its upstream position.
     :durable_input,
     :owned_pid,
@@ -712,7 +712,7 @@ defmodule Flezha.Plugin.ProviderBehaviour do
     # A partition group's fan-out merges these into EVERY plugin of every
     # member (`Plugin.for_partition/3` over `Partition.provider_opts/1`), so a
     # provider that does not allow them refuses every enable on a partitioned
-    # operator. A provider that USES one still declares it as its own field.
+    # relay. A provider that USES one still declares it as its own field.
     :partition_index,
     :partition_count,
     :key_group_from,
@@ -722,7 +722,7 @@ defmodule Flezha.Plugin.ProviderBehaviour do
   @doc """
   The options the HOST injects into a provider's opts, never settable by
   config: the identity `Extension.Table.with_host_identity/2` merges, the
-  operator facts `bulk_activate/2` merges, the tracked pid `health/1` injects,
+  relay facts `bulk_activate/2` merges, the tracked pid `health/1` injects,
   and the partition identity `Plugin.for_partition/3` merges into a group
   member's plugins.
 

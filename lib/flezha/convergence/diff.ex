@@ -12,7 +12,7 @@ defmodule Flezha.Convergence.Diff do
 
   alias Flezha.Convergence.{Facts, StallClassifier, Verdict}
 
-  @type operator_ref :: {atom(), binary()}
+  @type relay_ref :: {atom(), binary()}
 
   @typedoc """
   The tick's data-plane stall verdict resolved to the cell a heal primitive
@@ -23,34 +23,34 @@ defmodule Flezha.Convergence.Diff do
   @type wedge ::
           nil
           | {:runner, atom(), binary()}
-          | {:connection, [operator_ref()]}
-          | {:operator, [operator_ref()]}
+          | {:connection, [relay_ref()]}
+          | {:relay, [relay_ref()]}
 
   @typedoc "One judged record per subject, keyed by subject — the tick's health input."
   @type verdicts :: %{term() => Verdict.t()}
 
-  @typedoc "Why an operator is misbound: the probe saw its runner gone, or the fleet declared the disconnect."
+  @typedoc "Why a relay is misbound: the probe saw its runner gone, or the fleet declared the disconnect."
   @type misbound_reason :: :probe | :runner_disconnected
 
   @type t :: %__MODULE__{
-          unbound_operators: [operator_ref()],
-          misbound_operators: [{operator_ref(), binary(), misbound_reason()}],
-          parked_operators: [{operator_ref(), map(), binary() | nil}],
-          stalled_operators: [operator_ref()],
+          unbound_relays: [relay_ref()],
+          misbound_relays: [{relay_ref(), binary(), misbound_reason()}],
+          parked_relays: [{relay_ref(), map(), binary() | nil}],
+          stalled_relays: [relay_ref()],
           resync_cells: [{tuple(), binary(), atom()}],
-          missing_plugins: [{operator_ref(), binary(), map()}],
-          extra_plugins: [{operator_ref(), binary(), pid()}],
-          unhealthy_plugins: [{operator_ref(), binary(), map(), term()}],
-          stale_tags: [{operator_ref(), binary(), binary()}],
+          missing_plugins: [{relay_ref(), binary(), map()}],
+          extra_plugins: [{relay_ref(), binary(), pid()}],
+          unhealthy_plugins: [{relay_ref(), binary(), map(), term()}],
+          stale_tags: [{relay_ref(), binary(), binary()}],
           data_plane_wedge: wedge(),
           data_plane_layer: atom() | nil,
           draining: boolean()
         }
 
-  defstruct unbound_operators: [],
-            misbound_operators: [],
-            parked_operators: [],
-            stalled_operators: [],
+  defstruct unbound_relays: [],
+            misbound_relays: [],
+            parked_relays: [],
+            stalled_relays: [],
             resync_cells: [],
             missing_plugins: [],
             extra_plugins: [],
@@ -65,10 +65,10 @@ defmodule Flezha.Convergence.Diff do
   # added to the struct and forgotten here cannot make a non-empty delta read
   # as nothing to do.
   @healable_fields [
-    :unbound_operators,
-    :misbound_operators,
-    :parked_operators,
-    :stalled_operators,
+    :unbound_relays,
+    :misbound_relays,
+    :parked_relays,
+    :stalled_relays,
     :resync_cells,
     :missing_plugins,
     :extra_plugins,
@@ -77,13 +77,13 @@ defmodule Flezha.Convergence.Diff do
     :data_plane_wedge
   ]
 
-  # The fields that mean "this operator needs a runner": what one arriving in
+  # The fields that mean "this relay needs a runner": what one arriving in
   # the namespace is news for, and what `Planner.waiting_keys/2` plans to derive
   # the cooldown keys that arrival releases.
   @waiting_fields [
-    :unbound_operators,
-    :misbound_operators,
-    :parked_operators
+    :unbound_relays,
+    :misbound_relays,
+    :parked_relays
   ]
 
   # The verdict states `classify/6` answers with a binding: never bound, bound
@@ -98,7 +98,7 @@ defmodule Flezha.Convergence.Diff do
   # the drain owns the node.
   @placing_fields @waiting_fields ++ [:stale_tags]
 
-  @doc "The fields whose ops place a waiting operator on a runner."
+  @doc "The fields whose ops place a waiting relay on a runner."
   @spec waiting_fields() :: [atom()]
   def waiting_fields(), do: @waiting_fields
 
@@ -109,8 +109,8 @@ defmodule Flezha.Convergence.Diff do
   @spec compute(Flezha.Convergence.Intent.t(), map(), verdicts(), Facts.t()) :: t()
   def compute(intent, reality, verdicts \\ %{}, facts \\ %{})
 
-  def compute(%Flezha.Convergence.Intent{operators: declared}, reality, verdicts, facts) do
-    observed = Map.get(reality, :operators, %{})
+  def compute(%Flezha.Convergence.Intent{relays: declared}, reality, verdicts, facts) do
+    observed = Map.get(reality, :relays, %{})
     placement = Map.get(reality, :placement, %{})
     verdict = wedge_verdict(verdicts)
 
@@ -120,10 +120,10 @@ defmodule Flezha.Convergence.Diff do
     {missing, extra, unhealthy} = plugin_divergence(declared, observed)
 
     %__MODULE__{
-      unbound_operators: Enum.reverse(unbound),
-      misbound_operators: Enum.reverse(misbound),
-      parked_operators: Enum.reverse(parked),
-      stalled_operators: stalled_refs(declared, verdicts),
+      unbound_relays: Enum.reverse(unbound),
+      misbound_relays: Enum.reverse(misbound),
+      parked_relays: Enum.reverse(parked),
+      stalled_relays: stalled_refs(declared, verdicts),
       resync_cells: resync_cells(facts),
       missing_plugins: missing,
       extra_plugins: extra,
@@ -142,18 +142,18 @@ defmodule Flezha.Convergence.Diff do
     Enum.reduce(@placing_fields, d, &Map.put(&2, &1, []))
   end
 
-  # The per-operator binding classification, the sibling of `plugin_divergence/2`:
+  # The per-relay binding classification, the sibling of `plugin_divergence/2`:
   # one pass over the declared set answering `{unbound, misbound, parked}`.
   defp binding_divergence(declared, observed, verdicts, placement, facts) do
     disconnected = disconnected_runners(facts)
 
-    Enum.reduce(declared, {[], [], []}, fn %{namespace: ns, operator_id: rid}, {unb, mis, park} ->
+    Enum.reduce(declared, {[], [], []}, fn %{namespace: ns, relay_id: rid}, {unb, mis, park} ->
       ref = {ns, rid}
 
       case classify(
              ref,
              Map.get(observed, ref),
-             Map.get(verdicts, {:operator, ref}),
+             Map.get(verdicts, {:relay, ref}),
              placement,
              facts,
              disconnected
@@ -166,18 +166,18 @@ defmodule Flezha.Convergence.Diff do
     end)
   end
 
-  # What one declared operator's binding diverges into, or `:skip` when this
+  # What one declared relay's binding diverges into, or `:skip` when this
   # tick has no authoritative answer for it. The judged record IS the answer:
   # every state below names one owner of the next step, and the ones the loop
   # does not own (`:unknown`, `:suspended`, `:healthy`, `:degraded`) plan
   # nothing here.
-  defp classify(ref, observed_operator, verdict, placement, facts, disconnected) do
-    bound = observed_operator && Map.get(observed_operator, :bound_runner)
+  defp classify(ref, observed_relay, verdict, placement, facts, disconnected) do
+    bound = observed_relay && Map.get(observed_relay, :bound_runner)
 
     case verdict do
       # Declared but not observed running at all, or an observation that
       # failed: starting it is the hub reconcile's job, and acting on a read
-      # that failed mass-migrates healthy operators on a transient race.
+      # that failed mass-migrates healthy relays on a transient race.
       nil ->
         :skip
 
@@ -194,14 +194,14 @@ defmodule Flezha.Convergence.Diff do
       # Planner keys it, carrying what the park declared — its reason and
       # what that reason says about the runner's transport.
       %Verdict{state: :parked} ->
-        {:parked, {ref, park_args(facts, ref, observed_operator), normalize_runner(bound)}}
+        {:parked, {ref, park_args(facts, ref, observed_relay), normalize_runner(bound)}}
 
       %Verdict{state: :unbound} ->
-        classify_bindable(ref, nil, observed_operator, placement)
+        classify_bindable(ref, nil, observed_relay, placement)
 
       %Verdict{state: :failed} ->
         ref
-        |> classify_bindable(bound, observed_operator, placement)
+        |> classify_bindable(bound, observed_relay, placement)
         |> with_misbound_reason(ref, disconnected)
 
       %Verdict{} ->
@@ -241,27 +241,27 @@ defmodule Flezha.Convergence.Diff do
   # What the park declared, or — for one the loop was never told about (a park
   # from before this loop started) — the reason the probe read, with no
   # transport verdict: nothing may be cut on a reason nobody classified.
-  defp park_args(facts, ref, observed_operator) do
-    case Facts.args(facts, :operator_parked, ref) do
+  defp park_args(facts, ref, observed_relay) do
+    case Facts.args(facts, :relay_parked, ref) do
       %{} = args -> args
-      nil -> %{reason: Map.get(observed_operator, :park_reason) || :observed, transport: nil}
+      nil -> %{reason: Map.get(observed_relay, :park_reason) || :observed, transport: nil}
     end
   end
 
   defp normalize_runner(runner) when is_binary(runner) and runner != "", do: runner
   defp normalize_runner(_), do: nil
 
-  # An operator needing a binding whose factory no LOCAL runner advertises
+  # A relay needing a binding whose factory no LOCAL runner advertises
   # while another node's fleet does is WAITING, not diverging. The hub places an
-  # operator among the controllers serving its factory, so this state lasts
+  # relay among the controllers serving its factory, so this state lasts
   # only while this controller's withdrawal grace runs or the hub's own move is
   # in flight; a bind planned against it could only fail and advance a key. The
   # local read must be a definite `[]` — `:unknown` classifies as an ordinary
   # rebind, which the heal then skips or fails safely — and the factory must be
-  # known. With no eligible fleet anywhere the operator is ordinary again, and
+  # known. With no eligible fleet anywhere the relay is ordinary again, and
   # degrades loudly under its rebind's backoff.
-  defp classify_bindable({ns, _rid} = ref, dead_runner, observed_operator, placement) do
-    factory = Map.get(observed_operator, :factory_id)
+  defp classify_bindable({ns, _rid} = ref, dead_runner, observed_relay, placement) do
+    factory = Map.get(observed_relay, :factory_id)
 
     case is_binary(factory) && Map.get(placement, {ns, factory}) do
       %{local: [], remote_nodes: [_ | _]} -> :skip
@@ -272,12 +272,12 @@ defmodule Flezha.Convergence.Diff do
 
   # I3: declared to produce, observed not producing. The Watchdog names the
   # instance; resolving it against `declared` is what supplies the namespace and
-  # what drops a flag for an operator this tick is not healing (an id absent
+  # what drops a flag for a relay this tick is not healing (an id absent
   # from the declared set, or one in a namespace still mid-recovery — the caller passes only
-  # recovery-ready operators).
+  # recovery-ready relays).
   defp stalled_refs(declared, verdicts) do
-    for %{namespace: ns, operator_id: rid} <- declared,
-        match?(%Verdict{reason: {:stalled, _}}, Map.get(verdicts, {:operator, {ns, rid}})),
+    for %{namespace: ns, relay_id: rid} <- declared,
+        match?(%Verdict{reason: {:stalled, _}}, Map.get(verdicts, {:relay, {ns, rid}})),
         do: {ns, rid}
   end
 
@@ -290,11 +290,11 @@ defmodule Flezha.Convergence.Diff do
         do: {cell_id, runner_id, kind}
   end
 
-  # A durable row naming a runner other than the one the operator is bound to:
+  # A durable row naming a runner other than the one the relay is bound to:
   # a start's late registry write clobbered a rebind's tag. Both sides known,
   # both binaries, and they differ.
   defp stale_tags(declared, observed) do
-    for %{namespace: ns, operator_id: rid} <- declared,
+    for %{namespace: ns, relay_id: rid} <- declared,
         %{bound_runner: bound, registry_tag: tag} <- [Map.get(observed, {ns, rid})],
         is_binary(bound) and is_binary(tag) and bound != tag,
         do: {{ns, rid}, tag, bound}
@@ -302,7 +302,7 @@ defmodule Flezha.Convergence.Diff do
 
   # I4: the classifier's single deepest verdict, resolved against the SAME
   # probed reality every other invariant is classified against — a verdict
-  # naming a runner or operator the probe did not observe heals nothing and is
+  # naming a runner or relay the probe did not observe heals nothing and is
   # dropped rather than turned into a no-op op every tick.
   defp resolve_wedge(:ok, _active, _observed), do: nil
 
@@ -310,7 +310,7 @@ defmodule Flezha.Convergence.Diff do
     case StallClassifier.layer_scope(layer) do
       :runner -> wedged_runner(ctx, active)
       :connection -> wedged_connection(ctx, observed)
-      :operator -> wedged_operator(ctx, observed)
+      :relay -> wedged_relay(ctx, observed)
       # `:fabric` is /healthz's to report; `nil` is a layer with no scope.
       _ -> nil
     end
@@ -323,7 +323,7 @@ defmodule Flezha.Convergence.Diff do
 
       id ->
         # The namespace the runner is live in rides along: a runner-scoped op
-        # has no operator to take one from, and the terminal-restart rung has
+        # has no relay to take one from, and the terminal-restart rung has
         # to name it in the telemetry a user reads during a flap.
         case namespace_of_runner(id, active) do
           nil -> nil
@@ -333,38 +333,38 @@ defmodule Flezha.Convergence.Diff do
   end
 
   defp wedged_connection(ctx, observed) do
-    case operators_on_runner(ctx, observed) do
+    case relays_on_runner(ctx, observed) do
       nil -> nil
       refs -> {:connection, refs}
     end
   end
 
-  # The verdict names an operator id; the namespace comes from the probe, so a
-  # verdict for an operator this controller does not hold resolves to nothing.
-  defp wedged_operator(%{operator_id: rid}, observed) do
+  # The verdict names a relay id; the namespace comes from the probe, so a
+  # verdict for a relay this controller does not hold resolves to nothing.
+  defp wedged_relay(%{relay_id: rid}, observed) do
     case for {{_ns, ^rid} = ref, _obs} <- observed, do: ref do
-      [ref | _] -> {:operator, [ref]}
+      [ref | _] -> {:relay, [ref]}
       [] -> nil
     end
   end
 
-  defp wedged_operator(%{runner_id: id} = ctx, observed) when is_binary(id) do
-    case operators_on_runner(ctx, observed) do
+  defp wedged_relay(%{runner_id: id} = ctx, observed) when is_binary(id) do
+    case relays_on_runner(ctx, observed) do
       nil -> nil
-      refs -> {:operator, refs}
+      refs -> {:relay, refs}
     end
   end
 
-  defp wedged_operator(_ctx, _observed), do: nil
+  defp wedged_relay(_ctx, _observed), do: nil
 
-  # Every operator bound to the runner the verdict names. Two verdicts resolve
+  # Every relay bound to the runner the verdict names. Two verdicts resolve
   # through it: a wedged connection carries all of them, and a runner's handout
   # self-report is process-global — it proves one activation is stuck, not
-  # which operator owns it — so the runner's operators are the healable set
+  # which relay owns it — so the runner's relays are the healable set
   # either way. A rebind resumes each from durable state, which is safe whether
-  # or not that operator was the stuck one.
-  defp operators_on_runner(ctx, observed) do
-    case StallClassifier.operators_of(observed, ctx) do
+  # or not that relay was the stuck one.
+  defp relays_on_runner(ctx, observed) do
+    case StallClassifier.relays_of(observed, ctx) do
       [] -> nil
       refs -> refs
     end
@@ -384,45 +384,44 @@ defmodule Flezha.Convergence.Diff do
   # its plugins with its runner and the rehydrating bind replays them; a
   # parked one (init failed) activates them on its un-park. Neither has
   # anything to heal until then.
-  defp plugins_diffable?(observed_operator) do
-    is_pid(Map.get(observed_operator, :pid)) and
-      not Map.get(observed_operator, :suspended?, false) and
-      not Map.get(observed_operator, :parked?, false)
+  defp plugins_diffable?(observed_relay) do
+    is_pid(Map.get(observed_relay, :pid)) and
+      not Map.get(observed_relay, :suspended?, false) and
+      not Map.get(observed_relay, :parked?, false)
   end
 
-  # I2: an operator's declared plugin set (durable cspec) vs the set actually
+  # I2: a relay's declared plugin set (durable cspec) vs the set actually
   # subscribed in its running extension table, plus each subscribed declared
   # plugin's provider self-reported health. Only diffed for a RUNNING
-  # operator (`plugins_diffable?/1`) — a plugin can only be (un)subscribed on
-  # one; unbound operators are healed by binding first, which replays the full
+  # relay (`plugins_diffable?/1`) — a plugin can only be (un)subscribed on
+  # one; unbound relays are healed by binding first, which replays the full
   # cspec plugin list.
   defp plugin_divergence(declared, observed) do
-    Enum.reduce(declared, {[], [], []}, fn %{namespace: ns, operator_id: rid, plugins: plugins},
+    Enum.reduce(declared, {[], [], []}, fn %{namespace: ns, relay_id: rid, plugins: plugins},
                                            {missing_acc, extra_acc, unhealthy_acc} ->
       ref = {ns, rid}
-      {missing, extra, unhealthy} = operator_plugins(ref, plugins, Map.get(observed, ref, %{}))
+      {missing, extra, unhealthy} = relay_plugins(ref, plugins, Map.get(observed, ref, %{}))
       {missing_acc ++ missing, extra_acc ++ extra, unhealthy_acc ++ unhealthy}
     end)
   end
 
-  # One operator's plugin divergence: `{missing, extra, unhealthy}`, or three
+  # One relay's plugin divergence: `{missing, extra, unhealthy}`, or three
   # empty lists when its plugin sets are not diffable this tick.
-  defp operator_plugins(ref, plugins, observed_operator) do
-    if plugins_diffable?(observed_operator) do
+  defp relay_plugins(ref, plugins, observed_relay) do
+    if plugins_diffable?(observed_relay) do
       # Two sets, deliberately. `running` is the `:running`-phase set — a
       # declared plugin outside it is missing, whether it was never
       # subscribed or subscribed and failed to activate. `subscribed` is
       # every plugin on the table whatever its phase, so an UNDECLARED one
       # is still torn down while it is `:prepared`. Reading one set for both
       # checks is what let a failed activation read as running.
-      running = MapSet.new(Map.get(observed_operator, :running_plugins, []))
+      running = MapSet.new(Map.get(observed_relay, :running_plugins, []))
       # A subscriber whose owned pid crashed: its provider must be re-run,
       # not merely re-activated, so it is unhealthy rather than missing.
-      down = Map.get(observed_operator, :down_plugins, %{})
-      health = Map.get(observed_operator, :plugin_health, %{})
+      down = Map.get(observed_relay, :down_plugins, %{})
+      health = Map.get(observed_relay, :plugin_health, %{})
 
-      {missing_plugins(ref, plugins, running, down),
-       extra_plugins(ref, plugins, observed_operator),
+      {missing_plugins(ref, plugins, running, down), extra_plugins(ref, plugins, observed_relay),
        unhealthy_plugins(ref, plugins, running, down, health)}
     else
       {[], [], []}
@@ -446,19 +445,19 @@ defmodule Flezha.Convergence.Diff do
         do: {ref, id, plugin, verdict}
   end
 
-  # An empty declared set is ambiguous: a genuinely pluginless operator vs a
+  # An empty declared set is ambiguous: a genuinely pluginless relay vs a
   # cspec read that returned nothing (`Intent.declared/0` falls back to [] on
-  # any read failure, and the durable cspec can lag a running operator's
+  # any read failure, and the durable cspec can lag a running relay's
   # actual plugin set). Tearing down EVERY running plugin on that basis caused
   # a per-tick stop/re-subscribe storm, so "extra" is reconciled only against a
   # non-empty declaration.
-  defp extra_plugins(_ref, [], _observed_operator), do: []
+  defp extra_plugins(_ref, [], _observed_relay), do: []
 
-  defp extra_plugins(ref, plugins, observed_operator) do
+  defp extra_plugins(ref, plugins, observed_relay) do
     declared_ids = MapSet.new(plugins, fn {id, _plugin} -> id end)
-    pid = Map.get(observed_operator, :pid)
+    pid = Map.get(observed_relay, :pid)
 
-    for id <- Map.get(observed_operator, :subscribed_plugins, []),
+    for id <- Map.get(observed_relay, :subscribed_plugins, []),
         not MapSet.member?(declared_ids, id),
         do: {ref, id, pid}
   end

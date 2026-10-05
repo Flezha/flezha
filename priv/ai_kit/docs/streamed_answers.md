@@ -3,7 +3,7 @@
 A model writes its answer a token at a time, and a long answer takes a while. Rather than
 wait for all of it, a reader can watch it grow. A tasklet does that by sending **parts**
 while it runs: previews of the output it is producing, which leave at once and reach whoever
-listens to the operator. The finished output still leaves once, as it always does.
+listens to the relay. The finished output still leaves once, as it always does.
 
 Parts work for any long-running tasklet whose progress is worth showing: a model's tokens, a
 report's sections, a long computation's progress.
@@ -12,7 +12,7 @@ report's sections, a long computation's progress.
 
 - **A part is a preview of the tasklet's own output.** It is encoded exactly as an output on
   that channel would be, and it leaves the runner at once, while `run` is still running.
-- **Only listeners see parts.** A part reaches the operator's listeners (`flz operator
+- **Only listeners see parts.** A part reaches the relay's listeners (`flz relay
   listen`, or the HTTP plugin's event stream below). It does not reach the caller, a sink
   plugin never receives it, and nothing about it is kept or replayed. With nobody listening,
   it is dropped.
@@ -78,7 +78,7 @@ the same way.
 the caller:
 
 ```java
-// AgentOperator.java: reply's channel ends in a sink, deliver answers the caller.
+// AgentRelay.java: reply's channel ends in a sink, deliver answers the caller.
         c.input(String.class, "turn")
                 .into(Reply.class)
                 .sink("answer")                          // to whoever listens
@@ -86,7 +86,7 @@ the caller:
                 .response();                             // to whoever called
 ```
 
-Full file: [`AgentOperator.java`](https://github.com/flezha/flezha_java_sdk/blob/main/examples/agentdesk/src/main/java/com/flezha/examples/agentdesk/AgentOperator.java)
+Full file: [`AgentRelay.java`](https://github.com/flezha/flezha_java_sdk/blob/main/examples/agentdesk/src/main/java/com/flezha/examples/agentdesk/AgentRelay.java)
 
 ```java
 // Deliver.java: hands the finished answer to the caller.
@@ -127,7 +127,7 @@ the same way.
 the caller:
 
 ```elixir
-# lib/agentdesk/agent_operator.ex: reply's channel ends in a sink, deliver answers the caller.
+# lib/agentdesk/agent_relay.ex: reply's channel ends in a sink, deliver answers the caller.
     c
     |> input("turn")
     |> into(Reply)
@@ -138,7 +138,7 @@ the caller:
     |> response()
 ```
 
-Full file: [`agent_operator.ex`](https://github.com/flezha/flezha_elixir_sdk/blob/main/examples/agentdesk/lib/agentdesk/agent_operator.ex)
+Full file: [`agent_relay.ex`](https://github.com/flezha/flezha_elixir_sdk/blob/main/examples/agentdesk/lib/agentdesk/agent_relay.ex)
 
 ```elixir
 # lib/agentdesk/deliver.ex: hands the finished answer to the caller.
@@ -161,18 +161,18 @@ from it, and it declares an empty one.
 
 ### Watch a turn stream
 
-`flz operator listen` prints what an operator emits, parts included, for as long as its
+`flz relay listen` prints what a relay emits, parts included, for as long as its
 window lasts (`--duration-ms`, 30000 by default). Listening to a session named `anna` for
 five seconds:
 
 ```sh
-$ flz operator listen anna --namespace agents --duration-ms 5000
+$ flz relay listen anna --namespace agents --duration-ms 5000
 ```
 
 A message sent to the session meanwhile, from another terminal:
 
 ```sh
-$ flz operator call anna --namespace agents --text 'Tell me a story'
+$ flz relay call anna --namespace agents --text 'Tell me a story'
 ```
 
 ```output
@@ -200,30 +200,30 @@ one object whose `kind` is `output`, `input`, `part` or `dead_lettered`.
 
 A browser follows an answer as it is written over server-sent events, through the HTTP
 server plugin ([http_server.md](../../plugins/http_server.md)). The plugin is installed in
-the controller's image ([installing_plugins.md](../plugins/installing_plugins.md)) and enabled on an
-operator that answers HTTP requests.
+the controller's image ([installing_plugins.md](../plugins/installing_plugins.md)) and enabled on a
+relay that answers HTTP requests.
 
 > #### Not a production setup {: .warning}
 >
 > The agentdesk example runs with authorization off, and the HTTP plugin authenticates
 > nobody: anyone who can reach the port can read any session's answers. The plugin page's
 > [security section](../../plugins/http_server.md#security) says what the plugin guards and
-> what it leaves to the operator.
+> what it leaves to the relay.
 
 ### A request is an input
 
-The plugin turns every HTTP request into one input of the operator it is enabled on, as a
+The plugin turns every HTTP request into one input of the relay it is enabled on, as a
 JSON envelope: the method, the path, the body and a few more fields. Whatever a `response()`
-end of the operator produces from that input is the HTTP answer: a status and a body, or the
-name of an operator to stream. The plugin has no routes of its own: the operator's graph
+end of the relay produces from that input is the HTTP answer: a status and a body, or the
+name of a relay to stream. The plugin has no routes of its own: the relay's graph
 routes on the method and the path.
 
-When the answer names an operator to stream, for example `{"stream":"anna"}`, the plugin
-attaches a listener to that operator and keeps the response open: every part and every
-output on the operator's sinks is written as one event, as it happens, until the client goes
-away. The operator that answered the request is not in that path; it only named the session.
+When the answer names a relay to stream, for example `{"stream":"anna"}`, the plugin
+attaches a listener to that relay and keeps the response open: every part and every
+output on the relay's sinks is written as one event, as it happens, until the client goes
+away. The relay that answered the request is not in that path; it only named the session.
 
-In the agentdesk example, an operator called `gateway` carries the plugin. It answers
+In the agentdesk example, a relay called `gateway` carries the plugin. It answers
 `GET /sessions/<user>/events` with the user's session, named after the user, and any other
 request it does not route elsewhere with 404.
 
@@ -296,14 +296,14 @@ public final class Watch implements Tasklet<Request, Void, Http> {
 Full file: [`Watch.java`](https://github.com/flezha/flezha_java_sdk/blob/main/examples/agentdesk/src/main/java/com/flezha/examples/agentdesk/Watch.java)
 
 ```java
-// GatewayOperator.java: every request that does not send a message goes to watch.
+// GatewayRelay.java: every request that does not send a message goes to watch.
         EntryChannel<Request> http = c.input(Request.class, "http");
         http.filter(request -> !request.sends())
                 .into(Watch.class)
                 .response();                                 // a stream, or 404
 ```
 
-Full file: [`GatewayOperator.java`](https://github.com/flezha/flezha_java_sdk/blob/main/examples/agentdesk/src/main/java/com/flezha/examples/agentdesk/GatewayOperator.java)
+Full file: [`GatewayRelay.java`](https://github.com/flezha/flezha_java_sdk/blob/main/examples/agentdesk/src/main/java/com/flezha/examples/agentdesk/GatewayRelay.java)
 
 ### Elixir
 
@@ -375,7 +375,7 @@ An answer is the JSON object the plugin expects: a status and a body, or the ses
 stream. The plugin refuses an answer with a key it does not know.
 
 ```elixir
-# lib/agentdesk/gateway_operator.ex: every request that does not send a message goes to watch.
+# lib/agentdesk/gateway_relay.ex: every request that does not send a message goes to watch.
     http = input_with(c, "http", &Request.decode/1)
 
     http
@@ -385,12 +385,12 @@ stream. The plugin refuses an answer with a key it does not know.
     |> response()
 ```
 
-Full file: [`gateway_operator.ex`](https://github.com/flezha/flezha_elixir_sdk/blob/main/examples/agentdesk/lib/agentdesk/gateway_operator.ex)
+Full file: [`gateway_relay.ex`](https://github.com/flezha/flezha_elixir_sdk/blob/main/examples/agentdesk/lib/agentdesk/gateway_relay.ex)
 
 <!-- tabs-close -->
 
 The other branch of the gateway, `POST /sessions/<user>/messages`, sends the session a message
-through a call: [operator_calls.md](operator_calls.md) covers it.
+through a call: [relay_calls.md](relay_calls.md) covers it.
 
 ### Enable the plugin
 
@@ -399,7 +399,7 @@ in flow, the default. Start it with an id, then enable the HTTP plugin and bind 
 gateway in the same command:
 
 ```sh
-$ flz operator start gateway --id gateway --namespace agents
+$ flz relay start gateway --id gateway --namespace agents
 ```
 
 ```output
@@ -407,7 +407,7 @@ Started gateway
 ```
 
 ```sh
-$ flz plugin enable web http_server --operator_id=gateway --namespace agents --hook=on_terminate --Xport=8080 --Xbind=0.0.0.0 --Xchannel=http
+$ flz plugin enable web http_server --relay_id=gateway --namespace agents --hook=on_terminate --Xport=8080 --Xbind=0.0.0.0 --Xchannel=http
 ```
 
 ```output
@@ -447,7 +447,7 @@ $ curl -sN --max-time 5 localhost:8080/sessions/anna/events
 While it is open, a message sent to the session from another terminal:
 
 ```sh
-$ flz operator call anna --namespace agents --text 'Tell me more'
+$ flz relay call anna --namespace agents --text 'Tell me more'
 ```
 
 ```output
@@ -482,7 +482,7 @@ the few lines that show a growing answer.
 - **Parts are not durable.** A part can be dropped (no listener, or it could not leave at
   once), a replay sends none, and a retried attempt starts again at part 0. A client shows
   parts as a preview and treats the output as the answer.
-- **A caller never sees parts.** `flz operator call` and an operator's call get the finished
+- **A caller never sees parts.** `flz relay call` and a relay's call get the finished
   output only.
 - **The streaming tasklet's channel must end in a sink,** or the part is refused with
   `part.no_sink`; put a second tasklet after the sink to answer a caller.
@@ -492,10 +492,10 @@ the few lines that show a growing answer.
 ## See also
 
 - [sessions.md](sessions.md), [rewinding_a_turn.md](rewinding_a_turn.md),
-  [operator_calls.md](operator_calls.md).
+  [relay_calls.md](relay_calls.md).
 - [http_server.md](../../plugins/http_server.md): the HTTP plugin's options, envelopes,
   statuses, streams, security and deployment.
 - [installing_plugins.md](../plugins/installing_plugins.md), [plugins.md](../plugins/plugins.md).
-- [`operator_commands.md`](../cli/operator_commands.md#flz-operator) for `flz operator listen`.
+- [`relay_commands.md`](../cli/relay_commands.md#flz-relay) for `flz relay listen`.
 - Tutorials: [stream_an_answer.md](../../tutorials/agentdesk/stream_an_answer.md),
   [serve_http.md](../../tutorials/agentdesk/serve_http.md).

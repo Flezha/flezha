@@ -7,7 +7,7 @@ defmodule FlezhaTest.System.SdkSmokeE2ETest do
       FLEZHA_E2E_RUNTIME=java mix test --include sdk_smoke
 
   Handshake and `AssignRunnerId`, `ConnectSocket`, add/remove lifecycle,
-  end-to-end data flow, `PipeToOperator` routing, migration, reconnect after a
+  end-to-end data flow, `PipeToRelay` routing, migration, reconnect after a
   disconnect — plus the two assertions that make the manifest binding: the
   factory ids the controller lists for a fresh runner equal the union of the
   manifest's `fixtures`, and each declaration the controller decodes equals its
@@ -21,10 +21,10 @@ defmodule FlezhaTest.System.SdkSmokeE2ETest do
   use Mimic
   import FlezhaTest.Helper.TierE2EHarness, only: [unique: 1, unique_id_path: 1]
 
-  alias Flezha.Operator.Builder
+  alias Flezha.Relay.Builder
   alias Flezha.Runner.FleetManager
-  alias Flezha.Service.OperatorManager
-  alias FlezhaTest.Fixtures.OperatorFixture
+  alias Flezha.Service.RelayManager
+  alias FlezhaTest.Fixtures.RelayFixture
   alias FlezhaTest.Helper.DeclarationSnapshot
   alias FlezhaTest.Helper.NodeTestHelper
 
@@ -34,16 +34,16 @@ defmodule FlezhaTest.System.SdkSmokeE2ETest do
   # The tier drives only `runner_lifecycle` fixtures, so it runs to completion
   # on an SDK that defers every other capability; each snapshot below carries
   # the capability of the declaration it pins.
-  @test_operator_factory "do_nothing"
+  @test_relay_factory "do_nothing"
   @test_filter_factory "compare_filter"
 
-  # Flow operators that request steps spawns: the steps capability
+  # Flow relays that request steps spawns: the steps capability
   # lists them because its scenarios drive them, not because they are one.
   @stream_requesters ~w(spawn_requester spawn_hold_requester spawn_once_requester)
-  # Steps operators another capability lists: the shorthand's steps half, the
-  # operator-call sessions and the steps parts fixture.
+  # Steps relays another capability lists: the shorthand's steps half, the
+  # relay-call sessions, the outside call's turn and the steps parts fixture.
   @steps_elsewhere ~w(sugar_steps sugar_steps_per_input call_agent call_tool_session
-                      part_echo_steps)
+                      call_turn part_echo_steps)
 
   # A namespace per test: these scenarios start, kill and migrate runners, and
   # a neighbour's teardown must never be able to reach into one of them.
@@ -101,32 +101,32 @@ defmodule FlezhaTest.System.SdkSmokeE2ETest do
         end
       end
 
-      @tag scenario: "AddOperator + data flow"
-      test "AddOperator + send input + observe output", ctx do
+      @tag scenario: "AddRelay + data flow"
+      test "AddRelay + send input + observe output", ctx do
         NodeTestHelper.start_runner(ctx.namespace, transport: ctx.transport)
 
-        operator_id = unique("smoke_flow")
+        relay_id = unique("smoke_flow")
 
         assert {:ok, _info} =
-                 OperatorManager.start_operator(ctx.namespace, %Builder{
-                   id: operator_id,
-                   factory_id: @test_operator_factory,
-                   opts: [bindings: sink(ctx.namespace, operator_id)]
+                 RelayManager.start_relay(ctx.namespace, %Builder{
+                   id: relay_id,
+                   factory_id: @test_relay_factory,
+                   opts: [bindings: sink(ctx.namespace, relay_id)]
                  })
 
-        OperatorManager.send_io(operator_id, ctx.namespace, "hello", %{"input_type" => "2"})
+        RelayManager.send_io(relay_id, ctx.namespace, "hello", %{"input_type" => "2"})
 
         assert_receive {:message_forward, payload}, 30_000
         assert to_string(payload) == "hello"
       end
 
-      @tag scenario: "PipeToOperator local"
-      test "PipeToOperator routes locally when target exists", ctx do
+      @tag scenario: "PipeToRelay local"
+      test "PipeToRelay routes locally when target exists", ctx do
         NodeTestHelper.start_runner(ctx.namespace, transport: ctx.transport)
 
-        for factory <- [@test_operator_factory, @test_filter_factory] do
+        for factory <- [@test_relay_factory, @test_filter_factory] do
           assert {:ok, _} =
-                   OperatorManager.start_operator(ctx.namespace, %Builder{
+                   RelayManager.start_relay(ctx.namespace, %Builder{
                      id: unique("pipe_#{factory}"),
                      factory_id: factory
                    })
@@ -157,16 +157,16 @@ defmodule FlezhaTest.System.SdkSmokeE2ETest do
           System.cmd("kill", ["-TERM", Integer.to_string(os_pid)], stderr_to_stdout: true)
         end)
 
-        operator_id = unique("smoke_hybrid")
+        relay_id = unique("smoke_hybrid")
 
         assert {:ok, _} =
-                 OperatorManager.start_operator(ctx.namespace, %Builder{
-                   id: operator_id,
+                 RelayManager.start_relay(ctx.namespace, %Builder{
+                   id: relay_id,
                    factory_id: "hybrid_channel",
-                   opts: [bindings: sink(ctx.namespace, operator_id, include_metadata: true)]
+                   opts: [bindings: sink(ctx.namespace, relay_id, include_metadata: true)]
                  })
 
-        OperatorManager.send_io(operator_id, ctx.namespace, "42", %{
+        RelayManager.send_io(relay_id, ctx.namespace, "42", %{
           "channel" => "input",
           "input_type" => "2"
         })
@@ -187,7 +187,7 @@ defmodule FlezhaTest.System.SdkSmokeE2ETest do
       end
 
       @tag scenario: "migration"
-      test "an operator migrates between two runners of the same runtime", ctx do
+      test "a relay migrates between two runners of the same runtime", ctx do
         # Distinct identity files: an SDK that persists its stable id would
         # otherwise hand both processes the same one, and the second connect
         # would retire the first rather than join it.
@@ -200,26 +200,26 @@ defmodule FlezhaTest.System.SdkSmokeE2ETest do
           end
 
         assert first != second
-        operator_id = unique("smoke_migrate")
+        relay_id = unique("smoke_migrate")
 
         assert {:ok, info} =
-                 OperatorManager.start_operator(ctx.namespace, %Builder{
-                   id: operator_id,
-                   factory_id: @test_operator_factory
+                 RelayManager.start_relay(ctx.namespace, %Builder{
+                   id: relay_id,
+                   factory_id: @test_relay_factory
                  })
 
         target = Enum.find([first, second], &(&1 != info.runner_id))
 
-        # The migrate the loop's `rebind_operator` drives: the full bind, run
+        # The migrate the loop's `rebind_relay` drives: the full bind, run
         # off the Overwatch, whose binding flips once the target has started it.
-        {:ok, pid} = OperatorManager.get_operator_pid(ctx.namespace, operator_id)
+        {:ok, pid} = RelayManager.get_relay_pid(ctx.namespace, relay_id)
         assert :ok = GenServer.call(pid, {:runner_migrate, target}, 60_000)
 
         assert NodeTestHelper.wait_until(
                  fn ->
                    match?(
                      {:ok, %{runner_id: ^target, migrate_task: nil}},
-                     OperatorManager.get_overwatch_state(ctx.namespace, operator_id)
+                     RelayManager.get_overwatch_state(ctx.namespace, relay_id)
                    )
                  end,
                  30_000
@@ -260,16 +260,16 @@ defmodule FlezhaTest.System.SdkSmokeE2ETest do
 
     test "a keyed output carries the identity stamps its golden pins", ctx do
       NodeTestHelper.start_runner(ctx.namespace)
-      operator_id = unique("stamps")
+      relay_id = unique("stamps")
 
       assert {:ok, _} =
-               OperatorManager.start_operator(ctx.namespace, %Builder{
-                 id: operator_id,
-                 factory_id: "partition_relay",
-                 opts: [bindings: sink(ctx.namespace, operator_id, include_metadata: true)]
+               RelayManager.start_relay(ctx.namespace, %Builder{
+                 id: relay_id,
+                 factory_id: "partition_pass",
+                 opts: [bindings: sink(ctx.namespace, relay_id, include_metadata: true)]
                })
 
-      OperatorManager.send_io(operator_id, ctx.namespace, "k1:one", %{
+      RelayManager.send_io(relay_id, ctx.namespace, "k1:one", %{
         "channel" => "in",
         "input_type" => "2"
       })
@@ -290,7 +290,7 @@ defmodule FlezhaTest.System.SdkSmokeE2ETest do
   # The runner's stdout until `needle` appears. A hybrid channel's consumer
   # tasklet holds no state and answers nothing, so what it prints is its only
   # observable effect — and every SDK's fixture prints the same line.
-  # A fixture of the steps run: one the steps operator capability lists that is
+  # A fixture of the steps run: one the steps relay capability lists that is
   # not a stream requester, or one another capability lists.
   defp steps_fixture?(id) do
     steps = Map.get(NodeTestHelper.fixtures(), "steps", []) -- @stream_requesters
@@ -302,8 +302,8 @@ defmodule FlezhaTest.System.SdkSmokeE2ETest do
   end
 
   # Subscribed to every output channel, so it needs no channel name.
-  defp sink(namespace, operator_id, opts \\ []) do
-    OperatorFixture.bindings(namespace, operator_id, [
+  defp sink(namespace, relay_id, opts \\ []) do
+    RelayFixture.bindings(namespace, relay_id, [
       %Flezha.Plugin{
         id: "smoke_sink",
         provider: Flezha.Plugin.Provider.BeamMsgForward,

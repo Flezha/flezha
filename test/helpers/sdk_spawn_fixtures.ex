@@ -28,7 +28,7 @@ defmodule FlezhaTest.Helper.SdkSpawnFixtures do
 
   defmodule SpawnerOp do
     @moduledoc false
-    @behaviour Flezha.SDK.Operator
+    @behaviour Flezha.SDK.Relay
     def factory_id, do: "spawner"
 
     def channels(c),

@@ -31,8 +31,8 @@ defmodule Flezha.Api.ConsumerSurfaceTest do
 
   # What the console calls today and this tree does not answer. Phase 3 of
   # `publish-a-controller-consumer-api` moves the console onto the published
-  # surface, in the sibling repository, and empties this list. The console's own
-  # tasklet/cell rename takes off the entries that still use the old names.
+  # surface, in the sibling repository, and empties this list. The entries name
+  # what the console calls, in the console's own spelling.
   #
   # module-naming-record:begin
   @unresolved_today %{
@@ -128,7 +128,7 @@ defmodule Flezha.Api.ConsumerSurfaceTest do
 
     line = RpcSurface.explain(pair)
     assert line =~ "MOVED"
-    assert line =~ "Flezha.Service.OperatorManager"
+    assert line =~ "Flezha.Service.RelayManager"
     assert line =~ "node_manager.ex:"
   end
 

@@ -1,8 +1,8 @@
 defmodule Flezha.Plugin.SpecDecoder do
   @moduledoc """
   The one decoder for the JSON plugin-spec array carried by
-  `flz operator start --plugins` and `flz schedule add --plugins`. Each spec
-  names a plugin (`name`) and the hooks the operator is bound to it with. A
+  `flz relay start --plugins` and `flz schedule add --plugins`. Each spec
+  names a plugin (`name`) and the hooks the relay is bound to it with. A
   spec that also names a `provider`, with its `opts` and `single`, enables the
   plugin when it is not enabled yet; a spec that only binds may name the
   binding's `channel` in its `opts`
@@ -21,14 +21,14 @@ defmodule Flezha.Plugin.SpecDecoder do
   alias Flezha.Plugin.Providers
 
   @doc """
-  Decode `plugins_json` into one-step plugin structs for `operator_id` in
+  Decode `plugins_json` into one-step plugin structs for `relay_id` in
   `namespace`: the plugin's name as the id, its provider (or `nil` for a spec
   that only binds), its options and the binding's hooks. An empty/blank spec
   decodes to `[]`.
   """
   @spec decode(binary() | nil, atom() | binary(), binary()) ::
           {:ok, [Plugin.t()]} | {:error, term()}
-  def decode(plugins_json, namespace, operator_id) do
+  def decode(plugins_json, namespace, relay_id) do
     case decode_json(plugins_json) do
       {:ok, []} ->
         {:ok, []}
@@ -39,7 +39,7 @@ defmodule Flezha.Plugin.SpecDecoder do
         specs
         |> Enum.reduce_while(
           {:ok, []},
-          &collect_plugin(&1, &2, providers, namespace, operator_id)
+          &collect_plugin(&1, &2, providers, namespace, relay_id)
         )
         |> case do
           {:ok, plugins} -> {:ok, Enum.reverse(plugins)}
@@ -51,8 +51,8 @@ defmodule Flezha.Plugin.SpecDecoder do
     end
   end
 
-  defp collect_plugin(spec, {:ok, acc}, providers, namespace, operator_id) do
-    case build_plugin(spec, providers, namespace, operator_id) do
+  defp collect_plugin(spec, {:ok, acc}, providers, namespace, relay_id) do
+    case build_plugin(spec, providers, namespace, relay_id) do
       {:ok, plugin} -> {:cont, {:ok, [plugin | acc]}}
       {:error, _} = err -> {:halt, err}
     end
@@ -85,7 +85,7 @@ defmodule Flezha.Plugin.SpecDecoder do
   # reads is refused rather than dropped.
   @spec_keys ["name", "provider", "opts", "hooks", "single"]
 
-  defp build_plugin(spec, providers, namespace, operator_id) when is_map(spec) do
+  defp build_plugin(spec, providers, namespace, relay_id) when is_map(spec) do
     with :ok <- refuse_unknown_keys(spec),
          {:ok, name} <- fetch_string(spec, "name"),
          {:ok, provider_mod} <- resolve_provider(providers, Map.get(spec, "provider")),
@@ -98,7 +98,7 @@ defmodule Flezha.Plugin.SpecDecoder do
          opts: Plugin.option_keys(provider_mod, raw_opts),
          hooks: hooks,
          namespace: namespace,
-         operator_id: operator_id,
+         relay_id: relay_id,
          single: Map.get(spec, "single") == true
        }}
     end

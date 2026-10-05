@@ -54,7 +54,7 @@ fn scenario() {
         "tasklets": [{"name": "p0"}]
     }"#;
     veneer::declare_class(CtxPtr::of(ctx), decl).expect("the class declares");
-    let instance = flz_core::operator::instance::OperatorInstance::of_class("abi_part", "abi_part")
+    let instance = flz_core::relay::instance::RelayInstance::of_class("abi_part", "abi_part")
         .expect("the class builds an instance");
     let (sock, mut peer) = UnixStream::pair().unwrap();
     peer.set_read_timeout(Some(Duration::from_secs(5))).unwrap();

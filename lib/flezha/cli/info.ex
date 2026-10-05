@@ -1,21 +1,21 @@
 defmodule Flezha.Service.Cli.Info do
   @moduledoc """
-  `flz operator info` — the text form of the operator report: the partition
-  groups and their coverage, then every live and finished operator.
+  `flz relay info` — the text form of the relay report: the partition
+  groups and their coverage, then every live and finished relay.
   """
 
   alias Flezha.Service.Cli.Context
 
-  @doc "`flz operator info`."
-  def info(%{operators: [], groups: []} = report, _args, _opts),
-    do: IO.puts("No operators found for namespace '#{report.namespace}'.")
+  @doc "`flz relay info`."
+  def info(%{relays: [], groups: []} = report, _args, _opts),
+    do: IO.puts("No relays found for namespace '#{report.namespace}'.")
 
   def info(report, _args, _opts) do
-    IO.puts("Operator information for namespace '#{report.namespace}':")
+    IO.puts("Relay information for namespace '#{report.namespace}':")
     IO.puts("")
 
     Enum.each(report.groups, &print_group(&1, report.key_groups))
-    Enum.each(report.operators, &print_operator/1)
+    Enum.each(report.relays, &print_relay/1)
   end
 
   defp print_group(group, key_groups) do
@@ -49,40 +49,40 @@ defmodule Flezha.Service.Cli.Info do
     IO.puts("")
   end
 
-  defp print_operator(%{phase: "finished"} = operator) do
-    IO.puts("Operator: #{operator.id}")
-    IO.puts("  Run: #{operator.run}")
+  defp print_relay(%{phase: "finished"} = relay) do
+    IO.puts("Relay: #{relay.id}")
+    IO.puts("  Run: #{relay.run}")
     IO.puts("  Phase: finished")
-    IO.puts("  Status: #{operator.status}")
-    if operator.error, do: IO.puts("  Error: #{operator.error}")
-    IO.puts("  Finished At (unix s): #{operator.finished_at}")
+    IO.puts("  Status: #{relay.status}")
+    if relay.error, do: IO.puts("  Error: #{relay.error}")
+    IO.puts("  Finished At (unix s): #{relay.finished_at}")
     IO.puts("")
   end
 
-  defp print_operator(%{error: error} = operator) do
-    IO.puts("Operator: #{operator.id}")
+  defp print_relay(%{error: error} = relay) do
+    IO.puts("Relay: #{relay.id}")
     IO.puts("  Error getting overwatch state: #{error.message}")
     IO.puts("")
   end
 
-  defp print_operator(operator) do
-    IO.puts("Operator: #{operator.id}")
-    IO.puts("  Run: #{run_line(operator)}")
-    IO.puts("  Durable: #{durable_line(operator)}")
-    IO.puts("  Phase: #{operator.phase}")
-    IO.puts("  Health: #{operator.health}")
+  defp print_relay(relay) do
+    IO.puts("Relay: #{relay.id}")
+    IO.puts("  Run: #{run_line(relay)}")
+    IO.puts("  Durable: #{durable_line(relay)}")
+    IO.puts("  Phase: #{relay.phase}")
+    IO.puts("  Health: #{relay.health}")
 
-    with %{count: count, last_iteration: last} <- operator.failed_turns,
+    with %{count: count, last_iteration: last} <- relay.failed_turns,
          do: IO.puts("  Failed turns: #{count} (last: iteration #{last})")
 
-    IO.puts("  Runner ID: #{operator.runner_id}")
-    IO.puts("  Group ID: #{operator.namespace}")
-    IO.puts("  Uptime (ms): #{operator.uptime_ms}")
-    IO.puts("  Default Input Type: #{operator.default_input_type}")
-    IO.puts("  Waiting callers: #{operator.waiting_callers}")
+    IO.puts("  Runner ID: #{relay.runner_id}")
+    IO.puts("  Group ID: #{relay.namespace}")
+    IO.puts("  Uptime (ms): #{relay.uptime_ms}")
+    IO.puts("  Default Input Type: #{relay.default_input_type}")
+    IO.puts("  Waiting callers: #{relay.waiting_callers}")
     IO.puts("  Plugins:")
 
-    case operator.plugins do
+    case relay.plugins do
       [] ->
         IO.puts("    (none)")
 
@@ -107,13 +107,13 @@ defmodule Flezha.Service.Cli.Info do
     do: "steps (each: #{each}, on_failure: #{on_failure || :undo_all})"
 
   defp run_line(%{effectively_once: true}), do: "flow (exactly: effectively_once)"
-  defp run_line(operator), do: operator.run
+  defp run_line(relay), do: relay.run
 
   # `local (sleep_after: 6h)`; a class kept in memory has nothing to sleep on.
   defp durable_line(%{durable: "memory"}), do: "false"
 
-  defp durable_line(operator),
-    do: "#{operator.durable} (sleep_after: #{interval(operator.sleep_after_ms)})"
+  defp durable_line(relay),
+    do: "#{relay.durable} (sleep_after: #{interval(relay.sleep_after_ms)})"
 
   defp interval(nil), do: "false"
   defp interval(ms) when rem(ms, 3_600_000) == 0, do: "#{div(ms, 3_600_000)}h"

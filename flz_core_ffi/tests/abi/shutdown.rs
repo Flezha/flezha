@@ -46,7 +46,7 @@ pub(crate) fn shutdown_ships_state_then_wakes_the_poller(
         &reference_id,
         flz_core::pb::command_request::Command::RunnerShutdownAck(
             flz_core::pb::RunnerShutdownAck {
-                operator_id: "eff-1".to_string(),
+                relay_id: "eff-1".to_string(),
             },
         ),
     );

@@ -1,9 +1,9 @@
-//! A steps operator's host path, served the way a C-ABI host serves it: the
+//! A steps relay's host path, served the way a C-ABI host serves it: the
 //! `init_values` a bind carries land as state through the apply-state
 //! command before the first message, a message the host's entry decoder
 //! rejects rides the ladder and parks under the entry channel while the run
 //! waits for the next one instead of ending, and a durable run's park
-//! releases it. A flow operator given the same verdict parks the item at once.
+//! releases it. A flow relay given the same verdict parks the item at once.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -157,8 +157,8 @@ fn effect(verdict: schema::Verdict, bytes: &[u8]) -> schema::ItemEffect {
 use crate::test_support::host_class::bind as start;
 
 /// The connection a test's messages ride and the frames the run writes back
-/// on it: an opted-out steps operator's plugin outputs leave on the connection their
-/// item came in on, as a flow operator's do.
+/// on it: an opted-out steps relay's plugin outputs leave on the connection their
+/// item came in on, as a flow relay's do.
 struct Wire {
     stream: Arc<FlezhaStream>,
     frames: Receiver<(String, Vec<u8>, HashMap<String, String>)>,
@@ -179,7 +179,7 @@ impl Wire {
         Self { stream, frames }
     }
 
-    /// The payloads written for steps operator `id` until nothing more arrives.
+    /// The payloads written for steps relay `id` until nothing more arrives.
     fn outputs_of(&self, id: &str) -> Vec<Vec<u8>> {
         self.frames
             .try_iter()
@@ -192,9 +192,9 @@ impl Wire {
     }
 }
 
-/// One message into steps operator `id` on its first entry channel.
+/// One message into steps relay `id` on its first entry channel.
 fn feed(wire: &Wire, node: &RunnerNode, id: &str, message: &[u8]) {
-    node.operator_dispatch_handle().dispatch(
+    node.relay_dispatch_handle().dispatch(
         id,
         message.to_vec(),
         &Default::default(),
@@ -202,11 +202,11 @@ fn feed(wire: &Wire, node: &RunnerNode, id: &str, message: &[u8]) {
     );
 }
 
-/// One message into operator `id` on its first entry channel, called by the
+/// One message into relay `id` on its first entry channel, called by the
 /// outside call `token`.
 fn feed_call(wire: &Wire, node: &RunnerNode, id: &str, message: &[u8], token: &str) {
     let metadata = HashMap::from([("flz.reply_to".to_string(), token.to_string())]);
-    node.operator_dispatch_handle().dispatch(
+    node.relay_dispatch_handle().dispatch(
         id,
         message.to_vec(),
         &metadata,
@@ -214,17 +214,17 @@ fn feed_call(wire: &Wire, node: &RunnerNode, id: &str, message: &[u8], token: &s
     );
 }
 
-/// One message into steps operator `id` naming `channel`, at input-log `offset`.
+/// One message into steps relay `id` naming `channel`, at input-log `offset`.
 fn feed_at(node: &RunnerNode, id: &str, channel: &str, offset: u64, message: &[u8]) {
     let metadata = HashMap::from([
         ("channel".to_string(), channel.to_string()),
         ("flz.offset".to_string(), offset.to_string()),
     ]);
-    node.operator_dispatch_handle()
+    node.relay_dispatch_handle()
         .dispatch(id, message.to_vec(), &metadata, stream_pair().0);
 }
 
-/// The `IterPark` steps operator `id`'s run shipped when it suspended.
+/// The `IterPark` steps relay `id`'s run shipped when it suspended.
 fn await_park(rx: &Receiver<RunnerMessage>, id: &str) -> crate::pb::IterPark {
     loop {
         match rx
@@ -233,22 +233,20 @@ fn await_park(rx: &Receiver<RunnerMessage>, id: &str) -> crate::pb::IterPark {
         {
             RunnerMessage::EmitControlRequest { command, .. } => {
                 if let crate::pb::command_request::Command::IterPark(park) = *command {
-                    if park.operator_id == id {
+                    if park.relay_id == id {
                         return park;
                     }
                 }
             }
-            RunnerMessage::EmitOperatorCompleted {
-                operator_id,
-                status,
-                ..
-            } if operator_id == id => panic!("the run ended with `{status}` instead of parking"),
+            RunnerMessage::EmitRelayCompleted {
+                relay_id, status, ..
+            } if relay_id == id => panic!("the run ended with `{status}` instead of parking"),
             _ => {}
         }
     }
 }
 
-/// The outputs and the completion `(status, error, result)` of steps operator `id`.
+/// The outputs and the completion `(status, error, result)` of steps relay `id`.
 fn drain(
     rx: &Receiver<RunnerMessage>,
     wire: &Wire,
@@ -259,12 +257,12 @@ fn drain(
             .recv_timeout(Duration::from_secs(5))
             .unwrap_or_else(|_| panic!("timed out waiting for steps {id}"))
         {
-            RunnerMessage::EmitOperatorCompleted {
-                operator_id,
+            RunnerMessage::EmitRelayCompleted {
+                relay_id,
                 status,
                 error,
                 result,
-            } if operator_id == id => return (wire.outputs_of(id), (status, error, result)),
+            } if relay_id == id => return (wire.outputs_of(id), (status, error, result)),
             _ => {}
         }
     }
@@ -276,14 +274,12 @@ fn assert_no_completion(rx: &Receiver<RunnerMessage>, id: &str, wait: Duration) 
     while let Ok(message) =
         rx.recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))
     {
-        if let RunnerMessage::EmitOperatorCompleted {
-            operator_id,
-            status,
-            ..
+        if let RunnerMessage::EmitRelayCompleted {
+            relay_id, status, ..
         } = message
         {
             assert!(
-                operator_id != id,
+                relay_id != id,
                 "the run ended with status `{status}` instead of waiting"
             );
         }
@@ -321,15 +317,17 @@ fn a_host_steps_takes_init_values_as_state_before_its_first_message() {
         "state.init_values_invalid_json",
         "{refused:?}"
     );
-    assert!(!node.has_operator("host-init-2"));
+    assert!(!node.has_relay("host-init-2"));
 }
 
 #[test]
 fn a_durable_start_refused_for_its_init_values_leaves_no_cell_registered() {
     let _env = crate::runner::env_test_guard();
     let id = format!("host_steps_refused_{}", std::process::id());
-    let durable = host_class::steps_json(&id, &["in"], 1)
-        .replace(r#""durable":false"#, r#""durable":{"local":{"sleep_after":false}}"#);
+    let durable = host_class::steps_json(&id, &["in"], 1).replace(
+        r#""durable":false"#,
+        r#""durable":{"local":{"sleep_after":false}}"#,
+    );
     crate::host::register_host_class_json(durable.as_bytes()).expect("class registers");
     let mut node = RunnerNode::new("test-ns".to_string());
 
@@ -445,8 +443,8 @@ fn a_message_the_instance_already_took_starts_no_pass() {
     let mut node = RunnerNode::new("test-ns".to_string());
 
     let mut errors = Vec::new();
-    crate::pb::AddOperator {
-        operator_id: "host-taken-1".to_string(),
+    crate::pb::AddRelay {
+        relay_id: "host-taken-1".to_string(),
         factory_id: id.clone(),
         task_journal: Some(crate::pb::TaskJournalState {
             released_offset: Some(5),
@@ -472,7 +470,7 @@ fn a_flow_given_the_unreadable_verdict_parks_the_item() {
     let _guard = state_sink::test_guard();
     state_sink::reset_for_test();
     let parks = capture_parks();
-    // A tier-off flow operator, so the park rides the park frame rather than the
+    // A tier-off flow relay, so the park rides the park frame rather than the
     // effect record.
     let id = format!("host_flow_unread_{}", std::process::id());
     let json = format!(
@@ -481,16 +479,15 @@ fn a_flow_given_the_unreadable_verdict_parks_the_item() {
              "tasklets":[{{"name":"p0"}}]}}"#
     );
     crate::host::register_host_class_json(json.as_bytes()).expect("class registers");
-    let instance =
-        crate::operator::instance::OperatorInstance::of_class(&id, &format!("{id}_inst"))
-            .expect("class registered");
+    let instance = crate::relay::instance::RelayInstance::of_class(&id, &format!("{id}_inst"))
+        .expect("class registered");
     let _host = FakeHost::serve(|_| schema::Verdict::Unreadable {
         message: "not json".to_string(),
     });
-    let registry = Arc::new(crate::operator::registry::OperatorRegistry::new());
+    let registry = Arc::new(crate::relay::registry::RelayRegistry::new());
     registry.register(Arc::clone(&instance));
 
-    let handle = crate::routing::OperatorDispatchHandle { registry };
+    let handle = crate::routing::RelayDispatchHandle { registry };
     let called = HashMap::from([("flz.reply_to".to_string(), "w:bad".to_string())]);
     for metadata in [called, HashMap::new()] {
         handle.dispatch(
@@ -618,13 +615,13 @@ fn keyed_effect(slot: &crate::cell::CellSlot, mid: u32, bytes: &[u8]) -> schema:
 fn keyed_class(id: &str, mid_retry_max: u32) -> u32 {
     crate::host::register_host_class_json(keyed_json(id, mid_retry_max).as_bytes())
         .expect("class registers");
-    crate::operator::registry::get_class(id)
+    crate::relay::registry::get_class(id)
         .and_then(|topology| topology.lookup_channel_id("mid"))
         .expect("the keyed class declares `mid`")
 }
 
 fn live_keys(node: &RunnerNode, id: &str) -> Vec<String> {
-    let instance = node.get_operator(id).expect("a live instance");
+    let instance = node.get_relay(id).expect("a live instance");
     let mut keys: Vec<String> = instance.dynamic_registries[1]
         .as_ref()
         .expect("k1 is keyed")
@@ -674,7 +671,7 @@ fn a_resumed_host_steps_crosses_its_journaled_handoff() {
     let mid = keyed_class(&id, 1);
     let crossings = Arc::new(Crossings::default());
     let _host = keyed_host(mid, Arc::clone(&crossings), false);
-    let codec = crate::operator::registry::get_class(&id)
+    let codec = crate::relay::registry::get_class(&id)
         .and_then(|topology| topology.channel(mid).and_then(|c| c.codec.clone()))
         .expect("a host inter-tasklet channel journals through its codec");
     let released = |bytes: &[u8]| crate::pb::TaskHandoffItem {
@@ -696,8 +693,8 @@ fn a_resumed_host_steps_crosses_its_journaled_handoff() {
     state_sink::set_secondary_stream(Some(Arc::clone(&wire.stream)));
     let mut errors = Vec::new();
     crate::command::CommandAction::handle(
-        &crate::pb::AddOperator {
-            operator_id: "host-keyed-resume".to_string(),
+        &crate::pb::AddRelay {
+            relay_id: "host-keyed-resume".to_string(),
             factory_id: id.clone(),
             task_journal: Some(crate::pb::TaskJournalState {
                 committed_task_idxs: vec![0],
@@ -770,14 +767,13 @@ fn a_host_flow_entry_crossing_mints_its_keyed_cells() {
              "tasklets":[{{"name":"k0","cell_mode":"dynamic"}}]}}"#
     );
     crate::host::register_host_class_json(json.as_bytes()).expect("class registers");
-    let instance =
-        crate::operator::instance::OperatorInstance::of_class(&id, &format!("{id}_inst"))
-            .expect("class registered");
+    let instance = crate::relay::instance::RelayInstance::of_class(&id, &format!("{id}_inst"))
+        .expect("class registered");
     let _host = keyed_host(u32::MAX, Arc::clone(&crossings), false);
-    let registry = Arc::new(crate::operator::registry::OperatorRegistry::new());
+    let registry = Arc::new(crate::relay::registry::RelayRegistry::new());
     registry.register(Arc::clone(&instance));
 
-    crate::routing::OperatorDispatchHandle { registry }.dispatch(
+    crate::routing::RelayDispatchHandle { registry }.dispatch(
         &instance.instance_id,
         b"q".to_vec(),
         &Default::default(),
@@ -854,7 +850,7 @@ fn timed_host(nows: Arc<Mutex<Vec<Option<u64>>>>) -> FakeHost {
     })
 }
 
-/// Outputs of steps operator `id` until `count` arrived.
+/// Outputs of steps relay `id` until `count` arrived.
 fn outputs(wire: &Wire, id: &str, count: usize) -> Vec<Vec<u8>> {
     let mut outs = Vec::new();
     while outs.len() < count {
@@ -1015,11 +1011,9 @@ fn turn_class(
     each: &str,
     rollback: &str,
 ) -> (FakeHost, Arc<std::sync::atomic::AtomicUsize>) {
-    crate::host::register_host_class_json(
-        turn_json(id, persistent, each, rollback).as_bytes(),
-    )
-    .expect("class registers");
-    let mid = crate::operator::registry::get_class(id)
+    crate::host::register_host_class_json(turn_json(id, persistent, each, rollback).as_bytes())
+        .expect("class registers");
+    let mid = crate::relay::registry::get_class(id)
         .and_then(|topology| topology.lookup_channel_id("mid"))
         .expect("the class declares `mid`");
     let undos = Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -1036,8 +1030,8 @@ fn bind_turns(
 ) {
     use crate::command::CommandAction;
     let mut errors = Vec::new();
-    crate::pb::AddOperator {
-        operator_id: id.to_string(),
+    crate::pb::AddRelay {
+        relay_id: id.to_string(),
         factory_id: factory.to_string(),
         task_journal,
         dead_letter_turns,
@@ -1077,30 +1071,26 @@ fn pump_turns(
                 let answer = if refuse(&command) {
                     Err(crate::FlezhaError::with(
                         "commit.not_owner",
-                        [("operator", id.into())],
+                        [("relay", id.into())],
                     ))
                 } else {
                     Ok(String::new())
                 };
                 match *command {
-                    Command::IterCommit(commit) if commit.operator_id == id => {
-                        seen.iters.push(commit)
-                    }
-                    Command::TaskCommit(commit)
-                        if commit.operator_id == id && commit.compensating =>
-                    {
+                    Command::IterCommit(commit) if commit.relay_id == id => seen.iters.push(commit),
+                    Command::TaskCommit(commit) if commit.relay_id == id && commit.compensating => {
                         seen.undone.push((commit.task_idx, commit.iter))
                     }
                     _ => {}
                 }
                 crate::shutdown::signal_result(&reference_id, answer);
             }
-            Ok(RunnerMessage::EmitOperatorCompleted {
-                operator_id,
+            Ok(RunnerMessage::EmitRelayCompleted {
+                relay_id,
                 status,
                 error,
                 ..
-            }) if operator_id == id => seen.done = Some((status, error)),
+            }) if relay_id == id => seen.done = Some((status, error)),
             Ok(_) => {}
             Err(_) => panic!("steps {id} stalled; the controller saw {:?}", seen.iters),
         }
@@ -1166,7 +1156,7 @@ fn a_failed_turn_is_dead_lettered_undone_once_and_the_next_message_is_the_next_i
         "one undo entry, for p0 of iteration 1"
     );
     assert!(seen.done.is_none(), "{:?}", seen.done);
-    node.stop_operator("turn-1");
+    node.stop_relay("turn-1");
     state_sink::reset_for_test();
 }
 
@@ -1208,7 +1198,7 @@ fn a_resume_owing_a_failed_turns_undo_runs_it_once_and_waits() {
     assert_eq!(seen.iters[0].iter, 2, "the turn did not run again");
     assert_eq!(undos.load(Ordering::SeqCst), 1);
     assert!(seen.done.is_none(), "{:?}", seen.done);
-    node.stop_operator("turn-resume-1");
+    node.stop_relay("turn-resume-1");
     state_sink::reset_for_test();
 }
 
@@ -1253,14 +1243,7 @@ type EndingCase = (
 fn a_failure_the_dead_letter_does_not_cover_still_ends_the_run() {
     use crate::pb::command_request::Command;
     let cases: [EndingCase; 4] = [
-        (
-            "turn_all",
-            true,
-            "per_input",
-            "undo_all",
-            true,
-            &[b"boom"],
-        ),
+        ("turn_all", true, "per_input", "undo_all", true, &[b"boom"]),
         (
             "turn_chained",
             false,
@@ -1343,7 +1326,7 @@ fn a_stop_during_a_turn_ends_it_cancelled() {
     pump_turns(&rx, "turn-stop-1", &mut seen, never, |s| {
         !s.iters.is_empty()
     });
-    let instance = node.get_operator("turn-stop-1").expect("running");
+    let instance = node.get_relay("turn-stop-1").expect("running");
     crate::steps::stop(&instance);
     pump_turns(&rx, "turn-stop-1", &mut seen, never, |_| false);
     assert_eq!(seen.done.map(|d| d.0), Some("cancelled".to_string()));
@@ -1408,7 +1391,7 @@ fn a_per_input_pass_answers_its_call_from_its_last_stage() {
     let json = turn_json(&id, false, "per_input", "keep_progress")
         .replace(r#"{"link":"sink","name":"out"}"#, r#"{"link":"response"}"#);
     crate::host::register_host_class_json(json.as_bytes()).expect("class registers");
-    let mid = crate::operator::registry::get_class(&id)
+    let mid = crate::relay::registry::get_class(&id)
         .and_then(|topology| topology.lookup_channel_id("mid"))
         .expect("the class declares `mid`");
     let _host = turn_host(mid, Arc::default());

@@ -20,7 +20,7 @@ fn a_per_input_pass_calls_from_its_last_stage_and_reads_the_outcome_next() {
             1,
         );
     crate::host::register_host_class_json(json.as_bytes()).expect("a per-input class calls");
-    let topology = crate::operator::registry::get_class(&id).expect("registered");
+    let topology = crate::relay::registry::get_class(&id).expect("registered");
     let mid = topology.lookup_channel_id("mid").expect("`mid`");
     let _host = turn_host(mid, Arc::default());
     let mut node = RunnerNode::new("test-ns".to_string());
@@ -44,7 +44,7 @@ fn a_per_input_pass_calls_from_its_last_stage_and_reads_the_outcome_next() {
 
     // The outcome is an ordinary message on the Response channel: the next turn.
     let response = HashMap::from([("channel".to_string(), "out.response".to_string())]);
-    node.operator_dispatch_handle().dispatch(
+    node.relay_dispatch_handle().dispatch(
         "turn-call-1",
         b"outcome".to_vec(),
         &response,

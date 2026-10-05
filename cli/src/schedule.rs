@@ -2,7 +2,7 @@ use serde_json::{Map, Value};
 
 use crate::args::{OptSpec, Positional, Reading, INIT_VALUES, NAMESPACE};
 use crate::dispatch::{self, Command, Missing, Verb};
-use crate::operator::{first_message, json_object, plugins_json_or_refuse, CHANNEL, TEXT};
+use crate::relay::{first_message, json_object, plugins_json_or_refuse, CHANNEL, TEXT};
 use crate::{help, rpc};
 
 const CRON: OptSpec = OptSpec::text("--cron", "--cron", "<expr>").required();

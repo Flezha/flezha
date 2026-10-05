@@ -11,13 +11,13 @@ defmodule FlezhaTest.System.HealthVerdictDrillTest do
   committed boundary — or is a RECORDED deferral saying which tier owns it.
 
   Per driven row the drill reads `GET /healthz` on the test's bound port,
-  `flz operator info --json` and `flz operator list --json` in process, and
+  `flz relay info --json` and `flz relay list --json` in process, and
   the observability bus for the subject's last `[:flezha, :health, :verdict]`,
   and asserts they agree. `/healthz` is a fleet verdict, so a row asserts there
   only what is its own: a degrading row that its reason reached the endpoint, a
   benign one that the endpoint names it as no fault. Every row shares one booted
   fixture: the module boots a namespace, a runner, the convergence Loop and the
-  healthz listener once, and produces each condition on its own operator.
+  healthz listener once, and produces each condition on its own relay.
 
   Tagged `:system`; run with
   `mix test --include system test/system/health_verdict_drill_test.exs`.
@@ -33,10 +33,10 @@ defmodule FlezhaTest.System.HealthVerdictDrillTest do
 
   alias Flezha.Convergence.{Loop, Snapshot, Verdict}
   alias Flezha.Healthz.Server, as: Healthz
-  alias Flezha.Operator.Migration
+  alias Flezha.Relay.Migration
   alias Flezha.Plugin
-  alias Flezha.Service.{Cli, OperatorManager, PluginManager}
-  alias FlezhaTest.Fixtures.OperatorFixture
+  alias Flezha.Service.{Cli, RelayManager, PluginManager}
+  alias FlezhaTest.Fixtures.RelayFixture
 
   require Logger
 
@@ -56,7 +56,7 @@ defmodule FlezhaTest.System.HealthVerdictDrillTest do
   # this tier cannot force without wedging the NIF thread that carries the test
   # node's own traffic.
   @deferred %{
-    {:operator, :unbound} =>
+    {:relay, :unbound} =>
       "needs a live Overwatch whose binding was cleared by a failed rebind; the rebind ladder " <>
         "is `remedy_drill_test`'s row and clearing the binding by hand would not be a condition",
     {:runner, :unknown} =>
@@ -77,7 +77,7 @@ defmodule FlezhaTest.System.HealthVerdictDrillTest do
     {:driver, :unknown} => "the classifier could not answer; covered by the seam test",
     {:plugin, :unknown} =>
       "a plugin the loop never probed at all: the probe runs on every tick that reaches the " <>
-        "operator, so the window cannot be held open from here"
+        "relay, so the window cannot be held open from here"
   }
 
   setup_all do
@@ -118,15 +118,15 @@ defmodule FlezhaTest.System.HealthVerdictDrillTest do
     # last, because every row after them would be reading a fixture with no
     # runner left.
     driven = [
-      {{:operator, :healthy}, &row_healthy/1},
+      {{:relay, :healthy}, &row_healthy/1},
       {{:runner, :healthy}, &row_runner_healthy/1},
       {{:plugin, :healthy}, &row_plugin_healthy/1},
-      {{:operator, :suspended}, &row_suspended/1},
-      {{:operator, :unknown}, &row_unknown/1},
-      {{:operator, :degraded}, &row_degraded/1},
+      {{:relay, :suspended}, &row_suspended/1},
+      {{:relay, :unknown}, &row_unknown/1},
+      {{:relay, :degraded}, &row_degraded/1},
       {{:plugin, :degraded}, &row_plugin_degraded/1},
-      {{:operator, :parked}, &row_parked/1},
-      {{:operator, :failed}, &row_failed/1},
+      {{:relay, :parked}, &row_parked/1},
+      {{:relay, :failed}, &row_failed/1},
       {{:runner, :failed}, &row_runner_failed/1}
     ]
 
@@ -151,34 +151,34 @@ defmodule FlezhaTest.System.HealthVerdictDrillTest do
   # ---------- the rows ----------
 
   defp row_healthy(ctx) do
-    id = start_operator(ctx, "healthy")
+    id = start_relay(ctx, "healthy")
     assert_surfaces(ctx, id, :healthy, "healthy")
   end
 
   # A declared plugin that is not running: the start declares it and its
   # activation is impossible, so the loop's own `start_plugin` heal has
-  # something to do and the operator is degraded while it does. An enable
+  # something to do and the relay is degraded while it does. An enable
   # cannot set this up: a failed one removes what it declared. Every attempt
-  # logs the refusal, so the operator is stopped inside the capture, before a
+  # logs the refusal, so the relay is stopped inside the capture, before a
   # later row's tick can retry it.
   defp row_degraded(ctx) do
     plugin_id = "missing_#{System.unique_integer([:positive])}"
 
     log =
       capture_log(fn ->
-        id = start_operator(ctx, "degraded", [stuck_plugin(plugin_id)])
+        id = start_relay(ctx, "degraded", [stuck_plugin(plugin_id)])
         assert_surfaces(ctx, id, :degraded, "degraded", reason: "plugin_unhealthy")
-        :ok = OperatorManager.stop_operator(ctx.namespace, id)
+        :ok = RelayManager.stop_relay(ctx.namespace, id)
       end)
 
     assert log =~ "activate failed for plugin_id=#{plugin_id}"
   end
 
-  # The bind-time restore the SDK refused — the message `Operator.Replay`
-  # sends and the one path that parks an operator.
+  # The bind-time restore the SDK refused — the message `Relay.Replay`
+  # sends and the one path that parks a relay.
   defp row_parked(ctx) do
-    id = start_operator(ctx, "parked")
-    {:ok, pid} = OperatorManager.get_operator_pid(ctx.namespace, id)
+    id = start_relay(ctx, "parked")
+    {:ok, pid} = RelayManager.get_relay_pid(ctx.namespace, id)
 
     repark = fn -> repark(ctx, id, pid) end
 
@@ -204,7 +204,7 @@ defmodule FlezhaTest.System.HealthVerdictDrillTest do
   # Evicted at a committed iteration boundary: planned, so no surface may call
   # it a fault and `/healthz` stays healthy.
   defp row_suspended(ctx) do
-    id = start_operator(ctx, "suspended")
+    id = start_relay(ctx, "suspended")
     :ok = Migration.suspend(ctx.namespace, id, 0, %{wake_deadline_ms: nil})
     assert_surfaces(ctx, id, :suspended, "healthy")
   end
@@ -212,27 +212,27 @@ defmodule FlezhaTest.System.HealthVerdictDrillTest do
   # An Overwatch suspended past the probe budget: the bounded call cannot
   # answer, so the record is `unknown` and nothing escalates on it.
   defp row_unknown(ctx) do
-    id = start_operator(ctx, "unknown")
-    {:ok, pid} = OperatorManager.get_operator_pid(ctx.namespace, id)
+    id = start_relay(ctx, "unknown")
+    {:ok, pid} = RelayManager.get_relay_pid(ctx.namespace, id)
     :sys.suspend(pid)
     on_exit(fn -> if Process.alive?(pid), do: :sys.resume(pid) end)
     assert_surfaces(ctx, id, :unknown, "healthy")
   end
 
-  # The runner's OS process is killed: every operator bound to it is `failed`
+  # The runner's OS process is killed: every relay bound to it is `failed`
   # with `dead_runner`, and the runner's own record says so too. The grace this
   # module sets is short enough that the endpoint is past it by the first tick,
   # so the `recovering` half of that window is asserted where it can be timed —
   # against a published snapshot in `Flezha.Healthz.ServerTest`.
   defp row_failed(ctx) do
-    id = start_operator(ctx, "failed")
+    id = start_relay(ctx, "failed")
     sigkill(os_pid(ctx.runner_port))
 
     assert_surfaces(ctx, id, :failed, "degraded", timeout: 90_000, reason: "dead_runner")
   end
 
   defp row_plugin_healthy(ctx) do
-    id = start_operator(ctx, "plugged")
+    id = start_relay(ctx, "plugged")
     plugin_id = id <> "_ok"
     :ok = enable_plugin(ctx, id, plugin_id, FlezhaTest.System.HealthVerdictDrillTest.OkProvider)
 
@@ -243,7 +243,7 @@ defmodule FlezhaTest.System.HealthVerdictDrillTest do
   # A running plugin whose provider self-reports unhealthy: the fact seam
   # normalises it, the judge turns it into the plugin's one degraded record.
   defp row_plugin_degraded(ctx) do
-    id = start_operator(ctx, "plugin_degraded")
+    id = start_relay(ctx, "plugin_degraded")
     plugin_id = id <> "_sick"
 
     :ok =
@@ -270,8 +270,8 @@ defmodule FlezhaTest.System.HealthVerdictDrillTest do
 
   # ---------- the four surfaces ----------
 
-  # One word on all four: the record the loop published, `flz operator info`,
-  # `flz operator list`, and the `/healthz` word `Verdict.fold/2` gives that
+  # One word on all four: the record the loop published, `flz relay info`,
+  # `flz relay list`, and the `/healthz` word `Verdict.fold/2` gives that
   # state. The bus's verdict event for the subject is asserted last, because a
   # transition is what it reports and a state that never changed emits none.
   defp assert_surfaces(ctx, id, state, healthz_word, opts \\ []) do
@@ -310,13 +310,13 @@ defmodule FlezhaTest.System.HealthVerdictDrillTest do
     body = healthz_body(ctx)
 
     refute faulted?(body, id),
-           "#{id}: a #{state} operator is named as a fault by /healthz: #{inspect(body)}"
+           "#{id}: a #{state} relay is named as a fault by /healthz: #{inspect(body)}"
   end
 
   # The endpoint word AND the row's own reason: a fleet degraded by an earlier
   # row would satisfy the word on its own, so the reason is what proves THIS
   # subject reached the kubelet's answer. That is the 08-18 shape — a parked
-  # operator the health map knew about and `/healthz` never heard of.
+  # relay the health map knew about and `/healthz` never heard of.
   defp assert_healthz(ctx, id, state, word, refresh, reason) do
     assert wait_until(
              ticked(fn ->
@@ -328,16 +328,16 @@ defmodule FlezhaTest.System.HealthVerdictDrillTest do
              end),
              60_000
            ),
-           "#{id}: a #{state} operator did not reach /healthz as #{inspect(reason)} — " <>
+           "#{id}: a #{state} relay did not reach /healthz as #{inspect(reason)} — " <>
              "got #{inspect(healthz_body(ctx))}"
   end
 
-  # Every list the endpoint's body names a subject in. A benign operator in
+  # Every list the endpoint's body names a subject in. A benign relay in
   # one of them is the endpoint calling it a fault.
   defp faulted?(body, id) do
-    id in Map.get(body, "stalled_operators", []) or
-      id in Map.get(body, "plugin_degraded_operators", []) or
-      id in Map.keys(Map.get(body, "stuck_operators", %{})) or
+    id in Map.get(body, "stalled_relays", []) or
+      id in Map.get(body, "plugin_degraded_relays", []) or
+      id in Map.keys(Map.get(body, "stuck_relays", %{})) or
       id in Map.get(body, "intent_mismatch", [])
   end
 
@@ -348,17 +348,17 @@ defmodule FlezhaTest.System.HealthVerdictDrillTest do
 
   defp verdict_signal?(ctx, id, state) do
     Enum.any?(drain_verdicts(), fn meta ->
-      meta[:kind] == :operator and meta[:id] == {ctx.namespace, id} and meta[:state] == state
+      meta[:kind] == :relay and meta[:id] == {ctx.namespace, id} and meta[:state] == state
     end)
   end
 
   # ---------- readers ----------
 
-  # `:absent` and `:unknown` are different answers: an operator the loop has
-  # never judged has no record, and asserting on `Snapshot.operator_health/2`
+  # `:absent` and `:unknown` are different answers: a relay the loop has
+  # never judged has no record, and asserting on `Snapshot.relay_health/2`
   # alone would read the missing-record default as a judged `unknown`.
   defp record_state(ctx, id) do
-    state_of({:operator, {ctx.namespace, id}}) || :absent
+    state_of({:relay, {ctx.namespace, id}}) || :absent
   end
 
   defp plugin_state(ctx, id, plugin_id),
@@ -376,10 +376,10 @@ defmodule FlezhaTest.System.HealthVerdictDrillTest do
   defp info_health(ctx, id) do
     out =
       ExUnit.CaptureIO.capture_io(fn ->
-        Cli.call("Operator.info", Jason.encode!([ctx.namespace]), output: "json")
+        Cli.call("Relay.info", Jason.encode!([ctx.namespace]), output: "json")
       end)
 
-    %{"operators" => rows} = Jason.decode!(out)
+    %{"relays" => rows} = Jason.decode!(out)
 
     case Enum.find(rows, &(&1["id"] == id)) do
       %{"health" => health} -> health
@@ -390,7 +390,7 @@ defmodule FlezhaTest.System.HealthVerdictDrillTest do
   defp list_health(ctx, id) do
     out =
       ExUnit.CaptureIO.capture_io(fn ->
-        Cli.call("Operator.list", Jason.encode!([ctx.namespace]), output: "json")
+        Cli.call("Relay.list", Jason.encode!([ctx.namespace]), output: "json")
       end)
 
     rows = Jason.decode!(out)
@@ -446,17 +446,17 @@ defmodule FlezhaTest.System.HealthVerdictDrillTest do
 
   # `plugins` are declared by the start itself, the same record an enable
   # writes to.
-  defp start_operator(ctx, label, plugins \\ []) do
+  defp start_relay(ctx, label, plugins \\ []) do
     id = "#{label}_#{System.unique_integer([:positive])}"
 
-    builder = %Flezha.Operator.Builder{
+    builder = %Flezha.Relay.Builder{
       id: id,
       factory_id: "do_nothing",
       init_values: %{},
-      opts: [bindings: OperatorFixture.bindings(ctx.namespace, id, plugins)]
+      opts: [bindings: RelayFixture.bindings(ctx.namespace, id, plugins)]
     }
 
-    {:ok, _} = OperatorManager.start_operator(ctx.namespace, builder)
+    {:ok, _} = RelayManager.start_relay(ctx.namespace, builder)
     id
   end
 
@@ -471,12 +471,12 @@ defmodule FlezhaTest.System.HealthVerdictDrillTest do
 
   # The loop reads the DECLARED plugin set from the durable cspec, which
   # `PluginManager.enable_plugin/2` writes before it subscribes.
-  defp enable_plugin(ctx, operator_id, plugin_id, provider) do
+  defp enable_plugin(ctx, relay_id, plugin_id, provider) do
     result =
       PluginManager.enable_plugin(plugin_id, %Plugin{
         id: plugin_id,
         namespace: ctx.namespace,
-        operator_id: operator_id,
+        relay_id: relay_id,
         provider: provider,
         opts: %{},
         hooks: [{:on_input, [position: 0]}]

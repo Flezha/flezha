@@ -1,17 +1,17 @@
 defmodule Flezha.SDK.InNodeE2ETest do
   @moduledoc """
   In-node end-to-end: the Elixir SDK boots over the native transport against the
-  same-BEAM controller, FleetManager lists it, an operator is placed, and an
+  same-BEAM controller, FleetManager lists it, a relay is placed, and an
   io_in frame drives `run/3` (observed directly, since the Cell runs in this
   BEAM). Exercises the full path — handshake, AssignRunnerId, ConnectSocket,
-  AddOperator, primary-stream io_in routing — with no external process.
+  AddRelay, primary-stream io_in routing — with no external process.
   """
   # async: false: the live controller and its fleet; registered singletons.
   use ExUnit.Case, async: false
 
-  alias Flezha.Operator.Builder
+  alias Flezha.Relay.Builder
   alias Flezha.Runner.FleetManager
-  alias Flezha.Service.OperatorManager
+  alias Flezha.Service.RelayManager
   alias FlezhaTest.Helper.NodeTestHelper
 
   @probe :sdk_in_node_probe
@@ -32,7 +32,7 @@ defmodule Flezha.SDK.InNodeE2ETest do
   end
 
   defmodule ProbeOp do
-    @behaviour Flezha.SDK.Operator
+    @behaviour Flezha.SDK.Relay
     def factory_id, do: "sdk_probe"
 
     def channels(c) do
@@ -102,17 +102,17 @@ defmodule Flezha.SDK.InNodeE2ETest do
     assert FleetManager.active_runners(kept) == []
   end
 
-  test "io_in drives run/3 through the placed operator", %{ns: ns} do
+  test "io_in drives run/3 through the placed relay", %{ns: ns} do
     assert NodeTestHelper.wait_until(fn -> FleetManager.active_runners(ns) != [] end, 15_000)
 
-    operator_id = "probe_op_#{System.unique_integer([:positive])}"
-    builder = %Builder{id: operator_id, factory_id: "sdk_probe", init_values: %{}, opts: []}
+    relay_id = "probe_op_#{System.unique_integer([:positive])}"
+    builder = %Builder{id: relay_id, factory_id: "sdk_probe", init_values: %{}, opts: []}
 
-    # `start_operator` returns after the SDK acknowledged `AddOperator`, so
-    # the operator is instantiated there when the first input is sent.
-    assert {:ok, _info} = OperatorManager.start_operator(ns, builder)
+    # `start_relay` returns after the SDK acknowledged `AddRelay`, so
+    # the relay is instantiated there when the first input is sent.
+    assert {:ok, _info} = RelayManager.start_relay(ns, builder)
 
-    OperatorManager.send_io(operator_id, ns, "hello", %{"channel" => "in", "input_type" => "2"})
+    RelayManager.send_io(relay_id, ns, "hello", %{"channel" => "in", "input_type" => "2"})
 
     assert_receive {:sdk_probe_ran, "hello"}, 10_000
   end
@@ -146,9 +146,9 @@ defmodule Flezha.SDK.SocketRoundtripTest do
   # async: false: the live controller and its fleet; registered singletons; OS environment variables.
   use ExUnit.Case, async: false
 
-  alias Flezha.Operator.Builder
+  alias Flezha.Relay.Builder
   alias Flezha.Runner.FleetManager
-  alias Flezha.Service.OperatorManager
+  alias Flezha.Service.RelayManager
   alias Flezha.Socket.Support
   alias Flezha.Transport.Native
   alias FlezhaTest.Helper.NodeTestHelper
@@ -171,7 +171,7 @@ defmodule Flezha.SDK.SocketRoundtripTest do
   end
 
   defmodule ProbeOp do
-    @behaviour Flezha.SDK.Operator
+    @behaviour Flezha.SDK.Relay
     def factory_id, do: "sdk_socket_probe_factory"
 
     def channels(c) do
@@ -238,10 +238,10 @@ defmodule Flezha.SDK.SocketRoundtripTest do
     assert NodeTestHelper.wait_until(fn -> FleetManager.active_runners(ns) != [] end, 15_000),
            "runner never connected over UDS"
 
-    assert {:ok, []} = Flezha.SDK.Control.list_operators(handle)
+    assert {:ok, []} = Flezha.SDK.Control.list_relays(handle)
   end
 
-  test "a standalone UDS runner starts an operator with and without an id, answered by id and outcome",
+  test "a standalone UDS runner starts a relay with and without an id, answered by id and outcome",
        %{ns: ns, handle: handle} do
     assert NodeTestHelper.wait_until(fn -> FleetManager.active_runners(ns) != [] end, 15_000),
            "runner never connected over UDS"
@@ -250,23 +250,23 @@ defmodule Flezha.SDK.SocketRoundtripTest do
     named = "socket_admin_#{System.unique_integer([:positive])}"
 
     assert {:ok, %{id: generated, outcome: :started} = unnamed} =
-             Flezha.SDK.Control.start_operator(handle, factory)
+             Flezha.SDK.Control.start_relay(handle, factory)
 
     assert Map.keys(unnamed) |> Enum.sort() == [:id, :outcome]
     assert generated =~ ~r/\Asdk_socket_\w*-[a-z2-7]{16}\z/
 
     assert {:ok, %{id: ^named, outcome: :started}} =
-             Flezha.SDK.Control.start_operator(handle, factory, id: named)
+             Flezha.SDK.Control.start_relay(handle, factory, id: named)
 
     assert {:ok, %{id: ^named, outcome: :already_running}} =
-             Flezha.SDK.Control.start_operator(handle, factory, id: named)
+             Flezha.SDK.Control.start_relay(handle, factory, id: named)
 
-    assert {:ok, ids} = Flezha.SDK.Control.list_operators(handle)
+    assert {:ok, ids} = Flezha.SDK.Control.list_relays(handle)
     assert generated in ids
     assert named in ids
 
-    assert {:error, %Flezha.SDK.Error{code: "operator.factory_unknown"} = refusal} =
-             Flezha.SDK.Control.start_operator(handle, "no_such_factory")
+    assert {:error, %Flezha.SDK.Error{code: "relay.factory_unknown"} = refusal} =
+             Flezha.SDK.Control.start_relay(handle, "no_such_factory")
 
     refute refusal.message =~ "@", "the refusal names no node"
   end
@@ -275,20 +275,20 @@ defmodule Flezha.SDK.SocketRoundtripTest do
     assert NodeTestHelper.wait_until(fn -> FleetManager.active_runners(ns) != [] end, 15_000),
            "runner never connected over UDS"
 
-    operator_id = "socket_probe_op_#{System.unique_integer([:positive])}"
+    relay_id = "socket_probe_op_#{System.unique_integer([:positive])}"
 
     builder = %Builder{
-      id: operator_id,
+      id: relay_id,
       factory_id: ProbeOp.factory_id(),
       init_values: %{},
       opts: []
     }
 
-    assert {:ok, _info} = OperatorManager.start_operator(ns, builder)
+    assert {:ok, _info} = RelayManager.start_relay(ns, builder)
 
-    # No settle: the operator's bind waits for its data stream, so the first
+    # No settle: the relay's bind waits for its data stream, so the first
     # cast after a start cannot land on an unbound one.
-    OperatorManager.send_io(operator_id, ns, "over-the-wire", %{
+    RelayManager.send_io(relay_id, ns, "over-the-wire", %{
       "channel" => "in",
       "input_type" => "2"
     })
@@ -301,22 +301,22 @@ defmodule Flezha.SDK.SocketRoundtripTest do
     assert NodeTestHelper.wait_until(fn -> FleetManager.active_runners(ns) != [] end, 15_000),
            "runner never connected over UDS"
 
-    operator_id = "socket_local_#{System.unique_integer([:positive])}"
+    relay_id = "socket_local_#{System.unique_integer([:positive])}"
 
-    assert {:ok, %{id: ^operator_id}} =
-             Flezha.SDK.Control.start_operator(handle, ProbeOp.factory_id(), id: operator_id)
+    assert {:ok, %{id: ^relay_id}} =
+             Flezha.SDK.Control.start_relay(handle, ProbeOp.factory_id(), id: relay_id)
 
     assert NodeTestHelper.wait_until(
-             fn -> match?({:ok, [_ | _]}, Flezha.SDK.operators(handle)) end,
+             fn -> match?({:ok, [_ | _]}, Flezha.SDK.relays(handle)) end,
              10_000
            )
 
-    assert {:ok, [^operator_id]} = Flezha.SDK.operators(handle)
-    assert {:ok, nil} = Flezha.SDK.send(handle, operator_id, "in-process", "in", local: true)
+    assert {:ok, [^relay_id]} = Flezha.SDK.relays(handle)
+    assert {:ok, nil} = Flezha.SDK.send(handle, relay_id, "in-process", "in", local: true)
     assert_receive {:sdk_socket_ran, "in-process"}, 10_000
 
-    assert {:error, %Flezha.SDK.Error{code: "runtime.operator_not_local"}} =
-             Flezha.SDK.send(handle, "#{operator_id}-elsewhere", "x", "in", local: true)
+    assert {:error, %Flezha.SDK.Error{code: "runtime.relay_not_local"}} =
+             Flezha.SDK.send(handle, "#{relay_id}-elsewhere", "x", "in", local: true)
   end
 end
 
@@ -337,10 +337,10 @@ defmodule Flezha.SDK.LivenessReconnectE2ETest do
   import ExUnit.CaptureLog
   import FlezhaTest.Helper.MimicGlobal
 
-  alias Flezha.Operator.Builder
+  alias Flezha.Relay.Builder
   alias Flezha.Runner.FleetManager
   alias Flezha.SDK.RunnerServer
-  alias Flezha.Service.OperatorManager
+  alias Flezha.Service.RelayManager
   alias Flezha.Transport.Server, as: TransportServer
   alias FlezhaTest.Helper.NodeTestHelper
 
@@ -357,7 +357,7 @@ defmodule Flezha.SDK.LivenessReconnectE2ETest do
   end
 
   defmodule EchoOp do
-    @behaviour Flezha.SDK.Operator
+    @behaviour Flezha.SDK.Relay
     def factory_id, do: "lr_echo"
 
     def channels(c) do
@@ -367,7 +367,7 @@ defmodule Flezha.SDK.LivenessReconnectE2ETest do
   end
 
   defmodule OtherOp do
-    @behaviour Flezha.SDK.Operator
+    @behaviour Flezha.SDK.Relay
     def factory_id, do: "lr_other"
 
     def channels(c) do
@@ -390,7 +390,7 @@ defmodule Flezha.SDK.LivenessReconnectE2ETest do
   end
 
   defmodule StoreOp do
-    @behaviour Flezha.SDK.Operator
+    @behaviour Flezha.SDK.Relay
     def factory_id, do: "lr_store"
 
     def channels(c) do
@@ -587,7 +587,7 @@ defmodule Flezha.SDK.LivenessReconnectE2ETest do
            "the third refused reconnect waited #{third} ms, no longer than the first (#{first} ms)"
   end
 
-  test "post-start define_operator ships UpdateFactories; removal with a live instance refuses",
+  test "post-start define_relay ships UpdateFactories; removal with a live instance refuses",
        %{
          ns: ns
        } do
@@ -609,21 +609,21 @@ defmodule Flezha.SDK.LivenessReconnectE2ETest do
            )
 
     # Placing an instance of EchoOp, then removing it, refuses while live.
-    operator_id = "lr_inst_#{System.unique_integer([:positive])}"
+    relay_id = "lr_inst_#{System.unique_integer([:positive])}"
 
     assert {:ok, _} =
-             OperatorManager.start_operator(ns, %Builder{
-               id: operator_id,
+             RelayManager.start_relay(ns, %Builder{
+               id: relay_id,
                factory_id: "lr_echo",
                init_values: %{},
                opts: []
              })
 
-    # `start_operator` returns after the SDK acknowledged `AddOperator`, so
+    # `start_relay` returns after the SDK acknowledged `AddRelay`, so
     # the instance is live on the handle when the removal is refused.
     assert {:error,
             %Flezha.SDK.Error{
-              code: "runtime.operator_type_in_use",
+              code: "runtime.relay_type_in_use",
               details: %{"factory_id" => "lr_echo", "live_instances" => n}
             }} = Flezha.SDK.unregister_factory(handle2, EchoOp)
 
@@ -636,33 +636,33 @@ defmodule Flezha.SDK.LivenessReconnectE2ETest do
        } do
     handle = start_runner(ns, [StoreOp])
     on_exit(fn -> Flezha.SDK.close(handle) end)
-    operator_id = "lr_store_#{System.unique_integer([:positive])}"
+    relay_id = "lr_store_#{System.unique_integer([:positive])}"
 
     assert {:ok, _} =
-             OperatorManager.start_operator(ns, %Builder{
-               id: operator_id,
+             RelayManager.start_relay(ns, %Builder{
+               id: relay_id,
                factory_id: "lr_store",
                init_values: %{}
              })
 
-    {:ok, overwatch} = OperatorManager.get_operator_pid(ns, operator_id)
+    {:ok, overwatch} = RelayManager.get_relay_pid(ns, relay_id)
     assert :sys.get_state(overwatch).snapshot == nil
 
     for input <- ~w(alpha beta gamma) do
-      OperatorManager.send_io(operator_id, ns, input, %{"channel" => "in", "input_type" => "2"})
+      RelayManager.send_io(relay_id, ns, input, %{"channel" => "in", "input_type" => "2"})
     end
 
     # The live read is the residency signal, and the CellState command end to end.
     assert NodeTestHelper.wait_until(
              fn ->
-               live_state(ns, operator_id) ==
+               live_state(ns, relay_id) ==
                  %{"lr_store_tasklet" => %{"inputs" => ["alpha", "beta", "gamma"]}}
              end,
              15_000
            )
 
     assert {:ok, _json, seq} =
-             OperatorManager.get_cell_state(ns, operator_id, %{
+             RelayManager.get_cell_state(ns, relay_id, %{
                tasklet: "lr_store_tasklet"
              })
 
@@ -682,8 +682,8 @@ defmodule Flezha.SDK.LivenessReconnectE2ETest do
              %{"lr_store_tasklet" => %{"inputs" => ["alpha", "beta", "gamma"]}}
   end
 
-  defp live_state(ns, operator_id) do
-    case OperatorManager.get_cell_state(ns, operator_id) do
+  defp live_state(ns, relay_id) do
+    case RelayManager.get_cell_state(ns, relay_id) do
       {:ok, json} -> Jason.decode!(json)
       _ -> nil
     end
@@ -723,10 +723,10 @@ defmodule Flezha.SDK.SpawnStepsE2ETest do
   # async: false: the live controller and its fleet; registered singletons.
   use ExUnit.Case, async: false
 
-  alias Flezha.Operator.Builder
+  alias Flezha.Relay.Builder
   alias Flezha.Runner.FleetManager
   alias Flezha.SDK.Spawn
-  alias Flezha.Service.OperatorManager
+  alias Flezha.Service.RelayManager
   alias FlezhaTest.Helper.NodeTestHelper
 
   @probe :sdk_spawn_probe
@@ -756,7 +756,7 @@ defmodule Flezha.SDK.SpawnStepsE2ETest do
   end
 
   defmodule RequesterOp do
-    @behaviour Flezha.SDK.Operator
+    @behaviour Flezha.SDK.Relay
     def factory_id, do: "sdk_spawn_requester"
 
     def channels(c) do
@@ -781,7 +781,7 @@ defmodule Flezha.SDK.SpawnStepsE2ETest do
   end
 
   defmodule InboxSteps do
-    @behaviour Flezha.SDK.Operator
+    @behaviour Flezha.SDK.Relay
     def factory_id, do: "sdk_spawned_inbox"
     def run, do: {:steps, each: :per_input}
     def max_duration_ms, do: 60_000
@@ -831,10 +831,10 @@ defmodule Flezha.SDK.SpawnStepsE2ETest do
       opts: []
     }
 
-    assert {:ok, _info} = OperatorManager.start_operator(ns, builder)
+    assert {:ok, _info} = RelayManager.start_relay(ns, builder)
 
     request = fn policy, payload ->
-      OperatorManager.send_io(requester, ns, "#{instance}:#{policy}:#{payload}", %{
+      RelayManager.send_io(requester, ns, "#{instance}:#{policy}:#{payload}", %{
         "channel" => "in",
         "input_type" => "2"
       })
@@ -847,13 +847,12 @@ defmodule Flezha.SDK.SpawnStepsE2ETest do
     request.("error", "p3")
 
     assert_receive {:spawn_result, "p3",
-                    {:error,
-                     %Flezha.SDK.Error{code: "operator.already_running", details: details}}},
+                    {:error, %Flezha.SDK.Error{code: "relay.already_running", details: details}}},
                    20_000
 
     assert details |> Map.values() |> Enum.member?(instance)
 
-    OperatorManager.send_io(requester, ns, "::p4", %{"channel" => "in", "input_type" => "2"})
+    RelayManager.send_io(requester, ns, "::p4", %{"channel" => "in", "input_type" => "2"})
     assert_receive {:spawn_result, "p4", {:ok, %{id: generated, outcome: :spawned}}}, 20_000
     assert generated =~ ~r/\Asdk_spawned_\w*-[a-z2-7]{16}\z/
 

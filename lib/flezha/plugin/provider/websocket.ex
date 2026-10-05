@@ -1,7 +1,7 @@
 defmodule Flezha.Plugin.Provider.Websocket do
   @moduledoc """
-  First-party Websocket provider (an operator plugin). Its declared worker is a Fresh
-  connection the table starts at activation; inbound frames reach the operator
+  First-party Websocket provider (a relay plugin). Its declared worker is a Fresh
+  connection the table starts at activation; inbound frames reach the relay
   through the host's one inject.
 
   A two-tier watchdog separates CONNECTION liveness from DATA liveness: every
@@ -190,7 +190,7 @@ defmodule Flezha.Plugin.Provider.Websocket do
   # `init_provider/1` validates and normalises config; it does NOT open the
   # upstream WebSocket. The TLS handshake and the subscribe round trip are the
   # worker's, started by `Flezha.Plugin.Extension.Table` at activation once the
-  # operator's SDK side has confirmed bound. See `operator-extensions`
+  # relay's SDK side has confirmed bound. See `relay-extensions`
   # "Two-phase plugin lifecycle gated on SDK readiness".
   @impl true
   def init_provider(opts) do
@@ -236,14 +236,14 @@ defmodule Flezha.Plugin.Provider.Websocket do
 
   # Warn, never refuse. A durable sink alongside a live websocket view is the
   # standard topology, and refusing it would push users into a worse one.
-  # Refusing would also claim more than this change can honour: the operator's
+  # Refusing would also claim more than this change can honour: the relay's
   # internal guarantee is untouched and only the websocket hop is best-effort.
   defp warn_best_effort_hop(opts, %Sink{} = sink, plugin_id) do
     if opts[:effectively_once] do
       Logger.warning(
         "[Plugin.Provider.Websocket] plugin_id=#{inspect(plugin_id)} ships output from an " <>
-          "effectively-once operator with sink_ack_mode=#{inspect(sink.ack_mode)}; the " <>
-          "operator's internal guarantee is unchanged, its websocket output hop is not " <>
+          "effectively-once relay with sink_ack_mode=#{inspect(sink.ack_mode)}; the " <>
+          "relay's internal guarantee is unchanged, its websocket output hop is not " <>
           "effectively-once"
       )
     end
@@ -260,7 +260,7 @@ defmodule Flezha.Plugin.Provider.Websocket do
   effectively-once tier the socket process confirms an injected input by calling
   the Overwatch without a deadline, and the Overwatch is the process running
   this chain: a synchronous send in this direction closes that cycle and hangs
-  the operator permanently. The bounded wait is what keeps the cycle open, and
+  the relay permanently. The bounded wait is what keeps the cycle open, and
   a frame that outlives it is still safely in the socket's hands.
   """
   @impl true
@@ -338,7 +338,7 @@ defmodule Flezha.Plugin.Provider.Websocket do
          :applied_subscriptions,
          :source_plugin_id,
          :source_namespace,
-         :source_operator_id,
+         :source_relay_id,
          :targets_from
        ])
        # Both read by access: the teardown path asks for the declared worker

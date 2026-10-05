@@ -10,8 +10,8 @@ mod help;
 mod mcp;
 mod namespace;
 mod observe;
-mod operator;
 mod plugin;
+mod relay;
 mod reset;
 mod role;
 mod rpc;
@@ -35,7 +35,7 @@ const FLZ: Command = Command {
     verbs: &[
         Verb::table("controller", &controller::TABLE),
         Verb::table("cluster", &cluster::TABLE),
-        Verb::table("operator", &operator::TABLE),
+        Verb::table("relay", &relay::TABLE),
         Verb::table("namespace", &namespace::TABLE),
         Verb::table("runner", &runner::TABLE),
         Verb::table("plugin", &plugin::TABLE),

@@ -5,8 +5,8 @@ answer went wrong, and the conversation should continue from an earlier turn as 
 ones had not happened. And sometimes a single turn fails, because the model refused or timed
 out, and only that turn should be lost, not the conversation.
 
-Flezha covers both for an operator that runs in steps once per message, such as a
-[session](sessions.md): `flz operator rewind` takes the instance back to an earlier turn, and
+Flezha covers both for a relay that runs in steps once per message, such as a
+[session](sessions.md): `flz relay rewind` takes the instance back to an earlier turn, and
 the failure mode `keep_progress` lets a failed turn fail alone.
 
 ## How it works
@@ -28,11 +28,11 @@ A rewind is refused when it cannot undo what it would have to:
 
 | Code | When |
 | --- | --- |
-| `operator.rewind_uncovered` | a tasklet whose output left the instance (through a sink or a `response()` end) between the target and now declares no `compensate` |
-| `operator.iteration_not_committed` | the target iteration has not committed, so there is no boundary to rewind to |
+| `relay.rewind_uncovered` | a tasklet whose output left the instance (through a sink or a `response()` end) between the target and now declares no `compensate` |
+| `relay.iteration_not_committed` | the target iteration has not committed, so there is no boundary to rewind to |
 
-A steps instance is taken back only as a whole: `flz operator replay` of one of its cells is
-refused with `operator.replay_steps`, whose hint is the rewind.
+A steps instance is taken back only as a whole: `flz relay replay` of one of its cells is
+refused with `relay.replay_steps`, whose hint is the rewind.
 
 **A failed turn.** What a failure undoes is the run's `on_failure` setting:
 
@@ -57,7 +57,7 @@ to pass, even when there is nothing to take back: it then declares an empty one.
 ### Java
 
 ```java
-// AgentOperator.java: a failed turn fails alone.
+// AgentRelay.java: a failed turn fails alone.
     @Override
     public Run run() {
         return new Run.Steps(
@@ -66,17 +66,17 @@ to pass, even when there is nothing to take back: it then declares an empty one.
     }
 ```
 
-Full file: [`AgentOperator.java`](https://github.com/flezha/flezha_java_sdk/blob/main/examples/agentdesk/src/main/java/com/flezha/examples/agentdesk/AgentOperator.java)
+Full file: [`AgentRelay.java`](https://github.com/flezha/flezha_java_sdk/blob/main/examples/agentdesk/src/main/java/com/flezha/examples/agentdesk/AgentRelay.java)
 
 ### Elixir
 
 ```elixir
-# lib/agentdesk/agent_operator.ex: a failed turn fails alone.
+# lib/agentdesk/agent_relay.ex: a failed turn fails alone.
     # one turn per message; a failed turn fails alone
     run: {:steps, each: :per_input, on_failure: :keep_progress},
 ```
 
-Full file: [`agent_operator.ex`](https://github.com/flezha/flezha_elixir_sdk/blob/main/examples/agentdesk/lib/agentdesk/agent_operator.ex)
+Full file: [`agent_relay.ex`](https://github.com/flezha/flezha_elixir_sdk/blob/main/examples/agentdesk/lib/agentdesk/agent_relay.ex)
 
 <!-- tabs-close -->
 
@@ -170,11 +170,11 @@ state get anna/reply:
 Taking it back to iteration 0 keeps the first message:
 
 ```sh
-$ flz operator rewind anna --to-iteration 0 --namespace agents
+$ flz relay rewind anna --to-iteration 0 --namespace agents
 ```
 
 ```output
-Operator 'anna' rewound to iteration 0. Iterations above it were compensated; the loop resumes at 1.
+Relay 'anna' rewound to iteration 0. Iterations above it were compensated; the loop resumes at 1.
 ```
 
 The runner ran the two undos, newest first. In the example's Docker Compose setup:
@@ -202,7 +202,7 @@ The undos are changes of their own, so `change_seq` grows. The next message cont
 the first one:
 
 ```sh
-$ flz operator call anna --namespace agents --text 'Where were we?'
+$ flz relay call anna --namespace agents --text 'Where were we?'
 ```
 
 ```output
@@ -215,11 +215,11 @@ The demo model reads at most 200 characters, and refuses a longer message with a
 is not worth retrying (a non-retryable tasklet error, so the turn is not tried again):
 
 ```sh
-$ flz operator call anna --namespace agents --text "$(printf '%0250d' 0)"
+$ flz relay call anna --namespace agents --text "$(printf '%0250d' 0)"
 ```
 
 ```output
-error: operator 'anna' dead-lettered the call's input as 'anna/_turn/fd471f7e0b872ddf': tasklet `reply` failed after 1 attempt(s): non-retryable tasklet error: the demo model reads at most 200 characters, and this message has 250 (call.failed)
+error: relay 'anna' dead-lettered the call's input as 'anna/_turn/fd471f7e0b872ddf': tasklet `reply` failed after 1 attempt(s): non-retryable tasklet error: the demo model reads at most 200 characters, and this message has 250 (call.failed)
 hint: flz dlq list anna
 ```
 
@@ -228,7 +228,7 @@ The message is kept in the dead-letter queue, where it can be read, replayed or 
 not part of the conversation:
 
 ```sh
-$ flz operator call anna --namespace agents --text 'Sorry, go on'
+$ flz relay call anna --namespace agents --text 'Sorry, go on'
 ```
 
 ```output
@@ -243,15 +243,15 @@ $ flz operator call anna --namespace agents --text 'Sorry, go on'
   listener stays sent; `compensate` only takes back what the instance itself keeps, and
   whatever the tasklet can reach (an external system's own cancel call, for example).
 - **Every tasklet with output that left needs a `compensate`,** even an empty one, or the
-  rewind is refused with `operator.rewind_uncovered`.
+  rewind is refused with `relay.rewind_uncovered`.
 - **Only committed iterations are targets.** A turn still running is not a boundary.
 - **With the default `undo_all`, one failed turn ends the session.** Declare
   `keep_progress` for a conversation.
 
 ## See also
 
-- [sessions.md](sessions.md): the operator shape a rewind works on.
+- [sessions.md](sessions.md): the relay shape a rewind works on.
 - [workflows.md](../basics/workflows.md): steps, undo and failure modes in general.
 - [durability.md](../basics/durability.md): the dead-letter queue.
-- [errors.md](../../errors.md): `operator.rewind_uncovered`, `call.failed`.
+- [errors.md](../../errors.md): `relay.rewind_uncovered`, `call.failed`.
 - Tutorial: [take_a_turn_back.md](../../tutorials/agentdesk/take_a_turn_back.md).

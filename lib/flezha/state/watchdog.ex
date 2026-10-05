@@ -28,7 +28,7 @@ defmodule Flezha.State.Watchdog do
   alias Flezha.Config.Durations
   alias Flezha.Config.Backoff
   alias Flezha.Convergence.{Facts, Snapshot}
-  alias Flezha.Operator.ClassRegistry
+  alias Flezha.Relay.ClassRegistry
 
   alias Flezha.State.{
     Commands,
@@ -140,7 +140,7 @@ defmodule Flezha.State.Watchdog do
     :telemetry.execute(
       [:flezha, :state, :compaction_completed],
       %{},
-      %{operator: rc, tasklet: sh, key: pk}
+      %{relay: rc, tasklet: sh, key: pk}
     )
 
     now = :erlang.monotonic_time(:millisecond)
@@ -197,7 +197,7 @@ defmodule Flezha.State.Watchdog do
   # ---------- Disk-quota breach (finish-platform-authn-authz §6.2) ----------
   #
   # A running namespace over `max_state_bytes` gets a loud, latched alarm and
-  # stops admitting NEW operator allocations (checked at start_operator) —
+  # stops admitting NEW relay allocations (checked at start_relay) —
   # in-flight durable writes are never interrupted: killing durability
   # mid-write loses data, which is worse than a quota breach.
 
@@ -218,7 +218,7 @@ defmodule Flezha.State.Watchdog do
 
                 Logger.error(
                   "[watchdog] namespace #{namespace} exceeds max_state_bytes " <>
-                    "(#{bytes} > #{limit}); new operator allocation is refused, " <>
+                    "(#{bytes} > #{limit}); new relay allocation is refused, " <>
                     "durable writes continue"
                 )
               end
@@ -303,15 +303,15 @@ defmodule Flezha.State.Watchdog do
     end)
   end
 
-  # The age floor resolves per operator (a correction-declaring class must not
+  # The age floor resolves per relay (a correction-declaring class must not
   # compact away the history inside its own window), so it is read here rather
   # than hoisted out of the loop. The size floor already resolved per cell,
   # so this adds no new cost class.
-  defp compaction_trigger(status, now, operator_class, _tasklet_id) do
-    age_ms = PersistenceResolver.compact_after_age_ms(operator_class)
+  defp compaction_trigger(status, now, relay_class, _tasklet_id) do
+    age_ms = PersistenceResolver.compact_after_age_ms(relay_class)
 
     cond do
-      status.wal_size_bytes >= PersistenceResolver.compact_after_bytes(operator_class) ->
+      status.wal_size_bytes >= PersistenceResolver.compact_after_bytes(relay_class) ->
         :size
 
       age_ms > 0 and is_integer(status.oldest_unsnapshotted_at) and
@@ -327,17 +327,17 @@ defmodule Flezha.State.Watchdog do
     :telemetry.execute(
       [:flezha, :state, :compaction_trigger],
       %{wal_size_bytes: status.wal_size_bytes},
-      %{operator: rc, tasklet: sh, key: pk, trigger: trigger, runner: runner_id}
+      %{relay: rc, tasklet: sh, key: pk, trigger: trigger, runner: runner_id}
     )
 
     _ = Commands.dispatch_compact_cell(runner_id, cell_id)
     :ok
   end
 
-  # Detects an operator that produced output but received zero Change frames for
+  # Detects a relay that produced output but received zero Change frames for
   # the full timeout: the condition the output-staleness sweep cannot see (no
   # Changes arriving means the cell looks idle, not stalled). Latched per
-  # operator_class.
+  # relay_class.
   #
   # Silence is all this establishes. A dead upstream, a source that reports
   # hourly and a quiet night are indistinguishable here, which is why the
@@ -366,7 +366,7 @@ defmodule Flezha.State.Watchdog do
               %{acc | input_silence: MapSet.put(acc.input_silence, rc)}
 
             not any_silent? and latched? ->
-              Logger.info("[watchdog] input resumed for operator=#{inspect(rc)}")
+              Logger.info("[watchdog] input resumed for relay=#{inspect(rc)}")
               %{acc | input_silence: MapSet.delete(acc.input_silence, rc)}
 
             true ->
@@ -400,11 +400,11 @@ defmodule Flezha.State.Watchdog do
     :telemetry.execute(
       [:flezha, :state, :input_silence],
       %{timeout_ms: timeout},
-      %{operator_class: rc, operator_instance: rc}
+      %{relay_class: rc, relay_instance: rc}
     )
 
     Logger.warning(
-      "[watchdog] input silent for operator=#{inspect(rc)}: no Changes received for >= " <>
+      "[watchdog] input silent for relay=#{inspect(rc)}: no Changes received for >= " <>
         "#{timeout}ms, having produced output earlier"
     )
   end
@@ -431,16 +431,16 @@ defmodule Flezha.State.Watchdog do
       now - status.last_advance_at >= timeout
   end
 
-  # The cell's `operator_class` is, by the flezha operator convention
-  # (`OperatorManager`: "the operator_id is used as the operator_class identifier"),
-  # the operator-instance id the convergence Loop binds. Emitting it as
-  # `operator_instance` lets the Loop rebind the exact stalled instance
+  # The cell's `relay_class` is, by the flezha relay convention
+  # (`RelayManager`: "the relay_id is used as the relay_class identifier"),
+  # the relay-instance id the convergence Loop binds. Emitting it as
+  # `relay_instance` lets the Loop rebind the exact stalled instance
   # rather than the factory/class name.
   defp flag_output_stall({rc, sh, pk}, status, now) do
     :telemetry.execute(
       [:flezha, :state, :output_stall],
       %{stalled_ms: now - status.last_advance_at, last_seq: status.last_persisted_seq},
-      %{operator_class: rc, operator_instance: rc, tasklet: sh, key: pk}
+      %{relay_class: rc, relay_instance: rc, tasklet: sh, key: pk}
     )
   end
 
@@ -477,7 +477,7 @@ defmodule Flezha.State.Watchdog do
     :telemetry.execute(
       [:flezha, :state, :compaction_timeout],
       %{waited_ms: waited_ms},
-      %{operator: rc, tasklet: sh, key: pk, runner: runner_id, attempt: attempt}
+      %{relay: rc, tasklet: sh, key: pk, runner: runner_id, attempt: attempt}
     )
 
     maybe_give_up(pid, attempt, runner_id)
@@ -498,7 +498,7 @@ defmodule Flezha.State.Watchdog do
       if runner_id, do: Facts.declare({:compaction_gave_up, pid, %{runner_id: runner_id}})
     else
       Logger.debug(
-        "[watchdog] compaction unresolved operator=#{rc} tasklet=#{sh} key=#{pk} " <>
+        "[watchdog] compaction unresolved relay=#{rc} tasklet=#{sh} key=#{pk} " <>
           "attempt=#{attempt}; retry gated by backoff"
       )
     end
@@ -506,7 +506,7 @@ defmodule Flezha.State.Watchdog do
 
   defp emit_give_up({rc, sh, pk}, attempt) do
     Logger.error(
-      "[watchdog] compaction GAVE UP after #{attempt} failed attempts operator=#{rc} " <>
+      "[watchdog] compaction GAVE UP after #{attempt} failed attempts relay=#{rc} " <>
         "tasklet=#{sh} key=#{pk}; the Cell's WAL is not being reclaimed — investigate " <>
         "the runner's snapshot path"
     )
@@ -514,7 +514,7 @@ defmodule Flezha.State.Watchdog do
     :telemetry.execute(
       [:flezha, :state, :compaction_gave_up],
       %{attempts: attempt},
-      %{operator: rc, tasklet: sh, key: pk}
+      %{relay: rc, tasklet: sh, key: pk}
     )
   end
 

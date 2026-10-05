@@ -5,11 +5,11 @@ TBD - created by archiving change add-a-file-plugin. Update Purpose after archiv
 ## Requirements
 ### Requirement: A file sink SHALL append one line per record and confirm the hold only once the batch is durable
 
-A built-in provider `operator_file_sink` SHALL be attachable as a plugin with options `{path,
+A built-in provider `relay_file_sink` SHALL be attachable as a plugin with options `{path,
 channel_out?, commit? (append), linger_ms? (default 25), max_batch? (default 500), queue_max?
 (default 10000), retry_backoff_ms?, retry_max_backoff_ms?, unhealthy_after_ms? (default
 30000), plugin_id?}` and the hooks `on_input` and `on_output`. It SHALL NOT declare that it
-feeds the operator: `channel_out` is the record filter by the rule in `operator-extensions`,
+feeds the relay: `channel_out` is the record filter by the rule in `relay-extensions`,
 absent means every record, and `channel` or `channel_in` SHALL be refused as options this
 provider does not offer.
 
@@ -43,7 +43,7 @@ rewrite bytes.
 
 #### Scenario: Only the filtered channel is written
 
-- **GIVEN** a sink with `channel_out: "alerts"` on an operator also producing `metrics`
+- **GIVEN** a sink with `channel_out: "alerts"` on a relay also producing `metrics`
 - **WHEN** one record is released on each
 - **THEN** only the `alerts` record SHALL be written
 

@@ -19,7 +19,7 @@ defmodule Flezha.Api.ServiceSurfaceTest do
   alias Flezha.Service.Dlq
   alias Flezha.Service.Fleet
   alias Flezha.Service.Namespace
-  alias Flezha.Service.Operator
+  alias Flezha.Service.Relay
   alias Flezha.Service.PluginManager
   alias Flezha.Service.Schedule
   alias Flezha.Service.Steps
@@ -64,13 +64,13 @@ defmodule Flezha.Api.ServiceSurfaceTest do
       {:hub_nodes, ["default"]},
       {:installed_plugins, []},
       {:providers, []},
-      {:provider, ["operator_stdout"]}
+      {:provider, ["relay_stdout"]}
     ],
     Namespace => [
       {:list, []},
       {:get, ["default"]},
       {:quota_kinds, []},
-      {:quota, ["default", :operators]},
+      {:quota, ["default", :relays]},
       {:roles, ["default"]},
       {:create, ["ns_surface", []]},
       {:delete, ["ns_surface"]},
@@ -84,11 +84,11 @@ defmodule Flezha.Api.ServiceSurfaceTest do
       {:unbind_role, ["p", nil]},
       {:list_roles, []}
     ],
-    Operator => [
+    Relay => [
       {:list_namespaces, []},
-      {:list_operators, ["default"]},
-      {:operator_rows, ["default"]},
-      {:operator_plugins, ["default"]},
+      {:list_relays, ["default"]},
+      {:relay_rows, ["default"]},
+      {:relay_plugins, ["default"]},
       {:registry, ["default"]},
       {:partition_coverage, [[]]},
       {:partition_groups, [[]]},
@@ -107,8 +107,8 @@ defmodule Flezha.Api.ServiceSurfaceTest do
     PluginManager => [
       {:list, []},
       {:enable, ["plug_1", [provider: Flezha.Plugin]]},
-      {:bind, ["plug_1", [operator_id: "rc"]]},
-      {:unbind, ["plug_1", [operator_id: "rc"]]},
+      {:bind, ["plug_1", [relay_id: "rc"]]},
+      {:unbind, ["plug_1", [relay_id: "rc"]]},
       {:disable, ["plug_1", []]},
       {:enabled, ["default"]},
       {:update, ["plug_1", []]}
@@ -125,7 +125,7 @@ defmodule Flezha.Api.ServiceSurfaceTest do
       {:run, ["s"]}
     ],
     Steps => [
-      {:operator_classes, []},
+      {:relay_classes, []},
       {:completion, ["instance"]},
       {:completed_retention_hours, ["rc", %{}]},
       {:journal, ["instance"]},
@@ -235,10 +235,10 @@ defmodule Flezha.Api.ServiceSurfaceTest do
       assert {:ok, kinds} = Namespace.quota_kinds(context)
       assert is_list(kinds) and kinds != []
 
-      assert {:ok, true} = Operator.run_known?(:flow, context)
+      assert {:ok, true} = Relay.run_known?(:flow, context)
 
-      assert {:ok, []} = Operator.partition_groups([], context)
-      assert {:ok, _coverage} = Operator.partition_coverage([], context)
+      assert {:ok, []} = Relay.partition_groups([], context)
+      assert {:ok, _coverage} = Relay.partition_coverage([], context)
 
       assert {:ok, hub} = Controller.hub_id("default", context)
       assert is_atom(hub)
@@ -249,7 +249,7 @@ defmodule Flezha.Api.ServiceSurfaceTest do
       assert {:ok, counters} = Controller.liveness_counters(context)
       assert is_map(counters) or is_list(counters)
 
-      assert {:ok, classes} = Steps.operator_classes(context)
+      assert {:ok, classes} = Steps.relay_classes(context)
       assert is_list(classes)
 
       assert {:ok, hours} = Steps.completed_retention_hours("rc", %{}, context)

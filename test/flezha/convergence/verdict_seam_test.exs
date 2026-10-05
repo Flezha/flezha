@@ -6,7 +6,7 @@ defmodule Flezha.Convergence.VerdictSeamTest do
 
     1. **Vocabulary** — a file outside the seam carrying two or more of the
        seven verdict states is a second vocabulary.
-    2. **One writer** — `operator_health` is put into the published snapshot
+    2. **One writer** — `relay_health` is put into the published snapshot
        from exactly one site.
     3. **Conformance** — every detector entry reads facts of one shape for its
        declared kind, names thresholds something answers, and yields `unknown`
@@ -46,7 +46,7 @@ defmodule Flezha.Convergence.VerdictSeamTest do
       "`:failed` is an event segment; `:suspended` is a poll outcome journaled for wake",
     "lib/flezha/cli/state.ex" =>
       "both are `{:not_resident, _}` refusal reasons rendered as text, not health",
-    "lib/flezha/operator/overwatch.ex" =>
+    "lib/flezha/relay/overwatch.ex" =>
       "both are call refusals naming a lifecycle fact the caller asked against",
     "lib/flezha/observability/telemetry_bridge.ex" => "event NAMES, never verdicts",
     "lib/flezha/convergence/loop.ex" =>
@@ -83,9 +83,9 @@ defmodule Flezha.Convergence.VerdictSeamTest do
   end
 
   describe "clause 2 — one writer of the published health map" do
-    test "operator_health is put into the snapshot from exactly one site" do
+    test "relay_health is put into the snapshot from exactly one site" do
       assert snapshot_health_writers() == ["lib/flezha/convergence/loop/summary.ex"],
-             "operator_health reaches the published snapshot from more than one site: " <>
+             "relay_health reaches the published snapshot from more than one site: " <>
                inspect(snapshot_health_writers())
     end
   end
@@ -122,10 +122,10 @@ defmodule Flezha.Convergence.VerdictSeamTest do
       context = %{fixture_context() | signals: %{facts: :not_a_fact_map}}
       records = Judge.judge(context, %{})
 
-      operators = for {{:operator, _}, r} <- records, do: r
-      assert operators != []
+      relays = for {{:relay, _}, r} <- records, do: r
+      assert relays != []
 
-      for record <- operators do
+      for record <- relays do
         assert record.state == :unknown
         assert match?({:unobserved, _}, record.reason)
       end
@@ -134,13 +134,13 @@ defmodule Flezha.Convergence.VerdictSeamTest do
     test "every classifier layer maps to exactly one subject kind" do
       for layer <- classifier_layers() do
         scope = StallClassifier.layer_scope(layer)
-        assert scope in [nil, :fabric, :runner, :connection, :operator]
+        assert scope in [nil, :fabric, :runner, :connection, :relay]
         assert kind_of_scope(scope) in [nil | Verdict.kinds()]
       end
     end
 
     test "the Diff plans nothing for a driver record" do
-      intent = %Intent{operators: []}
+      intent = %Intent{relays: []}
 
       records = %{
         {:driver, {:uds, :control}} =>
@@ -170,15 +170,15 @@ defmodule Flezha.Convergence.VerdictSeamTest do
   end
 
   describe "the judge's rule order" do
-    test "a bound operator on a live runner is healthy" do
+    test "a bound relay on a live runner is healthy" do
       assert state_of(one("live", bound_runner: "e1"), MapSet.new(["e1"])) == :healthy
     end
 
-    test "an operator bound to no runner is unbound" do
+    test "a relay bound to no runner is unbound" do
       assert state_of(one("unbound", bound_runner: nil), MapSet.new(["e1"])) == :unbound
     end
 
-    test "an operator bound to a runner the roster does not hold is failed" do
+    test "a relay bound to a runner the roster does not hold is failed" do
       assert state_of(one("dead", bound_runner: "gone"), MapSet.new(["e1"])) == :failed
     end
 
@@ -201,25 +201,25 @@ defmodule Flezha.Convergence.VerdictSeamTest do
       assert records[{:runner, "gone"}].reason == :dead_runner
     end
 
-    test "a parked operator is parked, with its reason and its phase" do
+    test "a parked relay is parked, with its reason and its phase" do
       records =
         judged(
           one("parked", bound_runner: "e1", parked?: true, park_reason: :boom),
           MapSet.new(["e1"])
         )
 
-      record = records[{:operator, {"ns", "parked"}}]
+      record = records[{:relay, {"ns", "parked"}}]
 
       assert record.state == :parked
       assert record.reason == {:parked, :boom}
       assert record.phase == :parked
     end
 
-    # fails when: phase and state derive in different orders. An operator held
+    # fails when: phase and state derive in different orders. A relay held
     # after a bind that found no runner carries an `init_error`, which the probe
     # reports as `parked?` — so a phase derivation that tests parked before the
     # binding reports `parked` while the judge reports `unbound`.
-    test "an operator held after a bind that found no runner is unbound in both words" do
+    test "a relay held after a bind that found no runner is unbound in both words" do
       records =
         judged(
           one("held",
@@ -230,7 +230,7 @@ defmodule Flezha.Convergence.VerdictSeamTest do
           MapSet.new(["e1"])
         )
 
-      record = records[{:operator, {"ns", "held"}}]
+      record = records[{:relay, {"ns", "held"}}]
 
       assert record.state == :unbound
       assert record.reason == :no_binding
@@ -244,25 +244,25 @@ defmodule Flezha.Convergence.VerdictSeamTest do
           MapSet.new(["e1"])
         )
 
-      record = records[{:operator, {"ns", "suspended"}}]
+      record = records[{:relay, {"ns", "suspended"}}]
       assert record.state == :suspended
       assert record.phase == :suspended
     end
 
-    test "a bound-but-stalled operator is degraded, and names the window it was judged by" do
+    test "a bound-but-stalled relay is degraded, and names the window it was judged by" do
       records =
         judged(one("stalled", bound_runner: "e1"), MapSet.new(["e1"]), %{
           facts: %{{:output_stall, "stalled"} => %{at: 0, args: %{}}}
         })
 
-      record = records[{:operator, {"ns", "stalled"}}]
+      record = records[{:relay, {"ns", "stalled"}}]
       assert record.state == :degraded
       assert record.reason == {:stalled, :output_stall}
       assert {:output_stall_timeout_ms, ms} = record.threshold
       assert is_integer(ms)
     end
 
-    test "an operator whose declared plugin is not running is degraded" do
+    test "a relay whose declared plugin is not running is degraded" do
       records =
         judged(
           one("pluginless", bound_runner: "e1", running_plugins: [], subscribed_plugins: []),
@@ -271,7 +271,7 @@ defmodule Flezha.Convergence.VerdictSeamTest do
           [{"src", %{}}]
         )
 
-      assert records[{:operator, {"ns", "pluginless"}}].state == :degraded
+      assert records[{:relay, {"ns", "pluginless"}}].state == :degraded
       assert records[{:plugin, {"ns", "pluginless", "src"}}].state == :degraded
     end
 
@@ -312,20 +312,20 @@ defmodule Flezha.Convergence.VerdictSeamTest do
       record = records[{:plugin, {"ns", "failopen", "src"}}]
       assert record.state == :healthy
       assert record.reason == {:fail_open, :probe_budget_exceeded}
-      assert records[{:operator, {"ns", "failopen"}}].state == :healthy
+      assert records[{:relay, {"ns", "failopen"}}].state == :healthy
     end
 
-    test "an unobservable operator is unknown for the tick, not classified" do
+    test "an unobservable relay is unknown for the tick, not classified" do
       assert state_of(one("blind", bound_runner: :unknown), MapSet.new(["e1"])) == :unknown
     end
 
-    test "an operator whose namespace roster read failed is unknown, not failed" do
+    test "a relay whose namespace roster read failed is unknown, not failed" do
       assert state_of(one("blind_ns", bound_runner: "e1"), :unknown) == :unknown
     end
 
     test "a state that holds keeps its since_ms; a state that changes is re-stamped" do
       first = judged(one("held", bound_runner: "e1"), MapSet.new(["e1"]))
-      subject = {:operator, {"ns", "held"}}
+      subject = {:relay, {"ns", "held"}}
 
       context = context_for(one("held", bound_runner: "e1"), MapSet.new(["e1"]), %{}, [])
       again = Judge.judge(%{context | now: 9_999}, first)
@@ -345,7 +345,7 @@ defmodule Flezha.Convergence.VerdictSeamTest do
   end
 
   describe "the /healthz fold" do
-    test "a parked operator is degraded at once, never healthy" do
+    test "a parked relay is degraded at once, never healthy" do
       {status, body} = Verdict.fold(fixture_records(:parked), %{})
       assert status == :degraded
       assert body.reason =~ "parked"
@@ -361,13 +361,13 @@ defmodule Flezha.Convergence.VerdictSeamTest do
                Verdict.fold(records, %{unmet_intent_ms: 500_000, unmet_intent_grace_ms: 100})
 
       assert body.reason =~ "dead_runner"
-      assert body.bound_operators == 0
+      assert body.bound_relays == 0
     end
 
-    test "an unobserved operator is counted, not judged" do
+    test "an unobserved relay is counted, not judged" do
       {status, body} = Verdict.fold(fixture_records(:unknown), %{})
       assert status == :healthy
-      assert body.unknown_operators == 1
+      assert body.unknown_relays == 1
     end
 
     test "a driver record reaches the fabric arm and no other" do
@@ -386,7 +386,7 @@ defmodule Flezha.Convergence.VerdictSeamTest do
 
   defp source_files(), do: SourceWalk.files(["lib/flezha"], [".ex"])
 
-  # Every file that hands `Snapshot.publish/1` a map carrying `operator_health`.
+  # Every file that hands `Snapshot.publish/1` a map carrying `relay_health`.
   # Read from the AST, so a render key of the same name elsewhere is not a write.
   defp snapshot_health_writers() do
     for file <- source_files(),
@@ -413,7 +413,7 @@ defmodule Flezha.Convergence.VerdictSeamTest do
   end
 
   defp health_key?(pairs),
-    do: Keyword.keyword?(pairs) and Keyword.has_key?(pairs, :operator_health)
+    do: Keyword.keyword?(pairs) and Keyword.has_key?(pairs, :relay_health)
 
   defp atoms(file) do
     ~r/:(healthy|degraded|failed|unbound|parked|suspended|unknown)\b/
@@ -437,13 +437,13 @@ defmodule Flezha.Convergence.VerdictSeamTest do
   end
 
   defp context_for(observed, roster, signals, plugins) do
-    operators =
+    relays =
       for {{ns, id}, _} <- observed,
-          do: %{namespace: ns, operator_id: id, factory_id: nil, plugins: plugins}
+          do: %{namespace: ns, relay_id: id, factory_id: nil, plugins: plugins}
 
-    intent = %Intent{operators: operators}
+    intent = %Intent{relays: relays}
 
-    reality = %{operators: observed, active_runners: %{"ns" => roster}}
+    reality = %{relays: observed, active_runners: %{"ns" => roster}}
     Probe.context(intent, reality, signals, 1_000)
   end
 
@@ -453,7 +453,7 @@ defmodule Flezha.Convergence.VerdictSeamTest do
 
   defp state_of(observed, roster) do
     [{{"ns", id}, _}] = Enum.take(observed, 1)
-    judged(observed, roster)[{:operator, {"ns", id}}].state
+    judged(observed, roster)[{:relay, {"ns", id}}].state
   end
 
   # Every reachable state of every kind, minted by the judge from one context —
@@ -477,16 +477,16 @@ defmodule Flezha.Convergence.VerdictSeamTest do
       {"blind", "unknown_runner"} => obs(bound_runner: "e_blind")
     }
 
-    operators =
+    relays =
       for {{ns, id}, _} <- observed do
         plugins = if id in ["degraded", "plugged"], do: [{"src", %{}}], else: []
-        %{namespace: ns, operator_id: id, factory_id: nil, plugins: plugins}
+        %{namespace: ns, relay_id: id, factory_id: nil, plugins: plugins}
       end
 
-    intent = %Intent{operators: operators}
+    intent = %Intent{relays: relays}
 
     reality = %{
-      operators: observed,
+      relays: observed,
       active_runners: %{"ns" => MapSet.new(["e1", "e2"]), "blind" => :unknown}
     }
 
@@ -589,20 +589,19 @@ defmodule Flezha.Convergence.VerdictSeamTest do
 
   defp fixture_records(:parked),
     do: %{
-      {:operator, {"ns", "p"}} =>
-        Verdict.new({:operator, {"ns", "p"}}, :parked, reason: {:parked, :boom}, phase: :parked)
+      {:relay, {"ns", "p"}} =>
+        Verdict.new({:relay, {"ns", "p"}}, :parked, reason: {:parked, :boom}, phase: :parked)
     }
 
   defp fixture_records(:failed),
     do: %{
-      {:operator, {"ns", "f"}} =>
-        Verdict.new({:operator, {"ns", "f"}}, :failed, reason: :dead_runner)
+      {:relay, {"ns", "f"}} => Verdict.new({:relay, {"ns", "f"}}, :failed, reason: :dead_runner)
     }
 
   defp fixture_records(:unknown),
     do: %{
-      {:operator, {"ns", "u"}} =>
-        Verdict.new({:operator, {"ns", "u"}}, :unknown, reason: {:unobserved, :probe})
+      {:relay, {"ns", "u"}} =>
+        Verdict.new({:relay, {"ns", "u"}}, :unknown, reason: {:unobserved, :probe})
     }
 
   defp fixture_records(:driver_wedged),
@@ -622,7 +621,7 @@ defmodule Flezha.Convergence.VerdictSeamTest do
           :runner_not_consuming,
           :runner_pool_wedged,
           :channel_not_sending,
-          :operator_not_forwarding,
+          :relay_not_forwarding,
           :cell_dispatch_stalled,
           :producer_push_stalled
         ],
@@ -632,6 +631,6 @@ defmodule Flezha.Convergence.VerdictSeamTest do
   defp kind_of_scope(:fabric), do: :driver
   defp kind_of_scope(:connection), do: :channel
   defp kind_of_scope(:runner), do: :runner
-  defp kind_of_scope(:operator), do: :operator
+  defp kind_of_scope(:relay), do: :relay
   defp kind_of_scope(nil), do: nil
 end

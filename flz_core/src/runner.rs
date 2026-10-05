@@ -52,10 +52,10 @@ pub fn emit_control_request(reference_id: String, command: crate::pb::command_re
     coordinator_send(RunnerMessage::control_request(reference_id, command));
 }
 
-/// A steps operator's `OperatorCompleted`, so the controller deregisters it.
-pub fn emit_operator_completed(operator_id: String, status: String, error: String, result: Vec<u8>) {
-    coordinator_send(RunnerMessage::EmitOperatorCompleted {
-        operator_id,
+/// A steps relay's `RelayCompleted`, so the controller deregisters it.
+pub fn emit_relay_completed(relay_id: String, status: String, error: String, result: Vec<u8>) {
+    coordinator_send(RunnerMessage::EmitRelayCompleted {
+        relay_id,
         status,
         error,
         result,
@@ -86,9 +86,9 @@ pub enum RunnerMessage {
     SendControlKeepalive,
     /// The heartbeat timer's tick: a heartbeat on every secondary stream.
     SendDataHeartbeat,
-    /// A steps operator reached an exit trigger.
-    EmitOperatorCompleted {
-        operator_id: String,
+    /// A steps relay reached an exit trigger.
+    EmitRelayCompleted {
+        relay_id: String,
         status: String,
         error: String,
         result: Vec<u8>,
@@ -100,7 +100,7 @@ pub enum RunnerMessage {
         command: Box<crate::pb::command_request::Command>,
     },
     /// A post-start remove, on the loop so the live-instance check is
-    /// serialized with `AddOperator`; answered by
+    /// serialized with `AddRelay`; answered by
     /// [`ClientResponseMessage::RemoveFactoryResult`].
     RemoveFactory {
         factory_id: String,
@@ -135,5 +135,5 @@ pub enum ClientResponseMessage {
     RemoveFactoryResult(Result<(), usize>),
 }
 
-pub use crate::coordinator::{bound, live_instance, start, BoundOperators, RunnerNode};
-pub use crate::routing::OperatorDispatchHandle;
+pub use crate::coordinator::{bound, live_instance, start, BoundRelays, RunnerNode};
+pub use crate::routing::RelayDispatchHandle;

@@ -11,10 +11,10 @@ defmodule FlezhaTest.Plugin.ControllerPluginMultinodeTest do
   alias Flezha.Plugin
   alias Flezha.Plugin.Provider.HookWebhook
   alias Flezha.Service.HubManager
-  alias Flezha.Service.OperatorManager
+  alias Flezha.Service.RelayManager
   alias Flezha.Service.PluginManager
   alias Flezha.State.TestHelpers
-  alias FlezhaTest.Fixtures.OperatorFixture
+  alias FlezhaTest.Fixtures.RelayFixture
   alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.Helper.WebhookServer
 
@@ -41,7 +41,7 @@ defmodule FlezhaTest.Plugin.ControllerPluginMultinodeTest do
         end
       end
 
-      OperatorManager.stop_all_operators(@namespace)
+      RelayManager.stop_all_relays(@namespace)
     end)
 
     for peer <- [p1, p2] do
@@ -66,20 +66,20 @@ defmodule FlezhaTest.Plugin.ControllerPluginMultinodeTest do
       })
   end
 
-  # An operator the hub placed on `node`: the class whose dead letter names
+  # A relay the hub placed on `node`: the class whose dead letter names
   # its namespace there.
-  defp operator_on(node, prefix) do
+  defp relay_on(node, prefix) do
     Enum.find_value(1..30, fn i ->
       id = "#{prefix}_#{i}"
-      {:ok, %{node: placed}} = id |> OperatorFixture.get(@factory) |> OperatorFixture.start()
-      if placed == node, do: id, else: OperatorFixture.stop(id) && nil
-    end) || flunk("no operator landed on #{inspect(node)}")
+      {:ok, %{node: placed}} = id |> RelayFixture.get(@factory) |> RelayFixture.start()
+      if placed == node, do: id, else: RelayFixture.stop(id) && nil
+    end) || flunk("no relay landed on #{inspect(node)}")
   end
 
-  defp dead_letter_on(node, operator) do
+  defp dead_letter_on(node, relay) do
     entry =
       Flezha.Dlq.Entry.new!(%{
-        operator_class: operator,
+        relay_class: relay,
         tasklet_id: "t",
         cell_key: "k",
         channel: "in",
@@ -105,7 +105,7 @@ defmodule FlezhaTest.Plugin.ControllerPluginMultinodeTest do
     # A copy another controller runs is seen here once the directory syncs.
     assert NodeTestHelper.wait_until(fn -> copies("hook_local") == everywhere end, 5_000)
 
-    op = operator_on(p2, "dl_local")
+    op = relay_on(p2, "dl_local")
     dead_letter_on(p2, op)
 
     assert received_from() == to_string(p2)
@@ -149,7 +149,7 @@ defmodule FlezhaTest.Plugin.ControllerPluginMultinodeTest do
     [home] = copies("hook_single")
 
     elsewhere = Enum.find([node(), ctx.p1, ctx.p2], &(&1 != home))
-    op = operator_on(elsewhere, "dl_single")
+    op = relay_on(elsewhere, "dl_single")
     dead_letter_on(elsewhere, op)
 
     assert received_from() == to_string(elsewhere)

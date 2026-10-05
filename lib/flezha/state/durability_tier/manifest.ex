@@ -2,7 +2,7 @@ defmodule Flezha.State.DurabilityTier.Manifest do
   @moduledoc """
   What a shipped artifact set *is*, and the naming that addresses it.
 
-  A manifest entry describes one shippable unit — a Cell, a steps operator
+  A manifest entry describes one shippable unit — a Cell, a steps relay
   instance's task-journal, an instance's durable input log, its parked
   failures, the ProcessHub registry cspec, or a control-plane store — as of one
   shipped cut. It is written **last** in every ship, so a crash mid-upload
@@ -242,7 +242,7 @@ defmodule Flezha.State.DurabilityTier.Manifest do
   # Which classes carry a writer in their identity is the ownership model in
   # one line: the cspec and the control-plane stores are per-writer replicas of
   # something no node replicates for another, while a Cell's state and an
-  # operator's parked failures belong to whichever node runs it and are
+  # relay's parked failures belong to whichever node runs it and are
   # arbitrated by the claim counter instead.
   @classes %{
     "e" => {:cell, 3},
@@ -290,7 +290,7 @@ defmodule Flezha.State.DurabilityTier.Manifest do
   Manifest-key prefix covering every artifact of `kind`, narrowed by the leading
   identity segments in `parts`.
 
-  `prefix(:cell, [class])` is every Cell of one operator class;
+  `prefix(:cell, [class])` is every Cell of one relay class;
   `prefix(:cspec)` is every registry replica there is.
   """
   @spec prefix(atom(), [binary()]) :: binary()

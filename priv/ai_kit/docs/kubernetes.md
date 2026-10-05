@@ -16,10 +16,10 @@ and its runners as deployments beside it.
   a volume both containers mount, and the runner finds the sockets there
   (`FLEZHA_SOCKET_FILES_PATH` on both sides, the same path).
 - **The controller's data needs a volume of its own.** Everything the controller keeps, the
-  operators' state included, is under its `app_data` folder. A StatefulSet gives the pod a
+  relays' state included, is under its `app_data` folder. A StatefulSet gives the pod a
   volume that a new pod of the same name mounts again, so the state outlives the pod.
 - **The pod needs time to stop.** A controller that stops drains its work and hands its
-  operators over first. `terminationGracePeriodSeconds` must be longer than the controller's
+  relays over first. `terminationGracePeriodSeconds` must be longer than the controller's
   shutdown timeout (`FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS`, 60 seconds by default): 75 seconds
   is the timeout plus 15 seconds.
 - **Readiness.** A controller is ready once its boot has finished: `flz boot await --timeout 0`
@@ -195,10 +195,10 @@ Runners in namespace 'agents':
   - agents_4d7736218461
 ```
 
-Operators are then started and plugins enabled as anywhere else:
+Relays are then started and plugins enabled as anywhere else:
 
 ```sh
-$ flz operator start agent --id anna --namespace agents && flz operator start gateway --id gateway --namespace agents
+$ flz relay start agent --id anna --namespace agents && flz relay start gateway --id gateway --namespace agents
 ```
 
 ```output
@@ -207,7 +207,7 @@ Started gateway
 ```
 
 ```sh
-$ flz plugin enable web http_server --operator_id=gateway --namespace agents --hook=on_terminate --Xport=8080 --Xbind=0.0.0.0 --Xchannel=http
+$ flz plugin enable web http_server --relay_id=gateway --namespace agents --hook=on_terminate --Xport=8080 --Xbind=0.0.0.0 --Xchannel=http
 ```
 
 ```output
@@ -265,7 +265,7 @@ The new pod's controller restored the session from the volume, and its next answ
 the conversation:
 
 ```sh
-$ flz operator call anna --namespace agents --text 'Are you still there?'
+$ flz relay call anna --namespace agents --text 'Are you still there?'
 ```
 
 ```output
@@ -319,8 +319,8 @@ in short:
 ## Limits and gotchas
 
 - **One controller is a single point of failure.** Several controllers need the settings in
-  [clustering.md](clustering.md), and a durability backend to restore a moved operator from.
-- **A plugin's port moves with its operator.** With several controllers, a Service in front of
+  [clustering.md](clustering.md), and a durability backend to restore a moved relay from.
+- **A plugin's port moves with its relay.** With several controllers, a Service in front of
   an HTTP port needs a proxy that retries a refused connection
   ([http_server.md](../../plugins/http_server.md#deployment)).
 - **Deleting the namespace deletes the volumes,** and the state in them.

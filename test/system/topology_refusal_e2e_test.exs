@@ -32,7 +32,7 @@ defmodule FlezhaTest.System.TopologyRefusalE2ETest do
   `FLEZHA_E2E_RUNTIME`, the one a nightly job builds, whose clauses also run in
   the ordinary `:system` pass. That is what makes the drill run in CI at all:
   the nightly is one job per runtime and no job builds a second one, so a
-  steps operator line asking for the whole sweep would be red on every runtime it did
+  steps relay line asking for the whole sweep would be red on every runtime it did
   not build.
   """
 
@@ -301,7 +301,7 @@ defmodule FlezhaTest.System.TopologyRefusalE2ETest do
     |> MapSet.new()
   end
 
-  # A steps operator golden binds as a steps operator; everything else is unbounded.
+  # A steps relay golden binds as a steps relay; everything else is unbounded.
   defp kind_of(factory) do
     if String.contains?(factory, "steps"), do: :steps, else: :flow
   end

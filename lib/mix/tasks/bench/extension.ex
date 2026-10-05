@@ -18,7 +18,7 @@ defmodule Mix.Tasks.Bench.Extension do
       mix bench.extension
       mix bench.extension --iterations 500000
 
-  N=0 is the dominant production case: operators without any subscriber
+  N=0 is the dominant production case: relays without any subscriber
   attached to `:on_input` take the bitmask short-circuit.
   """
 
@@ -53,7 +53,7 @@ defmodule Mix.Tasks.Bench.Extension do
         %{file: __ENV__.file, line: __ENV__.line}
       )
 
-    ctx = %Ctx.IO{operator_id: "p", namespace: :n, message: "msg", metadata: %{}}
+    ctx = %Ctx.IO{relay_id: "p", namespace: :n, message: "msg", metadata: %{}}
 
     IO.puts("\nExtension.run/3 microbenchmark — #{iterations} iterations each")
     IO.puts(String.duplicate("=", 78))

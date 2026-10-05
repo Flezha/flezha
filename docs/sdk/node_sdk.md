@@ -2,7 +2,7 @@
 
 `@flezha/sdk` is a poll host over `flz_core`, the runner kernel the Rust and
 Java SDKs also drive. The kernel owns transport, ordering, per-cell
-exclusivity, durability, retries, timers, credit, routing and the steps operator
+exclusivity, durability, retries, timers, credit, routing and the steps relay
 driver. This package supplies threads and user code, and nothing else —
 [`poll_core.md` → "The core decides, the SDK brings the threads"](poll_core.md#the-core-decides-the-sdk-brings-the-threads).
 
@@ -60,10 +60,10 @@ succeeds and says nothing. An installation that resolved no platform package
 therefore looks healthy until the core is first loaded, where the SDK refuses
 naming the host it detected, the package it looked for and the build above.
 
-## Writing an operator
+## Writing a relay
 
 ```ts
-import { createRunner, defineOperator, defineTasklet, type Ctx } from '@flezha/sdk';
+import { createRunner, defineRelay, defineTasklet, type Ctx } from '@flezha/sdk';
 
 interface Trade { symbol: string; price: number; at: number }
 interface Candle { symbol: string; close: number }
@@ -85,7 +85,7 @@ const Ohlc = defineTasklet({
   },
 });
 
-export default defineOperator({
+export default defineRelay({
   factoryId: 'candles',
   channels: (c) => {
     c.input<Trade>('trades').keyBy((trade) => trade.symbol).into(Ohlc).keyed().sink('candles');
@@ -136,14 +136,14 @@ an `emit` on it does not compile.
   on a stream or on a merge, gets a cell per key; one reached by no `keyBy`
   has one cell; `cells: { keys, cellsFor }` declares a fixed key set, and
   `keyBy` into one is refused as `topology.key_by_on_unkeyable_target`. The mode belongs to
-  the node, so one definition can be keyed in one operator and single in
+  the node, so one definition can be keyed in one relay and single in
   another.
 - `idleTtlSeconds` evicts a keyed cell idle that long, a positive whole number
   of seconds; unset never evicts. `maxCells` caps the keyed cells held at once.
 - The clock follows from what the definition writes: `eventTime(input)` puts it
   on event time, `logicalClock: true` on the logical clock, and anything else on
   the wall clock. Writing both is refused. A logical clock needs `applyChange`,
-  and without it the core refuses the operator as `topology.unservable_clock`.
+  and without it the core refuses the relay as `topology.unservable_clock`.
 - A field `defineTasklet` does not read is refused while the module loads,
   naming it, whether the definition carries it or inherits it. A field an
   earlier release read is refused naming what replaced it.
@@ -156,11 +156,11 @@ refusal stops working. Everything static typing cannot see — cycles, missing
 entry channels, unservable clocks, keyed-channel rules, branch arity, duplicate
 sinks — is refused at registration, naming the handler and the defect.
 
-**The class settings are one tree.** `defineOperator` takes them beside
+**The class settings are one tree.** `defineRelay` takes them beside
 `factoryId`, in either form:
 
 ```javascript
-export default defineOperator({
+export default defineRelay({
   factoryId: 'orders',
   steps: { each: 'per_input', onFailure: 'keep_progress' },
   durable: { local: { sleepAfter: 10_000 } },
@@ -169,7 +169,7 @@ export default defineOperator({
 });
 ```
 
-- An operator runs as a flow unless it writes `steps`. The run is written as
+- A relay runs as a flow unless it writes `steps`. The run is written as
   its branch, `flow: {...}` or `steps: {...}`, never both, because a short
   form's `run` is its tasklet body. `steps` takes `each` (`'once'`, the
   default, `'per_input'` or `'chained'`) and `onFailure` (`'undo_all'`, the
@@ -210,7 +210,7 @@ is what makes enabling worker threads a flag rather than a rewrite.
 
 ### The short form
 
-An operator of one tasklet can be one declaration: `defineOperator` carrying
+A relay of one tasklet can be one declaration: `defineRelay` carrying
 that tasklet's `run` body in place of `channels`. `factoryId` is required, `sink` is optional,
 `input` names the entry channel, and `codec` is the entry codec `c.input`
 takes. The tasklet's own fields (`initState`, `applyChange`, `cells`,
@@ -221,7 +221,7 @@ form unchanged.
 
 ```javascript
 // upcase.mjs
-export const upcase = defineOperator({
+export const upcase = defineRelay({
   factoryId: 'upcase',
   sink: 'out',
   codec: 'text',
@@ -229,7 +229,7 @@ export const upcase = defineOperator({
 });
 
 // place.mjs
-export const place = defineOperator({
+export const place = defineRelay({
   factoryId: 'place',
   steps: {},
   sink: 'placed',
@@ -246,19 +246,19 @@ await runner.registerFactory('./place.mjs');
 await runner.run();
 ```
 
-The generated operator is the one you would have written by hand with that
+The generated relay is the one you would have written by hand with that
 single tasklet: an entry channel named `input`, or the `input` field's value,
 decoded by `codec`; the tasklet, named `factoryId` verbatim, so its cells
 keep their state path when it grows into the full form; a plugin sink named by
 `sink`; and the class settings it writes, as the full form takes them. A steps
-short form is a `once` steps operator unless it writes `each`, run once over its first
-message: `flz operator start --text '<payload>'`, or a start followed by
-`flz operator send`; a second message to a `once` instance is accepted and
+short form is a `once` steps relay unless it writes `each`, run once over its first
+message: `flz relay start --text '<payload>'`, or a start followed by
+`flz relay send`; a second message to a `once` instance is accepted and
 never read. With `each: 'per_input'` it runs once per message and does
 not complete after the first:
 
 ```javascript
-export const chat = defineOperator({
+export const chat = defineRelay({
   factoryId: 'chat',
   sink: 'replies',
   codec: 'text',
@@ -271,7 +271,7 @@ With no `sink` there is no plugin channel, so the tasklet has no output
 channel either: its `run` keeps state and emits nothing.
 
 ```javascript
-export const counter = defineOperator({
+export const counter = defineRelay({
   factoryId: 'counter',
   input: 'ticks',
   codec: 'text',
@@ -288,11 +288,11 @@ export const counter = defineOperator({
 Anything more is the full form: a second tasklet, a fan-out, a merge, a keyed
 edge, or an edge's retry ladder.
 
-The spec is built where `defineOperator` runs, so a
+The spec is built where `defineRelay` runs, so a
 malformed short form is refused while the module loads rather than inside
 `run()`. Two refusals name themselves: `topology.short_form_with_topology` (`run` beside
 `channels`), and `topology.duplicate_factory_id`, raised when the runner declares a second
-operator under a factory id it holds, whatever either runs. A key written where it
+relay under a factory id it holds, whatever either runs. A key written where it
 does not belong is refused naming the key: `name` beside `run`, `sink`, `input`,
 `codec` or a tasklet field beside `channels`, and `flow`, `steps`, `durable`,
 `sink`, `input` or `codec` on a `defineTasklet`. There is no `topology.sink_without_output`: a plain `.mjs` definition
@@ -405,21 +405,21 @@ passes through, a string is sent as UTF-8, and anything else as JSON. So a sink
 needs no codec for a string, bytes or a JSON value, and names one only to pick
 another format, `'json'` to quote a string or `'msgpack'`. A decoder or encoder
 function takes the place of a codec for anything else. A codec name outside the
-four does not type-check, and from JavaScript it is refused when the operator
+four does not type-check, and from JavaScript it is refused when the relay
 is declared, as is a codec given beside a function on one channel, naming the
-operator and the channel.
+relay and the channel.
 
 `.response()` ends a channel on the answer to an outside call instead of a sink,
-and takes the sink's arguments, an encoder or `{ codec }`: [`../topics/advanced/operator_calls.md`](../topics/advanced/operator_calls.md).
+and takes the sink's arguments, an encoder or `{ codec }`: [`../topics/advanced/relay_calls.md`](../topics/advanced/relay_calls.md).
 `.call("pricing", { deadlineMs, codec })` or `.call({ factory: "agent", create: false }, { deadlineMs })`
-ends a chain on a call to another operator and answers a stream of `Response`s:
-[`../topics/advanced/operator_calls.md`](../topics/advanced/operator_calls.md).
+ends a chain on a call to another relay and answers a stream of `Response`s:
+[`../topics/advanced/relay_calls.md`](../topics/advanced/relay_calls.md).
 
 A JSON number is a double, so an integer above 2^53 loses precision on the way
 in and out. A `bigint`, `undefined` or a function has no JSON form and fails
 the emit naming the channel; `'msgpack'` carries a `bigint` at any width.
 
-A value passed between two tasklets of one operator never crosses a channel
+A value passed between two tasklets of one relay never crosses a channel
 codec: it stays MessagePack. An Elixir entry declared with no decoder hands its
 tasklet the binary instead, since an Elixir string is its binary, so the same
 bytes on an undeclared entry are an object here and a string there.
@@ -446,14 +446,14 @@ refused by name rather than decoded, and the reverse holds too.
 
 ## Local mode: run a graph with no controller
 
-`LocalOperator.start` takes the operator definition you deploy and runs its
+`LocalRelay.start` takes the relay definition you deploy and runs its
 declared graph in this process — no controller, no socket, no local-mode member
 on the definition:
 
 ```ts
-import { LocalOperator } from '@flezha/sdk';
+import { LocalRelay } from '@flezha/sdk';
 
-const run = LocalOperator.start(WordCount);
+const run = LocalRelay.start(WordCount);
 try {
   run.onSink('totals', (out) => console.log(out.payload.toString('utf8')));
   await run.feed('lines', 'the quick brown fox');

@@ -1,17 +1,17 @@
 defmodule Flezha.State.Retention do
   @moduledoc """
-  Sweeper enforcing `time_travel_retention_hours` per Operator class.
+  Sweeper enforcing `time_travel_retention_hours` per Relay class.
 
   On each pass, walks every Cell under `Paths.state_root/0` and prunes
   snapshots strictly older than `now - retention_hours` (keeping at minimum the
   latest snapshot) and WAL records whose `seq <= kept_snapshot_seq`, by chunk
   rewrite through `cell.wal.rewriting` -> rename.
 
-  `retention_hours = 0` disables time-travel for that Operator class: the WAL
+  `retention_hours = 0` disables time-travel for that Relay class: the WAL
   is truncated to the latest snapshot's seq on every pass — compact and forget.
 
   On the same tick it also runs the **finished-job** sweep: a finished steps
-  operator's retained state and completion record (`Flezha.State.Completion`)
+  relay's retained state and completion record (`Flezha.State.Completion`)
   are removed once `finished_at + completed_retention_hours` is past.
 
   Holds its own sweep timer, `:time_travel_retention_check_interval_ms`.
@@ -82,31 +82,31 @@ defmodule Flezha.State.Retention do
   # ---------- Sweep ----------
 
   defp sweep_all() do
-    Enum.each(Paths.all_cells(), fn {operator_class, _, _} = pid ->
-      sweep_cell(pid, PersistenceResolver.retention_hours(operator_class))
+    Enum.each(Paths.all_cells(), fn {relay_class, _, _} = pid ->
+      sweep_cell(pid, PersistenceResolver.retention_hours(relay_class))
     end)
   end
 
-  # Finished-job retention: reclaim a finished steps operator's retained
+  # Finished-job retention: reclaim a finished steps relay's retained
   # state + completion record once `finished_at + completed_retention_hours`
-  # is in the past. A finished operator is fully torn down (no live writer), so
+  # is in the past. A finished relay is fully torn down (no live writer), so
   # the whole class dir goes, through the one guard every state deletion passes.
   defp sweep_completed() do
     now = System.system_time(:second)
 
-    Enum.each(Paths.operator_classes(), fn operator_class ->
+    Enum.each(Paths.relay_classes(), fn relay_class ->
       with {:ok, %{finished_at: finished_at}} when is_integer(finished_at) <-
-             Completion.read(operator_class),
-           window = PersistenceResolver.completed_retention_hours(operator_class),
+             Completion.read(relay_class),
+           window = PersistenceResolver.completed_retention_hours(relay_class),
            true <- finished_at + window * 3600 < now do
-        Paths.delete_class_dir(operator_class)
+        Paths.delete_class_dir(relay_class)
       else
         _ -> :ok
       end
     end)
   end
 
-  # Effectively-once tier: truncate each operator's input-log below its
+  # Effectively-once tier: truncate each relay's input-log below its
   # min durable consumed-offset watermark (`durable-input-log`).
   defp sweep_input_logs() do
     Enum.each(Sweep.all_classes(), &Sweep.run/1)

@@ -2,7 +2,7 @@ defmodule Flezha.Service.PluginManager do
   @moduledoc """
   Named plugins and their bindings. A plugin is enabled by name in a namespace
   and recorded as its own `{:plugin, name}` entry in the namespace hub's
-  declared set; an operator is bound to it by a binding on the operator's own
+  declared set; a relay is bound to it by a binding on the relay's own
   entry. Both are written by the start authority, so a plugin and every binding
   survive an Overwatch restart, a controller restart and a cluster cold start,
   and nothing is kept per node.
@@ -12,7 +12,7 @@ defmodule Flezha.Service.PluginManager do
   validate, then durable write, then runtime: a refused enable or bind leaves
   nothing, and a failed runtime subscribe rolls its binding back.
 
-  What runs where is `Flezha.Operator.Plugins`' and `Flezha.Plugin.Shared`'s:
+  What runs where is `Flezha.Relay.Plugins`' and `Flezha.Plugin.Shared`'s:
   this module writes intent and asks the running copies to converge on it.
   """
 
@@ -21,8 +21,8 @@ defmodule Flezha.Service.PluginManager do
   alias Flezha.Cluster.Directory
   alias Flezha.Config.Backoff
   alias Flezha.Config.Durations
-  alias Flezha.Operator.Overwatch
-  alias Flezha.Operator.PartitionGroup
+  alias Flezha.Relay.Overwatch
+  alias Flezha.Relay.PartitionGroup
   alias Flezha.Parallel
   alias Flezha.Plugin
   alias Flezha.Plugin.Extension.Table
@@ -35,20 +35,20 @@ defmodule Flezha.Service.PluginManager do
   alias Flezha.Process.Cspec
   alias Flezha.Service.CallerContext
   alias Flezha.Service.HubManager
-  alias Flezha.Service.OperatorManager
-  alias Flezha.Service.OperatorManager.Init
-  alias Flezha.Service.OperatorManager.Teardown
+  alias Flezha.Service.RelayManager
+  alias Flezha.Service.RelayManager.Init
+  alias Flezha.Service.RelayManager.Teardown
   alias Flezha.Service.RegistryUpdate
 
   ## Enable
 
   @doc """
   Enable `name` in `plugin.namespace` with the provider and options `plugin`
-  carries. Nothing starts: a plugin runs where an operator bound to it runs.
+  carries. Nothing starts: a plugin runs where a relay bound to it runs.
   Answers `{:ok, :already_enabled}` for a name enabled with the same provider,
   and refuses another provider with `plugin.id_taken`.
 
-  With `plugin.operator_id` set it also binds that operator with `plugin.hooks`
+  With `plugin.relay_id` set it also binds that relay with `plugin.hooks`
   and `channel`, in one call; a bind that fails answers its refusal and leaves
   the plugin enabled.
   """
@@ -80,13 +80,13 @@ defmodule Flezha.Service.PluginManager do
     end
   end
 
-  # A controller plugin's operator is its entry's own, not a binding.
+  # A controller plugin's relay is its entry's own, not a binding.
   defp bind_after_enable(%Plugin{} = plugin, enabled, channel) do
-    if plugin.operator_id == nil or Plugin.controller?(plugin) do
+    if plugin.relay_id == nil or Plugin.controller?(plugin) do
       {:ok, if(enabled == :already_enabled, do: :already_enabled, else: "plugin enabled")}
     else
       plugin.namespace
-      |> bind_plugin(plugin.id, plugin.operator_id, hooks: plugin.hooks, channel: channel)
+      |> bind_plugin(plugin.id, plugin.relay_id, hooks: plugin.hooks, channel: channel)
       |> case do
         :already_bound when enabled == :already_enabled -> {:ok, :already_enabled}
         {:error, _} = refused -> refused
@@ -95,9 +95,9 @@ defmodule Flezha.Service.PluginManager do
     end
   end
 
-  # An operator plugin's entry is the plugin without an operator or hooks, its
+  # A relay plugin's entry is the plugin without a relay or hooks, its
   # options checked against the provider's declaration as any binding of it may
-  # hook it: an enable names no operator, so the provider's own preparation runs
+  # hook it: an enable names no relay, so the provider's own preparation runs
   # where a binding brings the plugin up. A controller plugin's keeps its hooks.
   defp entry_of(%Plugin{provider: provider, opts: opts} = plugin) do
     plugin = %Plugin{plugin | opts: opts || %{}}
@@ -126,11 +126,11 @@ defmodule Flezha.Service.PluginManager do
 
     with :ok <- refuse_init_hook(plugin),
          {:ok, _normalised} <- Options.normalise_opts(provider, Map.merge(plugin.opts, bindable)),
-         do: {:ok, %Plugin{plugin | operator_id: nil, hooks: []}}
+         do: {:ok, %Plugin{plugin | relay_id: nil, hooks: []}}
   end
 
   defp refuse_init_hook(%Plugin{hooks: hooks}) do
-    if Enum.any?(hooks, &(elem(&1, 0) in [:on_operator_init, "on_operator_init"])),
+    if Enum.any?(hooks, &(elem(&1, 0) in [:on_relay_init, "on_relay_init"])),
       do: {:error, :init_plugin_after_start},
       else: :ok
   end
@@ -188,18 +188,18 @@ defmodule Flezha.Service.PluginManager do
   ## Bind
 
   @doc """
-  Bind `operator_id` (or every member of the partition group it names) to the
+  Bind `relay_id` (or every member of the partition group it names) to the
   plugin `name`, with the `:hooks` and the `:channel` in `fields`. Answers
-  `:already_bound` for an operator that holds the binding.
+  `:already_bound` for a relay that holds the binding.
   """
   @spec bind_plugin(binary(), binary(), binary(), keyword()) ::
           :ok | :already_bound | {:error, term()}
-  def bind_plugin(namespace, name, operator_id, fields \\ []) do
+  def bind_plugin(namespace, name, relay_id, fields \\ []) do
     binding = %Plugin{
       id: name,
       provider: nil,
       namespace: namespace,
-      operator_id: operator_id,
+      relay_id: relay_id,
       hooks: Keyword.get(fields, :hooks, []),
       opts: channel_opts(Keyword.get(fields, :channel))
     }
@@ -211,8 +211,8 @@ defmodule Flezha.Service.PluginManager do
 
   @doc false
   @spec bind_here(Plugin.t()) :: :ok | :already_bound | {:error, term()}
-  def bind_here(%Plugin{namespace: namespace, operator_id: operator_id} = binding) do
-    targets = targets(namespace, operator_id)
+  def bind_here(%Plugin{namespace: namespace, relay_id: relay_id} = binding) do
+    targets = targets(namespace, relay_id)
 
     with :ok <- refuse_init_hook(binding),
          {:ok, entry} <- fetch_entry(namespace, binding.id) do
@@ -249,9 +249,9 @@ defmodule Flezha.Service.PluginManager do
   end
 
   @doc """
-  The bindings an operator starting with `--plugins` specs carries: each spec
+  The bindings a relay starting with `--plugins` specs carries: each spec
   that names a provider enables its plugin when it is not enabled yet, and each
-  is checked as a bind of `plugins`' operator would be. A spec that only binds
+  is checked as a bind of `plugins`' relay would be. A spec that only binds
   may name the binding's `channel` and nothing else in its options.
   """
   @spec start_bindings(binary(), [Plugin.t()]) :: {:ok, [Plugin.t()]} | {:error, term()}
@@ -283,21 +283,21 @@ defmodule Flezha.Service.PluginManager do
 
   defp start_binding(namespace, %Plugin{id: name} = plugin) do
     with {:ok, _enabled} <-
-           enable_plugin(name, %Plugin{plugin | namespace: namespace, operator_id: nil}) do
+           enable_plugin(name, %Plugin{plugin | namespace: namespace, relay_id: nil}) do
       start_binding(namespace, %Plugin{plugin | provider: nil, opts: %{}})
     end
   end
 
   @doc false
-  def checked_start_binding(%Plugin{operator_id: operator_id} = binding),
-    do: checked_binding(binding, [{operator_id, nil}])
+  def checked_start_binding(%Plugin{relay_id: relay_id} = binding),
+    do: checked_binding(binding, [{relay_id, nil}])
 
-  # A group id names no operator — it names N of them, each bound under its
+  # A group id names no relay — it names N of them, each bound under its
   # `#pK` id with its partition options.
   @doc false
-  def targets(namespace, operator_id) do
-    case PartitionGroup.members(namespace, operator_id) do
-      [] -> [{operator_id, nil}]
+  def targets(namespace, relay_id) do
+    case PartitionGroup.members(namespace, relay_id) do
+      [] -> [{relay_id, nil}]
       members -> Enum.map(members, &{&1.id, &1.partition})
     end
   end
@@ -326,82 +326,82 @@ defmodule Flezha.Service.PluginManager do
     end
   end
 
-  # The operator, or the group, already bound to a plugin that cannot be
+  # The relay, or the group, already bound to a plugin that cannot be
   # shared. Members of one group are one holder.
   defp other_holder(%Plugin{id: name, namespace: namespace}, targets) do
     own = MapSet.new(targets, &Plugin.group_of(elem(&1, 0)))
 
     namespace
-    |> bound_operators(name)
+    |> bound_relays(name)
     |> Enum.map(&Plugin.group_of/1)
     |> Enum.reject(&MapSet.member?(own, &1))
     |> List.first()
   end
 
-  defp bind_one(namespace, operator_id, %Plugin{id: id} = binding, entry) do
-    case HubManager.operator_bindings(namespace, operator_id) do
+  defp bind_one(namespace, relay_id, %Plugin{id: id} = binding, entry) do
+    case HubManager.relay_bindings(namespace, relay_id) do
       {:ok, bindings} ->
         if List.keymember?(bindings, id, 0),
           do: :already_bound,
-          else: write_binding(namespace, operator_id, binding, entry)
+          else: write_binding(namespace, relay_id, binding, entry)
 
       {:error, _} = refused ->
         refused
     end
   end
 
-  # The operator is handed the plugin's entry with the binding: its own node's
+  # The relay is handed the plugin's entry with the binding: its own node's
   # rows may not have heard of a plugin enabled a moment ago.
-  defp write_binding(namespace, operator_id, %Plugin{id: id} = binding, entry) do
+  defp write_binding(namespace, relay_id, %Plugin{id: id} = binding, entry) do
     stored = Plugin.strip_transient(binding)
 
     with :ok <-
-           update_cspec_plugins(namespace, operator_id, RegistryUpdate.add_plugin(id, stored)) do
-      case subscribe(namespace, operator_id, id, binding, entry) do
+           update_cspec_plugins(namespace, relay_id, RegistryUpdate.add_plugin(id, stored)) do
+      case subscribe(namespace, relay_id, id, binding, entry) do
         :ok ->
           :ok
 
         refused ->
-          _ = update_cspec_plugins(namespace, operator_id, RegistryUpdate.remove_plugin(id))
+          _ = update_cspec_plugins(namespace, relay_id, RegistryUpdate.remove_plugin(id))
           refused
       end
     end
   end
 
-  defp subscribe(namespace, operator_id, id, binding, entry) do
-    with {:ok, pid} <- OperatorManager.get_operator_pid(namespace, operator_id),
+  defp subscribe(namespace, relay_id, id, binding, entry) do
+    with {:ok, pid} <- RelayManager.get_relay_pid(namespace, relay_id),
          do: Overwatch.plugin_subscribe(pid, id, binding, entry)
   end
 
   ## Unbind
 
   @doc """
-  Remove `operator_id`'s binding to `name` (from every member of the group it
+  Remove `relay_id`'s binding to `name` (from every member of the group it
   names). The plugin stays enabled.
   """
   @spec unbind_plugin(binary(), binary(), binary()) :: :ok | {:error, term()}
-  def unbind_plugin(namespace, name, operator_id),
+  def unbind_plugin(namespace, name, relay_id),
     do:
       on_hub_node(
         namespace,
         :unbind_here,
-        [namespace, name, operator_id],
-        {:plugin_not_bound, name, operator_id}
+        [namespace, name, relay_id],
+        {:plugin_not_bound, name, relay_id}
       )
 
   @doc false
   @spec unbind_here(binary(), binary(), binary()) :: :ok | {:error, term()}
-  def unbind_here(namespace, name, operator_id) do
+  def unbind_here(namespace, name, relay_id) do
     held =
-      for {member_id, _identity} <- targets(namespace, operator_id),
-          {:ok, bindings} <- [HubManager.operator_bindings(namespace, member_id)],
+      for {member_id, _identity} <- targets(namespace, relay_id),
+          {:ok, bindings} <- [HubManager.relay_bindings(namespace, member_id)],
           {id, _binding} <- bindings,
           Plugin.base_id(id) == name,
           do: {member_id, id}
 
     case held do
       [] ->
-        {:error, {:plugin_not_bound, name, operator_id}}
+        {:error, {:plugin_not_bound, name, relay_id}}
 
       held ->
         held
@@ -415,17 +415,17 @@ defmodule Flezha.Service.PluginManager do
     end
   end
 
-  # The durable write decides the unbind; an operator that does not answer its
+  # The durable write decides the unbind; a relay that does not answer its
   # unsubscribe drops the binding at its next bring-up, and is named.
-  defp unbind_one(namespace, operator_id, id) do
-    case update_cspec_plugins(namespace, operator_id, RegistryUpdate.remove_plugin(id)) do
+  defp unbind_one(namespace, relay_id, id) do
+    case update_cspec_plugins(namespace, relay_id, RegistryUpdate.remove_plugin(id)) do
       :ok ->
-        case OperatorManager.get_operator_pid(namespace, operator_id) do
+        case RelayManager.get_relay_pid(namespace, relay_id) do
           {:ok, pid} -> unsubscribed(Overwatch.plugin_unsubscribe(pid, id))
           {:error, _gone} -> :ok
         end
 
-      {:error, {:operator_not_found, _, _}} ->
+      {:error, {:relay_not_found, _, _}} ->
         :ok
 
       {:error, _} = refused ->
@@ -459,18 +459,18 @@ defmodule Flezha.Service.PluginManager do
   defp partial(:group_disable_partial, _total, failed), do: {:group_disable_partial, failed}
 
   @doc """
-  Remove every binding of `operator_ids`, in one bounded fan-out: a partition
+  Remove every binding of `relay_ids`, in one bounded fan-out: a partition
   rescale turns the old members' sources off this way. Answers `:ok`, or
-  `{:error, {:undisabled, operator_ids}}` naming the ones it could not reach.
+  `{:error, {:undisabled, relay_ids}}` naming the ones it could not reach.
   """
   @spec unbind_all(binary(), [binary()]) :: :ok | {:error, {:undisabled, [binary()]}}
-  def unbind_all(namespace, operator_ids) do
+  def unbind_all(namespace, relay_ids) do
     outcomes =
       Parallel.results(
-        operator_ids,
-        fn operator_id ->
-          {:ok, bindings} = HubManager.operator_bindings(namespace, operator_id)
-          bindings |> Enum.map(&unbind_one(namespace, operator_id, elem(&1, 0))) |> Enum.uniq()
+        relay_ids,
+        fn relay_id ->
+          {:ok, bindings} = HubManager.relay_bindings(namespace, relay_id)
+          bindings |> Enum.map(&unbind_one(namespace, relay_id, elem(&1, 0))) |> Enum.uniq()
         end,
         timeout: Durations.get(:plugin_disable_fanout_ms)
       )
@@ -485,10 +485,10 @@ defmodule Flezha.Service.PluginManager do
   Change `name`'s options, and a controller plugin's hooks when `hooks` names
   any. When every changed option is declared live, each running copy applies
   them in place; otherwise each restarts, and an update that changes none is
-  `:unchanged`. Answers how it was applied and the operators bound to it.
+  `:unchanged`. Answers how it was applied and the relays bound to it.
   """
   @spec update_plugin(binary(), binary(), map(), [Plugin.hook()]) ::
-          {:ok, %{applied: :live | :restarted | :unchanged, operators: [binary()]}}
+          {:ok, %{applied: :live | :restarted | :unchanged, relays: [binary()]}}
           | {:error, term()}
   def update_plugin(namespace, name, opts, hooks \\ []),
     do:
@@ -506,7 +506,7 @@ defmodule Flezha.Service.PluginManager do
          opts = Map.merge(old.opts, Plugin.option_keys(old.provider, opts)),
          {:ok, new} <- entry_of(%Plugin{old | opts: opts, hooks: hooks}) do
       case change(old, new) do
-        :none -> {:ok, %{applied: :unchanged, operators: bound_operators(namespace, name)}}
+        :none -> {:ok, %{applied: :unchanged, relays: bound_relays(namespace, name)}}
         mode -> apply_update(namespace, name, new, mode)
       end
     end
@@ -516,13 +516,13 @@ defmodule Flezha.Service.PluginManager do
     with :ok <-
            update_cspec_plugins(namespace, {:plugin, name}, RegistryUpdate.add_plugin(name, new)) do
       Enum.each(Directory.plugin_hosts(namespace, name), &Shared.update(&1, new, mode))
-      operators = bound_operators(namespace, name)
+      relays = bound_relays(namespace, name)
       _ = reconverge(namespace, name, &Overwatch.plugin_update(&1, &2, &3, mode, new))
-      {:ok, %{applied: if(mode == :live, do: :live, else: :restarted), operators: operators}}
+      {:ok, %{applied: if(mode == :live, do: :live, else: :restarted), relays: relays}}
     end
   end
 
-  # An operator plugin's hooks are its bindings'.
+  # A relay plugin's hooks are its bindings'.
   defp updated_hooks(%Plugin{hooks: hooks}, []), do: {:ok, hooks}
 
   defp updated_hooks(%Plugin{} = entry, hooks) do
@@ -548,7 +548,7 @@ defmodule Flezha.Service.PluginManager do
 
   @doc """
   Disable `name`: its entry leaves the declared set, every running copy stops,
-  and every binding stays on its operator, reported not started until a plugin
+  and every binding stays on its relay, reported not started until a plugin
   of that name is enabled again.
   """
   @spec disable_plugin(binary(), binary()) :: {:ok, binary()} | {:error, term()}
@@ -572,10 +572,10 @@ defmodule Flezha.Service.PluginManager do
 
   ## Listeners
 
-  @doc "Unbind and disable the plugin a listener enabled for itself on `operator_id`."
+  @doc "Unbind and disable the plugin a listener enabled for itself on `relay_id`."
   @spec detach(binary(), binary(), binary()) :: :ok | {:error, term()}
-  def detach(namespace, operator_id, name) do
-    _ = unbind_plugin(namespace, name, operator_id)
+  def detach(namespace, relay_id, name) do
+    _ = unbind_plugin(namespace, name, relay_id)
 
     case disable_plugin(namespace, name) do
       {:ok, _} -> :ok
@@ -588,7 +588,7 @@ defmodule Flezha.Service.PluginManager do
 
   @doc """
   Every plugin enabled in `namespace`: its name, its provider, whether it is
-  `single`, the operators bound to it, and the controllers it runs on; for a
+  `single`, the relays bound to it, and the controllers it runs on; for a
   controller plugin, its hooks and the controllers whose copy lags.
   """
   @spec plugins(binary()) :: [map()]
@@ -605,7 +605,7 @@ defmodule Flezha.Service.PluginManager do
         name: name,
         provider: provider_name(entry.provider),
         single: entry.single,
-        operators: bound |> bound_to(name) |> operators_of() |> Enum.sort(),
+        relays: bound |> bound_to(name) |> relays_of() |> Enum.sort(),
         controllers: Directory.plugin_nodes(namespace, name) |> Enum.sort(),
         hooks: Enum.map(entry.hooks, &to_string(elem(&1, 0))),
         lagging: if(Plugin.controller?(entry), do: Shared.lagging_on(namespace, name), else: [])
@@ -619,28 +619,28 @@ defmodule Flezha.Service.PluginManager do
     if Code.ensure_loaded?(provider), do: provider.__provider__().name, else: inspect(provider)
   end
 
-  defp bound_operators(namespace, name),
-    do: namespace |> all_bindings() |> bound_to(name) |> operators_of()
+  defp bound_relays(namespace, name),
+    do: namespace |> all_bindings() |> bound_to(name) |> relays_of()
 
-  # Every binding in the namespace as `{operator_id, id, binding}`: the
-  # registry rows, and the declared set that holds a moving operator's
+  # Every binding in the namespace as `{relay_id, id, binding}`: the
+  # registry rows, and the declared set that holds a moving relay's
   # bindings while its row is between its two homes.
   defp all_bindings(namespace) do
-    for {operator_id, bindings} <-
-          HubManager.operator_bindings(namespace) ++ HubManager.declared_bindings(namespace),
+    for {relay_id, bindings} <-
+          HubManager.relay_bindings(namespace) ++ HubManager.declared_bindings(namespace),
         {id, binding} <- bindings,
         uniq: true,
-        do: {operator_id, id, binding}
+        do: {relay_id, id, binding}
   end
 
   defp bound_to(bindings, name), do: Enum.filter(bindings, &(Plugin.base_id(elem(&1, 1)) == name))
-  defp operators_of(bindings), do: bindings |> Enum.map(&elem(&1, 0)) |> Enum.uniq()
+  defp relays_of(bindings), do: bindings |> Enum.map(&elem(&1, 0)) |> Enum.uniq()
 
   @doc """
   `binding` laid over its plugin's entry, or why it cannot come up here: its
   plugin is not enabled, or its provider is not loaded on this controller.
   The entry is `entry` when the caller holds it (`:none` when it knows there is
-  none), and read on this node otherwise (an operator's node hosts its
+  none), and read on this node otherwise (a relay's node hosts its
   namespace's hub).
   """
   @spec resolve(binary() | atom(), Plugin.t(), Plugin.t() | :none | :read) ::
@@ -672,29 +672,29 @@ defmodule Flezha.Service.PluginManager do
          do: {:error, {:plugin_not_found, name}}
   end
 
-  # Ask every operator bound to `name` to bring its binding to what the
+  # Ask every relay bound to `name` to bring its binding to what the
   # plugin's entry now says: up after an enable, not started after a disable.
-  # One bound for the whole walk; answers the operators it could not reach.
+  # One bound for the whole walk; answers the relays it could not reach.
   defp reconverge(namespace, name, ask) do
     namespace
     |> all_bindings()
     |> bound_to(name)
     |> Parallel.results(
-      fn {operator_id, id, binding} ->
-        with {:ok, pid} <- OperatorManager.get_operator_pid(namespace, operator_id),
+      fn {relay_id, id, binding} ->
+        with {:ok, pid} <- RelayManager.get_relay_pid(namespace, relay_id),
              do: ask.(pid, id, binding)
       end,
       timeout: Durations.get(:plugin_disable_fanout_ms)
     )
     |> Enum.reject(fn {_target, outcome} ->
-      match?({:ok, :ok}, outcome) or match?({:ok, {:error, {:operator_not_found, _, _}}}, outcome)
+      match?({:ok, :ok}, outcome) or match?({:ok, {:error, {:relay_not_found, _, _}}}, outcome)
     end)
-    |> Enum.map(fn {{operator_id, _id, _binding}, _outcome} -> operator_id end)
+    |> Enum.map(fn {{relay_id, _id, _binding}, _outcome} -> relay_id end)
   end
 
   @doc """
   Persist a value a running provider committed onto the record it starts from:
-  `owner` is an operator, or `{:plugin, name}` for a shared plugin's copy.
+  `owner` is a relay, or `{:plugin, name}` for a shared plugin's copy.
   """
   @spec persist_opt(binary() | atom(), binary() | {:plugin, binary()}, binary(), atom(), term()) ::
           :ok | {:error, term()}
@@ -753,7 +753,7 @@ defmodule Flezha.Service.PluginManager do
 
   @doc """
   Enable the plugin `name` built from `fields` (`:provider`, `:opts`,
-  `:namespace`, `:single`, and `:operator_id`, `:hooks` and `:channel` to bind
+  `:namespace`, `:single`, and `:relay_id`, `:hooks` and `:channel` to bind
   in the same call), answering how it was enabled and the controllers holding
   the namespace that lack its provider: the plugin does not run there.
   """
@@ -771,35 +771,35 @@ defmodule Flezha.Service.PluginManager do
        %{
          name: name,
          outcome: if(outcome == :already_enabled, do: :already_enabled, else: :enabled),
-         bound: if(Plugin.controller?(plugin), do: nil, else: plugin.operator_id),
+         bound: if(Plugin.controller?(plugin), do: nil, else: plugin.relay_id),
          lacking: lacking(plugin.namespace, fields[:provider])
        }}
     end
   end
 
-  @doc "Bind `fields[:operator_id]` to the plugin `name` with `:hooks` and `:channel`."
+  @doc "Bind `fields[:relay_id]` to the plugin `name` with `:hooks` and `:channel`."
   @spec bind(String.t(), keyword(), CallerContext.t()) :: term() | {:error, term()}
   verb bind(name, fields, caller_context) when is_binary(name) and is_list(fields),
     verb: :plugin_bind,
     row: &fields_row/1,
     args: [name: @plugin_name, fields: @fields] do
-    with {:ok, operator_id} <- Plugin.binding_target(fields, [:hooks, :channel]),
+    with {:ok, relay_id} <- Plugin.binding_target(fields, [:hooks, :channel]),
          {:ok, hooks} <- Plugin.optional_hooks(fields[:hooks]),
          do:
-           bind_plugin(namespace(fields), name, operator_id,
+           bind_plugin(namespace(fields), name, relay_id,
              hooks: hooks,
              channel: fields[:channel]
            )
   end
 
-  @doc "Unbind `fields[:operator_id]` from the plugin `name`, which stays enabled."
+  @doc "Unbind `fields[:relay_id]` from the plugin `name`, which stays enabled."
   @spec unbind(String.t(), keyword(), CallerContext.t()) :: term() | {:error, term()}
   verb unbind(name, fields, caller_context) when is_binary(name) and is_list(fields),
     verb: :plugin_unbind,
     row: &fields_row/1,
     args: [name: @plugin_name, fields: @fields] do
-    with {:ok, operator_id} <- Plugin.binding_target(fields, []),
-         do: unbind_plugin(namespace(fields), name, operator_id)
+    with {:ok, relay_id} <- Plugin.binding_target(fields, []),
+         do: unbind_plugin(namespace(fields), name, relay_id)
   end
 
   @doc """

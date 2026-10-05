@@ -187,7 +187,7 @@ defmodule Flezha.State.WalWriter do
   def outbox_epoch(server), do: call(server, :outbox_epoch)
 
   @doc """
-  Re-dispatch now every operator call this Cell's outbox still holds; how many
+  Re-dispatch now every relay call this Cell's outbox still holds; how many
   entries went again, or the writer's refusal.
   """
   @spec redrive_calls(GenServer.server()) :: non_neg_integer() | {:error, term()}
@@ -248,7 +248,7 @@ defmodule Flezha.State.WalWriter do
     do: :gen_server.send_request(server, {:await_durable, seq}, label, reqids)
 
   @doc """
-  A steps operator Cell's records `first..last` are named by a stage marker that is
+  A steps relay Cell's records `first..last` are named by a stage marker that is
   now durable: release their outputs (`Flezha.State.WalWriter.Settlement`).
   """
   @spec commit_records(GenServer.server(), non_neg_integer(), non_neg_integer()) :: :ok
@@ -256,7 +256,7 @@ defmodule Flezha.State.WalWriter do
     do: GenServer.cast(server, {:commit_records, first, last})
 
   @doc """
-  At a steps operator bind, re-derive which of this Cell's queued outputs are
+  At a steps relay bind, re-derive which of this Cell's queued outputs are
   committed from the instance's `TaskJournal.committed_records/1`, dropping the
   rest: what the rebound runner interrupted, and what a rewind unwound.
   """
@@ -313,7 +313,7 @@ defmodule Flezha.State.WalWriter do
   # would be restarted straight back into the same file (`restart: :transient`),
   # and the read-only status calls below still answer, so the watchdog and the
   # convergence loop keep seeing the Cell. The refusal is what leaves the
-  # operator unbound: the restore assembled from this file refuses too.
+  # relay unbound: the restore assembled from this file refuses too.
   @impl true
   def handle_call(request, _from, %{refusal: {_, _, _} = refusal} = state)
       when request == :fsync
@@ -569,7 +569,7 @@ defmodule Flezha.State.WalWriter do
   end
 
   # Overwatch was not yet resolvable when durable outbox entries arrived
-  # (cold-boot re-drive before the operator bound): retry the gated flush.
+  # (cold-boot re-drive before the relay bound): retry the gated flush.
   @impl true
   def handle_info(:outbox_retry, state) do
     before = state.outbox_flushed_seq

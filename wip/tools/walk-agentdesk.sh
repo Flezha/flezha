@@ -65,8 +65,8 @@ build_desk() {
 
 [ "$SDK" = php ] && php_checkout
 
-phase() { # operator id, phase, seconds: waits until `flz operator info` shows it in that phase
-  until_ok "$3" "flz operator info $1 --namespace agents | awk '/^Operator: $1\$/{f=1} f && /Phase:/{print \$2; exit}' | grep -qx $2"
+phase() { # relay id, phase, seconds: waits until `flz relay info` shows it in that phase
+  until_ok "$3" "flz relay info $1 --namespace agents | awk '/^Relay: $1\$/{f=1} f && /Phase:/{print \$2; exit}' | grep -qx $2"
 }
 runner_up() { # waits for that many runners (1) in agents
   until_ok 90 "[ \$(flz runner list --namespace agents | grep -c agents_) -ge ${1:-1} ]"
@@ -74,7 +74,7 @@ runner_up() { # waits for that many runners (1) in agents
 logs() { # keeps each named service's log beside the page's captures
   for service; do docker compose logs --no-log-prefix "$service" >"$OUT/$page/$service.log" 2>&1; done
 }
-ENABLE_WEB="flz plugin enable web http_server --operator_id=gateway --namespace agents --hook=on_terminate --Xport=8080 --Xbind=0.0.0.0 --Xchannel=http"
+ENABLE_WEB="flz plugin enable web http_server --relay_id=gateway --namespace agents --hook=on_terminate --Xport=8080 --Xbind=0.0.0.0 --Xchannel=http"
 
 # The scratch copies hold build output the builder writes as root, so the
 # builder removes it before they go.
@@ -98,14 +98,14 @@ session() {
   step up "docker compose up -d --build --wait"
   runner_up
   step runner-list "flz runner list --namespace agents"
-  step start "flz operator start agent --id anna --namespace agents"
-  step calls "flz operator call anna --namespace agents --text 'Hello' && flz operator call anna --namespace agents --text 'What can you do?'"
-  step bob "flz operator start agent --id bob --namespace agents && flz operator call bob --namespace agents --text 'Hi, I am Bob'"
+  step start "flz relay start agent --id anna --namespace agents"
+  step calls "flz relay call anna --namespace agents --text 'Hello' && flz relay call anna --namespace agents --text 'What can you do?'"
+  step bob "flz relay start agent --id bob --namespace agents && flz relay call bob --namespace agents --text 'Hi, I am Bob'"
   phase anna suspended 60
-  step info-asleep "flz operator info anna --namespace agents"
+  step info-asleep "flz relay info anna --namespace agents"
   step restart-runner "docker compose restart runner"
   runner_up
-  step call-awake "flz operator call anna --namespace agents --text 'Are you still there?'"
+  step call-awake "flz relay call anna --namespace agents --text 'Are you still there?'"
 }
 
 rebuild() {
@@ -116,23 +116,23 @@ rebuild() {
 rewinding() {
   step state "flz state get anna/reply --namespace agents"
   rebuild
-  step rewind "flz operator rewind anna --to-iteration 0 --namespace agents"
+  step rewind "flz relay rewind anna --to-iteration 0 --namespace agents"
   until_ok 30 "[ \$(docker compose logs runner | grep -c undo) -ge 2 ]"
   step undo-log "docker compose logs runner | grep undo"
   step state-after "flz state get anna/reply --namespace agents"
-  step call-after "flz operator call anna --namespace agents --text 'Where were we?'"
-  step call-long "flz operator call anna --namespace agents --text \"\$(printf '%0250d' 0)\""
-  step call-on "flz operator call anna --namespace agents --text 'Sorry, go on'"
+  step call-after "flz relay call anna --namespace agents --text 'Where were we?'"
+  step call-long "flz relay call anna --namespace agents --text \"\$(printf '%0250d' 0)\""
+  step call-on "flz relay call anna --namespace agents --text 'Sorry, go on'"
   logs runner
 }
 
 streamed() {
   rebuild
-  step listen "flz operator listen anna --namespace agents --duration-ms 5000" &
+  step listen "flz relay listen anna --namespace agents --duration-ms 5000" &
   local listener=$!
   n=$((n + 1))                           # the listener's step counted in its own shell
   sleep 2
-  step call "flz operator call anna --namespace agents --text 'Tell me a story'"
+  step call "flz relay call anna --namespace agents --text 'Tell me a story'"
   wait "$listener"
 }
 
@@ -150,14 +150,14 @@ plugins() {
   step plugin-list "flz plugin list --installed"
   runner_up
   phase anna suspended 90 # the new controller restarts the sessions only once the runner has joined (W-022)
-  step list "flz operator list --namespace agents"
-  step call "flz operator call anna --namespace agents --text 'Did you notice anything?'"
+  step list "flz relay list --namespace agents"
+  step call "flz relay call anna --namespace agents --text 'Did you notice anything?'"
   logs runner
 }
 
 gateway() {
   rebuild
-  step start "flz operator start gateway --id gateway --namespace agents"
+  step start "flz relay start gateway --id gateway --namespace agents"
   step enable "$ENABLE_WEB"
   until_ok 30 "curl -s localhost:8080/"
   step not-found "curl -si localhost:8080/sessions/anna"
@@ -165,7 +165,7 @@ gateway() {
   local stream=$!
   n=$((n + 1))
   sleep 2
-  step call "flz operator call anna --namespace agents --text 'Tell me more'"
+  step call "flz relay call anna --namespace agents --text 'Tell me more'"
   wait "$stream"
 }
 
@@ -187,8 +187,8 @@ browser() {
   rm -f "$OUT/browser.done"
 }
 
-# Waits until no operator of agents is moving: none failed, recovering, parked or unbound.
-settled() { until_ok "${1:-120}" "flz operator list --namespace agents | awk 'NR>4 && \$2 !~ /^(healthy|suspended)\$/ {bad=1} END {exit bad}'"; }
+# Waits until no relay of agents is moving: none failed, recovering, parked or unbound.
+settled() { until_ok "${1:-120}" "flz relay list --namespace agents | awk 'NR>4 && \$2 !~ /^(healthy|suspended)\$/ {bad=1} END {exit bad}'"; }
 
 cluster() {
   export RELEASE_COOKIE=$(openssl rand -hex 32) DURABILITY_PASSWORD=$(openssl rand -hex 16)
@@ -197,12 +197,12 @@ cluster() {
   runner_up 2
   settled
   step runner-list "flz runner list --namespace agents"
-  step list "flz operator list --namespace agents"
+  step list "flz relay list --namespace agents"
   step status "flz cluster status --namespace agents"
   step stop "time docker compose stop controller-2 runner-2"
   settled
-  step list-after "flz operator list --namespace agents"
-  step call "flz operator call anna --namespace agents --text 'Are you still there?'"
+  step list-after "flz relay list --namespace agents"
+  step call "flz relay call anna --namespace agents --text 'Are you still there?'"
   step post-dave "curl -si -d 'Six' localhost:8080/sessions/dave/messages"
   step post-anna "curl -si -d 'Good' localhost:8080/sessions/anna/messages"
   logs controller controller-2
@@ -223,7 +223,7 @@ once() {
   settled
   until_ok 90 "! flz state get gateway/budget/anna --namespace agents | grep state: | cmp -s - $OUT/$page/budget-before.state"
   step budget-after "flz state get gateway/budget/anna --namespace agents"
-  step call "flz operator call anna --namespace agents --text 'What did I ask?'"
+  step call "flz relay call anna --namespace agents --text 'What did I ask?'"
   step inbox-gateway-after "flz state inbox gateway --namespace agents"
   logs runner controller
 }
@@ -281,7 +281,7 @@ k8s() {
   export -f flz
   runner_up
   step runner-list "flz runner list --namespace agents"
-  step start "flz operator start agent --id anna --namespace agents && flz operator start gateway --id gateway --namespace agents"
+  step start "flz relay start agent --id anna --namespace agents && flz relay start gateway --id gateway --namespace agents"
   step enable "$ENABLE_WEB"
   kubectl -n agentdesk port-forward service/agentdesk 8090:8080 >"$OUT/$page/port-forward.log" 2>&1 &
   FORWARD=$!
@@ -292,7 +292,7 @@ k8s() {
   step delete-pod "kubectl -n agentdesk delete pod agentdesk-0"
   step rollout-again "kubectl -n agentdesk rollout status statefulset/agentdesk --timeout=300s"
   runner_up
-  step call "flz operator call anna --namespace agents --text 'Are you still there?'"
+  step call "flz relay call anna --namespace agents --text 'Are you still there?'"
   kubectl -n agentdesk logs agentdesk-0 -c controller >"$OUT/$page/controller.log" 2>&1
   step delete "kubectl delete -f k8s/agentdesk.yaml"
 }

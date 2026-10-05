@@ -192,9 +192,9 @@ mod tests {
 
     #[test]
     fn plain_options_are_fields_and_nothing_else_is_added() {
-        let got = fields(&words(&["--operator_id", "op1", "--namespace=prod"]));
+        let got = fields(&words(&["--relay_id", "op1", "--namespace=prod"]));
 
-        assert_eq!(got["operator_id"], "op1");
+        assert_eq!(got["relay_id"], "op1");
         assert_eq!(got["namespace"], "prod");
         assert!(got.get("opts").is_none() && got.get("hooks").is_none());
     }

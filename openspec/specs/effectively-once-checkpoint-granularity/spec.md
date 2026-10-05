@@ -3,17 +3,17 @@
 ## Purpose
 
 The effectively-once tier acknowledges an input by making its state durable —
-one atomic record per invocation. Operators that fold many inputs into one
+one atomic record per invocation. Relays that fold many inputs into one
 state push (a window that only closes on its boundary) cannot use that
 granularity coherently: the offset would advance with state they never published,
 and a restore would resume past inputs the restored state never saw. This
-capability is the opt-in that moves the acknowledgement to where such an
-operator's state actually becomes kernel-visible — the checkpoint.
+capability is the opt-in that moves the acknowledgement to where such a
+relay's state actually becomes kernel-visible — the checkpoint.
 ## Requirements
 ### Requirement: Consumed-offset advances only at checkpoint boundaries
 
 In checkpoint mode the Cell's durable `consumed_offset` SHALL advance only
-when the operator calls `ctx.checkpoint()`. Changes applied between checkpoints
+when the relay calls `ctx.checkpoint()`. Changes applied between checkpoints
 SHALL be held in the Cell's flush buffer and SHALL NOT be made durable on
 their own. The record written at the checkpoint SHALL carry the interval's
 accumulated changes and the closing input's consumed-offset as one fsynced unit
@@ -30,7 +30,7 @@ record exists to carry the offset.
 
 #### Scenario: Checkpoint closes the interval atomically
 
-- **WHEN** the operator checkpoints after processing offset 4710
+- **WHEN** the relay checkpoints after processing offset 4710
 - **THEN** one record carrying the accumulated changes and consumed-offset 4710
   is fsynced, and only then does the durable offset advance
 
@@ -42,7 +42,7 @@ consumed-offset. Checkpointing moves the acknowledgement, not the output. An
 interval's outputs are therefore emitted again when the interval replays, and
 the keyed-sink dedup the tier already requires SHALL absorb them.
 
-A checkpoint-ack operator MAY declare `outputs: :at_checkpoint` with a
+A checkpoint-ack relay MAY declare `outputs: :at_checkpoint` with a
 `max_delay_ms`: its mid-interval outputs SHALL then ride the interval's
 checkpoint record and be flushed as one batch after that record is fsynced,
 and the interval SHALL close after `every` inputs or `max_delay_ms` since its
@@ -62,7 +62,7 @@ absorbs both.
 
 #### Scenario: Batched outputs flush with the checkpoint record
 
-- **WHEN** an operator declared `outputs: :at_checkpoint` emits 300 outputs
+- **WHEN** a relay declared `outputs: :at_checkpoint` emits 300 outputs
   across an interval of 500 inputs
 - **THEN** no output reaches a plugin before the checkpoint, and after the
   checkpoint record is fsynced all 300 are handed to the chain as one batch
@@ -102,7 +102,7 @@ replay.
 
 On recovery, a checkpoint-mode Cell SHALL be restored from its durable
 records and the controller SHALL re-forward the input log from the restored
-consumed-offset through the operator in order. The replay SHALL keep the
+consumed-offset through the relay in order. The replay SHALL keep the
 current epoch. The Cell SHALL discard any open interval accumulated before
 the restore — the restored state does not contain it, and the re-forwarded
 inputs produce it again.
@@ -125,7 +125,7 @@ inputs produce it again.
 
 The input-log retention floor for a checkpoint-mode Cell SHALL be its last
 checkpointed offset — at least one full checkpoint interval is always retained.
-The operator's min-watermark SHALL advance in steps at checkpoint cadence, and
+The relay's min-watermark SHALL advance in steps at checkpoint cadence, and
 the source-ingestion credit loop SHALL grant accordingly (burst grants at
 watermark steps, park in between when credit is exhausted).
 
@@ -137,13 +137,13 @@ watermark steps, park in between when credit is exhausted).
 
 ### Requirement: A held watermark is not read as a stall
 
-The controller's liveness detectors SHALL NOT report a checkpoint-mode operator
+The controller's liveness detectors SHALL NOT report a checkpoint-mode relay
 as a stalled or dead data-flow merely because it made nothing durable for an
 interval. Silence between checkpoints is the mode's steady state.
 
 #### Scenario: A quiet interval does not trip the input-silence sweep
 
-- **WHEN** a checkpoint-mode operator that has produced output before makes
+- **WHEN** a checkpoint-mode relay that has produced output before makes
   nothing durable for longer than the input-silence timeout
 - **THEN** no `input_silence` is reported for it
 

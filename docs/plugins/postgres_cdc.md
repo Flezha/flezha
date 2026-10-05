@@ -1,7 +1,7 @@
 # Postgres change capture
 
 The Postgres change capture plugin delivers every inserted, updated and deleted row of
-Postgres tables onto an operator's entry channel, in commit order, after a first copy of the
+Postgres tables onto a relay's entry channel, in commit order, after a first copy of the
 rows already there. It reads the database's write-ahead log through a logical replication
 slot with Postgres's built-in `pgoutput` format. `FlezhaPostgresCdc` is its provider, under
 the provider id `postgres_cdc`. To read a table by polling instead, which sees no deletes,
@@ -9,11 +9,11 @@ see [postgres_poll.md](postgres_poll.md).
 
 | | |
 | --- | --- |
-| Type | operator plugin |
+| Type | relay plugin |
 | Ships | package `flezha_postgres_cdc` |
-| Shareable | no: one slot per binding, so a second operator bound to it is refused (`plugin.not_shareable`) |
-| Partitioned operators | refused (`plugin.partitioned_host`) |
-| Durability | each hand-over waits for the operator's verdicts; the position confirmed to Postgres moves after every accepted transaction with durable input, otherwise at most every `commit_interval_ms` |
+| Shareable | no: one slot per binding, so a second relay bound to it is refused (`plugin.not_shareable`) |
+| Partitioned relays | refused (`plugin.partitioned_host`) |
+| Durability | each hand-over waits for the relay's verdicts; the position confirmed to Postgres moves after every accepted transaction with durable input, otherwise at most every `commit_interval_ms` |
 
 ## Options
 
@@ -36,7 +36,7 @@ see [postgres_poll.md](postgres_poll.md).
 | `snapshot` | enum | `"initial"` | no | `initial` copies the published tables before streaming; `never` only streams |
 | `snapshot_batch` | int | `1000` | no | Rows per fetch of the copy |
 | `batch_size` | int | `500` | no | Most changes of one transaction handed over at once |
-| `commit_interval_ms` | int | `5000` | no | Longest the read position waits to be confirmed while changes stream, unless the operator's input is durable |
+| `commit_interval_ms` | int | `5000` | no | Longest the read position waits to be confirmed while changes stream, unless the relay's input is durable |
 | `max_lag_bytes` | int | `1073741824` | no | Write-ahead log the slot may hold back before the plugin reports unhealthy |
 | `lag_check_ms` | int | `30000` | no | How often the slot's lag is read |
 | `failure_threshold` | int | `3` | no | Refused hand-overs in a row before the plugin reports unhealthy |
@@ -45,7 +45,7 @@ see [postgres_poll.md](postgres_poll.md).
 ## Example
 
 ```sh
-$ flz plugin enable rates-cdc postgres_cdc --operator_id=pricer \
+$ flz plugin enable rates-cdc postgres_cdc --relay_id=pricer \
   --Xhostname=db --Xdatabase=market --Xusername=cdc --Xpassword_env=CDC_PASSWORD \
   --Xslot=rates_cdc --Xpublication=rates_pub --Xchannel=rates
 ```
@@ -98,22 +98,22 @@ publication until the check passes. It checks again along its backoff curve.
 | | |
 | --- | --- |
 | Hooks | none needed: the plugin drives itself, so a binding names no hook (the provider also defines `:on_terminate`) |
-| Shared | no: one slot per binding, so a second operator bound to it is refused (`plugin.not_shareable`), and a member of a partition group is refused (`plugin.partitioned_host`) |
+| Shared | no: one slot per binding, so a second relay bound to it is refused (`plugin.not_shareable`), and a member of a partition group is refused (`plugin.partitioned_host`) |
 | Upstream | one publication, read through one logical replication slot |
 | Injection | one row change as one input, a JSON object, on the entry channel `:channel` (or `:channel_in`) names |
-| Delivery | each hand-over waits for the operator's verdicts; the read position moves only past changes the operator took |
+| Delivery | each hand-over waits for the relay's verdicts; the read position moves only past changes the relay took |
 
 Enabled and bound in two commands, with the settings written without their dashes:
 
 ```sh
 $ flz plugin enable rates-cdc postgres_cdc Xhostname=db Xdatabase=market Xusername=cdc \
   Xpassword_env=CDC_PASSWORD Xslot=rates_cdc Xpublication=rates_pub Xchannel=rates
-$ flz plugin bind rates-cdc --operator_id pricer --hook=on_terminate
+$ flz plugin bind rates-cdc --relay_id pricer --hook=on_terminate
 ```
 
 A literal `password` is redacted once the plugin is prepared and held in memory only;
 `password_env` is read again at every connect. Neither is written to a log line, a telemetry
-label, `flz plugin list` or `flz operator info`. The replication connection keeps the
+label, `flz plugin list` or `flz relay info`. The replication connection keeps the
 password in its own process, which is marked sensitive, so no process inspection or crash
 report shows it.
 
@@ -167,7 +167,7 @@ while it holds the first one.
 When `snapshot` is `initial` (the default) and the slot does not exist, the plugin creates a
 temporary slot, `<slot>_copy`, with an exported snapshot and reads every published table in
 that snapshot, `snapshot_batch` rows at a time through a server-side cursor, ordered by the key
-when there is one, handing each batch to the operator as events with `op` `r`. The copy holds
+when there is one, handing each batch to the relay as events with `op` `r`. The copy holds
 exactly the transactions committed before the slot's consistent point and the stream every one
 after it, so the two meet with nothing missed or doubled. Once the copy ends, the temporary
 slot is kept as `slot`, at the same position, and the stream starts from it.
@@ -176,14 +176,14 @@ The slot itself is the record that the copy ended: an unbind, a disable, a resta
 another controller finds it and streams on, without copying again, whatever became of the
 binding.
 
-- A batch the operator refuses during the copy is handed over again along the backoff curve,
+- A batch the relay refuses during the copy is handed over again along the backoff curve,
   from where the copy stands; nothing starts over.
 - A copy cut short (a crash, a lost connection) leaves no slot: the temporary one ends with its
   connection. The next start copies every table again, from the start.
 - Each copied row's message id names the copy's consistent point, so the rows of a later copy
   (after a copy cut short, after the slot was dropped or invalidated) are new inputs: the
-  operator receives every row again, at its value in that copy, and a row it received from an
-  earlier copy is not absorbed in its place. Rows copied before the cut reach the operator
+  relay receives every row again, at its value in that copy, and a row it received from an
+  earlier copy is not absorbed in its place. Rows copied before the cut reach the relay
   twice, once per copy.
 - The copy runs in one `REPEATABLE READ` transaction, which holds back vacuum on the whole
   database for as long as it runs. Copy a large database at a quiet time.
@@ -192,19 +192,19 @@ With `snapshot: never` the plugin creates the slot and streams from it, copying 
 
 ## Acknowledgement
 
-The stream hands each transaction's changes to the operator in batches of at most
+The stream hands each transaction's changes to the relay in batches of at most
 `batch_size`, and at its commit, and waits for every verdict. A transaction whose every change
 was taken is accepted; the position confirmed to Postgres (which lets it free the log behind
 it) moves to its end:
 
-- **With durable input** (an `effectively_once` operator, or one that journals its input),
+- **With durable input** (an `effectively_once` relay, or one that journals its input),
   after every accepted transaction. A change streamed again after a crash is absorbed by its
   message id while the input log holds it, so nothing is lost and nothing is doubled.
 - **Without it**, at most every `commit_interval_ms`, and whenever the stream is idle. A crash
-  loses what the operator had not processed, and the transactions accepted since the last
-  confirmed position are streamed again and reach the operator twice.
+  loses what the relay had not processed, and the transactions accepted since the last
+  confirmed position are streamed again and reach the relay twice.
 
-A refused change, or a hand-over the operator does not answer within 20 seconds (well under
+A refused change, or a hand-over the relay does not answer within 20 seconds (well under
 Postgres's `wal_sender_timeout`), stops the stream. The plugin starts it again from the last
 confirmed position along its backoff curve, from half a second doubling to half a minute, and
 the accepted changes before the refusal come again: absorbed with durable input, doubled
@@ -216,9 +216,9 @@ The slot keeps the write-ahead log the plugin has not confirmed, on the database
 disk. The plugin reads how much every `lag_check_ms` and reports unhealthy with
 `postgres_cdc.slot_lag` past `max_lag_bytes`.
 
-The slot is kept when the plugin is disabled, unbound or its operator stops: dropping it would
+The slot is kept when the plugin is disabled, unbound or its relay stops: dropping it would
 lose the position, and the next start would copy every table again. Binding the plugin again,
-to the same operator or another one, streams on from the slot's confirmed position. A slot nobody reads any
+to the same relay or another one, streams on from the slot's confirmed position. A slot nobody reads any
 more keeps log until it is dropped by hand:
 
 ```sql
@@ -248,7 +248,7 @@ lag reads off its own process, so it answers while they run.
 ## Telemetry
 
 Under `[:flezha, :plugin, :postgres_cdc, verb]`, with the plugin id and the slot: `shipped`
-(`%{count: n}`) after each hand-over the operator took, and `failed` (`%{count: n}`, with a
+(`%{count: n}`) after each hand-over the relay took, and `failed` (`%{count: n}`, with a
 `reason`), the verbs every provider shares; `lag_bytes` (a metric, `%{bytes: n}`) after each
 lag read; and `snapshot_done` (an event, `%{count: rows}`) when the first copy ends.
 

@@ -8,8 +8,8 @@ capture plugins are packages, and so is a plugin of your own.
 A controller loads the packages in its plugin root once, when it starts, and never changes
 a running system's code. Installing, upgrading or removing a package takes effect at the
 next restart. Packages are installed per controller: give every controller of a cluster
-the same list, because a controller that lacks a package does not run that plugin, and an
-operator bound to it there runs without it ([`where_plugins_run.md`](where_plugins_run.md#a-controller-without-the-provider)).
+the same list, because a controller that lacks a package does not run that plugin, and a
+relay bound to it there runs without it ([`where_plugins_run.md`](where_plugins_run.md#a-controller-without-the-provider)).
 
 ## How it works
 
@@ -20,7 +20,7 @@ the opt-in.
 
 At every boot the controller takes the archives in id order, verifies each one, expands it
 under `<plugin_root>/.loaded/<id>/`, which nothing else touches, and loads its code before
-any operator's plugins come up, so a binding to a package's provider subscribes the plugin
+any relay's plugins come up, so a binding to a package's provider subscribes the plugin
 like a built-in one. Install, uninstall and sync only change the archives: an install on a
 running node never changes a file the running system uses. The plugin root must therefore
 be writable when the controller starts. A package that fails a step is refused, with a
@@ -150,12 +150,12 @@ A package's providers are enabled like any provider (`flz plugin enable <name>
 `plugin.provider_unavailable`, naming the package and its status. When another controller
 holding the namespace lacks the provider, the enable warns, naming it.
 
-An operator placed on a controller that did not load a bound plugin's provider runs
+A relay placed on a controller that did not load a bound plugin's provider runs
 without that plugin. It logs one warning naming the plugin and why: the package that
 declared the provider and whether it was refused or is pending, or that no installed
 package provides it. Its health reports `plugin_unhealthy` with
 `plugin.provider_not_loaded`, a guaranteed output to the missing sink waits, and a plain
-one is dropped and counted. The plugin comes up with the operator's next start on a
+one is dropped and counted. The plugin comes up with the relay's next start on a
 controller that has the package.
 
 ### Where the packages come from
@@ -255,8 +255,8 @@ $ flz plugin list --installed
 flezha_http 0.1.0  loaded  providers: http_server
 ```
 
-The new controller starts the operators again once the runner has connected to it, within
-about a minute; a call before that answers `operator.not_found`. It found them on the
+The new controller starts the relays again once the runner has connected to it, within
+about a minute; a call before that answers `relay.not_found`. It found them on the
 `app_data` volume. To upgrade the plugin, put the newer package in its place and rebuild;
 to remove it, delete it and rebuild.
 

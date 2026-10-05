@@ -86,14 +86,14 @@ defmodule FlezhaTest.State.WalTransferTest do
     cell_id = seed_cell("self")
 
     assert {:ok, 0} = WalTransfer.pull_cell(node(), {:cell, cell_id})
-    assert 0 = WalTransfer.pull_operator(node(), elem(cell_id, 0))
+    assert 0 = WalTransfer.pull_relay(node(), elem(cell_id, 0))
   end
 
   @tag :multi_node
-  test "a cell moves from a peer into another Operator's tree, source last" do
+  test "a cell moves from a peer into another Relay's tree, source last" do
     # This is the shape a partition rescale needs: the Cell keeps its
     # tasklet and key but changes OWNER, so it lands under a different
-    # Operator class — and the peer's copy may only go once ours is safe.
+    # Relay class — and the peer's copy may only go once ours is safe.
     {class, tasklet, key} = source = seed_cell("moveacross")
     source_bytes = File.read!(Paths.wal_path(source))
     destination = {class <> "_moved", tasklet, key}
@@ -197,7 +197,7 @@ defmodule FlezhaTest.State.WalTransferTest do
     dest_root = TestHelpers.tmp_app_data_dir()
     on_exit(fn -> File.rm_rf(dest_root) end)
 
-    WalTransfer.pull_operator(peer_node, class)
+    WalTransfer.pull_relay(peer_node, class)
 
     assert File.exists?(Paths.wal_path(cell_id))
     assert File.read!(Paths.journal_path(class)) == journal_bytes
@@ -208,7 +208,7 @@ defmodule FlezhaTest.State.WalTransferTest do
 
   # fails when: a source that cannot be asked leaves the local copy bound
   # without a word.
-  test "says when the node an operator moves from cannot be asked" do
+  test "says when the node a relay moves from cannot be asked" do
     {class, cell_id} = class_and_cell("unreachable")
     TestHelpers.write_wal(cell_id, 0..3, "local")
     local = File.read!(Paths.wal_path(cell_id))
@@ -222,11 +222,11 @@ defmodule FlezhaTest.State.WalTransferTest do
     assert File.read!(Paths.wal_path(cell_id)) == local
   end
 
-  describe "an operator moving back to a node that kept a copy" do
+  describe "a relay moving back to a node that kept a copy" do
     @describetag :multi_node
 
     # fails when: a node holding any of the instance's files skips the pull, so
-    # an operator moving back binds from the copy this node was left holding.
+    # a relay moving back binds from the copy this node was left holding.
     test "takes the source's newer copy, and keeps a newer one of its own" do
       {class, cell_id} = class_and_cell("newer")
       newer = with_source_copy(cell_id, 0..5)
@@ -243,10 +243,10 @@ defmodule FlezhaTest.State.WalTransferTest do
       assert File.read!(Paths.wal_path(cell_id)) == local
     end
 
-    # fails when: a writer an operator stopped before its writers closed stays
+    # fails when: a writer a relay stopped before its writers closed stays
     # open, so the bind's writer start returns it and appends to the copy set
     # aside and removed.
-    test "closes the writers a stopped operator left open, then adopts" do
+    test "closes the writers a stopped relay left open, then adopts" do
       {class, cell_id} = class_and_cell("open")
       newer = with_source_copy(cell_id, 0..5)
       peer = move_root_to_peer(:waltransfer7)
@@ -270,10 +270,10 @@ defmodule FlezhaTest.State.WalTransferTest do
 
       test_pid = self()
 
-      stub(WalTransfer, :pull_operator, fn source, class ->
+      stub(WalTransfer, :pull_relay, fn source, class ->
         {:ok, late} = Supervisor.find_or_start(cell_id)
         send(test_pid, {:late, late, Process.monitor(late)})
-        call_original(WalTransfer, :pull_operator, [source, class])
+        call_original(WalTransfer, :pull_relay, [source, class])
       end)
 
       assert :ok = Adoption.adopt_newest(class, peer)
@@ -283,22 +283,22 @@ defmodule FlezhaTest.State.WalTransferTest do
       assert File.read!(Paths.wal_path(cell_id)) == newer
     end
 
-    # fails when: the adoption swaps the files of an operator another
+    # fails when: the adoption swaps the files of a relay another
     # Overwatch here is bound with, so records it acknowledges are lost.
-    test "leaves a copy alone while an operator bound here owns it" do
+    test "leaves a copy alone while a relay bound here owns it" do
       {class, cell_id} = class_and_cell("bound")
       with_source_copy(cell_id, 0..5)
       peer = move_root_to_peer(:waltransfer10)
       TestHelpers.write_wal(cell_id, 0..3, "stale")
       stale = File.read!(Paths.wal_path(cell_id))
       bound = spawn_link(fn -> Process.sleep(:infinity) end)
-      :ok = Flezha.Operator.ClassRegistry.put_overwatch(class, bound, nil)
-      on_exit(fn -> Flezha.Operator.ClassRegistry.delete(class) end)
+      :ok = Flezha.Relay.ClassRegistry.put_overwatch(class, bound, nil)
+      on_exit(fn -> Flezha.Relay.ClassRegistry.delete(class) end)
       on_exit(NodeTestHelper.override_log_level(:warning))
 
       log = capture_log(fn -> assert :ok = Adoption.adopt_newest(class, peer) end)
 
-      assert log =~ "the operator is bound on this node; the local copy stays"
+      assert log =~ "the relay is bound on this node; the local copy stays"
       assert File.read!(Paths.wal_path(cell_id)) == stale
     end
 
@@ -334,7 +334,7 @@ defmodule FlezhaTest.State.WalTransferTest do
       File.write!(Paths.input_log_path(class), TestHelpers.wal_records(0..3, "stale"))
       stale = {File.read!(Paths.wal_path(cell_id)), File.read!(Paths.input_log_path(class))}
       # The source's log is judged newer and then does not come over.
-      stub(WalTransfer, :pull_operator, fn source, _class ->
+      stub(WalTransfer, :pull_relay, fn source, _class ->
         {:ok, _} = WalTransfer.pull_cell(source, {:cell, cell_id})
         1
       end)
@@ -352,8 +352,8 @@ defmodule FlezhaTest.State.WalTransferTest do
     end
 
     # fails when: a tie keeps the local copy, so two histories of equal length
-    # resolve toward the one the operator's current owner did not write.
-    test "settles a tie toward the copy the operator moves from" do
+    # resolve toward the one the relay's current owner did not write.
+    test "settles a tie toward the copy the relay moves from" do
       {class, cell_id} = class_and_cell("tie")
       source = with_source_copy(cell_id, 0..5)
       peer = move_root_to_peer(:waltransfer9)
@@ -406,7 +406,7 @@ defmodule FlezhaTest.State.WalTransferTest do
 
     refute File.exists?(Paths.wal_path(cell_id))
 
-    assert 1 = WalTransfer.pull_operator(peer_node, class)
+    assert 1 = WalTransfer.pull_relay(peer_node, class)
 
     assert File.read!(Paths.wal_path(cell_id)) == source_bytes
     # The staging artefact never survives a successful pull.

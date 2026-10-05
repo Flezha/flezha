@@ -84,14 +84,12 @@ defmodule Flezha.Observability.TelemetryBridge do
     [:flezha, :dlq, :retention_dropped] =>
       {:flezha_dlq, :dlq_dropped_by_retention_total, :metric},
     [:flezha, :dlq, :usage] => {:flezha_dlq, :dlq_usage, :metric},
-    [:flezha, :plugin, :operator_forward, :shipped] =>
-      {:flezha_operator_forward, :delivered, :metric},
-    [:flezha, :plugin, :operator_forward, :retried] =>
-      {:flezha_operator_forward, :retry, :metric},
-    [:flezha, :plugin, :operator_forward, :queue_depth] =>
-      {:flezha_operator_forward, :queue_depth, :metric},
-    [:flezha, :plugin, :operator_forward, :overflowed] =>
-      {:flezha_operator_forward, :saturated, :event},
+    [:flezha, :plugin, :relay_forward, :shipped] => {:flezha_relay_forward, :delivered, :metric},
+    [:flezha, :plugin, :relay_forward, :retried] => {:flezha_relay_forward, :retry, :metric},
+    [:flezha, :plugin, :relay_forward, :queue_depth] =>
+      {:flezha_relay_forward, :queue_depth, :metric},
+    [:flezha, :plugin, :relay_forward, :overflowed] =>
+      {:flezha_relay_forward, :saturated, :event},
     [:flezha, :plugin, :http_poll, :shipped] => {:flezha_http_poll, :injected, :metric},
     [:flezha, :plugin, :http_poll, :unchanged] => {:flezha_http_poll, :unchanged, :metric},
     [:flezha, :plugin, :http_poll, :failed] => {:flezha_http_poll, :failed, :event},
@@ -110,8 +108,8 @@ defmodule Flezha.Observability.TelemetryBridge do
     [:flezha, :plugin, :file_sink, :failed] => {:flezha_file_sink, :failed, :event},
     # A deliberate start, and a stop or completion: read by every sink, the
     # hook sink among them, which names this source.
-    [:flezha, :operator, :started] => {:flezha_operator, :operator_started, :event},
-    [:flezha, :operator, :stopped] => {:flezha_operator, :operator_stopped, :event},
+    [:flezha, :relay, :started] => {:flezha_relay, :relay_started, :event},
+    [:flezha, :relay, :stopped] => {:flezha_relay, :relay_stopped, :event},
     # What controller plugins hear and nothing else does: a new dead letter
     # (`Flezha.Observability.HookSink`).
     [:flezha, :dlq, :dead_lettered] => {:flezha_hooks, :on_dead_letter, :event},
@@ -130,11 +128,11 @@ defmodule Flezha.Observability.TelemetryBridge do
     # The plugin lifecycle's one event: every phase a plugin enters or leaves,
     # from the table's one transition function.
     [:flezha, :plugin, :phase] => {:flezha_plugin, :phase, :event},
-    [:flezha, :operator, :parked] => {:flezha_operator, :operator_parked_total, :metric},
+    [:flezha, :relay, :parked] => {:flezha_relay, :relay_parked_total, :metric},
     # A steps session's turn that failed and was parked, the session going on.
     [:flezha, :steps, :turn_dead_lettered] =>
       {:flezha_steps, :flezha_steps_turns_dead_lettered_total, :metric},
-    # A call, an outside caller's or an operator's: how long each answer took,
+    # A call, an outside caller's or a relay's: how long each answer took,
     # and the calls that ended with none, counted by reason or code; a caller's
     # call recovered past its deadline and the retention margin settles with no
     # `Response` at all.
@@ -146,7 +144,7 @@ defmodule Flezha.Observability.TelemetryBridge do
     [:flezha, :call, :recovered_unanswered] =>
       {:flezha_call, :flezha_call_recovered_unanswered_total, :metric},
     # A runner's report that an instance's process died, which parks it.
-    [:flezha, :operator, :exited] => {:flezha_operator, :operator_exited, :event},
+    [:flezha, :relay, :exited] => {:flezha_relay, :relay_exited, :event},
     # The backoff table's two events: every wait a ladder takes and every reset
     # a success records, whichever site walks the row.
     [:flezha, :backoff, :wait] => {:flezha_convergence, :backoff_wait, :metric},
@@ -206,7 +204,7 @@ defmodule Flezha.Observability.TelemetryBridge do
   # grouped under the reason it has none. A ratchet: the suite pins the total,
   # so an event may leave a group and none may join.
   @unexported %{
-    # One signal per durable steps operator commit, at the data plane's rate, with
+    # One signal per durable steps relay commit, at the data plane's rate, with
     # `task_idx` and `iter` unique to each. The commit's outcome rides the ack
     # the SDK observes and the durability counters, not a per-commit event.
     commit_path: [
@@ -240,7 +238,7 @@ defmodule Flezha.Observability.TelemetryBridge do
       [:flezha, :correction, :completed],
       [:flezha, :correction, :retention_derived],
       [:flezha, :hub, :pid_removed],
-      [:flezha, :operator, :requested_spawn],
+      [:flezha, :relay, :requested_spawn],
       [:flezha, :schedule, :dormant],
       [:flezha, :schedule, :fired],
       [:flezha, :state, :compaction_completed],

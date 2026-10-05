@@ -86,7 +86,7 @@ defmodule Flezha.State.DurabilityTier.Backend.S3Test do
     assert :ok = Shipper.ship_now({:cell, cell_id})
 
     File.rm!(path)
-    assert :ok = DurabilityTier.hydrate_operator(elem(cell_id, 0))
+    assert :ok = DurabilityTier.hydrate_relay(elem(cell_id, 0))
     assert File.read!(path) == records
   end
 end

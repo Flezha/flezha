@@ -97,8 +97,8 @@
     },
     {
       "name": "Controller.cluster_status",
-      "doc": "The cluster as `namespace` sees it: its nodes, each one's operator count and recovery state, the unplaced operators and the operators' health.",
-      "action": "operator.list",
+      "doc": "The cluster as `namespace` sees it: its nodes, each one's relay count and recovery state, the unplaced relays and the relays' health.",
+      "action": "relay.list",
       "remote": true,
       "stream": false,
       "args": [
@@ -176,7 +176,7 @@
     {
       "name": "Controller.recovery_per_node",
       "doc": "Each node's recovery state for `namespace`, keyed by node.",
-      "action": "operator.list",
+      "action": "relay.list",
       "remote": true,
       "stream": false,
       "args": [
@@ -252,7 +252,7 @@
           "name": "entry_ref",
           "type": "string",
           "required": true,
-          "doc": "The entry, as `<operator>/<tasklet>/<id>`."
+          "doc": "The entry, as `<relay>/<tasklet>/<id>`."
         }
       ]
     },
@@ -267,7 +267,7 @@
           "name": "entry_ref",
           "type": "string",
           "required": true,
-          "doc": "The entry, as `<operator>/<tasklet>/<id>`."
+          "doc": "The entry, as `<relay>/<tasklet>/<id>`."
         }
       ]
     },
@@ -279,17 +279,17 @@
       "stream": false,
       "args": [
         {
-          "name": "operator_class",
+          "name": "relay_class",
           "type": "string",
           "required": false,
           "default": null,
-          "doc": "The operator whose entries to read; every operator when absent."
+          "doc": "The relay whose entries to read; every relay when absent."
         }
       ]
     },
     {
       "name": "Dlq.replay",
-      "doc": "Re-dispatch a parked payload to its operator through the ordinary input path.",
+      "doc": "Re-dispatch a parked payload to its relay through the ordinary input path.",
       "action": "dlq.replay",
       "remote": true,
       "stream": false,
@@ -298,7 +298,7 @@
           "name": "entry_ref",
           "type": "string",
           "required": true,
-          "doc": "The entry, as `<operator>/<tasklet>/<id>`."
+          "doc": "The entry, as `<relay>/<tasklet>/<id>`."
         }
       ]
     },
@@ -312,24 +312,24 @@
     },
     {
       "name": "Dlq.tasklets",
-      "doc": "The `{operator_class, tasklet_id}` pairs that hold parked entries.",
+      "doc": "The `{relay_class, tasklet_id}` pairs that hold parked entries.",
       "action": "dlq.list",
       "remote": true,
       "stream": false,
       "args": [
         {
-          "name": "operator_class",
+          "name": "relay_class",
           "type": "string",
           "required": false,
           "default": null,
-          "doc": "The operator whose entries to read; every operator when absent."
+          "doc": "The relay whose entries to read; every relay when absent."
         }
       ]
     },
     {
       "name": "Fleet.factories",
       "doc": "The factories declared in `namespace`.",
-      "action": "operator.list",
+      "action": "relay.list",
       "remote": true,
       "stream": false,
       "args": [
@@ -344,7 +344,7 @@
     {
       "name": "Fleet.hub_nodes",
       "doc": "The nodes holding a hub for `namespace`.",
-      "action": "operator.list",
+      "action": "relay.list",
       "remote": true,
       "stream": false,
       "args": [
@@ -390,7 +390,7 @@
     {
       "name": "Fleet.runner_caller_context",
       "doc": "The caller context a runner in `namespace` connects with.",
-      "action": "operator.list",
+      "action": "relay.list",
       "remote": true,
       "stream": false,
       "args": [
@@ -405,7 +405,7 @@
     {
       "name": "Fleet.runners",
       "doc": "Every runner serving `namespace`, anywhere in the cluster, each with the process id of the runner on its socket where the transport can say, so a user can tell which process a runner is.",
-      "action": "operator.list",
+      "action": "relay.list",
       "remote": true,
       "stream": false,
       "args": [
@@ -420,7 +420,7 @@
     {
       "name": "Fleet.runners_for_factory",
       "doc": "The runners of one factory in `namespace`.",
-      "action": "operator.list",
+      "action": "relay.list",
       "remote": true,
       "stream": false,
       "args": [
@@ -441,7 +441,7 @@
     {
       "name": "Fleet.runners_on_this_node",
       "doc": "The runners serving `namespace` **on this node only**.",
-      "action": "operator.list",
+      "action": "relay.list",
       "remote": true,
       "stream": false,
       "args": [
@@ -824,389 +824,8 @@
       ]
     },
     {
-      "name": "Operator.call",
-      "doc": "Call `operator_id` with `message` and wait for its answer: the one output a `response()` end produced from it, as `{:ok, payload, %{\"channel\" => channel}}`, or a coded error saying why none came.",
-      "action": "operator.send",
-      "remote": true,
-      "stream": false,
-      "args": [
-        {
-          "name": "namespace",
-          "type": "string",
-          "required": true,
-          "doc": "The namespace."
-        },
-        {
-          "name": "operator_id",
-          "type": "string",
-          "required": true,
-          "doc": "The operator's id."
-        },
-        {
-          "name": "message",
-          "type": "string",
-          "required": true,
-          "doc": "The input's payload."
-        },
-        {
-          "name": "channel",
-          "type": "string",
-          "required": false,
-          "default": "",
-          "doc": "The input channel; none when empty."
-        },
-        {
-          "name": "opts",
-          "type": "keyword",
-          "required": true,
-          "doc": "`deadline_ms`, and `key` for a partition group."
-        }
-      ]
-    },
-    {
-      "name": "Operator.cell_state",
-      "doc": "An operator's live state, as JSON, and the change sequence it was read at.",
-      "action": "state.get",
-      "remote": true,
-      "stream": false,
-      "args": [
-        {
-          "name": "namespace",
-          "type": "string",
-          "required": true,
-          "doc": "The namespace."
-        },
-        {
-          "name": "operator_id",
-          "type": "string",
-          "required": true,
-          "doc": "The operator's id."
-        },
-        {
-          "name": "cell",
-          "type": "string",
-          "required": false,
-          "default": null,
-          "doc": "`<tasklet>[/<cell_key>]`; every Cell when absent."
-        }
-      ]
-    },
-    {
-      "name": "Operator.info",
-      "doc": "Every operator in `namespace` as its Overwatch reports it, every finished one still inside its retention window, and every partition group with its key-group coverage.",
-      "action": "operator.list",
-      "remote": true,
-      "stream": false,
-      "args": [
-        {
-          "name": "namespace",
-          "type": "string",
-          "required": true,
-          "doc": "The namespace."
-        }
-      ]
-    },
-    {
-      "name": "Operator.list",
-      "doc": "The operators in `namespace`, one row each with its health, runner, node and, for a partition group, its width and members.",
-      "action": "operator.list",
-      "remote": true,
-      "stream": false,
-      "args": [
-        {
-          "name": "namespace",
-          "type": "string",
-          "required": true,
-          "doc": "The namespace."
-        }
-      ]
-    },
-    {
-      "name": "Operator.list_namespaces",
-      "doc": "The namespaces in the durable catalog that the caller may be shown (its own, or all of them for an admin in `_system`), each with whether this controller runs a hub for it.",
-      "action": "operator.list",
-      "remote": true,
-      "stream": false,
-      "args": []
-    },
-    {
-      "name": "Operator.list_operators",
-      "doc": "The operator ids running in `namespace`.",
-      "action": "operator.list",
-      "remote": true,
-      "stream": false,
-      "args": [
-        {
-          "name": "namespace",
-          "type": "string",
-          "required": true,
-          "doc": "The namespace."
-        }
-      ]
-    },
-    {
-      "name": "Operator.listen",
-      "doc": "Hand every frame `operator_id` emits (with its parts and dead-letter notices), or ingests when `direction` is `input`, to the context's `:emit`, until the window closes, the caller goes away or the operator ends.",
-      "action": "operator.listen",
-      "remote": true,
-      "stream": true,
-      "args": [
-        {
-          "name": "namespace",
-          "type": "string",
-          "required": true,
-          "doc": "The namespace."
-        },
-        {
-          "name": "operator_id",
-          "type": "string",
-          "required": true,
-          "doc": "The operator's id."
-        },
-        {
-          "name": "direction",
-          "type": "enum",
-          "required": false,
-          "default": "output",
-          "values": [
-            "output",
-            "input"
-          ],
-          "doc": "What to hear."
-        },
-        {
-          "name": "opts",
-          "type": "keyword",
-          "required": false,
-          "default": [],
-          "doc": "`window_ms`."
-        }
-      ]
-    },
-    {
-      "name": "Operator.operator_plugins",
-      "doc": "The plugin bindings each operator in `namespace` declares.",
-      "action": "operator.list",
-      "remote": true,
-      "stream": false,
-      "args": [
-        {
-          "name": "namespace",
-          "type": "string",
-          "required": true,
-          "doc": "The namespace."
-        }
-      ]
-    },
-    {
-      "name": "Operator.operator_rows",
-      "doc": "One row per operator in `namespace`: node, health and partition.",
-      "action": "operator.list",
-      "remote": true,
-      "stream": false,
-      "args": [
-        {
-          "name": "namespace",
-          "type": "string",
-          "required": true,
-          "doc": "The namespace."
-        }
-      ]
-    },
-    {
-      "name": "Operator.overwatch_state",
-      "doc": "One operator's Overwatch state.",
-      "action": "operator.list",
-      "remote": true,
-      "stream": false,
-      "args": [
-        {
-          "name": "namespace",
-          "type": "string",
-          "required": true,
-          "doc": "The namespace."
-        },
-        {
-          "name": "operator_id",
-          "type": "string",
-          "required": true,
-          "doc": "The operator's id."
-        }
-      ]
-    },
-    {
-      "name": "Operator.partition_coverage",
-      "doc": "Partition coverage over `{id, range}` pairs: gaps, overlaps and total.",
-      "action": "public",
-      "remote": true,
-      "stream": false,
-      "args": [
-        {
-          "name": "members",
-          "type": "list",
-          "required": true,
-          "doc": "The `{id, range}` pairs."
-        }
-      ]
-    },
-    {
-      "name": "Operator.partition_groups",
-      "doc": "The partition groups `rows` describe: group, declared width, members and key-group coverage.",
-      "action": "public",
-      "remote": true,
-      "stream": false,
-      "args": [
-        {
-          "name": "rows",
-          "type": "list",
-          "required": true,
-          "doc": "The operator rows."
-        }
-      ]
-    },
-    {
-      "name": "Operator.registry",
-      "doc": "The namespace's hub registry, as the hub reports it.",
-      "action": "operator.list",
-      "remote": true,
-      "stream": false,
-      "args": [
-        {
-          "name": "namespace",
-          "type": "string",
-          "required": true,
-          "doc": "The namespace."
-        }
-      ]
-    },
-    {
-      "name": "Operator.replay",
-      "doc": "Re-run a Cell's retained inputs from a point in the past through the current code: rewind the Cell to `from` (a WAL seq, or an ISO 8601 time), bump the epoch, and replay the input log forward, so a conforming keyed sink overwrites the stale rows by natural key.",
-      "action": "operator.replay",
-      "remote": true,
-      "stream": false,
-      "args": [
-        {
-          "name": "namespace",
-          "type": "string",
-          "required": true,
-          "doc": "The namespace."
-        },
-        {
-          "name": "path",
-          "type": "string",
-          "required": true,
-          "doc": "The Cell, as `<operator>/<tasklet>/<cell_key>`."
-        },
-        {
-          "name": "from",
-          "type": "string",
-          "required": true,
-          "doc": "A WAL seq, or an ISO 8601 time."
-        }
-      ]
-    },
-    {
-      "name": "Operator.run_known?",
-      "doc": "Whether `run` is a way an operator runs that this controller knows.",
-      "action": "public",
-      "remote": true,
-      "stream": false,
-      "args": [
-        {
-          "name": "run",
-          "type": "atom",
-          "required": true,
-          "doc": "The way an operator runs."
-        }
-      ]
-    },
-    {
-      "name": "Operator.send",
-      "doc": "Inject `message` into `operator_id`'s input stream, blocking for the confirming verdict so a parked or absent target is reported rather than silently dropped.",
-      "action": "operator.send",
-      "remote": true,
-      "stream": false,
-      "args": [
-        {
-          "name": "namespace",
-          "type": "string",
-          "required": true,
-          "doc": "The namespace."
-        },
-        {
-          "name": "operator_id",
-          "type": "string",
-          "required": true,
-          "doc": "The operator's id."
-        },
-        {
-          "name": "message",
-          "type": "string",
-          "required": true,
-          "doc": "The input's payload."
-        },
-        {
-          "name": "channel",
-          "type": "string",
-          "required": false,
-          "default": "",
-          "doc": "The input channel; none when empty."
-        },
-        {
-          "name": "opts",
-          "type": "keyword",
-          "required": false,
-          "default": [],
-          "doc": "`key`, for a partition group, and `msg_id`, the message's id."
-        }
-      ]
-    },
-    {
-      "name": "Operator.start",
-      "doc": "Start `operator` in `namespace`, answering the id it runs under and whether this call started it (`:started`) or found a live instance already holding the id it named (`:already_running`).",
-      "action": "operator.start",
-      "remote": true,
-      "stream": false,
-      "args": [
-        {
-          "name": "namespace",
-          "type": "string",
-          "required": true,
-          "doc": "The namespace."
-        },
-        {
-          "name": "operator",
-          "type": "keyword",
-          "required": true,
-          "doc": "`factory_id`, `id`, `init_values`, `opts`, `plugins`, `text`, `channel` and `partitions`."
-        }
-      ]
-    },
-    {
-      "name": "Operator.stop",
-      "doc": "Stop `operator_id` in `namespace`, or every member of the partition group it names.",
-      "action": "operator.stop",
-      "remote": true,
-      "stream": false,
-      "args": [
-        {
-          "name": "namespace",
-          "type": "string",
-          "required": true,
-          "doc": "The namespace."
-        },
-        {
-          "name": "operator_id",
-          "type": "string",
-          "required": true,
-          "doc": "The operator's id."
-        }
-      ]
-    },
-    {
       "name": "PluginManager.bind",
-      "doc": "Bind `fields[:operator_id]` to the plugin `name` with `:hooks` and `:channel`.",
+      "doc": "Bind `fields[:relay_id]` to the plugin `name` with `:hooks` and `:channel`.",
       "action": "plugin.enable",
       "remote": true,
       "stream": false,
@@ -1250,7 +869,7 @@
     },
     {
       "name": "PluginManager.enable",
-      "doc": "Enable the plugin `name` built from `fields` (`:provider`, `:opts`, `:namespace`, `:single`, and `:operator_id`, `:hooks` and `:channel` to bind in the same call), answering how it was enabled and the controllers holding the namespace that lack its provider: the plugin does not run there.",
+      "doc": "Enable the plugin `name` built from `fields` (`:provider`, `:opts`, `:namespace`, `:single`, and `:relay_id`, `:hooks` and `:channel` to bind in the same call), answering how it was enabled and the controllers holding the namespace that lack its provider: the plugin does not run there.",
       "action": "plugin.enable",
       "remote": true,
       "stream": false,
@@ -1295,7 +914,7 @@
     },
     {
       "name": "PluginManager.unbind",
-      "doc": "Unbind `fields[:operator_id]` from the plugin `name`, which stays enabled.",
+      "doc": "Unbind `fields[:relay_id]` from the plugin `name`, which stays enabled.",
       "action": "plugin.disable",
       "remote": true,
       "stream": false,
@@ -1334,6 +953,387 @@
           "required": false,
           "default": [],
           "doc": "The plugin's fields."
+        }
+      ]
+    },
+    {
+      "name": "Relay.call",
+      "doc": "Call `relay_id` with `message` and wait for its answer: the one output a `response()` end produced from it, as `{:ok, payload, %{\"channel\" => channel}}`, or a coded error saying why none came.",
+      "action": "relay.send",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "namespace",
+          "type": "string",
+          "required": true,
+          "doc": "The namespace."
+        },
+        {
+          "name": "relay_id",
+          "type": "string",
+          "required": true,
+          "doc": "The relay's id."
+        },
+        {
+          "name": "message",
+          "type": "string",
+          "required": true,
+          "doc": "The input's payload."
+        },
+        {
+          "name": "channel",
+          "type": "string",
+          "required": false,
+          "default": "",
+          "doc": "The input channel; none when empty."
+        },
+        {
+          "name": "opts",
+          "type": "keyword",
+          "required": true,
+          "doc": "`deadline_ms`, and `key` for a partition group."
+        }
+      ]
+    },
+    {
+      "name": "Relay.cell_state",
+      "doc": "A relay's live state, as JSON, and the change sequence it was read at.",
+      "action": "state.get",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "namespace",
+          "type": "string",
+          "required": true,
+          "doc": "The namespace."
+        },
+        {
+          "name": "relay_id",
+          "type": "string",
+          "required": true,
+          "doc": "The relay's id."
+        },
+        {
+          "name": "cell",
+          "type": "string",
+          "required": false,
+          "default": null,
+          "doc": "`<tasklet>[/<cell_key>]`; every Cell when absent."
+        }
+      ]
+    },
+    {
+      "name": "Relay.info",
+      "doc": "Every relay in `namespace` as its Overwatch reports it, every finished one still inside its retention window, and every partition group with its key-group coverage.",
+      "action": "relay.list",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "namespace",
+          "type": "string",
+          "required": true,
+          "doc": "The namespace."
+        }
+      ]
+    },
+    {
+      "name": "Relay.list",
+      "doc": "The relays in `namespace`, one row each with its health, runner, node and, for a partition group, its width and members.",
+      "action": "relay.list",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "namespace",
+          "type": "string",
+          "required": true,
+          "doc": "The namespace."
+        }
+      ]
+    },
+    {
+      "name": "Relay.list_namespaces",
+      "doc": "The namespaces in the durable catalog that the caller may be shown (its own, or all of them for an admin in `_system`), each with whether this controller runs a hub for it.",
+      "action": "relay.list",
+      "remote": true,
+      "stream": false,
+      "args": []
+    },
+    {
+      "name": "Relay.list_relays",
+      "doc": "The relay ids running in `namespace`.",
+      "action": "relay.list",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "namespace",
+          "type": "string",
+          "required": true,
+          "doc": "The namespace."
+        }
+      ]
+    },
+    {
+      "name": "Relay.listen",
+      "doc": "Hand every frame `relay_id` emits (with its parts and dead-letter notices), or ingests when `direction` is `input`, to the context's `:emit`, until the window closes, the caller goes away or the relay ends.",
+      "action": "relay.listen",
+      "remote": true,
+      "stream": true,
+      "args": [
+        {
+          "name": "namespace",
+          "type": "string",
+          "required": true,
+          "doc": "The namespace."
+        },
+        {
+          "name": "relay_id",
+          "type": "string",
+          "required": true,
+          "doc": "The relay's id."
+        },
+        {
+          "name": "direction",
+          "type": "enum",
+          "required": false,
+          "default": "output",
+          "values": [
+            "output",
+            "input"
+          ],
+          "doc": "What to hear."
+        },
+        {
+          "name": "opts",
+          "type": "keyword",
+          "required": false,
+          "default": [],
+          "doc": "`window_ms`."
+        }
+      ]
+    },
+    {
+      "name": "Relay.overwatch_state",
+      "doc": "One relay's Overwatch state.",
+      "action": "relay.list",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "namespace",
+          "type": "string",
+          "required": true,
+          "doc": "The namespace."
+        },
+        {
+          "name": "relay_id",
+          "type": "string",
+          "required": true,
+          "doc": "The relay's id."
+        }
+      ]
+    },
+    {
+      "name": "Relay.partition_coverage",
+      "doc": "Partition coverage over `{id, range}` pairs: gaps, overlaps and total.",
+      "action": "public",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "members",
+          "type": "list",
+          "required": true,
+          "doc": "The `{id, range}` pairs."
+        }
+      ]
+    },
+    {
+      "name": "Relay.partition_groups",
+      "doc": "The partition groups `rows` describe: group, declared width, members and key-group coverage.",
+      "action": "public",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "rows",
+          "type": "list",
+          "required": true,
+          "doc": "The relay rows."
+        }
+      ]
+    },
+    {
+      "name": "Relay.registry",
+      "doc": "The namespace's hub registry, as the hub reports it.",
+      "action": "relay.list",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "namespace",
+          "type": "string",
+          "required": true,
+          "doc": "The namespace."
+        }
+      ]
+    },
+    {
+      "name": "Relay.relay_plugins",
+      "doc": "The plugin bindings each relay in `namespace` declares.",
+      "action": "relay.list",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "namespace",
+          "type": "string",
+          "required": true,
+          "doc": "The namespace."
+        }
+      ]
+    },
+    {
+      "name": "Relay.relay_rows",
+      "doc": "One row per relay in `namespace`: node, health and partition.",
+      "action": "relay.list",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "namespace",
+          "type": "string",
+          "required": true,
+          "doc": "The namespace."
+        }
+      ]
+    },
+    {
+      "name": "Relay.replay",
+      "doc": "Re-run a Cell's retained inputs from a point in the past through the current code: rewind the Cell to `from` (a WAL seq, or an ISO 8601 time), bump the epoch, and replay the input log forward, so a conforming keyed sink overwrites the stale rows by natural key.",
+      "action": "relay.replay",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "namespace",
+          "type": "string",
+          "required": true,
+          "doc": "The namespace."
+        },
+        {
+          "name": "path",
+          "type": "string",
+          "required": true,
+          "doc": "The Cell, as `<relay>/<tasklet>/<cell_key>`."
+        },
+        {
+          "name": "from",
+          "type": "string",
+          "required": true,
+          "doc": "A WAL seq, or an ISO 8601 time."
+        }
+      ]
+    },
+    {
+      "name": "Relay.run_known?",
+      "doc": "Whether `run` is a way a relay runs that this controller knows.",
+      "action": "public",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "run",
+          "type": "atom",
+          "required": true,
+          "doc": "The way a relay runs."
+        }
+      ]
+    },
+    {
+      "name": "Relay.send",
+      "doc": "Inject `message` into `relay_id`'s input stream, blocking for the confirming verdict so a parked or absent target is reported rather than silently dropped.",
+      "action": "relay.send",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "namespace",
+          "type": "string",
+          "required": true,
+          "doc": "The namespace."
+        },
+        {
+          "name": "relay_id",
+          "type": "string",
+          "required": true,
+          "doc": "The relay's id."
+        },
+        {
+          "name": "message",
+          "type": "string",
+          "required": true,
+          "doc": "The input's payload."
+        },
+        {
+          "name": "channel",
+          "type": "string",
+          "required": false,
+          "default": "",
+          "doc": "The input channel; none when empty."
+        },
+        {
+          "name": "opts",
+          "type": "keyword",
+          "required": false,
+          "default": [],
+          "doc": "`key`, for a partition group, and `msg_id`, the message's id."
+        }
+      ]
+    },
+    {
+      "name": "Relay.start",
+      "doc": "Start `relay` in `namespace`, answering the id it runs under and whether this call started it (`:started`) or found a live instance already holding the id it named (`:already_running`).",
+      "action": "relay.start",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "namespace",
+          "type": "string",
+          "required": true,
+          "doc": "The namespace."
+        },
+        {
+          "name": "relay",
+          "type": "keyword",
+          "required": true,
+          "doc": "`factory_id`, `id`, `init_values`, `opts`, `plugins`, `text`, `channel` and `partitions`."
+        }
+      ]
+    },
+    {
+      "name": "Relay.stop",
+      "doc": "Stop `relay_id` in `namespace`, or every member of the partition group it names.",
+      "action": "relay.stop",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "namespace",
+          "type": "string",
+          "required": true,
+          "doc": "The namespace."
+        },
+        {
+          "name": "relay_id",
+          "type": "string",
+          "required": true,
+          "doc": "The relay's id."
         }
       ]
     },
@@ -1450,7 +1450,7 @@
     {
       "name": "Schedule.run",
       "doc": "Fire the schedule `name` once, now, judged as a start where its instance starts.",
-      "action": "operator.start",
+      "action": "relay.start",
       "remote": true,
       "stream": false,
       "args": [
@@ -1472,16 +1472,16 @@
     },
     {
       "name": "Steps.cells",
-      "doc": "One row per Cell of `operator_class` with persisted state: its WAL and snapshot sequences, WAL size and the writer's counters.",
+      "doc": "One row per Cell of `relay_class` with persisted state: its WAL and snapshot sequences, WAL size and the writer's counters.",
       "action": "state.list",
       "remote": true,
       "stream": false,
       "args": [
         {
-          "name": "operator_class",
+          "name": "relay_class",
           "type": "string",
           "required": true,
-          "doc": "The operator class."
+          "doc": "The relay class."
         }
       ]
     },
@@ -1502,16 +1502,16 @@
     },
     {
       "name": "Steps.completed_retention_hours",
-      "doc": "How long a completed instance of `operator_class` is retained, in hours.",
+      "doc": "How long a completed instance of `relay_class` is retained, in hours.",
       "action": "public",
       "remote": true,
       "stream": false,
       "args": [
         {
-          "name": "operator_class",
+          "name": "relay_class",
           "type": "string",
           "required": true,
-          "doc": "The operator class."
+          "doc": "The relay class."
         },
         {
           "name": "metadata",
@@ -1563,13 +1563,13 @@
           "name": "cell",
           "type": "string",
           "required": true,
-          "doc": "The Cell, as `<operator>/<tasklet>/<cell_key>`."
+          "doc": "The Cell, as `<relay>/<tasklet>/<cell_key>`."
         }
       ]
     },
     {
       "name": "Steps.inbox",
-      "doc": "An instance's durable input log, for a flow operator on the effectively-once tier and a durable steps operator alike: every retained record with its offset, whether it is at or below the instance's floor (consumed), its size and channel.",
+      "doc": "An instance's durable input log, for a flow relay on the effectively-once tier and a durable steps relay alike: every retained record with its offset, whether it is at or below the instance's floor (consumed), its size and channel.",
       "action": "state.records",
       "remote": true,
       "stream": false,
@@ -1613,16 +1613,8 @@
       ]
     },
     {
-      "name": "Steps.operator_classes",
-      "doc": "Every operator class this controller holds persisted state for.",
-      "action": "operator.list",
-      "remote": true,
-      "stream": false,
-      "args": []
-    },
-    {
       "name": "Steps.outbox",
-      "doc": "One Cell's outbox: durable seq, flush cursor, epoch, undispatched lag, the entries a steps Cell holds until its stage commits, and the operator's input-log min-watermark.",
+      "doc": "One Cell's outbox: durable seq, flush cursor, epoch, undispatched lag, the entries a steps Cell holds until its stage commits, and the relay's input-log min-watermark.",
       "action": "state.records",
       "remote": true,
       "stream": false,
@@ -1631,14 +1623,22 @@
           "name": "cell",
           "type": "string",
           "required": true,
-          "doc": "The Cell, as `<operator>/<tasklet>/<cell_key>`."
+          "doc": "The Cell, as `<relay>/<tasklet>/<cell_key>`."
         }
       ]
     },
     {
+      "name": "Steps.relay_classes",
+      "doc": "Every relay class this controller holds persisted state for.",
+      "action": "relay.list",
+      "remote": true,
+      "stream": false,
+      "args": []
+    },
+    {
       "name": "Steps.rescale",
       "doc": "Rescale the partition group `group_id` in `namespace` to `target`.",
-      "action": "operator.scale",
+      "action": "relay.scale",
       "remote": true,
       "stream": false,
       "args": [
@@ -1672,8 +1672,8 @@
     },
     {
       "name": "Steps.rewind",
-      "doc": "Rewind `operator_class` in `namespace` to the committed iteration `to_iter`.",
-      "action": "operator.rewind",
+      "doc": "Rewind `relay_class` in `namespace` to the committed iteration `to_iter`.",
+      "action": "relay.rewind",
       "remote": true,
       "stream": false,
       "args": [
@@ -1684,10 +1684,10 @@
           "doc": "The namespace."
         },
         {
-          "name": "operator_class",
+          "name": "relay_class",
           "type": "string",
           "required": true,
-          "doc": "The steps operator."
+          "doc": "The steps relay."
         },
         {
           "name": "to_iter",
@@ -1709,22 +1709,22 @@
           "name": "cell",
           "type": "string",
           "required": true,
-          "doc": "The Cell, as `<operator>/<tasklet>/<cell_key>`."
+          "doc": "The Cell, as `<relay>/<tasklet>/<cell_key>`."
         }
       ]
     },
     {
       "name": "Steps.set_retention",
-      "doc": "Retain `operator_class`'s write-ahead history for `hours`, in this controller's memory: it lasts until the next boot unless the runtime configuration says so too.",
+      "doc": "Retain `relay_class`'s write-ahead history for `hours`, in this controller's memory: it lasts until the next boot unless the runtime configuration says so too.",
       "action": "state.retention",
       "remote": true,
       "stream": false,
       "args": [
         {
-          "name": "operator_class",
+          "name": "relay_class",
           "type": "string",
           "required": true,
-          "doc": "The operator class."
+          "doc": "The relay class."
         },
         {
           "name": "hours",
@@ -1746,13 +1746,13 @@
           "name": "path",
           "type": "string",
           "required": true,
-          "doc": "`<operator>/<tasklet>[/<cell_key>]`."
+          "doc": "`<relay>/<tasklet>[/<cell_key>]`."
         }
       ]
     },
     {
       "name": "Steps.state_metrics",
-      "doc": "Durable-state counters across every operator class.",
+      "doc": "Durable-state counters across every relay class.",
       "action": "state.list",
       "remote": true,
       "stream": false,
@@ -1769,7 +1769,7 @@
           "name": "cell",
           "type": "string",
           "required": true,
-          "doc": "The Cell, as `<operator>/<tasklet>/<cell_key>`."
+          "doc": "The Cell, as `<relay>/<tasklet>/<cell_key>`."
         },
         {
           "name": "target",

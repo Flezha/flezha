@@ -85,7 +85,7 @@ $ mix test.connection_healing
 
 The first restarts the controller and the runner in turn and checks that they
 find each other again. The second restarts the runner and checks that the
-plugins enabled on its operator are still there.
+plugins enabled on its relay are still there.
 
 The stacks start through `scripts/harness-boot.sh`, which checks the mounted
 directories, fetches the Elixir dependencies when `mix.lock` changed, and waits

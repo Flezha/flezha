@@ -1,4 +1,4 @@
-flz schedule - cron-scheduled steps operator spawns
+flz schedule - cron-scheduled steps relay spawns
 
 USAGE:
     flz schedule <SUBCOMMAND>
@@ -12,12 +12,12 @@ SUBCOMMANDS:
                  --init-values is the state every fired instance starts with;
                  --text is the first message it receives, on the entry channel
                  --channel names or the first declared one.
-                 --plugins takes the same array as `operator start --plugins`;
+                 --plugins takes the same array as `relay start --plugins`;
                  each firing binds its instance to the plugins it names.
     list         List schedules with their next fire time
     remove <name>  Remove a schedule
     run <name>     Fire one instance immediately with the stored config;
-                   judged as operator.start in the schedule's namespace
+                   judged as relay.start in the schedule's namespace
     help         Show this help message
 
 EXAMPLES:

@@ -573,7 +573,7 @@ defmodule Flezha.Transport.Server do
   # first nil-ref channel in the pool (rebind contract) — overwriting a live
   # channel would silently drop traffic on its existing stream. The SDK's
   # index hint is intentionally ignored: any index can map to any channel
-  # since outbound routing is by operator_id, not stream index.
+  # since outbound routing is by relay_id, not stream index.
   defp route_quic_data_stream(stream_ref, stream_type, index, runner_id, state) do
     case bind_data_stream(runner_id, stream_type, stream_ref) do
       {:ok, type, stream_name} ->

@@ -19,7 +19,7 @@ The controller is in one of three postures:
 | Posture | When | Effect |
 | --- | --- | --- |
 | open | `FLEZHA_AUTHZ_ENABLED=false`, or the dev and test configuration | every call is allowed; a warning is logged on every boot |
-| bootstrap pending | enforcement on, no admin claimed yet | administration verbs are refused, naming `flz auth bootstrap`; operators and runner connections carry on |
+| bootstrap pending | enforcement on, no admin claimed yet | administration verbs are refused, naming `flz auth bootstrap`; relays and runner connections carry on |
 | enforced | the admin was claimed (a durable flag) | every call is checked against the caller's roles |
 
 A release enforces by default; dev and test builds do not. An upgrade that was
@@ -113,13 +113,13 @@ characters of the id and takes effect on the next call. Each gated verb takes
 A token is checked by the controller that answers it, against that controller's
 own store, so in a cluster it works on the controller it was issued on.
 
-An option is read wherever it is written: `flz operator stop --token t op1`
-and `flz operator stop op1 --token t` are the same request. Two verbs are
+An option is read wherever it is written: `flz relay stop --token t op1`
+and `flz relay stop op1 --token t` are the same request. Two verbs are
 stricter: `flz boot await` and `flz reset` refuse an argument they do not
 recognise, because one blocks for as long as its option says and the other
 deletes data. Other verbs ignore an unknown word and use their defaults.
 
-**When a token expires**, only the CLI stops: operators and runner connections
+**When a token expires**, only the CLI stops: relays and runner connections
 carry on, because a runner proves its namespace with a credential that does
 not expire. There is no automatic renewal, but a lapse is announced: a token
 within `FLEZHA_AUTHZ_TOKEN_EXPIRY_WARNING_MS` (one day) of its expiry emits
@@ -191,13 +191,13 @@ reaches across namespaces.
 
 | Role | What it may do |
 | --- | --- |
-| `viewer` | read: operators, plugins, cell state, audit, observability, the schedule list |
-| `app` | `viewer`, plus what an application does to its own work: start, stop and send to an operator (including what a tasklet's spawn asks for), listen to what it takes in and sends out, enable and disable a plugin. It destroys no record and moves no work it did not create: no dead-letter drop or replay, no state rotation or deletion, no rewind, replay or rescale |
-| `ops` | `app`, plus the rest of the operator and plugin lifecycle, audit rotation, observability changes, schedules, the dead-letter queue and records in flight |
+| `viewer` | read: relays, plugins, cell state, audit, observability, the schedule list |
+| `app` | `viewer`, plus what an application does to its own work: start, stop and send to a relay (including what a tasklet's spawn asks for), listen to what it takes in and sends out, enable and disable a plugin. It destroys no record and moves no work it did not create: no dead-letter drop or replay, no state rotation or deletion, no rewind, replay or rescale |
+| `ops` | `app`, plus the rest of the relay and plugin lifecycle, audit rotation, observability changes, schedules, the dead-letter queue and records in flight |
 | `admin` | `ops`, plus authorization state, namespaces and quotas, stopping the controller and controller-wide settings |
 | `runner` | connect a runner, and nothing else. It is what a runner's connection is until a role is bound to it |
-| `spawner` | `runner`, plus starting and sending to operators in its own namespace: what a tasklet's spawn and an operator's `call` need |
-| `stopper` | `runner`, plus stopping operators in its own namespace |
+| `spawner` | `runner`, plus starting and sending to relays in its own namespace: what a tasklet's spawn and a relay's `call` need |
+| `stopper` | `runner`, plus stopping relays in its own namespace |
 
 `spawner` and `stopper` combine: a namespace bound to both starts, sends to
 and stops its own work, and still enables no plugin. `app` holds everything
@@ -261,15 +261,15 @@ roles outside that line), and the namespace it is judged in:
 | `flz namespace show` | `authz.namespace_show` | viewer | the namespace named |
 | `flz controller status`, `mem-top` | `controller.status` | viewer | the caller's namespace |
 | `flz controller stop` | `controller.stop` | admin | `_system` |
-| `flz cluster status`, `flz operator list`, `info`, `flz runner list` | `operator.list` | viewer | the namespace named |
-| `flz operator start`, `flz schedule run` | `operator.start` | spawner | the namespace named (a schedule's own) |
-| `flz operator send`, `flz operator call` | `operator.send` | spawner | the namespace named |
-| `flz operator stop` | `operator.stop` | stopper | the namespace named |
-| `flz operator listen` | `operator.listen` | app | the namespace named |
-| `flz operator scale` | `operator.scale` | ops | the namespace named |
-| `flz operator rewind` | `operator.rewind` | ops | the namespace named |
-| `flz operator replay` | `operator.replay` | ops | the operator's namespace |
-| `flz operator state`, `flz state get`, `list`, `at` | `state.get`, `state.list`, `state.at` | viewer | the namespace named, or the cell's |
+| `flz cluster status`, `flz relay list`, `info`, `flz runner list` | `relay.list` | viewer | the namespace named |
+| `flz relay start`, `flz schedule run` | `relay.start` | spawner | the namespace named (a schedule's own) |
+| `flz relay send`, `flz relay call` | `relay.send` | spawner | the namespace named |
+| `flz relay stop` | `relay.stop` | stopper | the namespace named |
+| `flz relay listen` | `relay.listen` | app | the namespace named |
+| `flz relay scale` | `relay.scale` | ops | the namespace named |
+| `flz relay rewind` | `relay.rewind` | ops | the namespace named |
+| `flz relay replay` | `relay.replay` | ops | the relay's namespace |
+| `flz relay state`, `flz state get`, `list`, `at` | `state.get`, `state.list`, `state.at` | viewer | the namespace named, or the cell's |
 | `flz state rotate` | `state.rotate` | ops | the cell's namespace |
 | `flz state delete` | `state.delete` | admin | the cell's namespace |
 | `flz state retention` | `state.retention` | admin | `_system` |
@@ -299,19 +299,19 @@ nothing about whether the name exists. Some choices worth stating plainly:
   firings land. A credential for `flz schedule add`, `list` and `remove` is
   one bound to `_system` (`flz token issue ci _system ops`), or the admin.
 - **`flz schedule run` is judged where the instance starts**, as
-  `operator.start` in the schedule's namespace. An `ops@_system` token can
+  `relay.start` in the schedule's namespace. An `ops@_system` token can
   add, list and remove a schedule but not run one; a token with
-  `operator.start` in the schedule's namespace, or the admin, can.
+  `relay.start` in the schedule's namespace, or the admin, can.
 - **A spawn's delivery is judged, not recorded.** A tasklet's spawn that feeds
-  a running instance is judged as `operator.send`, and a permitted one writes
+  a running instance is judged as `relay.send`, and a permitted one writes
   no audit record, since it happens per event. A refused one is audited. The
   start a spawn makes is recorded like any start.
-- **A call is a send.** `flz operator call` is judged and audited as
-  `operator.send`. A plugin's call on the operator it is enabled on is that
-  operator's own input and is not judged again.
-- **An operator's `call` is judged as its runner identity**, which needs
+- **A call is a send.** `flz relay call` is judged and audited as
+  `relay.send`. A plugin's call on the relay it is enabled on is that
+  relay's own input and is not judged again.
+- **A relay's `call` is judged as its runner identity**, which needs
   `spawner` or `app`; a refusal ends the call with a response carrying its
-  `authz.*` code ([`../advanced/operator_calls.md`](../advanced/operator_calls.md)).
+  `authz.*` code ([`../advanced/relay_calls.md`](../advanced/relay_calls.md)).
 - **`flz auth whoami` is a gated read**: while enforced, a call without a token
   is refused, naming the missing credential.
 
@@ -352,7 +352,7 @@ revokes the `_system` admin tokens, resets the claimed flag and writes a fresh
 `bootstrap.token` to claim.
 
 Either way the claim succeeds once, and a claim with no file present is
-refused, naming the path it expected. Old admin tokens stop working; operators,
+refused, naming the path it expected. Old admin tokens stop working; relays,
 runner connections and runner credentials are untouched. The recovery is
 recorded as `:rebootstrap_recovery`. `flz auth rebootstrap` finds the directory
 from `FLEZHA_AUTHZ_DIR`, else `<app_data>/auth`, and runs behind the same
@@ -443,7 +443,7 @@ Two kinds of record reach the audit log. The authorization stores' own events
 land on `:platform_authz`, with the verified principal: `:authorization_denied`,
 `:token_issued`, `:token_revoked`, `:bootstrap_completed` and
 `:rebootstrap_recovery`. Each administration act lands on its service's source
-(`namespace_service`, `dlq_service`, `schedule_service`, `operator_service`,
+(`namespace_service`, `dlq_service`, `schedule_service`, `relay_service`,
 `plugin_service`, `state_service`, `controller_service`, `steps_service`,
 `observability_service`, `audit_log`) in one shape: `name` is the verb,
 `metadata.action` the action it was judged as, `metadata.outcome` (`ok` or

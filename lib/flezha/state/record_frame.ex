@@ -207,7 +207,7 @@ defmodule Flezha.State.RecordFrame do
     # `-1`, not `0`, for an empty file: the SDK's per-Cell seq is 0-based
     # (`change_seq` starts at 0), so a `0` floor makes the dedup guard
     # (`seq <= last_persisted_seq`) drop the very first change (seq 0) of every
-    # operator. `-1` is the same "no records yet" sentinel `realign_epoch` uses.
+    # relay. `-1` is the same "no records yet" sentinel `realign_epoch` uses.
     do_scan(device, path, 0, -1)
   end
 

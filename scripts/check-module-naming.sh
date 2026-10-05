@@ -9,8 +9,8 @@
 #   Flezha.SDK.Backoff                            -> Flezha.SDK.Jitter
 #   Flezha.Service.Parser                         -> Flezha.Service.Identificator
 #   Flezha.Plugin.Provider.Metrics                -> Flezha.State.Metrics
-#   Flezha.Plugin.Provider.OperatorForward.Telemetry
-#                                                 -> Flezha.Plugin.Provider.OperatorForward
+#   Flezha.Plugin.Provider.RelayForward.Telemetry
+#                                                 -> Flezha.Plugin.Provider.RelayForward
 #   Flezha.Observability.OtpBackend.Source
 #                                                 -> Flezha.Observability.OtpBackend.Poller
 #   Flezha.Convergence.Backoff                    -> Flezha.Config.Backoff
@@ -48,7 +48,7 @@ RETIRED = (
     "Flezha.SDK.Backoff",
     "Flezha.Service.Parser",
     "Flezha.Plugin.Provider.Metrics",
-    "Flezha.Plugin.Provider.OperatorForward.Telemetry",
+    "Flezha.Plugin.Provider.RelayForward.Telemetry",
     "Flezha.Observability.OtpBackend.Source",
     "Flezha.Convergence.Backoff",
 )

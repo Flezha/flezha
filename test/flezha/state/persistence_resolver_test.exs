@@ -6,7 +6,7 @@ defmodule Flezha.State.PersistenceResolverTest do
   # async: false: writes Application env.
   use FlezhaTest.Case, fixtures: [:env, :tmp_app_data], async: false
 
-  alias Flezha.Operator.ClassRegistry
+  alias Flezha.Relay.ClassRegistry
   alias Flezha.State.PersistenceResolver
 
   describe "keeps_state?/2" do
@@ -26,7 +26,7 @@ defmodule Flezha.State.PersistenceResolverTest do
     test "the user override wins over the declaration, both ways" do
       :ok = ClassRegistry.put_persistent("pe_declared_off", false)
 
-      Application.put_env(:flezha, :operator_persistence, %{
+      Application.put_env(:flezha, :relay_persistence, %{
         "pe_declared_off" => true,
         "pe_forced_off" => false
       })
@@ -57,7 +57,7 @@ defmodule Flezha.State.PersistenceResolverTest do
       assert PersistenceResolver.compact_after_bytes("task", %{compact_after_bytes: 789}) == 789
     end
 
-    # The Watchdog calls `compact_after_bytes(operator_class)` with NO metadata
+    # The Watchdog calls `compact_after_bytes(relay_class)` with NO metadata
     # argument (it holds only the class), so the SDK-declared value must be
     # consulted through `ClassRegistry`. The metadata-passing tests above mask
     # that path; these exercise it the way production does.
@@ -120,25 +120,25 @@ defmodule Flezha.State.PersistenceResolverTest do
     end
 
     test "honours the global default override" do
-      Application.put_env(:flezha, :default_operator_completed_retention_hours, 5)
+      Application.put_env(:flezha, :default_relay_completed_retention_hours, 5)
       assert PersistenceResolver.completed_retention_hours("c") == 5
     end
 
     test "honours a per-class user override; other classes fall back to default" do
-      Application.put_env(:flezha, :operator_completed_retention_hours, %{"c" => 1})
+      Application.put_env(:flezha, :relay_completed_retention_hours, %{"c" => 1})
       assert PersistenceResolver.completed_retention_hours("c") == 1
       assert PersistenceResolver.completed_retention_hours("d") == 72
     end
 
     test "honours an instance-metadata override" do
       assert PersistenceResolver.completed_retention_hours("c", %{
-               "operator_completed_retention_hours" => 3
+               "relay_completed_retention_hours" => 3
              }) == 3
     end
   end
 
   describe "compact_after_age_ms/2 — a declared correction window raises the floor" do
-    alias Flezha.Operator.ClassRegistry
+    alias Flezha.Relay.ClassRegistry
 
     setup do
       ClassRegistry.ensure_table()

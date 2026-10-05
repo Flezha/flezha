@@ -1,0 +1,22 @@
+flz relay call - Send one input and print the relay's answer
+
+USAGE:
+    flz relay call <relay_id> --text <payload> [OPTIONS]
+
+OPTIONS:
+    -t, --text <payload>      The input's payload (required)
+    -c, --channel <ch>        The entry channel the input arrives on
+    --key <key>               The key whose member of a partition group takes the input
+    --timeout <ms>            How long the relay has to answer (default 30000)
+    --namespace <ns>          Namespace the relay runs in (default: default)
+
+OUTPUT:
+    The answer's payload and a newline: the output a response() end of the
+    relay's graph produced from the input. A failure is printed on stderr
+    with its code and exits by its class: call.timeout 7, a denied call 4,
+    relay.not_found 5, call.target_unkeyed 2.
+
+EXAMPLES:
+    flz relay call echo --text hello
+    flz relay call prices --key EURUSD --text '{"pair":"EURUSD"}'
+    flz relay call slow --text x --timeout 100

@@ -5,7 +5,7 @@ defmodule FlezhaTest.System.SchemaEvolutionE2ETest do
   eventually makes.
 
   The two halves of the deploy are two factories declaring the SAME tasklet
-  name (`evolving_cart`), so an operator started under `schema_evolution_v1`
+  name (`evolving_cart`), so a relay started under `schema_evolution_v1`
   and restarted under `schema_evolution_v2` restores from the very WAL v1 wrote.
   One runner binary carries both, which is the only difference from a real
   deploy — the bytes crossing the restore are identical.
@@ -25,10 +25,10 @@ defmodule FlezhaTest.System.SchemaEvolutionE2ETest do
 
   use FlezhaTest.SystemCase, capability: :schema_evolution
 
-  alias Flezha.Operator.Builder
+  alias Flezha.Relay.Builder
   alias Flezha.Payloader
   alias Flezha.Runner.FleetManager
-  alias Flezha.Service.OperatorManager
+  alias Flezha.Service.RelayManager
   alias Flezha.State.TestHelpers
   alias Flezha.State.Watchdog
   alias FlezhaTest.Helper.CompactionAssertions, as: CA
@@ -45,12 +45,12 @@ defmodule FlezhaTest.System.SchemaEvolutionE2ETest do
   setup do
     # One namespace per scenario: a runner from a finished scenario is still
     # registered while the next one starts, and placement would hand the new
-    # operator to a port that is on its way out.
+    # relay to a port that is on its way out.
     namespace = "schema_evolution_e2e_#{System.unique_integer([:positive])}"
 
     on_exit(fn ->
       try do
-        OperatorManager.stop_all_operators(namespace)
+        RelayManager.stop_all_relays(namespace)
       catch
         _, _ -> :ok
       end
@@ -74,7 +74,7 @@ defmodule FlezhaTest.System.SchemaEvolutionE2ETest do
     {port, _runner_id} = NodeTestHelper.start_runner_port(namespace)
     on_exit(fn -> NodeTestHelper.ensure_port_dead(port) end)
 
-    operator_id = "evo_#{System.unique_integer([:positive])}"
+    relay_id = "evo_#{System.unique_integer([:positive])}"
 
     parent = self()
     handler_id = {__MODULE__, :migration, System.unique_integer([:positive])}
@@ -89,21 +89,21 @@ defmodule FlezhaTest.System.SchemaEvolutionE2ETest do
     on_exit(fn -> :telemetry.detach(handler_id) end)
 
     # v1 accumulates 3 + 4 = 7 and persists it.
-    assert {:ok, _} = start(namespace, operator_id, @v1)
-    send(namespace, operator_id, "3")
-    send(namespace, operator_id, "4")
+    assert {:ok, _} = start(namespace, relay_id, @v1)
+    send(namespace, relay_id, "3")
+    send(namespace, relay_id, "4")
 
-    assert NodeTestHelper.wait_until(fn -> total(namespace, operator_id) == 7 end, 10_000),
+    assert NodeTestHelper.wait_until(fn -> total(namespace, relay_id) == 7 end, 10_000),
            "precondition: v1 must accumulate its state before the deploy; read " <>
-             inspect(state_of(namespace, operator_id))
+             inspect(state_of(namespace, relay_id))
 
     # Compact first: the snapshot is what carries the *state* across the
     # deploy, and a long-lived Cell always has one. Without it the restore
     # would exercise only the change-log half of the migration.
-    cell_id = {operator_id, @tasklet, ""}
+    cell_id = {relay_id, @tasklet, ""}
     # The live read is not a persisted-seq signal: an erased host publishes its
     # state before the core frames the changes, so the WAL is awaited by seq.
-    wait_for_cell(operator_id, @tasklet, 30_000)
+    wait_for_cell(relay_id, @tasklet, 30_000)
     await_seq(wait_for_writer(cell_id, 10_000), 1, 30_000)
     Application.put_env(:flezha, :compact_after_age_ms, 1)
     {:ok, writer} = Flezha.State.Supervisor.lookup(cell_id)
@@ -113,26 +113,26 @@ defmodule FlezhaTest.System.SchemaEvolutionE2ETest do
     assert CA.wait_for_snapshot_file(cell_id, 15_000),
            "precondition: v1 must leave a snapshot for the deploy to restore from"
 
-    # The deploy: same operator id and tasklet, one schema version later.
+    # The deploy: same relay id and tasklet, one schema version later.
     # `preserve_state: true` is what makes this a deploy rather than a delete —
     # the same option a rescale uses when the files are about to be handed on.
-    :ok = OperatorManager.stop_operator(namespace, operator_id, preserve_state: true)
-    assert {:ok, _} = start(namespace, operator_id, @v2)
+    :ok = RelayManager.stop_relay(namespace, relay_id, preserve_state: true)
+    assert {:ok, _} = start(namespace, relay_id, @v2)
 
-    assert NodeTestHelper.wait_until(fn -> total(namespace, operator_id) == 7 end, 10_000),
-           "v2 restored #{inspect(state_of(namespace, operator_id))} — a cold start reads 0, " <>
+    assert NodeTestHelper.wait_until(fn -> total(namespace, relay_id) == 7 end, 10_000),
+           "v2 restored #{inspect(state_of(namespace, relay_id))} — a cold start reads 0, " <>
              "which is the loss this change closes"
 
-    assert state_of(namespace, operator_id)["currency"] == "EUR",
+    assert state_of(namespace, relay_id)["currency"] == "EUR",
            "the field v2 added must come from the migration, not from init_state"
 
-    assert_receive {:migrated, %{operator: ^operator_id, tasklet: @tasklet}},
+    assert_receive {:migrated, %{relay: ^relay_id, tasklet: @tasklet}},
                    5_000,
                    "the controller must observe the migration and compact behind it"
 
     # And the migrated Cell keeps accumulating on the new shape.
-    send(namespace, operator_id, "5")
-    assert NodeTestHelper.wait_until(fn -> total(namespace, operator_id) == 12 end, 10_000)
+    send(namespace, relay_id, "5")
+    assert NodeTestHelper.wait_until(fn -> total(namespace, relay_id) == 12 end, 10_000)
 
     # The migration is paid once: the compaction the controller drove on the
     # back of it rewrote the baseline at the running version, so the NEXT
@@ -141,11 +141,11 @@ defmodule FlezhaTest.System.SchemaEvolutionE2ETest do
            "the post-migration compaction must leave a snapshot at the running version"
 
     await_seq(wait_for_writer(cell_id, 10_000), 2, 30_000)
-    :ok = OperatorManager.stop_operator(namespace, operator_id, preserve_state: true)
-    assert {:ok, _} = start(namespace, operator_id, @v2)
-    assert NodeTestHelper.wait_until(fn -> total(namespace, operator_id) == 12 end, 10_000)
+    :ok = RelayManager.stop_relay(namespace, relay_id, preserve_state: true)
+    assert {:ok, _} = start(namespace, relay_id, @v2)
+    assert NodeTestHelper.wait_until(fn -> total(namespace, relay_id) == 12 end, 10_000)
 
-    refute_receive {:migrated, %{operator: ^operator_id}},
+    refute_receive {:migrated, %{relay: ^relay_id}},
                    100,
                    "a second restore must find records at the running version"
   end
@@ -154,15 +154,15 @@ defmodule FlezhaTest.System.SchemaEvolutionE2ETest do
     {port, _runner_id} = NodeTestHelper.start_runner_port(namespace)
     on_exit(fn -> NodeTestHelper.ensure_port_dead(port) end)
 
-    operator_id = "evo_down_#{System.unique_integer([:positive])}"
+    relay_id = "evo_down_#{System.unique_integer([:positive])}"
 
-    assert {:ok, _} = start(namespace, operator_id, @v2)
-    send(namespace, operator_id, "9")
-    assert NodeTestHelper.wait_until(fn -> total(namespace, operator_id) == 9 end, 10_000)
-    wait_for_cell(operator_id, @tasklet, 30_000)
-    await_seq(wait_for_writer({operator_id, @tasklet, ""}, 10_000), 0, 30_000)
+    assert {:ok, _} = start(namespace, relay_id, @v2)
+    send(namespace, relay_id, "9")
+    assert NodeTestHelper.wait_until(fn -> total(namespace, relay_id) == 9 end, 10_000)
+    wait_for_cell(relay_id, @tasklet, 30_000)
+    await_seq(wait_for_writer({relay_id, @tasklet, ""}, 10_000), 0, 30_000)
 
-    :ok = OperatorManager.stop_operator(namespace, operator_id, preserve_state: true)
+    :ok = RelayManager.stop_relay(namespace, relay_id, preserve_state: true)
 
     # The bind-time restore's verdict is what the guard produces; wait for it.
     MessageTestHelper.forward_telemetry(
@@ -173,9 +173,9 @@ defmodule FlezhaTest.System.SchemaEvolutionE2ETest do
     # Placement only: `start/3`'s residency wait would raise on the very outcome
     # this scenario proves, since a refused restore never makes the Cell
     # resident.
-    _ = place(namespace, operator_id, @v1)
+    _ = place(namespace, relay_id, @v1)
 
-    assert_receive {:refused, _, %{cell: {^operator_id, _, _}, reason: reason}}, 30_000
+    assert_receive {:refused, _, %{cell: {^relay_id, _, _}, reason: reason}}, 30_000
 
     # Refused BY NAME, which is the whole point. v2's change records encode
     # `{delta, note}` where v1's encode `(delta)`, and a positional codec reads
@@ -184,35 +184,35 @@ defmodule FlezhaTest.System.SchemaEvolutionE2ETest do
     # so the reason has to be the stamp and not an incidental decode failure.
     assert reason =~ "schema_version 2 is above the running tasklet's 1"
 
-    # `operator-state-persistence`, "A refused restore fails the bind instead of
-    # cold-starting the Cell": the operator is left unbound. Whether
-    # `start_operator/2`'s own reply carried the refusal is NOT part of that
+    # `relay-state-persistence`, "A refused restore fails the bind instead of
+    # cold-starting the Cell": the relay is left unbound. Whether
+    # `start_relay/2`'s own reply carried the refusal is NOT part of that
     # guarantee and is a real race — `Replay.dispatch_restore/3` reports the
     # verdict off-process, so `{:restore_refused, _}` and the
-    # `:registry_runner_set` call `finalize_init_operator/3` makes reach the
+    # `:registry_runner_set` call `finalize_init_relay/3` makes reach the
     # Overwatch in either order. The park is the outcome, and it is not a race.
-    assert NodeTestHelper.wait_until(fn -> not serving?(namespace, operator_id) end, 10_000),
-           "a refused restore must leave the operator unbound, never serving"
+    assert NodeTestHelper.wait_until(fn -> not serving?(namespace, relay_id) end, 10_000),
+           "a refused restore must leave the relay unbound, never serving"
 
-    refute total(namespace, operator_id) == 9,
-           "v1 must not read v2's state: got #{inspect(state_of(namespace, operator_id))}"
+    refute total(namespace, relay_id) == 9,
+           "v1 must not read v2's state: got #{inspect(state_of(namespace, relay_id))}"
   end
 
-  defp place(namespace, operator_id, factory) do
-    OperatorManager.start_operator(namespace, %Builder{
-      id: operator_id,
+  defp place(namespace, relay_id, factory) do
+    RelayManager.start_relay(namespace, %Builder{
+      id: relay_id,
       factory_id: factory,
       init_values: %{},
       opts: []
     })
   end
 
-  # A live Overwatch that is not parked. A refused restore leaves the operator
-  # one of two ways — parked in place, or stopped by `finalize_init_operator/3`
+  # A live Overwatch that is not parked. A refused restore leaves the relay
+  # one of two ways — parked in place, or stopped by `finalize_init_relay/3`
   # when the refusal beat the start's own status read — and neither is serving.
   # Binding cold and folding input WOULD be, which is what this scenario forbids.
-  defp serving?(namespace, operator_id) do
-    with {:ok, pid} <- OperatorManager.get_operator_pid(namespace, operator_id),
+  defp serving?(namespace, relay_id) do
+    with {:ok, pid} <- RelayManager.get_relay_pid(namespace, relay_id),
          %{init_error: nil} <- :sys.get_state(pid) do
       true
     else
@@ -222,29 +222,29 @@ defmodule FlezhaTest.System.SchemaEvolutionE2ETest do
     :exit, _ -> false
   end
 
-  defp start(namespace, operator_id, factory) do
-    result = place(namespace, operator_id, factory)
+  defp start(namespace, relay_id, factory) do
+    result = place(namespace, relay_id, factory)
 
-    # `start_operator` returns once the operator is placed; its Cell
+    # `start_relay` returns once the relay is placed; its Cell
     # materializes on the runner a moment later, and an input sent into that
     # gap has nothing to reach. A live state read is the readiness signal —
     # it answers only once the Cell exists — and every send below follows it.
-    with {:ok, _} <- result, do: await_resident(namespace, operator_id)
+    with {:ok, _} <- result, do: await_resident(namespace, relay_id)
 
     result
   end
 
-  defp await_resident(namespace, operator_id) do
-    unless NodeTestHelper.wait_until(fn -> state_of(namespace, operator_id) != nil end, 10_000) do
-      raise "operator #{operator_id} never became resident on its runner"
+  defp await_resident(namespace, relay_id) do
+    unless NodeTestHelper.wait_until(fn -> state_of(namespace, relay_id) != nil end, 10_000) do
+      raise "relay #{relay_id} never became resident on its runner"
     end
   end
 
-  defp send(namespace, operator_id, input),
-    do: OperatorManager.send_io(operator_id, namespace, input, %{})
+  defp send(namespace, relay_id, input),
+    do: RelayManager.send_io(relay_id, namespace, input, %{})
 
-  defp state_of(namespace, operator_id) do
-    case OperatorManager.get_cell_state(namespace, operator_id) do
+  defp state_of(namespace, relay_id) do
+    case RelayManager.get_cell_state(namespace, relay_id) do
       {:ok, json} ->
         case Payloader.json_to_map(json) do
           %{@tasklet => cell} -> cell
@@ -256,8 +256,8 @@ defmodule FlezhaTest.System.SchemaEvolutionE2ETest do
     end
   end
 
-  defp total(namespace, operator_id) do
-    case state_of(namespace, operator_id) do
+  defp total(namespace, relay_id) do
+    case state_of(namespace, relay_id) do
       %{"total" => t} -> t
       _ -> nil
     end

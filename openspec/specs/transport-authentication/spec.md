@@ -25,7 +25,7 @@ world-writable.
 
 - **WHEN** a peer opens a QUIC session presenting no client certificate or one not
   signed by the configured trust anchor
-- **THEN** the handshake is rejected, no operator-control frame is processed, and a
+- **THEN** the handshake is rejected, no relay-control frame is processed, and a
   refusal is recorded
 
 #### Scenario: The peer certificate reaches the connect path
@@ -151,7 +151,7 @@ principal SHALL be refused with a message naming the token requirement;
 
 #### Scenario: A verb that carries a JSON document still carries the token beside it
 
-- **WHEN** `flz plugin enable` or `operator scale` is invoked with a token
+- **WHEN** `flz plugin enable` or `relay scale` is invoked with a token
 - **THEN** the JSON document SHALL travel unchanged and the token SHALL ride the
   trailing options list, never inside the document
 

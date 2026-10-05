@@ -1,7 +1,7 @@
 //! The prepare crossing: a payload whose consumers need keys or an event time
 //! the core cannot derive from bytes is staged and crossed to the host as a
 //! [`schema::ActivationKind::KeyRequest`] before it is enqueued — an entry
-//! payload, or a steps operator's released value on its way into a keyed tasklet.
+//! payload, or a steps relay's released value on its way into a keyed tasklet.
 //! The invariant: an end-of-slice broadcast never overtakes a slice member
 //! still waiting on its answer.
 
@@ -12,9 +12,9 @@ use std::sync::Arc;
 use super::cell::HostPayload;
 use super::decl::HostClock;
 use crate::channel::ChannelDescriptor;
-use crate::operator::instance::OperatorInstance;
-use crate::operator::topology::{CellMode, OperatorTopology};
 use crate::poll_core::EnginePayload;
+use crate::relay::instance::RelayInstance;
+use crate::relay::topology::{CellMode, RelayTopology};
 use crate::schema;
 use crate::util::LockRecover;
 
@@ -60,7 +60,7 @@ pub struct StagedEntry {
 /// A batched prepare crossing, handed to the host as a
 /// [`schema::ActivationKind::KeyRequest`].
 pub struct PrepareCrossing {
-    pub instance: Arc<OperatorInstance>,
+    pub instance: Arc<RelayInstance>,
     pub channel: crate::channel::ChannelId,
     pub want_keys: bool,
     pub want_event_time: bool,
@@ -74,7 +74,7 @@ pub struct PrepareCrossing {
 const PREPARE_BATCH_MAX: usize = 256;
 
 /// `(want_keys, want_event_time)`; `(false, false)` is no crossing.
-pub fn prepare_wants(topology: &OperatorTopology, channel: &ChannelDescriptor) -> (bool, bool) {
+pub fn prepare_wants(topology: &RelayTopology, channel: &ChannelDescriptor) -> (bool, bool) {
     let mut want_keys = false;
     let mut want_event_time = false;
     for edge in &channel.consumers {
@@ -99,7 +99,7 @@ pub fn prepare_wants(topology: &OperatorTopology, channel: &ChannelDescriptor) -
 /// Stage payloads for one crossing on `channel`, or hand them all back when
 /// none of its consumers needs one.
 pub fn stage_prepare(
-    instance: &Arc<OperatorInstance>,
+    instance: &Arc<RelayInstance>,
     channel_id: crate::channel::ChannelId,
     channel: &ChannelDescriptor,
     entries: Vec<StagedEntry>,
@@ -124,7 +124,7 @@ pub fn stage_prepare(
 
 /// The end-of-slice broadcast, deferred behind slice members still in the
 /// crossing.
-pub fn deferred_end_replay_slice(instance: &Arc<OperatorInstance>) {
+pub fn deferred_end_replay_slice(instance: &Arc<RelayInstance>) {
     {
         let mut state = instance.host_prepare.lock_recover();
         if state.replay_staged > 0 {
@@ -137,7 +137,7 @@ pub fn deferred_end_replay_slice(instance: &Arc<OperatorInstance>) {
 
 /// Submit the channel's next crossing unless one is in flight.
 fn submit_next_crossing(
-    instance: &Arc<OperatorInstance>,
+    instance: &Arc<RelayInstance>,
     channel_id: u32,
     want_keys: bool,
     want_event_time: bool,
@@ -248,7 +248,7 @@ fn answers_for(
 }
 
 fn deliver_prepared(
-    instance: &Arc<OperatorInstance>,
+    instance: &Arc<RelayInstance>,
     channel_id: u32,
     channel: &ChannelDescriptor,
     entry: StagedEntry,
@@ -277,10 +277,10 @@ fn deliver_prepared(
 }
 
 /// A failed prepare climbs its channel's ladder, one blocking re-crossing
-/// per attempt. Where the ladder would park an entry payload, a steps operator
+/// per attempt. Where the ladder would park an entry payload, a steps relay
 /// stage's value fails its stage instead: nothing is parked.
 fn spawn_prepare_ladder(
-    instance: Arc<OperatorInstance>,
+    instance: Arc<RelayInstance>,
     channel_id: u32,
     want_keys: bool,
     want_event_time: bool,
@@ -341,7 +341,7 @@ fn spawn_prepare_ladder(
 /// Release the inflight gate, re-arm the next batch, fire a deferred
 /// broadcast once the last slice member resolved.
 fn finish_crossing(
-    instance: &Arc<OperatorInstance>,
+    instance: &Arc<RelayInstance>,
     channel_id: u32,
     want_keys: bool,
     want_event_time: bool,

@@ -1,7 +1,7 @@
 defmodule Flezha.State.DurabilityTier.Hydrator do
   @moduledoc """
   Rebuilds local durable files from the remote manifest, so a controller with an
-  empty state directory can adopt an operator that lived on a node whose disk
+  empty state directory can adopt a relay that lived on a node whose disk
   is gone — and, at boot, can come back as itself rather than as a blank
   cluster.
 
@@ -27,45 +27,45 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
   alias Flezha.State.{DurabilityTier, InputLog, Outbox, Paths, TaskJournal}
 
   @doc """
-  Hydrate every shipped reference of `operator_class` whose local files are
+  Hydrate every shipped reference of `relay_class` whose local files are
   absent. Called from the bind-time restore enumeration, so a fresh controller
-  binding a remote-only operator finds its Cells, task-journal, input log and
+  binding a remote-only relay finds its Cells, task-journal, input log and
   parked failures on disk by the time it enumerates them.
   """
-  @spec hydrate_operator(module(), keyword(), binary()) :: :ok
-  def hydrate_operator(module, opts, operator_class) when is_binary(operator_class) do
-    hydrate_prefix(module, opts, Manifest.prefix(:cell, [operator_class]))
+  @spec hydrate_relay(module(), keyword(), binary()) :: :ok
+  def hydrate_relay(module, opts, relay_class) when is_binary(relay_class) do
+    hydrate_prefix(module, opts, Manifest.prefix(:cell, [relay_class]))
 
     # The input log is class-level, so it sits outside the per-Cell prefix
     # above and has to be asked for by name. Without it a hydrated Cell
     # comes back with its consumed floor intact and no log to replay from —
     # the next input lands at offset 0, below the floor, and is silently
     # skipped as already-consumed.
-    hydrate_ref(module, opts, {:input_log, operator_class})
+    hydrate_ref(module, opts, {:input_log, relay_class})
 
-    # Parked failures belong to the operator that produced them, so they come
+    # Parked failures belong to the relay that produced them, so they come
     # back with it rather than at boot: a replacement controller's `flz dlq`
-    # sees the inherited parks from the moment it binds the operator.
+    # sees the inherited parks from the moment it binds the relay.
     hydrate_prefix(
       module,
       opts,
-      Manifest.prefix(:dlq, [Dlq.Store.path_component(operator_class)])
+      Manifest.prefix(:dlq, [Dlq.Store.path_component(relay_class)])
     )
 
     :ok
   end
 
   @doc """
-  How new the cut of `operator_class`'s Cells, task-journal and input log
+  How new the cut of `relay_class`'s Cells, task-journal and input log
   another controller shipped is, as `%{ref => Manifest.freshness/1}`; `%{}`
   when this controller shipped every one of them.
   """
   @spec shipped_freshness(module(), keyword(), binary()) :: %{Paths.durable_ref() => term()}
-  def shipped_freshness(module, opts, operator_class) do
-    log_key = Manifest.key({:input_log, operator_class})
+  def shipped_freshness(module, opts, relay_class) do
+    log_key = Manifest.key({:input_log, relay_class})
 
     manifests =
-      manifests(module, opts, Manifest.prefix(:cell, [operator_class])) ++
+      manifests(module, opts, Manifest.prefix(:cell, [relay_class])) ++
         manifests(module, opts, log_key, &(&1 == log_key))
 
     if Enum.all?(manifests, &(&1.owner == DurabilityTier.writer_id())),
@@ -80,20 +80,20 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
   it names — no full-Tasklet fetch to answer a question about one key.
   """
   @spec hydrate_cells(module(), keyword(), binary(), binary(), [binary()]) :: :ok
-  def hydrate_cells(module, opts, operator_class, tasklet_id, cell_keys) do
+  def hydrate_cells(module, opts, relay_class, tasklet_id, cell_keys) do
     Enum.each(cell_keys, fn cell_key ->
-      ref = {:cell, {operator_class, tasklet_id, cell_key}}
+      ref = {:cell, {relay_class, tasklet_id, cell_key}}
       hydrate_ref(module, opts, ref)
     end)
   end
 
   @doc """
   Hydrate every shipped registry cspec whose local file is absent — the record
-  of which operators exist and how they are configured.
+  of which relays exist and how they are configured.
 
   Must complete before any hub starts: ProcessHub opens `registry.dets` at hub
   start, so a cspec that lands afterwards is invisible to the orphan reconcile
-  and the operators it names are never started.
+  and the relays it names are never started.
   """
   @spec hydrate_cspecs() :: :ok
   def hydrate_cspecs(), do: hydrate_replicas(Manifest.prefix(:cspec))

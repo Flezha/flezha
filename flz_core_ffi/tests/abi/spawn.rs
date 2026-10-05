@@ -250,10 +250,8 @@ fn a_refusal_stays_in_its_handle(ctx: *mut FlzContext, controller: &Controller, 
         (sent.instance_id.as_str(), sent.if_running.as_str()),
         ("w-refused", "error")
     );
-    let already_running = FlezhaError::with(
-        "operator.already_running",
-        [("operator", "w-refused".into())],
-    );
+    let already_running =
+        FlezhaError::with("relay.already_running", [("relay", "w-refused".into())]);
     controller
         .try_answer_spawn(&reference_id, &sent, Some(&already_running))
         .expect("refuse the spawn");
@@ -327,11 +325,11 @@ fn an_unread_failure_is_logged_when_its_activation_completes(
         .try_answer_spawn(
             &read_ref,
             &read_sent,
-            Some(&refusal("operator.factory_unknown")),
+            Some(&refusal("relay.factory_unknown")),
         )
         .expect("refuse the spawn");
     assert_eq!(read(ctx, read_one, 5_000).0, FLZ_ERR);
-    assert_eq!(last_document(ctx).code, "operator.factory_unknown");
+    assert_eq!(last_document(ctx).code, "relay.factory_unknown");
 
     abi_complete(
         ctx,

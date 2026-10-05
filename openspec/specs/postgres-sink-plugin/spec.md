@@ -7,7 +7,7 @@ effectively-once tier (`Flezha.Plugin.Provider.Postgres`).
 ## Requirements
 ### Requirement: PostgreSQL sink plugin with transactional upsert + watermark
 
-The controller SHALL provide a `postgres` operator sink plugin
+The controller SHALL provide a `postgres` relay sink plugin
 (`Flezha.Plugin.Provider.Postgres`, backed by `postgrex`) that, per flush batch,
 executes ONE database transaction containing (a) an upsert of every record keyed
 by `flz.key` and (b) an upsert of the per-Cell progress row
@@ -97,7 +97,7 @@ inserted under a unique synthetic key, unchanged.
 
 #### Scenario: A tier-off keyed record updates its row on every emit
 
-- **WHEN** an operator on a `.keyed()` channel without the effectively-once tier
+- **WHEN** a relay on a `.keyed()` channel without the effectively-once tier
   emits twice for the same `flz.key`, stamped `flz.seq` `"4.0"` then `"5.0"`, with
   no `flz.epoch`
 - **THEN** the row for that key holds the second record's payload and `seq = "5.0"`
@@ -157,7 +157,7 @@ The health threshold SHALL be validated at preparation and read as a plain value
 
 #### Scenario: Host-injected keys are still accepted
 
-- **GIVEN** a plugin enabled on an operator, so that the host merges its identity keys into the provider's opts
+- **GIVEN** a plugin enabled on a relay, so that the host merges its identity keys into the provider's opts
 - **WHEN** the plugin is enabled
 - **THEN** those keys SHALL be accepted, and the sink SHALL start exactly as it does today
 

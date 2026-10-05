@@ -12,8 +12,8 @@ use crate::cell::{CellSlot, ItemDisposition, TaskletDispatcher};
 use crate::channel::{BuildCellArgs, RetryPolicy};
 use crate::flusher::{CellFlusher, FlushableBuffer};
 use crate::header::HeaderTemplate;
-use crate::operator::topology::CorrectionPolicy;
 use crate::poll_core::ItemAttempt;
+use crate::relay::topology::CorrectionPolicy;
 use crate::schema;
 use crate::timer::PendingTimers;
 use crate::util::LockRecover;
@@ -44,7 +44,7 @@ pub struct HostTaskletFacts {
     /// Completions produce effect records and outputs ride the outbox.
     pub effectively_once: bool,
     /// The open interval's changes stage until a completion checkpoints.
-    pub checkpoint: Option<crate::operator::topology::CheckpointPolicy>,
+    pub checkpoint: Option<crate::relay::topology::CheckpointPolicy>,
     pub clock: HostClock,
     pub sdk_lang: u8,
     /// The writing SDK's own version, as declared; never the core's.
@@ -125,7 +125,7 @@ impl TaskletDispatcher for HostDispatcher {
         _state: &mut Box<dyn Any + Send>,
         _flush_buffer: &mut Box<dyn FlushableBuffer>,
         _timers: &mut PendingTimers,
-        _instance: &Weak<crate::operator::instance::OperatorInstance>,
+        _instance: &Weak<crate::relay::instance::RelayInstance>,
     ) -> ItemDisposition {
         tracing::error!(
             target: "flezha::host",
@@ -240,7 +240,7 @@ pub type BytesBuffer = crate::flusher::EffectBuffer<crate::flusher::RawBodies>;
 /// The schema address of a slot.
 pub fn cell_ref_of(slot: &CellSlot) -> schema::CellRef {
     schema::CellRef {
-        operator: slot.instance_id.to_string(),
+        relay: slot.instance_id.to_string(),
         tasklet: slot.tasklet_id,
         cell_key: slot.cell_key.as_deref().map(str::to_string),
     }

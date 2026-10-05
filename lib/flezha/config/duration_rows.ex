@@ -72,7 +72,7 @@ defmodule Flezha.Config.DurationRows do
     {:runner_min_call_ms, :ms, 25, []},
     {:runner_poll_call_ms, :ms, 250, []},
     {:runner_poll_interval_ms, :ms, 50, []},
-    # How long the per-runner operator count a placement reads may go without
+    # How long the per-runner relay count a placement reads may go without
     # being rebuilt from the hub registry. Its own row rather than a borrowed
     # one: a cache's staleness bound and a lookup's timeout answer different
     # questions and move apart the moment either is tuned.
@@ -81,7 +81,7 @@ defmodule Flezha.Config.DurationRows do
      key: true, env: "FLEZHA_RUNNER_RETIRING_MARK_TTL_MS"},
     # How long this controller keeps declaring a factory to the namespace hub
     # after its last runner for it goes. A runner that comes back inside the
-    # grace moves no operator at all; past it, the hub reassigns them to a
+    # grace moves no relay at all; past it, the hub reassigns them to a
     # controller that can still run the factory. A disconnect the controller
     # asked for skips the grace. Measured on this box, kill to placeable again:
     # 125-185 ms for a Rust runner, 475-573 ms for a Java one, so five seconds
@@ -90,7 +90,7 @@ defmodule Flezha.Config.DurationRows do
     {:group_withdraw_grace_ms, :ms, 5_000, key: true, env: "FLEZHA_GROUP_WITHDRAW_GRACE_MS"},
     {:superseded_mark_ttl_ms, :ms, 600_000, []},
 
-    # ---- operators: the calls the loop and the manager make ----------------
+    # ---- relays: the calls the loop and the manager make ----------------
     {:hub_await_recovery_ms, :ms, 60_000, []},
     {:hub_cross_node_request_ms, :ms, 10_000, []},
     # The declared-set rewrite a plugin mutation issues, and the same bound plus
@@ -106,7 +106,7 @@ defmodule Flezha.Config.DurationRows do
      key: {:migration_consent, :consent_timeout_ms}, env: "FLEZHA_MIGRATION_CONSENT_TIMEOUT_MS"},
     {:migration_retry_interval_ms, :ms, 2_000,
      key: {:migration_consent, :retry_interval_ms}, env: "FLEZHA_MIGRATION_RETRY_INTERVAL_MS"},
-    {:operator_call_timeout_ms, :ms, 1_000, []},
+    {:relay_call_timeout_ms, :ms, 1_000, []},
     # What an outside caller waits past its call's deadline, so the callee's
     # own `call.timeout` always reaches it first.
     {:call_grace_ms, :ms, 1_000, key: true},
@@ -114,7 +114,7 @@ defmodule Flezha.Config.DurationRows do
     # deadline, so a request sent again is absorbed and a caller's recovery
     # still finds its `Response`.
     {:call_retention_margin_ms, :ms, 300_000, key: true, env: "FLEZHA_CALL_RETENTION_MARGIN_MS"},
-    # How long an operator call's delivery worker waits with an empty queue
+    # How long a relay call's delivery worker waits with an empty queue
     # before it stops.
     {:call_worker_idle_ms, :ms, 30_000, key: true},
     {:overwatch_call_timeout_ms, :ms, 5_000, key: true},
@@ -142,7 +142,7 @@ defmodule Flezha.Config.DurationRows do
     {:convergence_unmet_intent_grace_ms, :ms, 120_000,
      key: true, env: "FLEZHA_CONVERGENCE_UNMET_INTENT_GRACE_MS"},
     {:plugin_stable_uptime_ms, :ms, 60_000, key: true},
-    # How long a shared plugin whose last operator went down or moved away
+    # How long a shared plugin whose last relay went down or moved away
     # waits for one to come back before it stops.
     {:plugin_idle_stop_ms, :ms, 60_000, key: true, env: "FLEZHA_PLUGIN_IDLE_STOP_MS"},
     # How often a retiring copy of a `single` plugin asks its successor whether
@@ -151,7 +151,7 @@ defmodule Flezha.Config.DurationRows do
 
     # ---- plugins -----------------------------------------------------------
     # Headroom above the Overwatch call for provider health probes: each
-    # plugin's probe is bounded on its own, and an operator's plugins are
+    # plugin's probe is bounded on its own, and a relay's plugins are
     # probed in series, so a few wedged ones still fit.
     {:health_probe_budget_ms, :ms, nil, derived: {:factor, :provider_probe_timeout_ms, 3}},
     {:http_listener_idle_ms, :ms, 5_000, []},
@@ -167,7 +167,7 @@ defmodule Flezha.Config.DurationRows do
     # How long an enable waits for the namespace's other controllers to say
     # whether they hold the provider.
     {:plugin_peer_check_ms, :ms, 2_000, []},
-    # How long a listener's relay waits after its plugin was released before
+    # How long a listener's receiver waits after its plugin was released before
     # it asks the registry what the release was, and between asks: a move or a
     # restart brings the plugin's worker back well inside it.
     {:listener_release_check_ms, :ms, 5_000, key: true},
@@ -241,7 +241,7 @@ defmodule Flezha.Config.DurationRows do
     {:shutdown_finalise_call_ms, :ms, 5_000, []},
     {:signal_handler_status_call_ms, :ms, 5_000, []},
     {:stop_release_timeout_ms, :ms, 15_000, []},
-    # A process teardown runs inside the operator stop, keeping 1 s of slack
+    # A process teardown runs inside the relay stop, keeping 1 s of slack
     # for the stop itself to answer.
     {:stop_process_budget_ms, :ms, nil, derived: {:headroom, :stop_release_timeout_ms, -1_000}},
 
@@ -273,7 +273,7 @@ defmodule Flezha.Config.DurationRows do
     {:sdk_commit_ack_ms, :ms, 30_000,
      key: true, env: "FLEZHA_STEPS_ACK_TIMEOUT_MS", runtimes: [:controller, :elixir_sdk, :rust]},
     # A call into one of the runner's own control processes: the RunnerServer,
-    # an Operator, a local run. None of them runs author code on the answering
+    # a Relay, a local run. None of them runs author code on the answering
     # clause, so a wait here is a wedged process rather than a busy one.
     {:sdk_control_call_ms, :ms, 5_000, runtimes: [:elixir_sdk]},
     # A call into a Cell that answers from its queue rather than from its

@@ -2,29 +2,29 @@
 
 ## Purpose
 
-The sdk-authoring-contract capability is the single, language-agnostic source of truth for SDK authoring sugar. It defines the canonical mapping from a sugared tasklet/operator declaration to the existing `Operator`/`Tasklet`/`Change`/`Channel` trait (or interface) surface: signature → associated types, mutable-state parameter → `State`, `State` → `Change` derivation with an explicit hand-written boundary, explicit cell-mode opt-ins (single/static/dynamic), single-tasklet input-to-sink auto-wiring, and auto-registration. All sugar is pure expansion — it introduces no new runtime path, protocol message, or WAL change, and sugared tasklets compose with hand-written ones. The contract binds Rust, Java, and the forward-looking Python and Elixir SDKs so the same boilerplate collapses identically across every binding.
+The sdk-authoring-contract capability is the single, language-agnostic source of truth for SDK authoring sugar. It defines the canonical mapping from a sugared tasklet/relay declaration to the existing `Relay`/`Tasklet`/`Change`/`Channel` trait (or interface) surface: signature → associated types, mutable-state parameter → `State`, `State` → `Change` derivation with an explicit hand-written boundary, explicit cell-mode opt-ins (single/static/dynamic), single-tasklet input-to-sink auto-wiring, and auto-registration. All sugar is pure expansion — it introduces no new runtime path, protocol message, or WAL change, and sugared tasklets compose with hand-written ones. The contract binds Rust, Java, and the forward-looking Python and Elixir SDKs so the same boilerplate collapses identically across every binding.
 ## Requirements
 ### Requirement: Sugar expands to existing trait surface
-The authoring sugar in every SDK SHALL be pure expansion over the existing `Operator`/`Tasklet`/`Change`/`Channel` trait (or interface) surface. The generated code MUST be equivalent to a valid hand-written implementation, and MUST NOT introduce any new runtime path, protocol message, or WAL change.
+The authoring sugar in every SDK SHALL be pure expansion over the existing `Relay`/`Tasklet`/`Change`/`Channel` trait (or interface) surface. The generated code MUST be equivalent to a valid hand-written implementation, and MUST NOT introduce any new runtime path, protocol message, or WAL change.
 
 #### Scenario: Generated code equals hand-written impl
 
 - **WHEN** a sugared tasklet is expanded by any SDK's macro or processor
-- **THEN** the result is a `Tasklet`/`Operator` implementation that compiles and runs identically to the equivalent hand-written one
+- **THEN** the result is a `Tasklet`/`Relay` implementation that compiles and runs identically to the equivalent hand-written one
 - **AND** no protobuf, controller, or WAL-format change is required for it to run
 
 #### Scenario: Sugared and raw tasklets interoperate
 
-- **WHEN** a flow operator contains one sugared tasklet and one hand-written tasklet wired together
-- **THEN** the operator builds and runs correctly with both tasklets participating
+- **WHEN** a flow relay contains one sugared tasklet and one hand-written tasklet wired together
+- **THEN** the relay builds and runs correctly with both tasklets participating
 
 #### Scenario: Eject to full impl is a paste
 
 - **WHEN** a user replaces a sugared tasklet with the code its sugar expands to
-- **THEN** the operator behaves identically with no other change required
+- **THEN** the relay behaves identically with no other change required
 
 ### Requirement: Canonical signature-to-types inference
-The contract SHALL define one canonical mapping from a tasklet declared as a function to the tasklet's types, and every SDK that declares a tasklet as a function (Rust's `#[flezha::operator]` / `#[flezha::operator]` on a function, Python's decorated function) MUST implement it identically. A Rust or Java tasklet written as a type names its types on that type instead: `type Input` / `type Output` in the Rust `impl Tasklet` block, the `Tasklet<Input, State, Output>` arguments in Java.
+The contract SHALL define one canonical mapping from a tasklet declared as a function to the tasklet's types, and every SDK that declares a tasklet as a function (Rust's `#[flezha::relay]` / `#[flezha::relay]` on a function, Python's decorated function) MUST implement it identically. A Rust or Java tasklet written as a type names its types on that type instead: `type Input` / `type Output` in the Rust `impl Tasklet` block, the `Tasklet<Input, State, Output>` arguments in Java.
 
 #### Scenario: Input and Output inferred from signature
 
@@ -42,7 +42,7 @@ The contract SHALL define one canonical mapping from a tasklet declared as a fun
 - **THEN** it runs on the wall clock
 
 ### Requirement: State parameter drives stateful inference
-A function-declared tasklet SHALL keep no state in Rust: `#[flezha::operator]` on a function with a `&mut` parameter SHALL fail to compile with a message beginning `ShortFormStateOnFunction`, and a stateful Rust tasklet SHALL name `type State` on its `impl Tasklet` block. In an SDK that infers a function tasklet's state from a parameter, a mutable-state parameter SHALL be the single signal that the tasklet is stateful, and its type SHALL become the tasklet `State`.
+A function-declared tasklet SHALL keep no state in Rust: `#[flezha::relay]` on a function with a `&mut` parameter SHALL fail to compile with a message beginning `ShortFormStateOnFunction`, and a stateful Rust tasklet SHALL name `type State` on its `impl Tasklet` block. In an SDK that infers a function tasklet's state from a parameter, a mutable-state parameter SHALL be the single signal that the tasklet is stateful, and its type SHALL become the tasklet `State`.
 
 #### Scenario: Mutable state parameter sets State type
 
@@ -56,7 +56,7 @@ A function-declared tasklet SHALL keep no state in Rust: `#[flezha::operator]` o
 
 #### Scenario: A Rust function with a state parameter is refused
 
-- **WHEN** `#[flezha::operator(id = "store_input")]` annotates `fn store_input(input: String, state: &mut S) -> String`
+- **WHEN** `#[flezha::relay(id = "store_input")]` annotates `fn store_input(input: String, state: &mut S) -> String`
 - **THEN** the macro fails to compile with a message beginning `ShortFormStateOnFunction`
 
 ### Requirement: State-to-Change derivation with explicit boundary
@@ -79,7 +79,7 @@ The declarations are named for the Cell, not the Tasklet. Static mode is declare
 
 #### Scenario: Dynamic keying is declared on the wiring
 
-- **WHEN** an operator wires a tasklet through an edge declaring a key function, and the tasklet declares optional idle-TTL / max-cells
+- **WHEN** a relay wires a tasklet through an edge declaring a key function, and the tasklet declares optional idle-TTL / max-cells
 - **THEN** the SDK SHALL produce a dynamic-mode tasklet against the existing runtime surface (lazily created Cells, empty static key list) with no new runtime path and no keying member on the tasklet itself
 
 #### Scenario: Static and dynamic declarations together are rejected
@@ -98,34 +98,34 @@ The declarations are named for the Cell, not the Tasklet. Static mode is declare
 - **THEN** it SHALL offer no `cell_key`-style hook, and declaring one SHALL fail at compile time (Rust) or annotation processing (Java) with an error directing the author to `key_by` on the wiring
 
 ### Requirement: Single-tasklet auto-wiring and registration
-The contract SHALL define exactly one topology that may be written short, a single tasklet from a controller input to at most one sink, and every SDK SHALL carry it for both operator kinds: Rust, Java, Python, Node, Ruby, PHP and Elixir. **The short form SHALL be an operator declaration**, written at the SDK's kind-named operator entry point, and SHALL NOT be a tasklet declaration that becomes an operator: `#[flezha::operator]` / `#[flezha::operator]` in Rust, `@Operator` / `@Operator` in Java, `@flezha.operator` / `@flezha.operator` in Python, `defineOperator` / `defineOperator` in Node, a `Flezha::Operator` / `Flezha::Operator` subclass in Ruby, `#[Operator]` on a class extending `Flezha\Operator` / `Flezha\Operator` in PHP, `use Flezha.SDK.Operator` / `use Flezha.SDK.Operator` in Elixir.
+The contract SHALL define exactly one topology that may be written short, a single tasklet from a controller input to at most one sink, and every SDK SHALL carry it for both relay kinds: Rust, Java, Python, Node, Ruby, PHP and Elixir. **The short form SHALL be a relay declaration**, written at the SDK's kind-named relay entry point, and SHALL NOT be a tasklet declaration that becomes a relay: `#[flezha::relay]` / `#[flezha::relay]` in Rust, `@Relay` / `@Relay` in Java, `@flezha.relay` / `@flezha.relay` in Python, `defineRelay` / `defineRelay` in Node, a `Flezha::Relay` / `Flezha::Relay` subclass in Ruby, `#[Relay]` on a class extending `Flezha\Relay` / `Flezha\Relay` in PHP, `use Flezha.SDK.Relay` / `use Flezha.SDK.Relay` in Elixir.
 
-An operator declaration SHALL be a short form exactly when it carries its one tasklet's body **instead of** a topology body, a topology body being `channels`, the one name both kinds give it in every SDK. The body SHALL be named `run`, as every SDK names a tasklet's body. The kind SHALL be the entry point's own name (in PHP, the base class its `#[Operator]` class extends) and SHALL NOT be a key on the declaration. The identity SHALL be the operator's factory id, spelled as that SDK's full-form operator already spells it (`id` in Rust, Java and Python, `factoryId` in Node and PHP, `factory_id` in Ruby and Elixir), and SHALL be written by the author; an SDK that otherwise derives a name SHALL NOT derive a factory id. The declaration MAY carry a `sink`, an entry channel name `input`, and, in an SDK whose channel builder names an entry codec (Python, Node, Ruby, PHP), that SDK's `codec` with the builder's vocabulary.
+A relay declaration SHALL be a short form exactly when it carries its one tasklet's body **instead of** a topology body, a topology body being `channels`, the one name both kinds give it in every SDK. The body SHALL be named `run`, as every SDK names a tasklet's body. The kind SHALL be the entry point's own name (in PHP, the base class its `#[Relay]` class extends) and SHALL NOT be a key on the declaration. The identity SHALL be the relay's factory id, spelled as that SDK's full-form relay already spells it (`id` in Rust, Java and Python, `factoryId` in Node and PHP, `factory_id` in Ruby and Elixir), and SHALL be written by the author; an SDK that otherwise derives a name SHALL NOT derive a factory id. The declaration MAY carry a `sink`, an entry channel name `input`, and, in an SDK whose channel builder names an entry codec (Python, Node, Ruby, PHP), that SDK's `codec` with the builder's vocabulary.
 
-`sink` SHALL be optional. With a `sink`, the generated operator SHALL declare an entry channel, the tasklet, and a plugin sink of that name; with no `sink`, it SHALL declare the entry channel and the tasklet and no plugin channel, which is the topology a full-form operator already declares when its channel ends at a tasklet. `input` and `codec` SHALL be accepted whether or not a `sink` is written, because an entry channel exists either way.
+`sink` SHALL be optional. With a `sink`, the generated relay SHALL declare an entry channel, the tasklet, and a plugin sink of that name; with no `sink`, it SHALL declare the entry channel and the tasklet and no plugin channel, which is the topology a full-form relay already declares when its channel ends at a tasklet. `input` and `codec` SHALL be accepted whether or not a `sink` is written, because an entry channel exists either way.
 
-The generated operator SHALL otherwise be the operator an author would hand-write with that one tasklet: an entry channel named by `input`, or `input` when none is written, decoded by `codec` where one is written; the tasklet; a factory id equal to the written identity; and every class-level setting at the SDK's default for its kind. A steps short form SHALL therefore be a `once` steps operator unless it declares its loop mode, its entry channel receiving its first message, from a spawn, `flz operator send` or `flz operator start --text`, and its `init_values` being the tasklet's initial state as on a flow operator: the loop mode SHALL be accepted on a steps short form in every SDK, in the spelling that SDK's full form gives the setting (`each` on the Rust attribute, `each()` on `@Operator`, `each` on the Node definition, `each=` on the Python decorator, `each` in the Ruby class body, `#[Steps(each: ...)]` beside `#[Operator]` in PHP, `each:` on the Elixir `use`), and SHALL reach the generated operator as the full form's loop mode does. Every other class-level setting (the retry ladder is no longer one, being an edge's; a duration, persistence, the effectively-once tier, a correction window, rollback mode, synchronous durability) SHALL NOT be expressible on the short form; it is the full form, and where an SDK's spelling lets an author write one on a short form it SHALL be refused naming the setting. A loop mode or rollback mode outside the declared set (`once`, `per_input`, `chained`; `undo_all`, `keep_progress`) SHALL be refused at declaration naming the value, in every SDK whose spelling can write one. The tasklet's own settings (cell keys and `cells_for`, mailbox capacity, clock, schema version, the state and change declarations) SHALL be accepted on the short form and SHALL reach the generated tasklet. A short-form key (`sink`, `input`, `codec`) or a tasklet setting written on a declaration that carries a topology body SHALL be refused rather than ignored.
+The generated relay SHALL otherwise be the relay an author would hand-write with that one tasklet: an entry channel named by `input`, or `input` when none is written, decoded by `codec` where one is written; the tasklet; a factory id equal to the written identity; and every class-level setting at the SDK's default for its kind. A steps short form SHALL therefore be a `once` steps relay unless it declares its loop mode, its entry channel receiving its first message, from a spawn, `flz relay send` or `flz relay start --text`, and its `init_values` being the tasklet's initial state as on a flow relay: the loop mode SHALL be accepted on a steps short form in every SDK, in the spelling that SDK's full form gives the setting (`each` on the Rust attribute, `each()` on `@Relay`, `each` on the Node definition, `each=` on the Python decorator, `each` in the Ruby class body, `#[Steps(each: ...)]` beside `#[Relay]` in PHP, `each:` on the Elixir `use`), and SHALL reach the generated relay as the full form's loop mode does. Every other class-level setting (the retry ladder is no longer one, being an edge's; a duration, persistence, the effectively-once tier, a correction window, rollback mode, synchronous durability) SHALL NOT be expressible on the short form; it is the full form, and where an SDK's spelling lets an author write one on a short form it SHALL be refused naming the setting. A loop mode or rollback mode outside the declared set (`once`, `per_input`, `chained`; `undo_all`, `keep_progress`) SHALL be refused at declaration naming the value, in every SDK whose spelling can write one. The tasklet's own settings (cell keys and `cells_for`, mailbox capacity, clock, schema version, the state and change declarations) SHALL be accepted on the short form and SHALL reach the generated tasklet. A short-form key (`sink`, `input`, `codec`) or a tasklet setting written on a declaration that carries a topology body SHALL be refused rather than ignored.
 
-The expansion SHALL produce an ordinary tasklet and an ordinary operator, and the generated tasklet's node name SHALL be the factory id verbatim, with no suffix, case change or decoration, because a tasklet's name is a durable component of every cell's state path. Where an SDK generates code, the two SHALL be separate types, and the author-facing name SHALL be the operator's, because that is what the declaration declares.
+The expansion SHALL produce an ordinary tasklet and an ordinary relay, and the generated tasklet's node name SHALL be the factory id verbatim, with no suffix, case change or decoration, because a tasklet's name is a durable component of every cell's state path. Where an SDK generates code, the two SHALL be separate types, and the author-facing name SHALL be the relay's, because that is what the declaration declares.
 
-Registration SHALL be explicit in every SDK: the author hands the declaration to the runner's `register_factory`, which reads its kind as it reads any operator's, and nothing is harvested, scanned or collected. No SDK SHALL require the author to name a generated artefact.
+Registration SHALL be explicit in every SDK: the author hands the declaration to the runner's `register_factory`, which reads its kind as it reads any relay's, and nothing is harvested, scanned or collected. No SDK SHALL require the author to name a generated artefact.
 
-An operator declaration carrying both a tasklet body and a topology body SHALL be refused. A written `sink` on a body the SDK can see declares no output SHALL be refused; an SDK whose tasklets declare no output type owes no such refusal and says so in its conformance manifest.
+A relay declaration carrying both a tasklet body and a topology body SHALL be refused. A written `sink` on a body the SDK can see declares no output SHALL be refused; an SDK whose tasklets declare no output type owes no such refusal and says so in its conformance manifest.
 
 #### Scenario: A flow short form is the hand-written single-tasklet stream
 
-- **WHEN** a flow operator declaration carries its identity, a `sink` and a tasklet body, and the author registers it
-- **THEN** the runner declares a flow operator wiring the controller input to the tasklet to the named sink, with every class setting at its default, and the declaration equals the one a hand-written single-tasklet stream produces
+- **WHEN** a flow relay declaration carries its identity, a `sink` and a tasklet body, and the author registers it
+- **THEN** the runner declares a flow relay wiring the controller input to the tasklet to the named sink, with every class setting at its default, and the declaration equals the one a hand-written single-tasklet stream produces
 
 #### Scenario: A steps short form runs once on its first message
 
-- **WHEN** a steps operator declaration carries its identity, a `sink` and a tasklet body, is registered, an instance is started, and one message is sent to it
+- **WHEN** a steps relay declaration carries its identity, a `sink` and a tasklet body, is registered, an instance is started, and one message is sent to it
 - **THEN** the entry channel receives the message, the tasklet runs once, its output reaches the sink, and the instance completes
 
 #### Scenario: A short form with no sink declares an entry channel and a tasklet
 
-- **WHEN** a flow operator declaration carries its identity and a tasklet body and no `sink`
-- **THEN** the generated operator SHALL declare the entry channel and the tasklet and no plugin channel, and the declaration SHALL be accepted, as a full-form operator whose channel ends at a tasklet is accepted
+- **WHEN** a flow relay declaration carries its identity and a tasklet body and no `sink`
+- **THEN** the generated relay SHALL declare the entry channel and the tasklet and no plugin channel, and the declaration SHALL be accepted, as a full-form relay whose channel ends at a tasklet is accepted
 
 #### Scenario: An entry channel name and codec need no sink
 
@@ -150,42 +150,42 @@ An operator declaration carrying both a tasklet body and a topology body SHALL b
 #### Scenario: A steps short form declares its loop mode
 
 - **WHEN** a steps short form in any of the seven SDKs declares the `per_input` loop mode in that SDK's spelling, is registered, and two messages reach its entry channel
-- **THEN** the generated operator SHALL declare `each` `per_input`, the tasklet SHALL run once per message, and the instance SHALL not complete after the first
+- **THEN** the generated relay SHALL declare `each` `per_input`, the tasklet SHALL run once per message, and the instance SHALL not complete after the first
 
 #### Scenario: An unknown loop mode is refused at declaration
 
-- **WHEN** a Python steps operator is decorated with `each="forever"`, or a steps operator in any SDK whose spelling takes a string names a rollback mode outside the declared set
+- **WHEN** a Python steps relay is decorated with `each="forever"`, or a steps relay in any SDK whose spelling takes a string names a rollback mode outside the declared set
 - **THEN** the declaration SHALL be refused naming the value, and nothing SHALL reach the core
 
 #### Scenario: A short-form key beside a topology body is refused
 
-- **WHEN** an operator declaration carries a `channels` body and also a `sink`, an `input` or a `codec`
+- **WHEN** a relay declaration carries a `channels` body and also a `sink`, an `input` or a `codec`
 - **THEN** the SDK SHALL refuse the declaration rather than ignore the key
 
 #### Scenario: The kind is read from the entry point, not from a key
 
 - **WHEN** a short form is written at the flow entry point and another at the steps entry point
-- **THEN** each SHALL be an operator of that kind, no declaration SHALL carry a `kind` key, and no declaration SHALL be able to name a kind that disagrees with its entry point
+- **THEN** each SHALL be a relay of that kind, no declaration SHALL carry a `kind` key, and no declaration SHALL be able to name a kind that disagrees with its entry point
 
 #### Scenario: The auto-wired entry channel keeps its default name
 
 - **WHEN** a short form declares no entry channel name
-- **THEN** the generated operator's entry channel SHALL be named `input`
+- **THEN** the generated relay's entry channel SHALL be named `input`
 
 #### Scenario: The author names the auto-wired entry channel
 
 - **WHEN** a short form declares the entry channel name `prices`
-- **THEN** the generated operator's entry channel SHALL be named `prices`, and a frame whose metadata names `prices` SHALL reach it
+- **THEN** the generated relay's entry channel SHALL be named `prices`, and a frame whose metadata names `prices` SHALL reach it
 
 #### Scenario: A short form reads text where the builder names codecs
 
-- **WHEN** a Python, Node, Ruby or PHP short form declares the text codec and a frame is sent with `flz operator send --text`
+- **WHEN** a Python, Node, Ruby or PHP short form declares the text codec and a frame is sent with `flz relay send --text`
 - **THEN** the tasklet receives the text as a string, as the same codec on the builder's `input` delivers it
 
 #### Scenario: Registration is written by the author
 
 - **WHEN** a program declares a short form and never hands it to its runner
-- **THEN** the runner declares no operator for it
+- **THEN** the runner declares no relay for it
 
 #### Scenario: The author registers what the author wrote
 
@@ -194,7 +194,7 @@ An operator declaration carrying both a tasklet body and a topology body SHALL b
 
 #### Scenario: A tasklet body beside a topology body is refused
 
-- **WHEN** an operator declaration carries a tasklet body and also a `channels` body
+- **WHEN** a relay declaration carries a tasklet body and also a `channels` body
 - **THEN** the SDK SHALL refuse naming `topology.short_form_with_topology`, at compile time where the language has one and at declaration or registration otherwise
 
 #### Scenario: A sink on a body with no output is refused
@@ -204,27 +204,27 @@ An operator declaration carrying both a tasklet body and a topology body SHALL b
 
 #### Scenario: Multi-tasklet topology stays explicit
 
-- **WHEN** an operator has more than one tasklet, any fan-out or multi-input edge, a keyed edge, or any class-level setting other than a steps operator's loop mode
+- **WHEN** a relay has more than one tasklet, any fan-out or multi-input edge, a keyed edge, or any class-level setting other than a steps relay's loop mode
 - **THEN** the SDK requires the full form and does not auto-wire
 
 #### Scenario: Duplicate factory id fails fast across kinds
 
-- **WHEN** a runner is handed an unbounded and a steps operator, short or full, under one factory id
+- **WHEN** a runner is handed an unbounded and a steps relay, short or full, under one factory id
 - **THEN** the second definition fails with an error naming `topology.duplicate_factory_id` and the colliding id
 
 #### Scenario: The same declaration in every SDK
 
 - **WHEN** the reference short-form fixtures `sugar_do_nothing`, `sugar_store_input`, `sugar_named_input`, `sugar_steps` and `sugar_state_only` are authored in each SDK's test app
-- **THEN** each is one operator declaration carrying its factory id and a tasklet body (a `sink` on all but `sugar_state_only`, and `prices` or `order` for the named entries), no separate tasklet declaration and one registration call, and every runtime's declaration equals the reference golden
+- **THEN** each is one relay declaration carrying its factory id and a tasklet body (a `sink` on all but `sugar_state_only`, and `prices` or `order` for the named entries), no separate tasklet declaration and one registration call, and every runtime's declaration equals the reference golden
 
 ### Requirement: Contract binds all current and future SDKs
-The contract SHALL be the single source of truth for authoring sugar across the Rust, Java, Elixir, Node, Ruby, PHP and Python SDKs and any future binding, including non-normative target sketches for bindings not yet built. Every SDK's flow and steps authoring surfaces SHALL be rooted in the shared `Operator` base (see below). Beyond the sugar, every surface that more than one SDK carries SHALL change in lockstep: a change to the authoring or declaration surface (builder, ctx, the `HostClassDecl` keys), to the wire protocol or its metadata keys, to a default (overflow policy, retry ladder, mailbox capacity, heartbeat keys), or to a fixture that proves one of these (the regression and round-trip bench factories, the end-to-end runtime matrix) SHALL land in every SDK in the same change, or SHALL name in its spec delta the SDK it defers and the follow-up change that owes it. An SDK that carries a capability another SDK neither carries nor names as deferred is a defect of the change, not a backlog item. A performance change SHALL state in its notes which layer it changed (controller, shared kernel, or host SDK); a measurement taken with one runtime SHALL be reported as that runtime's number, and a claim that holds for every SDK SHALL be backed by the same bench run on each runtime that carries the tier.
+The contract SHALL be the single source of truth for authoring sugar across the Rust, Java, Elixir, Node, Ruby, PHP and Python SDKs and any future binding, including non-normative target sketches for bindings not yet built. Every SDK's flow and steps authoring surfaces SHALL be rooted in the shared `Relay` base (see below). Beyond the sugar, every surface that more than one SDK carries SHALL change in lockstep: a change to the authoring or declaration surface (builder, ctx, the `HostClassDecl` keys), to the wire protocol or its metadata keys, to a default (overflow policy, retry ladder, mailbox capacity, heartbeat keys), or to a fixture that proves one of these (the regression and round-trip bench factories, the end-to-end runtime matrix) SHALL land in every SDK in the same change, or SHALL name in its spec delta the SDK it defers and the follow-up change that owes it. An SDK that carries a capability another SDK neither carries nor names as deferred is a defect of the change, not a backlog item. A performance change SHALL state in its notes which layer it changed (controller, shared kernel, or host SDK); a measurement taken with one runtime SHALL be reported as that runtime's number, and a claim that holds for every SDK SHALL be backed by the same bench run on each runtime that carries the tier.
 
 An SDK whose authoring surface is a set of factory functions, or a set of classes, rather than macros or annotations SHALL be bound by the same contract: the sketch names the mechanism, and the inference rules, the refusal set and the invocation context are the same.
 
-#### Scenario: Reference operator expands identically across SDKs
+#### Scenario: Reference relay expands identically across SDKs
 
-- **WHEN** the same reference flow operator is authored with each SDK's sugar
+- **WHEN** the same reference flow relay is authored with each SDK's sugar
 - **THEN** each expansion produces a structurally identical topology and associated-type mapping per this contract
 
 #### Scenario: Future bindings have a documented target
@@ -249,7 +249,7 @@ An SDK whose authoring surface is a set of factory functions, or a set of classe
 
 #### Scenario: The PHP binding is rooted in the shared base
 
-- **WHEN** a PHP flow or steps operator is authored
+- **WHEN** a PHP flow or steps relay is authored
 - **THEN** its declaration SHALL expand to the same topology and cell-mode mapping the contract defines for Rust and Java, with no PHP-specific runtime path, protocol message, or WAL change
 
 #### Scenario: An attribute-carried declaration is bound by the same rules
@@ -287,17 +287,17 @@ The defined modes are:
 - **THEN** the SDK reports a clear authoring error directing the author to a hand-written `Change`, and SHALL NOT generate silent or incorrect journaling
 
 ### Requirement: Emit-or-skip output return
-The authoring contract SHALL define an optional-output return shape for a short form declared on a function (Rust `#[flezha::operator]` / `#[flezha::operator]` on a `fn`): a function returning an optional `Output` emits when present and emits nothing when absent. The unit return (no output channel) and the unconditional `Output` return (always emit) are unchanged. A Java, Rust or PHP tasklet's `run` returns no output and emits through its context, typed in Java and Rust, so the shape does not apply there: emitting nothing is not calling `emit`. A PHP short form is a class whose `run` is a tasklet's, so it emits through its context too. A Python short form declared on a function (`@flezha.operator` / `@flezha.operator`) takes the same shape, `None` being its absent value; a Python tasklet class's `run`, and a Python short form declared on a class, returns `None` and emits through its typed context, so the shape does not apply there. A Ruby tasklet's `run`, and a Ruby short form's, emits through its context as well, so the shape does not apply there; a Ruby method answers its last expression, so a Ruby `run` may answer a value, and the SDK ignores it. A Node tasklet's `run`, and a Node short form's, a definition object carrying a tasklet's fields and `run`, emits through its typed context as well, so the shape does not apply there; a Node `run` is typed to return nothing, so TypeScript refuses one that returns a value, and the SDK ignores a value a plain JavaScript `run` returns.
+The authoring contract SHALL define an optional-output return shape for a short form declared on a function (Rust `#[flezha::relay]` / `#[flezha::relay]` on a `fn`): a function returning an optional `Output` emits when present and emits nothing when absent. The unit return (no output channel) and the unconditional `Output` return (always emit) are unchanged. A Java, Rust or PHP tasklet's `run` returns no output and emits through its context, typed in Java and Rust, so the shape does not apply there: emitting nothing is not calling `emit`. A PHP short form is a class whose `run` is a tasklet's, so it emits through its context too. A Python short form declared on a function (`@flezha.relay` / `@flezha.relay`) takes the same shape, `None` being its absent value; a Python tasklet class's `run`, and a Python short form declared on a class, returns `None` and emits through its typed context, so the shape does not apply there. A Ruby tasklet's `run`, and a Ruby short form's, emits through its context as well, so the shape does not apply there; a Ruby method answers its last expression, so a Ruby `run` may answer a value, and the SDK ignores it. A Node tasklet's `run`, and a Node short form's, a definition object carrying a tasklet's fields and `run`, emits through its typed context as well, so the shape does not apply there; a Node `run` is typed to return nothing, so TypeScript refuses one that returns a value, and the SDK ignores a value a plain JavaScript `run` returns.
 
 #### Scenario: A function short form emits on present and skips on absent
 
 - **WHEN** a Rust function short form returns an optional `Output`
-- **THEN** the operator emits the value when present and emits nothing when absent, without the author touching the context
+- **THEN** the relay emits the value when present and emits nothing when absent, without the author touching the context
 
 #### Scenario: A Python function short form emits on a value and skips on None
 
 - **WHEN** a Python function short form returns `None` for one input and a value for the next
-- **THEN** the operator emits nothing for the first input and emits the value for the second, without the author touching the context
+- **THEN** the relay emits nothing for the first input and emits the value for the second, without the author touching the context
 
 #### Scenario: A Java tasklet that emits nothing
 
@@ -433,7 +433,7 @@ The mandatory authoring surface for the common case therefore reduces to a name 
 
 ### Requirement: Every SDK binding passes the shared conformance suite
 
-Every SDK binding SHALL ship a test app under `test/apps/<sdk>_runner/` with a conformance manifest (`sdk-conformance`), and SHALL pass the shared end-to-end suite under `FLEZHA_E2E_RUNTIME=<sdk>` for every capability its manifest does not defer. A capability listed under `deferred` SHALL match the SDK's documented scope matrix, and the documented matrix SHALL point at the manifest rather than restate it. The contract's reference-operator equivalence (§6 `static_cell`, §6.1 `rolling_window_twin`) SHALL be asserted against the controller-side golden declaration snapshot in the smoke tier, in addition to any SDK-local expansion test; an SDK whose expansion differs from the golden fails conformance, whatever its local test says.
+Every SDK binding SHALL ship a test app under `test/apps/<sdk>_runner/` with a conformance manifest (`sdk-conformance`), and SHALL pass the shared end-to-end suite under `FLEZHA_E2E_RUNTIME=<sdk>` for every capability its manifest does not defer. A capability listed under `deferred` SHALL match the SDK's documented scope matrix, and the documented matrix SHALL point at the manifest rather than restate it. The contract's reference-relay equivalence (§6 `static_cell`, §6.1 `rolling_window_twin`) SHALL be asserted against the controller-side golden declaration snapshot in the smoke tier, in addition to any SDK-local expansion test; an SDK whose expansion differs from the golden fails conformance, whatever its local test says.
 
 #### Scenario: A new binding is admitted by the suite, not by review
 - **WHEN** a new SDK's test app and manifest are added and `FLEZHA_E2E_RUNTIME=<sdk> mix test --include system` passes with every non-deferred capability green
@@ -532,7 +532,7 @@ requirement by one conformance run over every row, not by a set of tests of its 
 ### Requirement: Short-form refusals carry one name per refusal in every SDK
 The three short-form refusals SHALL be named `topology.short_form_with_topology`, `topology.sink_without_output` and `topology.duplicate_factory_id` in every SDK, and the name SHALL be the code the author reads: in the compile error text in Rust, Java and an Elixir `use` declaration, and as the `code` of the SDK's one error type in Python, Node, Ruby, PHP and an Elixir registration. The names SHALL be listed in `docs/sdk/authoring_contract.md` §5, which the conformance check reads as the source of the row names.
 
-`SinkWithoutId`, `SinkWithoutKind` and `ShorthandKeyWithoutSink` SHALL NOT exist. A short form's identity is an operator's factory id, which every operator has always been required to carry, so the first is the full form's own rule; the kind is the entry point's name, so the second is unrepresentable; and `input` and `codec` are meaningful with no `sink`, so the third refuses nothing.
+`SinkWithoutId`, `SinkWithoutKind` and `ShorthandKeyWithoutSink` SHALL NOT exist. A short form's identity is a relay's factory id, which every relay has always been required to carry, so the first is the full form's own rule; the kind is the entry point's name, so the second is unrepresentable; and `input` and `codec` are meaningful with no `sink`, so the third refuses nothing.
 
 #### Scenario: A refusal is recognisable across languages
 
@@ -541,7 +541,7 @@ The three short-form refusals SHALL be named `topology.short_form_with_topology`
 
 #### Scenario: The duplicate-id error is named, not only described
 
-- **WHEN** a runner is asked to define a second operator with a factory id it already holds
+- **WHEN** a runner is asked to define a second relay with a factory id it already holds
 - **THEN** the error contains `topology.duplicate_factory_id` and the id, in every SDK
 
 #### Scenario: A retired refusal name is gone from every SDK
@@ -551,21 +551,21 @@ The three short-form refusals SHALL be named `topology.short_form_with_topology`
 
 ### Requirement: The timer contract holds in flow and in steps and no class-level wake exists
 
-The `on_timer` contract of section 3.4 of the authoring contract SHALL hold for a tasklet of a steps operator exactly as for a tasklet of a flow operator, in every SDK: the four timer calls SHALL be available on the tasklet context in both kinds under the same names, `fired_at` SHALL be the scheduled timestamp and equal `ctx.now()` inside the hook, `timer_after` SHALL anchor on `ctx.now()`, and a registration made during a replay or a re-run SHALL be registered. What differs in a steps operator SHALL be only what follows from the steps operator's peculiarities, and the contract SHALL state it: a firing starts a pass at the tasklet that set the timer, or joins that tasklet's stage while it runs, or waits its turn behind the pass in flight; a `ONCE` instance ends with its one pass and a timer due after that never fires; a firing's removal is durable at its stage's commit. No SDK SHALL declare a class-level wake setting (`wake_after`, `wakeAfter`, `wake_after_ms`, `wakeAfterMs`): a steps operator that must wake itself writes a timer in a tasklet. The `compensate` hook SHALL keep no timer session in either kind.
+The `on_timer` contract of section 3.4 of the authoring contract SHALL hold for a tasklet of a steps relay exactly as for a tasklet of a flow relay, in every SDK: the four timer calls SHALL be available on the tasklet context in both kinds under the same names, `fired_at` SHALL be the scheduled timestamp and equal `ctx.now()` inside the hook, `timer_after` SHALL anchor on `ctx.now()`, and a registration made during a replay or a re-run SHALL be registered. What differs in a steps relay SHALL be only what follows from the steps relay's peculiarities, and the contract SHALL state it: a firing starts a pass at the tasklet that set the timer, or joins that tasklet's stage while it runs, or waits its turn behind the pass in flight; a `ONCE` instance ends with its one pass and a timer due after that never fires; a firing's removal is durable at its stage's commit. No SDK SHALL declare a class-level wake setting (`wake_after`, `wakeAfter`, `wake_after_ms`, `wakeAfterMs`): a steps relay that must wake itself writes a timer in a tasklet. The `compensate` hook SHALL keep no timer session in either kind.
 
 #### Scenario: The same tasklet code arms a timer in both kinds
 
-- **WHEN** a tasklet whose `run` calls `timer_after` and whose `on_timer` emits is wired into a flow operator and, unchanged, into a `per_input` steps operator
-- **THEN** both SHALL register the timer, both SHALL run `on_timer` at its scheduled time, and the steps operator's firing SHALL open a pass at that tasklet
+- **WHEN** a tasklet whose `run` calls `timer_after` and whose `on_timer` emits is wired into a flow relay and, unchanged, into a `per_input` steps relay
+- **THEN** both SHALL register the timer, both SHALL run `on_timer` at its scheduled time, and the steps relay's firing SHALL open a pass at that tasklet
 
 #### Scenario: The retired wake setting is refused as an unknown setting
 
 - **WHEN** a steps class in any SDK writes the wake setting in that SDK's old spelling
 - **THEN** the SDK SHALL refuse it as it refuses any unknown class setting (a compile error, a `TypeError`, a `NoMethodError`, an unknown attribute argument, a `CompileError`), and no declaration SHALL carry `wake_after_ms`
 
-### Requirement: Every SDK offers one operator base
+### Requirement: Every SDK offers one relay base
 
-Every SDK SHALL offer one operator authoring base that takes the settings tree and the
+Every SDK SHALL offer one relay authoring base that takes the settings tree and the
 graph, and SHALL offer the short form on that same base. The short form SHALL take the
 class settings the full form takes. No SDK SHALL offer a second base, a kind-specific
 factory function or a kind-specific registry.
@@ -573,7 +573,7 @@ factory function or a kind-specific registry.
 #### Scenario: The seven bases
 
 - **WHEN** each SDK's public surface is listed (`public-api.txt`, the Java API module, the Node type declarations, the Python, Ruby and PHP packages, the Elixir `use` macros)
-- **THEN** each SHALL name one operator base and no retired class, and the conformance surface snapshot SHALL match
+- **THEN** each SHALL name one relay base and no retired class, and the conformance surface snapshot SHALL match
 
 ### Requirement: A setting under another setting cannot be written
 
@@ -596,5 +596,5 @@ registration; a start SHALL not be able to change either.
 #### Scenario: The announcement matches the class
 
 - **WHEN** a class declares `run: {steps, each: chained, on_failure: undo_all}` and `durable: {local, sleep_after: false}` in any SDK
-- **THEN** the runner's announcement SHALL carry exactly those values, and `flz operator info` on an instance SHALL print them
+- **THEN** the runner's announcement SHALL carry exactly those values, and `flz relay info` on an instance SHALL print them
 

@@ -17,11 +17,11 @@ it, and none SHALL advance the offset without that state. Under the default
 per-input granularity the record's offset is the invocation's own input; under
 `checkpoint` ack-granularity it is the offset of the input that closed the
 interval, and the record carries every change the interval accumulated. For a
-steps operator Cell the pair is state and stage: no `task_committed` entry SHALL be
+steps relay Cell the pair is state and stage: no `task_committed` entry SHALL be
 durable without every record it names being durable first.
 
 Outputs are not part of that pair. A record MAY carry outputs with no offset —
-which is how a checkpoint-mode operator's mid-interval emits reach their
+which is how a checkpoint-mode relay's mid-interval emits reach their
 plugins without acknowledging an input whose state is not durable yet. Such
 outputs are emitted again when the interval replays, and the keyed-sink dedup
 the tier requires absorbs them.
@@ -41,20 +41,20 @@ the tier requires absorbs them.
 
 #### Scenario: A stage marker is never durable ahead of its state
 
-- **WHEN** the controller crashes at any point between a steps operator Cell's effect record arriving and its stage's `task_committed` entry being acked
+- **WHEN** the controller crashes at any point between a steps relay Cell's effect record arriving and its stage's `task_committed` entry being acked
 - **THEN** after restart the journal holds the entry only if the Cell's WAL holds the record it names
 
 #### Scenario: Emits leave the primary stream in tier mode
 
-- **WHEN** an opted-in operator's invocation emits on a keyed channel
+- **WHEN** an opted-in relay's invocation emits on a keyed channel
 - **THEN** the output travels inside the effect record on the reliable sink, and
   no output frame for it appears on the primary stream
 
 ### Requirement: Fsync-gated outbox flush
 
-For tier operators and for durable steps operators the controller SHALL invoke the
+For tier relays and for durable steps relays the controller SHALL invoke the
 `:on_output` plugin chain for an output only after its effect record is fsynced and the kind's
-commit unit has committed it: for a flow operator Cell the record's fsync is the commit; for a steps operator
+commit unit has committed it: for a flow relay Cell the record's fsync is the commit; for a steps relay
 Cell the commit is the durable `task_committed` or `compensated` entry that names the record
 within its Cell's range, and the commit worker SHALL mark that range committed on the Cell's
 writer after the entry's ack. Each outbox entry SHALL carry the durable identity `(flz.cell, outbox_seq, epoch)`
@@ -63,7 +63,7 @@ plus `flz.key` when the channel is keyed and the author's metadata, for both kin
 the `flz.seq` exactness boundary: `outbox_seq` SHALL be a sufficient handle for exact append-only
 dedup.
 
-A steps operator Cell's entries SHALL stay queued, on disk, until a marker names them; an entry that
+A steps relay Cell's entries SHALL stay queued, on disk, until a marker names them; an entry that
 no marker will name, because the stage was interrupted and re-run, failed, or was unwound by a
 rewind, SHALL be dropped without reaching the chain: by the Cell's next committed range, which
 starts above it, or at the instance's next bind, which re-derives the committed ranges from the
@@ -76,7 +76,7 @@ unconfirmed to `outbox_inflight_max` (default 1 000) — the window is the set o
 dispatched entries still awaiting completion, nothing else — and SHALL refill
 it on every event that can open it: an fsync that makes further entries
 durable, a committed range that admits further entries, and a completed confirmation that frees a slot. The periodic retry
-tick SHALL be a backstop for an operator that was not yet bound at dispatch
+tick SHALL be a backstop for a relay that was not yet bound at dispatch
 time, never the pump that drains a burst.
 
 #### Scenario: No flush before durable point
@@ -86,7 +86,7 @@ time, never the pump that drains a burst.
 
 #### Scenario: No flush before the stage marker
 
-- **WHEN** a steps operator Cell's effect record is durable and its stage's `task_committed` entry is not yet acked
+- **WHEN** a steps relay Cell's effect record is durable and its stage's `task_committed` entry is not yet acked
 - **THEN** its outputs have not been dispatched to any plugin, and they are dispatched once the entry naming the record is acked
 
 #### Scenario: A failed stage delivers nothing
@@ -96,7 +96,7 @@ time, never the pump that drains a burst.
 
 #### Scenario: Durable identity on every flushed output
 
-- **WHEN** an output is dispatched to the plugin chain in tier mode or from a durable steps operator Cell
+- **WHEN** an output is dispatched to the plugin chain in tier mode or from a durable steps relay Cell
 - **THEN** its metadata carries `flz.cell`, the durable `outbox_seq`, the
   epoch, `channel`, `flz.key` when the channel is keyed, and the author's metadata
 
@@ -111,11 +111,11 @@ time, never the pump that drains a burst.
 ### Requirement: Restart re-drives unflushed outbox entries
 
 The controller SHALL maintain a per-Cell `outbox_flushed_seq` cursor that
-never runs ahead of what the external sink has confirmed delivered, for a tier flow operator Cell and
-a durable steps operator Cell alike. An
-in-memory hand-off (a cast to the operator or an async admission into a
+never runs ahead of what the external sink has confirmed delivered, for a tier flow relay Cell and
+a durable steps relay Cell alike. An
+in-memory hand-off (a cast to the relay or an async admission into a
 plugin queue) SHALL NOT advance the cursor. On restart the controller SHALL
-re-drive every durable outbox entry above the cursor, in order; a steps operator Cell's writer SHALL
+re-drive every durable outbox entry above the cursor, in order; a steps relay Cell's writer SHALL
 release only the re-driven entries a live journal entry names, SHALL drop those below the last
 range it names that no entry names, and SHALL hold the rest until the instance's bind, which
 drops them. The writer SHALL learn that its Cell commits by stage from the class registry,
@@ -145,7 +145,7 @@ outputs are never lost and never applied twice at a conforming sink.
 - **THEN** the same outputs are re-dispatched with identical identity and the
   sink deduplicates them
 
-#### Scenario: A steps operator's committed output re-drives, its uncommitted output does not
+#### Scenario: A steps relay's committed output re-drives, its uncommitted output does not
 
 - **WHEN** the controller crashes after journaling `task_committed(A)` naming A's Cell record at seq 3 but before dispatching its output, while B's Cell holds a record at seq 1 that no entry names, then restarts and the instance rebinds
 - **THEN** A's output is dispatched with its original identity and confirmed once, and B's record's output is dropped from the queue and never dispatched
@@ -207,7 +207,7 @@ superseded are unchanged by batching.
 
 #### Scenario: A crashed chain run leaves its entry owed
 
-- **WHEN** the operator host crashes while running an output's chain, after
+- **WHEN** the relay host crashes while running an output's chain, after
   a sink held the token
 - **THEN** no settlement is reported, the entry stays pending with its holds
   unanswered, and the resettle re-dispatches its outputs under identical
@@ -263,7 +263,7 @@ An edge output SHALL also be durable in the producer's outbox, inside the effect
 
 With the ordering correct, at-least-once edge delivery composes into effectively-once without a second mechanism: the edge payload carries the producer's input offset, the consumer's own effect record acknowledges that offset, and the consumer's restored floor skips a re-emitted duplicate. A fan-out invocation SHALL hold its record until **every** consumer's push has landed; a replay after a partial fan-out re-emits to all consumers and each one's own floor decides whether it is a duplicate.
 
-A steps operator Cell's edge output is the one edge output with a durable copy: it is held on the instance's pass sheet and journaled as the stage's handoff in the `task_committed` entry, and its consumers are fed from that entry on resume. A steps operator Cell's record therefore carries no offset and SHALL NOT be held for an edge delivery: it ships as soon as the item settles, and the flusher's deferred-push gate never applies to it.
+A steps relay Cell's edge output is the one edge output with a durable copy: it is held on the instance's pass sheet and journaled as the stage's handoff in the `task_committed` entry, and its consumers are fed from that entry on resume. A steps relay Cell's record therefore carries no offset and SHALL NOT be held for an edge delivery: it ships as soon as the item settles, and the flusher's deferred-push gate never applies to it.
 
 This requirement binds the host (C-ABI) resolution path, where an activation's outputs are reported at completion and were previously folded before being routed. The typed in-process path emits during the invocation, before the effect block is assembled, and already satisfies it. The Elixir SDK, whose Cell ships its own records and whose router is one process that blocks on a full consumer, holds an invocation's effect record in a FIFO until its router reports every edge push admitted and ships the FIFO in seq order, never gating its own queue — a gated Cell and a router blocked on it would wait on each other; a replacement after an untrappable kill loses the held records, whose offsets were never durable, and the controller's re-forward reproduces them.
 
@@ -282,9 +282,9 @@ This requirement binds the host (C-ABI) resolution path, where an activation's o
 - **WHEN** an invocation emits to three consumers, two pushes land, and the runner dies before the third
 - **THEN** the invocation's offset SHALL NOT be durable, and after restart all three consumers SHALL end in the state they would have reached had the invocation completed once
 
-#### Scenario: A steps operator Cell's record is not held for its edge output
+#### Scenario: A steps relay Cell's record is not held for its edge output
 
-- **WHEN** a steps operator Cell emits towards the next stage and its item settles
+- **WHEN** a steps relay Cell emits towards the next stage and its item settles
 - **THEN** its effect record ships at once, the edge value waits on the pass sheet for the stage's commit ack, and a crash before that ack re-seeds the consumer from the journaled handoff rather than from a re-run of the producer
 
 #### Scenario: The Elixir Cell holds its record until the edge is admitted
@@ -296,7 +296,7 @@ This requirement binds the host (C-ABI) resolution path, where an activation's o
 - **WHEN** a tier producer's effect record for offset 7 is durable, its edge value was admitted to the consumer's mailbox, and the runner dies before the consumer's record for offset 7 is durable
 - **THEN** after the restore the producer SHALL NOT re-run offset 7, the consumer SHALL receive the edge value from the producer's outbox, and the consumer's state SHALL reflect offset 7 exactly once
 
-### Requirement: A durable steps operator Cell writes the effect record without declaring the tier
+### Requirement: A durable steps relay Cell writes the effect record without declaring the tier
 
 A Cell of a durable steps class SHALL settle every invocation into one `cell_effect_record`
 exactly as a Cell of a tier flow class does: its state changes, its plugin outputs as
@@ -308,7 +308,7 @@ stage's barrier is sent, never left to the flusher's linger. A steps class SHALL
 produced no change and no output SHALL write no record for it, and the stage marker SHALL name
 that Cell with no seq.
 
-There SHALL be one settle path for a steps operator Cell's item on every SDK: a retryable failure
+There SHALL be one settle path for a steps relay Cell's item on every SDK: a retryable failure
 holds the attempt's changes until the item resolves and ships them with the resolving attempt,
 and an attempt that exhausts the ladder ships the held changes in a record carrying no output,
 so the Cell's WAL matches the host's memory on every path.
@@ -318,14 +318,14 @@ so the Cell's WAL matches the host's memory on every path.
 - **WHEN** a durable steps tasklet's Cell applies two changes and emits once on a keyed channel with metadata `{"trace": "t1"}`
 - **THEN** exactly one `cell_effect_record` frame for that Cell leaves the runner before the stage's `TaskCommit`, its body carrying both changes and one output with the channel, the key, the metadata and the payload, and no `cell_state_change` frame is sent for the invocation
 
-#### Scenario: A host steps operator Cell's record leaves ahead of its barrier
+#### Scenario: A host steps relay Cell's record leaves ahead of its barrier
 
 - **WHEN** a Java steps tasklet commits a state change and the runner's flush linger is raised to 20 s
 - **THEN** the Cell's effect record reaches the controller before its stage's `TaskCommit`, and the controller's journal never holds a `task_committed` entry naming a record the Cell's WAL does not hold
 
 #### Scenario: A failed attempt's changes ship with the attempt that resolves
 
-- **WHEN** a steps operator Cell's attempt applies a change and fails retryably, and the next attempt succeeds
+- **WHEN** a steps relay Cell's attempt applies a change and fails retryably, and the next attempt succeeds
 - **THEN** one record ships carrying both attempts' changes, and no record shipped between the two
 
 #### Scenario: A steps class cannot declare the tier

@@ -1,6 +1,6 @@
 # Serve HTTP
 
-On this page you start the gateway, an operator that runs in flow behind the
+On this page you start the gateway, a relay that runs in flow behind the
 HTTP plugin, and stream Anna's answer to an HTTP client. Each request is an
 input on the channel `http`, and what the graph sends to its `response()` end is
 the answer. [The HTTP server plugin](../../plugins/http_server.md) covers its
@@ -11,8 +11,8 @@ options.
 ### Java
 
 ```java
-// GatewayOperator.java: requests in, answers out
-public final class GatewayOperator implements Operator {
+// GatewayRelay.java: requests in, answers out
+public final class GatewayRelay implements Relay {
     static final long DEADLINE_MS = 60_000;
 
     @Override
@@ -47,7 +47,7 @@ public final class GatewayOperator implements Operator {
         verdicts.filter(Verdict::admitted)
                 .map(Message.class, Verdict::message)
                 .keyBy(Message::user)                        // the user's session
-                // call the "agent" operator; its answer comes back here
+                // call the "agent" relay; its answer comes back here
                 .call(CallTarget.factory("agent").channel("message"), Answer.class, DEADLINE_MS)
                 .map(Event.class, Used::of)                  // the session's answer, as tokens used
                 .keyBy(Event::user)
@@ -56,7 +56,7 @@ public final class GatewayOperator implements Operator {
 }
 ```
 
-[`GatewayOperator.java`](https://github.com/flezha/flezha_java_sdk/blob/main/examples/agentdesk/src/main/java/com/flezha/examples/agentdesk/GatewayOperator.java)
+[`GatewayRelay.java`](https://github.com/flezha/flezha_java_sdk/blob/main/examples/agentdesk/src/main/java/com/flezha/examples/agentdesk/GatewayRelay.java)
 
 ### Rust
 
@@ -81,9 +81,9 @@ TODO: this page is not yet written for PHP.
 ### Elixir
 
 ```elixir
-# lib/agentdesk/gateway_operator.ex: requests in, answers out
-defmodule Agentdesk.GatewayOperator do
-  use Flezha.SDK.Operator,
+# lib/agentdesk/gateway_relay.ex: requests in, answers out
+defmodule Agentdesk.GatewayRelay do
+  use Flezha.SDK.Relay,
     factory_id: "gateway",
     # each request and answer on disk before it runs
     run: {:flow, exactly: :effectively_once}
@@ -124,7 +124,7 @@ defmodule Agentdesk.GatewayOperator do
     |> map(& &1.message)
     # the user's session
     |> key_by(& &1.user)
-    # call the "agent" operator; its answer comes back here
+    # call the "agent" relay; its answer comes back here
     |> call(
       factory: "agent",
       channel: "message",
@@ -140,7 +140,7 @@ defmodule Agentdesk.GatewayOperator do
 end
 ```
 
-[`lib/agentdesk/gateway_operator.ex`](https://github.com/flezha/flezha_elixir_sdk/blob/main/examples/agentdesk/lib/agentdesk/gateway_operator.ex)
+[`lib/agentdesk/gateway_relay.ex`](https://github.com/flezha/flezha_elixir_sdk/blob/main/examples/agentdesk/lib/agentdesk/gateway_relay.ex)
 
 <!-- tabs-close -->
 
@@ -151,8 +151,8 @@ stream. The other routes are the next page's.
 > {: .step}
 
 ```sh
-$ flz operator start gateway --id gateway --namespace agents
-$ flz plugin enable web http_server --operator_id=gateway --namespace agents --hook=on_terminate --Xport=8080 --Xbind=0.0.0.0 --Xchannel=http
+$ flz relay start gateway --id gateway --namespace agents
+$ flz plugin enable web http_server --relay_id=gateway --namespace agents --hook=on_terminate --Xport=8080 --Xbind=0.0.0.0 --Xchannel=http
 ```
 
 ```output
@@ -173,7 +173,7 @@ $ curl -sN --max-time 5 localhost:8080/sessions/anna/events
 > {: .step}
 
 ```sh
-$ flz operator call anna --namespace agents --text 'Tell me more'
+$ flz relay call anna --namespace agents --text 'Tell me more'
 ```
 
 The stream shows each part, then the answer, as server-sent events:

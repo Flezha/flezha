@@ -5,13 +5,11 @@ use flz_transport::service::payloader;
 use flz_transport::transport::FlezhaStream;
 use prost::Message;
 
-use crate::command;
 use crate::pb::command_request::Command;
 use crate::pb::{CommandRequest, CommandResponse};
 use crate::runner::RunnerNode;
-use crate::ErrorModel;
+use crate::{command, ErrorModel};
 
-mod steps_stop;
 mod cell_apply_state;
 pub mod cell_state;
 mod cell_status;
@@ -19,14 +17,15 @@ mod compact;
 mod credit;
 mod migration_deserialization;
 mod migration_serialization;
-mod operator_message;
-mod operator_start;
-mod operator_stop;
 mod park_ack;
 mod ping;
+mod relay_message;
+mod relay_start;
+mod relay_stop;
 mod restore;
 mod runner_assign;
 mod runner_disconnect;
+mod steps_stop;
 mod streams_connect;
 
 /// One command's answer: the `CommandResponse` bytes under the handler's own
@@ -118,13 +117,13 @@ fn classify(command: Option<Command>) -> Result<CommandActionType, CommandDecode
     Ok(match command {
         Some(Command::AssignRunnerId(c)) => regular(c),
         Some(Command::ConnectSocket(c)) => regular(c),
-        Some(Command::AddOperator(c)) => regular(c),
-        Some(Command::RemOperator(c)) => regular(c),
+        Some(Command::AddRelay(c)) => regular(c),
+        Some(Command::RemRelay(c)) => regular(c),
         Some(Command::MigrationSerialization(c)) => regular(c),
         Some(Command::MigrationDeserialization(c)) => regular(c),
         Some(Command::CellState(c)) => regular(c),
         Some(Command::RunnerDisconnect(c)) => CommandActionType::RunnerDisconnect(Box::new(c)),
-        Some(Command::OperatorMessage(c)) => regular(c),
+        Some(Command::RelayMessage(c)) => regular(c),
         Some(Command::CellApplyState(c)) => regular(c),
         Some(Command::RestoreInitState(c)) => regular(c),
         Some(Command::CompactCell(c)) => regular(c),
@@ -139,7 +138,7 @@ fn classify(command: Option<Command>) -> Result<CommandActionType, CommandDecode
         | Some(Command::CompactCellResponse(_))
         | Some(Command::RunnerReconnected(_))
         | Some(Command::ReassignRunnerId(_))
-        | Some(Command::OperatorCompleted(_))
+        | Some(Command::RelayCompleted(_))
         | Some(Command::CreditWindowAck(_))
         | Some(Command::TaskCommit(_))
         | Some(Command::IterCommit(_))
@@ -147,7 +146,7 @@ fn classify(command: Option<Command>) -> Result<CommandActionType, CommandDecode
         | Some(Command::UpdateFactories(_))
         | Some(Command::SpawnStepsRequest(_))
         | Some(Command::AdminRequest(_))
-        | Some(Command::OperatorExited(_))
+        | Some(Command::RelayExited(_))
         // The control reader answers a refusal itself, before the handshake
         // it ends; one arriving later has no session to refuse.
         | Some(Command::ConnectRefused(_)) => CommandActionType::NotificationIgnore,
@@ -351,7 +350,7 @@ mod tests {
         let request = CommandRequest {
             reference_id: "ref-shutdown".to_string(),
             command: Some(Command::RunnerShutdownAck(crate::pb::RunnerShutdownAck {
-                operator_id: "".to_string(),
+                relay_id: "".to_string(),
             })),
         };
 
@@ -368,8 +367,8 @@ mod tests {
     fn an_exit_report_is_a_notification_this_side_only_sends() {
         let bytes = CommandRequest {
             reference_id: "ref-exited".to_string(),
-            command: Some(Command::OperatorExited(crate::pb::OperatorExited {
-                operator_id: "op-1".to_string(),
+            command: Some(Command::RelayExited(crate::pb::RelayExited {
+                relay_id: "op-1".to_string(),
                 reason: ":killed".to_string(),
             })),
         }
@@ -388,13 +387,11 @@ mod tests {
         let reply = |outcome: &str, error: Option<&FlezhaError>, instance_id: &str| {
             let bytes = CommandRequest {
                 reference_id: "ref-spawn".to_string(),
-                command: Some(Command::SpawnStepsResponse(
-                    crate::pb::SpawnStepsResponse {
-                        outcome: outcome.to_string(),
-                        error: error.map(crate::pb::Error::from),
-                        instance_id: instance_id.to_string(),
-                    },
-                )),
+                command: Some(Command::SpawnStepsResponse(crate::pb::SpawnStepsResponse {
+                    outcome: outcome.to_string(),
+                    error: error.map(crate::pb::Error::from),
+                    instance_id: instance_id.to_string(),
+                })),
             }
             .encode_to_vec();
 
@@ -421,7 +418,7 @@ mod tests {
         let quota = FlezhaError::with(
             "quota.exceeded",
             [
-                ("kind", "max_operators".into()),
+                ("kind", "max_relays".into()),
                 ("current", 3.into()),
                 ("limit", 3.into()),
             ],

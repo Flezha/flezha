@@ -24,16 +24,16 @@ defmodule Flezha.Convergence.DiffTest do
       opts: %{},
       hooks: [{:on_output, []}],
       namespace: "default",
-      operator_id: "r"
+      relay_id: "r"
     )
   end
 
   defp plugin_intent(ids),
     do: %Intent{
-      operators: [
+      relays: [
         %{
           namespace: :ns,
-          operator_id: "r",
+          relay_id: "r",
           factory_id: nil,
           plugins: Enum.map(ids, &{&1, plugin(&1)})
         }
@@ -43,14 +43,14 @@ defmodule Flezha.Convergence.DiffTest do
   defp plugin_reality(fields),
     do: %{
       active_runners: %{ns: MapSet.new(["e"])},
-      operators: %{
+      relays: %{
         {:ns, "r"} =>
           Map.merge(
             %{bound_runner: "e", pid: self(), running_plugins: [], subscribed_plugins: []},
             fields
           )
       },
-      stalled_operators: MapSet.new()
+      stalled_relays: MapSet.new()
     }
 
   describe "a declared plugin that is not running is a divergence (D1)" do
@@ -95,7 +95,7 @@ defmodule Flezha.Convergence.DiffTest do
       end
     end
 
-    test "a parked or a suspended operator yields neither missing nor extra" do
+    test "a parked or a suspended relay yields neither missing nor extra" do
       for gate <- [%{parked?: true}, %{suspended?: true}] do
         observed =
           Map.merge(%{running_plugins: [], subscribed_plugins: ["src", "stray"]}, gate)
@@ -130,7 +130,7 @@ defmodule Flezha.Convergence.DiffTest do
   describe "Backoff" do
     test "fresh keys are eligible; failures arm an exponential cooldown" do
       b = Backoff.new(:heal)
-      key = {:rebind_operator, "btc"}
+      key = {:rebind_relay, "btc"}
       now = 1_000
 
       assert Backoff.eligible?(b, key, now)
@@ -147,70 +147,70 @@ defmodule Flezha.Convergence.DiffTest do
 
     test "filter drops ops still in cooldown, keeps the rest" do
       now = 0
-      b = Backoff.update(Backoff.new(:heal), {:rebind_operator, "a"}, :error, now)
+      b = Backoff.update(Backoff.new(:heal), {:rebind_relay, "a"}, :error, now)
 
       ops = [
-        %{primitive: :rebind_operator, target: "a"},
-        %{primitive: :rebind_operator, target: "b"}
+        %{primitive: :rebind_relay, target: "a"},
+        %{primitive: :rebind_relay, target: "b"}
       ]
 
       kept = Backoff.filter(ops, b, &Planner.key/1, now)
-      assert kept == [%{primitive: :rebind_operator, target: "b"}]
+      assert kept == [%{primitive: :rebind_relay, target: "b"}]
     end
   end
 
   describe "Diff.compute/2" do
-    test "classifies unbound and misbound operators against active runners" do
+    test "classifies unbound and misbound relays against active runners" do
       intent = %Intent{
-        operators: [
-          %{namespace: :ns, operator_id: "unbound", factory_id: nil, plugins: []},
-          %{namespace: :ns, operator_id: "ok", factory_id: nil, plugins: []},
-          %{namespace: :ns, operator_id: "stale", factory_id: nil, plugins: []}
+        relays: [
+          %{namespace: :ns, relay_id: "unbound", factory_id: nil, plugins: []},
+          %{namespace: :ns, relay_id: "ok", factory_id: nil, plugins: []},
+          %{namespace: :ns, relay_id: "stale", factory_id: nil, plugins: []}
         ]
       }
 
       reality = %{
         active_runners: %{ns: MapSet.new(["e_live"])},
-        operators: %{
+        relays: %{
           {:ns, "unbound"} => %{bound_runner: nil},
           {:ns, "ok"} => %{bound_runner: "e_live"},
           {:ns, "stale"} => %{bound_runner: "e_dead"}
         },
-        stalled_operators: MapSet.new()
+        stalled_relays: MapSet.new()
       }
 
       delta = diff(intent, reality)
 
-      assert delta.unbound_operators == [{:ns, "unbound"}]
-      assert delta.misbound_operators == [{{:ns, "stale"}, "e_dead", :probe}]
+      assert delta.unbound_relays == [{:ns, "unbound"}]
+      assert delta.misbound_relays == [{{:ns, "stale"}, "e_dead", :probe}]
       refute Diff.empty?(delta)
     end
 
-    test "empty delta when every operator is bound to a live runner" do
+    test "empty delta when every relay is bound to a live runner" do
       intent = %Intent{
-        operators: [%{namespace: :ns, operator_id: "ok", factory_id: nil, plugins: []}]
+        relays: [%{namespace: :ns, relay_id: "ok", factory_id: nil, plugins: []}]
       }
 
       reality = %{
         active_runners: %{ns: MapSet.new(["e_live"])},
-        operators: %{{:ns, "ok"} => %{bound_runner: "e_live"}},
-        stalled_operators: MapSet.new()
+        relays: %{{:ns, "ok"} => %{bound_runner: "e_live"}},
+        stalled_relays: MapSet.new()
       }
 
       assert Diff.empty?(diff(intent, reality))
     end
 
-    test "a declared operator with no observation is the reconcile's to start, not a heal's" do
+    test "a declared relay with no observation is the reconcile's to start, not a heal's" do
       intent = %Intent{
-        operators: [
-          %{namespace: :ns, operator_id: "declared_only", factory_id: nil, plugins: []}
+        relays: [
+          %{namespace: :ns, relay_id: "declared_only", factory_id: nil, plugins: []}
         ]
       }
 
       reality = %{
         active_runners: %{ns: MapSet.new(["e_live"])},
-        operators: %{},
-        stalled_operators: MapSet.new()
+        relays: %{},
+        stalled_relays: MapSet.new()
       }
 
       assert Diff.empty?(diff(intent, reality))
@@ -218,20 +218,20 @@ defmodule Flezha.Convergence.DiffTest do
 
     test "plans nothing when the factory is only served elsewhere: the hub is moving it" do
       intent = %Intent{
-        operators: [
-          %{namespace: :ns, operator_id: "movable", factory_id: "f", plugins: []},
-          %{namespace: :ns, operator_id: "stale_movable", factory_id: "f", plugins: []}
+        relays: [
+          %{namespace: :ns, relay_id: "movable", factory_id: "f", plugins: []},
+          %{namespace: :ns, relay_id: "stale_movable", factory_id: "f", plugins: []}
         ]
       }
 
       reality = %{
         active_runners: %{ns: MapSet.new(["e_other"])},
-        operators: %{
+        relays: %{
           {:ns, "movable"} => %{bound_runner: nil, factory_id: "f"},
           {:ns, "stale_movable"} => %{bound_runner: "e_dead", factory_id: "f"}
         },
         placement: %{{:ns, "f"} => %{local: [], remote_nodes: [:peer@host]}},
-        stalled_operators: MapSet.new()
+        stalled_relays: MapSet.new()
       }
 
       assert Diff.empty?(diff(intent, reality))
@@ -239,48 +239,48 @@ defmodule Flezha.Convergence.DiffTest do
 
     test "an unknown local placement read falls back to an ordinary rebind" do
       intent = %Intent{
-        operators: [%{namespace: :ns, operator_id: "r", factory_id: "f", plugins: []}]
+        relays: [%{namespace: :ns, relay_id: "r", factory_id: "f", plugins: []}]
       }
 
       reality = %{
         active_runners: %{ns: MapSet.new()},
-        operators: %{{:ns, "r"} => %{bound_runner: nil, factory_id: "f"}},
+        relays: %{{:ns, "r"} => %{bound_runner: nil, factory_id: "f"}},
         placement: %{{:ns, "f"} => %{local: :unknown, remote_nodes: [:peer@host]}},
-        stalled_operators: MapSet.new()
+        stalled_relays: MapSet.new()
       }
 
       delta = diff(intent, reality)
-      assert delta.unbound_operators == [{:ns, "r"}]
+      assert delta.unbound_relays == [{:ns, "r"}]
     end
 
     test "no eligible fleet anywhere stays an ordinary rebind — degraded, no re-place churn" do
       intent = %Intent{
-        operators: [%{namespace: :ns, operator_id: "r", factory_id: "f", plugins: []}]
+        relays: [%{namespace: :ns, relay_id: "r", factory_id: "f", plugins: []}]
       }
 
       reality = %{
         active_runners: %{ns: MapSet.new()},
-        operators: %{{:ns, "r"} => %{bound_runner: nil, factory_id: "f"}},
+        relays: %{{:ns, "r"} => %{bound_runner: nil, factory_id: "f"}},
         placement: %{{:ns, "f"} => %{local: [], remote_nodes: []}},
-        stalled_operators: MapSet.new()
+        stalled_relays: MapSet.new()
       }
 
       delta = diff(intent, reality)
-      assert delta.unbound_operators == [{:ns, "r"}]
+      assert delta.unbound_relays == [{:ns, "r"}]
     end
 
-    test "I2: classifies missing and extra plugins on a live operator" do
+    test "I2: classifies missing and extra plugins on a live relay" do
       p = plugin("declared")
 
       intent = %Intent{
-        operators: [
-          %{namespace: :ns, operator_id: "r", factory_id: nil, plugins: [{"declared", p}]}
+        relays: [
+          %{namespace: :ns, relay_id: "r", factory_id: nil, plugins: [{"declared", p}]}
         ]
       }
 
       reality = %{
         active_runners: %{ns: MapSet.new(["e"])},
-        operators: %{
+        relays: %{
           {:ns, "r"} => %{
             bound_runner: "e",
             pid: self(),
@@ -288,7 +288,7 @@ defmodule Flezha.Convergence.DiffTest do
             subscribed_plugins: ["stray"]
           }
         },
-        stalled_operators: MapSet.new()
+        stalled_relays: MapSet.new()
       }
 
       delta = diff(intent, reality)
@@ -301,8 +301,8 @@ defmodule Flezha.Convergence.DiffTest do
       p = plugin("declared")
 
       intent = %Intent{
-        operators: [
-          %{namespace: :ns, operator_id: "r", factory_id: nil, plugins: [{"declared", p}]}
+        relays: [
+          %{namespace: :ns, relay_id: "r", factory_id: nil, plugins: [{"declared", p}]}
         ]
       }
 
@@ -310,10 +310,10 @@ defmodule Flezha.Convergence.DiffTest do
       # steps loop. The rehydrating bind replays its plugins.
       reality = %{
         active_runners: %{ns: MapSet.new(["e"])},
-        operators: %{
+        relays: %{
           {:ns, "r"} => %{bound_runner: nil, pid: self(), suspended?: true, running_plugins: []}
         },
-        stalled_operators: MapSet.new()
+        stalled_relays: MapSet.new()
       }
 
       delta = diff(intent, reality)
@@ -327,8 +327,8 @@ defmodule Flezha.Convergence.DiffTest do
       p = plugin("declared")
 
       intent = %Intent{
-        operators: [
-          %{namespace: :ns, operator_id: "r", factory_id: nil, plugins: [{"declared", p}]}
+        relays: [
+          %{namespace: :ns, relay_id: "r", factory_id: nil, plugins: [{"declared", p}]}
         ]
       }
 
@@ -336,10 +336,10 @@ defmodule Flezha.Convergence.DiffTest do
       # the un-park activates them.
       reality = %{
         active_runners: %{ns: MapSet.new(["e"])},
-        operators: %{
+        relays: %{
           {:ns, "r"} => %{bound_runner: "e", pid: self(), parked?: true, running_plugins: []}
         },
-        stalled_operators: MapSet.new()
+        stalled_relays: MapSet.new()
       }
 
       delta = diff(intent, reality)
@@ -352,13 +352,13 @@ defmodule Flezha.Convergence.DiffTest do
       p = plugin("p1")
 
       intent = %Intent{
-        operators: [%{namespace: :ns, operator_id: "r", factory_id: nil, plugins: [{"p1", p}]}]
+        relays: [%{namespace: :ns, relay_id: "r", factory_id: nil, plugins: [{"p1", p}]}]
       }
 
       reality = %{
         active_runners: %{ns: MapSet.new(["e"])},
-        operators: %{{:ns, "r"} => %{bound_runner: "e", pid: self(), running_plugins: ["p1"]}},
-        stalled_operators: MapSet.new()
+        relays: %{{:ns, "r"} => %{bound_runner: "e", pid: self(), running_plugins: ["p1"]}},
+        stalled_relays: MapSet.new()
       }
 
       delta = diff(intent, reality)
@@ -366,24 +366,24 @@ defmodule Flezha.Convergence.DiffTest do
       assert delta.extra_plugins == []
     end
 
-    # fails when: an operator whose declared plugin set reads empty (cspec lag or
+    # fails when: a relay whose declared plugin set reads empty (cspec lag or
     # read failure) has its entire running plugin set torn down every tick,
     # causing a stop/re-subscribe storm
     test "I2: empty declared plugin set never marks running plugins as extra" do
       intent = %Intent{
-        operators: [%{namespace: :ns, operator_id: "r", factory_id: nil, plugins: []}]
+        relays: [%{namespace: :ns, relay_id: "r", factory_id: nil, plugins: []}]
       }
 
       reality = %{
         active_runners: %{ns: MapSet.new(["e"])},
-        operators: %{
+        relays: %{
           {:ns, "r"} => %{
             bound_runner: "e",
             pid: self(),
             running_plugins: ["ws_in", "http_out"]
           }
         },
-        stalled_operators: MapSet.new()
+        stalled_relays: MapSet.new()
       }
 
       delta = diff(intent, reality)
@@ -395,14 +395,14 @@ defmodule Flezha.Convergence.DiffTest do
       p = plugin("ws_in")
 
       intent = %Intent{
-        operators: [
-          %{namespace: :ns, operator_id: "r", factory_id: nil, plugins: [{"ws_in", p}]}
+        relays: [
+          %{namespace: :ns, relay_id: "r", factory_id: nil, plugins: [{"ws_in", p}]}
         ]
       }
 
       reality = %{
         active_runners: %{ns: MapSet.new(["e"])},
-        operators: %{
+        relays: %{
           {:ns, "r"} => %{
             bound_runner: "e",
             pid: self(),
@@ -410,7 +410,7 @@ defmodule Flezha.Convergence.DiffTest do
             plugin_health: %{"ws_in" => {:unhealthy, :connection_idle}}
           }
         },
-        stalled_operators: MapSet.new()
+        stalled_relays: MapSet.new()
       }
 
       delta = diff(intent, reality)
@@ -425,10 +425,10 @@ defmodule Flezha.Convergence.DiffTest do
       fine = plugin("fine")
 
       intent = %Intent{
-        operators: [
+        relays: [
           %{
             namespace: :ns,
-            operator_id: "r",
+            relay_id: "r",
             factory_id: nil,
             plugins: [{"gone", missing}, {"shaky", shaky}, {"fine", fine}]
           }
@@ -437,7 +437,7 @@ defmodule Flezha.Convergence.DiffTest do
 
       reality = %{
         active_runners: %{ns: MapSet.new(["e"])},
-        operators: %{
+        relays: %{
           {:ns, "r"} => %{
             bound_runner: "e",
             pid: self(),
@@ -447,7 +447,7 @@ defmodule Flezha.Convergence.DiffTest do
             plugin_health: %{"shaky" => {:unhealthy, :produce_stalled}}
           }
         },
-        stalled_operators: MapSet.new()
+        stalled_relays: MapSet.new()
       }
 
       delta = diff(intent, reality)
@@ -455,19 +455,19 @@ defmodule Flezha.Convergence.DiffTest do
       assert delta.unhealthy_plugins == [{{:ns, "r"}, "shaky", shaky, :produce_stalled}]
     end
 
-    test "I2: skips plugin diff for operators with no live pid" do
+    test "I2: skips plugin diff for relays with no live pid" do
       p = plugin("declared")
 
       intent = %Intent{
-        operators: [
-          %{namespace: :ns, operator_id: "r", factory_id: nil, plugins: [{"declared", p}]}
+        relays: [
+          %{namespace: :ns, relay_id: "r", factory_id: nil, plugins: [{"declared", p}]}
         ]
       }
 
       reality = %{
         active_runners: %{ns: MapSet.new()},
-        operators: %{{:ns, "r"} => %{bound_runner: nil, pid: nil, running_plugins: []}},
-        stalled_operators: MapSet.new()
+        relays: %{{:ns, "r"} => %{bound_runner: nil, pid: nil, running_plugins: []}},
+        stalled_relays: MapSet.new()
       }
 
       delta = diff(intent, reality)
@@ -476,55 +476,55 @@ defmodule Flezha.Convergence.DiffTest do
 
     test "skips misbound classification when the namespace's live-runner read is :unknown" do
       # C1 regression: a failed FleetManager read (Probe records `:unknown`)
-      # must NOT make every bound operator misbound — that mass-migrates a whole
+      # must NOT make every bound relay misbound — that mass-migrates a whole
       # namespace on a transient read race.
       intent = %Intent{
-        operators: [
-          %{namespace: :ns, operator_id: "a", factory_id: nil, plugins: []},
-          %{namespace: :ns, operator_id: "b", factory_id: nil, plugins: []}
+        relays: [
+          %{namespace: :ns, relay_id: "a", factory_id: nil, plugins: []},
+          %{namespace: :ns, relay_id: "b", factory_id: nil, plugins: []}
         ]
       }
 
       reality = %{
         active_runners: %{ns: :unknown},
-        operators: %{
+        relays: %{
           {:ns, "a"} => %{bound_runner: "e1"},
           {:ns, "b"} => %{bound_runner: "e2"}
         },
-        stalled_operators: MapSet.new()
+        stalled_relays: MapSet.new()
       }
 
       delta = diff(intent, reality)
-      assert delta.misbound_operators == []
-      assert delta.unbound_operators == []
+      assert delta.misbound_relays == []
+      assert delta.unbound_relays == []
     end
 
-    test "skips an operator whose own state read failed (bound_runner :unknown)" do
+    test "skips a relay whose own state read failed (bound_runner :unknown)" do
       intent = %Intent{
-        operators: [%{namespace: :ns, operator_id: "r", factory_id: nil, plugins: []}]
+        relays: [%{namespace: :ns, relay_id: "r", factory_id: nil, plugins: []}]
       }
 
       reality = %{
         active_runners: %{ns: MapSet.new(["e_live"])},
-        operators: %{{:ns, "r"} => %{bound_runner: :unknown, pid: nil, running_plugins: []}},
-        stalled_operators: MapSet.new()
+        relays: %{{:ns, "r"} => %{bound_runner: :unknown, pid: nil, running_plugins: []}},
+        stalled_relays: MapSet.new()
       }
 
       delta = diff(intent, reality)
-      assert delta.misbound_operators == []
-      assert delta.unbound_operators == []
+      assert delta.misbound_relays == []
+      assert delta.unbound_relays == []
       assert delta.missing_plugins == []
     end
   end
 
   describe "Planner.plan/3" do
-    test "orders eviction before rebind for misbound operators" do
-      delta = %Diff{misbound_operators: [{{:ns, "r"}, "e_dead", :probe}]}
+    test "orders eviction before rebind for misbound relays" do
+      delta = %Diff{misbound_relays: [{{:ns, "r"}, "e_dead", :probe}]}
       plan = Planner.plan(delta, Backoff.new(:heal))
 
       assert [
                %{primitive: :evict_runner, target: "e_dead"},
-               %{primitive: :rebind_operator} = rebind
+               %{primitive: :rebind_relay} = rebind
              ] =
                plan
 
@@ -533,14 +533,14 @@ defmodule Flezha.Convergence.DiffTest do
     end
 
     test "caps ops per tick at max_ops" do
-      delta = %Diff{unbound_operators: for(i <- 1..30, do: {:ns, "r#{i}"})}
+      delta = %Diff{unbound_relays: for(i <- 1..30, do: {:ns, "r#{i}"})}
       assert length(Planner.plan(delta, Backoff.new(:heal), max_ops: 5)) == 5
     end
 
-    test "unbound operators bind via rebind_operator (un-park), not a no-op" do
-      delta = %Diff{unbound_operators: [{:ns, "parked"}]}
+    test "unbound relays bind via rebind_relay (un-park), not a no-op" do
+      delta = %Diff{unbound_relays: [{:ns, "parked"}]}
 
-      assert [%{primitive: :rebind_operator, namespace: :ns, target: "parked"}] =
+      assert [%{primitive: :rebind_relay, namespace: :ns, target: "parked"}] =
                Planner.plan(delta, Backoff.new(:heal))
     end
 
@@ -570,29 +570,29 @@ defmodule Flezha.Convergence.DiffTest do
     end
 
     test "a declared disconnect keys the rebind on the fact, a probed one on the primitive" do
-      declared = %Diff{misbound_operators: [{{:ns, "r"}, "e_dead", :runner_disconnected}]}
+      declared = %Diff{misbound_relays: [{{:ns, "r"}, "e_dead", :runner_disconnected}]}
       [_evict, rebind] = Planner.plan(declared, Backoff.new(:heal))
       assert Planner.key(rebind) == {:runner_disconnected, "r"}
       refute Planner.ladder?(rebind)
 
-      probed = %Diff{misbound_operators: [{{:ns, "r"}, "e_dead", :probe}]}
+      probed = %Diff{misbound_relays: [{{:ns, "r"}, "e_dead", :probe}]}
       [_evict, rebind] = Planner.plan(probed, Backoff.new(:heal))
-      assert Planner.key(rebind) == {:rebind_operator, "r"}
+      assert Planner.key(rebind) == {:rebind_relay, "r"}
     end
 
-    test "a parked operator rebinds on the parked ladder, cutting a dead transport first" do
+    test "a parked relay rebinds on the parked ladder, cutting a dead transport first" do
       # The verdict rides the fact: `Lifecycle.park/2` classifies its own
       # failure reason, so the Planner reads it rather than re-deriving it.
       dead =
         %Diff{
-          parked_operators: [
+          parked_relays: [
             {{:ns, "r"}, %{reason: {:ping_failed, :closed}, transport: :dead}, "e1"}
           ]
         }
 
       assert [
                %{primitive: :reset_control_channel, target: "e1"},
-               %{primitive: :rebind_operator, target: "r"} = rebind
+               %{primitive: :rebind_relay, target: "r"} = rebind
              ] = Planner.plan(dead, Backoff.new(:heal))
 
       assert Planner.key(rebind) == {:parked, "r"}
@@ -602,12 +602,12 @@ defmodule Flezha.Convergence.DiffTest do
       # parked ladder has walked two rungs.
       busy =
         %Diff{
-          parked_operators: [
+          parked_relays: [
             {{:ns, "r"}, %{reason: {:ping_failed, :timeout}, transport: :busy}, "e1"}
           ]
         }
 
-      assert [%{primitive: :rebind_operator}] = Planner.plan(busy, Backoff.new(:heal))
+      assert [%{primitive: :rebind_relay}] = Planner.plan(busy, Backoff.new(:heal))
 
       # Two rungs recorded long enough ago that the cooldown has opened, so
       # the tick plans both the cut and the retry it precedes. The clock is
@@ -620,7 +620,7 @@ defmodule Flezha.Convergence.DiffTest do
           Backoff.update(b, {:parked, "r"}, :error, long_ago)
         end)
 
-      assert [%{primitive: :reset_control_channel, target: "e1"}, %{primitive: :rebind_operator}] =
+      assert [%{primitive: :reset_control_channel, target: "e1"}, %{primitive: :rebind_relay}] =
                Planner.plan(busy, walked)
     end
 
@@ -650,18 +650,18 @@ defmodule Flezha.Convergence.DiffTest do
 
     defp waiting_delta(state) do
       intent = %Intent{
-        operators: [%{namespace: :ns, operator_id: "r", factory_id: "f", plugins: []}]
+        relays: [%{namespace: :ns, relay_id: "r", factory_id: "f", plugins: []}]
       }
 
       reality = %{
         active_runners: %{ns: MapSet.new(["e_live"])},
-        operators: %{@waiting_ref => %{bound_runner: "e_dead", pid: self(), factory_id: "f"}}
+        relays: %{@waiting_ref => %{bound_runner: "e_dead", pid: self(), factory_id: "f"}}
       }
 
       Diff.compute(
         intent,
         reality,
-        ConvergenceFixtures.verdicts([{{:operator, @waiting_ref}, state}])
+        ConvergenceFixtures.verdicts([{{:relay, @waiting_ref}, state}])
       )
     end
 
@@ -685,15 +685,15 @@ defmodule Flezha.Convergence.DiffTest do
       draining = %{{:node_draining, node()} => %{at: 0, args: %{}}}
 
       intent = %Intent{
-        operators: [%{namespace: :ns, operator_id: "r", factory_id: "f", plugins: []}]
+        relays: [%{namespace: :ns, relay_id: "r", factory_id: "f", plugins: []}]
       }
 
       reality = %{
         active_runners: %{ns: MapSet.new(["e_live"])},
-        operators: %{@waiting_ref => %{bound_runner: "e_dead", pid: self(), factory_id: "f"}}
+        relays: %{@waiting_ref => %{bound_runner: "e_dead", pid: self(), factory_id: "f"}}
       }
 
-      verdicts = ConvergenceFixtures.verdicts([{{:operator, @waiting_ref}, :failed}])
+      verdicts = ConvergenceFixtures.verdicts([{{:relay, @waiting_ref}, :failed}])
 
       assert waiting?(Diff.compute(intent, reality, verdicts))
       assert Diff.compute(intent, reality, verdicts, draining).draining

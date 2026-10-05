@@ -1,7 +1,7 @@
 # Feed the echo a file
 
 On this page you attach a file to each side of `my_echo`: lines added to one
-file go in, and their echoes land in another. The operator declared where its
+file go in, and their echoes land in another. The relay declared where its
 data comes in (`in`) and goes out (`out`); a plugin decides what is on the
 other side, so the code does not change.
 [Plugins](../../topics/plugins/plugins.md) explains how plugins are enabled and
@@ -18,18 +18,18 @@ started in.
 > {: .step}
 
 ```sh
-$ ./bin/flz plugin enable writer operator_file_sink \
-  --operator_id=my_echo \
+$ ./bin/flz plugin enable writer relay_file_sink \
+  --relay_id=my_echo \
   --hook=on_output \
   --Xpath=echo-out.txt
 ```
 
-`writer` is the plugin's name, `operator_file_sink` is which plugin,
-`--hook=on_output` sends it everything the operator emits, and `--Xpath` is the
+`writer` is the plugin's name, `relay_file_sink` is which plugin,
+`--hook=on_output` sends it everything the relay emits, and `--Xpath` is the
 plugin's own setting. Send a message, and a moment later it is in the file:
 
 ```sh
-$ ./bin/flz operator send my_echo --text hello
+$ ./bin/flz relay send my_echo --text hello
 ```
 
 ```output
@@ -49,8 +49,8 @@ echo: hello
 > {: .step}
 
 ```sh
-$ ./bin/flz plugin enable reader operator_file_source \
-  --operator_id=my_echo \
+$ ./bin/flz plugin enable reader relay_file_source \
+  --relay_id=my_echo \
   --Xpath=echo-in.txt \
   --Xchannel_in=in
 ```
@@ -74,15 +74,15 @@ echo: from a file
 That is the whole loop. The reader looks for new lines once a second and
 resumes from where it stopped after a restart or a move.
 
-`flz operator info` lists every operator with the plugins attached to it, their
+`flz relay info` lists every relay with the plugins attached to it, their
 files and their health:
 
 ```sh
-$ ./bin/flz operator info
+$ ./bin/flz relay info
 ```
 
 ```output
-Operator: my_echo
+Relay: my_echo
   Run: flow
   Durable: local (sleep_after: false)
   Phase: running

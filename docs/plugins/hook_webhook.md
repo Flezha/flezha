@@ -2,7 +2,7 @@
 
 The webhook plugin tells another service what happens in a namespace: a chat channel, an
 alerting tool, or any service that takes an HTTP POST. It is a controller plugin, so no
-operator is bound to it: it sends every hook event it is enabled for as one JSON object to
+relay is bound to it: it sends every hook event it is enabled for as one JSON object to
 a URL. `Flezha.Plugin.Provider.HookWebhook` is its provider, under the provider id
 `hook_webhook`.
 
@@ -10,8 +10,8 @@ a URL. `Flezha.Plugin.Provider.HookWebhook` is its provider, under the provider 
 | --- | --- |
 | Type | controller plugin |
 | Ships | built in |
-| Shareable | no: it is bound to no operator; one copy runs on each controller of its namespace, or one in the cluster with `--single` |
-| Partitioned operators | not applicable |
+| Shareable | no: it is bound to no relay; one copy runs on each controller of its namespace, or one in the cluster with `--single` |
+| Partitioned relays | not applicable |
 | Durability | none: best effort, an event is a notice, not a record |
 
 ## Options
@@ -30,18 +30,18 @@ a URL. `Flezha.Plugin.Provider.HookWebhook` is its provider, under the provider 
 ```sh
 $ flz plugin enable alerts hook_webhook \
   --Xurl=https://hooks.example.test/services/T000/B000/XXXX \
-  --hook on_operator_failed --hook on_dead_letter --namespace prod
+  --hook on_relay_failed --hook on_dead_letter --namespace prod
 ```
 
 `flz plugin list --namespace prod` shows the plugin with its hooks and the controllers it
-runs on. `flz plugin update alerts --hook on_operator_started --namespace prod` replaces its
+runs on. `flz plugin update alerts --hook on_relay_started --namespace prod` replaces its
 hooks; `flz plugin bind` of it is refused with `plugin.not_bindable`.
 
 ## Contract
 
 | | |
 | --- | --- |
-| Hooks | `on_operator_started`, `on_operator_stopped`, `on_operator_failed`, `on_dead_letter`, `on_plugin_unhealthy`, each named with `--hook` |
+| Hooks | `on_relay_started`, `on_relay_stopped`, `on_relay_failed`, `on_dead_letter`, `on_plugin_unhealthy`, each named with `--hook` |
 | Runs | one copy on every controller that holds the namespace, each sending what happened on its own controller; one copy in the cluster with `--single` |
 | Request | `POST` to `url`, the event as a JSON object, `content-type: application/json`, one connection kept open, events in the order they happened on the controller |
 | Retries | a 429, a 5xx, a timeout or a transport error, after 1 s and then 5 s, up to `retries` |
@@ -72,15 +72,15 @@ and the fields of its hook:
 
 | Hook | When | Fields |
 | --- | --- | --- |
-| `on_operator_started` | a deliberate start (a user, a schedule, a tasklet or the admin SDK) has declared the operator and it runs; not a restart, a move, a wake or a partition rescale | `operator`, `factory` |
-| `on_operator_stopped` | a deliberate stop or a completion; not a partition rescale. `controller` is the one that ran the stop | `operator`, `reason` (`stopped` or `completed`) |
-| `on_operator_failed` | the operator's health turned parked, or failed because its runner was lost; once, until it is healthy again or stopped | `operator`, `error` (an error code) |
-| `on_dead_letter` | a record was newly dead-lettered | `operator`, `entry` (the DLQ entry, as `flz dlq show` takes it), `channel`, `error` |
-| `on_plugin_unhealthy` | a plugin bound to an operator turned from healthy to unhealthy | `plugin`, `operator`, `error` |
+| `on_relay_started` | a deliberate start (a user, a schedule, a tasklet or the admin SDK) has declared the relay and it runs; not a restart, a move, a wake or a partition rescale | `relay`, `factory` |
+| `on_relay_stopped` | a deliberate stop or a completion; not a partition rescale. `controller` is the one that ran the stop | `relay`, `reason` (`stopped` or `completed`) |
+| `on_relay_failed` | the relay's health turned parked, or failed because its runner was lost; once, until it is healthy again or stopped | `relay`, `error` (an error code) |
+| `on_dead_letter` | a record was newly dead-lettered | `relay`, `entry` (the DLQ entry, as `flz dlq show` takes it), `channel`, `error` |
+| `on_plugin_unhealthy` | a plugin bound to a relay turned from healthy to unhealthy | `plugin`, `relay`, `error` |
 
-A start and a stop are also the operator's own observability events, `operator_started` and
-`operator_stopped` of source `flezha_operator` beside `operator_exited`, so `flz observe tail
-flezha_operator` and the exporters show them with no plugin enabled.
+A start and a stop are also the relay's own observability events, `relay_started` and
+`relay_stopped` of source `flezha_relay` beside `relay_exited`, so `flz observe tail
+flezha_relay` and the exporters show them with no plugin enabled.
 
 No event carries a record's data: a dead letter names its entry, which `flz dlq show` reads
 with an `ops` token. An `error` the error catalogue does not hold, such as a provider's own
@@ -88,13 +88,13 @@ health reason, is `internal.uncatalogued`.
 
 ```json
 {
-  "hook": "on_operator_failed",
+  "hook": "on_relay_failed",
   "namespace": "prod",
   "controller": "flezha@ctrl-2",
   "at": "2026-10-02T13:41:16.662637Z",
-  "operator": "orders",
+  "relay": "orders",
   "error": "runner.not_connected",
-  "text": "operator orders in prod failed: runner.not_connected"
+  "text": "relay orders in prod failed: runner.not_connected"
 }
 ```
 
@@ -119,7 +119,7 @@ Delivery is best effort. An event waiting on a controller that stops is lost, an
 that happens in the first moments after an enable, before the controller's hook sink has
 heard of the new copy. While a `single` copy moves to another controller, the old and the
 new copy both run for a moment, so an event can be sent twice. The DLQ and
-`flz operator list` remain the record of what happened.
+`flz relay list` remain the record of what happened.
 
 ## Telemetry
 

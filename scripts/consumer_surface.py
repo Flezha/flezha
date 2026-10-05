@@ -49,7 +49,7 @@ HELPERS = {
 
 HELPER_CALL = re.compile(r"\b(" + "|".join(HELPERS) + r")\s*\(")
 # A paren is required, so a `Mod.fun/1` written in a doc or a comment is not a
-# call. That exclusion is what keeps the relay's moduledoc out of the manifest.
+# call. That exclusion is what keeps the receiver's moduledoc out of the manifest.
 DIRECT_CALL = re.compile(r"(?<![\w.:@])(" + MODULE + r")\.(" + FUN + r")\s*\(")
 CAPTURE = re.compile(r"&(" + MODULE + r")\.(" + FUN + r")/(\d+)")
 MODULE_ARG = re.compile(r"^\s*(" + MODULE + r")\s*$")

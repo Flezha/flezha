@@ -70,7 +70,7 @@ defmodule Flezha.Plugin.Extension.Table.Subscription do
   type.
 
   A hook name may arrive as text or as an atom, and sub-opts as a map or
-  a keyword list — the shapes the CLI, the operator-start spec, an installed
+  a keyword list — the shapes the CLI, the relay-start spec, an installed
   package manifest and direct construction produce. Both are resolved against
   a declaration rather than interned, so user text never creates an atom;
   a name that resolves to nothing is refused.
@@ -124,8 +124,8 @@ defmodule Flezha.Plugin.Extension.Table.Subscription do
   end
 
   @doc """
-  The refusal for a hook `catalog` does not hold, naming the hooks it does, so an
-  operator hook on a controller plugin, or the reverse, says which it may name.
+  The refusal for a hook `catalog` does not hold, naming the hooks it does, so a
+  relay hook on a controller plugin, or the reverse, says which it may name.
   """
   @spec unknown_hook(map(), term()) :: {:error, {:unknown_hook, term(), binary()}}
   def unknown_hook(catalog, name),
@@ -489,7 +489,7 @@ defmodule Flezha.Plugin.Extension.Table.Subscription do
         plugin = Map.get(table.plugins, plugin_id)
 
         ctx = %Ctx.Tick{
-          operator_id: plugin.operator_id,
+          relay_id: plugin.relay_id,
           namespace: plugin.namespace,
           runner_id: nil,
           plugin_id: plugin_id

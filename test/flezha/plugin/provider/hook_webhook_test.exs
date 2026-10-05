@@ -62,7 +62,7 @@ defmodule FlezhaTest.Plugin.Provider.HookWebhookTest do
   defp dead_letter(n) do
     :telemetry.execute([:flezha, :dlq, :dead_lettered], %{count: 1}, %{
       namespace: @namespace,
-      operator: "op#{n}",
+      relay: "op#{n}",
       entry: "op#{n}/t/e#{n}",
       channel: "in",
       error: "boom"
@@ -81,7 +81,7 @@ defmodule FlezhaTest.Plugin.Provider.HookWebhookTest do
     assert headers =~ ~r/content-type: application\/json/i
     assert headers =~ ~r/x-token: s3/i
 
-    assert %{"hook" => "on_dead_letter", "operator" => "op1", "text" => text} =
+    assert %{"hook" => "on_dead_letter", "relay" => "op1", "text" => text} =
              Jason.decode!(body)
 
     assert is_binary(text) and text != ""

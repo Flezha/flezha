@@ -19,7 +19,7 @@ use crate::utility::noise::noise;
 pub const CONTROL_PING_PAYLOAD_ID: &str = "control_ping";
 
 /// Payload id for the data-channel heartbeat. The runner writes a bare frame
-/// on every secondary stream so an idle-but-healthy operator keeps the controller's
+/// on every secondary stream so an idle-but-healthy relay keeps the controller's
 /// per-channel liveness clock fresh without producing real output.
 pub const DATA_HEARTBEAT_PAYLOAD_ID: &str = "data_heartbeat";
 

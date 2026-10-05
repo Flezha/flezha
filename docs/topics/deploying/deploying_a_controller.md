@@ -1,20 +1,20 @@
 # Deploying a controller
 
 The controller is the part of Flezha that decides and remembers. Runners run
-operator code and nothing else; every decision about that code's life, and
+relay code and nothing else; every decision about that code's life, and
 every record of it that has to survive a crash, belongs to the controller:
 
-- **Placement and distribution.** Which runner each operator binds to, how a
-  partitioned operator's key groups are divided, and where that work goes when
+- **Placement and distribution.** Which runner each relay binds to, how a
+  partitioned relay's key groups are divided, and where that work goes when
   a runner disconnects or a node leaves the cluster.
 - **Healing.** A convergence loop compares what should be running with what
-  is, on a tick, and closes the gap: it rebinds an operator whose runner went
+  is, on a tick, and closes the gap: it rebinds a relay whose runner went
   away, retries on a backoff ladder, and parks what cannot proceed instead of
   losing it.
 - **Durable state.** Each cell's write-ahead log, the snapshots and the
   dead-letter queue. This is what turns a restart into a resume, and what
   effectively-once delivery is built on.
-- **The registry.** The record of which operators exist and what they were
+- **The registry.** The record of which relays exist and what they were
   doing, kept so that it outlives any single process, and replayed on every
   boot before the controller calls itself ready.
 - **The operations surface.** Namespaces, authorization, tokens and roles,
@@ -337,10 +337,10 @@ that controller owns. Clear a relocated tree by path, with the controller down.
 
 > #### A second controller is capacity, not a backup {: .warning}
 >
-> Each operator runs on exactly one node, with no replicas, and moving state
+> Each relay runs on exactly one node, with no replicas, and moving state
 > between controllers reads it from the source node, so a controller that died
 > with its disk answers nothing and the one adopting its work starts cold. A
-> controller that dies with its disk takes its operators' state, and the record
+> controller that dies with its disk takes its relays' state, and the record
 > of their existence, with it. The remote durability tier is what survives
 > that ([`durability.md`](../basics/durability.md)). Two controllers believed to cover
 > each other are worse off than one controller with the tier on.
@@ -350,22 +350,22 @@ that controller owns. Clear a relocated tree by path, with the controller down.
 Graceful shutdown is on by default. A controller that is told to stop runs
 three phases:
 
-1. **Quiesce.** The node plans nothing new onto itself: an operator start
+1. **Quiesce.** The node plans nothing new onto itself: a relay start
    there answers `shutting_down`, and new runner connections are refused.
-   Running operators and connected runners are not touched.
-2. **Drain.** Each operator it hosts moves to a peer controller while it is
-   still alive, namespace by namespace, concurrently. An operator in the
+   Running relays and connected runners are not touched.
+2. **Drain.** Each relay it hosts moves to a peer controller while it is
+   still alive, namespace by namespace, concurrently. A relay in the
    middle of critical work can defer its move (below); whatever still defers at
    the deadline is moved by force. With no peer to move to, nothing moves, and
-   the next boot restores the operators from disk
-   ([`running_operators.md`](../basics/running_operators.md#after-a-controller-restart)).
+   the next boot restores the relays from disk
+   ([`running_relays.md`](../basics/running_relays.md#after-a-controller-restart)).
 3. **Finalise.** The audit log is closed, pending disk writes are flushed and
    the transports stop; each step is bounded to 5 s, and a failure is logged,
    not fatal.
 
 The whole sequence is bounded by `FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS`. On
-expiry the controller logs an error, stops the remaining operators, finalises
-and reports which operators were still local. It does not hang on a drain.
+expiry the controller logs an error, stops the remaining relays, finalises
+and reports which relays were still local. It does not hang on a drain.
 
 **What starts it:**
 
@@ -402,8 +402,8 @@ its child about two seconds later, whatever the timeouts say.
 | `FLEZHA_GRACEFUL_SHUTDOWN_ENABLED` | `true` | `1`, `true`, `yes` or `on` (any case) is true; anything else turns graceful shutdown off |
 | `FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS` | 60000 | bounds the whole sequence |
 
-**Operators that defer their move.** When any move is planned (a node joining,
-a rebind, a drain), each operator is asked whether it may move now, and
+**Relays that defer their move.** When any move is planned (a node joining,
+a rebind, a drain), each relay is asked whether it may move now, and
 answers "not yet" while a move would tear critical work:
 
 | Busy with | Ready to move when |
@@ -415,8 +415,8 @@ answers "not yet" while a move would tear critical work:
 | Setting | Default | What it does |
 | --- | --- | --- |
 | `FLEZHA_MIGRATION_CONSENT_TIMEOUT_MS` | 5000 | no answer within this counts as "not yet" |
-| `FLEZHA_MIGRATION_RETRY_INTERVAL_MS` | 2000 | how often a deferring operator is asked again |
-| `FLEZHA_MIGRATION_MAX_DEFER_MS` | the shutdown timeout | after this, the operator is moved by force and recovers from its journal and log on the target; a deferring operator does not outlive the shutdown window |
+| `FLEZHA_MIGRATION_RETRY_INTERVAL_MS` | 2000 | how often a deferring relay is asked again |
+| `FLEZHA_MIGRATION_MAX_DEFER_MS` | the shutdown timeout | after this, the relay is moved by force and recovers from its journal and log on the target; a deferring relay does not outlive the shutdown window |
 
 **`flz controller stop`** drives the shutdown in each run mode, streams drain
 progress to stderr, and needs the `controller.stop` permission. Its options:
@@ -426,10 +426,10 @@ drain and only finalises.
 
 | Exit | Meaning |
 | --- | --- |
-| 0 | clean shutdown: each operator moved to a peer, or `--force` finalised cleanly. A stop issued while one is in flight follows it and exits with its outcome |
+| 0 | clean shutdown: each relay moved to a peer, or `--force` finalised cleanly. A stop issued while one is in flight follows it and exits with its outcome |
 | 3 | `controller.unreachable`: the controller is not running, or the socket path is wrong |
 | 4 | `authz.*`: refused for want of a token or a role |
-| 7 | `shutdown.partial_drain`: the timeout passed with operators still local at finalise |
+| 7 | `shutdown.partial_drain`: the timeout passed with relays still local at finalise |
 
 Before an admin is claimed, or when the controller is wedged, the release
 script stops it with the cookie alone:
@@ -465,7 +465,7 @@ each phase boundary also logs a `[shutdown] ...` line:
 | `:phase_started` | none | `phase`: `:quiesce`, `:drain` or `:finalise` |
 | `:phase_completed` | `duration_ms` | `phase` |
 | `:drain_progress` | `migrated`, `forced`, `remaining_hubs`, `elapsed_ms` | `namespace`, one per finished namespace |
-| `:timeout` | none | `phase`, `still_local` (operator ids) |
+| `:timeout` | none | `phase`, `still_local` (relay ids) |
 | `:complete` | `duration_ms` | `outcome`: `:clean`, `:partial` or `:forced`; `reason` |
 
 ## Limits and gotchas
@@ -487,7 +487,7 @@ each phase boundary also logs a `[shutdown] ...` line:
 - [`connecting_a_runner.md`](connecting_a_runner.md): runners attaching to the controller.
 - [`authorization.md`](../basics/authorization.md): claiming an admin, tokens, TLS.
 - [`durability.md`](../basics/durability.md): the remote durability tier.
-- [`running_operators.md`](../basics/running_operators.md): what the controller restores at boot, and `flz reset`.
+- [`running_relays.md`](../basics/running_relays.md): what the controller restores at boot, and `flz reset`.
 - [`clustering.md`](clustering.md), [`kubernetes.md`](kubernetes.md).
 - [`../../configuration.md`](../../configuration.md): every variable and application key.
 - Tutorial: [`start_the_controller.md`](../../tutorials/echo/start_the_controller.md).

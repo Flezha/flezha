@@ -22,7 +22,7 @@ defmodule Flezha.SDK.TopologyWiringTest do
 
   alias Flezha.SDK.{Channels, Topology}
 
-  import FlezhaTest.Helper.SdkOperatorHarness, only: [refusal_issues: 1]
+  import FlezhaTest.Helper.SdkRelayHarness, only: [refusal_issues: 1]
 
   defmodule EchoTask do
     use Flezha.SDK.Tasklet, name: "echo"

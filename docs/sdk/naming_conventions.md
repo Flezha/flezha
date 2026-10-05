@@ -19,15 +19,15 @@ or `startAsync()`.
 
 ### 2. `registerFactory` declares a factory; `unregisterFactory` is its inverse
 
-Declaring an operator class tells the runtime what it *may spawn instances of
-later* (via `AddOperator`). One method does it, whichever kind the operator
-is: `registerFactory(Class)` (Java, Node, PHP), `register_factory(operator)`
+Declaring a relay class tells the runtime what it *may spawn instances of
+later* (via `AddRelay`). One method does it, whichever kind the relay
+is: `registerFactory(Class)` (Java, Node, PHP), `register_factory(relay)`
 (Rust, Python, Ruby, Elixir), legal before and after `start()`. Its one inverse
 is `unregisterFactory` / `unregister_factory`, taking exactly what the
 registration took — never an `undefine*` / `drop*` synonym.
 
 What is registered is a *factory*: the class the controller places by factory
-id. That is why the name says so, and why no call names the kind — an operator
+id. That is why the name says so, and why no call names the kind — a relay
 already declares its own, and a call that named it again could disagree with the
 declaration.
 
@@ -39,17 +39,17 @@ the direct precedent. `run()` is pure sugar (`start()` then
 `awaitTermination()`), never an independent implementation, so the two can
 never drift.
 
-### 4. A kind an operator already declares is never a second method
+### 4. A kind a relay already declares is never a second method
 
 Two per-kind methods were the earlier reading of this rule, and they were
-wrong: the kind is a fact of the operator, so a second method for it is a
+wrong: the kind is a fact of the relay, so a second method for it is a
 second place for one fact to be stated, and a call that can disagree with a
 declaration. One `registerFactory` reads the kind from what it is handed — a
 Rust trait impl, a Java interface, an exported callback — and refuses what it
 cannot read, by name.
 
 Where a language genuinely cannot express one method over both kinds, that is
-what earns a second one. Rust can: a sealed `Operator<K>` trait over the two
+what earns a second one. Rust can: a sealed `Relay<K>` trait over the two
 kind markers, with `K` inferred from the value.
 
 ### 5. Accessors return `Optional`/`Option`, never throw for "nothing is there yet"
@@ -77,7 +77,7 @@ told apart by the error's `code`, the same string in every SDK:
 | duplicate `factory_id`              | `topology.duplicate_factory_id`              | `DuplicateFactoryId { factory_id }`          |
 | runner lifecycle misuse             | `runtime.runner_already_running`, `namespace.invalid_name` | `AlreadyRunning { namespace }`, `InvalidNamespace` |
 | connection failure at `start()`     | `runner.controller_unreachable`, or the controller's own refusal code | `ConnectFailed(String)`, `Refused(..)` |
-| removing a type with live instances | `runtime.operator_type_in_use`               | `OperatorTypeInUse { factory_id, live_instances }` |
+| removing a type with live instances | `runtime.relay_type_in_use`               | `RelayTypeInUse { factory_id, live_instances }` |
 
 What Java throws at `registerFactory(...)`, Rust returns as `Err` from
 `register_factory(R)`, with the same code. The three short-form refusals
@@ -106,7 +106,7 @@ is only justified when the concept itself is novel.
 
 Topology declaration reads in flow order on a **stream handle**. `input`
 declares an entry channel (its name is explicit — an external address of the
-operator; an operator may declare several, one per external source, and the
+relay; a relay may declare several, one per external source, and the
 controller routes each inbound frame to its entry by `metadata["channel"]`),
 `.into(Task)` wires a consumer and returns *that tasklet's* output stream,
 and plugin egress is `sink()` / `sink(name)` / `sink(name, serializer)` (Rust,
@@ -138,7 +138,7 @@ given at wiring time (`into(Filter.class, "spam_filter")` in Java,
 spelling). The node name replaces `name()` for everything identity feeds:
 per-cell state directories, journal entries, the derived channel name and
 diagnostics. Two unnamed mentions of one class are the same node (which is how
-fan-in is spelled); node identities are unique per operator. Channel names
+fan-in is spelled); node identities are unique per relay. Channel names
 auto-derive from the producer node's identity, so renaming a language class
 never changes an on-disk or on-wire name — identity strings are hand-written.
 

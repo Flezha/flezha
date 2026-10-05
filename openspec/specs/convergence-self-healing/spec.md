@@ -5,14 +5,14 @@ TBD - created by archiving change unified-convergence-loop. Update Purpose after
 ## Requirements
 ### Requirement: Single convergence loop owns all self-healing decisions
 
-The system MUST run exactly one self-healing decision loop (`Flezha.Convergence.Loop`), and every remedy MUST be one of its declared primitives — `rebind_operator`, `resync_runner`, `start_plugin`, `stop_plugin`, `restart_plugin`, `evict_runner`, `restart_runner`, `reset_control_channel`, `publish_binding` — planned by the Planner and executed by `Heal.execute/1`. No module other than the Loop emits heal actions. Watchdog, FleetManager, HubManager, Healthz, StreamChannel, the Overwatch's bind, the WAL admission, the extension table and the registry hooks each record a fact and declare it through `Loop.declare/1`; none of them decide what to fix, none carry a retry ladder, counter or clock of its own, and none invoke a remedy entry point directly. In particular the Watchdog SHALL NOT call `Recovery.resync` (or any other remedy) itself — neither for an output stall nor for a compaction give-up — and the WAL admission SHALL NOT resync a seq gap itself. The one remedy-shaped action outside the primitives is the node drain of a graceful shutdown: an administration verb the loop is told about (`{:node_draining, deadline}`) and never chooses, reached through `HubManager.drain_hub/2` from `lib/flezha/shutdown/` only.
+The system MUST run exactly one self-healing decision loop (`Flezha.Convergence.Loop`), and every remedy MUST be one of its declared primitives — `rebind_relay`, `resync_runner`, `start_plugin`, `stop_plugin`, `restart_plugin`, `evict_runner`, `restart_runner`, `reset_control_channel`, `publish_binding` — planned by the Planner and executed by `Heal.execute/1`. No module other than the Loop emits heal actions. Watchdog, FleetManager, HubManager, Healthz, StreamChannel, the Overwatch's bind, the WAL admission, the extension table and the registry hooks each record a fact and declare it through `Loop.declare/1`; none of them decide what to fix, none carry a retry ladder, counter or clock of its own, and none invoke a remedy entry point directly. In particular the Watchdog SHALL NOT call `Recovery.resync` (or any other remedy) itself — neither for an output stall nor for a compaction give-up — and the WAL admission SHALL NOT resync a seq gap itself. The one remedy-shaped action outside the primitives is the node drain of a graceful shutdown: an administration verb the loop is told about (`{:node_draining, deadline}`) and never chooses, reached through `HubManager.drain_hub/2` from `lib/flezha/shutdown/` only.
 
 #### Scenario: stall is observed in one place, decision happens in another
-- **GIVEN** the State Watchdog detects output stall for operator `btc_feed` tasklet 0
+- **GIVEN** the State Watchdog detects output stall for relay `btc_feed` tasklet 0
 - **WHEN** the Watchdog flags the stall
-- **THEN** the Watchdog emits a `[:flezha, :state, :output_stall]` event with `%{operator_class, operator_instance, tasklet, key}`
+- **THEN** the Watchdog emits a `[:flezha, :state, :output_stall]` event with `%{relay_class, relay_instance, tasklet, key}`
 - **AND** the Watchdog performs no heal action of its own — no direct `Recovery.resync`, no dedup bookkeeping
-- **AND** the Convergence Loop holds the declared stall as a fact, and on its next tick the Diff classifies the divergence and the Planner emits the output-stall ladder op (`resync_runner` first, escalating to `rebind_operator`) under per-target backoff.
+- **AND** the Convergence Loop holds the declared stall as a fact, and on its next tick the Diff classifies the divergence and the Planner emits the output-stall ladder op (`resync_runner` first, escalating to `rebind_relay`) under per-target backoff.
 
 #### Scenario: a compaction give-up is declared, not resynced
 - **GIVEN** the Watchdog's strike table reaches its give-up count for a Cell
@@ -24,10 +24,10 @@ The system MUST run exactly one self-healing decision loop (`Flezha.Convergence.
 - **WHEN** the gaps arrive
 - **THEN** the first SHALL declare `{:seq_gap, cell_id, runner_id}` and the rest SHALL refresh the same key, the loop SHALL plan `resync_runner` for the Cell on its table, and the next contiguous append SHALL declare `{:seq_gap_closed, cell_id}`, which resets the key
 
-#### Scenario: a runner disconnect is a declared fact planned per operator
-- **GIVEN** a runner with thirty bound operators closes its session while another runner advertising their factory is in the fleet
+#### Scenario: a runner disconnect is a declared fact planned per relay
+- **GIVEN** a runner with thirty bound relays closes its session while another runner advertising their factory is in the fleet
 - **WHEN** the fleet manager observes the close
-- **THEN** it SHALL declare `{:runner_disconnected, ns, runner_id}` and reroute nothing; the loop SHALL tick at once, plan `rebind_operator` for at most twenty of them keyed on the reason, and re-tick without waiting for the rest
+- **THEN** it SHALL declare `{:runner_disconnected, ns, runner_id}` and reroute nothing; the loop SHALL tick at once, plan `rebind_relay` for at most twenty of them keyed on the reason, and re-tick without waiting for the rest
 
 #### Scenario: a stale registry tag is re-asserted by the planner
 - **GIVEN** a registry write lands after a rebind naming the old runner
@@ -36,7 +36,7 @@ The system MUST run exactly one self-healing decision loop (`Flezha.Convergence.
 
 ### Requirement: The reconciler is a pure-function pipeline, not scattered handlers
 
-The self-healing decision logic MUST be expressed as a pure-function pipeline under `lib/flezha/convergence/`: `Loop.declare/1` (the one intake — a fact `{kind, target, args}` held in one map keyed `{kind, target}` with the time of its last declaration, refreshed by a re-declaration, cleared by its counter-fact or by its grace expiry, ticking the loop at once when the key is new) → `Probe.snapshot/0` (observe reality) → `Intent` (declared state) → `Diff.compute/3` (divergence delta, over probed reality AND this tick's facts) → `Planner` (ordered, backoff-filtered ops) → `Heal.execute/1` (steps primitives). The two telemetry subscriptions and the runner-connected handler SHALL be declarations too, so a site tells the loop in one shape. Adding a failure mode means one `declare/1` kind consumed by one Diff field, or one primitive entry with the Diff rule that plans it — NOT a new self-healing module, a site-local ladder, or decision branches scattered across services. The heal surface is a fixed, small set of idempotent primitives, each an entry naming its key rule, its executor and the evidence that resets it. The Planner SHALL be the only place a divergence becomes an op — no caller may inject ops into or around a produced plan. That rule governs remedies: everything that acts on an operator, a runner, a plugin or a Cell. The loop carries one duty outside it — on each tick it reclaims this node's hub for any namespace whose local fleet is empty and none of whose operators this node hosts. That reclaim names no target, takes no backoff and repairs nothing: it retires a node-local resource the fleet no longer justifies, so it is neither a primitive nor planned.
+The self-healing decision logic MUST be expressed as a pure-function pipeline under `lib/flezha/convergence/`: `Loop.declare/1` (the one intake — a fact `{kind, target, args}` held in one map keyed `{kind, target}` with the time of its last declaration, refreshed by a re-declaration, cleared by its counter-fact or by its grace expiry, ticking the loop at once when the key is new) → `Probe.snapshot/0` (observe reality) → `Intent` (declared state) → `Diff.compute/3` (divergence delta, over probed reality AND this tick's facts) → `Planner` (ordered, backoff-filtered ops) → `Heal.execute/1` (steps primitives). The two telemetry subscriptions and the runner-connected handler SHALL be declarations too, so a site tells the loop in one shape. Adding a failure mode means one `declare/1` kind consumed by one Diff field, or one primitive entry with the Diff rule that plans it — NOT a new self-healing module, a site-local ladder, or decision branches scattered across services. The heal surface is a fixed, small set of idempotent primitives, each an entry naming its key rule, its executor and the evidence that resets it. The Planner SHALL be the only place a divergence becomes an op — no caller may inject ops into or around a produced plan. That rule governs remedies: everything that acts on a relay, a runner, a plugin or a Cell. The loop carries one duty outside it — on each tick it reclaims this node's hub for any namespace whose local fleet is empty and none of whose relays this node hosts. That reclaim names no target, takes no backoff and repairs nothing: it retires a node-local resource the fleet no longer justifies, so it is neither a primitive nor planned.
 
 #### Scenario: a new signal enters through the Diff, not around the plan
 - **WHEN** a sensor produces a fact the Loop must heal from (the data-plane classifier verdict, the Watchdog's stalled instances)
@@ -49,20 +49,20 @@ The self-healing decision logic MUST be expressed as a pure-function pipeline un
 - **THEN** the loop SHALL refresh the key's time and SHALL NOT tick for it; a key it does not hold SHALL tick at once
 
 #### Scenario: a fact is cleared by its counter-fact or its expiry
-- **WHEN** an operator held as parked is observed bound, a plugin held as down is observed `:running` past the stable window, a disconnected runner is observed active or no operator still names it, or a fact outlives its grace
+- **WHEN** a relay held as parked is observed bound, a plugin held as down is observed `:running` past the stable window, a disconnected runner is observed active or no relay still names it, or a fact outlives its grace
 - **THEN** the loop SHALL drop the fact and the next tick SHALL plan nothing from it
 
 ### Requirement: A hub stuck in `:recovery_timeout` does not permanently block healing for its namespace
 
-The convergence loop MUST include hubs in `:recovery_timeout` state in the ready set returned by `RecoveryGate.ready_namespaces/1`. Heal tasklets for operators in a timed-out hub's namespace MUST proceed using the live cluster state (the authoritative source), not be gated indefinitely.
+The convergence loop MUST include hubs in `:recovery_timeout` state in the ready set returned by `RecoveryGate.ready_namespaces/1`. Heal tasklets for relays in a timed-out hub's namespace MUST proceed using the live cluster state (the authoritative source), not be gated indefinitely.
 
 A `Logger.warning` MUST be emitted for each `:recovery_timeout` namespace included in the ready set so users are alerted to the stuck hub.
 
-#### Scenario: timed-out hub does not block healthy operators
+#### Scenario: timed-out hub does not block healthy relays
 
 - **GIVEN** a controller hosting two namespaces: `ns_ok` (hub `:normal`) and `ns_timeout` (hub `:recovery_timeout`)
 - **WHEN** a convergence tick runs
-- **THEN** the Loop heals misbound operators in both `ns_ok` and `ns_timeout`
+- **THEN** the Loop heals misbound relays in both `ns_ok` and `ns_timeout`
 - **AND** a `Logger.warning` is emitted naming `ns_timeout` as timed-out
 
 #### Scenario: normal tasklet is unchanged for healthy hubs
@@ -73,7 +73,7 @@ A `Logger.warning` MUST be emitted for each `:recovery_timeout` namespace includ
 
 ### Requirement: Every heal primitive is a safe no-op on a healthy target
 
-Each heal primitive MUST re-read the authoritative live state at execution time and do nothing if the target is no longer broken. A detection slip (a reconnect or recovery between the snapshot and the heal) MUST NOT disrupt a working operator, runner, or producer.
+Each heal primitive MUST re-read the authoritative live state at execution time and do nothing if the target is no longer broken. A detection slip (a reconnect or recovery between the snapshot and the heal) MUST NOT disrupt a working relay, runner, or producer.
 
 The guard protects a target that is merely *observed* healthy. It SHALL NOT protect a target whose op carries a reason that PROVES it is not producing (`:output_stall`, `:data_plane_wedge`): neither `Heal.skip_rebind?/4`'s active-runner check nor `FleetManager.evict_runner/2`'s "never evict a live runner" rule applies to one. A pool-wedged runner is still connected, and being connected is exactly what stops anything else from dislodging it.
 
@@ -82,28 +82,28 @@ The guard protects a target that is merely *observed* healthy. It SHALL NOT prot
 - **AND** `default_X` re-established its transport connection before the heal ran
 - **WHEN** `Heal.execute(:evict_runner)` runs for `default_X`
 - **THEN** FleetManager observes `default_X` is currently `:active` and performs no eviction
-- **AND** the operators bound to `default_X` keep producing.
+- **AND** the relays bound to `default_X` keep producing.
 
 #### Scenario: a classifier-proved wedged runner IS evicted while connected
 - **GIVEN** runner `default_X` is in the live active set, heartbeating, and the classifier reported `runner_pool_wedged` for it
 - **WHEN** `Heal.execute(:evict_runner)` runs with `args.reason == :data_plane_wedge`
-- **THEN** FleetManager evicts it despite the open connection, and its operators rebind onto a live runner
+- **THEN** FleetManager evicts it despite the open connection, and its relays rebind onto a live runner
 
-#### Scenario: an output-stalled operator is always re-wired
-- **GIVEN** operator `btc_feed` is bound to an active runner but has not produced output past the stall grace
-- **WHEN** the Planner emits the output-stall ladder op (`resync_runner`, then `rebind_operator` on persistence) with `reason: :output_stall`
+#### Scenario: an output-stalled relay is always re-wired
+- **GIVEN** relay `btc_feed` is bound to an active runner but has not produced output past the stall grace
+- **WHEN** the Planner emits the output-stall ladder op (`resync_runner`, then `rebind_relay` on persistence) with `reason: :output_stall`
 - **THEN** the Heal applies it even though its bound runner is active (the silent-freeze self-heal MUST NOT be skipped by the healthy-target guard).
 
 ### Requirement: A failed heal SHALL NOT erase the divergence it failed to fix
 
-`Overwatch.handle_call({:runner_migrate, new_runner_id})` SHALL commit the new binding only after `attempt_ping_and_start/2` reports the runner answered; on failure it SHALL return the state untouched. Runner ownership is node-local — `ControlUnit` and the `StreamChannel` registry live in the per-node `Identificator` registry and `FleetManager` is a per-node GenServer — so a heal handing a local runner to an Overwatch on another node fails by construction, and that failure MUST leave the operator honestly misbound.
+`Overwatch.handle_call({:runner_migrate, new_runner_id})` SHALL commit the new binding only after `attempt_ping_and_start/2` reports the runner answered; on failure it SHALL return the state untouched. Runner ownership is node-local — `ControlUnit` and the `StreamChannel` registry live in the per-node `Identificator` registry and `FleetManager` is a per-node GenServer — so a heal handing a local runner to an Overwatch on another node fails by construction, and that failure MUST leave the relay honestly misbound.
 
-Committing the binding first records `bound_runner ∈ active_runners` for a runner the operator cannot reach: `Convergence.Probe` reads it as placed, `Convergence.Diff` stops classifying it misbound, and the delta goes permanently empty. The operator then reports healthy while every frame drops.
+Committing the binding first records `bound_runner ∈ active_runners` for a runner the relay cannot reach: `Convergence.Probe` reads it as placed, `Convergence.Diff` stops classifying it misbound, and the delta goes permanently empty. The relay then reports healthy while every frame drops.
 
 #### Scenario: a failed cross-node migrate stays visible to the next tick
-- **GIVEN** operator `btc_feed` is misbound and the Heal targets a runner on another controller's node
+- **GIVEN** relay `btc_feed` is misbound and the Heal targets a runner on another controller's node
 - **WHEN** `runner_migrate` cannot reach that runner (`{:ping_failed, :no_control_unit}`)
-- **THEN** the operator's `runner_id` and `channel` SHALL be unchanged
+- **THEN** the relay's `runner_id` and `channel` SHALL be unchanged
 - **AND** the next Diff SHALL still classify it misbound and re-plan the heal under backoff.
 
 ### Requirement: Bounded calls and backoff prevent heal-induced churn
@@ -115,9 +115,9 @@ The Watchdog's compaction handshake SHALL ride a `:compaction` row of its own wi
 The wrapper is control-plane-wide, not a convergence concept: it is named by `convergence`, `schedule`, `runner` and `service`, so it sits with the pure modules the controller imports from the Elixir SDK. Its telemetry event stays `[:flezha, :convergence, :safe_call]`, which is a published surface and MUST NOT be renamed with the module.
 
 #### Scenario: a flapping target is backed off
-- **GIVEN** operator `r1` was just rebound by the Loop
+- **GIVEN** relay `r1` was just rebound by the Loop
 - **WHEN** the same divergence is observed on the next tick
-- **THEN** the Planner filters the repeat `rebind_operator` op under backoff and does not re-issue it until the backoff window elapses.
+- **THEN** the Planner filters the repeat `rebind_relay` op under backoff and does not re-issue it until the backoff window elapses.
 
 #### Scenario: the loop's rungs are the table's
 - **WHEN** a heal of one target fails on twelve consecutive eligible ticks
@@ -130,63 +130,63 @@ The wrapper is control-plane-wide, not a convergence concept: it is named by `co
 
 ### Requirement: Producing-liveness derives from durable progress markers with a fed precondition
 
-The convergence snapshot SHALL classify each bound operator's producing-liveness from durable progress markers compared between ticks — per-Cell WAL persisted seq always, and, when the operator runs the effectively-once tier, per-Cell durable consumed-offset advance and outbox `flushed_seq` drain. Channel state and heartbeats SHALL NOT be producing-liveness inputs.
+The convergence snapshot SHALL classify each bound relay's producing-liveness from durable progress markers compared between ticks — per-Cell WAL persisted seq always, and, when the relay runs the effectively-once tier, per-Cell durable consumed-offset advance and outbox `flushed_seq` drain. Channel state and heartbeats SHALL NOT be producing-liveness inputs.
 
-The tier cursors SHALL be read per Cell. A Cell's durable consumed offset is the offset the controller has fsynced for it, and the minimum across an operator's Cells is that operator's watermark — so a single frozen Cell freezes the operator's verdict while the verdict still names the Cell responsible.
+The tier cursors SHALL be read per Cell. A Cell's durable consumed offset is the offset the controller has fsynced for it, and the minimum across a relay's Cells is that relay's watermark — so a single frozen Cell freezes the relay's verdict while the verdict still names the Cell responsible.
 
-Every flat-marker verdict SHALL apply the fed precondition over the grace window: input-side evidence advancing while the progress marker is flat past the grace period classifies the operator STUCK (not producing); no input-side advance with a flat marker classifies it IDLE (producing-healthy). For tier-on operators, an input-log tail growing while a Cell's durable consumed offset is flat is a STUCK verdict, and output-bearing WAL records accumulating while `outbox_flushed_seq` is flat is a STUCK verdict. When one root cause freezes multiple markers, the snapshot SHALL report the single deepest verdict for that operator.
+Every flat-marker verdict SHALL apply the fed precondition over the grace window: input-side evidence advancing while the progress marker is flat past the grace period classifies the relay STUCK (not producing); no input-side advance with a flat marker classifies it IDLE (producing-healthy). For tier-on relays, an input-log tail growing while a Cell's durable consumed offset is flat is a STUCK verdict, and output-bearing WAL records accumulating while `outbox_flushed_seq` is flat is a STUCK verdict. When one root cause freezes multiple markers, the snapshot SHALL report the single deepest verdict for that relay.
 
-Cursor reads SHALL NOT create or resurrect durable state for an operator that has none: an operator without a live input log SHALL yield no cursor fields, and its classification SHALL degrade to WAL-seq-only rather than fail or default.
+Cursor reads SHALL NOT create or resurrect durable state for a relay that has none: a relay without a live input log SHALL yield no cursor fields, and its classification SHALL degrade to WAL-seq-only rather than fail or default.
 
 All marker reads SHALL be off-path at the convergence tick cadence, reusing counters and cursors that already advance; no per-message instrumentation is added.
 
-#### Scenario: Idle operator stays healthy
+#### Scenario: Idle relay stays healthy
 
-- **WHEN** an operator receives no input and all its progress markers are flat across ticks
+- **WHEN** a relay receives no input and all its progress markers are flat across ticks
 - **THEN** it classifies IDLE and counts as producing; `/healthz` remains `200 healthy`
 
-#### Scenario: Fed but frozen operator is STUCK
+#### Scenario: Fed but frozen relay is STUCK
 
-- **WHEN** input-side evidence for an operator advances across ticks while its WAL persisted seq stays flat past the grace period
-- **THEN** the snapshot classifies it STUCK, `producing_operators` excludes it, and `/healthz` reports `200 degraded`
+- **WHEN** input-side evidence for a relay advances across ticks while its WAL persisted seq stays flat past the grace period
+- **THEN** the snapshot classifies it STUCK, `producing_relays` excludes it, and `/healthz` reports `200 degraded`
 
 #### Scenario: Frozen consumed offset with growing input-log is STUCK (tier on)
 
-- **WHEN** a tier-on operator's input-log tail grows across ticks while one of its Cells' durable consumed offset does not advance past the grace period
-- **THEN** the operator classifies STUCK with a watermark-frozen detail naming that Cell
+- **WHEN** a tier-on relay's input-log tail grows across ticks while one of its Cells' durable consumed offset does not advance past the grace period
+- **THEN** the relay classifies STUCK with a watermark-frozen detail naming that Cell
 
-#### Scenario: A checkpoint-ack operator that stops consuming is STUCK
+#### Scenario: A checkpoint-ack relay that stops consuming is STUCK
 
-- **WHEN** a checkpoint-ack operator's input-log tail grows across ticks while its Cells' durable consumed offsets stay flat past the grace period
-- **THEN** the operator classifies STUCK, even though its WAL persisted seq is legitimately flat between checkpoints and it is exempt from the input-silence sweep
+- **WHEN** a checkpoint-ack relay's input-log tail grows across ticks while its Cells' durable consumed offsets stay flat past the grace period
+- **THEN** the relay classifies STUCK, even though its WAL persisted seq is legitimately flat between checkpoints and it is exempt from the input-silence sweep
 
 #### Scenario: Undrained outbox with accumulating output records is STUCK (tier on)
 
 - **WHEN** output-bearing WAL records accumulate for a Cell across ticks while its `outbox_flushed_seq` stays flat past the grace period
-- **THEN** the operator classifies STUCK with an outbox-flat detail naming that Cell
+- **THEN** the relay classifies STUCK with an outbox-flat detail naming that Cell
 
-#### Scenario: A tier-off operator is classified on the WAL seq alone
+#### Scenario: A tier-off relay is classified on the WAL seq alone
 
-- **WHEN** an operator that has not declared the effectively-once tier is classified
+- **WHEN** a relay that has not declared the effectively-once tier is classified
 - **THEN** no cursor fields are present on its markers, no input log is created for it, and its verdict is derived from WAL fed/advance evidence only
 
 ### Requirement: An empty intended set with durable evidence of intent is never vacuously healthy
 
-On each tick the convergence snapshot SHALL compare the live intended set against durable evidence of prior intent (per-Operator state directories under the state root and durable-registry entries). Any operator with durable evidence but absent from the live intended set SHALL be listed as `intent_mismatch`. When the mismatch list is non-empty — including the case where the live intended set is entirely empty — `/healthz` SHALL report `200 degraded` with `reason: intent_mismatch` naming the operators, and SHALL NOT report `200 healthy`. The condition SHALL NOT produce `503 unhealthy` (a kubelet restart cannot repair missing intent). Deleting the operator's durable state (`flz state delete`, `flz reset`) clears the mismatch. A state directory that carries a finished-job `Completion` record is retained for inspection on purpose and SHALL NOT count as evidence of lost intent.
+On each tick the convergence snapshot SHALL compare the live intended set against durable evidence of prior intent (per-Relay state directories under the state root and durable-registry entries). Any relay with durable evidence but absent from the live intended set SHALL be listed as `intent_mismatch`. When the mismatch list is non-empty — including the case where the live intended set is entirely empty — `/healthz` SHALL report `200 degraded` with `reason: intent_mismatch` naming the relays, and SHALL NOT report `200 healthy`. The condition SHALL NOT produce `503 unhealthy` (a kubelet restart cannot repair missing intent). Deleting the relay's durable state (`flz state delete`, `flz reset`) clears the mismatch. A state directory that carries a finished-job `Completion` record is retained for inspection on purpose and SHALL NOT count as evidence of lost intent.
 
 #### Scenario: Registry wipe degrades health instead of reporting healthy
 
-- **WHEN** the durable registry is wiped so the live intended set is empty, while per-Operator state directories from prior tasklet exist on disk
-- **THEN** `/healthz` reports `200 degraded` with `reason: intent_mismatch` listing the evidenced operators, not `200 healthy`
+- **WHEN** the durable registry is wiped so the live intended set is empty, while per-Relay state directories from prior tasklet exist on disk
+- **THEN** `/healthz` reports `200 degraded` with `reason: intent_mismatch` listing the evidenced relays, not `200 healthy`
 
 #### Scenario: Deliberate decommission clears the mismatch
 
-- **WHEN** a user stops an operator and deletes its durable state
-- **THEN** the operator no longer appears in `intent_mismatch` and health returns to `200 healthy`
+- **WHEN** a user stops a relay and deletes its durable state
+- **THEN** the relay no longer appears in `intent_mismatch` and health returns to `200 healthy`
 
-#### Scenario: A retained finished steps operator is not a mismatch
+#### Scenario: A retained finished steps relay is not a mismatch
 
-- **WHEN** a steps operator completes and its state directory is retained with its `Completion` record while it is no longer intended
+- **WHEN** a steps relay completes and its state directory is retained with its `Completion` record while it is no longer intended
 - **THEN** it SHALL NOT appear in `intent_mismatch` and health SHALL NOT degrade for it
 
 #### Scenario: Fresh install with no evidence is healthy
@@ -196,15 +196,15 @@ On each tick the convergence snapshot SHALL compare the live intended set agains
 
 ### Requirement: /healthz never lies
 
-The `/healthz` HTTP endpoint MUST derive `bound_operators`, `producing_operators`, `unknown_operators`, recovery state, the intent-mismatch list, the current data-plane fabric verdict, and sensor freshness from a single `Convergence.Snapshot.current/0` reader, and the per-operator and per-plugin words it folds MUST be the verdict records that snapshot carries. It MUST NOT compute these from independent paths, and it MUST NOT judge: the fold from records to one endpoint word is one ordered table owned by the verdict record module, and the endpoint renders its result. `producing_operators` MUST be the count of operator records whose state is `healthy` — an IDLE operator counts as producing, a STUCK operator does not — and `bound_operators` the count of records that are neither `unbound`, `failed` nor `unknown` and not suspended, so a dead binding is never counted as bound. It returns `200 healthy` (every operator record `healthy`, `suspended` or `unknown`; the body carries `unknown_operators`), `200 degraded` (any operator record `degraded` or `parked`, any operator `unbound` or `failed` past the unmet-intent grace, any plugin record `degraded`, non-empty intent mismatch, `sensor_stale`, or an RPO breach — the body's reason joins the records' reasons, e.g. `dead_runner+parked+plugin_unhealthy`), `200 recovering`/`restoring_registry` (planned recovery, a gapped tick, an operator `unbound` or `failed` inside the unmet-intent grace, or a pending restore — kubelet MUST NOT restart), or `503 unhealthy` ONLY on an authoritative dead-loop (`tick_stale`), `recovery_failed`, or a persistent controller-fabric data-plane wedge (a `driver` record `degraded` with a wedged layer — `driver_loop_frozen` or `nif_queue_backing_up` — sustained for `FLEZHA_FABRIC_503_POLLS` consecutive classifier polls — default 3, `0` disables the fabric 503 — reason `data_plane_fabric_wedged` naming the layer). BEAM-remediable verdicts MUST NOT produce `503` — they are healed by the convergence pipeline and surface as `degraded`. An `unknown` record MUST NOT degrade the endpoint: an uncertain probe never escalates. An empty intended set MUST NOT short-circuit to `200 healthy` while durable evidence of intent exists.
+The `/healthz` HTTP endpoint MUST derive `bound_relays`, `producing_relays`, `unknown_relays`, recovery state, the intent-mismatch list, the current data-plane fabric verdict, and sensor freshness from a single `Convergence.Snapshot.current/0` reader, and the per-relay and per-plugin words it folds MUST be the verdict records that snapshot carries. It MUST NOT compute these from independent paths, and it MUST NOT judge: the fold from records to one endpoint word is one ordered table owned by the verdict record module, and the endpoint renders its result. `producing_relays` MUST be the count of relay records whose state is `healthy` — an IDLE relay counts as producing, a STUCK relay does not — and `bound_relays` the count of records that are neither `unbound`, `failed` nor `unknown` and not suspended, so a dead binding is never counted as bound. It returns `200 healthy` (every relay record `healthy`, `suspended` or `unknown`; the body carries `unknown_relays`), `200 degraded` (any relay record `degraded` or `parked`, any relay `unbound` or `failed` past the unmet-intent grace, any plugin record `degraded`, non-empty intent mismatch, `sensor_stale`, or an RPO breach — the body's reason joins the records' reasons, e.g. `dead_runner+parked+plugin_unhealthy`), `200 recovering`/`restoring_registry` (planned recovery, a gapped tick, a relay `unbound` or `failed` inside the unmet-intent grace, or a pending restore — kubelet MUST NOT restart), or `503 unhealthy` ONLY on an authoritative dead-loop (`tick_stale`), `recovery_failed`, or a persistent controller-fabric data-plane wedge (a `driver` record `degraded` with a wedged layer — `driver_loop_frozen` or `nif_queue_backing_up` — sustained for `FLEZHA_FABRIC_503_POLLS` consecutive classifier polls — default 3, `0` disables the fabric 503 — reason `data_plane_fabric_wedged` naming the layer). BEAM-remediable verdicts MUST NOT produce `503` — they are healed by the convergence pipeline and surface as `degraded`. An `unknown` record MUST NOT degrade the endpoint: an uncertain probe never escalates. An empty intended set MUST NOT short-circuit to `200 healthy` while durable evidence of intent exists.
 
-The fabric arm of that guarantee needs a NIF driver to judge, and **the scope MUST be stated wherever the guarantee is**. Both server drivers, UDS and QUIC, produce the self-report the fabric verdicts are computed from, so a controller on either transport is covered and its `/healthz` is evidence about the data plane. The `:native` in-node transport runs no driver thread and produces none, so on a native-only controller no driver measurement is emitted and `driver_loop_frozen` and `nif_queue_backing_up` cannot be minted; its `200` is evidence about the convergence loop, the operator population and the plugin set alone. The endpoint's own documentation and the classifier's driver clauses MUST carry that limitation so a user does not read a green probe as a data-plane guarantee it cannot give.
+The fabric arm of that guarantee needs a NIF driver to judge, and **the scope MUST be stated wherever the guarantee is**. Both server drivers, UDS and QUIC, produce the self-report the fabric verdicts are computed from, so a controller on either transport is covered and its `/healthz` is evidence about the data plane. The `:native` in-node transport runs no driver thread and produces none, so on a native-only controller no driver measurement is emitted and `driver_loop_frozen` and `nif_queue_backing_up` cannot be minted; its `200` is evidence about the convergence loop, the relay population and the plugin set alone. The endpoint's own documentation and the classifier's driver clauses MUST carry that limitation so a user does not read a green probe as a data-plane guarantee it cannot give.
 
 #### Scenario: healthz reflects reality even when bound and producing diverge
 
-- **GIVEN** 10 operators are bound and 3 classify STUCK (fed but progress markers flat past `output_stall_grace_ms`)
+- **GIVEN** 10 relays are bound and 3 classify STUCK (fed but progress markers flat past `output_stall_grace_ms`)
 - **WHEN** `/healthz` is queried
-- **THEN** the body reports `bound_operators=10`, `producing_operators=7`, and the status is `200 degraded` (not 200 healthy, not 503).
+- **THEN** the body reports `bound_relays=10`, `producing_relays=7`, and the status is `200 degraded` (not 200 healthy, not 503).
 
 #### Scenario: healthz does not 503 on a slow-but-live loop
 
@@ -222,9 +222,9 @@ The fabric arm of that guarantee needs a NIF driver to judge, and **the scope MU
 
 #### Scenario: idle fleet is healthy, wiped fleet is not
 
-- **GIVEN** two controllers: one with 5 intended operators all IDLE (no input), one with an empty intended set but durable state directories for 5 operators
+- **GIVEN** two controllers: one with 5 intended relays all IDLE (no input), one with an empty intended set but durable state directories for 5 relays
 - **WHEN** `/healthz` is queried on each
-- **THEN** the idle controller reports `200 healthy` with `producing_operators=5`, and the wiped controller reports `200 degraded` with `reason: intent_mismatch`
+- **THEN** the idle controller reports `200 healthy` with `producing_relays=5`, and the wiped controller reports `200 degraded` with `reason: intent_mismatch`
 
 #### Scenario: a frozen NIF driver reaches 503
 
@@ -252,51 +252,51 @@ The fabric arm of that guarantee needs a NIF driver to judge, and **the scope MU
 - **THEN** driver measurements are emitted for it, `driver_loop_frozen` is minted naming the QUIC transport, and the endpoint moves toward the fabric `503` on the same sustained-poll rule a UDS controller follows
 - **AND** the `/healthz` endpoint documentation and the classifier's driver clauses state which transports carry a driver, so the limit that remains — a native-only controller — is not left to inference
 
-#### Scenario: a parked operator is degraded at once
+#### Scenario: a parked relay is degraded at once
 
-- **GIVEN** an operator the Controller has parked, whatever the park reason
+- **GIVEN** a relay the Controller has parked, whatever the park reason
 - **WHEN** `/healthz` is queried
 - **THEN** the status is `200 degraded` with `parked` among the joined reasons, and never `200 healthy`
 
-#### Scenario: an operator whose runner is absent is recovering, then degraded
+#### Scenario: a relay whose runner is absent is recovering, then degraded
 
-- **GIVEN** a bound operator whose runner process has died and left the roster
+- **GIVEN** a bound relay whose runner process has died and left the roster
 - **WHEN** `/healthz` is queried inside the unmet-intent grace and again after it
-- **THEN** the first response is `200 recovering`, the second is `200 degraded` with `dead_runner` among the joined reasons, and neither counts the dead binding in `bound_operators`
+- **THEN** the first response is `200 recovering`, the second is `200 degraded` with `dead_runner` among the joined reasons, and neither counts the dead binding in `bound_relays`
 
-#### Scenario: an unobserved operator is counted, not judged
+#### Scenario: an unobserved relay is counted, not judged
 
-- **GIVEN** an operator whose fact reader timed out on the last tick
+- **GIVEN** a relay whose fact reader timed out on the last tick
 - **WHEN** `/healthz` is queried
-- **THEN** the status is `200 healthy` when nothing else degrades it, the body's `unknown_operators` is 1, and no `503` and no `degraded` follows from the uncertainty alone
+- **THEN** the status is `200 healthy` when nothing else degrades it, the body's `unknown_relays` is 1, and no `503` and no `degraded` follows from the uncertainty alone
 
-### Requirement: Output-stalled operators SHALL be actively rebound, not only reported as degraded
+### Requirement: Output-stalled relays SHALL be actively rebound, not only reported as degraded
 
-An output stall SHALL reach the loop as a declared fact: the Watchdog telemetry handler declares `{:output_stall, operator_id}`, the loop holds it as any fact (a re-declaration refreshes it, a new key ticks at once), the Diff carries it, and `Planner.plan/3` plans the ladder — `resync_runner` on the first eligible attempt (cheap connection-level resync, no migration), escalating to `rebind_operator` on subsequent eligible attempts while the stall persists — with `args: %{reason: :output_stall}` on the `{:output_stall, operator_id}` key of the one backoff table, so a persistently stalled operator follows the `:heal` row's cooldown and never a per-tick storm. Escalation is counted in attempts, not in elapsed time, so the denser early rungs reach `rebind_operator` sooner in wall-clock terms while the order of remedies is unchanged. No op SHALL be injected after the plan is produced. The stall's timestamp stays readable for healthz reporting.
+An output stall SHALL reach the loop as a declared fact: the Watchdog telemetry handler declares `{:output_stall, relay_id}`, the loop holds it as any fact (a re-declaration refreshes it, a new key ticks at once), the Diff carries it, and `Planner.plan/3` plans the ladder — `resync_runner` on the first eligible attempt (cheap connection-level resync, no migration), escalating to `rebind_relay` on subsequent eligible attempts while the stall persists — with `args: %{reason: :output_stall}` on the `{:output_stall, relay_id}` key of the one backoff table, so a persistently stalled relay follows the `:heal` row's cooldown and never a per-tick storm. Escalation is counted in attempts, not in elapsed time, so the denser early rungs reach `rebind_relay` sooner in wall-clock terms while the order of remedies is unchanged. No op SHALL be injected after the plan is produced. The stall's timestamp stays readable for healthz reporting.
 
-`Heal.skip_rebind?/4` SHALL NOT skip a rebind when `args.reason == :output_stall`, even if the operator's currently-bound runner is in the live active set. The output-stall condition proves the binding is not producing; the active-runner guard exists only to avoid disrupting a healthy operator, which an output-stalled operator is not.
+`Heal.skip_rebind?/4` SHALL NOT skip a rebind when `args.reason == :output_stall`, even if the relay's currently-bound runner is in the live active set. The output-stall condition proves the binding is not producing; the active-runner guard exists only to avoid disrupting a healthy relay, which an output-stalled relay is not.
 
-#### Scenario: output-stalled operator walks the resync-then-rebind ladder
+#### Scenario: output-stalled relay walks the resync-then-rebind ladder
 
-- **GIVEN** operator `btc_feed` is bound to active runner `ex1` and has not produced output past the output-stall grace period
+- **GIVEN** relay `btc_feed` is bound to active runner `ex1` and has not produced output past the output-stall grace period
 - **WHEN** the Watchdog flags it and the convergence Loop receives the stall event
 - **THEN** the Loop triggers an immediate tick
 - **AND** the first eligible attempt issues a `resync_runner` op with `args: %{reason: :output_stall}`
-- **AND** if the stall persists past the next backoff window, the following attempt issues `rebind_operator`, `skip_rebind?` returns `false` even though `ex1` is still active, and the operator is migrated and begins producing again
+- **AND** if the stall persists past the next backoff window, the following attempt issues `rebind_relay`, `skip_rebind?` returns `false` even though `ex1` is still active, and the relay is migrated and begins producing again
 
 #### Scenario: repeated stalls are backoff-throttled
 
-- **GIVEN** operator `btc_feed` was just resynced due to an output stall 1 second ago
+- **GIVEN** relay `btc_feed` was just resynced due to an output stall 1 second ago
 - **WHEN** the Watchdog flags another output stall for `btc_feed`
 - **THEN** the planned op is filtered out by Backoff (the first rung's cooldown has not yet elapsed)
 - **AND** no op is issued on this tick
 
-### Requirement: Rolling upgrade preserves producing-operators count
+### Requirement: Rolling upgrade preserves producing-relays count
 
-A user-initiated rolling restart of the controller or runner workload MUST complete with no data loss, measured by kafka offset advance per declared operator. The runner presents its persisted `previous_runner_id` on reconnect so the controller evicts the stale binding and rebinds atomically.
+A user-initiated rolling restart of the controller or runner workload MUST complete with no data loss, measured by kafka offset advance per declared relay. The runner presents its persisted `previous_runner_id` on reconnect so the controller evicts the stale binding and rebinds atomically.
 
 #### Scenario: rolling restart of the runner workload
-- **GIVEN** the cluster is producing `producing_operators = N`
+- **GIVEN** the cluster is producing `producing_relays = N`
 - **WHEN** the runner pods are rolled one at a time (graceful SIGTERM, peer stays up)
 - **THEN** the new runner presents its `previous_runner_id`, the controller evicts the old binding and rebinds within a tick, and kafka offsets advance with no data loss.
 
@@ -305,13 +305,13 @@ A user-initiated rolling restart of the controller or runner workload MUST compl
 The system MUST detect a wall-clock vs monotonic-clock divergence indicating sleep/hibernate and, on wake, kick reconnects across SDK control streams and producers without user action.
 
 #### Scenario: host sleep then wake
-- **GIVEN** the system is producing `producing_operators = N`
+- **GIVEN** the system is producing `producing_relays = N`
 - **WHEN** the host sleeps for ≥ 30 s and wakes
-- **THEN** the Loop observes the wake, reconnects affected streams/producers, and kafka offsets per operator resume advancing without a user command.
+- **THEN** the Loop observes the wake, reconnects affected streams/producers, and kafka offsets per relay resume advancing without a user command.
 
 ### Requirement: Plugins are durable across controller restart
 
-When `flz plugin enable <operator> <plugin>` succeeds, the plugin MUST be persisted into the hub's **declared-children set**, on every node of the hub cluster, regardless of which node served the CLI call. The declared set is named deliberately: the hub keeps two records of the same child, and an auto-recovery hub never replays its process registry from disk, so a plugin held only in the registry row is not read back by the restart it was written to survive. The registry row MUST continue to carry the plugin as the live view, written from the declared spec by every start, so the two records cannot disagree about a running operator. On restart (recovery mode, plain restart, or node-death redistribution from any node), every restored operator MUST re-instantiate its declared plugins idempotently, and the convergence I2 backstop MUST re-add a declared-but-missing plugin to a running operator. The same cluster-wide propagation MUST apply to plugin disable, to provider state persisted against a plugin, and to the registry runner-tag write issued by Heal rebinds. A peer node that is unreachable at write time MUST converge on rejoin via the peer-sync recovery path; propagation failures MUST be logged, never silently dropped.
+When `flz plugin enable <relay> <plugin>` succeeds, the plugin MUST be persisted into the hub's **declared-children set**, on every node of the hub cluster, regardless of which node served the CLI call. The declared set is named deliberately: the hub keeps two records of the same child, and an auto-recovery hub never replays its process registry from disk, so a plugin held only in the registry row is not read back by the restart it was written to survive. The registry row MUST continue to carry the plugin as the live view, written from the declared spec by every start, so the two records cannot disagree about a running relay. On restart (recovery mode, plain restart, or node-death redistribution from any node), every restored relay MUST re-instantiate its declared plugins idempotently, and the convergence I2 backstop MUST re-add a declared-but-missing plugin to a running relay. The same cluster-wide propagation MUST apply to plugin disable, to provider state persisted against a plugin, and to the registry runner-tag write issued by Heal rebinds. A peer node that is unreachable at write time MUST converge on rejoin via the peer-sync recovery path; propagation failures MUST be logged, never silently dropped.
 
 #### Scenario: plugin survives recovery-mode restart
 - **GIVEN** `flz plugin enable btc_feed kafka-producer` was executed
@@ -319,41 +319,41 @@ When `flz plugin enable <operator> <plugin>` succeeds, the plugin MUST be persis
 - **THEN** `btc_feed` shows kafka-producer and the producer functions within a few ticks of boot.
 
 #### Scenario: a restart-driven start SHALL NOT erase an enabled plugin
-- **GIVEN** an operator declared by `flz operator start` with no plugins, and a plugin enabled on it afterwards
-- **WHEN** the controller restarts and the reconcile round starts the operator from its declared entry
-- **THEN** that declared entry carries the enabled plugin, so the started operator's plugin table carries it
+- **GIVEN** a relay declared by `flz relay start` with no plugins, and a plugin enabled on it afterwards
+- **WHEN** the controller restarts and the reconcile round starts the relay from its declared entry
+- **THEN** that declared entry carries the enabled plugin, so the started relay's plugin table carries it
 - **AND** the registry row the start writes carries it too, so a later divergence is healable rather than invisible
 
 #### Scenario: a disabled plugin is not resurrected by a restart
-- **GIVEN** a plugin that was enabled and then disabled on a running operator
+- **GIVEN** a plugin that was enabled and then disabled on a running relay
 - **WHEN** the controller restarts
-- **THEN** the declared entry no longer names it and the restored operator does not subscribe it
+- **THEN** the declared entry no longer names it and the restored relay does not subscribe it
 
-#### Scenario: the operator reports the plugins it actually has
-- **GIVEN** an operator restored after a restart whose enabled plugins failed to re-instantiate
-- **WHEN** a user runs `flz operator info`
-- **THEN** the operator SHALL NOT report `Health: healthy` with an empty plugin table while plugins are declared for it
+#### Scenario: the relay reports the plugins it actually has
+- **GIVEN** a relay restored after a restart whose enabled plugins failed to re-instantiate
+- **WHEN** a user runs `flz relay info`
+- **THEN** the relay SHALL NOT report `Health: healthy` with an empty plugin table while plugins are declared for it
 
-#### Scenario: a dropped plugin is re-instantiated on a running operator
-- **GIVEN** a declared plugin is force-unsubscribed at runtime while its operator stays up
+#### Scenario: a dropped plugin is re-instantiated on a running relay
+- **GIVEN** a declared plugin is force-unsubscribed at runtime while its relay stays up
 - **WHEN** the Loop ticks
-- **THEN** the Diff detects the missing plugin and the Heal re-subscribes it from the cspec the operator was started with.
+- **THEN** the Diff detects the missing plugin and the Heal re-subscribes it from the cspec the relay was started with.
 
 #### Scenario: plugin enabled via one node is declared on every node
-- **GIVEN** a two-node hub cluster with an operator registered on both nodes' registries
+- **GIVEN** a two-node hub cluster with a relay registered on both nodes' registries
 - **WHEN** `flz plugin enable` is served by node B
-- **THEN** the declared entry the leader wrote is visible to node A, and an operator restart driven from node A re-instantiates the plugin.
+- **THEN** the declared entry the leader wrote is visible to node A, and a relay restart driven from node A re-instantiates the plugin.
 
-#### Scenario: redistribution after node death restores a producing operator
-- **GIVEN** an operator whose plugins were enabled through any node of the cluster
-- **WHEN** the node hosting the operator's Overwatch dies and the hub redistributes the operator to a surviving node
-- **THEN** the restarted operator re-attaches its full declared plugin set without user action.
+#### Scenario: redistribution after node death restores a producing relay
+- **GIVEN** a relay whose plugins were enabled through any node of the cluster
+- **WHEN** the node hosting the relay's Overwatch dies and the hub redistributes the relay to a surviving node
+- **THEN** the restarted relay re-attaches its full declared plugin set without user action.
 
 ### Requirement: Unhealthy declared plugins are detected and restarted by the loop
 
-The convergence loop SHALL judge production liveness of an operator's plugins by the plugin provider's own `health/1` self-report (`Extension.Table.health/1`), never by traffic-volume proxies. A plugin that is declared, currently subscribed, and self-reports `{:unhealthy, reason}` SHALL produce a `restart_plugin` heal op routed through the extension table's existing restart machinery, subject to the loop's per-target exponential backoff. An uncertain health probe (timeout, raise, missing provider callback) SHALL be treated as healthy so the loop never escalates on uncertainty.
+The convergence loop SHALL judge production liveness of a relay's plugins by the plugin provider's own `health/1` self-report (`Extension.Table.health/1`), never by traffic-volume proxies. A plugin that is declared, currently subscribed, and self-reports `{:unhealthy, reason}` SHALL produce a `restart_plugin` heal op routed through the extension table's existing restart machinery, subject to the loop's per-target exponential backoff. An uncertain health probe (timeout, raise, missing provider callback) SHALL be treated as healthy so the loop never escalates on uncertainty.
 
-A subscriber that crashes is the same divergence declared from the other side: the extension table records its phase as `{:down, reason}` and declares `{:plugin_down, namespace, operator_id, plugin_id}`; the table restarts nothing and holds no counter or timer. The loop plans `restart_plugin` keyed `{restart_plugin, {operator_id, plugin_id}}` — per plugin, so one crashing plugin never throttles its siblings' starts — and the key resets only on `:running` observed for the stable window, read from the table's `started_at` by the Probe, so a fast-failing provider accumulates backoff instead of resetting on every restart. The denser early rungs of the `:heal` row mean such a provider is retried more often in its first minute; the stable-window reset is what still carries it to the top rung rather than resetting on every restart.
+A subscriber that crashes is the same divergence declared from the other side: the extension table records its phase as `{:down, reason}` and declares `{:plugin_down, namespace, relay_id, plugin_id}`; the table restarts nothing and holds no counter or timer. The loop plans `restart_plugin` keyed `{restart_plugin, {relay_id, plugin_id}}` — per plugin, so one crashing plugin never throttles its siblings' starts — and the key resets only on `:running` observed for the stable window, read from the table's `started_at` by the Probe, so a fast-failing provider accumulates backoff instead of resetting on every restart. The denser early rungs of the `:heal` row mean such a provider is retried more often in its first minute; the stable-window reset is what still carries it to the top rung rather than resetting on every restart.
 
 The health self-report is the authority on whether a RUNNING plugin is producing;
 it is not the authority on whether a plugin is running at all. A declared plugin
@@ -364,14 +364,14 @@ An uncertain probe treated as healthy SHALL be emitted as telemetry by the
 extension table, so that fail-open is observable rather than silent.
 
 #### Scenario: wedged kafka producer is restarted after broker recovery
-- **GIVEN** an operator with a declared kafka producer plugin and an unreachable broker long enough for the provider to self-report `{:unhealthy, :produce_stalled}`
+- **GIVEN** a relay with a declared kafka producer plugin and an unreachable broker long enough for the provider to self-report `{:unhealthy, :produce_stalled}`
 - **WHEN** the Loop ticks
 - **THEN** a `restart_plugin` op is executed for that plugin under backoff, and once the broker is reachable a restart attempt succeeds and the verdict clears to healthy.
 
 #### Scenario: healthy plugins are never restarted
-- **GIVEN** an operator whose declared plugins all self-report `:healthy`
+- **GIVEN** a relay whose declared plugins all self-report `:healthy`
 - **WHEN** the Loop ticks
-- **THEN** no `restart_plugin` op is planned for that operator.
+- **THEN** no `restart_plugin` op is planned for that relay.
 
 #### Scenario: uncertain probe does not escalate
 - **GIVEN** a plugin whose `health/1` raises or times out
@@ -389,12 +389,12 @@ extension table, so that fail-open is observable rather than silent.
 - **WHEN** the loop plans across ticks
 - **THEN** its key SHALL walk the `:heal` row's rungs to the top and SHALL NOT reset until `:running` is observed for the whole window
 
-### Requirement: Plugin-degraded operators surface on /healthz and telemetry
+### Requirement: Plugin-degraded relays surface on /healthz and telemetry
 
-A declared plugin SHALL carry its own verdict record: `degraded` when it is not subscribed at all, when its owning process crashed, or when its provider self-reports unhealthy. An operator with at least one declared plugin that is not RUNNING — whichever of those it is, and including a plugin subscribed but left `prepared` by a failed activation — SHALL carry that divergence as its own `degraded` reason naming the plugin, so the operator surface and the plugin surface agree without either re-reading the other, and the snapshot's plugin-degraded set SHALL be derived from those records rather than kept as a second list. While any plugin record is `degraded`, `/healthz` SHALL report `degraded` with HTTP 200 and a reason that names `plugin_unhealthy` — degraded MUST NOT trigger a kubelet restart. The loop SHALL log plugin-health verdict transitions (a record's state changes, the degraded set changes membership, or it clears), not steady-state. A suspended steps instance — alive, unbound, its plugins released with its runner — SHALL NOT be plugin-diffed: the rehydrating bind replays its declared plugins, and until then there is nothing to heal.
+A declared plugin SHALL carry its own verdict record: `degraded` when it is not subscribed at all, when its owning process crashed, or when its provider self-reports unhealthy. A relay with at least one declared plugin that is not RUNNING — whichever of those it is, and including a plugin subscribed but left `prepared` by a failed activation — SHALL carry that divergence as its own `degraded` reason naming the plugin, so the relay surface and the plugin surface agree without either re-reading the other, and the snapshot's plugin-degraded set SHALL be derived from those records rather than kept as a second list. While any plugin record is `degraded`, `/healthz` SHALL report `degraded` with HTTP 200 and a reason that names `plugin_unhealthy` — degraded MUST NOT trigger a kubelet restart. The loop SHALL log plugin-health verdict transitions (a record's state changes, the degraded set changes membership, or it clears), not steady-state. A suspended steps instance — alive, unbound, its plugins released with its runner — SHALL NOT be plugin-diffed: the rehydrating bind replays its declared plugins, and until then there is nothing to heal.
 
-#### Scenario: pluginless running operator is degraded, not healthy
-- **GIVEN** a running operator whose declared cspec lists plugins that are not subscribed
+#### Scenario: pluginless running relay is degraded, not healthy
+- **GIVEN** a running relay whose declared cspec lists plugins that are not subscribed
 - **WHEN** `/healthz` is queried before the heal completes
 - **THEN** the response is HTTP 200 with status `degraded` and a reason naming `plugin_unhealthy`.
 
@@ -404,23 +404,23 @@ A declared plugin SHALL carry its own verdict record: `degraded` when it is not 
 - **THEN** no `missing_plugins` entry, no heal op and no degraded verdict SHALL be produced for it
 
 #### Scenario: verdict clears after heal
-- **GIVEN** a plugin-degraded operator
+- **GIVEN** a plugin-degraded relay
 - **WHEN** the loop re-attaches or successfully restarts the affected plugins
 - **THEN** every plugin record for it returns to `healthy` and `/healthz` returns to `healthy` with a single transition log line.
 
 ### Requirement: Fresh-process runner takeover is atomic
 
-When an SDK runner process restarts and presents its stable identity with a new incarnation while the identity's previous session is still held, the controller MUST fence and evict the previous session and bind each of the identity's operators onto the new session through the one bind path, ordered unbind-old before bind-new, with no window where an operator is bound to both sessions or to a corpse, and with no `AddOperator` sent to a process for an operator it still runs.
+When an SDK runner process restarts and presents its stable identity with a new incarnation while the identity's previous session is still held, the controller MUST fence and evict the previous session and bind each of the identity's relays onto the new session through the one bind path, ordered unbind-old before bind-new, with no window where a relay is bound to both sessions or to a corpse, and with no `AddRelay` sent to a process for a relay it still runs.
 
-#### Scenario: SDK process restart preserves operator binding
-- **GIVEN** operator `btc_feed` is bound to session `default_X` of stable identity `S` and producing
+#### Scenario: SDK process restart preserves relay binding
+- **GIVEN** relay `btc_feed` is bound to session `default_X` of stable identity `S` and producing
 - **WHEN** the SDK process is killed and restarts, presenting `S` with a new incarnation
-- **THEN** the controller fences and evicts `default_X` inside the connect handler, each affected Overwatch binds its operator onto the new session through `Lifecycle.complete_init/4`, `btc_feed` is re-attached with its persisted state, and kafka offsets resume within a couple of ticks
+- **THEN** the controller fences and evicts `default_X` inside the connect handler, each affected Overwatch binds its relay onto the new session through `Lifecycle.complete_init/4`, `btc_feed` is re-attached with its persisted state, and kafka offsets resume within a couple of ticks
 - **AND** no entry in the active runner set references a dead `default_X`.
 
 ### Requirement: Data-plane stall verdicts feed the convergence pipeline
 
-The classifier verdict the Loop already computes each tick SHALL be consumed by the Diff → Planner → Heal seams — passed in-process alongside the Probe snapshot, with NO new telemetry subscription or side channel — and mapped by remedy: runner-scoped verdicts (`runner_not_consuming`, `runner_pool_wedged`) to `restart_runner` first and `evict_runner` only on a later rung (the process the verdict named is ended on its own session — the one moment it can be identified — and the existing disconnect reroute moves its operators; see *A runner the classifier proves wedged is terminally restarted, not only evicted*); connection-scoped verdicts (`socket_write_blocked`, `channel_not_sending`) to `resync_runner`; operator-scoped verdicts (`operator_not_forwarding`, `cell_dispatch_stalled`) to `rebind_operator` for the operator named by the verdict metadata. Ops SHALL ride the standard per-target backoff, and the active-runner rebind guard SHALL NOT protect a target the classifier proved wedged. The classifier returns one deepest-wins verdict per tick; the pipeline SHALL heal that layer and let the next tick surface any remaining layer. No new self-healing module SHALL be introduced.
+The classifier verdict the Loop already computes each tick SHALL be consumed by the Diff → Planner → Heal seams — passed in-process alongside the Probe snapshot, with NO new telemetry subscription or side channel — and mapped by remedy: runner-scoped verdicts (`runner_not_consuming`, `runner_pool_wedged`) to `restart_runner` first and `evict_runner` only on a later rung (the process the verdict named is ended on its own session — the one moment it can be identified — and the existing disconnect reroute moves its relays; see *A runner the classifier proves wedged is terminally restarted, not only evicted*); connection-scoped verdicts (`socket_write_blocked`, `channel_not_sending`) to `resync_runner`; relay-scoped verdicts (`relay_not_forwarding`, `cell_dispatch_stalled`) to `rebind_relay` for the relay named by the verdict metadata. Ops SHALL ride the standard per-target backoff, and the active-runner rebind guard SHALL NOT protect a target the classifier proved wedged. The classifier returns one deepest-wins verdict per tick; the pipeline SHALL heal that layer and let the next tick surface any remaining layer. No new self-healing module SHALL be introduced.
 
 `cell_dispatch_stalled` SHALL be minted from the runner's self-reported handout liveness — a non-zero outstanding count whose oldest-age exceeds the configured threshold — under the same "is it actually being fed?" precondition every other check carries, and SHALL rank *shallower* than every runner-scoped verdict, since a wedged runner explains a wedged cell and not the reverse. Its detail SHALL carry the reported age so a false positive is diagnosable from the log alone.
 
@@ -429,24 +429,24 @@ The classifier verdict the Loop already computes each tick SHALL be consumed by 
 * `driver_loop_frozen` SHALL be minted only when the *previous* sample shows an established driver — a non-zero loop-iteration count and a stamped last-loop time — and the current sample's iteration count has not gone backwards. A driver that has never completed a loop iteration SHALL NOT be reported frozen, and a counter that decreased SHALL be read as a re-created driver at the same transport key rather than as a frozen one. In consequence a reported `driver_loop_frozen` can never carry an infinite loop age.
 * `nif_queue_backing_up` SHALL be minted only when the driver has demonstrably written before — a non-zero written count in the previous sample — so that "nothing was written since" means the driver stopped draining rather than that there was nothing to drain. This is the same exemption `runner_not_consuming` already applies to a stream that has never been read.
 
-A close the controller itself initiated SHALL NOT mint an `output_stall` for the operators mapped to the closing stream, so a planned teardown SHALL NOT enter the loop as a divergence to heal. An unexpected close SHALL continue to emit it unchanged.
+A close the controller itself initiated SHALL NOT mint an `output_stall` for the relays mapped to the closing stream, so a planned teardown SHALL NOT enter the loop as a divergence to heal. An unexpected close SHALL continue to emit it unchanged.
 
 #### Scenario: A wedged runner pool is restarted from a classifier verdict
 - **WHEN** the classifier reports `runner_pool_wedged` (heartbeats flowing, dispatch counter frozen) for a runner that remains in the active set
-- **THEN** the same tick's plan issues a `restart_runner` op with the verdict as reason, the runner exits non-zero and its operators are rerouted by the existing disconnect path and planner ordering, and repeats are backoff-throttled on the standard ladder
+- **THEN** the same tick's plan issues a `restart_runner` op with the verdict as reason, the runner exits non-zero and its relays are rerouted by the existing disconnect path and planner ordering, and repeats are backoff-throttled on the standard ladder
 
-#### Scenario: A wedged channel is resynced, a wedged operator is rebound
-- **WHEN** the classifier reports `channel_not_sending` for a fed channel, and on a later tick `operator_not_forwarding` for a fed operator
-- **THEN** the plan issues `resync_runner` for the first and `rebind_operator` for the second, each under per-target backoff, and `skip_rebind?` does not skip the rebind despite the bound runner being active
+#### Scenario: A wedged channel is resynced, a wedged relay is rebound
+- **WHEN** the classifier reports `channel_not_sending` for a fed channel, and on a later tick `relay_not_forwarding` for a fed relay
+- **THEN** the plan issues `resync_runner` for the first and `rebind_relay` for the second, each under per-target backoff, and `skip_rebind?` does not skip the rebind despite the bound runner being active
 
 #### Scenario: One verdict per tick, deepest first
 - **WHEN** both a channel and the runner beneath it are wedged
 - **THEN** the classifier reports only the deeper runner-scoped verdict, that layer is healed first, and any surviving channel wedge surfaces on a later tick
 
 #### Scenario: A single stalled cell is rebound while the runner keeps working
-- **GIVEN** a runner whose dispatch counter is still advancing and whose operators are being fed
-- **WHEN** its heartbeat reports an outstanding activation older than the threshold for one operator
-- **THEN** the classifier SHALL report `cell_dispatch_stalled` scoped to that operator, the plan SHALL issue `rebind_operator` for it, and no `evict_runner` SHALL be issued for the runner
+- **GIVEN** a runner whose dispatch counter is still advancing and whose relays are being fed
+- **WHEN** its heartbeat reports an outstanding activation older than the threshold for one relay
+- **THEN** the classifier SHALL report `cell_dispatch_stalled` scoped to that relay, the plan SHALL issue `rebind_relay` for it, and no `evict_runner` SHALL be issued for the runner
 
 #### Scenario: A wedged runner outranks a stalled cell
 - **WHEN** a runner reports both a frozen dispatch counter and an aged outstanding activation
@@ -475,7 +475,7 @@ A close the controller itself initiated SHALL NOT mint an `output_stall` for the
 #### Scenario: A planned teardown is not a divergence
 - **GIVEN** a runner the controller has marked retiring because it initiated the disconnect
 - **WHEN** the runner's data streams close and the close reaches the stream channel
-- **THEN** no `output_stall` SHALL be emitted for the operators mapped to that stream, and the convergence loop SHALL plan no rebind on account of the close
+- **THEN** no `output_stall` SHALL be emitted for the relays mapped to that stream, and the convergence loop SHALL plan no rebind on account of the close
 
 ### Requirement: Sensor freshness is visible
 
@@ -489,12 +489,12 @@ Periodic sensors SHALL stamp their last completed pass into the convergence Snap
 - **WHEN** the Watchdog crashes, is restarted by its supervisor, and completes a sweep
 - **THEN** the stamp is fresh again and healthz drops the `sensor_stale` reason with no user action
 
-### Requirement: Operator starts have a single idempotent authority
+### Requirement: Relay starts have a single idempotent authority
 
-Every path that starts or binds an operator — the ProcessHub orphan reconcile, the Convergence planner, manager/CLI starts, scheduled spawns, and tasklet-requested spawns — SHALL resolve through the registry's duplicate-id claim. On a collision the loser SHALL observe the duplicate verdict, verify the winner is live, and no-op; it SHALL NOT stop, restart, or rebind the winner's instance. The `reconcile_duplicate` telemetry event (upstream: one operator observed on multiple nodes, resolved keep-one/stop-others) SHALL be reclassified alarm-grade carrying the kept/stopped nodes: a firing outside a cross-node partition-recovery window indicates a start-authority violation.
+Every path that starts or binds a relay — the ProcessHub orphan reconcile, the Convergence planner, manager/CLI starts, scheduled spawns, and tasklet-requested spawns — SHALL resolve through the registry's duplicate-id claim. On a collision the loser SHALL observe the duplicate verdict, verify the winner is live, and no-op; it SHALL NOT stop, restart, or rebind the winner's instance. The `reconcile_duplicate` telemetry event (upstream: one relay observed on multiple nodes, resolved keep-one/stop-others) SHALL be reclassified alarm-grade carrying the kept/stopped nodes: a firing outside a cross-node partition-recovery window indicates a start-authority violation.
 
 #### Scenario: Concurrent reconcile and planner starts collapse to one instance
-- **WHEN** the orphan reconcile and the Convergence planner both attempt to start the same operator in the same window on one node
+- **WHEN** the orphan reconcile and the Convergence planner both attempt to start the same relay in the same window on one node
 - **THEN** exactly one instance runs, the losing path no-ops after verifying the winner is live, and no stop/restart churn is observed on the winner
 
 #### Scenario: Duplicate telemetry distinguishes its two cases
@@ -503,11 +503,11 @@ Every path that starts or binds an operator — the ProcessHub orphan reconcile,
 
 ### Requirement: Convergence cooperates with reconcile rounds instead of racing them
 
-`Flezha.Convergence.Loop` SHALL consume `reconcile_round` completion events (the hook fires at round completion, carrying `started`/`duplicates`/`elapsed_ms`): a round reporting `started > 0` SHALL trigger an immediate convergence tick whose plan adopts the reconcile-started operators — no rebind, stop, or duplicate-start op is emitted against an operator the round just started and that probes as live-bound. A round reporting `started = 0` SHALL trigger nothing. The boot/recovery window remains gated by the existing RecoveryGate hold, unchanged.
+`Flezha.Convergence.Loop` SHALL consume `reconcile_round` completion events (the hook fires at round completion, carrying `started`/`duplicates`/`elapsed_ms`): a round reporting `started > 0` SHALL trigger an immediate convergence tick whose plan adopts the reconcile-started relays — no rebind, stop, or duplicate-start op is emitted against a relay the round just started and that probes as live-bound. A round reporting `started = 0` SHALL trigger nothing. The boot/recovery window remains gated by the existing RecoveryGate hold, unchanged.
 
-#### Scenario: A reconcile-started operator is adopted, not fought
-- **WHEN** a steady-state reconcile round starts two orphaned operators and the completion event reaches the Loop
-- **THEN** the Loop ticks immediately, the Diff observes both operators bound, and the plan contains no op targeting them
+#### Scenario: A reconcile-started relay is adopted, not fought
+- **WHEN** a steady-state reconcile round starts two orphaned relays and the completion event reaches the Loop
+- **THEN** the Loop ticks immediately, the Diff observes both relays bound, and the plan contains no op targeting them
 
 #### Scenario: Quiet rounds are free
 - **WHEN** a reconcile round completes with `started = 0`
@@ -515,41 +515,41 @@ Every path that starts or binds an operator — the ProcessHub orphan reconcile,
 
 ### Requirement: Rebind is node-placement-aware with cross-node re-placement
 
-The heal/rebind path SHALL only bind an operator to a runner reachable from
-the node hosting that operator's Overwatch, and every rebind path SHALL pick
+The heal/rebind path SHALL only bind a relay to a runner reachable from
+the node hosting that relay's Overwatch, and every rebind path SHALL pick
 its target through the same factory-filtered placement function as the start
 path.
 
-The convergence loop SHALL NOT move an operator to another node. Which
-controller hosts an operator is decided by the namespace hub's distribution
-strategy alone (see `operator-placement`), so an operator with a factory is
+The convergence loop SHALL NOT move a relay to another node. Which
+controller hosts a relay is decided by the namespace hub's distribution
+strategy alone (see `relay-placement`), so a relay with a factory is
 never assigned to a node whose fleet cannot run it, and there SHALL be no
-`replace_operator` primitive, no `replace_operators` Diff field and no call to
+`replace_relay` primitive, no `replace_relays` Diff field and no call to
 `ProcessHub.Service.Migration.migrate_child/3` in `lib/`.
 
-An operator whose node has no eligible runner while a peer's fleet has one is
+A relay whose node has no eligible runner while a peer's fleet has one is
 in that state only during the group withdrawal grace or while the hub's own
 move is in flight. The Diff SHALL classify it as waiting: no op is planned
 against it and no backoff key advances.
 
 #### Scenario: No local runner plans nothing
 
-- **WHEN** an operator's Overwatch is on a node whose local fleet has no
+- **WHEN** a relay's Overwatch is on a node whose local fleet has no
   runner advertising its factory, while another node's fleet does
-- **THEN** the plan contains no op targeting the operator
-- **AND** the operator reaches the other node through the hub's
+- **THEN** the plan contains no op targeting the relay
+- **AND** the relay reaches the other node through the hub's
   redistribution once this node withdraws the factory's group
 
 #### Scenario: No eligible fleet anywhere degrades loudly, without churn
 
-- **WHEN** no node in the cluster has a runner advertising the operator's
+- **WHEN** no node in the cluster has a runner advertising the relay's
   factory
-- **THEN** the operator stays where it is, visibly degraded under backoff, and
+- **THEN** the relay stays where it is, visibly degraded under backoff, and
   no move is attempted
 
 ### Requirement: Registry rebinds commit only on a confirmed migrate
 
-Every rebind path SHALL commit the registry binding only after the operator
+Every rebind path SHALL commit the registry binding only after the relay
 confirms the bind — the heal rebind and the runner-disconnect reroute
 alike. The Overwatch's `runner_migrate` SHALL take the one bind path for every
 state it is in: it starts the bind task an un-park starts, linked to the Overwatch, which runs
@@ -557,36 +557,36 @@ state it is in: it starts the bind task an un-park starts, linked to the Overwat
 process it starts SHALL stop when the Overwatch stops, killed or not, so no bind outlives the
 Overwatch that owns it; the
 Overwatch publishes the registry tag and the route when the task reports a bound
-state, and parks the operator with the attempt's reason when it reports a
+state, and parks the relay with the attempt's reason when it reports a
 failure, so the failure is declared to the loop and rebound on the `{:parked, id}`
 ladder. There SHALL be no synchronous running-migrate path beside the task, no
-snapshot-seeded `AddOperator`, and no restore dispatched by the heal after the
+snapshot-seeded `AddRelay`, and no restore dispatched by the heal after the
 bind: the bind restores the persisted Cells and delivers the inbox tail itself.
 A failed, timed-out, or unconfirmable bind SHALL leave the durable registry
-binding unchanged, and the operator SHALL remain eligible for the next
+binding unchanged, and the relay SHALL remain eligible for the next
 convergence tick.
 
 #### Scenario: Timed-out migrate does not switch the registry
 
 - **WHEN** a `runner_migrate` call times out, or the bind task it spawned reports a failure
-- **THEN** the durable registry binding is not switched to the new runner, the operator is parked with the reason and declared to the loop, and the parked ladder rebinds it
+- **THEN** the durable registry binding is not switched to the new runner, the relay is parked with the reason and declared to the loop, and the parked ladder rebinds it
 
-#### Scenario: A steps instance migrates as a steps operator
+#### Scenario: A steps instance migrates as a steps relay
 
-- **WHEN** a `runner_migrate` re-adds a durable steps operator on its new runner
-- **THEN** the `AddOperator` SHALL carry the operator's kind, its folded `task_journal`, a `resume_cell_count` equal to its persisted Cells and its undelivered `inbox_tail_count`, so the runner starts it as a steps operator, holds its driver until those Cells are restored, skips every committed tasklet and receives the tail it is owed
+- **WHEN** a `runner_migrate` re-adds a durable steps relay on its new runner
+- **THEN** the `AddRelay` SHALL carry the relay's kind, its folded `task_journal`, a `resume_cell_count` equal to its persisted Cells and its undelivered `inbox_tail_count`, so the runner starts it as a steps relay, holds its driver until those Cells are restored, skips every committed tasklet and receives the tail it is owed
 
 #### Scenario: A rebind performs one restore
 
-- **WHEN** the heal's `rebind_operator` succeeds for an operator with persisted Cells
+- **WHEN** the heal's `rebind_relay` succeeds for a relay with persisted Cells
 - **THEN** each Cell SHALL receive exactly one `RestoreInitState` for that rebind, sent by the bind, and the heal SHALL send none of its own
 
 #### Scenario: Reroute picks by placement, not at random
 
-- **WHEN** a runner disconnects and its operators are rerouted to the
+- **WHEN** a runner disconnects and its relays are rerouted to the
   remaining fleet
 - **THEN** each replacement target is chosen by the factory-filtered placement
-  function, and no operator is bound to a runner that does not advertise its
+  function, and no relay is bound to a runner that does not advertise its
   factory
 
 #### Scenario: A killed Overwatch leaves no bind running
@@ -630,7 +630,7 @@ runner restarting repeatedly is visible rather than mysterious.
 
 #### Scenario: The restarted runner exits non-zero
 - **WHEN** a runner receives the terminal disconnect reason
-- **THEN** it SHALL run its graceful shutdown and exit with a non-zero status, and its operators SHALL be rerouted by the existing disconnect path
+- **THEN** it SHALL run its graceful shutdown and exit with a non-zero status, and its relays SHALL be rerouted by the existing disconnect path
 
 #### Scenario: A healthy runner is never restarted
 - **WHEN** a runner is idle, or is connected but unfed, or is slow without a wedge verdict
@@ -642,45 +642,45 @@ runner restarting repeatedly is visible rather than mysterious.
 
 ### Requirement: A park is an outcome declared to the loop, never a primitive
 
-A park SHALL be declared to the convergence loop by the one park funnel (`Flezha.Operator.Lifecycle.park/2`) as the fact `{:operator_parked, namespace, operator_id, reason}`, and SHALL NOT be a heal primitive: nothing is repaired by a park, it is what a failed repair leaves behind. The Diff SHALL report parked operators apart from unbound ones, with the reason, and the Planner SHALL answer with `rebind_operator` on the `{:parked, operator_id}` key — eligible at the declaring tick, then on the loop's table — planning `reset_control_channel` for the runner first when the reason is a dead-transport ping failure, and only once the parked key has walked two rungs when the reason is a timeout. A bind SHALL be one attempt; the un-park task reports its outcome to the Overwatch and decides nothing.
+A park SHALL be declared to the convergence loop by the one park funnel (`Flezha.Relay.Lifecycle.park/2`) as the fact `{:relay_parked, namespace, relay_id, reason}`, and SHALL NOT be a heal primitive: nothing is repaired by a park, it is what a failed repair leaves behind. The Diff SHALL report parked relays apart from unbound ones, with the reason, and the Planner SHALL answer with `rebind_relay` on the `{:parked, relay_id}` key — eligible at the declaring tick, then on the loop's table — planning `reset_control_channel` for the runner first when the reason is a dead-transport ping failure, and only once the parked key has walked two rungs when the reason is a timeout. A bind SHALL be one attempt; the un-park task reports its outcome to the Overwatch and decides nothing.
 
-A runner connecting in a namespace SHALL release the cooldown keys of every operator in that namespace which is waiting for a runner, whatever phase it is in: parked, unbound, and misbound to a runner that is gone. The released set SHALL be **derived** from the same `Planner.key/1` that produced the op, never from a hand-written list of key shapes, so a rebind planned under a new reason cannot silently escape the release.
+A runner connecting in a namespace SHALL release the cooldown keys of every relay in that namespace which is waiting for a runner, whatever phase it is in: parked, unbound, and misbound to a runner that is gone. The released set SHALL be **derived** from the same `Planner.key/1` that produced the op, never from a hand-written list of key shapes, so a rebind planned under a new reason cannot silently escape the release.
 
-The release SHALL be guarded so that a runner which cannot serve an operator does not wake it: a runner SHALL release only the keys of operators whose factory it advertises. Because that advertisement can change between the release and the plan, the guard SHALL NOT be the only protection — a rebind attempt that finds no runner able to serve the operator SHALL be treated as an unmet precondition and SHALL neither advance nor reset the ladder, so a wake that turns out to be useless costs a plan and not a rung. A failed bind that did have a capable runner is a failed repair and advances the ladder as before. No separate release counter, per-runner release cooldown or other site-local ladder SHALL be introduced: the `:on_success` reset of the one table is what bounds a flapping runner.
+The release SHALL be guarded so that a runner which cannot serve a relay does not wake it: a runner SHALL release only the keys of relays whose factory it advertises. Because that advertisement can change between the release and the plan, the guard SHALL NOT be the only protection — a rebind attempt that finds no runner able to serve the relay SHALL be treated as an unmet precondition and SHALL neither advance nor reset the ladder, so a wake that turns out to be useless costs a plan and not a rung. A failed bind that did have a capable runner is a failed repair and advances the ladder as before. No separate release counter, per-runner release cooldown or other site-local ladder SHALL be introduced: the `:on_success` reset of the one table is what bounds a flapping runner.
 
 #### Scenario: A failed bind parks once and is retried by the loop
-- **GIVEN** an operator whose one bind attempt fails with a timeout-class reason
+- **GIVEN** a relay whose one bind attempt fails with a timeout-class reason
 - **WHEN** the Overwatch parks it
-- **THEN** `{:operator_parked, ns, id, reason}` SHALL reach the loop, the loop SHALL tick at once and plan `rebind_operator` for it under the `{:parked, id}` key, and no retry SHALL run inside the Overwatch
+- **THEN** `{:relay_parked, ns, id, reason}` SHALL reach the loop, the loop SHALL tick at once and plan `rebind_relay` for it under the `{:parked, id}` key, and no retry SHALL run inside the Overwatch
 
-#### Scenario: A dead transport is cut before the operator is placed on it
-- **GIVEN** an operator parked because its bind's ping reported a dead transport
+#### Scenario: A dead transport is cut before the relay is placed on it
+- **GIVEN** a relay parked because its bind's ping reported a dead transport
 - **WHEN** the loop plans the declaring tick
-- **THEN** it SHALL plan `reset_control_channel` for the runner before `rebind_operator` for the operator
+- **THEN** it SHALL plan `reset_control_channel` for the runner before `rebind_relay` for the relay
 
 #### Scenario: A busy runner is retried, then cut
-- **GIVEN** an operator parked with a timeout reason whose `{:parked, id}` key has walked two rungs
+- **GIVEN** a relay parked with a timeout reason whose `{:parked, id}` key has walked two rungs
 - **WHEN** the fault persists into the next eligible tick
 - **THEN** the plan SHALL carry `reset_control_channel` for its runner; a first timeout SHALL NOT cut the channel
 
 #### Scenario: A runner arriving mid-cooldown is used at once
-- **GIVEN** three operators parked in a namespace, their keys on a mid-ladder rung
+- **GIVEN** three relays parked in a namespace, their keys on a mid-ladder rung
 - **WHEN** a runner advertising their factory connects to that namespace
 - **THEN** every one of their cooldown keys SHALL be released and the immediate tick SHALL plan their rebinds
 
-#### Scenario: An operator whose runner died is released too
-- **GIVEN** an operator judged misbound to a runner that is gone, cooling on the `{:dead_runner, id}` key its reasoned rebind derives
+#### Scenario: A relay whose runner died is released too
+- **GIVEN** a relay judged misbound to a runner that is gone, cooling on the `{:dead_runner, id}` key its reasoned rebind derives
 - **WHEN** a runner advertising its factory connects to the namespace
-- **THEN** that key SHALL be released and the operator SHALL bind on the immediate tick rather than waiting out its rung
+- **THEN** that key SHALL be released and the relay SHALL bind on the immediate tick rather than waiting out its rung
 
-#### Scenario: A runner that cannot serve the operator wakes nobody
-- **GIVEN** an operator waiting for a runner in a namespace
-- **WHEN** a runner connects to that namespace advertising no factory the operator needs
-- **THEN** the operator's cooldown key SHALL NOT be released
+#### Scenario: A runner that cannot serve the relay wakes nobody
+- **GIVEN** a relay waiting for a runner in a namespace
+- **WHEN** a runner connects to that namespace advertising no factory the relay needs
+- **THEN** the relay's cooldown key SHALL NOT be released
 - **AND** if it is woken anyway, the resulting attempt SHALL neither advance nor reset its ladder
 
 #### Scenario: A flapping runner does not defeat the ladder
-- **GIVEN** an operator waiting on a mid-ladder rung whose bind fails for its own reasons
+- **GIVEN** a relay waiting on a mid-ladder rung whose bind fails for its own reasons
 - **WHEN** a runner connects and disconnects repeatedly in its namespace
 - **THEN** each failed repair SHALL advance the ladder, and the rung SHALL be cleared only by a bind that succeeds
 
@@ -701,10 +701,10 @@ walk over `lib/**/*.ex` finds no call to a remedy entry point — `Recovery.resy
 table and, per primitive, inject its fault through the real transport and assert the
 loop plans and executes that primitive, advances its key while the fault persists and
 resets it on repair. The one exception is a rebind whose fault leaves no runner able to
-serve the operator: that attempt is an unmet precondition and neither advances nor
+serve the relay: that attempt is an unmet precondition and neither advances nor
 resets the ladder, so for it the drill SHALL assert instead that the rebind is planned
-again with no waiting key of the operator armed, and that no key is left armed once
-the operator binds to a runner that arrives. A new primitive or fact kind SHALL be
+again with no waiting key of the relay armed, and that no key is left armed once
+the relay binds to a runner that arrives. A new primitive or fact kind SHALL be
 covered by both with no test edit.
 
 #### Scenario: A direct resync outside the loop fails the walk
@@ -725,15 +725,15 @@ covered by both with no test edit.
 - **THEN** `[:flezha, :convergence, :heal]` SHALL fire naming that primitive and target, the tick summary SHALL report the advanced rung while the fault is held, the unmet rebind below excepted, and the tick after repair SHALL plan nothing for the target
 
 #### Scenario: A rebind with no runner to place on arms no rung
-- **GIVEN** the drill's rebind row, whose runner is killed with no other runner able to serve the operator
+- **GIVEN** the drill's rebind row, whose runner is killed with no other runner able to serve the relay
 - **WHEN** the loop plans the rebind
-- **THEN** it SHALL plan it again, with no waiting key of the operator armed
-- **AND** once a runner arrives and the operator binds to it, no waiting key SHALL be left armed and the tick after SHALL plan nothing for the operator
+- **THEN** it SHALL plan it again, with no waiting key of the relay armed
+- **AND** once a runner arrives and the relay binds to it, no waiting key SHALL be left armed and the tick after SHALL plan nothing for the relay
 
 ### Requirement: One verdict record per subject SHALL be judged once and read everywhere
 
 The convergence loop SHALL mint, on every tick, exactly one verdict record per health
-subject — a runner, an operator, a plugin, a channel or a driver — carrying the subject,
+subject — a runner, a relay, a plugin, a channel or a driver — carrying the subject,
 one state of a closed vocabulary (`healthy`, `degraded`, `failed`, `unbound`, `parked`,
 `suspended`, `unknown`), the reason, the subject's own lifecycle phase as a fact never
 derived from the state, the monotonic instant the state was first minted, the named
@@ -743,7 +743,7 @@ nobody, `degraded` the loop in place, `failed` the loop by rebinding, `unbound` 
 by binding, `parked` a user or a plugin fix, `suspended` nobody until the committed
 boundary, `unknown` the next tick. The states a subject kind can reach SHALL be declared
 and tested: a plugin and a driver reach `healthy`, `degraded` and `unknown`; a channel
-and a runner add `failed`; an operator reaches all seven.
+and a runner add `failed`; a relay reaches all seven.
 
 Every detector SHALL be one entry of a declaration table naming its fact reader, the
 subject kind it speaks about, the threshold names it cites and the `[:flezha, …]` events
@@ -752,14 +752,14 @@ facts per subject in one fixed rule order — an unobserved reader wins, then su
 then no binding, then a binding to a runner the roster does not hold, then a park, then
 the deepest of a stall, a stuck marker or a degraded plugin, otherwise healthy — and the
 three fail-open rules SHALL be the judge's: a `:prepared` plugin is `healthy`, a probe
-that answered uncertainly is `healthy`, and an operator whose markers are flat with no
+that answered uncertainly is `healthy`, and a relay whose markers are flat with no
 input-side advance is `healthy` with reason `idle`. A reader that raises or times out
 SHALL yield `unknown` for its subjects, `unknown` SHALL escalate nothing, and the tick
 SHALL complete.
 
 The judged records SHALL be the Diff's input in place of an open signals map, SHALL be
-published to the snapshot from exactly one site, and `bound_operators`,
-`producing_operators` and `unknown_operators` SHALL be derived from them. A classifier
+published to the snapshot from exactly one site, and `bound_relays`,
+`producing_relays` and `unknown_relays` SHALL be derived from them. A classifier
 verdict SHALL reach exactly one reader by its subject kind: a `driver` record is read by
 `/healthz` alone and the Diff SHALL plan nothing for it; every other kind is read by the
 Diff alone and reaches `/healthz` only as `degraded`. The five facts — session open, data
@@ -775,9 +775,9 @@ so a session that is alive over a data plane that is dead is two fields of one r
   the failure, no heal SHALL be planned on its account, and the tick SHALL publish a
   snapshot
 
-#### Scenario: An idle operator is healthy, not stalled
+#### Scenario: An idle relay is healthy, not stalled
 
-- **GIVEN** a bound operator whose progress markers are flat and whose input side has
+- **GIVEN** a bound relay whose progress markers are flat and whose input side has
   not advanced
 - **WHEN** the judge runs
 - **THEN** its record SHALL be `healthy` with reason `idle` and it SHALL count as
@@ -789,14 +789,14 @@ so a session that is alive over a data plane that is dead is two fields of one r
   a park reason
 - **WHEN** the judge runs
 - **THEN** its record SHALL be `state: suspended, phase: suspended`, and a parked
-  operator that is not suspended SHALL be `state: parked, phase: parked`
+  relay that is not suspended SHALL be `state: parked, phase: parked`
 
 #### Scenario: A driver verdict plans nothing
 
 - **GIVEN** the classifier reports a fabric-scoped layer
 - **WHEN** the judge and the Diff run
 - **THEN** a `driver` record SHALL be minted `degraded` with the wedged layer as its
-  reason, the Diff SHALL issue no op for it, and no runner, channel or operator record
+  reason, the Diff SHALL issue no op for it, and no runner, channel or relay record
   SHALL reach the fabric arm of `/healthz`
 
 #### Scenario: A live session over a dead data plane is one record with two facts
@@ -875,7 +875,7 @@ A monitor exists so its OWNER can maintain its own bookkeeping — drop a route,
 
 #### Scenario: An owner reacts at once and the Loop plans on its own tick
 
-- **GIVEN** a route table that watches the process serving an operator
+- **GIVEN** a route table that watches the process serving a relay
 - **WHEN** that process dies
 - **THEN** the route table SHALL drop its routes at once, and the Loop SHALL reach the same verdict on its next tick rather than being called into directly
 
@@ -884,9 +884,9 @@ A monitor exists so its OWNER can maintain its own bookkeeping — drop a route,
 - **WHEN** the convergence tree is read
 - **THEN** no module under it SHALL call `Process.monitor/1` and no `:DOWN` clause SHALL exist there
 
-### Requirement: A runner's report that an operator instance exited SHALL park it for the one rebind
+### Requirement: A runner's report that a relay instance exited SHALL park it for the one rebind
 
-The controller SHALL read `OperatorExited { operator_id, reason }` on a runner's control stream as
+The controller SHALL read `RelayExited { relay_id, reason }` on a runner's control stream as
 a runner-initiated frame, admit it through the ownership record, flush the reporting runner's
 stream channels off the control channel's process, and then tell the instance's Overwatch. The
 Overwatch SHALL act on a report only when it is current: the instance is bound to the reporting
@@ -895,16 +895,16 @@ completion is recorded for it. A report that lands while a bind task is in fligh
 and judged by the same rules against the binding that task's result adopts, because the
 incarnation the bind started can exit before the bind reports. Any other report SHALL change
 nothing. A current report SHALL be
-logged, SHALL emit `[:flezha, :operator, :exited]` naming the namespace, the operator, the runner
+logged, SHALL emit `[:flezha, :relay, :exited]` naming the namespace, the relay, the runner
 and the reason, and SHALL park the instance through the one park funnel with the reason
-`{:operator_exited, reason}`.
+`{:relay_exited, reason}`.
 
-That park SHALL be answered as every park is: `rebind_operator` on the `{:parked, operator_id}` key,
-whose bind task sends `AddOperator` with the resume state, restores and awaits every persisted Cell
+That park SHALL be answered as every park is: `rebind_relay` on the `{:parked, relay_id}` key,
+whose bind task sends `AddRelay` with the resume state, restores and awaits every persisted Cell
 of an instance whose input is durable, and re-forwards the input log above the confirmed floor
 before the instance takes new input. No other rebind path SHALL be added.
 
-A park whose reason is `{:operator_exited, _}` SHALL count as repaired only once the probe sees the
+A park whose reason is `{:relay_exited, _}` SHALL count as repaired only once the probe sees the
 instance unparked and bound for at least the stable window a restarted plugin must stay up for,
 read from the same duration row, so that an instance which exits again inside that window is
 rebound when its key's rung allows and not at once. No new ladder or knob SHALL be introduced.
@@ -912,29 +912,29 @@ rebound when its key's rung allows and not at once. No new ladder or knob SHALL 
 #### Scenario: A killed instance is parked and rebound
 
 - **GIVEN** a flow instance `X` bound to a live Elixir runner and a running convergence loop
-- **WHEN** the runner reports `OperatorExited` for `X`
-- **THEN** `X` SHALL be parked with `{:operator_exited, reason}`, `[:flezha, :operator, :exited]`
-  SHALL be emitted, the loop SHALL plan `rebind_operator` for `X` on the declaring tick, an
-  `AddOperator` for `X` SHALL reach a runner advertising its factory, and `X` SHALL be observed
+- **WHEN** the runner reports `RelayExited` for `X`
+- **THEN** `X` SHALL be parked with `{:relay_exited, reason}`, `[:flezha, :relay, :exited]`
+  SHALL be emitted, the loop SHALL plan `rebind_relay` for `X` on the declaring tick, an
+  `AddRelay` for `X` SHALL reach a runner advertising its factory, and `X` SHALL be observed
   bound and unparked afterwards
 
 #### Scenario: A stale report changes nothing
 
 - **GIVEN** an instance `X` bound to session B
-- **WHEN** an `OperatorExited` for `X` is admitted from session A, which shares B's stable identity
+- **WHEN** a `RelayExited` for `X` is admitted from session A, which shares B's stable identity
 - **THEN** `X` SHALL NOT be parked and no rebind SHALL be planned for it
 
 #### Scenario: A report while a bind is in flight is judged against the binding it adopts
 
 - **GIVEN** an instance `X` whose bind task is running
-- **WHEN** an `OperatorExited` for `X` arrives, and the bind task then reports `X` bound
+- **WHEN** a `RelayExited` for `X` arrives, and the bind task then reports `X` bound
 - **THEN** `X` SHALL NOT be parked while the task runs, the task's result SHALL be adopted, and `X`
-  SHALL then be parked with `{:operator_exited, reason}` when the report came from the session the
+  SHALL then be parked with `{:relay_exited, reason}` when the report came from the session the
   adopted binding names, and left bound otherwise
 
 #### Scenario: A report for a suspended or completed instance changes nothing
 
-- **WHEN** an `OperatorExited` arrives for an instance that is suspended, or for a steps instance
+- **WHEN** a `RelayExited` arrives for an instance that is suspended, or for a steps instance
   whose completion is recorded
 - **THEN** the instance SHALL NOT be parked or rebound, and a completed one's teardown SHALL proceed
 
@@ -948,7 +948,7 @@ rebound when its key's rung allows and not at once. No new ladder or knob SHALL 
 
 - **GIVEN** an instance `X` rebound after a report, whose park fact is still held
 - **WHEN** `X` is reported exited again before it has been bound for the stable window
-- **THEN** the report SHALL cause no immediate tick, and the next `rebind_operator` for `X` SHALL be
+- **THEN** the report SHALL cause no immediate tick, and the next `rebind_relay` for `X` SHALL be
   planned only once its `{:parked, X}` key's rung has elapsed
 
 #### Scenario: An instance that stays up clears its ladder
@@ -966,7 +966,7 @@ rebound when its key's rung allows and not at once. No new ladder or knob SHALL 
 **Migration**: Any test or external code that calls `Backoff.schedule_ms/0` should inline the value `[5_000, 30_000, 60_000, 300_000]` or read the module attribute `@schedule_ms` if needed for compile-time assertions.
 ### Requirement: A declared plugin that is not running is a divergence
 
-`Convergence.Probe` SHALL report an operator's RUNNING plugins as the set whose
+`Convergence.Probe` SHALL report a relay's RUNNING plugins as the set whose
 lifecycle phase is `:running`, not the set of subscribed plugin ids. A declared
 plugin that is subscribed but stuck in `:prepared` — because its `activate/1`
 failed — SHALL therefore appear in the Diff's `missing_plugins`, and SHALL be
@@ -979,22 +979,22 @@ different sets deliberately, and the Probe SHALL report both.
 
 Without this, a plugin that never acquired its upstream resources is counted as
 running, is reported healthy because `:prepared` is healthy by rule, and yields
-an empty delta on every tick — the operator produces nothing and no verdict,
+an empty delta on every tick — the relay produces nothing and no verdict,
 op, or alarm is ever raised.
 
 #### Scenario: a plugin stuck in prepared is diffed as missing
-- **GIVEN** an operator with one declared plugin whose `activate/1` failed, leaving it `:prepared` and subscribed
+- **GIVEN** a relay with one declared plugin whose `activate/1` failed, leaving it `:prepared` and subscribed
 - **WHEN** the Loop ticks
 - **THEN** the Diff SHALL list that plugin in `missing_plugins`
 - **AND** the Planner SHALL plan a `start_plugin` op for it under backoff
 
 #### Scenario: a running plugin is not diffed as missing
-- **GIVEN** an operator whose declared plugins are all `:running`
+- **GIVEN** a relay whose declared plugins are all `:running`
 - **WHEN** the Loop ticks
 - **THEN** `missing_plugins` SHALL be empty and no `start_plugin` op SHALL be planned
 
 #### Scenario: an undeclared plugin is still extra whatever its phase
-- **GIVEN** an operator holding a subscribed plugin that its declaration does not name, in either phase
+- **GIVEN** a relay holding a subscribed plugin that its declaration does not name, in either phase
 - **WHEN** the Loop ticks
 - **THEN** the Diff SHALL list it in `extra_plugins` and a `stop_plugin` op SHALL be planned
 

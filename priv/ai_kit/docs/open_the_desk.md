@@ -70,8 +70,8 @@ factories:
 public final class Main {
     public static void main(String[] args) throws Exception {
         FlezhaRunner runner = Flezha.createRunner(args.length > 0 ? args[0] : "trading")
-                .registerFactory(TradeWatcherOperator.class)
-                .registerFactory(OrderExecutorOperator.class)
+                .registerFactory(TradeWatcherRelay.class)
+                .registerFactory(OrderExecutorRelay.class)
                 .start();
 
         runner.awaitTermination();
@@ -94,8 +94,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let runner = Flezha::create_runner(namespace)?;
     runner
-        .register_factory(trade_watcher::TradeWatcherOperator)?
-        .register_factory(order_executor::OrderExecutorOperator)?
+        .register_factory(trade_watcher::TradeWatcherRelay)?
+        .register_factory(order_executor::OrderExecutorRelay)?
         .start()?;
 
     runner.await_termination()?;
@@ -110,8 +110,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```javascript
 // runner.mjs: the runner: joins trading and registers both factories
 const runner = createRunner(process.argv[2] ?? 'trading');
-await runner.registerFactory('./trade_watcher_operator.mjs');
-await runner.registerFactory('./order_executor_operator.mjs');
+await runner.registerFactory('./trade_watcher_relay.mjs');
+await runner.registerFactory('./order_executor_relay.mjs');
 
 await runner.run();
 ```
@@ -147,8 +147,8 @@ if __name__ == "__main__":
 $stdout.sync = true
 
 runner = Flezha.create_runner(ARGV[0] || "trading")
-               .register_factory(TradeWatcherOperator)
-               .register_factory(OrderExecutorOperator)
+               .register_factory(TradeWatcherRelay)
+               .register_factory(OrderExecutorRelay)
                .boot
 
 runner.await_termination
@@ -161,8 +161,8 @@ runner.await_termination
 ```php
 // runner.php: the runner: joins trading and registers both factories
 $runner = Flezha::createRunner($argv[1] ?? 'trading')
-    ->registerFactory(TradeWatcherOperator::class)
-    ->registerFactory(OrderExecutorOperator::class)
+    ->registerFactory(TradeWatcherRelay::class)
+    ->registerFactory(OrderExecutorRelay::class)
     ->start();
 
 $runner->awaitTermination();
@@ -184,7 +184,7 @@ defmodule Tradedesk.Application do
     children = [
       {Flezha.SDK,
        namespace: namespace,
-       operators: [Tradedesk.TradeWatcher, Tradedesk.OrderExecutor],
+       relays: [Tradedesk.TradeWatcher, Tradedesk.OrderExecutor],
        transport: :uds}
     ]
 
@@ -268,4 +268,4 @@ Runners in namespace 'trading':
 
 ## Next
 
-[Watch the trades](watch_the_trades.md) starts the first operator on it.
+[Watch the trades](watch_the_trades.md) starts the first relay on it.

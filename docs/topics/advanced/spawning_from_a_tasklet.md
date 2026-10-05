@@ -1,9 +1,9 @@
 # Spawning from a tasklet
 
-A running tasklet can start a steps operator with one call: `ctx.spawn_steps`. A stream that
+A running tasklet can start a steps relay with one call: `ctx.spawn_steps`. A stream that
 watches prices can start one order workflow per buy; a router can start one triage job per
 ticket, or hand a ticket to the job already working on its subject. The tasklet may belong to a
-flow or a steps operator; what it starts is always a steps operator, in the tasklet's own
+flow or a steps relay; what it starts is always a steps relay, in the tasklet's own
 namespace.
 
 The call is spawn-**or**-deliver: given an id that is free, it starts an instance there with the
@@ -15,31 +15,31 @@ id.
 
 | | |
 |---|---|
-| Callable from | any tasklet's `run`, in a flow or a steps operator |
-| Starts | a **steps operator** only; flow operators are started and kept running by the controller |
+| Callable from | any tasklet's `run`, in a flow or a steps relay |
+| Starts | a **steps relay** only; flow relays are started and kept running by the controller |
 | Namespace | the requester's, always; a tasklet cannot reach another namespace |
 | Verb | spawn-or-deliver on (namespace, id); with no id, always a spawn under a generated id |
 | Blocking | never: the call returns a handle before the controller decides |
 | Failure | isolated: a refusal never fails `run`, its emits or its journaling |
 | Replay | live processing only; a replayed invocation issues nothing |
 
-The request goes to the controller, which judges and records it the way `flz operator start`
-is, so the instance it starts is an ordinary steps operator: namespace quota (`max_operators`,
-`max_cells_per_operator`), durable input log, sleeping and waking, its end and teardown,
-retention, and a row in `flz operator list`. A delivery is judged as `flz operator send` is,
+The request goes to the controller, which judges and records it the way `flz relay start`
+is, so the instance it starts is an ordinary steps relay: namespace quota (`max_relays`,
+`max_cells_per_relay`), durable input log, sleeping and waking, its end and teardown,
+retention, and a row in `flz relay list`. A delivery is judged as `flz relay send` is,
 and recorded only when refused, because it happens once per event.
 
 The payload is the new instance's first message by construction: it is taken in as the instance
 binds, ahead of anything else in its mailbox, through the same entrance every message takes. It
 names no channel, so it enters the first declared entry channel, is decoded by that channel's
-codec or parser, and runs the chain that channel starts, whichever way the operator loops. Every
+codec or parser, and runs the chain that channel starts, whichever way the relay loops. Every
 SDK encodes it the way a sink with no codec encodes a value, the rule `ctx.complete` uses:
 bytes as they are, a string as UTF-8, anything else as JSON, so a `text` or `json` entry reads
 it. A durable instance whose input log already holds records is a restart, not a spawn, and is
 not given the payload again.
 
 The factory is looked up cluster-wide: a controller with no runner for it routes the request to
-one that has one, so `operator.factory_unknown` means no runner anywhere serves it.
+one that has one, so `relay.factory_unknown` means no runner anywhere serves it.
 
 ## How to use it
 
@@ -64,14 +64,14 @@ What the call does:
 |---|---|---|
 | not given | spawned under a generated id | (no policy without an id) |
 | free | spawned; the payload is the first message | spawned |
-| taken | delivered; the payload is one more message | refused, `operator.already_running` |
+| taken | delivered; the payload is one more message | refused, `relay.already_running` |
 
 A generated id is the factory id, shortened to fit the 32-byte limit, a `-` and 16 characters of
 time and randomness, such as `triage-k7m2qzxw4pd3fn2a`.
 
 Concurrent requests for one id resolve to **exactly one** spawn, and deliveries for the rest. A
 completed instance's id counts as free again, so a request arriving after the instance finished
-starts a fresh one: make the started operator safe to run twice for the same work.
+starts a fresh one: make the started relay safe to run twice for the same work.
 
 ### Permission
 
@@ -87,7 +87,7 @@ bound runner@trading as spawner@trading
 runner@trading  spawner@trading
 ```
 
-`spawner` also lets that connection call `Operator.start` and `Operator.send` on the
+`spawner` also lets that connection call `Relay.start` and `Relay.send` on the
 administration surface, and nothing else (see [authorization](../basics/authorization.md)).
 
 ### Reading the result
@@ -111,9 +111,9 @@ that never waits answers that the result is pending until it has arrived.
 
 | Code | Meaning |
 |---|---|
-| `operator.already_running` | the id is taken and the policy is `error` |
-| `operator.factory_unknown` | no connected runner on any controller registers that factory |
-| `operator.factory_not_steps` | the factory's runners announced it as a flow operator; decided before anything is placed |
+| `relay.already_running` | the id is taken and the policy is `error` |
+| `relay.factory_unknown` | no connected runner on any controller registers that factory |
+| `relay.factory_not_steps` | the factory's runners announced it as a flow relay; decided before anything is placed |
 | `authz.role_insufficient` and other `authz.*` codes | authorization is on and `runner@<namespace>` holds no role that grants the spawn |
 | `quota.exceeded`, and the controller's other codes | quota used up, controller shutting down, start failed |
 | `spawn.timeout` | no answer within 30 seconds |
@@ -138,7 +138,7 @@ order is the workflow's first message. It passes no id, so each buy starts a new
 // BuyAboveAverage.java: buys when a price is far enough above its average.
         int quantity = (int) Math.round(percent * UNITS_PER_PERCENT);   // a stronger move buys more
 
-        ctx.spawnSteps("order_executor", new OrderTicket(move.symbol(), quantity));   // one steps operator per order
+        ctx.spawnSteps("order_executor", new OrderTicket(move.symbol(), quantity));   // one steps relay per order
 ```
 
 [Full file](https://github.com/flezha/flezha_java_sdk/blob/main/examples/tradedesk/src/main/java/com/flezha/examples/tradedesk/BuyAboveAverage.java)
@@ -152,7 +152,7 @@ order is the workflow's first message. It passes no id, so each buy starts a new
             quantity,
         };
         let order = serde_json::to_vec(&ticket).map_err(|e| TaskletError::Custom(e.to_string()))?;
-        let _ = ctx.spawn_steps("order_executor", order); // one steps operator per order
+        let _ = ctx.spawn_steps("order_executor", order); // one steps relay per order
 ```
 
 [Full file](https://github.com/flezha/flezha_rust_sdk/blob/main/examples/tradedesk/src/buy_above_average.rs)
@@ -162,7 +162,7 @@ order is the workflow's first message. It passes no id, so each buy starts a new
 ```js
 // buy_above_average.mjs: buys when a price is far enough above its average.
     const order = { symbol: move.symbol, quantity };
-    ctx.spawnSteps('order_executor', order); // one steps operator per order
+    ctx.spawnSteps('order_executor', order); // one steps relay per order
 ```
 
 [Full file](https://github.com/flezha/flezha_node_sdk/blob/main/examples/tradedesk/buy_above_average.mjs)
@@ -172,7 +172,7 @@ order is the workflow's first message. It passes no id, so each buy starts a new
 ```python
 # buy_above_average.py: buys when a price is far enough above its average.
         order = OrderTicket(symbol=move["symbol"], quantity=quantity)
-        ctx.spawn_steps("order_executor", order)  # one steps operator per order
+        ctx.spawn_steps("order_executor", order)  # one steps relay per order
 ```
 
 [Full file](https://github.com/flezha/flezha_python_sdk/blob/main/examples/tradedesk/buy_above_average.py)
@@ -182,7 +182,7 @@ order is the workflow's first message. It passes no id, so each buy starts a new
 ```ruby
 # buy_above_average.rb: buys when a price is far enough above its average.
     order = { symbol: move[:symbol], quantity: quantity }
-    ctx.spawn_steps("order_executor", order)               # one steps operator per order
+    ctx.spawn_steps("order_executor", order)               # one steps relay per order
 ```
 
 [Full file](https://github.com/flezha/flezha_ruby_sdk/blob/main/examples/tradedesk/buy_above_average.rb)
@@ -192,7 +192,7 @@ order is the workflow's first message. It passes no id, so each buy starts a new
 ```php
 // BuyAboveAverage.php: buys when a price is far enough above its average.
         $order = ['symbol' => $input['symbol'], 'quantity' => $quantity];
-        $ctx->spawnSteps('order_executor', $order);        // one steps operator per order
+        $ctx->spawnSteps('order_executor', $order);        // one steps relay per order
 ```
 
 [Full file](https://github.com/flezha/flezha_php_sdk/blob/main/examples/tradedesk/src/BuyAboveAverage.php)
@@ -201,7 +201,7 @@ order is the workflow's first message. It passes no id, so each buy starts a new
 
 ```elixir
 # lib/tradedesk/buy_above_average.ex: buys when a price is far enough above its average.
-      # One steps operator per order.
+      # One steps relay per order.
       spawn_steps(ctx, "order_executor", %{symbol: symbol, quantity: quantity})
 ```
 
@@ -233,7 +233,7 @@ instance the first request resolved to:
   once.
 
 A re-run that asks for a different factory or payload at the same position is a new request and
-spawns anew. An invocation that took no input offset (a timer firing, or an input to an operator
+spawns anew. An invocation that took no input offset (a timer firing, or an input to a relay
 with no durable input log) carries no identity, and neither does a start from the CLI, the
 administration API or a schedule.
 
@@ -250,7 +250,7 @@ A caller that needs at most one instance, or the id on replay, passes its own id
 ## Limits
 
 - **A faulty tasklet can spawn in a loop.** The namespace quota is the backstop; there is no
-  per-requester rate limit. The telemetry event `[:flezha, :operator, :requested_spawn]`
+  per-requester rate limit. The telemetry event `[:flezha, :relay, :requested_spawn]`
   carries `namespace`, `instance_id` (the id the request resolved to), `factory_id` and
   `outcome` for each request, for rate alerts.
 - **A runner cut off from its controller fails the request later**, like any control-plane
@@ -262,12 +262,12 @@ A caller that needs at most one instance, or the id on replay, passes its own id
 
 ## See also
 
-- [Workflows](../basics/workflows.md): the steps operator a spawn starts
-- [Running operators](../basics/running_operators.md): `flz operator start` and the same retry
+- [Workflows](../basics/workflows.md): the steps relay a spawn starts
+- [Running relays](../basics/running_relays.md): `flz relay start` and the same retry
   danger for a start without an id
 - [Authorization](../basics/authorization.md): roles, and `spawner`
-- [Operator calls](operator_calls.md): a call to a factory uses the same spawn-or-deliver
-- [`operator_forward`](../../plugins/operator_forward.md): feeding an existing operator as
+- [Relay calls](relay_calls.md): a call to a factory uses the same spawn-or-deliver
+- [`relay_forward`](../../plugins/relay_forward.md): feeding an existing relay as
   configuration
 - [Errors](../../errors.md)
 - Tutorial: [place orders](../../tutorials/tradedesk/place_orders.md)

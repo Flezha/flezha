@@ -206,7 +206,7 @@ defmodule Flezha.Config.Keys do
     {:bind_restore_concurrency, :positive_int, 16, key: true},
     # The fairness cap on runner selection, as a percentage of the fair share of
     # the candidate set. At `100` the cap is exactly the fair share and the
-    # spread is even at every operator count; a value high enough that no
+    # spread is even at every relay count; a value high enough that no
     # candidate ever reaches the cap is plain rendezvous hashing, which is where
     # placement was before the cap existed.
     {:placement_load_cap_percent, :positive_int, 100,
@@ -279,7 +279,7 @@ defmodule Flezha.Config.Keys do
 
     # ---- state: compaction, watermarks, credit ------------------------------
     # A Cell whose un-snapshotted WAL exceeds this is compacted. A class that
-    # declares `compact_after_bytes()` ships it in the `AddOperator` metadata
+    # declares `compact_after_bytes()` ships it in the `AddRelay` metadata
     # and that per-class value is resolved ahead of this default; a user
     # `%{class => bytes}` override wins over both.
     {:default_compact_after_bytes, :int, 8_388_608, key: true, env: "FLEZHA_COMPACT_AFTER_BYTES"},
@@ -291,9 +291,9 @@ defmodule Flezha.Config.Keys do
      key: true, derived: {:factor, :wal_high_watermark_bytes, 4}},
     {:wal_pending_msg_cap, :positive_int, 5_000, key: true},
     {:outbox_inflight_max, :positive_int, 1_000, key: true},
-    # The answers one callee operator owes the callers waiting on it, outside
-    # callers and operators alike; a call past it is refused `call.busy`
-    # before anything is ingested. An operator's own outbound calls never
+    # The answers one callee relay owes the callers waiting on it, outside
+    # callers and relays alike; a call past it is refused `call.busy`
+    # before anything is ingested. A relay's own outbound calls never
     # count against it, its own or a callee's.
     {:call_pending_max, :positive_int, 10_000, key: true, env: "FLEZHA_CALL_PENDING_MAX"},
     # What one listener holds that its handler has not taken: parts are dropped
@@ -309,26 +309,26 @@ defmodule Flezha.Config.Keys do
      key: true, env: "FLEZHA_PLUGIN_BACKLOG_BYTES"},
     {:plugin_backlog_frames, :positive_int, 4_096,
      key: true, env: "FLEZHA_PLUGIN_BACKLOG_FRAMES"},
-    # The ingest requests one source batch keeps in flight to its operator
+    # The ingest requests one source batch keeps in flight to its relay
     # (`Host.inject_many/4`), so a large fetch is not one mailbox flood.
     {:plugin_ingest_window, :positive_int, 64, key: true, env: "FLEZHA_PLUGIN_INGEST_WINDOW"},
     {:record_log_cut_after_bytes, :int, 65_536, key: true},
-    # Per-operator-class user overrides: a map from class to value, read
+    # Per-relay-class user overrides: a map from class to value, read
     # ahead of the SDK's own declaration and of the global default below it.
-    {:operator_persistence, :term, %{}, key: true},
+    {:relay_persistence, :term, %{}, key: true},
     {:output_stall_timeout_overrides, :term, %{}, key: :output_stall_timeout_ms},
     {:default_time_travel_retention_hours, :int, 6, key: true},
     {:credit_window_bytes, :term, %{}, key: true},
     # Unset means half the per-class credit window, which is not a row: the
-    # window is resolved per operator class, so the site holds the halving.
+    # window is resolved per relay class, so the site holds the halving.
     {:credit_low_watermark_bytes, :int, nil, key: true},
     # Kill switch: `false` skips the CreditWindowInit offer entirely, reverting
     # every session to the legacy CellMailboxStatus and shed path.
     {:credit_flow_control_enabled, :bool, true, key: true, env: "FLEZHA_CREDIT_FLOW_CONTROL"},
     {:time_travel_retention_hours, :term, %{}, key: true},
-    {:default_operator_completed_retention_hours, :int, 72,
+    {:default_relay_completed_retention_hours, :int, 72,
      key: true, env: "FLEZHA_STEPS_RETENTION_HOURS"},
-    {:operator_completed_retention_hours, :term, %{}, key: true},
+    {:relay_completed_retention_hours, :term, %{}, key: true},
 
     # ---- remote durability tier ---------------------------------------------
     # `backend: :none` wires nothing into the supervision tree and leaves every
@@ -481,7 +481,7 @@ defmodule Flezha.Config.Keys do
      key: {:file_plugin_s3, :secret_access_key_env}, env: "FLEZHA_FILE_PLUGIN_S3_SECRET_ENV"},
 
     # ---- boot and recovery --------------------------------------------------
-    # Tests bring up their own runners and operators, so at-boot replay is off
+    # Tests bring up their own runners and relays, so at-boot replay is off
     # under `:test`; the persistent registry still records mutations.
     {:auto_restore_enabled, :bool, true,
      key: true, env: "FLEZHA_AUTO_RESTORE_ENABLED", env_default: [test: false]},
@@ -614,8 +614,7 @@ defmodule Flezha.Config.Keys do
      runtimes: [:harness], env: "FLEZHA_RESET_PROBE_OVERRIDE"},
     {:prefer_explicit_restore, :bool, false,
      runtimes: [:harness], env: "FLEZHA_PREFER_EXPLICIT_RESTORE"},
-    {:persistence_operator, :string, nil,
-     runtimes: [:harness], env: "FLEZHA_PERSISTENCE_OPERATOR"},
+    {:persistence_relay, :string, nil, runtimes: [:harness], env: "FLEZHA_PERSISTENCE_RELAY"},
     {:persistence_processor, :string, nil,
      runtimes: [:harness], env: "FLEZHA_PERSISTENCE_PROCESSOR"},
     {:pre_replay_fleet_wait_ms, :ms, nil,
@@ -652,8 +651,7 @@ defmodule Flezha.Config.Keys do
      runtimes: [:bench], env: "FLEZHA_BENCH_CHECKPOINT_DELAY_MS"},
     {:bench_wake_after_ms, :ms, nil, runtimes: [:bench], env: "FLEZHA_BENCH_WAKE_AFTER_MS"},
     {:bench_dyn_msgs, :int, nil, runtimes: [:bench], env: "FLEZHA_BENCH_DYN_MSGS"},
-    {:bench_msgs_per_operator, :int, nil,
-     runtimes: [:bench], env: "FLEZHA_BENCH_MSGS_PER_OPERATOR"},
+    {:bench_msgs_per_relay, :int, nil, runtimes: [:bench], env: "FLEZHA_BENCH_MSGS_PER_RELAY"},
     {:bench_measurement_secs, :int, 30,
      runtimes: [:bench, :rust], env: "FLEZHA_BENCH_MEASUREMENT_SECS"},
     {:scale_n, :int, nil, runtimes: [:bench], env: "FLEZHA_SCALE_N"},

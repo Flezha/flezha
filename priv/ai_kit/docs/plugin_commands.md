@@ -1,6 +1,6 @@
 # Plugin commands
 
-`flz plugin` installs plugin packages, enables plugins and connects operators
+`flz plugin` installs plugin packages, enables plugins and connects relays
 to them. What a plugin is, and how its settings and hooks work, is explained in
 [`plugins.md`](../plugins/plugins.md); this page shows the commands.
 
@@ -13,7 +13,7 @@ How `flz` reaches the controller, its options and its exit codes are on the
 
 ## `flz plugin`
 
-Installs plugin packages, enables plugins and connects operators to them. Explained in [`plugins.md`](../plugins/plugins.md), [`hooks.md`](../plugins/hooks.md), [`installing_plugins.md`](../plugins/installing_plugins.md), tutorial [Feed the echo a file](../../tutorials/echo/feed_the_echo_a_file.md).
+Installs plugin packages, enables plugins and connects relays to them. Explained in [`plugins.md`](../plugins/plugins.md), [`hooks.md`](../plugins/hooks.md), [`installing_plugins.md`](../plugins/installing_plugins.md), tutorial [Feed the echo a file](../../tutorials/echo/feed_the_echo_a_file.md).
 
 ```sh
 $ flz plugin help
@@ -25,7 +25,7 @@ flz plugin - Plugin management commands
 USAGE:
     flz plugin <COMMAND>
     flz plugin enable <name> <provider_id> [--single] [X<key>=<value>]... [OPTIONS]
-    flz plugin bind <name> --operator_id <op> [--hook=<name>]... [--channel <c>]
+    flz plugin bind <name> --relay_id <op> [--hook=<name>]... [--channel <c>]
 
 COMMANDS:
     install    Place a plugin package (.fpz) from a path or an https:// URL
@@ -33,8 +33,8 @@ COMMANDS:
     sync       Make the plugin root hold exactly the packages FLEZHA_PLUGINS
                declares
     enable     Enable a plugin by name in a namespace
-    bind       Connect an operator to an enabled plugin
-    unbind     Take an operator's connection to a plugin away
+    bind       Connect a relay to an enabled plugin
+    unbind     Take a relay's connection to a plugin away
     update     Change an enabled plugin's settings
     disable    Turn a plugin off
     list       List the plugins enabled in a namespace (text or json),
@@ -44,16 +44,16 @@ COMMANDS:
 
 PLUGINS:
     A plugin has a name of its own in its namespace and is enabled once, with
-    no operator; nothing runs until an operator is bound to it. A plugin runs
-    on each controller where an operator bound to it runs, and one copy there
-    serves every such operator when its provider can be shared. `--single`
-    runs one copy in the whole cluster instead. A plugin whose last operator
+    no relay; nothing runs until a relay is bound to it. A plugin runs
+    on each controller where a relay bound to it runs, and one copy there
+    serves every such relay when its provider can be shared. `--single`
+    runs one copy in the whole cluster instead. A plugin whose last relay
     leaves stops and stays enabled; only `disable` turns it off. A provider
-    that cannot be shared serves one operator, or one partition group.
+    that cannot be shared serves one relay, or one partition group.
 
-    `enable --operator_id <op>` enables and binds in one command. `update`
+    `enable --relay_id <op>` enables and binds in one command. `update`
     changes a running plugin in place when its provider declares the changed
-    settings live, and restarts it otherwise, naming the operators bound to it.
+    settings live, and restarts it otherwise, naming the relays bound to it.
 
 PACKAGES:
     install, uninstall and sync change the plugin root, never a running
@@ -61,13 +61,13 @@ PACKAGES:
     when the controller restarts; `flz plugin list --installed` shows each
     package as loaded, refused, pending or removed. An upgrade is an install
     of a newer package of the same id. While FLEZHA_PLUGINS is set, install
-    and uninstall are refused: the declared list is the node's only truth. An
-    operator bound to a plugin whose package a controller lacks runs there
+    and uninstall are refused: the declared list is the node's only truth. A
+    relay bound to a plugin whose package a controller lacks runs there
     without it, and its health says so.
 
 HOOKS:
-    A hook is a point at which the operator calls its plugin, named by the
-    callback the provider defines: on_input sends every payload the operator
+    A hook is a point at which the relay calls its plugin, named by the
+    callback the provider defines: on_input sends every payload the relay
     ingests, on_output every payload it emits, on_interval runs on a timer.
     `flz plugin help <provider_id>` lists the hooks a provider has. A hook
     belongs to a binding.
@@ -77,38 +77,38 @@ HOOKS:
     it needs `--on_interval.interval_ms=<ms>`.
 
     A binding naming no hook has no hooks. A plugin that only receives still
-    feeds its operator: its connection is held by the provider's own worker,
+    feeds its relay: its connection is held by the provider's own worker,
     which no hook governs.
 
-    enable reads --namespace, --single, --operator_id, --hook, --channel and
-    the X-prefixed provider settings; bind reads --namespace, --operator_id,
-    --hook and --channel; unbind --namespace and --operator_id; update
+    enable reads --namespace, --single, --relay_id, --hook, --channel and
+    the X-prefixed provider settings; bind reads --namespace, --relay_id,
+    --hook and --channel; unbind --namespace and --relay_id; update
     --namespace and the X-prefixed settings; disable --namespace. Each
     refuses any other option.
 
 EXAMPLES:
     flz plugin install ./flezha_example_plugin-0.1.0.fpz
     flz plugin list --installed
-    flz plugin enable trades operator_websocket \
+    flz plugin enable trades relay_websocket \
         --Xuri=ws://localhost:9000/feed --Xchannel=trades
-    flz plugin bind trades --operator_id my_op
-    flz plugin bind trades --operator_id other_op --channel ticks
-    flz plugin enable stamp example_stamp --operator_id my_op \
+    flz plugin bind trades --relay_id my_op
+    flz plugin bind trades --relay_id other_op --channel ticks
+    flz plugin enable stamp example_stamp --relay_id my_op \
         --Xpath=/tmp/stamped.txt --hook=on_output
     flz plugin update trades --Xsubscription_items='["BTC/EUR","ETH/EUR"]'
     flz plugin list --namespace default
-    flz plugin unbind trades --operator_id other_op
+    flz plugin unbind trades --relay_id other_op
     flz plugin disable trades
 ```
 
 `flz plugin help <provider>` lists one provider's settings and hooks, and
 `flz plugin list --providers` the providers there are. The echo's file plugins
 from [`plugin_examples.md`](../plugins/plugin_examples.md#a-file-in-a-file-out): a sink that writes everything the
-echo emits to a file, then the plugins and their operators, then the plugin
+echo emits to a file, then the plugins and their relays, then the plugin
 taken away again:
 
 ```sh
-$ flz plugin enable writer operator_file_sink --operator_id=my_echo --hook=on_output --Xpath=echo-out.txt
+$ flz plugin enable writer relay_file_sink --relay_id=my_echo --hook=on_output --Xpath=echo-out.txt
 ```
 
 ```output
@@ -118,7 +118,7 @@ Plugin writer bound to my_echo.
 ```
 
 ```sh
-$ flz operator send my_echo --text hello
+$ flz relay send my_echo --text hello
 ```
 
 ```output
@@ -142,7 +142,7 @@ writer  file_sink  bound: my_echo  runs on: idle
 ```
 
 ```sh
-$ flz plugin unbind writer --operator_id=my_echo
+$ flz plugin unbind writer --relay_id=my_echo
 ```
 
 ```output

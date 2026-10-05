@@ -4,21 +4,21 @@
 
 ### Added: `runner.send`, with a message id, a partition key or `local`
 
-Application code on a runner sends to an operator with `runner.send` (`send_to` in Ruby,
+Application code on a runner sends to a relay with `runner.send` (`send_to` in Ruby,
 `Flezha.SDK.send/5` in Elixir), through the controller as before
 ([`docs/topics/advanced/sending_from_runner_code.md`](docs/topics/advanced/sending_from_runner_code.md)).
-A message id is stamped as `flz.msg_id`, so an operator with an input log absorbs a repeat;
-`flz operator send --msg-id` does the same, and an id that is not text is refused
+A message id is stamped as `flz.msg_id`, so a relay with an input log absorbs a repeat;
+`flz relay send --msg-id` does the same, and an id that is not text is refused
 (`usage.not_text`). A partition key reaches the member that owns it.
-The `local` option hands the message to an operator bound on the same runner without the
+The `local` option hands the message to a relay bound on the same runner without the
 controller: it is on no disk and lost on a crash, and refused with the new
-`runtime.operator_not_local` for an operator the runner does not hold. Every runner lists the
-operators bound on it by instance id.
+`runtime.relay_not_local` for a relay the runner does not hold. Every runner lists the
+relays bound on it by instance id.
 
 **Breaking:** `runner.admin()` is now `runner.control()` in every SDK, with no alias (Java
 `com.flezha.sdk.control.Control`, Elixir `Flezha.SDK.Control`), and its `send` is gone. The
-`admin.*` error codes are now `control.*`. Python's `operators()` answers instance ids rather
-than factory ids, and Java's `getOperators()` and Rust's `operators()` answer a list of ids.
+`admin.*` error codes are now `control.*`. Python's `relays()` answers instance ids rather
+than factory ids, and Java's `getRelays()` and Rust's `relays()` answer a list of ids.
 
 ### Added: `flz mcp`, an MCP server for AI assistants
 
@@ -30,13 +30,13 @@ and one guide page. Once a controller answers, the operations an HTTP caller may
 tools too, called as the token's principal; stopping the controller, issuing tokens and
 resetting never are. The MCP code is now one core module that the HTTP API's `POST /mcp`
 shares, so it serves the same four tools. A value `flz` sends to the controller is no longer
-interpolated: a message holding `#{...}` reaches the operator as that text.
+interpolated: a message holding `#{...}` reaches the relay as that text.
 
-### Changed: an operator's start and stop reach every sink, and fewer repeated log lines
+### Changed: a relay's start and stop reach every sink, and fewer repeated log lines
 
 A deliberate start and a stop or completion are now ordinary observability events,
-`operator_started` and `operator_stopped` of source `flezha_operator` beside
-`operator_exited`, so the ring buffer, `flz observe tail`, PubSub and the exporters see them;
+`relay_started` and `relay_stopped` of source `flezha_relay` beside
+`relay_exited`, so the ring buffer, `flz observe tail`, PubSub and the exporters see them;
 controller plugins still hear each once, from the same event. A fact the controller already
 records once is no longer logged again: an append refused by an input log that refused its
 file, a durability claim another node took over, a plugin subscriber that ended normally or
@@ -55,7 +55,7 @@ replication slot and injects one JSON event per insert, update, delete and trunc
 order, after a first copy of the published tables taken in the slot's own snapshot, so the
 copy and the stream meet with nothing missed or doubled. Each event carries an `flz.msg_id`
 that a re-stream repeats, and the read position is confirmed to Postgres after every accepted
-transaction when the operator's input is durable, every `commit_interval_ms` when it is not.
+transaction when the relay's input is durable, every `commit_interval_ms` when it is not.
 The plugin checks the server before it creates anything, reports the log its slot holds back,
 and keeps the slot when it is disabled. The dev compose file gains a `postgres-cdc` service,
 and six error codes join the catalogue.
@@ -64,22 +64,22 @@ and six error codes join the catalogue.
 
 The new package `flezha_rabbitmq`, built from `plugins/flezha_rabbitmq_plugin`, brings two
 providers ([`docs/plugins/rabbitmq.md`](docs/plugins/rabbitmq.md)). `rabbitmq_consumer`
-consumes one queue with a prefetch window and hands its messages to the operator in batches;
-a message is acknowledged only after the operator took it (after the input log holds it when
-the operator's input is durable), a refused one goes back to the queue, and its `message_id`
-becomes an `flz.msg_id` prefixed with the plugin id. Several operators on one queue are
-competing consumers; a partitioned operator is refused. `rabbitmq_producer` publishes each
+consumes one queue with a prefetch window and hands its messages to the relay in batches;
+a message is acknowledged only after the relay took it (after the input log holds it when
+the relay's input is durable), a refused one goes back to the queue, and its `message_id`
+becomes an `flz.msg_id` prefixed with the plugin id. Several relays on one queue are
+competing consumers; a partitioned relay is refused. `rabbitmq_producer` publishes each
 output to an exchange, routed by a static key or the output's `flz.key`, with its identity
 as headers; a delivery-guaranteed output carries a stable `message_id` and is held until the
 broker confirms it, published again after a refusal or a lost connection, and parked as
-`rabbitmq.exhausted` or, with `mandatory`, `rabbitmq.unroutable`. Every operator bound to one
+`rabbitmq.exhausted` or, with `mandatory`, `rabbitmq.unroutable`. Every relay bound to one
 producer on a controller shares one connection. Both reconnect after a broker restart and
 report unhealthy meanwhile. The dev compose file gains a `rabbitmq` service.
 
 ### Changed: one overflow policy for every sink queue
 
 What a full queue does under `queue_overflow` is now decided in one place,
-`Flezha.Process.Backlog.admit/5`, for `operator_http_push`, the Kafka producer and the
+`Flezha.Process.Backlog.admit/5`, for `relay_http_push`, the Kafka producer and the
 RabbitMQ producer. Neither existing sink behaves differently.
 
 ### Added: a Kafka consumer in the Kafka package
@@ -89,11 +89,11 @@ group `group_id` for its `topics` and injects every record of the partitions Kaf
 it as one input, its value as the payload and its topic, partition, offset, timestamp, key
 and headers as `kafka.*` metadata, with an `flz.msg_id` of the plugin, the topic, the
 partition and the offset ([`docs/plugins/kafka_consumer.md`](docs/plugins/kafka_consumer.md)).
-Each fetched batch waits for the operator's verdicts; its offsets are committed at once when
-the operator's input is durable, so a record fetched again is absorbed, and every
+Each fetched batch waits for the relay's verdicts; its offsets are committed at once when
+the relay's input is durable, so a record fetched again is absorbed, and every
 `commit_interval_ms` when it is not. A refused batch commits nothing and is fetched again.
-Several operators bound to consumers of one group split the partitions; a partitioned
-operator is refused. The lag per partition, each rebalance, a broker or group that is away
+Several relays bound to consumers of one group split the partitions; a partitioned
+relay is refused. The lag per partition, each rebalance, a broker or group that is away
 and a run of refused batches are reported. The producer and the consumer now share one set
 of connection options, and the package raises the client library's request timeout
 (`sync_timeout`) to 5 s, which a group's join needs; while a broker is away the producer's
@@ -103,12 +103,12 @@ stats can answer that much later.
 
 The Kafka producer has left the controller for the plugin package `flezha_kafka`, built from
 `plugins/flezha_kafka_plugin`, and the release no longer carries `kafka_ex`. Install the
-package and enable `kafka_producer` where `operator_kafka_producer` was; a plugin enabled
+package and enable `kafka_producer` where `relay_kafka_producer` was; a plugin enabled
 under the old id is not converted ([`docs/plugins/kafka_producer.md`](docs/plugins/kafka_producer.md)).
 Without a `partition`, a record now goes to the partition Kafka's Java client chooses for its
 key (`partitioner: murmur2`), an unkeyed effectively-once record to the partition its
 `flezha.dedup_key` hashes to, and any other unkeyed record to a sticky partition that moves
-after each batch; every operator bound to one plugin casts to one worker per topic, which keeps a
+after each batch; every relay bound to one plugin casts to one worker per topic, which keeps a
 queue, window and producer session per partition. `compression: gzip` compresses batches
 (`snappy`, `lz4` and `zstd` are refused), the record of a guaranteed or effectively-once output
 carries its identity as `flz.key`, `flz.cell`, `flz.seq` and `flz.epoch` headers beside
@@ -121,42 +121,42 @@ unused `FLEZHA_TESTNET_KAFKA_PORT` is removed. The dev broker also listens on
 
 ### Added: a Postgres table read by polling, and a literal Postgres password that works
 
-The new provider `operator_postgres_poll` reads the new rows of one table, and with a
+The new provider `relay_postgres_poll` reads the new rows of one table, and with a
 `timestamp_column` its changed rows too, every `interval_ms`, oldest first, and injects each
 row as one JSON object with an `flz.msg_id` of the plugin, the table and the row's cursor
 ([`docs/plugins/postgres_poll.md`](docs/plugins/postgres_poll.md)). It needs no replication
 rights: the plugin builds the query from validated, quoted names and runs every read in a
 read-only transaction. The cursor is committed to the binding after every batch when the
-operator's input is durable, so a row read again after a restart is absorbed, and otherwise
+relay's input is durable, so a row read again after a restart is absorbed, and otherwise
 once the reader catches up and at most every `commit_interval_ms`. It is not shareable and
-refuses a partitioned operator. The Postgres sink connects with a literal `password` again:
+refuses a partitioned relay. The Postgres sink connects with a literal `password` again:
 it used to send the redacted placeholder, so only `password_env` could log in. Both providers
 now share their connection options, which lists the sink's `ssl` beside the other connection
 rows.
 
-### Changed: a shared source hands each record straight to its operators
+### Changed: a shared source hands each record straight to its relays
 
-A shareable source plugin (`operator_websocket`, `operator_http_poll`) still runs once per
-controller, but its worker now injects each record directly into every operator sharing it,
-with no process in between and without waiting on any of them: a slow operator falls behind
-in its own input queue and loses nothing. An operator whose input is durable (effectively-once,
+A shareable source plugin (`relay_websocket`, `relay_http_poll`) still runs once per
+controller, but its worker now injects each record directly into every relay sharing it,
+with no process in between and without waiting on any of them: a slow relay falls behind
+in its own input queue and loses nothing. A relay whose input is durable (effectively-once,
 sleeping or durable steps) runs the source on its own again, as before plugins could be
 shared, so every frame is confirmed to it and a refused poll is offered again, and a slow one
-holds back only its own connection. A shared poller offers each operator the content it does
-not hold yet, so a newly bound operator gets the current content at the next poll. An operator
+holds back only its own connection. A shared poller offers each relay the content it does
+not hold yet, so a newly bound relay gets the current content at the next poll. A relay
 no longer reports `plugin_lagging` for a shared source, and
 `FLEZHA_PLUGIN_BACKLOG_BYTES` and `FLEZHA_PLUGIN_BACKLOG_FRAMES` now bound only a controller
 plugin's hook events. A plain output to a binding that is not started is counted as the
-operator metric `operator_not_started_drops` instead of a
+relay metric `relay_not_started_drops` instead of a
 `[:flezha, :plugin, :not_started, :dropped]` event per output. A package provider declaring
 both `feeds` and `shareable` injects into `Flezha.Plugin.Host.targets/1` and takes
 `{:targets, targets}` (see [`custom_plugins.md`](docs/guides/advanced/custom_plugins.md)); one
 that injects into its copy has the record dropped, warned of once and reported as
 `plugin_lagging`.
 
-### Added: an operator's outputs sent over HTTP (breaking for `hook_webhook` telemetry)
+### Added: a relay's outputs sent over HTTP (breaking for `hook_webhook` telemetry)
 
-The new provider `operator_http_push` sends each output (or, on `on_input`, each ingested
+The new provider `relay_http_push` sends each output (or, on `on_input`, each ingested
 record) as one `POST` or `PUT` to its `url`, over connections it keeps open, in order by
 default ([`docs/plugins/http_push.md`](docs/plugins/http_push.md)). Every request carries the
 output's `flz-key`, `flz-cell`, `flz-seq` and `flz-epoch`, and a guaranteed output an
@@ -165,17 +165,17 @@ guaranteed one is held until a 2xx and otherwise parked as a dead letter with
 `http_push.rejected` or `http_push.exhausted`, after a retry budget bounded by `retries` and
 `delivery_timeout_ms`. The queue is bounded by payloads and bytes with the Kafka producer's
 `queue_overflow` policies, and under `drop_nothing` the dispatch waits only while it is full.
-Operators bound to one plugin share it. `plugin.headers_invalid` now names the header in its
+Relays bound to one plugin share it. `plugin.headers_invalid` now names the header in its
 `header` detail. The webhook controller plugin sends through the same worker, and its events
 take the shared names: `shipped`, `retried` and `failed` replace `sent`, `failed` and
 `dropped`. Neither shows the URL's path or query in a process status any more.
 
 ### Added: what a connector package needs from the core (breaking for `http.partitioned_host`)
 
-Every plugin's options now carry `durable_input`, true when its operator journals its input
-(a durable steps operator, or a flow operator with `effectively_once` or that sleeps), set by
+Every plugin's options now carry `durable_input`, true when its relay journals its input
+(a durable steps relay, or a flow relay with `effectively_once` or that sleeps), set by
 the controller over anything stored. `Flezha.Plugin.Host.inject_many/4` hands a batch to the
-operator and answers one verdict per record, in order, with up to
+relay and answers one verdict per record, in order, with up to
 `FLEZHA_PLUGIN_INGEST_WINDOW` (64) records waiting at once; `send_io_confirming_many/5` runs
 on it and now answers `{:error, {:unreachable, :timeout}}` per record its deadline cut
 instead of exiting. `mix flezha.plugin.package` writes the project's configuration of each
@@ -188,15 +188,15 @@ server plugin's `http.partitioned_host`.
 
 ### Added: controller plugins, told what happens in a namespace (breaking for `type: :io_binding`)
 
-A provider is now an operator plugin (`type: :operator`, the default and every existing
+A provider is now a relay plugin (`type: :relay`, the default and every existing
 provider) or a controller plugin (`type: :controller`); `type: :io_binding` no longer
-compiles. A controller plugin is bound to no operator: `flz plugin enable <name> <provider>
+compiles. A controller plugin is bound to no relay: `flz plugin enable <name> <provider>
 --hook <hook> ...` stores its hooks, `flz plugin update` may change them, and `flz plugin
 bind` of it is refused with `plugin.not_bindable`. It runs on every controller that holds
 its namespace, each copy hearing its own controller, or once with `--single`, until it is
-disabled. Five hooks tell it what happened: `on_operator_started`, `on_operator_stopped`,
-`on_operator_failed`, `on_dead_letter` and `on_plugin_unhealthy`, each carrying the
-namespace, the operator, the controller and a one-line `text`, and never a record's data.
+disabled. Five hooks tell it what happened: `on_relay_started`, `on_relay_stopped`,
+`on_relay_failed`, `on_dead_letter` and `on_plugin_unhealthy`, each carrying the
+namespace, the relay, the controller and a one-line `text`, and never a record's data.
 Delivery is best effort, from a queue bounded by the plugin backlog settings; a copy that
 falls behind drops its oldest events and `flz plugin list` shows where it lags. The first
 one, `hook_webhook`, POSTs each event as JSON to a URL
@@ -206,37 +206,37 @@ names the hooks a plugin may take. A new DLQ entry also executes
 
 ### Fixed: a stop forwarded to another controller keeps its options
 
-An operator stop that a controller forwarded to one holding the namespace's hub dropped its
+A relay stop that a controller forwarded to one holding the namespace's hub dropped its
 options, so a partition rescale's stop there deleted the member's state instead of keeping
 it for the member that takes it over. The forward now carries them.
 
-### Changed: a plugin has a name and operators are bound to it
+### Changed: a plugin has a name and relays are bound to it
 
-A plugin is enabled once, by name, in its namespace, with no operator, and operators are
+A plugin is enabled once, by name, in its namespace, with no relay, and relays are
 connected to it: `flz plugin enable <name> <provider> [--single] [options]`, then
-`flz plugin bind <name> --operator_id <op> [--hook=...] [--channel ...]`; `flz plugin unbind`
+`flz plugin bind <name> --relay_id <op> [--hook=...] [--channel ...]`; `flz plugin unbind`
 takes the connection away and the plugin stays enabled, and only `flz plugin disable <name>`
-turns it off. `flz plugin enable ... --operator_id <op>` still enables and binds in one
+turns it off. `flz plugin enable ... --relay_id <op>` still enables and binds in one
 command. `flz plugin update <name> [options]` changes a running plugin: in place when the
 provider declares the changed options live (the websocket provider's `subscription_items`),
-by a restart otherwise, naming the operators bound to it. `flz plugin list` shows the plugins
-enabled in a namespace, with their provider, bound operators and the controllers they run on
+by a restart otherwise, naming the relays bound to it. `flz plugin list` shows the plugins
+enabled in a namespace, with their provider, bound relays and the controllers they run on
 or `idle`; the provider registry moves to `flz plugin list --providers`.
 
 A provider that can be shared (`websocket`, `http_poll`, `stdout`, `kafka_producer`) runs once
-on each controller where an operator bound to it runs, and every operator gets every record
+on each controller where a relay bound to it runs, and every relay gets every record
 through a backlog of its own (`FLEZHA_PLUGIN_BACKLOG_BYTES`, `FLEZHA_PLUGIN_BACKLOG_FRAMES`): a
 slow one loses its oldest records, its health says `plugin_lagging`, and the others are not
-slowed. With `--single` one copy runs in the whole cluster. A copy whose last operator leaves
+slowed. With `--single` one copy runs in the whole cluster. A copy whose last relay leaves
 stops, at once on an unbind or a stop and after `FLEZHA_PLUGIN_IDLE_STOP_MS` otherwise, so the
-connection stays open across an operator's move. The members of a partitioned operator do not
+connection stays open across a relay's move. The members of a partitioned relay do not
 share: each runs its own copy, asking only for its own share of the keys, beside the copy the
-unpartitioned operators share. A provider that cannot be shared refuses a second operator
-(`plugin.not_shareable`). An operator placed on a controller that lacks a
+unpartitioned relays share. A provider that cannot be shared refuses a second relay
+(`plugin.not_shareable`). A relay placed on a controller that lacks a
 plugin's package now runs without it, its health naming `plugin.provider_not_loaded`, instead
 of parking. Every SDK's admin object gains `bindPlugin` and `unbindPlugin` in its own spelling.
 
-Nothing converts the plugins an operator carried before: an operator starts without them and
+Nothing converts the plugins a relay carried before: a relay starts without them and
 logs a warning naming them, and each must be enabled and bound again. `--plugins` specs name a
 plugin with `name` instead of `id`. The HTTP server package is the submodule
 `plugins/flezha_http_plugin`.
@@ -250,38 +250,38 @@ loads on any later version of the same major; before 1.0 the rule is unchanged. 
 still `plugin.runtime_mismatch`, its `rule` detail and the first words of its message naming
 the rule that failed.
 
-### Changed: the guides teach one operator
+### Changed: the guides teach one relay
 
-The guides, the glossary and the architecture, resilience and SDK pages describe one operator
+The guides, the glossary and the architecture, resilience and SDK pages describe one relay
 whose class says how it runs (`run: flow`, the default, or `steps`) and where its work is kept
 (`durable: false | local | remote`), instead of two kinds. `what_is_flezha.md` opens with "One
-operator, two ways to run it", Part 1 says when an idle operator sleeps, Part 2's workflow page
+relay, two ways to run it", Part 1 says when an idle relay sleeps, Part 2's workflow page
 explains why the order executor runs in steps and every tab declares its loop shape and failure
 mode, and `durability.md` shows the durability ladder as one table. Part 3's code pages carry
 Java and Elixir; their other language tabs say the page is not yet written for that language. The words bounded and unbounded are kept for input data, as the new
 glossary entry says.
 
-### Fixed: a sleeping flow operator confirms its input even when its tasklets keep no state
+### Fixed: a sleeping flow relay confirms its input even when its tasklets keep no state
 
-A flow operator that sleeps, and whose Cells write no record (Rust tasklets without state, say),
+A flow relay that sleeps, and whose Cells write no record (Rust tasklets without state, say),
 never reported how far it had processed its input, so its input log's floor stayed put and every
 bind delivered the whole log again. The runner now reports that point for every instance whose
 input is journaled.
 
-### Fixed: an operator moving back to a controller no longer loses the turns taken elsewhere
+### Fixed: a relay moving back to a controller no longer loses the turns taken elsewhere
 
-A controller that kept a copy of an operator's state when the operator moved away bound from that
-copy when the operator came back, because any local file counted as the newest. As the operator
+A controller that kept a copy of a relay's state when the relay moved away bound from that
+copy when the relay came back, because any local file counted as the newest. As the relay
 arrives, the controller now compares its copy with the one on the node it moves from, or else the
 cut another controller shipped to the durability backend, by the WAL-owner epoch and then the
 highest seq. When the other copy is newer, the local one is set aside and the newer one is pulled
 or hydrated as on a controller that holds nothing; what only the local copy held is kept, and a
-newer copy that does not land whole leaves the local one in place, with a warning. An operator
+newer copy that does not land whole leaves the local one in place, with a warning. A relay
 leaving a controller closes its writers there, and the retention sweep no longer reopens an input
 log. A bind now awaits its restore, so the state a hand-over brings is never reset to the WAL's
 afterwards.
 
-### Changed: `durable: remote` keeps a flow operator's work remote
+### Changed: `durable: remote` keeps a flow relay's work remote
 
 A flow class may now declare `durable: remote`, and `topology.remote_on_flow` is gone: no level of
 `durable` is refused on any run. Such a class acknowledges an input (under `ack: per_input` or
@@ -294,10 +294,9 @@ before, off every acknowledgement. `flz controller status` prints each running c
 `durability_levels`, and each remote commit's wait is reported as
 `[:flezha, :state, :remote_commit]`.
 
-### Changed: one operator, configured by one settings tree (breaking)
+### Changed: one relay, configured by one settings tree (breaking)
 
-Every SDK offers one `Operator` class; the two kinds and every spelling of them are gone, with no
-alias. A class says how it runs and where its work is kept in one settings tree: `run` is `flow`
+A relay class says how it runs and where its work is kept in one settings tree: `run` is `flow`
 (the default: the commit point is an input, or a checkpoint) or `steps` (the commit point is a
 stage; `each` is `once`, `per_input` or `chained`, `on_failure` is `undo_all` or `keep_progress`);
 under `flow`, `exactly` is `at_least_once` or `effectively_once` with `ack` (`per_input`, or
@@ -308,29 +307,21 @@ sleeps after six hours. A sleeping flow instance has its input journaled before 
 which cost the default flow path about 38 % of its throughput, so the flow default stays awake (a
 decision taken while the maintainer was away; it may be overruled). Each SDK spells the tree in its own types, so a
 setting written under the wrong parent does not compile, or is refused at registration with
-`topology.unknown_field` naming it and its parent. A flow operator may now end itself with
-`complete` (it drains what its Cells hold first) and may declare `max_duration_ms`; a steps operator
+`topology.unknown_field` naming it and its parent. A flow relay may now end itself with
+`complete` (it drains what its Cells hold first) and may declare `max_duration_ms`; a steps relay
 that has no way to end is ordinary.
 
 Each setting lives in one place. The channel builder's `effectively_once`, `checkpoint_ack`,
 `checkpoint_every`, `outputs_at_checkpoint`, `correction_window` and `beyond_window_policy` calls
 are gone; `FLEZHA_PARK_IDLE_MS` is gone (the interval is the class's `sleep_after`);
-`flz operator start --snapshot-interval`, which nothing read, is gone; the per-class
+`flz relay start --snapshot-interval`, which nothing read, is gone; the per-class
 `:sync_durability` override is gone (`durable: remote` is the class's). On a controller without a
 durability backend a class at `durable: remote` is refused its start with
-`operator.remote_without_backend`, naming `FLEZHA_DURABILITY_BACKEND`.
+`relay.remote_without_backend`, naming `FLEZHA_DURABILITY_BACKEND`.
 
-The wire carries the run where it carried the kind: `UpdateFactories` announces `run` (with `each`
-and `on_failure` for steps), `AddOperator.run` replaces `kind`, and the AddOperator response
-announces the run and the durability. `BoundedCompleted` is `OperatorCompleted`. The refusal codes
-that policed kind combinations are removed (`topology.bounded_setting_on_unbounded`,
-`ambiguous_operator_kind`, `unknown_operator_kind`, `checkpoint_on_bounded`,
-`correction_window_on_bounded`, `checkpoint_ack_without_tier`, `correction_without_tier`,
-`sleep_without_persistence`, `sync_durability_on_unbounded`, `sync_durability_without_persistence`,
-`effectively_once_on_bounded`, `external_stop_only`, `runtime.complete_outside_bounded`), and the
-words bounded and unbounded leave the code, the CLI and the specs: a class runs in flow or in steps.
-`flz operator info` prints `Run:` and `Durable:` where it printed `Kind:`. The Rust pipeline macro
-is `flezha::pipeline!`. Upgrade: `flz controller stop && flz reset --yes`.
+The wire carries the run: `UpdateFactories` announces `run` (with `each` and `on_failure` for
+steps), `AddRelay` carries it, and the AddRelay response announces the run and the durability.
+`flz relay info` prints `Run:` and `Durable:`. The Rust pipeline macro is `flezha::pipeline!`. Upgrade: `flz controller stop && flz reset --yes`.
 
 A chained steps loop declared in Node, Java, Python, Ruby or PHP now runs every pass: its last
 tasklet's value reaches the core as the next pass's input, where before the loop ended after
@@ -353,17 +344,17 @@ the maintainer does not yet run them in a live deployment. Each SDK's README and
 `docs/sdk/` states its tier. `scripts/check-feature-maturity.sh`, run with the naming gates,
 keeps the record and the tree agreeing.
 
-### Added: an operator behind HTTP, as a plugin package
+### Added: a relay behind HTTP, as a plugin package
 
 The HTTP server plugin, the package `flezha_http` (provider `http_server`), is built in its own
 repository, `Flezha/flezha_http_plugin`, on Bandit and Plug, and installed with
-`flz plugin install`. Enabled on an operator of either kind, it listens on `port` (loopback
-unless `bind` says otherwise) and makes every request one outside call of that operator,
-carrying a JSON request envelope; the operator's `response()` answers with a status, headers
-and a body, or with a stream answer naming an operator of its namespace, whose parts, outputs
+`flz plugin install`. Enabled on a relay of either run, it listens on `port` (loopback
+unless `bind` says otherwise) and makes every request one outside call of that relay,
+carrying a JSON request envelope; the relay's `response()` answers with a status, headers
+and a body, or with a stream answer naming a relay of its namespace, whose parts, outputs
 and dead-letter notices the plugin then writes as server-sent events. Connections, waiting
 requests (counted before the body is read), bodies (size and one deadline; a body without
-`content-length` is refused 411) and open streams are bounded, only the headers `pass_headers` names reach the operator, and every failure is an HTTP
+`content-length` is refused 411) and open streams are bounded, only the headers `pass_headers` names reach the relay, and every failure is an HTTP
 status with the error model's document, stripped of a tasklet's error text and entries. A member of a partition group
 is refused. The reference is `docs/plugins/http_server.md`.
 
@@ -375,21 +366,21 @@ The catalogue gains the plugin's eight codes (`http.body_too_large`, `http.body_
 and so does such an activation failure, instead of `plugin.provider_failed` or
 `plugin.activation_failed`. `flz plugin enable` on a partition
 group that every member refuses answers the members' own error instead of
-`plugin.group_enable_partial`. A listener, `flz operator listen` included, on an operator
-neither running nor declared is refused with `operator.not_found` at once, where it waited out
+`plugin.group_enable_partial`. A listener, `flz relay listen` included, on a relay
+neither running nor declared is refused with `relay.not_found` at once, where it waited out
 the hub's settling first.
 
-### Added: an operator calls another from its graph
+### Added: a relay calls another from its graph
 
-`call(...)` ends a chain on a call to another operator, in every SDK and from an operator of
-either kind: to an instance or a partition group by name (`call("pricing", deadline_ms: 500)`),
+`call(...)` ends a chain on a call to another relay, in every SDK and from a relay of
+either run: to an instance or a partition group by name (`call("pricing", deadline_ms: 500)`),
 or to the instance of a factory whose id is the record's key
 (`key_by(...) |> call(factory: "agent", deadline_ms: ..., create: false)`), started with the
 request when absent unless `create: false`. Nothing waits: the outcome arrives later as a
 `Response` input on the Response channel `<channel>.response`, carrying the request, the answer
 or the error that ended the call (`call.timeout`, `call.failed`, `call.busy`,
-`operator.not_found`, `operator.factory_mismatch`, `quota.exceeded`, an `authz.*` code, ...),
-the instance that answered and whether the call started it. A `:per_input` bounded operator
+`relay.not_found`, `relay.factory_mismatch`, `quota.exceeded`, an `authz.*` code, ...),
+the instance that answered and whether the call started it. A `:per_input` steps relay
 calls too, reading the outcome as a later turn.
 
 When caller and callee both keep a durable input log, a call survives a crash of either side,
@@ -399,8 +390,8 @@ side was down past the deadline plus `call_retention_margin_ms`, counted
 earlier rule that a call frame is never journaled: the request is journaled in the callee's log
 and the `Response` in the caller's, and each is kept until its call is over. Requests from one
 caller to one target keep their order. `call_pending_max` now bounds the answers a callee owes
-operator callers too; a caller's own calls never count against it. A call is judged as the
-namespace's runner identity (`spawner` or `app`), as `ctx.spawn_bounded` is.
+relay callers too; a caller's own calls never count against it. A call is judged as the
+namespace's runner identity (`spawner` or `app`), as `ctx.spawn_steps` is.
 
 Registration refuses `topology.call_outside_per_input_loop`, `topology.call_without_key`,
 `topology.call_deadline_zero` and `topology.call_response_unread`, and a call beside another
@@ -426,27 +417,27 @@ now refused (`PartitionsWithoutKeyedTasklet`).
 
 `ctx.part(value)` (`part(ctx, value)` in Elixir, `$ctx->part($value)` in PHP) sends a preview
 of the output an invocation is producing at once, from anywhere in `run`, in every SDK and for
-an unbounded operator and a bounded one alike. A part previews the tasklet's own output channel,
+a flow relay and a steps one alike. A part previews the tasklet's own output channel,
 which must end in a sink (`part.no_sink` otherwise, a `response()` end included), carries a
-number from `0` within its attempt, the attempt and the Cell, and goes to the operator's
+number from `0` within its attempt, the attempt and the Cell, and goes to the relay's
 listeners and nothing else: it is never durable, never reaches a sink or a waiting caller, and
 is dropped rather than waited on when the wire cannot take it. The runner counts what it sent
 and dropped in its heartbeat (`parts_sent`, `parts_dropped_*`). The wire gains the data frame
 `output_part` and the C ABI the entry `flz_core_part`, so the five hosts on the core are
 rebuilt together; a controller without this change drops a part.
 
-`flz operator listen` prints a part with a third field beginning `part=<n> attempt=<a>`, and a
+`flz relay listen` prints a part with a third field beginning `part=<n> attempt=<a>`, and a
 dead-lettered input as a notice `error=input.dead_lettered entry=<entry>`; its JSON lines carry
-`kind`. It ends with exit 0 when the operator ends, and a listener that falls behind on outputs
+`kind`. It ends with exit 0 when the relay ends, and a listener that falls behind on outputs
 is ended `listener.overrun` (`FLEZHA_LISTENER_PENDING_BYTES`, `FLEZHA_LISTENER_PENDING_FRAMES`).
 
 A plugin reads the same stream through `Flezha.Service.Listener.listen/4`, with an idle event
-for a server-sent events heartbeat. A listener now survives its operator sleeping, being
+for a server-sent events heartbeat. A listener now survives its relay sleeping, being
 rebound, its Overwatch restarting, moving to another controller and a rescale, and leaves no
-plugin row behind on any of them. `flz plugin disable` finds a plugin by the operator whose
-row holds it rather than by the node that enabled it, so a plugin on a moved operator, or on a
+plugin row behind on any of them. `flz plugin disable` finds a plugin by the relay whose
+row holds it rather than by the node that enabled it, so a plugin on a moved relay, or on a
 member a rescale added, is disabled from any controller. A bind brings up every declared
-plugin its table does not hold, so an operator found asleep at boot that gained a runtime
+plugin its table does not hold, so a relay found asleep at boot that gained a runtime
 plugin before it woke keeps its sinks.
 
 ### Changed (BREAKING): every failure carries a code
@@ -468,10 +459,10 @@ once, in `flz_transport/errors.json`, and listed in the generated `docs/errors.m
   rather than a raw reason term, and `Flezha.AuthZ.TokenStore.verify/1` answers `authz.token_*`
   codes. The audit record of a failed act carries `error_code`, and an `authorization_denied`
   record's `reason` is the `authz.*` code.
-- The wire carries one `Error` message in `AdminResponse`, `SpawnBoundedResponse`,
-  `TaskCommitResponse`, `IterCommitResponse`, `OperatorMessageResponse` and `CommandResponse`,
+- The wire carries one `Error` message in `AdminResponse`, `SpawnStepsResponse`,
+  `TaskCommitResponse`, `IterCommitResponse`, `RelayMessageResponse` and `CommandResponse`,
   and a refused runner connect is answered with `ConnectRefused` before the stream closes. A
-  refused spawn carries the controller's own code, and `SpawnBoundedResponse.outcome` keeps only
+  refused spawn carries the controller's own code, and `SpawnStepsResponse.outcome` keeps only
   `spawned` and `delivered`.
 - The C ABI's `flz_core_last_error` returns the JSON error document for every failure; the
   separate failure bodies of `flz_core_check_class` and `flz_core_spawn_result` are gone. The new
@@ -495,8 +486,8 @@ from `event_time_of/1`) makes it event time, `logical_clock: true` makes it logi
 once do not compile; the `clock:` option and `clock/0` are gone. A `state` block declares a
 state's fields and defaults and generates no change: the `set_<field>` and `push_<field>`
 recorders and their `{:set, ...}` and `{:push, ...}` clauses are gone, and `defchange` is the one
-way to change state, with or without a block. A module that `use`s `Flezha.SDK.Tasklet` or an
-operator macro and writes `apply_change/2` by hand does not compile; the hand-written
+way to change state, with or without a block. A module that `use`s `Flezha.SDK.Tasklet` or a
+relay macro and writes `apply_change/2` by hand does not compile; the hand-written
 `@behaviour` form, which does, is the reference form. `complete/2` is imported like `emit/2`. A
 retired option, or a `clock/0`, `event_time_of/1` or `cell_idle_ttl_ms/0` written in a `use`
 module, does not compile, naming what replaced it, and one in a hand-written module is refused
@@ -505,7 +496,7 @@ long as a change keeps its term, with two exceptions. A change a `set_<field>` o
 `push_<field>` recorder wrote (`{:set, field, value}`, `{:push, field, item}`) folds only through
 a `defchange` that records the same tuple, such as `defchange set(state, field, value)`. A change
 a hand-written `apply_change/2` took as a bare term (a string, an atom, a map) is not a term
-`defchange` records, so a log holding one no longer folds and that operator's saved state must be
+`defchange` records, so a log holding one no longer folds and that relay's saved state must be
 cleared once.
 
 ### Fixed: an Elixir tasklet's `stable_id` differs between cells
@@ -539,11 +530,11 @@ never read again and each key's cell starts from `initState`. The reverse holds 
 `dynamicCells` tasklet fed by no `keyBy` edge is now single, so its per-key cells are never read
 again and every key folds into one new cell.
 
-### Fixed: two operators of one factory on a Node runner no longer share a cell
+### Fixed: two relays of one factory on a Node runner no longer share a cell
 
-A Node runner kept a cell's state by tasklet and cell key alone, so two operators of one factory
-served by the same runner, such as two instances of a bounded operator running at once, read and
-wrote each other's state. Each operator now has cells of its own.
+A Node runner kept a cell's state by tasklet and cell key alone, so two relays of one factory
+served by the same runner, such as two instances of a steps relay running at once, read and
+wrote each other's state. Each relay now has cells of its own.
 
 ### Changed (BREAKING): a Ruby tasklet names itself and emits only through its context
 
@@ -551,7 +542,7 @@ A value leaves a Ruby tasklet only through `ctx.emit` or `ctx.emit_to`: what `ru
 and `compensate` answer is ignored, for a tasklet and a short form alike, so a `run` ending in
 `ctx.change(...)` no longer emits the folded value. Ruby answers its last expression, so a
 non-nil answer is not refused. `Ctx#emit_returned` and the harness's `Outcome#returned` are gone.
-Every tasklet class writes `tasklet_name`, and one wired without it is refused when its operator
+Every tasklet class writes `tasklet_name`, and one wired without it is refused when its relay
 is declared, so renaming a class never moves its saved state. The initial-state hook is
 `init_state`, and optional under `state_type`: a new cell then starts from `state_type.new`. The
 idle TTL is `idle_ttl_seconds` in whole seconds and `max_cells` is a setting of its own; the
@@ -568,11 +559,11 @@ starts from `init_state`. The reverse holds too: a `dynamic_cells` tasklet fed b
 edge is now single, so its per-key cells are never read again and every key folds into one new
 cell.
 
-### Fixed: two operators of one factory on a Ruby runner no longer share a cell
+### Fixed: two relays of one factory on a Ruby runner no longer share a cell
 
-A Ruby runner kept a cell's state by tasklet and cell key alone, so two operators of one factory
-served by the same runner, such as two instances of a bounded operator running at once, read and
-wrote each other's state, from two worker threads at once. Each operator now has cells of its
+A Ruby runner kept a cell's state by tasklet and cell key alone, so two relays of one factory
+served by the same runner, such as two instances of a steps relay running at once, read and
+wrote each other's state, from two worker threads at once. Each relay now has cells of its
 own.
 
 ### Changed (BREAKING): a Python tasklet is a named class that emits only through its context
@@ -601,11 +592,11 @@ keys its producer or entry frame carried, is now single, so its per-key cells ar
 again and every key folds into one new cell. A class that still writes `initial_state` is
 refused, naming `init_state`.
 
-### Fixed: two operators of one factory on a Python runner no longer share a cell
+### Fixed: two relays of one factory on a Python runner no longer share a cell
 
-A Python runner kept a cell's state by tasklet and cell key alone, so two operators of one
-factory served by the same runner, such as two instances of a bounded operator running at once
-or two partitions of a stream, read and wrote each other's state. Each operator now has cells of
+A Python runner kept a cell's state by tasklet and cell key alone, so two relays of one
+factory served by the same runner, such as two instances of a steps relay running at once
+or two partitions of a stream, read and wrote each other's state. Each relay now has cells of
 its own.
 
 ### Changed (BREAKING): a PHP tasklet names itself and emits only through its context
@@ -624,12 +615,12 @@ named after its class in snake case, so write that name), with one exception: a 
 through `keyBy` that did not carry `dynamicCells` ran as one cell and now gets a cell per key, so
 its old single-cell state is never read again and each key's cell starts from `initState`.
 
-### Fixed: two operators of one factory on a PHP runner no longer share a cell
+### Fixed: two relays of one factory on a PHP runner no longer share a cell
 
-A PHP runner kept a cell's state by tasklet and cell key alone, so two operators of one factory
-served by the same runner, such as two instances of a bounded operator running at once, read and
+A PHP runner kept a cell's state by tasklet and cell key alone, so two relays of one factory
+served by the same runner, such as two instances of a steps relay running at once, read and
 wrote each other's state. A step of one order could then act on another order's values. Each
-operator now has cells of its own.
+relay now has cells of its own.
 
 ### Changed (BREAKING): a Java tasklet is one class, and nothing is generated
 
@@ -639,8 +630,8 @@ The Java SDK has one way to write a tasklet: your own class implements
 a change is a record implementing `Change<State>` whose `applyTo` writes the state. A new cell's
 state comes from the state class's no-arg constructor, or from a written `initState(cellKey)`;
 hooks such as `onTimer`, `eventTime` and `compensate` are declared by writing them, and writing
-`eventTime` makes the clock event time. The operator names the class itself, `.into(TrackPrices.class)`,
-and a short-form class annotated `@UnboundedOperator` or `@BoundedOperator` is read when it is
+`eventTime` makes the clock event time. The relay names the class itself, `.into(TrackPrices.class)`,
+and a short-form class annotated `@Relay` or `@Relay` is read when it is
 registered. The `flezha-sdk-processor` module is gone, with `@Tasklet`, `@State`, `@Journal`,
 `@InitState`, `@CellsFor`, `@CellKey`, `StateHandle`, `TaskletCtx`, `Stateless` and the clock and
 config type parameters. The types a tasklet saves are found by the SDK and take ids derived from
@@ -652,7 +643,7 @@ state; a written `kryoTypes()` owns ids by list order from the first save. State
 
 A plain sleeping stream folded inputs twice after a controller restart while it was awake, a
 dead-lettered input could be owed again after a restart, a durable loop moved off a dead runner
-could run input again, and a crash-resumed bounded operator could run a message twice. Every
+could run input again, and a crash-resumed steps relay could run a message twice. Every
 persistent Cell's records now carry the input offset it consumed through, every Cell drops an
 input at or below the floor it took, and the runner reports a processed prefix that the
 controller confirms once the records behind it are on disk; that prefix is the input log's
@@ -685,200 +676,142 @@ the only copy of its durable state and runs local-only. The warning, and the ref
 missing an option, sent the reader to a page that is not published; they now name
 `docs/configuration.md`. The durability page no longer says such a controller refuses to start.
 
-### Fixed: `flz operator list` reads `recovering` while operators move off a dead runner
+### Fixed: `flz relay list` reads `recovering` while relays move off a dead runner
 
-After a runner died, a partitioned operator whose members were being moved to another runner
-read `failed` in `flz operator list` for a few seconds, though the takeover succeeded. A
-`failed` or `unbound` operator now reads `recovering` there, in the table and in the JSON,
+After a runner died, a partitioned relay whose members were being moved to another runner
+read `failed` in `flz relay list` for a few seconds, though the takeover succeeded. A
+`failed` or `unbound` relay now reads `recovering` there, in the table and in the JSON,
 for as long as `/healthz` calls the same moment `recovering`
 (`FLEZHA_CONVERGENCE_UNMET_INTENT_GRACE_MS`), and its own word after that. The HEALTH column
-is two characters wider to fit it. `flz operator info` (each operator and each partition
-member), the health counts of `flz cluster status` and the admin `operator_rows` verb follow
-the same rule, so an application reading operator health can now see `recovering`.
+is two characters wider to fit it. `flz relay info` (each relay and each partition
+member), the health counts of `flz cluster status` and the admin `relay_rows` verb follow
+the same rule, so an application reading relay health can now see `recovering`.
 
-### Changed (BREAKING): Operative is Operator; the kinds are unbounded and bounded
+### Changed: a steps stage commits through its Cells' own records
 
-The unit a runner hosts is an **Operator**, and its two kinds are **unbounded** (no run reaches
-an end; it stops only from outside) and **bounded** (every run ends). The words name the run, not
-the input: a `per_input` bounded operator reads an unbounded input in bounded runs. Tasklet and
-Cell keep their names. There is no alias or compatibility shim anywhere.
-
-What breaks, all at once:
-
-- SDKs: `StreamOperative`/`WorkflowOperative` are `UnboundedOperator`/`BoundedOperator`,
-  `LocalOperative` is `LocalOperator`, `spawn_workflow` is `spawn_bounded`,
-  `define_stream`/`define_workflow` (`defineStream`/`defineWorkflow`) are
-  `define_unbounded`/`define_bounded`, `use Flezha.SDK.StreamOperative` is
-  `use Flezha.SDK.UnboundedOperator`, and every `Operative*` type in all seven SDKs is
-  `Operator*`.
-- The wire: `AddOperative`, `RemOperative`, `OperativeMessage`, `operative_id`,
-  `WorkflowCompleted`, `WorkflowStop` and `SpawnWorkflow*` are `AddOperator`, `RemOperator`,
-  `OperatorMessage`, `operator_id`, `BoundedCompleted`, `BoundedStop` and `SpawnBounded*`, with
-  every tag number unchanged. The kind literal on `AddOperator` is `""` (the unbounded default),
-  `"unbounded"` or `"bounded"`; `"stream"` and `"workflow"` are refused as unknown kinds. The
-  class announcement's `workflow` key is `bounded`.
-- The CLI verb tree is `flz operator start|stop|list|info|scale|send|listen|replay|rewind`, and
-  `list` and `info` print the kind as `bounded` or `unbounded`.
-- Environment: `FLEZHA_WORKFLOW_*` is `FLEZHA_BOUNDED_*`, `FLEZHA_PERSISTENCE_OPERATIVE` is
-  `FLEZHA_PERSISTENCE_OPERATOR`, `FLEZHA_BENCH_MSGS_PER_OPERATIVE` is
-  `FLEZHA_BENCH_MSGS_PER_OPERATOR`.
-- Telemetry events, metric names, `/healthz` fields (`bound_operators`, `producing_operators`,
-  `stuck_operators`), the AuthZ actions (`operator.start`, `operator.send`, `operator.stop`, ...),
-  the plugin hook `on_operator_init`, the provider ids (`operator_forward`, ...) and the
-  dead-letter path component (`app_data/dlq/<operator_class>/`) follow the same rename.
-- The AuthZ role `operator` is **`ops`**; `operator` is refused as an unknown role.
-
-The naming gates for the retired names (`check-kind-naming.sh`, `check-tasklet-cell-naming.sh`
-and their lists) are removed.
-
-Upgrade: the kind and the class names are persisted, so stop the controller and wipe runtime
-data (`flz controller stop && flz reset --yes`), redeploy the controller and every runner
-together, and bind roles again with `ops` where they said `operator`.
-
-### Changed: a workflow stage commits through its Cells' own records
-
-A durable workflow Cell writes the same effect record a stream Cell on the effectively-once tier
+A durable steps relay Cell writes the same effect record a flow Cell on the effectively-once tier
 writes: one record per invocation with its state changes and its plugin outputs, shipped as the
 item settles. A stage's `TaskCommit` names the records each Cell wrote (`CommittedCell`, a
 `first_seq..seq` range and the channels written on) instead of carrying an outbox, and the
 controller appends the stage's journal entry only once every named record is durable, then acks.
 A committed stage can no longer be durable ahead of the state it commits.
 
-There is one outbox, the Cell writer's, for both kinds. A workflow Cell's outputs leave once the
+There is one outbox, the Cell writer's, for both runs. A steps relay Cell's outputs leave once the
 entry naming their record is durable; a failed, interrupted or rewound attempt's outputs never
-do. A workflow output carries the identity a stream's carries: `flz.cell`, `flz.seq = <record
+do. A steps output carries the identity a flow relay's carries: `flz.cell`, `flz.seq = <record
 seq>.<ordinal>`, the Cell's `flz.epoch`, `channel`, `flz.key` and the author's metadata, so
-`emit_keyed` and metadata work in a workflow tasklet in every SDK, and an undo output is a newer
-record of the compensating Cell rather than a `.1` suffix. With persistence off a workflow's
+`emit_keyed` and metadata work in a steps tasklet in every SDK, and an undo output is a newer
+record of the compensating Cell rather than a `.1` suffix. With persistence off a steps relay's
 outputs go to the wire with their full metadata.
 
 Removed with the second outbox: `TaskOutboxItem` and `TaskCommit.outbox` (field 6 reserved), the
 journal's `outbox_flushed` entry, the iteration-boundary snapshot (the Watchdog's triggers compact
-workflow Cells as they do stream Cells), the `task_outbox_flush` telemetry event and the
+steps relay Cells as they do flow Cells), the `task_outbox_flush` telemetry event and the
 `task_outbox_retry` backoff row. `flz state journal` prints each Cell's records and channels;
 `flz state outbox` prints the entries held for a stage marker.
 
-### Changed: a per-input workflow runs as a partition group
+### Changed: a per-input steps runs as a partition group
 
-`flz operative start <factory> --partitions N` now starts a `per_input` workflow as N ordinary
-workflow instances, each with its own key-group range, journal, input log and pass sheet, and
-`flz operative scale` rescales it between passes. Each member ends, compensates and commits on
-its own; there is no group end, result or rollback. A `once` or `chained` workflow is refused
-with `PartitionsWithoutPerInputLoop`, and a workflow class declares `loop_mode` in its
-`AddOperative` response. A partitioned start carrying `--text` is refused.
+`flz relay start <factory> --partitions N` now starts a `per_input` steps relay as N ordinary
+steps instances, each with its own key-group range, journal, input log and pass sheet, and
+`flz relay scale` rescales it between passes. Each member ends, compensates and commits on
+its own; there is no group end, result or rollback. A `once` or `chained` steps relay is refused
+with `PartitionsWithoutPerInputLoop`, and a steps class declares `each` in its
+`AddRelay` response. A partitioned start carrying `--text` is refused.
 
-A rescale seals every surviving workflow member at its latest committed iteration: a rewind or an
+A rescale seals every surviving steps relay member at its latest committed iteration: a rewind or an
 all-or-nothing rollback no longer reaches a pass committed before it, and the scale command says
-so. On the shared path, a stop that keeps state for a move now closes the operative's writers and
+so. On the shared path, a stop that keeps state for a move now closes the relay's writers and
 its input log on the node it ran on, a same-id move from another controller is a real pull, a
-cross-controller pull carries a workflow's journal and input log with its Cells, and a member
+cross-controller pull carries a steps relay's journal and input log with its Cells, and a member
 placed on another controller pulls its files before its bind reads its resume state.
 
-### Changed: timers fire inside a workflow; `wake_after` is gone
+### Changed: timers fire inside a steps relay; `wake_after` is gone
 
-A workflow tasklet registers Cell timers exactly as a stream tasklet does, in all seven SDKs, and
+A steps tasklet registers Cell timers exactly as a flow tasklet does, in all seven SDKs, and
 a due timer opens a pass at the tasklet that set it: its `on_timer` output travels down that
 tasklet's chain and commits stage by stage. A firing whose tasklet's stage is running joins it;
 any other waits beside messages and runs at the next committed boundary. Its timer leaves the
 pending set when that stage commits, so a crash before the commit fires it again and a crash
-after it does not. A sleeping workflow wakes at its earliest pending timer. Only a `compensate`
+after it does not. A sleeping steps relay wakes at its earliest pending timer. Only a `compensate`
 hook still answers `TimersUnavailable`.
 
 The class setting `wake_after` (`wakeAfter`, `wake_after_ms`, `wakeAfterMs`) is removed from
 every SDK, and a woken instance no longer receives an empty `flz.wake` message; a tasklet that
-wants a periodic wake registers `timer_after` in its `run`. A host workflow's entry channel now
-runs the event-time crossing a stream's does.
+wants a periodic wake registers `timer_after` in its `run`. A host steps relay's entry channel now
+runs the event-time crossing a flow relay's does.
 
-### Changed: an operative of either kind sleeps when idle
+### Changed: a relay of either run sleeps when idle
 
-`sleep_when_idle` is a class setting of both kinds in all seven SDKs. A stream class that declares
+`sleep_when_idle` is a class setting of both runs in all seven SDKs. A flow class that declares
 it sleeps once every cell has been idle for `FLEZHA_PARK_IDLE_MS` (600 000 ms), is evicted from
-the runner, and wakes on its next input with its state intact; a workflow class sleeps by default
+the runner, and wakes on its next input with its state intact; a steps class sleeps by default
 when it persists, as before. Sleeping needs persistence: a class that declares it with
 persistence off is refused at registration (`SleepWithoutPersistence`). The knob
-`FLEZHA_WORKFLOW_PARK_IDLE_MS` is now `FLEZHA_PARK_IDLE_MS`, and the park record moved out of the
+`FLEZHA_STEPS_PARK_IDLE_MS` is now `FLEZHA_PARK_IDLE_MS`, and the park record moved out of the
 task journal into the class directory.
 
-The persistence switch is one class setting for both kinds too: a Java stream class that turns
+The persistence switch is one class setting for both runs too: a Java flow class that turns
 persistence off is now declared so (it used to read its tasklets), and a live state read of any
 class with persistence off answers `persistence_off`. Time travel, retention, the watchdog and
-evicted-cell deletion now treat a workflow's cells as a stream's. Stopping a sleeping workflow
+evicted-cell deletion now treat a steps relay's cells as a flow relay's. Stopping a sleeping steps relay
 wakes it and stops it cleanly instead of removing it hard.
 
-### Changed: a workflow tasklet may be keyed
+### Changed: a steps tasklet may be keyed
 
-A `key_by` edge into a workflow tasklet is accepted in all seven SDKs; the `DynamicCells` refusal
+A `key_by` edge into a steps tasklet is accepted in all seven SDKs; the `DynamicCells` refusal
 is gone. The tasklet runs one cell per key, minted when a stage's item is addressed to it and
-capped by `max_cells` as a stream's is. A stage commits the cells it addressed, a crash-resume
+capped by `max_cells` as a flow relay's is. A stage commits the cells it addressed, a crash-resume
 restores the keyed cells the instance persisted, and a rollback compensates each keyed cell that
 ran, once. An idle keyed cell is evicted by `cell_idle_ttl` only between passes, and never while a
-rollback of the declared `rollback_mode` could still reach it: under all-or-nothing a cell that ran
+rollback of the declared `on_failure` could still reach it: under all-or-nothing a cell that ran
 a compensable tasklet is kept until the instance ends. One pass of one tasklet runs at most
 65 535 cells, the width of a stage commit's cell count; a class that keys more per pass declares a
 smaller `max_cells`.
 
-### Fixed: an Elixir workflow rewinds, and delivers its output when it journals nothing
+### Fixed: an Elixir steps relay rewinds, and delivers its output when it journals nothing
 
-`flz operative rewind` on an Elixir workflow instance now compensates the unwound iterations,
+`flz relay rewind` on an Elixir steps instance now compensates the unwound iterations,
 latest first, before the loop goes on from the rewound-to iteration; it used to resume without
-undoing anything. An Elixir workflow class with persistence off now delivers its plugin-bound
-output during the pass, as a stream does; it used to drop it.
+undoing anything. An Elixir steps class with persistence off now delivers its plugin-bound
+output during the pass, as a flow relay does; it used to drop it.
 
-### Changed: a workflow instance holds no thread
+### Changed: a steps instance holds no thread
 
-A workflow instance no longer owns a driver thread: its run is a small pass sheet advanced by
+A steps instance no longer owns a driver thread: its run is a small pass sheet advanced by
 events on the thread that brings each one, and its stages reach their cells through the stream's
 routing, mailboxes and poll core, under the in-flight cap (`FLEZHA_MAX_INFLIGHT_ACTIVATIONS`).
 Ten thousand waiting instances now cost no CPU and about 61 KiB each. A stage commits when its own
 last item settles, so siblings commit independently and a sibling that fails later compensates
 the one already committed. A cell's retry is the stream's per-item ladder: the failed item and
 those queued behind it re-run, not the whole batch, and a stop disarms a pending backoff at once.
-`FLEZHA_WORKFLOW_DRIVER_STACK_KIB` is gone. A Java, Node, Python, Ruby or PHP workflow tasklet that
-declares static `cell_keys` now runs the cells its `cells_for` names, and `flz operative state` /
-`flz state get` answer for a durable workflow's cells. The journal, the wire frames and the
+`FLEZHA_STEPS_DRIVER_STACK_KIB` is gone. A Java, Node, Python, Ruby or PHP steps tasklet that
+declares static `cell_keys` now runs the cells its `cells_for` names, and `flz relay state` /
+`flz state get` answer for a durable steps relay's cells. The journal, the wire frames and the
 authoring surface are unchanged.
 
-### Changed: a workflow is declared like a stream
+### Changed: a steps relay is declared like a flow relay
 
-A workflow class writes its graph in `channels`, as a stream class does, in all seven SDKs; the
-workflow-only `tasklets` body is gone, and Node's `defineOperative` is `defineStream`. The runner
-announces each factory's kind with its id, so `flz operative start` and `flz schedule add` take no
-`--kind`, the admin start has no `kind` field, a schedule of a stream factory is refused, and a
-spawn naming a stream factory answers `factory_not_workflow`. The class-level `retry_attempts`,
-`retry_backoff_ms` and `barrier_retry_attempts` are deleted: a workflow stage's retry ladder is its
-consuming edge's `retry_max` / `retry_backoff_ms`, as on a stream, and a commit barrier is re-sent a
-fixed three times. A workflow class is refused by name when it sets the effectively-once tier
-(`EffectivelyOnceOnWorkflow`), a checkpoint setting (`CheckpointOnWorkflow`) or a correction window
-(`CorrectionWindowOnWorkflow`), and a timer call inside a workflow tasklet fails naming
-`TimersUnavailable`. The short form of a workflow may write its loop mode.
+A steps class writes its graph in `channels`, as a flow class does, in all seven SDKs; the
+steps-only `tasklets` body is gone. The runner
+announces each factory's kind with its id, so `flz relay start` and `flz schedule add` take no
+`--kind`, the admin start has no `kind` field, a schedule of a flow factory is refused, and a
+spawn naming a flow factory answers `factory_not_steps`. The class-level `retry_attempts`,
+`retry_backoff_ms` and `barrier_retry_attempts` are deleted: a steps stage's retry ladder is its
+consuming edge's `retry_max` / `retry_backoff_ms`, as on a flow relay, and a commit barrier is re-sent a
+fixed three times. A steps class is refused by name when it sets the effectively-once tier
+(`EffectivelyOnceOnSteps`), a checkpoint setting (`CheckpointOnSteps`) or a correction window
+(`CorrectionWindowOnSteps`), and a timer call inside a steps tasklet fails naming
+`TimersUnavailable`. The short form of a steps relay may write its loop mode.
 
-### Changed: the workload levels are Operative → Tasklet → Cell
+### Changed: the single-tasklet short form is a relay declaration; every tasklet body is `run`
 
-<!-- tasklet-cell-naming-record:begin -->Procedure is now Tasklet and Entity is now Cell<!-- tasklet-cell-naming-record:end -->,
-and the `Proc*` abbreviation is `Task*`, in the controller, the CLI, all seven SDKs, the wire
-protocol and the on-disk layout, with no alias. The authoring surface is `#[flezha::tasklet]` and
-`TaskletCtx` in Rust, `@Tasklet` in Java, `defineTasklet` in Node, `flezha.tasklet` in Python,
-`Flezha::Tasklet` in Ruby, a `Tasklet` subclass under `#[Task]` in PHP and `use Flezha.SDK.Tasklet`
-in Elixir; the keying declarations are `cell_keys`, `cells_for`, `cell_idle_ttl` and
-`ctx.cell_key()`. On the wire the control messages are `CellState`, `CellApplyState`, `CompactCell`
-and `CellMailboxStatus`, the payload ids `cell_state_change`, `cell_state_snapshot`,
-`delete_cell_state` and `compact_cell`, and a sink's metadata key is `flz.cell`, so anything
-reading sink output reads the new key. A cell's state lives at
-`state/<namespace>/<operative>/<tasklet_id>/<cell_key>.*` and a workflow's journal is
-`task.journal`. State written under the old names is not read: stop the controller and run
-`flz reset --yes` before starting the new build.
-
-### Changed: the single-tasklet short form is an operative declaration; every tasklet body is `run`
-
-The short form moves from the tasklet declaration to each SDK's kind-named operative entry
-point in all seven SDKs, with no alias: `#[flezha::stream_operative]` / `#[flezha::workflow_operative]`
-in Rust, `@StreamOperative` / `@WorkflowOperative` in Java, `@flezha.stream_operative` /
-`@flezha.workflow_operative` in Python, `defineOperative` / `defineWorkflow` in Node, a
-`Flezha::StreamOperative` / `Flezha::WorkflowOperative` subclass in Ruby, `#[Operative]` on a class
-extending `StreamOperative` / `WorkflowOperative` in PHP, and `use Flezha.SDK.StreamOperative` /
-`use Flezha.SDK.WorkflowOperative` in Elixir. A declaration is a short form when it carries its
-tasklet's `run` body instead of a topology body; the kind is the entry point's name, the identity
-is the operative's factory id, and the generated tasklet is named after it, so growing into the
+The short form moves from the tasklet declaration to each SDK's relay entry point in all
+seven SDKs: `#[flezha::relay]` in Rust, `@Relay` in Java, `@flezha.relay` in Python,
+`defineRelay` in Node, a `Flezha::Relay` subclass in Ruby, `#[Relay]` on a class extending
+`Relay` in PHP, and `use Flezha.SDK.Relay` in Elixir. A declaration is a short form when it
+carries its tasklet's `run` body instead of a topology body; the identity
+is the relay's factory id, and the generated tasklet is named after it, so growing into the
 full form keeps every cell's state. `sink` is optional: with none, the entry channel feeds the
 tasklet and no plugin channel is declared. The refusals are `ShortFormWithTopology`,
 `SinkWithoutOutput` and `DuplicateFactoryId`; the three that policed the old `sink` switch are gone.
@@ -886,56 +819,56 @@ Node's `handle` and the `process` method of Ruby's and Python's class tasklets a
 the name every SDK now gives a tasklet's body. The conformance suite gains `sugar_state_only`, a
 short form with no sink proven by its cell state.
 
-### Removed: the one-function workflow body; a tasklet ends its instance
+### Removed: the one-function steps body; a tasklet ends its instance
 
-A workflow always runs tasklets. The one-function body `run(ctx, args)` and its context
+A steps relay always runs tasklets. The one-function body `run(ctx, args)` and its context
 (`emit`, `recv`, `loop_until`, `complete`, `is_cancelled`) are deleted in all seven SDKs with no
-alias, together with the C ABI's `flz_core_workflow_emit`, `_recv` and `_cancelled`, the
-`WorkflowRun` activation and the `WorkflowDone` outcome; a workflow class that declares no
-tasklet is refused at registration. A chat agent is a `PerInput` workflow whose tasklet keeps
+alias, together with the C ABI's `flz_core_steps_emit`, `_recv` and `_cancelled`, the
+`StepsRun` activation and the `StepsDone` outcome; a steps class that declares no
+tasklet is refused at registration. A chat agent is a `PerInput` steps relay whose tasklet keeps
 the conversation in cell state, so a crash loses no turn.
 
 Every tasklet context gains `complete(result)`: once the iteration commits, the instance ends
 with status `ok` and `result` instead of waiting for its next input. The rest of the iteration
 still runs; several completions resolve to the tasklet latest in the chain and, within it, the
-cell whose key sorts last; a failed iteration discards its completion; a stream tasklet
-calling it fails its input, non-retryable, naming `CompleteOutsideWorkflow`. The result is
+cell whose key sorts last; a failed iteration discards its completion; a flow tasklet
+calling it fails its input, non-retryable, naming `CompleteOutsideSteps`. The result is
 encoded the way a sink naming no codec encodes a value: bytes as they are, a string as UTF-8,
 anything else as JSON. The completion rides `TaskCommit` and `IterCommit`, is journaled in
 `task_committed` and `iter_committed` (an entry written before this change reads as not
 completing), comes back on a rebind, and `flz state journal` shows a completing entry.
 
-### Changed: an operative starts without a name, and every start answers its id
+### Changed: a relay starts without a name, and every start answers its id
 
-The id is optional at every start. `flz operative start <factory>` takes the id as
-`--id` / `-i`, the consumer surface's `Operative.start` takes a spec with no `id`, a tasklet's
+The id is optional at every start. `flz relay start <factory>` takes the id as
+`--id` / `-i`, the consumer surface's `Relay.start` takes a spec with no `id`, a tasklet's
 spawn takes none, and a partitioned start generates its group base. The controller then
 generates `<factory>-<16 characters>`, trimmed to the 32-byte limit, checks it with the same
 atomic claim a named start uses, counts a leftover state folder as taken, and draws again at
 most three times. A start without an id that is retried after a lost answer starts a second
-operative, and a spawn without an id always starts a new instance; pass an id when that
+relay, and a spawn without an id always starts a new instance; pass an id when that
 matters.
 
 Every start and spawn answers `{id, outcome}`. A start answers `started` or `already_running`
-and no longer carries `operative_id`, `runner_id`, `node` or `pid`; a spawn answers `spawned`,
-`delivered` or `skipped_on_replay`. `SpawnWorkflowResponse` gains `instance_id`. The audit
+and no longer carries `relay_id`, `runner_id`, `node` or `pid`; a spawn answers `spawned`,
+`delivered` or `skipped_on_replay`. `SpawnStepsResponse` gains `instance_id`. The audit
 record of a start names the id it ran under.
 
 The SDK calls take the factory first and the id as an optional named argument:
-`OperativeSpec::new("echo").id(..)` and `ctx.spawn_workflow_with(.., SpawnOptions::id(..))` in
-Rust, `OperativeSpec.of("echo").id(..)` and `SpawnOptions.id(..)` in Java, keyword options in
+`RelaySpec::new("echo").id(..)` and `ctx.spawn_steps_with(.., SpawnOptions::id(..))` in
+Rust, `RelaySpec.of("echo").id(..)` and `SpawnOptions.id(..)` in Java, keyword options in
 Elixir, keyword arguments in Python and Ruby, named arguments in PHP and an options object in
 Node. A spawn now returns a handle at once in all seven SDKs: Python, Ruby and PHP no longer
-wait for the controller or raise its refusal into the tasklet, Node's `spawnWorkflow` is no
+wait for the controller or raise its refusal into the tasklet, Node's `spawnSteps` is no
 longer `async`, and a refusal is read from the handle (`wait` / `await` and `try_result` /
-`tryResult`). The C ABI replaces `flz_core_spawn_workflow` with `flz_core_spawn_request` and
+`tryResult`). The C ABI replaces `flz_core_spawn_steps` with `flz_core_spawn_request` and
 `flz_core_spawn_result`, and the spawn handle lives once in `flz_core`.
 
-The CLI spellings change: `flz operative start <operative_id> <factory_id>` becomes
-`flz operative start <factory_id> [--id <id>]`, which prints `Started <id>` (or
-`{"id":..,"outcome":..}` with `--json`) instead of `Starting operative...`; `--init_values` and
-`-iv` become `--init-values` on `operative start` and `schedule add`; `-si` and the `-i` of
-`operative rewind --to-iteration` go. Both verbs refuse an option they do not read.
+The CLI spellings change: `flz relay start <relay_id> <factory_id>` becomes
+`flz relay start <factory_id> [--id <id>]`, which prints `Started <id>` (or
+`{"id":..,"outcome":..}` with `--json`) instead of `Starting relay...`; `--init_values` and
+`-iv` become `--init-values` on `relay start` and `schedule add`; `-si` and the `-i` of
+`relay rewind --to-iteration` go. Both verbs refuse an option they do not read.
 
 ### Added: `merge`, the latest-document router and `flat_map` in every SDK
 
@@ -1065,7 +998,7 @@ and `msgpack` in Ruby, Python and Node. It is spelled the way each SDK spells a
 policy: `codec: :text` in Ruby, `codec="text"` in Python, `{ codec: 'text' }` in
 Node and `codec: ChannelCodec::Text` in PHP. A text channel no longer needs a
 hand-written decoder and encoder. An unknown name, or a codec given beside a
-decoder or encoder, is refused when the operative is declared, and `text` refuses
+decoder or encoder, is refused when the relay is declared, and `text` refuses
 invalid UTF-8 rather than replacing it.
 
 ### Changed: an undeclared entry reads JSON, and an undeclared sink sends by the value
@@ -1076,7 +1009,7 @@ already did. In all four a sink with no codec and no encoder sends bytes
 unchanged, a string as its UTF-8 bytes and any other value as JSON, the rule Java,
 Rust and Elixir already follow, so a PHP sink no longer quotes a string and the
 other three no longer send MessagePack. `msgpack` restores the previous format in
-one word. Payloads between tasklets of one operative, and state and change
+one word. Payloads between tasklets of one relay, and state and change
 bodies, keep their formats.
 
 ### Added: a Ruby runner can do work between starting and waiting
@@ -1086,18 +1019,18 @@ bodies, keep their formats.
 split in Java. An application can boot a runner, make its admin calls, and
 then wait, which the Ruby SDK had no public way to do.
 
-### Fixed: an operative reads healthy as soon as a restarted runner takes it
+### Fixed: a relay reads healthy as soon as a restarted runner takes it
 
-After a runner stopped and came back, its operatives were bound again and answering
+After a runner stopped and came back, its relays were bound again and answering
 within seconds but reported `degraded` for about a minute, while the controller kept
 retrying a repair they no longer needed. The stall a closed stream reports now clears
-as soon as the operative is bound to another runner.
+as soon as the relay is bound to another runner.
 
 ### Fixed: a runner stopped with Ctrl-C or SIGTERM exits cleanly
 
 A Node runner could end with `Aborted (core dumped)` instead of exiting 0, because the
 SDK core ended the process while Node was still shutting itself down. The core now
-ends the process at once, once every operative's final state has shipped, without the
+ends the process at once, once every relay's final state has shipped, without the
 exit-time cleanup that raced Node's own. The change is in the core that every SDK but
 Elixir is built on.
 
@@ -1116,7 +1049,7 @@ window was lost and reported unanswered after 30 seconds, or, once delivered,
 judged before the runner was recorded and refused with
 `no runners for factory`. The controller now keeps what a runner sends after
 its connect queued until the runner's own channel takes the stream, and judges
-an admin call or a workflow spawn once the session is admitted. No SDK changed.
+an admin call or a steps spawn once the session is admitted. No SDK changed.
 
 ### Fixed: an Elixir runner's admin call over a socket is answered
 
@@ -1125,14 +1058,14 @@ an admin call or a workflow spawn once the session is admitted. No SDK changed.
 request had no guarantee class. It is now a control frame: sent once, never
 held, and a refused write answers the caller with the refusal.
 
-### Fixed: a runner acts only on the operatives bound to it
+### Fixed: a runner acts only on the relays bound to it
 
-The controller now records, for every operative, the stable identity of the
-runner it is bound to, and refuses a frame about that operative from any other
+The controller now records, for every relay, the stable identity of the
+runner it is bound to, and refuses a frame about that relay from any other
 runner: an output, a state record, a completion, a park, a shutdown snapshot or
 a commit barrier. A runner judged dead while its process was still alive kept
-its copy of an operative the controller had moved elsewhere, and after it
-reconnected that copy could stop the operative, suspend it, overwrite its
+its copy of a relay the controller had moved elsewhere, and after it
+reconnected that copy could stop the relay, suspend it, overwrite its
 snapshot or rewind its WAL. The copy is now refused, counted on
 `[:flezha, :runner, :foreign_frame_refused]`, and told to stop. A stable
 identity presented under another runner credential while its session is held
@@ -1141,7 +1074,7 @@ is refused as a connect rejection.
 ### Added: a file plugin root can be an S3 bucket
 
 `FLEZHA_FILE_PLUGIN_ROOT` also takes `s3://<bucket>/<prefix>`, so a file source
-and a file sink keep working when their operative moves to another controller,
+and a file sink keep working when their relay moves to another controller,
 with no shared mount. Four settings give the connection,
 `FLEZHA_FILE_PLUGIN_S3_ENDPOINT`, `FLEZHA_FILE_PLUGIN_S3_REGION`,
 `FLEZHA_FILE_PLUGIN_S3_ACCESS_KEY_ID` and `FLEZHA_FILE_PLUGIN_S3_SECRET_ENV`,
@@ -1159,7 +1092,7 @@ call instead of being served.
 
 ### Changed: a plugin's hooks have one name, and an enable refuses an option it does not read
 
-The point at which an operative calls a plugin is a hook everywhere an operator
+The point at which a relay calls a plugin is a hook everywhere a user
 types or reads it. This breaks every command, spec and manifest that used the
 old words:
 
@@ -1170,14 +1103,14 @@ old words:
   interval` and `proactive` become `--hook=on_interval
   --on_interval.interval_ms=5000`. There is no default interval.
 - `flz plugin enable` refuses a plain option it does not read, naming it,
-  instead of dropping it. It reads `--namespace`, `--operative_id` and `--hook`;
+  instead of dropping it. It reads `--namespace`, `--relay_id` and `--hook`;
   provider settings stay `--X<key>=<value>`.
-- `"subscriptions"` is `"hooks"` in the `--plugins` spec of `flz operative
+- `"subscriptions"` is `"hooks"` in the `--plugins` spec of `flz relay
   start` and `flz schedule add` and in the fields of an admin `enable_plugin`
   call in every SDK. `subscriptions:` is `hooks:` in a package `manifest.exs`,
   in `Flezha.Plugin.new/1` and in `%Flezha.Plugin{}`.
 - Refusals name hooks: `:unknown_hook`, `:invalid_hook`, `:invalid_hook_opts`,
-  `:unknown_hook_opt` and `:invalid_hooks`. `flz operative info` prints `hook:`
+  `:unknown_hook_opt` and `:invalid_hooks`. `flz relay info` prints `hook:`
   lines and its JSON carries `hooks` as `{"name", "opts"}` objects, and `flz
   plugin help <provider_id>` lists `SUPPORTED HOOKS:`.
 - Controller state written by an earlier build holds plugin records this build
@@ -1188,7 +1121,7 @@ old words:
 ### Changed: plugin help names the real provider id, and `help/0` becomes `help/1`
 
 `flz plugin help <provider_id>` names the id the enable takes and lists only the
-options an operator can write. A plugin provider's `help/0` callback becomes
+options a user can write. A plugin provider's `help/0` callback becomes
 `help/1`, taking that id.
 
 ### Fixed: Java `@Tasklet` strings may hold quotes and backslashes
@@ -1210,7 +1143,7 @@ the start's own error in its log lines and in the
 
 ### Fixed: a Java constructor that throws is reported as its own error
 
-A Java operative, workflow or tasklet whose constructor throws reports that
+A Java relay, steps relay or tasklet whose constructor throws reports that
 exception instead of claiming it has no public no-arg constructor.
 
 ### Fixed: two controllers started at once on a fresh state directory agree on their cookie
@@ -1220,7 +1153,7 @@ value the running node did not use.
 
 ### Fixed: the Node SDK's CommonJS build loads a handler module by path
 
-`defineStream('./handlers.cjs')`, `declare` and worker loops no longer fail with
+`defineRelay('./handlers.cjs')`, `declare` and worker loops no longer fail with
 `could not import handler module` when the runner is required from CommonJS.
 
 ### Fixed: `flz reset` no longer empties a folder it reports as kept
@@ -1230,7 +1163,7 @@ keeps, such as a `dlq` symlinked to `audit`.
 
 ### Fixed: Node and Ruby runners ship their final state at shutdown
 
-Node and Ruby runners stopped by SIGTERM or SIGINT now ship their final operative
+Node and Ruby runners stopped by SIGTERM or SIGINT now ship their final relay
 state instead of an empty or missing snapshot.
 
 ### Fixed: a trailing channel option takes effect in Node, Python, Ruby and PHP
@@ -1264,21 +1197,21 @@ It now prints the verdict first, then one labelled line each for the directory,
 the paths checked and the fix, and leaves the fix out when a controller answered.
 The one-line diagnosis a runner prints before it retries is unchanged.
 
-### Fixed: a move to another controller no longer brings back an operative's older state
+### Fixed: a move to another controller no longer brings back a relay's older state
 
-When a runner stops gracefully it hands its operatives' final state to the
-controller, which kept that copy for good. If the operative then ran on another
+When a runner stops gracefully it hands its relays' final state to the
+controller, which kept that copy for good. If the relay then ran on another
 runner, took more input, and lost that runner to a crash before moving to another
-controller, the move shipped the old copy and skipped reading the operative's
+controller, the move shipped the old copy and skipped reading the relay's
 saved state, so every change since the graceful stop was gone. A kept copy is now
-dropped as soon as another runner takes the operative over, and a move that
+dropped as soon as another runner takes the relay over, and a move that
 follows a crash reads the saved state instead.
 
-An operative class that opted out of persistence has no saved state to read. It
+A relay class that opted out of persistence has no saved state to read. It
 no longer gets that older graceful-stop state back after another runner took it
 over and crashed; it starts from its initial values, as a hard kill already does.
 
-`OperativeManager.create_snapshot/2` still answers the operative's current state,
+`RelayManager.create_snapshot/2` still answers the relay's current state,
 but no longer keeps it for a later move or rebind, for the same reason.
 
 ### Fixed: a healthy runner sent input just after its heartbeat is no longer restarted
@@ -1291,13 +1224,13 @@ restart. The controller now notes when each heartbeat lands and judges a frozen
 count only across a heartbeat that landed after a send. A runner that really stops
 dispatching while it is being fed is still found and restarted.
 
-### Added: a file as an operative's input and output
+### Added: a file as a relay's input and output
 
-Two first-party plugins read and write local files. `operative_file_source` reads
+Two first-party plugins read and write local files. `relay_file_source` reads
 a file onto an entry channel, one line per frame, follows it as it grows, and
 resumes after the last committed line on a plugin restart, a move to another
 controller and a controller restart. Delivery is at-least-once.
-`operative_file_sink` appends one line per record and syncs each batch before it
+`relay_file_sink` appends one line per record and syncs each batch before it
 confirms a delivery-guaranteed record; a batch synced just before a crash can be
 appended a second time.
 
@@ -1307,17 +1240,17 @@ must already exist. Every path must resolve inside it with symbolic links
 followed. A file the sink creates is private (`0600`). See `docs/plugins/file.md`.
 
 ```
-flz plugin enable reader operative_file_source --operative_id=op1 \
+flz plugin enable reader relay_file_source --relay_id=op1 \
   --Xpath=events.ndjson --Xchannel_in=events
-flz plugin enable writer operative_file_sink --operative_id=op1 \
+flz plugin enable writer relay_file_sink --relay_id=op1 \
   --extension=on_output --Xpath=out/alerts.ndjson --Xchannel_out=alerts
 ```
 
-### Changed: `flz operative listen` replaces `io_listen`, and it ends
+### Changed: `flz relay listen` replaces `io_listen`, and it ends
 
-`flz operative io_listen input|output <operative_id>` is now
-`flz operative listen <operative_id> [--input]`, with no alias. It listens to
-what the operative emits; `--input` listens to what it ingests instead.
+`flz relay io_listen input|output <relay_id>` is now
+`flz relay listen <relay_id> [--input]`, with no alias. It listens to
+what the relay emits; `--input` listens to what it ingests instead.
 
 Every frame prints the metadata it carries: the channel, a tab and the payload,
 and on a keyed sink a third field with its cell, seq and key. `--json` prints
@@ -1327,31 +1260,31 @@ attaches is detached however it ends, on every member of a partition group.
 Before, it ran until Ctrl-C, Ctrl-C opened the Erlang break menu instead, and
 every listener that ended left its plugin attached on the controller.
 
-Listening is authorized as its own action, `operative.listen`, granted from
+Listening is authorized as its own action, `relay.listen`, granted from
 `app` upward, rather than as `plugin.enable`.
 
-`flz operative send --await <ms>` attaches the listener before it delivers and
+`flz relay send --await <ms>` attaches the listener before it delivers and
 prints what came back, so one command checks a deployment:
 
 ```
-$ flz operative send my_echo --text 'hello world' --await 2000
+$ flz relay send my_echo --text 'hello world' --await 2000
 Delivered to 'my_echo'.
 echo	hello world
 ```
 
 ### Added: a plugin's channel filter names a set of channels
 
-A plugin that acts on the records passing through an operative could restrict
-itself to one channel or to none. One destination carrying two of an
-operative's four output channels had neither answer: naming one channel dropped
-the other, and naming none pulled in the two the operator did not want. The
+A plugin that acts on the records passing through a relay could restrict
+itself to one channel or to none. One destination carrying two of a
+relay's four output channels had neither answer: naming one channel dropped
+the other, and naming none pulled in the two the user did not want. The
 workaround was to enable the same plugin twice, which opens two upstream
 connections for what is one destination.
 
 The filter now takes several names, comma-separated:
 
 ```
-flz plugin enable alerts operative_kafka_producer \
+flz plugin enable alerts relay_kafka_producer \
   --extension=on_output \
   --Xhosts=broker-1:9092 \
   --Xtopic=alerts \
@@ -1375,7 +1308,7 @@ whitespace.** A comma in these three options now separates names, so
 where it used to match only records whose channel carried the spaces — a plugin
 relying on that stops matching after the upgrade, with no refusal to announce
 it. On the entry side — `channel_in`, and
-`channel` on a plugin whose provider feeds the operative, such as `http_poll`
+`channel` on a plugin whose provider feeds the relay, such as `http_poll`
 and the websocket — several names are refused rather than quietly read as one,
 since a payload is injected on exactly one channel. A caller that builds the
 options itself can still pass a list, which is how a name containing a comma is
@@ -1418,16 +1351,16 @@ by hiding a `"channel"` key inside `payload_metadata`, a general label bag that
 appears in no help screen.
 
 `channel` now names the channel a plugin is attached to, in whichever
-directions it works: a plugin that feeds the operative injects on it, a plugin
+directions it works: a plugin that feeds the relay injects on it, a plugin
 subscribed to `on_input` or `on_output` filters on it, and a plugin that does
 both does both with that one name. `channel_in` and `channel_out` name one
 direction each, for a plugin whose two names differ.
 
 What breaks: a websocket plugin subscribed to `on_output` with
 `channel: "prices"` used to send only outputs naming `prices` while injecting
-its inbound frames on the operative's FIRST entry channel. It now also injects
+its inbound frames on the relay's FIRST entry channel. It now also injects
 on `prices` — which, since an entry channel and an output channel never share a
-name inside one operative, means those frames are dead-lettered under that name
+name inside one relay, means those frames are dead-lettered under that name
 instead of silently landing somewhere else. **Write `channel_out: "prices"` to
 keep exactly the old behaviour**, or write the pair `channel_in`/`channel_out`
 to name both ends. The shipped example in
@@ -1436,7 +1369,7 @@ to name both ends. The shipped example in
 Four shapes are now refused when the plugin is enabled rather than discovered
 in flight: `channel` together with `channel_in` or `channel_out`; a spelling for
 a direction the plugin does not work in (`channel_out` on a plugin subscribed to
-no chain extension); `channel` on a plugin that neither feeds the operative nor
+no chain extension); `channel` on a plugin that neither feeds the relay nor
 is subscribed to one, because nothing would read it; and a `"channel"` key
 inside a websocket's `payload_metadata` alongside any channel option. The bag on
 its own keeps working unchanged. `http_poll` still requires an entry channel and
@@ -1445,28 +1378,28 @@ either spelling satisfies it.
 ### Added: the single-tasklet shorthand names its entry channel
 
 The shorthand's entry channel used to be the literal string `input`, and that
-string is not private: it is the address an operator types into a plugin option
+string is not private: it is the address a user types into a plugin option
 to inject on, and the name a forwarded frame has to match to reach the
-operative. An author who needed to choose it had to abandon the shorthand and
+relay. An author who needed to choose it had to abandon the shorthand and
 write the whole topology by hand.
 
 All three spellings now take an optional name. Java is an annotation element,
 `@Tasklet(id = "…", sink = "…", input = "prices")`. Rust is an attribute key,
 `#[flezha::tasklet(id = "…", sink = "…", input = "prices")]`, and an optional
-name on the `flezha::operative!` pipeline head,
+name on the `flezha::relay!` pipeline head,
 `input::<String>("prices") -> … -> plugin::<Vec<u8>>("k")`, written in the same
 position the `plugin` terminator already takes its own name.
 
 **Nothing changes for a declaration that writes no name.** The generated
 topology is byte-identical to today's, entry channel included, so every
-existing operative, the cross-SDK conformance table and every fixture are
+existing relay, the cross-SDK conformance table and every fixture are
 untouched. Only Rust and Java have this shorthand; the other five SDKs have
 none to extend.
 
 A name written on a spelling that can omit its `sink` is refused at compile
-time, naming both — the Java processor generates no operative without a `sink`,
+time, naming both — the Java processor generates no relay without a `sink`,
 and the Rust attribute already refused a `sink` without an `id` the same way.
-The `flezha::operative!` pipeline cannot omit its terminator, so it owes no such
+The `flezha::relay!` pipeline cannot omit its terminator, so it owes no such
 refusal; it does refuse an empty name, which would declare a channel nothing can
 address.
 
@@ -1500,7 +1433,7 @@ did not filter apart, and that shape is still written the same way by giving
 each channel its own name and the plugin no channel filter.
 
 Both code generators stop emitting the `.named(x).sink(x)` pair they needed to
-get the naming their users expected, so a sugared operative and a hand-written
+get the naming their users expected, so a sugared relay and a hand-written
 one now produce the same channel name for the same declaration. That
 disagreement is what this change exists to close.
 
@@ -1522,7 +1455,7 @@ only for a channel whose name actually moves:
   second row instead of deduplicating against the first. Drain the dead-letter
   queue for the affected tasklets before upgrading. Under the tier the key is
   `cell_key@origin_offset` and carries no channel name, so it is unaffected.
-- A workflow instance that straddles the upgrade has both names in the staged
+- A steps instance that straddles the upgrade has both names in the staged
   output set its rewind guard reads back from the journal. The guard's verdict
   is unaffected — it decides by tasklet index, and the names are only what
   the refusal reports — but a refusal spanning the upgrade names channels under
@@ -1530,10 +1463,10 @@ only for a channel whose name actually moves:
 - A plugin filtering by channel sees nothing for replayed records under the old
   name. Keep the old name with `sink()` if that matters more than the new one.
 
-An operative whose channel names do not change — every declaration that keeps
+A relay whose channel names do not change — every declaration that keeps
 its name through the migration above — needs none of this.
 
-### Removed: the workflow handoff codec declaration, from the Rust and Java builders
+### Removed: the steps relay handoff codec declaration, from the Rust and Java builders
 
 **Breaking for the Rust and Java SDKs.** `codec()` and `codec_with(...)` are
 gone from the Rust stream handle, `codec()` and `codecWith(...)` from the Java
@@ -1551,7 +1484,7 @@ That makes the Rust `Tasklet::Output` and `SimpleTasklet::Output` types
 **writable to bytes and readable back**, unconditionally, the way `State`
 already was. A tasklet whose output has no serde derives stops compiling, with
 a message naming the type and the journal rather than serde. The bound cannot be
-narrowed to workflows: whether a class journals is an operator's setting at
+narrowed to steps relays: whether a class journals is a user's setting at
 deploy time, not a fact the compiler has. Three types in this repository failed
 it and gained the derives — `TickInput`, `Ticker` and `Candle`, all in test
 fixtures — and nothing else moved. (Two more, in a compile-fail fixture, gained
@@ -1607,17 +1540,17 @@ fails the manifest gate.
 Nothing in the tree consumed the signal. The nearest supported replacement is
 the controller's own input-silence watchdog: set `input_silence_timeout_ms`
 (off by default, `docs/configuration.md`) and it emits
-`[:flezha, :state, :input_silence]` and one `[watchdog]` warning for an
-operative class that has gone quiet.
+`[:flezha, :state, :input_silence]` and one `[watchdog]` warning for a
+relay class that has gone quiet.
 
 **It is a coarser instrument, and the difference matters if you were using the
 removed signal.** The watchdog counts durable Change frames, not arriving
-input, and it latches per operative class rather than per entry channel. So:
-an operative with two entry channels whose first feed dies while the second
+input, and it latches per relay class rather than per entry channel. So:
+a relay with two entry channels whose first feed dies while the second
 keeps folding state is never flagged, because the class keeps writing changes;
-an operative that has never persisted a change is never watched at all, since
+a relay that has never persisted a change is never watched at all, since
 the sweep only considers a class whose `last_persisted_seq` has moved; and only
-stream operatives are swept, because a workflow is quiet between stages by
+flow relays are swept, because a steps relay is quiet between stages by
 design and a checkpoint-acknowledging class is quiet between checkpoints. If you need
 per-channel silence, you now have to observe it in your own tasklet, from the
 frames it receives.
@@ -1628,21 +1561,21 @@ Plugin providers keep their own silence handling: the websocket's
 ### Changed: a frame naming a channel that is not an entry channel is parked
 
 An input frame whose `channel` metadata names something that is not one of the
-operative's entry channels — a name it declares nowhere, or one that is really a
+relay's entry channels — a name it declares nowhere, or one that is really a
 sink or an inter-tasklet channel — used to be thrown away with one line on the
 runner's stderr, and, on the Elixir SDK, delivered to whichever entry channel
 happened to be first. It is now parked in the dead-letter store with its payload
 bytes, under the name it asked for, and an error naming the entry channels the
-operative does declare:
+relay does declare:
 
 ```sh
 flz dlq list --token "$FLEZHA_TOKEN"
-# … channel: not_prices   error: no entry channel `not_prices`; the operative declares: config, prices
+# … channel: not_prices   error: no entry channel `not_prices`; the relay declares: config, prices
 ```
 
 The park is immediate: the name will not resolve on a re-attempt, so the entry
 records one attempt and no retry delay is waited. `flz dlq replay` re-injects
-the payload on the recorded name, so once the operative declares a channel of
+the payload on the recorded name, so once the relay declares a channel of
 that name the parked frames reach it.
 
 Two behaviour changes ride with it. The Elixir SDK's default entry channel — the
@@ -1680,7 +1613,7 @@ holds grants it. `flz role unbind <principal> <role>` removes one role, and
 every role an identity holds on one line, which for an identity holding one role
 is the line it printed before.
 
-The new `stopper` role grants `runner.connect` and `operative.stop` in its
+The new `stopper` role grants `runner.connect` and `relay.stop` in its
 namespace and nothing else, so an application bound to both `spawner` and
 `stopper` starts, sends and stops its own work and still enables no plugin:
 
@@ -1696,8 +1629,8 @@ Two behaviour changes come with it. A bind naming a namespace other than the one
 the principal already holds roles in is now REFUSED, naming that namespace;
 before, it moved the identity and silently dropped the role it held, which also
 let an admin of one namespace take a binding out of another. Moving an identity
-is now an unbind followed by a bind. And a runner principal bound only to an
-operator's role (`viewer`, `operator` or `admin`) now connects as `runner`;
+is now an unbind followed by a bind. And a runner principal bound only to a
+user's role (`viewer`, `ops` or `admin`) now connects as `runner`;
 before, its connect was refused while a live session kept that role's rights
 until it reconnected. A connection holds only bound roles that grant
 `runner.connect`, which is what keeps the administration surface's namespace and
@@ -1758,13 +1691,13 @@ teardown script read as a delete. It now prints
 `error: namespace delete: :not_found` on standard error and exits with status 1,
 the way `flz namespace create` already refuses a name that exists.
 
-### Fixed: a namespace that loses its runner no longer stops its hub starting operatives
+### Fixed: a namespace that loses its runner no longer stops its hub starting relays
 
-A durable operative whose namespace had no runner made the hub's periodic
-reconcile fail inside the worker that starts that namespace's operatives. The
+A durable relay whose namespace had no runner made the hub's periodic
+reconcile fail inside the worker that starts that namespace's relays. The
 worker died with it, every start queued behind it was stranded, and the same
 failure came back every 30 seconds without healing. The reconcile now starts
-such an operative without a runner, where it waits for one to connect, and the
+such a relay without a runner, where it waits for one to connect, and the
 namespace's other starts go through.
 
 ### Fixed: an in-node Elixir runner answers a refused data-stream bind instead of crashing
@@ -1803,7 +1736,7 @@ branch-protection rule that requires the check still finds it.
 
 `flz reset` left `app_data/dlq/`, `app_data/schedules/`, `app_data/auth/`,
 `app_data/audit/` and `app_data/plugins/` behind and did not mention them, so
-an operative re-created after a reset could meet its own old dead-letter
+a relay re-created after a reset could meet its own old dead-letter
 records, and old schedules fired against a fresh state tree. Five new flags
 clear them: `--include-dlq`, `--include-schedules`, `--include-auth`,
 `--include-audit` and `--include-plugins`. A plain reset still keeps all five.
@@ -1815,7 +1748,7 @@ and sockets it cleared before. That means it:
   every role binding and every namespace but `_system` is gone. With
   authorization enabled (the prod default), the next start writes a fresh
   bootstrap token to `<auth_dir>/bootstrap.token`. Until it is claimed with
-  `flz auth bootstrap <token>`, operator verbs are refused and every runner is
+  `flz auth bootstrap <token>`, administration verbs are refused and every runner is
   admitted with no credential into any namespace but `_system` it names, as on
   a fresh install, so claim it at once; then bind roles and issue runner
   credentials again.
@@ -1873,14 +1806,14 @@ The socket ladder's own candidates fit on an ordinary host, and so does the repo
 fallback `app_data/sockets` while the controller's working directory is at most 43
 bytes.
 
-### Added: a `spawner` role, so a namespace can spawn workflows without the rest of `app`
+### Added: a `spawner` role, so a namespace can spawn steps relays without the rest of `app`
 
-With authorization on, a tasklet's `ctx.spawn_workflow` needs the runner's
+With authorization on, a tasklet's `ctx.spawn_steps` needs the runner's
 `runner@<namespace>` principal to hold the start and the delivery a spawn performs.
 Until now the only role that held them was `app`, which also lets the namespace's
-application code stop operatives and enable or disable plugins. A `spawner` binding lets
-the runner's own connection start and send to operatives in its namespace, through a
-tasklet's spawn and through `Operative.start` and `Operative.send` on the SDK's
+application code stop relays and enable or disable plugins. A `spawner` binding lets
+the runner's own connection start and send to relays in its namespace, through a
+tasklet's spawn and through `Relay.start` and `Relay.send` on the SDK's
 administration surface, and nothing else: no stop, no plugins, no schedules, no other
 namespace and no token:
 
@@ -1913,7 +1846,7 @@ await`, never ran.
 
 ### Fixed: a topology refusal reaches a Node, Ruby or PHP author under its own name
 
-A Node operative builds its graph while its module loads, so a refusal its builder
+A Node relay builds its graph while its module loads, so a refusal its builder
 raised there reached the author as `could not import handler module ...`, with the
 refusal's name only on the chained cause. A declaration refusal thrown while the module
 loads now reaches the author as itself. Every other failure to load, a syntax error or
@@ -1973,16 +1906,16 @@ of the row it replaces. The fix is in process_hub 0.7.1, which this release need
 
 ### Changed: a spawn a tasklet requests is judged like any other start
 
-`ctx.spawn_workflow` started a workflow instance, or fed a running one, without asking
+`ctx.spawn_steps` started a steps instance, or fed a running one, without asking
 whether the runner's namespace was allowed to, and left no audit record of who asked.
 It is now judged as the identity the runner's connection proved. A start is judged the
-way `flz operative start` is and writes the same `start` record, naming
+way `flz relay start` is and writes the same `start` record, naming
 `runner@<namespace>`. A delivery to a running instance is judged the way
-`flz operative send` is but recorded only when refused, because it happens once per
+`flz relay send` is but recorded only when refused, because it happens once per
 event.
 
 With authorization on, the default in a release, a namespace whose tasklets spawn
-workflows now needs `flz role bind runner@<namespace> spawner <namespace>` (or `app`,
+steps relays now needs `flz role bind runner@<namespace> spawner <namespace>` (or `app`,
 which adds stop and plugin enable and disable). Until it has one, every start or delivery
 a tasklet asks for resolves `Refused`, with the refusal as its reason. With
 authorization disabled nothing is refused, and a start is still recorded, as every
@@ -1991,7 +1924,7 @@ other start is.
 ### Fixed: `flz role bind` binds the `app` role
 
 `flz role bind` refused `app` as an unknown role, so the binding an application needs
-to administer its own namespace, and now to spawn workflows, could not be made at all.
+to administer its own namespace, and now to spawn steps relays, could not be made at all.
 The documentation also wrote the command with the role and the namespace swapped. It
 is `flz role bind runner@<namespace> app <namespace>`, and it binds. `flz token issue`
 still refuses `app`: a runner proves its namespace with a `runner` credential, and no
@@ -2046,7 +1979,7 @@ seconds after start. The new `FLEZHA_PROCESS_HUB_CLUSTER_SETTLE_MS` (default
 `2000`) sets that window; `0` suits a deployment that forms its cluster before
 the controller starts. The grace keeps its `45000` default and now only caps the
 wait on a connected peer that never answers. Nothing in that window waits for a
-runner: an operative whose runner has not reconnected is started unbound and
+runner: a relay whose runner has not reconnected is started unbound and
 bound when the runner arrives.
 
 This needs process_hub 0.7.1. Against 0.7.0 the new setting is ignored and the
@@ -2055,19 +1988,19 @@ wait is unchanged.
 ### Fixed — an enabled plugin survives a controller restart
 
 A plugin enabled with `flz plugin enable` was silently lost when the controller
-restarted. The operative came back up, reported healthy, and carried no plugins;
+restarted. The relay came back up, reported healthy, and carried no plugins;
 the data path stopped with nothing logged anywhere.
 
 The enable recorded the plugin in the hub's process registry row and nowhere
 else. That row is on disk and is copied to every node, but a controller with
 auto-restore on never reads its registry back after a restart: it rebuilds each
-operative from the hub's declared list instead, and the declared list is written
-when an operative is created and when it is deleted, so it never learned about
+relay from the hub's declared list instead, and the declared list is written
+when a relay is created and when it is deleted, so it never learned about
 the plugin. The self-healing loop that should have noticed reads the same row the
 restart had just overwritten, so it saw nothing to fix.
 
 A plugin mutation now reaches the declared list as well, through the same
-authority that starts and stops operatives, and a restart rebuilds the operative
+authority that starts and stops relays, and a restart rebuilds the relay
 with the plugins it was last known to have. Disabling a plugin removes it from
 the same record, so a restart no longer switches one back on. An enable that
 fails part way now removes what it wrote instead of leaving a plugin that no
@@ -2101,7 +2034,7 @@ fixture row, so every SDK renders it the same way.
 
 ### Changed — the dead-data-flow watchdog is now an input-silence sweep, off by default
 
-The Watchdog reported an operative as a catastrophic data-flow stop when it had
+The Watchdog reported a relay as a catastrophic data-flow stop when it had
 produced output at some point and then received nothing for 60 seconds. That is
 idleness, not a fault: a stream fed hourly, nightly, or by user activity is
 silent for far longer in normal operation, and the detector cannot tell that
@@ -2109,8 +2042,8 @@ from a dead upstream. It logged at `critical`, the level that should mean the
 controller itself is in trouble.
 
 The sweep is renamed for what it measures, reports at `warning`, and its message
-now states the observation instead of a conclusion. It is off by default, and an
-operator who wants it back sets a positive window. **Breaking** for anyone
+now states the observation instead of a conclusion. It is off by default, and a
+user who wants it back sets a positive window. **Breaking** for anyone
 reading the knob, the event or the metric derived from it:
 
 | Was | Is |
@@ -2120,10 +2053,10 @@ reading the knob, the event or the metric derived from it:
 
 The old names are not accepted.
 
-### Fixed — a `flz` failure reaches the operator instead of the Controller's log
+### Fixed — a `flz` failure reaches the user instead of the Controller's log
 
 Every refusal and every error a `flz` verb rendered was written to the
-Controller's log. The operator saw an exit trace and an exit code, and nothing
+Controller's log. The user saw an exit trace and an exit code, and nothing
 that said what was wrong or what to do about it.
 
 A verb runs on the Controller, over rpc. Its standard output already travelled
@@ -2140,7 +2073,7 @@ Three surfaces were losing text this way: every refusal and rendered error,
 
 A gated verb refused while the bootstrap is unclaimed said the token path was
 logged at Controller boot. It is logged only on the boot that writes the file,
-so an operator on any later boot was sent to a line that was not there. The
+so a user on any later boot was sent to a line that was not there. The
 refusal now carries the path.
 
 ### Added — a publication-readiness record and its gate
@@ -2160,8 +2093,8 @@ release while a blocking entry is open. An owed entry never stops a release.
 
 ### Added — local mode in the Node, Python, Ruby and PHP SDKs
 
-Every SDK can now run a declared operative graph in its own process with no
-controller. `LocalOperative` takes the operative class you deploy, runs the graph
+Every SDK can now run a declared relay graph in its own process with no
+controller. `LocalRelay` takes the relay class you deploy, runs the graph
 it already declares, hands sink output to a callback and blocks until the graph
 is idle. State is held in memory and nothing is durable; every run says so.
 
@@ -2181,9 +2114,9 @@ A test declares the fixtures it needs (`use FlezhaTest.Case, fixtures: [...]`)
 rather than building a temporary directory, an environment key or an auth store in
 its own `setup`, and a module that builds one anyway fails a gate. CI installs
 every toolchain through the composite actions under `.github/actions/`, which read
-one version set in `.github/toolchains.json`; a workflow that sets a toolchain up
+one version set in `.github/toolchains.json`; a steps relay that sets a toolchain up
 itself or writes a version literal fails a gate. Node and Python each had two live
-values across the workflows and now have one.
+values across the steps relays and now have one.
 
 Every repository gate is a row in `scripts/naming_gate.py`, which owns running it
 and one exit contract: `0` clean, `1` a finding, `2` a tool the gate needs is
@@ -2194,7 +2127,7 @@ and `scripts/format-check.sh` are removed; the local gate is now
 
 Every test tier is one row in `FlezhaTest.Tiers` saying where it runs, what it
 needs, which transports it covers and where it is documented, and
-`docs/sdk/conformance.md` publishes the table. A tier that no workflow runs and
+`docs/sdk/conformance.md` publishes the table. A tier that no steps runs and
 gives no reason is a failure, as is a tag spelled like a tier selector that
 nothing selects. Ten such tag names were removed: each of their modules already
 declares the same axis as a `capability:`.
@@ -2257,7 +2190,7 @@ of all of that — joins them. Each store's recovery instructions are unchanged.
 Identifiers are one table too, a row per kind with its length limits and its
 pattern. That closes a real defect: the controller could mint a runner id longer
 than a socket name can hold, and the transport would quietly rename it, so the
-socket on disk carried an id no operator surface ever reported. A minted id now
+socket on disk carried an id no operations surface ever reported. A minted id now
 fits, and the control socket's filename is composed by the same code every SDK
 already reaches for the data sockets.
 
@@ -2279,7 +2212,7 @@ not edited.
 
 An Elixir-hosted runner now reports how much queued input a restore threw away,
 under the same heartbeat key every other runtime uses. It was the only runtime
-that reported neither the count nor the key, which left that operator surface
+that reported neither the count nor the key, which left that operations surface
 correct for six SDKs and blank for the seventh.
 
 ### Fixed — a QUIC peer ending a stream is now reported, and reported the same way
@@ -2294,7 +2227,7 @@ on which transport it was configured with, and one of the two said nothing.
 
 The two drivers are now one loop with one implementation per transport, so a
 close reason is one word for both and a capability added for one reaches the
-other by construction. Nothing an operator configures changes.
+other by construction. Nothing a user configures changes.
 
 The Java SDK's native surface is also declared and asserted now, the last of
 the five language bindings to have that: an entry point added on one side and
@@ -2311,10 +2244,10 @@ the next bound stream, and the data heartbeat is held by nothing at all because
 it reports a moment that has passed. A payload id no class table names is
 refused rather than given a default.
 
-What changes for an operator:
+What changes for a user:
 
 - **A shutdown notification the wire refuses is held and counted, not printed
-  and lost.** The operative's final state is what makes reconnect-resume
+  and lost.** The relay's final state is what makes reconnect-resume
   loss-free, so it is now treated as the durable frame it is.
 - **A runner ends when its wire goes, whatever its host language.** Standard
   input closing and SIGINT or SIGTERM are detected once, in the shared core, on
@@ -2332,27 +2265,27 @@ leaving the process alive instead of ending it.
 ### Changed — one bounded call, one lookup, one timer, one child spec
 
 Five jobs every process in the controller does — call another process, find the
-one that serves an operative, learn that one died, arm a timer, declare a
+one that serves a relay, learn that one died, arm a timer, declare a
 supervised child — were done at four hundred-odd sites in as many spellings as
 there were authors. Each is now a seam a site declares into.
 
-What changes for an operator:
+What changes for a user:
 
 - **A wedged process no longer stalls the caller for five seconds.** Every call
   into a process reached by pid carries an explicit bound and answers a value
   its caller declared, rather than waiting out a default and taking the caller
   down with it. A call into a registered node-wide service is deliberately left
   as it was: a store that is gone is a fault worth crashing on.
-- **Tearing down many operatives at once costs one timeout, not one each.**
+- **Tearing down many relays at once costs one timeout, not one each.**
   Where the wait happens inside a single manager, that manager now takes the
   whole list in one request and overlaps its own calls. Six unreachable
-  operatives took twelve seconds and now take two, and every one that could not
+  relays took twelve seconds and now take two, and every one that could not
   be reached is still named in the result.
-- **One vocabulary for "that operative is not there".** The three different
+- **One vocabulary for "that relay is not there".** The three different
   error strings for the same fact are down to two, written at one place, and
   the internal answer distinguishes not-found, dead and hub-unavailable.
 
-Nothing an operator configures changes, and no SDK is affected.
+Nothing a user configures changes, and no SDK is affected.
 
 ### Changed — a `flz` verb declares what it takes, and one reader reads it
 
@@ -2364,13 +2297,13 @@ the arity check and the usage line are all derived from that row, so adding a
 verb no longer means editing an argument walk, a switch scan, an arity refusal
 and a usage string in four places.
 
-Three things change for an operator:
+Three things change for a user:
 
-- **An option is read wherever it is written.** `flz operative stop --token t
+- **An option is read wherever it is written.** `flz relay stop --token t
   op1` now stops `op1` and carries the credential. It used to send `--token` as
-  the operative id and drop the token entirely, because eight verbs decided
+  the relay id and drop the token entirely, because eight verbs decided
   which words were options by their position.
-- **Every failure is written to stderr.** The `operative` and `plugin` families
+- **Every failure is written to stderr.** The `relay` and `plugin` families
   printed theirs to stdout, so a run piped into a file or `jq` collected the
   error as if it were the answer. Exit codes are unchanged. Every failure now
   also carries one prefix (`error: `) instead of the three the surface had, and
@@ -2391,7 +2324,7 @@ Three things change for an operator:
 Every environment variable and application-env key the controller, its SDKs, its
 crates and its shell wrappers read is now declared once in
 `Flezha.Config.Keys` — its name, key, variable, type, default, the runtimes that
-read it and the operator surface that shows it — and read through
+read it and the operations surface that shows it — and read through
 `Flezha.Config.get/1`. `config/runtime.exs` derives the whole `:flezha`
 configuration from that table in one call instead of translating each variable by
 hand, and a per-environment default is a field on the row rather than a line in a
@@ -2419,8 +2352,8 @@ a type, a default and its documentation, and the worker it runs. The extension
 table drives every phase from that declaration rather than probing which
 callbacks a provider exports, starts the declared worker when the plugin is
 activated rather than when it is prepared, and stops it the same way on disable
-and on teardown. A prepared plugin now holds no process at all, so a plugin on an
-operative whose SDK side never binds costs nothing.
+and on teardown. A prepared plugin now holds no process at all, so a plugin on a
+relay whose SDK side never binds costs nothing.
 
 Adding a provider is one module and one row of `Flezha.Plugin.Providers`; adding
 an option is one row of the provider. The `enabled_plugins` map in
@@ -2468,9 +2401,9 @@ Each is a shape the reference SDK has always refused.
   jittered wait no longer exceeds its 30 s cap). `FLEZHA_HEALTHZ_BIND` has one
   default again, the documented `0.0.0.0`.
 
-### Added — run a declared operative graph in your own process, with no controller
+### Added — run a declared relay graph in your own process, with no controller
 
-`LocalOperative` (Rust, Java) and `Flezha.SDK.Local` (Elixir) take the operative
+`LocalRelay` (Rust, Java) and `Flezha.SDK.Local` (Elixir) take the relay
 class you would deploy, run the `channels()` graph it already declares in the
 host process, and hand each value released on a sink to a callback. There is no
 local-mode member on the class and no second declaration: the same type
@@ -2506,17 +2439,17 @@ Python, Ruby and PHP do not carry local mode yet.
 ### Changed — one health verdict per subject, read by every surface
 
 The controller now judges "is this healthy" once per tick and publishes one
-record per subject — a runner, an operative, a plugin, a channel or a driver —
+record per subject — a runner, a relay, a plugin, a channel or a driver —
 in one closed vocabulary (`healthy`, `degraded`, `failed`, `unbound`, `parked`,
-`suspended`, `unknown`). `/healthz`, `flz operative info`, `flz operative list`,
-`flz cluster status` and the published `Flezha.Service.Operative.operative_rows/2`
-all read that record, so they can no longer describe one operative in
-contradictory words. An operative that is parked, bound to a runner the roster no
+`suspended`, `unknown`). `/healthz`, `flz relay info`, `flz relay list`,
+`flz cluster status` and the published `Flezha.Service.Relay.relay_rows/2`
+all read that record, so they can no longer describe one relay in
+contradictory words. A relay that is parked, bound to a runner the roster no
 longer holds, or missing a declared plugin reads `degraded` on `/healthz` — with
 `parked`, `dead_runner` or `plugin_unhealthy` among the joined reasons — where it
 could previously read `healthy`; a dead binding is no longer counted in
-`bound_operatives`, and the body gains `unknown_operatives`. `flz operative info`
-reports `parked` as an operative's health where it reported `degraded`.
+`bound_relays`, and the body gains `unknown_relays`. `flz relay info`
+reports `parked` as a relay's health where it reported `degraded`.
 
 Every detector's `[:flezha, …]` event now reaches the observability bus by the
 detector table's own declaration of it, including the control-plane watchdog's
@@ -2530,8 +2463,8 @@ A Cell evicted while no secondary stream was bound lost its
 `delete_cell_state`, so the controller kept state for a Cell the runner had
 already destroyed. The same eviction lost every change record that Cell was
 still holding, while the output of the very dispatch that produced them was
-replayed by the Operative — the controller saw a result whose cause it never
-heard about. And the workflow driver's two writes relayed through the runner, a
+replayed by the Relay — the controller saw a result whose cause it never
+heard about. And the steps driver's two writes forwarded through the runner, a
 staged output and a saga marker, were dropped whenever no stream was bound or
 the write was refused: one behind a log line, one behind a discarded verdict.
 
@@ -2539,12 +2472,12 @@ All three are now held and replayed on the next bound stream, on the terms every
 hold on this wire already used — bounded by `FLEZHA_RECONNECT_RING_CAPACITY`,
 oldest dropped past that and counted as a drop-oldest shed. Because a hold that
 dies with the process that owned it is not a hold, a Cell that stops in an
-orderly way hands what it could not ship to its Operative, which outlives it and
+orderly way hands what it could not ship to its Relay, which outlives it and
 replays those frames first: ahead of the outputs of the same dispatch, and ahead
 of anything a replacement Cell for the same key writes.
 
 This is the Elixir SDK only. It is its own core and inherits nothing from the
-shared `flz_core`, where the workflow writes were already held; the one matching
+shared `flz_core`, where the steps relay writes were already held; the one matching
 hole there, an evicted Cell's delete, is recorded for a follow-up.
 
 ### Fixed — the Kubernetes readiness probe stops reporting a booting controller ready
@@ -2591,11 +2524,11 @@ behind it: the bytes are left untouched, the process that owns the file stays
 alive and refuses to serve rather than being restarted into the same file, and
 one error line plus one `[:flezha, :state, :record_frame, :refused]` telemetry
 event name the file, the last seq that verified and the byte offset. The
-Cell's restore is refused the same way, so the operative is left unbound
+Cell's restore is refused the same way, so the relay is left unbound
 rather than binding on a partial history — the behaviour a refused restore
-already had. Recovery stays an operator decision with the bytes still in hand.
+already had. Recovery stays a user decision with the bytes still in hand.
 
-### Fixed — `flz operative rescale` prints its summary again
+### Fixed — `flz relay rescale` prints its summary again
 
 The rescale summary line still asked the result for the count of forwarding
 plugins it had re-pointed, a field the command stopped returning when forwards
@@ -2607,7 +2540,7 @@ runs only in the nightly tier.
 
 ### Changed — every module lives in the directory that owns its feature (`one-directory-per-feature`)
 
-`lib/flezha/` now says what the system is made of. The operator CLI — sixteen
+`lib/flezha/` now says what the system is made of. The CLI — sixteen
 modules, the whole `flz` surface — has left `service/`, which was both the
 control-plane RPC layer and the entire command surface, and become `cli/`. Three
 shared process primitives that sat loose at the top level became `process/`, the
@@ -2653,7 +2586,7 @@ The full test suite was red in roughly one run in three, always somewhere in
 alone at every seed. The reset every one of its tests starts from resolved the
 state root a second time, on its own, instead of asking
 `Flezha.State.Paths.state_root/0` like the writers, the bind-time restore and
-the operative teardown do. Once any teardown had deleted the `:state_root`
+the relay teardown do. Once any teardown had deleted the `:state_root`
 application key — the run configures it and twenty-six teardowns delete rather
 than restore it — the reset emptied a directory in the checkout while the live
 state tree sat elsewhere, so it did nothing and the module ran with no isolation
@@ -2674,11 +2607,11 @@ cooldown table. Two primitives are new: clearing a runner's stale control
 channel so its next data stream can claim it, and re-writing a durable row that
 a late registry write left naming the wrong runner.
 
-Operators see a few differences. A failed bind is now one attempt: the operative
+Users see a few differences. A failed bind is now one attempt: the relay
 parks with its reason and the loop retries it on the standard 5 s → 30 s → 60 s
-→ 300 s schedule instead of six jittered attempts inside the operative, and a
-runner arriving in the namespace releases every parked operative at once. A
-controller losing its last runner for a namespace moves its operatives one by
+→ 300 s schedule instead of six jittered attempts inside the relay, and a
+runner arriving in the namespace releases every parked relay at once. A
+controller losing its last runner for a namespace moves its relays one by
 one through the consent gate instead of draining the hub under a five-second
 budget, and once it holds none of them it leaves that namespace's cluster, so a
 node with no fleet is not handed work it cannot run.
@@ -2687,31 +2620,31 @@ crashing plugin no longer delays its siblings. Two knobs are gone,
 `:overwatch_retry_backoff_ms` and `:wal_resync_retry_interval_ms`, because
 nothing has a second schedule to configure any more.
 
-Stopping things is one mechanism too. An operator stopping an operative, an
+Stopping things is one mechanism too. A user stopping a relay, an
 Overwatch terminating, a namespace being stopped and a node draining all fold
 over the same declared, ordered list of teardown steps under one budget, so a
 plugin table is torn down once instead of twice, on-disk state is deleted
 through one guard instead of four places with three different ones, and adding a
 resource with a teardown means adding one step rather than editing four paths.
 
-### Changed — every operator verb is declared once, and one seam applies it (`declare-every-operator-verb`)
+### Changed — every administration verb is declared once, and one seam applies it
 
-Authorizing an operator verb used to be decided at every site, in six
+Authorizing an administration verb used to be decided at every site, in six
 spellings, and thirty-two verbs never got a decision — five of them mutations,
-`flz operative start` among them. Every verb is now one row of a declaration
+`flz relay start` among them. Every verb is now one row of a declaration
 table beside the policy (its action, where it is judged, how it is audited),
 and one function applies the row on the `flz` wire, the published service API
 and the runner session alike. A wire name without a row does not compile, a
 published function without one fails the suite, and an action no row names
 fails it too. Every `flz` request ends with one options list that carries the
 credential, so the thirteen verbs that could not receive a token now can, and
-`operative start` takes `--plugins` and `--kind` in that list. A verb scoped to
+`relay start` takes `--plugins` and `--kind` in that list. A verb scoped to
 a stored row refuses an unbound caller before reading it, so `schedule run` no
 longer says whether a name exists. Every declared audit source is durable by
 construction, and one record shape names the actor, the action and the
-outcome from either surface. Three actions were added (`operative.send`,
-`operative.replay`, `state.records`) and six dead ones deleted; the runner role
-holds `runner.connect` alone. Operators of the console: four controller-wide
+outcome from either surface. Three actions were added (`relay.send`,
+`relay.replay`, `state.records`) and six dead ones deleted; the runner role
+holds `runner.connect` alone. Users of the console: four controller-wide
 reads are now judged in the caller's own namespace, and the journal, inbox,
 completion and time-travel reads carry actions.
 
@@ -2730,21 +2663,21 @@ the way the release names its node — `FLEZHA_NODE_NAME@FLEZHA_NODE_HOST` —
 with a base derived per run, so two suites on one box are both distributed.
 The Python state guard's delegation inside the runtime window has a test.
 
-### Fixed — `flz schedule run` is an authorized operative start, and the schedule flags travel as one options document (`gate-schedule-run-and-fold-its-flags`)
+### Fixed — `flz schedule run` is an authorized relay start, and the schedule flags travel as one options document (`gate-schedule-run-and-fold-its-flags`)
 
 `flz schedule run <name>` fired an instance with no authorization under any
 posture, and its request had nowhere to carry a token. It now takes `--token`
-(or `FLEZHA_TOKEN`) and is judged as `operative.start` in the schedule's own
+(or `FLEZHA_TOKEN`) and is judged as `relay.start` in the schedule's own
 namespace before anything spawns. That makes it the one schedule verb not
-judged in `_system`: an `operator@_system` token can add, list and remove a
+judged in `_system`: an `ops@_system` token can add, list and remove a
 schedule but cannot run one; a token bound to the schedule's namespace with
-`operative.start`, or `admin@_system`, can.
+`relay.start`, or `admin@_system`, can.
 
 - **One options document.** `flz schedule add`'s optional flags — `--namespace`,
   `--init_values`, `--kind`, `--plugins` — and the credential reach the
   controller as one keyword list instead of positional arguments with defaults,
-  and an absent flag is absent from the request. The operator-facing flags do
-  not change; `--plugins` arrives as the text the operator wrote and is stored
+  and an absent flag is absent from the request. The user-facing flags do
+  not change; `--plugins` arrives as the text the user wrote and is stored
   verbatim.
 
 ### Fixed — a runner's self-report is counted once per runner (`count-a-runner-self-report-once`)
@@ -2779,7 +2712,7 @@ change that produced it, and nothing counted the loss.
   oldest past it, and counts the shed as `drops_oldest` — the same terms and the
   same knob the output hold uses. That counter now moves for records too.
 - **A dispatch's records still reach the wire before its output frame**, on a
-  replay as on a live stream: the Operative rebinds every Cell and waits before
+  replay as on a live stream: the Relay rebinds every Cell and waits before
   replaying its own outputs.
 - **The credit window is unchanged**: a frame is debited when it is written, not
   when it is held, so a held record does not consume the window and a replay
@@ -2797,7 +2730,7 @@ change that produced it, and nothing counted the loss.
 - **No compatibility alias.** `--Xqueue_overflow=block` is refused with
   `Invalid value for queue_overflow: block`. A stored plugin row carrying the
   retired atom must be re-enabled with the new spelling; because `:block` was
-  the default, a row carries it only if an operator set the value already in
+  the default, a row carries it only if a user set the value already in
   force.
 - **The parking mechanism keeps its own names.** `:queue_block_timeout_ms`
   still bounds a synchronous `enqueue/4` caller's wait, and the worker's
@@ -2819,7 +2752,7 @@ free-threaded build below 3.14). Both tiers build from one source with one API,
 and the runner names the tier it is running in its startup line.
 
 The authoring surface is decorators — `@flezha.tasklet`, `@flezha.state`,
-`@flezha.stream_operative`, `@flezha.workflow_operative` — over a handler that
+`@flezha.relay`, `@flezha.relay` — over a handler that
 is a plain function when it is a transform and a class when it has hooks. **Type
 hints are the declaration**: the input, output, state and change types all come
 from the annotations, and the package ships `py.typed` with generic `Edge[T]` /
@@ -2858,7 +2791,7 @@ not.
 `mix bench.roundtrip --runtime python` lands with the change.
 
 `examples/python/durable_agent/` is the worked example: a durable agent loop
-with a model call, a retry ladder, a compensation and a suspending workflow
+with a model call, a retry ladder, a compensation and a suspending steps relay
 session.
 
 ### Added — PHP SDK (`add-php-sdk`)
@@ -2884,7 +2817,7 @@ has exactly one possible implementation). `SyncExecutor` is the default: one
 loop on the calling thread, on the non-thread-safe build every distribution
 ships. `SwooleExecutor` runs the same loop on a pool of threads over one shared
 context, growing on the core's own `flz_core_wait_starvation` signal, so a
-single operative can exceed one core. Which one is an axis of the *run*
+single relay can exceed one core. Which one is an axis of the *run*
 (`FLEZHA_PHP_EXECUTOR`), never a property of a file: no test, fixture or
 manifest entry exists in a per-executor variant.
 
@@ -3055,7 +2988,7 @@ arrived — a wrong answer with nothing reported.
 
 ### Changed — the overflow policy names its guarantee (`rename-block-to-drop-nothing`)
 
-**BREAKING for every operative that declares an overflow policy.** The policy
+**BREAKING for every relay that declares an overflow policy.** The policy
 formerly spelled `Block` is now `DropNothing` — searching for `Block`,
 `BLOCK`, `"block"` or `:block` on the overflow surface lands here.
 
@@ -3079,13 +3012,13 @@ formerly spelled `Block` is now `DropNothing` — searching for `Block`,
 
 ### Changed — nothing drops by default (`close-silent-data-loss-defaults`)
 
-**BREAKING for operatives and producer chains that ran above capacity.** Two
+**BREAKING for relays and producer chains that ran above capacity.** Two
 defaults invert from drop to block, so a saturated pipeline now back-pressures
 its source (visibly slower ingest) instead of silently discarding records with
 every health surface green.
 
-- **Entry channels default to `DropNothing`** in both SDKs (`OverflowPolicy`). An
-  operative that wants to shed under saturation declares it —
+- **Entry channels default to `DropNothing`** in both SDKs (`OverflowPolicy`). A
+  relay that wants to shed under saturation declares it —
   `.on_full(OverflowPolicy::DropNewest)` / `.onFull(OverflowPolicy.DROP_NEWEST)`
   — and the loss is a stated intent at the declaration site. The cost: a
   blocked entry parks the shared wire reader, so siblings on the same
@@ -3104,7 +3037,7 @@ every health surface green.
 
 ### Changed — a production controller must choose a durability posture (`durability-tier-default-on`)
 
-**BREAKING for operators.** `FLEZHA_DURABILITY_BACKEND` no longer defaults to
+**BREAKING for users.** `FLEZHA_DURABILITY_BACKEND` no longer defaults to
 `none` in production. A prod release booting with it unset refuses to start and
 prints the two valid moves; dev and test are unchanged.
 
@@ -3123,7 +3056,7 @@ prints the two valid moves; dev and test are unchanged.
   tier on. Dead-letter parked records ship as one claim-fenced artifact per
   tasklet — on every park, drop, replay-mark and retention drop, so a resolved
   entry disappears from the backend rather than being resurrected — and hydrate
-  with the operative that owns them. The control-plane stores (authz roles,
+  with the relay that owns them. The control-plane stores (authz roles,
   tokens, namespaces, quota counters and the durable enabled flag; the schedule
   definitions) ship on the backstop sweep as per-writer replicas and hydrate
   **before** any hub starts or any connection is accepted, so a resurrected
@@ -3138,16 +3071,16 @@ prints the two valid moves; dev and test are unchanged.
   delegated to external log shipping, plus the four non-stores above). A store
   on neither list is a defect.
 
-### Changed — declared intent lives in the hub's declared set (`durable-operator-intent`)
+### Changed — declared intent lives in the hub's declared set (`durable-relay-intent`)
 
-- **Every operative start is declared, every stop is remembered for good.**
+- **Every relay start is declared, every stop is remembered for good.**
   Starts pass `durable: true` into ProcessHub's declared-children set; stops
-  and workflow completions ride the hub stop path, which removes the entry
+  and steps completions ride the hub stop path, which removes the entry
   before the process terminates. A whole-cluster cold start restores the
-  declared set (spawned workflow instances included), and a deliberately
-  stopped operative can no longer be resurrected by a node returning after an
+  declared set (spawned steps instances included), and a deliberately
+  stopped relay can no longer be resurrected by a node returning after an
   arbitrary absence.
-- **Removed operator knob:** `FLEZHA_PROCESS_HUB_STOPPED_ROW_TTL_MS` (and
+- **Removed knob:** `FLEZHA_PROCESS_HUB_STOPPED_ROW_TTL_MS` (and
   `:process_hub_stopped_row_ttl_ms`). Stop knowledge is declared-set absence
   and never expires, so there is no 30-day tombstone window left to outwait.
   A deployment still setting the variable keeps booting; the value is
@@ -3159,16 +3092,16 @@ prints the two valid moves; dev and test are unchanged.
   `:s3`; any `{module, opts}` implementing the backend behaviour remains the
   extension point.
 - **Reroute is placement-consistent and atomic.** A disconnected runner's
-  operatives are rerouted per-operative through the factory-filtered HRW
+  relays are rerouted per-relay through the factory-filtered HRW
   placement, and the registry binding switches only on a confirmed migrate —
   never to a random runner, never on a discarded result.
-- **Cross-node re-placement.** An operative on a node with no runner
+- **Cross-node re-placement.** A relay on a node with no runner
   advertising its factory is moved — state intact, consent-gated — onto a
   node whose fleet has one, instead of retrying a doomed local rebind forever.
 
 ### Changed — authentication and authorization finished end to end, enforced by default (`finish-platform-authn-authz`)
 
-**BREAKING for operators.** The trusting-LAN default is gone; every transport
+**BREAKING for users.** The trusting-LAN default is gone; every transport
 surface authenticates its peer and the policy point enforces by default.
 
 - **Transport authentication.** The QUIC server verifies a client certificate
@@ -3182,10 +3115,10 @@ surface authenticates its peer and the policy point enforces by default.
   explicit wide-open opt-out, warned on every boot.
 - **Enforcement by default.** `authorize/3` has three postures: `:open` (the
   explicit `FLEZHA_AUTHZ_ENABLED=false` opt-out, warned every boot),
-  `:bootstrap_pending` (configured on, unclaimed — operator verbs refuse
+  `:bootstrap_pending` (configured on, unclaimed — administration verbs refuse
   naming `flz auth bootstrap` while dataflow and runner reconnects continue),
   and `:enforced`. Destructive verbs (`state delete/rotate`, `dlq
-  replay/drop`, `operative stop`, `controller stop`) and every plugin
+  replay/drop`, `relay stop`, `controller stop`) and every plugin
   mutation are gated and audited.
 - **Principals from the transport only.** CLI identity is a verified token
   (`flz --token` / `FLEZHA_TOKEN` → `caller_context.principal`); runner
@@ -3200,7 +3133,7 @@ surface authenticates its peer and the policy point enforces by default.
 - **Remaining quota points.** `max_runners` enforced at runner connect
   (refusal observable), `max_state_bytes` (renamed from
   `max_disk_bytes_total`) accounted from the state tree, rebuilt on boot,
-  enforced at operative allocation, with a latched Watchdog alarm — never a
+  enforced at relay allocation, with a latched Watchdog alarm — never a
   write-path kill — on breach of a running namespace; per-namespace
   `max_mailbox_bytes_total` caps the credit window.
 - **CLI.** New `flz auth` (`bootstrap`, `whoami`, `rebootstrap`), `flz token`
@@ -3213,7 +3146,7 @@ surface authenticates its peer and the policy point enforces by default.
   `sasl_password_env` resolves the secret from the environment at client
   start.
 
-Operator runbook (cookie, certs, k8s manifests, break-glass):
+Runbook (cookie, certs, k8s manifests, break-glass):
 `docs/operations/authn_authz.md`. Migration: provision the cookie + certs,
 boot, claim the bootstrap, issue tokens; rollback is
 `FLEZHA_AUTHZ_ENABLED=false` + the previous release.
@@ -3243,7 +3176,7 @@ arguments read off the implementing class's generic supertype chain — a direct
 class. `kryoTypes()` defaults to the resolved Change and State. That is ~24
 lines of pure type-erasure tax removed from every hand-written Java tasklet.
 An argument still generic at the concrete class is **never guessed**:
-`defineStream` / `defineWorkflow` fails naming the class and the parameter, and
+`defineRelay` fails naming the class and the parameter, and
 nothing is registered — a startup error, not a dispatch error far from its cause.
 
 **Rust gets a simplified tier.** `SimpleTasklet` declares only `Input`,
@@ -3259,8 +3192,8 @@ and every existing declaration keeps its exact meaning.
 ### Added — `route_latest`, the latest-document router building block (`add-route-latest-building-block`)
 
 `c.route_latest(documents, traffic, key_fn)` (Rust) /
-`c.routeLatest(Doc.class, documents, traffic, keyFn)` (Java) turns an
-operative-wide document stream into per-key deliveries: every key seen on the
+`c.routeLatest(Doc.class, documents, traffic, keyFn)` (Java) turns a
+relay-wide document stream into per-key deliveries: every key seen on the
 traffic stream receives each distinct document exactly once, on that key's own
 next traffic item. Rust returns a stream of `(key, document)` pairs, Java a
 stream of `RoutedDocument<D>`; the consumer keys by that key.
@@ -3346,7 +3279,7 @@ as before.
     leak. Neither property alone is the safety argument.
   - **Blob names were position-addressed, so two writers overwrote each other's
     bytes.** An ordinary migration leaves the source node holding a full copy
-    (`pull_operative/3` copies; only `move_cell/3` deletes), so two nodes
+    (`pull_relay/3` copies; only `move_cell/3` deletes), so two nodes
     legitimately held one reference at the same WAL epoch and wrote
     `r-<epoch>-<from>-<to>` with different records. Names now carry the content
     hash, as the registry cspec already did.
@@ -3355,15 +3288,15 @@ as before.
     restores verbatim, so both nodes held the same value and equal epochs
     overwrite. Manifest writes are now conditional on a **claim counter** that
     exists only in the remote store; bidding for a lineage requires the node to
-    have actually adopted the operative, and losing one is reported as a routine
+    have actually adopted the relay, and losing one is reported as a routine
     handover rather than a permanent fence — the old latch would have left an
     RPO breach and a `degraded` `/healthz` after every migration.
   - **The registry cspec was a cluster-shared key at epoch 0.** `hub_id` is
     namespace-derived, so every controller shipped its own replica to one key
     with no fencing and last writer won — a node with a stale registry could
-    erase the record of which operatives exist. The key now carries the writer;
+    erase the record of which relays exist. The key now carries the writer;
     hydration picks the newest replica.
-  - **`commit_sync/1` conflated operative id and class**, so a class declaring
+  - **`commit_sync/1` conflated relay id and class**, so a class declaring
     RPO 0 could have its barrier answer `:ok` having shipped neither the Cell
     WAL nor the input log, and `sync_class?/1` never armed the gate at all.
 
@@ -3380,70 +3313,28 @@ as before.
   `FLEZHA_DURABILITY_GC_ABANDONED_AFTER_MS`, `FLEZHA_DURABILITY_WRITER_ID` (set
   this under a Deployment, where the pod name changes on every reschedule).
 
-### Breaking
-
-<!-- kind-naming-record:begin -->
-- **The two operative kinds are now `stream` and `workflow`**
-  (`rename-operative-kinds-to-stream-and-workflow`). They were `unbounded` and
-  `bounded` — borrowed from stream-processing vocabulary for a property of the *data*, applied to what is
-  actually an *execution model* distinction, and outright false for a durable
-  `PerInput` operative, which consumes an unbounded input stream forever and
-  bounds only its iteration. Nothing about execution, durability or the wire
-  tag numbers moves; only names.
-
-  What changes for a caller: the kind atoms (`:unbounded`/`:bounded` →
-  `:stream`/`:workflow`) and their wire literals — `""` still means the
-  `stream` default, and `"unbounded"`/`"bounded"` are now rejected as unknown
-  with **no compatibility mapping**; the SDK author surfaces
-  (`UnboundedOperative`/`BoundedOperative` → `StreamOperative`/
-  `WorkflowOperative` in both SDKs, with the whole surrounding family, and
-  `define_unbounded`/`define_bounded` → `define_stream`/`define_workflow`,
-  `spawn_bounded` → `spawn_workflow`); the protobuf messages `BoundedCompleted`,
-  `BoundedStop`, `SpawnBoundedRequest`, `SpawnBoundedResponse` and their oneof
-  fields; `flz operative start --kind <stream|workflow>` (`--kind bounded` is
-  refused); and the env vars `FLEZHA_BOUNDED_{DRIVER_STACK_KIB,PARK_IDLE_MS,
-  RETENTION_HOURS,RETRY_FAILS}` → `FLEZHA_WORKFLOW_*`.
-
-  **Upgrading requires `flz controller stop && flz reset --yes`** — the kind
-  atom is persisted in the ProcessHub DETS cspec registry and in the class
-  registry's on-disk sidecar, and no code reads the retired atoms. Controller
-  and every runner redeploy together; there is no forward-compatible
-  intermediate state, so rollback is symmetric and equally requires a reset.
-  Deployment config referencing `FLEZHA_BOUNDED_*` — including the
-  `flezha_market` ConfigMaps, which live in a separate repo — must be renamed
-  before its next deploy.
-
-  The words survive where they are true. `bounded` and `unbounded` remain
-  correct English for describing a *run* (a workflow operative runs a bounded
-  iteration; a stream operative folds an unbounded input) and for unrelated
-  capacity concepts such as the bounded mailbox subsystem, which is untouched.
-  `scripts/kind-naming-allowlist.txt` enumerates every preserved occurrence and
-  `scripts/check-kind-naming.sh` — wired into CI as the Naming gate — fails a
-  kind-sense reintroduction.
-<!-- kind-naming-record:end -->
-
 ### Measured
 
-- **How many workflow instances a runner holds, answered with a number**
-  (`workflow-driver-as-state`). One OS driver thread per actively-running
-  workflow instance was the last thread-per-instance cost in the SDKs, and the
+- **How many steps instances a runner holds, answered with a number**
+  (`steps-driver-as-state`). One OS driver thread per actively-running
+  steps instance was the last thread-per-instance cost in the SDKs, and the
   proposal to delete it — turning the chain's position from a call stack into
   stored state — was gated on measuring it first. It was measured, and the
-  verdict is **no-go**: the thread is ~1.4 KiB of a workflow instance's ~73 KiB
+  verdict is **no-go**: the thread is ~1.4 KiB of a steps instance's ~73 KiB
   resident cost (the rest is heap), 10 000 blocked instances cost ~734–884 MiB
   and start in 0.65 s, and a driver blocked at a stage barrier — the agent-turn
   shape the proposal was named for — costs 0.5 % of one core at that
   population. Cutting the driver stack from 2 MiB to 256 KiB moves no resident
   byte, because a blocked driver's stack was never resident, so that stopgap is
   not adopted either. What the measurement *did* find is now documented in
-  `docs/resilience/workflow_operative.md`: interference tracks total OS thread
+  `docs/resilience/relay.md`: interference tracks total OS thread
   count rather than instance count (an agent turn holds two threads in Rust,
   one in Java, three if the class declares `max_duration`), and the CPU a
   blocked population burns comes entirely from three waits that re-check every
   200 ms — the inbox wait, the commit-ack wait and the duration watcher — not
-  from the thread model. Kept: `sdk/rust/tests/workflow_scaling.rs`, an
+  from the thread model. Kept: `sdk/rust/tests/steps_scaling.rs`, an
   `#[ignore]`d instance-count scaling probe, and
-  `FLEZHA_WORKFLOW_DRIVER_STACK_KIB`, unset by default and an address-space
+  `FLEZHA_STEPS_DRIVER_STACK_KIB`, unset by default and an address-space
   lever only. No behaviour change.
 
 ### Changed
@@ -3467,23 +3358,23 @@ as before.
   `.keyed()`. Backwards compatible — every currently-legal call keeps its
   behaviour; one error case became the safe default.
 
-- **Operator start and enable verbs are idempotent**
-  (`idempotent-start-and-enable`). `flz operative start` against a live
+- **Start and enable verbs are idempotent**
+  (`idempotent-start-and-enable`). `flz relay start` against a live
   instance now exits 0 as an explicit no-op (it previously exited non-zero
-  with "operative id already in use"); a claim refused with no live winner —
-  a stale registry row — still errors. `flz operative start --partitions N`
+  with "relay id already in use"); a claim refused with no live winner —
+  a stale registry row — still errors. `flz relay start --partitions N`
   over an existing group converges: only the missing members start, iff N
   matches the identity every survivor declares (else it refuses naming
-  `flz operative scale`); a fresh group start and its all-or-nothing rollback
+  `flz relay scale`); a fresh group start and its all-or-nothing rollback
   are unchanged. `flz plugin enable` on a plugin id already registered for the
-  same operative exits 0 untouched — no cspec write, no re-subscribe; the same
+  same relay exits 0 untouched — no cspec write, no re-subscribe; the same
   id held by a different target still errors, and a group enable counts
   already-enabled members as success. Two id collisions previously accepted
   are now refused: a plain start of a live group's base id (it minted a rogue
   singleton beside the group) and a partitioned start over a live
-  unpartitioned operative. Together these make re-running a cold-start script
+  unpartitioned relay. Together these make re-running a cold-start script
   the supported heal after a warm restart. Scripts keying on the old non-zero
-  "already exists" exit must use `flz operative info` instead.
+  "already exists" exit must use `flz relay info` instead.
 
 - **The control plane has one actor, and every failure signal has one consumer**
   (`close-control-plane-silent-wedges`). Three silent-wedge classes closed
@@ -3497,8 +3388,8 @@ as before.
   remediation path racing the convergence Loop's own rebind with no shared
   backoff. The remedy is not lost: the Loop's output-stall response is now a
   ladder, `resync_runner` (a new `Heal` primitive re-running the
-  `RestoreInitState` handshake against the runner the operative is already
-  bound to — no migration) escalating to `rebind_operative` when the stall
+  `RestoreInitState` handshake against the runner the relay is already
+  bound to — no migration) escalating to `rebind_relay` when the stall
   survives it. Both rungs share ONE cooldown key so escalating walks a single
   5 s → 30 s → 60 s → 300 s ladder, and the rung is read off that entry's
   attempt count rather than a second counter. Measured end to end: 0.84 ms from
@@ -3509,7 +3400,7 @@ as before.
   now, read by nothing — is passed into `Diff.compute/3` in-process (no
   telemetry subscription, no side channel) and mapped by remedy: wedged runner
   → `evict_runner`, wedged connection → `resync_runner` for that runner's
-  operatives, wedged operative → `rebind_operative`. Ops ride the standard
+  relays, wedged relay → `rebind_relay`. Ops ride the standard
   per-target backoff, and a target the classifier *proved* wedged is no longer
   protected by the guards that exist to spare a healthy one — neither
   `skip_rebind?`'s active-runner check nor `FleetManager.evict_runner/2`'s
@@ -3531,7 +3422,7 @@ as before.
   crashing is visible within one poll instead of silently turning detection
   off.
 
-  Start authority is one claim: `OperativeManager.start_operative/3` now mints
+  Start authority is one claim: `RelayManager.start_relay/3` now mints
   the `:duplicate` verdict itself (the CLI, schedules, tasklet-requested
   spawns and the ProcessHub orphan reconcile all resolve through the same
   registry check), and a start that loses it verifies the winner is live and
@@ -3548,8 +3439,8 @@ as before.
   One config key added (`FLEZHA_FABRIC_503_POLLS`); no new module, loop,
   GenServer or telemetry subscription; no wire, storage or SDK change.
 
-- **Workflow stage work runs on the SDK's workers, in both languages**
-  (`workflow-steps-through-sdk`). The workflow driver used to fan a stage out
+- **Steps stage work runs on the SDK's workers, in both languages**
+  (`steps-steps-through-sdk`). The steps driver used to fan a stage out
   onto a second, core-owned thread pool, and a Java step cost TWO threads: one
   of those pool threads submitted the crossing and then blocked on the reply
   while a Java thread ran the code. Both are gone. The driver now hands each
@@ -3558,7 +3449,7 @@ as before.
   same ordinary `Work` (or `CompensateRun`) activation it already knew — and
   collects the answers at the stage barrier it already owned. Every step
   therefore costs exactly one thread, no core-owned thread runs or waits on
-  user code, and workflow work inherits the adaptive pool / virtual threads
+  user code, and bounded work inherits the adaptive pool / virtual threads
   from `sdk-owned-concurrency`. The cell-retry ladder moves with it: a step
   runs ONE attempt and releases its worker, and the driver times the
   re-submission at its barrier, so a backoff window no longer occupies a
@@ -3574,7 +3465,7 @@ as before.
   belongs to the core and is decoupled from any thread count: one process-wide
   cap on work activations underway (`FLEZHA_MAX_INFLIGHT_ACTIVATIONS`, default
   1024), enforced at handout and released on completion. Direct activations
-  (restore folds, snapshot requests, workflow steps) stay exempt — they are
+  (restore folds, snapshot requests, steps relay steps) stay exempt — they are
   barrier-bounded by their own drivers. Each SDK then services that
   with whatever its runtime does best: **Rust** parks one supervisor thread in
   the core's new starvation wait (work queued, nobody inside `poll`) and grows
@@ -3594,8 +3485,8 @@ as before.
   to sleep there, so a dependency outage that failed every cell could put
   every worker to sleep at once, and the sleep also delayed shutdown); the
   cell's exclusivity gates stay held across the window, so ordering and the
-  head-of-line holdback are unchanged. The per-Operative timer wheel thread is
-  deleted: an Operative registering timers across any number of Cells now
+  head-of-line holdback are unchanged. The per-Relay timer wheel thread is
+  deleted: a Relay registering timers across any number of Cells now
   costs no thread. Firing semantics are unchanged — onto the Cell's mailbox,
   serialized against `run`, ascending scheduled order, `fired_at` still the
   scheduled timestamp — except that a deadline passing while every worker is
@@ -3607,7 +3498,7 @@ as before.
 - **The authoring sugar can now feed a `.keyed()` channel.** A keyed output
   channel accepts only `emit_keyed`, but `#[flezha::tasklet]` / `@Tasklet`
   always generated a plain `emit` — so every tasklet with a keyed sink had to
-  be hand-written as a full `Tasklet` impl, and a partitioned operative wants
+  be hand-written as a full `Tasklet` impl, and a partitioned relay wants
   keyed sinks on *all* of its outputs. Both SDKs gain a `key` opt-in naming a
   function from the output to its natural key: Rust
   `#[flezha::tasklet(key = my_fn)]` with `fn(&Output) -> String`, Java
@@ -3619,7 +3510,7 @@ as before.
 
 - **The testnet WS server speaks v2 subscriptions.** It understood only
   its own `{"event_type":"subscribe",…}` payload, whose generators were global
-  to the server — so a partitioned operative could not be exercised against it:
+  to the server — so a partitioned relay could not be exercised against it:
   every member would have received every symbol and parked the out-of-range
   half. It now also accepts
   `{"method":"subscribe"|"unsubscribe","params":{"channel":…,"symbol":[…]},"req_id":N}`,
@@ -3630,15 +3521,15 @@ as before.
   carries no room for it. The legacy payload is unchanged, and a disconnect now
   stops that connection's generators instead of leaking them.
 
-- **One stream operative can now run across N machines**
-  (`add-partitioned-operatives`). A stream operative bound to exactly one
+- **One flow relay can now run across N machines**
+  (`add-partitioned-relays`). A flow relay bound to exactly one
   runner, so a single logical stream could never use more than one machine —
-  the only way past that box was hand-sharding into N unrelated operatives with
+  the only way past that box was hand-sharding into N unrelated relays with
   hand-split source configs, no routing-correctness check, no unified view, and
   no way to change N later without orphaning cell state.
 
-  `flz operative start ohlc candles --partitions 3` materializes one logical
-  operative as three **ordinary** instances (`ohlc#p0` … `ohlc#p2`), each with
+  `flz relay start ohlc candles --partitions 3` materializes one logical
+  relay as three **ordinary** instances (`ohlc#p0` … `ohlc#p2`), each with
   its own Overwatch, ProcessHub child, registry row, runner binding, input log,
   state tree, plugins and DLQ identity. Placement, convergence, rebind,
   migration and recovery act per member, unchanged. There is no group record:
@@ -3657,21 +3548,21 @@ as before.
     same machinery, mutually exclusive with `subscription_url`); `http_poll`
     gains `{{partition_index}}` / `{{partition_count}}` URL placeholders
     rendered once at init, with URL validation running on the rendered value.
-  - **`operative_forward` routes per message** by `hash(flz.key)` to the owning
+  - **`relay_forward` routes per message** by `hash(flz.key)` to the owning
     member, one worker per target member. A message with no `flz.key` is parked
     with `partitioned target requires keyed emit` — never round-robined.
   - **The SDK refuses a mis-routed key on its first frame**, naming the key,
     its key group, the owning partition and the contract, before any state for
-    that key exists. Additive `AddOperative` fields (`partition_index`,
+    that key exists. Additive `AddRelay` fields (`partition_index`,
     `partition_count`, `key_group_from`, `key_group_to`) carry the range; a
     class with no keyed entry-fed tasklet is refused with
     `PartitionsWithoutKeyedTasklet`.
-  - **`flz operative scale <group> M`** rescales under an explicit quiesce
+  - **`flz relay scale <group> M`** rescales under an explicit quiesce
     (sources off, input logs consumed, DLQs empty), moves every Cell whose
     key group changes owner (rename on one controller, `WalTransfer` pull
     across controllers), then starts M members with the recomputed ranges. A
     refusal changes nothing; a crash mid-move is re-runnable.
-  - **CLI**: `flz operative list` shows one row per group with per-member
+  - **CLI**: `flz relay list` shows one row per group with per-member
     placement, `info` validates that all 256 key groups are owned exactly once
     and renders gaps/overlaps as warnings, `stop <group>` fans out, and
     `flz state get <group>/<tasklet>/<key>` resolves the owning member by
@@ -3680,17 +3571,17 @@ as before.
 
   `--partitions 1` (the default) is byte-identical to before; all proto fields
   are additive with zero values meaning "unpartitioned". See
-  `docs/sdk/partitioned_operatives.md`.
+  `docs/sdk/partitioned_relays.md`.
 
 - **A controller can now survive dying with its disk**
   (`add-remote-durability-tier`). Every durable byte flezha owned lived on the
-  owning controller's local disk — Cell WALs and snapshots, workflow
+  owning controller's local disk — Cell WALs and snapshots, steps relay
   task-journals, durable inboxes, the effectively-once input log, and the
-  ProcessHub registry cspec that records which operatives exist at all — and
+  ProcessHub registry cspec that records which relays exist at all — and
   `WalTransfer` moves a subset only at migration time. Losing the disk lost all
   of it. The new `Flezha.State.DurabilityTier` ships those as immutable
   artifacts to a remote backend and hydrates them back when a controller binds
-  an operative whose local state is absent.
+  a relay whose local state is absent.
 
   **Off by default.** With `FLEZHA_DURABILITY_BACKEND=none` (the default) no
   process starts, no backend is contacted, and every acknowledgement path gates
@@ -3700,7 +3591,7 @@ as before.
   WAL semantics.
 
   Shipping reuses the boundaries that already existed — compaction completion,
-  checkpoint-interval close, workflow `TaskCommit`/`IterCommit` — plus one
+  checkpoint-interval close, steps relay `TaskCommit`/`IterCommit` — plus one
   backstop sweep (`ship_interval_ms`, default 30 s) for cells that reach
   none of them. A shipped WAL artifact is a **seq-addressed record bundle** read
   at ship time, never a file byte range, because compaction and correction
@@ -3708,10 +3599,10 @@ as before.
   through an epoch-conditional write, so a crash mid-upload leaves the previous
   entry authoritative and the orphan blobs invisible to recovery.
 
-  A workflow class may declare `SYNC_DURABILITY` (Rust) / `syncDurability()`
+  A steps class may declare `SYNC_DURABILITY` (Rust) / `syncDurability()`
   (Java): the controller then completes the remote ship of a commit barrier
   before acking it, so the ack the driver blocks on implies the commit survives
-  losing the disk (RPO 0). Stream classes are refused it at registration.
+  losing the disk (RPO 0). Flow classes are refused it at registration.
   Everything else ships asynchronously and never delays an append, ack or
   watermark advance; a stalled shipper raises the alarm-grade
   `[:flezha, :state, :rpo_exceeded]`, surfaced in `flz controller status` and
@@ -3726,12 +3617,12 @@ as before.
   (`schedule-spawn-without-runner`). A new cluster directory
   (`Flezha.Cluster.Directory`, one `:pg` scope — no new dependency) lets each
   node advertise which factories its runners serve and which namespace hubs it
-  hosts; reads are local on every node. Workflow starts (`flz operative add`,
-  schedule fires, `ctx.spawn_workflow`) submitted on a node that cannot satisfy
+  hosts; reads are local on every node. Steps starts (`flz relay add`,
+  schedule fires, `ctx.spawn_steps`) submitted on a node that cannot satisfy
   them locally are forwarded once to a capable node and re-validated there, so
   a schedule no longer fails forever when a rolling update moves its runner to
   another controller node. The command plane routes the same way: `flz
-  operative send`/`stop`/`info`, `flz state get` and `flz dlq replay` resolve
+  relay send`/`stop`/`info`, `flz state get` and `flz dlq replay` resolve
   their target cluster-wide. A failed schedule slot is retried with capped
   exponential backoff under the same deterministic instance id until the next
   slot supersedes it, and `flz schedule list` gained `LAST FIRE (UTC)` /
@@ -3742,7 +3633,7 @@ as before.
 - **The Java SDK is rehosted on the poll core**
   (`rehost-java-sdk-on-poll-core`). The Java runtime's kernel mirror —
   command handlers, framing, reconnect, flusher, credit, DLQ park, timer
-  wheel, the workflow driver — is deleted; JVM poller threads drive
+  wheel, the steps driver — is deleted; JVM poller threads drive
   `flz_core` through a JNI binding over `flz_core_ffi` (`FlzCore`,
   schema-negotiated at context creation). The core's host layer grew from
   v1 to full capability for this: the five command activation kinds
@@ -3750,15 +3641,15 @@ as before.
   the prepare crossing for keys/event times, static/dynamic cell modes,
   producer-evaluated inter-tasklet edges, the effectively-once and
   checkpoint ack-granularity tiers, late-input correction, per-cell
-  timers, and workflow lifecycles (run-sugar sessions + structured chains)
+  timers, and steps relay lifecycles (run-sugar sessions + structured chains)
   — all reachable through the C ABI and pinned by the ABI scenario suite.
   Activation schema bumped to v2 (prepare answers, `change_seq`,
-  `factory`, `Output.event_time`, workflow kinds); both SDKs' fixture
+  `factory`, `Output.event_time`, steps runs); both SDKs' fixture
   suites pin the same bytes.
 
 - **The Rust SDK's kernel is now a language-agnostic poll core**
   (`extract-sdk-poll-core`). A new `flz_core` crate owns transport,
-  ordering, durability, retries, timers, credit, routing and the workflow
+  ordering, durability, retries, timers, credit, routing and the steps relay
   driver; host SDKs drive it through one surface — `poll() -> Activation` /
   `complete(ActivationResult)` — and the core never calls host code. The
   Rust SDK is rebuilt as a typed layer over the crate (public API
@@ -3773,7 +3664,7 @@ as before.
   optional `subscription_url` publishing the desired item set
   (`{"version": <integer>, "items": [<string>, …]}`). The provider polls it every
   `subscription_interval_ms`, diffs it against what it has applied, and sends
-  operator-supplied `subscribe_template` / `unsubscribe_template` frames — with
+  user-supplied `subscribe_template` / `unsubscribe_template` frames — with
   `{{items}}` and `{{req_id}}` substituted — for the difference, on the
   connection it already holds. Previously the only way to change a subscription
   was `plugin disable` then `plugin enable`: a full teardown that dropped every
@@ -3790,7 +3681,7 @@ as before.
   `subscription_ack_mode: "none"`, committing on send.
 
   The applied set is persisted to the plugin cspec after every commit, so a
-  plugin restart, an operative handover and a controller restart all resume with
+  plugin restart, a relay handover and a controller restart all resume with
   what the socket actually holds. That also fixes a correctness edge predating
   the feature: the data-liveness watchdog resent `post_connect`, the *boot-time*
   payload, so any runtime change would have been silently reverted by the very
@@ -3799,14 +3690,14 @@ as before.
 
   A failed poll is *no information*, never an empty desired set: it can never
   cause an unsubscribe. An explicitly empty `items` array is a real instruction
-  and does. `flz operative info` reports the applied set, last reconcile outcome
+  and does. `flz relay info` reports the applied set, last reconcile outcome
   and last error; each reconcile that sent a frame emits
   `[:flezha, :ws, :reconcile]`. Fully backwards compatible — with no
   `subscription_url` there is no poll timer, no applied set, and no subscription
   state on the per-frame path. See `docs/plugins/websocket_subscription.md`.
 
 - **A Cell's current value is readable without a serving tier**
-  (`cell-state-live-query`). `flz state get <operative/tasklet[/cell_key]>`
+  (`cell-state-live-query`). `flz state get <relay/tasklet[/cell_key]>`
   returns one live Cell's in-memory state as JSON together with the
   `change_seq` it was serialized at. Until now the only read was
   `flz state at`, which serves the controller's WAL at a point in the *past*, so
@@ -3820,7 +3711,7 @@ as before.
   durability it is. A read triggers no compaction, snapshot or WAL truncation.
 
   A Cell that is not held in memory is **refused naming why** — idle-evicted,
-  instance suspended, no Cell by that key, or Operative unbound — and points at
+  instance suspended, no Cell by that key, or Relay unbound — and points at
   `flz state at` as the durable path. There is deliberately no durable fallback:
   dynamic-mode eviction is destructive (the recreate cold-starts), the controller
   cannot decode the SDK's WAL bytes, and a fallback would mean binding a runner
@@ -3838,20 +3729,20 @@ as before.
   `docs/internals/state_persistence.md`; examples:
   `sdk/rust/examples/live_state_read.rs`, Java `E11_LiveStateRead`.
 
-- **An operative can be fed from an HTTP resource**
-  (`add-http-poll-source-provider`). The built-in `operative_http_poll` source
+- **A relay can be fed from an HTTP resource**
+  (`add-http-poll-source-provider`). The built-in `relay_http_poll` source
   provider (`Flezha.Plugin.Provider.HttpPoll`) polls a URL on an interval and
   injects the response body as an ordinary journaled entry frame — but only when
   the body's SHA-256 changes, so a steady endpoint costs one request per interval
   and zero frames. The first successful poll after the plugin starts always
-  injects, which converges an operative that has just been started, recovered, or
+  injects, which converges a relay that has just been started, recovered, or
   handed over onto current content within one interval; consumers of a polled
   channel must therefore treat its frames idempotently. Until now runtime
-  configuration could reach a running operative only by restarting it with new
-  `init_values` or by an operator hand-pushing `flz operative send`.
+  configuration could reach a running relay only by restarting it with new
+  `init_values` or by a user hand-pushing `flz relay send`.
 
-  Delivery uses the operative's confirming ingest and the hash advances only once
-  the operative has taken the payload, so a frame dropped by a parked operative
+  Delivery uses the relay's confirming ingest and the hash advances only once
+  the relay has taken the payload, so a frame dropped by a parked relay
   or an unbound stream is re-offered on the next poll instead of being lost until
   the endpoint next changes. Timeouts, connection errors, statuses outside 2xx
   (redirects included — they are not followed, since `:httpc` would replay the
@@ -3861,7 +3752,7 @@ as before.
   contract; the next success clears the run and delivers the change the outage
   hid. `ETag`/`If-None-Match` is passed through for bandwidth, with the local hash
   still the injection gate. The size cap aborts the transfer as the body arrives,
-  so it bounds controller memory and not merely what the operative receives.
+  so it bounds controller memory and not merely what the relay receives.
   HTTPS is verified against the system CA store. Attach refuses a non-http
   scheme, a hostless URL, credentials embedded in the URL, a sub-second interval,
   a timeout that could outlast its own interval, a non-positive tunable, a body
@@ -3876,17 +3767,17 @@ as before.
   (Java) subscribes two or more source channels to one tasklet whose `Input`
   is an author-declared sum type, each subscription supplying a pure mapping
   from its payload into that type. Entry channels and inter-tasklet channels
-  are both valid sources on a stream operative, freely mixed, so a detector
+  are both valid sources on a flow relay, freely mixed, so a detector
   can take its data feed and
-  a live config channel without the operative being restarted with new
+  a live config channel without the relay being restarted with new
   environment. Per-source FIFO is preserved and nothing is ordered across
   sources; `cells_for` sees the mapped value; the mappings run identically on
   live delivery and WAL replay, so a warm restart restores the same state.
   Fewer than two sources, the same channel subscribed twice, or a source that
-  would re-wire an already-declared edge all fail operative definition with a
-  named topology error. A **workflow** operative merges its tasklets' output
+  would re-wire an already-declared edge all fail relay definition with a
+  named topology error. A **steps relay** relay merges its tasklets' output
   streams — its entry channel seeds the root from the spawn args and names no
-  channel, so an entry channel as a workflow merge source is refused by name.
+  channel, so an entry channel as a steps relay merge source is refused by name.
   Single-input wiring is unchanged.
 
   **No wire change and no controller change**: the merge is a subscription-time
@@ -3894,35 +3785,35 @@ as before.
   controller has no model of a channel's consumers. See
   `docs/sdk/multi_input_tasklets.md`.
 
-- **A tasklet can ask for a workflow operative**
-  (`add-tasklet-requested-spawn`). `ctx.spawn_workflow` (Rust) /
-  `ctx.spawnWorkflow` (Java) spawns-or-delivers a workflow instance on one
+- **A tasklet can ask for a steps relay**
+  (`add-tasklet-requested-spawn`). `ctx.spawn_steps` (Rust) /
+  `ctx.spawnSteps` (Java) spawns-or-delivers a steps instance on one
   `(namespace, instance_id)` from inside any tasklet: a free id starts the
   factory with the payload as its first input, a taken id receives the payload
   as one more input (`if_running: deliver`) or refuses (`error`). Concurrent
-  requests race-resolve at the operative registry to exactly one instance.
+  requests race-resolve at the relay registry to exactly one instance.
   Failures — quota, unknown factory, unreachable controller — resolve the
   caller's async handle and never fault the requesting tasklet; an
   uninspected handle logs the failure once. Spawning is a live-processing side
-  effect: a replayed invocation issues nothing. Until now a workflow operative
+  effect: a replayed invocation issues nothing. Until now a steps relay
   could only be started from outside the cluster, so every pipeline that needed
   one grew its own external dispatcher. See
   `docs/sdk/tasklet_requested_spawn.md`.
 
-  **Wire**: two additive `CommandRequest` variants, `SpawnWorkflowRequest`
-  (tag 34, SDK → controller) and `SpawnWorkflowResponse` (tag 35,
+  **Wire**: two additive `CommandRequest` variants, `SpawnStepsRequest`
+  (tag 34, SDK → controller) and `SpawnStepsResponse` (tag 35,
   controller → SDK). Additive-tag compatibility as with every prior wire
   change: an older controller ignores the unknown variant (the requester times
   out), so the controller image and both SDKs are released together.
 
 - `flz schedule add --plugins <json>` — a schedule entry can now carry the
-  same plugin-spec array `flz operative start --plugins` accepts
+  same plugin-spec array `flz relay start --plugins` accepts
   (`schedule-entries-carry-plugins`). The spec is validated against the
   enabled providers at `add` time, stored verbatim, and decoded at every
   firing; each firing stamps its namespace and instance id on every plugin
   and prefixes the plugin id with the instance id so overlapping slots never
-  collide. Without this a cron-fired workflow job had no output channel at all
-  — a workflow instance finishes in milliseconds, so plugins must be attached
+  collide. Without this a cron-fired steps relay job had no output channel at all
+  — a steps instance finishes in milliseconds, so plugins must be attached
   at spawn. A spec that fails to decode at fire time starts nothing and is
   reported on `[:flezha, :schedule, :spawn_failed]` rather than firing a run
   whose output is dropped. The schedule row gained a field, so the
@@ -3930,7 +3821,7 @@ as before.
 
 ### Changed (BREAKING)
 
-- Scheduled workflow spawns are now driven by **one schedule process per
+- Scheduled steps spawns are now driven by **one schedule process per
   schedule, hosted in a dedicated `:flz_schedules` ProcessHub**, replacing the
   per-controller polling evaluator (`single-owner-schedule-processes`). The
   hub's `Singularity` redundancy makes exactly one process exist cluster-wide
@@ -3952,21 +3843,21 @@ as before.
   superseded before release by `sdk-runner-entrypoint-redesign` — the shipping
   surface is the one described here). `Flezha.newInstance(namespace)` (Java) /
   `flezha_runner::new(namespace)` (Rust) and the
-  `Flezha.registerStream`/`registerWorkflow` /
-  `register_stream::<R>()`/`register_workflow::<T>()` registration surface
+  `Flezha.registerFlow`/`registerSteps` /
+  `register_flow::<R>()`/`register_steps::<T>()` registration surface
   are removed with no back-compat shim. The replacement is a runner handle —
   no builder, no freeze step:
-  `Flezha.createRunner(ns).defineStream(A.class).run()` (Java) /
-  `Flezha::create_runner(ns)?.define_stream::<A>()?.run()?` (Rust).
+  `Flezha.createRunner(ns).defineRelay(A.class).run()` (Java) /
+  `Flezha::create_runner(ns)?.define_relay::<A>()?.run()?` (Rust).
   `RunnerBuilder` and both Java registry facades
-  (`StreamOperativeRegistry`/`WorkflowOperativeRegistry`) are gone.
+  are gone.
   The declared set is per-runner and starts empty each generation;
-  `define_*`/`remove_*` (`removeStream`/`removeWorkflow` /
-  `remove_stream::<R>()`/`remove_workflow::<T>()`) are legal before and
+  `define_*`/`remove_*` (`removeFlow`/`removeSteps` /
+  `remove_flow::<R>()`/`remove_steps::<T>()`) are legal before and
   after `start()`, a post-start change shipping the full factory set as a
   fire-and-forget `UpdateFactories`. A removal refuses while live instances
-  of the factory exist (`OperativeTypeInUseException` /
-  `FlezhaError::OperativeTypeInUse`). Starting with zero declared classes is
+  of the factory exist (`RelayTypeInUseException` /
+  `FlezhaError::RelayTypeInUse`). Starting with zero declared classes is
   legal.
   The singleton slot is claimed at `start()`, not at create: any number of
   unstarted runners may exist, and a second `start()`/`run()` fails loudly
@@ -3981,20 +3872,20 @@ as before.
   and `Flezha.currentRunner()` / `Flezha::current_runner()` exposes the
   active runner. Rust declaration, connect, and lifecycle failures are now
   ONE typed `Result` error, `FlezhaError` (wrapping `TopologyBuildError` /
-  `BuildWorkflowError`), instead of panics and the removed
+  `BuildStepsError`), instead of panics and the removed
   `RunnerStartError`/`RunnerError`; the per-issue topology enum is
   `TopologyIssue`. Java's annotation processor generates
-  `GeneratedStreamOperatives.defineAll(FlezhaRunner)`.
+  `GeneratedFlowRelays.defineAll(FlezhaRunner)`.
   Naming rules for future SDK surface: `docs/sdk/naming_conventions.md`.
 
 ### Fixed
 
 - **A rescale left everything forwarding into the group routing by the old
-  member set.** `operative_forward` resolves its target's members once, at
+  member set.** `relay_forward` resolves its target's members once, at
   `init_provider/1`, and nothing re-ran it: the workers stayed alive, so the
   plugin reported healthy while the worker for a removed member retried
-  forever against an operative that no longer existed — until its queue
-  saturated and back-pressured the **source** operative's output chain. A
+  forever against a relay that no longer existed — until its queue
+  saturated and back-pressured the **source** relay's output chain. A
   forward whose resolved members no longer match the group now reports itself
   unhealthy, and the convergence loop restarts it so it re-reads the member
   set. Surviving members keep their workers
@@ -4005,7 +3896,7 @@ as before.
   `plugin_health/3` would have reported it healthy without probing until the
   next bind.
 
-- **Two concurrent `flz operative scale` calls on one group could leave it half
+- **Two concurrent `flz relay scale` calls on one group could leave it half
   started** — each read the member set the other was rewriting, so the loser's
   rollback stopped the members the winner had just started. A rescale now takes
   a cluster-wide lock on `{namespace, group}` and a second one is refused by
@@ -4019,7 +3910,7 @@ as before.
   checks, and gives up before anything durable has moved.
 
 - **A dynamic Cell never restored its durable state on a rebind**
-  (found implementing `add-partitioned-operatives`). The SDK's restore handler
+  (found implementing `add-partitioned-relays`). The SDK's restore handler
   resolved the named Cell by walking `instance.cells` — the static and
   single slots — while a dynamic Cell lives in its Tasklet's registry and
   has no slot until its first input. Every `RestoreInitState` for one was
@@ -4032,12 +3923,12 @@ as before.
   ever saw the key.
 
 - A controller that lost **every runner** for a namespace could neither keep its
-  operatives nor move them, and the healing machinery hid the damage
+  relays nor move them, and the healing machinery hid the damage
   (`fix-last-runner-migration-state-loss`). Three defects compounded:
   `hub_migrate` had been reduced to a vacancy check that no-ops exactly when the
-  hub still holds operatives — i.e. whenever there is something to migrate;
+  hub still holds relays — i.e. whenever there is something to migrate;
   `:runner_migrate` committed the binding *before* the runner answered, so a
-  failed heal left the operative naming a **live but unreachable** runner, which
+  failed heal left the relay naming a **live but unreachable** runner, which
   made `Convergence.Diff` stop classifying it misbound and emptied the delta
   permanently; and because a handover serializes its state from the **runner**,
   a migration caused by that runner's death shipped an empty payload while still
@@ -4045,7 +3936,7 @@ as before.
   explicit repair path. The binding is now committed only on success, the flag
   only when the handover carried state, and `hub_migrate` drains the hub
   (`HubManager.drain_hub/2`, the seam graceful shutdown already used) so
-  operatives leave through a live HotSwap handover. New
+  relays leave through a live HotSwap handover. New
   `Flezha.State.WalTransfer` moves what the handover cannot: a
   destination-pulled, chunked `:erpc` copy of the Cell's durable files,
   written to a `.transferring` sibling that is fsynced and atomically renamed,
@@ -4054,38 +3945,38 @@ as before.
   One-shot at migration time, not replication — a controller that dies together
   with its disk still takes its state with it.
 
-- A durable workflow operative whose tasklets hold **no per-Cell state**
+- A durable steps relay whose tasklets hold **no per-Cell state**
   went silent after its first turn. The task-journal is instance-scoped but rode
   `RestoreInitState.task_journal`, a per-Cell frame — and such a class has no
   Cell WAL, so the controller shipped no restore at all. Every wake resumed
   at iteration 0, and each turn's commit collided with iteration 0's
   `outbox_flushed` marker (the flush marker is keyed `{type, task_idx, iter}`),
   so its staged output was journaled and never delivered. Only the first turn
-  of such an operative was ever emitted; it bit any instance that parked
+  of such a relay was ever emitted; it bit any instance that parked
   between turns, on both SDKs.
   `TaskJournalState` moves from `RestoreInitState` (field 6, removed) to
-  `AddOperative` (field 6, added) — instance-scoped state on the bind, beside
+  `AddRelay` (field 6, added) — instance-scoped state on the bind, beside
   `resume_cell_count`, delivered once per bind instead of once per persisted
   Cell and before the driver spawns. No compatibility shim: an SDK and a
   controller must be upgraded together.
 
 ### Changed
 
-- An operative may now declare **more than one entry channel** (both SDKs). The
+- A relay may now declare **more than one entry channel** (both SDKs). The
   `sdk-graph-authoring` graph-shape rule is relaxed from "exactly one entry" to
   "one or more entries, every node reachable from some entry"; the
   `MultipleEntryChannels` topology error is removed. The runtime already routed
   each inbound frame to its entry by `metadata["channel"]` (falling back to the
   first-declared entry), so this only lifts the build-time refusal — enabling a
-  single operative to ingest several external sources (e.g. a market pipeline
-  reading a trade feed and an order-book feed on distinct channels). Workflow
-  operatives keep their single-entry linear-chain rule.
+  single relay to ingest several external sources (e.g. a market pipeline
+  reading a trade feed and an order-book feed on distinct channels). Steps relay
+  relays keep their single-entry linear-chain rule.
 
 - Plugin subscriptions added via `flz plugin enable` now survive any
   Overwatch (re)start automatically. The ProcessHub child-spec is the
-  source of truth for an operative's enabled plugins; the runtime
+  source of truth for a relay's enabled plugins; the runtime
   `Overwatch.state.extensions` table is rebuilt from it on every
-  `init/1`. Previously, plugins enabled after `flz operative start`
+  `init/1`. Previously, plugins enabled after `flz relay start`
   were dropped on runner-pod restart, agent restart with intact
   ProcessHub state, or any in-place restart that ran through
   `HubManager.alter_child_data/2` (e.g. `kubectl rollout restart
@@ -4093,8 +3984,8 @@ as before.
   commands manually before the data plane recovered. See
   `openspec/specs/plugin-subscription-persistence/spec.md`.
 
-  **Upgrade note for clusters with already-running operatives.**
-  Operatives whose plugins were enabled dynamically before this
+  **Upgrade note for clusters with already-running relays.**
+  Relays whose plugins were enabled dynamically before this
   upgrade have an empty `opts[:plugins]` in the cspec. They keep
   working as long as no Overwatch (re)start happens before the next
   `flz plugin enable` / `flz plugin disable` call, which canonicalises
@@ -4104,15 +3995,15 @@ as before.
 
 ### Added
 
-- Controller-native cron scheduling of workflow operatives
-  (`add-scheduled-operative-spawns`). `flz schedule add <name> --cron
+- Controller-native cron scheduling of steps relays
+  (`add-scheduled-relay-spawns`). `flz schedule add <name> --cron
   "<expr>" --tz <iana> --factory <factory_id> [--namespace ns]
   [--init_values json]` registers a durable schedule (node-local DETS at
   `app_data/schedules/schedules.dets`; names are capped at 11 bytes so the
-  composed instance id fits the 32-byte operative id limit); `list` /
+  composed instance id fits the 32-byte relay id limit); `list` /
   `remove` / `run <name>` complete the family. A per-controller evaluator
   (`Flezha.Schedule.Evaluator`) fires each matching slot through the
-  standard workflow start path with deterministic instance id
+  standard steps start path with deterministic instance id
   `<name>@<slot-iso>` — a duplicate fire attempt no-ops on the id, which is
   the cluster-wide exactly-once guard. Slots are evaluated in the entry's
   IANA time zone (new `tz` dependency): a spring-forward gap slot skips, a
@@ -4121,8 +4012,8 @@ as before.
   e.g. missed while the controller was down — are skipped and logged with
   their timestamps, never back-filled; a still-running previous slot never
   blocks the next one (ids differ; bound runtime via `max_duration`). Only
-  workflow operatives are schedulable. Telemetry: `[:flezha, :schedule,
-  :fired | :skipped | :spawn_failed]`. Operator guide in
+  steps relays are schedulable. Telemetry: `[:flezha, :schedule,
+  :fired | :skipped | :spawn_failed]`. Guide in
   [`docs/operations/schedules.md`](docs/operations/schedules.md).
 
 - Hardened first-party Kafka producer plugin
@@ -4169,32 +4060,32 @@ as before.
 
 - SDKs ship a final state snapshot to the agent on graceful shutdown so
   rolling deploys preserve the latest state. Rust and Java SDKs now emit
-  one `RunnerShutdownNotification{operative_id, serialized_state}`
-  per running operative on the control channel when the SDK is dropped,
+  one `RunnerShutdownNotification{relay_id, serialized_state}`
+  per running relay on the control channel when the SDK is dropped,
   receives SIGTERM (Kubernetes pre-stop), or is closed explicitly via
   `Flezha.close()` (Java) / handle drop (Rust); the agent's
   `Flezha.Runner.ControlChannel` overwrites
-  `Flezha.Operative.Overwatch.state.snapshot` with the supplied binary
-  and emits an `RunnerShutdownAck`. Per-operative ack wait is bounded
-  at 2 s, parallelised across operatives. SIGKILL bypasses as expected;
+  `Flezha.Relay.Overwatch.state.snapshot` with the supplied binary
+  and emits an `RunnerShutdownAck`. Per-relay ack wait is bounded
+  at 2 s, parallelised across relays. SIGKILL bypasses as expected;
   agent falls back to the last periodic snapshot. Disabled-snapshot
   deployments (`overwatch_state_snapshot_interval_ms == 0`, e.g.
   `flezha_market`) get a one-shot shutdown handoff that survives until
-  the next `AddOperative` reissue. New protobuf messages
+  the next `AddRelay` reissue. New protobuf messages
   `RunnerShutdownNotification` (tag 12) and `RunnerShutdownAck`
   (tag 13) are additive — older agents/SDKs interoperate by falling
   back to the periodic-snapshot freshness shipped by
   `heal-connections-on-restart`.
 - Runner ↔ agent connections now heal automatically across either-side
-  restarts; operatives resume traffic within 5 s of reconnect without
+  restarts; relays resume traffic within 5 s of reconnect without
   runner intervention. Stream rebind is enforced as a hard contract on
   `Flezha.Runner.StreamChannel`, the UDS/QUIC acceptors atomically
   bind incoming streams only to nil-ref channels, and
   `Flezha.Runner.FleetManager.runner_connect/3` re-issues
-  `AddOperative` for operatives ProcessHub still has tagged to a dead
+  `AddRelay` for relays ProcessHub still has tagged to a dead
   runner_id matching the connecting runner's profile. Rust and
-  Java SDK `AddOperative` handlers are now idempotent on duplicate
-  `operative_id` (log + skip).
+  Java SDK `AddRelay` handlers are now idempotent on duplicate
+  `relay_id` (log + skip).
 - `mix test.connection_healing` opt-in alias that runs
   `test/scripts/connection_healing.sh` against the dev compose stack to
   exercise both restart paths end-to-end. Requires Docker on the host;
@@ -4223,14 +4114,14 @@ along with the SYSMODE coordinator GenServer that drove it.
   atomic ETF file write.
 - `Flezha.Cluster.Snapshot.PluginRecoverability` predicate that decides
   which plugins survive a snapshot/restore cycle.
-- `Flezha.Operative.Builder` now recognises `:initial_state_binary` in
-  opts; `Flezha.Operative.Overwatch` sends a new `CellApplyState`
+- `Flezha.Relay.Builder` now recognises `:initial_state_binary` in
+  opts; `Flezha.Relay.Overwatch` sends a new `CellApplyState`
   control command to the compute engine before the first input is
-  forwarded so a re-spawned operative begins with primed state.
+  forwarded so a re-spawned relay begins with primed state.
 - New protobuf message `CellApplyState` and corresponding handler
   in the Rust and Java SDKs. Default impl returns the canonical
   `apply_state_not_supported` error so older SDK builds are detectable;
-  the agent logs once per operative on apply failure.
+  the agent logs once per relay on apply failure.
 - `:flezha, :snapshot_state_cap_bytes` configuration key (default 8 MB),
   with `FLEZHA_SNAPSHOT_STATE_CAP_BYTES` env-var override.
 
@@ -4239,19 +4130,19 @@ along with the SYSMODE coordinator GenServer that drove it.
 - The entire DETS-based recovery subsystem:
   `Flezha.Recovery.Store`, `Flezha.Recovery.PluginStore`,
   `Flezha.Recovery.Coordinator`, `Flezha.Recovery.SysMode`. The agent no
-  longer writes child specs to a DETS file on operative start, no longer
+  longer writes child specs to a DETS file on relay start, no longer
   reads DETS at boot, no longer maintains a SYSMODE state machine, and
   no longer exchanges SYSMODE with peers. Recovery from an unattended
   crash now requires the runner to run `flz cluster restore` against
   a previously-captured snapshot file.
-- `Flezha.Operative.InitState.Providers.Sibling` along with its
+- `Flezha.Relay.InitState.Providers.Sibling` along with its
   registration in `:enabled_plugins`, its capability spec
-  (`operative-init-state-sibling`), and the `lib/flezha/operative/init_state/`
+  (`relay-init-state-sibling`), and the `lib/flezha/relay/init_state/`
   tree. Restart-survival init-state seeding is now handled by
   `flz cluster restore` priming `:initial_state_binary` directly. The
-  generic `operative-init-state` provider chain remains for non-snapshot
+  generic `relay-init-state` provider chain remains for non-snapshot
   sources (HTTP, S3, computed defaults, custom modules implementing
-  `on_operative_init/2`).
+  `on_relay_init/2`).
 - Application env keys: `:flezha, :recovery_window_ms`,
   `:flezha, :recovery_data_dir`, `:flezha, :recovery_enabled`,
   `:flezha, :recovery_autostart`, `:flezha, :prefer_explicit_restore?`.

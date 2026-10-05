@@ -24,9 +24,9 @@ defmodule FlezhaTest.System.SleepAfterE2ETest do
 
   import FlezhaTest.Helper.StepsResumeHarness
 
-  alias Flezha.Operator.{ClassRegistry, Replay}
+  alias Flezha.Relay.{ClassRegistry, Replay}
   alias Flezha.Dlq.Store, as: DlqStore
-  alias Flezha.Service.OperatorManager
+  alias Flezha.Service.RelayManager
   alias Flezha.State.InputLog
   alias Flezha.State.Paths
   alias FlezhaTest.Helper.NodeTestHelper
@@ -136,7 +136,7 @@ defmodule FlezhaTest.System.SleepAfterE2ETest do
       send_input(namespace, id, "a:1")
       assert NodeTestHelper.wait_until(fn -> suspended?(namespace, id) end, 30_000)
 
-      assert :ok = OperatorManager.request_stop(namespace, id)
+      assert :ok = RelayManager.request_stop(namespace, id)
       refute registered?(namespace, id)
       refute File.dir?(Paths.class_dir(id))
     end
@@ -157,7 +157,7 @@ defmodule FlezhaTest.System.SleepAfterE2ETest do
 
       assert NodeTestHelper.wait_until(
                fn ->
-                 OperatorManager.get_cell_state(namespace, id) == {:error, {:persistence_off, id}}
+                 RelayManager.get_cell_state(namespace, id) == {:error, {:persistence_off, id}}
                end,
                30_000
              ),
@@ -184,12 +184,12 @@ defmodule FlezhaTest.System.SleepAfterE2ETest do
         )
 
       start_steps(namespace, id, "typed_once_steps", first_message: nil)
-      :ok = OperatorManager.send_io(id, namespace, "not json", %{})
+      :ok = RelayManager.send_io(id, namespace, "not json", %{})
 
       assert NodeTestHelper.wait_until(fn -> suspended?(namespace, id) end, 30_000)
       assert [%{"generation" => 1}] = DlqStore.list(id)
 
-      {:ok, pid} = OperatorManager.get_operator_pid(namespace, id)
+      {:ok, pid} = RelayManager.get_relay_pid(namespace, id)
       GenServer.call(pid, {:runner_migrate, runner_id}, 30_000)
 
       assert NodeTestHelper.wait_until(fn -> ClassRegistry.parked(id) == nil end, 10_000),
@@ -205,7 +205,7 @@ defmodule FlezhaTest.System.SleepAfterE2ETest do
     end
 
     @tag capability: :steps, skip: FlezhaTest.SystemCase.deferral(:steps)
-    test "a steps operator that declares persistence off keeps no state and refuses a live read",
+    test "a steps relay that declares persistence off keeps no state and refuses a live read",
          ctx do
       collector = spawn_link(fn -> collect_loop([]) end)
       namespace = unique("persistence_off_steps")
@@ -220,7 +220,7 @@ defmodule FlezhaTest.System.SleepAfterE2ETest do
 
       assert NodeTestHelper.wait_until(fn -> collected(collector) != [] end, 30_000)
 
-      assert OperatorManager.get_cell_state(namespace, id) == {:error, {:persistence_off, id}}
+      assert RelayManager.get_cell_state(namespace, id) == {:error, {:persistence_off, id}}
       refute ClassRegistry.persistent?(id)
       refute ClassRegistry.sleeps?(id), "an opted-out steps does not sleep"
       assert Paths.cells_of(id) == []

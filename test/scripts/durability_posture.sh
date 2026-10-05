@@ -19,7 +19,7 @@
 #
 # Cell WAL recovery is NOT re-proved here; that is
 # `test/system/remote_durability_e2e_test.exs`, which destroys the state
-# directory of a live steps operator and a live checkpoint stream against real
+# directory of a live steps relay and a live checkpoint stream against real
 # runners.
 #
 # Usage:
@@ -265,7 +265,7 @@ disk_death() { # disk_death <backend>
   fi
 
   # A parked failure, through the store's real durable append.
-  rpc "$first" 'Flezha.Dlq.Store.append(%{operator_class: "durval_class", tasklet_id: "task", cell_key: "k1", channel: "input", origin_offset: nil, error: "poison", attempts: 3, payload: "poison-bytes", park_id: "durval-1"})' \
+  rpc "$first" 'Flezha.Dlq.Store.append(%{relay_class: "durval_class", tasklet_id: "task", cell_key: "k1", channel: "input", origin_offset: nil, error: "poison", attempts: 3, payload: "poison-bytes", park_id: "durval-1"})' \
     >"$LOGDIR/${backend}-park.log" 2>&1
   check "parked a record" "$LOGDIR/${backend}-park.log" "durval_class/task/"
 
@@ -296,9 +296,9 @@ disk_death() { # disk_death <backend>
     return
   fi
 
-  # Parked failures hydrate WITH their operator, so the replacement has to bind
-  # it — the same call `Flezha.Operator.Replay` makes on the bind path.
-  rpc "$second" 'Flezha.State.DurabilityTier.hydrate_operator("durval_class")' \
+  # Parked failures hydrate WITH their relay, so the replacement has to bind
+  # it — the same call `Flezha.Relay.Replay` makes on the bind path.
+  rpc "$second" 'Flezha.State.DurabilityTier.hydrate_relay("durval_class")' \
     >"$LOGDIR/${backend}-dlq-hydrate.log" 2>&1
 
   flz "$second" dlq list >"$LOGDIR/${backend}-dlq-after.log" 2>&1

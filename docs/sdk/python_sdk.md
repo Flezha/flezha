@@ -97,7 +97,7 @@ class Tally:
         state.seen = change.seen
 
 
-@operator("local_word_count_example")
+@relay("local_word_count_example")
 def word_count(c: Channels) -> None:
     # One Cell per word: the hop from `Split` to `Tally` is the runtime's,
     # not this file's.
@@ -109,7 +109,7 @@ def word_count(c: Channels) -> None:
 - **`name` is required.** It is the tasklet's durable identity: its state is
   saved under it, so a renamed class keeps its state. A tasklet with no name,
   and a function handed to `flezha.tasklet`, are refused with
-  `FlezhaError` (`topology.tasklet_name_missing`, `topology.invalid_tasklet`); a whole one-tasklet operator written as a function is
+  `FlezhaError` (`topology.tasklet_name_missing`, `topology.invalid_tasklet`); a whole one-tasklet relay written as a function is
   [the short form](#the-short-form).
 - **A value leaves only through `ctx`.** `run`, `on_timer` and `compensate`
   take the context as their last parameter and return `None`, plain or
@@ -147,7 +147,7 @@ def word_count(c: Channels) -> None:
   gives the tasklet those cells; a `key_by` on the edge that feeds it gives it
   a cell per key, created on first sight; anything else gives it one cell.
   `Tally` is dynamic in `word_count` because of the `key_by` before it, and
-  would be single in an operator that wired it without one.
+  would be single in a relay that wired it without one.
 
 The keywords `flezha.tasklet` takes beside `name`:
 
@@ -162,7 +162,7 @@ The keywords `flezha.tasklet` takes beside `name`:
 
 ### The short form
 
-`@flezha.operator` declares a whole single-tasklet operator when it decorates
+`@flezha.relay` declares a whole single-tasklet relay when it decorates
 a tasklet's body instead of a channels body: one declaration, no
 `flezha.tasklet` beside it. `id` is the factory id and is always written; `sink`, `input`
 and `codec` (the entry codec `Channels.input` takes) are optional, and so are
@@ -170,12 +170,12 @@ the tasklet's own keywords (`cell_keys`, `logical_clock`, `idle_ttl_seconds`,
 `mailbox_capacity` and the rest `flezha.tasklet` takes, except `name`).
 
 ```python
-@flezha.operator(id="upcase", sink="out", codec="text")
+@flezha.relay(id="upcase", sink="out", codec="text")
 def upcase(value: str) -> str:
     return value.upper()
 
 
-@flezha.operator(id="place", run="steps", sink="placed", input="order", codec="text")
+@flezha.relay(id="place", run="steps", sink="placed", input="order", codec="text")
 def place(order: str) -> str:
     return order
 
@@ -199,11 +199,11 @@ A function is a channels body when it takes one parameter annotated
 `flezha.Channels`, or not annotated at all; any other function is a tasklet
 body.
 
-A class body is how a one-tasklet operator with state is written, from
+A class body is how a one-tasklet relay with state is written, from
 `sdk/python/test_app/fixtures.py`:
 
 ```python
-@flezha.operator(id="sugar_store_input", sink="sugar_store_sink", codec="text")
+@flezha.relay(id="sugar_store_input", sink="sugar_store_sink", codec="text")
 class SugarStoreInput:
     def run(self, value: str, ctx: flezha.Ctx[dict[str, Any], str]) -> None:
         ctx.change({"push": value})
@@ -216,37 +216,37 @@ class SugarStoreInput:
         state["text_inputs"].append(change["push"])
 ```
 
-With no `sink`, the operator declares its entry channel and the tasklet and no
-plugin channel, which is how an operator that only keeps state is written.
+With no `sink`, the relay declares its entry channel and the tasklet and no
+plugin channel, which is how a relay that only keeps state is written.
 
-The generated operator is the one you would have written by hand with that
+The generated relay is the one you would have written by hand with that
 single tasklet: an entry channel named `input` (or the `input` keyword's
 value) decoded by `codec`, the tasklet, a plugin sink named by `sink` when one
 is written, a factory id equal to `id`, and the class settings it writes, as
 the full form takes them. The tasklet is named `id` verbatim, so growing out of the short form
 keeps every cell's state where it was, and `upcase.tasklet` wires it into
-another operator's channels body. A steps short form is a `once` steps operator,
-run once over its first message: `flz operator start --text '<payload>'`, or
-a start followed by `flz operator send`; a second message to a `once`
+another relay's channels body. A steps short form is a `once` steps relay,
+run once over its first message: `flz relay start --text '<payload>'`, or
+a start followed by `flz relay send`; a second message to a `once`
 instance is accepted and never read. With `each` written it loops, still
 one declaration:
 
 ```python
-@flezha.operator(id="chat", run={"steps": {"each": "per_input"}}, sink="replies", codec="text")
+@flezha.relay(id="chat", run={"steps": {"each": "per_input"}}, sink="replies", codec="text")
 def chat(turn: str) -> str:
     return turn
 ```
 
 Anything more is the full form: a second tasklet, a fan-out, a merge, a keyed
 edge, an edge's retry budget. The short form declares
-none of them, and nothing is harvested: an operator a runner declares is one
+none of them, and nothing is harvested: a relay a runner declares is one
 you registered.
 
 Three refusals name themselves. `topology.short_form_with_topology` (a class with `run`
 that also declares `channels`) and `topology.sink_without_output` (a `sink` on a function
 with no return annotation, or `None`, or on a class whose context names no
 output) are raised where the decorator runs, and
-`topology.duplicate_factory_id` where a second operator under one factory id is
+`topology.duplicate_factory_id` where a second relay under one factory id is
 registered. A missing `id`, and `sink`, `input`, `codec` or a tasklet keyword
 on a channels body, are refused where the decorator runs too, as is `run`,
 `durable`, `sink`, `input` or `codec` on `flezha.tasklet`.
@@ -257,7 +257,7 @@ The decorator takes the class settings as keywords, in either form, written as
 the tree's own data:
 
 ```python
-@flezha.operator(
+@flezha.relay(
     "orders",
     run={"steps": {"each": "per_input", "on_failure": "keep_progress"}},
     durable={"local": {"sleep_after": 10_000}},
@@ -281,12 +281,12 @@ def orders(c: flezha.Channels) -> None:
   `description` is free text.
 
 The `Run` and `Durable` type aliases spell the tree with `Literal` unions for a
-type checker. The core judges the tree when the runner declares its operators,
+type checker. The core judges the tree when the runner declares its relays,
 before it connects: a setting under a parent that does not carry it is
 `topology.unknown_field`, naming the setting and the parent, and a value
 outside its choice is `topology.invalid_setting`.
 
-A steps operator retries a failing tasklet on the edge that feeds it, as a flow
+A steps relay retries a failing tasklet on the edge that feeds it, as a flow
 does: `retry_max` and `retry_backoff_ms` on the channel (3 attempts, 50 ms base
 by default), so `retry_max(1)` is fail-fast.
 
@@ -294,7 +294,7 @@ A steps tasklet registers timers as a flow tasklet does, and a firing
 runs as a pass of its own ([`../topics/advanced/timers.md`](../topics/advanced/timers.md));
 only inside a `compensate` hook do `ctx.timer_after`, `ctx.timer_at_event_time`
 and `ctx.cancel_timer` raise a `FlezhaError` with the code `runtime.timers_unavailable`. A `ctx.spawn_steps`
-naming a flow factory resolves its handle to a `FlezhaError` with the code `operator.factory_not_steps`.
+naming a flow factory resolves its handle to a `FlezhaError` with the code `relay.factory_not_steps`.
 
 ### Type hints are the declaration
 
@@ -370,20 +370,20 @@ codec for a string, bytes or a JSON value, and names one only to pick another
 format, `"json"` to quote a string or `"msgpack"`. A `decode=` or `encode=`
 callable takes the place of a codec for anything else. A codec name outside the
 four, or a codec named beside a callable on one channel, is refused when the
-operator is declared, naming the operator and the channel.
+relay is declared, naming the relay and the channel.
 
 `.response()` ends a channel on the answer to an outside call instead of a sink,
-and takes the sink's `encode=` and `codec=`: [`../topics/advanced/operator_calls.md`](../topics/advanced/operator_calls.md).
+and takes the sink's `encode=` and `codec=`: [`../topics/advanced/relay_calls.md`](../topics/advanced/relay_calls.md).
 `.call("pricing", deadline_ms=500)` or `.call(factory="agent", deadline_ms=..., create=False, codec=...)`
-ends a chain on a call to another operator and answers an edge of `Response`s:
-[`../topics/advanced/operator_calls.md`](../topics/advanced/operator_calls.md).
+ends a chain on a call to another relay and answers an edge of `Response`s:
+[`../topics/advanced/relay_calls.md`](../topics/advanced/relay_calls.md).
 
 Python's integers survive JSON at any width. A `datetime`, a set, a dataclass,
 `NaN` or an infinity has no JSON form, so sending one to a sink that names no
 codec fails the emit naming the channel; `codec="msgpack"` or an encoder carries
 it.
 
-A value passed between two tasklets of one operator never crosses a channel
+A value passed between two tasklets of one relay never crosses a channel
 codec: it stays MessagePack. An Elixir entry declared with no decoder hands its
 tasklet the binary instead, since an Elixir string is its binary, so the same
 bytes on an undeclared entry are a `dict` here and a string there.
@@ -406,7 +406,7 @@ a later change cannot reintroduce it.
 
 The default host is a base pool of Python threads, each looping
 `poll → dispatch → complete` **on itself**, plus one supervisor thread parked in
-the core's starvation wait. It is `sdk/rust/src/operator/poll_pool.rs`
+the core's starvation wait. It is `sdk/rust/src/relay/poll_pool.rs`
 transliterated, and it reads that host's environment rather than inventing a
 vocabulary:
 
@@ -535,14 +535,14 @@ everywhere in one change.
 
 ## Local mode: run a graph with no controller
 
-`LocalOperator.start` takes the operator you deploy and runs its declared
+`LocalRelay.start` takes the relay you deploy and runs its declared
 graph in this process — no controller, no socket, no local-mode member on the
 class:
 
 ```python
-from flezha import LocalOperator
+from flezha import LocalRelay
 
-with LocalOperator.start(word_count) as run:
+with LocalRelay.start(word_count) as run:
     run.on_sink("totals", lambda out: print(out.payload.decode()))
     run.feed("lines", "the quick brown fox")
     run.run_until_idle(10_000)

@@ -96,7 +96,7 @@ defmodule Flezha.Application do
   defp drain_on_prep_stop() do
     # The Coordinator owns the drain — it dispatches ProcessHub
     # `cluster_leave` (via HubManager.stop_hub_manager/0) inside its
-    # drain phase and waits for peers to claim our Operators before
+    # drain phase and waits for peers to claim our Relays before
     # finalising. Bounded by `:flezha, :graceful_shutdown_timeout_ms`.
     _ = Coordinator.shutdown(:prep_stop)
   catch
@@ -186,7 +186,7 @@ defmodule Flezha.Application do
       worker_families ++
       [
         Flezha.Service.PortPilot,
-        {Task.Supervisor, name: Flezha.Operator.MessageHandlerTaskSup}
+        {Task.Supervisor, name: Flezha.Relay.MessageHandlerTaskSup}
       ]
   end
 

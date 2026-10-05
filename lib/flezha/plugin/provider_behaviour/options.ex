@@ -154,8 +154,8 @@ defmodule Flezha.Plugin.ProviderBehaviour.Options do
   # can name it.
   #
   # `channel` names it in BOTH directions: the entry channel a plugin whose
-  # provider feeds the operator injects on, and the filter over records passing
-  # through the operator a plugin hooked on a chain acts on.
+  # provider feeds the relay injects on, and the filter over records passing
+  # through the relay a plugin hooked on a chain acts on.
   # `channel_in` and `channel_out` name one each, for a plugin whose two names
   # differ. The answer is the two host-side values the readers take —
   # `:entry_channel` for the injection sites, `:filter_channel` for
@@ -281,7 +281,7 @@ defmodule Flezha.Plugin.ProviderBehaviour.Options do
 
       COMMON OPTIONS:
           --namespace <namespace>    Namespace (default: default)
-          --operator_id <id>        Target operator ID
+          --relay_id <id>        Target relay ID
           --hook=<name>              Call the plugin at this hook; repeatable
           --<name>.<key>=<value>     A sub-option of the hook <name>
 

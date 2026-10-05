@@ -198,7 +198,7 @@ defmodule Flezha.State.FsyncBatcher do
 
       # The writer refused its own file, and answers every write with that
       # refusal for the rest of its life. Re-marking it is a sync that can never
-      # happen; the refusal is what leaves its operator unbound.
+      # happen; the refusal is what leaves its relay unbound.
       {:error, {_reason, _last_seq, _offset}} ->
         :refused
 

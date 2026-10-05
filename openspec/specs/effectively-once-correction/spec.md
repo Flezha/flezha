@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The effectively-once-correction capability lets a flow operator fix the past when a source sends a late or corrected event: an operator with the effectively-once tier, an event-time clock, and keyed plugin channels may declare a `correction_window`, and an input that lands behind the Cell's event-time high-water but inside that window triggers an automatic restore-and-replay of the input-log slice above a rewound baseline, event-time-ordered, under a bumped epoch — so conforming sinks overwrite the stale rows by natural key and converge on the corrected values. Inputs are journaled before they are forwarded, so the late input is already in the log at its arrival offset and the slice contains it by construction. Beyond-window inputs follow a declared policy, bursts of late inputs coalesce into one correction per Cell, and the same transaction backs the administration verb `flz operator replay`.
+The effectively-once-correction capability lets a flow relay fix the past when a source sends a late or corrected event: a relay with the effectively-once tier, an event-time clock, and keyed plugin channels may declare a `correction_window`, and an input that lands behind the Cell's event-time high-water but inside that window triggers an automatic restore-and-replay of the input-log slice above a rewound baseline, event-time-ordered, under a bumped epoch — so conforming sinks overwrite the stale rows by natural key and converge on the corrected values. Inputs are journaled before they are forwarded, so the late input is already in the log at its arrival offset and the slice contains it by construction. Beyond-window inputs follow a declared policy, bursts of late inputs coalesce into one correction per Cell, and the same transaction backs the administration verb `flz relay replay`.
 ## Requirements
 ### Requirement: Late inputs inside the window trigger automatic correction
 
@@ -65,7 +65,7 @@ watermark.
 
 ### Requirement: Beyond-window late inputs follow the declared policy
 
-Late inputs older than the correction window SHALL follow the operator's
+Late inputs older than the correction window SHALL follow the relay's
 declared policy: `process_as_arrival` (default) or `drop`.
 
 In the Elixir SDK the two arms differ in one more way that is not optional: a
@@ -82,7 +82,7 @@ on-time input look late and start a correction storm.
 
 #### Scenario: Drop policy drops the input
 
-- **WHEN** the operator declares `drop` and a beyond-window input arrives
+- **WHEN** the relay declares `drop` and a beyond-window input arrives
 - **THEN** the input is not processed
 
 #### Scenario: An Elixir beyond-window arrival does not move the high-water
@@ -129,24 +129,24 @@ flight.
 
 ### Requirement: Manual replay verb
 
-`flz operator replay <cell> --from <seq|ts>` SHALL re-process the retained
-input window from the given point through the current operator code and
+`flz relay replay <cell> --from <seq|ts>` SHALL re-process the retained
+input window from the given point through the current relay code and
 republish outputs under a bumped epoch, using the same correction transaction
 with an empty splice. Targets older than retention SHALL be refused with an
-error coded `operator.outside_retention` (class `invalid`, exit 2), its details naming the earliest available point.
+error coded `relay.outside_retention` (class `invalid`, exit 2), its details naming the earliest available point.
 
 A Cell of a steps class SHALL be refused before anything is rewound, with an
-error stating that a steps operator's baseline is an iteration boundary across every Cell of the
+error stating that a steps relay's baseline is an iteration boundary across every Cell of the
 instance, recorded in its journal, and not one Cell's WAL seq, so the per-Cell correction
-transaction has no baseline to rewind to; and that a steps operator's inputs are released to
+transaction has no baseline to rewind to; and that a steps relay's inputs are released to
 retention at each iteration commit, so there is no retained window to re-process. The refusal
-SHALL name `flz operator rewind` as the steps operator's verb for taking a loop back. The
+SHALL name `flz relay rewind` as the steps relay's verb for taking a loop back. The
 instance's input log SHALL be untouched by the refusal.
 
 #### Scenario: Replay heals a sink after a code fix
 
-- **WHEN** an operator with a calculation bug is fixed and redeployed, and the
-  user runs `flz operator replay` from a point inside retention
+- **WHEN** a relay with a calculation bug is fixed and redeployed, and the
+  user runs `flz relay replay` from a point inside retention
 - **THEN** the sink's rows for the replayed range converge to values computed by
   the fixed code
 
@@ -154,15 +154,15 @@ instance's input log SHALL be untouched by the refusal.
 
 - **WHEN** the user requests a replay from a timestamp older than the
   retained window
-- **THEN** the verb fails with the code `operator.outside_retention` and reports the earliest
+- **THEN** the verb fails with the code `relay.outside_retention` and reports the earliest
   available target
 
-#### Scenario: Replay of a steps operator Cell is refused naming the instance-wide baseline
+#### Scenario: Replay of a steps relay Cell is refused naming the instance-wide baseline
 
-- **WHEN** the user runs `flz operator replay` naming a Cell of a durable
+- **WHEN** the user runs `flz relay replay` naming a Cell of a durable
   steps instance
 - **THEN** the verb fails naming the iteration boundary as the instance's baseline and
-  `flz operator rewind` as the verb to use, no Cell is rewound, no epoch is
+  `flz relay rewind` as the verb to use, no Cell is rewound, no epoch is
   bumped, and the instance's input log and floor are unchanged
 
 ### Requirement: The correction window is `correction_ms` under `effectively_once`

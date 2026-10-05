@@ -4,7 +4,7 @@ This tutorial runs `tradedesk`, a toy trader, and uses it to show what a
 deployment needs beyond the echo: authorization, a namespace of its own, state,
 partitions, plugins, and recovery from a crash.
 
-The desk is two operators. `trade_watcher` is an ETL stream that runs in flow:
+The desk is two relays. `trade_watcher` is an ETL stream that runs in flow:
 it reads trades from a demo exchange, keeps each symbol's recent prices, and
 sends out a buy signal when a price is far enough above their average. Each buy
 also starts an `order_executor`, a workflow that runs in steps: it takes one

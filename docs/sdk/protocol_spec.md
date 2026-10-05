@@ -2,7 +2,7 @@
 
 This is the wire-protocol reference for SDK implementers: transports, binary
 framing, the protobuf command set, the connection lifecycle, the data-plane
-frames and the per-Cell persistence frames. Operator authors do not need it
+frames and the per-Cell persistence frames. Relay authors do not need it
 — their surface is [`authoring_contract.md`](authoring_contract.md).
 
 The protocol has two implementations: the shared Rust kernel `flz_core`
@@ -30,13 +30,13 @@ separate boundary: [`poll_core.md`](poll_core.md).
 
 The **Controller** (Elixir/OTP) orchestrates work across one or more
 **Runners** (SDK processes). A runner connects to the controller over one
-transport, presents the operator factories it can host, and executes Operator
+transport, presents the relay factories it can host, and executes Relay
 logic on the controller's behalf over two layers:
 
 | Layer | Purpose | Socket | Encoding |
 |-------|---------|--------|----------|
 | Control plane | Handshake, command dispatch, lifecycle, durability barriers | control channel (one per runner) | protobuf inside the binary frame |
-| Data plane | Operator input/output, heartbeats, per-Cell state records | N primary (controller → runner) + N secondary (runner → controller) streams | raw bytes inside the binary frame |
+| Data plane | Relay input/output, heartbeats, per-Cell state records | N primary (controller → runner) + N secondary (runner → controller) streams | raw bytes inside the binary frame |
 
 Of the command surface, only five interactions reach host code in a `flz_core`
 runner (as `RestoreFold`, `SnapshotRequest`, `LiveStateRead`, `ApplyState`,
@@ -161,7 +161,7 @@ the logical id.
 | `control_command` | both | Protobuf `CommandRequest` / `CommandResponse` |
 | `control_ping` | runner → controller → runner | Keep-alive; a bare `Ping` the controller echoes verbatim (§5) |
 | `data_heartbeat` | runner → controller | Data-channel liveness, empty message + counters in metadata |
-| `{operator_id}` | both | Operator input (primary) and output (secondary) |
+| `{relay_id}` | both | Relay input (primary) and output (secondary) |
 | `cell_state_change`, `cell_effect_record`, `cell_state_snapshot` | runner → controller | Per-Cell persistence records (§11) |
 | `compensation_intent`, `compensation_done` | runner → controller | Steps saga markers (§11) |
 | `delete_cell_state` | runner → controller | Dynamic-Cell hard delete (§11) |
@@ -216,19 +216,19 @@ than at emit.
 
 | Key | Direction | Meaning |
 |-----|-----------|---------|
-| `input_type` | controller → runner | Stamped by the controller on every entry-channel input from the Operator's `:default_input_type` (`"2"` unless declared; `"1"` binary, `"2"` text). The SDKs do not read it: payload bytes are converted by the entry channel's declared payload type (`Vec<u8>`/`byte[]` passthrough, `String` UTF-8, anything else through the channel's entry parser). |
-| `channel` | controller → runner | The Operator's entry channel that receives this input. Absent ⇒ the Operator's first declared input channel. A name that is not one of the Operator's entry channels — undeclared, or declared as a channel of another kind — is parked to the dead-letter store under that name, never dropped and never routed to another channel. |
+| `input_type` | controller → runner | Stamped by the controller on every entry-channel input from the Relay's `:default_input_type` (`"2"` unless declared; `"1"` binary, `"2"` text). The SDKs do not read it: payload bytes are converted by the entry channel's declared payload type (`Vec<u8>`/`byte[]` passthrough, `String` UTF-8, anything else through the channel's entry parser). |
+| `channel` | controller → runner | The Relay's entry channel that receives this input. Absent ⇒ the Relay's first declared input channel. A name that is not one of the Relay's entry channels — undeclared, or declared as a channel of another kind — is parked to the dead-letter store under that name, never dropped and never routed to another channel. |
 | `channel` | runner → controller | Set on every plugin-bound emit. Plugin providers match on it via their `:channel` option to select which channel's outputs they consume. |
-| `flz.cell` | runner → controller | Output-identity stamp on `.keyed()` channels: `<operator_instance_id>/<tasklet_name>/<cell_key>` (empty key for single-mode). |
-| `flz.seq` | runner → controller | Output-identity stamp: `<change_seq>.<emit_ordinal>`; for a Cell that records effects (a flow operator on the effectively-once tier, or a durable steps operator Cell) the controller stamps `<record seq>.<emit_ordinal>` from the effect record. |
+| `flz.cell` | runner → controller | Output-identity stamp on `.keyed()` channels: `<relay_instance_id>/<tasklet_name>/<cell_key>` (empty key for single-mode). |
+| `flz.seq` | runner → controller | Output-identity stamp: `<change_seq>.<emit_ordinal>`; for a Cell that records effects (a flow relay on the effectively-once tier, or a durable steps relay Cell) the controller stamps `<record seq>.<emit_ordinal>` from the effect record. |
 | `flz.key` | runner → controller | Output-identity stamp: the emitting Cell's own key, or the caller's natural key from `emit_keyed(key, value)`. |
-| `flz.epoch` | controller → plugins | The Cell's WAL realign epoch, for a flow operator on the effectively-once tier and a durable steps operator Cell alike; a steps operator rewind does not move it. `(flz.cell, flz.seq, flz.epoch)` is the exact dedup identity a conforming sink deduplicates on. |
+| `flz.epoch` | controller → plugins | The Cell's WAL realign epoch, for a flow relay on the effectively-once tier and a durable steps relay Cell alike; a steps relay rewind does not move it. `(flz.cell, flz.seq, flz.epoch)` is the exact dedup identity a conforming sink deduplicates on. |
 | `flz.ack` | controller → plugins | Delivery-confirmation token minted by a durable outbox flush; the owning writer advances its cursor when the sink confirms or parks it. Absent on live non-durable output. |
-| `flz.offset` | controller → runner | The durable input-log offset of this forwarded input, for an instance with durable input: a flow operator on the effectively-once tier or a durable steps operator (§11). A flow operator's invocation carries it back as its effect record's `consumed_offset`, a steps operator's iteration as `IterCommit.consumed_offset`. |
+| `flz.offset` | controller → runner | The durable input-log offset of this forwarded input, for an instance with durable input: a flow relay on the effectively-once tier or a durable steps relay (§11). A flow relay's invocation carries it back as its effect record's `consumed_offset`, a steps relay's iteration as `IterCommit.consumed_offset`. |
 | `flz.msg_id` | sender → controller | Sender-supplied message id: an append whose id the instance's input log still retains is absorbed (§11). |
 | `flz.replay`, `flz.replay_end` | controller → runner | Replayed-slice markers for late-input correction (§11). |
 | `flz.change_seq` | runner → controller | On the `CellState` reply frame: the seq a single selected Cell was serialized at (§6). |
-| `flz.part`, `flz.part_attempt`, `flz.operator` | runner → controller | On an `output_part` frame: the part's number within its attempt, from `0`; the attempt, from `1`; and the instance it belongs to (§11). |
+| `flz.part`, `flz.part_attempt`, `flz.relay` | runner → controller | On an `output_part` frame: the part's number within its attempt, from `0`; the attempt, from `1`; and the instance it belongs to (§11). |
 
 The `flz.` prefix is a protected namespace: a user-supplied metadata key
 beginning with `flz.` is rejected at emit time with a typed error
@@ -248,7 +248,7 @@ to inter-tasklet consumers.
 
 `data_heartbeat` (empty message) is written on **every** secondary stream every
 `FLEZHA_DATA_HEARTBEAT_MS` (default 10 s, jittered into `[base/2, base]`)
-while connected, so an idle-but-healthy Operator keeps the controller's
+while connected, so an idle-but-healthy Relay keeps the controller's
 per-channel liveness clock fresh. Its metadata is the runner's self-report, and
 the key set is **one declaration**: every row of
 `Flezha.Transport.LivenessCounters` that names a `heartbeat:`, answered by
@@ -270,23 +270,23 @@ default-suite run.
 ### Per-Cell mailbox is bounded; on full, the channel's `OverflowPolicy` applies
 
 The runner's per-Cell mailbox is a fixed-capacity queue
-(`crossbeam::queue::ArrayQueue`) sized at Operator startup. A frame for a
+(`crossbeam::queue::ArrayQueue`) sized at Relay startup. A frame for a
 full mailbox takes the channel's declared `OverflowPolicy`: `DropNothing`
 (nothing is discarded — the producer waits for a slot, which on an
 inter-tasklet channel means the producing Cell is withheld further work and
 on an entry channel means the reader stalls; the default for every
 channel kind in every SDK), `DropNewest` or `DropOldest` (a counter is
 bumped). Under `DropNothing` a saturated entry channel parks the **wire-reader
-thread** and sibling Operators on that connection wait with it; the reader
+thread** and sibling Relays on that connection wait with it; the reader
 never runs tasklets itself, and `DropNothing` requires an acyclic tasklet
 graph. Capacity declaration
-and counters: [`rust_operator_architecture.md`](rust_operator_architecture.md)
+and counters: [`rust_relay_architecture.md`](rust_relay_architecture.md)
 "Backpressure and bounded mailboxes".
 
-### Operator state JSON shape
+### Relay state JSON shape
 
-`MigrationSerialization` / `MigrationDeserialization` / `CellState` and an
-operator's `AddOperator.init_values`, for both kinds, all carry a JSON blob
+`MigrationSerialization` / `MigrationDeserialization` / `CellState` and a
+relay's `AddRelay.init_values`, for both kinds, all carry a JSON blob
 whose shape is:
 
 - Single-mode tasklets (no Cell keys): `{"<tasklet_name>": <state>}`
@@ -301,7 +301,7 @@ on either runtime.
 
 #### Applying the shape
 
-A document need not cover the operator. Every top-level entry is applied to
+A document need not cover the relay. Every top-level entry is applied to
 the tasklet it names and every inner entry to the Cell its key names; a
 tasklet the document omits keeps the state its class builds. Within one
 entry there is no partial application: the value is handed to the tasklet's
@@ -311,7 +311,7 @@ declares per-field defaults.
 An entry that names nothing live is **ignored, not refused**. The runner writes
 one line to its stderr (`ignoring unknown tasklet`, `ignoring unknown
 cell_key`) and the command still succeeds; a value that fails to deserialize
-is ignored the same way. Only the document as a whole can fail `AddOperator`:
+is ignored the same way. Only the document as a whole can fail `AddRelay`:
 JSON that does not parse, and JSON that parses to anything but an object.
 
 A dynamic-mode tasklet cannot be seeded by `init_values`: its Cells are
@@ -319,10 +319,10 @@ minted on first sight of a key and none exists at the bind, so the entry
 reaches nothing. Migration is unaffected, because a dynamic tasklet's
 Cells are restored from their own records rather than through this path.
 
-A steps operator takes this shape exactly as a flow operator does: its
+A steps relay takes this shape exactly as a flow relay does: its
 `init_values` are applied as its tasklets' initial state before the
-`AddOperator` acknowledgement, so before any message can reach it. Nothing
-seeds an entry channel from the document; a steps operator's input is the messages
+`AddRelay` acknowledgement, so before any message can reach it. Nothing
+seeds an entry channel from the document; a steps relay's input is the messages
 sent to it.
 
 ### Frame buffering
@@ -374,13 +374,13 @@ message Error {
 |-----|---------|-----------|-------|
 | 2 | `AssignRunnerId` | C → R | `CommandResponse` |
 | 3 | `ConnectSocket` | C → R | `CommandResponse` |
-| 4 | `AddOperator` | C → R | `CommandResponse` (`raw_data` = `AddOperatorResponse`) |
-| 5 | `RemOperator` | C → R | `CommandResponse` |
+| 4 | `AddRelay` | C → R | `CommandResponse` (`raw_data` = `AddRelayResponse`) |
+| 5 | `RemRelay` | C → R | `CommandResponse` |
 | 6 | `MigrationSerialization` | C → R | `CommandResponse` (`raw_data` = JSON state) |
 | 7 | `MigrationDeserialization` | C → R | `CommandResponse` |
 | 8 | `CellState` | C → R | `CommandResponse` (`raw_data` = JSON state; frame metadata `flz.change_seq`) |
 | 9 | `RunnerDisconnect` | C → R | `CommandResponse` |
-| 10 | `OperatorMessage` | C → R | `CommandResponse` (`raw_data` = `OperatorMessageResponse`) |
+| 10 | `RelayMessage` | C → R | `CommandResponse` (`raw_data` = `RelayMessageResponse`) |
 | 11 | `CellApplyState` | C → R | `CommandResponse` (reserved; see §6) |
 | 12 | `RunnerShutdownNotification` | R → C | `RunnerShutdownAck` (tag 13) under the same `reference_id` |
 | 13 | `RunnerShutdownAck` | C → R | none |
@@ -389,7 +389,7 @@ message Error {
 | 18 | `CellMailboxStatus` | C → R | none (one-way) |
 | 19 | `Ping` | C → R | `CommandResponse` (`raw_data` = `PingResponse`) |
 | 20, 21 | `RunnerReconnected`, `ReassignRunnerId` | — | reserved; never emitted (§6) |
-| 22 | `OperatorCompleted` | R → C | none |
+| 22 | `RelayCompleted` | R → C | none |
 | 23 | `StepsStop` | C → R | `CommandResponse` |
 | 24 | `CreditWindowInit` | C → R | `CommandResponse` (`raw_data` = `CreditWindowAck`, tag 25) |
 | 26 | `CreditGrant` | C → R | generic `CommandResponse`, ignored |
@@ -404,7 +404,7 @@ message Error {
 | 35 | `SpawnStepsResponse` | C → R | none |
 | 36 | `AdminRequest` | R → C | `AdminResponse` (tag 37) under the same `reference_id` |
 | 37 | `AdminResponse` | C → R | none |
-| 38 | `OperatorExited` | R → C | none |
+| 38 | `RelayExited` | R → C | none |
 | 39 | `ConnectRefused` | C → R | none; the controller closes the stream after it |
 
 Tags 15, 17 and 25 are message types that only ever ride as a
@@ -441,7 +441,7 @@ Runner                                           Controller
   │<─ 6. ConnectSocket{sockets_count: N} ─────────│
   │   7. connect N primary + N secondary streams  │
   │── 8. CommandResponse(success) ───────────────>│
-  │<─ 9. Ping / AddOperator / ... (READY) ───────│
+  │<─ 9. Ping / AddRelay / ... (READY) ───────│
   │── 9. CommandResponse ────────────────────────>│
   │<─ 10. RunnerDisconnect ───────────────────────│
   │── 10. CommandResponse(success) ──────────────>│  11. both sides close
@@ -477,17 +477,17 @@ One frame, payload id `connect_control_channel`, empty metadata, JSON message:
   The controller establishes each factory's language and kind from the first
   announcement and places only on a runner announcing both as established; an
   entry with no kind never places. A start names only the factory, so the kind
-  on `AddOperator` is the announced one.
+  on `AddRelay` is the announced one.
 - `stable_id` — the runner's durable, self-owned identity, present on **every**
   connect (`profile_hash8` hashes the declared factory set order-independently,
-  `rand6` is a per-process random suffix). The controller binds operators to
+  `rand6` is a per-process random suffix). The controller binds relays to
   it and on a reconnect swaps the prior session's bindings onto the new token.
   See [`../internals/runner_identity.md`](../internals/runner_identity.md).
 - `incarnation` — an opaque value the runner process mints once and presents
   on every connect it makes. Under a `stable_id` the controller already holds,
   the same incarnation is a reconnect of the process that still runs the
-  operators, so only the bindings move; a new one is a restarted process that
-  runs none of them, so each operator is bound onto it afresh and resumes from
+  relays, so only the bindings move; a new one is a restarted process that
+  runs none of them, so each relay is bound onto it afresh and resumes from
   its durable state.
 - `namespace_secret` — the credential the claimed namespace is checked against,
   from `FLEZHA_NAMESPACE_SECRET`. **Omitted entirely** when the runner holds
@@ -550,7 +550,7 @@ answers the same way, through `establish_sockets/2`.
 ### Step 9: steady state
 
 The controller issues a `Ping` round-trip (default timeout
-`:overwatch_ping_timeout_ms`, 2 s) before each `AddOperator`, then the
+`:overwatch_ping_timeout_ms`, 2 s) before each `AddRelay`, then the
 commands of §6. A reply the `ControlUnit` has not seen after
 `:control_unit_pending_reply_timeout_ms` (90 s) is failed to its caller.
 
@@ -576,7 +576,7 @@ streams. This is intentional — the runner MUST NOT reconnect.
 ### Auto-reconnection
 
 A control read error while the status is `Running` drives a reconnect. The
-runner keeps its operator registry and per-Cell state, marks itself
+runner keeps its relay registry and per-Cell state, marks itself
 `Stopped` for the duration, re-dials with the same handshake (same
 `stable_id`) and returns to `Running` on the new stream. Every connect attempt
 retries forever with full-jitter exponential backoff:
@@ -601,8 +601,8 @@ the data-plane loss after them ends the session.
 
 On the controller the reconnect is a **binding swap**: the re-presented
 `stable_id` resolves to the prior session, its bindings move to the new token,
-and `AddOperator` is re-issued for every instance still bound to the runner;
-the runner's handler is idempotent on a duplicate `operator_id`, so existing
+and `AddRelay` is re-issued for every instance still bound to the runner;
+the runner's handler is idempotent on a duplicate `relay_id`, so existing
 Cell state survives. A runner that never returns is removed after
 `FLEZHA_RUNNER_KEEPALIVE` (default 30000 ms; `0` disables the grace).
 
@@ -625,15 +625,15 @@ secondary stream pairs (§5).
 ### Ping
 
 `Ping { nonce: string }` is answered with `raw_data` = `PingResponse { nonce }`
-echoing the nonce. Issued before `AddOperator` and by `flz` diagnostics; the
+echoing the nonce. Issued before `AddRelay` and by `flz` diagnostics; the
 round-trip proves the channel is bound, the runner is listening and the reply
 path is intact.
 
-### AddOperator
+### AddRelay
 
 ```protobuf
-message AddOperator {
-    string operator_id = 1;
+message AddRelay {
+    string relay_id = 1;
     string factory_id = 2;
     string init_values = 3;            // JSON; "" for none
     string kind = 4;                   // the announced kind: "flow" | "steps"; empty ⇒ "flow"
@@ -650,12 +650,12 @@ message AddOperator {
 
 | Field | Value |
 |-------|-------|
-| Behaviour | Create an instance of `factory_id` under `operator_id`. `"flow"`: a flow operator whose non-empty `init_values` JSON is applied as initial state in the tasklet-keyed shape of "Operator state JSON shape" above. `"steps"`: a steps instance, whose run is a pass sheet its events advance, its non-empty `init_values` applied as initial state in the same shape, its input the messages that arrive on its entry channels; a durable instance holds its first tasklet until `resume_cell_count` restores have landed. For either run, while any of its `inbox_tail_count` owed input-log records has not arrived its idle deadline is 60 s instead of its class's `sleep_after` |
-| Idempotency | A duplicate `operator_id` (a reconnect re-issue) is answered `success` without re-registering |
-| Reply | `raw_data` = `AddOperatorResponse { map<string,string> metadata }` — empty when the class declares nothing |
+| Behaviour | Create an instance of `factory_id` under `relay_id`. `"flow"`: a flow relay whose non-empty `init_values` JSON is applied as initial state in the tasklet-keyed shape of "Relay state JSON shape" above. `"steps"`: a steps instance, whose run is a pass sheet its events advance, its non-empty `init_values` applied as initial state in the same shape, its input the messages that arrive on its entry channels; a durable instance holds its first tasklet until `resume_cell_count` restores have landed. For either run, while any of its `inbox_tail_count` owed input-log records has not arrived its idle deadline is 60 s instead of its class's `sleep_after` |
+| Idempotency | A duplicate `relay_id` (a reconnect re-issue) is answered `success` without re-registering |
+| Reply | `raw_data` = `AddRelayResponse { map<string,string> metadata }` — empty when the class declares nothing |
 | Errors | factory not found; JSON parse / deserialization failure; `PartitionsWithoutPerInputLoop: ...`; `PartitionsWithoutKeyedTasklet: ...` |
 
-`AddOperatorResponse.metadata` carries the class's SDK-side declarations so
+`AddRelayResponse.metadata` carries the class's SDK-side declarations so
 the controller resolves per-class capabilities without a parallel config
 channel (absent/undecodable ⇒ every default):
 
@@ -673,43 +673,43 @@ channel (absent/undecodable ⇒ every default):
 | `beyond_window` | `"process_as_arrival"` / `"drop"` | what a late input beyond the window gets |
 | `ack` | `"checkpoint"` | the class acknowledges input only at checkpoints |
 | `compact_after_bytes` | bytes | the smallest per-tasklet compaction trigger, when it differs from the default |
-| `compensable_tasks` | list | steps operator tree positions whose tasklet declares `compensate` |
-| `leaf_tasks` | list | the steps operator tree's leaf positions |
+| `compensable_tasks` | list | steps relay tree positions whose tasklet declares `compensate` |
+| `leaf_tasks` | list | the steps relay tree's leaf positions |
 
 #### Partition identity
 
 `partition_index` / `partition_count` / `key_group_from` / `key_group_to`
-carry one member of a partitioned operator over 256 key groups
+carry one member of a partitioned relay over 256 key groups
 ([`../topics/advanced/partitioning.md`](../topics/advanced/partitioning.md)). With
 `partition_count < 2` the instance owns the whole space; otherwise the runner
 checks that each computed Cell key hashes into
 `[key_group_from, key_group_to]` and parks a miss with an error naming the
-key, its key group and the owning partition. A migrate-time `AddOperator`
+key, its key group and the owning partition. A migrate-time `AddRelay`
 carries the same fields, for either kind. A steps class whose loop mode is
 `once` or `chained` is refused first, with `PartitionsWithoutPerInputLoop`:
 its one message would reach one member while the others waited. A class with
 no keyed entry-fed tasklet is refused with `PartitionsWithoutKeyedTasklet`.
 A flow class answers `keyed: "false"` and a steps class its `each`,
 so the controller refuses a later partitioned start of a known class before
-touching a runner. On a steps operator member a refused entry key parks the message
+touching a runner. On a steps relay member a refused entry key parks the message
 under its entry channel and opens no pass.
 
-### RemOperator
+### RemRelay
 
-`RemOperator { operator_id: string }` removes the instance from the registry
-(hard teardown). Error: `runtime.operator_not_found`.
+`RemRelay { relay_id: string }` removes the instance from the registry
+(hard teardown). Error: `runtime.relay_not_found`.
 
 ### StepsStop
 
-`StepsStop { operator_id: string }` is the cooperative stop
-(`flz operator stop`): the runner trips the instance's cancellation token,
+`StepsStop { relay_id: string }` is the cooperative stop
+(`flz relay stop`): the runner trips the instance's cancellation token,
 lets in-flight work unwind, runs any saga compensation, then emits the normal
-`OperatorCompleted` with status `"cancelled"`. An unknown id is answered
+`RelayCompleted` with status `"cancelled"`. An unknown id is answered
 `success` and ignored.
 
-### OperatorCompleted
+### RelayCompleted
 
-`OperatorCompleted { operator_id, status, error, result: bytes }` travels
+`RelayCompleted { relay_id, status, error, result: bytes }` travels
 runner → controller, one-way, when an instance reaches an exit
 trigger. `status` is `"ok"` (a steps run's clean end), `"completed"` (a flow
 instance's `complete`), `"error"` (with `error`) or `"cancelled"`; `result` is the terminal payload. The controller
@@ -732,22 +732,22 @@ under a 60 s bound, until every Cell writer of the instance owes nothing; an
 entry still held for a stage marker is owed nothing. Field 5 was a `direct_outputs` count and is
 reserved; a runner that still sets it is simply not read.
 
-### OperatorExited
+### RelayExited
 
-`OperatorExited { operator_id, reason }` travels runner → controller,
-one-way, when the process of an operator instance of either kind exits
-abnormally: any reason but a clean stop, which a `RemOperator`, a finished
+`RelayExited { relay_id, reason }` travels runner → controller,
+one-way, when the process of a relay instance of either kind exits
+abnormally: any reason but a clean stop, which a `RemRelay`, a finished
 steps run or a graceful shutdown produce. The runner has already dropped the
 instance, so nothing it reads is routed to the dead process and the next
-`AddOperator` for the id starts a fresh one. `reason` renders the exit reason
+`AddRelay` for the id starts a fresh one. `reason` renders the exit reason
 for the log, the telemetry and the park reason; nothing branches on it. The
-runner keeps the report until an `AddOperator` or `RemOperator` names the id,
+runner keeps the report until an `AddRelay` or `RemRelay` names the id,
 and sends it again after every `ConnectSocket` it answers, because a report
 written while no control stream is bound reaches no one.
 
 The controller admits it through the instance's ownership record, as every
-frame naming an operator is: a runner that does not own the instance is told
-`RemOperator` once and nothing else happens. An admitted report first flushes
+frame naming a relay is: a runner that does not own the instance is told
+`RemRelay` once and nothing else happens. An admitted report first flushes
 the runner's stream channels, so every frame the dead incarnation wrote is read,
 and then reaches the instance's Overwatch, which acts only on a current report:
 the instance is bound to the reporting session, no bind is in flight, it is
@@ -755,8 +755,8 @@ neither suspended nor already parked, and no completion is recorded for it. A
 report that lands while a bind is in flight is held and judged against the
 binding that bind adopts, since the incarnation it started can die first. A
 current report parks the instance with the reason
-`{:operator_exited, reason}`, and the convergence loop rebinds it as it
-un-parks any operator: `AddOperator` with the resume state, the persisted Cells
+`{:relay_exited, reason}`, and the convergence loop rebinds it as it
+un-parks any relay: `AddRelay` with the resume state, the persisted Cells
 restored, then the input log re-forwarded above the confirmed floor. A park
 this report caused counts as repaired only once the rebound instance has stayed
 bound for the stable window, so one that dies on every bind is retried on its
@@ -767,10 +767,10 @@ runtimes decode it as a notification they never act on.
 
 | Field | Value |
 |-------|-------|
-| Message | `CellState { operator_id, tasklet, cell_key }` |
+| Message | `CellState { relay_id, tasklet, cell_key }` |
 | Behaviour | Serialize live in-memory Cell state as JSON (shape in §3), narrowed by the selector |
 | Reply | `raw_data` = JSON; reply-frame metadata `flz.change_seq` when the selector names exactly one Cell |
-| Errors | `Operator instance with id {id} not found`, plus the refusal tokens below |
+| Errors | `Relay instance with id {id} not found`, plus the refusal tokens below |
 
 **Selector.** `tasklet` and `cell_key` are optional (empty = absent), so a
 selector-less command encodes byte-identically to the migration/handover
@@ -785,7 +785,7 @@ compaction, snapshot or WAL truncation.
 | Refusal code (the `Error.code`) | Meaning |
 |---|---|
 | `state.cell_key_without_tasklet` | a Cell key is unique only within its Tasklet |
-| `state.tasklet_not_found` | the Operator declares no Tasklet by that name |
+| `state.tasklet_not_found` | the Relay declares no Tasklet by that name |
 | `state.cell_not_found` | that Tasklet holds no Cell by that key |
 | `state.cell_evicted` | the Cell was idle-evicted; eviction is destructive, so there is no durable value either |
 
@@ -794,21 +794,21 @@ The operations surface is `flz state get`
 
 ### CellApplyState
 
-`CellApplyState { operator_id, factory_id, state_binary: bytes }` is
+`CellApplyState { relay_id, factory_id, state_binary: bytes }` is
 reserved: the controller never sends it. A `flz_core` runner answers an
-unknown instance with `runtime.operator_not_found` and a known one with
+unknown instance with `runtime.relay_not_found` and a known one with
 `status: "error"` and the code `state.apply_not_supported`, the code an SDK
 without apply support MUST return.
 
 ### MigrationSerialization
 
-`MigrationSerialization { operator_id }` serializes the instance's whole state
+`MigrationSerialization { relay_id }` serializes the instance's whole state
 (JSON shape in §3) into `raw_data`, then **removes** the instance from the
 registry so the controller can re-create it on another runner.
 
 ### MigrationDeserialization
 
-`MigrationDeserialization { operator_id, factory_id, serialized_state: bytes }`
+`MigrationDeserialization { relay_id, factory_id, serialized_state: bytes }`
 creates the instance from `factory_id`, then applies `serialized_state`.
 
 ### RunnerDisconnect
@@ -816,24 +816,24 @@ creates the instance from `factory_id`, then applies `serialized_state`.
 `RunnerDisconnect {}`: set status `Stopped`, reply, close the control socket;
 never reconnect.
 
-### OperatorMessage
+### RelayMessage
 
-`OperatorMessage { operator_id, payload: bytes }` is answered with
-`status: "success"` and `raw_data` = `OperatorMessageResponse { payload:
+`RelayMessage { relay_id, payload: bytes }` is answered with
+`status: "success"` and `raw_data` = `RelayMessageResponse { payload:
 bytes, error: Error }`. An absent `error` means success and the controller
 reads `payload`; a present one means the instance reported a failure and the
 controller SHALL discard `payload`. A `flz_core` runner always answers the
-code `runtime.operator_message_unsupported` with an empty payload — the kernel
+code `runtime.relay_message_unsupported` with an empty payload — the kernel
 has no per-instance message hook. Sent by
 `Flezha.Plugin.Provider.MessageForward` via
-`ControlUnit.send_operator_message/3`
+`ControlUnit.send_relay_message/3`
 ([`../plugins/message_handlers.md`](../plugins/message_handlers.md)); the
 caller owns the timeout, and payloads share the control stream — keep them
 small.
 
 ### RunnerShutdownNotification
 
-`RunnerShutdownNotification { operator_id, serialized_state: bytes }` travels
+`RunnerShutdownNotification { relay_id, serialized_state: bytes }` travels
 runner → controller in the `CommandRequest` envelope (tag 12) on graceful
 shutdown only — SIGTERM, drop of the SDK handle, explicit `disconnect()`;
 SIGKILL and panics cannot emit and fall back to the last persisted state. Per
@@ -841,13 +841,13 @@ running instance the runner serializes through the same serializer
 `MigrationSerialization` uses and emits one notification; the controller
 forwards the bytes to the instance's Overwatch snapshot and answers
 `RunnerShutdownAck` under the same `reference_id`. The runner waits at most
-**2 s per operator** (parallelised), then exits unconditionally and never
-blocks its container's grace period; the per-operator serializer is capped at
+**2 s per relay** (parallelised), then exits unconditionally and never
+blocks its container's grace period; the per-relay serializer is capped at
 the controller's `cross_node_request_timeout` ceiling (10 s).
 
 ### RunnerShutdownAck
 
-`RunnerShutdownAck { operator_id }` travels controller → runner in the
+`RunnerShutdownAck { relay_id }` travels controller → runner in the
 `CommandRequest` envelope (tag 13), emitted as soon as the snapshot cast is
 enqueued on the Overwatch (not after it is applied) and unconditionally — a
 missing Overwatch (already migrated to a peer controller) still gets an ack so
@@ -869,10 +869,10 @@ current factory set. Full-set semantics make it idempotent: `FleetManager`
 replaces the runner's stored list (remove-then-store), scoped to the sender; an
 empty set is legal and leaves the runner connected with zero placeable
 factories. No ack: it gates no durability barrier — a stale placement fails at
-the runner's `AddOperator` handler and convergence re-places it; a lost frame
+the runner's `AddRelay` handler and convergence re-places it; a lost frame
 is corrected by the next one or by the reconnect init frame. Dropping a factory
-that still has operators bound to the runner logs a `FleetManager` warning
-naming namespace, runner, factory id and affected operators.
+that still has relays bound to the runner logs a `FleetManager` warning
+naming namespace, runner, factory id and affected relays.
 
 ### SpawnStepsRequest
 
@@ -896,18 +896,18 @@ in the invocation (4 bytes), the factory id and the payload, each part
 preceded by its length as 8 bytes big-endian. It is empty for an invocation
 that took no offset and for a spawn from outside a tasklet. A generated id is
 derived from it, and a delivered payload carries it as its `flz.msg_id`, so a
-request whose identity was already resolved answers the operator the first one
+request whose identity was already resolved answers the relay the first one
 started, running or completed, and delivers nothing twice.
 
 **The namespace is not carried**: the controller takes it from the control
 channel the request arrived on, which makes cross-namespace spawning impossible
-by construction. Resolution runs off the control channel (it starts an
-operator, which awaits `AddOperator` on the same stream); concurrent requests
+by construction. Resolution runs off the control channel (it starts a
+relay, which awaits `AddRelay` on the same stream); concurrent requests
 for one `(namespace, instance_id)` race-resolve at the registry — one start
 wins, every loser converts to a delivery. Each act is judged as the
 `runner@<namespace>` principal the connection proved, before it is performed: a
-start against the `operator_start` row, which records it, and a delivery as
-`operator.send`, recorded only when refused because it happens once per event.
+start against the `relay_start` row, which records it, and a delivery as
+`relay.send`, recorded only when refused because it happens once per event.
 With authorization enforced, an unbound principal is `runner`, and a start or a
 delivery answers `refused`. See
 [`../topics/advanced/spawning_from_a_tasklet.md`](../topics/advanced/spawning_from_a_tasklet.md).
@@ -917,9 +917,9 @@ delivery answers `refused`. See
 `SpawnStepsResponse { outcome, error, instance_id }` returns controller →
 runner under the request's `reference_id`; `outcome` is a success word,
 `spawned` or `delivered`, and is empty when `error` carries the refusal under
-the controller's own code: `operator.already_running`,
-`operator.factory_unknown`, `operator.factory_not_steps` (a factory its
-runners announced as a flow operator, decided before anything is placed),
+the controller's own code: `relay.already_running`,
+`relay.factory_unknown`, `relay.factory_not_steps` (a factory its
+runners announced as a flow relay, decided before anything is placed),
 an `authz.*` or `quota.exceeded` code, or any other. `instance_id` is the id
 the request resolved to: the requester's own, or
 the generated one (empty when a request that carried none started nothing). It resolves the requester's result handle and never faults the
@@ -931,7 +931,7 @@ older controller the request is ignored and the requester times out.
 `AdminRequest { verb, args }` goes runner → controller when application code
 administers the namespace its connection proved. One frame serves every verb,
 because the verb is data: `verb` names a function of the controller's published
-consumer surface as `"<Module>.<function>"` (`"Operator.start"`), and `args`
+consumer surface as `"<Module>.<function>"` (`"Relay.start"`), and `args`
 is a JSON array of that call's arguments other than the namespace.
 
 **There is no namespace field and no principal field**, and that is the safety
@@ -946,7 +946,7 @@ operation the catalogue marks as not `remote`, or as streaming, is refused as
 
 The hosts that share `flz_core` reach it through one verb-keyed C ABI entry,
 `flz_core_admin_call`; the Elixir SDK re-expresses the same frame over its own core. A runner's send rides the same frame: `flz_core_send_message` makes the
-`Operator.send` request, or, local, hands the message to an operator bound on
+`Relay.send` request, or, local, hands the message to a relay bound on
 that runner and sends no frame at all.
 
 ### AdminResponse
@@ -967,11 +967,11 @@ The persistence commands (`RestoreInitState`, `CompactCell`,
 
 | Stream | Direction | Carries |
 |--------|-----------|---------|
-| Primary | controller → runner | Operator input, replay slices, wake entries |
-| Secondary | runner → controller | Operator output, `data_heartbeat`, every persistence frame of §11 |
+| Primary | controller → runner | Relay input, replay slices, wake entries |
+| Secondary | runner → controller | Relay output, `data_heartbeat`, every persistence frame of §11 |
 
 Stream frames use the §3 format with payload id = the target instance's
-`operator_id` (or one of the reserved ids of §3).
+`relay_id` (or one of the reserved ids of §3).
 
 **Input (primary streams).** The runner resolves the instance by payload id
 (an unknown instance is logged and the frame dropped). For a **stream**
@@ -981,7 +981,7 @@ parks to the dead-letter queue under that name, with one attempt), wraps the pay
 bytes through that
 channel's declared type, and pushes the item onto every consumer Tasklet's
 Cell mailbox under the mailbox policy of §3; `flz.offset`, `flz.replay` and
-`flz.replay_end` ride along as described in §11. A **steps operator** instance takes
+`flz.replay_end` ride along as described in §11. A **steps relay** instance takes
 the same entrance: the channel is resolved the same way (an undeclared name
 parks under that name), the payload is wrapped through the channel's declared
 type or parser, a parse failure rides the entry channel's retry ladder to the
@@ -1012,7 +1012,7 @@ happens when the wire refuses it. There are three, the same in every runtime:
 - **durable** — a change record, an effect record, a compaction snapshot, an
   eviction's delete, a saga marker, a park payload, a shutdown state ship. Held
   in the ring below and replayed in write order on the next bound stream.
-- **output** — a plugin or steps operator emit. Held **already framed**, so a keyed
+- **output** — a plugin or steps relay emit. Held **already framed**, so a keyed
   output's `channel` and its `flz.*` identity stamps survive the replay; a
   re-framed record would carry empty metadata and strip them.
 
@@ -1104,7 +1104,7 @@ Total frame: 32 + 4 + 24 = 60 bytes
 **Command errors.** A failing handler replies `status: "error"` with one
 `Error` per failure in `errors` and normally an empty `raw_data`. Every failure
 on the wire is that one message: a command reply, `TaskCommitResponse`,
-`IterCommitResponse`, `OperatorMessageResponse`, `SpawnStepsResponse`,
+`IterCommitResponse`, `RelayMessageResponse`, `SpawnStepsResponse`,
 `AdminResponse` and `ConnectRefused`. The receiver branches on `code` (for
 example `runtime.class_not_registered`, `state.cell_key_without_tasklet`,
 `state.apply_not_supported`), never on `message`, which may be reworded.
@@ -1155,7 +1155,7 @@ Runner → controller. One Change record for the per-Cell WAL. Frame layout
 right per-Cell WAL without a side table:
 
 ```text
-[operator_class_len: u8   ][operator_class]
+[relay_class_len: u8   ][relay_class]
 [tasklet_id_len:    u8   ][tasklet_id]
 [cell_key_len:     u16 BE][cell_key]
 ```
@@ -1192,7 +1192,7 @@ rides the record of the state it produced. Same frame as
 `cell_state_change` with `format_id = 2`; `body` is the postcard
 `EffectRecordBody`: one invocation's state change(s), plugin outputs and
 consumed input-log offset, persisted by the controller as ONE WAL record under
-ONE fsync so state, outputs and progress can never tear apart. A steps operator
+ONE fsync so state, outputs and progress can never tear apart. A steps relay
 Cell's record carries no consumed offset (the iteration's `IterCommit` does)
 and no dead-letter park, and is sent as the item settles, ahead of the stage's
 `TaskCommit`, never on the flush linger. Decoded by
@@ -1237,7 +1237,7 @@ as concatenated fields and `Option` as `0x00 | 0x01 ++ T`.
   `cell_key@consumed_offset`) and sends no `ParkPayloadAck` for it.
 - A recorded plugin emit never rides the primary stream: the controller
   dispatches it to the `:on_output` chain only after the record's fsync (for a
-  steps operator Cell, only once the durable `task_committed` or `compensated` entry
+  steps relay Cell, only once the durable `task_committed` or `compensated` entry
   naming the record has been acked), stamped with `flz.cell`,
   `flz.seq = <record WAL seq>.<emit ordinal>`, `flz.epoch`, `channel`, `flz.key`
   when keyed, and the author's metadata. Effect records are never coalesced at
@@ -1291,7 +1291,7 @@ ParkBody {
 ```
 
 The controller appends the entry to the durable DLQ store
-(`app_data/dlq/<operator_class>/<tasklet_id>/`), fsyncs, then acks.
+(`app_data/dlq/<relay_class>/<tasklet_id>/`), fsyncs, then acks.
 Appends are idempotent on origin identity (`channel:sha256(payload)`), so an
 ack-lost re-send never duplicates an entry.
 
@@ -1338,12 +1338,12 @@ channel would be, and the metadata is:
 | `flz.part_attempt` | the invocation's attempt, from `1` |
 | `flz.cell` | the Cell's label, `<instance>/<tasklet>/<key>` |
 | `flz.key` | the Cell's key, when it has one |
-| `flz.operator` | the instance the part belongs to |
+| `flz.relay` | the instance the part belongs to |
 
 The payload id is reserved rather than the instance id, so a controller that
 does not know parts routes the frame to an instance named `output_part`, finds
 no route and drops it; it never reaches that controller's sinks. The
-controller routes a part by `flz.operator` through the session's own route, so
+controller routes a part by `flz.relay` through the session's own route, so
 a part from a session that no longer owns the instance is dropped, and hands it
 to the Overwatch's `on_preview` hook, which only a listener implements.
 
@@ -1416,7 +1416,7 @@ Changes refused as duplicates. `RestoreInitStateResponse` returns as
 `raw_data`; the controller blocks the Cell's input until it lands (the
 restore rides the control channel, the replay the data channel) and expects
 the next `cell_state_change` at `seq = terminal_seq + 1`. The task-journal is
-**not** here — it is instance-scoped and rides `AddOperator.task_journal`; a
+**not** here — it is instance-scoped and rides `AddRelay.task_journal`; a
 durable steps class with no per-Cell state receives no `RestoreInitState`
 at all.
 
@@ -1459,7 +1459,7 @@ message CompactCellResponse  { bytes cell_id = 1; uint64 snapshot_seq = 2; uint6
 
 Issued when the Cell's un-snapshotted WAL exceeds its compaction trigger
 (`FLEZHA_COMPACT_AFTER_BYTES`, default 8 MiB, overridable per class through
-`AddOperatorResponse.compact_after_bytes` and per user), when its oldest
+`AddRelayResponse.compact_after_bytes` and per user), when its oldest
 un-snapshotted record is older than `FLEZHA_COMPACT_AFTER_AGE_MS` (default
 300000; `0` disables), or on `flz state rotate`. The runner drains the
 Cell's pending changes, clones `State` under the Cell's sticky CAS,
@@ -1493,7 +1493,7 @@ message CreditGrant      { string stream_id = 1; uint64 bytes = 2; }
 ```
 
 Offered on the **first** `cell_state_change` frame of a stream attach, so
-the window resolves per Operator from that frame's class
+the window resolves per Relay from that frame's class
 (`:credit_window_bytes`, default `:wal_high_watermark_bytes`;
 `:credit_low_watermark_bytes`, default half the window). The runner arms the
 window and returns `CreditWindowAck` echoing `stream_id` as `raw_data`; on
@@ -1525,7 +1525,7 @@ entry is fsynced. On receipt the runner wakes the dispatch thread blocked in
 the park, drops the payload and advances the Cell. A runner that never
 receives it keeps the Cell held and re-sends the park — delay, never loss.
 
-### Control command `AddOperator.task_journal` (controller → runner)
+### Control command `AddRelay.task_journal` (controller → runner)
 
 ```protobuf
 message TaskHandoffItem   { uint32 channel_id = 1; bytes payload = 2; }   // channel codec bytes of one value
@@ -1584,7 +1584,7 @@ message CommittedCell {
 }
 
 message TaskCommit {
-    string operator_id = 1;
+    string relay_id = 1;
     uint32 task_idx = 2;
     uint32 iter = 3;                        // 0 for the single-pass chain
     repeated CommittedCell cells_ran = 4;
@@ -1602,10 +1602,10 @@ message TimerTrigger {
     uint64 scheduled_at = 3;   // its scheduled timestamp
 }
 
-message TaskCommitResponse { string operator_id = 1; uint32 task_idx = 2; Error error = 3; }
+message TaskCommitResponse { string relay_id = 1; uint32 task_idx = 2; Error error = 3; }
 ```
 
-Emitted at each tasklet barrier of a **durable structured** steps operator
+Emitted at each tasklet barrier of a **durable structured** steps relay
 instance: tasklet `task_idx` completed forward on `cells_ran` and released
 the inter-task handoff batch, serialized through the producing channel's byte
 codec, which the runtime derives and no SDK declares. The tasklet's outputs reach its children
@@ -1658,7 +1658,7 @@ at-least-once).
 **Release.** The response is the durable point past which the named records'
 outputs may be seen: right after the ack the controller tells each named
 Cell's writer that its range is committed, and the writer's outbox, the same
-one a tier flow operator Cell uses, dispatches those outputs through the
+one a tier flow relay Cell uses, dispatches those outputs through the
 `:on_output` chain. A held entry of that Cell below the range belongs to an
 attempt that never committed and is dropped. On restart the writer re-queues
 every record above its flush cursor and releases what a live journal entry
@@ -1680,13 +1680,13 @@ stream's output carries, minted by the Cell's writer from the effect record:
 The tuple is a pure function of the record, so a re-drive replays
 byte-identical stamps. An opted-out class writes no record: its outputs go
 straight to the wire with `channel`, `flz.key` and metadata, as a tier-off
-flow operator's do.
+flow relay's do.
 
 ### Control command `IterCommit` (runner → controller)
 
 ```protobuf
 message IterCommit {
-    string operator_id = 1;
+    string relay_id = 1;
     uint32 iter = 2;
     optional uint64 consumed_offset = 3;    // flz.offset of the input this iteration consumed; absent = none
     repeated TaskHandoffItem handoff = 4;   // the iteration's terminal batch
@@ -1696,7 +1696,7 @@ message IterCommit {
     optional DeadLetter dead_letter = 8;    // set when the iteration's turn failed
 }
 message DeadLetter { string tasklet = 1; uint32 attempts = 2; string error = 3; string cell_key = 4; }
-message IterCommitResponse { string operator_id = 1; uint32 iter = 2; Error error = 3; }
+message IterCommitResponse { string relay_id = 1; uint32 iter = 2; Error error = 3; }
 ```
 
 Emitted at each **iteration** boundary of a looping durable structured
@@ -1724,7 +1724,7 @@ a class whose tasklets declare `compensate`. The instance enters iteration
 iteration.
 
 `dead_letter` marks an iteration whose turn failed, in a `per_input` loop
-declaring keep-progress bound with `AddOperator.dead_letter_turns`. The
+declaring keep-progress bound with `AddRelay.dead_letter_turns`. The
 controller first parks the message at `consumed_offset`, read from the
 instance's input log, under the `_turn` slot, then appends ONE
 `dead_lettered` entry naming the DLQ entry instead of `iter_committed`, then
@@ -1739,8 +1739,8 @@ instead.
 
 ```protobuf
 message IterPark {
-    string operator_id = 1;
-    uint32 iter = 2;               // the last COMMITTED iteration; 0 for a flow operator
+    string relay_id = 1;
+    uint32 iter = 2;               // the last COMMITTED iteration; 0 for a flow relay
     uint64 wake_deadline_ms = 3;   // earliest pending processing-time timer; 0 = wake on input only
     optional uint64 consumed_offset = 4;  // the last message parked unread; absent = none
 }
@@ -1749,12 +1749,12 @@ message IterPark {
 An instance of either run whose class sleeps (`durable` `local` or `remote`
 with a `sleep_after`) asks to sleep with this once it has been idle past its
 class's `sleep_after` (by default never for a flow class, six hours for a steps class) with every Cell holding nothing
-queued, in flight, retrying or unflushed. A pending timer keeps a flow operator awake; a steps operator sleeps with its
-timers pending and names the earliest in `wake_deadline_ms`. A steps operator of any loop mode does so only at a **committed** iteration
+queued, in flight, retrying or unflushed. A pending timer keeps a flow relay awake; a steps relay sleeps with its
+timers pending and names the earliest in `wake_deadline_ms`. A steps relay of any loop mode does so only at a **committed** iteration
 boundary, the boundary before its first pass included, and emits it instead of
-`OperatorCompleted`; a flow operator sends `iter` `0`. Suspension is not a terminal
+`RelayCompleted`; a flow relay sends `iter` `0`. Suspension is not a terminal
 outcome. A rehydrated instance waits up to 60 s for the input-log tail the
-controller owes it (`AddOperator.inbox_tail_count`) before it may sleep again.
+controller owes it (`AddRelay.inbox_tail_count`) before it may sleep again.
 
 A message the run parked to the dead-letter queue unread (an undeclared
 channel, a parse the entry's ladder never got past, a host decoder's unreadable
@@ -1766,14 +1766,14 @@ restart too; the driver drops a re-forwarded message at or below the journal's
 `released_offset`.
 
 The controller writes the instance's park record (its wake deadline) beside
-the class's declarations, durable BEFORE the eviction, then evicts the instance from its runner (`RemOperator`); the
+the class's declarations, durable BEFORE the eviction, then evicts the instance from its runner (`RemRelay`); the
 bind that wakes it clears the record. The
 registry entry and the controller-side Overwatch stay: it is the **runner**
-that holds zero resources, and `flz operator info` reports the instance
+that holds zero resources, and `flz relay info` reports the instance
 `suspended`. Rehydration has one path, whichever wakes it — a new input-log
 append, or the journaled deadline elapsing — and both re-bind the instance
 through the normal spawn path on any live runner, restoring its Cells (and a
-steps operator's journal) and delivering the input log's undelivered tail. The
+steps relay's journal) and delivering the input log's undelivered tail. The
 deadline appends nothing: `wake_deadline_ms` is the earliest processing-time
 timer pending on any of the instance's Cells when it parked, so the restored
 Cell re-arms that timer and its firing opens the pass. An elapsed deadline
@@ -1783,13 +1783,13 @@ racing wakes collapse into exactly one rehydration.
 
 ### Data frame metadata: the durable input log (`flz.offset`, `flz.msg_id`)
 
-An instance has durable input when it is a flow operator on the effectively-once tier,
-a durable steps operator, or an instance of a class that sleeps. Its input is appended to the instance's one input log
+An instance has durable input when it is a flow relay on the effectively-once tier,
+a durable steps relay, or an instance of a class that sleeps. Its input is appended to the instance's one input log
 (`<state key>/input.log`) **before** it is forwarded, answered only once the
 record is synced, and the forwarded frame carries the assigned offset as
 `flz.offset`. Offsets are 0-based; absent means the input was not journaled (an
-instance without durable input), never offset `0`. A flow operator threads it into
-its Cells' effect records' `consumed_offset`; a steps operator into
+instance without durable input), never offset `0`. A flow relay threads it into
+its Cells' effect records' `consumed_offset`; a steps relay into
 `IterCommit.consumed_offset`, or `IterPark.consumed_offset` for a message it
 parked unread, and an iteration that consumed no journaled input (a carry-fed
 pass) carries none. A Cell drops an input stamped at or below the highest
@@ -1837,7 +1837,7 @@ metadata:
 
 | Key | Value | Stability |
 |-----|-------|-----------|
-| `flz.cell` | `<operator_instance_id>/<tasklet_name>/<cell_key>` | replay-stable |
+| `flz.cell` | `<relay_instance_id>/<tasklet_name>/<cell_key>` | replay-stable |
 | `flz.seq` | `<change_seq>.<emit_ordinal>` — the Cell's durable change seq after the flush-before-emit drain, plus the emit's ordinal within the invocation | replay-stable while state advances |
 | `flz.key` | the emitting Cell's own key, or the caller's natural key from `Ctx::emit_keyed(key, value)` | replay-stable by the determinism contract |
 
@@ -1855,7 +1855,7 @@ consumers that upsert on `flz.key`. It is NOT a sufficient handle for exact
 append-only dedup: consecutive invocations that apply no state change can
 produce colliding `<change_seq>.<emit_ordinal>` pairs. Exact dedup needs a
 durable outbox: the Cell writer's outbox stamps `flz.epoch` for the
-effectively-once tier and for a durable steps operator alike, and `(flz.cell, flz.seq, flz.epoch)` is the identity a
+effectively-once tier and for a durable steps relay alike, and `(flz.cell, flz.seq, flz.epoch)` is the identity a
 conforming sink deduplicates on (the Kafka producer uses `flz.key` as the
 record key and ships `<cell>/<outbox_seq>/<epoch>` in its
 `flezha.dedup_key` header; the Postgres sink guards on `(epoch, seq)`). See
@@ -1868,4 +1868,4 @@ record key and ships `<cell>/<outbox_seq>/<epoch>` in its
 - [`../internals/state_persistence.md`](../internals/state_persistence.md) — the controller's on-disk layout, WAL writer and `flz state` CLI
 - [`../internals/transport_liveness.md`](../internals/transport_liveness.md) — keep-alives, watchdogs and the stall classifier
 - [`../internals/nif_transport.md`](../internals/nif_transport.md) — the controller-side UDS/QUIC drivers
-- [`../architecture/steps_profile.md`](../architecture/steps_profile.md) — the steps operator barrier, journal and outbox model
+- [`../architecture/steps_profile.md`](../architecture/steps_profile.md) — the steps relay barrier, journal and outbox model

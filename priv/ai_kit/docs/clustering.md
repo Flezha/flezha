@@ -1,12 +1,12 @@
 # Clustering
 
 One controller can carry a whole application, but it is then a single machine to lose.
-Several controllers can share the operators instead: they form a cluster, each hosts a part
-of the operators, and when one is stopped it hands its operators to the others before it
-exits. An operator that moves keeps what it remembers.
+Several controllers can share the relays instead: they form a cluster, each hosts a part
+of the relays, and when one is stopped it hands its relays to the others before it
+exits. A relay that moves keeps what it remembers.
 
 A cluster is a set of controllers that hold the same secret and know each other's node
-names. Each controller has its own runners; an operator runs on a runner of the controller
+names. Each controller has its own runners; a relay runs on a runner of the controller
 that hosts it.
 
 ## How it works
@@ -28,18 +28,18 @@ flowchart LR
   reach them by node name. A node name is `flezha@` and a host name (or IP), and a host name
   must contain a dot. `FLEZHA_INITIAL_NODES` lists the nodes each controller tries to connect
   to; on Kubernetes, `FLEZHA_CLUSTER_DISCOVERY=k8s_pod_discovery` finds them instead.
-- **Sharing.** The operators are spread over the controllers. When a controller joins, it
-  takes a share: some operators move to it as it joins.
-- **Leaving.** A controller that is stopped hands its operators to the others before it
+- **Sharing.** The relays are spread over the controllers. When a controller joins, it
+  takes a share: some relays move to it as it joins.
+- **Leaving.** A controller that is stopped hands its relays to the others before it
   exits. The graceful-shutdown timeout bounds that (`FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS`,
   60000 by default), and the orchestrator must give the process longer than that before it
   kills it: the timeout plus 15 seconds, 75 seconds by default.
   [deploying_a_controller.md](deploying_a_controller.md) has the pairing rule.
 - **The state copy.** A durability backend (PostgreSQL, S3 or a path that outlives the node's
-  disk) holds a copy of each controller's state, which an operator that moves is restored
-  from. For an operator at `durable: local` the copy is made in the background, every
-  `FLEZHA_DURABILITY_SHIP_INTERVAL_MS` (30000 by default), so it can be a little behind; an
-  operator at `durable: remote` waits for it before each acknowledgement.
+  disk) holds a copy of each controller's state, which a relay that moves is restored
+  from. For a relay at `durable: local` the copy is made in the background, every
+  `FLEZHA_DURABILITY_SHIP_INTERVAL_MS` (30000 by default), so it can be a little behind; a
+  relay at `durable: remote` waits for it before each acknowledgement.
   [durability.md](../basics/durability.md) has the levels.
 
 ## Configure a cluster
@@ -85,7 +85,7 @@ services:
     depends_on: &postgres
       postgres:
         condition: service_healthy
-    stop_grace_period: 75s                 # time to hand its operators over
+    stop_grace_period: 75s                 # time to hand its relays over
 
   controller-2:
     build: controller
@@ -139,7 +139,7 @@ Full file: [`cluster.yaml`](https://github.com/flezha/flezha_java_sdk/blob/main/
 - **The node names** each get a network alias with a dot.
 - **Each controller has its own runner**, reached through its own socket volume.
 - **Port 8081** is the gateway's while `controller-2` hosts it: the HTTP server plugin runs on
-  whichever controller hosts the operator it is bound to.
+  whichever controller hosts the relay it is bound to.
 
 The two secrets are set in the shell that runs Compose:
 
@@ -164,17 +164,17 @@ Runners in namespace 'agents':
   - agents_00322d6189cc
 ```
 
-`flz operator list` shows which controller (`NODE`) and runner hosts each operator:
+`flz relay list` shows which controller (`NODE`) and runner hosts each relay:
 
 ```sh
-$ flz operator list --namespace agents
+$ flz relay list --namespace agents
 ```
 
 ```output
-Fetching operators for namespace 'agents'...
-Operators in namespace 'agents':
+Fetching relays for namespace 'agents'...
+Relays in namespace 'agents':
 
-  OPERATOR                          HEALTH      PARTS   NODE                  RUNNER
+  RELAY                          HEALTH      PARTS   NODE                  RUNNER
   anna                              suspended   -       flezha@controller-2.agentdeskagents_00322d6189cc
   bob                               suspended   -       flezha@controller-2.agentdeskagents_00322d6189cc
   carol                             suspended   -       flezha@controller.agentdeskagents_c8cade00c78f
@@ -196,10 +196,10 @@ Cluster status for namespace 'agents':
   Local node: flezha@controller.agentdesk (leader)
 
   Nodes:
-    flezha@controller.agentdesk: 2 operator(s) recovery_state=normal [leader]
-    flezha@controller-2.agentdesk: 3 operator(s) recovery_state=normal
+    flezha@controller.agentdesk: 2 relay(s) recovery_state=normal [leader]
+    flezha@controller-2.agentdesk: 3 relay(s) recovery_state=normal
 
-  Operator health: suspended=3, healthy=2
+  Relay health: suspended=3, healthy=2
 ```
 
 ### Stop a controller
@@ -217,19 +217,19 @@ user	0m0.163s
 sys	0m0.058s
 ```
 
-The controller handed its operators over before it exited, which is what
+The controller handed its relays over before it exited, which is what
 `stop_grace_period` leaves time for; here that took about a minute. Everything is on
 `controller` again:
 
 ```sh
-$ flz operator list --namespace agents
+$ flz relay list --namespace agents
 ```
 
 ```output
-Fetching operators for namespace 'agents'...
-Operators in namespace 'agents':
+Fetching relays for namespace 'agents'...
+Relays in namespace 'agents':
 
-  OPERATOR                          HEALTH      PARTS   NODE                  RUNNER
+  RELAY                          HEALTH      PARTS   NODE                  RUNNER
   anna                              suspended   -       flezha@controller.agentdeskagents_c8cade00c78f
   bob                               suspended   -       flezha@controller.agentdeskagents_c8cade00c78f
   carol                             suspended   -       flezha@controller.agentdeskagents_c8cade00c78f
@@ -237,11 +237,11 @@ Operators in namespace 'agents':
   gateway                           healthy     -       flezha@controller.agentdeskagents_c8cade00c78f
 ```
 
-The moved operators kept their state: a session's next answer continues its conversation, and
+The moved relays kept their state: a session's next answer continues its conversation, and
 the gateway's per-user token budget moved with it.
 
 ```sh
-$ flz operator call anna --namespace agents --text 'Are you still there?'
+$ flz relay call anna --namespace agents --text 'Are you still there?'
 ```
 
 ```output
@@ -250,10 +250,10 @@ $ flz operator call anna --namespace agents --text 'Are you still there?'
 
 ## Limits and gotchas
 
-- **A plugin's port moves with its operator.** The HTTP port is served by whichever controller
-  hosts the operator, so clients reach it through a proxy that tries each controller, as
+- **A plugin's port moves with its relay.** The HTTP port is served by whichever controller
+  hosts the relay, so clients reach it through a proxy that tries each controller, as
   [http_server.md](../../plugins/http_server.md#deployment) says.
-- **The background copy can be a little behind.** An operator at `durable: local` that moves
+- **The background copy can be a little behind.** A relay at `durable: local` that moves
   after its controller is lost, rather than stopped, is restored from the last copy shipped.
   `durable: remote` closes that gap at the cost of a wait per acknowledgement.
 - **Give the stop its time.** An orchestrator grace period shorter than the shutdown timeout

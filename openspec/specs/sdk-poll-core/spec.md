@@ -21,7 +21,7 @@ use.
 
 ### Requirement: Per-cell exclusivity by handout
 
-The core SHALL NOT hand out two activations for the same `(operator_instance,
+The core SHALL NOT hand out two activations for the same `(relay_instance,
 tasklet, cell_key)` concurrently: a cell with an outstanding (polled,
 uncompleted) activation SHALL NOT appear in any other poll result until its completion
 arrives. This restates the existing single-active-drainer invariant at the boundary.
@@ -39,7 +39,7 @@ The core SHALL NOT reclaim an outstanding activation on a timer or deadline. A
 long-running activation and a lost handout are indistinguishable at the
 boundary, and re-handing on a deadline would re-execute work the
 effectively-once tier promises once. Recovery from a handout a host lost despite
-the above is the controller's operator rebind, which resumes from durable
+the above is the controller's relay rebind, which resumes from durable
 state.
 
 #### Scenario: Same cell never outstanding twice
@@ -166,14 +166,14 @@ before the chain.
 
 The host layer (`flz_core::host`) SHALL support, for byte-level host
 classes, everything the typed Rust host can declare: single, static, and
-dynamic cell modes (dynamic with idle-TTL eviction and the steps operator
+dynamic cell modes (dynamic with idle-TTL eviction and the steps relay
 evicted-keys trace), the effectively-once tier and checkpoint
 ack-granularity (completions carrying `consumed_offset` / `checkpoint`
 drive the same effect-record and interval semantics), late-input
 correction (window declaration, admission classification, slice replay),
 per-cell timers of both kinds, and inter-tasklet edges whose values
 cross as bytes routed on `(edge, key)`. Class declarations SHALL carry
-these facts and the core SHALL populate `AddOperator` response metadata
+these facts and the core SHALL populate `AddRelay` response metadata
 from them exactly as the typed path does.
 
 #### Scenario: A dynamic host class routes by key and evicts idle cells
@@ -201,7 +201,7 @@ whose host releases a value untransformed and unkeyed for the consumer to
 apply the edge on delivery: the core SHALL stage such a value for the
 crossing on its channel, live or re-seeded from the journal, and SHALL
 address it to the keyed consumer's Cells from the answer, minting them as
-a flow operator's are minted. A payload that already carries its keys SHALL
+a flow relay's are minted. A payload that already carries its keys SHALL
 cross nothing. A staged value SHALL count as an item the RECEIVING stage
 still owes, so that stage cannot settle ahead of it; the live release and
 the journal re-seed are then one mechanism, because both arrive at the
@@ -210,7 +210,7 @@ Admission, classification, the high-water, and due-timer generation remain
 core-side; a prepare failure enters the input channel's retry→park ladder,
 and where that ladder would park a steps instance's value it SHALL
 fail the receiving stage instead, and nothing SHALL be parked, as the two
-other park sites do for a steps operator.
+other park sites do for a steps relay.
 
 #### Scenario: Event time arrives before admission
 - **WHEN** an input for an event-time-clocked host class is received
@@ -220,19 +220,19 @@ other park sites do for a steps operator.
 - **WHEN** the host answers a prepare batch with a failure for one payload
 - **THEN** that payload SHALL climb the channel's retry→park ladder and no keyless-drop path SHALL exist
 
-#### Scenario: A host steps operator's release is keyed by the crossing
-- **WHEN** a Java, Node, Python, Ruby or PHP steps operator's first tasklet releases three values into a tasklet reached by `keyBy`
+#### Scenario: A host steps relay's release is keyed by the crossing
+- **WHEN** a Java, Node, Python, Ruby or PHP steps relay's first tasklet releases three values into a tasklet reached by `keyBy`
 - **THEN** the core stages the three payloads for one crossing on the inter-tasklet channel, the host answers each value's key by running the edge's chain, three Cells are minted from the answers, and the keyed stage settles only after the three are addressed and have run
 
-#### Scenario: A resumed host steps operator re-seeds its keyed consumer the same way
-- **WHEN** a host steps operator whose keyed tasklet is the first uncommitted stage is resumed from its journal
+#### Scenario: A resumed host steps relay re-seeds its keyed consumer the same way
+- **WHEN** a host steps relay whose keyed tasklet is the first uncommitted stage is resumed from its journal
 - **THEN** the journaled handoff crosses for its keys as the live release did, and the pass resumes on the same Cells the crash left behind
 
 #### Scenario: A crossing that fails terminally fails the stage
 - **WHEN** a host answers every re-attempt for one released value with a non-retryable error
 - **THEN** the receiving stage of the steps instance fails without committing, compensation starts from there, and nothing is parked to the dead-letter queue
 
-### Requirement: Steps operator lifecycles run under poll
+### Requirement: Steps relay lifecycles run under poll
 
 Steps classes of BOTH language paths SHALL run their stages through the poll seam as
 ordinary cell work: a stage's items are admitted to its cells' mailboxes through the stream's
@@ -252,14 +252,14 @@ exist per instance. Saga compensation crosses as the `CompensateRun` activation,
 recorded outputs, for both language paths, with its completion an event on the sheet and its
 undo output settled into the compensating cell's own record; the
 task-journal, durable loop, suspension and rewind semantics are unchanged. Every
-steps class declares tasklets, so every steps operator host class runs through work activations; a
+steps class declares tasklets, so every steps relay host class runs through work activations; a
 completion MAY carry a tasklet's completion request, which the sheet folds at the iteration
 seal.
 
-#### Scenario: A host step completion ends its steps operator
+#### Scenario: A host step completion ends its steps relay
 
-- **WHEN** a steps operator host class's tasklet answers its activation with a completion request and a result
-- **THEN** the sheet SHALL seal the iteration on the pass's last ack and drive the same `OperatorCompleted` teardown the typed path produces, carrying that result
+- **WHEN** a steps relay host class's tasklet answers its activation with a completion request and a result
+- **THEN** the sheet SHALL seal the iteration on the pass's last ack and drive the same `RelayCompleted` teardown the typed path produces, carrying that result
 
 #### Scenario: A stage commits on its last item and releases on the ack
 
@@ -271,7 +271,7 @@ seal.
 - **WHEN** a durable steps cell's item settles with a change and a plugin output
 - **THEN** the worker that settled it frames and sends the cell's effect record before any barrier for that stage is sent, and the barrier carries that record's seq for the cell
 
-#### Scenario: A steps operator step costs no thread beyond the one running it
+#### Scenario: A steps relay step costs no thread beyond the one running it
 
 - **WHEN** a Java or a Rust steps class runs a stage
 - **THEN** the only thread occupied by that stage SHALL be the SDK thread running the code; no
@@ -285,7 +285,7 @@ seal.
 - **THEN** the stage's cells SHALL be handed out in the ready queue's order like any cell, and
   SHALL NOT be served ahead of queued cell work or outside the cap
 
-#### Scenario: A host steps operator's static cells receive their items
+#### Scenario: A host steps relay's static cells receive their items
 
 - **WHEN** a Java, Node, Python, Ruby or PHP steps tasklet declares static `cell_keys` and a
   stage releases a value to it
@@ -309,13 +309,13 @@ holdback, the cell's exclusivity gates stay held across the window exactly as
 they are across an in-line backoff, and the release-then-reclaim runs when the
 entry comes due. An instance's deadlines SHALL be entries on the same list, keyed by instance
 and deadline kind so re-arming replaces: the idle deadline (the class's `sleep_after`) of any
-instance whose class sleeps, and a steps operator's `max_duration`, commit-ack
+instance whose class sleeps, and a steps relay's `max_duration`, commit-ack
 re-send and restore-gate cap. A promoted deadline SHALL decide over what the instance holds
-(the pass sheet under its lock for a steps operator, the cells' mailboxes, holdbacks, buffers and
+(the pass sheet under its lock for a steps relay, the cells' mailboxes, holdbacks, buffers and
 timers for either kind) and act without waiting; a deadline that no longer applies SHALL be a
 no-op, and an idle deadline that finds the instance busy or its cells active more recently than
 the window SHALL re-arm rather than sleep. The idle deadline SHALL be armed once per bind (and,
-for a steps operator, when its sheet enters `Waiting`) and never per admitted input. No thread SHALL
+for a steps relay, when its sheet enters `Waiting`) and never per admitted input. No thread SHALL
 sleep out a backoff delay or an instance deadline, and no dedicated thread SHALL exist to
 service the list.
 
@@ -356,7 +356,7 @@ service the list.
 - **THEN** the poller promoting the deadline SHALL send `IterPark` and mark the instance parked,
   and no thread SHALL have waited out the idle window
 
-#### Scenario: A due idle deadline parks a flow operator without a thread
+#### Scenario: A due idle deadline parks a flow relay without a thread
 
 - **WHEN** a flow instance whose class sleeps has had no cell activity for its class's `sleep_after`, every cell's mailbox, holdback and flush buffer is empty, no retry or timer wake names one of its cells, and no input tail is owed
 - **THEN** the poller promoting the deadline SHALL send `IterPark` with iteration `0` and remove the instance, and no thread SHALL have waited out the idle window
@@ -378,7 +378,7 @@ activations (default 1024, env `FLEZHA_MAX_INFLIGHT_ACTIVATIONS`), enforced at
 work handout: when the limit is reached, `poll` SHALL NOT hand out cell work,
 and a completion that drops the count below the limit SHALL resume handout.
 The limit SHALL NOT gate direct command activations (restore folds, snapshot
-requests, live state reads, the steps operator undo's `CompensateRun`, prepare crossings: these
+requests, live state reads, the steps relay undo's `CompensateRun`, prepare crossings: these
 answer a rendezvous or an event, never a queued work item) nor the inline-serve
 deadlock-avoidance path. A steps stage's cell work is cell work and SHALL be counted and
 capped like any other.
@@ -578,7 +578,7 @@ behind it. Reaching the bound SHALL be reported.
 ### Requirement: A host encodes an output without allocating a buffer per value
 
 A host that must encode a value into bytes to hand the core an edge output SHALL reuse one
-encode buffer per thread rather than allocate a buffer, a flow operator or a reader for each value, and
+encode buffer per thread rather than allocate a buffer, a flow relay or a reader for each value, and
 SHALL NOT copy the encoder's own output a second time before handing it over. The only copy the
 host MAY make is the one that transfers ownership of the finished bytes out of a reused buffer,
 because a later encode overwrites that buffer.
@@ -635,9 +635,9 @@ one representation: the sheet is what the journal's resume state describes.
 
 The reason is one mechanism: after a proper sleep the only duty a per-instance thread would
 have is to hold a stage number, and a mechanism whose sole purpose is to hold one number beside
-the mechanism every flow operator runs on is a parallel implementation. `sdk/rust/benches/steps_scaling.rs`
+the mechanism every flow relay runs on is a parallel implementation. `sdk/rust/benches/steps_scaling.rs`
 stays as the regression gate: after this change ten thousand awake instances SHALL NOT cost more
-resident memory than the envelope recorded in `docs/resilience/steps_operator.md`, and a
+resident memory than the envelope recorded in `docs/resilience/steps_relay.md`, and a
 population waiting in any state SHALL consume no measurable CPU, because no wait polls.
 
 #### Scenario: A waiting population costs no CPU
@@ -655,7 +655,7 @@ population waiting in any state SHALL consume no measurable CPU, because no wait
 
 #### Scenario: The probe answers the question on demand
 
-- **WHEN** the per-instance cost of a steps operator is re-opened
+- **WHEN** the per-instance cost of a steps relay is re-opened
 - **THEN** the probe SHALL report resident and virtual cost per instance, thread count per
   instance, CPU while waiting, start and teardown latency, and an unrelated instance's latency
   beside the population, for a population blocked mid-stage and for one waiting for input

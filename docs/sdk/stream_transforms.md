@@ -8,15 +8,15 @@ For SDK implementers and contributors. How to use it is on
 | Piece | Rust | Java |
 | --- | --- | --- |
 | The check and its vocabulary | `flz_core/src/host/{register,issue}.rs` — one implementation, every SDK | shared core |
-| Builder surface, fusion (`attach_consumer`, `extend_pending`, `compose`) | `sdk/rust/src/channel/builder/` | `flezha-sdk-api/.../channel/{EdgeStream,EntryChannel,Stream}.java`, `flezha-sdk-runtime/.../operator/builder/OperatorTopologyBuilder.java` |
-| `ConsumerEdge`, `EdgeTransformFn`, `EdgeYield`, `transform_value`, `key_of` | `flz_core/src/channel.rs` | `flezha-sdk-runtime/.../operator/{ConsumerEdge,EdgeYield}.java` |
+| Builder surface, fusion (`attach_consumer`, `extend_pending`, `compose`) | `sdk/rust/src/channel/builder/` | `flezha-sdk-api/.../channel/{EdgeStream,EntryChannel,Stream}.java`, `flezha-sdk-runtime/.../relay/builder/RelayTopologyBuilder.java` |
+| `ConsumerEdge`, `EdgeTransformFn`, `EdgeYield`, `transform_value`, `key_of` | `flz_core/src/channel.rs` | `flezha-sdk-runtime/.../relay/{ConsumerEdge,EdgeYield}.java` |
 | Routing seam and ladder (`route_to_consumers`, `deliver_edge`, `run_retry_park_ladder`) | `flz_core/src/routing.rs` | `flezha-sdk-runtime/.../core/{EmitContext,CellRouting,EdgeTransforms}.java` |
-| Steps operator containment (`extend_mapped`) and refusals | `flz_core/src/steps/{driver,spec}.rs` | shared core |
+| Steps relay containment (`extend_mapped`) and refusals | `flz_core/src/steps/{driver,spec}.rs` | shared core |
 | Elixir SDK | `sdk/elixir/lib/flezha/sdk/{channels,topology}.ex` | — |
 
 Tests: `sdk/rust/tests/stream_transforms.rs` (asserts fusion by counting
 traversals), `sdk/rust/tests/ui/tasklet_cell_key_removed.rs`, Java
-`OperatorTopologyBuilderTest` / `CellRoutingTest` /
+`RelayTopologyBuilderTest` / `CellRoutingTest` /
 `StepsDispatchTest`, and
 `test/system/dynamic_cell_e2e_test.exs` on both runtimes. Examples:
 `sdk/rust/examples/stream_transforms.rs`, Java `E10_StreamTransforms`.

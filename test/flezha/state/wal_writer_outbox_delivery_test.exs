@@ -237,7 +237,7 @@ defmodule Flezha.State.WalWriterOutboxDeliveryTest do
     assert %{outbox_flushed_seq: 0} = WalWriter.outbox_status(pid)
   end
 
-  test "a held answer to an operator caller is re-dispatched until its delivery confirms it", %{
+  test "a held answer to a relay caller is re-dispatched until its delivery confirms it", %{
     rc: rc,
     cell_id: cell_id
   } do

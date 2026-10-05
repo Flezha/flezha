@@ -16,7 +16,7 @@ Three files, one for each part the guides describe:
 | File | Part | What it does |
 |---|---|---|
 | `Echo.java` | the tasklet | the processing stage: prefixes each message |
-| `EchoOperator.java` | the operator | the graph: `in` feeds the tasklet, output lands on `out` |
+| `EchoRelay.java` | the relay | the graph: `in` feeds the tasklet, output lands on `out` |
 | `Main.java` | the runner | this process: registers the echo factory and waits |
 
 ## Run it
@@ -31,8 +31,8 @@ mvn -q package && java -jar target/echo.jar
 Then, from another terminal:
 
 ```sh
-flz operator start echo --id my_echo
-flz operator send my_echo --text 'hello world' --await 2000
+flz relay start echo --id my_echo
+flz relay send my_echo --text 'hello world' --await 2000
 ```
 
 ```
@@ -62,7 +62,7 @@ above is all you need.
 
 [`docs/guides/runner_deployment.md`](../../../../docs/guides/runner_deployment.md)
 walks through what each of the three parts is and why the split is the way it
-is. The other worked examples, covering state, keys, timers, steps operators and the
+is. The other worked examples, covering state, keys, timers, steps relays and the
 rest, stay inside the SDK's own build at
 [`sdk/java/flezha-sdk-examples/`](../../flezha-sdk-examples/README.md).
 ````
@@ -86,7 +86,7 @@ rest, stay inside the SDK's own build at
     <packaging>jar</packaging>
 
     <name>Flezha echo example</name>
-    <description>One message in, one message out: a tasklet, an operator and a runner.</description>
+    <description>One message in, one message out: a tasklet, a relay and a runner.</description>
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
@@ -154,7 +154,7 @@ import com.flezha.sdk.tasklet.Tasklet;
 import com.flezha.sdk.tasklet.TaskletException;
 
 /**
- * A processing stage of the operator's graph, invoked once per message. This one prefixes the
+ * A processing stage of the relay's graph, invoked once per message. This one prefixes the
  * input and emits the result.
  *
  * <p>{@code Tasklet<String, Void, String>} reads input, state, output: a string in, no state, a
@@ -163,7 +163,7 @@ import com.flezha.sdk.tasklet.TaskletException;
  * <p>{@code name} is the tasklet's stable identity. State is filed under it, so changing it later
  * declares a different tasklet rather than renaming this one.
  *
- * <p>Where the result goes is not decided here. The operator decides that, so the graph can be
+ * <p>Where the result goes is not decided here. The relay decides that, so the graph can be
  * rewired without touching this class.
  */
 @Tasklet.Spec(name = "echo")                 // state is saved under this name, so choose it once
@@ -171,39 +171,39 @@ public final class Echo implements Tasklet<String, Void, String> {
 
     @Override
     public void run(String input, Ctx<Void, String> ctx) throws TaskletException {
-        ctx.emit("echo: " + input);          // where it goes is the operator's business
+        ctx.emit("echo: " + input);          // where it goes is the relay's business
     }
 }
 ````
 
-## examples/echo/src/main/java/com/flezha/examples/echo/EchoOperator.java
+## examples/echo/src/main/java/com/flezha/examples/echo/EchoRelay.java
 
 ````java
 package com.flezha.examples.echo;
 
 import com.flezha.sdk.channel.ChannelBuilder;
-import com.flezha.sdk.operator.Operator;
+import com.flezha.sdk.relay.Relay;
 import javax.annotation.Nonnull;
 
 /**
- * The deployable unit. An operator declares the graph a message travels: the entry channel it
+ * The deployable unit. A relay declares the graph a message travels: the entry channel it
  * arrives on, the steps it passes through, and the channel its result leaves on.
  *
- * <p>The operator is what the controller schedules onto a host, restarts after a failure,
+ * <p>The relay is what the controller schedules onto a host, restarts after a failure,
  * relocates when a host is withdrawn, and scales across several hosts. A tasklet is one stage
  * inside that graph.
  */
-public final class EchoOperator implements Operator {
+public final class EchoRelay implements Relay {
 
     /**
-     * The operator's stable identity, durable in the same way the tasklet's name is. The
+     * The relay's stable identity, durable in the same way the tasklet's name is. The
      * controller's registry and the durable state both key on this value, so changing it declares a
-     * new operator rather than renaming an existing one.
+     * new relay rather than renaming an existing one.
      */
     @Override
     @Nonnull
     public String factoryId() {
-        return "echo";                       // the name `flz operator start` takes
+        return "echo";                       // the name `flz relay start` takes
     }
 
     /**
@@ -234,16 +234,16 @@ import com.flezha.sdk.Flezha;
 import com.flezha.sdk.FlezhaRunner;
 import com.flezha.sdk.SendOpts;
 import com.flezha.sdk.control.Control;
-import com.flezha.sdk.control.OperatorSpec;
+import com.flezha.sdk.control.RelaySpec;
 import com.flezha.sdk.control.PluginSpec;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
 /**
- * Starts a runner: a process that connects to the controller and serves your operators.
+ * Starts a runner: a process that connects to the controller and serves your relays.
  *
- * <p>Declare every operator you want served before calling {@code run()}. One runner can serve
+ * <p>Declare every relay you want served before calling {@code run()}. One runner can serve
  * several, and {@code registerFactory(...)} is the same call for the steps run.
  */
 public final class Main {
@@ -252,18 +252,18 @@ public final class Main {
         // run() is start() followed by awaitTermination(). Splitting them keeps the handle,
         // which is the only way to reach control() and send(), and still blocks until shutdown.
         FlezhaRunner runner = Flezha.createRunner(args.length > 0 ? args[0] : "default")
-                .registerFactory(EchoOperator.class)     // the operators this runner serves
+                .registerFactory(EchoRelay.class)     // the relays this runner serves
                 .start();                                // connects to the controller
 
-        // Everything `flz operator` and `flz plugin` do is also a method of control(), and
-        // send() hands a message to an operator. Uncomment to drive this namespace from the
+        // Everything `flz relay` and `flz plugin` do is also a method of control(), and
+        // send() hands a message to a relay. Uncomment to drive this namespace from the
         // application instead of from a terminal:
         //
         // Control control = runner.control();
-        // control.startOperator(OperatorSpec.of("echo").id("my_echo"));
+        // control.startRelay(RelaySpec.of("echo").id("my_echo"));
         //
         // ObjectNode opts = JsonNodeFactory.instance.objectNode().put("path", "echo-out.txt");
-        // control.enablePlugin("writer", PluginSpec.of("operator_file_sink").opts(opts));
+        // control.enablePlugin("writer", PluginSpec.of("relay_file_sink").opts(opts));
         // ArrayNode hooks = JsonNodeFactory.instance.arrayNode();
         // hooks.addArray().add("on_output").addObject();
         // control.bindPlugin("writer", "my_echo", hooks, null);
@@ -284,16 +284,16 @@ public final class Main {
 
 ````java
 /**
- * The minimal complete application: an operator that declares the graph, a stateless tasklet it
+ * The minimal complete application: a relay that declares the graph, a stateless tasklet it
  * routes each message into, and a main that serves it.
  *
  * <p>This example deliberately introduces nothing else. A line of text arrives on an entry channel,
  * the tasklet prefixes it, and the result is delivered to a plugin sink.
  *
- * <p>{@link com.flezha.examples.echo.EchoOperator} declares the graph and is the unit the cluster
+ * <p>{@link com.flezha.examples.echo.EchoRelay} declares the graph and is the unit the cluster
  * actually schedules. {@link com.flezha.examples.echo.Echo} is the processing stage invoked once per
- * message, and the class the operator routes into. {@link com.flezha.examples.echo.Main} starts a
- * runner and declares the operator on it. Read the operator first: its single wiring expression is
+ * message, and the class the relay routes into. {@link com.flezha.examples.echo.Main} starts a
+ * runner and declares the relay on it. Read the relay first: its single wiring expression is
  * the shortest complete description of what this application does.
  *
  * <p>The tasklet declares {@code Void} state, so it persists nothing. Nothing is

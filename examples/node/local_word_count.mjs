@@ -9,7 +9,7 @@
 //
 // State is held in memory and nothing is durable; the run says so on stderr.
 
-import { LocalOperator, defineOperator, defineTasklet } from '@flezha/sdk';
+import { LocalRelay, defineRelay, defineTasklet } from '@flezha/sdk';
 
 const Split = defineTasklet({
   name: 'split',
@@ -34,7 +34,7 @@ const Tally = defineTasklet({
   },
 });
 
-const WordCount = defineOperator({
+const WordCount = defineRelay({
   factoryId: 'local_word_count_example',
   channels: (c) => {
     c.input('lines', { codec: 'text' })
@@ -48,7 +48,7 @@ const WordCount = defineOperator({
   },
 });
 
-const run = LocalOperator.start(WordCount);
+const run = LocalRelay.start(WordCount);
 try {
   run.onSink('totals', (output) => console.log(output.payload.toString('utf8')));
   await run.feed('lines', 'the quick brown fox');

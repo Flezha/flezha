@@ -3,7 +3,7 @@
 How the guarantees of [Durability](../topics/basics/durability.md) are built: the
 guarantee class of a frame, the parts of the effectively-once tier, and the input
 floor. This page is for contributors; what survives what, and how to use it, is on the
-topic page. Operator placement recovery is
+topic page. Relay placement recovery is
 [`../internals/process_hub.md`](../internals/process_hub.md); the WAL substrate is
 [`../internals/state_persistence.md`](../internals/state_persistence.md).
 
@@ -13,7 +13,7 @@ Between the two sits the wire itself, and what a runner does when it refuses a f
 by the frame's declared **guarantee class**, never at the write site. A change record, a
 snapshot, an eviction's delete, a saga marker, a park payload and the shutdown state ship are
 `durable`: held in a bounded drop-oldest ring, the shed counted, replayed in write order on the
-next bound stream. A plugin or steps operator emit is `output`: held already framed, so a keyed
+next bound stream. A plugin or steps relay emit is `output`: held already framed, so a keyed
 output's channel and identity stamps survive the replay. A control frame is refused to its
 caller and never held, because the reconnect re-issues the request it belonged to, and the data
 heartbeat is held by nothing at all — it reports a moment that has passed. The seam is
@@ -29,9 +29,9 @@ effectively-once*. Every plugin-bound channel must be `.keyed()` (refused at bui
 otherwise), and the tier is built by the shared runner core, so Rust and Java earn the same
 guarantee.
 
-- **Durable input log.** `Flezha.Operator.Ingest.ingest/4` appends every inbound payload to a
+- **Durable input log.** `Flezha.Relay.Ingest.ingest/4` appends every inbound payload to a
   per-instance `input.log` before forwarding, stamped `flz.offset`; the log answers once the
-  record is synced. It is the one durable input log, shared with a durable steps operator (below). The
+  record is synced. It is the one durable input log, shared with a durable steps relay (below). The
   host never waits on the log (`InputLog.append_async/5`): the input is forwarded when the log
   answers, and a zero-credit park lands on the source's call alone. A repeat of a `flz.msg_id`
   the log still retains is absorbed; a message without an id is always appended. Retention
@@ -75,7 +75,7 @@ guarantee.
   one cast and settles it with one report; a sink confirms a completed batch with one report
   naming every entry (a park stays per record). A chain that crashes mid-batch settles nothing,
   and the resettle re-drives every pending entry under identical identity.
-- **Conforming sinks out of the box.** The **Postgres** sink (`operator_postgres`,
+- **Conforming sinks out of the box.** The **Postgres** sink (`relay_postgres`,
   `Flezha.Plugin.Provider.Postgres`) upserts every record of a flush batch into
   `flezha_records` (keyed by `flz.key`, else the durable identity) and advances the per-Cell
   `flezha_sink_progress` row in ONE transaction; every upsert is guarded by `(epoch, seq)`
@@ -88,7 +88,7 @@ guarantee.
   `flz.key` as the message key and carries the durable identity in the `flezha.dedup_key`
   header; see [`../plugins/kafka_producer.md`](../plugins/kafka_producer.md).
 - **The websocket sink is not a conforming sink, and does not claim to be.** A plugin bound as
-  an output (`operator_websocket`, `Flezha.Plugin.Provider.Websocket`) ships each dispatched
+  an output (`relay_websocket`, `Flezha.Plugin.Provider.Websocket`) ships each dispatched
   payload as a frame on the connection it already holds, and answers the hold by its declared
   `sink_ack_mode`: `"none"` (default) confirms when the frame reaches the established socket,
   which is **at-most-once** past that point; `"required"` confirms only when an inbound frame
@@ -98,19 +98,19 @@ guarantee.
   `flz.cell` and `flz.seq` in the frame template, and the consumer that tracks the last
   sequence it has applied per cell is the only place the dedup can work. Frames are queued
   while the socket is down (`sink_queue_max`, 10 000; callers park at the bound) and a frame
-  whose retry budget is spent parks in the dead-letter store. An enable on a tier operator
-  warns rather than refusing: the operator's internal guarantee is unchanged and only its
+  whose retry budget is spent parks in the dead-letter store. An enable on a tier relay
+  warns rather than refusing: the relay's internal guarantee is unchanged and only its
   websocket hop is best-effort. See
   [`../plugins/websocket_subscription.md`](../plugins/websocket_subscription.md).
-- **Source back-pressure.** Ingestion debits a per-operator source credit window
+- **Source back-pressure.** Ingestion debits a per-relay source credit window
   (`:source_credit_window_bytes`, default = `:wal_high_watermark_bytes`); the min-watermark
   advance mints it back. At zero credit the source adapter's ingest call parks (a websocket
   stops reading its socket), bounding input-log growth against a stalled Cell. A sink outage
   longer than `window / ingest rate` delays ingestion; it never wedges it.
-- **Cost-free default.** Operators without the flag keep every path byte-identical. Under the
+- **Cost-free default.** Relays without the flag keep every path byte-identical. Under the
   tier a slow or unreachable sink backs the outbox up on disk, never in memory.
-- **Steps operators** do not declare the tier (it is a member of the flow run only): a durable
-  steps operator's Cells write the same effect record as their ordinary durability, released at the
+- **Steps relays** do not declare the tier (it is a member of the flow run only): a durable
+  steps relay's Cells write the same effect record as their ordinary durability, released at the
   stage commit below.
 
 Wire shapes: [`../sdk/protocol_spec.md`](../sdk/protocol_spec.md) "Output identity stamps" and

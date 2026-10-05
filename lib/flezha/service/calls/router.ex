@@ -5,7 +5,7 @@ defmodule Flezha.Service.Calls.Router do
   hands it to that key's delivery worker, and stops a worker that reports
   itself idle and still holds nothing.
 
-  A request is delivered through `OperatorManager.spawn_or_deliver/8` for a
+  A request is delivered through `RelayManager.spawn_or_deliver/8` for a
   factory and through the target's `:call` entry point for an instance or a
   group, judged as the caller namespace's runner identity. The callee's
   verdict is reported to the caller: taken (the callee's id and whether the
@@ -23,15 +23,15 @@ defmodule Flezha.Service.Calls.Router do
   use GenServer
 
   alias Flezha.Config.Durations
-  alias Flezha.Operator.Calls
-  alias Flezha.Plugin.Provider.OperatorForward.ForwardWorker
+  alias Flezha.Relay.Calls
+  alias Flezha.Plugin.Provider.RelayForward.ForwardWorker
   alias Flezha.Process.CallDelivery
   alias Flezha.Process.Watch
   alias Flezha.Runner.FleetManager.Session
   alias Flezha.Service.Calls, as: Service
   alias Flezha.Service.HubManager
-  alias Flezha.Service.OperatorManager
-  alias Flezha.Service.OperatorManager.Spawn
+  alias Flezha.Service.RelayManager
+  alias Flezha.Service.RelayManager.Spawn
 
   def start_link(_opts), do: GenServer.start_link(__MODULE__, nil, name: CallDelivery.name())
 
@@ -111,8 +111,8 @@ defmodule Flezha.Service.Calls.Router do
     %{
       plugin_id: "call",
       source_namespace: namespace,
-      source_operator_id: source,
-      target_operator_id: target,
+      source_relay_id: source,
+      target_relay_id: target,
       queue_max: :infinity,
       retry_backoff_ms: 50,
       retry_max_backoff_ms: 2_000,
@@ -176,7 +176,7 @@ defmodule Flezha.Service.Calls.Router do
   end
 
   defp reach(namespace, caller, %{target: "factory:" <> factory} = request, context) do
-    OperatorManager.spawn_or_deliver(
+    RelayManager.spawn_or_deliver(
       namespace,
       request.key || "",
       factory,
@@ -200,17 +200,17 @@ defmodule Flezha.Service.Calls.Router do
       factory: factory
     }
 
-  defp metadata(%{channel: channel}), do: OperatorManager.channel_metadata(channel)
+  defp metadata(%{channel: channel}), do: RelayManager.channel_metadata(channel)
 
   defp report_taken(namespace, caller, id, callee, created) do
-    with {:ok, pid} <- OperatorManager.get_operator_pid(namespace, caller),
+    with {:ok, pid} <- RelayManager.get_relay_pid(namespace, caller),
          do: GenServer.cast(pid, {:call_accepted, id, callee, created})
 
     :ok
   end
 
   defp deliver_answer(namespace, caller, id, outcome) do
-    case OperatorManager.get_operator_pid(namespace, caller) do
+    case RelayManager.get_relay_pid(namespace, caller) do
       {:ok, pid} ->
         GenServer.call(
           pid,
@@ -218,7 +218,7 @@ defmodule Flezha.Service.Calls.Router do
           Durations.get(:overwatch_call_timeout_ms)
         )
 
-      {:error, {:operator_not_found, _namespace, _id}} = absent ->
+      {:error, {:relay_not_found, _namespace, _id}} = absent ->
         if gone?(namespace, caller),
           do: caller_gone(namespace, outcome.target, caller),
           else: absent
@@ -232,7 +232,7 @@ defmodule Flezha.Service.Calls.Router do
   # caller still declared is asleep, moving or restarting, and a hub that
   # cannot be read decides nothing.
   defp gone?(namespace, caller) do
-    case HubManager.declared_operators(namespace, :unreadable) do
+    case HubManager.declared_relays(namespace, :unreadable) do
       :unreadable -> false
       declared -> not Enum.any?(declared, &(&1.id == caller))
     end
@@ -242,7 +242,7 @@ defmodule Flezha.Service.Calls.Router do
     :telemetry.execute(
       [:flezha, :call, :answer_dropped],
       %{count: 1},
-      %{namespace: namespace, operator_id: callee, caller: caller, reason: "caller_gone"}
+      %{namespace: namespace, relay_id: callee, caller: caller, reason: "caller_gone"}
     )
 
     {:ok, :absorbed}

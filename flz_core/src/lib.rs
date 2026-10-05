@@ -17,7 +17,6 @@ pub mod admission;
 #[cfg(feature = "bench-internals")]
 #[doc(hidden)]
 pub mod bench_support;
-pub mod steps;
 pub mod call;
 pub mod cell;
 pub mod channel;
@@ -43,7 +42,6 @@ pub mod host;
 pub mod local;
 #[doc(hidden)]
 pub mod mailbox;
-pub mod operator;
 #[doc(hidden)]
 pub mod park;
 pub mod part;
@@ -52,6 +50,7 @@ pub mod persistent_id;
 pub mod poll_core;
 #[doc(hidden)]
 pub mod prefix;
+pub mod relay;
 #[doc(hidden)]
 pub mod restore;
 #[doc(hidden)]
@@ -66,6 +65,7 @@ pub mod shutdown;
 pub mod spawn;
 #[doc(hidden)]
 pub mod state_sink;
+pub mod steps;
 #[cfg(any(test, feature = "bench-internals"))]
 mod test_support;
 pub mod timer;

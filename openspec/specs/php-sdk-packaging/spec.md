@@ -31,7 +31,7 @@ Process multiplicity SHALL be the orchestrator's concern — Kubernetes replicas
 
 #### Scenario: More processes means more runners
 - **WHEN** an orchestrator starts several runner processes for one namespace on one host
-- **THEN** each SHALL register as its own runner, and the controller SHALL spread operators across them by its existing placement
+- **THEN** each SHALL register as its own runner, and the controller SHALL spread relays across them by its existing placement
 
 #### Scenario: The SDK exposes no worker-count knob
 - **WHEN** the SDK's command-line surface is inspected

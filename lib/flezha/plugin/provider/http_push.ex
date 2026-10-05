@@ -1,12 +1,12 @@
 defmodule Flezha.Plugin.Provider.HttpPush do
   @moduledoc """
-  The first-party HTTP sink (an operator plugin): each payload on a channel it
+  The first-party HTTP sink (a relay plugin): each payload on a channel it
   sends, from `on_output` or `on_input`, as one request to `url`.
 
   The dispatch holds a delivery-guaranteed output and hands the payload to the
   plugin's worker (`Flezha.Plugin.Provider.HttpSend`), which sends it, retries
   it and confirms or parks it; a plain output holds nothing and is dropped once
-  its retries are spent. Every operator bound to the plugin on a controller
+  its retries are spent. Every relay bound to the plugin on a controller
   sends through one worker, keyed like `hook_webhook`'s so a namespace and a
   partition member never share another's.
 

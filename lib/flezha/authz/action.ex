@@ -8,15 +8,15 @@ defmodule Flezha.AuthZ.Action do
   """
 
   @actions [
-    # Operator lifecycle and read.
-    :"operator.start",
-    :"operator.stop",
-    :"operator.list",
-    :"operator.scale",
-    :"operator.rewind",
-    :"operator.send",
-    :"operator.replay",
-    :"operator.listen",
+    # Relay lifecycle and read.
+    :"relay.start",
+    :"relay.stop",
+    :"relay.list",
+    :"relay.scale",
+    :"relay.rewind",
+    :"relay.send",
+    :"relay.replay",
+    :"relay.listen",
     # Plugin lifecycle and read.
     :"plugin.enable",
     :"plugin.disable",
@@ -63,7 +63,7 @@ defmodule Flezha.AuthZ.Action do
     :"dlq.show",
     :"dlq.replay",
     :"dlq.drop",
-    # Scheduled operator spawns.
+    # Scheduled relay spawns.
     :"schedule.list",
     :"schedule.add",
     :"schedule.remove",

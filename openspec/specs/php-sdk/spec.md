@@ -4,16 +4,16 @@
 TBD - created by archiving change add-php-sdk. Update Purpose after archive.
 ## Requirements
 ### Requirement: PHP SDK entry point and runner lifecycle
-The PHP SDK SHALL expose a runner handle created by `Flezha::createRunner(string $namespace)`, carrying declaration and lifecycle on one object, with `registerFactory()` registering an operator class of either run (the run is read from its `#[Operator]`), `unregisterFactory()` as its inverse, `executor()` selecting the concurrency adapter, `start()` connecting, `awaitTermination()` blocking, and `run()` as `start()` + `awaitTermination()`.
+The PHP SDK SHALL expose a runner handle created by `Flezha::createRunner(string $namespace)`, carrying declaration and lifecycle on one object, with `registerFactory()` registering a relay class of either run (the run is read from its `#[Relay]`), `unregisterFactory()` as its inverse, `executor()` selecting the concurrency adapter, `start()` connecting, `awaitTermination()` blocking, and `run()` as `start()` + `awaitTermination()`.
 
 The runner SHALL map onto the ABI lifecycle `flz_core_context_new(SCHEMA_VERSION)` → `flz_core_declare_class` per class → `flz_core_start(namespace)` → poll/complete → `flz_core_shutdown` → `flz_core_context_free`. Naming SHALL follow `docs/sdk/naming_conventions.md`, matching the Rust and Java surfaces.
 
-#### Scenario: A declared flow operator connects and is placed
+#### Scenario: A declared flow relay connects and is placed
 - **WHEN** a script calls `Flezha::createRunner('trading')->registerFactory(OrderTotals::class)->run()` against a live controller
-- **THEN** the runner SHALL connect, `AddOperator` SHALL place an instance of that class, and inputs routed to it SHALL reach the declared tasklet
+- **THEN** the runner SHALL connect, `AddRelay` SHALL place an instance of that class, and inputs routed to it SHALL reach the declared tasklet
 
-#### Scenario: Zero declared operator types is legal
-- **WHEN** a runner is started having declared no operator class
+#### Scenario: Zero declared relay types is legal
+- **WHEN** a runner is started having declared no relay class
 - **THEN** it SHALL connect successfully and remain connected, matching the Rust and Java behaviour for an empty factory list
 
 #### Scenario: Schema mismatch is refused before connecting
@@ -89,7 +89,7 @@ The PHP SDK SHALL serialize durable State and Change values as JSON produced by 
 Durable records SHALL be stamped `sdk_lang = SDK_LANG_PHP` with the PHP change-format id, declared through `HostClassDecl`'s existing `sdk_lang` / `change_format_id` fields.
 
 #### Scenario: State survives a restart
-- **WHEN** a cell accumulates State, the runner is stopped, and a new runner binds the same operator
+- **WHEN** a cell accumulates State, the runner is stopped, and a new runner binds the same relay
 - **THEN** the restored State SHALL equal the State at shutdown, folded from the change log through `fromArray()`
 
 #### Scenario: A renamed class still restores
@@ -106,15 +106,15 @@ Durable records SHALL be stamped `sdk_lang = SDK_LANG_PHP` with the PHP change-f
 
 #### Scenario: A record of another language is refused, not decoded
 - **WHEN** a PHP-hosted class is sent a `RestoreInitState` whose records carry another SDK's `sdk_lang`
-- **THEN** the core's host restore fold SHALL refuse before any body reaches the PHP codec, and the controller SHALL leave the operator unbound rather than cold-starting it
+- **THEN** the core's host restore fold SHALL refuse before any body reaches the PHP codec, and the controller SHALL leave the relay unbound rather than cold-starting it
 
 ### Requirement: Full host-class declaration
 The PHP SDK SHALL build the complete `HostClassDecl` JSON accepted by `flz_core_declare_class`: the channels graph (entry, inter-tasklet, plugin, with per-channel retry, overflow and plugin keying), cell modes, clock kinds, the effectively-once tier and ack granularity, the correction window, header lang and format bytes, and steps lifecycle facts.
 
 A declaration the core refuses SHALL surface the core's error naming the offending field, and the class SHALL NOT be registered.
 
-#### Scenario: Declared facts reach AddOperatorResponse
-- **WHEN** a PHP class declares the effectively-once tier, a correction window and checkpoint ack-granularity, and the controller sends `AddOperator`
+#### Scenario: Declared facts reach AddRelayResponse
+- **WHEN** a PHP class declares the effectively-once tier, a correction window and checkpoint ack-granularity, and the controller sends `AddRelay`
 - **THEN** the response metadata SHALL carry the same declarations the typed Rust path produces for an equivalent class
 
 #### Scenario: An unserviceable declaration is refused at declare time
@@ -137,13 +137,13 @@ The PHP SDK SHALL handle every command activation kind the core hands out: `Rest
 - **THEN** the SDK SHALL answer a `LiveStateRead` with the cell's current State as JSON, stamped with the change seq it was read at
 
 #### Scenario: A migration serializes and applies
-- **WHEN** an operator hot-swap migrates a PHP-hosted cell
+- **WHEN** a relay hot-swap migrates a PHP-hosted cell
 - **THEN** `MigrationSerialize` on the source and `ApplyState` on the destination SHALL round-trip the State
 
 ### Requirement: Cell modes and the prepare crossing
 The PHP SDK SHALL support single, static-keyed and dynamic cell modes, and SHALL answer the core's batched `KeyRequest` prepare crossing with routing keys and extracted event times for the payloads it is given.
 
-The cell mode SHALL be read per tasklet node from what is declared, never from a flag: static when the tasklet's `#[Task]` carries `cellKeys`, dynamic when a chain of the operator keys its values with `keyBy` before the `into` or merge that reaches the tasklet, and single otherwise. A tasklet carrying `cellKeys` and fed by `keyBy` SHALL be refused at registration with the core's `topology.key_by_on_unkeyable_target`.
+The cell mode SHALL be read per tasklet node from what is declared, never from a flag: static when the tasklet's `#[Task]` carries `cellKeys`, dynamic when a chain of the relay keys its values with `keyBy` before the `into` or merge that reaches the tasklet, and single otherwise. A tasklet carrying `cellKeys` and fed by `keyBy` SHALL be refused at registration with the core's `topology.key_by_on_unkeyable_target`.
 
 Dynamic mode SHALL honour the declared idle TTL and cell cap through the core's existing eviction, without a PHP-side registry.
 
@@ -156,12 +156,12 @@ Dynamic mode SHALL honour the declared idle TTL and cell cap through the core's 
 - **THEN** that payload SHALL climb the entry channel's retry→park ladder, and the other payloads in the batch SHALL be unaffected
 
 #### Scenario: keyBy alone makes a tasklet dynamic
-- **WHEN** an operator declares `$c->input('orders')->keyBy(fn (array $o): string => $o['customer'])->into(Counter::class)` and `Counter`'s `#[Task]` carries only its `name`
+- **WHEN** a relay declares `$c->input('orders')->keyBy(fn (array $o): string => $o['customer'])->into(Counter::class)` and `Counter`'s `#[Task]` carries only its `name`
 - **THEN** the declaration record SHALL carry `cell_mode` `dynamic` for `Counter`, and each customer SHALL get its own Cell
 
 #### Scenario: One class takes its mode from each wiring
-- **WHEN** one tasklet class is wired through `keyBy` in one operator and without it in another
-- **THEN** the first operator's record SHALL carry `cell_mode` `dynamic` for it and the second's `single`
+- **WHEN** one tasklet class is wired through `keyBy` in one relay and without it in another
+- **THEN** the first relay's record SHALL carry `cell_mode` `dynamic` for it and the second's `single`
 
 #### Scenario: A static key set fed by keyBy is refused
 - **WHEN** a tasklet carrying `#[Task(name: 'routed', cellKeys: ['a', 'b'])]` is reached by an edge declaring `keyBy`
@@ -205,15 +205,15 @@ The PHP SDK SHALL support the producer-side edge surface — map, filter, flatMa
 - **THEN** the failure SHALL climb the channel's retry→park ladder rather than terminating the runner
 
 #### Scenario: Two channels merge into one tasklet
-- **WHEN** an operator declares `$c->merge()->from($ticks, fn ($t) => [...])->from($quotes, fn ($q) => [...])->keyBy(fn ($v) => $v['symbol'])->into(Detector::class)`
+- **WHEN** a relay declares `$c->merge()->from($ticks, fn ($t) => [...])->from($quotes, fn ($q) => [...])->keyBy(fn ($v) => $v['symbol'])->into(Detector::class)`
 - **THEN** registration SHALL succeed with one Detector node fed by two consumer edges, each applying its own mapping, a value from either entry SHALL reach `run` as the mapped value keyed by `symbol`, a duplicated source SHALL refuse with `topology.duplicate_merge_source` and a single source with `topology.merge_too_few_sources`
 
 #### Scenario: The router delivers on a key's own traffic
 - **WHEN** `$c->routeLatest($config, $trades, fn ($t) => $t['symbol'])` is declared and the harness feeds a document, trades for `A` and `B`, the same document, then a trade for `A`
 - **THEN** exactly one `['A', $document]` and one `['B', $document]` SHALL be emitted, and the repeated document SHALL be inert
 
-### Requirement: Steps operators at parity
-The PHP SDK SHALL support steps operators as structured chains, where each stage partition arrives as a step activation and completion answers the driver's barrier. `Flezha\Operator` SHALL carry no one-function `run`, and `Flezha\StepsCtx` SHALL NOT exist; a tasklet inside a steps operator SHALL end its instance with `$ctx->complete($result)`, carried in its step answer.
+### Requirement: Steps relays at parity
+The PHP SDK SHALL support steps relays as structured chains, where each stage partition arrives as a step activation and completion answers the driver's barrier. `Flezha\Relay` SHALL carry no one-function `run`, and `Flezha\StepsCtx` SHALL NOT exist; a tasklet inside a steps relay SHALL end its instance with `$ctx->complete($result)`, carried in its step answer.
 
 Compensation hooks, loop modes, suspension and rewind SHALL be the core driver's existing machinery, reached through step activations; the SDK SHALL NOT implement a driver.
 
@@ -225,8 +225,8 @@ Compensation hooks, loop modes, suspension and rewind SHALL be the core driver's
 - **WHEN** a stage fails after earlier stages committed
 - **THEN** the core SHALL hand out `CompensateRun` activations for the committed stages in reverse order
 
-#### Scenario: A tasklet ends its steps operator
-- **WHEN** a tasklet of a `PerInput` steps operator calls `$ctx->complete(['turns' => 4])` while handling a message
+#### Scenario: A tasklet ends its steps relay
+- **WHEN** a tasklet of a `PerInput` steps relay calls `$ctx->complete(['turns' => 4])` while handling a message
 - **THEN** the iteration SHALL commit and the instance SHALL complete with that result instead of waiting for the next message
 
 #### Scenario: A resumed chain skips journaled stages
@@ -244,7 +244,7 @@ The budget SHALL default to unlimited, and a clean shutdown SHALL leave unpolled
 
 #### Scenario: Recycling loses no work
 - **WHEN** a runner exits at its budget while inputs remain unconsumed
-- **THEN** a replacement runner binding the same operator SHALL receive those inputs
+- **THEN** a replacement runner binding the same relay SHALL receive those inputs
 
 ### Requirement: End-to-end parity is the acceptance gate
 The PHP SDK SHALL be gated by a runner application under `test/apps/php_runner`, declaring its launch line and its fixtures in a `conformance.json` manifest exactly as the Rust, Java and Elixir apps do, and driven by `php_sdk`-tagged suites in `test/system` selected by `FLEZHA_E2E_RUNTIME=php`.
@@ -289,42 +289,42 @@ The SDK SHALL prove the set by one conformance run over every row of
 - **THEN** it authors the row with `$c->merge()->from(...)…->into(...)` rather than throwing, registration refuses with `topology.merge_too_few_sources` or `topology.duplicate_merge_source`, and the manifest's `topology_surfaces` lists `merge`
 
 ### Requirement: The single-tasklet short form is four attribute arguments
-The short form SHALL be declared with the `#[Operator]` attribute a full-form operator already carries, on a class extending `Flezha\Operator`, and SHALL NOT be declared with `#[Task]`, which SHALL accept none of `run`, `durable`, `sink`, `input` or `codec` and SHALL throw naming the argument and `#[Operator]` when one is given. `#[Operator]` SHALL accept `sink`, `input` and `codec` (a `ChannelCodec`) beside the `factoryId` and the class settings it already takes; how the class runs is its `run` argument.
+The short form SHALL be declared with the `#[Relay]` attribute a full-form relay already carries, on a class extending `Flezha\Relay`, and SHALL NOT be declared with `#[Task]`, which SHALL accept none of `run`, `durable`, `sink`, `input` or `codec` and SHALL throw naming the argument and `#[Relay]` when one is given. `#[Relay]` SHALL accept `sink`, `input` and `codec` (a `ChannelCodec`) beside the `factoryId` and the class settings it already takes; how the class runs is its `run` argument.
 
 A class SHALL be a short form exactly when it defines the tasklet body `run(mixed $input, Ctx $ctx): mixed` and does not override the topology body `channels`, which is the mechanism `Definition` already uses to read which hooks a class overrides; defining `run` and overriding `channels` SHALL throw `FlezhaException` naming `topology.short_form_with_topology`, and doing neither SHALL throw naming the missing body. A short-form class MAY define the tasklet hooks a `Flezha\Tasklet` subclass defines (`state`, `applyChange`), which the generated tasklet takes.
 
-`sink` SHALL be optional. The class SHALL carry a generated operator whose factory id is `factoryId`, wiring an entry channel named `input` (or the `input` argument's value) into a generated tasklet named `factoryId` and, when a `sink` is written, that tasklet to the `sink` plugin channel; with no `sink`, it SHALL wire the entry channel into the tasklet and declare no plugin channel. A short form SHALL take the class settings on `#[Operator]` as the full form does; a steps short form SHALL be a `once` steps operator unless its `run` writes another `each`, fed by its first message on the entry channel and taking `init_values` as the tasklet's initial state. The entry SHALL be decoded by `codec` where one is written, whether or not a `sink` is. An absent `factoryId` SHALL throw naming the required argument, and the SDK SHALL NOT derive one from the class.
+`sink` SHALL be optional. The class SHALL carry a generated relay whose factory id is `factoryId`, wiring an entry channel named `input` (or the `input` argument's value) into a generated tasklet named `factoryId` and, when a `sink` is written, that tasklet to the `sink` plugin channel; with no `sink`, it SHALL wire the entry channel into the tasklet and declare no plugin channel. A short form SHALL take the class settings on `#[Relay]` as the full form does; a steps short form SHALL be a `once` steps relay unless its `run` writes another `each`, fed by its first message on the entry channel and taking `init_values` as the tasklet's initial state. The entry SHALL be decoded by `codec` where one is written, whether or not a `sink` is. An absent `factoryId` SHALL throw naming the required argument, and the SDK SHALL NOT derive one from the class.
 
-`Runner::registerFactory` SHALL accept such a class string and register the generated operator, throwing `FlezhaException` at registration whose code is the refusal's code. A duplicate factory id SHALL throw `FlezhaException` with the code `topology.duplicate_factory_id`. The PHP SDK owes no `topology.sink_without_output`: `Flezha\Tasklet::run` is declared `: mixed` and PHP refuses an override narrowing that to `: void`, so a tasklet declaring no output cannot be written; the manifest SHALL NOT list `shorthand_typed_output`.
+`Runner::registerFactory` SHALL accept such a class string and register the generated relay, throwing `FlezhaException` at registration whose code is the refusal's code. A duplicate factory id SHALL throw `FlezhaException` with the code `topology.duplicate_factory_id`. The PHP SDK owes no `topology.sink_without_output`: `Flezha\Tasklet::run` is declared `: mixed` and PHP refuses an override narrowing that to `: void`, so a tasklet declaring no output cannot be written; the manifest SHALL NOT list `shorthand_typed_output`.
 
-#### Scenario: An attributed class is a whole flow operator
+#### Scenario: An attributed class is a whole flow relay
 
-- **WHEN** a class extending `Flezha\Operator` is attributed `#[Operator(factoryId: 'upcase', sink: 'out', codec: ChannelCodec::Text)]`, defines `run`, and the runner is given `registerFactory(Upcase::class)`
-- **THEN** the runner declares a flow operator `upcase` with entry channel `input` decoding text, a tasklet named `upcase` and sink `out`, and no `Flezha\Tasklet` subclass exists for it
+- **WHEN** a class extending `Flezha\Relay` is attributed `#[Relay(factoryId: 'upcase', sink: 'out', codec: ChannelCodec::Text)]`, defines `run`, and the runner is given `registerFactory(Upcase::class)`
+- **THEN** the runner declares a flow relay `upcase` with entry channel `input` decoding text, a tasklet named `upcase` and sink `out`, and no `Flezha\Tasklet` subclass exists for it
 
-#### Scenario: An attributed class is a whole steps operator
+#### Scenario: An attributed class is a whole steps relay
 
-- **WHEN** a class extending `Flezha\Operator` is attributed `#[Operator(factoryId: 'place', sink: 'placed', input: 'order', codec: ChannelCodec::Text)]` and defines `run`, the runner is given `registerFactory(Place::class)`, an instance is started, and one message is sent on `order`
+- **WHEN** a class extending `Flezha\Relay` is attributed `#[Relay(factoryId: 'place', sink: 'placed', input: 'order', codec: ChannelCodec::Text)]` and defines `run`, the runner is given `registerFactory(Place::class)`, an instance is started, and one message is sent on `order`
 - **THEN** `run` receives the message as text, the value it passes to `$ctx->emit` reaches `placed`, and the instance completes
 
-#### Scenario: A short-form steps operator declares its loop mode
+#### Scenario: A short-form steps relay declares its loop mode
 
-- **WHEN** a class extending `Flezha\Operator` is attributed `#[Operator(factoryId: 'chat', sink: 'replies', codec: ChannelCodec::Text)]` and `#[Steps(each: Each::PerInput)]`, defines `run`, is registered, and two messages reach its entry channel
+- **WHEN** a class extending `Flezha\Relay` is attributed `#[Relay(factoryId: 'chat', sink: 'replies', codec: ChannelCodec::Text)]` and `#[Steps(each: Each::PerInput)]`, defines `run`, is registered, and two messages reach its entry channel
 - **THEN** the declaration carries `each` `per_input`, `run` runs once per message, and the instance does not complete after the first
 
 #### Scenario: A short form with no sink is declared
 
-- **WHEN** a class extending `Flezha\Operator` is attributed `#[Operator(factoryId: 'counter', input: 'ticks', codec: ChannelCodec::Text)]` and defines `run`, `state` and `applyChange`
-- **THEN** the operator declares `ticks` into the generated tasklet and no plugin channel
+- **WHEN** a class extending `Flezha\Relay` is attributed `#[Relay(factoryId: 'counter', input: 'ticks', codec: ChannelCodec::Text)]` and defines `run`, `state` and `applyChange`
+- **THEN** the relay declares `ticks` into the generated tasklet and no plugin channel
 
 #### Scenario: An input and codec need no sink
 
-- **WHEN** a class extending `Flezha\Operator` is attributed `#[Operator(factoryId: 'counter', input: 'ticks', codec: ChannelCodec::Text)]` with no `sink`
+- **WHEN** a class extending `Flezha\Relay` is attributed `#[Relay(factoryId: 'counter', input: 'ticks', codec: ChannelCodec::Text)]` with no `sink`
 - **THEN** `registerFactory` accepts it and the entry channel takes that name and codec
 
 #### Scenario: A run body beside a channels override is refused
 
-- **WHEN** an attributed operator class defines `run` and overrides `channels`
+- **WHEN** an attributed relay class defines `run` and overrides `channels`
 - **THEN** `registerFactory` throws `FlezhaException` whose code is `topology.short_form_with_topology`
 
 #### Scenario: A tasklet cannot declare no output
@@ -335,30 +335,30 @@ A class SHALL be a short form exactly when it defines the tasklet body `run(mixe
 #### Scenario: A sink on a tasklet attribute is refused
 
 - **WHEN** a class is attributed `#[Task(name: 'upcase', sink: 'out')]`
-- **THEN** `registerFactory` throws naming `sink` and `#[Operator]`
+- **THEN** `registerFactory` throws naming `sink` and `#[Relay]`
 
 #### Scenario: A derived factory id is refused
 
-- **WHEN** a class extending `Flezha\Operator` defines `run` and carries no `#[Operator]` attribute
-- **THEN** `registerFactory` throws naming the required `#[Operator(factoryId: ...)]`
+- **WHEN** a class extending `Flezha\Relay` defines `run` and carries no `#[Relay]` attribute
+- **THEN** `registerFactory` throws naming the required `#[Relay(factoryId: ...)]`
 
 ### Requirement: A PHP class is judged on the settings tree it wrote
 
-`#[Operator]` SHALL take the class settings as the tree's own data (`run`, `durable`, `maxDurationMs`, `description`), and `HostClassDecl::of` SHALL put the tree on the wire as written, so a setting under a parent that does not carry it reaches the core and is refused as `topology.unknown_field`, naming the setting and its parent, when the runner declares the class to the shared core (at start, or at the registration itself for a class registered after start), as every other core refusal in this SDK is raised, as a `FlezhaException` naming it. `#[Operator]` SHALL carry no `retryAttempts`, `retryBackoffMs`, `barrierRetryAttempts` or `wakeAfterMs`, and the declaration SHALL carry no `wake_after_ms`. A `Ctx` inside a steps operator SHALL offer `timerAfter`, `timerAtEventTime` and `cancelTimer` exactly as inside a flow operator, and a tasklet's `onTimer` SHALL run on its firing in both runs; only a `compensate` hook's `Ctx` SHALL throw an error naming `runtime.timers_unavailable` from them.
+`#[Relay]` SHALL take the class settings as the tree's own data (`run`, `durable`, `maxDurationMs`, `description`), and `HostClassDecl::of` SHALL put the tree on the wire as written, so a setting under a parent that does not carry it reaches the core and is refused as `topology.unknown_field`, naming the setting and its parent, when the runner declares the class to the shared core (at start, or at the registration itself for a class registered after start), as every other core refusal in this SDK is raised, as a `FlezhaException` naming it. `#[Relay]` SHALL carry no `retryAttempts`, `retryBackoffMs`, `barrierRetryAttempts` or `wakeAfterMs`, and the declaration SHALL carry no `wake_after_ms`. A `Ctx` inside a steps relay SHALL offer `timerAfter`, `timerAtEventTime` and `cancelTimer` exactly as inside a flow relay, and a tasklet's `onTimer` SHALL run on its firing in both runs; only a `compensate` hook's `Ctx` SHALL throw an error naming `runtime.timers_unavailable` from them.
 
 #### Scenario: A misplaced setting reaches the core
 
-- **WHEN** a class declares `#[Operator(factoryId: 'w', run: ['flow' => ['each' => 'per_input']])]`, and the runner declares it
-- **THEN** declaring it to the core throws `FlezhaException` whose code is `topology.unknown_field`, naming `each` and `flow`, and the operator is not declared
+- **WHEN** a class declares `#[Relay(factoryId: 'w', run: ['flow' => ['each' => 'per_input']])]`, and the runner declares it
+- **THEN** declaring it to the core throws `FlezhaException` whose code is `topology.unknown_field`, naming `each` and `flow`, and the relay is not declared
 
 #### Scenario: The retired wake argument is refused
 
-- **WHEN** a class carries `#[Operator(factoryId: 'w', wakeAfterMs: 5000)]`
+- **WHEN** a class carries `#[Relay(factoryId: 'w', wakeAfterMs: 5000)]`
 - **THEN** PHP refuses the unknown named argument when the attribute is instantiated, and no declaration carries `wake_after_ms`
 
 #### Scenario: A timer inside a steps tasklet fires
 
-- **WHEN** a tasklet of a running `per_input` steps operator calls `$ctx->timerAfter(300)` in `run`
+- **WHEN** a tasklet of a running `per_input` steps relay calls `$ctx->timerAfter(300)` in `run`
 - **THEN** the call returns the scheduled timestamp, the effect carries the timer op, and `onTimer` runs on that Cell at that timestamp, opening a pass at that tasklet
 
 ### Requirement: A PHP tasklet names itself and declares its settings on one attribute
@@ -374,7 +374,7 @@ A change SHALL be any value the codec carries, recorded with `$ctx->change($valu
 
 #### Scenario: A tasklet without a name is refused
 
-- **WHEN** a class extending `Flezha\Tasklet` carries `#[Task(cellKeys: ['a'])]`, or no `#[Task]` at all, and an operator wiring it is registered
+- **WHEN** a class extending `Flezha\Tasklet` carries `#[Task(cellKeys: ['a'])]`, or no `#[Task]` at all, and a relay wiring it is registered
 - **THEN** registration throws `FlezhaException` naming the class and the missing `name`, and nothing is registered
 
 #### Scenario: A renamed class keeps its state

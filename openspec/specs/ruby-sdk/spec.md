@@ -12,7 +12,7 @@ The Ruby SDK SHALL drive `flz_core` through the poll boundary and SHALL contain 
 - **THEN** none SHALL exist; every such behaviour SHALL be reached by calling the core
 
 #### Scenario: The runner connects, serves and shuts down through the core
-- **WHEN** a Ruby runner starts, binds an operator, processes input, fires a timer and receives a shutdown
+- **WHEN** a Ruby runner starts, binds a relay, processes input, fires a timer and receives a shutdown
 - **THEN** every step SHALL be driven by `poll` / `complete` against the core, and the runner SHALL exit with in-flight activations completed or reported
 
 ### Requirement: Runner entry point and lifecycle
@@ -20,7 +20,7 @@ The Ruby SDK SHALL drive `flz_core` through the poll boundary and SHALL contain 
 The SDK SHALL expose one entry point that declares classes, claims a runner slot and serves until shutdown. Declaration SHALL complete before the first `poll`. Shutdown SHALL be observable from a signal, from closed stdin (the e2e teardown contract), and from a controller-requested shutdown, and SHALL drain in-flight activations before the process exits.
 
 #### Scenario: Declaration precedes serving
-- **WHEN** the entry point is invoked with two declared operator classes
+- **WHEN** the entry point is invoked with two declared relay classes
 - **THEN** both class declarations SHALL reach the core before any activation is polled
 
 #### Scenario: Closed stdin ends the runner
@@ -29,7 +29,7 @@ The SDK SHALL expose one entry point that declares classes, claims a runner slot
 
 ### Requirement: Class-based authoring surface with explicit registration
 
-Operators and tasklets SHALL be authored as Ruby classes. The SDK SHALL NOT scan packages, walk load paths, or autoload to discover them; the author SHALL name the classes that participate. A declaration that cannot be resolved to a valid topology SHALL be refused at registration time with an error naming the offending class and method; registration-time refusal replaces the Rust SDK's compile-time refusal. A tasklet's body SHALL be its `run` method, the name every SDK gives a tasklet's body; a tasklet class defining `process` and no `run` SHALL be refused at registration naming `run`.
+Relays and tasklets SHALL be authored as Ruby classes. The SDK SHALL NOT scan packages, walk load paths, or autoload to discover them; the author SHALL name the classes that participate. A declaration that cannot be resolved to a valid topology SHALL be refused at registration time with an error naming the offending class and method; registration-time refusal replaces the Rust SDK's compile-time refusal. A tasklet's body SHALL be its `run` method, the name every SDK gives a tasklet's body; a tasklet class defining `process` and no `run` SHALL be refused at registration naming `run`.
 
 A value SHALL leave a tasklet only through its context: `ctx.emit` (with its `key:`, `channel:` and `metadata:` keywords) and `ctx.emit_to`. The SDK SHALL ignore what `run`, `on_timer` and `compensate` answer and SHALL NOT emit it, and SHALL NOT refuse a non-nil answer, since every Ruby method answers its last expression. `Flezha::Ctx` SHALL NOT offer `emit_returned`, and `Flezha::Testing::Harness` SHALL report what a tasklet emitted and SHALL NOT report what it returned.
 
@@ -42,7 +42,7 @@ A value SHALL leave a tasklet only through its context: `ctx.emit` (with its `ke
 - **THEN** registration SHALL raise naming the class, the method and the channel; no controller connection SHALL be attempted
 
 #### Scenario: A tasklet's body is its run method
-- **WHEN** a `Flezha::Tasklet` subclass defines `run(input, ctx)` and an operator wires it
+- **WHEN** a `Flezha::Tasklet` subclass defines `run(input, ctx)` and a relay wires it
 - **THEN** each input SHALL reach `run`, and the values `run` passes to `ctx.emit` SHALL be the tasklet's output
 
 #### Scenario: The old body method is refused
@@ -59,18 +59,18 @@ A value SHALL leave a tasklet only through its context: `ctx.emit` (with its `ke
 
 ### Requirement: The authoring surface carries the shared vocabulary at full parity
 
-The Ruby authoring surface SHALL carry both runs — flow and steps — on one `Flezha::Operator` base, and the shared vocabulary the reference SDK carries: the graph/wiring DSL with `key_by` and transforms, `ctx` emits, `ctx.now` and `ctx.stable_id`, cell state and change journaling, static and dynamic cell modes, per-cell timers, tiers including effectively-once, multi-input tasklets, tasklet-requested spawn, steps operator chains, loops, suspension and rewind. A capability the Ruby SDK does not carry SHALL be named as deferred in its conformance manifest together with the follow-up that owes it; silent absence SHALL be a defect.
+The Ruby authoring surface SHALL carry both runs — flow and steps — on one `Flezha::Relay` base, and the shared vocabulary the reference SDK carries: the graph/wiring DSL with `key_by` and transforms, `ctx` emits, `ctx.now` and `ctx.stable_id`, cell state and change journaling, static and dynamic cell modes, per-cell timers, tiers including effectively-once, multi-input tasklets, tasklet-requested spawn, steps relay chains, loops, suspension and rewind. A capability the Ruby SDK does not carry SHALL be named as deferred in its conformance manifest together with the follow-up that owes it; silent absence SHALL be a defect.
 
 #### Scenario: The manifest defers nothing at v1
 - **WHEN** `test/apps/ruby_runner/conformance.json` is compared against the Rust reference manifest
 - **THEN** its `deferred` list SHALL be empty and its fixture set SHALL equal the reference's
 
 #### Scenario: A steps class runs a durable chain
-- **WHEN** a Ruby steps operator runs a chained loop with a suspension and is resumed after a runner restart
+- **WHEN** a Ruby steps relay runs a chained loop with a suspension and is resumed after a runner restart
 - **THEN** the journal SHALL drive resume without re-running a committed tasklet
 
 #### Scenario: Two channels merge into one tasklet
-- **WHEN** an operator declares `c.merge.from(ticks) { |t| … }.from(quotes) { |q| … }.key_by { |v| v[:symbol] }.into(Detector)`
+- **WHEN** a relay declares `c.merge.from(ticks) { |t| … }.from(quotes) { |q| … }.key_by { |v| v[:symbol] }.into(Detector)`
 - **THEN** registration SHALL succeed with one Detector node fed by two consumer edges, each applying its own mapping, a value from either entry SHALL reach `run` as the mapped value keyed by `symbol`, a duplicated source SHALL refuse with `topology.duplicate_merge_source` and a single source with `topology.merge_too_few_sources`
 
 #### Scenario: One input becomes three deliveries
@@ -131,31 +131,31 @@ The SDK SHALL prove the set by one conformance run over every row of
 - **THEN** it authors the row with `c.merge.from(...)…into(...)` rather than raising, registration refuses with `topology.merge_too_few_sources` or `topology.duplicate_merge_source`, and the manifest's `topology_surfaces` lists `merge`
 
 ### Requirement: The single-tasklet short form is a class-body declaration
-The short form SHALL be a `Flezha::Operator` subclass, the same base a full-form operator subclasses, and SHALL NOT be a `Flezha::Tasklet` subclass; `Flezha::Tasklet` SHALL lose its `sink` class-body declaration and SHALL raise naming the operator base when one is written. The class body SHALL declare `factory_id "name"`, as a full-form operator already does, and MAY declare `sink "name"`, `input "name"` and `codec :text`, each its own class-body call so that none rides another. How it runs is the `run` class setting, written as on the full form.
+The short form SHALL be a `Flezha::Relay` subclass, the same base a full-form relay subclasses, and SHALL NOT be a `Flezha::Tasklet` subclass; `Flezha::Tasklet` SHALL lose its `sink` class-body declaration and SHALL raise naming the relay base when one is written. The class body SHALL declare `factory_id "name"`, as a full-form relay already does, and MAY declare `sink "name"`, `input "name"` and `codec :text`, each its own class-body call so that none rides another. How it runs is the `run` class setting, written as on the full form.
 
-Such a class SHALL be a short form exactly when it defines `run` and not `channels`; defining both SHALL be refused, and defining neither SHALL be refused naming the missing body. `sink` SHALL be optional. The class SHALL carry a generated operator whose factory id is `factory_id`, wiring an entry channel named `input` (or the `input` value) into a generated tasklet named `factory_id` and, when a `sink` is declared, that tasklet to the `sink` plugin channel; with no `sink`, it SHALL wire the entry channel into the tasklet and declare no plugin channel. A short form SHALL take the class settings as the full form does; a steps short form SHALL be a `once` steps operator unless its `run` writes another `each`, fed by its first message on the entry channel and taking `init_values` as the tasklet's initial state. The entry SHALL be decoded by `codec` where one is declared, whether or not a `sink` is.
+Such a class SHALL be a short form exactly when it defines `run` and not `channels`; defining both SHALL be refused, and defining neither SHALL be refused naming the missing body. `sink` SHALL be optional. The class SHALL carry a generated relay whose factory id is `factory_id`, wiring an entry channel named `input` (or the `input` value) into a generated tasklet named `factory_id` and, when a `sink` is declared, that tasklet to the `sink` plugin channel; with no `sink`, it SHALL wire the entry channel into the tasklet and declare no plugin channel. A short form SHALL take the class settings as the full form does; a steps short form SHALL be a `once` steps relay unless its `run` writes another `each`, fed by its first message on the entry channel and taking `init_values` as the tasklet's initial state. The entry SHALL be decoded by `codec` where one is declared, whether or not a `sink` is.
 
-`Runner#register_factory` SHALL accept such a class and register the generated operator; the refusals SHALL be raised there, at registration, as the Ruby contract places every refusal: `Flezha::Error` whose code is `topology.short_form_with_topology`. A class with no `factory_id` SHALL be refused naming the required declaration, and SHALL NOT take a factory id from the class constant. The Ruby SDK cannot see a tasklet's output type, owes no `topology.sink_without_output`, and SHALL NOT list `shorthand_typed_output` in its manifest. A duplicate factory id SHALL raise `Flezha::Error` with the code `topology.duplicate_factory_id`.
+`Runner#register_factory` SHALL accept such a class and register the generated relay; the refusals SHALL be raised there, at registration, as the Ruby contract places every refusal: `Flezha::Error` whose code is `topology.short_form_with_topology`. A class with no `factory_id` SHALL be refused naming the required declaration, and SHALL NOT take a factory id from the class constant. The Ruby SDK cannot see a tasklet's output type, owes no `topology.sink_without_output`, and SHALL NOT list `shorthand_typed_output` in its manifest. A duplicate factory id SHALL raise `Flezha::Error` with the code `topology.duplicate_factory_id`.
 
-#### Scenario: An operator class with a run body is a whole flow operator
+#### Scenario: A relay class with a run body is a whole flow relay
 
-- **WHEN** `class Upcase < Flezha::Operator` declares `factory_id "upcase"`, `sink "out"`, `codec :text` and `run`, and the runner is given `register_factory(Upcase)`
-- **THEN** the runner declares a flow operator `upcase` with entry channel `input` decoding text, a tasklet named `upcase` and sink `out`, and no `Flezha::Tasklet` subclass exists for it
+- **WHEN** `class Upcase < Flezha::Relay` declares `factory_id "upcase"`, `sink "out"`, `codec :text` and `run`, and the runner is given `register_factory(Upcase)`
+- **THEN** the runner declares a flow relay `upcase` with entry channel `input` decoding text, a tasklet named `upcase` and sink `out`, and no `Flezha::Tasklet` subclass exists for it
 
-#### Scenario: An operator class with a run body is a whole steps operator
+#### Scenario: A relay class with a run body is a whole steps relay
 
-- **WHEN** `class Place < Flezha::Operator` declares `factory_id "place"`, `sink "placed"`, `input "order"`, `codec :text` and `run`, the runner is given `register_factory(Place)`, an instance is started, and one message is sent on `order`
+- **WHEN** `class Place < Flezha::Relay` declares `factory_id "place"`, `sink "placed"`, `input "order"`, `codec :text` and `run`, the runner is given `register_factory(Place)`, an instance is started, and one message is sent on `order`
 - **THEN** `run` receives the message as text, the value it passes to `ctx.emit` reaches `placed`, and the instance completes
 
-#### Scenario: A short-form steps operator declares its loop mode
+#### Scenario: A short-form steps relay declares its loop mode
 
-- **WHEN** `class Chat < Flezha::Operator` declares `factory_id "chat"`, `sink "replies"`, `codec :text`, `each :per_input` and `run`, is registered, and two messages reach its entry channel
+- **WHEN** `class Chat < Flezha::Relay` declares `factory_id "chat"`, `sink "replies"`, `codec :text`, `each :per_input` and `run`, is registered, and two messages reach its entry channel
 - **THEN** the declaration carries `each` `per_input`, `run` runs once per message, and the instance does not complete after the first
 
 #### Scenario: A short form with no sink is declared
 
 - **WHEN** a class declares `factory_id "counter"`, `input "ticks"`, `codec :text`, `initial_state`, `apply_change` and `run`, with no `sink`
-- **THEN** the operator declares `ticks` into the generated tasklet and no plugin channel
+- **THEN** the relay declares `ticks` into the generated tasklet and no plugin channel
 
 #### Scenario: An input and codec need no sink
 
@@ -169,40 +169,40 @@ Such a class SHALL be a short form exactly when it defines `run` and not `channe
 
 #### Scenario: A channels body beside a run body is refused
 
-- **WHEN** a `Flezha::Operator` subclass defines both `channels` and `run`
+- **WHEN** a `Flezha::Relay` subclass defines both `channels` and `run`
 - **THEN** `register_factory` raises `Flezha::Error` whose code is `topology.short_form_with_topology`
 
 #### Scenario: A sink on a tasklet is refused
 
 - **WHEN** a `Flezha::Tasklet` subclass declares `sink "out"`
-- **THEN** loading it raises naming `Flezha::Operator`
+- **THEN** loading it raises naming `Flezha::Relay`
 
 #### Scenario: A derived factory id is refused
 
-- **WHEN** a `Flezha::Operator` subclass declares `sink "out"` and `run` and no `factory_id`
+- **WHEN** a `Flezha::Relay` subclass declares `sink "out"` and `run` and no `factory_id`
 - **THEN** `register_factory` raises `Flezha::Error` naming the required `factory_id`, and no controller connection is attempted
 
 ### Requirement: A Ruby class carries the settings tree it wrote
 
-`Flezha::Operator`'s class body SHALL take the class settings as the tree's own data (`run`, `durable`, `max_duration_ms`, `description`), and `to_host_class_decl` SHALL put the tree on the wire as written, so a setting under a parent that does not carry it reaches the core and is refused as `topology.unknown_field`, naming the setting and its parent, when the runner declares the class to the shared core (at start, or at the registration itself for a class registered after start), as every other core refusal in this SDK is raised, as a `Flezha::Error` naming it. `Flezha::Operator` SHALL declare no `retry_attempts`, `retry_backoff_ms`, `barrier_retry_attempts` or `wake_after_ms` setting, and the declaration SHALL carry no `wake_after_ms`. A `Ctx` inside a steps operator SHALL offer `timer_after`, `timer_at_event_time` and `cancel_timer` exactly as inside a flow operator, and a tasklet's `on_timer` SHALL run on its firing in both runs; only a `compensate` hook's `Ctx` SHALL raise an error naming `runtime.timers_unavailable` from them.
+`Flezha::Relay`'s class body SHALL take the class settings as the tree's own data (`run`, `durable`, `max_duration_ms`, `description`), and `to_host_class_decl` SHALL put the tree on the wire as written, so a setting under a parent that does not carry it reaches the core and is refused as `topology.unknown_field`, naming the setting and its parent, when the runner declares the class to the shared core (at start, or at the registration itself for a class registered after start), as every other core refusal in this SDK is raised, as a `Flezha::Error` naming it. `Flezha::Relay` SHALL declare no `retry_attempts`, `retry_backoff_ms`, `barrier_retry_attempts` or `wake_after_ms` setting, and the declaration SHALL carry no `wake_after_ms`. A `Ctx` inside a steps relay SHALL offer `timer_after`, `timer_at_event_time` and `cancel_timer` exactly as inside a flow relay, and a tasklet's `on_timer` SHALL run on its firing in both runs; only a `compensate` hook's `Ctx` SHALL raise an error naming `runtime.timers_unavailable` from them.
 
 #### Scenario: A misplaced setting reaches the core
 
-- **WHEN** a `Flezha::Operator` subclass writes `run flow: { each: :per_input }` and the runner declares it
-- **THEN** declaring it to the core raises naming `topology.unknown_field`, `each` and `flow`, and the operator is not declared
+- **WHEN** a `Flezha::Relay` subclass writes `run flow: { each: :per_input }` and the runner declares it
+- **THEN** declaring it to the core raises naming `topology.unknown_field`, `each` and `flow`, and the relay is not declared
 
 #### Scenario: A retired setting is refused
 
-- **WHEN** a `Flezha::Operator` subclass writes `retry_attempts 5` or `wake_after_ms 5000` in its class body
+- **WHEN** a `Flezha::Relay` subclass writes `retry_attempts 5` or `wake_after_ms 5000` in its class body
 - **THEN** loading it raises `NoMethodError`, the setting no longer being declared
 
 #### Scenario: A timer inside a steps tasklet fires
 
-- **WHEN** a tasklet of a running `per_input` steps operator calls `ctx.timer_after(300)` in `run`
+- **WHEN** a tasklet of a running `per_input` steps relay calls `ctx.timer_after(300)` in `run`
 - **THEN** the call returns the scheduled timestamp, the effect carries the timer op, and `on_timer` runs on that Cell at that timestamp, opening a pass at that tasklet
 
 ### Requirement: A Ruby tasklet names itself and declares its settings in its class body
-A Ruby tasklet SHALL be a class `< Flezha::Tasklet` whose class body writes `tasklet_name "..."`, a non-empty name. Declaring an operator that wires a tasklet class with no `tasklet_name`, or an empty one, SHALL raise `Flezha::Error` naming the class, and the SDK SHALL NOT derive a name from the class. `tasklet_name` SHALL NOT be inherited, so every concrete subclass writes its own. The declaration SHALL keep the name `tasklet_name` because `name` is `Class#name`. The short form SHALL keep naming its tasklet after its factory id.
+A Ruby tasklet SHALL be a class `< Flezha::Tasklet` whose class body writes `tasklet_name "..."`, a non-empty name. Declaring a relay that wires a tasklet class with no `tasklet_name`, or an empty one, SHALL raise `Flezha::Error` naming the class, and the SDK SHALL NOT derive a name from the class. `tasklet_name` SHALL NOT be inherited, so every concrete subclass writes its own. The declaration SHALL keep the name `tasklet_name` because `name` is `Class#name`. The short form SHALL keep naming its tasklet after its factory id.
 
 The idle TTL SHALL be `idle_ttl_seconds`, a positive whole number of seconds written in the class body, and the declaration record SHALL carry it as `idle_ttl_ms`, that number times 1000; any other value SHALL be refused with `Flezha::Error` naming `idle_ttl_seconds` where the class body writes it. Unset SHALL mean no eviction. `max_cells` SHALL be a class-body setting of its own.
 
@@ -216,7 +216,7 @@ A tasklet class body SHALL NOT offer `dynamic_cells`, `clock`, `idle_ttl_ms`, or
 
 #### Scenario: A tasklet without a name is refused
 
-- **WHEN** a class `< Flezha::Tasklet` writes `cell_keys "a"` and no `tasklet_name`, or is written with `Class.new(Flezha::Tasklet)` and no `tasklet_name`, and an operator wiring it is declared
+- **WHEN** a class `< Flezha::Tasklet` writes `cell_keys "a"` and no `tasklet_name`, or is written with `Class.new(Flezha::Tasklet)` and no `tasklet_name`, and a relay wiring it is declared
 - **THEN** declaring it raises `Flezha::Error` naming the class (or saying it is anonymous) and the missing `tasklet_name`, and nothing is declared
 
 #### Scenario: A renamed class keeps its state
@@ -291,7 +291,7 @@ A tasklet class body SHALL NOT offer `dynamic_cells`, `clock`, `idle_ttl_ms`, or
 
 #### Scenario: A retired initial_state method is refused
 
-- **WHEN** a tasklet class defines `initial_state(cell_key)` and an operator wiring it is declared
+- **WHEN** a tasklet class defines `initial_state(cell_key)` and a relay wiring it is declared
 - **THEN** declaring it raises `Flezha::Error` naming `init_state`, rather than running the tasklet with no state
 
 #### Scenario: A retired declaration is refused
@@ -300,22 +300,22 @@ A tasklet class body SHALL NOT offer `dynamic_cells`, `clock`, `idle_ttl_ms`, or
 - **THEN** loading it raises `NoMethodError` naming the declaration, the declaration no longer existing
 
 ### Requirement: A Ruby tasklet's cell mode is read from the wiring
-The Ruby SDK SHALL declare each tasklet node's cell mode from what is written, never from a flag: static when the tasklet's class body writes `cell_keys`, dynamic when a chain of the operator keys its values with `key_by` before the `into` or merge that reaches the node, and single otherwise. The mode SHALL belong to the node, so one class MAY take a different mode in each operator that wires it. A tasklet writing `cell_keys` and fed by `key_by` SHALL be refused at registration with the core's `topology.key_by_on_unkeyable_target`. A dynamic node SHALL carry the tasklet's `idle_ttl_seconds` and `max_cells`.
+The Ruby SDK SHALL declare each tasklet node's cell mode from what is written, never from a flag: static when the tasklet's class body writes `cell_keys`, dynamic when a chain of the relay keys its values with `key_by` before the `into` or merge that reaches the node, and single otherwise. The mode SHALL belong to the node, so one class MAY take a different mode in each relay that wires it. A tasklet writing `cell_keys` and fed by `key_by` SHALL be refused at registration with the core's `topology.key_by_on_unkeyable_target`. A dynamic node SHALL carry the tasklet's `idle_ttl_seconds` and `max_cells`.
 
 #### Scenario: key_by alone makes a tasklet dynamic
 
-- **WHEN** an operator declares `c.input("orders").key_by { |o| o[:customer] }.into(Counter)` and `Counter`'s class body writes only `tasklet_name "counter"`
+- **WHEN** a relay declares `c.input("orders").key_by { |o| o[:customer] }.into(Counter)` and `Counter`'s class body writes only `tasklet_name "counter"`
 - **THEN** the declaration record carries `cell_mode` `dynamic` for `counter`, and each customer gets its own Cell whose key is the customer
 
 #### Scenario: A merge keyed by key_by makes its tasklet dynamic
 
-- **WHEN** an operator declares `c.merge.from(ticks) { |t| t }.from(quotes) { |q| q }.key_by { |v| v[:symbol] }.into(Detector)` and `Detector` writes no cell declaration
+- **WHEN** a relay declares `c.merge.from(ticks) { |t| t }.from(quotes) { |q| q }.key_by { |v| v[:symbol] }.into(Detector)` and `Detector` writes no cell declaration
 - **THEN** the declaration record carries `cell_mode` `dynamic` for `Detector`'s node
 
 #### Scenario: One class takes its mode from each wiring
 
-- **WHEN** one tasklet class is wired through `key_by` in one operator and without it in another
-- **THEN** the first operator's record carries `cell_mode` `dynamic` for it and the second's `single`
+- **WHEN** one tasklet class is wired through `key_by` in one relay and without it in another
+- **THEN** the first relay's record carries `cell_mode` `dynamic` for it and the second's `single`
 
 #### Scenario: A static key set fed by key_by is refused
 

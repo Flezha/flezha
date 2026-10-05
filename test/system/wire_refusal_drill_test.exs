@@ -28,11 +28,11 @@ defmodule FlezhaTest.System.WireRefusalDrillTest do
 
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
 
-  alias Flezha.Operator.Builder
+  alias Flezha.Relay.Builder
   alias Flezha.Runner.FleetManager
   alias Flezha.Runner.StreamPool
-  alias Flezha.Service.OperatorManager
-  alias FlezhaTest.Fixtures.OperatorFixture
+  alias Flezha.Service.RelayManager
+  alias FlezhaTest.Fixtures.RelayFixture
   alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.Helper.TierE2EHarness
 
@@ -52,12 +52,12 @@ defmodule FlezhaTest.System.WireRefusalDrillTest do
   test "a closed standard input ends the runner, whatever its host language",
        %{namespace: namespace} do
     {port, runner_id} = boot(namespace)
-    operator_id = "wr_eof_#{System.unique_integer([:positive])}"
+    relay_id = "wr_eof_#{System.unique_integer([:positive])}"
 
     assert {:ok, %{runner_id: ^runner_id}} =
-             OperatorManager.start_operator(namespace, builder(namespace, operator_id, self()))
+             RelayManager.start_relay(namespace, builder(namespace, relay_id, self()))
 
-    assert produced?(operator_id, namespace, "alive", 60_000)
+    assert produced?(relay_id, namespace, "alive", 60_000)
 
     {:os_pid, os_pid} = :erlang.port_info(port, :os_pid)
     # The harness's own stop: it manages a runner as a Port and closes it,
@@ -75,12 +75,12 @@ defmodule FlezhaTest.System.WireRefusalDrillTest do
   test "a termination signal ends the runner, and it opens no new control connection",
        %{namespace: namespace} do
     {port, runner_id} = boot(namespace)
-    operator_id = "wr_exit_#{System.unique_integer([:positive])}"
+    relay_id = "wr_exit_#{System.unique_integer([:positive])}"
 
     assert {:ok, %{runner_id: ^runner_id}} =
-             OperatorManager.start_operator(namespace, builder(namespace, operator_id, self()))
+             RelayManager.start_relay(namespace, builder(namespace, relay_id, self()))
 
-    assert produced?(operator_id, namespace, "alive", 60_000)
+    assert produced?(relay_id, namespace, "alive", 60_000)
 
     {:os_pid, os_pid} = :erlang.port_info(port, :os_pid)
     {_, 0} = System.cmd("kill", ["-TERM", Integer.to_string(os_pid)], stderr_to_stdout: true)
@@ -106,12 +106,12 @@ defmodule FlezhaTest.System.WireRefusalDrillTest do
        %{namespace: namespace} do
     # A ten-minute heartbeat, so no ladder of any kind can stand in for the repair.
     {port, runner_id} = boot(namespace, [{"FLEZHA_DATA_HEARTBEAT_MS", "600000"}])
-    operator_id = "wr_sever_#{System.unique_integer([:positive])}"
+    relay_id = "wr_sever_#{System.unique_integer([:positive])}"
 
     assert {:ok, %{runner_id: ^runner_id}} =
-             OperatorManager.start_operator(namespace, builder(namespace, operator_id, self()))
+             RelayManager.start_relay(namespace, builder(namespace, relay_id, self()))
 
-    assert produced?(operator_id, namespace, "before", 60_000)
+    assert produced?(relay_id, namespace, "before", 60_000)
 
     # A break on the controller's end, as its driver reports one: the owner is
     # told, then the stream is released.
@@ -122,7 +122,7 @@ defmodule FlezhaTest.System.WireRefusalDrillTest do
       Flezha.Transport.Stream.close(ref)
     end
 
-    resumed? = produced?(operator_id, namespace, "after", 60_000)
+    resumed? = produced?(relay_id, namespace, "after", 60_000)
     reconnects = count_lines(port, "reconnecting (attempt")
 
     assert resumed?, "production never resumed; the runner logged #{reconnects} reconnects"
@@ -140,41 +140,41 @@ defmodule FlezhaTest.System.WireRefusalDrillTest do
     {port, runner_id}
   end
 
-  defp builder(namespace, operator_id, recv_pid) do
+  defp builder(namespace, relay_id, recv_pid) do
     sink = %Flezha.Plugin{
       id: "wire_refusal_sink",
       namespace: nil,
-      operator_id: operator_id,
+      relay_id: relay_id,
       provider: Flezha.Plugin.Provider.BeamMsgForward,
       opts: %{recv_pid: recv_pid},
       hooks: [{:on_output, []}]
     }
 
     %Builder{
-      id: operator_id,
+      id: relay_id,
       factory_id: @factory,
       init_values: %{},
-      opts: [bindings: OperatorFixture.bindings(namespace, operator_id, [sink])]
+      opts: [bindings: RelayFixture.bindings(namespace, relay_id, [sink])]
     }
   end
 
   # Feeds one input until its own output comes back, so "the wire works" is
   # answered by the wire rather than by a sleep.
-  defp produced?(operator_id, namespace, input, timeout) do
+  defp produced?(relay_id, namespace, input, timeout) do
     deadline = System.monotonic_time(:millisecond) + timeout
-    feed_until(operator_id, namespace, input, deadline)
+    feed_until(relay_id, namespace, input, deadline)
   end
 
-  defp feed_until(operator_id, namespace, input, deadline) do
-    OperatorManager.send_io(operator_id, namespace, input, %{"input_type" => "2"})
+  defp feed_until(relay_id, namespace, input, deadline) do
+    RelayManager.send_io(relay_id, namespace, input, %{"input_type" => "2"})
 
     receive do
       {:message_forward, payload} ->
-        to_string(payload) == input or feed_until(operator_id, namespace, input, deadline)
+        to_string(payload) == input or feed_until(relay_id, namespace, input, deadline)
     after
       500 ->
         System.monotonic_time(:millisecond) < deadline and
-          feed_until(operator_id, namespace, input, deadline)
+          feed_until(relay_id, namespace, input, deadline)
     end
   end
 

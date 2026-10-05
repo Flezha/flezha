@@ -82,7 +82,7 @@ defmodule Flezha.Runner.ControlChannel.Commits do
 
   def handle_cast({:refuse, reference_id, frame}, state) do
     commit = decode(frame, state)
-    error = {:error, {:not_owner, commit.operator_id}}
+    error = {:error, {:not_owner, commit.relay_id}}
     {:noreply, ack(state, reference_id, commit, error)}
   end
 
@@ -178,7 +178,7 @@ defmodule Flezha.Runner.ControlChannel.Commits do
   # A dead-lettered turn's park is issued like a record wait and is owed as
   # one, under the same deadline.
   defp park_turn(state, reference_id, commit) do
-    case TaskJournal.park_turn_async(commit.operator_id, commit.turn, state.reqids, {
+    case TaskJournal.park_turn_async(commit.relay_id, commit.turn, state.reqids, {
            :turn,
            reference_id
          }) do
@@ -225,7 +225,7 @@ defmodule Flezha.Runner.ControlChannel.Commits do
   defp turn_parked({:reply, {:ok, entry_ref}}) do
     {:ok,
      fn commit ->
-       stall(:turn_parked, commit.operator_id)
+       stall(:turn_parked, commit.relay_id)
 
        %{
          Map.delete(commit, :turn)
@@ -247,7 +247,7 @@ defmodule Flezha.Runner.ControlChannel.Commits do
   # oversized payload) is acked with its error at once.
   defp append(state, reference_id, commit) do
     case TaskJournal.append_async(
-           commit.operator_id,
+           commit.relay_id,
            commit.barrier,
            state.reqids,
            {reference_id, commit}
@@ -267,8 +267,8 @@ defmodule Flezha.Runner.ControlChannel.Commits do
     {event, measurements, metadata} = commit.telemetry
     :telemetry.execute(event, measurements, Map.put(metadata, :status, status(result)))
 
-    if result == :ok and DurabilityTier.sync_class?(commit.operator_id) do
-      :ok = DurabilityTier.commit_async(commit.operator_id, {reference_id, commit})
+    if result == :ok and DurabilityTier.sync_class?(commit.relay_id) do
+      :ok = DurabilityTier.commit_async(commit.relay_id, {reference_id, commit})
       state
     else
       ack(state, reference_id, commit, result)
@@ -302,19 +302,19 @@ defmodule Flezha.Runner.ControlChannel.Commits do
 
     if is_nil(error) do
       commit.post.()
-      DurabilityTier.on_steps_commit(commit.operator_id)
+      DurabilityTier.on_steps_commit(commit.relay_id)
     end
 
     state
   end
 
-  defp turn_dead_lettered(%{operator_id: operator_id} = metadata, turn, entry_ref) do
-    stall(:dead_lettered, operator_id)
-    TaskJournal.announce_turn(operator_id, turn, entry_ref)
-    iteration_committed(operator_id, metadata.consumed_offset)
+  defp turn_dead_lettered(%{relay_id: relay_id} = metadata, turn, entry_ref) do
+    stall(:dead_lettered, relay_id)
+    TaskJournal.announce_turn(relay_id, turn, entry_ref)
+    iteration_committed(relay_id, metadata.consumed_offset)
 
     Logger.warning(
-      "[control_channel] operator #{inspect(operator_id)} iteration #{metadata.iter}: " <>
+      "[control_channel] relay #{inspect(relay_id)} iteration #{metadata.iter}: " <>
         "the turn failed in tasklet #{metadata.tasklet} and was dead-lettered as #{entry_ref}"
     )
 
@@ -324,16 +324,16 @@ defmodule Flezha.Runner.ControlChannel.Commits do
   # An iteration boundary is durable: the input it consumed is released into
   # the input log's watermark and the journal prefix the fold no longer needs
   # is cut.
-  defp iteration_committed(operator_id, consumed_offset) do
-    TaskJournal.release_input(operator_id, consumed_offset)
-    TaskJournal.cut(operator_id)
+  defp iteration_committed(relay_id, consumed_offset) do
+    TaskJournal.release_input(relay_id, consumed_offset)
+    TaskJournal.cut(relay_id)
   end
 
   # The crash drills' seam: a function under `:commit_stall_fn` is called at a
   # named step of a dead-lettered commit, and may block there.
-  defp stall(step, operator_id) do
+  defp stall(step, relay_id) do
     case Config.get(:commit_stall_fn) do
-      fun when is_function(fun, 2) -> fun.(step, operator_id)
+      fun when is_function(fun, 2) -> fun.(step, relay_id)
       _unset -> :ok
     end
   end
@@ -350,7 +350,7 @@ defmodule Flezha.Runner.ControlChannel.Commits do
   # records a compensation hook wrote, journaled as a `compensated` entry.
   defp decode(%RunnerCommands.TaskCommit{} = commit, state) do
     %RunnerCommands.TaskCommit{
-      operator_id: operator_id,
+      relay_id: relay_id,
       task_idx: task_idx,
       iter: iter,
       cells_ran: cells_ran,
@@ -372,7 +372,7 @@ defmodule Flezha.Runner.ControlChannel.Commits do
            completion(completes, result), trigger(trigger)}
 
     %{
-      operator_id: operator_id,
+      relay_id: relay_id,
       barrier: barrier,
       records: records,
       telemetry:
@@ -380,14 +380,14 @@ defmodule Flezha.Runner.ControlChannel.Commits do
          %{count: 1, handoff_items: length(handoff), cells: length(cells)},
          %{
            namespace: state.namespace,
-           operator_id: operator_id,
+           relay_id: relay_id,
            task_idx: task_idx,
            compensating: compensating
          }},
-      label: "task-journal commit operator=#{inspect(operator_id)} task_idx=#{task_idx}",
+      label: "task-journal commit relay=#{inspect(relay_id)} task_idx=#{task_idx}",
       response:
         {:task_commit_response,
-         %RunnerCommands.TaskCommitResponse{operator_id: operator_id, task_idx: task_idx}},
+         %RunnerCommands.TaskCommitResponse{relay_id: relay_id, task_idx: task_idx}},
       post: fn -> TaskJournal.release_records(records) end
     }
   end
@@ -403,7 +403,7 @@ defmodule Flezha.Runner.ControlChannel.Commits do
   # writers' to run, so this process never waits on a file rewrite.
   defp decode(%RunnerCommands.IterCommit{dead_letter: nil} = commit, state) do
     %RunnerCommands.IterCommit{
-      operator_id: operator_id,
+      relay_id: relay_id,
       iter: iter,
       consumed_offset: consumed_offset,
       handoff: handoff,
@@ -413,7 +413,7 @@ defmodule Flezha.Runner.ControlChannel.Commits do
     } = commit
 
     %{
-      operator_id: operator_id,
+      relay_id: relay_id,
       barrier:
         {:iter_committed, iter, consumed_offset, entry_channel, handoff_items(handoff),
          completion(completes, result)},
@@ -422,15 +422,15 @@ defmodule Flezha.Runner.ControlChannel.Commits do
         {[:flezha, :state, :iter_commit], %{count: 1},
          %{
            namespace: state.namespace,
-           operator_id: operator_id,
+           relay_id: relay_id,
            iter: iter,
            consumed_offset: consumed_offset
          }},
-      label: "task-journal iteration commit operator=#{inspect(operator_id)} iter=#{iter}",
+      label: "task-journal iteration commit relay=#{inspect(relay_id)} iter=#{iter}",
       response:
         {:iter_commit_response,
-         %RunnerCommands.IterCommitResponse{operator_id: operator_id, iter: iter}},
-      post: fn -> iteration_committed(operator_id, consumed_offset) end
+         %RunnerCommands.IterCommitResponse{relay_id: relay_id, iter: iter}},
+      post: fn -> iteration_committed(relay_id, consumed_offset) end
     }
   end
 
@@ -441,7 +441,7 @@ defmodule Flezha.Runner.ControlChannel.Commits do
   # commit's, and the turn is reported.
   defp decode(%RunnerCommands.IterCommit{dead_letter: dead_letter} = commit, state) do
     %RunnerCommands.IterCommit{
-      operator_id: operator_id,
+      relay_id: relay_id,
       iter: iter,
       consumed_offset: offset,
       entry_channel: channel
@@ -451,7 +451,7 @@ defmodule Flezha.Runner.ControlChannel.Commits do
 
     metadata = %{
       namespace: state.namespace,
-      operator_id: operator_id,
+      relay_id: relay_id,
       iter: iter,
       consumed_offset: offset,
       tasklet: tasklet,
@@ -464,17 +464,17 @@ defmodule Flezha.Runner.ControlChannel.Commits do
       |> Map.merge(%{entry_channel: channel, error: error})
 
     %{
-      operator_id: operator_id,
+      relay_id: relay_id,
       barrier: {:dead_lettered, iter, offset, channel, tasklet, attempts, nil},
       records: [],
       turn: turn,
       telemetry:
         {[:flezha, :state, :iter_commit], %{count: 1},
-         Map.take(metadata, [:namespace, :operator_id, :iter, :consumed_offset])},
-      label: "task-journal dead-lettered iteration operator=#{inspect(operator_id)} iter=#{iter}",
+         Map.take(metadata, [:namespace, :relay_id, :iter, :consumed_offset])},
+      label: "task-journal dead-lettered iteration relay=#{inspect(relay_id)} iter=#{iter}",
       response:
         {:iter_commit_response,
-         %RunnerCommands.IterCommitResponse{operator_id: operator_id, iter: iter}},
+         %RunnerCommands.IterCommitResponse{relay_id: relay_id, iter: iter}},
       # Takes the DLQ entry the park answered with; `turn_parked/3` binds it.
       post: &turn_dead_lettered(metadata, turn, &1)
     }

@@ -20,7 +20,7 @@ The controller container SHALL declare a `startupProbe`, a `livenessProbe`, and 
 
 Liveness and readiness are different questions and SHALL NOT share one endpoint. The `livenessProbe` and the `startupProbe` SHALL read the health endpoint, which answers success throughout a planned recovery so the kubelet does not restart a controller mid-replay. The `readinessProbe` SHALL read the readiness endpoint, which answers failure for exactly that same window, so a pod that has not finished coming up is not routed to.
 
-A readiness probe SHALL NOT report a controller ready on the grounds that nothing is yet running on it. A controller in its first tick — no namespace hub created, no operator bound, nothing restored — SHALL read as not ready.
+A readiness probe SHALL NOT report a controller ready on the grounds that nothing is yet running on it. A controller in its first tick — no namespace hub created, no relay bound, nothing restored — SHALL read as not ready.
 
 #### Scenario: Probes present and self-contained
 

@@ -135,11 +135,11 @@ state get anna/reply:
 > {: .step}
 
 ```sh
-$ flz operator rewind anna --to-iteration 0 --namespace agents
+$ flz relay rewind anna --to-iteration 0 --namespace agents
 ```
 
 ```output
-Operator 'anna' rewound to iteration 0. Iterations above it were compensated; the loop resumes at 1.
+Relay 'anna' rewound to iteration 0. Iterations above it were compensated; the loop resumes at 1.
 ```
 
 ```sh
@@ -155,7 +155,7 @@ runner-1  | [undo] forgot "What can you do?"
 > {: .step}
 
 ```sh
-$ flz operator call anna --namespace agents --text 'Where were we?'
+$ flz relay call anna --namespace agents --text 'Where were we?'
 ```
 
 ```output
@@ -168,16 +168,16 @@ The demo model reads at most 200 characters, so a longer message fails.
 > {: .step}
 
 ```sh
-$ flz operator call anna --namespace agents --text "$(printf '%0250d' 0)"
+$ flz relay call anna --namespace agents --text "$(printf '%0250d' 0)"
 ```
 
 ```output
-error: operator 'anna' dead-lettered the call's input as 'anna/_turn/fd471f7e0b872ddf': tasklet `reply` failed after 1 attempt(s): non-retryable tasklet error: the demo model reads at most 200 characters, and this message has 250 (call.failed)
+error: relay 'anna' dead-lettered the call's input as 'anna/_turn/fd471f7e0b872ddf': tasklet `reply` failed after 1 attempt(s): non-retryable tasklet error: the demo model reads at most 200 characters, and this message has 250 (call.failed)
 hint: flz dlq list anna
 ```
 
 ```sh
-$ flz operator call anna --namespace agents --text 'Sorry, go on'
+$ flz relay call anna --namespace agents --text 'Sorry, go on'
 ```
 
 ```output

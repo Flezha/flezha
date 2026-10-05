@@ -110,7 +110,7 @@ defmodule Flezha.Cluster.DirectoryTwoNodeTest do
   connects to a peer controller BEAM in a namespace this node has never seen.
   The peer's FleetManager advertises it into the directory, and a start
   submitted HERE — the node without the runner — executes THERE, as do the
-  command verbs against the started operator. Needs a peer BEAM, so it is
+  command verbs against the started relay. Needs a peer BEAM, so it is
   slow and excluded by default: `mix test --include multi_node`.
   """
 
@@ -124,8 +124,8 @@ defmodule Flezha.Cluster.DirectoryTwoNodeTest do
 
   alias Flezha.Cluster.Directory
   alias Flezha.Service.HubManager
-  alias Flezha.Service.OperatorManager
-  alias FlezhaTest.Fixtures.OperatorFixture
+  alias Flezha.Service.RelayManager
+  alias FlezhaTest.Fixtures.RelayFixture
   alias FlezhaTest.Helper.NodeTestHelper
 
   use Flezha.Constant
@@ -149,20 +149,20 @@ defmodule Flezha.Cluster.DirectoryTwoNodeTest do
     refute HubManager.hub_alive?(@ns)
 
     # Start routed at fire time — executes on the peer, verdict verbatim.
-    operator = OperatorFixture.get("xnode_routed", @factory_do_nothing)
+    relay = RelayFixture.get("xnode_routed", @factory_do_nothing)
 
-    assert {:ok, %{operator_id: "xnode_routed", node: ^peer_node}} =
-             OperatorManager.start_operator(@ns, operator)
+    assert {:ok, %{relay_id: "xnode_routed", node: ^peer_node}} =
+             RelayManager.start_relay(@ns, relay)
 
     # Command plane from the non-member node: the pid resolves through the
-    # peer's hub and the read executes inside the operator's own node.
-    assert {:ok, pid} = OperatorManager.get_operator_pid(@ns, "xnode_routed")
+    # peer's hub and the read executes inside the relay's own node.
+    assert {:ok, pid} = RelayManager.get_relay_pid(@ns, "xnode_routed")
     assert node(pid) == peer_node
 
-    assert {:ok, %{runner_id: _}} = OperatorManager.get_overwatch_state(@ns, "xnode_routed")
+    assert {:ok, %{runner_id: _}} = RelayManager.get_overwatch_state(@ns, "xnode_routed")
 
     # Stop forwards whole-call, so its node-local cleanup runs on the peer.
-    assert :ok = OperatorManager.stop_operator(@ns, "xnode_routed")
+    assert :ok = RelayManager.stop_relay(@ns, "xnode_routed")
 
     NodeTestHelper.stop_runner_remote(peer_node, @ns, runner_id)
     NodeTestHelper.stop_peer_node(peer_pid, peer_node)

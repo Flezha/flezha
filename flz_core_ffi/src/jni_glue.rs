@@ -105,12 +105,12 @@ pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_localStart(
     _class: JClass,
     ctx: jlong,
     factory_id: JString,
-    operator_id: JString,
+    relay_id: JString,
 ) {
     let ctx = ctx_of(ctx);
     let outcome = c_string(&mut env, "factory id", &factory_id).and_then(|factory| {
-        c_string(&mut env, "operator id", &operator_id)
-            .and_then(|operator| veneer::local_start(ctx, &factory, &operator))
+        c_string(&mut env, "relay id", &relay_id)
+            .and_then(|relay| veneer::local_start(ctx, &factory, &relay))
     });
     report(&mut env, outcome);
 }
@@ -479,7 +479,7 @@ pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_sendMessage<'l>(
     mut env: JNIEnv<'l>,
     _class: JClass,
     ctx: jlong,
-    operator: JString,
+    relay: JString,
     channel: JString,
     message: JByteArray,
     msg_id: JString,
@@ -488,32 +488,24 @@ pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_sendMessage<'l>(
 ) -> jstring {
     let ctx = ctx_of(ctx);
     let answer = (|| {
-        let operator = c_string(&mut env, "operator", &operator)?;
+        let relay = c_string(&mut env, "relay", &relay)?;
         let channel = c_string(&mut env, "entry channel", &channel)?;
         let msg_id = c_string(&mut env, "message id", &msg_id)?;
         let key = c_string(&mut env, "key", &key)?;
         let message = bytes_of(&mut env, "message", &message)?;
-        veneer::send_message(
-            ctx,
-            &operator,
-            &channel,
-            &message,
-            &msg_id,
-            &key,
-            local != 0,
-        )
+        veneer::send_message(ctx, &relay, &channel, &message, &msg_id, &key, local != 0)
     })();
     string_or_throw(&mut env, answer.map(Some))
 }
 
-/// The ids of the operator instances bound on this runner, as a JSON array.
+/// The ids of the relay instances bound on this runner, as a JSON array.
 #[no_mangle]
-pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_operators<'l>(
+pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_relays<'l>(
     mut env: JNIEnv<'l>,
     _class: JClass,
     ctx: jlong,
 ) -> jstring {
-    let ids = veneer::operators(ctx_of(ctx)).map(|ids| Some(serde_json::json!(ids).to_string()));
+    let ids = veneer::relays(ctx_of(ctx)).map(|ids| Some(serde_json::json!(ids).to_string()));
     string_or_throw(&mut env, ids)
 }
 

@@ -1,4 +1,4 @@
-//! A steps operator's durability barriers as frames: `TaskCommit` at a task
+//! A steps relay's durability barriers as frames: `TaskCommit` at a task
 //! boundary, `IterCommit` at an iteration boundary, and the undo record a
 //! compensation journals. Each is sent with its ack registered as an event;
 //! the controller journals a barrier once by its identity, so a re-send under
@@ -48,7 +48,7 @@ pub(super) fn task_frame(
     let handoff = encode_handoff(r, r.task(node).output_channel_id, &values)
         .map_err(|e| StepsError::from(format!("task {node} {e}")))?;
     Ok(Command::TaskCommit(crate::pb::TaskCommit {
-        operator_id: r.inst.instance_id.to_string(),
+        relay_id: r.inst.instance_id.to_string(),
         task_idx: node as u32,
         iter,
         cells_ran: cells
@@ -94,7 +94,7 @@ pub(super) fn iteration_frame(
         .map(|c| c.name.to_string())
         .unwrap_or_default();
     Ok(Command::IterCommit(crate::pb::IterCommit {
-        operator_id: r.inst.instance_id.to_string(),
+        relay_id: r.inst.instance_id.to_string(),
         iter,
         consumed_offset,
         handoff,
@@ -113,7 +113,7 @@ pub(super) fn undo_frame(
     cells_ran: Vec<crate::pb::CommittedCell>,
 ) -> Command {
     Command::TaskCommit(crate::pb::TaskCommit {
-        operator_id: r.inst.instance_id.to_string(),
+        relay_id: r.inst.instance_id.to_string(),
         task_idx: node as u32,
         iter,
         cells_ran,

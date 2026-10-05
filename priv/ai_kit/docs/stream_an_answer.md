@@ -77,14 +77,14 @@ end
 > {: .step}
 
 ```sh
-$ flz operator listen anna --namespace agents --duration-ms 5000
+$ flz relay listen anna --namespace agents --duration-ms 5000
 ```
 
 > In the first terminal, send Anna a message.
 > {: .step}
 
 ```sh
-$ flz operator call anna --namespace agents --text 'Tell me a story'
+$ flz relay call anna --namespace agents --text 'Tell me a story'
 ```
 
 ```output

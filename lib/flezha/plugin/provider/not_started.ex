@@ -6,7 +6,7 @@ defmodule Flezha.Plugin.Provider.NotStarted do
 
   A guaranteed output is held and never settled, so it waits in the outbox and
   is driven again when the binding starts. A plain output makes no delivery
-  promise and is dropped, counted on its operator's liveness counters as
+  promise and is dropped, counted on its relay's liveness counters as
   `not_started_drops`.
   """
 
@@ -21,7 +21,7 @@ defmodule Flezha.Plugin.Provider.NotStarted do
         type: :any,
         internal: true,
         transient: true,
-        doc: "The host operator's liveness counters, which count the dropped outputs"
+        doc: "The host relay's liveness counters, which count the dropped outputs"
       ]
     ]
 
@@ -29,7 +29,7 @@ defmodule Flezha.Plugin.Provider.NotStarted do
   def on_output(%Ctx.IO{metadata: metadata} = ctx, opts) do
     if Outbox.guaranteed?(metadata),
       do: Outbox.hold(metadata),
-      else: LivenessCounters.bump_operator(opts[:counters], :not_started_drops)
+      else: LivenessCounters.bump_relay(opts[:counters], :not_started_drops)
 
     {:ok, ctx}
   end

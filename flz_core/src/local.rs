@@ -1,7 +1,7 @@
-//! Running a declared operator graph in this process, with no controller.
+//! Running a declared relay graph in this process, with no controller.
 //!
-//! A [`LocalRun`] adds no engine. It builds the `OperatorInstance` a deployed
-//! runner builds, feeds it through the [`OperatorDispatchHandle::dispatch`]
+//! A [`LocalRun`] adds no engine. It builds the `RelayInstance` a deployed
+//! runner builds, feeds it through the [`RelayDispatchHandle::dispatch`]
 //! a stream reader uses, and takes sink output where production frames it —
 //! a [`FlezhaStream::Local`] whose writes are parsed in process instead of
 //! reaching a socket. Cell lifecycle, key resolution, routing, mailboxes,
@@ -31,11 +31,11 @@ use flz_transport::transport::FlezhaStream;
 
 use crate::channel::ChannelKind;
 use crate::error::{Code, Error};
-use crate::operator::instance::OperatorInstance;
-use crate::operator::registry::OperatorRegistry;
-use crate::operator::topology::ChannelLookup;
 use crate::poll_core::PollCore;
-use crate::routing::OperatorDispatchHandle;
+use crate::relay::instance::RelayInstance;
+use crate::relay::registry::RelayRegistry;
+use crate::relay::topology::ChannelLookup;
+use crate::routing::RelayDispatchHandle;
 use crate::util::LockRecover;
 
 /// What every local run states before it does any work. Emitted by the core,
@@ -119,10 +119,10 @@ impl SinkTable {
     }
 }
 
-/// One operator graph running in this process.
+/// One relay graph running in this process.
 pub struct LocalRun {
-    instance: Arc<OperatorInstance>,
-    dispatch: OperatorDispatchHandle,
+    instance: Arc<RelayInstance>,
+    dispatch: RelayDispatchHandle,
     stream: Arc<FlezhaStream>,
     sinks: Arc<SinkTable>,
 }
@@ -131,9 +131,9 @@ impl LocalRun {
     /// Start the class already registered under `factory_id`. Refuses before
     /// building anything when the declaration asks for something only a
     /// controller can answer.
-    pub fn start(factory_id: &str, operator_id: &str) -> Result<Self, Error> {
+    pub fn start(factory_id: &str, relay_id: &str) -> Result<Self, Error> {
         refuse_controller_only(factory_id)?;
-        let instance = OperatorInstance::of_class(factory_id, operator_id)?;
+        let instance = RelayInstance::of_class(factory_id, relay_id)?;
         let sinks = Arc::new(SinkTable::default());
         let frames = Arc::clone(&sinks);
         let stream = Arc::new(FlezhaStream::Local(Arc::new(move |frame: &[u8]| {
@@ -143,13 +143,13 @@ impl LocalRun {
         // branching: the change log, the fold and the effect path all still
         // run, and their frames are discarded at the outbound edge.
         crate::state_sink::install_global_sink(Arc::new(|_payload_id: &str, _frame: &[u8]| Ok(())));
-        let registry = Arc::new(OperatorRegistry::new());
+        let registry = Arc::new(RelayRegistry::new());
         registry.register(Arc::clone(&instance));
         NOTICES_EMITTED.fetch_add(1, Ordering::Relaxed);
         eprintln!("{NON_DURABILITY_NOTICE}");
         Ok(LocalRun {
             instance,
-            dispatch: OperatorDispatchHandle { registry },
+            dispatch: RelayDispatchHandle { registry },
             stream,
             sinks,
         })
@@ -194,13 +194,13 @@ impl LocalRun {
             std::thread::sleep(Duration::from_millis(1));
         }
         Err(Error::Routing(Code::LocalRunBusy.with([
-            ("operator", self.instance.instance_id.as_ref().into()),
+            ("relay", self.instance.instance_id.as_ref().into()),
             ("budget_ms", (budget.as_millis() as u64).into()),
         ])))
     }
 
     /// The live instance, for a caller that wants to read its Cells.
-    pub fn instance(&self) -> &Arc<OperatorInstance> {
+    pub fn instance(&self) -> &Arc<RelayInstance> {
         &self.instance
     }
 
@@ -229,12 +229,12 @@ impl LocalRun {
 }
 
 /// `instance`'s declared channel of that kind; the refusal names the channel
-/// and the operator, because a name nothing matches is otherwise a value that
+/// and the relay, because a name nothing matches is otherwise a value that
 /// vanishes. The lookup is the topology's own, shared with the dispatch path
 /// so an in-process input and a frame off the wire cannot disagree about what
 /// a name means.
 pub(crate) fn declared_channel(
-    instance: &OperatorInstance,
+    instance: &RelayInstance,
     channel: &str,
     kind: ChannelKind,
 ) -> Result<(), Error> {
@@ -242,13 +242,13 @@ pub(crate) fn declared_channel(
     match topology.channel_of_kind(channel, kind) {
         ChannelLookup::Found(..) => Ok(()),
         ChannelLookup::WrongKind(declared) => Err(Error::Routing(Code::ChannelWrongKind.with([
-            ("operator", instance.instance_id.as_ref().into()),
+            ("relay", instance.instance_id.as_ref().into()),
             ("channel", channel.into()),
             ("declared", declared.as_str().into()),
             ("kind", kind.as_str().into()),
         ]))),
         ChannelLookup::Undeclared => Err(Error::Routing(Code::ChannelUndeclared.with([
-            ("operator", instance.instance_id.as_ref().into()),
+            ("relay", instance.instance_id.as_ref().into()),
             ("channel", channel.into()),
             ("kind", kind.as_str().into()),
             ("channels", topology.declared_names(kind).into()),
@@ -265,19 +265,19 @@ impl Drop for LocalRun {
 /// What a declaration can ask for that only a controller answers. Each is
 /// refused by name rather than run as a graph whose work would go nowhere.
 /// Partitioning is absent from this list because it is absent from the
-/// declaration: a member's key-group range arrives with `AddOperator`, so a
+/// declaration: a member's key-group range arrives with `AddRelay`, so a
 /// local run is unpartitioned by construction.
 fn refuse_controller_only(factory_id: &str) -> Result<(), Error> {
-    let class = crate::operator::registry::get_class(factory_id);
+    let class = crate::relay::registry::get_class(factory_id);
     let steps = class
         .as_ref()
         .is_some_and(|topology| topology.steps.is_some());
     let tier = class.is_some_and(|topology| topology.effectively_once);
-    // A steps operator's messages come from the controller's input log and
+    // A steps relay's messages come from the controller's input log and
     // its commit barriers are durable; under the tier an output is released
     // once its effect record is durable. Local mode has neither.
     let capability = if steps {
-        "a steps operator"
+        "a steps relay"
     } else if tier {
         "effectively_once"
     } else {

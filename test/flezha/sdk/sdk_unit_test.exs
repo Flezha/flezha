@@ -5,7 +5,7 @@ defmodule Flezha.SDK.UnitTest do
   alias Flezha.SDK.{Channels, Codec, Ctx, Declarations, KeyGroup, PersistentId, Tasklet, Topology}
   alias Flezha.SDK.Proto.RunnerCommands
   alias Flezha.SDK.Transport
-  alias FlezhaTest.Helper.SdkOperatorHarness
+  alias FlezhaTest.Helper.SdkRelayHarness
   alias FlezhaTest.Helper.SdkTierFixtures.{CheckpointBatchedOp, TierStoreOp}
 
   # A ctx built without a tasklet has no name to refuse with; the tests
@@ -27,7 +27,7 @@ defmodule Flezha.SDK.UnitTest do
   end
 
   defmodule EchoOp do
-    @behaviour Flezha.SDK.Operator
+    @behaviour Flezha.SDK.Relay
     def factory_id, do: "echo_op"
 
     def channels(c),
@@ -48,7 +48,7 @@ defmodule Flezha.SDK.UnitTest do
   end
 
   defmodule DynamicOp do
-    @behaviour Flezha.SDK.Operator
+    @behaviour Flezha.SDK.Relay
     def factory_id, do: "dyn_op"
 
     def channels(c) do
@@ -84,7 +84,7 @@ defmodule Flezha.SDK.UnitTest do
   end
 
   defmodule StaticOp do
-    @behaviour Flezha.SDK.Operator
+    @behaviour Flezha.SDK.Relay
     def factory_id, do: "static_op"
 
     def channels(c),
@@ -180,7 +180,7 @@ defmodule Flezha.SDK.UnitTest do
       end
     end
 
-    issues = SdkOperatorHarness.refusal_issues(Topology.build(ClockOp))
+    issues = SdkRelayHarness.refusal_issues(Topology.build(ClockOp))
 
     assert {"topology.unservable_clock",
             %{"tasklet" => inspect(LogicalNoChange), "clock_type" => "logical"}} in issues
@@ -201,7 +201,7 @@ defmodule Flezha.SDK.UnitTest do
     end
 
     assert [{"topology.keyed_on_entry", %{"channel" => "in"}}] =
-             SdkOperatorHarness.refusal_issues(Topology.build(KeyedEntry))
+             SdkRelayHarness.refusal_issues(Topology.build(KeyedEntry))
   end
 
   # A name this SDK gains from the reference vocabulary here. It is a row of
@@ -258,7 +258,7 @@ defmodule Flezha.SDK.UnitTest do
   # --- branch: fan-out sugar over one handle ---
 
   defmodule BranchedOp do
-    use Flezha.SDK.Operator, factory_id: "branched"
+    use Flezha.SDK.Relay, factory_id: "branched"
 
     @impl true
     def channels(c) do
@@ -271,7 +271,7 @@ defmodule Flezha.SDK.UnitTest do
   end
 
   defmodule ReusedHandleOp do
-    @behaviour Flezha.SDK.Operator
+    @behaviour Flezha.SDK.Relay
     def factory_id, do: "reused_handle"
 
     def channels(c) do
@@ -326,7 +326,7 @@ defmodule Flezha.SDK.UnitTest do
     end
 
     assert [{"topology.deferred_builder_surface", %{"module" => module}}] =
-             SdkOperatorHarness.refusal_issues(Topology.build(Deferred))
+             SdkRelayHarness.refusal_issues(Topology.build(Deferred))
 
     assert module == inspect(Deferred)
   end
@@ -496,7 +496,7 @@ defmodule Flezha.SDK.UnitTest do
   end
 
   defp one_issue(module) do
-    assert [issue] = SdkOperatorHarness.refusal_issues(Topology.build(module))
+    assert [issue] = SdkRelayHarness.refusal_issues(Topology.build(module))
     issue
   end
 
@@ -532,16 +532,16 @@ defmodule Flezha.SDK.UnitTest do
 
   # --- Codec ---
 
-  test "codec round-trips request/response and add-operator metadata" do
+  test "codec round-trips request/response and add-relay metadata" do
     bin = Codec.encode_response("ref-1", "success", [], <<>>)
 
     assert {:ok, %RunnerCommands.CommandResponse{reference_id: "ref-1", status: "success"}} =
              RunnerCommands.CommandResponse.decode(bin)
 
-    raw = Codec.encode_add_operator_response(%{"keyed" => "false"})
+    raw = Codec.encode_add_relay_response(%{"keyed" => "false"})
 
-    assert {:ok, %RunnerCommands.AddOperatorResponse{metadata: %{"keyed" => "false"}}} =
-             RunnerCommands.AddOperatorResponse.decode(raw)
+    assert {:ok, %RunnerCommands.AddRelayResponse{metadata: %{"keyed" => "false"}}} =
+             RunnerCommands.AddRelayResponse.decode(raw)
 
     run = %{run: "steps", each: "chained", on_failure: "keep_progress"}
     uf = Codec.encode_request("uf-1", Codec.update_factories_command([{"a", "d", run}]))

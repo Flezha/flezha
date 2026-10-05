@@ -24,7 +24,7 @@ defmodule Flezha.State.WalWriter.RemoteGate do
   """
 
   alias Flezha.Config.Backoff
-  alias Flezha.Operator.ClassRegistry
+  alias Flezha.Relay.ClassRegistry
   alias Flezha.Process.Timer
   alias Flezha.State.{DurabilityTier, Paths}
   alias Flezha.State.WalWriter.{Admission, Settlement}
@@ -49,9 +49,9 @@ defmodule Flezha.State.WalWriter.RemoteGate do
   the reserved identities (a task journal, an input log) acknowledge nothing.
   """
   @spec new(Paths.cell_id(), :record | :stage) :: t() | nil
-  def new({operator_class, _sh, key}, :record) do
-    if key not in Paths.reserved_cell_keys() and DurabilityTier.sync_class?(operator_class),
-      do: %__MODULE__{checkpoint?: ClassRegistry.ack_checkpoint?(operator_class)}
+  def new({relay_class, _sh, key}, :record) do
+    if key not in Paths.reserved_cell_keys() and DurabilityTier.sync_class?(relay_class),
+      do: %__MODULE__{checkpoint?: ClassRegistry.ack_checkpoint?(relay_class)}
   end
 
   def new(_cell_id, :stage), do: nil

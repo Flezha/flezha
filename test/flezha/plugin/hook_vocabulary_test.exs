@@ -12,7 +12,7 @@ defmodule FlezhaTest.Plugin.HookVocabularyTest do
   # reports the halt at error level; the refusal is asserted as a return value.
   @moduletag :capture_log
 
-  alias Flezha.Operator.Overwatch
+  alias Flezha.Relay.Overwatch
   alias Flezha.Plugin
   alias Flezha.Plugin.Extension
   alias Flezha.Plugin.Extension.Ctx
@@ -25,7 +25,7 @@ defmodule FlezhaTest.Plugin.HookVocabularyTest do
     use Flezha.Plugin.ProviderBehaviour
 
     @impl true
-    def on_operator_init(ctx, _opts), do: {:ok, ctx}
+    def on_relay_init(ctx, _opts), do: {:ok, ctx}
     @impl true
     def on_input(ctx, _opts), do: {:ok, ctx}
     @impl true
@@ -70,7 +70,7 @@ defmodule FlezhaTest.Plugin.HookVocabularyTest do
 
   # Fails when: an enable that names no hook reaches the provider bound in a
   # direction nobody asked for. The websocket's `on_input` and `on_output` are
-  # the same send, so a source made an echo ships every payload the operator
+  # the same send, so a source made an echo ships every payload the relay
   # ingests back out on the socket it arrived on.
   test "a source-only enable has no hooks, allocates no sink and ships nothing" do
     plugin_id = "cli_source_only_#{System.unique_integer([:positive])}"
@@ -91,7 +91,7 @@ defmodule FlezhaTest.Plugin.HookVocabularyTest do
 
     refute Extension.active?(table, :on_input)
 
-    ctx = %Ctx.IO{operator_id: "op", namespace: :default, message: "in", metadata: %{}}
+    ctx = %Ctx.IO{relay_id: "op", namespace: :default, message: "in", metadata: %{}}
 
     assert {:ok, ^ctx} = Extension.run(table, :on_input, ctx)
     refute_receive {:shipped, _, _}, 200
@@ -104,7 +104,7 @@ defmodule FlezhaTest.Plugin.HookVocabularyTest do
     assert {:ok, %Plugin{hooks: [{"on_terminate", %{}}], opts: opts}} =
              Plugin.from_fields(
                id: "p",
-               provider: "operator_stdout",
+               provider: "relay_stdout",
                opts: %{"url" => "http://x"},
                hooks: [hook("on_terminate", %{})]
              )
@@ -117,7 +117,7 @@ defmodule FlezhaTest.Plugin.HookVocabularyTest do
       subs =
         cli_hooks([
           hook("on_interval", %{"interval_ms" => "5000"}),
-          hook("on_operator_init", %{"on_error" => "empty", "timeout_ms" => "1000"}),
+          hook("on_relay_init", %{"on_error" => "empty", "timeout_ms" => "1000"}),
           hook("on_message", %{"key" => "orders"}),
           hook("on_terminate", %{})
         ])
@@ -128,7 +128,7 @@ defmodule FlezhaTest.Plugin.HookVocabularyTest do
 
       assert stored == [
                {:on_interval, [interval_ms: 5_000]},
-               {:on_operator_init, [timeout_ms: 1_000, on_error: "empty"]},
+               {:on_relay_init, [timeout_ms: 1_000, on_error: "empty"]},
                {:on_message, [key: "orders"]},
                {:on_terminate, []}
              ]
@@ -171,7 +171,7 @@ defmodule FlezhaTest.Plugin.HookVocabularyTest do
         payload: "hi",
         reply_to: self(),
         ref: ref,
-        operator_id: "p",
+        relay_id: "p",
         namespace: "n"
       }
 
@@ -186,11 +186,11 @@ defmodule FlezhaTest.Plugin.HookVocabularyTest do
         Jason.encode!([
           %{
             "name" => "spec_p",
-            "provider" => "operator_stdout",
+            "provider" => "relay_stdout",
             "opts" => %{},
             "hooks" => [
               %{"name" => "on_interval", "opts" => %{"interval_ms" => "5000"}},
-              %{"name" => "on_operator_init", "opts" => %{"position" => "0"}},
+              %{"name" => "on_relay_init", "opts" => %{"position" => "0"}},
               %{"name" => "on_message", "opts" => %{"key" => "orders"}},
               "on_terminate"
             ]
@@ -204,7 +204,7 @@ defmodule FlezhaTest.Plugin.HookVocabularyTest do
 
       assert subs == [
                {:on_interval, [interval_ms: 5_000]},
-               {:on_operator_init, [position: 0]},
+               {:on_relay_init, [position: 0]},
                {:on_message, [key: "orders"]},
                {:on_terminate, []}
              ]
@@ -215,7 +215,7 @@ defmodule FlezhaTest.Plugin.HookVocabularyTest do
     test "hooks written under another key are refused" do
       spec =
         Jason.encode!([
-          %{"name" => "old", "provider" => "operator_stdout", "subscriptions" => ["on_output"]}
+          %{"name" => "old", "provider" => "relay_stdout", "subscriptions" => ["on_output"]}
         ])
 
       assert SpecDecoder.decode(spec, "default", "spec_op") ==
@@ -227,7 +227,7 @@ defmodule FlezhaTest.Plugin.HookVocabularyTest do
         Jason.encode!([
           %{
             "name" => "spec_bad",
-            "provider" => "operator_stdout",
+            "provider" => "relay_stdout",
             "opts" => %{},
             "hooks" => [%{"name" => "on_input", "opts" => %{"position" => "first"}}]
           }

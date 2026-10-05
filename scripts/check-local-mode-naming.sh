@@ -46,7 +46,7 @@ SURFACE = (
     "flz_core/src/local.rs",
     "sdk/rust/src/local.rs",
     "sdk/rust/examples/local_word_count.rs",
-    "sdk/java/flezha-sdk-api/src/main/java/com/flezha/sdk/LocalOperator.java",
+    "sdk/java/flezha-sdk-api/src/main/java/com/flezha/sdk/LocalRelay.java",
     "sdk/java/flezha-sdk-api/src/main/java/com/flezha/sdk/SinkOutput.java",
     "sdk/java/flezha-sdk-api/src/main/java/com/flezha/sdk/internal/LocalRunHandle.java",
     "sdk/java/flezha-sdk-runtime/src/main/java/com/flezha/sdk/runtime/LocalImpl.java",
@@ -59,7 +59,7 @@ SURFACE = (
     "sdk/python/examples/local_word_count.py",
     "sdk/ruby/lib/flezha/local.rb",
     "sdk/ruby/examples/local_word_count.rb",
-    "sdk/php/src/LocalOperator.php",
+    "sdk/php/src/LocalRelay.php",
     "sdk/php/src/SinkOutput.php",
     "sdk/php/examples/E07_LocalMode.php",
     "docs/topics/basics/local_mode.md",
@@ -70,7 +70,7 @@ TESTING = r"[Tt]est|TEST|[Tt]esting|TESTING|[Hh]arness|HARNESS|[Mm]ock|MOCK|[Ff]
 # A testing word FUSED into a local-mode symbol — the only shape that could
 # reintroduce the name. Every SDK's spelling of the symbol is listed, because
 # the point is the identifier and not the sentence around it.
-LOCAL_NAME = r"Local(?:Run|Operator|Mode|Impl|Session|Frame|Output)|flz_core_local_[a-z_]+|local_(?:run|mode|operator)|Flezha\.SDK\.Local|flz_core::local|flezha_runner::local"
+LOCAL_NAME = r"Local(?:Run|Relay|Mode|Impl|Session|Frame|Output)|flz_core_local_[a-z_]+|local_(?:run|mode|relay)|Flezha\.SDK\.Local|flz_core::local|flezha_runner::local"
 SYMBOL = [re.compile(p) for p in (
     rf"(?:{LOCAL_NAME})[A-Za-z0-9_.:]*(?:{TESTING})",
     rf"(?:{TESTING})[A-Za-z0-9_.:]*(?:{LOCAL_NAME})",

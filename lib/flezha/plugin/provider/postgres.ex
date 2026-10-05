@@ -1,11 +1,11 @@
 defmodule Flezha.Plugin.Provider.Postgres do
   @moduledoc """
-  Transactional PostgreSQL sink (an operator plugin): per flush batch, ONE database
+  Transactional PostgreSQL sink (a relay plugin): per flush batch, ONE database
   transaction upserts every record into `flezha_records` (keyed by `flz.key`)
   and advances the per-Cell `flezha_sink_progress` watermark row.
 
   That single transaction is the guarantee: effectively-once into the DB for
-  tier operators, plain inserts for everything else. See
+  tier relays, plain inserts for everything else. See
   `docs/resilience/data_durability.md` "Delivery semantics".
 
   Required opts `:database` and `:username`; the rest, with their defaults, are

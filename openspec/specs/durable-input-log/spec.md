@@ -3,23 +3,23 @@
 ## Purpose
 TBD - created by archiving change effectively-once-output. Update Purpose after archive.
 ## Requirements
-### Requirement: Per-operator offset-addressable input-log, gated by the tier
+### Requirement: Per-relay offset-addressable input-log, gated by the tier
 
 For an instance with durable input, the controller SHALL journal every inbound payload (after
 the `:on_input` transform chain) into one durable per-instance input log before forwarding it to
 the runner, assigning a strictly monotonic offset. An instance has durable input when it is a
-stream on the effectively-once tier or a durable steps operator; there SHALL be one log module, one
+stream on the effectively-once tier or a durable steps relay; there SHALL be one log module, one
 file and one offset space for both, keyed by the instance's on-disk state key, and no second
-input log of any kind. A flow operator that declares no durability SHALL NOT write an input log and its
+input log of any kind. A flow relay that declares no durability SHALL NOT write an input log and its
 ingest path SHALL perform no journaling work.
 
 #### Scenario: Payload journaled before forward
 
-- **WHEN** a source plugin delivers a payload to a flow operator on the tier
+- **WHEN** a source plugin delivers a payload to a flow relay on the tier
 - **THEN** the payload is appended to the instance's input log with offset N before the runner
   receives it
 
-#### Scenario: A steps operator's input is journaled to the same log
+#### Scenario: A steps relay's input is journaled to the same log
 
 - **WHEN** a message is sent to a durable steps instance
 - **THEN** it is appended to that instance's input log, the same module and file layout a tier
@@ -28,17 +28,17 @@ ingest path SHALL perform no journaling work.
 
 #### Scenario: Tier off means no log
 
-- **WHEN** a flow operator that declares no durability receives payloads
+- **WHEN** a flow relay that declares no durability receives payloads
 - **THEN** no input log file exists for it and the forward path performs no journaling work
 
 ### Requirement: Offset travels with the forwarded input
 
 The assigned offset SHALL be stamped on the forwarded frame as reserved metadata `flz.offset`,
 for an instance of either kind, and there SHALL be no other offset stamp. The SDK SHALL thread it
-through to the durable record that consumes it: a flow operator's atomic effect record SHALL carry it as
-its consumed offset, and a steps operator's iteration commit SHALL carry the offset of the input that
-seeded the iteration. A steps operator Cell's own effect record SHALL carry no consumed offset, whether
-or not the Cell is the one the message entered through: the iteration is the steps operator's unit of
+through to the durable record that consumes it: a flow relay's atomic effect record SHALL carry it as
+its consumed offset, and a steps relay's iteration commit SHALL carry the offset of the input that
+seeded the iteration. A steps relay Cell's own effect record SHALL carry no consumed offset, whether
+or not the Cell is the one the message entered through: the iteration is the steps relay's unit of
 consumption and its `iter_committed` entry is the instance's one reporter into the log's
 watermark, so a Cell that runs rarely never holds the instance's floor. An iteration or an
 effect record that consumed no journaled input SHALL carry no offset; `0` is an offset, never
@@ -52,13 +52,13 @@ effect record that consumed no journaled input SHALL carry no offset; `0` is an 
 
 #### Scenario: Offset round-trips through an iteration commit
 
-- **WHEN** input at offset 0 seeds a durable steps operator's iteration
+- **WHEN** input at offset 0 seeds a durable steps relay's iteration
 - **THEN** that iteration's commit carries consumed offset 0, and the journal records 0, not
   "none"
 
-#### Scenario: A steps operator Cell's record carries no offset
+#### Scenario: A steps relay Cell's record carries no offset
 
-- **WHEN** input at offset 4711 seeds a durable steps operator's iteration and the entry tasklet's Cell writes an effect record for it
+- **WHEN** input at offset 4711 seeds a durable steps relay's iteration and the entry tasklet's Cell writes an effect record for it
 - **THEN** that record's consumed offset is absent, the Cell reports no watermark row, and the instance's floor moves only when the iteration commits
 
 #### Scenario: A pass that consumed nothing carries no offset
@@ -119,9 +119,9 @@ The controller SHALL track the instance's floor and SHALL truncate the input log
 below `min(floor, now − hold_window)`. The floor SHALL be the confirmed processed prefix
 (Requirement: The instance floor is a processed prefix the controller confirms durable), and
 before one is confirmed, the minimum durable consumed offset across the instance's reporters (the
-watermark). A flow operator's reporters are its Cells, each reporting from its durable
+watermark). A flow relay's reporters are its Cells, each reporting from its durable
 records (the effect record under the tier, the change record otherwise); a durable steps
-operator's reporter is its journal, reporting the consumed offset of each iteration commit and
+relay's reporter is its journal, reporting the consumed offset of each iteration commit and
 each released input under the journal's reserved identity, seeded on every bind from the highest
 offset the journal released. A reporter that has consumed nothing holds the watermark at the log
 start. A truncation SHALL rewrite the file only once the prefix below the floor exceeds the
@@ -138,15 +138,15 @@ non-correcting instance truncates at its floor exactly as it does with no hold w
 - **WHEN** no processed prefix is confirmed yet, cell A has durably consumed to offset 4711 and cell B to 4710
 - **THEN** truncation removes only offsets below 4710
 
-#### Scenario: An iteration commit advances a steps operator's watermark
+#### Scenario: An iteration commit advances a steps relay's watermark
 
-- **WHEN** a durable steps operator's iteration N commits with consumed offset 7
+- **WHEN** a durable steps relay's iteration N commits with consumed offset 7
 - **THEN** the instance's watermark is 7, offsets below 7 become eligible for truncation, and
   the source credit those records held is released
 
 #### Scenario: A rewind does not lower the watermark
 
-- **WHEN** a steps operator whose watermark is 7 is rewound to an earlier iteration
+- **WHEN** a steps relay whose watermark is 7 is rewound to an earlier iteration
 - **THEN** the watermark stays 7 and no released input is re-delivered
 
 #### Scenario: A small released prefix is not rewritten
@@ -157,11 +157,11 @@ non-correcting instance truncates at its floor exactly as it does with no hold w
 
 #### Scenario: A declared correction window holds the log
 
-- **WHEN** a flow operator declares `correction_window(60_000)`, its floor is offset 4711,
+- **WHEN** a flow relay declares `correction_window(60_000)`, its floor is offset 4711,
   and offset 4711 was appended 10 s ago
 - **THEN** offset 4711 is retained, because it is newer than the derived 60 s hold window
 
-#### Scenario: An operator with no correction window has no hold
+#### Scenario: A relay with no correction window has no hold
 
 - **WHEN** an instance declares no correction window, the user configures no hold window,
   and its floor is offset 4711
@@ -170,7 +170,7 @@ non-correcting instance truncates at its floor exactly as it does with no hold w
 ### Requirement: The log owns its watermark
 
 The input-log process SHALL keep each Cell's durable consumed-offset itself
-and derive the operator's min-watermark from that map; a consumed-offset
+and derive the relay's min-watermark from that map; a consumed-offset
 report SHALL update the log's copy and SHALL NOT scan any shared table. A
 burst of reports SHALL fold into one watermark recompute and one credit drain.
 The published watermark table SHALL be a rebuildable cache for readers outside
@@ -314,16 +314,16 @@ truncation after a restart MAY scan from the start of the file once.
 
 ### Requirement: A parked append parks the source, never the host
 
-The host process of an effectively-once operator SHALL NOT wait on the input log: it SHALL hand each append to the log and forward the input when the log answers, keeping forward order equal to offset order and answering each confirming call in call order. While the log parks appends at zero source credit, the host SHALL keep running its output chains, its control calls and its timers; the park SHALL be observable only as the source's owed call. A log that dies with an append in flight SHALL cause that append to be re-issued once and then answered as refused, never left owed.
+The host process of an effectively-once relay SHALL NOT wait on the input log: it SHALL hand each append to the log and forward the input when the log answers, keeping forward order equal to offset order and answering each confirming call in call order. While the log parks appends at zero source credit, the host SHALL keep running its output chains, its control calls and its timers; the park SHALL be observable only as the source's owed call. A log that dies with an append in flight SHALL cause that append to be re-issued once and then answered as refused, never left owed.
 
 #### Scenario: Zero credit parks the source's call and nothing else
 
-- **WHEN** the operator's source credit is exhausted and a source's confirming ingest is in flight
+- **WHEN** the relay's source credit is exhausted and a source's confirming ingest is in flight
 - **THEN** the source's call stays unanswered, and the host still answers a control call and runs an `{:io_out}` chain dispatched to it meanwhile
 
 #### Scenario: The host's own confirmations free its parked appends
 
-- **WHEN** the appends of an operator are parked and the sink confirms outputs the host's chain delivered while parked
+- **WHEN** the appends of a relay are parked and the sink confirms outputs the host's chain delivered while parked
 - **THEN** the resulting watermark advance mints credit, the log answers the parked appends in arrival order, and the host forwards the inputs and answers their verdicts in the same order
 
 #### Scenario: Forward order is offset order
@@ -340,7 +340,7 @@ The host process of an effectively-once operator SHALL NOT wait on the input log
 
 The log SHALL stop when its sync companion exits, rather than continue with a
 companion that syncs nothing. It SHALL first report the death, naming the
-operator class and the exit reason, so the loss of durability is observable
+relay class and the exit reason, so the loss of durability is observable
 rather than inferred from a missing sync. Its termination SHALL datasync and
 close its own handle, so the window the companion owed reaches disk, and the
 restart that follows SHALL open a fresh handle pair, creating the class
@@ -360,7 +360,7 @@ message, and SHALL NOT stop the log.
 - **WHEN** the sync companion exits and the fsync batcher's tick then drives the
   log's class
 - **THEN** no sync tick is sent to the exited companion, the death is reported
-  naming the operator class and the reason, and the class's log is serving
+  naming the relay class and the reason, and the class's log is serving
   again with a live companion
 
 #### Scenario: A synchronous flush against a dead companion is answered
@@ -381,7 +381,7 @@ message, and SHALL NOT stop the log.
 The log SHALL absorb an append whose metadata carries a non-empty `flz.msg_id` equal to that of
 a record it still retains, answering the retained record's offset, and the caller SHALL forward
 nothing for it. A message carrying no id SHALL always be appended: two identical payloads without
-ids are two messages, for a flow operator and for a steps operator alike. The log SHALL keep the id index
+ids are two messages, for a flow relay and for a steps relay alike. The log SHALL keep the id index
 itself, in memory over its retained records, built from the file on the first append that carries
 an id, maintained on every such append and trimmed by every truncation; an append SHALL NOT
 re-read the file. The record header SHALL keep carrying the append time; the id rides the
@@ -391,7 +391,7 @@ metadata the record already holds.
 
 - **WHEN** two appends carrying `flz.msg_id` `"m1"` reach the log before the first is truncated
 - **THEN** exactly one record exists, the second append answers the first record's offset, and
-  the operator receives the message once
+  the relay receives the message once
 
 #### Scenario: Two identical payloads without an id are two inputs
 
@@ -414,22 +414,22 @@ On every bind of an instance with durable input, of either kind, the controller 
 the retained records strictly above the instance's floor, in offset order, each stamped with its
 original `flz.offset` and never re-journaled, before the instance's source plugins are brought
 up. There SHALL be one such re-forward function, shared by a fresh bind, a crash resume, a
-migration, a rehydrate from suspension and the bind of a flow operator that could not carry
+migration, a rehydrate from suspension and the bind of a flow relay that could not carry
 an earlier input. A re-forward SHALL be safe to repeat: every receiver, a Cell or a steps
 driver, SHALL drop an input at or below its own consumed floor, so a second bind, an orphaned
 bind or a repeated tail changes no state and emits nothing twice. Whether an instance owes
 undelivered input SHALL be answered from the log's tail and floor, without decoding the file.
 
-#### Scenario: A rehydrated steps operator receives its tail once
+#### Scenario: A rehydrated steps relay receives its tail once
 
 - **WHEN** a durable steps instance whose journal has released offset 6 rehydrates while the
   log holds offsets 0..9
 - **THEN** offsets 7..9 are forwarded in order, each stamped with its own `flz.offset`, and
   nothing at or below 6 is forwarded
 
-#### Scenario: A tier flow operator receives its tail once
+#### Scenario: A tier flow relay receives its tail once
 
-- **WHEN** an effectively-once flow operator whose floor is 4700 rebinds while the log holds
+- **WHEN** an effectively-once flow relay whose floor is 4700 rebinds while the log holds
   offsets up to 4720
 - **THEN** offsets 4701..4720 are forwarded in order, and a Cell ahead of 4700 skips the offsets
   it already consumed

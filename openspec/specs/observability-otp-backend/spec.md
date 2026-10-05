@@ -103,7 +103,7 @@ makes its cross-runner value meaningful.
 
 #### Scenario: Armed timers that stop firing are visible
 - **WHEN** a runner's heartbeats carry a climbing `timers_armed` and a frozen `timers_fired`
-- **THEN** both counters SHALL be emitted by this source, so wedged promotion is distinguishable from an idle Operator
+- **THEN** both counters SHALL be emitted by this source, so wedged promotion is distinguishable from an idle Relay
 
 #### Scenario: Every heartbeat key has a slot
 - **WHEN** the controller's mirrored key set is compared with the key set the shared core's heartbeat builds
@@ -135,23 +135,23 @@ makes its cross-runner value meaningful.
 
 ### Requirement: Built-in bounded-mailbox source
 
-The system SHALL provide a built-in process-backed source named `:flezha_bounded_mailbox` that polls the bounded-mailbox subsystem and emits `:metric` signals for per-Operator mailbox high-water marks and drop counters.
+The system SHALL provide a built-in process-backed source named `:flezha_bounded_mailbox` that polls the bounded-mailbox subsystem and emits `:metric` signals for per-Relay mailbox high-water marks and drop counters.
 
-#### Scenario: Per-Operator mailbox high-water mark
-- **WHEN** an Operator named `"orders"` in namespace `"default"` has a mailbox high-water mark of `120`
-- **THEN** a `:metric` signal on source `:flezha_bounded_mailbox` with `name: :mailbox_high_water`, `measurements: %{value: 120}`, and `metadata: %{namespace: "default", operator: "orders"}` SHALL appear on the bus
+#### Scenario: Per-Relay mailbox high-water mark
+- **WHEN** a Relay named `"orders"` in namespace `"default"` has a mailbox high-water mark of `120`
+- **THEN** a `:metric` signal on source `:flezha_bounded_mailbox` with `name: :mailbox_high_water`, `measurements: %{value: 120}`, and `metadata: %{namespace: "default", relay: "orders"}` SHALL appear on the bus
 
 #### Scenario: Drop counter exposed
-- **WHEN** an Operator has dropped `5` messages due to bounded-mailbox overflow
-- **THEN** a `:metric` signal with `name: :messages_dropped`, `measurements: %{count: 5}` SHALL appear on the bus with the same `namespace` / `operator` metadata shape
+- **WHEN** a Relay has dropped `5` messages due to bounded-mailbox overflow
+- **THEN** a `:metric` signal with `name: :messages_dropped`, `measurements: %{count: 5}` SHALL appear on the bus with the same `namespace` / `relay` metadata shape
 
 ### Requirement: Cardinality budget enforcement on built-in sources
 
-Every built-in source SHALL declare its cardinality budget at registration time and SHALL be designed so that the cluster-scale label cardinality (operators × tasklets × cells × runners × hubs) fits within the declared budget. Where the natural cardinality exceeds the foundation's default `1_000` budget, the source SHALL raise its budget at registration time and document the rationale in the source module's `@moduledoc`.
+Every built-in source SHALL declare its cardinality budget at registration time and SHALL be designed so that the cluster-scale label cardinality (relays × tasklets × cells × runners × hubs) fits within the declared budget. Where the natural cardinality exceeds the foundation's default `1_000` budget, the source SHALL raise its budget at registration time and document the rationale in the source module's `@moduledoc`.
 
 #### Scenario: Source declares a budget at registration
 - **WHEN** the `:flezha_bounded_mailbox` source registers
-- **THEN** its `cardinality_budget` value SHALL be at least equal to the expected count of Operators × Namespaces in a typical cluster, and the value SHALL be visible in `Flezha.Observability.Registry.list_sources/0`
+- **THEN** its `cardinality_budget` value SHALL be at least equal to the expected count of Relays × Namespaces in a typical cluster, and the value SHALL be visible in `Flezha.Observability.Registry.list_sources/0`
 
 #### Scenario: Over-budget emit triggers the foundation's budget-exceeded event
 - **WHEN** a built-in source emits `:metric` signals with more distinct metadata shapes than its declared cardinality budget allows

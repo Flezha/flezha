@@ -12,10 +12,10 @@ defmodule Flezha.SDK.SpawnTest do
   """
   use ExUnit.Case, async: true
 
-  import FlezhaTest.Helper.SdkOperatorHarness
+  import FlezhaTest.Helper.SdkRelayHarness
 
   alias Flezha.SDK.{Codec, Counters, Ctx, Error, Hold, RunnerServer, Spawn}
-  alias Flezha.SDK.Operator.Inbox
+  alias Flezha.SDK.Relay.Inbox
   alias FlezhaTest.Helper.AuthTestHelper
   alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.Helper.SdkSpawnFixtures.{Spawner, SpawnerOp}
@@ -75,7 +75,7 @@ defmodule Flezha.SDK.SpawnTest do
     end
 
     test "a refusal is the controller's own error, whatever the outcome word says" do
-      for code <- ["operator.already_running", "operator.factory_unknown", "quota.exceeded"] do
+      for code <- ["relay.already_running", "relay.factory_unknown", "quota.exceeded"] do
         refusal = Error.new(code)
         assert resolve("", refusal) == {:error, refusal}
       end
@@ -324,7 +324,7 @@ defmodule Flezha.SDK.SpawnTest do
 
   describe "inside a running tasklet" do
     test "a refused spawn leaves the invocation intact: the emit ships once and the handle resolves the refusal" do
-      %{op: op, counters: counters} = start_operator(SpawnerOp)
+      %{op: op, counters: counters} = start_relay(SpawnerOp)
       Inbox.input(op, "in", "w-refused", %{})
 
       assert_receive {:"$gen_cast", {:spawn, caller, %Spawn{} = spawn, "payload", :deliver}},
@@ -344,7 +344,7 @@ defmodule Flezha.SDK.SpawnTest do
     end
 
     test "a failure nobody reads is logged exactly once by the runner server" do
-      %{op: op} = start_operator(SpawnerOp)
+      %{op: op} = start_relay(SpawnerOp)
       Inbox.input(op, "in", "unread:w-unread", %{})
 
       assert [{"op-1", "sent", _meta}] = frames(1)
@@ -359,7 +359,7 @@ defmodule Flezha.SDK.SpawnTest do
       log =
         AuthTestHelper.capture_log_at(:warning, fn ->
           RunnerServer.handle_info(
-            answered(spawn.reference_id, "", "operator.factory_unknown", "w-unread"),
+            answered(spawn.reference_id, "", "relay.factory_unknown", "w-unread"),
             s
           )
         end)

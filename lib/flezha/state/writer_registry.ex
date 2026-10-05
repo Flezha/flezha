@@ -2,8 +2,8 @@ defmodule Flezha.State.WriterRegistry do
   @moduledoc """
   Where a record writer registers, and how one is found.
 
-  Every per-Cell `WalWriter` and every per-operator `InputLog` registers here
-  under its own id — a 3-tuple `cell_id` for a writer, `{operator_class,
+  Every per-Cell `WalWriter` and every per-relay `InputLog` registers here
+  under its own id — a 3-tuple `cell_id` for a writer, `{relay_class,
   :input_log}` for a log — so the shared `FsyncBatcher` drains both through one
   lookup.
 
@@ -29,13 +29,13 @@ defmodule Flezha.State.WriterRegistry do
   end
 
   @doc """
-  Pids of every live Cell writer for `operator_class`. The 3-tuple key
+  Pids of every live Cell writer for `relay_class`. The 3-tuple key
   pattern excludes the class's `{class, :input_log}` registration.
   """
   @spec live_writers(String.t()) :: [pid()]
-  def live_writers(operator_class) do
+  def live_writers(relay_class) do
     Elixir.Registry.select(@registry, [
-      {{{operator_class, :_, :_}, :"$1", :_}, [], [:"$1"]}
+      {{{relay_class, :_, :_}, :"$1", :_}, [], [:"$1"]}
     ])
   end
 

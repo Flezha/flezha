@@ -2,16 +2,16 @@ defmodule Flezha.SDK.DurableInputFloorTest do
   @moduledoc """
   The durable input floor in the SDK's own core: the offset a Cell off the
   tier keeps in its record, the floor it drops a re-forward at, the
-  processed-prefix marker its Operator reports behind what it settled, the
+  processed-prefix marker its Relay reports behind what it settled, the
   inter-tasklet values a tier record keeps for a restore to deliver again, and
   the identity a tasklet's spawn carries across a re-run of its input.
   """
   use ExUnit.Case, async: true
 
-  import FlezhaTest.Helper.SdkOperatorHarness
+  import FlezhaTest.Helper.SdkRelayHarness
 
   alias Flezha.SDK.{Cell, Channels, Ctx, Record, Spawn}
-  alias Flezha.SDK.Operator.Inbox
+  alias Flezha.SDK.Relay.Inbox
   alias FlezhaTest.Helper.SdkSpawnFixtures.SpawnerOp
 
   defmodule Store do
@@ -73,40 +73,40 @@ defmodule Flezha.SDK.DurableInputFloorTest do
     end
   end
 
-  defmodule Relay do
+  defmodule Forward do
     @moduledoc false
-    use Flezha.SDK.Tasklet, name: "relay"
+    use Flezha.SDK.Tasklet, name: "forward"
     @impl true
     def init_state(_), do: 0
 
-    defchange relayed(count) do
+    defchange forwarded(count) do
       count + 1
     end
 
     @impl true
     def run(input, count, ctx) do
       emit(ctx, input)
-      {:ok, relayed(count, ctx)}
+      {:ok, forwarded(count, ctx)}
     end
   end
 
-  defmodule RelayOp do
+  defmodule PassOp do
     @moduledoc false
-    @behaviour Flezha.SDK.Operator
-    def factory_id, do: "floor_relay"
+    @behaviour Flezha.SDK.Relay
+    def factory_id, do: "floor_pass"
 
     def channels(c),
       do:
         c
         |> Channels.input("in")
-        |> Channels.into(Relay)
-        |> Channels.named("relayed")
+        |> Channels.into(Forward)
+        |> Channels.named("forwarded")
         |> Channels.into(Store)
   end
 
   defmodule StoreOp do
     @moduledoc false
-    @behaviour Flezha.SDK.Operator
+    @behaviour Flezha.SDK.Relay
     def factory_id, do: "floor_store"
 
     def channels(c),
@@ -119,7 +119,7 @@ defmodule Flezha.SDK.DurableInputFloorTest do
 
   defmodule DropOp do
     @moduledoc false
-    @behaviour Flezha.SDK.Operator
+    @behaviour Flezha.SDK.Relay
     def factory_id, do: "floor_drop"
 
     def channels(c),
@@ -128,7 +128,7 @@ defmodule Flezha.SDK.DurableInputFloorTest do
 
   defmodule SplitOp do
     @moduledoc false
-    @behaviour Flezha.SDK.Operator
+    @behaviour Flezha.SDK.Relay
     def factory_id, do: "floor_split"
 
     def channels(c),
@@ -142,7 +142,7 @@ defmodule Flezha.SDK.DurableInputFloorTest do
 
   defmodule TierSplitOp do
     @moduledoc false
-    @behaviour Flezha.SDK.Operator
+    @behaviour Flezha.SDK.Relay
     def factory_id, do: "floor_tier_split"
     def run, do: {:flow, exactly: :effectively_once}
 
@@ -185,7 +185,7 @@ defmodule Flezha.SDK.DurableInputFloorTest do
 
   describe "off the tier" do
     test "a Cell that records keeps each input's offset in the record of the state it produced" do
-      %{op: op} = start_operator(StoreOp)
+      %{op: op} = start_relay(StoreOp)
       push(op, "x=1", 3)
 
       assert [record] = frames(1)
@@ -194,7 +194,7 @@ defmodule Flezha.SDK.DurableInputFloorTest do
     end
 
     test "a re-forward of an input the Cell took is dropped, and a restore takes the floor from the records" do
-      %{op: op} = start_operator(StoreOp)
+      %{op: op} = start_relay(StoreOp)
       push(op, "x=1", 3)
       assert [_record] = frames(1)
       push(op, "x=2", 3)
@@ -217,7 +217,7 @@ defmodule Flezha.SDK.DurableInputFloorTest do
     end
 
     test "every value a producer emitted for one input reaches its consumer" do
-      %{op: op} = start_operator(SplitOp)
+      %{op: op} = start_relay(SplitOp)
       push(op, "x=1,y=2", 4)
 
       assert [_, _] = frames(2)
@@ -225,23 +225,23 @@ defmodule Flezha.SDK.DurableInputFloorTest do
     end
 
     test "a producer's record keeps the values it emitted, and a re-delivered one reaches its consumer" do
-      %{op: op} = start_operator(RelayOp)
+      %{op: op} = start_relay(PassOp)
       push(op, "x=1", 4)
 
       assert [%{origin: 4} = edge] =
                frames(2) |> Enum.map(&effect/1) |> Enum.flat_map(fn {_seq, b} -> b.edges end)
 
-      %{op: fresh} = start_operator(RelayOp, operator_id: "op-2")
+      %{op: fresh} = start_relay(PassOp, relay_id: "op-2")
       named = %{"flz.edge" => "#{edge.channel}:#{edge.consumer}", "flz.offset" => "4"}
       Inbox.input(fresh, "in", edge.payload, named)
 
       assert [_record] = frames(1)
       assert {:ok, %{"x" => "1"}, 1} = Cell.read(cell!(fresh, "store"), 1_000)
-      assert {:ok, 0, 0} = Cell.read(cell!(fresh, "relay"), 1_000)
+      assert {:ok, 0, 0} = Cell.read(cell!(fresh, "forward"), 1_000)
     end
 
     test "a park rides the record with the offset of the input it parked" do
-      %{op: op} = start_operator(StoreOp)
+      %{op: op} = start_relay(StoreOp)
       push(op, "poison", 7)
 
       assert [record] = frames(1)
@@ -251,7 +251,7 @@ defmodule Flezha.SDK.DurableInputFloorTest do
 
   describe "the processed-prefix marker" do
     test "goes out behind the record its input settled into" do
-      %{op: op} = start_operator(StoreOp)
+      %{op: op} = start_relay(StoreOp)
       push(op, "x=1", 5)
 
       assert_receive {:flz_data, _id, payload_id, _frame, _meta}, 2_000
@@ -260,7 +260,7 @@ defmodule Flezha.SDK.DurableInputFloorTest do
     end
 
     test "a pending input holds it below itself until its Cell settles the input" do
-      %{op: op} = start_operator(StoreOp)
+      %{op: op} = start_relay(StoreOp)
       held = hold(op, 1)
       push(op, "x=1", 2)
       assert [_record] = frames(1)
@@ -271,7 +271,7 @@ defmodule Flezha.SDK.DurableInputFloorTest do
     end
 
     test "a dropped input releases its hold" do
-      %{op: op} = start_operator(DropOp)
+      %{op: op} = start_relay(DropOp)
       pid = hold(op, 1)
       push(op, "x=1", 2)
       push(op, "x=2", 3)
@@ -287,7 +287,7 @@ defmodule Flezha.SDK.DurableInputFloorTest do
 
   describe "an inter-tasklet value under the tier" do
     test "rides its producer's record, and a re-delivered one reaches its consumer" do
-      %{op: op} = start_operator(TierSplitOp)
+      %{op: op} = start_relay(TierSplitOp)
       push(op, "x=1,y=2", 4)
 
       edges =
@@ -299,7 +299,7 @@ defmodule Flezha.SDK.DurableInputFloorTest do
       assert {:ok, "x=1"} = Record.decode_body(x.payload)
       assert {:ok, "y=2"} = Record.decode_body(y.payload)
 
-      %{op: fresh} = start_operator(TierSplitOp, operator_id: "op-2")
+      %{op: fresh} = start_relay(TierSplitOp, relay_id: "op-2")
       named = %{"flz.edge" => "#{x.channel}:#{x.consumer}", "flz.offset" => "4"}
       Inbox.input(fresh, "in", x.payload, named)
 
@@ -334,7 +334,7 @@ defmodule Flezha.SDK.DurableInputFloorTest do
     end
 
     test "comes from the input the Cell's invocation took" do
-      %{op: op} = start_operator(SpawnerOp)
+      %{op: op} = start_relay(SpawnerOp)
       Inbox.input(op, "in", "unread:w1", %{"flz.offset" => "7"})
       assert_receive {:"$gen_cast", {:spawn, _, %Spawn{identity: identity}, _, _}}, 2_000
       assert identity =~ ~r/^[0-9a-f]{32}$/

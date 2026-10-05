@@ -16,7 +16,7 @@ defmodule Flezha.Process.SeamTest do
 
   use ExUnit.Case, async: true
 
-  alias Flezha.Operator.Lookup
+  alias Flezha.Relay.Lookup
   alias Flezha.Process.Cspec
   alias Flezha.Process.Timer
   alias FlezhaTest.Helper.SourceWalk
@@ -27,9 +27,9 @@ defmodule Flezha.Process.SeamTest do
     "lib/flezha/process/timer.ex",
     "lib/flezha/process/cspec.ex",
     "lib/flezha/process/hub.ex",
-    "lib/flezha/operator/lookup.ex",
-    "lib/flezha/operator/lookup/class.ex",
-    "lib/flezha/operator/lookup/hub.ex"
+    "lib/flezha/relay/lookup.ex",
+    "lib/flezha/relay/lookup/class.ex",
+    "lib/flezha/relay/lookup/hub.ex"
   ]
 
   defp sources do
@@ -72,9 +72,9 @@ defmodule Flezha.Process.SeamTest do
       # one monitor for one owner, held in a named field, with no map to book
       "lib/flezha/state/input_log.ex",
       "lib/flezha/plugin/provider/http_poll/poll_worker.ex",
-      "lib/flezha/plugin/provider/operator_forward/forward_worker.ex",
+      "lib/flezha/plugin/provider/relay_forward/forward_worker.ex",
       # a synchronous wait's own monitor, as `GenServer.call` takes one
-      "lib/flezha/operator/calls.ex"
+      "lib/flezha/relay/calls.ex"
     ]
   end
 
@@ -99,7 +99,7 @@ defmodule Flezha.Process.SeamTest do
   # two places rather than one.
   defp timer_allow do
     [
-      # a per-operator retry send-later from a pure helper; nothing is kept
+      # a per-relay retry send-later from a pure helper; nothing is kept
       "lib/flezha/runner/control_channel/commits.ex",
       # a table of per-subscription timers across plugins, keyed by ref so the
       # host's `:DOWN` can find the record the timer belongs to
@@ -122,7 +122,7 @@ defmodule Flezha.Process.SeamTest do
     [
       # a cspec ProcessHub persists and reads back after a restart: its shape is
       # durable state and this change only READS one
-      "lib/flezha/service/operator_manager/init.ex",
+      "lib/flezha/service/relay_manager/init.ex",
       "lib/flezha/schedule/job.ex",
       "lib/flezha/service/hub_manager/rows.ex",
       "lib/flezha/service/hub_manager/placement.ex",
@@ -130,15 +130,15 @@ defmodule Flezha.Process.SeamTest do
     ]
   end
 
-  # ---------- clause 4: one answerer of "which process serves this operator" ----------
+  # ---------- clause 4: one answerer of "which process serves this relay" ----------
 
   test "the class registry's pid read has one caller, and it is the resolver" do
-    # fails when: a second module answers "operator → pid" for itself, which is
+    # fails when: a second module answers "relay → pid" for itself, which is
     # how five answerers and three spellings of one failure grew.
     assert hits(~r/ClassRegistry\.overwatch_pid\(/, [
-             "lib/flezha/operator/class_registry.ex"
+             "lib/flezha/relay/class_registry.ex"
            ]) == [],
-           "a second answerer of `operator → pid`"
+           "a second answerer of `relay → pid`"
   end
 
   test "the hub's liveness guard has one implementation" do
@@ -168,9 +168,9 @@ defmodule Flezha.Process.SeamTest do
     end
 
     implementers =
-      for path <- Path.wildcard("lib/flezha/operator/lookup/*.ex"),
+      for path <- Path.wildcard("lib/flezha/relay/lookup/*.ex"),
           src = File.read!(path),
-          String.contains?(src, "@behaviour Flezha.Operator.Lookup.Resolver"),
+          String.contains?(src, "@behaviour Flezha.Relay.Lookup.Resolver"),
           [_, mod] = Regex.run(~r/defmodule ([\w.]+) do/, src),
           do: Module.concat([mod])
 

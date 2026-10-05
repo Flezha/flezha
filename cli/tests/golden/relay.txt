@@ -1,0 +1,34 @@
+flz relay - Relay management commands
+
+USAGE:
+    flz relay <COMMAND>
+
+COMMANDS:
+    start       Start a relay
+    scale       Rescale a partition group to N partitions
+    stop        Stop a relay
+    state       Get relay state
+    list        List relays
+    info        Get relay info
+    listen      Print the frames a relay emits or ingests
+    send        Send a payload to a relay's input stream
+    call        Send one input and print the relay's answer
+    rewind      Rewind a steps loop to a committed iteration
+    replay      Re-run a Cell's retained inputs from a point in the past
+    help        Show this help message
+
+EXAMPLES:
+    flz relay start candles --id ohlc --partitions 3
+    flz relay scale ohlc 5
+    flz relay send orchestrator --text '{"task":"refactor"}'
+    flz relay send my_echo --text 'hello world' --await 2000
+    flz relay send prices --key EURUSD --text x
+    flz relay send orders --text x --msg-id orders/0/41
+    flz relay call echo --text hello
+    flz relay listen my_echo --duration-ms 10000
+    flz relay rewind chat-1 --to-iteration 3
+    flz relay replay candles/aggregate/BTC --from 1720000000000
+
+Use 'flz relay <COMMAND> --help' for more information on a specific command.
+
+Identity for gated verbs rides `--token <token>` or the FLEZHA_TOKEN env var.

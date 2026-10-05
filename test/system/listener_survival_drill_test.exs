@@ -1,7 +1,7 @@
 defmodule FlezhaTest.System.ListenerSurvivalDrillTest do
   @moduledoc """
   A listener (`Flezha.Service.Listener.listen/4`) across everything that
-  happens to the operator it listens to: sleep and wake, a runner's death, an
+  happens to the relay it listens to: sleep and wake, a runner's death, an
   Overwatch restart, the end of a `once` run, a rescale, and, under
   `:multi_node`, a move to another controller. Each drill ends the listener
   and asserts that no member carries its plugin row afterwards, and that the
@@ -22,12 +22,12 @@ defmodule FlezhaTest.System.ListenerSurvivalDrillTest do
   import FlezhaTest.Helper.StepsResumeHarness,
     only: [boot_runner: 4, replace_runner: 4, suspended?: 2]
 
-  alias Flezha.Operator.{Builder, PartitionGroup}
+  alias Flezha.Relay.{Builder, PartitionGroup}
   alias Flezha.Partition
   alias Flezha.Plugin.Extension.Table
   alias Flezha.SDK.KeyGroup
-  alias Flezha.Service.{Cli, HubManager, Listener, OperatorManager, PluginManager}
-  alias FlezhaTest.Fixtures.OperatorFixture
+  alias Flezha.Service.{Cli, HubManager, Listener, RelayManager, PluginManager}
+  alias FlezhaTest.Fixtures.RelayFixture
   alias FlezhaTest.Helper.{FleetStateHelper, NodeTestHelper, TierE2EHarness}
 
   @moduletag reference_runtime: true
@@ -106,7 +106,7 @@ defmodule FlezhaTest.System.ListenerSurvivalDrillTest do
   end
 
   @tag capability: :parts, skip: FlezhaTest.SystemCase.deferral(:parts)
-  test "a listener hears the outputs after its runner dies and the operator is rebound",
+  test "a listener hears the outputs after its runner dies and the relay is rebound",
        ctx do
     %{namespace: ns, port: port, runner: dead, id_path: id_path} = ctx
     id = start!(ns, "part_echo", :flow)
@@ -138,14 +138,14 @@ defmodule FlezhaTest.System.ListenerSurvivalDrillTest do
   end
 
   @tag capability: :steps, skip: FlezhaTest.SystemCase.deferral(:steps)
-  test "a listener on a once steps operator ends when the operator completes",
+  test "a listener on a once steps relay ends when the relay completes",
        %{namespace: ns} do
     id = start!(ns, "echo_steps", :steps)
     %{task: task} = listen(ns, id)
     send!(ns, id, "hi")
 
     assert_receive {:heard, {:output, "echo:hi", _}}, 30_000
-    assert Task.await(task, 60_000) == {:ok, :operator_ended}
+    assert Task.await(task, 60_000) == {:ok, :relay_ended}
   end
 
   @tag capability: :partitioned, skip: FlezhaTest.SystemCase.deferral(:partitioned)
@@ -158,7 +158,7 @@ defmodule FlezhaTest.System.ListenerSurvivalDrillTest do
     @describetag :multi_node
     @describetag capability: :parts, skip: FlezhaTest.SystemCase.deferral(:parts)
 
-    # This node (A) and a peer (B), a runner on each. An operator of
+    # This node (A) and a peer (B), a runner on each. A relay of
     # `part_echo` placed on A moves to B once A's runner stops advertising it,
     # with both controllers up.
     setup %{namespace: ns, runner: local_runner} do
@@ -170,7 +170,7 @@ defmodule FlezhaTest.System.ListenerSurvivalDrillTest do
       %{peer: peer, id: id, local_runner: local_runner}
     end
 
-    test "a listener attached through A survives the operator's move to B and leaves no row",
+    test "a listener attached through A survives the relay's move to B and leaves no row",
          %{namespace: ns, peer: peer, id: id} = ctx do
       listener = listen(ns, id)
       move_off_this_node(ctx)
@@ -181,7 +181,7 @@ defmodule FlezhaTest.System.ListenerSurvivalDrillTest do
       stop_listening(listener, ns, [id])
     end
 
-    test "a killed listener on a moved operator is detached by its heartbeat",
+    test "a killed listener on a moved relay is detached by its heartbeat",
          %{namespace: ns, peer: peer, id: id} = ctx do
       %{task: task} = listen(ns, id)
       move_off_this_node(ctx)
@@ -200,7 +200,7 @@ defmodule FlezhaTest.System.ListenerSurvivalDrillTest do
       rescale_drill(ns)
     end
 
-    test "a listener on A hears an operator hosted by B after B leaves the ring",
+    test "a listener on A hears a relay hosted by B after B leaves the ring",
          %{namespace: ns, peer: peer} do
       id = start_on!(ns, "part_echo", peer)
       listener = listen(ns, id)
@@ -220,7 +220,7 @@ defmodule FlezhaTest.System.ListenerSurvivalDrillTest do
       stop_listening(listener, ns, [id])
     end
 
-    test "a file sink on an operator moved to B is disabled through a controller that never held it",
+    test "a file sink on a relay moved to B is disabled through a controller that never held it",
          %{namespace: ns, peer: peer, id: id} = ctx do
       {c_pid, c_node} = NodeTestHelper.start_peer_node(:listener_drill_c, app_env: @loop_env)
       on_exit(fn -> NodeTestHelper.stop_peer_node(c_pid, c_node) end)
@@ -228,7 +228,7 @@ defmodule FlezhaTest.System.ListenerSurvivalDrillTest do
       sink = %{
         file_sink("moved_sink", "#{unique("moved_sink")}.ndjson")
         | namespace: ns,
-          operator_id: id
+          relay_id: id
       }
 
       assert {:ok, _} = PluginManager.enable_plugin("moved_sink_c", sink)
@@ -244,12 +244,12 @@ defmodule FlezhaTest.System.ListenerSurvivalDrillTest do
       assert running_plugins(ns, id) == []
     end
 
-    test "a file sink enabled through A on an operator moved to B is disabled through A",
+    test "a file sink enabled through A on a relay moved to B is disabled through A",
          %{namespace: ns, peer: peer, id: id} = ctx do
       sink = %{
         file_sink("moved_sink", "#{unique("moved_sink")}.ndjson")
         | namespace: ns,
-          operator_id: id
+          relay_id: id
       }
 
       assert {:ok, _} = PluginManager.enable_plugin("moved_sink", sink)
@@ -278,7 +278,7 @@ defmodule FlezhaTest.System.ListenerSurvivalDrillTest do
     group = unique("drill_grp")
 
     assert {:ok, %{members: members}} =
-             PartitionGroup.start(ns, %Builder{id: group, factory_id: "partition_relay"}, 2)
+             PartitionGroup.start(ns, %Builder{id: group, factory_id: "partition_pass"}, 2)
 
     for member <- members, do: assert(wait_until(fn -> bound?(ns, member) end, 30_000))
     listener = listen(ns, group, on: members)
@@ -298,7 +298,7 @@ defmodule FlezhaTest.System.ListenerSurvivalDrillTest do
 
   # A disable stops every running copy and leaves the binding in place.
   defp running_plugins(ns, id) do
-    case OperatorManager.get_overwatch_state(ns, id) do
+    case RelayManager.get_overwatch_state(ns, id) do
       {:ok, %{extensions: table}} -> Table.running_ids(table)
       _ -> []
     end
@@ -310,36 +310,36 @@ defmodule FlezhaTest.System.ListenerSurvivalDrillTest do
       id = "#{unique(factory)}_#{i}"
 
       assert {:ok, %{node: placed}} =
-               OperatorManager.start_operator(ns, %Builder{id: id, factory_id: factory})
+               RelayManager.start_relay(ns, %Builder{id: id, factory_id: factory})
 
       if placed == node do
         assert wait_until(fn -> bound?(ns, id) end, 30_000)
         id
       else
-        OperatorManager.stop_operator(ns, id)
+        RelayManager.stop_relay(ns, id)
         nil
       end
     end) || flunk("no #{factory} landed on #{node}")
   end
 
-  # This node's runner stops advertising `part_echo`, so its operators move.
+  # This node's runner stops advertising `part_echo`, so its relays move.
   defp move_off_this_node(%{namespace: ns, local_runner: runner}),
     do: FleetStateHelper.sync(ns, runner, ["do_nothing", "sleeping_counter"])
 
   defp hosted_on?(ns, id, node) do
-    match?({:ok, pid} when node(pid) == node, OperatorManager.get_operator_pid(ns, id))
+    match?({:ok, pid} when node(pid) == node, RelayManager.get_relay_pid(ns, id))
   end
 
   defp start!(ns, factory, kind, plugins \\ []) do
     id = unique(factory)
-    bindings = OperatorFixture.bindings(ns, id, plugins)
+    bindings = RelayFixture.bindings(ns, id, plugins)
     builder = %Builder{id: id, factory_id: factory, run: kind, opts: [bindings: bindings]}
-    assert {:ok, _} = OperatorManager.start_operator(ns, builder)
+    assert {:ok, _} = RelayManager.start_relay(ns, builder)
     id
   end
 
   defp send!(ns, id, text) do
-    assert capture_io(fn -> Cli.call("Operator.send", Jason.encode!([ns, id, text, ""]), []) end) =~
+    assert capture_io(fn -> Cli.call("Relay.send", Jason.encode!([ns, id, text, ""]), []) end) =~
              "'#{id}'"
   end
 
@@ -389,14 +389,14 @@ defmodule FlezhaTest.System.ListenerSurvivalDrillTest do
   defp bound?(ns, id) do
     match?(
       {:ok, %{runner_id: runner, suspended: false}} when is_binary(runner),
-      OperatorManager.get_overwatch_state(ns, id)
+      RelayManager.get_overwatch_state(ns, id)
     )
   end
 
   defp rebound?(ns, id, old_runner) do
     match?(
       {:ok, %{runner_id: runner}} when is_binary(runner) and runner != old_runner,
-      OperatorManager.get_overwatch_state(ns, id)
+      RelayManager.get_overwatch_state(ns, id)
     )
   end
 

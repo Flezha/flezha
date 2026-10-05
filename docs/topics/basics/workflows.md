@@ -1,9 +1,9 @@
 # Workflows
 
 A workflow is a piece of work made of steps that run in a fixed order: reserve
-the money, place the order, confirm the fill. In Flezha a workflow is an
-operator whose class runs in steps (`run: steps`). Each step is a tasklet, and
-the operator's graph says which step feeds which.
+the money, place the order, confirm the fill. In Flezha a workflow is a
+relay whose class runs in steps (`run: steps`). Each step is a tasklet, and
+the relay's graph says which step feeds which.
 
 Running in steps gives a workflow three things a stream does not have. Each
 finished step is written down before the next one starts, so after a crash the
@@ -26,7 +26,7 @@ flowchart LR
 ```
 
 An instance takes its input as messages on its entry channels. The first one
-can ride the start: `flz operator start --text`, a schedule's stored message,
+can ride the start: `flz relay start --text`, a schedule's stored message,
 or the payload of a tasklet's spawn. The instance then runs its steps:
 
 1. **A step runs over what the step before it handed on.** Its cells run as a
@@ -48,7 +48,7 @@ steps are done when an instance stops half way, and that is where it resumes.
 ## Configure it
 
 The class declares the run and its two members
-([`configuring_an_operator.md`](configuring_an_operator.md)):
+([`configuring_a_relay.md`](configuring_a_relay.md)):
 
 | Setting | Values | Default |
 | --- | --- | --- |
@@ -448,7 +448,7 @@ public function onTimer(Timer $timer, Ctx $ctx): void
 ```
 
 Full file: [`src/ConfirmFill.php`](https://github.com/flezha/flezha_php_sdk/blob/main/examples/tradedesk/src/ConfirmFill.php).
-A PHP runner serves every operator on one thread, so the step waits with a
+A PHP runner serves every relay on one thread, so the step waits with a
 cell timer instead of a sleep. The timer is saved with the cell and fires after
 a crash too. An exception from `onTimer` is retried as one from `run` is, but
 at once rather than ten seconds apart.
@@ -504,7 +504,7 @@ non-retryable error, ends only that turn, the way a stream sets a poison
 message aside and goes on:
 
 1. The pass stops, and nothing it had not committed is kept.
-2. The turn's message is parked in the dead-letter queue, under the operator's
+2. The turn's message is parked in the dead-letter queue, under the relay's
    `_turn` slot, with the entry channel, its offset and its exact bytes.
 3. The turn's committed steps are undone, each `compensate` once.
 4. The next message runs as the next iteration.
@@ -512,7 +512,7 @@ message aside and goes on:
 `flz dlq replay` sends the parked message back to the session as a new message.
 A crash anywhere in this resumes it, and the message is parked at most once. A
 class kept in memory parks the turn without its bytes. The failed turn shows
-up as `Failed turns: <count> (last: iteration <n>)` in `flz operator info`, a
+up as `Failed turns: <count> (last: iteration <n>)` in `flz relay info`, a
 `dead_lettered` row in `flz state journal`, the
 `flezha_steps_turns_dead_lettered_total` metric and a warning line.
 
@@ -520,7 +520,7 @@ Everything else still ends a `keep_progress` session: a `once` or `chained`
 loop, a pass a timer opened, a commit the controller refuses, a stop and
 `max_duration_ms`.
 
-**Going back on purpose.** `flz operator rewind <instance> --to-iteration N`
+**Going back on purpose.** `flz relay rewind <instance> --to-iteration N`
 takes a loop back to a committed iteration: it keeps iteration `N` and every
 earlier one, undoes every later one newest first, and the next message becomes
 iteration `N + 1`. The undone messages are not run again. A rewind is refused,
@@ -543,7 +543,7 @@ The graph of a workflow is built with the same calls as a stream's
 ([`streams.md`](streams.md)): `input` names the entry channel, `into` adds a
 step, `branch` splits the path into arms that run side by side. There is
 usually no `sink`: the last step ends the instance with its result through
-`complete`, and `flz operator info` shows it. A channel between steps that has
+`complete`, and `flz relay info` shows it. A channel between steps that has
 no name of its own is named after the step that feeds it, which is the name in
 the journal and in an error; `named(...)` gives one a stable name.
 
@@ -552,7 +552,7 @@ the journal and in an error; `named(...)` gives one a stable name.
 ### Java
 
 ```java
-// OrderExecutorOperator.java: the workflow's steps, in the order they run.
+// OrderExecutorRelay.java: the workflow's steps, in the order they run.
 @Override
 public void channels(@Nonnull ChannelBuilder c) {
     c.input(OrderTicket.class, "order")
@@ -564,7 +564,7 @@ public void channels(@Nonnull ChannelBuilder c) {
 }
 ```
 
-Full file: [`OrderExecutorOperator.java`](https://github.com/flezha/flezha_java_sdk/blob/main/examples/tradedesk/src/main/java/com/flezha/examples/tradedesk/OrderExecutorOperator.java).
+Full file: [`OrderExecutorRelay.java`](https://github.com/flezha/flezha_java_sdk/blob/main/examples/tradedesk/src/main/java/com/flezha/examples/tradedesk/OrderExecutorRelay.java).
 
 ### Rust
 
@@ -590,7 +590,7 @@ Full file: [`src/order_executor.rs`](https://github.com/flezha/flezha_rust_sdk/b
 ### Node
 
 ```javascript
-// order_executor_operator.mjs: the workflow's steps, in the order they run.
+// order_executor_relay.mjs: the workflow's steps, in the order they run.
 channels: (c) => {
   c.input('order')
     .into(ReserveFunds) // step one
@@ -602,7 +602,7 @@ channels: (c) => {
 },
 ```
 
-Full file: [`order_executor_operator.mjs`](https://github.com/flezha/flezha_node_sdk/blob/main/examples/tradedesk/order_executor_operator.mjs).
+Full file: [`order_executor_relay.mjs`](https://github.com/flezha/flezha_node_sdk/blob/main/examples/tradedesk/order_executor_relay.mjs).
 
 ### Python
 
@@ -624,7 +624,7 @@ Full file: [`order_executor.py`](https://github.com/flezha/flezha_python_sdk/blo
 ### Ruby
 
 ```ruby
-# order_executor_operator.rb: the workflow's steps, in the order they run.
+# order_executor_relay.rb: the workflow's steps, in the order they run.
 channels do |c|
   c.input("order")
    .into(ReserveFunds)                                     # step one
@@ -636,12 +636,12 @@ channels do |c|
 end
 ```
 
-Full file: [`order_executor_operator.rb`](https://github.com/flezha/flezha_ruby_sdk/blob/main/examples/tradedesk/order_executor_operator.rb).
+Full file: [`order_executor_relay.rb`](https://github.com/flezha/flezha_ruby_sdk/blob/main/examples/tradedesk/order_executor_relay.rb).
 
 ### PHP
 
 ```php
-// src/OrderExecutorOperator.php: the workflow's steps, in the order they run.
+// src/OrderExecutorRelay.php: the workflow's steps, in the order they run.
 public static function channels(Builder $c): void
 {
     $c->input('order')
@@ -654,7 +654,7 @@ public static function channels(Builder $c): void
 }
 ```
 
-Full file: [`src/OrderExecutorOperator.php`](https://github.com/flezha/flezha_php_sdk/blob/main/examples/tradedesk/src/OrderExecutorOperator.php).
+Full file: [`src/OrderExecutorRelay.php`](https://github.com/flezha/flezha_php_sdk/blob/main/examples/tradedesk/src/OrderExecutorRelay.php).
 
 ### Elixir
 
@@ -681,19 +681,19 @@ are undone even though `record_order` beside it succeeded.
 ## One instance per piece of work
 
 A workflow's factory is registered on a runner like any other, and an instance
-is started per piece of work: by hand with `flz operator start`, on a schedule
+is started per piece of work: by hand with `flz relay start`, on a schedule
 with `flz schedule add`, or from a running tasklet. In the tradedesk example
 the ETL stream starts one `order_executor` for every buy, handing it the order
 as its first message
 ([`../advanced/spawning_from_a_tasklet.md`](../advanced/spawning_from_a_tasklet.md)):
 
 ```sh
-$ flz operator start order_executor --text '{"symbol": "EUR/USD", "quantity": 10}' --channel order
+$ flz relay start order_executor --text '{"symbol": "EUR/USD", "quantity": 10}' --channel order
 ```
 
 A start without `--id` that is retried after a lost reply starts a second
 instance, which here would be a second order. Pass `--id` when a start may be
-retried ([`running_operators.md`](running_operators.md)).
+retried ([`running_relays.md`](running_relays.md)).
 
 ## Crashes and resuming
 
@@ -716,29 +716,29 @@ when it is stopped. While it sleeps:
 
 | Surface | While asleep |
 | --- | --- |
-| `flz operator info` | phase `suspended` |
+| `flz relay info` | phase `suspended` |
 | `flz state get` | refused: no live cell |
-| `flz operator stop` | wakes it onto a runner with the stop carried, and it ends `cancelled` with its record kept, as it would awake. With no runner to wake on, it is removed hard |
+| `flz relay stop` | wakes it onto a runner with the stop carried, and it ends `cancelled` with its record kept, as it would awake. With no runner to wake on, it is removed hard |
 | the input-silence check | does not flag it |
-| removing its factory from the runner | succeeds, because the runner cannot see a sleeping instance; the instance then cannot wake until a runner registers the factory again, and the controller logs `dropped factory ... that still has controller-known operators` |
+| removing its factory from the runner | succeeds, because the runner cannot see a sleeping instance; the instance then cannot wake until a runner registers the factory again, and the controller logs `dropped factory ... that still has controller-known relays` |
 
 An instance with undelivered input is not left asleep, and a wake that finds
-no runner is retried. `flz state journal <operator/instance>` shows the
-journal, and `flz state inbox <operator/instance>` the input log's records.
-`flz operator replay` is refused for a workflow's cell; `flz operator rewind`
+no runner is retried. `flz state journal <relay/instance>` shows the
+journal, and `flz state inbox <relay/instance>` the input log's records.
+`flz relay replay` is refused for a workflow's cell; `flz relay rewind`
 is a loop's way back.
 
 ## After it ends
 
 A finished instance's completion record (status, error, result, finish time)
-and state are kept for a while: `flz operator info <id>` shows phase
+and state are kept for a while: `flz relay info <id>` shows phase
 `finished` with the status, result and finish time. They are removed once the
 retention window has passed.
 
 | Setting | Default |
 | --- | --- |
-| `FLEZHA_STEPS_RETENTION_HOURS` (`:default_operator_completed_retention_hours`) | 72 hours |
-| `:operator_completed_retention_hours`, `%{<class> => hours}` | none: a per-class override |
+| `FLEZHA_STEPS_RETENTION_HOURS` (`:default_relay_completed_retention_hours`) | 72 hours |
+| `:relay_completed_retention_hours`, `%{<class> => hours}` | none: a per-class override |
 
 A workflow's cell keeps point-in-time history for
 `time_travel_retention_hours`, like a stream's; set it to `0` for a class that
@@ -786,15 +786,15 @@ its worker pool. `max_duration_ms` costs no thread either.
 
 ## See also
 
-- [`configuring_an_operator.md`](configuring_an_operator.md): the settings tree, and `run: steps` in it.
+- [`configuring_a_relay.md`](configuring_a_relay.md): the settings tree, and `run: steps` in it.
 - [`streams.md`](streams.md): the graph builder, and the run a workflow is not.
 - [`state.md`](state.md): a step's state and how it comes back.
 - [`durability.md`](durability.md): what each `durable` level keeps through a crash.
-- [`running_operators.md`](running_operators.md): start, stop, info.
+- [`running_relays.md`](running_relays.md): start, stop, info.
 - [`../advanced/spawning_from_a_tasklet.md`](../advanced/spawning_from_a_tasklet.md),
   [`../advanced/rewinding_a_turn.md`](../advanced/rewinding_a_turn.md),
   [`../advanced/sessions.md`](../advanced/sessions.md),
   [`../advanced/timers.md`](../advanced/timers.md).
-- [Operator settings](../../configuration/operator_settings.md#channel-and-edge-options): edge options, retry included.
-- [`../../resilience/steps_operator.md`](https://github.com/flezha/flezha/blob/main/docs/resilience/steps_operator.md): how the controller and the runner carry it out.
+- [Relay settings](../../configuration/relay_settings.md#channel-and-edge-options): edge options, retry included.
+- [`../../resilience/steps_relay.md`](https://github.com/flezha/flezha/blob/main/docs/resilience/steps_relay.md): how the controller and the runner carry it out.
 - Tutorial: [`place_orders.md`](../../tutorials/tradedesk/place_orders.md) builds `order_executor`.

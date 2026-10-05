@@ -15,7 +15,7 @@ defmodule Flezha.Service.HubManager.Rows do
 
   alias Flezha.Convergence.Snapshot
   alias Flezha.Identificator
-  alias Flezha.Operator.Lookup
+  alias Flezha.Relay.Lookup
   alias Flezha.Plugin
   alias Flezha.Process.Cspec
   alias Flezha.Process.Hub
@@ -58,14 +58,14 @@ defmodule Flezha.Service.HubManager.Rows do
 
   @doc """
   The same dump, for a caller that only folds it: a hub that is not up holds no
-  running operator, and that is an empty dump rather than an error to unwrap.
+  running relay, and that is an empty dump rather than an error to unwrap.
   """
   @spec registry_dump(String.t()) :: map()
   def registry_dump(namespace), do: with_live_hub(namespace, %{}, &live_registry_dump/1)
 
   # Every caller here means "what is currently running with a live binding":
   # unbound rows are replay residue, not runtime. Declared intent is a
-  # different question — `declared_operators/1` answers that from the hub's
+  # different question — `declared_relays/1` answers that from the hub's
   # declared set.
   defp live_registry_dump(hub_id) do
     ProcessRegistry.dump_all(hub_id, include_unbound: false, include_stopped: false)
@@ -79,16 +79,16 @@ defmodule Flezha.Service.HubManager.Rows do
   # `Lookup` answers in the three atoms every resolver shares; this is the
   # boundary where a hub read becomes the reason a caller is answered with,
   # naming what was looked for.
-  def get_pid(namespace, operator_id) do
-    case Lookup.operator(namespace, operator_id) do
+  def get_pid(namespace, relay_id) do
+    case Lookup.relay(namespace, relay_id) do
       {:ok, pid} -> {:ok, pid}
       {:error, :hub_down} -> {:error, {:hub_down, namespace}}
-      {:error, _reason} -> {:error, {:operator_not_found, namespace, operator_id}}
+      {:error, _reason} -> {:error, {:relay_not_found, namespace, relay_id}}
     end
   end
 
   @doc """
-  Resolve an operator's runnable pid from a ProcessHub `node_pids` list
+  Resolve a relay's runnable pid from a ProcessHub `node_pids` list
   (`[{node, pid}]`, with 0, 1, or many entries).
 
   Drops entries on nodes absent from the live cluster, prefers the local node's
@@ -97,7 +97,7 @@ defmodule Flezha.Service.HubManager.Rows do
 
   This centralises the multi-node-safe access that replaced the former
   single-element `[{_node, pid}]` matches, which raised `FunctionClauseError`
-  the moment an operator was registered on more than one node.
+  the moment a relay was registered on more than one node.
   """
   @spec live_pid([{node(), pid()}]) :: pid() | nil
   def live_pid(node_pids) when is_list(node_pids) do
@@ -126,13 +126,13 @@ defmodule Flezha.Service.HubManager.Rows do
   def live_pid(_), do: nil
 
   # A plugin entry is a hub child too, keyed `{:plugin, name}`; every reader
-  # here that means operators takes the binary keys only.
-  def get_all_operators(namespace) do
+  # here that means relays takes the binary keys only.
+  def get_all_relays(namespace) do
     with_live_hub(namespace, [], fn hub_id ->
       ProcessHub.process_list(hub_id, :global)
-      |> Enum.flat_map(fn {operator_id, node_pids} ->
-        case is_binary(operator_id) && live_pid(node_pids) do
-          pid when is_pid(pid) -> [{operator_id, pid}]
+      |> Enum.flat_map(fn {relay_id, node_pids} ->
+        case is_binary(relay_id) && live_pid(node_pids) do
+          pid when is_pid(pid) -> [{relay_id, pid}]
           _plugin_or_dead -> []
         end
       end)
@@ -140,7 +140,7 @@ defmodule Flezha.Service.HubManager.Rows do
   end
 
   @doc """
-  The live node hosting an operator from its `node_pids` (`[{node, pid}]`): the
+  The live node hosting a relay from its `node_pids` (`[{node, pid}]`): the
   local node when it holds the runnable pid, else another live cluster node,
   else `nil` (every entry is on a dead node — a FAILED placement). Sibling of
   `live_pid/1` for surfacing per-node placement in the CLI.
@@ -166,31 +166,31 @@ defmodule Flezha.Service.HubManager.Rows do
   def live_node(_), do: nil
 
   @doc """
-  Per-operator view of a namespace's durable registry for user surfaces:
-  one row per registered operator (including FAILED ones whose only placement is
-  a dead node, which `get_all_operators/1` filters out), carrying the assigned
+  Per-relay view of a namespace's durable registry for user surfaces:
+  one row per registered relay (including FAILED ones whose only placement is
+  a dead node, which `get_all_relays/1` filters out), carrying the assigned
   runner, the declared factory (from the durable cspec start-args) and live node
   from the registry dump and the live health classified
-  by the Convergence Loop (`Snapshot.operator_health/2`), so the CLI sees exactly
+  by the Convergence Loop (`Snapshot.relay_health/2`), so the CLI sees exactly
   what the loop sees, worded as every surface shows it: `:recovering` for a
-  rebinding operator inside the unmet-intent grace. A registry row the loop has
+  rebinding relay inside the unmet-intent grace. A registry row the loop has
   not yet observed reports `:unknown` until the next tick covers it.
   """
-  @spec operator_rows(String.t()) :: [
+  @spec relay_rows(String.t()) :: [
           %{id: term(), health: atom(), runner: term(), factory: term(), node: term()}
         ]
-  def operator_rows(namespace) do
+  def relay_rows(namespace) do
     with_live_hub(namespace, [], fn hub_id ->
       hub_id
-      |> operator_dump()
-      |> Enum.map(fn {operator_id, entry} ->
+      |> relay_dump()
+      |> Enum.map(fn {relay_id, entry} ->
         {cspec, node_pids, metadata} = normalize_registry_entry(entry)
 
-        builder = cspec_operator(cspec)
+        builder = cspec_relay(cspec)
 
         %{
-          id: operator_id,
-          health: Snapshot.operator_health(namespace, operator_id),
+          id: relay_id,
+          health: Snapshot.relay_health(namespace, relay_id),
           runner: Map.get(metadata, :tag),
           factory: builder && Map.get(builder, :factory_id),
           partition: cspec_partition(cspec),
@@ -202,42 +202,42 @@ defmodule Flezha.Service.HubManager.Rows do
   end
 
   @doc """
-  Every operator's bindings, as `{operator_id, [{plugin_id, %Flezha.Plugin{}}]}`.
+  Every relay's bindings, as `{relay_id, [{plugin_id, %Flezha.Plugin{}}]}`.
 
-  Read from the same durable registry dump `operator_rows/1` walks, so asking
+  Read from the same durable registry dump `relay_rows/1` walks, so asking
   "who is bound to X" costs one registry read rather than an Overwatch
-  round-trip per operator. Declared, not live: a binding the cspec records but
+  round-trip per relay. Declared, not live: a binding the cspec records but
   whose host has not brought it up yet still appears.
   """
-  @spec operator_bindings(binary() | atom()) :: [{binary(), [{binary(), Plugin.t()}]}]
-  def operator_bindings(namespace) do
+  @spec relay_bindings(binary() | atom()) :: [{binary(), [{binary(), Plugin.t()}]}]
+  def relay_bindings(namespace) do
     with_live_hub(namespace, [], fn hub_id ->
       hub_id
-      |> operator_dump()
-      |> Enum.map(fn {operator_id, entry} ->
+      |> relay_dump()
+      |> Enum.map(fn {relay_id, entry} ->
         {cspec, _node_pids, _metadata} = normalize_registry_entry(entry)
-        {operator_id, normalize_plugins(Keyword.get(cspec_opts(cspec), :bindings, []))}
+        {relay_id, normalize_plugins(Keyword.get(cspec_opts(cspec), :bindings, []))}
       end)
       |> Enum.reject(fn {_id, bindings} -> bindings == [] end)
     end)
   end
 
   @doc """
-  The bindings embedded in an operator's child-spec start args, as
+  The bindings embedded in a relay's child-spec start args, as
   `{:ok, [{plugin_id, %Flezha.Plugin{}}]}`.
   """
-  @spec operator_bindings(String.t(), String.t()) ::
+  @spec relay_bindings(String.t(), String.t()) ::
           {:ok, [{binary(), Plugin.t()}]} | {:error, term()}
-  def operator_bindings(namespace, operator_id) do
+  def relay_bindings(namespace, relay_id) do
     with_live_hub(namespace, {:error, {:hub_down, namespace}}, fn hub_id ->
-      case ProcessRegistry.lookup(hub_id, operator_id) do
+      case ProcessRegistry.lookup(hub_id, relay_id) do
         nil ->
-          {:error, {:operator_not_found, namespace, operator_id}}
+          {:error, {:relay_not_found, namespace, relay_id}}
 
         entry ->
-          case cspec_operator(elem(entry, 0)) do
-            %{} = operator -> {:ok, normalize_plugins(Keyword.get(operator.opts, :bindings, []))}
-            nil -> {:error, {:operator_not_found, namespace, operator_id}}
+          case cspec_relay(elem(entry, 0)) do
+            %{} = relay -> {:ok, normalize_plugins(Keyword.get(relay.opts, :bindings, []))}
+            nil -> {:error, {:relay_not_found, namespace, relay_id}}
           end
       end
     end)
@@ -274,16 +274,16 @@ defmodule Flezha.Service.HubManager.Rows do
     end
   end
 
-  # The declared operator from a registry entry's cspec start-args — the same
-  # `{namespace, operator}` / `{namespace, runner, operator}` arg shapes
+  # The declared relay from a registry entry's cspec start-args — the same
+  # `{namespace, relay}` / `{namespace, runner, relay}` arg shapes
   # `alter_child_data/2` rewrites. The durable record of everything a start
   # declared, which is why partition identity lives there. A plugin child's
-  # entry is no operator.
-  defp cspec_operator(cspec) do
+  # entry is no relay.
+  defp cspec_relay(cspec) do
     case Cspec.start_arg(cspec) do
       {:ok, {_namespace, %Plugin{}}} -> nil
-      {:ok, {_namespace, %{} = operator}} -> operator
-      {:ok, {_namespace, _runner, %{} = operator}} -> operator
+      {:ok, {_namespace, %{} = relay}} -> relay
+      {:ok, {_namespace, _runner, %{} = relay}} -> relay
       _ -> nil
     end
   end
@@ -295,9 +295,9 @@ defmodule Flezha.Service.HubManager.Rows do
   # The builder opts a registry entry's cspec start-args carry, or `[]` — where
   # a partition member's identity is durable.
   defp cspec_opts(cspec) do
-    case cspec_operator(cspec) do
+    case cspec_relay(cspec) do
       nil -> []
-      operator -> Map.get(operator, :opts, [])
+      relay -> Map.get(relay, :opts, [])
     end
   end
 
@@ -306,7 +306,7 @@ defmodule Flezha.Service.HubManager.Rows do
 
   @doc """
   Apply `update_fn` to the plugin list a child spec's start args carry and
-  return the rewritten spec: an operator's bindings, or a plugin child's own
+  return the rewritten spec: a relay's bindings, or a plugin child's own
   entry as a list of one. `Flezha.Service.PluginManager` writes both through
   `ProcessHub.Service.ProcessRegistry.update/3` with this one transform.
   """
@@ -319,19 +319,19 @@ defmodule Flezha.Service.HubManager.Rows do
           [{^id, rewritten}] = update_fn.([{id, plugin}])
           {namespace, rewritten}
 
-        {namespace, operator} ->
-          {namespace, rewrite_operator_bindings(operator, update_fn)}
+        {namespace, relay} ->
+          {namespace, rewrite_relay_bindings(relay, update_fn)}
 
-        {namespace, runner_id, operator} ->
-          {namespace, runner_id, rewrite_operator_bindings(operator, update_fn)}
+        {namespace, runner_id, relay} ->
+          {namespace, runner_id, rewrite_relay_bindings(relay, update_fn)}
       end
 
     Map.put(cspec, :start, {m, f, [new_arg]})
   end
 
-  defp rewrite_operator_bindings(operator, update_fn) do
-    current = normalize_plugins(Keyword.get(operator.opts, :bindings, []))
-    %{operator | opts: Keyword.put(operator.opts, :bindings, update_fn.(current))}
+  defp rewrite_relay_bindings(relay, update_fn) do
+    current = normalize_plugins(Keyword.get(relay.opts, :bindings, []))
+    %{relay | opts: Keyword.put(relay.opts, :bindings, update_fn.(current))}
   end
 
   defp normalize_plugins(plugins) when is_list(plugins) do
@@ -341,15 +341,15 @@ defmodule Flezha.Service.HubManager.Rows do
     end)
   end
 
-  def durable_operator_count(hub_id) do
-    with_live_hub_id(hub_id, 0, fn id -> map_size(operator_dump(id)) end)
+  def durable_relay_count(hub_id) do
+    with_live_hub_id(hub_id, 0, fn id -> map_size(relay_dump(id)) end)
   end
 
-  defp operator_dump(hub_id),
+  defp relay_dump(hub_id),
     do: hub_id |> live_registry_dump() |> Map.filter(fn {id, _entry} -> is_binary(id) end)
 
   @doc """
-  Whether operator starts declare durable intent — `durable: true` through
+  Whether relay starts declare durable intent — `durable: true` through
   the hub's declared set. THE auto-restore kill-switch predicate: the start
   authority, the hub's `auto_recovery` config, the registry backend, and the
   pending-restore health read all flip on it together — a hub without
@@ -365,32 +365,32 @@ defmodule Flezha.Service.HubManager.Rows do
   end
 
   @doc """
-  The namespace's declared operators, read from the hub's declared set:
+  The namespace's declared relays, read from the hub's declared set:
   intent, not runtime. An entry exists here for exactly as long as the
-  operator should exist, whether or not anything currently runs it — a wiped
+  relay should exist, whether or not anything currently runs it — a wiped
   runtime registry does not empty this list, and a deliberate stop removes its
   entry for good. Parsed through the same cspec start-args shapes the registry
   readers use; an entry whose args no current clause understands still counts
   as declared, with an unknown factory. A hub that cannot be read answers
   `unreadable`: none declared, unless the caller must tell the two apart.
   """
-  @spec declared_operators(binary() | atom(), term()) ::
+  @spec declared_relays(binary() | atom(), term()) ::
           [%{id: binary(), factory_id: binary() | nil}] | term()
-  def declared_operators(namespace, unreadable \\ []) do
+  def declared_relays(namespace, unreadable \\ []) do
     with_live_hub(namespace, unreadable, fn hub_id ->
       %{children: children} = DeclaredChildren.declared_children(hub_id)
 
       for %{id: id} = child_spec <- children, is_binary(id) do
-        operator = cspec_operator(child_spec)
-        %{id: id, factory_id: operator && Map.get(operator, :factory_id)}
+        relay = cspec_relay(child_spec)
+        %{id: id, factory_id: relay && Map.get(relay, :factory_id)}
       end
     end)
   end
 
   @doc """
-  Every declared operator's bindings, as `{operator_id, [binding]}`, read from
+  Every declared relay's bindings, as `{relay_id, [binding]}`, read from
   the hub's declared set: the intent a move, a restart and a rescale all keep,
-  while the registry row of a moving operator may be between its two homes.
+  while the registry row of a moving relay may be between its two homes.
   """
   @spec declared_bindings(binary() | atom()) :: [{binary(), list()}]
   def declared_bindings(namespace) do
@@ -405,7 +405,7 @@ defmodule Flezha.Service.HubManager.Rows do
     end)
   end
 
-  @doc "Whether `namespace`'s declared set names any child, operator or plugin."
+  @doc "Whether `namespace`'s declared set names any child, relay or plugin."
   @spec declares_anything?(binary() | atom()) :: boolean()
   def declares_anything?(namespace) do
     with_live_hub(namespace, false, fn hub_id ->
@@ -413,29 +413,29 @@ defmodule Flezha.Service.HubManager.Rows do
     end)
   end
 
-  def durable_operator_keys(hub_id) do
+  def durable_relay_keys(hub_id) do
     with_live_hub_id(hub_id, [], fn id ->
       live_registry_dump(id) |> Map.keys() |> Enum.filter(&is_binary/1)
     end)
   end
 
   @doc """
-  True when the namespace's hub still holds registered operators (running or
+  True when the namespace's hub still holds registered relays (running or
   durably suspended). Runner cleanup / migration consult this so a hub is never
-  torn down while it holds parked operators that must stay addressable.
+  torn down while it holds parked relays that must stay addressable.
   """
-  def registered_operators?(namespace) do
-    Identificator.hub(namespace) |> durable_operator_keys() != []
+  def registered_relays?(namespace) do
+    Identificator.hub(namespace) |> durable_relay_keys() != []
   end
 
   @doc """
-  True when THIS node still hosts operators of `namespace`'s hub — the
+  True when THIS node still hosts relays of `namespace`'s hub — the
   question a node-local reclaim asks, as opposed to the cluster-wide
-  `registered_operators?/1`. A hub that cannot be read answers `true`: a
+  `registered_relays?/1`. A hub that cannot be read answers `true`: a
   read that failed proves nothing, and nothing is torn down on it.
   """
-  @spec local_operators?(binary()) :: boolean()
-  def local_operators?(namespace) do
+  @spec local_relays?(binary()) :: boolean()
+  def local_relays?(namespace) do
     with_live_hub(namespace, true, fn hub_id ->
       ProcessHub.process_list(hub_id, :local) != []
     end)

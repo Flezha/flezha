@@ -1,24 +1,24 @@
 # File plugin
 
-The file plugin makes a file an operator's input, to replay a log or load an export, or its
-output, to watch what an operator emits land somewhere `tail` can read.
-`Flezha.Plugin.Provider.File` is one family with two provider ids: `operator_file_source`
+The file plugin makes a file a relay's input, to replay a log or load an export, or its
+output, to watch what a relay emits land somewhere `tail` can read.
+`Flezha.Plugin.Provider.File` is one family with two provider ids: `relay_file_source`
 (`File.Source`) reads a file onto an entry channel, one line per frame, and
-`operator_file_sink` (`File.Sink`) writes one line per record. This page covers the root
+`relay_file_sink` (`File.Sink`) writes one line per record. This page covers the root
 folder both share, then each direction: its contract, options, delivery, failure semantics
 and health, then telemetry and limits.
 
-| | `operator_file_source` | `operator_file_sink` |
+| | `relay_file_source` | `relay_file_sink` |
 | --- | --- | --- |
-| Type | operator plugin | operator plugin |
+| Type | relay plugin | relay plugin |
 | Ships | built in | built in |
-| Shareable | no: a second operator bound to it is refused (`plugin.not_shareable`) | no: a second operator bound to it is refused (`plugin.not_shareable`) |
-| Partitioned operators | not refused: each member runs a reader of its own over the same file | allowed: each member runs a writer of its own; give each a file of its own |
-| Durability | at least once: the offset moves only once the operator took the line; a crash can deliver up to `commit_interval_ms` of lines again and never skips one | a delivery-guaranteed record is confirmed once its batch is synced (`commit: append`), or once its part is committed (`commit: rename`, written once) |
+| Shareable | no: a second relay bound to it is refused (`plugin.not_shareable`) | no: a second relay bound to it is refused (`plugin.not_shareable`) |
+| Partitioned relays | not refused: each member runs a reader of its own over the same file | allowed: each member runs a writer of its own; give each a file of its own |
+| Durability | at least once: the offset moves only once the relay took the line; a crash can deliver up to `commit_interval_ms` of lines again and never skips one | a delivery-guaranteed record is confirmed once its batch is synced (`commit: append`), or once its part is committed (`commit: rename`, written once) |
 
 ## Options
 
-### `operator_file_source`
+### `relay_file_source`
 
 <!-- provider-options:begin file_source -->
 | Option | Type | Default | Required | Description |
@@ -36,7 +36,7 @@ and health, then telemetry and limits.
 | `idle_after_ms` | int | `0` | no | Age of the last settled poll past which the reader is idle; 0 derives it from `poll_interval_ms` |
 <!-- provider-options:end -->
 
-### `operator_file_sink`
+### `relay_file_sink`
 
 <!-- provider-options:begin file_sink -->
 | Option | Type | Default | Required | Description |
@@ -58,9 +58,9 @@ and health, then telemetry and limits.
 ## Example
 
 ```sh
-$ flz plugin enable reader operator_file_source --operator_id=op1 \
+$ flz plugin enable reader relay_file_source --relay_id=op1 \
   --Xpath=events.ndjson --Xchannel_in=events
-$ flz plugin enable writer operator_file_sink --operator_id=op1 --hook=on_output \
+$ flz plugin enable writer relay_file_sink --relay_id=op1 --hook=on_output \
   --Xpath=out/alerts.ndjson --Xchannel_out=alerts
 ```
 
@@ -101,15 +101,15 @@ plugin.
 
 ### A local path, on a cluster
 
-The root is a folder on the controller the operator runs on. On one controller, or
+The root is a folder on the controller the relay runs on. On one controller, or
 where the root is a shared mount at the same path on every controller, that is enough.
-Where it is not, an operator moved onto a controller that does not have the file
+Where it is not, a relay moved onto a controller that does not have the file
 reports `{:unhealthy, {:file_missing, path}}` within one health probe rather than
 reading nothing silently, or the root can be [an S3 bucket](#an-s3-bucket-instead-of-a-folder)
 every controller reaches.
 
 Both providers print their path and their current verdict beneath the plugin in
-`flz operator info`, so the screen that shows an operator `degraded` also says why:
+`flz relay info`, so the screen that shows a relay `degraded` also says why:
 
 ```text
   Plugins:
@@ -120,7 +120,7 @@ Both providers print their path and their current verdict beneath the plugin in
 
 ### An S3 bucket instead of a folder
 
-Where an operator moves between controllers and no folder is shared, the root can be a
+Where a relay moves between controllers and no folder is shared, the root can be a
 bucket prefix on an S3-compatible endpoint such as AWS S3 or MinIO:
 
 ```bash
@@ -159,35 +159,35 @@ What each direction does differently is under
 [reading an object](#reading-an-object-under-an-s3-root) and
 [writing parts to a bucket](#writing-parts-to-a-bucket).
 
-## Reading a file: `operator_file_source`
+## Reading a file: `relay_file_source`
 
 ### Contract
 
 | | |
 | --- | --- |
 | Hooks | none needed: the reader drives itself, so a binding names no hook (the provider also defines `:on_terminate`) |
-| Shared | no: a second operator bound to it is refused (`plugin.not_shareable`) |
+| Shared | no: a second relay bound to it is refused (`plugin.not_shareable`) |
 | Upstream | one file inside the root folder, or one object under an S3 root, polled every `poll_interval_ms` |
 | Injection | each line, without its newline, on the entry channel `channel` or `channel_in` names |
-| Delivery | the confirming ingest: the offset moves only once the operator has taken the line |
+| Delivery | the confirming ingest: the offset moves only once the relay has taken the line |
 | Resume | the byte offset of the last committed line, on a plugin restart, a move and a controller restart |
 | Guarantee | at-least-once: a crash can re-deliver lines confirmed since the last commit, and never skips one |
 | Failure posture | stop at a line it cannot deliver; keep polling a missing file |
 
 ```sh
-$ flz plugin enable reader operator_file_source \
-  --operator_id=op1 \
+$ flz plugin enable reader relay_file_source \
+  --relay_id=op1 \
   --Xpath=events.ndjson \
   --Xchannel_in=events
 ```
 
-As a plugin spec at operator start (`flz operator start --plugins`):
+As a plugin spec at relay start (`flz relay start --plugins`):
 
 ```json
 [
   {
     "name": "reader",
-    "provider": "operator_file_source",
+    "provider": "relay_file_source",
     "opts": {"path": "events.ndjson", "channel_in": "events"},
     "hooks": ["on_terminate"]
   }
@@ -197,7 +197,7 @@ As a plugin spec at operator start (`flz operator start --plugins`):
 `channel` names the entry channel every line is injected on, and `channel_in` is the
 explicit spelling of the same name; one of the two is required, and writing both is
 refused. Either takes exactly one name. `channel_out` is not a parameter here: the
-reader never acts on the records passing through the operator.
+reader never acts on the records passing through the relay.
 
 **One of `channel` and `channel_in` is required.** The Required column speaks of one
 row at a time, so it reads `no` for both.
@@ -225,19 +225,19 @@ only once every whole line before it has been delivered.
 
 Each line is `GenServer.call(overwatch, {:ingest, line, %{"channel" => entry_channel}})`,
 never the fire-and-forget cast. The reader waits for the answer as long as the
-operator takes: an operator parked at zero credit parks the reader with it, which is
+relay takes: a relay parked at zero credit parks the reader with it, which is
 the back-pressure a source exists to feel. A refused ingest counts toward health and
 the same line is offered again on the next poll. While a reader is waiting on a parked
-operator its health probe cannot be answered, which reports `{:fail_open,
+relay its health probe cannot be answered, which reports `{:fail_open,
 :probe_timeout}`, an uncertain probe the convergence loop does not escalate on.
 
 ### Where it resumes
 
 The reader commits the byte offset where the last delivered line ended through the
-plugin's persisted option, `offset`. The value lands on the operator's live plugin
+plugin's persisted option, `offset`. The value lands on the relay's live plugin
 table, which a plugin restart and a move to another controller prepare the plugin
 from, and in the declared plugin manifest, which a controller restart rebuilds the
-operator from. A committed offset wins over `start_at`.
+relay from. A committed offset wins over `start_at`.
 
 The commit is batched, not per line: once the reader has caught up with the file,
 stopped, or has to wait, and otherwise every `commit_interval_ms` while it is still
@@ -294,14 +294,14 @@ health are the file's.
 | `{:unhealthy, :no_reader}` / `{:unhealthy, :reader_dead}` | no worker, or a dead one |
 | `:healthy` | otherwise, including a file that does not grow |
 
-## Writing a file: `operator_file_sink`
+## Writing a file: `relay_file_sink`
 
 ### Contract
 
 | | |
 | --- | --- |
 | Hooks | `:on_input`, `:on_output` |
-| Shared | no: a second operator bound to it is refused (`plugin.not_shareable`) |
+| Shared | no: a second relay bound to it is refused (`plugin.not_shareable`) |
 | Downstream | one file inside the root folder, appended to; under `commit: rename`, a directory of parts, or under an S3 root a key prefix of parts |
 | Record | the message bytes followed by one newline, nothing else |
 | Delivery | a batch is written in one call and data-synced before any outbox hold in it is confirmed; under `rename`, once its part is committed |
@@ -309,8 +309,8 @@ health are the file's.
 | Failure posture | a failed write is cut back and retried under the backoff ladder; nothing is dropped |
 
 ```sh
-$ flz plugin enable writer operator_file_sink \
-  --operator_id=op1 \
+$ flz plugin enable writer relay_file_sink \
+  --relay_id=op1 \
   --hook=on_output \
   --Xpath=out/alerts.ndjson \
   --Xchannel_out=alerts
@@ -338,7 +338,7 @@ line, and nothing is dropped. What the sync is followed by is the layout's.
 
 **`commit: append`, the default, has a crash window.** `path` is one file, and each
 delivery-guaranteed record's outbox hold is confirmed once its batch is synced, which is
-what lets the operator's cursor move past it. A batch written and synced just before
+what lets the relay's cursor move past it. A batch written and synced just before
 the controller crashes, whose confirmation did not reach the outbox, is re-driven after
 the restart and appended a second time. No record is lost; one batch can be written
 twice. Choose `rename` where a duplicate line matters.
@@ -346,8 +346,8 @@ twice. Choose `rename` where a duplicate line matters.
 ### `commit: rename`: parts written once
 
 ```bash
-flz plugin enable writer operator_file_sink \
-  --operator_id=op1 \
+flz plugin enable writer relay_file_sink \
+  --relay_id=op1 \
   --hook=on_output \
   --Xpath=out/alerts \
   --Xcommit=rename \
@@ -406,8 +406,8 @@ the only layout. `commit: append`, given or taken as the default, is refused at 
 naming `commit`, because an object cannot be appended to:
 
 ```bash
-flz plugin enable writer operator_file_sink \
-  --operator_id=op1 \
+flz plugin enable writer relay_file_sink \
+  --relay_id=op1 \
   --hook=on_output \
   --Xpath=echo-out \
   --Xcommit=rename

@@ -2,7 +2,7 @@
 
 For SDK implementers and contributors: how a Tasklet's per-Cell state becomes durable in
 the Rust, Java and Elixir SDKs: the flusher, the restoration fold, compaction, the payload ids
-and the record header. What an operator author writes and configures (state, changes, the
+and the record header. What a relay author writes and configures (state, changes, the
 `durable` setting, the per-tasklet knobs, Kryo registration, the test harnesses) is in
 [`../topics/basics/state.md`](../topics/basics/state.md). The controller's on-disk layout,
 fsync batching, retention and the `flz state` CLI are in
@@ -46,10 +46,10 @@ their place, carrying the outputs rather than preceding them.
 ### How `durable` reaches the controller
 
 The runner announces the class's `durable` setting (`durable` = `memory`, `local` or `remote`
-in the `AddOperator` response, with `sleep_after_ms` when the class sleeps), so the controller
+in the `AddRelay` response, with `sleep_after_ms` when the class sleeps), so the controller
 reads the same value: a class kept in memory keeps no WAL or snapshot, is given no restore on a
 rebind, and answers a live Cell read with `{:error, :persistence_off}`. The controller's
-`:operator_persistence` (`%{class => bool}`) overrides the announced setting per class.
+`:relay_persistence` (`%{class => bool}`) overrides the announced setting per class.
 
 ### Restoration flow (warm restart)
 
@@ -75,7 +75,7 @@ an arm per format, so an effect record is unwrapped in place — its enclosed ch
 fold under the enclosing record's version decision, its timer ops join the pending set, and
 its consumed offset and event time become the Cell's floor and high-water — while a
 snapshot header carrying that format is malformed. A refused fold leaves the Cell as it
-was and the controller parks the operator.
+was and the controller parks the relay.
 Rust folds in-process with postcard and verifies each record's header (`sdk_lang`,
 `schema_version`, `format_id`) and trailing CRC32, failing loud with
 `RestoreError::{LangMismatch, SchemaTooOld, SchemaFromTheFuture, HeaderInvalid,
@@ -136,7 +136,7 @@ restore rejects any `sdk_lang` but its own before it reads the format byte:
 | 12..16 | `crc32` | over the body | over the body | over the body |
 
 Every SDK ships the smallest `compact_after_bytes` across the class's Tasklets in
-`AddOperator` metadata only when it differs from the default
+`AddRelay` metadata only when it differs from the default
 (`flz_core::persistence::DEFAULT_COMPACT_AFTER_BYTES`, in lockstep with the controller's
 `:default_compact_after_bytes`).
 
@@ -171,4 +171,4 @@ Every SDK ships the smallest `compact_after_bytes` across the class's Tasklets i
 - [`poll_core.md`](poll_core.md) — the activation model the Java change bytes ride
 - [`cell_timers.md`](cell_timers.md) — timers as folded state
 - [`authoring_contract.md`](authoring_contract.md) — tiers, derived Change types, determinism
-- [`../resilience/steps_operator.md`](../resilience/steps_operator.md) — durable-by-default steps classes
+- [`../resilience/steps_relay.md`](../resilience/steps_relay.md) — durable-by-default steps classes

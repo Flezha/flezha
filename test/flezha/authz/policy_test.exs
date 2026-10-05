@@ -5,20 +5,20 @@ defmodule Flezha.AuthZ.PolicyTest do
 
   describe "grants?/2" do
     test "viewer has read-only verbs" do
-      for a <- [:"operator.list", :"audit.read", :"observability.query"] do
+      for a <- [:"relay.list", :"audit.read", :"observability.query"] do
         assert Policy.grants?(:viewer, a)
       end
     end
 
-    test "viewer cannot start operators or mutate" do
-      for a <- [:"operator.start", :"plugin.install", :"state.retention", :"authz.token_issue"] do
+    test "viewer cannot start relays or mutate" do
+      for a <- [:"relay.start", :"plugin.install", :"state.retention", :"authz.token_issue"] do
         refute Policy.grants?(:viewer, a)
       end
     end
 
-    test "ops inherits viewer plus operator/plugin lifecycle and observability mutate" do
-      assert Policy.grants?(:ops, :"operator.list")
-      assert Policy.grants?(:ops, :"operator.start")
+    test "ops inherits viewer plus relay/plugin lifecycle and observability mutate" do
+      assert Policy.grants?(:ops, :"relay.list")
+      assert Policy.grants?(:ops, :"relay.start")
       assert Policy.grants?(:ops, :"plugin.enable")
       assert Policy.grants?(:ops, :"observability.enable_source")
       refute Policy.grants?(:ops, :"plugin.install")
@@ -26,7 +26,7 @@ defmodule Flezha.AuthZ.PolicyTest do
     end
 
     test "admin inherits ops plus auth-state mutation and the controller-wide settings" do
-      assert Policy.grants?(:admin, :"operator.start")
+      assert Policy.grants?(:admin, :"relay.start")
       assert Policy.grants?(:admin, :"controller.stop")
       assert Policy.grants?(:admin, :"authz.token_issue")
       assert Policy.grants?(:admin, :"authz.namespace_create")
@@ -35,14 +35,14 @@ defmodule Flezha.AuthZ.PolicyTest do
     end
 
     test "app is viewer plus the lifecycle an application runs on its own work" do
-      for a <- [:"operator.list", :"plugin.list", :"state.get"],
+      for a <- [:"relay.list", :"plugin.list", :"state.get"],
           do: assert(Policy.grants?(:app, a))
 
       for a <- [
-            :"operator.start",
-            :"operator.stop",
-            :"operator.send",
-            :"operator.listen",
+            :"relay.start",
+            :"relay.stop",
+            :"relay.send",
+            :"relay.listen",
             :"plugin.enable",
             :"plugin.disable"
           ] do
@@ -51,10 +51,10 @@ defmodule Flezha.AuthZ.PolicyTest do
     end
 
     test "listening is granted from app upward, and apart from the plugin rights" do
-      for role <- [:app, :ops, :admin], do: assert(Policy.grants?(role, :"operator.listen"))
+      for role <- [:app, :ops, :admin], do: assert(Policy.grants?(role, :"relay.listen"))
 
       for role <- [:viewer, :spawner, :stopper, :runner],
-          do: refute(Policy.grants?(role, :"operator.listen"))
+          do: refute(Policy.grants?(role, :"relay.listen"))
     end
 
     test "app destroys no record and moves no work it did not create" do
@@ -63,9 +63,9 @@ defmodule Flezha.AuthZ.PolicyTest do
             :"dlq.replay",
             :"state.rotate",
             :"state.delete",
-            :"operator.rewind",
-            :"operator.replay",
-            :"operator.scale",
+            :"relay.rewind",
+            :"relay.replay",
+            :"relay.scale",
             :"plugin.install",
             :"controller.stop",
             :"authz.token_issue"
@@ -95,7 +95,7 @@ defmodule Flezha.AuthZ.PolicyTest do
 
     test "spawner holds the connect and the two rights a requested spawn needs, and nothing else" do
       assert Enum.filter(Action.all(), &Policy.grants?(:spawner, &1)) ==
-               [:"operator.start", :"operator.send", :"runner.connect"]
+               [:"relay.start", :"relay.send", :"runner.connect"]
     end
 
     test "app holds every spawner grant" do
@@ -106,7 +106,7 @@ defmodule Flezha.AuthZ.PolicyTest do
 
     test "stopper holds the connect and the stop, and nothing else" do
       assert Enum.filter(Action.all(), &Policy.grants?(:stopper, &1)) ==
-               [:"operator.stop", :"runner.connect"]
+               [:"relay.stop", :"runner.connect"]
     end
 
     test "app holds every stopper grant" do
@@ -119,13 +119,13 @@ defmodule Flezha.AuthZ.PolicyTest do
       assert Policy.grants?(:runner, :"runner.connect")
       assert Enum.filter(Action.all(), &Policy.grants?(:runner, &1)) == [:"runner.connect"]
 
-      for a <- [:"operator.start", :"operator.list", :"audit.read", :"observability.query"] do
+      for a <- [:"relay.start", :"relay.list", :"audit.read", :"observability.query"] do
         refute Policy.grants?(:runner, a)
       end
     end
 
     test "unknown role denies everything" do
-      refute Policy.grants?(:superuser, :"operator.start")
+      refute Policy.grants?(:superuser, :"relay.start")
     end
   end
 
@@ -146,7 +146,7 @@ defmodule Flezha.AuthZ.PolicyTest do
   test "cross_namespace_admin_action?/1 covers auth-state mutations" do
     assert Policy.cross_namespace_admin_action?(:"authz.namespace_create")
     assert Policy.cross_namespace_admin_action?(:"authz.token_issue")
-    refute Policy.cross_namespace_admin_action?(:"operator.start")
+    refute Policy.cross_namespace_admin_action?(:"relay.start")
     refute Policy.cross_namespace_admin_action?(:"audit.read")
   end
 end

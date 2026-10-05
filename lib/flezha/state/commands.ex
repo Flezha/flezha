@@ -5,13 +5,13 @@ defmodule Flezha.State.Commands do
   Restoring a Cell, pulling a snapshot, threading a steps instance's
   task-journal onto its bind, and telling a Tasklet its target Cell's
   mailbox is full are all one thing: a control command the State subsystem
-  issues on behalf of an operator it does not own a process for. Its callers —
+  issues on behalf of a relay it does not own a process for. Its callers —
   `Watchdog`, `Recovery`, `WalWriter`, `Runner.ControlChannel`,
   `Service.Steps` — are none of them an Overwatch and none of them holding
-  operator state.
+  relay state.
 
   Each cell-scoped function takes the controller-side `runner_id` and a
-  structured `cell_id` triple `{operator_class, tasklet_id, cell_key}`.
+  structured `cell_id` triple `{relay_class, tasklet_id, cell_key}`.
   `task_journal_state/1` is the instance-scoped sibling: a steps instance's
   journal is not per-Cell, which is why it rides the bind rather than a
   per-Cell restore.
@@ -89,7 +89,7 @@ defmodule Flezha.State.Commands do
         :telemetry.execute(
           [:flezha, :state, :schema_migration],
           %{count: 1},
-          %{operator: rc, tasklet: sh, key: pk, runner: runner_id}
+          %{relay: rc, tasklet: sh, key: pk, runner: runner_id}
         )
 
         Logger.info(
@@ -127,7 +127,7 @@ defmodule Flezha.State.Commands do
 
       # The Cell's own WAL refused a record. Shipping the records before it
       # would restore the Cell from a change log that was cut short and call
-      # it whole; the reason is text, so the awaited path parks the operator
+      # it whole; the reason is text, so the awaited path parks the relay
       # the way an SDK-reported refusal does.
       {:error, _reason} = refused ->
         refused
@@ -140,8 +140,8 @@ defmodule Flezha.State.Commands do
   # ---------- task journal ----------
 
   @doc """
-  Steps operator task-journal crash-resume: the instance's committed task state, threaded
-  onto `AddOperator.task_journal` so the resumed driver skips the journaled
+  Steps relay task-journal crash-resume: the instance's committed task state, threaded
+  onto `AddRelay.task_journal` so the resumed driver skips the journaled
   tasklets, seeds the next one from the journaled handoff, and enters the
   iteration after the last committed one.
 
@@ -149,8 +149,8 @@ defmodule Flezha.State.Commands do
   instance-scoped: a durable steps class with no per-Cell state ships no
   restore at all, and would otherwise resume at iteration 0 on every wake.
 
-  `nil` when the instance has no journal — a fresh spawn, a flow operator
-  operator, an opted-out class.
+  `nil` when the instance has no journal — a fresh spawn, a flow relay
+  relay, an opted-out class.
   """
   @spec task_journal_state(binary()) :: RunnerCommands.TaskJournalState.t() | nil
   def task_journal_state(instance_id) do
@@ -290,7 +290,7 @@ defmodule Flezha.State.Commands do
       :telemetry.execute(
         [:flezha, :state, :compaction_failed],
         %{},
-        %{operator: rc, tasklet: sh, key: pk, runner: runner_id, reason: :no_snapshot}
+        %{relay: rc, tasklet: sh, key: pk, runner: runner_id, reason: :no_snapshot}
       )
 
       Watchdog.compaction_failed(cell_id)

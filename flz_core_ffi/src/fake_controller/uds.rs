@@ -240,18 +240,18 @@ impl Controller {
     }
 }
 
-/// The `RunnerShutdownNotification` for `operator` in a captured frame, as
+/// The `RunnerShutdownNotification` for `relay` in a captured frame, as
 /// its reference id and serialized state. A graceful shutdown ships one per
-/// live operator and blocks on the ack, so both the ABI scenario and the
+/// live relay and blocks on the ack, so both the ABI scenario and the
 /// smoke run read the frame through here rather than each decoding it.
 pub fn shutdown_notification(
     payload_id: &str,
     message: &[u8],
-    operator: &str,
+    relay: &str,
 ) -> Option<(String, Vec<u8>)> {
     match command_in(payload_id, message)? {
         (reference_id, pb::command_request::Command::RunnerShutdownNotification(n))
-            if n.operator_id == operator =>
+            if n.relay_id == relay =>
         {
             Some((reference_id, n.serialized_state))
         }
@@ -260,10 +260,7 @@ pub fn shutdown_notification(
 }
 
 /// The `SpawnStepsRequest` in a captured frame, with its reference id.
-pub fn spawn_request(
-    payload_id: &str,
-    message: &[u8],
-) -> Option<(String, pb::SpawnStepsRequest)> {
+pub fn spawn_request(payload_id: &str, message: &[u8]) -> Option<(String, pb::SpawnStepsRequest)> {
     match command_in(payload_id, message)? {
         (reference_id, pb::command_request::Command::SpawnStepsRequest(request)) => {
             Some((reference_id, request))
@@ -366,7 +363,7 @@ impl Scenario {
         let secondary = accept_within(secondary, "secondary", self.timeout)?;
         report("data streams accepted");
 
-        self.start_operator(&controller, report)?;
+        self.start_relay(&controller, report)?;
         self.feed(&primary, report)?;
         let seen = self.count_outputs(secondary, report)?;
         report(&format!("{seen} outputs seen"));
@@ -398,22 +395,22 @@ impl Scenario {
         )
     }
 
-    fn start_operator(&self, controller: &Controller, report: Progress<'_>) -> Result<(), String> {
+    fn start_relay(&self, controller: &Controller, report: Progress<'_>) -> Result<(), String> {
         controller.try_command(
-            "AddOperator",
+            "AddRelay",
             "smoke-add",
-            pb::command_request::Command::AddOperator(pb::AddOperator {
-                operator_id: self.operator_id.clone(),
+            pb::command_request::Command::AddRelay(pb::AddRelay {
+                relay_id: self.relay_id.clone(),
                 factory_id: self.factory_id.clone(),
                 ..Default::default()
             }),
         )?;
-        report(&format!("`{}` started", self.operator_id));
+        report(&format!("`{}` started", self.relay_id));
         Ok(())
     }
 
     /// One framed input per payload on the primary stream. The payload id is
-    /// the operator id (what the runner routes by), and the channel rides
+    /// the relay id (what the runner routes by), and the channel rides
     /// the metadata, exactly as the controller's own ingest builds it.
     fn feed(&self, primary: &UnixStream, report: Progress<'_>) -> Result<(), String> {
         let metadata: payloader::PayloadMetadata = self
@@ -422,7 +419,7 @@ impl Scenario {
             .map(|c| ("channel".to_string(), c.clone()))
             .collect();
         for payload in &self.inputs {
-            let frame = payloader::build_from_binary(&self.operator_id, payload, metadata.clone())
+            let frame = payloader::build_from_binary(&self.relay_id, payload, metadata.clone())
                 .map_err(|e| format!("an input frame could not be built: {e}"))?;
             (&*primary)
                 .write_all(&frame)
@@ -433,7 +430,7 @@ impl Scenario {
     }
 
     /// Count output frames on the secondary stream. An output is a frame
-    /// under the operator id; a part is reported as its line; the heartbeat
+    /// under the relay id; a part is reported as its line; the heartbeat
     /// and the record frames beside them carry their own payload ids and are
     /// drained.
     fn count_outputs(&self, secondary: UnixStream, report: Progress<'_>) -> Result<usize, String> {
@@ -456,7 +453,7 @@ impl Scenario {
                 ));
             }
             match payloader::extract_payload(&stream) {
-                Ok((payload_id, _, _)) if payload_id == self.operator_id => seen += 1,
+                Ok((payload_id, _, _)) if payload_id == self.relay_id => seen += 1,
                 Ok((payload_id, message, metadata))
                     if payload_id == flz_core::part::PART_PAYLOAD_ID =>
                 {
@@ -495,7 +492,7 @@ impl Scenario {
         Ok(())
     }
 
-    /// A graceful shutdown ships the operator's state and blocks on the ack.
+    /// A graceful shutdown ships the relay's state and blocks on the ack.
     /// Answering it ends the run at the runner's pace instead of at its
     /// timeout; a class with no state to ship sends nothing, and that is not
     /// a failure, so the wait is bounded by the runner's own and its
@@ -507,7 +504,7 @@ impl Scenario {
             |captured| {
                 captured
                     .iter()
-                    .find_map(|(id, m)| shutdown_notification(id, m, &self.operator_id))
+                    .find_map(|(id, m)| shutdown_notification(id, m, &self.relay_id))
             },
         );
         let Ok((reference_id, state)) = found else {
@@ -518,7 +515,7 @@ impl Scenario {
         if let Err(e) = controller.try_send(
             &reference_id,
             pb::command_request::Command::RunnerShutdownAck(pb::RunnerShutdownAck {
-                operator_id: self.operator_id.clone(),
+                relay_id: self.relay_id.clone(),
             }),
         ) {
             report(&format!("the shutdown ack could not be written: {e}"));

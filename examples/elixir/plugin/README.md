@@ -1,7 +1,7 @@
 # Example plugin
 
 A plugin project, `flezha_example_plugin`, and a library it bundles, `stamp_lib`. Its one
-provider, `example_stamp`, appends every output payload of an operator to the file its
+provider, `example_stamp`, appends every output payload of a relay to the file its
 `path` option names, prefixed with a stamp `stamp_lib` renders.
 
 The one package exercises what a controller does with any package at boot: it bundles a

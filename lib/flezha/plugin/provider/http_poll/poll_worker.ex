@@ -2,20 +2,20 @@ defmodule Flezha.Plugin.Provider.HttpPoll.PollWorker do
   @moduledoc """
   The polling half of `Flezha.Plugin.Provider.HttpPoll`: one process per
   enabled plugin owning the interval timer and the injection state, so the host
-  operator's dispatch path is never inside an upstream wait.
+  relay's dispatch path is never inside an upstream wait.
 
   Each request runs in a short-lived monitored child, which keeps this
   worker's mailbox answerable while a hanging endpoint is outstanding — the
   health probe reports on exactly the outage that would otherwise block it.
 
-  Injection is content-gated, per operator it injects into. A poller its own
-  operator started confirms each body, and its hash advances only once the
-  operator has TAKEN the payload, so a refused ingest re-offers the same content
-  rather than losing a change. A shared copy's poller serves only operators
+  Injection is content-gated, per relay it injects into. A poller its own
+  relay started confirms each body, and its hash advances only once the
+  relay has TAKEN the payload, so a refused ingest re-offers the same content
+  rather than losing a change. A shared copy's poller serves only relays
   whose input is not durable (`Flezha.Plugin.Extension.Table.Workers.own_source?/2`)
-  and casts to them, so no operator's answer holds back another's. An operator
+  and casts to them, so no relay's answer holds back another's. A relay
   the worker holds no hash for (every one at start, and one newly bound) is
-  offered the next body: that seed is what converges a rejoining operator
+  offered the next body: that seed is what converges a rejoining relay
   within one interval.
   """
 
@@ -99,7 +99,7 @@ defmodule Flezha.Plugin.Provider.HttpPoll.PollWorker do
   end
 
   def handle_info({:DOWN, ref, :process, _pid, _reason}, %{host_ref: ref} = state) do
-    # The operator this poller feeds is gone; injecting into a dead mailbox is
+    # The relay this poller feeds is gone; injecting into a dead mailbox is
     # nothing but wasted requests against the upstream.
     {:stop, :normal, state}
   end
@@ -109,7 +109,7 @@ defmodule Flezha.Plugin.Provider.HttpPoll.PollWorker do
      settle(%{state | fetch: nil}, {:error, {:fetch_crashed, reason}}, elapsed(started))}
   end
 
-  # An operator it holds no hash for must be sent a body, which a request
+  # A relay it holds no hash for must be sent a body, which a request
   # carrying the last validator would not fetch.
   def handle_info({:targets, targets}, state) do
     targets = offered(targets, Map.new(state.targets, fn {pid, _md, hash} -> {pid, hash} end))
@@ -188,7 +188,7 @@ defmodule Flezha.Plugin.Provider.HttpPoll.PollWorker do
 
         recovered(%{state | etag: etag})
 
-      # Neither the refusing operator's hash nor the validator is advanced: it
+      # Neither the refusing relay's hash nor the validator is advanced: it
       # did not take this content, so the next poll must re-offer it rather
       # than read it as already delivered and go quiet forever.
       [reason | _] ->
@@ -196,10 +196,10 @@ defmodule Flezha.Plugin.Provider.HttpPoll.PollWorker do
     end
   end
 
-  # Its own operator's poller confirms, not casts: a parked operator drops the
+  # Its own relay's poller confirms, not casts: a parked relay drops the
   # cast silently, and a dropped config push that has already advanced the hash
   # is lost until the endpoint happens to change again. `:absorbed` (duplicate)
-  # and `:suspended` (journaled for wake) both mean the operator owns the
+  # and `:suspended` (journaled for wake) both mean the relay owns the
   # payload. A cast answers `:ok`.
   defp offer({_pid, _metadata, hash} = target, refusals, _state, _body, hash),
     do: {target, refusals}
@@ -211,8 +211,8 @@ defmodule Flezha.Plugin.Provider.HttpPoll.PollWorker do
     end
   end
 
-  # Each operator the worker injects into, with the hash of the content it
-  # took last, kept across a change of operators.
+  # Each relay the worker injects into, with the hash of the content it
+  # took last, kept across a change of relays.
   defp offered(targets, held),
     do: for(t <- targets, do: {t.pid, %{"channel" => t.channel}, Map.get(held, t.pid)})
 
@@ -240,7 +240,7 @@ defmodule Flezha.Plugin.Provider.HttpPoll.PollWorker do
     )
 
     # The last delivered hash is retained: being unable to re-read the resource
-    # does not invalidate the content the operator already holds.
+    # does not invalidate the content the relay already holds.
     %{state | consecutive_failures: failures, last_error: reason}
   end
 

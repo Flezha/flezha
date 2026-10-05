@@ -1,11 +1,11 @@
 defmodule FlezhaTest.System.StepsTimersE2ETest do
   @moduledoc """
-  Cell timers inside a steps operator, end to end against a live runner of the
+  Cell timers inside a steps relay, end to end against a live runner of the
   selected SDK runtime over UDS.
 
-  `timer_loop_steps` is `in -> tick -> relay -> out`: `after:<ms>` makes
+  `timer_loop_steps` is `in -> tick -> tock -> out`: `after:<ms>` makes
   `tick` arm a processing-time timer and emit `armed:<at>`, its firing emits
-  `fired:<at>`, and `relay` prefixes both onto the sink. `slow:<ms>` holds
+  `fired:<at>`, and `tock` prefixes both onto the sink. `slow:<ms>` holds
   `tick` that long. `event_timer_steps` arms an event-time timer 100 after
   each message's event time and emits `seen:<t>`.
 
@@ -25,7 +25,7 @@ defmodule FlezhaTest.System.StepsTimersE2ETest do
 
   import FlezhaTest.Helper.StepsResumeHarness
 
-  alias Flezha.Operator.ClassRegistry
+  alias Flezha.Relay.ClassRegistry
   alias Flezha.Runner.FleetManager
   alias Flezha.State.Completion
   alias FlezhaTest.Helper.NodeTestHelper
@@ -35,13 +35,13 @@ defmodule FlezhaTest.System.StepsTimersE2ETest do
   describe "a timer inside a steps (uds)" do
     @describetag transport: :uds
 
-    test "a firing reaches the sink through relay with no second message", ctx do
+    test "a firing reaches the sink through tock with no second message", ctx do
       {namespace, id, collector} = start_timer_loop(ctx, [])
 
       send_turn(namespace, id, "after:300")
       at = armed_at(collector, id)
 
-      assert await_sink(collector, ["relay:armed:#{at}", "relay:fired:#{at}"]),
+      assert await_sink(collector, ["tock:armed:#{at}", "tock:fired:#{at}"]),
              "the firing never reached the sink: #{inspect(collected(collector))}"
     end
 
@@ -56,9 +56,9 @@ defmodule FlezhaTest.System.StepsTimersE2ETest do
       at = armed_at(collector, id)
 
       assert await_sink(collector, [
-               "relay:armed:#{at}",
-               "relay:slow:1500",
-               "relay:fired:#{at}"
+               "tock:armed:#{at}",
+               "tock:slow:1500",
+               "tock:fired:#{at}"
              ]),
              "the firing did not wait behind the slow pass: #{inspect(collected(collector))}"
     end
@@ -74,9 +74,9 @@ defmodule FlezhaTest.System.StepsTimersE2ETest do
              "the idle instance with a pending timer never slept"
 
       assert %{wake_deadline_ms: ^at} = ClassRegistry.parked(id)
-      assert collected(collector) == ["relay:armed:#{at}"]
+      assert collected(collector) == ["tock:armed:#{at}"]
 
-      assert await_sink(collector, ["relay:armed:#{at}", "relay:fired:#{at}"]),
+      assert await_sink(collector, ["tock:armed:#{at}", "tock:fired:#{at}"]),
              "the sleeper never woke at its timer: #{inspect(collected(collector))}"
     end
 
@@ -101,7 +101,7 @@ defmodule FlezhaTest.System.StepsTimersE2ETest do
                15_000
              )
 
-      assert await_sink(collector, ["relay:armed:#{at}", "relay:fired:#{at}"], 60_000),
+      assert await_sink(collector, ["tock:armed:#{at}", "tock:fired:#{at}"], 60_000),
              "the restored timer never fired: #{inspect(collected(collector))}"
     end
 
@@ -149,7 +149,7 @@ defmodule FlezhaTest.System.StepsTimersE2ETest do
     assert NodeTestHelper.wait_until(fn -> collected(collector) != [] end, 30_000),
            "nothing reached the sink; completion: #{inspect(Completion.read(id))}"
 
-    ["relay:armed:" <> at | _] = collected(collector)
+    ["tock:armed:" <> at | _] = collected(collector)
     String.to_integer(at)
   end
 

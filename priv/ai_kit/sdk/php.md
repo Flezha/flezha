@@ -16,7 +16,7 @@ Three files, one for each part the guides describe:
 | File | Part | What it does |
 |---|---|---|
 | `src/EchoTasklet.php` | the tasklet | the processing stage: prefixes each message |
-| `src/EchoOperator.php` | the operator | the graph: `in` feeds the tasklet, output lands on `out` |
+| `src/EchoRelay.php` | the relay | the graph: `in` feeds the tasklet, output lands on `out` |
 | `runner.php` | the runner | this process: registers the echo factory and waits |
 
 ## Run it
@@ -37,8 +37,8 @@ platform, from the release matching that version. The `allow-plugins` entry in
 Then, from another terminal:
 
 ```sh
-flz operator start echo --id my_echo
-flz operator send my_echo --text 'hello world' --await 2000
+flz relay start echo --id my_echo
+flz relay send my_echo --text 'hello world' --await 2000
 ```
 
 ```
@@ -85,7 +85,7 @@ SDK, including the threaded executor.
 ````json
 {
     "name": "flezha/echo-example",
-    "description": "One message in, one message out: a tasklet, an operator and a runner.",
+    "description": "One message in, one message out: a tasklet, a relay and a runner.",
     "type": "project",
     "license": "Apache-2.0",
     "require": {
@@ -114,30 +114,30 @@ declare(strict_types=1);
 
 /**
  * Starts a runner: a process that connects to the controller and serves your
- * operators.
+ * relays.
  *
- * Declare every operator you want served before `start()`. One runner can
- * serve several, and the same call takes a steps operator.
+ * Declare every relay you want served before `start()`. One runner can
+ * serve several, and the same call takes a steps relay.
  */
 
 require __DIR__ . '/vendor/autoload.php';
 
-use Flezha\Examples\Echo\EchoOperator;
+use Flezha\Examples\Echo\EchoRelay;
 use Flezha\Flezha;
 
 // `run()` is `start()` followed by `awaitTermination()`. Splitting them leaves
 // room for the calls below, and still blocks until shutdown.
 $runner = Flezha::createRunner($argv[1] ?? 'default')
-    ->registerFactory(EchoOperator::class) // the operators this runner serves
+    ->registerFactory(EchoRelay::class) // the relays this runner serves
     ->start();                             // connects to the controller
 
-// Everything `flz operator` and `flz plugin` do is also a method of
-// `control()`, and `send()` hands a message to an operator. Uncomment to drive
+// Everything `flz relay` and `flz plugin` do is also a method of
+// `control()`, and `send()` hands a message to a relay. Uncomment to drive
 // this namespace from the application instead of from a terminal:
 //
 // $control = $runner->control();
-// $control->startOperator('echo', id: 'my_echo');
-// $control->enablePlugin('writer', 'operator_file_sink', ['path' => 'echo-out.txt']);
+// $control->startRelay('echo', id: 'my_echo');
+// $control->enablePlugin('writer', 'relay_file_sink', ['path' => 'echo-out.txt']);
 // $control->bindPlugin('writer', 'my_echo', hooks: [['on_output', new stdClass()]]);
 // $runner->send('my_echo', 'hello world', 'in', msgId: 'hello-1');
 //
@@ -150,7 +150,7 @@ $runner = Flezha::createRunner($argv[1] ?? 'default')
 $runner->awaitTermination();
 ````
 
-## examples/echo/src/EchoOperator.php
+## examples/echo/src/EchoRelay.php
 
 ````php
 <?php
@@ -159,25 +159,25 @@ declare(strict_types=1);
 
 namespace Flezha\Examples\Echo;
 
-use Flezha\Attribute\Operator;
+use Flezha\Attribute\Relay;
 use Flezha\ChannelCodec;
 use Flezha\Graph\Builder;
 
 /**
- * The deployable unit. An operator declares the graph a message travels: the
+ * The deployable unit. A relay declares the graph a message travels: the
  * entry channel it arrives on, the steps it passes through, and the channel its
  * result leaves on.
  *
- * `factoryId` is the operator's stable identity, and the name
- * `flz operator start` takes. The graph is checked as a whole when the runner
+ * `factoryId` is the relay's stable identity, and the name
+ * `flz relay start` takes. The graph is checked as a whole when the runner
  * declares it, so one that cannot work is refused at startup.
  *
- * The entry names the text codec, so what `flz operator send --text` sends
+ * The entry names the text codec, so what `flz relay send --text` sends
  * arrives as that string. The sink names nothing: a string is sent as it
  * stands, so the output is the text itself, and any other value would be JSON.
  */
-#[Operator(factoryId: 'echo')] // the name `flz operator start` takes
-final class EchoOperator extends \Flezha\Operator
+#[Relay(factoryId: 'echo')] // the name `flz relay start` takes
+final class EchoRelay extends \Flezha\Relay
 {
     public static function channels(Builder $c): void
     {
@@ -202,7 +202,7 @@ use Flezha\Ctx;
 use Flezha\Tasklet;
 
 /**
- * A processing stage of the operator's graph, run once per message. This one
+ * A processing stage of the relay's graph, run once per message. This one
  * prefixes the input and emits it through the context: `run` returns nothing.
  *
  * `name` is the tasklet's stable identity, and it is required. State is filed
@@ -210,7 +210,7 @@ use Flezha\Tasklet;
  * different tasklet. With no `initState` and no `applyChange` overridden,
  * nothing is kept between messages and nothing is journaled.
  *
- * Where the result goes is not decided here. The operator decides that, so the
+ * Where the result goes is not decided here. The relay decides that, so the
  * graph can be rewired without touching this class.
  */
 #[Task(name: 'echo')] // state is saved under this name, so choose it once
@@ -218,7 +218,7 @@ final class EchoTasklet extends Tasklet
 {
     public function run(mixed $input, Ctx $ctx): void
     {
-        $ctx->emit('echo: ' . $input); // where it goes is the operator's business
+        $ctx->emit('echo: ' . $input); // where it goes is the relay's business
     }
 }
 ````

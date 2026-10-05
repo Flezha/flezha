@@ -351,13 +351,13 @@ fn start(namespace: String) -> Result<(), Error> {
 /// Start the declared class as a local run: no controller, no socket. The
 /// alternative to [`start`], never an addition. The host keeps driving its own
 /// poll loop, which is what runs the tasklets.
-fn local_start(factory_id: String, operator_id: String) -> Result<(), Error> {
+fn local_start(factory_id: String, relay_id: String) -> Result<(), Error> {
     let ruby = ruby();
     let ctx = context(&ruby)?;
     let refused = |r| raise(&ruby, r);
     let factory = veneer::c_string("factory id", &factory_id).map_err(refused)?;
-    let operator = veneer::c_string("operator id", &operator_id).map_err(refused)?;
-    veneer::local_start(ctx, &factory, &operator).map_err(refused)
+    let relay = veneer::c_string("relay id", &relay_id).map_err(refused)?;
+    veneer::local_start(ctx, &factory, &relay).map_err(refused)
 }
 
 /// Queue the declared sink `channel` for [`local_next_output`]. A channel the
@@ -538,7 +538,7 @@ fn admin_call(verb: String, args: String) -> Result<String, Error> {
 /// takes a round trip, and a local send parks while the consumer's mailbox is
 /// full.
 fn send_message(
-    operator: String,
+    relay: String,
     channel: String,
     message: RString,
     msg_id: Option<String>,
@@ -548,23 +548,21 @@ fn send_message(
     let ruby = ruby();
     let ctx = context(&ruby)?;
     let refused = |r| raise(&ruby, r);
-    let operator = veneer::c_string("operator", &operator).map_err(refused)?;
+    let relay = veneer::c_string("relay", &relay).map_err(refused)?;
     let channel = veneer::c_string("entry channel", &channel).map_err(refused)?;
     let msg_id =
         veneer::c_string("message id", msg_id.as_deref().unwrap_or_default()).map_err(refused)?;
     let key = veneer::c_string("key", key.as_deref().unwrap_or_default()).map_err(refused)?;
     let message = read_bytes(&ruby, "message", message.as_value())?;
-    without_gvl(move || {
-        veneer::send_message(ctx, &operator, &channel, &message, &msg_id, &key, local)
-    })
-    .map_err(refused)
+    without_gvl(move || veneer::send_message(ctx, &relay, &channel, &message, &msg_id, &key, local))
+        .map_err(refused)
 }
 
-/// The ids of the operator instances bound on this runner.
-fn operators() -> Result<Vec<String>, Error> {
+/// The ids of the relay instances bound on this runner.
+fn relays() -> Result<Vec<String>, Error> {
     let ruby = ruby();
     let ctx = context(&ruby)?;
-    veneer::operators(ctx).map_err(|r| raise(&ruby, r))
+    veneer::relays(ctx).map_err(|r| raise(&ruby, r))
 }
 
 /// The core's monotonic clock in nanoseconds.
@@ -638,7 +636,7 @@ pub const NATIVE_SURFACE: &[(&str, &str)] = &[
     ("part", "flz_core_part"),
     ("admin_call", "flz_core_admin_call"),
     ("send_message", "flz_core_send_message"),
-    ("operators", "flz_core_operators"),
+    ("relays", "flz_core_relays"),
     ("monotonic_nanos", "flz_core_monotonic_nanos"),
     ("last_error", "flz_core_last_error"),
     ("native_surface", "flz_core_schema_version"),
@@ -676,7 +674,7 @@ pub fn init(ruby: &Ruby) -> Result<(), Error> {
     native.define_module_function("part", function!(part, 3))?;
     native.define_module_function("admin_call", function!(admin_call, 2))?;
     native.define_module_function("send_message", function!(send_message, 6))?;
-    native.define_module_function("operators", function!(operators, 0))?;
+    native.define_module_function("relays", function!(relays, 0))?;
     native.define_module_function("monotonic_nanos", function!(monotonic_nanos, 0))?;
     native.define_module_function("last_error", function!(last_error, 0))?;
     native.define_module_function("native_surface", function!(native_surface, 0))?;

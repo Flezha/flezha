@@ -40,7 +40,7 @@ $ git clone --recurse-submodules https://github.com/flezha/flezha.git
 | [Take a turn back](take_a_turn_back.md) | Rewind a session, and let a failed turn fail alone |
 | [Stream an answer](stream_an_answer.md) | Watch an answer arrive token by token |
 | [Add your own plugin](add_your_own_plugin.md) | Install the HTTP plugin by rebuilding the controller's image |
-| [Serve HTTP](serve_http.md) | Put a gateway operator behind HTTP, and stream an answer to a browser |
+| [Serve HTTP](serve_http.md) | Put a gateway relay behind HTTP, and stream an answer to a browser |
 | [Call the session](call_the_session.md) | Send messages over HTTP through the gateway, within a daily token budget |
 | [Run a cluster](run_a_cluster.md) | Run two controllers, stop one, and watch its sessions move |
 | [Kill the runner](kill_the_runner.md) | Kill the runner mid-message and see each message counted once |

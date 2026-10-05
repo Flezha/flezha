@@ -32,7 +32,7 @@ defmodule FlezhaTest.HookStartOnly do
   use Flezha.Plugin.ProviderBehaviour, type: :controller
 
   @impl true
-  def on_operator_started(_event, _opts), do: :ok
+  def on_relay_started(_event, _opts), do: :ok
 end
 
 defmodule FlezhaTest.WorkerOnly do
@@ -67,7 +67,7 @@ end
 defmodule FlezhaTest.Plugin.ControllerPluginTest do
   @moduledoc """
   A controller plugin on one controller: enabled with its hooks and no
-  operator, never bound, running until it is disabled, and told what happened
+  relay, never bound, running until it is disabled, and told what happened
   in its namespace, once, from a bounded queue.
   """
 
@@ -79,18 +79,18 @@ defmodule FlezhaTest.Plugin.ControllerPluginTest do
   alias Flezha.Convergence.Loop
   alias Flezha.Convergence.Verdict
   alias Flezha.Observability.HookSink
-  alias Flezha.Operator.Builder
-  alias Flezha.Operator.PartitionGroup
+  alias Flezha.Relay.Builder
+  alias Flezha.Relay.PartitionGroup
   alias Flezha.Observability.Registry
   alias Flezha.Observability.RingBufferSink
   alias Flezha.Plugin
   alias Flezha.Plugin.Provider.WorkerSup
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.HubManager
-  alias Flezha.Service.OperatorManager
+  alias Flezha.Service.RelayManager
   alias Flezha.Service.PluginManager
   alias Flezha.State.TestHelpers
-  alias FlezhaTest.Fixtures.OperatorFixture
+  alias FlezhaTest.Fixtures.RelayFixture
   alias FlezhaTest.HookRecorder
   alias FlezhaTest.HookStartOnly
   alias FlezhaTest.VacantOnly
@@ -120,7 +120,7 @@ defmodule FlezhaTest.Plugin.ControllerPluginTest do
     SickProvider.reset()
 
     on_exit(fn ->
-      OperatorManager.stop_all_operators(@namespace)
+      RelayManager.stop_all_relays(@namespace)
 
       Enum.each(
         ["notify", "partial", "ill", "worker"],
@@ -145,20 +145,20 @@ defmodule FlezhaTest.Plugin.ControllerPluginTest do
     enabled
   end
 
-  defp start_operator(id) do
-    {:ok, _} = id |> OperatorFixture.get(@factory) |> OperatorFixture.start(@namespace)
+  defp start_relay(id) do
+    {:ok, _} = id |> RelayFixture.get(@factory) |> RelayFixture.start(@namespace)
     id
   end
 
   defp code(reason), do: Flezha.Error.from_reason(reason, :"plugin.enable")
 
   describe "enable, hooks and no binding" do
-    test "an enable stores the hooks, binds no operator and starts one copy until disabled" do
-      {:ok, _} = notify(["on_operator_failed"])
+    test "an enable stores the hooks, binds no relay and starts one copy until disabled" do
+      {:ok, _} = notify(["on_relay_failed"])
 
       row = Enum.find(PluginManager.plugins(@namespace), &(&1.name == "notify"))
-      assert row.hooks == ["on_operator_failed"]
-      assert row.operators == []
+      assert row.hooks == ["on_relay_failed"]
+      assert row.relays == []
       assert [copy] = Directory.plugin_hosts(@namespace, "notify")
       assert node(copy) == node()
 
@@ -166,11 +166,11 @@ defmodule FlezhaTest.Plugin.ControllerPluginTest do
       assert Directory.plugin_hosts(@namespace, "notify") == []
     end
 
-    test "an operator hook is plugin.unknown_hook, naming the hooks a controller plugin takes" do
+    test "a relay hook is plugin.unknown_hook, naming the hooks a controller plugin takes" do
       assert {:error, reason} = notify(["on_output"])
       error = code(reason)
       assert error.code == "plugin.unknown_hook"
-      assert error.message =~ "on_operator_started"
+      assert error.message =~ "on_relay_started"
       refute error.message =~ "on_input"
     end
 
@@ -266,9 +266,9 @@ defmodule FlezhaTest.Plugin.ControllerPluginTest do
       assert code(reason).code == "plugin.hook_not_implemented"
     end
 
-    test "a bind, and an enable naming an operator, are plugin.not_bindable" do
-      op = start_operator("not_bindable_op")
-      {:ok, _} = notify(["on_operator_failed"])
+    test "a bind, and an enable naming a relay, are plugin.not_bindable" do
+      op = start_relay("not_bindable_op")
+      {:ok, _} = notify(["on_relay_failed"])
 
       assert {:error, reason} = PluginManager.bind_plugin(@namespace, "notify", op)
       assert code(reason).code == "plugin.not_bindable"
@@ -278,7 +278,7 @@ defmodule FlezhaTest.Plugin.ControllerPluginTest do
                  id: "notify",
                  provider: HookRecorder,
                  namespace: @namespace,
-                 operator_id: op,
+                 relay_id: op,
                  opts: %{recv_pid: self()}
                })
 
@@ -286,23 +286,23 @@ defmodule FlezhaTest.Plugin.ControllerPluginTest do
     end
 
     test "an update changes the hooks the copy takes" do
-      {:ok, _} = notify(["on_operator_failed"])
+      {:ok, _} = notify(["on_relay_failed"])
 
       assert {:ok, %{applied: :restarted}} =
                PluginManager.update_plugin(@namespace, "notify", %{}, [
-                 {"on_operator_started", []}
+                 {"on_relay_started", []}
                ])
 
       row = Enum.find(PluginManager.plugins(@namespace), &(&1.name == "notify"))
-      assert row.hooks == ["on_operator_started"]
+      assert row.hooks == ["on_relay_started"]
 
-      op = start_operator("updated_hooks_op")
-      assert_receive {:hook, %{hook: :on_operator_started, operator: ^op}, _}, 5_000
+      op = start_relay("updated_hooks_op")
+      assert_receive {:hook, %{hook: :on_relay_started, relay: ^op}, _}, 5_000
     end
 
-    test "the copy keeps running past two idle-stop periods with no operator" do
+    test "the copy keeps running past two idle-stop periods with no relay" do
       Application.put_env(:flezha, :plugin_idle_stop_ms, 100)
-      {:ok, _} = notify(["on_operator_failed"])
+      {:ok, _} = notify(["on_relay_failed"])
       assert [copy] = Directory.plugin_hosts(@namespace, "notify")
 
       Process.sleep(300)
@@ -313,16 +313,16 @@ defmodule FlezhaTest.Plugin.ControllerPluginTest do
 
   describe "the five hooks" do
     test "a deliberate start and stop each tell the plugin once; a restart tells it nothing" do
-      {:ok, _} = notify(["on_operator_started", "on_operator_stopped"])
-      op = start_operator("told_op")
+      {:ok, _} = notify(["on_relay_started", "on_relay_stopped"])
+      op = start_relay("told_op")
 
       assert_receive {:hook, started, _}, 5_000
       controller = node()
 
       assert %{
-               hook: :on_operator_started,
+               hook: :on_relay_started,
                namespace: @namespace,
-               operator: ^op,
+               relay: ^op,
                factory: @factory,
                controller: ^controller,
                text: text,
@@ -332,7 +332,7 @@ defmodule FlezhaTest.Plugin.ControllerPluginTest do
       assert text =~ op
       assert {:ok, _, 0} = DateTime.from_iso8601(at)
 
-      {:ok, pid} = OperatorManager.get_operator_pid(@namespace, op)
+      {:ok, pid} = RelayManager.get_relay_pid(@namespace, op)
 
       log =
         capture_log(fn ->
@@ -342,7 +342,7 @@ defmodule FlezhaTest.Plugin.ControllerPluginTest do
                    fn ->
                      match?(
                        {:ok, new} when new != pid,
-                       OperatorManager.get_operator_pid(@namespace, op)
+                       RelayManager.get_relay_pid(@namespace, op)
                      )
                    end,
                    5_000
@@ -350,55 +350,55 @@ defmodule FlezhaTest.Plugin.ControllerPluginTest do
         end)
 
       assert log =~ "#{op}"
-      refute_receive {:hook, %{hook: :on_operator_started}, _}, 1_000
+      refute_receive {:hook, %{hook: :on_relay_started}, _}, 1_000
 
-      :ok = OperatorManager.stop_operator(@namespace, op)
+      :ok = RelayManager.stop_relay(@namespace, op)
 
-      assert_receive {:hook, %{hook: :on_operator_stopped, operator: ^op, reason: :stopped}, _},
+      assert_receive {:hook, %{hook: :on_relay_stopped, relay: ^op, reason: :stopped}, _},
                      5_000
     end
 
     test "a start and a stop reach the event stream and each hook once" do
-      {:ok, _} = notify(["on_operator_started", "on_operator_stopped"])
+      {:ok, _} = notify(["on_relay_started", "on_relay_stopped"])
       since = System.monotonic_time(:microsecond)
-      op = start_operator("streamed_op")
-      :ok = OperatorManager.stop_operator(@namespace, op)
+      op = start_relay("streamed_op")
+      :ok = RelayManager.stop_relay(@namespace, op)
 
-      assert_receive {:hook, %{hook: :on_operator_started, operator: ^op}, _}, 5_000
-      assert_receive {:hook, %{hook: :on_operator_stopped, operator: ^op}, _}, 5_000
-      refute_receive {:hook, %{operator: ^op}, _}, 300
+      assert_receive {:hook, %{hook: :on_relay_started, relay: ^op}, _}, 5_000
+      assert_receive {:hook, %{hook: :on_relay_stopped, relay: ^op}, _}, 5_000
+      refute_receive {:hook, %{relay: ^op}, _}, 300
 
       streamed = fn ->
-        for %{name: name, metadata: %{operator: ^op}} <-
-              RingBufferSink.query(:flezha_operator, since),
+        for %{name: name, metadata: %{relay: ^op}} <-
+              RingBufferSink.query(:flezha_relay, since),
             do: name
       end
 
       assert NodeTestHelper.wait_until(
-               fn -> Enum.sort(streamed.()) == [:operator_started, :operator_stopped] end,
+               fn -> Enum.sort(streamed.()) == [:relay_started, :relay_stopped] end,
                2_000
              )
     end
 
     test "a park retried over several ticks is one failure, naming the park's code" do
       {:ok, _} = start_supervised({Loop, tick_ms: 60_000})
-      {:ok, _} = notify(["on_operator_failed"])
-      op = start_operator("parked_op")
+      {:ok, _} = notify(["on_relay_failed"])
+      op = start_relay("parked_op")
       Loop.tick_now()
 
       reason = {:plugin_prepare_failed, "a_plugin", :boom}
-      {:ok, pid} = OperatorManager.get_operator_pid(@namespace, op)
+      {:ok, pid} = RelayManager.get_relay_pid(@namespace, op)
       :sys.replace_state(pid, &%{&1 | init_error: reason})
       for _ <- 1..3, do: Loop.tick_now()
 
       expected = "plugin.prepare_failed"
-      assert_receive {:hook, %{hook: :on_operator_failed, operator: ^op, error: ^expected}, _}
-      refute_receive {:hook, %{hook: :on_operator_failed}, _}, 300
+      assert_receive {:hook, %{hook: :on_relay_failed, relay: ^op, error: ^expected}, _}
+      refute_receive {:hook, %{hook: :on_relay_failed}, _}, 300
     end
 
     test "a park read unknown or unbound for a tick between is one failure until it recovers" do
-      {:ok, _} = notify(["on_operator_failed"])
-      subject = {:operator, {@namespace, "flaky_op"}}
+      {:ok, _} = notify(["on_relay_failed"])
+      subject = {:relay, {@namespace, "flaky_op"}}
       reason = {:parked, {:plugin_prepare_failed, "p", :boom}}
       read = &Verdict.new(subject, &1, reason: reason, facts: %{node: node()})
 
@@ -412,12 +412,12 @@ defmodule FlezhaTest.Plugin.ControllerPluginTest do
       end
 
       tick.([:healthy, :parked, :unknown, :parked, :unbound, :parked])
-      assert_receive {:hook, %{hook: :on_operator_failed, operator: "flaky_op"}, _}, 2_000
-      refute_receive {:hook, %{hook: :on_operator_failed}, _}, 300
+      assert_receive {:hook, %{hook: :on_relay_failed, relay: "flaky_op"}, _}, 2_000
+      refute_receive {:hook, %{hook: :on_relay_failed}, _}, 300
 
       tick.([:parked, :healthy, :parked])
-      assert_receive {:hook, %{hook: :on_operator_failed, operator: "flaky_op"}, _}, 2_000
-      refute_receive {:hook, %{hook: :on_operator_failed}, _}, 300
+      assert_receive {:hook, %{hook: :on_relay_failed, relay: "flaky_op"}, _}, 2_000
+      refute_receive {:hook, %{hook: :on_relay_failed}, _}, 300
     end
 
     test "a rescale tells nothing: its members are the group it moves" do
@@ -426,11 +426,11 @@ defmodule FlezhaTest.Plugin.ControllerPluginTest do
       {:ok, %{members: [_, _]}} =
         PartitionGroup.start(
           @namespace,
-          %Builder{id: group, factory_id: "partition_relay", init_values: %{}, opts: []},
+          %Builder{id: group, factory_id: "partition_pass", init_values: %{}, opts: []},
           2
         )
 
-      {:ok, _} = notify(["on_operator_started", "on_operator_stopped"])
+      {:ok, _} = notify(["on_relay_started", "on_relay_stopped"])
 
       assert {:ok, %{members: grown}} = PartitionGroup.rescale(@namespace, group, 4)
       assert length(grown) == 4
@@ -442,14 +442,14 @@ defmodule FlezhaTest.Plugin.ControllerPluginTest do
     test "a plugin unhealthy for three probe windows is one event naming it" do
       {:ok, _} = start_supervised({Loop, tick_ms: 60_000})
       {:ok, _} = notify(["on_plugin_unhealthy"])
-      op = start_operator("ill_op")
+      op = start_relay("ill_op")
 
       {:ok, _} =
         PluginManager.enable_plugin("ill", %Plugin{
           id: "ill",
           provider: SickProvider,
           namespace: @namespace,
-          operator_id: op,
+          relay_id: op,
           hooks: [{:on_output, []}]
         })
 
@@ -457,8 +457,7 @@ defmodule FlezhaTest.Plugin.ControllerPluginTest do
       SickProvider.set_health({:unhealthy, :sick})
       for _ <- 1..3, do: Loop.tick_now()
 
-      assert_receive {:hook, %{hook: :on_plugin_unhealthy, plugin: "ill", operator: ^op} = event,
-                      _}
+      assert_receive {:hook, %{hook: :on_plugin_unhealthy, plugin: "ill", relay: ^op} = event, _}
 
       assert event.error == "internal.uncatalogued"
       refute_receive {:hook, %{hook: :on_plugin_unhealthy}, _}, 300
@@ -466,12 +465,12 @@ defmodule FlezhaTest.Plugin.ControllerPluginTest do
 
     test "a dead letter names its entry and carries no payload" do
       {:ok, _} = notify(["on_dead_letter"])
-      op = start_operator("dead_op")
+      op = start_relay("dead_op")
       payload = "poison-#{System.unique_integer([:positive])}"
 
       entry =
         Flezha.Dlq.Entry.new!(%{
-          operator_class: op,
+          relay_class: op,
           tasklet_id: "t",
           cell_key: "k",
           channel: "in",
@@ -482,17 +481,17 @@ defmodule FlezhaTest.Plugin.ControllerPluginTest do
       {:ok, ref} = Flezha.Dlq.Store.append(entry)
       on_exit(fn -> Flezha.Dlq.Store.drop(ref) end)
 
-      assert_receive {:hook, %{hook: :on_dead_letter, operator: ^op} = event, _}, 5_000
+      assert_receive {:hook, %{hook: :on_dead_letter, relay: ^op} = event, _}, 5_000
       assert %{channel: "in", error: "boom", entry: ^ref, namespace: @namespace} = event
       refute inspect(event) =~ payload
     end
 
     test "an event of another namespace reaches nothing" do
-      {:ok, _} = notify(["on_operator_started"])
+      {:ok, _} = notify(["on_relay_started"])
 
-      :telemetry.execute([:flezha, :operator, :started], %{count: 1}, %{
+      :telemetry.execute([:flezha, :relay, :started], %{count: 1}, %{
         namespace: "another_ns",
-        operator: "elsewhere",
+        relay: "elsewhere",
         factory: @factory
       })
 
@@ -513,10 +512,10 @@ defmodule FlezhaTest.Plugin.ControllerPluginTest do
       :erlang.trace(sink, true, [:receive])
       before = RingBufferSink.count(:flezha_hooks)
 
-      op = start_operator("unheard_op")
-      {:ok, pid} = OperatorManager.get_operator_pid(@namespace, op)
+      op = start_relay("unheard_op")
+      {:ok, pid} = RelayManager.get_relay_pid(@namespace, op)
       :sys.replace_state(pid, &%{&1 | init_error: {:plugin_prepare_failed, "p", :boom}})
-      :ok = OperatorManager.stop_operator(@namespace, op)
+      :ok = RelayManager.stop_relay(@namespace, op)
 
       :erlang.trace(sink, false, [:receive])
       refute_receive {:trace, ^sink, :receive, {:signal, _}}, 100
@@ -532,7 +531,7 @@ defmodule FlezhaTest.Plugin.ControllerPluginTest do
         assert :ok =
                  :telemetry.execute([:flezha, :dlq, :dead_lettered], %{count: 1}, %{
                    namespace: @namespace,
-                   operator: "op#{n}",
+                   relay: "op#{n}",
                    entry: "e#{n}",
                    channel: "in",
                    error: "boom"

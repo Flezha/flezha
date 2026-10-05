@@ -1,6 +1,6 @@
 defmodule FlezhaTest.Runner.StreamChannelTest do
   alias Flezha.Convergence.Loop
-  alias Flezha.Operator.ClassRegistry
+  alias Flezha.Relay.ClassRegistry
   alias Flezha.Runner.ControlUnit
   alias Flezha.Runner.StreamChannel
   alias Flezha.State.Paths
@@ -31,10 +31,10 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
   end
 
   describe "stream closed → output_stall telemetry" do
-    test "{:flz_closed} emits output_stall telemetry for every operator in operator_mapping",
+    test "{:flz_closed} emits output_stall telemetry for every relay in relay_mapping",
          %{pid: pid} do
-      :ok = GenServer.call(pid, {:operator_pid_update, "operator_a", [self()]})
-      :ok = GenServer.call(pid, {:operator_pid_update, "operator_b", [self()]})
+      :ok = GenServer.call(pid, {:relay_pid_update, "relay_a", [self()]})
+      :ok = GenServer.call(pid, {:relay_pid_update, "relay_b", [self()]})
       :ok = GenServer.call(pid, {:bind, :ref_x})
 
       test_pid = self()
@@ -53,11 +53,11 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
       # flush through mailbox
       _ = GenServer.call(pid, :stream_ref_status)
 
-      assert_receive {:output_stall, "operator_a"}
-      assert_receive {:output_stall, "operator_b"}
+      assert_receive {:output_stall, "relay_a"}
+      assert_receive {:output_stall, "relay_b"}
     end
 
-    test "{:flz_closed} with empty operator_mapping emits no output_stall telemetry",
+    test "{:flz_closed} with empty relay_mapping emits no output_stall telemetry",
          %{pid: pid} do
       test_pid = self()
       handler_id = "stall_test_empty_#{System.unique_integer([:positive])}"
@@ -79,7 +79,7 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
     end
 
     test "{:flz_closed} declares each stall against the runner whose stream closed", %{pid: pid} do
-      :ok = GenServer.call(pid, {:operator_pid_update, "operator_a", [self()]})
+      :ok = GenServer.call(pid, {:relay_pid_update, "relay_a", [self()]})
       :ok = GenServer.call(pid, {:bind, :ref_z})
 
       MessageTestHelper.become_loop()
@@ -96,7 +96,7 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
 
       send(pid, {:flz_closed, :ref_z, :eof})
 
-      assert_receive {:declare, :output_stall, "operator_a", %{runner_id: "ce_test"}}
+      assert_receive {:declare, :output_stall, "relay_a", %{runner_id: "ce_test"}}
     end
   end
 
@@ -151,7 +151,7 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
       on_exit(fn -> :telemetry.detach(id) end)
 
       {:error, :no_stream} = StreamChannel.io_in(name, "p1", {"msg", %{}})
-      assert_receive {:drop, %{count: 1}, %{operator_id: "p1"}}
+      assert_receive {:drop, %{count: 1}, %{relay_id: "p1"}}
       assert GenServer.call(pid, :stream_ref_status) == nil
     end
   end
@@ -187,8 +187,8 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
       %{pid: pid, name: sec_name}
     end
 
-    test "idle operator that keeps heart-beating is never flagged", %{pid: pid} do
-      :ok = GenServer.call(pid, {:operator_pid_update, "operator_a", [self()]})
+    test "idle relay that keeps heart-beating is never flagged", %{pid: pid} do
+      :ok = GenServer.call(pid, {:relay_pid_update, "relay_a", [self()]})
       :ok = GenServer.call(pid, {:bind, :ref_x})
 
       # No real output, but a fresh heartbeat lands right before the check.
@@ -200,9 +200,9 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
       refute_received {:output_stall, _}
     end
 
-    test "operator whose heartbeats stop is flagged for every operator", %{pid: pid} do
-      :ok = GenServer.call(pid, {:operator_pid_update, "operator_a", [self()]})
-      :ok = GenServer.call(pid, {:operator_pid_update, "operator_b", [self()]})
+    test "relay whose heartbeats stop is flagged for every relay", %{pid: pid} do
+      :ok = GenServer.call(pid, {:relay_pid_update, "relay_a", [self()]})
+      :ok = GenServer.call(pid, {:relay_pid_update, "relay_b", [self()]})
       :ok = GenServer.call(pid, {:bind, :ref_x})
 
       # Last heartbeat, then silence past the threshold.
@@ -210,12 +210,12 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
       age_stream(pid, @threshold_ms * 3)
       send(pid, :io_liveness_check)
 
-      assert_receive {:output_stall, "operator_a"}
-      assert_receive {:output_stall, "operator_b"}
+      assert_receive {:output_stall, "relay_a"}
+      assert_receive {:output_stall, "relay_b"}
     end
 
     test "unbound stream is never flagged", %{pid: pid} do
-      :ok = GenServer.call(pid, {:operator_pid_update, "operator_a", [self()]})
+      :ok = GenServer.call(pid, {:relay_pid_update, "relay_a", [self()]})
 
       age_stream(pid, @threshold_ms * 3)
       send(pid, :io_liveness_check)
@@ -229,7 +229,7 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
       {:ok, pid} = StreamChannel.start_link({"ce_test", name, :primary})
       on_exit(fn -> NodeTestHelper.ensure_stopped(pid) end)
 
-      :ok = GenServer.call(pid, {:operator_pid_update, "operator_a", [self()]})
+      :ok = GenServer.call(pid, {:relay_pid_update, "relay_a", [self()]})
       :ok = GenServer.call(pid, {:bind, :ref_x})
 
       age_stream(pid, @threshold_ms * 3)
@@ -342,13 +342,13 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
       :ok
     end
 
-    test "a steps operator is flagged for output_stall on stream close, as a stream is",
+    test "a steps relay is flagged for output_stall on stream close, as a stream is",
          %{pid: pid} do
       ClassRegistry.put("bnd_op", :steps)
       on_exit(fn -> ClassRegistry.delete("bnd_op") end)
 
-      :ok = GenServer.call(pid, {:operator_pid_update, "bnd_op", [self()]})
-      :ok = GenServer.call(pid, {:operator_pid_update, "cont_op", [self()]})
+      :ok = GenServer.call(pid, {:relay_pid_update, "bnd_op", [self()]})
+      :ok = GenServer.call(pid, {:relay_pid_update, "cont_op", [self()]})
       :ok = GenServer.call(pid, {:bind, :ref_g})
 
       test_pid = self()
@@ -400,7 +400,7 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
       :ok
     end
 
-    test "a frame for an operator whose cached Overwatch died routes through the registry",
+    test "a frame for a relay whose cached Overwatch died routes through the registry",
          %{pid: pid} do
       class = "route_dead_#{System.unique_integer([:positive])}"
       on_exit(fn -> ClassRegistry.delete(class) end)
@@ -419,14 +419,14 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
           end
         end)
 
-      :ok = GenServer.call(pid, {:operator_pid_update, class, [dead]})
+      :ok = GenServer.call(pid, {:relay_pid_update, class, [dead]})
       ClassRegistry.put(class, :steps)
       ClassRegistry.put_overwatch(class, live, "ce_test")
 
       Process.exit(dead, :kill)
 
       assert NodeTestHelper.wait_until(
-               fn -> not Map.has_key?(:sys.get_state(pid).operator_mapping, class) end,
+               fn -> not Map.has_key?(:sys.get_state(pid).relay_mapping, class) end,
                1_000
              ),
              "the cached pid outlived the process it cached"
@@ -442,17 +442,17 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
       class = "route_gone_#{System.unique_integer([:positive])}"
       holder = spawn(fn -> Process.sleep(:infinity) end)
 
-      :ok = GenServer.call(pid, {:operator_pid_update, class, [holder]})
+      :ok = GenServer.call(pid, {:relay_pid_update, class, [holder]})
       assert {:process, holder} in monitors_of(pid)
 
-      :ok = GenServer.call(pid, {:operator_pid_remove, class})
+      :ok = GenServer.call(pid, {:relay_pid_remove, class})
       refute {:process, holder} in monitors_of(pid)
 
       Process.exit(holder, :kill)
     end
   end
 
-  describe "an output is routed only for the runner that owns its operator" do
+  describe "an output is routed only for the runner that owns its relay" do
     setup :set_mimic_global_until_exit
 
     setup do
@@ -460,8 +460,8 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
       test_pid = self()
       on_exit(fn -> ClassRegistry.delete(class) end)
 
-      stub(ControlUnit, :stop_operator_async, fn runner_id, id ->
-        send(test_pid, {:rem_operator, runner_id, id})
+      stub(ControlUnit, :stop_relay_async, fn runner_id, id ->
+        send(test_pid, {:rem_relay, runner_id, id})
         :ok
       end)
 
@@ -475,13 +475,13 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
       send(pid, {:flz_data, :ref, class, "first", %{}})
 
       assert_receive {:"$gen_cast", {:io_out, "first", _}}, 1_000
-      assert :sys.get_state(pid).operator_mapping[class] == [self()]
+      assert :sys.get_state(pid).relay_mapping[class] == [self()]
     end
 
     test "a part takes the route its instance's output takes, as a preview",
          %{pid: pid, class: class} do
       :ok = ClassRegistry.put_overwatch(class, self(), "ce_test")
-      metadata = %{"flz.operator" => class, "flz.part" => "0"}
+      metadata = %{"flz.relay" => class, "flz.part" => "0"}
 
       send(pid, {:flz_data, :ref, "output_part", "he", metadata})
 
@@ -493,11 +493,11 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
          %{pid: pid, class: class} do
       :ok = ClassRegistry.put_overwatch(class, self(), "runner_a")
 
-      send(pid, {:flz_data, :ref, "output_part", "he", %{"flz.operator" => class}})
+      send(pid, {:flz_data, :ref, "output_part", "he", %{"flz.relay" => class}})
       _ = GenServer.call(pid, :stream_ref_status)
 
       refute_received {:"$gen_cast", {:io_part, _, _}}
-      assert_received {:rem_operator, "ce_test", ^class}
+      assert_received {:rem_relay, "ce_test", ^class}
     end
 
     test "another runner's output is refused, counted every time and reported once",
@@ -516,26 +516,26 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
                          runner_id: "ce_test",
                          identity: "ce_test",
                          owner: "runner_a",
-                         operator_id: ^class,
+                         relay_id: ^class,
                          kind: :output
                        }}
 
       refute_received {:refused, _, _}
-      assert_received {:rem_operator, "ce_test", ^class}
-      refute_received {:rem_operator, _, _}
+      assert_received {:rem_relay, "ce_test", ^class}
+      refute_received {:rem_relay, _, _}
       rows = LivenessCounters.by_runner(LivenessCounters.snapshot_all().channels)
       assert get_in(rows, ["ce_test", :foreign_frame_refused]) == 2
     end
 
-    test "an output for an operator nobody records is the counted unrouted drop",
+    test "an output for a relay nobody records is the counted unrouted drop",
          %{pid: pid, class: class} do
       MessageTestHelper.forward_telemetry([:flezha, :stream, :drop], :drop)
 
       send(pid, {:flz_data, :ref, class, "unrouted", %{}})
       _ = GenServer.call(pid, :stream_ref_status)
 
-      assert_received {:drop, %{count: 1}, %{operator_id: ^class, reason: :unrouted}}
-      refute_received {:rem_operator, _, _}
+      assert_received {:drop, %{count: 1}, %{relay_id: ^class, reason: :unrouted}}
+      refute_received {:rem_relay, _, _}
     end
   end
 
@@ -545,13 +545,13 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
   end
 
   # The output_stall event is global: real channels elsewhere in the suite can
-  # flag leftovers of other tests' operators mid-refute-window. Forward only
+  # flag leftovers of other tests' relays mid-refute-window. Forward only
   # this file's instances so the refutes cannot be contaminated.
-  @tracked_instances ["operator_a", "operator_b", "cont_op", "bnd_op"]
+  @tracked_instances ["relay_a", "relay_b", "cont_op", "bnd_op"]
   defp stall_forwarder(test_pid) do
     fn _e, _m, md, _ ->
-      if md.operator_instance in @tracked_instances do
-        send(test_pid, {:output_stall, md.operator_instance})
+      if md.relay_instance in @tracked_instances do
+        send(test_pid, {:output_stall, md.relay_instance})
       end
     end
   end
@@ -654,8 +654,8 @@ defmodule Flezha.Runner.StreamChannelLivenessTest do
 
     {:ok, _pid} = StreamChannel.start_link({exec, name, :primary})
 
-    {:error, :no_stream} = StreamChannel.io_in(name, "operator1", {"msg", %{}})
-    {:error, :no_stream} = StreamChannel.io_in(name, "operator1", {"msg", %{}})
+    {:error, :no_stream} = StreamChannel.io_in(name, "relay1", {"msg", %{}})
+    {:error, :no_stream} = StreamChannel.io_in(name, "relay1", {"msg", %{}})
 
     row =
       LivenessCounters.snapshot_all().channels
@@ -671,7 +671,7 @@ defmodule FlezhaTest.Runner.IoStreamStaleRefReproTest do
   @moduledoc """
   Reproduction of a production incident: the IO data stream silently severs and
   NEVER self-heals — WS ingest keeps flowing, the runner goes idle, all
-  tasklet WALs/topics freeze, and only an operator recreate restores it.
+  tasklet WALs/topics freeze, and only a relay recreate restores it.
 
   Root cause under test: the IO `StreamChannel` can hold a STALE non-nil
   `stream_ref` after its NIF stream dies WITHOUT emitting `{:flz_closed, ...}`.

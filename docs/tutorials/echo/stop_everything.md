@@ -1,7 +1,7 @@
 # Stop everything
 
 On this page you stop what this tutorial started, in reverse order: the
-plugins, the operator, the runner, then the controller. Do it before the
+plugins, the relay, the runner, then the controller. Do it before the
 tradedesk tutorial, which starts a controller of its own with authorization on.
 
 > Disable both plugins and stop `my_echo`.
@@ -10,11 +10,11 @@ tradedesk tutorial, which starts a controller of its own with authorization on.
 ```sh
 $ ./bin/flz plugin disable writer
 $ ./bin/flz plugin disable reader
-$ ./bin/flz operator stop my_echo
+$ ./bin/flz relay stop my_echo
 ```
 
 These are the only steps that forget anything. The controller keeps enabled
-plugins and started operators in a durable registry, so what you skip comes back
+plugins and started relays in a durable registry, so what you skip comes back
 on its own the next time the controller and a runner start.
 
 > Stop your runner: press Ctrl-C in its terminal.
@@ -47,7 +47,7 @@ $ docker stop flezha-controller
 it exits, so nothing is lost; a kill costs at most the last few milliseconds,
 recovered on the next start.
 [Deploying a controller](../../topics/deploying/deploying_a_controller.md) covers
-shutdown in full, and [Running operators](../../topics/basics/running_operators.md)
+shutdown in full, and [Running relays](../../topics/basics/running_relays.md)
 what comes back after a restart.
 
 ## Next

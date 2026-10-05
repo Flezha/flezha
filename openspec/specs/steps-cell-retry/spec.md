@@ -8,15 +8,15 @@ The steps-cell-retry capability is the retry rung between a cell failure and the
 
 A cell whose work errors inside a structured steps tasklet SHALL be retried in place on the
 core's per-item retry ladder, the one a flow cell climbs, under the retry policy of the edge
-that feeds the tasklet, the same `retry_max` / `retry_backoff_ms` a flow operator's edge declares:
+that feeds the tasklet, the same `retry_max` / `retry_backoff_ms` a flow relay's edge declares:
 default 3 attempts (the first run plus its retries), with the platform's shared jittered
 exponential backoff (`base × 2^(n-1)` ±50%, capped at `RETRY_BACKOFF_MAX_MS` = 5 s; default base
-50 ms, the edge's default, computed by the same helper the flow operator's retry-then-park ladder uses).
+50 ms, the edge's default, computed by the same helper the flow relay's retry-then-park ladder uses).
 The failed item and the untouched tail of its batch are held at the head of the cell's line and
 re-handed after the backoff; sibling cells' settled results stay held on the instance's pass
-sheet and are not re-run. There SHALL be no class-level retry policy on a steps operator: the policy
+sheet and are not re-run. There SHALL be no class-level retry policy on a steps relay: the policy
 the ladder reads SHALL be the one the shared core already derives for the tasklet from its
-input channel, and a steps operator SHALL carry no `retry_attempts`, `retry_backoff` or
+input channel, and a steps relay SHALL carry no `retry_attempts`, `retry_backoff` or
 `barrier_retry_attempts` declaration in any SDK or on the wire. A retry that succeeds SHALL let
 the stage reach its count and commit normally. A cancellation (external stop / `max_duration`)
 SHALL end a pending backoff at once by disarming its deferred wake and releasing the cell's
@@ -30,7 +30,7 @@ imposes.
 
 #### Scenario: The edge's budget is the ladder's
 
-- **WHEN** a steps operator wires `c.input("order").retry_max(5).retry_backoff_ms(20).into(Reserve)` and `Reserve`'s cell errors retryably on every attempt
+- **WHEN** a steps relay wires `c.input("order").retry_max(5).retry_backoff_ms(20).into(Reserve)` and `Reserve`'s cell errors retryably on every attempt
 - **THEN** the cell SHALL run five times, each wait SHALL grow from a 20 ms base, and the tasklet SHALL fail after the fifth attempt
 
 #### Scenario: Only the failed item and its tail re-run
@@ -41,22 +41,22 @@ imposes.
 #### Scenario: Stop interrupts a waiting retry
 
 - **WHEN** an external stop arrives while a cell is in a backoff wait
-- **THEN** the wait SHALL end at once, the cell's held items SHALL be dropped, and the operator SHALL take the normal abnormal-exit path (compensation of completed tasklets)
+- **THEN** the wait SHALL end at once, the cell's held items SHALL be dropped, and the relay SHALL take the normal abnormal-exit path (compensation of completed tasklets)
 
 ### Requirement: Retry exhaustion fails the tasklet exactly as today
 
 A cell SHALL fail its tasklet after the configured attempts are exhausted, surfacing
 the original error into the existing abnormal-termination path: the tasklet
 does not commit, AbortAll/compensation runs per the existing saga contract, and
-the operator terminates with status `error`. No new terminal state SHALL be
+the relay terminates with status `error`. No new terminal state SHALL be
 introduced. In a `per_input` loop declaring keep-progress the exhausted Cell SHALL fail
-only the turn: the pass stops, the turn is dead-lettered and undone, and the operator does
+only the turn: the pass stops, the turn is dead-lettered and undone, and the relay does
 not terminate (see `steps-durable-loop`); the same holds for a non-retryable error.
 Each retry attempt SHALL emit telemetry (instance, tasklet, cell, attempt, delay).
 
 #### Scenario: Persistent failure aborts after the ladder
 
-- **WHEN** a cell errors retryably on every one of its 3 attempts, in an operator that is not a `per_input` loop declaring keep-progress
+- **WHEN** a cell errors retryably on every one of its 3 attempts, in a relay that is not a `per_input` loop declaring keep-progress
 - **THEN** the tasklet SHALL fail with the original error, completed tasklets SHALL be compensated, and the run SHALL terminate with status `error`
 
 #### Scenario: Retries are observable
@@ -66,10 +66,10 @@ Each retry attempt SHALL emit telemetry (instance, tasklet, cell, attempt, delay
 
 #### Scenario: Exhaustion in a per-input keep-progress loop fails the turn
 
-- **WHEN** a cell of a `per_input` keep-progress operator errors retryably on every one of
+- **WHEN** a cell of a `per_input` keep-progress relay errors retryably on every one of
   its 3 attempts
 - **THEN** the tasklet SHALL fail with the original error, the turn SHALL be dead-lettered
-  with `attempts` 3 and that error, and the operator SHALL NOT terminate
+  with `attempts` 3 and that error, and the relay SHALL NOT terminate
 
 ### Requirement: Authors can classify errors as non-retryable and tune the policy
 
@@ -77,10 +77,10 @@ Each retry attempt SHALL emit telemetry (instance, tasklet, cell, attempt, delay
 skip the ladder and fail the tasklet immediately. Errors produced by the
 existing string conversions SHALL remain retryable by default. The policy knobs SHALL be the
 edge's, `retry_max` and `retry_backoff_ms` on the channel builder of every SDK, exactly as a
-stream tunes them; the `Operator` trait SHALL expose no per-class knob for attempt
+stream tunes them; the `Relay` trait SHALL expose no per-class knob for attempt
 count or backoff base, and `retry_max(1)` SHALL be fail-fast, `retry_max(0)` being refused as
 `topology.retry_max_zero` for both kinds. Retry SHALL apply to
-every steps operator's tasklet cells, since every steps operator runs tasklets, and
+every steps relay's tasklet cells, since every steps relay runs tasklets, and
 SHALL only ever occur before the tasklet's commit (a committed tasklet is
 never retried).
 
@@ -91,12 +91,12 @@ never retried).
 
 #### Scenario: retry_max(1) is fail-fast
 
-- **WHEN** a steps operator's entry edge declares `retry_max(1)` and a cell errors
+- **WHEN** a steps relay's entry edge declares `retry_max(1)` and a cell errors
 - **THEN** the tasklet SHALL fail on the first error, and the same declaration with `retry_max(0)` SHALL be refused at registration naming `topology.retry_max_zero`
 
 #### Scenario: The class-level knobs are gone from every SDK
 
-- **WHEN** the seven SDKs' steps operator surfaces and `test/fixtures/host_class_decl_keys.txt` are searched for `retry_attempts`, `retryAttempts`, `retry_backoff`, `retryBackoff`, `barrier_retry_attempts` or `barrierRetryAttempts`
+- **WHEN** the seven SDKs' steps relay surfaces and `test/fixtures/host_class_decl_keys.txt` are searched for `retry_attempts`, `retryAttempts`, `retry_backoff`, `retryBackoff`, `barrier_retry_attempts` or `barrierRetryAttempts`
 - **THEN** no trait, interface, definition type, decorator keyword, class-body setting, attribute argument, `use` option or declaration key carries one, and `ZeroRetryBackoff` names no refusal in any SDK or in the core
 
 ### Requirement: A backoff wait holds no worker thread
@@ -106,7 +106,7 @@ worker, the worker is released, and the re-hand is timed by the core's deferred-
 same entry a flow cell's backoff is. There SHALL be no steps-owned ladder and no barrier
 that times it. The retry policy (attempts, shared jittered exponential backoff), error
 classification, exhaustion behaviour (the stage fails into compensation, never into the
-dead-letter queue) and per-attempt telemetry SHALL be the flow operator's ladder's, with the terminal
+dead-letter queue) and per-attempt telemetry SHALL be the flow relay's ladder's, with the terminal
 action the only difference.
 
 #### Scenario: Sibling stages proceed while a cell backs off
@@ -120,14 +120,14 @@ action the only difference.
 
 - **WHEN** a steps cell's item fails on its final attempt, or with a non-retryable error
 - **THEN** no dead-letter entry SHALL be minted; the cell's stage SHALL be marked failed on the
-  instance's pass sheet, and once no stage of the pass owes an item the operator SHALL
+  instance's pass sheet, and once no stage of the pass owes an item the relay SHALL
   compensate and end with status `error`
 
 #### Scenario: Stop disarms a pending backoff
 
 - **WHEN** an external stop arrives while the deferred-wake list holds a cell's retry entry
 - **THEN** the entry SHALL be removed, the cell's gates released and its held items dropped on
-  the thread that brings the stop, and the operator SHALL take the normal abnormal-exit path
+  the thread that brings the stop, and the relay SHALL take the normal abnormal-exit path
 
 ### Requirement: A commit barrier is re-sent a fixed number of times
 

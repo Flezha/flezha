@@ -115,9 +115,9 @@ codes! {
     CompletionTooManyEffects => "runtime.completion_too_many_effects",
     UnknownActivationToken => "runtime.unknown_activation_token",
     PrepareUnknownChannel => "runtime.prepare_unknown_channel",
-    OperatorNotFound => "runtime.operator_not_found",
-    OperatorNotLocal => "runtime.operator_not_local",
-    OperatorMessageUnsupported => "runtime.operator_message_unsupported",
+    RelayNotFound => "runtime.relay_not_found",
+    RelayNotLocal => "runtime.relay_not_local",
+    RelayMessageUnsupported => "runtime.relay_message_unsupported",
     UnreadableReply => "runtime.unreadable_reply",
     MaxCellsReached => "runtime.max_cells_reached",
     ResultUndecodable => "runtime.result_undecodable",
@@ -184,7 +184,7 @@ pub enum Error {
     Routing(FlezhaError),
     /// A key this partition member does not own.
     Partition(FlezhaError),
-    /// A state read or apply the operator cannot serve.
+    /// A state read or apply the relay cannot serve.
     State(FlezhaError),
     /// A part the invocation may not send.
     Part(FlezhaError),
@@ -326,7 +326,7 @@ mod tests {
     #[test]
     fn an_error_survives_the_wire_both_ways() {
         let error =
-            Code::TaskletNotFound.with([("operator", "op".into()), ("tasklet", "missing".into())]);
+            Code::TaskletNotFound.with([("relay", "op".into()), ("tasklet", "missing".into())]);
         assert_eq!(FlezhaError::from(pb::Error::from(&error)), error);
 
         let unknown_class = pb::Error {

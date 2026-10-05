@@ -11,7 +11,7 @@ never durable and never reaches a sink or a waiting caller.
 Every SDK SHALL give a tasklet's invocation context one call that sends a **part**: a
 preview of the output the invocation is producing, which leaves the runner when the call is
 made rather than when the invocation returns. The call SHALL be available to a tasklet of a
-flow operator and of a steps operator, in `run` and in a timer handler, and SHALL be
+flow relay and of a steps relay, in `run` and in a timer handler, and SHALL be
 callable any number of times, from any point of the invocation, including between two reads
 of a long blocking call made inside `run`. The value SHALL be encoded exactly as an emit of
 the same value on the tasklet's output channel would be. The call SHALL return without
@@ -21,15 +21,15 @@ channel argument.
 
 #### Scenario: A flow tasklet streams parts before its output
 
-- **GIVEN** a flow operator whose tasklet sends the parts `he`, `hel` and `hell` and
+- **GIVEN** a flow relay whose tasklet sends the parts `he`, `hel` and `hell` and
   then emits `hello` on its sink `answer`
-- **WHEN** a listener is attached and the operator is sent one input
+- **WHEN** a listener is attached and the relay is sent one input
 - **THEN** the listener SHALL receive the three parts in order, each on channel `answer`,
   and then the output `hello`
 
 #### Scenario: A steps session streams parts within its turn
 
-- **GIVEN** a `per_input` steps operator whose tasklet sends two parts and then emits its
+- **GIVEN** a `per_input` steps relay whose tasklet sends two parts and then emits its
   answer on the sink `answer`
 - **WHEN** a listener is attached and the instance is sent one message
 - **THEN** the listener SHALL receive both parts before the answer, and the answer SHALL
@@ -43,7 +43,7 @@ channel argument.
 
 #### Scenario: A part leaves before the effect record under the tier
 
-- **GIVEN** a flow operator on the effectively-once tier whose tasklet sends a part
+- **GIVEN** a flow relay on the effectively-once tier whose tasklet sends a part
   and then emits
 - **WHEN** the input is processed under a listener
 - **THEN** the part SHALL reach the listener before the effect record is durable, and the
@@ -77,7 +77,7 @@ preview for its channel and Cell. No user code SHALL be able to set a `flz.` key
 #### Scenario: A keyed Cell's part names its Cell and key
 
 - **WHEN** a tasklet keyed by `session` sends a part from the Cell whose key is `s-7`
-- **THEN** the part SHALL carry `flz.key` `s-7` and a `flz.cell` naming the operator, the
+- **THEN** the part SHALL carry `flz.key` `s-7` and a `flz.cell` naming the relay, the
   tasklet and `s-7`
 
 ### Requirement: A part SHALL never be durable and SHALL never reach a sink
@@ -92,7 +92,7 @@ it would produce without them. The part SHALL NOT be the answer: the output is.
 
 #### Scenario: A sink sees only the output
 
-- **GIVEN** an operator whose tasklet sends three parts and emits one output on a sink with
+- **GIVEN** a relay whose tasklet sends three parts and emits one output on a sink with
   a file sink plugin attached, and a listener attached beside it
 - **WHEN** one input is processed
 - **THEN** the file SHALL hold exactly the one output, and the listener SHALL have received
@@ -100,9 +100,9 @@ it would produce without them. The part SHALL NOT be the answer: the output is.
 
 #### Scenario: A crash replays no part
 
-- **GIVEN** an effectively-once operator whose tasklet sent two parts before the runner was
+- **GIVEN** an effectively-once relay whose tasklet sent two parts before the runner was
   killed mid-invocation
-- **WHEN** the operator is rebound and the input is forwarded again
+- **WHEN** the relay is rebound and the input is forwarded again
 - **THEN** no part of the first incarnation SHALL be sent again by any controller or runner
   path, and the parts the listener receives after the rebind SHALL be the ones the new
   invocation sends, starting at `flz.part` `0`
@@ -147,7 +147,7 @@ reason, and the count SHALL be readable where the runner's other liveness counte
 The part call SHALL raise the SDK's one error type (in Elixir, answer the error) and send
 nothing when the tasklet's output channel does not end in a sink, with the code
 `part.no_sink`: only a sink satisfies a part, and neither a `response()` end
-(`answer-an-outside-caller`) nor a `call` end (`call-an-operator-and-get-its-response`) is
+nor a `call` end is
 one, since each is a plugin end whose output is taken aside before any listener. It SHALL
 also refuse when it is made through a context whose invocation has already returned, with
 the code `part.outside_invocation`. Both codes SHALL be of class `invalid` and SHALL be listed in the
@@ -190,21 +190,21 @@ SHALL pin the frame both produce for the same invocation.
 - **THEN** every runtime SHALL deliver the same parts, with the same `channel`, `flz.part`,
   `flz.part_attempt` and payloads, followed by the same output
 
-### Requirement: The controller SHALL hand a part to its operator's listeners only
+### Requirement: The controller SHALL hand a part to its relay's listeners only
 
 A part SHALL travel from the runner as a data frame whose payload id is `output_part` and
-whose metadata names the instance under `flz.operator`. The stream channel SHALL route it
+whose metadata names the instance under `flz.relay`. The stream channel SHALL route it
 by that id through the same per-session route an output frame uses, so a part from a
 session that no longer owns the instance is dropped. The instance's Overwatch SHALL run the
 `on_preview` hook over it and nothing else: it SHALL NOT enter `on_output`, the outbox, the
-held-output list of a binding in flight or any sink. An operator with no subscriber on
+held-output list of a binding in flight or any sink. A relay with no subscriber on
 `on_preview` SHALL drop a part at the hook's active-bit check. A part SHALL be handed to
 each listener without making the Overwatch wait on that listener or on the distribution
 link to it.
 
 #### Scenario: No listener, no cost
 
-- **WHEN** a part reaches an operator with no listener
+- **WHEN** a part reaches a relay with no listener
 - **THEN** the Overwatch SHALL drop it without building a hook context, and no plugin SHALL
   be called
 
@@ -225,7 +225,7 @@ link to it.
 Because a part travels under its own payload id, a controller without this change SHALL
 read the frame as addressed to an instance named `output_part`, find no route and drop it.
 No part SHALL reach a sink of a controller that does not know parts, unless a user has named
-an operator `output_part` on the same runner session, which the older controller cannot
+a relay `output_part` on the same runner session, which the older controller cannot
 tell from a part's destination.
 
 #### Scenario: A newer runner, an older controller
@@ -237,13 +237,13 @@ tell from a part's destination.
 ### Requirement: A caller waiting for an answer SHALL NOT receive parts
 
 A caller waiting for an answer SHALL receive only the answer, never a part: an outside
-caller waiting for an operator's answer (`answer-an-outside-caller`) and an operator waiting
-on a call (`call-an-operator-and-get-its-response`) alike. This requirement SHALL hold once either change has landed. A caller
+caller waiting for a relay's answer and a relay waiting
+on a call alike. A caller
 that wants the preview attaches a listener.
 
 #### Scenario: An outside caller sees the answer alone
 
-- **GIVEN** an operator declaring `input("turn") |> into(Turn) |> sink("events") |> into(Usage) |> response()`,
+- **GIVEN** a relay declaring `input("turn") |> into(Turn) |> sink("events") |> into(Usage) |> response()`,
   whose `Turn` sends parts and emits its answer, and whose `Usage` answers the caller
 - **WHEN** an outside caller sends it an input and waits, with a listener attached beside it
 - **THEN** the caller SHALL receive `Usage`'s answer only, and the listener SHALL receive

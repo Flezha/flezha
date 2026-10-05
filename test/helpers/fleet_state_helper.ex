@@ -5,7 +5,7 @@ defmodule FlezhaTest.Helper.FleetStateHelper do
   runners advertising these factories".
   """
 
-  alias Flezha.Operator.ClassRegistry
+  alias Flezha.Relay.ClassRegistry
   alias Flezha.Runner.FleetManager
   alias Flezha.Runner.FleetManager.Factories
 
@@ -60,7 +60,7 @@ defmodule FlezhaTest.Helper.FleetStateHelper do
   end
 
   @doc """
-  The per-runner operator count `FleetManager` last handed placements out of.
+  The per-runner relay count `FleetManager` last handed placements out of.
 
   Read from its state rather than through an API: nothing in the controller asks
   the fleet for this — the user-facing count is the observability source's,

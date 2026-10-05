@@ -8,10 +8,10 @@ defmodule Flezha.SDK.EffectivelyOnceTest do
   """
   use ExUnit.Case, async: true
 
-  import FlezhaTest.Helper.SdkOperatorHarness
+  import FlezhaTest.Helper.SdkRelayHarness
 
   alias Flezha.SDK.{Counters, Cell, Record}
-  alias Flezha.SDK.Operator.Inbox
+  alias Flezha.SDK.Relay.Inbox
 
   alias FlezhaTest.Helper.SdkTierFixtures.{
     CheckpointBatchedOp,
@@ -30,7 +30,7 @@ defmodule Flezha.SDK.EffectivelyOnceTest do
     do: Inbox.input(op, "input", input, %{"flz.offset" => Integer.to_string(offset)})
 
   test "an effectful invocation ships ONE effect record carrying its change, its output and its offset" do
-    %{op: op} = start_operator(TierStoreOp)
+    %{op: op} = start_relay(TierStoreOp)
     push(op, "k1=a", 3)
 
     assert [first] = frames(1)
@@ -52,7 +52,7 @@ defmodule Flezha.SDK.EffectivelyOnceTest do
   end
 
   test "an input at or below the restored floor is a completed dispatch, and the one above it runs" do
-    %{op: op, counters: counters} = start_operator(TierStoreOp)
+    %{op: op, counters: counters} = start_relay(TierStoreOp)
     pid = cell!(op, @task)
 
     log =
@@ -82,7 +82,7 @@ defmodule Flezha.SDK.EffectivelyOnceTest do
   end
 
   test "a stateless tasklet under the tier ships its output and its offset in a record" do
-    %{op: op} = start_operator(StatelessTierOp)
+    %{op: op} = start_relay(StatelessTierOp)
     push(op, "k1=a", 5)
 
     # The router delivers no sink for a tier class — the record is the output
@@ -95,7 +95,7 @@ defmodule Flezha.SDK.EffectivelyOnceTest do
   end
 
   test "a mid-interval emit acknowledges nothing, and the checkpoint ships the interval" do
-    %{op: op} = start_operator(CheckpointStoreOp)
+    %{op: op} = start_relay(CheckpointStoreOp)
     push(op, "k1=a", 1)
     push(op, "k2=b", 2)
 
@@ -119,7 +119,7 @@ defmodule Flezha.SDK.EffectivelyOnceTest do
   end
 
   test "checkpoint_every closes on the nth input, carrying the interval and its last offset" do
-    %{op: op} = start_operator(CheckpointEveryOp)
+    %{op: op} = start_relay(CheckpointEveryOp)
     for {input, offset} <- [{"k1=a", 1}, {"k2=b", 2}], do: push(op, input, offset)
 
     assert [f0, f1] = frames(2)
@@ -135,7 +135,7 @@ defmodule Flezha.SDK.EffectivelyOnceTest do
   end
 
   test "held outputs ride the closing record in production order under one seq" do
-    %{op: op} = start_operator(CheckpointBatchedOp)
+    %{op: op} = start_relay(CheckpointBatchedOp)
     for {input, offset} <- [{"k1=a", 1}, {"k2=b", 2}, {"k3=c", 3}], do: push(op, input, offset)
     push(op, "commit:now", 4)
 
@@ -147,7 +147,7 @@ defmodule Flezha.SDK.EffectivelyOnceTest do
   end
 
   test "the delay closes a quiet interval, and a close that already happened leaves nothing to do" do
-    %{op: op} = start_operator(CheckpointHeldOp)
+    %{op: op} = start_relay(CheckpointHeldOp)
     push(op, "k1=a", 1)
 
     # Nothing ships on the invocation: the deadline is what closes it.
@@ -167,7 +167,7 @@ defmodule Flezha.SDK.EffectivelyOnceTest do
   end
 
   test "a poison input parks inside the record, with no park_payload frame and no ack to wait for" do
-    %{op: op} = start_operator(TierStoreOp, runner: self())
+    %{op: op} = start_relay(TierStoreOp, runner: self())
     push(op, "poison", 7)
 
     assert [parked] = frames(1)
@@ -184,7 +184,7 @@ defmodule Flezha.SDK.EffectivelyOnceTest do
   end
 
   test "a firing ships one record with its change, its output and its own removal" do
-    %{op: op} = start_operator(TierTimerOp)
+    %{op: op} = start_relay(TierTimerOp)
     push(op, "arm:0", 1)
 
     # The registration's record, then the firing's — the removal rides the
@@ -204,7 +204,7 @@ defmodule Flezha.SDK.EffectivelyOnceTest do
   end
 
   test "a restore discards the staged interval, and a replacement re-holds it from the slot" do
-    %{op: op, counters: counters} = start_operator(CheckpointStoreOp)
+    %{op: op, counters: counters} = start_relay(CheckpointStoreOp)
     pid = cell!(op, @task)
     push(op, "k1=a", 1)
     push(op, "k2=b", 2)
@@ -227,10 +227,10 @@ defmodule Flezha.SDK.EffectivelyOnceTest do
   end
 
   # The staged inputs are still held, so no replacement is minted over them:
-  # the Operator ends, and the controller's rebind re-forwards them.
-  test "an untrappable kill with an interval staged ends the Operator and ships nothing" do
+  # the Relay ends, and the controller's rebind re-forwards them.
+  test "an untrappable kill with an interval staged ends the Relay and ships nothing" do
     Process.flag(:trap_exit, true)
-    %{op: op} = start_operator(CheckpointBatchedOp)
+    %{op: op} = start_relay(CheckpointBatchedOp)
     pid = cell!(op, @task)
     push(op, "k1=a", 1)
     push(op, "k2=b", 2)
@@ -245,7 +245,7 @@ defmodule Flezha.SDK.EffectivelyOnceTest do
   end
 
   test "an inter-tasklet output holds its record until the consumer admits the push" do
-    %{op: op} = start_operator(TierEdgeOp)
+    %{op: op} = start_relay(TierEdgeOp)
     producer = cell!(op, "edge_producer")
 
     # This one's push was admitted before the consumer went into `run/3`, so

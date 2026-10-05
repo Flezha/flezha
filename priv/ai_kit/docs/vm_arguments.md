@@ -35,7 +35,7 @@ templates to each other, so a flag cannot ship undocumented.
 | `+S 1:1` | This node connects to the controller, evaluates there and exits. It was being given the host's full scheduler complement to do that. |
 | `+SDio 1` | It opens no transport, so the dirty IO pool has nothing to serve. |
 | `+Q 65536` | The same ceiling, pinned for the same reason. This node opens two ports and was allocating a table for a million of them: **15 MB of RSS**, and a tenth of the node's startup, on every `flz` verb. |
-| `+Bd` | Ctrl-C ends the verb. With the default break handler SIGINT opens the `BREAK:` menu and the node stays up, so a verb that streams, such as `flz operator listen`, could not be interrupted. |
+| `+Bd` | Ctrl-C ends the verb. With the default break handler SIGINT opens the `BREAK:` menu and the node stays up, so a verb that streams, such as `flz relay listen`, could not be interrupted. |
 
 <!-- vm-args:rel/remote.vm.args.eex:end -->
 
@@ -96,7 +96,7 @@ default.
 | Flag | Verdict |
 |---|---|
 | `+sbwt very_long` and friends | **Measured harmful.** 33% more CPU than the default, and the throughput direction was worse in 8 of 8 paired rounds on both windows. The common advice to spin harder for throughput is wrong on this workload, where the controller shares a machine with the runners it feeds |
-| `+sbwt none` and friends | Measured 22% less CPU against the default, one point better than the `short` that ships, and it pays for that point with the whole latency budget: plugin setup +204%, warmup +122%, operator creation +23%, where `short` costs +43%, +28% and +3.5%. Worth setting only where CPU is the scarce resource and nothing waits on a control-path round trip |
+| `+sbwt none` and friends | Measured 22% less CPU against the default, one point better than the `short` that ships, and it pays for that point with the whole latency budget: plugin setup +204%, warmup +122%, relay creation +23%, where `short` costs +43%, +28% and +3.5%. Worth setting only where CPU is the scarce resource and nothing waits on a control-path round trip |
 | `+sbwtdio none` alone | Measured 4.5% less CPU, consistent across rounds, and free in wall time. Most of the saving is on the normal schedulers, not the dirty IO pool, so this is the conservative fraction of the flag above rather than an alternative to it |
 | `+SDio` | Measured flat: `+SDio 4` moved CPU 1.1% and neither throughput window past its own noise. Worth setting only where the dirty IO pool's ten threads are being charged against a small CPU quota |
 | `+S` | Only where the pod's CPU limit is not the number you want; the VM already follows the limit |

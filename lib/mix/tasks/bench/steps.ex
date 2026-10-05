@@ -6,9 +6,9 @@ defmodule Mix.Tasks.Bench.Steps do
   alias Mix.Tasks.Bench.Steps.Run
   alias Mix.Tasks.Bench.Steps.Scenarios
 
-  @shortdoc "Steps operator benchmark: spawn, commit, turn, sleep, wake"
+  @shortdoc "Steps relay benchmark: spawn, commit, turn, sleep, wake"
   @moduledoc """
-  Measures steps operators on the paths a flow operator never takes: the instance
+  Measures steps relays on the paths a flow relay never takes: the instance
   lifecycle (spawn → chain → completion), the durable task barrier, the chat
   turn (iteration commit), suspension, and the wake paths.
 
@@ -22,7 +22,7 @@ defmodule Mix.Tasks.Bench.Steps do
 
   ## Scenarios
 
-    * `chain` — spawn `-n` run-once steps operators of `bench_chain_<tasks>`
+    * `chain` — spawn `-n` run-once steps relays of `bench_chain_<tasks>`
       (`--tier optout` picks the persistence-off twin of the 4-task chain), each
       seeded with `"<seq>,<send_ts_ns>"`, which the chain passes through to the
       sink. `-c N` keeps N in flight (closed loop), `--rate R` spawns R/s open
@@ -42,7 +42,7 @@ defmodule Mix.Tasks.Bench.Steps do
   `--sleep-after-ms` (how long an idle loop waits before it parks) defaults to
   500 for the sleep scenarios and 5000 otherwise. The bench fixture reads it
   from `FLEZHA_FIXTURE_SLEEP_AFTER_MS` into its class's `sleep_after`, the one
-  place an operator's sleep interval lives.
+  place a relay's sleep interval lives.
   """
 
   @switches [

@@ -1,16 +1,16 @@
 defmodule Flezha.Plugin.Extension.Ctx.IO do
   @moduledoc """
   Context struct for the `:on_input` / `:on_output` extensions (kind:
-  `:transform`). Carries the in-flight payload along with operator identity.
+  `:transform`). Carries the in-flight payload along with relay identity.
   """
 
   @type t() :: %__MODULE__{
-          operator_id: String.t(),
+          relay_id: String.t(),
           namespace: atom() | String.t(),
           runner_id: String.t() | nil,
           message: binary(),
           metadata: map()
         }
 
-  defstruct [:operator_id, :namespace, :runner_id, :message, metadata: %{}]
+  defstruct [:relay_id, :namespace, :runner_id, :message, metadata: %{}]
 end

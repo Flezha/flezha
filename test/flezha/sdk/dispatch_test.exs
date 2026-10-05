@@ -1,6 +1,6 @@
 defmodule Flezha.SDK.DispatchTest do
   @moduledoc """
-  Exercises the SDK dispatch runtime (Operator router + Cell mailbox/ladder)
+  Exercises the SDK dispatch runtime (Relay router + Cell mailbox/ladder)
   in isolation — no controller, no real transport. Sink output is captured on a
   native `LocalStream` whose controller side the test owns; `run/3` runs in the
   test's BEAM so it can also probe directly.
@@ -10,9 +10,9 @@ defmodule Flezha.SDK.DispatchTest do
 
   alias Flezha.SDK.{Channels, Counters, Cell, KeyGroup}
   alias Flezha.SDK.Ctx
-  alias Flezha.SDK.Operator.Inbox
+  alias Flezha.SDK.Relay.Inbox
   alias Flezha.SDK.Wire
-  alias FlezhaTest.Helper.{NodeTestHelper, SdkOperatorHarness}
+  alias FlezhaTest.Helper.{NodeTestHelper, SdkRelayHarness}
 
   # --- fixtures ---
 
@@ -29,7 +29,7 @@ defmodule Flezha.SDK.DispatchTest do
   end
 
   defmodule EchoOp do
-    @behaviour Flezha.SDK.Operator
+    @behaviour Flezha.SDK.Relay
     def factory_id, do: "echo_op"
 
     def channels(c),
@@ -52,7 +52,7 @@ defmodule Flezha.SDK.DispatchTest do
   end
 
   defmodule UnnamedMetaOp do
-    @behaviour Flezha.SDK.Operator
+    @behaviour Flezha.SDK.Relay
     def factory_id, do: "unnamed_meta_op"
 
     def channels(c),
@@ -70,7 +70,7 @@ defmodule Flezha.SDK.DispatchTest do
   end
 
   defmodule OrderedOp do
-    @behaviour Flezha.SDK.Operator
+    @behaviour Flezha.SDK.Relay
     def factory_id, do: "ordered_op"
 
     def channels(c) do
@@ -84,7 +84,7 @@ defmodule Flezha.SDK.DispatchTest do
   end
 
   defmodule IdentityKeyOp do
-    @behaviour Flezha.SDK.Operator
+    @behaviour Flezha.SDK.Relay
     def factory_id, do: "idkey_op"
 
     def channels(c) do
@@ -117,7 +117,7 @@ defmodule Flezha.SDK.DispatchTest do
   end
 
   defmodule FlakyOp do
-    @behaviour Flezha.SDK.Operator
+    @behaviour Flezha.SDK.Relay
     def factory_id, do: "flaky_op"
 
     def channels(c),
@@ -142,7 +142,7 @@ defmodule Flezha.SDK.DispatchTest do
   end
 
   defmodule RaiserOp do
-    @behaviour Flezha.SDK.Operator
+    @behaviour Flezha.SDK.Relay
     def factory_id, do: "raiser_op"
 
     def channels(c),
@@ -157,7 +157,7 @@ defmodule Flezha.SDK.DispatchTest do
   end
 
   defmodule PoisonOp do
-    @behaviour Flezha.SDK.Operator
+    @behaviour Flezha.SDK.Relay
     def factory_id, do: "poison_op"
 
     def channels(c),
@@ -191,7 +191,7 @@ defmodule Flezha.SDK.DispatchTest do
   end
 
   defmodule GatedOp do
-    @behaviour Flezha.SDK.Operator
+    @behaviour Flezha.SDK.Relay
     def factory_id, do: "gated_op"
 
     def channels(c),
@@ -206,7 +206,7 @@ defmodule Flezha.SDK.DispatchTest do
   # Two entries merged into one tasklet, each source's mapping tagging its
   # value, keyed on the symbol after the tag: an unmapped value keys elsewhere.
   defmodule MergeOp do
-    @behaviour Flezha.SDK.Operator
+    @behaviour Flezha.SDK.Relay
     def factory_id, do: "merge_op"
 
     def channels(c) do
@@ -225,7 +225,7 @@ defmodule Flezha.SDK.DispatchTest do
   end
 
   defmodule FanOp do
-    @behaviour Flezha.SDK.Operator
+    @behaviour Flezha.SDK.Relay
     def factory_id, do: "fan_op"
 
     def channels(c) do
@@ -241,24 +241,24 @@ defmodule Flezha.SDK.DispatchTest do
 
   # --- helpers ---
 
-  defdelegate start_operator(op_module, opts \\ []), to: SdkOperatorHarness
-  defdelegate cell!(op, tasklet, key), to: SdkOperatorHarness
-  defdelegate rebind_secondary(op), to: SdkOperatorHarness
-  defdelegate close_secondary(handle), to: SdkOperatorHarness
+  defdelegate start_relay(op_module, opts \\ []), to: SdkRelayHarness
+  defdelegate cell!(op, tasklet, key), to: SdkRelayHarness
+  defdelegate rebind_secondary(op), to: SdkRelayHarness
+  defdelegate close_secondary(handle), to: SdkRelayHarness
 
-  defp payloads(n), do: n |> SdkOperatorHarness.frames() |> Enum.map(&elem(&1, 1))
+  defp payloads(n), do: n |> SdkRelayHarness.frames() |> Enum.map(&elem(&1, 1))
 
   # --- tests ---
 
   test "full dispatch routes input → run → emit → sink output on a secondary" do
-    %{op: op} = start_operator(EchoOp)
+    %{op: op} = start_relay(EchoOp)
     Inbox.input(op, "in", "hello", %{})
     # The frame names the producing node's channel, never the plugin.
     assert_receive {:flz_data, _id, "op-1", "hello", %{"channel" => "e"}}, 1_000
   end
 
   test "the hold is bounded, and what it sheds is counted where every drop-oldest is" do
-    %{op: op, counters: counters, sdk_secondary: sdk} = start_operator(EchoOp, hold_cap: 2)
+    %{op: op, counters: counters, sdk_secondary: sdk} = start_relay(EchoOp, hold_cap: 2)
     :ok = close_secondary(sdk)
     for n <- 1..5, do: Inbox.input(op, "in", "v#{n}", %{})
 
@@ -279,7 +279,7 @@ defmodule Flezha.SDK.DispatchTest do
   end
 
   test "an unnamed node's frame carries its tasklet name, and user metadata rides it" do
-    %{op: op} = start_operator(UnnamedMetaOp)
+    %{op: op} = start_relay(UnnamedMetaOp)
     Inbox.input(op, "in", "hello", %{})
     assert_receive {:flz_data, _id, "op-1", "hello", meta}, 1_000
     assert meta == %{"channel" => "meta_echo", "tag" => "x"}
@@ -292,7 +292,7 @@ defmodule Flezha.SDK.DispatchTest do
       if Process.whereis(:dispatch_probe), do: Process.unregister(:dispatch_probe)
     end)
 
-    %{op: op} = start_operator(OrderedOp)
+    %{op: op} = start_relay(OrderedOp)
     for n <- 1..5, do: Inbox.input(op, "in", "v#{n}", %{})
 
     for n <- 1..5 do
@@ -302,7 +302,7 @@ defmodule Flezha.SDK.DispatchTest do
   end
 
   test "two merged entries reach one tasklet under their own mappings, keyed on the mapped value" do
-    %{op: op} = start_operator(MergeOp)
+    %{op: op} = start_relay(MergeOp)
     Inbox.input(op, "ticks", "AAPL:1", %{})
     Inbox.input(op, "quotes", "AAPL:2", %{})
 
@@ -311,7 +311,7 @@ defmodule Flezha.SDK.DispatchTest do
   end
 
   test "each merged source keeps its own order" do
-    %{op: op} = start_operator(MergeOp)
+    %{op: op} = start_relay(MergeOp)
 
     for n <- 1..3 do
       Inbox.input(op, "ticks", "MSFT:#{n}", %{})
@@ -328,7 +328,7 @@ defmodule Flezha.SDK.DispatchTest do
   end
 
   test "a fan of three runs the tasklet three times under three keys, and a fan of none is a drop" do
-    %{op: op, counters: counters} = start_operator(FanOp)
+    %{op: op, counters: counters} = start_relay(FanOp)
     Inbox.input(op, "in", "", %{})
     Inbox.input(op, "in", "a:1,b:2,c:3", %{})
 
@@ -343,7 +343,7 @@ defmodule Flezha.SDK.DispatchTest do
     :persistent_term.put(:flaky_counter, :counters.new(1, []))
     on_exit(fn -> :persistent_term.erase(:flaky_counter) end)
 
-    %{op: op, counters: counters} = start_operator(FlakyOp)
+    %{op: op, counters: counters} = start_relay(FlakyOp)
     Inbox.input(op, "in", "x", %{})
 
     # third attempt succeeds → one completed dispatch, output emitted
@@ -352,10 +352,10 @@ defmodule Flezha.SDK.DispatchTest do
   end
 
   test "a non-retryable failure parks immediately and the ack releases the Cell" do
-    %{op: op} = start_operator(PoisonOp, runner: self())
+    %{op: op} = start_relay(PoisonOp, runner: self())
     Inbox.input(op, "in", "poison", %{})
 
-    # Operator forwards the park to its runner (this test process).
+    # Relay forwards the park to its runner (this test process).
     assert_receive {:"$gen_cast", {:park, cell_pid, identity, body}}, 1_000
     assert body.error =~ "always"
     assert body.payload == "poison"
@@ -370,7 +370,7 @@ defmodule Flezha.SDK.DispatchTest do
   end
 
   test "a raised invocation leaves no ctx of its own in the Cell's dictionary" do
-    %{op: op} = start_operator(RaiserOp, runner: self())
+    %{op: op} = start_relay(RaiserOp, runner: self())
     Inbox.input(op, "in", "boom", %{})
 
     # The park is the positive settle: every attempt of the ladder has run and
@@ -399,7 +399,7 @@ defmodule Flezha.SDK.DispatchTest do
 
   test "drop_newest sheds at capacity; the runner stays responsive" do
     defmodule DropOp do
-      @behaviour Flezha.SDK.Operator
+      @behaviour Flezha.SDK.Relay
       def factory_id, do: "drop_op"
 
       def channels(c),
@@ -413,7 +413,7 @@ defmodule Flezha.SDK.DispatchTest do
     end
 
     probe!()
-    %{op: op, counters: counters} = start_operator(DropOp)
+    %{op: op, counters: counters} = start_relay(DropOp)
     # Fire many quickly; capacity 1 + drop_newest → only a subset get through.
     for n <- 1..10, do: Inbox.input(op, "in", "v#{n}", %{})
 
@@ -447,7 +447,7 @@ defmodule Flezha.SDK.DispatchTest do
     end
 
     defmodule DefaultOp do
-      @behaviour Flezha.SDK.Operator
+      @behaviour Flezha.SDK.Relay
       def factory_id, do: "default_op"
 
       # No `on_full/2`: the kind-independent default is `:drop_nothing`, in
@@ -462,7 +462,7 @@ defmodule Flezha.SDK.DispatchTest do
     end
 
     probe!()
-    %{op: op} = start_operator(DefaultOp)
+    %{op: op} = start_relay(DefaultOp)
     # The same burst `drop_newest` sheds: capacity 1 against 10 inputs, each
     # held at the gate. Under the default the router waits instead of dropping.
     for n <- 1..10, do: Inbox.input(op, "in", "v#{n}", %{})
@@ -475,7 +475,7 @@ defmodule Flezha.SDK.DispatchTest do
 
   test "a mis-routed dynamic key parks with the contract error before any Cell state" do
     range = KeyGroup.decode(0, 2, 0, 127)
-    %{op: op} = start_operator(IdentityKeyOp, range: range, runner: self())
+    %{op: op} = start_relay(IdentityKeyOp, range: range, runner: self())
     # "BTC-USD" hashes to key group 129 — outside this partition's 0..127 range.
     Inbox.input(op, "in", "BTC-USD", %{})
     assert_receive {:"$gen_cast", {:park, _cell, _identity, body}}, 1_000
@@ -496,7 +496,7 @@ defmodule Flezha.SDK.DispatchTest do
     # The self-report every SDK carries: one wedged Cell is invisible to
     # `dispatches` while the runner as a whole keeps completing work.
     test "a dispatch in flight is reported, and an idle runner reports zero" do
-      %{op: op, counters: counters} = start_operator(GatedOp)
+      %{op: op, counters: counters} = start_relay(GatedOp)
       assert Counters.handout_liveness(counters) == {0, 0}
 
       Inbox.input(op, "in", "slow", %{})
@@ -521,10 +521,10 @@ defmodule Flezha.SDK.DispatchTest do
              )
     end
 
-    # `after` cannot run for an untrappable kill, so the Operator releases the
+    # `after` cannot run for an untrappable kill, so the Relay releases the
     # dead Cell's slot — otherwise the runner would report a stall forever.
     test "a Cell killed mid-dispatch releases its slot, and its key is routable again" do
-      %{op: op, counters: counters} = start_operator(GatedOp)
+      %{op: op, counters: counters} = start_relay(GatedOp)
 
       Inbox.input(op, "in", "kill", %{})
       assert_receive {:running, "kill", cell}, 1_000
@@ -542,7 +542,7 @@ defmodule Flezha.SDK.DispatchTest do
              ),
              "a killed Cell left its in-flight slot claimed"
 
-      assert Process.alive?(op), "a crashed Cell must not take its Operator down"
+      assert Process.alive?(op), "a crashed Cell must not take its Relay down"
 
       # The key is routable again: a fresh Cell is started on the next input.
       Inbox.input(op, "in", "after", %{})
@@ -553,8 +553,8 @@ defmodule Flezha.SDK.DispatchTest do
   end
 
   # The exit signal and the next input are two messages racing for the
-  # Operator's mailbox. When the input wins, a `:block` enqueue is a
-  # `GenServer.call` into a pid that is already dead — which took the Operator
+  # Relay's mailbox. When the input wins, a `:block` enqueue is a
+  # `GenServer.call` into a pid that is already dead — which took the Relay
   # down with it, leaving the key permanently unroutable.
   test "an input that beats a killed Cell's exit signal is still served" do
     Process.register(self(), :dispatch_probe)
@@ -563,7 +563,7 @@ defmodule Flezha.SDK.DispatchTest do
       if Process.whereis(:dispatch_probe), do: Process.unregister(:dispatch_probe)
     end)
 
-    %{op: op} = start_operator(GatedOp)
+    %{op: op} = start_relay(GatedOp)
     Inbox.input(op, "in", "first", %{})
     assert_receive {:running, "first", cell}, 1_000
     send(cell, :release)
@@ -579,7 +579,7 @@ defmodule Flezha.SDK.DispatchTest do
     assert fresh != cell, "the input was handed to the dead Cell"
     send(fresh, :release)
     assert_receive {:flz_data, _id, "op-1", "second", _}, 2_000
-    assert Process.alive?(op), "a dead Cell took its Operator down"
+    assert Process.alive?(op), "a dead Cell took its Relay down"
   end
 
   # This process is where a gated Tasklet reports in.

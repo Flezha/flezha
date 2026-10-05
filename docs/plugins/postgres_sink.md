@@ -1,18 +1,18 @@
 # Postgres sink
 
-The Postgres sink writes what an operator emits into a PostgreSQL database, in
+The Postgres sink writes what a relay emits into a PostgreSQL database, in
 transactions. Per flush batch, one database transaction upserts every record into
 `flezha_records`, keyed by `flz.key`, and advances the per-cell `flezha_sink_progress`
 watermark row. That single transaction is the guarantee: effectively-once into the
-database for an effectively-once operator, plain inserts for every other one. Its provider
-id is `operator_postgres`.
+database for an effectively-once relay, plain inserts for every other one. Its provider
+id is `relay_postgres`.
 
 | | |
 | --- | --- |
-| Type | operator plugin |
+| Type | relay plugin |
 | Ships | built in |
-| Shareable | no: a second operator bound to it is refused (`plugin.not_shareable`) |
-| Partitioned operators | allowed: each member runs its own copy |
+| Shareable | no: a second relay bound to it is refused (`plugin.not_shareable`) |
+| Partitioned relays | allowed: each member runs its own copy |
 | Durability | the committed transaction confirms each delivery-guaranteed output; with `effectively_once` each output is written once |
 
 ## Options
@@ -41,7 +41,7 @@ id is `operator_postgres`.
 ## Example
 
 ```sh
-$ flz plugin enable store operator_postgres --operator_id=orders --hook=on_output \
+$ flz plugin enable store relay_postgres --relay_id=orders --hook=on_output \
   --Xdatabase=flezha --Xusername=flezha --Xpassword_env=PGPASSWORD --Xauto_create=true
 ```
 
@@ -104,7 +104,7 @@ escalates.
 The sink worker is this provider's declared worker: the extension table starts it
 at activation, under the provider's own family, keyed by `plugin_id`, with
 `restart: :permanent`. A `:prepared` plugin holds no connection and no process,
-so a sink on an operator whose SDK side never binds costs nothing.
+so a sink on a relay whose SDK side never binds costs nothing.
 
 ## See also
 

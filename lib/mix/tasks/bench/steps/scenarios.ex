@@ -9,8 +9,8 @@ defmodule Mix.Tasks.Bench.Steps.Scenarios do
   """
 
   alias Flezha.Convergence.Loop
-  alias Flezha.Operator.Builder
-  alias Flezha.Service.OperatorManager
+  alias Flezha.Relay.Builder
+  alias Flezha.Service.RelayManager
   alias Flezha.Service.PluginManager
   alias Mix.Tasks.Bench.Fleet
   alias Mix.Tasks.Bench.Report
@@ -71,7 +71,7 @@ defmodule Mix.Tasks.Bench.Steps.Scenarios do
   defp warm_up(%{warmup: warmup}, _sink, st) when warmup <= 0, do: st
 
   defp warm_up(cfg, sink, st) do
-    IO.puts("Warmup: #{cfg.warmup} steps operators (burst, excluded)...")
+    IO.puts("Warmup: #{cfg.warmup} steps relays (burst, excluded)...")
     spawn_burst(cfg, sink, 0..(cfg.warmup - 1), self())
     st = Run.collect(st, &(&1.completed >= cfg.warmup and &1.out.seen >= cfg.warmup))
     if st.stalled, do: raise("warmup stalled")
@@ -88,7 +88,7 @@ defmodule Mix.Tasks.Bench.Steps.Scenarios do
       Report.kv([
         {"spawned",
          "#{st.spawned} ok, #{st.spawn_errors} errors, in #{Report.ms_from_ns(m.spawn_window)} ms → #{Report.decimal(Run.rate(cfg.n, m.spawn_window))} spawns/s"},
-        {"start_operator call", Tally.latency_line(st.spawn)},
+        {"start_relay call", Tally.latency_line(st.spawn)},
         {"seed → sink output", Tally.latency_line(st.out)},
         {"seed → completed", Tally.latency_line(st.done)},
         {"completed",
@@ -96,7 +96,7 @@ defmodule Mix.Tasks.Bench.Steps.Scenarios do
         {"sink outputs",
          "#{st.out.received} measured, #{st.out.duplicates} dup, #{m.missing} missing, #{st.out.foreign} foreign"},
         {"task commits",
-         "#{c1.task - c0.task} (#{Report.decimal((c1.task - c0.task) / max(cfg.n, 1), 2)}/operator) → #{Report.decimal(Run.rate(c1.task - c0.task, m.whole_window))} commits/s; failed=#{c1.failed - c0.failed}"},
+         "#{c1.task - c0.task} (#{Report.decimal((c1.task - c0.task) / max(cfg.n, 1), 2)}/relay) → #{Report.decimal(Run.rate(c1.task - c0.task, m.whole_window))} commits/s; failed=#{c1.failed - c0.failed}"},
         {"state dir",
          "#{Tally.state_dir_summary(Run.namespace())}; fsync p99 #{Tally.fsync_p99_ms()} ms"},
         {"beam", "#{Run.mib(:erlang.memory(:total))} MiB, #{length(Process.list())} processes"},
@@ -460,7 +460,7 @@ defmodule Mix.Tasks.Bench.Steps.Scenarios do
     %Flezha.Plugin{
       id: @sink_id,
       namespace: nil,
-      operator_id: nil,
+      relay_id: nil,
       provider: Flezha.Plugin.Provider.BeamMsgForward,
       opts: %{recv_pid: recv_pid, include_metadata: true},
       hooks: [{:on_output, []}]
@@ -499,7 +499,7 @@ defmodule Mix.Tasks.Bench.Steps.Scenarios do
       case spawn_one(cfg, sink, seq, main, self()) do
         {:ok, id} ->
           receive do
-            {:operator_completed, ^id, _} -> :ok
+            {:relay_completed, ^id, _} -> :ok
           after
             120_000 -> :ok
           end
@@ -535,10 +535,10 @@ defmodule Mix.Tasks.Bench.Steps.Scenarios do
     # turns later, so it starts with none.
     seed = if cfg.scenario == :chain, do: [seed_input: {"#{seq},#{seed_ts}", %{}}], else: []
 
-    # One sink per instance: the forward cannot be shared between operators.
+    # One sink per instance: the forward cannot be shared between relays.
     {:ok, bindings} =
       PluginManager.start_bindings(Run.namespace(), [
-        %{sink | id: "#{sink.id}_#{id}", namespace: Run.namespace(), operator_id: id}
+        %{sink | id: "#{sink.id}_#{id}", namespace: Run.namespace(), relay_id: id}
       ])
 
     builder = %Builder{
@@ -551,7 +551,7 @@ defmodule Mix.Tasks.Bench.Steps.Scenarios do
 
     t0 = Run.now_ns()
 
-    case OperatorManager.start_operator(Run.namespace(), builder) do
+    case RelayManager.start_relay(Run.namespace(), builder) do
       {:ok, _info} ->
         send(main, {:spawned, seq, Run.now_ns() - t0, Run.now_ns()})
         {:ok, id}
@@ -573,7 +573,7 @@ defmodule Mix.Tasks.Bench.Steps.Scenarios do
     if st.spawn_errors > 0, do: raise("#{st.spawn_errors} spawns failed")
 
     IO.puts(
-      "  spawned in #{Report.ms_from_ns(Run.now_ns() - t0)} ms; start_operator #{Tally.latency_line(st.spawn)}"
+      "  spawned in #{Report.ms_from_ns(Run.now_ns() - t0)} ms; start_relay #{Tally.latency_line(st.spawn)}"
     )
 
     {st, List.to_tuple(for seq <- 0..(n - 1), do: "steps_#{seq}")}
@@ -583,7 +583,7 @@ defmodule Mix.Tasks.Bench.Steps.Scenarios do
 
   defp send_turn(ids, seq) do
     id = elem(ids, rem(seq, tuple_size(ids)))
-    OperatorManager.send_io(id, Run.namespace(), "#{seq},#{Run.now_ns()}", %{"channel" => "in"})
+    RelayManager.send_io(id, Run.namespace(), "#{seq},#{Run.now_ns()}", %{"channel" => "in"})
   end
 
   # Unpaced turns ride an in-flight cap (a few per loop) so the Overwatch

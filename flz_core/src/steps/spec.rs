@@ -8,7 +8,7 @@ use serde_json::{Map, Value};
 
 use super::{Each, OnFailure};
 use crate::channel::{ChannelId, ChannelKind, TaskletId};
-use crate::operator::topology::{OperatorTopology, TaskletDescriptor};
+use crate::relay::topology::{RelayTopology, TaskletDescriptor};
 use crate::Code;
 
 /// The tasklet DAG in Kahn order from the entry channels' consumers, so
@@ -171,7 +171,7 @@ impl TaskDag {
     /// carries into the next iteration.
     pub fn terminal_without_handoff<'t>(
         &self,
-        topology: &'t OperatorTopology,
+        topology: &'t RelayTopology,
     ) -> Option<&'t TaskletDescriptor> {
         self.entries
             .iter()
@@ -187,7 +187,7 @@ impl TaskDag {
 }
 
 /// Where a graph walk starts. `Roots` is the entry-rooted shape a structured
-/// steps operator declares, so a node the roots do not reach is left out of the
+/// steps relay declares, so a node the roots do not reach is left out of the
 /// order; `EveryIndegreeZero` is the flow shape, where a disconnected node
 /// still takes a position and unreachability is reported separately.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -202,7 +202,7 @@ pub enum GraphSeed {
 /// mechanism, and each caller keeps its own refusal wording.
 pub struct GraphOrder {
     /// Node ids in Kahn topological order (FIFO — for a tree this is exactly
-    /// BFS from the root, so steps operator `task_idx` numbering stays stable).
+    /// BFS from the root, so steps relay `task_idx` numbering stays stable).
     pub order: Vec<TaskletId>,
     /// Node id → position in `order`; `usize::MAX` for a node the walk left
     /// out.
@@ -300,7 +300,7 @@ pub fn graph_order(
 }
 
 /// What a steps class declares beyond its topology, carried on it as
-/// [`OperatorTopology::steps`]: the one fact a class registry reads the
+/// [`RelayTopology::steps`]: the one fact a class registry reads the
 /// kind from.
 #[derive(Debug)]
 pub struct StepsSpec {

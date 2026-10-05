@@ -1,7 +1,7 @@
 # Calls: implementation notes
 
 For SDK implementers and contributors. How to use it is on
-[Operator calls](../topics/advanced/operator_calls.md).
+[Relay calls](../topics/advanced/relay_calls.md).
 
 ## The `Response`
 

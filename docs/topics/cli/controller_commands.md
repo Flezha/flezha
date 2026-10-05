@@ -85,7 +85,7 @@ state_root:                    /opt/flezha/app_data/state
 file_plugin_root:              /opt/flezha/app_data/files
 ```
 
-`stop` drains the operators first and reports each phase:
+`stop` drains the relays first and reports each phase:
 
 ```sh
 $ flz controller stop
@@ -104,7 +104,7 @@ Stopping flezha controller...
 
 ## `flz boot`
 
-Says whether the controller has finished starting, or waits until it has. Explained in [`deploying_a_controller.md`](../deploying/deploying_a_controller.md#check-that-it-is-up), [after a restart](../basics/running_operators.md#after-a-controller-restart).
+Says whether the controller has finished starting, or waits until it has. Explained in [`deploying_a_controller.md`](../deploying/deploying_a_controller.md#check-that-it-is-up), [after a restart](../basics/running_relays.md#after-a-controller-restart).
 
 ```sh
 $ flz boot help
@@ -158,7 +158,7 @@ _system                            normal           0
 
 ## `flz cluster`
 
-Shows the controllers of a cluster, which one leads, and how their operators are doing. Explained in [`clustering.md`](../deploying/clustering.md), tutorial [Run a cluster](../../tutorials/agentdesk/run_a_cluster.md).
+Shows the controllers of a cluster, which one leads, and how their relays are doing. Explained in [`clustering.md`](../deploying/clustering.md), tutorial [Run a cluster](../../tutorials/agentdesk/run_a_cluster.md).
 
 ```sh
 $ flz cluster help
@@ -171,7 +171,7 @@ USAGE:
     flz cluster <SUBCOMMAND>
 
 SUBCOMMANDS:
-    status              Show nodes, leader, per-node operator counts, operator health, recovery state
+    status              Show nodes, leader, per-node relay counts, relay health, recovery state
     help                Show this help message
 
 OPTIONS:
@@ -197,9 +197,9 @@ Cluster status for namespace 'default':
   Local node: flezha@127.0.0.1(leader)
 
   Nodes:
-    flezha@127.0.0.1: 1 operator(s) recovery_state=normal [leader]
+    flezha@127.0.0.1: 1 relay(s) recovery_state=normal [leader]
 
-  Operator health: degraded=1
+  Relay health: degraded=1
 ```
 
 [`clustering.md`](../deploying/clustering.md#example) shows two controllers.
@@ -296,7 +296,7 @@ flezha_transport	active	metric	40
 
 ## `flz reset`
 
-Deletes the controller's data on disk, so its next start is empty. Explained in [`running_operators.md`](../basics/running_operators.md#start-from-a-clean-slate-flz-reset).
+Deletes the controller's data on disk, so its next start is empty. Explained in [`running_relays.md`](../basics/running_relays.md#start-from-a-clean-slate-flz-reset).
 
 ```sh
 $ flz reset --help

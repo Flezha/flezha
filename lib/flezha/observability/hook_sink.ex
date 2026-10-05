@@ -5,23 +5,23 @@ defmodule Flezha.Observability.HookSink do
 
   An event is a map with `hook`, `namespace`, `controller` (the node it happened
   on), `at` (UTC, ISO 8601) and `text` (one line a person reads), plus the
-  hook's own fields: `operator` and `factory` for `on_operator_started`,
-  `operator` and `reason` (`:stopped` or `:completed`) for
-  `on_operator_stopped`, `operator` and `error` (an error code) for
-  `on_operator_failed`, `operator`, `entry`, `channel` and `error` for
-  `on_dead_letter`, and `plugin`, `operator` and `error` for
-  `on_plugin_unhealthy`. No event carries an operator's data.
+  hook's own fields: `relay` and `factory` for `on_relay_started`,
+  `relay` and `reason` (`:stopped` or `:completed`) for
+  `on_relay_stopped`, `relay` and `error` (an error code) for
+  `on_relay_failed`, `relay`, `entry`, `channel` and `error` for
+  `on_dead_letter`, and `plugin`, `relay` and `error` for
+  `on_plugin_unhealthy`. No event carries a relay's data.
 
-  Three signals carry them. Start and stop are the operator's own events,
-  `operator_started` and `operator_stopped` of source `:flezha_operator`, which
+  Three signals carry them. Start and stop are the relay's own events,
+  `relay_started` and `relay_stopped` of source `:flezha_relay`, which
   every sink reads. A dead letter is a telemetry event the bridge lifts as source
   `:flezha_hooks` and emits to the sinks naming that source only
   (`Flezha.Observability.Bus.emit_named/1`), never to a `sources: :any` one. The
   two failures are the convergence judge's transitions
   (`[:flezha, :health, :verdict]`), which already fire once per health change:
-  every controller judges every operator, so this sink takes only those of
-  subjects on its own node, and it announces an operator's failure once, until
-  the operator reads recovered or stops.
+  every controller judges every relay, so this sink takes only those of
+  subjects on its own node, and it announces a relay's failure once, until
+  the relay reads recovered or stops.
 
   A copy listens by joining its hooks' directory groups
   (`Flezha.Cluster.Directory.hook_group/3`): a copy without `single` hears its
@@ -52,7 +52,7 @@ defmodule Flezha.Observability.HookSink do
   def config_schema(), do: %{}
 
   @impl Flezha.Observability.Sink
-  def filter(), do: %{kinds: [:event], sources: [@source, :flezha_health, :flezha_operator]}
+  def filter(), do: %{kinds: [:event], sources: [@source, :flezha_health, :flezha_relay]}
 
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(_opts \\ []), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
@@ -110,9 +110,9 @@ defmodule Flezha.Observability.HookSink do
     end
   end
 
-  # An operator's failure is announced once, until it reads recovered or is
+  # A relay's failure is announced once, until it reads recovered or is
   # stopped: the reads between, unknown or unbound while it is rebound, are
-  # neither. `failed` holds the operators announced and not recovered since.
+  # neither. `failed` holds the relays announced and not recovered since.
   defp read(%Signal{name: :verdict, metadata: %{node: node} = transition}, state)
        when node == node(),
        do:
@@ -122,33 +122,33 @@ defmodule Flezha.Observability.HookSink do
            state
          )
 
-  defp read(%Signal{source: :flezha_operator, name: :operator_started, metadata: f}, state),
-    do: {event(:on_operator_started, f), state}
+  defp read(%Signal{source: :flezha_relay, name: :relay_started, metadata: f}, state),
+    do: {event(:on_relay_started, f), state}
 
-  defp read(%Signal{source: :flezha_operator, name: :operator_stopped, metadata: f}, state),
+  defp read(%Signal{source: :flezha_relay, name: :relay_stopped, metadata: f}, state),
     do:
-      {event(:on_operator_stopped, f),
-       %{state | failed: MapSet.delete(state.failed, {f.namespace, f.operator})}}
+      {event(:on_relay_stopped, f),
+       %{state | failed: MapSet.delete(state.failed, {f.namespace, f.relay})}}
 
-  # The DLQ store names the operator's class; its namespace is read here, where
+  # The DLQ store names the relay's class; its namespace is read here, where
   # a copy listens, and not on every park.
   defp read(%Signal{source: @source, name: :on_dead_letter, metadata: fields}, state),
     do:
       {event(
          :on_dead_letter,
-         Map.put_new_lazy(fields, :namespace, fn -> Paths.namespace_of_class(fields.operator) end)
+         Map.put_new_lazy(fields, :namespace, fn -> Paths.namespace_of_class(fields.relay) end)
        ), state}
 
   defp read(_signal, state), do: {nil, state}
 
-  defp turned(:operator_failed, %{id: {namespace, operator} = id} = transition, state) do
+  defp turned(:relay_failed, %{id: {namespace, relay} = id} = transition, state) do
     if MapSet.member?(state.failed, id) do
       {nil, state}
     else
       event =
-        event(:on_operator_failed, %{
+        event(:on_relay_failed, %{
           namespace: namespace,
-          operator: operator,
+          relay: relay,
           error: code(cause(transition.reason))
         })
 
@@ -156,14 +156,14 @@ defmodule Flezha.Observability.HookSink do
     end
   end
 
-  defp turned(:operator_recovered, %{id: id}, state),
+  defp turned(:relay_recovered, %{id: id}, state),
     do: {nil, %{state | failed: MapSet.delete(state.failed, id)}}
 
-  defp turned(:plugin_unhealthy, %{id: {namespace, operator, plugin}} = transition, state) do
+  defp turned(:plugin_unhealthy, %{id: {namespace, relay, plugin}} = transition, state) do
     event =
       event(:on_plugin_unhealthy, %{
         namespace: namespace,
-        operator: operator,
+        relay: relay,
         plugin: Plugin.base_id(plugin),
         error: code(cause(transition.reason))
       })
@@ -196,17 +196,17 @@ defmodule Flezha.Observability.HookSink do
     })
   end
 
-  defp text(:on_operator_started, f),
-    do: "operator #{f.operator} in #{f.namespace} started on #{node()}"
+  defp text(:on_relay_started, f),
+    do: "relay #{f.relay} in #{f.namespace} started on #{node()}"
 
-  defp text(:on_operator_stopped, f), do: "operator #{f.operator} in #{f.namespace} #{f.reason}"
+  defp text(:on_relay_stopped, f), do: "relay #{f.relay} in #{f.namespace} #{f.reason}"
 
-  defp text(:on_operator_failed, f),
-    do: "operator #{f.operator} in #{f.namespace} failed: #{f.error}"
+  defp text(:on_relay_failed, f),
+    do: "relay #{f.relay} in #{f.namespace} failed: #{f.error}"
 
   defp text(:on_dead_letter, f),
-    do: "a record of operator #{f.operator} in #{f.namespace} was dead-lettered: #{f.error}"
+    do: "a record of relay #{f.relay} in #{f.namespace} was dead-lettered: #{f.error}"
 
   defp text(:on_plugin_unhealthy, f),
-    do: "plugin #{f.plugin} on operator #{f.operator} in #{f.namespace} is unhealthy: #{f.error}"
+    do: "plugin #{f.plugin} on relay #{f.relay} in #{f.namespace} is unhealthy: #{f.error}"
 end

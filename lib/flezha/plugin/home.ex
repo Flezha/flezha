@@ -2,17 +2,17 @@ defmodule Flezha.Plugin.Home do
   @moduledoc """
   A named plugin's hub child: the process the namespace hub places for the
   `{:plugin, name}` entry of its declared set, so a plugin is recorded, placed,
-  restored and stopped exactly as an operator is.
+  restored and stopped exactly as a relay is.
 
   A plugin without `single` runs nothing here: its copies run where its
-  operators run (`Flezha.Plugin.Shared`). A `single` plugin's one copy runs
+  relays run (`Flezha.Plugin.Shared`). A `single` plugin's one copy runs
   beside this home: started with it, stopped after the idle stop while no
-  operator joins it, and started again by the next one that does. On a move
+  relay joins it, and started again by the next one that does. On a move
   the hub starts the new home, and with it the new copy, before it hands the
-  subscribed operators over, and the old copy stops once the new one runs, so
+  subscribed relays over, and the old copy stops once the new one runs, so
   the new connection opens before the old one closes.
 
-  A controller plugin has no operator to start its copies, so the home of one
+  A controller plugin has no relay to start its copies, so the home of one
   without `single` places them: when it starts, and on every join or leave in
   its namespace's hub group, it runs a copy on each controller holding the hub
   (one that lacks the provider runs none) and stops the copy where the hub
@@ -48,7 +48,7 @@ defmodule Flezha.Plugin.Home do
     :exit, reason -> {:error, {:unreachable, reason}}
   end
 
-  # The copy is linked: one that stopped because its last operator left is
+  # The copy is linked: one that stopped because its last relay left is
   # started again by the next one that joins; one that died takes its home
   # along, and the hub starts it again.
   @impl true

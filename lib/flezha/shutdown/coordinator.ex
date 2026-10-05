@@ -4,12 +4,12 @@ defmodule Flezha.Shutdown.Coordinator do
   (`quiesce → drain → finalise`) on `shutdown/2`.
 
   - **Quiesce** marks the node as quiescing (`Flezha.Shutdown.quiesced?/2`)
-    so `Flezha.Service.OperatorManager.start_operator/2` returns
+    so `Flezha.Service.RelayManager.start_relay/2` returns
     `{:error, :shutting_down}` and `Flezha.Runner.FleetManager`
     rejects new runner connect attempts, and declares `{:node_draining, …}`
     to the convergence loop so it plans nothing onto this node meanwhile.
   - **Drain** is the `:node` walk of the shutdown plan: it migrates
-    locally-hosted Operators to peers while they are still alive —
+    locally-hosted Relays to peers while they are still alive —
     `ProcessHub.Service.Migration.drain/2` per running namespace hub, through
     the one drain seam, redistributes each child through the migration-consent
     gate (live HotSwap handover) and force-migrates what still defers at the
@@ -165,7 +165,7 @@ defmodule Flezha.Shutdown.Coordinator do
       Logger.info("[shutdown] phase=quiesce reason=#{inspect(reason)}")
       state = transition(state, :quiescing, now)
       # The loop is told the node is leaving, so it plans nothing onto it
-      # while the drain moves its operators away.
+      # while the drain moves its relays away.
       Facts.declare({:node_draining, node(), %{deadline: now + timeout_ms}})
       emit_telemetry(:phase_started, %{}, %{phase: :quiesce})
       send(self(), :do_quiesce)
@@ -207,7 +207,7 @@ defmodule Flezha.Shutdown.Coordinator do
     duration_ms = now - state.phase_start_ms
     emit_telemetry(:phase_completed, %{duration_ms: duration_ms}, %{phase: :quiesce})
 
-    captured = capture_local_operators()
+    captured = capture_local_relays()
     locally_hosted = Enum.reduce(captured, 0, fn {_ns, ids}, acc -> acc + length(ids) end)
 
     Logger.info("[shutdown] phase=drain locally_hosted=#{locally_hosted}")
@@ -347,7 +347,7 @@ defmodule Flezha.Shutdown.Coordinator do
 
   # ---------- Drain helpers ----------
 
-  defp capture_local_operators() do
+  defp capture_local_relays() do
     HubManager.get_running_namespaces()
     |> Enum.into(%{}, fn ns ->
       hub_id = Identificator.hub(ns)
@@ -356,7 +356,7 @@ defmodule Flezha.Shutdown.Coordinator do
         case Hub.alive?(hub_id) do
           true ->
             ProcessHub.process_list(hub_id, :local)
-            |> Enum.map(fn {operator_id, _pid} -> operator_id end)
+            |> Enum.map(fn {relay_id, _pid} -> relay_id end)
 
           false ->
             []

@@ -29,8 +29,8 @@ Testnet webSocket server is listening on ws://localhost:4500
 > {: .step}
 
 ```sh
-$ ./bin/flz plugin enable exchange operator_websocket \
-  --operator_id=trade_watcher --namespace trading \
+$ ./bin/flz plugin enable exchange relay_websocket \
+  --relay_id=trade_watcher --namespace trading \
   --Xuri=ws://localhost:4500/ \
   --Xchannel=trades \
   --Xsubscription_items='["EUR/USD", "GBP/USD", "USD/JPY"]' \
@@ -70,8 +70,8 @@ an order is booked, and the runner's terminal shows it:
 > {: .step}
 
 ```sh
-$ ./bin/flz plugin enable signals operator_file_sink \
-  --operator_id=trade_watcher --namespace trading \
+$ ./bin/flz plugin enable signals relay_file_sink \
+  --relay_id=trade_watcher --namespace trading \
   --hook=on_output \
   --Xpath=signals.txt \
   --Xchannel_out=signals

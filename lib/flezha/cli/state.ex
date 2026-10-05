@@ -12,8 +12,8 @@ defmodule Flezha.Service.Cli.State do
   end
 
   @doc "`flz state list`."
-  def cells(%{operator_class: operator_class, cells: cells}, _args, _opts) do
-    IO.puts("Cells under operator #{operator_class}:\n")
+  def cells(%{relay_class: relay_class, cells: cells}, _args, _opts) do
+    IO.puts("Cells under relay #{relay_class}:\n")
 
     Enum.each(cells, fn row ->
       IO.puts("  #{row.tasklet_id}/#{row.cell_key}")
@@ -53,9 +53,6 @@ defmodule Flezha.Service.Cli.State do
   end
 
   @doc "`flz state retention`."
-  def set_retention(%{operator_class: operator_class, hours: hours}, _args, _opts),
-    do:
-      IO.puts(
-        "retention[#{operator_class}] = #{hours} hours (in-memory; persist via runtime.exs)"
-      )
+  def set_retention(%{relay_class: relay_class, hours: hours}, _args, _opts),
+    do: IO.puts("retention[#{relay_class}] = #{hours} hours (in-memory; persist via runtime.exs)")
 end

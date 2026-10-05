@@ -10,7 +10,7 @@ defmodule Flezha.Schedule.Job do
   recent slot inside the window. Older slots are never back-filled.
 
   Firing goes through the shared steps start path
-  (`OperatorManager.start_steps/5`) with deterministic instance id
+  (`RelayManager.start_steps/5`) with deterministic instance id
   `<name>@<slot-iso>`; its `:duplicate` answer is the duplicate-fire no-op.
 
   A slot whose spawn fails is retried with exponential backoff under the SAME
@@ -27,10 +27,10 @@ defmodule Flezha.Schedule.Job do
 
   alias Flezha.Config.Durations
   alias Flezha.Config.Backoff
-  alias Flezha.Operator.Builder
+  alias Flezha.Relay.Builder
   alias Flezha.Plugin.SpecDecoder
   alias Flezha.Schedule.{Cron, Store}
-  alias Flezha.Service.OperatorManager
+  alias Flezha.Service.RelayManager
   alias Flezha.Service.PluginManager
 
   # Backoff cap equals the finest cron granularity, so a retrying schedule
@@ -90,7 +90,7 @@ defmodule Flezha.Schedule.Job do
         {:ok, seed} -> [{:seed_input, seed} | opts]
       end
 
-    case OperatorManager.start_steps(
+    case RelayManager.start_steps(
            entry.namespace,
            instance_id,
            entry.factory_id,

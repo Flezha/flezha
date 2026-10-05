@@ -1,6 +1,6 @@
 defmodule Flezha.State.GapRecoveryTest do
   @moduledoc """
-  Defect B / `operator-state-persistence`: a persistence seq gap must
+  Defect B / `relay-state-persistence`: a persistence seq gap must
   trigger a `RestoreInitState` resync (and let the WAL advance again)
   rather than wedge the Cell forever with `{:error, {:gap}}`.
 
@@ -98,7 +98,7 @@ defmodule Flezha.State.GapRecoveryTest do
 
     # Gap is detected (expected 4, got 37) and telemetry is emitted.
     assert_receive {:seq_gap, %{expected: 4, got: 37}, meta}, 1_000
-    assert meta.operator == "TestOperator"
+    assert meta.relay == "TestRelay"
 
     # The writer declares the gap once, naming the runner; it resyncs nothing.
     cell_id = ctx.cell_id

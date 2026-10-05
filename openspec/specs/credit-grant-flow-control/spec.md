@@ -5,7 +5,7 @@ TBD - created by archiving change credit-grant-flow-control. Update Purpose afte
 ## Requirements
 ### Requirement: Credit window is negotiated at stream attach
 
-The controller SHALL offer credit-grant flow control to every SDK session at state-stream attach via a `CreditWindowInit{stream_id, window_bytes, low_watermark_bytes}` control-channel frame. A session that acknowledges the handshake is a credit-speaking session; a session that does not acknowledge (a pre-credit SDK) SHALL receive the legacy `CellMailboxStatus` behaviour unchanged. The window SHALL be configurable per Operator (`:credit_window_bytes`), defaulting to `wal_high_watermark_bytes`.
+The controller SHALL offer credit-grant flow control to every SDK session at state-stream attach via a `CreditWindowInit{stream_id, window_bytes, low_watermark_bytes}` control-channel frame. A session that acknowledges the handshake is a credit-speaking session; a session that does not acknowledge (a pre-credit SDK) SHALL receive the legacy `CellMailboxStatus` behaviour unchanged. The window SHALL be configurable per Relay (`:credit_window_bytes`), defaulting to `wal_high_watermark_bytes`.
 
 #### Scenario: Credit-speaking session established
 
@@ -93,16 +93,16 @@ Credit SHALL NOT carry across sessions. On stream re-attach (reconnect, takeover
 
 ### Requirement: Source-ingestion credit is minted by min-watermark advance (effectively-once tier only)
 
-When an Operator runs with the effectively-once tier's durable input-log, the controller SHALL keep a per-Operator source credit ledger: dispatching a payload from the input-log to the Operator debits it by the payload's size, and the Operator's min-watermark advancing past consumed offsets credits back the corresponding bytes (batched, low/high watermark). At zero source credit the source adapter's ingest path SHALL park — stop reading its socket or pause its consumer — rather than growing the input-log without bound. The park SHALL land on the source's call, never on the Operator's host process, which SHALL keep running the output chains whose confirmations mint the credit — a host parked on its own log could never mint the credit it waits for. When the tier is off, no source credit ledger exists and source adapters behave exactly as today.
+When a Relay runs with the effectively-once tier's durable input-log, the controller SHALL keep a per-Relay source credit ledger: dispatching a payload from the input-log to the Relay debits it by the payload's size, and the Relay's min-watermark advancing past consumed offsets credits back the corresponding bytes (batched, low/high watermark). At zero source credit the source adapter's ingest path SHALL park — stop reading its socket or pause its consumer — rather than growing the input-log without bound. The park SHALL land on the source's call, never on the Relay's host process, which SHALL keep running the output chains whose confirmations mint the credit — a host parked on its own log could never mint the credit it waits for. When the tier is off, no source credit ledger exists and source adapters behave exactly as today.
 
 The min-watermark advance that drains the ledger SHALL be computed by the input-log from its own consumed-offset map (see `durable-input-log`), with a burst of per-Cell advances folded into one drain and at most one unpark pass, and the bytes credited back SHALL be those of the log's tracked offsets at or below the new watermark.
 
 #### Scenario: Frozen watermark parks the source
 
-- **WHEN** one Cell stops advancing its consumed offset so the Operator's min-watermark freezes while ingestion continues
+- **WHEN** one Cell stops advancing its consumed offset so the Relay's min-watermark freezes while ingestion continues
 - **THEN** the source credit ledger drains to zero and the source adapter parks, bounding input-log growth, until the watermark advances again
 
-#### Scenario: A sink outage longer than the window does not wedge the operator
+#### Scenario: A sink outage longer than the window does not wedge the relay
 
 - **WHEN** the sink stops confirming for longer than `window / ingest rate`, so source credit reaches zero with outputs still owed, and then recovers
 - **THEN** the host keeps delivering the owed outputs while the source is parked, their confirmations mint credit, and ingestion resumes without a restart
@@ -114,13 +114,13 @@ The min-watermark advance that drains the ledger SHALL be computed by the input-
 
 #### Scenario: Tier off means no source ledger
 
-- **WHEN** an Operator runs without the effectively-once tier
+- **WHEN** a Relay runs without the effectively-once tier
 - **THEN** no source credit accounting occurs and the source adapter's behaviour is unchanged from today
 
-#### Scenario: Per-operator isolation of source park
+#### Scenario: Per-relay isolation of source park
 
-- **WHEN** an adapter feeds two Operators and only one has a frozen min-watermark
-- **THEN** only the starved Operator's dispatch parks; the healthy Operator keeps receiving input
+- **WHEN** an adapter feeds two Relays and only one has a frozen min-watermark
+- **THEN** only the starved Relay's dispatch parks; the healthy Relay keeps receiving input
 
 ### Requirement: A stream close clears the credit flag on the channel's own counters and nothing else
 

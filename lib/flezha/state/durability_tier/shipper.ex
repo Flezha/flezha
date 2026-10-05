@@ -146,7 +146,7 @@ defmodule Flezha.State.DurabilityTier.Shipper do
     {:noreply, state}
   end
 
-  # This node now runs `state_key`'s operator, so it is entitled to take over
+  # This node now runs `state_key`'s relay, so it is entitled to take over
   # that lineage remotely. Without this gate a node that merely still has the
   # files — every source of a migration, since the copy is never deleted —
   # would bid its way back in on its next sweep and fence the real owner.
@@ -297,7 +297,7 @@ defmodule Flezha.State.DurabilityTier.Shipper do
   end
 
   # A writer extends its own lineage always, and takes one over only when this
-  # node has adopted the operator.
+  # node has adopted the relay.
   #
   # An unclaimed lineage needs no adoption: two nodes first-shipping it both bid
   # `{:claim, 1}` against a stored 0, and the strict compare-and-set already
@@ -553,7 +553,7 @@ defmodule Flezha.State.DurabilityTier.Shipper do
   #     sole shipper of, so it is also the only node entitled to collect it.
   #
   # Scope alone would leak a reference no node holds any more (a stopped
-  # operator, one whose state moved), so out-of-scope artifacts are still
+  # relay, one whose state moved), so out-of-scope artifacts are still
   # reclaimed — at a far longer threshold, where no ship can plausibly still be
   # in flight. Collection may leak; it must never lose.
   defp collect_orphans(state) do

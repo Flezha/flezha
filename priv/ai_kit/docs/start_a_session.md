@@ -3,19 +3,19 @@
 On this page you build the runner, start the agentdesk in Docker Compose, talk
 to two sessions, and watch an idle one sleep and wake on another runner.
 
-A session is an operator that runs in steps, one pass per message: `each:
+A session is a relay that runs in steps, one pass per message: `each:
 per_input`. It sleeps after ten seconds without a message and wakes with its
 conversation when the next one arrives.
 [Sessions](../../topics/advanced/sessions.md) explains the shape, and
-[Configuring an operator](../../topics/basics/configuring_an_operator.md) the settings.
+[Configuring a relay](../../topics/basics/configuring_a_relay.md) the settings.
 
 <!-- tabs-open -->
 
 ### Java
 
 ```java
-// AgentOperator.java: the session: one pass per message
-public final class AgentOperator implements Operator {
+// AgentRelay.java: the session: one pass per message
+public final class AgentRelay implements Relay {
     @Override
     public String factoryId() {
         return "agent";
@@ -35,7 +35,7 @@ public final class AgentOperator implements Operator {
 
     @Override
     public void channels(ChannelBuilder c) {
-        c.input(String.class, "turn")                    // entry 1: `flz operator call`
+        c.input(String.class, "turn")                    // entry 1: `flz relay call`
                 .into(Reply.class)
                 .sink("answer")                          // to whoever listens; the chain goes on
                 .into(Deliver.class)
@@ -47,7 +47,7 @@ public final class AgentOperator implements Operator {
 }
 ```
 
-[`AgentOperator.java`](https://github.com/flezha/flezha_java_sdk/blob/main/examples/agentdesk/src/main/java/com/flezha/examples/agentdesk/AgentOperator.java)
+[`AgentRelay.java`](https://github.com/flezha/flezha_java_sdk/blob/main/examples/agentdesk/src/main/java/com/flezha/examples/agentdesk/AgentRelay.java)
 
 ### Rust
 
@@ -72,9 +72,9 @@ TODO: this page is not yet written for PHP.
 ### Elixir
 
 ```elixir
-# lib/agentdesk/agent_operator.ex: the session: one pass per message
-defmodule Agentdesk.AgentOperator do
-  use Flezha.SDK.Operator,
+# lib/agentdesk/agent_relay.ex: the session: one pass per message
+defmodule Agentdesk.AgentRelay do
+  use Flezha.SDK.Relay,
     factory_id: "agent",
     # one turn per message; a failed turn fails alone
     run: {:steps, each: :per_input, on_failure: :keep_progress},
@@ -84,7 +84,7 @@ defmodule Agentdesk.AgentOperator do
   @impl true
   def channels(c) do
     c
-    # entry 1: `flz operator call`
+    # entry 1: `flz relay call`
     |> input("turn")
     |> into(Reply)
     # to whoever listens; the chain goes on
@@ -102,7 +102,7 @@ defmodule Agentdesk.AgentOperator do
 end
 ```
 
-[`lib/agentdesk/agent_operator.ex`](https://github.com/flezha/flezha_elixir_sdk/blob/main/examples/agentdesk/lib/agentdesk/agent_operator.ex)
+[`lib/agentdesk/agent_relay.ex`](https://github.com/flezha/flezha_elixir_sdk/blob/main/examples/agentdesk/lib/agentdesk/agent_relay.ex)
 
 <!-- tabs-close -->
 
@@ -168,9 +168,9 @@ Runners in namespace 'agents':
 > {: .step}
 
 ```sh
-$ flz operator start agent --id anna --namespace agents
-$ flz operator call anna --namespace agents --text 'Hello'
-$ flz operator call anna --namespace agents --text 'What can you do?'
+$ flz relay start agent --id anna --namespace agents
+$ flz relay call anna --namespace agents --text 'Hello'
+$ flz relay call anna --namespace agents --text 'What can you do?'
 ```
 
 ```output
@@ -179,15 +179,15 @@ Started anna
 {"text":"Message 2: you said \"What can you do?\". I am a demo model.","tokens":13}
 ```
 
-`flz operator call` sends one message and waits for the answer. Bob's session is
-another instance of the same operator, with a conversation of its own:
+`flz relay call` sends one message and waits for the answer. Bob's session is
+another instance of the same relay, with a conversation of its own:
 
 > Start a session for Bob, and send it a message.
 > {: .step}
 
 ```sh
-$ flz operator start agent --id bob --namespace agents
-$ flz operator call bob --namespace agents --text 'Hi, I am Bob'
+$ flz relay start agent --id bob --namespace agents
+$ flz relay call bob --namespace agents --text 'Hi, I am Bob'
 ```
 
 ```output
@@ -199,12 +199,12 @@ Started bob
 > {: .step}
 
 ```sh
-$ flz operator info anna --namespace agents
+$ flz relay info anna --namespace agents
 ```
 
 ```output
 ...
-Operator: anna
+Relay: anna
   Run: steps (each: per_input, on_failure: keep_progress)
   Durable: local (sleep_after: 10s)
   Phase: suspended
@@ -218,7 +218,7 @@ Operator: anna
 
 ```sh
 $ docker compose restart runner
-$ flz operator call anna --namespace agents --text 'Are you still there?'
+$ flz relay call anna --namespace agents --text 'Are you still there?'
 ```
 
 ```output

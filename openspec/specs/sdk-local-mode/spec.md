@@ -3,9 +3,9 @@
 ## Purpose
 TBD - created by archiving change add-sdk-local-mode. Update Purpose after archive.
 ## Requirements
-### Requirement: A declared operator graph SHALL run in process with no controller
+### Requirement: A declared relay graph SHALL run in process with no controller
 
-An SDK SHALL provide a local-mode entry point that accepts the same operator
+An SDK SHALL provide a local-mode entry point that accepts the same relay
 class a user deploys and runs its declared graph entirely in the host process,
 with no controller, no transport connection and no socket. The class SHALL be
 accepted unchanged: local mode consumes the host-class declaration the authoring
@@ -19,7 +19,7 @@ ladder, and inter-tasklet delivery.
 
 #### Scenario: A two-tasklet pipeline runs locally
 
-- **WHEN** an operator declaring `entry → Normalize → (inter-tasklet) → Total → sink` is started in local mode and fed two values on the entry channel
+- **WHEN** a relay declaring `entry → Normalize → (inter-tasklet) → Total → sink` is started in local mode and fed two values on the entry channel
 - **THEN** both tasklets SHALL run, the inter-tasklet hop SHALL be performed by the runtime rather than by caller code, and `Total`'s state SHALL reflect both values
 
 #### Scenario: Edge transforms and keying run
@@ -29,7 +29,7 @@ ladder, and inter-tasklet delivery.
 
 #### Scenario: The deployed class is accepted unchanged
 
-- **WHEN** the same operator class is run in local mode and then registered against a controller
+- **WHEN** the same relay class is run in local mode and then registered against a controller
 - **THEN** both SHALL accept the identical declaration, and no local-mode-specific member SHALL be required on the class
 
 ### Requirement: Local mode SHALL share the production code path
@@ -69,7 +69,7 @@ multi-runner scale.
 
 #### Scenario: The notice appears on every local run
 
-- **WHEN** an operator is started in local mode
+- **WHEN** a relay is started in local mode
 - **THEN** a notice SHALL be emitted stating that state is in memory and nothing is durable
 
 #### Scenario: A host SDK cannot omit the notice
@@ -100,7 +100,7 @@ production frames it rather than before.
 Local mode SHALL accept input addressed to an entry channel by its declared name,
 and SHALL apply the channel's declared decode, entry parse ladder and admission
 exactly as a deployed runner does. Feeding a channel the declaration does not
-name SHALL fail with an error naming the channel and the operator.
+name SHALL fail with an error naming the channel and the relay.
 
 Local mode SHALL NOT connect to, poll or otherwise obtain input from any external
 source of its own.
@@ -112,8 +112,8 @@ source of its own.
 
 #### Scenario: An unknown channel name is refused
 
-- **WHEN** the caller feeds a channel name the operator does not declare
-- **THEN** the call SHALL fail with an error naming both the channel and the operator
+- **WHEN** the caller feeds a channel name the relay does not declare
+- **THEN** the call SHALL fail with an error naming both the channel and the relay
 
 ### Requirement: Local mode SHALL refuse what it cannot honour
 
@@ -133,13 +133,13 @@ A local run SHALL NOT report success for work it did not perform.
 
 #### Scenario: A controller-only declaration is refused
 
-- **WHEN** an operator whose declaration requires a controller-side capability is started in local mode
+- **WHEN** a relay whose declaration requires a controller-side capability is started in local mode
 - **THEN** startup SHALL fail with an error naming the capability and stating that it requires a controller
 
 ### Requirement: The local-mode surface SHALL NOT be named as testing material
 
 Every user-facing local-mode symbol, module, file and documentation page MUST be
-named for what it does — running an operator locally — and SHALL NOT carry
+named for what it does — running a relay locally — and SHALL NOT carry
 `test`, `testing`, `harness`, `mock`, `fake`, `stub`, `dummy` or `sample` in its
 name. Local mode is a way to run an application, not a way to test one, and a
 user reaching for it SHALL NOT be asked to import something that reads as test

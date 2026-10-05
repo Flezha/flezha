@@ -11,7 +11,7 @@ defmodule Flezha.Observability.TelemetryEventSeamTest do
        length is pinned as a ceiling and whose every entry carries a reason.
        Both directions: a mapped event nothing writes any more is named too.
     2. **Readability** - a `:telemetry.execute` whose event argument this walk
-       cannot read is one of three named relays, and a fourth fails.
+       cannot read is one of three named forwarders, and a fourth fails.
     3. **Derivation** - every event a detector entry declares is bridged by
        that declaration, with no line in the hand-kept half.
 
@@ -40,9 +40,9 @@ defmodule Flezha.Observability.TelemetryEventSeamTest do
 
   # `:telemetry.execute` sites whose event argument this walk cannot read. Each
   # names where its literal is written instead. A FOURTH such site fails the
-  # clause below, because a relay whose writer this walk never reads would be
+  # clause below, because a forwarder whose writer this walk never reads would be
   # invisible exactly the way these three were.
-  @relays %{
+  @forwarders %{
     "lib/flezha/plugin/provider_behaviour.ex" =>
       "the provider family's one constructor; `provider_events/1` reads its call sites",
     "lib/flezha/runner/control_channel/commits.ex" =>
@@ -95,11 +95,11 @@ defmodule Flezha.Observability.TelemetryEventSeamTest do
     end
   end
 
-  describe "clause 2: every execute site is readable, or a named relay" do
-    test "an execute site whose event name this walk cannot read is a named relay" do
+  describe "clause 2: every execute site is readable, or a named forwarder" do
+    test "an execute site whose event name this walk cannot read is a named forwarder" do
       offenders =
         for file <- source_files(),
-            not Map.has_key?(@relays, file),
+            not Map.has_key?(@forwarders, file),
             ast = SourceWalk.ast(file),
             {line, raw} <- executes(ast),
             not readable?(raw, ast),
@@ -109,8 +109,8 @@ defmodule Flezha.Observability.TelemetryEventSeamTest do
              "a `:telemetry.execute` whose event name this walk cannot read: " <>
                Enum.join(offenders, "; ")
 
-      assert map_size(@relays) <= 3,
-             "the relay list may only shrink: a name this walk cannot read is " <>
+      assert map_size(@forwarders) <= 3,
+             "the forwarder list may only shrink: a name this walk cannot read is " <>
                "invisible to clause 1 unless something else writes it literally"
     end
   end
@@ -228,7 +228,7 @@ defmodule Flezha.Observability.TelemetryEventSeamTest do
   defp segment(_other, _ast), do: [:__dynamic__]
 
   # A site this walk can read is one that resolves to at least one name.
-  # Anything else is a relay, and every relay is named.
+  # Anything else is a forwarder, and every forwarder is named.
   defp readable?(event, ast), do: assembled(event, ast) != []
 
   # `ProviderBehaviour.emit(provider, verb, …)`. The prefix is derived from the

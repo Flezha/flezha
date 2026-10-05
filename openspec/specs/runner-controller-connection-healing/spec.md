@@ -1,55 +1,55 @@
 # runner-controller-connection-healing Specification
 
 ## Purpose
-Defines how a Runner↔Controller connection heals itself without user intervention. Covers automatic data-stream recovery across a Controller restart, identity-preserving reconnect (bindings are re-pointed at the new session rather than minted fresh and evicted — see capability `runner-identity-and-session`), and stale stream-mapping cleanup on disconnect so a reconnecting session binds cleanly. The goal is that a Controller restart costs no Runner restart, no `kubectl rollout restart` cascade, and no manual `flz operator start`.
+Defines how a Runner↔Controller connection heals itself without user intervention. Covers automatic data-stream recovery across a Controller restart, identity-preserving reconnect (bindings are re-pointed at the new session rather than minted fresh and evicted — see capability `runner-identity-and-session`), and stale stream-mapping cleanup on disconnect so a reconnecting session binds cleanly. The goal is that a Controller restart costs no Runner restart, no `kubectl rollout restart` cascade, and no manual `flz relay start`.
 ## Requirements
 ### Requirement: Runner → Controller data streams SHALL automatically heal across a Controller restart
 
-When the Controller process restarts and a Runner's reconnect loop succeeds against the new Controller process, every Operator that ProcessHub keeps registered against this node + this namespace + this Runner's profile SHALL have its data-stream traffic resume within 5 s of the new Controller reaching ready, without any Runner restart, manual `kubectl rollout restart` cascade, or external `flz operator start` invocation.
+When the Controller process restarts and a Runner's reconnect loop succeeds against the new Controller process, every Relay that ProcessHub keeps registered against this node + this namespace + this Runner's profile SHALL have its data-stream traffic resume within 5 s of the new Controller reaching ready, without any Runner restart, manual `kubectl rollout restart` cascade, or external `flz relay start` invocation.
 
 The mechanism has two halves:
 
 1. **Stream rebind.** `Flezha.Runner.StreamChannel` SHALL clear its `stream_ref` to `nil` synchronously inside its `handle_info({:flz_closed, _stream_ref, _reason}, state)` clause. A `StreamChannel` whose `stream_ref` is `nil` is "rebindable". `Flezha.Runner.StreamAcceptor` (UDS path) and `Flezha.Transport.Server` (QUIC path) SHALL, when accepting a new data stream for a `runner_id`, look up rebindable channels for that `runner_id` BEFORE spawning a fresh channel, and bind the new `stream_ref` via an atomic `GenServer.call(channel, {:bind, new_ref})` that returns `:ok` only if the channel was nil-ref at call time. On `:already_bound` the acceptor SHALL try the next candidate; if none, spawn fresh.
-2. **AddOperator reissue.** `Flezha.Runner.FleetManager.Session.runner_connect/3` SHALL, AFTER the existing `try_migrate_runner` call, enumerate every Operator currently registered in ProcessHub for this `node()` + this namespace whose `assigned_runner` matches the connecting Runner's profile (declared factories overlap the Operator's `factory_id`) AND was NOT already handled by `try_migrate_runner`. For each match, FleetManager SHALL re-issue `AddOperator` to the new Runner via the existing `Overwatch.runner_migrate` → `start_operator_sdk` path, so the Runner rebuilds its local Operator registry and triggers fresh data-stream opens.
+2. **AddRelay reissue.** `Flezha.Runner.FleetManager.Session.runner_connect/3` SHALL, AFTER the existing `try_migrate_runner` call, enumerate every Relay currently registered in ProcessHub for this `node()` + this namespace whose `assigned_runner` matches the connecting Runner's profile (declared factories overlap the Relay's `factory_id`) AND was NOT already handled by `try_migrate_runner`. For each match, FleetManager SHALL re-issue `AddRelay` to the new Runner via the existing `Overwatch.runner_migrate` → `start_relay_sdk` path, so the Runner rebuilds its local Relay registry and triggers fresh data-stream opens.
 
-The Rust SDK's `command_add_operator` handler SHALL be idempotent: an `AddOperator` for a `operator_id` already in the local registry SHALL be a no-op (logged, not raised).
+The Rust SDK's `command_add_relay` handler SHALL be idempotent: an `AddRelay` for a `relay_id` already in the local registry SHALL be a no-op (logged, not raised).
 
-#### Scenario: Runner's Operators resume traffic after a `docker compose restart controller`
-- **GIVEN** the dev compose stack is up with one Controller, one Rust Runner, and one Operator producing data to a Kafka topic
+#### Scenario: Runner's Relays resume traffic after a `docker compose restart controller`
+- **GIVEN** the dev compose stack is up with one Controller, one Rust Runner, and one Relay producing data to a Kafka topic
 - **AND** the Runner's reconnect loop is running normally
 - **WHEN** the user runs `docker compose restart controller`
 - **AND** the new Controller process reaches ready
 - **AND** the Runner's reconnect loop opens a new control channel within its existing backoff window
 - **THEN** within 5 s of the Controller reaching ready, the Kafka topic's `LOG-END-OFFSET` SHALL have advanced past its pre-restart value
-- **AND** the test SHALL NOT have called `flz operator start`, restarted the Runner container, or issued any other re-assignment tasklet between the restart and the assertion
+- **AND** the test SHALL NOT have called `flz relay start`, restarted the Runner container, or issued any other re-assignment tasklet between the restart and the assertion
 
 #### Scenario: StreamChannel rebinds to a fresh stream_ref instead of dropping traffic
-- **GIVEN** a `StreamChannel` for Operator `r1` was bound to `stream_ref_old`
+- **GIVEN** a `StreamChannel` for Relay `r1` was bound to `stream_ref_old`
 - **AND** the Controller process died and restarted, causing `{:flz_closed, stream_ref_old, _reason}` to fire on the channel
 - **WHEN** the Runner reconnects and opens a new data stream that the acceptor routes to this `runner_id`'s `StreamSupervisor`
 - **THEN** the acceptor SHALL discover the existing `StreamChannel` is nil-ref and call `{:bind, stream_ref_new}` on it
 - **AND** the channel's `stream_ref` SHALL update to `stream_ref_new`
 - **AND** subsequent outbound frames sent through the channel's published binding SHALL go out on `stream_ref_new`, not silently dropped
 
-#### Scenario: Idempotent AddOperator reissue does not crash the SDK
-- **GIVEN** the Rust SDK's local registry already contains Operator `r1`
-- **WHEN** the Controller issues `AddOperator{operator_id: "r1", ...}` to the SDK as part of the reissue catch-up
-- **THEN** the SDK SHALL log "AddOperator: operator already registered, skipping" (or similar) and continue without raising
+#### Scenario: Idempotent AddRelay reissue does not crash the SDK
+- **GIVEN** the Rust SDK's local registry already contains Relay `r1`
+- **WHEN** the Controller issues `AddRelay{relay_id: "r1", ...}` to the SDK as part of the reissue catch-up
+- **THEN** the SDK SHALL log "AddRelay: relay already registered, skipping" (or similar) and continue without raising
 - **AND** the SDK's local registry SHALL still contain exactly one entry for `r1`
 
 ### Requirement: An outbound input frame is sent by its caller from the channel's published binding
 
-`Flezha.Runner.StreamChannel` SHALL publish its bound `stream_ref`, together with its liveness counters, under its registered name — written at init (unbound), on `{:bind, new_ref}` and on `{:flz_closed, ...}` (unbound again), and erased when the channel terminates. A sender — the Overwatch's ingest path and the durable tiers' re-forward — SHALL send through `StreamChannel.io_in/3` with the channel's name: it reads the published binding and pushes the frame to the transport from the calling process, with no round trip through the channel process that every operator on the runner shares. A binding that is unbound, a name that is unknown, or a `nil` channel SHALL answer `{:error, :no_stream}`, bump the channel's `nil_drops` liveness counter where a channel exists, and emit `[:flezha, :stream, :drop]`, so a stall on an unbound stream stays observable. An unbound channel SHALL be rebound by the acceptor when the SDK opens a fresh data stream for that runner, and by nothing else: no convergence heal primitive rebinds a data stream, so the sender's refusal is a report, not a request for a repair that is already under way.
+`Flezha.Runner.StreamChannel` SHALL publish its bound `stream_ref`, together with its liveness counters, under its registered name — written at init (unbound), on `{:bind, new_ref}` and on `{:flz_closed, ...}` (unbound again), and erased when the channel terminates. A sender — the Overwatch's ingest path and the durable tiers' re-forward — SHALL send through `StreamChannel.io_in/3` with the channel's name: it reads the published binding and pushes the frame to the transport from the calling process, with no round trip through the channel process that every relay on the runner shares. A binding that is unbound, a name that is unknown, or a `nil` channel SHALL answer `{:error, :no_stream}`, bump the channel's `nil_drops` liveness counter where a channel exists, and emit `[:flezha, :stream, :drop]`, so a stall on an unbound stream stays observable. An unbound channel SHALL be rebound by the acceptor when the SDK opens a fresh data stream for that runner, and by nothing else: no convergence heal primitive rebinds a data stream, so the sender's refusal is a report, not a request for a repair that is already under way.
 
 #### Scenario: A bound frame leaves from the caller
 - **GIVEN** a `StreamChannel` bound to `stream_ref_1`
-- **WHEN** an Overwatch ingests an input for an operator mapped to that channel
+- **WHEN** an Overwatch ingests an input for a relay mapped to that channel
 - **THEN** the frame is pushed on `stream_ref_1` by the Overwatch's own process, the channel's `send_frame_calls` counter advances, and no message is queued at the channel process
 
 #### Scenario: An unbound channel answers no_stream and emits the drop
 - **GIVEN** a `StreamChannel` whose stream closed and has not rebound
 - **WHEN** an Overwatch ingests an input for it
-- **THEN** `io_in/3` answers `{:error, :no_stream}`, the channel's `nil_drops` counter advances, and `[:flezha, :stream, :drop]` fires naming the operator
+- **THEN** `io_in/3` answers `{:error, :no_stream}`, the channel's `nil_drops` counter advances, and `[:flezha, :stream, :drop]` fires naming the relay
 
 #### Scenario: A rebind republishes before the channel answers
 - **WHEN** the acceptor's `{:bind, stream_ref_new}` call succeeds on a nil-ref channel
@@ -72,7 +72,7 @@ The Rust SDK's command-frame decode path (`flz_core/src/command/mod.rs`) SHALL d
 This requirement is a precondition for the existing "Runner → Controller data streams SHALL automatically heal across a Controller restart" requirement: if the SDK panics on the disconnect that immediately precedes reconnect, the 5-second resume contract is unreachable. The production trace `thread '<unnamed>' panicked at /flezha-sdk/sdk/rust/src/command/mod.rs:54:52: Failed to decode message: DecodeError { description: "buffer underflow", stack: [("CommandRequest", "command")] }` observed at 07:40:01 in the flezha_market dev cluster is a violation of this requirement.
 
 #### Scenario: Controller closes the control socket cleanly, SDK reconnects without panic
-- **GIVEN** the dev compose stack is up with one Controller, one Rust Runner, and Operators steadily streaming
+- **GIVEN** the dev compose stack is up with one Controller, one Rust Runner, and Relays steadily streaming
 - **AND** `$MARKET_COMPOSE` names `docker/dev/docker-compose.yml` in the user's own checkout of the separate `flezha_market` repository — the stack every `docker compose ...` in this scenario selects
 - **AND** the user captures the Runner's PID before the test: `RUNNER_PID=$(docker compose -f "$MARKET_COMPOSE" exec -T market-executor cat /var/run/market-executor.pid)`
 - **WHEN** the user runs `docker compose -f "$MARKET_COMPOSE" restart flezha-controller`
@@ -98,9 +98,9 @@ Note: the `market-executor` container/PID-file name above is owned by the separa
 - **AND** the runner's reconnect loop SHALL be driven exactly as for a clean close (the controller is treated as untrustworthy and the SDK reconnects rather than parsing arbitrary bytes)
 
 #### Scenario: Existing 5-second resume contract holds after a clean controller restart
-- **GIVEN** the dev compose stack steady-state (same setup as the existing "Runner's Operators resume traffic after a `docker compose restart controller`" scenario in this capability)
+- **GIVEN** the dev compose stack steady-state (same setup as the existing "Runner's Relays resume traffic after a `docker compose restart controller`" scenario in this capability)
 - **WHEN** the user runs `docker compose ... restart flezha-controller`
-- **THEN** the existing scenario's THEN clauses SHALL all hold (offsets advance within 5 s of new-Controller-ready, no `flz operator start` is required, no runner restart is required)
+- **THEN** the existing scenario's THEN clauses SHALL all hold (offsets advance within 5 s of new-Controller-ready, no `flz relay start` is required, no runner restart is required)
 - **AND** the Rust Runner process SHALL have the same PID throughout (this is the new precondition this requirement adds — the existing scenario was silent on it, today it is violated by the panic)
 
 ### Requirement: Rust SDK runtime threads SHALL NOT panic on any control-socket transport-edge event
@@ -118,59 +118,59 @@ The existing `Command::RunnerShutdownNotification`, `Command::RestoreInitStateRe
 
 ### Requirement: Runner restart while the Controller is alive SHALL heal stream binding cleanly
 
-When a Runner process restarts and its reconnect loop succeeds against the still-alive Controller, the fleet manager SHALL declare the disconnect (`{:runner_disconnected, ns, runner_id}`) and, under `FLEZHA_RUNNER_KEEPALIVE`, preserve the runner as `:inactive` — a keepalive fact, not a remedy; the convergence loop SHALL plan `rebind_operator` per affected operator from the declared fact, choosing the returned or a surviving runner through the placement function, and the new data streams the Runner opens SHALL bind cleanly to nil-ref `StreamChannel`s without silent traffic drops. No reroute SHALL run inside the session handler. The rebind the loop drives SHALL be the one bind path: the Overwatch's `runner_migrate` runs `Lifecycle.complete_init/4` in its supervised bind task for every state, so the `AddOperator` it sends carries the operator's kind and, for a durable steps instance, its `task_journal`, `resume_cell_count` and `inbox_tail_count`, the persisted Cells are restored by that bind, and the undelivered inbox tail is delivered by it; the heal SHALL dispatch no second restore after the bind. When the replacement presents the dead session's stable identity before the loop has placed the operators, the takeover binds them through the same path instead, and the loop finds nothing left to plan.
+When a Runner process restarts and its reconnect loop succeeds against the still-alive Controller, the fleet manager SHALL declare the disconnect (`{:runner_disconnected, ns, runner_id}`) and, under `FLEZHA_RUNNER_KEEPALIVE`, preserve the runner as `:inactive` — a keepalive fact, not a remedy; the convergence loop SHALL plan `rebind_relay` per affected relay from the declared fact, choosing the returned or a surviving runner through the placement function, and the new data streams the Runner opens SHALL bind cleanly to nil-ref `StreamChannel`s without silent traffic drops. No reroute SHALL run inside the session handler. The rebind the loop drives SHALL be the one bind path: the Overwatch's `runner_migrate` runs `Lifecycle.complete_init/4` in its supervised bind task for every state, so the `AddRelay` it sends carries the relay's kind and, for a durable steps instance, its `task_journal`, `resume_cell_count` and `inbox_tail_count`, the persisted Cells are restored by that bind, and the undelivered inbox tail is delivered by it; the heal SHALL dispatch no second restore after the bind. When the replacement presents the dead session's stable identity before the loop has placed the relays, the takeover binds them through the same path instead, and the loop finds nothing left to plan.
 
 #### Scenario: Runner restart with single-replica-in-namespace
-- **GIVEN** Runner A is the only Runner in namespace `ns1` on this Controller, running Operators `r1` and `r2`
+- **GIVEN** Runner A is the only Runner in namespace `ns1` on this Controller, running Relays `r1` and `r2`
 - **WHEN** Runner A's container restarts and reconnects
-- **THEN** the disconnect SHALL have been declared, `r1` and `r2` SHALL each be bound onto the returned runner by exactly one `AddOperator` carrying their resume state, through `rebind_operator` or the takeover, whichever runs first, and the data streams MUST rebind to the existing `StreamChannel`s without traffic loss
+- **THEN** the disconnect SHALL have been declared, `r1` and `r2` SHALL each be bound onto the returned runner by exactly one `AddRelay` carrying their resume state, through `rebind_relay` or the takeover, whichever runs first, and the data streams MUST rebind to the existing `StreamChannel`s without traffic loss
 
-#### Scenario: A durable steps operator rebound by the loop resumes at its stage
+#### Scenario: A durable steps relay rebound by the loop resumes at its stage
 - **GIVEN** a durable steps instance on runner A with tasklet A committed and tasklet B in flight, and a runner B advertising the factory under a different stable identity
-- **WHEN** runner A is killed, its disconnect is declared, and the loop plans `rebind_operator` onto runner B
-- **THEN** the `AddOperator` runner B receives SHALL carry the folded `task_journal`, a `resume_cell_count` equal to the instance's persisted Cells and the undelivered `inbox_tail_count`, runner B's driver SHALL be held until those Cells are restored, tasklet A SHALL NOT run on runner B, and the instance SHALL reach its terminal completion
+- **WHEN** runner A is killed, its disconnect is declared, and the loop plans `rebind_relay` onto runner B
+- **THEN** the `AddRelay` runner B receives SHALL carry the folded `task_journal`, a `resume_cell_count` equal to the instance's persisted Cells and the undelivered `inbox_tail_count`, runner B's driver SHALL be held until those Cells are restored, tasklet A SHALL NOT run on runner B, and the instance SHALL reach its terminal completion
 
 ### Requirement: `FLEZHA_RUNNER_KEEPALIVE` controls inactive-Runner retention
 
-The Controller SHALL retain a disconnected Runner's peer entry (including its assigned Operators in the `:inactive` set) for the duration specified by the `FLEZHA_RUNNER_KEEPALIVE` environment variable (default 30 seconds). After that window elapses without reconnect, the Controller SHALL discard the inactive entry and ProcessHub SHALL redistribute its Operators.
+The Controller SHALL retain a disconnected Runner's peer entry (including its assigned Relays in the `:inactive` set) for the duration specified by the `FLEZHA_RUNNER_KEEPALIVE` environment variable (default 30 seconds). After that window elapses without reconnect, the Controller SHALL discard the inactive entry and ProcessHub SHALL redistribute its Relays.
 
-#### Scenario: Reconnect within keepalive preserves Operators
-- **GIVEN** a Runner with assigned Operators `[r1, r2]` disconnects
+#### Scenario: Reconnect within keepalive preserves Relays
+- **GIVEN** a Runner with assigned Relays `[r1, r2]` disconnects
 - **AND** `FLEZHA_RUNNER_KEEPALIVE=30`
 - **WHEN** the same Runner reconnects 10 seconds later with the same identity
-- **THEN** the Controller SHALL re-issue `AddOperator` for `r1` and `r2` to the reconnected Runner without redistributing them
+- **THEN** the Controller SHALL re-issue `AddRelay` for `r1` and `r2` to the reconnected Runner without redistributing them
 
 #### Scenario: Reconnect after keepalive triggers redistribution
-- **GIVEN** a Runner with assigned Operators disconnects and `FLEZHA_RUNNER_KEEPALIVE=30`
+- **GIVEN** a Runner with assigned Relays disconnects and `FLEZHA_RUNNER_KEEPALIVE=30`
 - **WHEN** no reconnect occurs within 30 seconds
-- **THEN** the Controller SHALL discard the inactive entry; ProcessHub SHALL redistribute the Operators to other Runners via normal placement
+- **THEN** the Controller SHALL discard the inactive entry; ProcessHub SHALL redistribute the Relays to other Runners via normal placement
 
 ### Requirement: SDK SHALL ship final state to the agent on graceful shutdown so reconnect-resume is loss-free
 
-When an SDK that carries `state_persistence` shuts down gracefully (SIGTERM, `Drop` of the SDK handle, explicit `disconnect()` call — or, for an erased host over `flz_core_ffi`, the host's own stop path calling `flz_core_shutdown`; or, for the Elixir SDK, the RunnerServer's `terminate/2` reached by the BEAM's `init:stop`, `Flezha.SDK.close/1` or `RunnerDisconnect`), it SHALL serialize each local operator's state via the same per-driver serializer used for `MigrationSerialization`, and emit `RunnerShutdownNotification{operator_id, serialized_state}` on the control channel for each operator, before the core reports shutting down to the host's pollers — an erased host's loops keep answering `migration_serialize` until then. The agent's `ControlChannel` SHALL forward each notification to the corresponding `Overwatch` GenServer (looked up via `Identificator.overwatch(operator_id)`) only when the operator's ownership record names the sending session's stable identity or records no owner on this node; that Overwatch SHALL replace `state.snapshot` with the supplied binary atomically. A notification naming an operator bound to another runner's identity SHALL be refused as `runner-identity-and-session` prescribes and SHALL NOT touch the snapshot. The agent SHALL respond with `RunnerShutdownAck{operator_id}` once the snapshot is enqueued, and SHALL respond with it for a refused notification too.
+When an SDK that carries `state_persistence` shuts down gracefully (SIGTERM, `Drop` of the SDK handle, explicit `disconnect()` call — or, for an erased host over `flz_core_ffi`, the host's own stop path calling `flz_core_shutdown`; or, for the Elixir SDK, the RunnerServer's `terminate/2` reached by the BEAM's `init:stop`, `Flezha.SDK.close/1` or `RunnerDisconnect`), it SHALL serialize each local relay's state via the same per-driver serializer used for `MigrationSerialization`, and emit `RunnerShutdownNotification{relay_id, serialized_state}` on the control channel for each relay, before the core reports shutting down to the host's pollers — an erased host's loops keep answering `migration_serialize` until then. The agent's `ControlChannel` SHALL forward each notification to the corresponding `Overwatch` GenServer (looked up via `Identificator.overwatch(relay_id)`) only when the relay's ownership record names the sending session's stable identity or records no owner on this node; that Overwatch SHALL replace `state.snapshot` with the supplied binary atomically. A notification naming a relay bound to another runner's identity SHALL be refused as `runner-identity-and-session` prescribes and SHALL NOT touch the snapshot. The agent SHALL respond with `RunnerShutdownAck{relay_id}` once the snapshot is enqueued, and SHALL respond with it for a refused notification too.
 
-The SDK SHALL wait at most 2 s per operator for the ack (with parallelism across operators) and SHALL exit regardless of ack receipt after the timeout. The SDK MUST NOT block the container's shutdown grace period if the agent has crashed or become unresponsive.
+The SDK SHALL wait at most 2 s per relay for the ack (with parallelism across relays) and SHALL exit regardless of ack receipt after the timeout. The SDK MUST NOT block the container's shutdown grace period if the agent has crashed or become unresponsive.
 
 `RunnerShutdownNotification` and `RunnerShutdownAck` are additive opcodes: agents that don't recognise them SHALL log and ignore (existing protobuf-decoder behaviour); SDKs that don't send them — an SDK that defers `state_persistence` by name — fall back to the periodic-snapshot freshness shipped by `heal-connections-on-restart`. Every shipped SDK carries `state_persistence`, so every shipped SDK sends them.
 
 #### Scenario: Graceful runner shutdown ships fresh state to the agent
-- **GIVEN** a runner running operator `p1` with current in-memory state `S_now` and the most recent periodic snapshot at `T - 45s` showing state `S_old`
+- **GIVEN** a runner running relay `p1` with current in-memory state `S_now` and the most recent periodic snapshot at `T - 45s` showing state `S_old`
 - **WHEN** the runner receives SIGTERM and runs its graceful-shutdown handler
-- **THEN** the runner SHALL serialize `p1`'s current state (yielding `S_now`) and emit `RunnerShutdownNotification{operator_id: "p1", serialized_state: S_now}` on the control channel
+- **THEN** the runner SHALL serialize `p1`'s current state (yielding `S_now`) and emit `RunnerShutdownNotification{relay_id: "p1", serialized_state: S_now}` on the control channel
 - **AND** the agent's `Overwatch` for `p1` SHALL replace `state.snapshot` with `S_now`
-- **AND** the agent SHALL emit `RunnerShutdownAck{operator_id: "p1"}` back to the runner
-- **AND** when a new runner subsequently reconnects and is assigned `p1` via the AddOperator reissue path (delivered by `heal-connections-on-restart`), the state delivered via `maybe_apply_initial_state` SHALL be `S_now` (not `S_old`)
+- **AND** the agent SHALL emit `RunnerShutdownAck{relay_id: "p1"}` back to the runner
+- **AND** when a new runner subsequently reconnects and is assigned `p1` via the AddRelay reissue path (delivered by `heal-connections-on-restart`), the state delivered via `maybe_apply_initial_state` SHALL be `S_now` (not `S_old`)
 
 #### Scenario: An erased host's own stop path ships the notification
-- **GIVEN** a Node, Python, Ruby or PHP runner running operator `p1`, whose runtime owns SIGTERM and stops the runner through the SDK's stop path
+- **GIVEN** a Node, Python, Ruby or PHP runner running relay `p1`, whose runtime owns SIGTERM and stops the runner through the SDK's stop path
 - **WHEN** the runner receives SIGTERM
-- **THEN** `flz_core_shutdown` SHALL serialize `p1`'s state through the host's still-polling loops and emit `RunnerShutdownNotification{operator_id: "p1", ...}` before the poll reports shutting down
+- **THEN** `flz_core_shutdown` SHALL serialize `p1`'s state through the host's still-polling loops and emit `RunnerShutdownNotification{relay_id: "p1", ...}` before the poll reports shutting down
 - **AND** `state_freshness_e2e_test.exs` under `FLEZHA_E2E_RUNTIME=node` and `python` SHALL see `Overwatch.state.snapshot` populated within its window
 
 #### Scenario: The Elixir runner's supervisor shutdown ships the notification
-- **GIVEN** an Elixir runner running operator `p1`, booted runner-only so the BEAM's default `sigterm` handling is `init:stop`
+- **GIVEN** an Elixir runner running relay `p1`, booted runner-only so the BEAM's default `sigterm` handling is `init:stop`
 - **WHEN** the runner receives SIGTERM
-- **THEN** the application stop reaches the RunnerServer's `terminate/2`, which SHALL serialize `p1` through its live Cells and emit `RunnerShutdownNotification{operator_id: "p1", ...}` before the control connection is closed
+- **THEN** the application stop reaches the RunnerServer's `terminate/2`, which SHALL serialize `p1` through its live Cells and emit `RunnerShutdownNotification{relay_id: "p1", ...}` before the control connection is closed
 - **AND** `state_freshness_e2e_test.exs` under `FLEZHA_E2E_RUNTIME=elixir` SHALL see `Overwatch.state.snapshot` populated within its window
 
 #### Scenario: A stopping runner does not re-register
@@ -179,8 +179,8 @@ The SDK SHALL wait at most 2 s per operator for the ack (with parallelism across
 - **THEN** the runner SHALL open no new control connection: a stopping runner that re-registered would be handed work it will never do
 
 #### Scenario: SDK exits after ack timeout if agent is unresponsive
-- **GIVEN** a runner running operator `p1` and the agent process is in the middle of crashing
-- **WHEN** the runner receives SIGTERM and emits `RunnerShutdownNotification{operator_id: "p1", ...}`
+- **GIVEN** a runner running relay `p1` and the agent process is in the middle of crashing
+- **WHEN** the runner receives SIGTERM and emits `RunnerShutdownNotification{relay_id: "p1", ...}`
 - **AND** no `RunnerShutdownAck` arrives within 2 s
 - **THEN** the runner SHALL log "RunnerShutdownAck timeout for p1" and SHALL proceed to exit
 - **AND** the runner SHALL NOT block its container's shutdown grace period waiting for the ack
@@ -195,33 +195,33 @@ The SDK SHALL wait at most 2 s per operator for the ack (with parallelism across
 #### Scenario: Older SDK with no graceful-shutdown handler still works (back-compat)
 - **GIVEN** a runner running an SDK build that does not implement the graceful-shutdown handler
 - **WHEN** the runner process exits
-- **THEN** the agent's `Overwatch` snapshot for each of the runner's operators SHALL still hold the most recent periodic-snapshot binary (today's behaviour)
-- **AND** the AddOperator reissue path SHALL still ship that snapshot to a reconnecting runner — just up to `overwatch_state_snapshot_interval_ms` stale, exactly as `heal-connections-on-restart` ships
+- **THEN** the agent's `Overwatch` snapshot for each of the runner's relays SHALL still hold the most recent periodic-snapshot binary (today's behaviour)
+- **AND** the AddRelay reissue path SHALL still ship that snapshot to a reconnecting runner — just up to `overwatch_state_snapshot_interval_ms` stale, exactly as `heal-connections-on-restart` ships
 
 #### Scenario: Disabled-snapshot runners still benefit from the shutdown notification
-- **GIVEN** a runner's operator is configured with `snapshot_interval: 0` (periodic snapshots disabled — e.g. flezha_market where Postgres is authoritative)
-- **WHEN** the runner shuts down gracefully and emits `RunnerShutdownNotification` for the operator
+- **GIVEN** a runner's relay is configured with `snapshot_interval: 0` (periodic snapshots disabled — e.g. flezha_market where Postgres is authoritative)
+- **WHEN** the runner shuts down gracefully and emits `RunnerShutdownNotification` for the relay
 - **THEN** the agent's `Overwatch` SHALL still accept the notification and store the binary in `state.snapshot`
-- **AND** the snapshot SHALL be available for the next AddOperator reissue, even though no periodic snapshots were ever taken
+- **AND** the snapshot SHALL be available for the next AddRelay reissue, even though no periodic snapshots were ever taken
 
-#### Scenario: Notification arrives for an operator whose Overwatch has already migrated away
-- **GIVEN** operator `p1`'s `Overwatch` was on this agent but ProcessHub migrated `p1` to a peer agent moments before the runner's shutdown notification arrives
-- **WHEN** the agent receives `RunnerShutdownNotification{operator_id: "p1", ...}`
+#### Scenario: Notification arrives for a relay whose Overwatch has already migrated away
+- **GIVEN** relay `p1`'s `Overwatch` was on this agent but ProcessHub migrated `p1` to a peer agent moments before the runner's shutdown notification arrives
+- **WHEN** the agent receives `RunnerShutdownNotification{relay_id: "p1", ...}`
 - **AND** `Identificator.overwatch("p1")` resolves to `:undefined`
-- **THEN** the agent SHALL log a warning naming `p1` and SHALL still emit `RunnerShutdownAck{operator_id: "p1"}` so the SDK can proceed to exit
+- **THEN** the agent SHALL log a warning naming `p1` and SHALL still emit `RunnerShutdownAck{relay_id: "p1"}` so the SDK can proceed to exit
 - **AND** the destination agent's Overwatch already received the latest state via HotSwap handover, so no functional loss
 
-#### Scenario: A notification for another runner's operator is acked and applied to nothing
-- **GIVEN** operator `p1` bound to runner A's stable identity and a second session B in the namespace
-- **WHEN** B emits `RunnerShutdownNotification{operator_id: "p1", serialized_state: S_b}`
-- **THEN** `p1`'s `Overwatch` SHALL keep the snapshot it held, the refusal SHALL be counted and reported naming B, A and `p1`, and B SHALL still receive `RunnerShutdownAck{operator_id: "p1"}`
+#### Scenario: A notification for another runner's relay is acked and applied to nothing
+- **GIVEN** relay `p1` bound to runner A's stable identity and a second session B in the namespace
+- **WHEN** B emits `RunnerShutdownNotification{relay_id: "p1", serialized_state: S_b}`
+- **THEN** `p1`'s `Overwatch` SHALL keep the snapshot it held, the refusal SHALL be counted and reported naming B, A and `p1`, and B SHALL still receive `RunnerShutdownAck{relay_id: "p1"}`
 
 ### Requirement: A dev-compose integration test SHALL exercise both restart paths end to end
 
 The repository SHALL include an integration test that uses `docker/dev/docker-compose.yml` (extended with the `rust` runner service that is currently commented out) to exercise the agent-restart and runner-restart healing paths end-to-end. The test MUST use the existing dev compose stack and SHALL NOT introduce new Docker contexts or `docker run` invocations.
 
 #### Scenario: Agent-restart path
-- **GIVEN** the dev compose stack is up with one agent, one Rust runner, and one operator producing data to a Kafka topic
+- **GIVEN** the dev compose stack is up with one agent, one Rust runner, and one relay producing data to a Kafka topic
 - **WHEN** the test runs `docker compose restart agent` and waits for agent ready
 - **THEN** within 5 s of agent ready, the Kafka topic's `LOG-END-OFFSET` SHALL have advanced past its pre-restart value
 - **AND** the test SHALL NOT have restarted the runner container or issued any explicit re-assignment
@@ -246,7 +246,7 @@ The repository SHALL include a unit test that loads `kubernetes/flezha-daemonset
 
 After the Rust SDK opens a control channel and writes its `connect_control_channel` init frame, it SHALL require the controller to send at least one frame (the assign-runner-id command issued by `FleetManager.runner_connect/3`) within a bounded window. The window SHALL default to 10 s and be overridable via `FLEZHA_CONTROL_ACK_TIMEOUT_MS`. If no frame arrives within the window, the SDK SHALL treat the connection as a non-servicing controller, post `RunnerMessage::Reconnect`, and drive the existing reconnect loop. Once the first frame arrives the SDK SHALL clear the read deadline and read indefinitely (steady state is unchanged).
 
-This closes the warm-restart hang where the SDK connects to a Controller that accepts the socket but never completes registration — a Controller mid-shutdown (quiesce rejects the connect via `{:error, :shutting_down}` without closing the stream) or a Controller process being replaced during a rolling restart. Without the bound the control reader blocks forever, the runner never reaches the live Controller, and no operator is re-registered (`start_hub` is never called).
+This closes the warm-restart hang where the SDK connects to a Controller that accepts the socket but never completes registration — a Controller mid-shutdown (quiesce rejects the connect via `{:error, :shutting_down}` without closing the stream) or a Controller process being replaced during a rolling restart. Without the bound the control reader blocks forever, the runner never reaches the live Controller, and no relay is re-registered (`start_hub` is never called).
 
 The SDK's `connect_control_channel` init write SHALL NOT panic the reader thread on failure: a write error (peer vanished between connect and write) SHALL post `RunnerMessage::Reconnect` and return, not `.unwrap()`.
 
@@ -262,32 +262,32 @@ The SDK's `connect_control_channel` init write SHALL NOT panic the reader thread
 - **THEN** the SDK SHALL clear the read timeout and read subsequent frames with no deadline
 - **AND** steady-state disconnect detection (EOF → reconnect) SHALL be unchanged
 
-### Requirement: Controller-side cold-restart operator startup SHALL self-heal via an end-to-end ping before `:start_operator`
+### Requirement: Controller-side cold-restart relay startup SHALL self-heal via an end-to-end ping before `:start_relay`
 
-When the Controller restarts and `Flezha.Operator.Overwatch` GenServers come up from durable registry replay, each Overwatch SHALL probe the resolved Runner's end-to-end control-channel health via a `:ping_runner` round-trip BEFORE issuing `{:start_operator, …}` to the Runner's `ControlUnit`. The ping SHALL traverse the same `ControlChannel → SDK → ControlChannel` path that `AddOperator` uses, so a successful round-trip proves the channel is bound, the SDK is listening, and the reply path is intact.
+When the Controller restarts and `Flezha.Relay.Overwatch` GenServers come up from durable registry replay, each Overwatch SHALL probe the resolved Runner's end-to-end control-channel health via a `:ping_runner` round-trip BEFORE issuing `{:start_relay, …}` to the Runner's `ControlUnit`. The ping SHALL traverse the same `ControlChannel → SDK → ControlChannel` path that `AddRelay` uses, so a successful round-trip proves the channel is bound, the SDK is listening, and the reply path is intact.
 
-The ping SHALL use a default 2 s timeout (configurable via `:overwatch_ping_timeout_ms`, env `FLEZHA_OVERWATCH_PING_TIMEOUT_MS`). On `:pong` the Overwatch SHALL proceed to `start_operator_sdk/2`. On a ping error the Overwatch SHALL NOT reset the channel itself: the attempt parks the operator with the ping's reason and the park is declared, and the convergence loop plans the primitive `reset_control_channel` (`Flezha.Runner.FleetManager.reset_control_channel/1`, clearing the `ControlChannel`'s `stream_ref` so the SDK's next data stream can claim it via the existing rebind path) — before the rebind when the reason reports a dead transport, and only once the parked key has walked two rungs when the ping merely timed out, because the channel is live and carries every other instance bound to that runner, and a busy runner is retried, not cut. The control-channel reader SHALL NOT perform disk I/O, so a commit storm on a runner cannot by itself push its ping past the timeout.
+The ping SHALL use a default 2 s timeout (configurable via `:overwatch_ping_timeout_ms`, env `FLEZHA_OVERWATCH_PING_TIMEOUT_MS`). On `:pong` the Overwatch SHALL proceed to `start_relay_sdk/2`. On a ping error the Overwatch SHALL NOT reset the channel itself: the attempt parks the relay with the ping's reason and the park is declared, and the convergence loop plans the primitive `reset_control_channel` (`Flezha.Runner.FleetManager.reset_control_channel/1`, clearing the `ControlChannel`'s `stream_ref` so the SDK's next data stream can claim it via the existing rebind path) — before the rebind when the reason reports a dead transport, and only once the parked key has walked two rungs when the ping merely timed out, because the channel is live and carries every other instance bound to that runner, and a busy runner is retried, not cut. The control-channel reader SHALL NOT perform disk I/O, so a commit storm on a runner cannot by itself push its ping past the timeout.
 
 The `:ping_runner` command and its `PingResponse` SHALL be carried by the existing `CommandRequest` / `CommandResponse` envelopes on the `"control_command"` payload_id; SDKs without the handler SHALL log and ignore (existing Protox unknown-field behaviour).
 
-#### Scenario: Healthy runner responds to ping and `:start_operator` proceeds
-- **GIVEN** an operator `r1` whose Overwatch has just resolved live runner `e1`
+#### Scenario: Healthy runner responds to ping and `:start_relay` proceeds
+- **GIVEN** a relay `r1` whose Overwatch has just resolved live runner `e1`
 - **AND** `e1`'s control channel is bound and its SDK is listening
 - **WHEN** the Overwatch issues `Flezha.Runner.ControlUnit.ping_runner("e1", timeout_ms: 2_000)`
 - **THEN** the call SHALL return `{:ok, :pong}` within 2 s
-- **AND** the Overwatch SHALL invoke `start_operator_sdk("e1", r1)` immediately afterwards
+- **AND** the Overwatch SHALL invoke `start_relay_sdk("e1", r1)` immediately afterwards
 - **AND** `reset_control_channel/1` SHALL NOT be invoked
 
 #### Scenario: Stale control channel fails the ping, and the loop resets the channel
-- **GIVEN** an operator `r1` whose Overwatch has just resolved runner `e1`
-- **AND** `e1`'s `ControlChannel` GenServer is registered but its `stream_ref` points to a closed/stale transport (the SDK has reconnected since the last `AddOperator`)
+- **GIVEN** a relay `r1` whose Overwatch has just resolved runner `e1`
+- **AND** `e1`'s `ControlChannel` GenServer is registered but its `stream_ref` points to a closed/stale transport (the SDK has reconnected since the last `AddRelay`)
 - **WHEN** the Overwatch issues `ping_runner("e1", timeout_ms: 2_000)` and it fails reporting a dead transport
-- **THEN** the Overwatch SHALL NOT issue `start_operator_sdk/2`, SHALL park `r1` with that reason and declare the park
-- **AND** the loop's declaring tick SHALL plan `reset_control_channel` for `e1` — which sets the channel's `stream_ref` to `nil` — before `rebind_operator` for `r1`
+- **THEN** the Overwatch SHALL NOT issue `start_relay_sdk/2`, SHALL park `r1` with that reason and declare the park
+- **AND** the loop's declaring tick SHALL plan `reset_control_channel` for `e1` — which sets the channel's `stream_ref` to `nil` — before `rebind_relay` for `r1`
 
 #### Scenario: A busy runner's timed-out ping does not cut the live channel
 - **GIVEN** runner `e1` is bound to a hundred instances and its control channel is saturated by their starts
-- **WHEN** one Overwatch's ping returns `{:error, :timeout}` and its operator parks
+- **WHEN** one Overwatch's ping returns `{:error, :timeout}` and its relay parks
 - **THEN** `reset_control_channel("e1")` SHALL NOT be planned at the declaring tick nor at the next rung, and no other instance on `e1` SHALL have seen `{:error, :no_connection_available}`; only a parked key that has walked two rungs plans it
 
 ### Requirement: Control-channel liveness SHALL be implemented once in shared `flz_transport` and serve both SDKs
@@ -434,7 +434,7 @@ the reconnect path. This is the Java parity of the Rust "runtime threads SHALL N
 on any control-socket transport-edge event" requirement.
 
 #### Scenario: Controller closes the Java SDK control socket cleanly
-- **GIVEN** a Java runner with operators streaming
+- **GIVEN** a Java runner with relays streaming
 - **WHEN** the controller process restarts (clean close on the control socket)
 - **THEN** the Java runner process SHALL stay alive and reconnect
 - **AND** no reader/runtime thread SHALL die unrecoverably
@@ -452,12 +452,12 @@ The guard protects a runner that is merely *observed* healthy against a stale sn
 #### Scenario: a reconnected runner survives a stale eviction
 - **GIVEN** the Diff snapshot queued `default_X` for eviction but `default_X` reconnected before the heal ran
 - **WHEN** `evict_runner(default_X)` executes with no proved-wedge reason
-- **THEN** FleetManager observes `default_X` is `:active` and performs no eviction, leaving its operators producing.
+- **THEN** FleetManager observes `default_X` is `:active` and performs no eviction, leaving its relays producing.
 
 #### Scenario: a classifier-proved wedged runner is evicted while connected
 - **GIVEN** `default_X` is in the live active set and heartbeating, and the classifier reported `runner_pool_wedged` for it
 - **WHEN** `evict_runner(default_X, proved_wedged: true)` executes
-- **THEN** FleetManager evicts it despite the open connection, and its operators rebind onto a live runner.
+- **THEN** FleetManager evicts it despite the open connection, and its relays rebind onto a live runner.
 
 ### Requirement: Runner liveness is session liveness, derived from one signal
 
@@ -511,26 +511,26 @@ QUIC SHALL enforce the same window via an explicit `max_idle_timeout` (no longer
 
 ### Requirement: Controller resolves a reconnect by swapping the binding, not minting-and-evicting
 
-On any runner reconnect the controller SHALL resolve identity by the runner's presented **stable identity** (see capability `runner-identity-and-session`) and SHALL NOT mint a fresh durable id nor perform an unconditional `previous_runner_id` pre-eviction. What it does with the identity's existing operator bindings SHALL follow the incarnation the connect presents. The held incarnation is the same process: the controller SHALL re-point the bindings at the new session, each Overwatch publishing its own tag and route, and SHALL send the process nothing for an operator it still runs. A different incarnation, or none, is a new process: the controller SHALL bind each operator onto the new session through the one bind path, `Lifecycle.complete_init/4` in the Overwatch's supervised bind task, which sends `AddOperator` with the operator's resume state, restores its persisted Cells and delivers its undelivered inbox tail; an Overwatch with a bind task already in flight SHALL leave it to finish or park. On disconnect, each operator's stale stream mapping SHALL be cleared (`HubManager.hook_remove_pid/2`) so the reconnecting session's fresh streams bind cleanly to nil-ref `StreamChannel`s.
+On any runner reconnect the controller SHALL resolve identity by the runner's presented **stable identity** (see capability `runner-identity-and-session`) and SHALL NOT mint a fresh durable id nor perform an unconditional `previous_runner_id` pre-eviction. What it does with the identity's existing relay bindings SHALL follow the incarnation the connect presents. The held incarnation is the same process: the controller SHALL re-point the bindings at the new session, each Overwatch publishing its own tag and route, and SHALL send the process nothing for a relay it still runs. A different incarnation, or none, is a new process: the controller SHALL bind each relay onto the new session through the one bind path, `Lifecycle.complete_init/4` in the Overwatch's supervised bind task, which sends `AddRelay` with the relay's resume state, restores its persisted Cells and delivers its undelivered inbox tail; an Overwatch with a bind task already in flight SHALL leave it to finish or park. On disconnect, each relay's stale stream mapping SHALL be cleared (`HubManager.hook_remove_pid/2`) so the reconnecting session's fresh streams bind cleanly to nil-ref `StreamChannel`s.
 
 #### Scenario: fresh-process restart preserves bindings without a pre-evict
 
-- **GIVEN** a runner with operators `[r1, r2]` whose process restarts and reconnects within the keepalive window, presenting the same persisted stable identity and a new incarnation
+- **GIVEN** a runner with relays `[r1, r2]` whose process restarts and reconnects within the keepalive window, presenting the same persisted stable identity and a new incarnation
 - **WHEN** the controller handles the connect
-- **THEN** it SHALL bind `r1` and `r2` onto the new session token through the one bind path, each with one `AddOperator` carrying its resume state
+- **THEN** it SHALL bind `r1` and `r2` onto the new session token through the one bind path, each with one `AddRelay` carrying its resume state
 - **AND** it SHALL NOT mint a new durable identity nor issue an unconditional eviction of a "previous" id
 
-#### Scenario: in-process reconnect actually re-binds operators
+#### Scenario: in-process reconnect actually re-binds relays
 
-- **GIVEN** a runner whose control stream dropped but whose process survived, holding operators `[r1]`
+- **GIVEN** a runner whose control stream dropped but whose process survived, holding relays `[r1]`
 - **WHEN** it reconnects presenting the same stable identity and the same incarnation
-- **THEN** the controller SHALL re-point `r1` onto the new session, `r1`'s Overwatch SHALL publish its tag and route on it, and the process SHALL receive no `AddOperator`, `RestoreInitState` or inbox tail for `r1`
+- **THEN** the controller SHALL re-point `r1` onto the new session, `r1`'s Overwatch SHALL publish its tag and route on it, and the process SHALL receive no `AddRelay`, `RestoreInitState` or inbox tail for `r1`
 
 #### Scenario: a connect with a stable identity and no incarnation is a new process
 
 - **GIVEN** stable identity `S` held by a live session
 - **WHEN** a connect presents `S` and no incarnation
-- **THEN** the controller SHALL handle it as a restarted process and bind `S`'s operators onto the new session through the one bind path
+- **THEN** the controller SHALL handle it as a restarted process and bind `S`'s relays onto the new session through the one bind path
 
 ### Requirement: A runner resolves its UDS socket directory from an ordered ladder
 
@@ -607,7 +607,7 @@ process lifetime and SHALL NOT be persisted across a runner restart.
 
 Reconnecting to the controller that already holds a runner's bindings is a binding swap; a
 reconnect elsewhere is a fresh connect that leaves the previous controller to heal that runner's
-operators independently.
+relays independently.
 
 #### Scenario: A reconnect returns to the same controller
 - **WHEN** a runner connected through one of several candidates loses its connection and the same controller is reachable again
@@ -679,12 +679,12 @@ An SDK that is its own core (the Elixir SDK) SHALL bound the same wait by its ow
 - **GIVEN** a runner one of whose Cells is inside an activation that never returns
 - **WHEN** the controller orders a terminal disconnect
 - **THEN** the runner SHALL acknowledge, ship the state of every other Cell, log the busy Cell as omitted, and exit with a non-zero status within the bound plus the ack wait
-- **AND** its session SHALL close and its operators SHALL be rerouted by the existing disconnect path
+- **AND** its session SHALL close and its relays SHALL be rerouted by the existing disconnect path
 
 #### Scenario: The omitted Cell's state is at most one activation stale
 - **GIVEN** the busy Cell's last completed activation left state `S`
 - **WHEN** the notification ships without it
-- **THEN** the controller's snapshot for that operator SHALL hold `S` from the periodic snapshot or the WAL, exactly as it would after a crash, and nothing newer existed to ship
+- **THEN** the controller's snapshot for that relay SHALL hold `S` from the periodic snapshot or the WAL, exactly as it would after a crash, and nothing newer existed to ship
 
 #### Scenario: A live read of a wedged Cell is refused, not held
 - **WHEN** a live state read names a Cell inside an activation older than the bound
@@ -748,17 +748,17 @@ component SHALL spell the control socket's filename itself.
 
 ### Requirement: A bind is one attempt, and its failure is a park the loop is told about
 
-`Flezha.Operator.Overwatch` SHALL, before issuing `:start_operator`, gate on an active runner being reachable: `await_active_runner/3` polls `OperatorManager.assign_runner/2` and confirms readiness (`runner_ready?/1` — the CU is registered AND, when `:overwatch_ping_enabled`, an end-to-end ping returns pong) within a bounded window. Once a runner is confirmed ready the Overwatch SHALL make ONE `:start_operator` attempt; a failure parks the operator with `init_error` (alive, plugins prepared, no upstream I/O) carrying the attempt's reason, and the park is declared to the convergence loop, which drives the un-park `rebind_operator` on the `{:parked, operator_id}` key of its own table — eligible at the declaring tick, then on the `:heal` row's rungs, which "Steps calls and backoff prevent heal-induced churn" states and this requirement does not restate. The Overwatch SHALL hold no retry list, no jitter and no per-attempt runner re-resolution; a runner connecting in the namespace releases the cooldown keys of the operators it can serve instead, the park's among them. The un-park `:runner_migrate` SHALL run in a supervised task so `:stop_operator` stays responsive, and the task SHALL report its outcome and decide nothing.
+`Flezha.Relay.Overwatch` SHALL, before issuing `:start_relay`, gate on an active runner being reachable: `await_active_runner/3` polls `RelayManager.assign_runner/2` and confirms readiness (`runner_ready?/1` — the CU is registered AND, when `:overwatch_ping_enabled`, an end-to-end ping returns pong) within a bounded window. Once a runner is confirmed ready the Overwatch SHALL make ONE `:start_relay` attempt; a failure parks the relay with `init_error` (alive, plugins prepared, no upstream I/O) carrying the attempt's reason, and the park is declared to the convergence loop, which drives the un-park `rebind_relay` on the `{:parked, relay_id}` key of its own table — eligible at the declaring tick, then on the `:heal` row's rungs, which "Steps calls and backoff prevent heal-induced churn" states and this requirement does not restate. The Overwatch SHALL hold no retry list, no jitter and no per-attempt runner re-resolution; a runner connecting in the namespace releases the cooldown keys of the relays it can serve instead, the park's among them. The un-park `:runner_migrate` SHALL run in a supervised task so `:stop_relay` stays responsive, and the task SHALL report its outcome and decide nothing.
 
 #### Scenario: start gates on runner readiness before its one attempt
-- **GIVEN** an operator is (re)starting and no runner for its factory is reachable yet
+- **GIVEN** a relay is (re)starting and no runner for its factory is reachable yet
 - **WHEN** Overwatch runs `await_active_runner/3`
-- **THEN** it waits for a ready runner before issuing `:start_operator`, and if none becomes ready within the window it parks rather than pinging a dead binding, and the park is declared.
+- **THEN** it waits for a ready runner before issuing `:start_relay`, and if none becomes ready within the window it parks rather than pinging a dead binding, and the park is declared.
 
 #### Scenario: a failed attempt is not retried in place
-- **GIVEN** an operator whose one `:start_operator` attempt fails
+- **GIVEN** a relay whose one `:start_relay` attempt fails
 - **WHEN** the Overwatch handles the failure
-- **THEN** it SHALL park at once with the reason, declare `{:operator_parked, ns, id, reason}`, and issue no second attempt of its own; the next attempt SHALL be the loop's `rebind_operator`
+- **THEN** it SHALL park at once with the reason, declare `{:relay_parked, ns, id, reason}`, and issue no second attempt of its own; the next attempt SHALL be the loop's `rebind_relay`
 
 ### Requirement: The runner's verdict record SHALL carry the control silence and the data silence as two facts
 
@@ -774,7 +774,7 @@ The convergence loop SHALL publish one verdict record per connected runner whose
 
 - **GIVEN** a runner whose control session the watchdog closed after the liveness window
 - **WHEN** the convergence loop ticks
-- **THEN** the runner's record SHALL be `failed`, every operator bound to it SHALL be `failed` with reason `dead_runner`, and the loop's remedy SHALL be the existing rebind
+- **THEN** the runner's record SHALL be `failed`, every relay bound to it SHALL be `failed` with reason `dead_runner`, and the loop's remedy SHALL be the existing rebind
 
 #### Scenario: a live runner whose namespace hub is not running is unknown, not dead
 
@@ -793,7 +793,7 @@ The convergence loop SHALL publish one verdict record per connected runner whose
 A refused `RunnerShutdownNotification` SHALL be treated as the durable frame it
 is: when its write to the control channel is refused it SHALL be held for replay
 on the next bound stream, and counted if it is shed, rather than reported to
-standard error or a log line and lost. The frame carries the operator's final state, which is the
+standard error or a log line and lost. The frame carries the relay's final state, which is the
 whole reason reconnect-resume is loss-free; a runner that prints the failure and
 exits leaves the agent holding a snapshot as stale as the last periodic one,
 which is the outcome the shutdown ship exists to prevent.
@@ -868,7 +868,7 @@ reply nobody is waiting on.
 
 A handover the runner refuses SHALL end the control session rather than leave the runner
 admitted with no data plane. Ending the session is what makes the failure self-clearing:
-the controller reclaims the runner's operators and places them somewhere that works.
+the controller reclaims the runner's relays and places them somewhere that works.
 
 The decision SHALL NOT be held inside a node-wide process. `FleetManager` serves every
 namespace on the node, and the in-node (`:native`) transport runs the connect from inside
@@ -879,7 +879,7 @@ an untrusted peer.
 #### Scenario: A refused socket connect fails the handshake
 - **GIVEN** a runner that answers `ConnectSocket` with an error
 - **WHEN** the controller resolves that answer
-- **THEN** the session SHALL NOT be recorded as connected, the control session SHALL end, and the runner's operators SHALL be reclaimed for placement
+- **THEN** the session SHALL NOT be recorded as connected, the control session SHALL end, and the runner's relays SHALL be reclaimed for placement
 
 #### Scenario: An accepted socket connect completes the handshake
 - **GIVEN** a runner that answers `ConnectSocket` successfully
@@ -899,7 +899,7 @@ QUIC handler already takes, so that a refusal has somewhere to go instead of unw
 coordinator thread that owns the control stream.
 
 The refusal SHALL be paired with the controller ending the session, because the thread
-death it replaces was self-clearing: the stream closed and the runner's operators were
+death it replaces was self-clearing: the stream closed and the runner's relays were
 reclaimed. A refusal that leaves the session alive and the runner unplaceable is worse than
 the panic it replaces, so it SHALL NOT be introduced on its own.
 
@@ -959,7 +959,7 @@ as the backstop.
 #### Scenario: A repair that cannot complete ends the session
 - **GIVEN** a controller that cannot bind the runner's data streams
 - **WHEN** the rebind is refused three times in one session
-- **THEN** the control session SHALL end, so the runner reconnects and its operators are reclaimed and placed elsewhere
+- **THEN** the control session SHALL end, so the runner reconnects and its relays are reclaimed and placed elsewhere
 
 ### Requirement: A disconnect SHALL tear down the session's tree whatever the roster holds
 
@@ -975,7 +975,7 @@ no-op rather than an error.
 #### Scenario: A disconnect for an unkeyed namespace still tears down
 - **GIVEN** a runner whose namespace the roster no longer keys
 - **WHEN** its control session disconnects
-- **THEN** its operators SHALL be detached and its supervision tree SHALL be stopped
+- **THEN** its relays SHALL be detached and its supervision tree SHALL be stopped
 
 #### Scenario: A repeated disconnect changes nothing
 - **GIVEN** a runner whose tree has already been stopped by a disconnect

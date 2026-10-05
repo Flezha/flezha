@@ -74,7 +74,7 @@ that has them downloads nothing.
 ## Authoring
 
 ```php
-use Flezha\Attribute\Operator;
+use Flezha\Attribute\Relay;
 use Flezha\Attribute\Task;
 use Flezha\Ctx;
 use Flezha\Flezha;
@@ -122,8 +122,8 @@ final class Session extends Tasklet
     }
 }
 
-#[Operator(factoryId: 'sessions')]
-final class SessionOperator extends \Flezha\Operator
+#[Relay(factoryId: 'sessions')]
+final class SessionRelay extends \Flezha\Relay
 {
     public static function channels(Builder $c): void
     {
@@ -134,7 +134,7 @@ final class SessionOperator extends \Flezha\Operator
     }
 }
 
-Flezha::createRunner('default')->registerFactory(SessionOperator::class)->run();
+Flezha::createRunner('default')->registerFactory(SessionRelay::class)->run();
 ```
 
 That is `examples/E04_SessionTimeout.php`. A tasklet is a class extending
@@ -156,8 +156,8 @@ implementation therefore cannot disagree.
 - **`$ctx->part($value)` previews the output while `run` is still working.**
   It sends `$value` on the tasklet's own output channel, encoded as
   `$ctx->emit($value)` would encode it, and returns without waiting. It works
-  in `run` and `onTimer`, in a flow operator and in a steps operator's
-  stage. The operator's listeners receive the parts before the output; a sink
+  in `run` and `onTimer`, in a flow relay and in a steps relay's
+  stage. The relay's listeners receive the parts before the output; a sink
   never does, and a part is never durable or replayed. Parts are numbered from
   0 within each attempt, so a retry starts its preview again. A part that
   cannot leave at once, such as in a local run, is dropped. A channel that
@@ -190,17 +190,17 @@ the Rust builder's compile-time refusals.
 
 ### Class settings
 
-`#[Operator]` takes the class settings beside the factory id, each written as
+`#[Relay]` takes the class settings beside the factory id, each written as
 the settings tree's own data, with the branch as an array's one key:
 
 ```php
-#[Operator(
+#[Relay(
     factoryId: 'orders',
     run: ['steps' => ['each' => 'per_input', 'on_failure' => 'keep_progress']],
     durable: ['local' => ['sleep_after' => 10_000]],
     maxDurationMs: 600_000,
 )]
-final class Orders extends \Flezha\Operator
+final class Orders extends \Flezha\Relay
 ```
 
 - `run` is `'flow'` (the default) or `'steps'`, bare or with its members.
@@ -224,8 +224,8 @@ parent, and a value outside its choice is `topology.invalid_setting`. An
 attribute argument is a constant expression, so a tree the environment chooses
 is a constant the program defines before it registers the class.
 
-The attribute and the base share the name `Operator`: a file that imports
-`Flezha\Attribute\Operator` writes the base as `\Flezha\Operator`.
+The attribute and the base share the name `Relay`: a file that imports
+`Flezha\Attribute\Relay` writes the base as `\Flezha\Relay`.
 
 Retry is the edge's for both runs: `retryMax` and `retryBackoffMs` on the
 channel that feeds a tasklet, three attempts from a 50 ms base when neither is
@@ -238,14 +238,14 @@ only inside a `compensate` hook do `timerAfter`, `timerAtEventTime` and
 
 ### The short form
 
-An operator class that defines its one tasklet's `run` instead of
-`channels()` is a whole operator: one class, no tasklet class beside it.
-`#[Operator]` names the channels around that tasklet: `sink` is the plugin sink its output reaches, `input` the entry
+A relay class that defines its one tasklet's `run` instead of
+`channels()` is a whole relay: one class, no tasklet class beside it.
+`#[Relay]` names the channels around that tasklet: `sink` is the plugin sink its output reaches, `input` the entry
 channel, and `codec` the entry codec the builder's `input` takes.
 
 ```php
-#[Operator(factoryId: 'upcase', sink: 'out', codec: ChannelCodec::Text)]
-final class Upcase extends \Flezha\Operator
+#[Relay(factoryId: 'upcase', sink: 'out', codec: ChannelCodec::Text)]
+final class Upcase extends \Flezha\Relay
 {
     public function run(mixed $input, Ctx $ctx): void
     {
@@ -253,8 +253,8 @@ final class Upcase extends \Flezha\Operator
     }
 }
 
-#[Operator(factoryId: 'place', run: 'steps', sink: 'placed', input: 'order', codec: ChannelCodec::Text)]
-final class Place extends \Flezha\Operator
+#[Relay(factoryId: 'place', run: 'steps', sink: 'placed', input: 'order', codec: ChannelCodec::Text)]
+final class Place extends \Flezha\Relay
 {
     public function run(mixed $input, Ctx $ctx): void
     {
@@ -268,7 +268,7 @@ Flezha::createRunner('default')
     ->run();
 ```
 
-The generated operator is the one you would have written by hand with that
+The generated relay is the one you would have written by hand with that
 single tasklet: an entry channel named `input` (or the `input` argument's
 value) decoded by `codec`, the tasklet, a plugin sink named by `sink`, a
 factory id equal to `factoryId`, and the class settings it writes, as the
@@ -276,20 +276,20 @@ full form takes them.
 The tasklet is named `factoryId` verbatim, so the full form that wires a
 tasklet of that name keeps every cell where it was. It runs the class's
 `run` and takes whichever hooks the class defines (`initState`, `applyChange`, ...),
-and a `#[Task]` on the class carries its settings, all but `name`. A steps operator
-short form is a `once` steps operator, run once over its first message:
-`flz operator start --text '<payload>'`, or a start followed by
-`flz operator send`; a second message to a `once` instance is accepted and
+and a `#[Task]` on the class carries its settings, all but `name`. A steps relay
+short form is a `once` steps relay, run once over its first message:
+`flz relay start --text '<payload>'`, or a start followed by
+`flz relay send`; a second message to a `once` instance is accepted and
 never read. With `each` written it loops, still one class:
 
 ```php
-#[Operator(
+#[Relay(
     factoryId: 'chat',
     run: ['steps' => ['each' => 'per_input']],
     sink: 'replies',
     codec: ChannelCodec::Text,
 )]
-final class Chat extends \Flezha\Operator
+final class Chat extends \Flezha\Relay
 {
     public function run(mixed $input, Ctx $ctx): void
     {
@@ -298,13 +298,13 @@ final class Chat extends \Flezha\Operator
 }
 ```
 
-`sink` is optional. Without one, the operator declares its entry channel into
-the tasklet and no plugin channel, which is all an operator that only keeps
+`sink` is optional. Without one, the relay declares its entry channel into
+the tasklet and no plugin channel, which is all a relay that only keeps
 state needs:
 
 ```php
-#[Operator(factoryId: 'counter', input: 'ticks', codec: ChannelCodec::Text)]
-final class Counter extends \Flezha\Operator
+#[Relay(factoryId: 'counter', input: 'ticks', codec: ChannelCodec::Text)]
+final class Counter extends \Flezha\Relay
 {
     public function initState(?string $cellKey): mixed
     {
@@ -327,19 +327,19 @@ Anything more is the full form: a second tasklet, a fan-out, a merge, a keyed
 edge or a retry ladder.
 
 The factory id is always written: it is an address a user types, and a
-class rename must not move it, so a class with no `#[Operator]` is refused as
-any operator is. `registerFactory`, where this SDK places every refusal,
+class rename must not move it, so a class with no `#[Relay]` is refused as
+any relay is. `registerFactory`, where this SDK places every refusal,
 refuses a class defining both `run` and `channels()` naming
 `topology.short_form_with_topology`, and one defining neither naming both. A second
-operator, flow or steps, under a factory id the runner holds is refused naming
+relay, flow or steps, under a factory id the runner holds is refused naming
 `topology.duplicate_factory_id`. `#[Task]` takes no `run`, `durable`, `sink`, `input` or `codec`,
-and a tasklet carrying one is refused naming `#[Operator]`. `#[Task]` on a
+and a tasklet carrying one is refused naming `#[Relay]`. `#[Task]` on a
 class defining `channels()` is refused too: a full form's tasklet settings go
 on its tasklet classes. A hook a short form defines is held to the signature
 `Tasklet` gives it, and one PHP would refuse on a tasklet is refused naming
 the hook. There is no
 `topology.sink_without_output`: `run` is declared `: void` on both `Tasklet` and
-`Operator`, a value leaves only through `$ctx->emit()`, and no body declares
+`Relay`, a value leaves only through `$ctx->emit()`, and no body declares
 an output type, so nothing in a class says whether it emits. The manifest
 leaves `shorthand_typed_output` off and the conformance row skips by name.
 
@@ -365,22 +365,22 @@ string is sent as it is and anything else as JSON. So a sink needs no codec for
 a string or a JSON value, and names one only to quote a string, with
 `ChannelCodec::Json`. A decoder or encoder callable takes the place of a codec
 for anything else, and a codec given beside a callable on one channel is refused
-when the operator is declared, naming the operator and the channel. PHP ships
+when the relay is declared, naming the relay and the channel. PHP ships
 no MessagePack library, so the enum has no MessagePack case.
 
 `->response()` ends a channel on the answer to an outside call instead of a
 sink, and takes the sink's arguments, `?callable $encode` and
-`?ChannelCodec $codec`: [`../topics/advanced/operator_calls.md`](../topics/advanced/operator_calls.md). `->call(target: 'pricing', deadlineMs: 500)`
+`?ChannelCodec $codec`: [`../topics/advanced/relay_calls.md`](../topics/advanced/relay_calls.md). `->call(target: 'pricing', deadlineMs: 500)`
 or `->call(factory: 'agent', deadlineMs: ..., create: false, codec: ...)` ends a chain on a
-call to another operator and answers an edge of readonly `Flezha\Response` values:
-[`../topics/advanced/operator_calls.md`](../topics/advanced/operator_calls.md).
+call to another relay and answers an edge of readonly `Flezha\Response` values:
+[`../topics/advanced/relay_calls.md`](../topics/advanced/relay_calls.md).
 
 A JSON integer outside PHP's 64-bit range decodes as a `float`. `NAN`, `INF`, a
 string that is not valid UTF-8 or an object that is not `Codable` has no JSON
 form, and sending one to a sink that names no codec fails the emit naming the
 channel.
 
-A value passed between two tasklets of one operator never crosses a channel
+A value passed between two tasklets of one relay never crosses a channel
 codec: it stays JSON. An Elixir entry declared with no decoder hands its
 tasklet the binary instead, so the same bytes on an undeclared entry are an
 array here and a string there.
@@ -441,18 +441,18 @@ makes the mutate-only-through-changes rule safe. Put it in your suite.
 
 The SDK starts exactly one runner per process and never forks, spawns,
 supervises or recycles. **N processes are N runners**, which is what the
-controller's placement already spreads operators across, and it keeps this
+controller's placement already spreads relays across, and it keeps this
 layer agnostic between Kubernetes, systemd and a supervisor's own process
 management.
 
 ## Local mode: run a graph with no controller
 
-`LocalOperator::start` takes the operator class you deploy and runs its
+`LocalRelay::start` takes the relay class you deploy and runs its
 declared graph in this process — no controller, no socket, no local-mode member
 on the class:
 
 ```php
-$run = LocalOperator::start(WordCountOperator::class);
+$run = LocalRelay::start(WordCountRelay::class);
 
 try {
     $run->onSink('totals', static fn (SinkOutput $out) => print($out->payload . PHP_EOL));
@@ -596,11 +596,11 @@ non-thread-safe (NTS) build every distribution ships. A tasklet body that
 performs blocking I/O is *correct*, not degraded: the body runs, the activation
 completes, the next one is polled. Scale by replicas, and get per-process
 failure isolation — a dead process drops one runner and the controller
-re-places only its operators.
+re-places only its relays.
 
-**`SwooleExecutor`** — opt in when a *single* operator must exceed one core.
-An operator binds to exactly one runner, and an NTS PHP process runs one
-thread of PHP, so a few large CPU-bound operators cap at one core each; this
+**`SwooleExecutor`** — opt in when a *single* relay must exceed one core.
+A relay binds to exactly one runner, and an NTS PHP process runs one
+thread of PHP, so a few large CPU-bound relays cap at one core each; this
 is what lifts that. It needs:
 
 - a thread-safe (**ZTS**) PHP build,
@@ -626,19 +626,19 @@ say so.** Measured with `mix bench --runtime php`, arms interleaved on one
 
 | shape | `SyncExecutor` | `SwooleExecutor` | ratio |
 | --- | ---: | ---: | ---: |
-| 20 operators × 200 (`regression`) | 97,752 msg/s | 83,815 / 70,921 msg/s | **0.86 / 0.73** |
-| 1 operator × 6,000 (`dynamic`, 8 keys) | 32,026 msg/s | 35,143 msg/s | **1.10** |
+| 20 relays × 200 (`regression`) | 97,752 msg/s | 83,815 / 70,921 msg/s | **0.86 / 0.73** |
+| 1 relay × 6,000 (`dynamic`, 8 keys) | 32,026 msg/s | 35,143 msg/s | **1.10** |
 
-The many-operator shape is *slower* under threads, and correctly so: those
-operators already spread across runner processes, one loop keeps up, the pool
+The many-relay shape is *slower* under threads, and correctly so: those
+relays already spread across runner processes, one loop keeps up, the pool
 never starves and so never grows past one thread — leaving the supervisor's
-wait as pure overhead. The single-operator shape is where the pool has
+wait as pure overhead. The single-relay shape is where the pool has
 something to do, and it is the only one of the two that a `SyncExecutor` cannot
 scale by adding processes.
 
 Both numbers are bounded by a fixture whose body does almost no work, so they
 measure the *seam*, not the ceiling: the wider the tasklet body, the more of
-the host's cores a single operator can reach, which is the claim the executor
+the host's cores a single relay can reach, which is the claim the executor
 exists for. Take your own measurement with your own body before sizing on
 either row.
 
@@ -682,7 +682,7 @@ both rules against the parsed source rather than the prose.
 
 - **Under `SyncExecutor` one runner uses one core.** An NTS PHP process runs
   one thread of PHP code, so cores come from running more processes. That is
-  fine at the thousands-of-small-operators scale this targets, and it is
+  fine at the thousands-of-small-relays scale this targets, and it is
   exactly the ceiling `SwooleExecutor` removes for a few large CPU-bound ones.
 - **No event-loop executor**, in this change or a planned next one. Threads
   supersede one for the case that matters, and the seam takes a user-written
@@ -709,7 +709,7 @@ both rules against the parsed source rather than the prose.
 The manifest at `test/apps/php_runner/conformance.json` defers nothing: every
 capability is carried with the reference's fixtures, the persistence, schema
 evolution and effectively-once set in `test/apps/php_runner/fixtures_state.php`,
-the steps operator set in `fixtures_steps.php` and `fixtures_steps_loop.php`, and
+the steps relay set in `fixtures_steps.php` and `fixtures_steps_loop.php`, and
 the rest in `fixtures.php` and `fixtures_probe.php`.
 
 ## Diagnostics

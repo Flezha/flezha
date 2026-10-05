@@ -2,12 +2,12 @@
 
 ## Purpose
 
-The steps-task-journal capability is the controller-side durable task-progress store for durable structured steps operators: one append-only `task.journal` per instance on the shared WalWriter/FsyncBatcher substrate, recording each completed tasklet and its serialized inter-task handoff batch. At every tasklet barrier the SDK ships a `TaskCommit` control-channel request and blocks until the controller has fsynced the `task_committed` entry and replied — the durable point later changes gate staged output flushes and iteration commits on. On crash-resume the journal state rides the bind itself (`AddOperator.task_journal`) — it is instance-scoped, and a class with no per-Cell state receives no per-Cell restore at all — so committed tasklets are skipped (not redone) and the first uncommitted tasklet is re-seeded from the journaled handoff; compensation-in-flight resume takes precedence unchanged. Inter-tasklet channels of durable structured classes carry a symmetric byte codec so the handoff is journal-able; the journal shares the instance's file lifecycle (retention, delete, reset) and is inspectable via `flz state journal`. Classes kept in memory (`durable: false`) write no journal and keep the re-run-from-top contract.
+The steps-task-journal capability is the controller-side durable task-progress store for durable structured steps relays: one append-only `task.journal` per instance on the shared WalWriter/FsyncBatcher substrate, recording each completed tasklet and its serialized inter-task handoff batch. At every tasklet barrier the SDK ships a `TaskCommit` control-channel request and blocks until the controller has fsynced the `task_committed` entry and replied — the durable point later changes gate staged output flushes and iteration commits on. On crash-resume the journal state rides the bind itself (`AddRelay.task_journal`) — it is instance-scoped, and a class with no per-Cell state receives no per-Cell restore at all — so committed tasklets are skipped (not redone) and the first uncommitted tasklet is re-seeded from the journaled handoff; compensation-in-flight resume takes precedence unchanged. Inter-tasklet channels of durable structured classes carry a symmetric byte codec so the handoff is journal-able; the journal shares the instance's file lifecycle (retention, delete, reset) and is inspectable via `flz state journal`. Classes kept in memory (`durable: false`) write no journal and keep the re-run-from-top contract.
 ## Requirements
 ### Requirement: Each durable steps instance has an append-only task-journal on the shared state substrate
 
-The controller SHALL maintain one append-only task-journal file per durable steps operator
-operator instance at `app_data/state/{operator_class}/{instance_id}/task.journal`,
+The controller SHALL maintain one append-only task-journal file per durable steps relay
+relay instance at `app_data/state/{relay_class}/{instance_id}/task.journal`,
 written through the existing WalWriter framing and FsyncBatcher path (no parallel
 persistence machinery). Journal entries SHALL be typed, length-prefixed frames
 carrying `{seq, type, task_idx, iter, payload}`. The entry types SHALL be
@@ -22,7 +22,7 @@ torn trailing frame SHALL be truncated on open. An opted-out class
 
 #### Scenario: Journal file lives with the instance's state files
 
-- **WHEN** a durable structured steps operator commits its first tasklet
+- **WHEN** a durable structured steps relay commits its first tasklet
 - **THEN** `task.journal` SHALL exist in the instance's state directory alongside its cell WAL files, and its first decoded entry SHALL be `task_committed` for task index 0
 
 #### Scenario: A stage entry names its records, not their contents
@@ -42,8 +42,8 @@ torn trailing frame SHALL be truncated on open. An opted-out class
 
 ### Requirement: Task-boundary commit is a gated handshake
 
-The SDK SHALL send, at each tasklet barrier of a durable structured steps operator
-operator, a `TaskCommit` control-channel request carrying the tasklet index,
+The SDK SHALL send, at each tasklet barrier of a durable structured steps relay
+relay, a `TaskCommit` control-channel request carrying the tasklet index,
 the set of Cells that ran, each with the range of effect records it wrote in the stage and the
 plugin channels they wrote on, and the serialized inter-task handoff batch. Every effect record a
 barrier names SHALL have been sent on the Cell's state stream before the barrier is sent. The
@@ -108,13 +108,13 @@ SHALL skip the handshake entirely.
 #### Scenario: Journal write failure is a terminal run error
 
 - **WHEN** the controller cannot append the `task_committed` entry (e.g. disk error)
-- **THEN** the `TaskCommitResponse` SHALL carry the error and the operator SHALL terminate abnormally, compensating completed tasklets per the existing saga contract
+- **THEN** the `TaskCommitResponse` SHALL carry the error and the relay SHALL terminate abnormally, compensating completed tasklets per the existing saga contract
 
 #### Scenario: A barrier from a runner that does not own the instance is refused
 
 - **GIVEN** a durable instance bound to runner A's stable identity and a second session B in the namespace
 - **WHEN** B sends `TaskCommit` or `IterCommit` naming the instance
-- **THEN** the response SHALL carry a non-empty error, the journal SHALL hold no entry for it, no inbox prefix SHALL be released and no journal prefix cut, and B SHALL be sent `RemOperator` for the instance once
+- **THEN** the response SHALL carry a non-empty error, the journal SHALL hold no entry for it, no inbox prefix SHALL be released and no journal prefix cut, and B SHALL be sent `RemRelay` for the instance once
 
 ### Requirement: Inter-task channels of a durable structured class carry a byte codec
 
@@ -159,12 +159,12 @@ a typed error directing the author to keep bulk data in Cell state.
 On respawn of a durable structured steps instance, the controller SHALL ship
 the journal state (the resume iteration, the entry channel of the last committed
 iteration, committed task indexes, and the latest journaled handoff) to the SDK
-**on the bind** (`AddOperator.task_journal`), which is instance-scoped and therefore
+**on the bind** (`AddRelay.task_journal`), which is instance-scoped and therefore
 reaches a class that has no per-Cell state and so receives no `RestoreInitState`.
 Every way the instance comes back onto a runner SHALL be that bind: a fresh bind after a
 controller restart, an un-park, a rehydrate, a rewind, the convergence loop's rebind after
 its runner died, and the takeover by a restarted runner presenting the same stable
-identity; none of them SHALL send an `AddOperator` without the journal.
+identity; none of them SHALL send an `AddRelay` without the journal.
 When no compensation is in flight, the driver SHALL skip every tasklet recorded
 `task_committed` and SHALL seed each uncommitted tasklet that has a committed producer
 from that producer's journaled handoff instead of the entry channel; an uncommitted root
@@ -185,7 +185,7 @@ unchanged. An instance with no journal (opted-out) SHALL keep the re-run-from-to
 
 #### Scenario: A join on a resume counts only this pass's producers
 
-- **WHEN** a steps operator declares entry `a` feeding A→J and entry `b` feeding B→J, a pass on `a` crashes after `task_committed(A)`, and the instance resumes
+- **WHEN** a steps relay declares entry `a` feeding A→J and entry `b` feeding B→J, a pass on `a` crashes after `task_committed(A)`, and the instance resumes
 - **THEN** J SHALL run seeded from A's handoff without waiting for B, which is not a producer of `a`'s pass
 
 #### Scenario: An instance with no per-Cell state still resumes at its iteration
@@ -202,13 +202,13 @@ unchanged. An instance with no journal (opted-out) SHALL keep the re-run-from-to
 
 - **GIVEN** a chain A→B whose runner is killed after `task_committed(A)` was journaled
 - **WHEN** the instance is bound onto a replacement runner, by the convergence loop or by the takeover of a restarted runner presenting the same stable identity
-- **THEN** the `AddOperator` SHALL carry the folded journal, the replacement's driver SHALL NOT run A, and the run of A observable on the replacement SHALL be absent, not merely deduplicated in the journal and the WAL
+- **THEN** the `AddRelay` SHALL carry the folded journal, the replacement's driver SHALL NOT run A, and the run of A observable on the replacement SHALL be absent, not merely deduplicated in the journal and the WAL
 
 ### Requirement: The task-journal shares the instance lifecycle and is inspectable
 
 The task-journal SHALL be deleted with the instance's state files by the
 finished-instance retention sweeper, `flz state delete`, and `flz reset`. A
-read-only CLI verb `flz state journal <operator/instance>` SHALL render the
+read-only CLI verb `flz state journal <relay/instance>` SHALL render the
 decoded journal entries.
 
 #### Scenario: Retention removes the journal with the instance data
@@ -218,7 +218,7 @@ decoded journal entries.
 
 #### Scenario: User inspects task progress
 
-- **WHEN** a user runs `flz state journal <operator/instance>` for an instance with journaled commits
+- **WHEN** a user runs `flz state journal <relay/instance>` for an instance with journaled commits
 - **THEN** the CLI SHALL list the decoded entries (seq, type, task index, iteration) in order
 
 ### Requirement: The crash-resume state ships every in-flight task's handoff
@@ -231,8 +231,8 @@ handoff SHALL carry the previous iteration's terminal batch, which re-seeds a
 handoff-chained loop. The existing frame-size guard SHALL apply unchanged to
 each journaled entry.
 
-The SDK SHALL declare its leaf tasklets in the `AddOperator` response
-metadata, and the controller SHALL derive operator completion (every leaf
+The SDK SHALL declare its leaf tasklets in the `AddRelay` response
+metadata, and the controller SHALL derive relay completion (every leaf
 tasklet committed in the in-flight iteration) from the journal alone.
 
 #### Scenario: Each branch re-seeds from its own parent
@@ -243,7 +243,7 @@ tasklet committed in the in-flight iteration) from the journal alone.
 #### Scenario: Controller derives DONE from the journal
 
 - **WHEN** the journal holds `task_committed` entries covering every declared leaf tasklet of the in-flight iteration
-- **THEN** the controller SHALL report the operator complete from the journal alone
+- **THEN** the controller SHALL report the relay complete from the journal alone
 
 ### Requirement: The iteration entry type is active and the journal records no park
 
@@ -272,7 +272,7 @@ offset `0`.
 #### Scenario: Journal reflects loop progress
 
 - **WHEN** a looping instance has committed two iterations and then slept
-- **THEN** `flz state journal` SHALL show the per-task entries tagged with their iteration and two `iter_committed` entries with their consumed input-log offsets, and no `parked` entry, while `flz operator info` reports the instance `suspended`
+- **THEN** `flz state journal` SHALL show the per-task entries tagged with their iteration and two `iter_committed` entries with their consumed input-log offsets, and no `parked` entry, while `flz relay info` reports the instance `suspended`
 
 #### Scenario: An iteration that consumed nothing is journaled as such
 
@@ -305,7 +305,7 @@ The `TaskCommit` of the stage that a timer firing opened SHALL carry the trigger
 
 #### Scenario: A resume after the root committed follows the timer's chain
 
-- **WHEN** a steps operator declares entry `a` feeding `A -> J` and entry `b` feeding `B -> J`, a timer set by `B` fires, `B` commits with the trigger, and the runner crashes before `J` commits
+- **WHEN** a steps relay declares entry `a` feeding `A -> J` and entry `b` feeding `B -> J`, a timer set by `B` fires, `B` commits with the trigger, and the runner crashes before `J` commits
 - **THEN** on rebind `J` SHALL run seeded from `B`'s journaled handoff without waiting for `A`, and the timer SHALL NOT be pending on `B`'s Cell
 
 #### Scenario: A resume before the root committed re-arms the timer

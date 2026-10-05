@@ -1,7 +1,7 @@
 defmodule Flezha.State.TaskJournal do
   @moduledoc """
   Per-instance append-only task-progress journal for a durable structured
-  steps operator: the markers of its progress, never its Cells' state or
+  steps relay: the markers of its progress, never its Cells' state or
   output.
 
   One `task.journal` per instance, written through the `WalWriter` framing +
@@ -26,7 +26,7 @@ defmodule Flezha.State.TaskJournal do
   require Logger
 
   alias Flezha.Dlq.{Entry, Store}
-  alias Flezha.Operator.ClassRegistry
+  alias Flezha.Relay.ClassRegistry
   alias Flezha.SDK.Wire
 
   alias Flezha.State.{
@@ -364,7 +364,7 @@ defmodule Flezha.State.TaskJournal do
 
   @doc """
   Fold the journal into the crash-resume state shipped on
-  `AddOperator.task_journal` (`nil` when the instance has no journal).
+  `AddRelay.task_journal` (`nil` when the instance has no journal).
 
   The resume point is the iteration **after** the highest `iter_committed` or
   `dead_lettered` (a failed turn consumed its input and commits its iteration):
@@ -493,11 +493,11 @@ defmodule Flezha.State.TaskJournal do
 
   @doc """
   Whether the instance's in-flight iteration has committed every **leaf**
-  tasklet of its tree — the completion rule of a branching steps operator
+  tasklet of its tree — the completion rule of a branching steps relay
   (`steps-branching`), derived from the journal alone.
 
   `leaf_tasks` is the class's declared leaf set (`ClassRegistry.leaf_tasks/1`, from
-  the SDK's `AddOperator` response). `nil` — a class that declared none (a
+  the SDK's `AddRelay` response). `nil` — a class that declared none (a
   stream, an SDK without the declaration) — is not derivable, so the answer is
   `nil` rather than a guess. An empty journal is not complete.
   """
@@ -551,7 +551,7 @@ defmodule Flezha.State.TaskJournal do
   @doc """
   The effect records the live `task_committed` and `compensated` entries name,
   as `first..last` ranges per Cell identity, in journal order. A Cell writer
-  holds its steps operator Cell's outputs until a range names them; one its Cell
+  holds its steps relay Cell's outputs until a range names them; one its Cell
   wrote outside every range, between two ranges or above the last, belongs to
   an attempt that never committed (a crash, a failed stage, an unwound
   iteration). The cut never drops an entry whose records are still owed, so
@@ -611,7 +611,7 @@ defmodule Flezha.State.TaskJournal do
           {:ok, :gen_server.request_id_collection()} | {:error, term()}
   def park_turn_async(instance_id, turn, reqids, label) when is_binary(instance_id) do
     fields = %{
-      operator_class: instance_id,
+      relay_class: instance_id,
       tasklet_id: @turn_slot,
       cell_key: @turn_slot,
       channel: turn.entry_channel,

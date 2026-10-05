@@ -2,11 +2,11 @@
 
 ## Purpose
 
-The tasklet-requested-spawn capability lets a running tasklet ask the cluster for a steps operator, closing the gap that made a steps instance startable only from outside the cluster (`flz operator start`, `flz schedule`) and forced every pipeline needing a worker to bolt an external dispatcher onto the controller. One SDK call — `ctx.spawn_steps` (Rust) / `ctx.spawnSteps` (Java) — spawns-or-delivers on a single `(namespace, instance_id)` in the requester's own namespace: a free id starts the factory with the payload as its first input, a taken id receives the payload as one more input or refuses. Concurrent requests race-resolve at the operator registry to exactly one instance. The call is fire-and-forget with an async result: quota, transport, and controller failures resolve the caller's handle and never fault the requesting tasklet, its emit path, or its journaling. Spawning is a side effect of live processing only, so a replay never doubles the workers a run created. Everything else — quota, the durable inbox, exit triggers, `OperatorCompleted` teardown, retention, `flz operator list` — is the existing steps lifecycle, inherited unchanged.
+The tasklet-requested-spawn capability lets a running tasklet ask the cluster for a steps relay, closing the gap that made a steps instance startable only from outside the cluster (`flz relay start`, `flz schedule`) and forced every pipeline needing a worker to bolt an external dispatcher onto the controller. One SDK call — `ctx.spawn_steps` (Rust) / `ctx.spawnSteps` (Java) — spawns-or-delivers on a single `(namespace, instance_id)` in the requester's own namespace: a free id starts the factory with the payload as its first input, a taken id receives the payload as one more input or refuses. Concurrent requests race-resolve at the relay registry to exactly one instance. The call is fire-and-forget with an async result: quota, transport, and controller failures resolve the caller's handle and never fault the requesting tasklet, its emit path, or its journaling. Spawning is a side effect of live processing only, so a replay never doubles the workers a run created. Everything else — quota, the durable inbox, exit triggers, `RelayCompleted` teardown, retention, `flz relay list` — is the existing steps lifecycle, inherited unchanged.
 ## Requirements
-### Requirement: A tasklet SHALL be able to request spawn-or-deliver of a steps operator
+### Requirement: A tasklet SHALL be able to request spawn-or-deliver of a steps relay
 
-Every SDK SHALL expose a context call that takes a steps operator `factory_id` and a `payload` first,
+Every SDK SHALL expose a context call that takes a steps relay `factory_id` and a `payload` first,
 and an optional `id` and an optional `if_running` as named arguments in the form its language
 has, usable from inside any tasklet: Rust, Java, Node, Python, Ruby and PHP through the shared
 core, and Elixir in its own core. The call shapes SHALL be:
@@ -24,8 +24,8 @@ core, and Elixir in its own core. The call shapes SHALL be:
 With an `id` and `if_running: deliver` (the default when an `id` is given), the controller SHALL
 spawn a steps instance of `factory_id` under that id if absent, or deliver `payload` to the
 existing instance as one more message if present. With an `id` and `if_running: error`, an existing instance
-SHALL fail the requester's read with the code `operator.already_running`. Without an `id`, the controller SHALL
-generate one as the `generated-operator-ids` capability defines and SHALL always spawn a new
+SHALL fail the requester's read with the code `relay.already_running`. Without an `id`, the controller SHALL
+generate one as the `generated-relay-ids` capability defines and SHALL always spawn a new
 instance: there is no running instance to deliver to, so `if_running` has no meaning. Rust and
 Java SHALL construct `SpawnOptions` only from an id, so `if_running` without an `id` cannot be
 written there; Elixir, Python, Ruby, PHP and Node SHALL raise an argument error at the call when
@@ -36,14 +36,14 @@ already applies: bytes as they are, a string as UTF-8, any other value as JSON. 
 entry message of the spawned instance, delivered through the entrance every message takes: it names no
 channel, so it SHALL enter the instance's first declared entry channel, be decoded by that channel's
 codec or parser, and run the chain that channel roots, in every loop mode. The spawned instance SHALL
-follow all existing steps lifecycle semantics (quota, exit triggers, `OperatorCompleted`, teardown,
+follow all existing steps lifecycle semantics (quota, exit triggers, `RelayCompleted`, teardown,
 retention). The handle SHALL resolve to a result carrying `id`, the instance id the request
 resolved to (the caller's or the generated one), and `outcome`, one of `spawned`, `delivered`
 or `skipped_on_replay`.
 
 The request SHALL NOT carry a namespace: the controller resolves it against the control channel the request arrived on, so a request cannot reach another namespace.
 
-Factory resolution SHALL be cluster-wide: the controller SHALL route the spawn to a runner registering `factory_id` connected to ANY controller node in the cluster, not only runners connected to the node that received the request. `operator.factory_unknown` SHALL be yielded only when no connected runner on any cluster node registers the factory, resolved against the fleet state current at request time. A factory that is registered but whose established kind is `flow` SHALL yield `operator.factory_not_steps`, decided from the fleet's factory record before anything is placed, so the requester reads the reason rather than a runner's late error; the code SHALL be the same string in every SDK, read from the SDK's one error type. A failed read SHALL carry the controller's own code for every other refusal (for example `authz.role_insufficient` or `quota.exceeded`), and `spawn.timeout` or `spawn.unavailable` when no answer came. The success outcomes `spawned`, `delivered` and `skipped_on_replay` are not errors and keep their words.
+Factory resolution SHALL be cluster-wide: the controller SHALL route the spawn to a runner registering `factory_id` connected to ANY controller node in the cluster, not only runners connected to the node that received the request. `relay.factory_unknown` SHALL be yielded only when no connected runner on any cluster node registers the factory, resolved against the fleet state current at request time. A factory that is registered but whose established kind is `flow` SHALL yield `relay.factory_not_steps`, decided from the fleet's factory record before anything is placed, so the requester reads the reason rather than a runner's late error; the code SHALL be the same string in every SDK, read from the SDK's one error type. A failed read SHALL carry the controller's own code for every other refusal (for example `authz.role_insufficient` or `quota.exceeded`), and `spawn.timeout` or `spawn.unavailable` when no answer came. The success outcomes `spawned`, `delivered` and `skipped_on_replay` are not errors and keep their words.
 
 #### Scenario: First request spawns, second delivers
 
@@ -53,7 +53,7 @@ Factory resolution SHALL be cluster-wide: the controller SHALL route the spawn t
 #### Scenario: error policy reports instead of delivering
 
 - **WHEN** a spawn of factory `worker` with id `w1` and `error` is issued while `w1` runs
-- **THEN** no delivery SHALL occur and the requester's read SHALL fail with `operator.already_running`
+- **THEN** no delivery SHALL occur and the requester's read SHALL fail with `relay.already_running`
 
 #### Scenario: A spawn without an id starts a new instance every time
 
@@ -62,7 +62,7 @@ Factory resolution SHALL be cluster-wide: the controller SHALL route the spawn t
 
 #### Scenario: A once steps runs on the payload it was spawned with
 
-- **WHEN** a tasklet issues `ctx.spawn_steps("paper_order", ticket)` and `paper_order` is a `once` steps operator whose entry channel decodes the ticket's type
+- **WHEN** a tasklet issues `ctx.spawn_steps("paper_order", ticket)` and `paper_order` is a `once` steps relay whose entry channel decodes the ticket's type
 - **THEN** the spawned instance's first tasklet SHALL receive the decoded ticket, the pass SHALL complete and the instance SHALL end with status `ok`, on every SDK
 
 #### Scenario: A host SDK's payload is readable by a text entry
@@ -77,18 +77,18 @@ Factory resolution SHALL be cluster-wide: the controller SHALL route the spawn t
 
 #### Scenario: Factory on a different runner than the requester
 
-- **WHEN** a tasklet on the streaming runner requests spawn of a factory registered only by a separate analyzer runner (each runner holds its own sealed operator registry)
-- **THEN** the controller SHALL route the spawn to a runner that has registered `factory_id`, and SHALL fail the read with `operator.factory_unknown` if no connected runner registers it
+- **WHEN** a tasklet on the streaming runner requests spawn of a factory registered only by a separate analyzer runner (each runner holds its own sealed relay registry)
+- **THEN** the controller SHALL route the spawn to a runner that has registered `factory_id`, and SHALL fail the read with `relay.factory_unknown` if no connected runner registers it
 
 #### Scenario: Factory on a runner connected to a different controller node
 
 - **WHEN** a tasklet whose runner is connected to controller node A requests spawn of a factory whose only runner is connected to controller node B
-- **THEN** the controller SHALL start the instance on node B and the requester's async result SHALL be `spawned` (or `delivered` if the id already exists), not `operator.factory_unknown`
+- **THEN** the controller SHALL start the instance on node B and the requester's async result SHALL be `spawned` (or `delivered` if the id already exists), not `relay.factory_unknown`
 
 #### Scenario: A flow factory is named by the answer
 
-- **WHEN** a tasklet issues `ctx.spawn_steps("prices", p)` and `prices` is a factory its runner announced as a flow operator
-- **THEN** the requester's read SHALL fail with `operator.factory_not_steps`, no instance SHALL be placed or started, and the code SHALL NOT be `operator.factory_unknown`
+- **WHEN** a tasklet issues `ctx.spawn_steps("prices", p)` and `prices` is a factory its runner announced as a flow relay
+- **THEN** the requester's read SHALL fail with `relay.factory_not_steps`, no instance SHALL be placed or started, and the code SHALL NOT be `relay.factory_unknown`
 
 #### Scenario: Every SDK exposes the call with one meaning
 
@@ -120,7 +120,7 @@ The call SHALL return immediately with a local async result handle in every SDK.
 
 A replayed invocation, the correction re-run the controller marks as a replay, SHALL issue no request and its handle SHALL resolve at once with outcome `skipped_on_replay`. Its `id` SHALL be the caller's id when the call gave one, and empty when it did not, because a generated id exists only in the controller's answer to the live run.
 
-A crash re-run is not a replay: an input that was not durably consumed runs live, and its spawn SHALL be issued again. Every spawn requested from a tasklet invocation SHALL carry an identity made of the requesting instance, the input's `flz.offset`, the call's position within the invocation, the factory and a hash of the payload. A request whose identity was already resolved SHALL resolve to the same operator the first request did and SHALL NOT start a second instance or deliver its payload a second time: without an id, the generated id SHALL be derived from the identity; with an id and `if_running: :deliver`, the delivered payload SHALL carry the identity as its `flz.msg_id`. A re-run whose request differs in factory or payload SHALL get a new identity and a new spawn, never another request's answer. Spawns requested from outside a tasklet (the CLI, the admin API, a schedule) SHALL carry no identity and are unchanged.
+A crash re-run is not a replay: an input that was not durably consumed runs live, and its spawn SHALL be issued again. Every spawn requested from a tasklet invocation SHALL carry an identity made of the requesting instance, the input's `flz.offset`, the call's position within the invocation, the factory and a hash of the payload. A request whose identity was already resolved SHALL resolve to the same relay the first request did and SHALL NOT start a second instance or deliver its payload a second time: without an id, the generated id SHALL be derived from the identity; with an id and `if_running: :deliver`, the delivered payload SHALL carry the identity as its `flz.msg_id`. A re-run whose request differs in factory or payload SHALL get a new identity and a new spawn, never another request's answer. Spawns requested from outside a tasklet (the CLI, the admin API, a schedule) SHALL carry no identity and are unchanged.
 
 #### Scenario: Controller unreachable
 
@@ -155,7 +155,7 @@ A crash re-run is not a replay: an input that was not durably consumed runs live
 #### Scenario: A re-run that asks for something else spawns anew
 
 - **WHEN** the re-run of offset 7 requests a different factory or payload at the same call position
-- **THEN** it SHALL be answered as a new spawn and SHALL NOT resolve to the first request's operator
+- **THEN** it SHALL be answered as a new spawn and SHALL NOT resolve to the first request's relay
 
 #### Scenario: A re-delivered payload to a named worker is absorbed
 
@@ -164,7 +164,7 @@ A crash re-run is not a replay: an input that was not durably consumed runs live
 
 ### Requirement: A spawn request SHALL be judged as the act it performs
 
-The controller SHALL judge each act a spawn request performs as the identity the request's connection proved, at the same policy point as the user-issued equivalent and in the connection's namespace: a start as `operator.start` through the `operator_start` row, and a delivery to a running instance as `operator.send`, the right the `operator_send` row judges. A permitted start SHALL write the `operator_start` row's audit record naming the connection's principal, the SDK as the surface, and the instance id the start resolved to, which for a request that carried no id is the generated one. A permitted delivery SHALL write no record of its own, because a delivery happens once per event. A refused act SHALL start nothing and deliver nothing, its denial SHALL be audited, and the requester's result SHALL be `refused` with the refusal as its detail.
+The controller SHALL judge each act a spawn request performs as the identity the request's connection proved, at the same policy point as the user-issued equivalent and in the connection's namespace: a start as `relay.start` through the `relay_start` row, and a delivery to a running instance as `relay.send`, the right the `relay_send` row judges. A permitted start SHALL write the `relay_start` row's audit record naming the connection's principal, the SDK as the surface, and the instance id the start resolved to, which for a request that carried no id is the generated one. A permitted delivery SHALL write no record of its own, because a delivery happens once per event. A refused act SHALL start nothing and deliver nothing, its denial SHALL be audited, and the requester's result SHALL be `refused` with the refusal as its detail.
 
 The judgment SHALL be made on the controller node that received the request, and no start and no delivery SHALL be forwarded to another node or performed before it. While authorization is disabled every act SHALL be permitted, and a start SHALL still write its record, as every other start does.
 
@@ -187,7 +187,7 @@ The judgment SHALL be made on the controller node that received the request, and
 
 - **WHEN** `runner@team-orders` is bound to `spawner` on `team-orders` and a
   tasklet on that connection spawns `w1`
-- **THEN** `w1` SHALL start, and a `start` record on `operator_service` SHALL name
+- **THEN** `w1` SHALL start, and a `start` record on `relay_service` SHALL name
   `w1`, the namespace `team-orders`, the principal `runner@team-orders` and the
   surface `sdk`
 
@@ -195,19 +195,19 @@ The judgment SHALL be made on the controller node that received the request, and
 
 - **WHEN** the same bound runner's tasklet spawns factory `worker` with no id and
   the result is `{id: "worker-<suffix>", outcome: spawned}`
-- **THEN** the `start` record on `operator_service` SHALL name `worker-<suffix>`,
+- **THEN** the `start` record on `relay_service` SHALL name `worker-<suffix>`,
   the same id the result carries
 
 #### Scenario: A permitted delivery is judged and writes no record
 
 - **WHEN** the same bound runner's request names `w1` while it runs
 - **THEN** the payload SHALL be delivered, and no `send` record SHALL be written
-  on `operator_service`
+  on `relay_service`
 
 #### Scenario: A start another node would run is judged where it was asked
 
 - **WHEN** the only runner registering the factory is connected to another
-  controller node and the requesting identity may not start an operator
+  controller node and the requesting identity may not start a relay
 - **THEN** the request SHALL be refused on the node that received it, and no start
   SHALL be forwarded
 
@@ -274,7 +274,7 @@ an empty id when the request carried none.
 #### Scenario: if_running is ignored without an id
 
 - **WHEN** a runner sends `SpawnStepsRequest{instance_id: "", factory_id: "worker", if_running: "error"}`
-- **THEN** the controller SHALL start a new instance and SHALL NOT answer `operator.already_running`
+- **THEN** the controller SHALL start a new instance and SHALL NOT answer `relay.already_running`
 
 ### Requirement: The dangers of a spawn without an id SHALL be documented
 

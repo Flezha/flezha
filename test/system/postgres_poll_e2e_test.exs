@@ -1,14 +1,14 @@
 defmodule FlezhaTest.System.PostgresPollE2ETest do
   @moduledoc """
-  The Postgres poll source feeding a live effectively-once operator
+  The Postgres poll source feeding a live effectively-once relay
   (`tier_store`) through restarts: every row of a 10 000-row table reaches the
-  operator although its Overwatch is killed mid-read, and rows read again while
-  the operator's input log still holds them are absorbed, so each reaches the
-  operator once.
+  relay although its Overwatch is killed mid-read, and rows read again while
+  the relay's input log still holds them are absorbed, so each reaches the
+  relay once.
 
   `tier_store` splits its input at the first `:`, so the row `{"k":"r17"}`
   comes out as `{"k"="r17"}`: the row's value is in every output, and the
-  outputs say which rows the operator ran on.
+  outputs say which rows the relay ran on.
 
   Tagged `:system` + `:postgres_integration`; run with:
 
@@ -23,14 +23,14 @@ defmodule FlezhaTest.System.PostgresPollE2ETest do
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
   import FlezhaTest.Helper.TierE2EHarness
 
-  alias Flezha.Operator.Builder
-  alias Flezha.Operator.ClassRegistry
-  alias Flezha.Operator.Overwatch
+  alias Flezha.Relay.Builder
+  alias Flezha.Relay.ClassRegistry
+  alias Flezha.Relay.Overwatch
   alias Flezha.Plugin.Host
   alias Flezha.Plugin.Provider.PostgresPoll
   alias Flezha.Plugin.Provider.WorkerSup
-  alias Flezha.Service.OperatorManager
-  alias FlezhaTest.Fixtures.OperatorFixture
+  alias Flezha.Service.RelayManager
+  alias FlezhaTest.Fixtures.RelayFixture
   alias FlezhaTest.Helper.PostgresSink
   alias FlezhaTest.Helper.Telemetry
 
@@ -62,9 +62,9 @@ defmodule FlezhaTest.System.PostgresPollE2ETest do
   test "every row arrives through an Overwatch kill, and a re-read is absorbed",
        %{db: db, table: table} do
     namespace = unique("pg_poll")
-    operator_id = unique("tier_store")
+    relay_id = unique("tier_store")
     id_path = unique_id_path()
-    on_exit(fn -> cleanup(namespace, operator_id, id_path) end)
+    on_exit(fn -> cleanup(namespace, relay_id, id_path) end)
 
     insert(db, table, 1, @rows)
     {port, _runner} = boot_runner(namespace, id_path)
@@ -86,23 +86,23 @@ defmodule FlezhaTest.System.PostgresPollE2ETest do
       hooks: [{:on_output, []}]
     }
 
-    [source, _sink] = bindings = OperatorFixture.bindings(namespace, operator_id, [source, sink])
+    [source, _sink] = bindings = RelayFixture.bindings(namespace, relay_id, [source, sink])
 
     builder = %Builder{
-      id: operator_id,
+      id: relay_id,
       factory_id: "tier_store",
       init_values: %{},
       opts: [bindings: bindings]
     }
 
-    assert {:ok, _info} = OperatorManager.start_operator(namespace, builder)
-    assert wait_until(fn -> ClassRegistry.effectively_once?(operator_id) end, 30_000)
+    assert {:ok, _info} = RelayManager.start_relay(namespace, builder)
+    assert wait_until(fn -> ClassRegistry.effectively_once?(relay_id) end, 30_000)
 
     # --- the Overwatch killed mid-read ---------------------------------------
     assert wait_until(fn -> map_size(seen()) >= div(@rows, 5) end, 60_000),
-           "the operator never ran on the first rows"
+           "the relay never ran on the first rows"
 
-    force_fresh_rebind(namespace, operator_id)
+    force_fresh_rebind(namespace, relay_id)
 
     assert wait_until(fn -> map_size(seen()) == @rows end, 120_000),
            "rows were lost across the kill: #{@rows - map_size(seen())} never arrived"
@@ -125,7 +125,7 @@ defmodule FlezhaTest.System.PostgresPollE2ETest do
       filter: &(&1.plugin_id == source.id)
     )
 
-    {:ok, overwatch} = OperatorManager.get_operator_pid(namespace, operator_id)
+    {:ok, overwatch} = RelayManager.get_relay_pid(namespace, relay_id)
     cursor = %{:sys.get_state(reader).committed | at: ["#{@rows}"]}
     :ok = Host.persist_opt(overwatch, source.id, :cursor, cursor)
     Process.exit(reader, :kill)
@@ -136,13 +136,13 @@ defmodule FlezhaTest.System.PostgresPollE2ETest do
     {_, 0} = System.cmd("kill", ["-CONT", "#{os_pid}"])
 
     assert wait_until(fn -> map_size(seen()) == @again end, 60_000),
-           "the rows read again did not all reach the operator"
+           "the rows read again did not all reach the relay"
 
-    assert await_outbox_drained(operator_id), "the outbox never drained"
+    assert await_outbox_drained(relay_id), "the outbox never drained"
     counts = drain_outputs([]) |> Enum.map(&row/1) |> Enum.frequencies()
 
     assert counts == Map.new((@rows + 1)..(@rows + @again), &{&1, 1}),
-           "a row read again reached the operator twice"
+           "a row read again reached the relay twice"
   end
 
   defp insert(db, table, from, to) do
@@ -153,7 +153,7 @@ defmodule FlezhaTest.System.PostgresPollE2ETest do
     )
   end
 
-  # The rows the operator ran on so far, by number, from the outputs not taken.
+  # The rows the relay ran on so far, by number, from the outputs not taken.
   defp seen, do: Map.new(peek_outputs(), &{row(&1), true})
 
   defp row({output, _metadata}) do

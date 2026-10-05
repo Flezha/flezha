@@ -331,7 +331,7 @@ defmodule Flezha.Plugin.Installer.Loader do
     with :ok <- declaration, do: Package.providers_free(Map.keys(providers), rows)
   end
 
-  # Library applications start now, before any operator binds. An application
+  # Library applications start now, before any relay binds. An application
   # depending on Flezha is loaded and never started: Flezha is starting.
   defp start_libraries(apps, to_load) do
     to_load

@@ -9,14 +9,14 @@ defmodule Flezha.Service.HubManager.Placement do
   alias Flezha.Identificator
   alias Flezha.Process.Cspec
   alias Flezha.Service.HubManager.Rows
-  alias Flezha.Service.OperatorManager
+  alias Flezha.Service.RelayManager
   alias Flezha.Service.RegistryUpdate
   alias Flezha.State.DurabilityTier
   alias ProcessHub.Service.ProcessRegistry
 
   require Logger
 
-  def runner_operators(namespace, runner_id) do
+  def runner_relays(namespace, runner_id) do
     Rows.with_live_hub(namespace, [], fn hub_id -> ProcessHub.tag_query(hub_id, runner_id) end)
   end
 
@@ -41,22 +41,22 @@ defmodule Flezha.Service.HubManager.Placement do
     end)
   end
 
-  def operator_set_runner(namespace, operator_id, runner_id) do
+  def relay_set_runner(namespace, relay_id, runner_id) do
     Rows.with_live_hub(namespace, {:error, {:hub_down, namespace}}, fn hub_id ->
-      # propagate: true — `runner_operators/2` is a local-table tag query, so a
-      # peer handling this runner's disconnect misses the operator otherwise.
+      # propagate: true — `runner_relays/2` is a local-table tag query, so a
+      # peer handling this runner's disconnect misses the relay otherwise.
       # Returned, not discarded: a "No child found" is the whole signal that a
       # binding never reached the durable row.
       result =
         ProcessRegistry.update(
           hub_id,
-          operator_id,
+          relay_id,
           RegistryUpdate.set_runner_tag(runner_id),
           propagate: true
         )
 
       # The cspec just changed: shipping state without it would give a
-      # recovering controller perfect Cells for operators it does not know
+      # recovering controller perfect Cells for relays it does not know
       # exist.
       DurabilityTier.ship_cspec(hub_id)
       result
@@ -65,22 +65,22 @@ defmodule Flezha.Service.HubManager.Placement do
 
   @doc """
   Hub-wide `child_registered` handler: ships the cspec to the durability tier
-  and declares each local operator's rewritten row to the convergence loop.
+  and declares each local relay's rewritten row to the convergence loop.
 
   A start request writes the row after its children are already running, so the
   `metadata.tag` it carries can name a runner an Overwatch has since rebound
   away from. The loop's next tick reads the row beside the binding and
   re-publishes the binding when they differ; nothing is decided here.
   """
-  def hook_registry_written(hub_id, %{child_id: operator_id} = hook_data)
-      when is_binary(operator_id) do
+  def hook_registry_written(hub_id, %{child_id: relay_id} = hook_data)
+      when is_binary(relay_id) do
     local = node()
     namespace = Identificator.namespace_from_hub(hub_id)
     DurabilityTier.ship_cspec(hub_id)
 
     Enum.each(Map.get(hook_data, :node_pids, []), fn
       {^local, pid} when is_pid(pid) ->
-        Facts.declare({:registry_written, {namespace, operator_id}, %{}})
+        Facts.declare({:registry_written, {namespace, relay_id}, %{}})
 
       _ ->
         :ok
@@ -90,10 +90,10 @@ defmodule Flezha.Service.HubManager.Placement do
   # A plugin child has no binding for the loop to read.
   def hook_registry_written(hub_id, _plugin_child), do: DurabilityTier.ship_cspec(hub_id)
 
-  @doc "The owning runner recorded on `operator_id`'s durable row, or `nil`."
-  def operator_runner_tag(namespace, operator_id) do
+  @doc "The owning runner recorded on `relay_id`'s durable row, or `nil`."
+  def relay_runner_tag(namespace, relay_id) do
     Rows.with_live_hub(namespace, nil, fn hub_id ->
-      case ProcessRegistry.lookup(hub_id, operator_id, with_metadata: true) do
+      case ProcessRegistry.lookup(hub_id, relay_id, with_metadata: true) do
         {_cspec, _node_pids, metadata} when is_map(metadata) -> Map.get(metadata, :tag)
         _ -> nil
       end
@@ -111,8 +111,8 @@ defmodule Flezha.Service.HubManager.Placement do
 
   defp start_args(cspec) do
     case Cspec.start_arg(cspec) do
-      {:ok, {namespace, %{} = operator}} -> {:ok, {namespace, nil, operator}}
-      {:ok, {namespace, runner, %{} = operator}} -> {:ok, {namespace, runner, operator}}
+      {:ok, {namespace, %{} = relay}} -> {:ok, {namespace, nil, relay}}
+      {:ok, {namespace, runner, %{} = relay}} -> {:ok, {namespace, runner, relay}}
       _ -> :error
     end
   end
@@ -128,34 +128,34 @@ defmodule Flezha.Service.HubManager.Placement do
     child_data
   end
 
-  defp place_child(child_data, %{start: {m, f, _args}}, {namespace, recorded_runner, operator}) do
-    operator_id = Map.get(operator, :id)
-    factory_id = Map.get(operator, :factory_id)
+  defp place_child(child_data, %{start: {m, f, _args}}, {namespace, recorded_runner, relay}) do
+    relay_id = Map.get(relay, :id)
+    factory_id = Map.get(relay, :factory_id)
 
     # Recovery replay races the `FleetManager.runner_connect/3` that triggered
     # it: the connecting runner is not placeable until that handler returns, so
     # the first `nil` here is not final.
     assigned_runner =
-      case OperatorManager.await_runner(
+      case RelayManager.await_runner(
              namespace,
              factory_id,
-             operator_id,
+             relay_id,
              batch_runner_wait_ms(),
-             &OperatorManager.runner_registered?/1
+             &RelayManager.runner_registered?/1
            ) do
         {:ok, runner_id} ->
           runner_id
 
         {:error, reason} ->
-          unplaceable_runner(recorded_runner, namespace, factory_id, operator_id, reason)
+          unplaceable_runner(recorded_runner, namespace, factory_id, relay_id, reason)
       end
 
     Logger.info(
-      "[hub_manager] alter_child_data operator=#{inspect(operator_id)} " <>
+      "[hub_manager] alter_child_data relay=#{inspect(relay_id)} " <>
         "factory=#{inspect(factory_id)} assigned_ce=#{inspect(assigned_runner)}"
     )
 
-    new_args = [{namespace, assigned_runner, operator}]
+    new_args = [{namespace, assigned_runner, relay}]
 
     child_data
     |> put_in([:child_spec, :start], {m, f, new_args})
@@ -163,9 +163,9 @@ defmodule Flezha.Service.HubManager.Placement do
     |> stamp_group(factory_id)
   end
 
-  # The hub places an operator among the controllers serving its factory, and
+  # The hub places a relay among the controllers serving its factory, and
   # reads that factory from the `:group` key of its row. A row written before
-  # an operator carried one has none, so it is stamped here — `put_new`, so a
+  # a relay carried one has none, so it is stamped here — `put_new`, so a
   # row that already carries a group keeps it and this handler never rewrites a
   # placement decision.
   defp stamp_group(child_data, nil), do: child_data
@@ -180,14 +180,14 @@ defmodule Flezha.Service.HubManager.Placement do
   #
   # What that buys is small and worth stating plainly. The Overwatch starts, its
   # own bind re-resolves the runner (`Lifecycle.bind/3` ignores the recorded one
-  # entirely), finds none, and holds the operator alive with no binding. The
+  # entirely), finds none, and holds the relay alive with no binding. The
   # convergence loop binds it when a runner advertising its factory connects. The
   # recorded-runner shape degrades exactly like this — the two shapes are not
   # distinguished here — and it is deliberately preferred to raising, which kills
   # the whole start request before `update_registry`, strands every row in the
   # batch, and, because the hook runs in the hub's shared `WorkerQueue` under a
   # linking `Task.async_stream`, takes that worker down with every start queued
-  # behind it — without starting the operator either.
+  # behind it — without starting the relay either.
   #
   # The caller still learns, though not from here. A named factory with no runner
   # is refused by `Admission.resolve_factory/2` before the hub is asked — its
@@ -195,9 +195,9 @@ defmodule Flezha.Service.HubManager.Placement do
   # that goes away after that check reaches the caller through
   # `Init.bind_started/4`, whose bounded `:registry_runner_set` call meets the
   # stopping Overwatch and answers an error.
-  defp unplaceable_runner(recorded_runner, namespace, _factory_id, operator_id, reason) do
+  defp unplaceable_runner(recorded_runner, namespace, _factory_id, relay_id, reason) do
     Logger.warning(
-      "[hub_manager] no placeable runner for #{operator_id} in #{namespace} (#{reason}); " <>
+      "[hub_manager] no placeable runner for #{relay_id} in #{namespace} (#{reason}); " <>
         "starting with recorded_runner=#{inspect(recorded_runner)}, pending rebind"
     )
 

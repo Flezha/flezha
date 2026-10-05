@@ -18,9 +18,9 @@ pub mod command_request {
         #[prost(message, tag = "3")]
         ConnectSocket(super::ConnectSocket),
         #[prost(message, tag = "4")]
-        AddOperator(super::AddOperator),
+        AddRelay(super::AddRelay),
         #[prost(message, tag = "5")]
-        RemOperator(super::RemOperator),
+        RemRelay(super::RemRelay),
         #[prost(message, tag = "6")]
         MigrationSerialization(super::MigrationSerialization),
         #[prost(message, tag = "7")]
@@ -30,7 +30,7 @@ pub mod command_request {
         #[prost(message, tag = "9")]
         RunnerDisconnect(super::RunnerDisconnect),
         #[prost(message, tag = "10")]
-        OperatorMessage(super::OperatorMessage),
+        RelayMessage(super::RelayMessage),
         #[prost(message, tag = "11")]
         CellApplyState(super::CellApplyState),
         #[prost(message, tag = "12")]
@@ -54,7 +54,7 @@ pub mod command_request {
         #[prost(message, tag = "21")]
         ReassignRunnerId(super::ReassignRunnerId),
         #[prost(message, tag = "22")]
-        OperatorCompleted(super::OperatorCompleted),
+        RelayCompleted(super::RelayCompleted),
         #[prost(message, tag = "23")]
         StepsStop(super::StepsStop),
         #[prost(message, tag = "24")]
@@ -86,7 +86,7 @@ pub mod command_request {
         #[prost(message, tag = "37")]
         AdminResponse(super::AdminResponse),
         #[prost(message, tag = "38")]
-        OperatorExited(super::OperatorExited),
+        RelayExited(super::RelayExited),
         #[prost(message, tag = "39")]
         ConnectRefused(super::ConnectRefused),
     }
@@ -138,13 +138,13 @@ pub struct ConnectSocket {
     pub sockets_count: u32,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct AddOperator {
+pub struct AddRelay {
     #[prost(string, tag = "1")]
-    pub operator_id: ::prost::alloc::string::String,
+    pub relay_id: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
     pub factory_id: ::prost::alloc::string::String,
     /// Initial state per tasklet name, a JSON object, for both kinds: a
-    /// steps operator's tasklets take it as a flow operator's do, and a steps operator's input
+    /// steps relay's tasklets take it as a flow relay's do, and a steps relay's input
     /// is the messages on its entry channels, never this document.
     #[prost(string, tag = "3")]
     pub init_values: ::prost::alloc::string::String,
@@ -153,25 +153,25 @@ pub struct AddOperator {
     #[prost(string, tag = "4")]
     pub run: ::prost::alloc::string::String,
     /// Number of persisted Cells the Controller will ship RestoreInitState
-    /// for on this (re)bind. Non-zero only when re-binding a durable steps operator
-    /// operator that has WAL state on disk (crash-resume). A durable steps operator
+    /// for on this (re)bind. Non-zero only when re-binding a durable steps relay
+    /// relay that has WAL state on disk (crash-resume). A durable steps relay
     /// driver holds its first Tasklet until this many Cell restores have
     /// landed, so a resumed run reads persisted state instead of cold-starting.
-    /// 0 for a fresh spawn, a flow operator, or an opted-out steps operator one.
+    /// 0 for a fresh spawn, a flow relay, or an opted-out steps relay one.
     #[prost(uint32, tag = "5")]
     pub resume_cell_count: u32,
-    /// Steps operator task-journal crash-resume (steps-task-journal): the instance's
+    /// Steps relay task-journal crash-resume (steps-task-journal): the instance's
     /// committed task indexes + latest journaled handoff. Instance-scoped, so it
     /// rides the bind itself rather than a per-Cell restore — a durable
     /// steps class with no per-Cell state ships no RestoreInitState at all,
     /// and would otherwise resume at iteration 0 on every wake.
     /// Absent when the instance has no journal (fresh spawn, opted-out class,
-    /// flow operator) — the driver then keeps the re-run-from-top behaviour.
+    /// flow relay) — the driver then keeps the re-run-from-top behaviour.
     #[prost(message, optional, tag = "6")]
     pub task_journal: ::core::option::Option<TaskJournalState>,
-    /// Partitioned operators: this member's identity within its group. A
+    /// Partitioned relays: this member's identity within its group. A
     /// `partition_count` below 2 means unpartitioned — the whole key space is
-    /// this instance's, which is every operator that predates partitioning.
+    /// this instance's, which is every relay that predates partitioning.
     #[prost(uint32, tag = "7")]
     pub partition_index: u32,
     #[prost(uint32, tag = "8")]
@@ -196,8 +196,8 @@ pub struct AddOperator {
     #[prost(bool, tag = "12")]
     pub dead_letter_turns: bool,
 }
-/// SDK -> Controller, as the CommandResponse raw_data of AddOperator.
-/// Carries the operator class's settings and SDK-side declarations (operator
+/// SDK -> Controller, as the CommandResponse raw_data of AddRelay.
+/// Carries the relay class's settings and SDK-side declarations (relay
 /// metadata) so the Controller resolves per-class capabilities without a
 /// parallel config channel: "run" ("flow" | "steps", with "each" and
 /// "on_failure" for steps), "durable" ("memory" | "local" | "remote"),
@@ -205,7 +205,7 @@ pub struct AddOperator {
 /// "exactly" = "effectively_once" with "ack" and "correction_ms". The
 /// Controller resolves absent/undecodable metadata to every default.
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct AddOperatorResponse {
+pub struct AddRelayResponse {
     #[prost(map = "string, string", tag = "1")]
     pub metadata: ::std::collections::HashMap<
         ::prost::alloc::string::String,
@@ -213,19 +213,19 @@ pub struct AddOperatorResponse {
     >,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct RemOperator {
+pub struct RemRelay {
     #[prost(string, tag = "1")]
-    pub operator_id: ::prost::alloc::string::String,
+    pub relay_id: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MigrationSerialization {
     #[prost(string, tag = "1")]
-    pub operator_id: ::prost::alloc::string::String,
+    pub relay_id: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MigrationDeserialization {
     #[prost(string, tag = "1")]
-    pub operator_id: ::prost::alloc::string::String,
+    pub relay_id: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
     pub factory_id: ::prost::alloc::string::String,
     #[prost(bytes = "vec", tag = "3")]
@@ -233,14 +233,14 @@ pub struct MigrationDeserialization {
 }
 /// Serialize live in-memory Cell state as JSON. Both selector fields are
 /// optional (empty = absent): absent selector covers every Tasklet of the
-/// Operator (the migration/handover shape), `tasklet` narrows to one
+/// Relay (the migration/handover shape), `tasklet` narrows to one
 /// Tasklet's Cells, `tasklet` + `cell_key` to one Cell. An
 /// `cell_key` without a `tasklet` is refused — a Cell key is unique
 /// only within its Tasklet.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CellState {
     #[prost(string, tag = "1")]
-    pub operator_id: ::prost::alloc::string::String,
+    pub relay_id: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
     pub tasklet: ::prost::alloc::string::String,
     #[prost(string, tag = "3")]
@@ -261,21 +261,21 @@ pub struct RunnerDisconnect {
     pub reason: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct OperatorMessage {
+pub struct RelayMessage {
     #[prost(string, tag = "1")]
-    pub operator_id: ::prost::alloc::string::String,
+    pub relay_id: ::prost::alloc::string::String,
     #[prost(bytes = "vec", tag = "2")]
     pub payload: ::prost::alloc::vec::Vec<u8>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct OperatorMessageResponse {
+pub struct RelayMessageResponse {
     #[prost(bytes = "vec", tag = "1")]
     pub payload: ::prost::alloc::vec::Vec<u8>,
     #[prost(message, optional, tag = "2")]
     pub error: ::core::option::Option<Error>,
 }
 /// Inverse of CellState. Sent by the Controller to a Runner SDK to
-/// prime a freshly-spawned Operator's GenServer/struct state from a
+/// prime a freshly-spawned Relay's GenServer/struct state from a
 /// previously-captured `state_binary`. Round-trips with the same opaque
 /// SDK-internal serialization used by CellState. SDKs that do not
 /// implement Apply respond with status="error" and an error coded
@@ -283,7 +283,7 @@ pub struct OperatorMessageResponse {
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CellApplyState {
     #[prost(string, tag = "1")]
-    pub operator_id: ::prost::alloc::string::String,
+    pub relay_id: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
     pub factory_id: ::prost::alloc::string::String,
     #[prost(bytes = "vec", tag = "3")]
@@ -291,9 +291,9 @@ pub struct CellApplyState {
 }
 /// Sent by the SDK to the Controller on graceful shutdown (SIGTERM, Drop of
 /// the SDK handle, explicit disconnect()) for each currently-running
-/// Operator. Carries the Runner's freshest in-memory state binary so the
+/// Relay. Carries the Runner's freshest in-memory state binary so the
 /// Controller can overwrite Overwatch.state.snapshot before the next
-/// AddOperator reissue (see runner-controller-connection-healing
+/// AddRelay reissue (see runner-controller-connection-healing
 /// capability).
 ///
 /// Direction is reversed compared to most CommandRequest variants: SDK -> Controller.
@@ -307,7 +307,7 @@ pub struct CellApplyState {
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct RunnerShutdownNotification {
     #[prost(string, tag = "1")]
-    pub operator_id: ::prost::alloc::string::String,
+    pub relay_id: ::prost::alloc::string::String,
     #[prost(bytes = "vec", tag = "2")]
     pub serialized_state: ::prost::alloc::vec::Vec<u8>,
 }
@@ -317,12 +317,12 @@ pub struct RunnerShutdownNotification {
 /// is enqueued on the Overwatch GenServer (not after the cast has been applied).
 ///
 /// Controller -> SDK direction at the wire level — same envelope as the
-/// notification. The SDK awaits this with a per-Operator 2 s timeout
-/// (parallelised across Operators) and exits regardless after the timeout.
+/// notification. The SDK awaits this with a per-Relay 2 s timeout
+/// (parallelised across Relays) and exits regardless after the timeout.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct RunnerShutdownAck {
     #[prost(string, tag = "1")]
-    pub operator_id: ::prost::alloc::string::String,
+    pub relay_id: ::prost::alloc::string::String,
 }
 /// One serialized inter-tasklet handoff value: the payload bytes produced
 /// by the channel's byte codec, tagged with the producing channel id so a
@@ -351,7 +351,7 @@ pub struct CommittedCell {
     pub first_seq: ::core::option::Option<u64>,
 }
 /// SDK -> Controller, at each tasklet barrier of a durable structured
-/// steps operator (steps-task-journal): tasklet `task_idx` completed
+/// steps relay (steps-task-journal): tasklet `task_idx` completed
 /// forward on `cells_ran`, each naming the effect records it wrote in the
 /// stage, and released the serialized `handoff` batch. The Controller waits
 /// until every named record is durable on its Cell's writer, appends ONE
@@ -371,7 +371,7 @@ pub struct CommittedCell {
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct TaskCommit {
     #[prost(string, tag = "1")]
-    pub operator_id: ::prost::alloc::string::String,
+    pub relay_id: ::prost::alloc::string::String,
     #[prost(uint32, tag = "2")]
     pub task_idx: u32,
     #[prost(uint32, tag = "3")]
@@ -409,14 +409,14 @@ pub struct TimerTrigger {
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct TaskCommitResponse {
     #[prost(string, tag = "1")]
-    pub operator_id: ::prost::alloc::string::String,
+    pub relay_id: ::prost::alloc::string::String,
     #[prost(uint32, tag = "2")]
     pub task_idx: u32,
     #[prost(message, optional, tag = "3")]
     pub error: ::core::option::Option<Error>,
 }
 /// SDK -> Controller, at each iteration boundary of a looping durable
-/// structured steps operator (steps-durable-loop): iteration `iter`
+/// structured steps relay (steps-durable-loop): iteration `iter`
 /// finished, having consumed the durable input log up to `consumed_offset` —
 /// the `flz.offset` of the input that seeded it, absent when it consumed none
 /// (0 is the log's first offset) — and released `handoff` as its terminal
@@ -433,7 +433,7 @@ pub struct TaskCommitResponse {
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct IterCommit {
     #[prost(string, tag = "1")]
-    pub operator_id: ::prost::alloc::string::String,
+    pub relay_id: ::prost::alloc::string::String,
     #[prost(uint32, tag = "2")]
     pub iter: u32,
     #[prost(uint64, optional, tag = "3")]
@@ -453,7 +453,7 @@ pub struct IterCommit {
     /// dead-letter queue, journals `dead_lettered` instead of `iter_committed`,
     /// and only then answers; the driver then undoes the turn and takes the
     /// next message as iteration `iter + 1`. Sent only to a controller that set
-    /// `AddOperator.dead_letter_turns`.
+    /// `AddRelay.dead_letter_turns`.
     #[prost(message, optional, tag = "8")]
     pub dead_letter: ::core::option::Option<DeadLetter>,
 }
@@ -477,26 +477,26 @@ pub struct DeadLetter {
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct IterCommitResponse {
     #[prost(string, tag = "1")]
-    pub operator_id: ::prost::alloc::string::String,
+    pub relay_id: ::prost::alloc::string::String,
     #[prost(uint32, tag = "2")]
     pub iter: u32,
     #[prost(message, optional, tag = "3")]
     pub error: ::core::option::Option<Error>,
 }
 /// SDK -> Controller. An instance of either kind whose class sleeps has been idle
-/// past the threshold (a steps operator at the committed boundary of iteration `iter`,
-/// a flow operator at `iter` 0): it asks to sleep WITHOUT a OperatorCompleted (this is
+/// past the threshold (a steps relay at the committed boundary of iteration `iter`,
+/// a flow relay at `iter` 0): it asks to sleep WITHOUT a RelayCompleted (this is
 /// not a terminal outcome). The Controller writes the instance's park record and
 /// evicts it from the runner; the registry keeps it `suspended` until a new
 /// input-log append, or the wake deadline, rehydrates it
-/// (durable-suspension). `wake_deadline_ms` is 0 when the operator
+/// (durable-suspension). `wake_deadline_ms` is 0 when the relay
 /// declared no durable timer. `consumed_offset` is the highest input-log offset
 /// the run parked to the dead-letter queue unread, absent when none: consumed
 /// without a pass, so the Controller releases it rather than re-delivering it.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct IterPark {
     #[prost(string, tag = "1")]
-    pub operator_id: ::prost::alloc::string::String,
+    pub relay_id: ::prost::alloc::string::String,
     #[prost(uint32, tag = "2")]
     pub iter: u32,
     #[prost(uint64, tag = "3")]
@@ -590,7 +590,7 @@ pub struct TaskJournalState {
 /// before any input is processed. See the per-cell state persistence design.
 ///
 /// `cell_id` is the structured byte identifier
-/// `[operator_class_len: u8][operator_class][tasklet_id_len: u8][tasklet_id]
+/// `[relay_class_len: u8][relay_class][tasklet_id_len: u8][tasklet_id]
 ///   [cell_key_len: u16 BE][cell_key]`. `change_log_bytes` is
 /// the tail of the WAL framed `[seq: u64 BE][len: u32 BE]
 /// [header: 16B][change_bytes][crc32: u32 BE]` records back-to-back.
@@ -602,12 +602,12 @@ pub struct RestoreInitState {
     pub snapshot_bytes: ::prost::alloc::vec::Vec<u8>,
     #[prost(bytes = "vec", tag = "3")]
     pub change_log_bytes: ::prost::alloc::vec::Vec<u8>,
-    /// Saga crash-resume (operator-saga): the Controller sets these
+    /// Saga crash-resume (relay-saga): the Controller sets these
     /// from the per-Cell compensation markers it persisted for a durable
-    /// steps operator. `has_compensation_intent` ⇒ this Cell's tasklet
+    /// steps relay. `has_compensation_intent` ⇒ this Cell's tasklet
     /// completed forward and may need undo; `has_compensation_done` ⇒ its
     /// compensation already ran (skip it on resume). Both false for a
-    /// flow operator or a steps operator one that never compensated.
+    /// flow relay or a steps relay one that never compensated.
     #[prost(bool, tag = "4")]
     pub has_compensation_intent: bool,
     #[prost(bool, tag = "5")]
@@ -671,7 +671,7 @@ pub struct CellMailboxStatus {
     pub status: ::prost::alloc::string::String,
 }
 /// End-to-end control-channel health probe issued by the Controller before
-/// `AddOperator`. The SDK responds immediately with a `CommandResponse{status:
+/// `AddRelay`. The SDK responds immediately with a `CommandResponse{status:
 /// "success", raw_data: PingResponse}`; the round-trip proves the
 /// control channel is bound, the SDK is listening, and the reply path is
 /// intact. SDKs without the handler MUST log and ignore the unknown variant
@@ -689,7 +689,7 @@ pub struct PingResponse {
 /// SDK -> Controller, emitted as the FIRST frame on every newly-established
 /// control stream after `handle_reconnect` runs. Preserves the runner's
 /// identity across the reconnect so the Controller can compute a binding
-/// delta instead of re-issuing every operator. `reason` is one of
+/// delta instead of re-issuing every relay. `reason` is one of
 /// `control_stream_broken | read_error | write_error | keepalive_timeout
 /// | controller_requested`. Old Controllers that do not recognise this
 /// variant silently skip it; new SDKs against an old Controller therefore
@@ -720,15 +720,15 @@ pub struct ReassignRunnerId {
 /// or "cancelled" on a cooperative external stop or a duration that elapsed;
 /// `result` carries the terminal result/error payload. The Controller drives
 /// the same stop/teardown path as an explicit stop (deregister-on-completion)
-/// so a finished steps operator is removed from the durable registry and
+/// so a finished steps relay is removed from the durable registry and
 /// never replayed on boot or misjudged by convergence. Direction is reversed
 /// like RunnerShutdownNotification: SDK -> Controller over the
 /// "control_command" payload_id; old Controllers ignore the unknown variant via
 /// Protox unknown-field handling.
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct OperatorCompleted {
+pub struct RelayCompleted {
     #[prost(string, tag = "1")]
-    pub operator_id: ::prost::alloc::string::String,
+    pub relay_id: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
     pub status: ::prost::alloc::string::String,
     #[prost(string, tag = "3")]
@@ -785,7 +785,7 @@ pub struct ParkPayloadAck {
     #[prost(string, tag = "1")]
     pub park_id: ::prost::alloc::string::String,
 }
-/// One declared operator factory: the controller-facing factory id plus a
+/// One declared relay factory: the controller-facing factory id plus a
 /// human-readable description, mirroring the connect init frame's factory
 /// entries.
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -798,7 +798,7 @@ pub struct FactoryDecl {
     /// SDK declares to the poll core as `class.sdk_lang` and stamps at byte 0
     /// of every durable record it writes (1 Rust, 2 Java, 3 Elixir; the
     /// allocation table of record is `flz_core::header`). The Controller places
-    /// an operator only on a runner advertising its factory's established
+    /// a relay only on a runner advertising its factory's established
     /// language, because the State/Change bodies below the shared envelope are
     /// per-SDK. 0 (absent) is "unspecified" and never places.
     #[prost(uint32, tag = "3")]
@@ -821,7 +821,7 @@ pub struct FactoryDecl {
 /// semantics make delivery idempotent; the reconnect init frame remains the
 /// resync of record, so a lost frame self-heals. Fire-and-forget: the
 /// Controller does not ack (it gates no durability barrier — a stale
-/// placement fails at the SDK's AddOperator handler and convergence
+/// placement fails at the SDK's AddRelay handler and convergence
 /// re-places). Direction is reversed like RunnerShutdownNotification:
 /// SDK -> Controller over the "control_command" payload_id; old Controllers
 /// ignore the unknown variant via Protox unknown-field handling.
@@ -830,17 +830,17 @@ pub struct UpdateFactories {
     #[prost(message, repeated, tag = "1")]
     pub factories: ::prost::alloc::vec::Vec<FactoryDecl>,
 }
-/// Controller -> SDK. Cooperative external stop for a steps operator
-/// (`flz operator stop`), distinct from the hard `RemOperator` teardown: the
+/// Controller -> SDK. Cooperative external stop for a steps relay
+/// (`flz relay stop`), distinct from the hard `RemRelay` teardown: the
 /// SDK trips its cancellation token, lets in-flight work unwind, runs any saga
-/// compensation, then emits the normal `OperatorCompleted` (status "cancelled")
+/// compensation, then emits the normal `RelayCompleted` (status "cancelled")
 /// that drives the single teardown path. Rides the "control_command" payload_id
 /// like other CommandRequest variants; SDKs that do not recognise it skip it via
 /// the protobuf decoder (degrading to no cooperative stop).
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct StepsStop {
     #[prost(string, tag = "1")]
-    pub operator_id: ::prost::alloc::string::String,
+    pub relay_id: ::prost::alloc::string::String,
 }
 /// SDK -> Controller. A tasklet asked for a steps instance
 /// (`ctx.spawn_steps`): spawn `factory_id` under `instance_id` if that id is
@@ -858,7 +858,7 @@ pub struct StepsStop {
 /// from: the requesting instance, the input-log offset its tasklet was taking,
 /// the call's position in that invocation, the factory and a hash of the
 /// payload. A re-run of the invocation sends the same identity, and the
-/// Controller resolves it to the operator the first request did. Empty when
+/// Controller resolves it to the relay the first request did. Empty when
 /// the request came from outside a tasklet invocation.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SpawnStepsRequest {
@@ -877,8 +877,8 @@ pub struct SpawnStepsRequest {
 /// request's reference_id so the SDK wakes the requester's result handle.
 /// `outcome` is `spawned` or `delivered` when the request reached an
 /// instance, and empty when it was refused; `error` is the refusal, carrying the
-/// controller's own code (`operator.already_running`, `operator.factory_unknown`,
-/// `operator.factory_not_steps`, `quota.exceeded`, `authz.*`, ...), and is
+/// controller's own code (`relay.already_running`, `relay.factory_unknown`,
+/// `relay.factory_not_steps`, `quota.exceeded`, `authz.*`, ...), and is
 /// absent otherwise. `instance_id` is the id the request
 /// resolved to: the requester's own, or the generated one for a request that
 /// carried none (empty when nothing was started). The reply never faults the
@@ -895,7 +895,7 @@ pub struct SpawnStepsResponse {
 /// SDK -> Controller. Ordinary application code administering the namespace its
 /// connection proved: one frame for every verb, because the verb is data.
 /// `verb` names a function of the controller's published consumer surface as
-/// "<Module>.<function>" (for example "Operator.start"); `args` is a JSON array
+/// "<Module>.<function>" (for example "Relay.start"); `args` is a JSON array
 /// of that call's remaining arguments.
 ///
 /// There is NO namespace field and NO principal field, and that is the safety
@@ -928,15 +928,15 @@ pub struct AdminResponse {
     pub error: ::core::option::Option<Error>,
 }
 /// SDK -> Controller, one-way, over the "control_command" payload_id: the
-/// process of operator instance `operator_id` exited abnormally, so the runner
+/// process of relay instance `relay_id` exited abnormally, so the runner
 /// no longer hosts it. `reason` renders the exit reason for the log, the
 /// telemetry and the park reason; nothing branches on it. The runner sends it
 /// again on every new control stream until the Controller answers with
-/// `AddOperator` or `RemOperator` for the id.
+/// `AddRelay` or `RemRelay` for the id.
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct OperatorExited {
+pub struct RelayExited {
     #[prost(string, tag = "1")]
-    pub operator_id: ::prost::alloc::string::String,
+    pub relay_id: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
     pub reason: ::prost::alloc::string::String,
 }

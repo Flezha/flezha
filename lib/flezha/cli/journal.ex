@@ -14,9 +14,9 @@ defmodule Flezha.Service.Cli.Journal do
     print_journal_completion(report.leaf_tasks, report.complete)
   end
 
-  # The leaf set is what "done" means for a tree-shaped chain: the operator is
+  # The leaf set is what "done" means for a tree-shaped chain: the relay is
   # complete when the in-flight iteration has committed every leaf. A class that
-  # declared none (a flow operator, an older SDK) leaves it underivable.
+  # declared none (a flow relay, an older SDK) leaves it underivable.
   defp print_journal_completion(nil, _complete),
     do: IO.puts("\n  complete: unknown (class declares no leaf tasklets)")
 

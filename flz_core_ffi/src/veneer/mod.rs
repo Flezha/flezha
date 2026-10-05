@@ -275,9 +275,9 @@ pub fn start(ctx: CtxPtr, namespace: &CStr) -> Result<(), Refusal> {
 
 /// Start the declared class as a local run: no controller, no socket. The
 /// host keeps its own poll loop, which is what runs the tasklets.
-pub fn local_start(ctx: CtxPtr, factory_id: &CStr, operator_id: &CStr) -> Result<(), Refusal> {
+pub fn local_start(ctx: CtxPtr, factory_id: &CStr, relay_id: &CStr) -> Result<(), Refusal> {
     verdict(ctx, unsafe {
-        crate::flz_core_local_start(ctx.get(), factory_id.as_ptr(), operator_id.as_ptr())
+        crate::flz_core_local_start(ctx.get(), factory_id.as_ptr(), relay_id.as_ptr())
     })
 }
 
@@ -394,12 +394,12 @@ pub fn admin_call(ctx: CtxPtr, verb: &CStr, args: &CStr) -> Result<String, Refus
     Ok(result.unwrap_or_default())
 }
 
-/// Send `message` to the entry channel `channel` of `operator`, answering as
+/// Send `message` to the entry channel `channel` of `relay`, answering as
 /// JSON: the controller's verdict, or `null` for a local send. An empty
 /// `msg_id` or `key` is none.
 pub fn send_message(
     ctx: CtxPtr,
-    operator: &CStr,
+    relay: &CStr,
     channel: &CStr,
     message: &[u8],
     msg_id: &CStr,
@@ -411,7 +411,7 @@ pub fn send_message(
         |out, out_len| unsafe {
             crate::flz_core_send_message(
                 ctx.get(),
-                operator.as_ptr(),
+                relay.as_ptr(),
                 channel.as_ptr(),
                 message.as_ptr(),
                 message.len(),
@@ -428,11 +428,11 @@ pub fn send_message(
     Ok(answer.unwrap_or_default())
 }
 
-/// The ids of the operator instances bound on this process's runner.
-pub fn operators(ctx: CtxPtr) -> Result<Vec<String>, Refusal> {
+/// The ids of the relay instances bound on this process's runner.
+pub fn relays(ctx: CtxPtr) -> Result<Vec<String>, Refusal> {
     let (status, ids) = with_buffer(
         &[FLZ_OK],
-        |out, out_len| unsafe { crate::flz_core_operators(ctx.get(), out, out_len) },
+        |out, out_len| unsafe { crate::flz_core_relays(ctx.get(), out, out_len) },
         |bytes| serde_json::from_slice::<Vec<String>>(bytes).unwrap_or_default(),
     );
     verdict(ctx, status)?;

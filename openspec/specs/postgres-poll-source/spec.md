@@ -1,11 +1,11 @@
 # postgres-poll-source Specification
 
 ## Purpose
-The first-party `operator_postgres_poll` source reads the new, and with a timestamp column the changed, rows of one Postgres table past a cursor it commits to its binding, injects each row as one JSON object with a stable message id, and commits its cursor as its operator's input durability says.
+The first-party `relay_postgres_poll` source reads the new, and with a timestamp column the changed, rows of one Postgres table past a cursor it commits to its binding, injects each row as one JSON object with a stable message id, and commits its cursor as its relay's input durability says.
 ## Requirements
-### Requirement: `operator_postgres_poll` SHALL read one table past its cursor, in order
+### Requirement: `relay_postgres_poll` SHALL read one table past its cursor, in order
 
-The first-party source `operator_postgres_poll` SHALL read the rows of its `table` whose cursor
+The first-party source `relay_postgres_poll` SHALL read the rows of its `table` whose cursor
 is past the last one it delivered, ordered by the cursor, at most `batch_size` per read, and
 SHALL inject each row as one input on its entry channel. With only `id_column` the cursor SHALL
 be the id; with `timestamp_column` it SHALL be the pair (timestamp, id), compared as a row,
@@ -17,14 +17,14 @@ after a short one, and after a failed read, it SHALL wait `interval_ms`.
 
 - **GIVEN** a table `orders` with rows of id 1 to 3 and a plugin with `id_column: id`
 - **WHEN** the plugin starts with `start_at: beginning` and rows 4 and 5 are inserted later
-- **THEN** the operator SHALL receive rows 1, 2, 3, 4, 5, in that order, each once
+- **THEN** the relay SHALL receive rows 1, 2, 3, 4, 5, in that order, each once
 
 #### Scenario: An updated row comes again in timestamp mode
 
 - **GIVEN** a plugin with `timestamp_column: updated_at` and `id_column: id` that has
   delivered row 7
 - **WHEN** row 7 is updated and its `updated_at` set to now
-- **THEN** the operator SHALL receive row 7 again with its new values
+- **THEN** the relay SHALL receive row 7 again with its new values
 
 #### Scenario: A row inside the delay is held back
 
@@ -73,33 +73,33 @@ table resolved to and the cursor values in Postgres's text form.
   decimals, an ISO 8601 string, a canonical uuid string, the JSON value, a base64 string and
   `null`
 
-### Requirement: The plugin SHALL follow the operator's input durability
+### Requirement: The plugin SHALL follow the relay's input durability
 
 The plugin SHALL hand every batch over with `inject_many/4` and wait for its verdicts with no
 timeout, SHALL move its cursor only past the longest prefix of rows accepted, and SHALL read a
-refused row again on its next read. When the operator's input is durable it SHALL commit its
+refused row again on its next read. When the relay's input is durable it SHALL commit its
 cursor after every confirmed batch; when it is not, once it has caught up or a read failed, and at
 most every `commit_interval_ms` while it reads full batches.
 
 #### Scenario: A restart with durable input loses nothing
 
-- **GIVEN** an operator with `effectively_once` bound to the plugin, reading a table of 10 000
+- **GIVEN** a relay with `effectively_once` bound to the plugin, reading a table of 10 000
   rows
 - **WHEN** the controller is killed while the plugin is reading, and started again
-- **THEN** the operator SHALL have received every row at least once by its `flz.msg_id`
+- **THEN** the relay SHALL have received every row at least once by its `flz.msg_id`
 
 #### Scenario: A row read again while the log holds it is absorbed
 
-- **GIVEN** an operator with `effectively_once` whose runner is stalled, so its input log
+- **GIVEN** a relay with `effectively_once` whose runner is stalled, so its input log
   still holds every delivered row, and a plugin whose cursor was committed before the last
   50 delivered rows
 - **WHEN** the plugin's worker is killed and brought up again
-- **THEN** it SHALL read those 50 rows again, and the operator SHALL receive each of them
+- **THEN** it SHALL read those 50 rows again, and the relay SHALL receive each of them
   once when its runner resumes
 
 #### Scenario: Without durable input the cursor is committed on a timer
 
-- **GIVEN** a plain flow operator bound to the plugin with `commit_interval_ms` 5000
+- **GIVEN** a plain flow relay bound to the plugin with `commit_interval_ms` 5000
 - **WHEN** the plugin delivers three full batches within one second
 - **THEN** the cursor SHALL be committed at most once in that second
 
@@ -114,7 +114,7 @@ start with `start_at: end`. A cursor committed under another `table`, `id_column
 #### Scenario: A move continues where it stopped
 
 - **GIVEN** a plugin that has delivered rows 1 to 500 and committed its cursor
-- **WHEN** its operator moves to another controller
+- **WHEN** its relay moves to another controller
 - **THEN** the plugin there SHALL continue with row 501
 
 #### Scenario: A changed table starts again
@@ -127,14 +127,14 @@ start with `start_at: end`. A cursor committed under another `table`, `id_column
 
 - **GIVEN** a table with 100 rows and a new binding with `start_at: end`
 - **WHEN** the plugin starts and one row is inserted
-- **THEN** the operator SHALL receive only that row
+- **THEN** the relay SHALL receive only that row
 
-### Requirement: The plugin SHALL NOT be shared or bound to a partitioned operator
+### Requirement: The plugin SHALL NOT be shared or bound to a partitioned relay
 
-`operator_postgres_poll` SHALL declare itself not shareable, and SHALL refuse a partitioned
-operator with `plugin.partitioned_host`.
+`relay_postgres_poll` SHALL declare itself not shareable, and SHALL refuse a partitioned
+relay with `plugin.partitioned_host`.
 
-#### Scenario: A partitioned operator
+#### Scenario: A partitioned relay
 
 - **WHEN** the plugin is bound to a member of a partition group
 - **THEN** the bind SHALL be refused with `plugin.partitioned_host`

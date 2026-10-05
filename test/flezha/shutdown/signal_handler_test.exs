@@ -10,7 +10,7 @@ defmodule Flezha.Shutdown.SignalHandlerTest do
 
   alias Flezha.Shutdown.Coordinator
   alias Flezha.Shutdown.SignalHandler
-  alias Flezha.Shutdown.SignalHandler.Relay
+  alias Flezha.Shutdown.SignalHandler.Forwarder
 
   setup do
     prev = Logger.level()
@@ -67,12 +67,12 @@ defmodule Flezha.Shutdown.SignalHandlerTest do
       assert is_pid(Process.whereis(SignalHandler))
       assert :sys.get_state(Process.whereis(SignalHandler)).count == 0
       assert :erl_signal_handler in :gen_event.which_handlers(:erl_signal_server)
-      refute Relay in :gen_event.which_handlers(:erl_signal_server)
+      refute Forwarder in :gen_event.which_handlers(:erl_signal_server)
     end
   end
 
   describe "install" do
-    test "registers Relay, reports :ok, and never asks for sigint" do
+    test "registers Forwarder, reports :ok, and never asks for sigint" do
       mgr = own_manager()
 
       {pid, log} =
@@ -83,7 +83,7 @@ defmodule Flezha.Shutdown.SignalHandlerTest do
             SignalHandler.start_link(name: :sh_install, enabled: true, signal_server: mgr)
 
           assert GenServer.call(pid, :status) == :ok
-          assert Relay in :gen_event.which_handlers(mgr)
+          assert Forwarder in :gen_event.which_handlers(mgr)
           pid
         end)
 
@@ -98,13 +98,13 @@ defmodule Flezha.Shutdown.SignalHandlerTest do
     test "the handler is supervised — it is removed when its owner dies" do
       mgr = own_manager()
       pid = start_handler(mgr, :sh_sup)
-      assert Relay in :gen_event.which_handlers(mgr)
+      assert Forwarder in :gen_event.which_handlers(mgr)
 
       ref = Process.monitor(pid)
       GenServer.stop(pid)
       assert_receive {:DOWN, ^ref, :process, ^pid, _}, 2_000
 
-      assert wait_until(fn -> Relay not in :gen_event.which_handlers(mgr) end, 2_000)
+      assert wait_until(fn -> Forwarder not in :gen_event.which_handlers(mgr) end, 2_000)
     end
 
     test "a refused registration latches :degraded, warns, and still completes start" do
@@ -131,7 +131,7 @@ defmodule Flezha.Shutdown.SignalHandlerTest do
     end
   end
 
-  describe "Relay" do
+  describe "Forwarder" do
     test "install/2 takes over a live manager: ours in, the incumbent out" do
       mgr = own_manager()
       # The real kernel handler, on a private manager — never notified with
@@ -139,16 +139,16 @@ defmodule Flezha.Shutdown.SignalHandlerTest do
       :ok = :gen_event.add_handler(mgr, :erl_signal_handler, [])
       assert :erl_signal_handler in :gen_event.which_handlers(mgr)
 
-      :ok = Relay.install(mgr, self())
+      :ok = Forwarder.install(mgr, self())
 
       handlers = :gen_event.which_handlers(mgr)
-      assert Relay in handlers
+      assert Forwarder in handlers
       refute :erl_signal_handler in handlers
     end
 
     test "forwards a signal to its owner" do
       mgr = own_manager()
-      :ok = :gen_event.add_handler(mgr, Relay, {self(), mgr})
+      :ok = :gen_event.add_handler(mgr, Forwarder, {self(), mgr})
 
       :gen_event.notify(mgr, :sigterm)
       assert_receive :sigterm, 1_000
@@ -156,8 +156,8 @@ defmodule Flezha.Shutdown.SignalHandlerTest do
 
     test "does not try to restore kernel's handler for a non-kernel manager" do
       mgr = own_manager()
-      :ok = :gen_event.add_handler(mgr, Relay, {self(), mgr})
-      :ok = :gen_event.delete_handler(mgr, Relay, [])
+      :ok = :gen_event.add_handler(mgr, Forwarder, {self(), mgr})
+      :ok = :gen_event.delete_handler(mgr, Forwarder, [])
 
       # The global manager is untouched, and kernel's handler is not
       # duplicated onto it.
@@ -233,12 +233,12 @@ defmodule Flezha.Shutdown.SignalHandlerTest do
       assert out =~ "STATUS=ok"
 
       install = Regex.run(~r/AFTER_INSTALL=(.*)/, out) |> List.last()
-      assert install =~ "Relay"
+      assert install =~ "Forwarder"
       refute install =~ "erl_signal_handler"
 
       stopped = Regex.run(~r/AFTER_STOP=(.*)/, out) |> List.last()
       assert stopped =~ "erl_signal_handler"
-      refute stopped =~ "Relay"
+      refute stopped =~ "Forwarder"
     end
 
     test "the first signal dispatches to the coordinator and stops the VM with status 0" do

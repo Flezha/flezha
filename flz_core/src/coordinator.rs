@@ -2,7 +2,7 @@
 //! every control-plane write — command replies, keepalives, heartbeats,
 //! steps completions and SDK-initiated requests — so those writes never
 //! interleave. Data-plane traffic bypasses it entirely: stream readers push
-//! straight into the targeted operator's cell mailboxes.
+//! straight into the targeted relay's cell mailboxes.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
@@ -18,23 +18,23 @@ use tracing::warn;
 
 use crate::channel::ChannelKind;
 use crate::error::{Code, Error};
-use crate::operator::instance::OperatorInstance;
-use crate::operator::registry::{get_class as get_operator_class, OperatorRegistry};
 use crate::pb::command_request::Command;
-use crate::pb::{CommandRequest, OperatorCompleted as PbOperatorCompleted};
-use crate::routing::OperatorDispatchHandle;
+use crate::pb::{CommandRequest, RelayCompleted as PbRelayCompleted};
+use crate::relay::instance::RelayInstance;
+use crate::relay::registry::{get_class as get_relay_class, RelayRegistry};
+use crate::routing::RelayDispatchHandle;
 use crate::runner::{ClientResponseMessage, RunnerMessage, RunnerStatus};
 use crate::shutdown::ShutdownBridge;
 use crate::util::nonce_suffix;
 use crate::{command, control_unit};
 
-/// Each data pair's secondary by pair key: the stream an operator's outputs ride.
+/// Each data pair's secondary by pair key: the stream a relay's outputs ride.
 pub type IoStreams = Arc<RwLock<HashMap<u32, Arc<FlezhaStream>>>>;
 
 pub struct RunnerNode {
     runner_id: String,
     _namespace: String,
-    operator_registry: Arc<OperatorRegistry>,
+    relay_registry: Arc<RelayRegistry>,
     shared_io_streams: IoStreams,
     quic_client: Option<Arc<QuicClient>>,
     connect_answered: ConnectAnswered,
@@ -42,75 +42,74 @@ pub struct RunnerNode {
 }
 
 /// What application code reaches of a runner without its coordinator: the
-/// operators bound on it, and a send to one of them that enters where a frame
+/// relays bound on it, and a send to one of them that enters where a frame
 /// off the wire enters.
 #[derive(Clone)]
-pub struct BoundOperators {
-    registry: Arc<OperatorRegistry>,
+pub struct BoundRelays {
+    registry: Arc<RelayRegistry>,
     io_streams: IoStreams,
 }
 
-static LIVE: Mutex<Option<BoundOperators>> = Mutex::new(None);
+static LIVE: Mutex<Option<BoundRelays>> = Mutex::new(None);
 
-/// The newest RunnerNode's bound operators; none before any runner is built.
-pub fn bound() -> BoundOperators {
+/// The newest RunnerNode's bound relays; none before any runner is built.
+pub fn bound() -> BoundRelays {
     LIVE.lock()
         .unwrap_or_else(|p| p.into_inner())
         .clone()
-        .unwrap_or_else(|| BoundOperators {
-            registry: Arc::new(OperatorRegistry::new()),
+        .unwrap_or_else(|| BoundRelays {
+            registry: Arc::new(RelayRegistry::new()),
             io_streams: Arc::default(),
         })
 }
 
 /// A live instance by id on the newest runner, for harnesses.
 #[doc(hidden)]
-pub fn live_instance(instance_id: &str) -> Option<Arc<OperatorInstance>> {
+pub fn live_instance(instance_id: &str) -> Option<Arc<RelayInstance>> {
     bound().registry.get(instance_id)
 }
 
-impl BoundOperators {
-    /// The ids of the operator instances bound now, a partition member by its
+impl BoundRelays {
+    /// The ids of the relay instances bound now, a partition member by its
     /// member id, sorted.
     pub fn ids(&self) -> Vec<String> {
         self.registry.ids()
     }
 
-    /// Hand `payload` to `operator`'s entry channel `channel` in this process,
+    /// Hand `payload` to `relay`'s entry channel `channel` in this process,
     /// through the dispatch a stream reader makes, with no frame to the
     /// controller. The input carries no offset, so no input log holds it.
     /// Blocks while the consumer's mailbox is full, as a reader does.
-    pub fn send(&self, operator: &str, channel: &str, payload: Vec<u8>) -> Result<(), Error> {
-        let not_local =
-            || Error::Routing(Code::OperatorNotLocal.with([("operator", operator.into())]));
-        let instance = self.registry.get(operator).ok_or_else(not_local)?;
+    pub fn send(&self, relay: &str, channel: &str, payload: Vec<u8>) -> Result<(), Error> {
+        let not_local = || Error::Routing(Code::RelayNotLocal.with([("relay", relay.into())]));
+        let instance = self.registry.get(relay).ok_or_else(not_local)?;
         crate::local::declared_channel(&instance, channel, ChannelKind::Entry)?;
-        let stream = self.stream_of(operator).ok_or_else(not_local)?;
+        let stream = self.stream_of(relay).ok_or_else(not_local)?;
         let metadata = HashMap::from([("channel".to_string(), channel.to_string())]);
         self.dispatch_handle()
-            .dispatch(operator, payload, &metadata, stream);
+            .dispatch(relay, payload, &metadata, stream);
         Ok(())
     }
 
-    /// The stream readers' handle onto these operators, for harnesses.
+    /// The stream readers' handle onto these relays, for harnesses.
     #[doc(hidden)]
-    pub fn dispatch_handle(&self) -> OperatorDispatchHandle {
-        OperatorDispatchHandle {
+    pub fn dispatch_handle(&self) -> RelayDispatchHandle {
+        RelayDispatchHandle {
             registry: Arc::clone(&self.registry),
         }
     }
 
     /// The secondary of the pair whose index the controller picks for
-    /// `operator` (`Flezha.Operator.Lifecycle.attach_channel/2`: the sum of the
+    /// `relay` (`Flezha.Relay.Lifecycle.attach_channel/2`: the sum of the
     /// id's code points modulo the pair count), so a local input's outputs
-    /// usually share a stream with the operator's other outputs. The controller
+    /// usually share a stream with the relay's other outputs. The controller
     /// numbers pairs in arrival order, which matches the runner's keys when they
     /// connect in turn; when they do not, only output order across the two
     /// paths is affected.
-    fn stream_of(&self, operator: &str) -> Option<Arc<FlezhaStream>> {
+    fn stream_of(&self, relay: &str) -> Option<Arc<FlezhaStream>> {
         let streams = self.io_streams.read().unwrap_or_else(|p| p.into_inner());
         let count = u64::try_from(streams.len()).ok().filter(|n| *n > 0)?;
-        let sum: u64 = operator.chars().map(u64::from).sum();
+        let sum: u64 = relay.chars().map(u64::from).sum();
         let key = u32::try_from(sum % count).ok()?;
         streams.get(&key).map(Arc::clone)
     }
@@ -118,17 +117,17 @@ impl BoundOperators {
 
 impl RunnerNode {
     pub fn new(namespace: String) -> RunnerNode {
-        let operator_registry = Arc::new(OperatorRegistry::new());
+        let relay_registry = Arc::new(RelayRegistry::new());
         let shared_io_streams: IoStreams = Arc::new(RwLock::new(HashMap::new()));
-        *LIVE.lock().unwrap_or_else(|p| p.into_inner()) = Some(BoundOperators {
-            registry: Arc::clone(&operator_registry),
+        *LIVE.lock().unwrap_or_else(|p| p.into_inner()) = Some(BoundRelays {
+            registry: Arc::clone(&relay_registry),
             io_streams: Arc::clone(&shared_io_streams),
         });
 
         RunnerNode {
             runner_id: "undefined".to_string(),
             _namespace: namespace,
-            operator_registry,
+            relay_registry,
             shared_io_streams,
             quic_client: None,
             connect_answered: ConnectAnswered::default(),
@@ -137,48 +136,44 @@ impl RunnerNode {
     }
 
     /// Spawn an instance of a registered class of either kind; `instance_id`
-    /// is the wire's `operator_id`. Idempotent: a duplicate id answers the
+    /// is the wire's `relay_id`. Idempotent: a duplicate id answers the
     /// existing instance. The instance takes the input tail the bind owes it;
-    /// a steps operator also takes the rest of the resume facts and waits for
+    /// a steps relay also takes the rest of the resume facts and waits for
     /// [`crate::steps::open`] before its first pass, so its `init_values`
     /// land first.
-    pub fn start_operator(
+    pub fn start_relay(
         &self,
         factory_id: String,
         instance_id: String,
-        partition: crate::operator::instance::KeyGroupRange,
+        partition: crate::relay::instance::KeyGroupRange,
         resume: crate::steps::instance::Resume,
-    ) -> Option<Arc<OperatorInstance>> {
-        if let Some(existing) = self.operator_registry.get(&instance_id) {
+    ) -> Option<Arc<RelayInstance>> {
+        if let Some(existing) = self.relay_registry.get(&instance_id) {
             return Some(existing);
         }
-        let topology = get_operator_class(&factory_id)?;
-        let instance = OperatorInstance::with_options(
-            topology,
-            Arc::from(instance_id.as_str()),
-            None,
-            partition,
-        );
+        let topology = get_relay_class(&factory_id)?;
+        let instance =
+            RelayInstance::with_options(topology, Arc::from(instance_id.as_str()), None, partition);
         instance.owe_inbox(resume.owed_inbox);
         if let Some(run) = &instance.steps {
             run.bind(resume);
         }
-        Some(self.operator_registry.register(instance))
+        Some(self.relay_registry.register(instance))
     }
 
     /// Unregister a class with no live instance; `Err(n)` names how many
-    /// exist. MUST run on the coordinator loop, serialized with `AddOperator`.
+    /// exist. MUST run on the coordinator loop, serialized with `AddRelay`.
     pub fn remove_factory(&self, factory_id: &str) -> Result<(), usize> {
-        let live = self.operator_registry.count_by_factory(factory_id);
+        let live = self.relay_registry.count_by_factory(factory_id);
         if live > 0 {
             return Err(live);
         }
-        crate::operator::registry::unregister_class(factory_id);
+        crate::relay::registry::unregister_class(factory_id);
         Ok(())
     }
 
-    pub fn stop_operator(&self, instance_id: &str) -> bool {
-        match self.operator_registry.remove(instance_id) {
+    pub fn stop_relay(&self, instance_id: &str) -> bool {
+        match self.relay_registry.remove(instance_id) {
             Some(instance) => {
                 instance.shutdown_background_threads();
                 crate::steps::removed(&instance);
@@ -188,12 +183,12 @@ impl RunnerNode {
         }
     }
 
-    pub fn has_operator(&self, instance_id: &str) -> bool {
-        self.operator_registry.contains(instance_id)
+    pub fn has_relay(&self, instance_id: &str) -> bool {
+        self.relay_registry.contains(instance_id)
     }
 
-    pub fn get_operator(&self, instance_id: &str) -> Option<Arc<OperatorInstance>> {
-        self.operator_registry.get(instance_id)
+    pub fn get_relay(&self, instance_id: &str) -> Option<Arc<RelayInstance>> {
+        self.relay_registry.get(instance_id)
     }
 
     /// The Cell a wire identity names, with its instance; a keyed one is
@@ -201,18 +196,18 @@ impl RunnerNode {
     pub fn find_cell(
         &self,
         cell_id: &[u8],
-    ) -> Option<(Arc<OperatorInstance>, Arc<crate::cell::CellSlot>)> {
-        self.operator_registry.find_cell(cell_id)
+    ) -> Option<(Arc<RelayInstance>, Arc<crate::cell::CellSlot>)> {
+        self.relay_registry.find_cell(cell_id)
     }
 
     /// The live instance a wire identity names.
-    pub fn instance_of_cell(&self, cell_id: &[u8]) -> Option<Arc<OperatorInstance>> {
-        self.operator_registry.instance_of_cell(cell_id)
+    pub fn instance_of_cell(&self, cell_id: &[u8]) -> Option<Arc<RelayInstance>> {
+        self.relay_registry.instance_of_cell(cell_id)
     }
 
-    pub fn operator_dispatch_handle(&self) -> OperatorDispatchHandle {
-        OperatorDispatchHandle {
-            registry: Arc::clone(&self.operator_registry),
+    pub fn relay_dispatch_handle(&self) -> RelayDispatchHandle {
+        RelayDispatchHandle {
+            registry: Arc::clone(&self.relay_registry),
         }
     }
 
@@ -224,10 +219,10 @@ impl RunnerNode {
         Arc::clone(&self.shared_io_streams)
     }
 
-    /// This runner's bound operators, as application code reaches them.
-    pub fn bound(&self) -> BoundOperators {
-        BoundOperators {
-            registry: Arc::clone(&self.operator_registry),
+    /// This runner's bound relays, as application code reaches them.
+    pub fn bound(&self) -> BoundRelays {
+        BoundRelays {
+            registry: Arc::clone(&self.relay_registry),
             io_streams: Arc::clone(&self.shared_io_streams),
         }
     }
@@ -294,7 +289,7 @@ pub fn start(
 
 /// Let the shutdown bridge enumerate live instances without the coordinator
 /// channel; the registry `Arc` is stable across reconnects.
-fn install_snapshot_fn(shutdown_bridge: &ShutdownBridge, registry: Arc<OperatorRegistry>) {
+fn install_snapshot_fn(shutdown_bridge: &ShutdownBridge, registry: Arc<RelayRegistry>) {
     shutdown_bridge.set_snapshot_fn(Box::new(move || {
         registry
             .snapshot_stream()
@@ -302,7 +297,7 @@ fn install_snapshot_fn(shutdown_bridge: &ShutdownBridge, registry: Arc<OperatorR
             .map(|(k, instance)| {
                 (
                     k,
-                    crate::command::cell_state::serialize_operator_state(&instance),
+                    crate::command::cell_state::serialize_relay_state(&instance),
                 )
             })
             .collect()
@@ -321,7 +316,7 @@ impl Coordinator {
         shutdown_bridge: Arc<ShutdownBridge>,
     ) -> (Self, [JoinHandle<()>; 2]) {
         let mut runner = RunnerNode::new(namespace.clone());
-        install_snapshot_fn(&shutdown_bridge, Arc::clone(&runner.operator_registry));
+        install_snapshot_fn(&shutdown_bridge, Arc::clone(&runner.relay_registry));
 
         let ctx_arc = Arc::new(Mutex::new(ctx));
         // Expose the coordinator channel process-globally so the
@@ -374,12 +369,12 @@ impl Coordinator {
             RunnerMessage::SendDataHeartbeat => {
                 heartbeat_tick(&self.runner.shared_io_streams);
             }
-            RunnerMessage::EmitOperatorCompleted {
-                operator_id,
+            RunnerMessage::EmitRelayCompleted {
+                relay_id,
                 status,
                 error,
                 result,
-            } => self.write_operator_completed(operator_id, status, error, result),
+            } => self.write_relay_completed(relay_id, status, error, result),
             RunnerMessage::EmitControlRequest {
                 reference_id,
                 command,
@@ -414,18 +409,18 @@ impl Coordinator {
             .set_control_stream(Some(Arc::clone(&self.control_stream)));
     }
 
-    /// The terminal `OperatorCompleted`, carrying the direct-output count.
-    fn write_operator_completed(
+    /// The terminal `RelayCompleted`, carrying the direct-output count.
+    fn write_relay_completed(
         &mut self,
-        operator_id: String,
+        relay_id: String,
         status: String,
         error: String,
         result: Vec<u8>,
     ) {
         let frame = control_command_frame(
             "steps-completed",
-            Command::OperatorCompleted(PbOperatorCompleted {
-                operator_id: operator_id.clone(),
+            Command::RelayCompleted(PbRelayCompleted {
+                relay_id: relay_id.clone(),
                 status,
                 error,
                 result,
@@ -434,7 +429,7 @@ impl Coordinator {
         if let Err(e) = self.write_control(frame) {
             warn!(
                 target: "flezha",
-                "[flezha] OperatorCompleted write failed for {}: {}", operator_id, e
+                "[flezha] RelayCompleted write failed for {}: {}", relay_id, e
             );
         }
     }
@@ -475,7 +470,7 @@ fn framed_request(reference_id: String, command: Command) -> Vec<u8> {
 }
 
 /// One heartbeat tick; a heartbeat that reached nothing feeds the flood
-/// ladder, the only signal an idle Operator ever gives it.
+/// ladder, the only signal an idle Relay ever gives it.
 fn heartbeat_tick(io_streams: &RwLock<HashMap<u32, Arc<FlezhaStream>>>) {
     if !send_data_heartbeat(io_streams) {
         crate::state_sink::note_transport_failure();
@@ -567,7 +562,7 @@ fn heartbeat_metadata() -> HashMap<String, String> {
         ("pending_push_oldest_ms", core.pending_push_oldest_age_ms()),
         // Wake-list occupancy: a runaway registration shows here long before it
         // is fatal, and a `timers_fired` that stops moving while `timers_armed`
-        // climbs is promotion wedged rather than the Operator idle.
+        // climbs is promotion wedged rather than the Relay idle.
         ("timers_armed", crate::timer::timers_armed() as u64),
         ("timers_fired", crate::timer::timers_fired_total()),
     ]

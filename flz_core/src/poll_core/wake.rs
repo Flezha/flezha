@@ -65,7 +65,7 @@ pub(super) enum Wake {
     /// An instance's deadline came due; `Weak` so a removed instance's
     /// deadlines die with it.
     Instance {
-        instance: Weak<crate::operator::instance::OperatorInstance>,
+        instance: Weak<crate::relay::instance::RelayInstance>,
         deadline: crate::steps::Deadline,
     },
 }
@@ -196,7 +196,7 @@ impl PollCore {
         for (key, wake) in self.wakes.take_due(now) {
             if let Wake::Instance { instance, deadline } = wake {
                 if let Some(instance) = instance.upgrade() {
-                    crate::operator::sleep::deadline_due(&instance, deadline, key.due_at_ms);
+                    crate::relay::sleep::deadline_due(&instance, deadline, key.due_at_ms);
                 }
                 continue;
             }
@@ -244,7 +244,7 @@ impl PollCore {
                     scheduled_at,
                     stream: Arc::clone(&stream),
                 };
-                // A steps operator's firing is a trigger of its run: the pass sheet
+                // A steps relay's firing is a trigger of its run: the pass sheet
                 // decides when it reaches the Cell, and admits it itself.
                 if live.topology.steps.is_some() {
                     crate::steps::firing_promoted(&live, fire);
@@ -330,7 +330,7 @@ impl PollCore {
     /// decides whether it still applies.
     pub fn arm_instance(
         &self,
-        instance: Weak<crate::operator::instance::OperatorInstance>,
+        instance: Weak<crate::relay::instance::RelayInstance>,
         seq: u64,
         deadline: crate::steps::Deadline,
         due_at_ms: u64,

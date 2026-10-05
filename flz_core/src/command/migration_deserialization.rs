@@ -1,8 +1,8 @@
-//! `MigrationDeserialization` — restore an Operator instance's per-Tasklet /
+//! `MigrationDeserialization` — restore a Relay instance's per-Tasklet /
 //! per-Cell state from a snapshot blob and register it locally.
 //! Reuses `apply_init_values` for the state-application path so a
 //! migrated instance ends up with byte-identical Cell state to the
-//! source instance produced by `serialize_operator_state`.
+//! source instance produced by `serialize_relay_state`.
 
 use super::{CommandAction, Reply};
 use crate::command::cell_state::apply_init_values;
@@ -17,12 +17,12 @@ impl CommandAction for MigrationDeserialization {
         errors: &mut Vec<crate::Error>,
     ) -> Reply {
         // A hot-swap handover carries no partition identity: the destination's
-        // `AddOperator` ran first and already registered the instance with
+        // `AddRelay` ran first and already registered the instance with
         // its range, so this call resolves to that instance.
-        match runner.start_operator(
+        match runner.start_relay(
             self.factory_id.clone(),
-            self.operator_id.clone(),
-            crate::operator::instance::KeyGroupRange::UNPARTITIONED,
+            self.relay_id.clone(),
+            crate::relay::instance::KeyGroupRange::UNPARTITIONED,
             crate::steps::Resume::default(),
         ) {
             Some(instance) => {
@@ -50,9 +50,7 @@ impl CommandAction for MigrationDeserialization {
                 }
             }
             None => {
-                errors.push(super::operator_start::class_not_registered(
-                    &self.factory_id,
-                ));
+                errors.push(super::relay_start::class_not_registered(&self.factory_id));
                 Reply {
                     payload_id: "migration_deserialization",
                     bytes: Vec::new(),

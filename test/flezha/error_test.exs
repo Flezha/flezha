@@ -14,11 +14,11 @@ defmodule Flezha.ErrorTest do
   end
 
   test "a reason maps to its code, its arguments naming the details" do
-    error = Error.from_reason({:quota_exceeded, :max_operators, %{current: 3, limit: 3}}, nil)
+    error = Error.from_reason({:quota_exceeded, :max_relays, %{current: 3, limit: 3}}, nil)
 
     assert %Error{code: "quota.exceeded", class: :conflict, hint: "flz namespace show"} = error
-    assert error.details == %{"kind" => "max_operators", "current" => 3, "limit" => 3}
-    assert error.message == "the namespace's max_operators quota is reached (3 of 3)"
+    assert error.details == %{"kind" => "max_relays", "current" => 3, "limit" => 3}
+    assert error.message == "the namespace's max_relays quota is reached (3 of 3)"
   end
 
   test "an entry limited to a site applies there and only there" do

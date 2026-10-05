@@ -23,7 +23,7 @@ defmodule Flezha.AuthZ.VerbsWalkTest do
   alias Flezha.Observability.TestSinks
   alias Flezha.Schedule.Store, as: ScheduleStore
   alias Flezha.Service.Cli
-  alias Flezha.Service.OperatorManager
+  alias Flezha.Service.RelayManager
   alias FlezhaTest.Helper.{AuthTestHelper, NodeTestHelper, ScheduleTestHelper}
 
   @elsewhere "walk-elsewhere"
@@ -149,7 +149,7 @@ defmodule Flezha.AuthZ.VerbsWalkTest do
     # An authorized act that fails is still an act: the record carries the outcome.
     {_out, _err} =
       refusal(fn ->
-        Cli.call("Operator.stop", Jason.encode!(["default", "walk-nope"]), token: ctx.op_default)
+        Cli.call("Relay.stop", Jason.encode!(["default", "walk-nope"]), token: ctx.op_default)
       end)
 
     settle(ctx.audit_dir)
@@ -168,8 +168,8 @@ defmodule Flezha.AuthZ.VerbsWalkTest do
 
     assert [retention] = records(ctx.audit_dir, "state_service", "retention")
 
-    assert retention["metadata"] |> Map.take(["operator_class", "hours"]) == %{
-             "operator_class" => "WalkClass",
+    assert retention["metadata"] |> Map.take(["relay_class", "hours"]) == %{
+             "relay_class" => "WalkClass",
              "hours" => 2
            }
 
@@ -180,9 +180,9 @@ defmodule Flezha.AuthZ.VerbsWalkTest do
     assert enable["metadata"]["source"] == "walk_source"
     assert enable["namespace"] == "default"
 
-    assert [stop] = records(ctx.audit_dir, "operator_service", "stop")
+    assert [stop] = records(ctx.audit_dir, "relay_service", "stop")
     assert stop["metadata"]["outcome"] == "error"
-    assert stop["metadata"]["operator"] == "walk-nope"
+    assert stop["metadata"]["relay"] == "walk-nope"
   end
 
   test "a row-scoped verb refuses before it reads, and a bound caller sees the row's verdict",
@@ -209,9 +209,9 @@ defmodule Flezha.AuthZ.VerbsWalkTest do
     {:ok, _} = ScheduleStore.add(ScheduleTestHelper.entry_fields(%{name: "walk-run"}))
     test = self()
 
-    stub(OperatorManager, :start_steps, fn "default", id, _factory, _init, _opts ->
+    stub(RelayManager, :start_steps, fn "default", id, _factory, _init, _opts ->
       send(test, {:spawned, id})
-      {:ok, %{operator_id: id}}
+      {:ok, %{relay_id: id}}
     end)
 
     {_out, err} =
@@ -272,9 +272,9 @@ defmodule Flezha.AuthZ.VerbsWalkTest do
     {out, err}
   end
 
-  defp parked(operator_class) do
+  defp parked(relay_class) do
     %{
-      operator_class: operator_class,
+      relay_class: relay_class,
       tasklet_id: "task",
       cell_key: "k",
       channel: "input",
@@ -327,7 +327,7 @@ defmodule Flezha.AuthZ.VerbsWalkTest do
     TestSinks.settle(Sink)
 
     assert NodeTestHelper.wait_until(
-             fn -> records(dir, "operator_service", "stop") != [] end,
+             fn -> records(dir, "relay_service", "stop") != [] end,
              2_000
            ),
            "the audit sink never wrote the walk's last record"

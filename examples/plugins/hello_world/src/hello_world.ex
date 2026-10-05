@@ -22,7 +22,7 @@ defmodule Flezha.Examples.HelloWorld do
 
   @doc """
   Required by the installer when the plugin has an `:on_input` hook:
-  called for every input the host operator observes. See
+  called for every input the host relay observes. See
   `Flezha.Plugin.Extension` for the full callback table.
   """
   def on_input(ctx, opts) do

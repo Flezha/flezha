@@ -1,8 +1,8 @@
 defmodule FlezhaTest.Plugin.SharedMultinodeTest do
   @moduledoc """
   A shareable plugin across controllers: one copy on each controller its
-  operators run on, a connection kept open across an operator's move, a
-  `single` plugin's one copy serving operators on every controller and moving
+  relays run on, a connection kept open across a relay's move, a
+  `single` plugin's one copy serving relays on every controller and moving
   with its controller, and the verbs taking effect from a controller that never
   held the plugin.
   """
@@ -17,10 +17,10 @@ defmodule FlezhaTest.Plugin.SharedMultinodeTest do
   alias Flezha.Plugin.Provider.Websocket
   alias Flezha.Plugin.Shared
   alias Flezha.Service.HubManager
-  alias Flezha.Service.OperatorManager
+  alias Flezha.Service.RelayManager
   alias Flezha.Service.PluginManager
   alias Flezha.State.TestHelpers
-  alias FlezhaTest.Fixtures.OperatorFixture
+  alias FlezhaTest.Fixtures.RelayFixture
   alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.Helper.WebsocketServer
 
@@ -46,7 +46,7 @@ defmodule FlezhaTest.Plugin.SharedMultinodeTest do
         end
       end
 
-      OperatorManager.stop_all_operators(@namespace)
+      RelayManager.stop_all_relays(@namespace)
     end)
 
     for peer <- [p1, p2] do
@@ -62,16 +62,16 @@ defmodule FlezhaTest.Plugin.SharedMultinodeTest do
 
   defp hub_nodes, do: HubManager.get_hub_nodes(@namespace, false)
 
-  # An operator the hub placed on `node`, whose every ingested record reaches
+  # A relay the hub placed on `node`, whose every ingested record reaches
   # the test as `{:ingested, id, record}`.
-  defp operator_on(node, prefix) do
+  defp relay_on(node, prefix) do
     id =
       Enum.find_value(1..30, fn i ->
         id = "#{prefix}_#{i}"
-        {:ok, %{node: placed}} = id |> OperatorFixture.get(@factory) |> OperatorFixture.start()
+        {:ok, %{node: placed}} = id |> RelayFixture.get(@factory) |> RelayFixture.start()
 
-        if placed == node, do: id, else: OperatorFixture.stop(id) && nil
-      end) || flunk("no operator landed on #{inspect(node)}")
+        if placed == node, do: id, else: RelayFixture.stop(id) && nil
+      end) || flunk("no relay landed on #{inspect(node)}")
 
     test = self()
     collector = spawn_link(fn -> collect(test, id) end)
@@ -81,7 +81,7 @@ defmodule FlezhaTest.Plugin.SharedMultinodeTest do
         id: "in_#{id}",
         provider: BeamMsgForward,
         namespace: @namespace,
-        operator_id: id,
+        relay_id: id,
         opts: %{recv_pid: collector},
         hooks: [{:on_input, []}]
       })
@@ -112,11 +112,11 @@ defmodule FlezhaTest.Plugin.SharedMultinodeTest do
 
   defp copies_on(name), do: Enum.sort(Directory.plugin_nodes(@namespace, name))
 
-  # Whether `op` takes input from `name` again. An operator whose runner went
+  # Whether `op` takes input from `name` again. A relay whose runner went
   # with a stopped controller is parked until the loop binds it to another,
   # and a record that reaches it before then is not taken.
   defp serving?(op, name) do
-    case OperatorManager.get_overwatch_state(@namespace, op) do
+    case RelayManager.get_overwatch_state(@namespace, op) do
       {:ok, %{init_error: nil, extensions: table}} ->
         Table.running?(table, name) and Table.running?(table, "in_" <> op)
 
@@ -174,10 +174,10 @@ defmodule FlezhaTest.Plugin.SharedMultinodeTest do
     end
   end
 
-  test "a copy on each controller an operator runs on, and the verbs work from any",
+  test "a copy on each controller a relay runs on, and the verbs work from any",
        %{p1: p1, p2: p2, server: server} do
-    a = operator_on(p1, "pc_a")
-    b = operator_on(p2, "pc_b")
+    a = relay_on(p1, "pc_a")
+    b = relay_on(p2, "pc_b")
     websocket("trades", server)
 
     :ok = PluginManager.bind_plugin(@namespace, "trades", a)
@@ -190,7 +190,7 @@ defmodule FlezhaTest.Plugin.SharedMultinodeTest do
     assert_receive {:ingested, ^a, "both"}, 5_000
     assert_receive {:ingested, ^b, "both"}, 5_000
 
-    # This node holds neither operator nor copy.
+    # This node holds neither relay nor copy.
     :ok = PluginManager.unbind_plugin(@namespace, "trades", b)
     assert NodeTestHelper.wait_until(fn -> copies_on("trades") == [p1] end, 5_000)
     assert NodeTestHelper.wait_until(fn -> WebsocketServer.open(server) == 1 end, 5_000)
@@ -200,14 +200,14 @@ defmodule FlezhaTest.Plugin.SharedMultinodeTest do
     assert NodeTestHelper.wait_until(fn -> WebsocketServer.open(server) == 0 end, 5_000)
   end
 
-  test "an operator that moves keeps the connection open across the move",
+  test "a relay that moves keeps the connection open across the move",
        %{p1: p1, server: server} = ctx do
-    a = operator_on(p1, "mv_a")
+    a = relay_on(p1, "mv_a")
     websocket("moving", server)
     :ok = PluginManager.bind_plugin(@namespace, "moving", a)
     assert_receive {:ws_open, first}, 10_000
 
-    # The operator moves first: the copy it left keeps its connection through
+    # The relay moves first: the copy it left keeps its connection through
     # the idle stop, so both are open together before its controller is gone.
     drain(p1)
     assert NodeTestHelper.wait_until(fn -> WebsocketServer.open(server) == 2 end, 15_000)
@@ -219,7 +219,7 @@ defmodule FlezhaTest.Plugin.SharedMultinodeTest do
     assert_receive {:ingested, ^a, "after-move"}, 10_000
   end
 
-  test "a single plugin serves operators on every controller with one connection, and moves",
+  test "a single plugin serves relays on every controller with one connection, and moves",
        %{p1: p1, p2: p2, server: server} = ctx do
     # The hub places the home by its name: take one it placed on a peer, so
     # that peer can be drained.
@@ -242,7 +242,7 @@ defmodule FlezhaTest.Plugin.SharedMultinodeTest do
     [first] = Agent.get(server.agent, & &1.open)
     _ = connection_events()
 
-    ops = [operator_on(p1, "s_a"), operator_on(p2, "s_b"), operator_on(node(), "s_c")]
+    ops = [relay_on(p1, "s_a"), relay_on(p2, "s_b"), relay_on(node(), "s_c")]
     Enum.each(ops, &(:ok = PluginManager.bind_plugin(@namespace, name, &1)))
 
     WebsocketServer.broadcast(server, "one-frame")
@@ -254,7 +254,7 @@ defmodule FlezhaTest.Plugin.SharedMultinodeTest do
     assert opened_before_closing(first), "the new connection did not open before the old closed"
     assert NodeTestHelper.wait_until(fn -> home_node(name) != p1 end, 10_000)
 
-    # Every operator, the one that moved with p1 too, is subscribed to the new
+    # Every relay, the one that moved with p1 too, is subscribed to the new
     # copy before the next frame goes.
     assert NodeTestHelper.wait_until(
              fn ->
@@ -289,7 +289,7 @@ defmodule FlezhaTest.Plugin.SharedMultinodeTest do
         end
       end) || flunk("no single home landed on #{inspect(p1)}")
 
-    ops = [operator_on(p2, "l_b"), operator_on(node(), "l_c")]
+    ops = [relay_on(p2, "l_b"), relay_on(node(), "l_c")]
     Enum.each(ops, &(:ok = PluginManager.bind_plugin(@namespace, name, &1)))
 
     NodeTestHelper.stop_peer_node(Map.fetch!(ctx.peers, p1), p1)
@@ -302,7 +302,7 @@ defmodule FlezhaTest.Plugin.SharedMultinodeTest do
              end,
              30_000
            ),
-           "the operators were not served again without a new bind"
+           "the relays were not served again without a new bind"
 
     WebsocketServer.broadcast(server, "after-loss")
     for op <- ops, do: assert_receive({:ingested, ^op, "after-loss"}, 15_000)

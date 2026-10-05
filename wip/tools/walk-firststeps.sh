@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # Walk the Part 1 guides (docs/guides: controller_deployment, runner_deployment,
-# running_operators, sources_and_sinks, stop_everything) for one SDK's echo
+# running_relays, sources_and_sinks, stop_everything) for one SDK's echo
 # example, against the private controller `env.sh up <sdk>` started with
 # authorization off, as Part 1 runs it:
 #
 #   FLEZHA_AUTHZ_ENABLED=false wip/tools/env.sh up <sdk>
 #   wip/tools/walk-firststeps.sh <sdk> [page...]
 #
-# Pages, in the guides' order: controller runner operators plugins stop. With
+# Pages, in the guides' order: controller runner relays plugins stop. With
 # none named, all of them run; a page picks up what the pages before it left.
 # The echo runner is built and run from this checkout as its README says
 # (`example_build` and `example_run` in walk-steps.sh), so the SDK's artifacts
@@ -51,40 +51,40 @@ runner() {
   step runner-list "flz runner list"
 }
 
-operators() {
-  step start "flz operator start echo --id my_echo"
-  step list "flz operator list"
-  step send "flz operator send my_echo --text 'hello world' --await 2000"
-  step listen "flz operator listen my_echo --duration-ms 4000" &
+relays() {
+  step start "flz relay start echo --id my_echo"
+  step list "flz relay list"
+  step send "flz relay send my_echo --text 'hello world' --await 2000"
+  step listen "flz relay listen my_echo --duration-ms 4000" &
   local listener=$!
   n=$((n + 1)) # the listener's step counted in its own shell
   sleep 1
-  flz operator send my_echo --text 'hello world' >/dev/null
+  flz relay send my_echo --text 'hello world' >/dev/null
   wait "$listener"
 }
 
 plugins() {
   step root "flz controller status | grep file_plugin_root"
-  step enable-writer "flz plugin enable writer operator_file_sink --operator_id=my_echo --hook=on_output --Xpath=echo-out.txt"
-  step send "flz operator send my_echo --text hello"
+  step enable-writer "flz plugin enable writer relay_file_sink --relay_id=my_echo --hook=on_output --Xpath=echo-out.txt"
+  step send "flz relay send my_echo --text hello"
   until_ok 30 "grep -q 'echo: hello' $FILES/echo-out.txt"
   step cat-out "cd $FLEZHA_CTL_DIR && cat app_data/files/echo-out.txt"
-  step enable-reader "flz plugin enable reader operator_file_source --operator_id=my_echo --Xpath=echo-in.txt --Xchannel_in=in"
+  step enable-reader "flz plugin enable reader relay_file_source --relay_id=my_echo --Xpath=echo-in.txt --Xchannel_in=in"
   step append "cd $FLEZHA_CTL_DIR && echo 'from a file' >> app_data/files/echo-in.txt"
   until_ok 30 "grep -q 'from a file' $FILES/echo-out.txt"
   step cat-out-again "cd $FLEZHA_CTL_DIR && cat app_data/files/echo-out.txt"
-  step info "flz operator info"
+  step info "flz relay info"
   step disable-reader "flz plugin disable reader"
 }
 
 stop() {
   step disable-writer "flz plugin disable writer"
-  step stop-operator "flz operator stop my_echo"
+  step stop-relay "flz relay stop my_echo"
   "$ENV" stop echo INT
   step controller-stop "flz controller stop"
 }
 
-for page in ${@:-controller runner operators plugins stop}; do
+for page in ${@:-controller runner relays plugins stop}; do
   n=0
   echo "$page"
   "$page"

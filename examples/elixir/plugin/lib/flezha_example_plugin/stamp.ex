@@ -1,6 +1,6 @@
 defmodule FlezhaExamplePlugin.Stamp do
   @moduledoc """
-  Appends every output payload of the operator it is enabled on to a file, one
+  Appends every output payload of the relay it is enabled on to a file, one
   line each, prefixed with the stamp `stamp_lib` renders.
   """
 

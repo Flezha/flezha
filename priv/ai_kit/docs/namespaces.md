@@ -1,13 +1,13 @@
 # Namespaces
 
 A namespace is a separate room inside one Flezha deployment. Each application
-gets its own: its runners, its operators and their saved data live there, and
+gets its own: its runners, its relays and their saved data live there, and
 nothing in one namespace can see or touch what is in another. Each namespace
-also has its own limits, such as how many operators it may run, so one
+also has its own limits, such as how many relays it may run, so one
 application cannot use up everything, and its own keys, so a runner can enter
 only the namespace it has a key for.
 
-Namespaces are the tenancy boundary: each operator, state file, audit record
+Namespaces are the tenancy boundary: each relay, state file, audit record
 and observability signal carries one. Limits and keys take effect when
 [authorization](authorization.md) is on, which it is by default in a release.
 
@@ -18,21 +18,21 @@ flowchart LR
     subgraph C["one Flezha controller"]
         subgraph T["namespace: trading"]
             direction TB
-            T1["runners"] ~~~ T2["operators"] ~~~ T3[("saved data")]
+            T1["runners"] ~~~ T2["relays"] ~~~ T3[("saved data")]
         end
         subgraph M["namespace: another app"]
             direction TB
-            M1["runners"] ~~~ M2["operators"] ~~~ M3[("saved data")]
+            M1["runners"] ~~~ M2["relays"] ~~~ M3[("saved data")]
         end
     end
 ```
 
-- **A runner connects into exactly one namespace** and serves operators only
+- **A runner connects into exactly one namespace** and serves relays only
   there. A runner process serves one namespace; serving two means two
   processes ([`connecting_a_runner.md`](../deploying/connecting_a_runner.md#one-runner-one-namespace)).
-- **An operator id is unique within its namespace**, not across them.
+- **A relay id is unique within its namespace**, not across them.
 - **Each namespace has a hub of its own**: the process that decides which
-  runner each operator runs on, and moves it when that runner goes away.
+  runner each relay runs on, and moves it when that runner goes away.
 - **Saved state is kept per namespace**, under `app_data/state/<namespace>/`.
 - **The limits are six quotas** stored with the namespace, and the keys are
   the credentials and tokens issued for it.
@@ -71,10 +71,10 @@ $ flz namespace create trading
 namespace trading created
 namespace: trading
 quotas:
-  max_cells_per_operator: 1024
+  max_cells_per_relay: 1024
   max_mailbox_bytes_total: 268435456
   max_message_rate_per_second: 100000
-  max_operators: 100
+  max_relays: 100
   max_runners: 32
   max_state_bytes: 107374182400
 ```
@@ -190,7 +190,7 @@ namespace = List.first(System.argv(), "trading")
 ...
 {Flezha.SDK,
  namespace: namespace,
- operators: [Tradedesk.TradeWatcher, Tradedesk.OrderExecutor],
+ relays: [Tradedesk.TradeWatcher, Tradedesk.OrderExecutor],
  transport: :uds}
 ```
 
@@ -215,9 +215,9 @@ Runners in namespace 'trading':
 
 | Quota | Default | What it caps |
 | --- | --- | --- |
-| `max_operators` | 100 | operators started in the namespace; checked at start |
-| `max_cells_per_operator` | 1024 | keyed cells one operator may hold; checked at start |
-| `max_mailbox_bytes_total` | 256 MiB | the credit window across the namespace's operator mailboxes |
+| `max_relays` | 100 | relays started in the namespace; checked at start |
+| `max_cells_per_relay` | 1024 | keyed cells one relay may hold; checked at start |
+| `max_mailbox_bytes_total` | 256 MiB | the credit window across the namespace's relay mailboxes |
 | `max_message_rate_per_second` | 100 000 | stored for now, not enforced |
 | `max_state_bytes` | 100 GiB | the namespace's state on disk: a start is refused while over it, and a running namespace raises a latched `[:flezha, :state, :disk_quota_breach]` alarm; writes are not interrupted |
 | `max_runners` | 32 | runners connected at once; a refused connect emits `[:flezha, :runner, :quota_refused]` |
@@ -232,7 +232,7 @@ A namespace can take its own limits when it is created, with
 `--X<field>=<value>`, repeated for several fields:
 
 ```sh
-$ flz namespace create reporting --Xmax_operators=10
+$ flz namespace create reporting --Xmax_relays=10
 ```
 
 Read and change them later:
@@ -246,10 +246,10 @@ $ flz namespace set-quota trading --Xmax_runners=4
 namespace trading quotas updated
 namespace: trading
 quotas:
-  max_cells_per_operator: 1024
+  max_cells_per_relay: 1024
   max_mailbox_bytes_total: 268435456
   max_message_rate_per_second: 100000
-  max_operators: 100
+  max_relays: 100
   max_runners: 4
   max_state_bytes: 107374182400
 ```
@@ -258,7 +258,7 @@ An unknown field is refused (`namespace.unknown_quota_field`), and so is a
 negative value (`namespace.invalid_quota_value`). A change applies to the next
 start or connect, not to what is already running. Quotas can also be set in
 the controller's application env, as per-namespace overrides under
-`config :flezha, :authn_authz, namespaces: %{"team-orders" => %{max_operators: 50}}`.
+`config :flezha, :authn_authz, namespaces: %{"team-orders" => %{max_relays: 50}}`.
 
 ## Delete a namespace
 
@@ -280,8 +280,8 @@ hint: flz namespace list
 ```
 
 Delete removes the catalog entry and its quota counters, and only those. Empty
-a namespace first: stop each operator with `flz operator stop` and stop its
-runners. A running operator is not stopped by the entry going away: it carries
+a namespace first: stop each relay with `flz relay stop` and stop its
+runners. A running relay is not stopped by the entry going away: it carries
 on, in a namespace that is no longer listed. A deleted namespace stays gone;
 a namespace whose hub was merely stopped comes back on the next controller
 start while its entry stands.
@@ -289,8 +289,8 @@ start while its entry stands.
 ## Administering from application code
 
 A connected runner can administer the namespace its connection proved: start
-and stop operators, enable and disable plugins, read what is running, and send
-to its operators. No tasklet has to run, and the application holds no credential
+and stop relays, enable and disable plugins, read what is running, and send
+to its relays. No tasklet has to run, and the application holds no credential
 beyond the one its connection already presented.
 
 | | |
@@ -316,43 +316,43 @@ that start workflows) reaches only the start and the send below; adding
 
 | What | Verb | Arguments after the namespace |
 | --- | --- | --- |
-| start an operator | `Operator.start` | the spec `flz operator start` takes: `factory_id`, and optionally `id`, `init_values`, `opts`. The run is the factory's, so a written `kind` is refused. Answers `{"id": ..., "outcome": "started" \| "already_running"}` |
-| stop an operator | `Operator.stop` | `operator_id` |
-| send to an operator | `Operator.send`, reached as `runner.send` ([`sending_from_runner_code.md`](../advanced/sending_from_runner_code.md)) | `operator_id`, `message`, `channel` (`""` for none), and optionally `msg_id` and `key` |
-| enable a plugin | `PluginManager.enable` | the plugin's `name`, then `provider`, `opts` and optionally `single`; with `operator_id` and `hooks` it also binds that operator |
-| bind an operator to a plugin | `PluginManager.bind` | `name`, then `operator_id` and optionally `hooks` and `channel` |
-| unbind an operator | `PluginManager.unbind` | `name`, then `operator_id` |
+| start a relay | `Relay.start` | the spec `flz relay start` takes: `factory_id`, and optionally `id`, `init_values`, `opts`. The run is the factory's, so a written `kind` is refused. Answers `{"id": ..., "outcome": "started" \| "already_running"}` |
+| stop a relay | `Relay.stop` | `relay_id` |
+| send to a relay | `Relay.send`, reached as `runner.send` ([`sending_from_runner_code.md`](../advanced/sending_from_runner_code.md)) | `relay_id`, `message`, `channel` (`""` for none), and optionally `msg_id` and `key` |
+| enable a plugin | `PluginManager.enable` | the plugin's `name`, then `provider`, `opts` and optionally `single`; with `relay_id` and `hooks` it also binds that relay |
+| bind a relay to a plugin | `PluginManager.bind` | `name`, then `relay_id` and optionally `hooks` and `channel` |
+| unbind a relay | `PluginManager.unbind` | `name`, then `relay_id` |
 | disable a plugin | `PluginManager.disable` | `name` |
-| list operators | `Operator.list_operators` | none |
+| list relays | `Relay.list_relays` | none |
 | list plugins | `PluginManager.list` | none; the plugins enabled in the namespace |
-| read cell state | `Operator.cell_state` | `operator_id`, `cell_key` |
+| read cell state | `Relay.cell_state` | `relay_id`, `cell_key` |
 
 Each SDK spells these as methods on its `control()` handle, except the send,
 which is on the runner itself:
 
 | SDK | Reached as | A start reads |
 | --- | --- | --- |
-| Rust | `runner.control()` | `control.start_operator(&OperatorSpec::new("order_worker").id("orders"))` |
-| Java | `runner.control()` | `control.startOperator(OperatorSpec.of("order_worker").id("orders"))` |
-| Node | `runner.control()` | `await control.startOperator('order_worker', { id: 'orders' })` |
-| Python | `runner.control()` | `control.start_operator("order_worker", id="orders")` |
-| Ruby | `runner.control` | `control.start_operator("order_worker", id: "orders")` |
-| PHP | `$runner->control()` | `$control->startOperator('order_worker', id: 'orders')` |
-| Elixir | `Flezha.SDK.Control` | `Control.start_operator(runner, "order_worker", id: "orders")` |
+| Rust | `runner.control()` | `control.start_relay(&RelaySpec::new("order_worker").id("orders"))` |
+| Java | `runner.control()` | `control.startRelay(RelaySpec.of("order_worker").id("orders"))` |
+| Node | `runner.control()` | `await control.startRelay('order_worker', { id: 'orders' })` |
+| Python | `runner.control()` | `control.start_relay("order_worker", id="orders")` |
+| Ruby | `runner.control` | `control.start_relay("order_worker", id: "orders")` |
+| PHP | `$runner->control()` | `$control->startRelay('order_worker', id: 'orders')` |
+| Elixir | `Flezha.SDK.Control` | `Control.start_relay(runner, "order_worker", id: "orders")` |
 
-[`running_operators.md`](running_operators.md#from-application-code) shows
+[`running_relays.md`](running_relays.md#from-application-code) shows
 them in the echo runner of each SDK.
 
 The id is optional in each SDK: without one, the controller generates one from
 the factory id, such as `order_worker-k7m2qzxw4pd3fn2a`. Each start answers the
 same two fields, `id` and `outcome` (`started`, or `already_running` when a
 live instance already holds an id you gave), and nothing else; where it runs
-is for `flz operator info` to say.
+is for `flz relay info` to say.
 
 > #### A start that may be retried needs an id {: .warning}
 >
 > A start without an id that is retried after its answer was lost starts a
-> second operator, and a second flow operator runs until it is stopped. Pass an
+> second relay, and a second flow relay runs until it is stopped. Pass an
 > id when a start may be retried: a start of an id already running starts
 > nothing and answers `already_running`.
 
@@ -371,14 +371,14 @@ controller, retuning state retention and every `authz` verb.
 point, against the same rule, and writes the same audit record its `flz`
 equivalent writes, naming `runner@<namespace>` as the principal and `sdk` as
 the surface; a read writes no record. Quotas apply unchanged: a start over
-`max_operators` is refused with the reason a user would get. An operator
+`max_relays` is refused with the reason a user would get. A relay
 started this way is the cluster's, not the connection's: it survives the
-runner disconnecting, and shows in `flz operator list`.
+runner disconnecting, and shows in `flz relay list`.
 
 ## Limits and gotchas
 
 - **A namespace cannot be renamed**, and its saved data stays with its name.
-- **Deleting a namespace does not stop its operators.** Empty it first.
+- **Deleting a namespace does not stop its relays.** Empty it first.
 - **`max_message_rate_per_second` is not enforced yet.**
 - **Quotas and keys need authorization on.** With it off, any runner joins any
   namespace and every quota passes.
@@ -387,7 +387,7 @@ runner disconnecting, and shows in `flz operator list`.
 ## See also
 
 - [`authorization.md`](authorization.md): tokens, roles and runner credentials.
-- [`running_operators.md`](running_operators.md): starting and stopping operators.
+- [`running_relays.md`](running_relays.md): starting and stopping relays.
 - [`connecting_a_runner.md`](../deploying/connecting_a_runner.md): one runner, one namespace.
 - [`access_commands.md`](../cli/access_commands.md): `flz namespace` and `flz role`.
 - Tutorial: [`open_the_desk.md`](../../tutorials/tradedesk/open_the_desk.md) creates `trading`.

@@ -46,8 +46,8 @@ defmodule Flezha.Plugin.Provider.Websocket.Client do
       overwatcher_pid: opts.overwatcher_pid,
       payload_metadata: opts.payload_metadata,
       targets: ingest_targets(opts.targets, opts.payload_metadata),
-      # The shared copy that started it, which it reads its operators from on
-      # each connect; nil for a socket its own operator started.
+      # The shared copy that started it, which it reads its relays from on
+      # each connect; nil for a socket its own relay started.
       targets_from: opts[:targets_from],
       idle_timeout_ms: idle_window(opts),
       resubscribe_after_ms: opts.resubscribe_after_ms,
@@ -150,7 +150,7 @@ defmodule Flezha.Plugin.Provider.Websocket.Client do
           last_error: nil,
           source_plugin_id: opts.source_plugin_id,
           source_namespace: opts.source_namespace,
-          source_operator_id: opts.source_operator_id
+          source_relay_id: opts.source_relay_id
         })
     end
   end
@@ -293,7 +293,7 @@ defmodule Flezha.Plugin.Provider.Websocket.Client do
     {:ok, state}
   end
 
-  # Every bound operator takes the frame in its own mode. An effectively-once
+  # Every bound relay takes the frame in its own mode. An effectively-once
   # one is confirming: awaiting its journal ack means a zero-credit park blocks
   # this connection process, so the socket stops being read (TCP back-pressure)
   # instead of a record being lost; every other one is cast and falls behind
@@ -316,10 +316,10 @@ defmodule Flezha.Plugin.Provider.Websocket.Client do
   defp reread_targets(state), do: state
 
   @doc """
-  The socket's per-operator injection state for `targets`
-  (`Flezha.Plugin.Host.targets/1`): each operator's metadata, the label `bag`
-  with its entry channel stamped on, and its mode. Built when the operators
-  change, so a frame costs one send per operator. Nothing overwrites the
+  The socket's per-relay injection state for `targets`
+  (`Flezha.Plugin.Host.targets/1`): each relay's metadata, the label `bag`
+  with its entry channel stamped on, and its mode. Built when the relays
+  change, so a frame costs one send per relay. Nothing overwrites the
   user's own "channel" key: naming it both ways is refused when the plugin is
   enabled.
   """

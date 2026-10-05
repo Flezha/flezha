@@ -70,7 +70,7 @@ The class SHALL map to exactly one process exit code: `internal` 1, `invalid` 2,
 
 #### Scenario: A malformed command line is invalid
 
-- **WHEN** `flz operator start echo --nope` is run
+- **WHEN** `flz relay start echo --nope` is run
 - **THEN** it SHALL exit 2 with the code `usage.unknown_option` and reach no controller
 
 ### Requirement: Text and JSON renderings SHALL be fixed

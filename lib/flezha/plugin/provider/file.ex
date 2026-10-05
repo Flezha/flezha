@@ -1,8 +1,8 @@
 defmodule Flezha.Plugin.Provider.File do
   @moduledoc """
-  A file as an operator's input and as its output: `File.Source` (provider id
-  `operator_file_source`) reads one line per entry frame, and `File.Sink`
-  (`operator_file_sink`) writes one line per record.
+  A file as a relay's input and as its output: `File.Source` (provider id
+  `relay_file_source`) reads one line per entry frame, and `File.Sink`
+  (`relay_file_sink`) writes one line per record.
 
   What both directions share lives here: the preparation that resolves a
   plugin's `path` inside `FLEZHA_FILE_PLUGIN_ROOT`, a folder or an `s3://`
@@ -27,10 +27,10 @@ defmodule Flezha.Plugin.Provider.File do
 
   defmodule Source do
     @moduledoc """
-    A file, or an S3 object, read onto an entry channel (an operator plugin), one
+    A file, or an S3 object, read onto an entry channel (a relay plugin), one
     line per frame, followed as it grows.
 
-    Each line is injected through the operator's confirming ingest, and the
+    Each line is injected through the relay's confirming ingest, and the
     byte offset where the last delivered line ended is committed through the
     plugin's persisted option `offset`, so a plugin restart, a move to another
     controller and a controller restart all resume after the last committed
@@ -169,7 +169,7 @@ defmodule Flezha.Plugin.Provider.File do
       )
     end
 
-    @doc "What `flz operator info` shows beneath the plugin: the path and its verdict."
+    @doc "What `flz relay info` shows beneath the plugin: the path and its verdict."
     @impl true
     def inspect_state(opts), do: %{path: opts.path, health: health(opts)}
 
@@ -193,7 +193,7 @@ defmodule Flezha.Plugin.Provider.File do
 
   defmodule Sink do
     @moduledoc """
-    Records written to a file (an operator plugin), one line per record: the
+    Records written to a file (a relay plugin), one line per record: the
     message bytes and a newline, nothing else.
 
     Records are batched, written in one call and made durable with a data sync
@@ -325,7 +325,7 @@ defmodule Flezha.Plugin.Provider.File do
       )
     end
 
-    @doc "What `flz operator info` shows beneath the plugin: the path and its verdict."
+    @doc "What `flz relay info` shows beneath the plugin: the path and its verdict."
     @impl true
     def inspect_state(opts), do: %{path: opts.path, health: health(opts)}
 

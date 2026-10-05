@@ -5,7 +5,7 @@ defmodule Flezha.Runner.StreamChannel do
 
   The two mechanisms it drives live beside it —
   `Flezha.Runner.StreamChannel.Gate` (the send gate and the bind-waiter set)
-  and `Flezha.Runner.StreamChannel.Records` (the operator route cache, the
+  and `Flezha.Runner.StreamChannel.Records` (the relay route cache, the
   ownership check, the durable-record fan-out and the credit handshake).
 
   Invariant: the published stream ref lives in a `:persistent_term` under this
@@ -50,7 +50,7 @@ defmodule Flezha.Runner.StreamChannel do
   Overwatch's, on the ingest path. The channel publishes its bound
   `stream_ref` (and liveness counters) under its registered name at bind and
   clears it at close; a sender reads that instead of asking the channel, so an
-  ingest pays no round trip through the one process every operator on the
+  ingest pays no round trip through the one process every relay on the
   runner shares. Unbound, unknown or dead channels answer
   `{:error, :no_stream}`, counted and emitted as `[:flezha, :stream, :drop]`.
 
@@ -62,15 +62,15 @@ defmodule Flezha.Runner.StreamChannel do
   """
   @spec io_in(GenServer.name() | nil, binary(), {binary(), map()}) ::
           :ok | {:error, :no_stream | :send_buffer_full}
-  def io_in(channel, operator_id, {message, metadata}) do
+  def io_in(channel, relay_id, {message, metadata}) do
     case :persistent_term.get({__MODULE__, channel}, nil) do
       {stream_ref, liveness_ref} when stream_ref != nil ->
         bump_send(liveness_ref)
-        Gate.send_held(channel, stream_ref, liveness_ref, operator_id, message, metadata)
+        Gate.send_held(channel, stream_ref, liveness_ref, relay_id, message, metadata)
 
       published ->
         if published, do: LivenessCounters.bump_channel(elem(published, 1), :io_in_received)
-        Gate.undeliverable(published, operator_id)
+        Gate.undeliverable(published, relay_id)
     end
   end
 
@@ -105,15 +105,15 @@ defmodule Flezha.Runner.StreamChannel do
       :ok,
       %{
         runner_id: runner_id,
-        # The stable identity this session presented, which an operator's
+        # The stable identity this session presented, which a relay's
         # ownership record is judged against.
         identity: Marks.identity_of(runner_id),
         type: type,
         stream_ref: nil,
-        operator_mapping: %{},
-        # Every pid `operator_mapping` caches, keyed by pid so a `:DOWN`
+        relay_mapping: %{},
+        # Every pid `relay_mapping` caches, keyed by pid so a `:DOWN`
         # resolves in one lookup: `%{pid => {monitor_ref, MapSet of the
-        # operator ids naming it}}`. Written only by `Records.put_route/3`,
+        # relay ids naming it}}`. Written only by `Records.put_route/3`,
         # `Records.drop_route/2` and `Records.forget_pid/2`.
         route_monitors: Watch.new(),
         name: name,
@@ -185,13 +185,13 @@ defmodule Flezha.Runner.StreamChannel do
   end
 
   @impl true
-  def handle_call({:operator_pid_update, operator_id, updated_pids}, _from, state) do
-    {:reply, :ok, Records.put_route(state, operator_id, updated_pids)}
+  def handle_call({:relay_pid_update, relay_id, updated_pids}, _from, state) do
+    {:reply, :ok, Records.put_route(state, relay_id, updated_pids)}
   end
 
   @impl true
-  def handle_call({:operator_pid_remove, operator_id}, _from, state) do
-    {:reply, :ok, Records.drop_route(state, operator_id)}
+  def handle_call({:relay_pid_remove, relay_id}, _from, state) do
+    {:reply, :ok, Records.drop_route(state, relay_id)}
   end
 
   # Probe used by acceptors to find rebindable channels. Returns the current
@@ -280,8 +280,8 @@ defmodule Flezha.Runner.StreamChannel do
   # Unified NIF transport message — complete parsed frame.
   #
   # Two reserved payload-ids carry persistence-bound data (see
-  # `Flezha.SDK.Wire`). All other payload-ids are operator outputs
-  # routed via the per-operator mapping.
+  # `Flezha.SDK.Wire`). All other payload-ids are relay outputs
+  # routed via the per-relay mapping.
   #
   # Fenced (superseded-session) channel: refuse every durable-write forward
   # at the binding. In-flight frames from the old session die here instead of
@@ -320,8 +320,8 @@ defmodule Flezha.Runner.StreamChannel do
     {:noreply, mark_seen(state)}
   end
 
-  # Steps-operator saga compensation markers (SDK → controller). A durable
-  # steps operator records each tasklet's forward completion (`compensation_intent`)
+  # Steps-relay saga compensation markers (SDK → controller). A durable
+  # steps relay records each tasklet's forward completion (`compensation_intent`)
   # and each compensation's completion (`compensation_done`); persisted per
   # Cell and shipped back on the next `RestoreInitState` so a respawn finishes
   # the remaining hooks and skips already-undone ones. Fire-and-forget.
@@ -367,7 +367,7 @@ defmodule Flezha.Runner.StreamChannel do
   end
 
   # Data-channel heartbeat: the runner emits this every ~10s while connected,
-  # so an idle-but-healthy operator keeps the channel live without producing
+  # so an idle-but-healthy relay keeps the channel live without producing
   # output. Metadata carries the runner's dispatch-progress self-report; the
   # stall classifier compares it across ticks to catch an alive-but-wedged
   # dispatch pool (a state every heartbeat-level signal is blind to). The
@@ -380,20 +380,20 @@ defmodule Flezha.Runner.StreamChannel do
     {:noreply, mark_seen(state)}
   end
 
-  # A part (runner → controller): a preview for the operator's listeners. It
-  # names its instance in `flz.operator` and takes the route an output takes,
+  # A part (runner → controller): a preview for the relay's listeners. It
+  # names its instance in `flz.relay` and takes the route an output takes,
   # so a superseded session's part is dropped exactly as its output would be.
   def handle_info({:flz_data, _stream_id, "output_part", message, metadata}, state) do
-    {:noreply, cast_routed(state, metadata["flz.operator"], {:io_part, message, metadata})}
+    {:noreply, cast_routed(state, metadata["flz.relay"], {:io_part, message, metadata})}
   end
 
-  def handle_info({:flz_data, _stream_id, operator_id, message, metadata}, state) do
-    {:noreply, cast_routed(state, operator_id, {:io_out, message, metadata})}
+  def handle_info({:flz_data, _stream_id, relay_id, message, metadata}, state) do
+    {:noreply, cast_routed(state, relay_id, {:io_out, message, metadata})}
   end
 
   # Periodic liveness check: a bound SECONDARY stream whose last frame
   # (heartbeat or data) is older than the threshold has missed several
-  # heartbeats and is stalled. Emit `output_stall` for each mapped operator (the
+  # heartbeats and is stalled. Emit `output_stall` for each mapped relay (the
   # signal the convergence Loop rebinds on) — but keep `stream_ref`, since the
   # rebind re-establishes it. Primary streams are send-only and never receive
   # heartbeats, so the check is meaningless there and would flag every
@@ -414,10 +414,10 @@ defmodule Flezha.Runner.StreamChannel do
     if not is_nil(state.stream_ref) and stale? do
       Logger.warning(
         "[stream_channel] IO stream silent past liveness threshold, flagging output_stall: " <>
-          "runner=#{inspect(state.runner_id)} operators=#{inspect(Map.keys(state.operator_mapping))}"
+          "runner=#{inspect(state.runner_id)} relays=#{inspect(Map.keys(state.relay_mapping))}"
       )
 
-      Records.emit_output_stall(state.runner_id, state.operator_mapping)
+      Records.emit_output_stall(state.runner_id, state.relay_mapping)
     end
 
     {:noreply, state}
@@ -506,10 +506,10 @@ defmodule Flezha.Runner.StreamChannel do
     else
       Logger.warning("Connection closed for IO socket (#{reason}).")
 
-      # Emit output_stall immediately for every operator in the mapping so the
+      # Emit output_stall immediately for every relay in the mapping so the
       # convergence Loop triggers a rebind tick rather than waiting for the
       # Watchdog's 60s grace period to detect the dead socket.
-      Records.emit_output_stall(state.runner_id, state.operator_mapping)
+      Records.emit_output_stall(state.runner_id, state.relay_mapping)
       ControlChannel.rebind_data_streams(state.runner_id)
     end
 
@@ -528,8 +528,8 @@ defmodule Flezha.Runner.StreamChannel do
     {:noreply, state}
   end
 
-  defp cast_routed(state, operator_id, request) do
-    {route, state} = Records.route(state, operator_id || "")
+  defp cast_routed(state, relay_id, request) do
+    {route, state} = Records.route(state, relay_id || "")
 
     case route do
       {:ok, pid} -> GenServer.cast(pid, request)

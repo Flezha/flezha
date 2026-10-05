@@ -47,10 +47,10 @@ defmodule Flezha.McpTest do
     tools = Map.new(Flezha.Service.catalogue(), &{&1.name, Mcp.tool(&1)})
 
     assert tools["Dlq.list"].annotations.readOnlyHint
-    refute tools["Operator.start"].annotations.readOnlyHint
+    refute tools["Relay.start"].annotations.readOnlyHint
     refute tools["AuditLog.read"].annotations.readOnlyHint
     assert tools["Dlq.drop"].annotations.destructiveHint
     refute tools["Dlq.replay"].annotations.destructiveHint
-    assert tools["Operator.start"].description =~ "`operator.start`"
+    assert tools["Relay.start"].description =~ "`relay.start`"
   end
 end

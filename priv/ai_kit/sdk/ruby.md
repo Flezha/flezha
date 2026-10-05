@@ -26,7 +26,7 @@ Three files, one for each part the guides describe:
 | File | Part | What it does |
 |---|---|---|
 | `echo_tasklet.rb` | the tasklet | the processing stage: prefixes each message |
-| `echo_operator.rb` | the operator | the graph: `in` feeds the tasklet, output lands on `out` |
+| `echo_relay.rb` | the relay | the graph: `in` feeds the tasklet, output lands on `out` |
 | `runner.rb` | the runner | this process: registers the echo factory and waits |
 
 ## Run it
@@ -43,8 +43,8 @@ bundle exec ruby runner.rb
 Then, from another terminal:
 
 ```sh
-flz operator start echo --id my_echo
-flz operator send my_echo --text 'hello world' --await 2000
+flz relay start echo --id my_echo
+flz relay send my_echo --text 'hello world' --await 2000
 ```
 
 ```
@@ -78,7 +78,7 @@ is. [`docs/sdk/ruby_sdk.md`](../../../../docs/sdk/ruby_sdk.md) covers the rest o
 the SDK.
 ````
 
-## examples/echo/echo_operator.rb
+## examples/echo/echo_relay.rb
 
 ````ruby
 # frozen_string_literal: true
@@ -86,7 +86,7 @@ the SDK.
 require "flezha"
 require_relative "echo_tasklet"
 
-# The deployable unit. An operator declares the graph a message travels: the
+# The deployable unit. A relay declares the graph a message travels: the
 # entry channel it arrives on, the steps it passes through, and the channel its
 # result leaves on.
 #
@@ -94,9 +94,9 @@ require_relative "echo_tasklet"
 # cannot work is refused at startup. The entry names the text codec, so the
 # tasklet is handed a String, and the sink names none, so a String result
 # leaves as its own bytes.
-class EchoOperator < Flezha::Operator
-  # The operator's stable identity, and the name `flz operator start` takes.
-  factory_id "echo" # the name `flz operator start` takes
+class EchoRelay < Flezha::Relay
+  # The relay's stable identity, and the name `flz relay start` takes.
+  factory_id "echo" # the name `flz relay start` takes
 
   channels do |c|
     c.input("in", codec: :text) # messages arrive on the entry channel "in"
@@ -113,19 +113,19 @@ end
 
 require "flezha"
 
-# A processing stage of the operator's graph, run once per message. This one
+# A processing stage of the relay's graph, run once per message. This one
 # prefixes the input and emits it through the context, the one way a value
 # leaves a tasklet; what `run` returns is not output.
 #
 # `tasklet_name` is required. State is filed under it, so renaming the class
 # keeps it, and renaming `tasklet_name` declares a different tasklet. With no
 # `init_state` and no `apply_change`, nothing is kept between messages and
-# nothing is journaled. Where the result goes is not decided here: the operator
+# nothing is journaled. Where the result goes is not decided here: the relay
 # decides that, so the graph can be rewired without touching this class.
 class EchoTasklet < Flezha::Tasklet
   tasklet_name "echo" # state is saved under this name, so choose it once
 
-  def run(input, ctx) = ctx.emit("echo: #{input}") # where it goes is the operator's business
+  def run(input, ctx) = ctx.emit("echo: #{input}") # where it goes is the relay's business
 end
 ````
 
@@ -135,30 +135,30 @@ end
 # frozen_string_literal: true
 
 # Starts a runner: a process that connects to the controller and serves your
-# operators.
+# relays.
 #
-# Declare every operator you want served before `boot`. One runner can serve
-# several, and the same call takes a steps operator.
+# Declare every relay you want served before `boot`. One runner can serve
+# several, and the same call takes a steps relay.
 
 require "flezha"
-require_relative "echo_operator"
+require_relative "echo_relay"
 
 namespace = ARGV[0] || "default"
 
-# the operators this runner serves
-runner = Flezha.create_runner(namespace).register_factory(EchoOperator)
+# the relays this runner serves
+runner = Flezha.create_runner(namespace).register_factory(EchoRelay)
 
 # `run` is `boot` followed by `await_termination`. Splitting them leaves room
 # for the calls below, and still blocks until shutdown.
 runner.boot # connects to the controller
 
-# Everything `flz operator` and `flz plugin` do is also a method of `control`,
-# and `send_to` hands a message to an operator. Uncomment to drive this
+# Everything `flz relay` and `flz plugin` do is also a method of `control`,
+# and `send_to` hands a message to a relay. Uncomment to drive this
 # namespace from the application instead of from a terminal:
 #
 # control = runner.control
-# control.start_operator("echo", id: "my_echo")
-# control.enable_plugin("writer", "operator_file_sink", opts: { "path" => "echo-out.txt" })
+# control.start_relay("echo", id: "my_echo")
+# control.enable_plugin("writer", "relay_file_sink", opts: { "path" => "echo-out.txt" })
 # control.bind_plugin("writer", "my_echo", hooks: [["on_output", {}]])
 # runner.send_to("my_echo", "hello world", "in", msg_id: "hello-1")
 #

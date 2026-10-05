@@ -4,7 +4,7 @@
 # per-boot, and some of it is secret — `auth/bootstrap.token`, the TLS keys in
 # `certs/`, and whole input payloads in `dlq/`. None of it is a fixture, and
 # every directory is recreated on demand (`File.mkdir_p!`), so losing the lot
-# costs nothing but a restart. `docs/topics/basics/running_operators.md` covers wiping it.
+# costs nothing but a restart. `docs/topics/basics/running_relays.md` covers wiping it.
 #
 # Deny by default, on purpose. The previous rule listed the subdirectories one
 # by one, which meant a subsystem that started writing here was tracked until

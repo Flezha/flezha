@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The platform-authn-authz capability provides the Flezha Controller's authentication, authorization, namespace, and per-namespace quota foundation. It defines a verified-principal model, a single policy point (`Flezha.AuthZ.authorize/3`) consulted by the user-action service functions it wires, a fixed role set (`viewer`, `app`, `ops`, `admin`, `runner`, `spawner`, `stopper`), a set of which is bound to a principal on one namespace, a namespace catalog (`_system` as the singleton compatibility namespace, additional namespaces created by `admin@_system`), per-namespace quotas enforceable at allocation time (with the operator/cell enforcement point shipping in this change), a local-managed token registry with instant revocation, a one-time on-disk bootstrap-token flow that replaces today's open-auth model without bricking upgrades, and mTLS cert principal/namespace extraction primitives (`Flezha.AuthN.Cert`) that downstream changes can wire into the live transport. Since `finish-platform-authn-authz`, authorization is enforced by default, principals derive from the authenticated transport (see the `transport-authentication` capability), namespace isolation extends through the State subsystem, and the Rust CLI verb families are shipped. Federated identity providers, encryption-at-rest, custom roles, per-message authorization inside user code, and the web UI remain out of scope.
+The platform-authn-authz capability provides the Flezha Controller's authentication, authorization, namespace, and per-namespace quota foundation. It defines a verified-principal model, a single policy point (`Flezha.AuthZ.authorize/3`) consulted by the user-action service functions it wires, a fixed role set (`viewer`, `app`, `ops`, `admin`, `runner`, `spawner`, `stopper`), a set of which is bound to a principal on one namespace, a namespace catalog (`_system` as the singleton compatibility namespace, additional namespaces created by `admin@_system`), per-namespace quotas enforceable at allocation time (with the relay/cell enforcement point shipping in this change), a local-managed token registry with instant revocation, a one-time on-disk bootstrap-token flow that replaces today's open-auth model without bricking upgrades, and mTLS cert principal/namespace extraction primitives (`Flezha.AuthN.Cert`) that downstream changes can wire into the live transport. Since `finish-platform-authn-authz`, authorization is enforced by default, principals derive from the authenticated transport (see the `transport-authentication` capability), namespace isolation extends through the State subsystem, and the Rust CLI verb families are shipped. Federated identity providers, encryption-at-rest, custom roles, per-message authorization inside user code, and the web UI remain out of scope.
 ## Requirements
 ### Requirement: Verified-principal model
 
@@ -74,7 +74,7 @@ The system SHALL expose exactly one authorization decision function `Flezha.Auth
 
 ### Requirement: Fixed role set
 
-The system SHALL define exactly seven roles: `viewer`, `app`, `ops`, `admin`, `runner`, `spawner`, `stopper`. The role→action mapping SHALL be a compile-time map in `Flezha.AuthZ.Policy`, and a principal MAY hold several of these roles in its namespace, as the "An identity SHALL hold a set of roles in one namespace" requirement states. `viewer` SHALL grant read-only actions on the bound namespace. `app` SHALL grant viewer plus the namespace-scoped lifecycle an application performs on its own work, and SHALL NOT grant any action that destroys a record or moves work it did not create; because the only principal ever bound to it is a runner's, it SHALL also grant `:runner.connect`. `ops` SHALL grant everything `app` adds except that connect, plus the remaining operator and plugin lifecycle, observability mutations, audit rotation, and the reads of records in flight. `admin` SHALL grant ops plus namespace/role/quota mutation and the controller-wide settings; only `admin@_system` SHALL be allowed to invoke auth-state mutations on namespaces other than its own. `runner` SHALL grant only `:runner.connect` and SHALL NOT grant any administration action. `spawner` SHALL grant `:runner.connect`, `:operator.start` and `:operator.send` on the bound namespace and nothing else: the rights a tasklet-requested spawn needs, which equally authorize the same principal's start and send on the administration surface. `stopper` SHALL grant `:runner.connect` and `:operator.stop` on the bound namespace and nothing else: the right to stop any operator in that namespace, which authorizes the same principal's stop on the administration surface. `app` SHALL grant every action `spawner` and `stopper` grant. A role that grants `:runner.connect` is a role for a runner's principal; because a runner proves its namespace with a `runner` credential, the administration surface SHALL NOT issue a credential for any such role other than `runner` itself, which today excludes `app`, `spawner` and `stopper`, and that exclusion SHALL be derived from the grant rather than kept as a list of role names. The enumeration SHALL hold no action in reserve: an action no declared verb names is deleted, not kept. The role name `operator` SHALL NOT be accepted by `flz role bind` or any role store read: it names the unit, never a role.
+The system SHALL define exactly seven roles: `viewer`, `app`, `ops`, `admin`, `runner`, `spawner`, `stopper`. The role→action mapping SHALL be a compile-time map in `Flezha.AuthZ.Policy`, and a principal MAY hold several of these roles in its namespace, as the "An identity SHALL hold a set of roles in one namespace" requirement states. `viewer` SHALL grant read-only actions on the bound namespace. `app` SHALL grant viewer plus the namespace-scoped lifecycle an application performs on its own work, and SHALL NOT grant any action that destroys a record or moves work it did not create; because the only principal ever bound to it is a runner's, it SHALL also grant `:runner.connect`. `ops` SHALL grant everything `app` adds except that connect, plus the remaining relay and plugin lifecycle, observability mutations, audit rotation, and the reads of records in flight. `admin` SHALL grant ops plus namespace/role/quota mutation and the controller-wide settings; only `admin@_system` SHALL be allowed to invoke auth-state mutations on namespaces other than its own. `runner` SHALL grant only `:runner.connect` and SHALL NOT grant any administration action. `spawner` SHALL grant `:runner.connect`, `:relay.start` and `:relay.send` on the bound namespace and nothing else: the rights a tasklet-requested spawn needs, which equally authorize the same principal's start and send on the administration surface. `stopper` SHALL grant `:runner.connect` and `:relay.stop` on the bound namespace and nothing else: the right to stop any relay in that namespace, which authorizes the same principal's stop on the administration surface. `app` SHALL grant every action `spawner` and `stopper` grant. A role that grants `:runner.connect` is a role for a runner's principal; because a runner proves its namespace with a `runner` credential, the administration surface SHALL NOT issue a credential for any such role other than `runner` itself, which today excludes `app`, `spawner` and `stopper`, and that exclusion SHALL be derived from the grant rather than kept as a list of role names. The enumeration SHALL hold no action in reserve: an action no declared verb names is deleted, not kept.
 
 A runner connection's roles SHALL be resolved from the role store keyed on its principal rather than stamped by the connect path. The connection SHALL hold every role bound to its principal in the namespace the connection proved that grants `:runner.connect`, and an action SHALL be authorized for it when any of those roles grants the action. A principal with no binding, one whose binding names a namespace other than the one the connection proved, or one none of whose bound roles grants `:runner.connect` SHALL resolve to `runner` alone; a bound role that does not grant `:runner.connect` SHALL NOT be held by a runner connection. The resolution SHALL be read per call, so that binding or unbinding a role takes effect on the next call without a reconnect.
 
@@ -98,7 +98,7 @@ A runner connection's roles SHALL be resolved from the role store keyed on its p
 
 #### Scenario: A bound runner principal acts in its own namespace
 - **WHEN** `runner@team-orders` is bound to `app` on `team-orders` and a runner
-  on that connection asks to start an operator there
+  on that connection asks to start a relay there
 - **THEN** the call SHALL be authorized, and the same call naming another
   namespace SHALL be refused
 
@@ -120,13 +120,13 @@ A runner connection's roles SHALL be resolved from the role store keyed on its p
 
 #### Scenario: The spawner grant is the connect and the two rights a spawn needs
 - **WHEN** the spawner role's grants are enumerated
-- **THEN** they SHALL contain `:runner.connect`, `:operator.start` and
-  `:operator.send` and nothing else, and `app` SHALL grant each of them
+- **THEN** they SHALL contain `:runner.connect`, `:relay.start` and
+  `:relay.send` and nothing else, and `app` SHALL grant each of them
 
 #### Scenario: A spawner binding opens neither a stop nor the plugin verbs
 - **WHEN** `runner@team-orders` holds `spawner` and no other role on
-  `team-orders` and the application code on that connection asks to stop an
-  operator, or to enable or disable a plugin
+  `team-orders` and the application code on that connection asks to stop a
+  relay, or to enable or disable a plugin
 - **THEN** each call SHALL be refused with `authz.role_insufficient`
 
 #### Scenario: A spawner starts nothing in another namespace
@@ -148,12 +148,12 @@ A runner connection's roles SHALL be resolved from the role store keyed on its p
 
 #### Scenario: The stopper grant is the connect and the stop
 - **WHEN** the stopper role's grants are enumerated
-- **THEN** they SHALL contain `:runner.connect` and `:operator.stop` and nothing
+- **THEN** they SHALL contain `:runner.connect` and `:relay.stop` and nothing
   else, and `app` SHALL grant each of them
 
 #### Scenario: A stopper binding opens the stop and nothing else
 - **WHEN** `runner@team-orders` holds `stopper` and no other role on `team-orders`
-  and the application code on that connection asks to stop an operator there
+  and the application code on that connection asks to stop a relay there
 - **THEN** the stop SHALL be authorized, and a start, a send, and a plugin enable
   or disable on that connection SHALL each be refused with `authz.role_insufficient`
 
@@ -182,9 +182,9 @@ A runner connection's roles SHALL be resolved from the role store keyed on its p
 - **THEN** it SHALL resolve to `runner`, its connect SHALL be authorized, and
   every administration action SHALL be refused
 
-#### Scenario: The ops role is bound by its new name
+#### Scenario: The ops role is bound
 - **WHEN** `flz role bind alice ops team-orders` is run
-- **THEN** `alice` SHALL hold `ops@team-orders`, `flz role list` SHALL print `ops`, and `flz role bind alice operator team-orders` SHALL be refused as an unknown role
+- **THEN** `alice` SHALL hold `ops@team-orders`, `flz role list` SHALL print `ops`
 
 ### Requirement: Namespace catalog
 
@@ -200,11 +200,11 @@ The system SHALL define a Namespace as a hard partition for authorization scope.
 
 ### Requirement: Per-namespace quotas at allocation
 
-The system SHALL store per-namespace quotas in `app_data/auth/namespaces.dets`. Quota fields SHALL include `max_operators`, `max_cells_per_operator`, `max_mailbox_bytes_total`, `max_message_rate_per_second`, `max_state_bytes`, `max_runners`. `Flezha.AuthZ.Quotas.check_allocation/3` SHALL be a hot-path check (one ETS lookup against `NamespaceStore` plus one against `QuotaCounters`). `Flezha.Service.OperatorManager.start_operator/2` SHALL call `check_allocation/3` for `max_operators` and `max_cells_per_operator`; `stop_operator/2` SHALL record the dealloc. `FleetManager.connect_handler/4` SHALL check `max_runners`; disk accounting and the per-namespace mailbox watermark are specified by the "Runner and disk quota points" requirement.
+The system SHALL store per-namespace quotas in `app_data/auth/namespaces.dets`. Quota fields SHALL include `max_relays`, `max_cells_per_relay`, `max_mailbox_bytes_total`, `max_message_rate_per_second`, `max_state_bytes`, `max_runners`. `Flezha.AuthZ.Quotas.check_allocation/3` SHALL be a hot-path check (one ETS lookup against `NamespaceStore` plus one against `QuotaCounters`). `Flezha.Service.RelayManager.start_relay/2` SHALL call `check_allocation/3` for `max_relays` and `max_cells_per_relay`; `stop_relay/2` SHALL record the dealloc. `FleetManager.connect_handler/4` SHALL check `max_runners`; disk accounting and the per-namespace mailbox watermark are specified by the "Runner and disk quota points" requirement.
 
-#### Scenario: Max-operators denial on allocation
-- **WHEN** namespace `team-orders` has `max_operators: 5`, 5 operators already exist, and a user invokes `Flezha.Service.OperatorManager.start_operator/2` with a 6th
-- **THEN** the call SHALL return `{:error, {:quota_exceeded, :max_operators, %{current: 5, limit: 5}}}` AND the 6th Operator SHALL NOT be started
+#### Scenario: Max-relays denial on allocation
+- **WHEN** namespace `team-orders` has `max_relays: 5`, 5 relays already exist, and a user invokes `Flezha.Service.RelayManager.start_relay/2` with a 6th
+- **THEN** the call SHALL return `{:error, {:quota_exceeded, :max_relays, %{current: 5, limit: 5}}}` AND the 6th Relay SHALL NOT be started
 
 #### Scenario: Quota check latency budget
 - **WHEN** `check_allocation/3` runs against a warm ETS cache
@@ -232,7 +232,7 @@ On Controller start, the system SHALL detect whether `app_data/auth/roles.dets` 
 
 ### Requirement: State-path namespace prefix and migration
 
-The system SHALL move any pre-namespace top-level subtree under `app_data/state/` into `app_data/state/_system/` via a one-shot migration pass added to `Flezha.Boot.StatePathMigrator`. The migration SHALL be atomic per top-level tree (single `rename(2)` per operator-class), safe to interrupt, and idempotent. The namespace SHALL be plumbed through `Flezha.State.PersistenceResolver` / `Wire` / `WalWriter` / `Snapshot` / `Restore` so writes land under `app_data/state/<namespace>/...` rather than the migrated `_system` prefix.
+The system SHALL move any pre-namespace top-level subtree under `app_data/state/` into `app_data/state/_system/` via a one-shot migration pass added to `Flezha.Boot.StatePathMigrator`. The migration SHALL be atomic per top-level tree (single `rename(2)` per relay-class), safe to interrupt, and idempotent. The namespace SHALL be plumbed through `Flezha.State.PersistenceResolver` / `Wire` / `WalWriter` / `Snapshot` / `Restore` so writes land under `app_data/state/<namespace>/...` rather than the migrated `_system` prefix.
 
 #### Scenario: Migration moves legacy state under _system
 - **WHEN** the Controller boots with `app_data/state/orders/` existing and no `_system/` subdirectory
@@ -242,9 +242,9 @@ The system SHALL move any pre-namespace top-level subtree under `app_data/state/
 - **WHEN** the migrator runs twice in succession on an already-migrated tree
 - **THEN** the second run SHALL leave the layout unchanged
 
-#### Scenario: Namespaced operator writes under its namespace
+#### Scenario: Namespaced relay writes under its namespace
 
-- **WHEN** an operator in namespace `team-orders` persists cell state
+- **WHEN** a relay in namespace `team-orders` persists cell state
 - **THEN** the WAL and snapshot files land under `app_data/state/team-orders/...`
   and restore resolves the same path
 
@@ -306,13 +306,13 @@ The system SHALL expose runtime configuration under the `:authn_authz` key with 
 
 #### Scenario: Default-namespace quotas applied when not overridden
 - **WHEN** namespace `team-orders` is created without quota overrides
-- **THEN** the namespace catalog entry SHALL store the documented default quotas (`max_operators: 100`, `max_cells_per_operator: 1_024`, `max_mailbox_bytes_total: 268_435_456`, `max_message_rate_per_second: 100_000`, `max_state_bytes: 107_374_182_400`, `max_runners: 32`)
+- **THEN** the namespace catalog entry SHALL store the documented default quotas (`max_relays: 100`, `max_cells_per_relay: 1_024`, `max_mailbox_bytes_total: 268_435_456`, `max_message_rate_per_second: 100_000`, `max_state_bytes: 107_374_182_400`, `max_runners: 32`)
 
 ### Requirement: Authorization is enforced by default
 
 The default posture SHALL enforce authorization. On a boot where no `admin@_system`
 binding exists (bootstrap not yet claimed), gated verbs SHALL be refused with a
-message naming the bootstrap tasklet, while already-running dataflow (operator
+message naming the bootstrap tasklet, while already-running dataflow (relay
 execution, runner reconnects over the authenticated transport) SHALL continue.
 Disabling enforcement SHALL require the explicit `FLEZHA_AUTHZ_ENABLED=false`
 opt-out, which SHALL emit a `warn` on every boot for as long as it is set.
@@ -327,7 +327,7 @@ writes nothing, and the user is sent to a line that is not there.
 - **WHEN** a controller boots with default configuration and no `admin@_system`
   binding exists
 - **THEN** a destructive verb is refused naming the bootstrap tasklet, AND
-  running operators continue to process input
+  running relays continue to process input
 
 #### Scenario: The refusal names the token file
 
@@ -345,7 +345,7 @@ writes nothing, and the user is sent to a line that is not there.
 
 Every destructive or mutating service operation SHALL be gated by
 `AuthZ.authorize/3` before it takes effect. This includes at least `state_delete`,
-`state_rotate`, `dlq_drop`, `dlq_replay`, `operator_stop`, `controller_stop`, and
+`state_rotate`, `dlq_drop`, `dlq_replay`, `relay_stop`, `controller_stop`, and
 the plugin mutations (install, enable, disable). An unauthorized caller SHALL be
 refused and the refusal SHALL be audited.
 
@@ -401,17 +401,17 @@ While authorization is enforced, `caller_context.principal` SHALL derive from wh
 Namespace-scoped reads and mutations SHALL resolve the target namespace from the
 caller's bound principal, and registry or state listings SHALL be filtered to the
 namespaces the principal may read. A principal bound to one namespace SHALL NOT be
-able to read, list, or mutate another namespace's operators or durable state
+able to read, list, or mutate another namespace's relays or durable state
 through any service verb.
 
 #### Scenario: Cross-namespace state read is refused
 
-- **WHEN** `ops@team-a` invokes a state read naming an operator in `team-b`
+- **WHEN** `ops@team-a` invokes a state read naming a relay in `team-b`
 - **THEN** the call is refused with a forbidden error and the denial is audited
 
 #### Scenario: Listings are namespace-filtered
 
-- **WHEN** `viewer@team-a` lists operators
+- **WHEN** `viewer@team-a` lists relays
 - **THEN** the result contains only `team-a` rows, with no indication of other
   namespaces' contents
 
@@ -419,8 +419,8 @@ through any service verb.
 
 Per-namespace quotas SHALL be enforceable for runner connections (`max_runners`,
 checked when a runner connects) and disk footprint (`max_state_bytes`, accounted
-from the State registry's per-namespace byte totals and enforced at operator
-allocation). Exceeding the disk quota with already-running operators SHALL raise
+from the State registry's per-namespace byte totals and enforced at relay
+allocation). Exceeding the disk quota with already-running relays SHALL raise
 a loud, observable alarm rather than interrupting durable writes. Quota counters
 SHALL be rebuilt from a State registry scan on boot.
 
@@ -433,8 +433,8 @@ SHALL be rebuilt from a State registry scan on boot.
 #### Scenario: Disk quota breach on a running namespace alarms without data loss
 
 - **WHEN** a namespace's accounted state bytes exceed `max_state_bytes` while its
-  operators are running
-- **THEN** an alarm event is emitted, new operator allocation in that namespace is
+  relays are running
+- **THEN** an alarm event is emitted, new relay allocation in that namespace is
   refused, and in-flight durable writes are not interrupted
 
 ### Requirement: Break-glass recovery for a lost admin
@@ -483,9 +483,9 @@ provider pattern.
 Such a verb SHALL name an action in the authorizable-action enumeration and SHALL
 authorize it before doing anything — a verb that reads parked business data or
 records in flight, reads a cell's state live or at a point in time, listens to the
-frames an operator ingests or emits, injects input into or replays inputs through an
-operator, enables a plugin on an operator, rewrites a controller-wide setting,
-creates or destroys a schedule, starts an operator, or moves live work between
+frames a relay ingests or emits, injects input into or replays inputs through a
+relay, enables a plugin on a relay, rewrites a controller-wide setting,
+creates or destroys a schedule, starts a relay, or moves live work between
 runners. A verb whose action is absent from that enumeration is not merely ungated, it
 is unauthorizable — the policy point refuses only actions it knows — so the
 enumeration is the surface this requirement governs.
@@ -499,14 +499,14 @@ unless narrowing it is the recorded intent of the change that adds it. A read of
 business data SHALL be granted no more widely than the mutation on the same data.
 
 A verb whose effect is one an existing action already names SHALL authorize that action
-rather than add a second name for the same right: firing a schedule by hand starts an
-operator, and is judged as `operator.start` in the namespace the schedule was added
-under; reading a cell's live state is `state.get`. Listening to an operator is its
-own action, `operator.listen`, because the right to read the frames an operator
+rather than add a second name for the same right: firing a schedule by hand starts a
+relay, and is judged as `relay.start` in the namespace the schedule was added
+under; reading a cell's live state is `state.get`. Listening to a relay is its
+own action, `relay.listen`, because the right to read the frames a relay
 carries is not the right to attach an arbitrary plugin to it: it is granted from `app`
 upward, the same floor as `plugin.enable`, so no caller that could listen before the
-action existed is refused after, and no caller gains it. `flz operator send --await`
-is judged as `operator.send`, the action of the verb the caller invoked; the listener
+action existed is refused after, and no caller gains it. `flz relay send --await`
+is judged as `relay.send`, the action of the verb the caller invoked; the listener
 it attaches to print what came back is that verb's own mechanism, not a second verb.
 
 #### Scenario: A parked payload is not readable by an unauthorized caller
@@ -523,8 +523,8 @@ it attaches to print what came back is that verb's own mechanism, not a second v
 
 #### Scenario: Live partitions are not moved by an unauthorized caller
 
-- **WHEN** a caller with no role binding rescales a partition group or rewinds an
-  operator while authorization is enforced
+- **WHEN** a caller with no role binding rescales a partition group or rewinds a
+  relay while authorization is enforced
 - **THEN** the verb SHALL be refused and no work SHALL move
 
 #### Scenario: A gated verb still reaches the callers it had
@@ -538,22 +538,22 @@ it attaches to print what came back is that verb's own mechanism, not a second v
 
 - **WHEN** a caller with no role binding issues `flz schedule run <name>` while
   authorization is enforced
-- **THEN** the verb SHALL be refused as `operator.start` in the schedule's namespace and
+- **THEN** the verb SHALL be refused as `relay.start` in the schedule's namespace and
   no instance SHALL spawn
 
-#### Scenario: An operator is not started, fed, replayed or listened to by an unauthorized caller
+#### Scenario: A relay is not started, fed, replayed or listened to by an unauthorized caller
 
-- **WHEN** a caller with no role binding issues `flz operator start`, `operator send`,
-  `operator replay` or `operator listen` while authorization is enforced
-- **THEN** each verb SHALL be refused as `operator.start`, `operator.send`,
-  `operator.replay` or `operator.listen` respectively, and no operator SHALL start,
+- **WHEN** a caller with no role binding issues `flz relay start`, `relay send`,
+  `relay replay` or `relay listen` while authorization is enforced
+- **THEN** each verb SHALL be refused as `relay.start`, `relay.send`,
+  `relay.replay` or `relay.listen` respectively, and no relay SHALL start,
   no input SHALL be delivered, no replay SHALL run and no plugin SHALL be enabled
 
 #### Scenario: Listening needs the listen action and not the plugin one
 
-- **WHEN** authorization is enforced and a caller bound to `app` on the operator's
-  namespace issues `flz operator listen`
-- **THEN** the verb SHALL be authorized as `operator.listen`, and the same call by a
+- **WHEN** authorization is enforced and a caller bound to `app` on the relay's
+  namespace issues `flz relay listen`
+- **THEN** the verb SHALL be authorized as `relay.listen`, and the same call by a
   caller bound to `viewer`, `spawner` or `stopper` SHALL be refused, whether or not
   that caller could enable a plugin
 
@@ -653,7 +653,7 @@ so that the refusal says nothing about whether the name exists.
 
 ### Requirement: Every identifier kind SHALL be one declared rule
 
-An identifier the system accepts or mints SHALL be governed by one declaration holding a row per kind — at minimum the operator id, the namespace name, the plugin id, the schedule name, the authorization token id and the runner id — and each row SHALL carry the kind's minimum length, its maximum length in bytes, and the pattern a value must match.
+An identifier the system accepts or mints SHALL be governed by one declaration holding a row per kind — at minimum the relay id, the namespace name, the plugin id, the schedule name, the authorization token id and the runner id — and each row SHALL carry the kind's minimum length, its maximum length in bytes, and the pattern a value must match.
 
 Validation SHALL be performed by the declaration's own function. No module SHALL carry a second length constant or name pattern for a kind the declaration already holds, and a kind absent from the declaration SHALL NOT be validated by a private rule.
 
@@ -699,7 +699,7 @@ The role store SHALL hold, for each principal, one namespace and a non-empty set
 
 #### Scenario: The policy point grants when any held role grants
 - **WHEN** a caller holds `spawner` and `stopper` in `team-orders` and asks to
-  start an operator, to stop one and to enable a plugin there, and to stop one in
+  start a relay, to stop one and to enable a plugin there, and to stop one in
   `team-payments`
 - **THEN** the start SHALL be authorized by `spawner` and the stop by `stopper`,
   the plugin enable SHALL be refused with `authz.role_insufficient`, and the stop in
@@ -708,7 +708,7 @@ The role store SHALL hold, for each principal, one namespace and a non-empty set
 #### Scenario: A token is judged by its own role
 - **WHEN** `alice` holds `ops` on `team-orders` in the role store and presents
   a token issued to her with the role `viewer` on `team-orders`, and asks to stop
-  an operator there
+  a relay there
 - **THEN** the stop SHALL be refused with `authz.role_insufficient`
 
 #### Scenario: A claim replaces the claimant's roles
@@ -808,18 +808,18 @@ Every act record the verb seam writes, and every `:authorization_denied` record,
 
 #### Scenario: A runner's act names its set
 - **WHEN** `runner@team-orders` holds `spawner` and `stopper` and its application
-  code stops operator `o1` through the administration surface
-- **THEN** the `stop` record on `operator_service` SHALL carry `caller_roles`
+  code stops relay `o1` through the administration surface
+- **THEN** the `stop` record on `relay_service` SHALL carry `caller_roles`
   `["spawner", "stopper"]` beside the principal `runner@team-orders` and the
   caller source `sdk`
 
 #### Scenario: A token's act names the token's role
-- **WHEN** an `ops` token stops an operator from `flz`
+- **WHEN** an `ops` token stops a relay from `flz`
 - **THEN** the `stop` record SHALL carry `caller_roles` `["ops"]`
 
 #### Scenario: A denial names the set that did not grant
 - **WHEN** `runner@team-orders` holds `spawner` alone and its application code
-  asks to stop an operator
+  asks to stop a relay
 - **THEN** the `:authorization_denied` record SHALL carry the reason
   `role_insufficient` and `caller_roles` `["spawner"]`
 
@@ -835,32 +835,32 @@ Every act record the verb seam writes, and every `:authorization_denied` record,
 - **THEN** the record SHALL be decoded and rendered as it was before, with no
   error
 
-### Requirement: An outside call SHALL be judged and audited as `operator.send`
+### Requirement: An outside call SHALL be judged and audited as `relay.send`
 
-A call made through `flz operator call` or the published `Flezha.Service.Operator.call/6` SHALL be
-authorized as `operator.send` in the operator's namespace, the action of the act it performs: an
-input delivered to the operator, whose answer belongs to the caller that sent it. It SHALL be bound
-to its own `Flezha.AuthZ.Verbs` row, `operator_call`, and SHALL write the audit record
-`operator_send` writes, after the act, naming the operator, with the error code on a failure. A
-refused call SHALL deliver no input. A call a plugin makes on the operator it is enabled on through
-`Host.inject/5` is that operator's own input and SHALL NOT be judged again.
+A call made through `flz relay call` or the published `Flezha.Service.Relay.call/6` SHALL be
+authorized as `relay.send` in the relay's namespace, the action of the act it performs: an
+input delivered to the relay, whose answer belongs to the caller that sent it. It SHALL be bound
+to its own `Flezha.AuthZ.Verbs` row, `relay_call`, and SHALL write the audit record
+`relay_send` writes, after the act, naming the relay, with the error code on a failure. A
+refused call SHALL deliver no input. A call a plugin makes on the relay it is enabled on through
+`Host.inject/5` is that relay's own input and SHALL NOT be judged again.
 
 #### Scenario: A caller without the send right is refused
 
-- **WHEN** authorization is enforced and a caller bound to `viewer` on the operator's namespace runs `flz operator call`
-- **THEN** the call SHALL be refused as `operator.send`, exit 4, and no input SHALL reach the operator
+- **WHEN** authorization is enforced and a caller bound to `viewer` on the relay's namespace runs `flz relay call`
+- **THEN** the call SHALL be refused as `relay.send`, exit 4, and no input SHALL reach the relay
 
 #### Scenario: A call is audited like a send
 
-- **WHEN** a caller bound to `app` calls an operator
-- **THEN** the audit log SHALL hold one record for the act naming the operator, in the shape an `operator send` writes
+- **WHEN** a caller bound to `app` calls a relay
+- **THEN** the audit log SHALL hold one record for the act naming the relay, in the shape a `relay send` writes
 
-### Requirement: An operator's call SHALL be judged as its runner identity
+### Requirement: A relay's call SHALL be judged as its runner identity
 
-A call an operator's graph makes SHALL be judged as the runner identity of the caller's namespace,
+A call a relay's graph makes SHALL be judged as the runner identity of the caller's namespace,
 the identity a tasklet's `ctx.spawn_steps` is judged as: the creation of a callee against the
-`operator_start` row, which authorizes `operator.start` and writes its audit record, and the
-delivery of a request against the `spawn_deliver` row, which authorizes `operator.send` and writes
+`relay_start` row, which authorizes `relay.start` and writes its audit record, and the
+delivery of a request against the `spawn_deliver` row, which authorizes `relay.send` and writes
 no record of its own. A refused creation or delivery SHALL end the call with a `Response` carrying
 the refusal's `authz.*` code, and SHALL start and deliver nothing. The way an answer returns into
 the caller SHALL NOT be judged again: it is the caller's own call coming back.
@@ -873,5 +873,5 @@ the caller SHALL NOT be judged again: it is the caller's own call coming back.
 #### Scenario: A creation is audited
 
 - **WHEN** a call creates a session under enforced authorization for a runner identity bound to `spawner`
-- **THEN** the audit log SHALL hold one `operator_start` record naming the new instance
+- **THEN** the audit log SHALL hold one `relay_start` record naming the new instance
 

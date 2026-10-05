@@ -1,7 +1,7 @@
 defmodule Flezha.Plugin.Provider.PostgresPoll do
   @moduledoc """
-  One Postgres table read onto an entry channel by polling (an operator plugin,
-  provider id `operator_postgres_poll`): every `interval_ms` its reader reads
+  One Postgres table read onto an entry channel by polling (a relay plugin,
+  provider id `relay_postgres_poll`): every `interval_ms` its reader reads
   the rows past its cursor, oldest first, `batch_size` at a time, and injects
   each row as one JSON object.
 
@@ -9,11 +9,11 @@ defmodule Flezha.Plugin.Provider.PostgresPoll do
   `timestamp_column` as well it is the pair, so updated rows come again. The
   plugin builds the query itself from validated, quoted names and runs every
   read in a read-only transaction (`PostgresPoll.Query`). The cursor is the
-  binding's internal option `cursor`, committed as the operator's input
+  binding's internal option `cursor`, committed as the relay's input
   durability says (`PostgresPoll.Reader`), so a restart, a move and a cold start
   continue where it stopped.
 
-  One cursor per binding: not shareable, and refused on a partitioned operator,
+  One cursor per binding: not shareable, and refused on a partitioned relay,
   whose members a row's key decides between. Required: the connection's
   `database` and `username`, `table`, `id_column` and an entry channel; the
   rest: `docs/plugins/postgres_poll.md`.
@@ -86,7 +86,7 @@ defmodule Flezha.Plugin.Provider.PostgresPoll do
             default: 1_000,
             min: 1,
             doc:
-              "Longest a new cursor waits to be committed while full batches are read, unless the operator's input is durable"
+              "Longest a new cursor waits to be committed while full batches are read, unless the relay's input is durable"
           ],
           query_timeout_ms: [
             type: :int,
@@ -170,7 +170,7 @@ defmodule Flezha.Plugin.Provider.PostgresPoll do
     )
   end
 
-  @doc "What `flz operator info` shows beneath the plugin: the table and its verdict."
+  @doc "What `flz relay info` shows beneath the plugin: the table and its verdict."
   @impl true
   def inspect_state(opts), do: %{table: opts.table, health: health(opts)}
 

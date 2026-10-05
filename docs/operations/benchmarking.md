@@ -2,7 +2,7 @@
 
 For contributors running and interpreting Flezha benches: the `mix bench`
 harness and its `./scripts/bench.sh` wrapper, the `mix bench.steps`
-steps operator bench, the Rust SDK Criterion microbenches, the controller-side
+steps relay bench, the Rust SDK Criterion microbenches, the controller-side
 microbenches, the recorded floors, the CI jobs that run benches, and how to
 triage a failed `bench-regression` job.
 
@@ -20,7 +20,7 @@ triage a failed `bench-regression` job.
 ## Quick start
 
 ```sh
-./scripts/bench.sh                                # rust + uds, 100 operators x 100 msg
+./scripts/bench.sh                                # rust + uds, 100 relays x 100 msg
 ./scripts/bench.sh -n 100 -m 10000                # the CI job's dimensions
 ./scripts/bench.sh -r java                        # java SDK
 ./scripts/bench.sh -t quic                        # quic transport
@@ -49,10 +49,10 @@ environment and forwards them.
 | `-r` / `--runtime`                 | `rust` (default), `java`, `elixir`          | Which SDK runner is launched. Each runner is launched from its test app's manifest, `bench` profile (`test/apps/<runtime>_runner/conformance.json`), which also names the build command for a missing artifact — `java` wants `mvn -f test/apps/java_runner/pom.xml package`, `elixir` on `uds`/`quic` wants `cd test/apps/elixir_runner && mix deps.get && MIX_ENV=prod mix compile`. On `native` the Elixir SDK starts in-process, with no spawn. |
 | `-t` / `--transport`               | `uds` (default), `quic`, `native`           | Sets `FLEZHA_TRANSPORT`. QUIC generates self-signed certs at `app_data/certs/` on first run. `native` is the in-process Elixir SDK and requires `--runtime elixir`.                                                                                                          |
 | `-s` / `--shape`                   | `regression` (default), `cell`, `dynamic` | The workload (below). `cell` ignores `-n`/`-m`.                                                                                                                                                                                                                               |
-| `-n` / `--num-operators`          | int (default 100)                           | Operator count, `regression` and `dynamic`.                                                                                                                                                                                                                                |
-| `-m` / `--messages-per-operator`  | int (default 100)                           | Messages per operator, `regression` and `dynamic`.                                                                                                                                                                                                                         |
+| `-n` / `--num-relays`          | int (default 100)                           | Relay count, `regression` and `dynamic`.                                                                                                                                                                                                                                |
+| `-m` / `--messages-per-relay`  | int (default 100)                           | Messages per relay, `regression` and `dynamic`.                                                                                                                                                                                                                         |
 | `--pool-sizes`                     | comma list (default `1,8`)                  | Worker-pool sizes to sweep, `cell` only; each spawns fresh runners with `FLEZHA_WORKER_POOL_SIZE=<N>`.                                                                                                                                                                     |
-| `-w` / `--warmup`                  | int (default 10, `0` disables)              | Untimed messages per operator drained before the measured phase, so runner cold start (class loading, JIT, lazy codec init) stays out of the numbers.                                                                                                                      |
+| `-w` / `--warmup`                  | int (default 10, `0` disables)              | Untimed messages per relay drained before the measured phase, so runner cold start (class loading, JIT, lazy codec init) stays out of the numbers.                                                                                                                      |
 
 Runner placement: the Rust runtime reuses runners already connected in the
 `default` namespace, otherwise (and always for `java`/`elixir`) two runners
@@ -109,8 +109,8 @@ by the send window and are **not** interchangeable:
   is the window closest to *SDK dispatch*, because the send window it excludes
   is the controller's own cast overhead.
 
-There is no `Average time per operator`: it divided total elapsed time across
-four unrelated phases by a count of concurrently-running operators and
+There is no `Average time per relay`: it divided total elapsed time across
+four unrelated phases by a count of concurrently-running relays and
 measured nothing.
 
 ### The structured report
@@ -136,13 +136,13 @@ classifier is wrong.
 
 ### `regression` (default)
 
-`-n` operators × 1 tasklet × 1 cell × `-m` msg, factory `do_nothing`,
+`-n` relays × 1 tasklet × 1 cell × `-m` msg, factory `do_nothing`,
 end-to-end through controller + NIF + SDK. The `bench-regression` CI job runs
 it at `-n 100 -m 10000` and reports both windows; no rate fails the job.
 
 ### `cell` (scaling check, informational)
 
-8 operators × 20K msg against factory `cell_stress` (4 tasklets, 8 cell
+8 relays × 20K msg against factory `cell_stress` (4 tasklets, 8 cell
 keys, fan-out then fan-in). Sweeps `--pool-sizes` and prints a `scaling` table
 ending with `ratio (max/min)`; the same ratio is the report's
 `metrics.scaling_ratio`, which the informational CI job reads.
@@ -158,7 +158,7 @@ while `8` completes. Sweep sizes the host can actually serve.
 ### `dynamic` (keyed steady state)
 
 The `regression` harness with factory `dynamic_cell` and keyed inputs
-(`k<i>:<n>`, 8 keys per operator); each input reaches one lazily created
+(`k<i>:<n>`, 8 keys per relay); each input reaches one lazily created
 Cell per key.
 
 ```sh
@@ -178,12 +178,12 @@ isolates two axes:
 No CI job benches the elixir runtime. Use `-n 100 -m 10000` after
 pre-building the standalone app; small runs are setup-dominated.
 
-## Steps operator bench (`mix bench.steps`)
+## Steps relay bench (`mix bench.steps`)
 
-Measures the paths a flow operator never takes: instance lifecycle (spawn → chain →
+Measures the paths a flow relay never takes: instance lifecycle (spawn → chain →
 completion), the durable task barrier, the chat turn (iteration commit),
 suspension and the wake paths. Runs in the scratch namespace `bench_steps`
-against `--runtime rust|java` (the Elixir SDK has no steps operators).
+against `--runtime rust|java` (the Elixir SDK has no steps relays).
 
 ```sh
 mix bench.steps --scenario chain -n 1000 --tasks 4 -c 100
@@ -197,7 +197,7 @@ mix bench.steps --scenario sleep-boot -n 10000
 
 | Scenario     | What it measures                                                                                                                                                                                                                |
 | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `chain`      | Spawn `-n` run-once steps operators of `bench_chain_<tasks>` (`--tasks 1\|4\|16`; `--tier optout` picks `bench_chain_optout_4`, the persistence-off twin), each seeded with `"<seq>,<send_ts_ns>"` passed through to the sink. `-c N` keeps N in flight (closed loop), `--rate R` spawns R/s (open loop); neither = one burst. |
+| `chain`      | Spawn `-n` run-once steps relays of `bench_chain_<tasks>` (`--tasks 1\|4\|16`; `--tier optout` picks `bench_chain_optout_4`, the persistence-off twin), each seeded with `"<seq>,<send_ts_ns>"` passed through to the sink. `-c N` keeps N in flight (closed loop), `--rate R` spawns R/s (open loop); neither = one burst. |
 | `turns`      | Spawn `-n` `bench_loop_steps` instances, send `-m` turns each round-robin (`--rate` total turns/s, else unpaced under an in-flight cap) and measure the reply. `--duration S` sizes `-m` from the rate; `--kill-runner-at S` SIGKILLs one runner S seconds in. |
 | `sleep`      | Spawn `-n` loops, one turn each, wait until every instance has parked; report resting cost per sleeper and the convergence tick time, then a message wake storm (`--wake-rate R` paces it, `--no-wake` skips it) and, with `--wake-after-ms`, a timer wake storm. `--keep` leaves the namespace for `sleep-boot`. |
 | `sleep-boot` | Boot over the namespace `sleep --keep` left: time until every sleeper is back as a suspended Overwatch, then the same wake storm.                                                                                               |
@@ -215,7 +215,7 @@ All but `state` need `--features bench-internals`.
 | Bench                         | Ids                                                                                                                 | Measures                                                                                          |
 | ----------------------------- | ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
 | `correctness`                 | `throughput_single_cell`, `throughput_static_fanout`, `throughput_effectively_once_tiers/{tier_off,tier_on}`        | Per-message dispatch budget on a pinned producer thread; 4-key static fan-out; the effectively-once tier's cost. Invariant violations fail the run. |
-| `dispatch`                    | `operator_dispatch/regression_100x1x1x10k`, `cell_stress_8x4x8x20k`                                                | Criterion mirrors of the `mix bench` shapes. The worker pool is process-global and sized once — sweep by re-running under different `FLEZHA_WORKER_POOL_SIZE` values. |
+| `dispatch`                    | `relay_dispatch/regression_100x1x1x10k`, `cell_stress_8x4x8x20k`                                                | Criterion mirrors of the `mix bench` shapes. The worker pool is process-global and sized once — sweep by re-running under different `FLEZHA_WORKER_POOL_SIZE` values. |
 | `dynamic_cell_steady_state` | `dynamic_cell/steady_state_1k_cells`                                                                           | 1,000 active dynamic Cells, no eviction, 200K inputs round-robined: one `cell_key` call plus one `DashMap` lookup per input. |
 | `hybrid_channel_throughput`   | `pure_inter_tasklet_1c`, `pure_inter_tasklet_3c`, `pure_plugin_bound`, `hybrid_1c`, `hybrid_3c`                 | Per-emit cost of hybrid (`sink_with`) channels vs pure inter-tasklet and pure plugin-bound ones. |
 | `state`                       | `state_apply/{small,large}_{no_key,keyed}_{no_prealloc,prealloc_1024}`                                              | The `ctx.change` hot path — one `apply_to` plus one `Vec::push`, no serialization or I/O.   |
@@ -316,16 +316,16 @@ Every recorded number, on any instrument:
 | `mix bench.extension` | inside the plateau | **none** | Five runs: run 1 within **3.6 %** of the plateau on the four rows above 100 ns. The 60 ns row spreads 16.7 % and resolves nothing. |
 | `./scripts/bench.sh -n 100 -m 10000` (the `bench-regression` workload) | not separated from the noise | first **1** | Five runs: receive window spread **12.1 %**, end-to-end **5.1 %**. |
 
-**Two runs, not one, is what the steps operator measurement establishes.** Run 1 sits
+**Two runs, not one, is what the steps relay measurement establishes.** Run 1 sits
 at 4.1x the plateau and run 2 at 1.4x, so a series that discards only its first
 sample still carries a 39 % warm-up into its floor. The four plateau samples
 above spread 1.3 %, taken with the 1-minute load average climbing 1.2 to 9.4
 across the series — the plateau is the *loaded* steady state, and it is what a
 comparison on this driver must be taken against, on both arms.
 
-**Two explanations for the steps operator transient were refuted, which is what makes
+**Two explanations for the steps relay transient were refuted, which is what makes
 the number usable.** A cold run of the same arm after 4.5 minutes idle came back
-at 91.1 operators/s with an identical state directory, so nothing accumulates on
+at 91.1 relays/s with an identical state directory, so nothing accumulates on
 disk or in the namespace. `package_throttle_count` was flat before the cooldown,
 after the idle and after the cold run, so package thermal throttling is not it.
 What remains is the box's sustained-load clock behaviour under the `powersave`
@@ -389,7 +389,7 @@ so read it off the table rather than guessing.
 **Warm up for the slowest-warming runtime, and use the same value on both
 arms.** The `-w` / `--warmup` row of *Axes* above says warm-up exists so "runner
 cold start (class loading, JIT, lazy codec init) stays out of the numbers", and
-the default is ten untimed messages per operator
+the default is ten untimed messages per relay
 (`lib/mix/tasks/bench.ex:93`). Ten activations do that for a natively compiled
 runner and cannot do it for a JVM, whose hottest tier does not engage until
 thousands of invocations — so the default warms a `rust` arm fully and a `java`
@@ -484,7 +484,7 @@ Per-phase, against control:
 
 | Phase | `+sbwt short` | `+sbwt none` |
 |---|---|---|
-| operator creation | +3.5 % | +23 % |
+| relay creation | +3.5 % | +23 % |
 | plugin setup | +43 % | +204 % |
 | warmup | +28 % | +122 % |
 | receive (saturated) | −7 % | −8 % |
@@ -525,7 +525,7 @@ artifact (`bench-regression.log` and `bench/reports/`) carries the evidence for
 each:
 
 1. **The bench run failed.** A build that failed, a runner that never
-   connected, every operator start refused, or `Timeout waiting for messages`.
+   connected, every relay start refused, or `Timeout waiting for messages`.
    The reason is in `bench-regression.log`, and the preflight warnings at the
    top of the run say what was unusual about the host.
 2. **No report was written.** The step's `ls` of `bench/reports/` fails: the
@@ -542,7 +542,7 @@ A rate that moved fails nothing, but when the job summary shows one drop:
    `cargo bench --bench dispatch -- regression_100x1x1x10k` to the `mix bench`
    number. Criterion steady while `mix bench` dropped → transport/controller.
 2. **SDK dispatch changes?** If the PR touches
-   `sdk/rust/src/operator/dispatcher.rs`, `flz_core/src/routing.rs` or
+   `sdk/rust/src/relay/dispatcher.rs`, `flz_core/src/routing.rs` or
    `flz_core/src/cell.rs`, run `throughput_single_cell` against
    `SINGLE_CELL_FLOOR_MSG_PER_SEC`. A regression here is the dispatch hot
    path itself.
@@ -561,7 +561,7 @@ it drives.
 
 ## See also
 
-- [`../sdk/rust_operator_architecture.md`](../sdk/rust_operator_architecture.md) — dispatch hot path, cell mailboxes, poll workers.
+- [`../sdk/rust_relay_architecture.md`](../sdk/rust_relay_architecture.md) — dispatch hot path, cell mailboxes, poll workers.
 - [`../sdk/protocol_spec.md`](../sdk/protocol_spec.md) — the wire format `mix bench` exercises.
 - [`../sdk/elixir_sdk.md`](../sdk/elixir_sdk.md) — the in-process `native` transport the elixir runtime measures.
 - [`../sdk/conformance.md`](../sdk/conformance.md) — the manifests both bench profiles and the e2e harness launch from.

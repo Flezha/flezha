@@ -1,12 +1,12 @@
 # Inside a runner
 
 To the controller, a runner is one box: a process that dials in, accepts
-operators, and sends back state changes and outputs. This page opens that
+relays, and sends back state changes and outputs. This page opens that
 box. It is for contributors working on an SDK or on the shared kernel, and
 for anyone who wants to know why the seven SDKs behave the same.
 
 A runner has **two layers**. Transport, ordering, durability, retries,
-timers, credit, routing and a steps operator's progress live in one Rust
+timers, credit, routing and a steps relay's progress live in one Rust
 kernel, `flz_core`. The SDK for each language brings the surface you write
 your code against and the threads that run it. Between them sits one poll
 loop. Six SDKs (Rust, Java, Node, Python, Ruby, PHP) share `flz_core`; the
@@ -23,7 +23,7 @@ below that loop.
 4. [The core decides, the SDK brings the threads](#the-core-decides-the-sdk-brings-the-threads)
 5. [Per-cell exclusivity](#per-cell-exclusivity)
 6. [Retries without a sleeping thread](#retries-without-a-sleeping-thread)
-7. [A stage of a steps operator](#a-stage-of-a-steps-operator)
+7. [A stage of a steps relay](#a-stage-of-a-steps-relay)
 8. [The C ABI](#the-c-abi)
 9. [What stays per language](#what-stays-per-language)
 10. [Running the graph without a controller](#running-the-graph-without-a-controller)
@@ -105,9 +105,9 @@ An **activation** always targets exactly one cell. The types are listed in
 | `LiveStateRead` | return the state as JSON for a live read |
 | `ApplyState`, `MigrationSerialize` | install a state, or serialize one for a move |
 | `KeyRequest` | compute keys (and event times) for entry payloads bound for a keyed edge, in one batch |
-| `CompensateRun` | run a steps operator's undo over the outputs a cell recorded |
+| `CompensateRun` | run a steps relay's undo over the outputs a cell recorded |
 
-A stage of a steps operator arrives as ordinary `Work`. Control commands the
+A stage of a steps relay arrives as ordinary `Work`. Control commands the
 SDK need not see, such as a `Ping`, never produce an activation.
 
 The SDK answers with one effect per item: the state changes as bytes it
@@ -118,8 +118,8 @@ non-retryable). The change bytes are **opaque to the core**: postcard from
 Rust, Kryo from Java, MessagePack from Node, Ruby and Python, JSON from PHP.
 The controller stores them without decoding them either.
 
-The [key-group check](flow_profile.md#partitioned-operators) also lives below
-the boundary. `AddOperator` carries a partition member's key-group range, and
+The [key-group check](flow_profile.md#partitioned-relays) also lives below
+the boundary. `AddRelay` carries a partition member's key-group range, and
 a computed cell key outside it is parked on the first frame, so every SDK on
 the core gets the check without writing it.
 
@@ -158,8 +158,8 @@ code, and a host that cannot starve never calls it.
 **Direct activations are not capped.** Restore folds, snapshot requests and
 the other command activations answer a caller that is already waiting, so
 holding one behind capped cell work could deadlock that caller. A steps
-operator's undo goes through the same queue. A steps operator's stage work is
-ordinary cell work, capped like a flow operator's.
+relay's undo goes through the same queue. A steps relay's stage work is
+ordinary cell work, capped like a flow relay's.
 
 ## Per-cell exclusivity
 
@@ -223,11 +223,11 @@ user code is starvation and is reported as such. The starvation wait's
 deadline takes the nearest due entry into account, which is how a host that
 grows threads gets one there in time.
 
-## A stage of a steps operator
+## A stage of a steps relay
 
 A stage runs the way a flow cell does: its items go into its cells' mailboxes
 and the poll core hands them out as ordinary work, under the same cap. What is
-the steps operator's own is a small record of progress on the instance in the
+the steps relay's own is a small record of progress on the instance in the
 core, moved forward by events on the threads that bring them; no core thread
 belongs to an instance.
 
@@ -255,7 +255,7 @@ commit acknowledgement, a retry's backoff, `max_duration_ms` and a park are
 events or entries on the deferred-wake list. Barriers, the task journal, loop
 modes, suspension and rewind are in [`steps_profile.md`](steps_profile.md).
 What an instance costs at scale is measured in
-[the steps operator resilience notes](https://github.com/flezha/flezha/blob/main/docs/resilience/steps_operator.md#how-many-instances-a-runner-holds).
+[the steps relay resilience notes](https://github.com/flezha/flezha/blob/main/docs/resilience/steps_relay.md#how-many-instances-a-runner-holds).
 
 ## The C ABI
 
@@ -304,7 +304,7 @@ policy, retries, and the hop between tasklets, which is a mailbox push
 (`route_to_consumers` in `flz_core/src/routing.rs`) that never crosses the
 wire.
 
-**Local mode** uses that. It builds the same `OperatorInstance` a deployed
+**Local mode** uses that. It builds the same `RelayInstance` a deployed
 runner builds, feeds it through the same dispatch entry a stream reader uses,
 and differs in one thing: where output goes. A `FlezhaStream::Local` passes
 what production would write to a callback in the same process, and a null
@@ -316,7 +316,7 @@ through the core's own wake list.
 What is on the controller's side of that line is absent locally: durability of
 any kind, the effectively-once tier (a class that asks for it is refused at
 local start, naming it), plugins, placement, moving and rescaling,
-partitioning (a member's range arrives with `AddOperator`, so a local run is
+partitioning (a member's range arrives with `AddRelay`, so a local run is
 unpartitioned), the dead-letter queue, observability export, authorization
 and running on several runners.
 
@@ -391,7 +391,7 @@ The rules every SDK follows:
 - **Each SDK has one language byte, and a factory uses one language.** The
   durable bodies of `State` and `Change` are per SDK, below a shared 16-byte
   header, and a restore sends them unchanged to whichever runner holds the
-  cell, so an operator is placed only on a runner of its factory's language.
+  cell, so a relay is placed only on a runner of its factory's language.
   The table is in `flz_core/src/header.rs`:
 
   | Value | SDK | Encoding of its records |
@@ -430,14 +430,14 @@ included, defers a capability. See
   nothing.
 - **The Elixir SDK takes nothing from `flz_core`.** A kernel change reaches it
   only when it is written again in Elixir.
-- **An operator runs only on runners of its factory's language**, because
+- **A relay runs only on runners of its factory's language**, because
   state bodies are encoded per SDK.
 
 ## See also
 
 - [`overview.md`](overview.md): the roles and the kernel's rules.
 - [`kernel.md`](kernel.md): what the runner sends to the controller, and what the controller does with it.
-- [`flow_profile.md`](flow_profile.md) and [`steps_profile.md`](steps_profile.md): the two ways an operator runs.
+- [`flow_profile.md`](flow_profile.md) and [`steps_profile.md`](steps_profile.md): the two ways a relay runs.
 - [`../topics/basics/local_mode.md`](../topics/basics/local_mode.md): running a graph with no controller.
 - [Poll core](https://github.com/flezha/flezha/blob/main/docs/sdk/poll_core.md): the poll boundary in full detail.
 - [Conformance](https://github.com/flezha/flezha/blob/main/docs/sdk/conformance.md): how an SDK proves it still works.

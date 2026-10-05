@@ -4,7 +4,7 @@ defmodule FlezhaTest.System.RemoteDurabilityDefaultOffTest do
 
   The tier's whole claim to being safe to land is that `backend: none` — the
   default — is byte-identical to a build without it. This runs a real
-  effectively-once operator end to end against a live runner with the tier
+  effectively-once relay end to end against a live runner with the tier
   unconfigured and asserts that no tier process exists at any point, that no
   entry point does anything, and that the durability path behaves exactly as it
   did before.
@@ -18,16 +18,16 @@ defmodule FlezhaTest.System.RemoteDurabilityDefaultOffTest do
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
   import FlezhaTest.Helper.TierE2EHarness
 
-  alias Flezha.Operator.Builder
-  alias Flezha.Operator.ClassRegistry
-  alias Flezha.Service.OperatorManager
+  alias Flezha.Relay.Builder
+  alias Flezha.Relay.ClassRegistry
+  alias Flezha.Service.RelayManager
   alias Flezha.State.DurabilityTier
   alias Flezha.State.InputLog
-  alias FlezhaTest.Fixtures.OperatorFixture
+  alias FlezhaTest.Fixtures.RelayFixture
 
   @moduletag timeout: 300_000
 
-  test "an effectively-once operator runs unchanged and no tier process ever starts" do
+  test "an effectively-once relay runs unchanged and no tier process ever starts" do
     # The suite's config never sets `:durability_tier`; assert that rather than
     # assume it, so a leaked override from another case cannot make this pass
     # vacuously.
@@ -39,47 +39,47 @@ defmodule FlezhaTest.System.RemoteDurabilityDefaultOffTest do
     assert GenServer.whereis(Flezha.State.DurabilityTier.Shipper) == nil
 
     namespace = unique("dur_off")
-    operator_id = unique("tier_store")
+    relay_id = unique("tier_store")
     id_path = unique_id_path()
 
-    on_exit(fn -> cleanup(namespace, operator_id, id_path) end)
+    on_exit(fn -> cleanup(namespace, relay_id, id_path) end)
 
     {_port, exec} = boot_runner(namespace, id_path)
 
     sink = %Flezha.Plugin{
       id: "off_sink",
       namespace: namespace,
-      operator_id: operator_id,
+      relay_id: relay_id,
       provider: Flezha.Plugin.Provider.BeamMsgForward,
       opts: %{recv_pid: self(), include_metadata: true},
       hooks: [{:on_output, []}]
     }
 
     builder = %Builder{
-      id: operator_id,
+      id: relay_id,
       factory_id: "tier_store",
       init_values: %{},
-      opts: [bindings: OperatorFixture.bindings(namespace, operator_id, [sink])]
+      opts: [bindings: RelayFixture.bindings(namespace, relay_id, [sink])]
     }
 
-    assert {:ok, info} = OperatorManager.start_operator(namespace, builder)
+    assert {:ok, info} = RelayManager.start_relay(namespace, builder)
 
     assert info.runner_id == exec
 
-    assert wait_until(fn -> ClassRegistry.effectively_once?(operator_id) end, 30_000)
+    assert wait_until(fn -> ClassRegistry.effectively_once?(relay_id) end, 30_000)
 
-    send_inputs(operator_id, namespace, ["k1:a", "k2:a"])
+    send_inputs(relay_id, namespace, ["k1:a", "k2:a"])
     assert await_changelog(%{"k1" => "k1=a", "k2" => "k2=a"}, 60_000)
 
     # Per-input acknowledgement, exactly as before the tier existed.
-    assert wait_until(fn -> InputLog.watermark(operator_id) == 1 end, 60_000),
+    assert wait_until(fn -> InputLog.watermark(relay_id) == 1 end, 60_000),
            "the durable consumed-offset did not advance as it does without the tier"
 
     # Still nothing started, and every tier entry point is still a no-op.
     assert GenServer.whereis(Flezha.State.DurabilityTier.Shipper) == nil
     assert DurabilityTier.status() == []
     assert DurabilityTier.breaches() == []
-    refute DurabilityTier.sync_class?(operator_id)
-    assert DurabilityTier.hydrate_operator(operator_id) == :ok
+    refute DurabilityTier.sync_class?(relay_id)
+    assert DurabilityTier.hydrate_relay(relay_id) == :ok
   end
 end

@@ -77,7 +77,7 @@ defmodule Flezha.Runner.ControlChannel do
 
         # Propagate the transport result instead of always returning {:ok, ref}.
         # A reset/dead stream replies {:error, :no_connection_available}; the
-        # caller (ControlUnit) must then surface a clean error to the operator
+        # caller (ControlUnit) must then surface a clean error to the relay
         # rather than registering a reply ref that will never resolve.
         #
         # A channel that dies or stalls mid-call must answer its caller, not
@@ -276,8 +276,8 @@ defmodule Flezha.Runner.ControlChannel do
         {ack, log_label} = Requests.runner_shutdown(state, notif)
         emit_control_request(state, reference_id, ack, log_label)
 
-      {:operator_completed, %{} = completed, _reference_id} ->
-        Requests.operator_completed(state, completed)
+      {:relay_completed, %{} = completed, _reference_id} ->
+        Requests.relay_completed(state, completed)
 
       {barrier, %{} = commit, reference_id} when barrier in [:task_commit, :iter_commit] ->
         Requests.barrier(state, barrier, commit, reference_id)
@@ -285,8 +285,8 @@ defmodule Flezha.Runner.ControlChannel do
       {:iter_park, %{} = park, _reference_id} ->
         Requests.iter_park(state, park)
 
-      {:operator_exited, %{} = exited, _reference_id} ->
-        Requests.operator_exited(state, exited)
+      {:relay_exited, %{} = exited, _reference_id} ->
+        Requests.relay_exited(state, exited)
 
       {:update_factories, %{} = update, _reference_id} ->
         Requests.update_factories(state, update)
@@ -439,11 +439,11 @@ defmodule Flezha.Runner.ControlChannel do
   # `:not_sdk_initiated`.
   @sdk_initiated_commands [
     :runner_shutdown_notification,
-    :operator_completed,
+    :relay_completed,
     :task_commit,
     :iter_commit,
     :iter_park,
-    :operator_exited,
+    :relay_exited,
     :update_factories,
     :spawn_steps_request,
     :admin_request

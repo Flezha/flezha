@@ -1,12 +1,12 @@
 defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
   @moduledoc """
   Every provider, through the real enable and the real disable, on a live
-  operator bound to a live runner.
+  relay bound to a live runner.
 
   The table is `Flezha.Plugin.Providers.all()`, so a provider added to the
   system is driven here by name or fails the drill. Each row names its upstream:
   a TCP origin for the poller, a websocket
-  fixture for the socket, a second operator for the forward, the test process
+  fixture for the socket, a second relay for the forward, the test process
   for the two message forwards, nothing for the transforms. A test asserts every
   row HAS a fixture, so a new provider cannot escape the drill by being absent
   from a list.
@@ -19,7 +19,7 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
   token path is `multi_tenant_e2e_test`'s. Per row:
 
     * enable, and read the phase and the `[:flezha, :plugin, :phase]` events;
-    * read `Table.health/1` and `flz operator info`'s plugin block in process;
+    * read `Table.health/1` and `flz relay info`'s plugin block in process;
     * kill the worker and assert the declared restart value's outcome;
     * disable, and assert the family registry holds nothing for the plugin.
 
@@ -38,14 +38,14 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
   import FlezhaTest.Helper.TierE2EHarness,
     only: [boot_runner: 3, stop_namespace: 1, unique_id_path: 1]
 
-  alias Flezha.Operator.Overwatch
+  alias Flezha.Relay.Overwatch
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Plugin.Provider
   alias Flezha.Plugin.Provider.WorkerSup
   alias Flezha.Plugin.Providers
   alias Flezha.Service.Cli
   alias Flezha.Service.HubManager
-  alias Flezha.Service.OperatorManager
+  alias Flezha.Service.RelayManager
   alias Flezha.Service.PluginManager
   alias Flezha.TestHelpers.PluginPackage
 
@@ -64,7 +64,7 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
         {:test_process,
          %{
            recv_pid: ctx.sink_name,
-           operator_id: ctx.operator_id,
+           relay_id: ctx.relay_id,
            namespace: ctx.namespace,
            heartbeat_interval: 60_000
          }},
@@ -73,7 +73,7 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
       Provider.File.Source => {:file, %{path: "drill_source.ndjson", channel: "drill"}},
       Provider.File.Sink => {:file, %{path: "drill_sink.ndjson"}},
       Provider.Websocket => {:websocket, %{uri: ctx.ws_uri, idle_timeout_ms: 0}},
-      Provider.OperatorForward => {:second_operator, %{target_operator_id: ctx.target_id}},
+      Provider.RelayForward => {:second_relay, %{target_relay_id: ctx.target_id}},
       Provider.Postgres =>
         {:database, %{database: "flezha_test", username: "postgres", auto_create: true}},
       # The example plugin package, loaded in setup: a package's row is driven
@@ -102,10 +102,10 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
     sink = spawn_link(fn -> Process.sleep(:infinity) end)
     Process.register(sink, sink_name)
 
-    operator_id = start_operator(namespace, "drill_op")
-    # The forward's destination: a second operator in the same namespace, which
+    relay_id = start_relay(namespace, "drill_op")
+    # The forward's destination: a second relay in the same namespace, which
     # is the only shape that provider accepts.
-    target_id = start_operator(namespace, "drill_target")
+    target_id = start_relay(namespace, "drill_target")
 
     on_exit(fn -> stop_namespace(namespace) end)
 
@@ -130,7 +130,7 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
     %{
       namespace: namespace,
       sink_name: sink_name,
-      operator_id: operator_id,
+      relay_id: relay_id,
       target_id: target_id,
       origin_url: "http://127.0.0.1:1/drill",
       ws_uri: "ws://127.0.0.1:1/drill",
@@ -187,7 +187,7 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
                  id: plugin_id,
                  provider: Provider.Filter,
                  namespace: ctx.namespace,
-                 operator_id: ctx.operator_id,
+                 relay_id: ctx.relay_id,
                  opts: %{regex_pattern: ".*"},
                  hooks: [{:on_input, []}]
                ],
@@ -216,9 +216,9 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
   end
 
   # One plugin option decides the entry channel every inbound frame of a socket
-  # is injected on, so two plugins on one operator must not be able to feed the
+  # is injected on, so two plugins on one relay must not be able to feed the
   # same channel by accident. Driven through the user's own verb on the live
-  # operator: what the socket process is started with is the whole of what this
+  # relay: what the socket process is started with is the whole of what this
   # decides, and delivering a frame that names a channel to that channel is the
   # runner's, pinned in `flz_core/src/routing_tests.rs`.
   test "each websocket plugin feeds the channel its own option names", ctx do
@@ -237,7 +237,7 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
       plugin_id = "drill-ws-channel-#{System.unique_integer([:positive])}"
 
       fields = %{
-        "provider" => "operator_websocket",
+        "provider" => "relay_websocket",
         "opts" =>
           flags
           |> Map.merge(%{uri: ctx.ws_uri, idle_timeout_ms: 0, plugin_id: plugin_id})
@@ -246,7 +246,7 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
           %{"name" => Atom.to_string(extension), "opts" => subscription_opts(extension)}
         ],
         "namespace" => ctx.namespace,
-        "operator_id" => ctx.operator_id
+        "relay_id" => ctx.relay_id
       }
 
       # The verb prints its own confirmation; this test asserts on the table.
@@ -269,16 +269,16 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
     end
   end
 
-  defp start_operator(namespace, label) do
+  defp start_relay(namespace, label) do
     id = "#{label}_#{System.unique_integer([:positive])}"
 
-    builder = %Flezha.Operator.Builder{
+    builder = %Flezha.Relay.Builder{
       id: id,
       factory_id: "do_nothing",
       init_values: %{}
     }
 
-    {:ok, _} = OperatorManager.start_operator(namespace, builder)
+    {:ok, _} = RelayManager.start_relay(namespace, builder)
     id
   end
 
@@ -297,7 +297,7 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
         %{"name" => Atom.to_string(extension), "opts" => subscription_opts(extension)}
       ],
       "namespace" => ctx.namespace,
-      "operator_id" => ctx.operator_id
+      "relay_id" => ctx.relay_id
     }
 
     # The verb prints and answers `:ok`; a refusal exits `{:shutdown, 1}`, which is
@@ -422,15 +422,15 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
     end
   end
 
-  # `flz operator info` in process: the namespace's block names the enabled
+  # `flz relay info` in process: the namespace's block names the enabled
   # plugin, which is the surface a user reads a plugin's own state on.
   defp assert_info_block(ctx, plugin_id) do
     output =
       ExUnit.CaptureIO.capture_io(fn ->
-        Cli.call("Operator.info", Jason.encode!([ctx.namespace]), [])
+        Cli.call("Relay.info", Jason.encode!([ctx.namespace]), [])
       end)
 
-    assert output =~ plugin_id, "flz operator info does not name the enabled plugin"
+    assert output =~ plugin_id, "flz relay info does not name the enabled plugin"
   end
 
   defp disable(plugin_id, ctx),
@@ -459,7 +459,7 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
   ## The fixture harness
 
   defp plugin_table(ctx) do
-    {:ok, pid} = HubManager.get_pid(ctx.namespace, ctx.operator_id)
+    {:ok, pid} = HubManager.get_pid(ctx.namespace, ctx.relay_id)
     %Overwatch{extensions: table} = :sys.get_state(pid)
     table
   end

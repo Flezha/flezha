@@ -7,6 +7,7 @@ use std::time::Duration;
 use std::{io, thread};
 
 use crossbeam::channel::Sender;
+use flz_transport::errors::FlezhaError;
 use flz_transport::service::payloader;
 use flz_transport::transport::config::{
     self as transport_config, get_transport_type, TransportType,
@@ -29,7 +30,6 @@ use crate::pb::command_request::Command;
 use crate::pb::{self, Ping};
 use crate::runner::{ClientResponseMessage, RunnerMessage};
 use crate::util::nonce_suffix;
-use flz_transport::errors::FlezhaError;
 
 /// The QUIC address this process last connected through.
 static LAST_GOOD_QUIC: LastGood<SocketAddr> = LastGood::new();
@@ -75,7 +75,7 @@ struct ControlInitMessage {
     stable_id: String,
     /// This process's incarnation, the same on every connect it makes: a new
     /// one under a known `stable_id` tells the controller the runner restarted
-    /// and runs none of the operators it was bound to.
+    /// and runs none of the relays it was bound to.
     incarnation: String,
     /// The credential the controller checks the claimed namespace against.
     /// Absent when this runner holds none, so a deployment authenticating with a
@@ -562,7 +562,7 @@ fn send_init_msg(
     let factories: Vec<FactoryInfo> = factory_ids
         .iter()
         .map(|id| {
-            let decl = crate::operator::registry::advertised_for_factory(id);
+            let decl = crate::relay::registry::advertised_for_factory(id);
             FactoryInfo {
                 id: decl.id,
                 description: (!decl.description.is_empty()).then_some(decl.description),
@@ -574,7 +574,7 @@ fn send_init_msg(
         })
         .collect();
 
-    // Loaded once per process (cached); the controller binds operators to it.
+    // Loaded once per process (cached); the controller binds relays to it.
     let stable_id = crate::persistent_id::stable_id(&namespace, &factory_ids);
 
     let control_init_message = ControlInitMessage {

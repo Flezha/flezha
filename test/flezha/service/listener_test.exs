@@ -2,20 +2,20 @@ defmodule Flezha.Service.ListenerTest do
   @moduledoc """
   `Flezha.Service.Listener.listen/4` with the plugin manager and the registry
   stubbed: a test process stands in for a plugin's request process, and the
-  frames the attached forwarder would send are sent to the relay it names.
+  frames the attached forwarder would send are sent to the receiver it names.
   What a caller receives and in which process, what ends a listener, its
   bound, and that every way out detaches.
 
-  The live operator is `test/system/part_stream_e2e_test.exs`.
+  The live relay is `test/system/part_stream_e2e_test.exs`.
   """
-  # async: false: Mimic global mode (the relay reads the stubbed registry) and
+  # async: false: Mimic global mode (the receiver reads the stubbed registry) and
   # the listener bounds are application env.
   use FlezhaTest.Case, fixtures: [:env], async: false
   use Mimic
   import FlezhaTest.Helper.MimicGlobal
 
   alias Flezha.Cluster.Directory
-  alias Flezha.Operator.PartitionGroup
+  alias Flezha.Relay.PartitionGroup
   alias Flezha.Service.{HubManager, Listener, PluginManager}
 
   setup :set_mimic_global_until_exit
@@ -35,8 +35,8 @@ defmodule Flezha.Service.ListenerTest do
 
     stub(PartitionGroup, :members, fn _ns, _op -> [] end)
     stub(Directory, :hub_nodes, fn _ns -> [node()] end)
-    stub(HubManager, :declared_operators, fn _ns -> [] end)
-    stub(HubManager, :operator_bindings, fn _ns, _op -> {:ok, []} end)
+    stub(HubManager, :declared_relays, fn _ns -> [] end)
+    stub(HubManager, :relay_bindings, fn _ns, _op -> {:ok, []} end)
     :ok
   end
 
@@ -52,29 +52,30 @@ defmodule Flezha.Service.ListenerTest do
         send(test, {:outcome, outcome})
       end)
 
-    assert_receive {:attached, id, relay, hooks}, 2_000
-    %{pid: pid, relay: relay, id: id, hooks: hooks}
+    assert_receive {:attached, id, receiver, hooks}, 2_000
+    %{pid: pid, receiver: receiver, id: id, hooks: hooks}
   end
 
-  defp output(relay, payload), do: send(relay, {:message_forward, {payload, %{"channel" => "c"}}})
+  defp output(receiver, payload),
+    do: send(receiver, {:message_forward, {payload, %{"channel" => "c"}}})
 
-  defp part(relay, payload, n),
-    do: send(relay, {:preview_forward, {payload, %{"channel" => "c", "flz.part" => "#{n}"}}})
+  defp part(receiver, payload, n),
+    do: send(receiver, {:preview_forward, {payload, %{"channel" => "c", "flz.part" => "#{n}"}}})
 
   test "outputs reach the handler in the calling process, and :done detaches" do
-    %{pid: pid, relay: relay} = listening([])
-    output(relay, "one")
-    output(relay, "two")
+    %{pid: pid, receiver: receiver} = listening([])
+    output(receiver, "one")
+    output(receiver, "two")
 
     assert_receive {:event, ^pid, {:output, "one", %{"channel" => "c"}}}, 2_000
     assert_receive {:event, ^pid, {:output, "two", _}}, 2_000
     Process.exit(pid, :kill)
 
-    %{relay: relay, id: id} = listening([], fn _event -> :done end)
-    output(relay, "x")
+    %{receiver: receiver, id: id} = listening([], fn _event -> :done end)
+    output(receiver, "x")
     assert_receive {:outcome, {:ok, :done}}, 2_000
     assert_receive {:detached, "ns", "op", ^id}
-    refute Process.alive?(relay)
+    refute Process.alive?(receiver)
   end
 
   test "an output listener hooks the output and the preview chains, an input one the input" do
@@ -85,10 +86,10 @@ defmodule Flezha.Service.ListenerTest do
   end
 
   test "a part, a notice and an input are told apart" do
-    %{pid: pid, relay: relay} = listening([])
-    part(relay, "he", 0)
-    notice = Flezha.Error.new("input.dead_lettered", operator: "op", channel: "in", entry: "e1")
-    send(relay, {:preview_forward, {Flezha.Error.render(notice, :json), %{"channel" => "in"}}})
+    %{pid: pid, receiver: receiver} = listening([])
+    part(receiver, "he", 0)
+    notice = Flezha.Error.new("input.dead_lettered", relay: "op", channel: "in", entry: "e1")
+    send(receiver, {:preview_forward, {Flezha.Error.render(notice, :json), %{"channel" => "in"}}})
 
     assert_receive {:event, ^pid, {:part, "he", %{"flz.part" => "0"}}}, 2_000
     assert_receive {:event, ^pid, {:dead_lettered, %Flezha.Error{} = error, %{"channel" => "in"}}}
@@ -107,43 +108,43 @@ defmodule Flezha.Service.ListenerTest do
         end
       end)
 
-    assert_receive {:attached, id, relay, _}, 2_000
-    output(relay, "x")
+    assert_receive {:attached, id, receiver, _}, 2_000
+    output(receiver, "x")
     assert_receive {:DOWN, ^ref, :process, ^pid, {:raised, %RuntimeError{message: "boom"}}}, 2_000
     assert_receive {:detached, "ns", "op", ^id}
   end
 
   test "a refused attach answers the enable's own error and leaves nothing" do
     stub(PluginManager, :enable_plugin, fn _id, _plugin ->
-      {:error, {:operator_not_found, "ns", "op"}}
+      {:error, {:relay_not_found, "ns", "op"}}
     end)
 
-    assert {:error, %Flezha.Error{code: "operator.not_found"}} =
+    assert {:error, %Flezha.Error{code: "relay.not_found"}} =
              Listener.listen("ns", "op", [], fn _ -> :continue end)
 
     assert_received {:detached, "ns", "op", _id}
   end
 
   test "a target neither registered nor declared is refused before anything is enabled" do
-    stub(HubManager, :operator_bindings, fn "ns", "ghost" ->
-      {:error, {:operator_not_found, "ns", "ghost"}}
+    stub(HubManager, :relay_bindings, fn "ns", "ghost" ->
+      {:error, {:relay_not_found, "ns", "ghost"}}
     end)
 
-    assert {:error, %Flezha.Error{code: "operator.not_found"}} =
+    assert {:error, %Flezha.Error{code: "relay.not_found"}} =
              Listener.listen("ns", "ghost", [], fn _ -> :continue end)
 
     refute_received {:attached, _, _, _}
     refute_received {:detached, _, _, _}
   end
 
-  test "the relay answers the heartbeat, and dies with its caller" do
-    %{pid: pid, relay: relay} = listening([])
-    send(relay, {:heartbeat_keepalive, self()})
+  test "the receiver answers the heartbeat, and dies with its caller" do
+    %{pid: pid, receiver: receiver} = listening([])
+    send(receiver, {:heartbeat_keepalive, self()})
     assert_receive {:heartbeat_keepalive, :ok}, 2_000
 
-    ref = Process.monitor(relay)
+    ref = Process.monitor(receiver)
     Process.exit(pid, :kill)
-    assert_receive {:DOWN, ^ref, :process, ^relay, :killed}, 2_000
+    assert_receive {:DOWN, ^ref, :process, ^receiver, :killed}, 2_000
   end
 
   test "the watched process going away ends the listener" do
@@ -168,14 +169,14 @@ defmodule Flezha.Service.ListenerTest do
         :continue
       end
 
-      %{pid: pid, relay: relay} = listening([], slow)
-      for n <- 0..99, do: part(relay, "p#{n}", n)
-      output(relay, "answer")
+      %{pid: pid, receiver: receiver} = listening([], slow)
+      for n <- 0..99, do: part(receiver, "p#{n}", n)
+      output(receiver, "answer")
 
       numbers = parts_until_output(pid, [])
       assert length(numbers) < 100
       assert numbers == Enum.sort(numbers)
-      assert :sys.get_state(relay).backlog.frames <= 8
+      assert :sys.get_state(receiver).backlog.frames <= 8
       refute_received {:outcome, _}
       Process.exit(pid, :kill)
     end
@@ -186,8 +187,8 @@ defmodule Flezha.Service.ListenerTest do
         :continue
       end
 
-      %{relay: relay, id: id} = listening([], slow)
-      for n <- 1..100, do: output(relay, "o#{n}")
+      %{receiver: receiver, id: id} = listening([], slow)
+      for n <- 1..100, do: output(receiver, "o#{n}")
 
       assert_receive {:outcome, {:error, %Flezha.Error{code: "listener.overrun"} = error}}, 5_000
       assert error.details["frames"] == 8
@@ -201,37 +202,37 @@ defmodule Flezha.Service.ListenerTest do
     end
 
     test "a row still carrying it is a move: the listener goes on" do
-      %{pid: pid, relay: relay, id: id} = listening(window_ms: 300)
-      stub(HubManager, :operator_bindings, fn "ns", "op" -> {:ok, [{id, nil}]} end)
+      %{pid: pid, receiver: receiver, id: id} = listening(window_ms: 300)
+      stub(HubManager, :relay_bindings, fn "ns", "op" -> {:ok, [{id, nil}]} end)
 
-      send(relay, {:listener_released, id})
-      send(relay, {:heartbeat_keepalive, self()})
+      send(receiver, {:listener_released, id})
+      send(receiver, {:heartbeat_keepalive, self()})
       assert_receive {:heartbeat_keepalive, :ok}, 2_000
       assert_receive {:outcome, {:ok, :window_closed}}, 2_000
       refute Process.alive?(pid)
     end
 
-    test "a registered operator without the row was disabled by someone else" do
-      stub(HubManager, :operator_bindings, fn "ns", "op" -> {:ok, []} end)
-      %{relay: relay, id: id} = listening([])
-      send(relay, {:listener_released, id})
+    test "a registered relay without the row was disabled by someone else" do
+      stub(HubManager, :relay_bindings, fn "ns", "op" -> {:ok, []} end)
+      %{receiver: receiver, id: id} = listening([])
+      send(receiver, {:listener_released, id})
 
       assert_receive {:outcome, {:error, %Flezha.Error{code: "listener.detached"}}}, 2_000
       assert_receive {:detached, "ns", "op", ^id}
     end
 
-    test "an operator no longer registered ended, after what was held before it" do
-      %{pid: pid, relay: relay, id: id} = listening([])
+    test "a relay no longer registered ended, after what was held before it" do
+      %{pid: pid, receiver: receiver, id: id} = listening([])
 
-      stub(HubManager, :operator_bindings, fn "ns", "op" ->
-        {:error, {:operator_not_found, "ns", "op"}}
+      stub(HubManager, :relay_bindings, fn "ns", "op" ->
+        {:error, {:relay_not_found, "ns", "op"}}
       end)
 
-      output(relay, "last")
-      send(relay, {:listener_released, id})
+      output(receiver, "last")
+      send(receiver, {:listener_released, id})
 
       assert_receive {:event, ^pid, {:output, "last", _}}, 2_000
-      assert_receive {:outcome, {:ok, :operator_ended}}, 2_000
+      assert_receive {:outcome, {:ok, :relay_ended}}, 2_000
     end
   end
 
@@ -264,10 +265,10 @@ defmodule Flezha.Service.ListenerTest do
         event -> send(test, {:event, self(), event}) && :continue
       end
 
-      %{pid: pid, relay: relay} = listening([idle_ms: 500], handler)
+      %{pid: pid, receiver: receiver} = listening([idle_ms: 500], handler)
 
       for n <- 0..19 do
-        part(relay, "p", n)
+        part(receiver, "p", n)
         Process.sleep(100)
       end
 

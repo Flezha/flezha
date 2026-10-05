@@ -38,7 +38,7 @@ Three files, one for each part the guides describe:
 | File | Part | What it does |
 |---|---|---|
 | `src/tasklet.rs` | the tasklet | the processing stage: prefixes each message |
-| `src/operator.rs` | the operator | the graph: `in` feeds the tasklet, output lands on `out` |
+| `src/relay.rs` | the relay | the graph: `in` feeds the tasklet, output lands on `out` |
 | `src/main.rs` | the runner | this process: registers the echo factory and waits |
 
 ## Run it
@@ -53,8 +53,8 @@ cargo run --release
 Then, from another terminal:
 
 ```sh
-flz operator start echo --id my_echo
-flz operator send my_echo --text 'hello world' --await 2000
+flz relay start echo --id my_echo
+flz relay send my_echo --text 'hello world' --await 2000
 ```
 
 ```
@@ -95,7 +95,7 @@ workspace from claiming this folder, and does nothing in a copy of its own.
 
 [`docs/guides/runner_deployment.md`](../../../../docs/guides/runner_deployment.md)
 walks through what each of the three parts is and why the split is the way it
-is. The other Rust examples, covering state, keys, timers, steps operators and the
+is. The other Rust examples, covering state, keys, timers, steps relays and the
 rest, are the SDK crate's own examples in `sdk/rust/examples/`.
 ````
 
@@ -103,12 +103,12 @@ rest, are the SDK crate's own examples in `sdk/rust/examples/`.
 
 ````rust
 //! Starts a runner: a process that connects to the controller and serves your
-//! operators.
+//! relays.
 //!
-//! Declare every operator you want served before `start()`. One runner can
-//! serve several, and the same call takes a steps operator.
+//! Declare every relay you want served before `start()`. One runner can
+//! serve several, and the same call takes a steps relay.
 
-mod operator;
+mod relay;
 mod tasklet;
 
 use flezha_runner::Flezha;
@@ -123,18 +123,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // The runner is bound to a name because a chained temporary would be
     // dropped, and shut down, at the end of the statement.
     let runner = Flezha::create_runner(namespace)?;
-    // connects to the controller and serves these operators
-    runner.register_factory(operator::EchoOperator)?.start()?;
+    // connects to the controller and serves these relays
+    runner.register_factory(relay::EchoRelay)?.start()?;
 
-    // Everything `flz operator` and `flz plugin` do is also a method of
-    // `control()`, and `send` hands a message to an operator. Uncomment to
+    // Everything `flz relay` and `flz plugin` do is also a method of
+    // `control()`, and `send` hands a message to a relay. Uncomment to
     // drive this namespace from the application instead of from a terminal:
     //
     // let control = runner.control();
-    // control.start_operator(&flezha_runner::OperatorSpec::new("echo").id("my_echo"))?;
+    // control.start_relay(&flezha_runner::RelaySpec::new("echo").id("my_echo"))?;
     // control.enable_plugin(
     //     "writer",
-    //     &flezha_runner::PluginSpec::new("operator_file_sink")
+    //     &flezha_runner::PluginSpec::new("relay_file_sink")
     //         .opts(serde_json::json!({ "path": "echo-out.txt" })),
     // )?;
     // control.bind_plugin("writer", "my_echo", serde_json::json!([["on_output", {}]]), "")?;
@@ -150,31 +150,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ````
 
-## examples/echo/src/operator.rs
+## examples/echo/src/relay.rs
 
 ````rust
-use flezha_runner::{ChannelBuilder, Operator};
+use flezha_runner::{ChannelBuilder, Relay};
 
 use crate::tasklet::Echo;
 
-/// The deployable unit. An operator declares the graph a message travels: the
+/// The deployable unit. A relay declares the graph a message travels: the
 /// entry channel it arrives on, the steps it passes through, and the channel its
 /// result leaves on.
 ///
-/// The operator is what the controller schedules onto a runner, restarts after
+/// The relay is what the controller schedules onto a runner, restarts after
 /// a failure and moves when a runner goes away. A tasklet is one stage inside
 /// that graph.
-pub struct EchoOperator;
+pub struct EchoRelay;
 
-impl Operator for EchoOperator {
-    /// The operator's stable identity, and the name `flz operator start`
+impl Relay for EchoRelay {
+    /// The relay's stable identity, and the name `flz relay start`
     /// takes. The controller's registry and the durable state both key on it,
-    /// so changing it declares a new operator rather than renaming this one.
+    /// so changing it declares a new relay rather than renaming this one.
     fn factory_id() -> &'static str {
-        "echo" // the name `flz operator start` takes
+        "echo" // the name `flz relay start` takes
     }
 
-    /// Called once when the runner declares the operator. The graph is checked
+    /// Called once when the runner declares the relay. The graph is checked
     /// as a whole there, so one that cannot work is refused at startup.
     ///
     /// An entry channel named `in` carrying strings, routed into the echo
@@ -192,7 +192,7 @@ impl Operator for EchoOperator {
 ````rust
 use flezha_runner::{tasklet, Ctx, Tasklet, TaskletError};
 
-/// A processing stage of the operator's graph, run once per message. This one
+/// A processing stage of the relay's graph, run once per message. This one
 /// prefixes the input and emits the result.
 ///
 /// The tasklet is your own type. The attribute generates no type: it fills in
@@ -201,7 +201,7 @@ use flezha_runner::{tasklet, Ctx, Tasklet, TaskletError};
 /// identity. State is filed under it, so renaming it later declares a different
 /// tasklet rather than renaming this one; renaming the type is safe.
 ///
-/// Where the result goes is not decided here. The operator decides that, so
+/// Where the result goes is not decided here. The relay decides that, so
 /// the graph can be rewired without touching this tasklet.
 #[derive(Default)]
 pub struct Echo;
@@ -213,7 +213,7 @@ impl Tasklet for Echo {
     type Output = String;
 
     fn run(&mut self, input: String, ctx: &mut Ctx<'_, Self>) -> Result<(), TaskletError> {
-        ctx.emit(format!("echo: {input}")) // where it goes is the operator's business
+        ctx.emit(format!("echo: {input}")) // where it goes is the relay's business
     }
 }
 ````

@@ -435,11 +435,11 @@ impl Core {
     /// Start the declared class as a local run: no controller, no socket.
     /// The alternative to `start`, never an addition. The host keeps driving
     /// its own poll loop, which is what runs the tasklets.
-    fn local_start(&self, factory_id: &str, operator_id: &str) -> PyResult<()> {
+    fn local_start(&self, factory_id: &str, relay_id: &str) -> PyResult<()> {
         let ctx = self.ptr()?;
         let factory = veneer::c_string("factory id", factory_id)?;
-        let operator = veneer::c_string("operator id", operator_id)?;
-        Ok(veneer::local_start(ctx, &factory, &operator)?)
+        let relay = veneer::c_string("relay id", relay_id)?;
+        Ok(veneer::local_start(ctx, &factory, &relay)?)
     }
 
     /// Queue the declared sink `channel` for `local_next_output`. A channel
@@ -603,11 +603,11 @@ impl Core {
     /// controller's answer takes a round trip, and a local send parks while
     /// the consumer's mailbox is full.
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (operator, channel, message, msg_id, key, local))]
+    #[pyo3(signature = (relay, channel, message, msg_id, key, local))]
     fn send_message(
         &self,
         py: Python<'_>,
-        operator: &str,
+        relay: &str,
         channel: &str,
         message: &[u8],
         msg_id: Option<&str>,
@@ -615,19 +615,19 @@ impl Core {
         local: bool,
     ) -> PyResult<String> {
         let ctx = self.ptr()?;
-        let operator = veneer::c_string("operator", operator)?;
+        let relay = veneer::c_string("relay", relay)?;
         let channel = veneer::c_string("entry channel", channel)?;
         let msg_id = veneer::c_string("message id", msg_id.unwrap_or_default())?;
         let key = veneer::c_string("key", key.unwrap_or_default())?;
         let message = message.to_vec();
         Ok(py.detach(move || {
-            veneer::send_message(ctx, &operator, &channel, &message, &msg_id, &key, local)
+            veneer::send_message(ctx, &relay, &channel, &message, &msg_id, &key, local)
         })?)
     }
 
-    /// The ids of the operator instances bound on this runner.
-    fn operators(&self) -> PyResult<Vec<String>> {
-        Ok(veneer::operators(self.ptr()?)?)
+    /// The ids of the relay instances bound on this runner.
+    fn relays(&self) -> PyResult<Vec<String>> {
+        Ok(veneer::relays(self.ptr()?)?)
     }
 
     /// The context's last recorded error, or `None`.
@@ -720,7 +720,7 @@ pub const NATIVE_SURFACE: &[(&str, &str)] = &[
     ("Core.part", "flz_core_part"),
     ("Core.admin_call", "flz_core_admin_call"),
     ("Core.send_message", "flz_core_send_message"),
-    ("Core.operators", "flz_core_operators"),
+    ("Core.relays", "flz_core_relays"),
     ("monotonic_nanos", "flz_core_monotonic_nanos"),
     ("Core.last_error", "flz_core_last_error"),
     ("free_threaded", "flz_core_schema_version"),

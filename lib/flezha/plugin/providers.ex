@@ -25,23 +25,23 @@ defmodule Flezha.Plugin.Providers do
   @installed_key {__MODULE__, :installed}
 
   @first_party %{
-    "operator_postgres" => Provider.Postgres,
-    "operator_postgres_poll" => Provider.PostgresPoll,
-    "operator_websocket" => Provider.Websocket,
-    "operator_http_poll" => Provider.HttpPoll,
-    "operator_http_push" => Provider.HttpPush,
-    "operator_file_source" => Provider.File.Source,
-    "operator_file_sink" => Provider.File.Sink,
-    "operator_beam_msg" => Provider.BeamMsgForward,
-    "operator_stdout" => Provider.StdOut,
-    "operator_io_filter" => Provider.Filter,
+    "relay_postgres" => Provider.Postgres,
+    "relay_postgres_poll" => Provider.PostgresPoll,
+    "relay_websocket" => Provider.Websocket,
+    "relay_http_poll" => Provider.HttpPoll,
+    "relay_http_push" => Provider.HttpPush,
+    "relay_file_source" => Provider.File.Source,
+    "relay_file_sink" => Provider.File.Sink,
+    "relay_beam_msg" => Provider.BeamMsgForward,
+    "relay_stdout" => Provider.StdOut,
+    "relay_io_filter" => Provider.Filter,
     "monitored_io_forward" => Provider.MonitoredIOForward,
-    "operator_forward" => Provider.OperatorForward,
+    "relay_forward" => Provider.RelayForward,
     # An `:on_message` provider that forwards a `{:flezha_request, key, payload,
-    # reply_to, ref}` envelope to the SDK-side operator. Attach at operator
+    # reply_to, ref}` envelope to the SDK-side relay. Attach at relay
     # start with a hook keyed on the handler key, e.g.
     # `["on_message", {"key": "fetch_init_state"}]`.
-    "operator_message_forward" => Provider.MessageForward,
+    "relay_message_forward" => Provider.MessageForward,
     # The first-party controller plugin: every hook event, POSTed as JSON.
     "hook_webhook" => Provider.HookWebhook
   }

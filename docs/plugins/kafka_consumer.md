@@ -1,19 +1,19 @@
 # Kafka consumer plugin
 
-The Kafka consumer plugin delivers the records of Kafka topics onto an operator's entry
+The Kafka consumer plugin delivers the records of Kafka topics onto a relay's entry
 channel. It joins the consumer group `group_id` for its `topics`, injects every record of
 the partitions assigned to it as one input, and commits the group's offsets to Kafka as the
-operator's input durability says. `FlezhaKafka.Consumer` is its provider, under the
+relay's input durability says. `FlezhaKafka.Consumer` is its provider, under the
 provider id `kafka_consumer`, in the Kafka plugin package beside the producer
 ([`kafka_producer.md`](kafka_producer.md), which also covers installing the package).
 
 | | |
 | --- | --- |
-| Type | operator plugin |
+| Type | relay plugin |
 | Ships | package `flezha_kafka` |
-| Shareable | no: one group member per binding, so a second operator bound to it is refused (`plugin.not_shareable`) |
-| Partitioned operators | refused (`plugin.partitioned_host`): Kafka partitions are not Flezha key groups |
-| Durability | each fetched batch waits for the operator's verdicts; offsets are committed after every confirmed batch for durable input, otherwise at most every `commit_interval_ms` |
+| Shareable | no: one group member per binding, so a second relay bound to it is refused (`plugin.not_shareable`) |
+| Partitioned relays | refused (`plugin.partitioned_host`): Kafka partitions are not Flezha key groups |
+| Durability | each fetched batch waits for the relay's verdicts; offsets are committed after every confirmed batch for durable input, otherwise at most every `commit_interval_ms` |
 
 ## Options
 
@@ -33,7 +33,7 @@ provider id `kafka_consumer`, in the Kafka plugin package beside the producer
 | `start_at` | enum | `"end"` | no | Where a group with no committed offset starts: the earliest record, or the next one written |
 | `max_bytes` | int | `1048576` | no | Bytes one fetch takes from one partition |
 | `max_wait_ms` | int | `500` | no | How long a fetch waits for records; below the client's 5 s request timeout |
-| `commit_interval_ms` | int | `5000` | no | Longest the offsets of taken records wait to be committed, unless the operator's input is durable |
+| `commit_interval_ms` | int | `5000` | no | Longest the offsets of taken records wait to be committed, unless the relay's input is durable |
 | `lag_interval_ms` | int | `5000` | no | How often the lag of each assigned partition is read |
 | `failure_threshold` | int | `3` | no | Refused batches in a row before the plugin reports unhealthy |
 | `idle_after_ms` | int | `0` | no | Age of the last settled lag read past which the source is idle; 0 derives it from `lag_interval_ms` |
@@ -42,7 +42,7 @@ provider id `kafka_consumer`, in the Kafka plugin package beside the producer
 ## Example
 
 ```sh
-$ flz plugin enable trades-in kafka_consumer --operator_id=pricer \
+$ flz plugin enable trades-in kafka_consumer --relay_id=pricer \
   --Xhosts=kafka1:9092 --Xtopics=trades --Xgroup_id=pricing \
   --Xchannel=trades --Xstart_at=beginning
 ```
@@ -52,13 +52,13 @@ $ flz plugin enable trades-in kafka_consumer --operator_id=pricer \
 | | |
 | --- | --- |
 | Hooks | none needed: the consumer drives itself, so a binding names no hook (the provider also defines `:on_terminate`) |
-| Shared | no: one group member per binding, so a second operator bound to it is refused (`plugin.not_shareable`), and a member of a partition group is refused (`plugin.partitioned_host`), because Kafka partitions are not Flezha key groups |
+| Shared | no: one group member per binding, so a second relay bound to it is refused (`plugin.not_shareable`), and a member of a partition group is refused (`plugin.partitioned_host`), because Kafka partitions are not Flezha key groups |
 | Upstream | the topics' partitions Kafka assigns to this member of `group_id` |
 | Injection | one record as one input, its value as the payload, on the entry channel `:channel` (or `:channel_in`) names, with `flz.msg_id` set |
-| Delivery | each fetched batch waits for the operator's verdicts; a batch with a refusal commits nothing and is fetched again |
+| Delivery | each fetched batch waits for the relay's verdicts; a batch with a refusal commits nothing and is fetched again |
 | Failure posture | a group that exits is started again after `lag_interval_ms`; a refused batch is fetched again from the last committed offset |
 
-As a plugin spec at operator start (`flz operator start --plugins`):
+As a plugin spec at relay start (`flz relay start --plugins`):
 
 ```json
 [
@@ -82,7 +82,7 @@ Enabled and bound in two commands, with the settings written without their dashe
 ```sh
 $ flz plugin enable trades-in kafka_consumer Xhosts=kafka1:9092 Xtopics=trades \
   Xgroup_id=pricing Xchannel=trades Xstart_at=beginning
-$ flz plugin bind trades-in --operator_id pricer --hook=on_terminate
+$ flz plugin bind trades-in --relay_id pricer --hook=on_terminate
 ```
 
 ## Options in detail
@@ -116,22 +116,22 @@ A key or header value that is not UTF-8 text is carried Base64-encoded under its
 
 ## Delivery and commits
 
-Every fetched batch is handed to the operator with `Host.inject_many/4`, up to
+Every fetched batch is handed to the relay with `Host.inject_many/4`, up to
 `FLEZHA_PLUGIN_INGEST_WINDOW` records in flight, and the consumer waits for the verdicts,
-2 s at most, before it fetches more. How the offsets are committed follows the operator's
+2 s at most, before it fetches more. How the offsets are committed follows the relay's
 input:
 
 - **Durable input** (effectively-once, sleeping or durable steps): a verdict means the record
-  is in the operator's input log, and the batch's offsets are committed before the next
+  is in the relay's input log, and the batch's offsets are committed before the next
   fetch. A record fetched again after a crash, a restart or a rebalance is absorbed by its
-  `flz.msg_id` while the input log still holds it; with effectively-once the operator's
+  `flz.msg_id` while the input log still holds it; with effectively-once the relay's
   outputs are effectively once on top of that.
-- **Otherwise**: a verdict means the operator accepted the record, and the offsets are
+- **Otherwise**: a verdict means the relay accepted the record, and the offsets are
   committed at most every `commit_interval_ms`, and when the partition consumer stops. A
   crash can lose records taken but not processed, and repeats up to `commit_interval_ms` of
   them.
 
-A batch with any verdict that is not `:ok` (an input log that refuses an append, an operator
+A batch with any verdict that is not `:ok` (an input log that refuses an append, a relay
 that does not answer within the 2 s) commits nothing: its partition consumer logs the
 refusal and stops, and is started again at once, fetching from the last committed offset.
 The records before the refused one come again, absorbed with durable input and repeated
@@ -140,11 +140,11 @@ down to the size of one batch the producer wrote.
 
 ## Scaling with a group
 
-Kafka splits a group's partitions between its members, round-robin. Several operators,
+Kafka splits a group's partitions between its members, round-robin. Several relays,
 each bound to its own `kafka_consumer` with the same `group_id` and `topics`, on one
 controller or on several, are several members: each record reaches one of them. A member
 with no partition left (more members than partitions) consumes nothing until a rebalance
-gives it one. One operator consuming many partitions is limited by that operator; add
+gives it one. One relay consuming many partitions is limited by that relay; add
 members to go wider.
 
 ## Rebalances
@@ -168,7 +168,7 @@ durable input and repeated without it. Each change of this member's assignment i
 
 A lag read settles when the group has answered its assignment and every offset was read. A
 group that exits (a failed join, a partition consumer that failed three times in five
-seconds) is logged and joined again after `lag_interval_ms`. `flz operator info` shows the
+seconds) is logged and joined again after `lag_interval_ms`. `flz relay info` shows the
 group, the topics, the last assignment and lag, and the verdict.
 
 ## Lag
@@ -207,7 +207,7 @@ producer's worker can answer a stats call up to 5 s late, and loses nothing.
 
 - **Read committed is not offered.** The client library delivers the records of aborted
   transactions, so a topic written transactionally is read as `read_uncommitted`.
-- **A partitioned operator is refused.** Bind the consumer to an operator that is not
+- **A partitioned relay is refused.** Bind the consumer to a relay that is not
   partitioned and route from there.
 - **No regex subscription, no manual assignment, no seek.** The group decides; a reset of
   the group's offsets is Kafka's own tooling.

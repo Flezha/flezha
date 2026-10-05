@@ -7,9 +7,9 @@ defmodule Flezha.Healthz.ServerTest do
   Covered scenarios match the `convergence-self-healing` capability:
     * `/` returns `pong\\n`
     * `/healthz` returns 200 healthy after a tick observation with
-      no stalled operators.
-    * `/healthz` returns 200 `degraded` when an operator is output-stalled
-      (`producing_operators < bound_operators`) — a stalled operator is the
+      no stalled relays.
+    * `/healthz` returns 200 `degraded` when a relay is output-stalled
+      (`producing_relays < bound_relays`) — a stalled relay is the
       Loop's job to rebind, NOT a kubelet restart signal.
     * `/healthz` returns 503 with `reason: "tick_stale"` only when the
       Loop is wedged (ticks stopped past `tick_ms × 3`).
@@ -47,9 +47,9 @@ defmodule Flezha.Healthz.ServerTest do
       # not bleed into other suites.
       Snapshot.publish(%{
         last_tick_at: nil,
-        operator_health: %{},
-        bound_operators: 0,
-        producing_operators: 0
+        relay_health: %{},
+        bound_relays: 0,
+        producing_relays: 0
       })
 
       Snapshot.reset_recovery_states()
@@ -60,19 +60,19 @@ defmodule Flezha.Healthz.ServerTest do
   end
 
   # Publish a convergence snapshot the way the Loop would: one verdict record
-  # per operator, which is what the endpoint folds. `bound` operators are
+  # per relay, which is what the endpoint folds. `bound` relays are
   # minted healthy and the ones named in `stalled` degraded, so the counts the
   # body reports are DERIVED here exactly as the Loop derives them.
   defp publish_tick(stalled, bound \\ 0, age_ms \\ 0) do
     Snapshot.publish(%{
       last_tick_at: System.monotonic_time(:millisecond) - age_ms,
-      operator_health: operator_records(stalled, bound)
+      relay_health: relay_records(stalled, bound)
     })
   end
 
-  # `bound` operators, the first `length(stalled)` of them named by `stalled`
+  # `bound` relays, the first `length(stalled)` of them named by `stalled`
   # and output-stalled, the rest healthy and producing.
-  defp operator_records(stalled, bound) do
+  defp relay_records(stalled, bound) do
     healthy = for i <- 1..max(bound - length(stalled), 0)//1, do: "healthy_#{i}"
 
     verdicts(
@@ -84,7 +84,7 @@ defmodule Flezha.Healthz.ServerTest do
     )
   end
 
-  defp op(id), do: {:operator, {"ns", id}}
+  defp op(id), do: {:relay, {"ns", id}}
 
   @sensor_period_ms 10_000
 
@@ -95,9 +95,9 @@ defmodule Flezha.Healthz.ServerTest do
   defp publish_verdict(layer, polls) do
     Snapshot.publish(%{
       last_tick_at: System.monotonic_time(:millisecond),
-      stuck_operators: %{},
+      stuck_relays: %{},
       intent_mismatch: [],
-      operator_health: operator_records([], 1),
+      relay_health: relay_records([], 1),
       pending_restore: false,
       data_plane_layer: layer,
       data_plane_streak: polls
@@ -142,7 +142,7 @@ defmodule Flezha.Healthz.ServerTest do
   end
 
   test "output stalled → 200 degraded (not a restart signal)", %{port: port} do
-    # One of two bound operators stalled: producing(1) < bound(2).
+    # One of two bound relays stalled: producing(1) < bound(2).
     publish_tick(["btc_feed"], 2)
 
     {status, _headers, body} = get(port, "/healthz")
@@ -155,17 +155,17 @@ defmodule Flezha.Healthz.ServerTest do
     else
       assert status == 200
       assert decoded["status"] == "degraded"
-      assert decoded["bound_operators"] == 2
-      assert decoded["producing_operators"] == 1
-      assert decoded["stalled_operators"] == ["btc_feed"]
+      assert decoded["bound_relays"] == 2
+      assert decoded["producing_relays"] == 1
+      assert decoded["stalled_relays"] == ["btc_feed"]
     end
   end
 
-  test "plugin-degraded operator → 200 degraded with reason plugin_unhealthy", %{port: port} do
-    # One of two bound operators has declared plugins missing/unhealthy.
+  test "plugin-degraded relay → 200 degraded with reason plugin_unhealthy", %{port: port} do
+    # One of two bound relays has declared plugins missing/unhealthy.
     Snapshot.publish(%{
       last_tick_at: System.monotonic_time(:millisecond),
-      operator_health:
+      relay_health:
         verdicts([
           {op("btc_feed"), :degraded,
            reason: {:plugin_unhealthy, "src", :not_running}, phase: :running},
@@ -183,18 +183,18 @@ defmodule Flezha.Healthz.ServerTest do
       assert status == 200
       assert decoded["status"] == "degraded"
       assert decoded["reason"] == "plugin_unhealthy"
-      assert decoded["plugin_degraded_operators"] == ["btc_feed"]
+      assert decoded["plugin_degraded_relays"] == ["btc_feed"]
     end
   end
 
-  test "operators declared but not yet bound → 200 recovering (post-restart rebind)", %{
+  test "relays declared but not yet bound → 200 recovering (post-restart rebind)", %{
     port: port
   } do
-    # 3 operators intended, only 1 actually bound (controller mid-rebind). Capable-
+    # 3 relays intended, only 1 actually bound (controller mid-rebind). Capable-
     # but-not-ready must read recovering, never healthy.
     Snapshot.publish(%{
       last_tick_at: System.monotonic_time(:millisecond),
-      operator_health:
+      relay_health:
         verdicts([
           {op("bound"), :healthy, reason: :producing, phase: :running},
           {op("rebinding_a"), :unbound, reason: :no_binding},
@@ -206,20 +206,20 @@ defmodule Flezha.Healthz.ServerTest do
     assert status == 200
     decoded = Jason.decode!(body)
     assert decoded["status"] == "recovering"
-    assert decoded["reason"] == "operators_rebinding"
-    assert decoded["bound_operators"] == 1
-    assert decoded["intended_operators"] == 3
+    assert decoded["reason"] == "relays_rebinding"
+    assert decoded["bound_relays"] == 1
+    assert decoded["intended_relays"] == 3
   end
 
-  test "a dead runner's channel while every operator is bound → 200 degraded, not recovering",
+  test "a dead runner's channel while every relay is bound → 200 degraded, not recovering",
        %{port: port} do
-    # The rebind window is an OPERATOR window: the grace it sits inside is
+    # The rebind window is a RELAY window: the grace it sits inside is
     # measured from unmet intent, and a channel record never makes intent
     # unmet. Weighing one here would hold the endpoint at `recovering` for as
     # long as the node runs, outranking every reason the fold could report.
     Snapshot.publish(%{
       last_tick_at: System.monotonic_time(:millisecond),
-      operator_health:
+      relay_health:
         verdicts([
           {op("bound"), :healthy, reason: :producing, phase: :running},
           {{:channel, {"departed_runner", :control}}, :failed, reason: :dead_runner}
@@ -231,21 +231,21 @@ defmodule Flezha.Healthz.ServerTest do
     decoded = Jason.decode!(body)
     assert decoded["status"] == "degraded"
     assert decoded["reason"] == "dead_runner"
-    assert decoded["bound_operators"] == 1
-    assert decoded["intended_operators"] == 1
+    assert decoded["bound_relays"] == 1
+    assert decoded["intended_relays"] == 1
   end
 
-  test "operators declared but unbound PAST the grace → 200 degraded (not silent recovering)",
+  test "relays declared but unbound PAST the grace → 200 degraded (not silent recovering)",
        %{port: port} do
-    # The silent-30h-outage gap: an operator declared but never bound must not sit
+    # The silent-30h-outage gap: a relay declared but never bound must not sit
     # at `recovering` forever. Once `unmet_intent_ms` exceeds the grace the
     # reader escalates to `degraded` so it alarms (still 200 — a restart can't
-    # re-bind an orphaned operator).
+    # re-bind an orphaned relay).
     Application.put_env(:flezha, :convergence_unmet_intent_grace_ms, 100)
 
     Snapshot.publish(%{
       last_tick_at: System.monotonic_time(:millisecond),
-      operator_health: verdicts([{op("orphan"), :unbound, reason: :no_binding}]),
+      relay_health: verdicts([{op("orphan"), :unbound, reason: :no_binding}]),
       unmet_intent_ms: 5_000
     })
 
@@ -254,23 +254,23 @@ defmodule Flezha.Healthz.ServerTest do
     decoded = Jason.decode!(body)
     refute decoded["status"] == "healthy"
     assert decoded["status"] == "degraded"
-    assert decoded["reason"] == "operators_unbound"
-    assert decoded["intended_operators"] == 1
-    assert decoded["bound_operators"] == 0
+    assert decoded["reason"] == "relays_unbound"
+    assert decoded["intended_relays"] == 1
+    assert decoded["bound_relays"] == 0
     assert decoded["unmet_intent_ms"] == 5_000
   end
 
   test "durable registry pending → 200 recovering (post-restart, registry not loaded yet)",
        %{port: port} do
     # Hubs start lazily on runner reconnect, so right after a restart Intent is
-    # empty (intended == 0) while operators.dets still sits on disk. This must read
+    # empty (intended == 0) while relays.dets still sits on disk. This must read
     # recovering, never vacuously healthy — `bound < intended` (0 < 0) misses it.
     Snapshot.publish(%{
       last_tick_at: System.monotonic_time(:millisecond),
-      stalled_operators: [],
-      intended_operators: 0,
-      bound_operators: 0,
-      producing_operators: 0,
+      stalled_relays: [],
+      intended_relays: 0,
+      bound_relays: 0,
+      producing_relays: 0,
       pending_restore: true
     })
 
@@ -279,20 +279,20 @@ defmodule Flezha.Healthz.ServerTest do
     decoded = Jason.decode!(body)
     assert decoded["status"] == "recovering"
     assert decoded["reason"] == "restoring_registry"
-    assert decoded["intended_operators"] == 0
-    assert decoded["bound_operators"] == 0
+    assert decoded["intended_relays"] == 0
+    assert decoded["bound_relays"] == 0
   end
 
   test "genuinely empty, fully started system → 200 healthy", %{port: port} do
-    # No durable operators pending and nothing declared: a legitimately-empty
+    # No durable relays pending and nothing declared: a legitimately-empty
     # controller that has finished starting must still report healthy, so the
     # restoring-registry branch never masks a steady-state empty system.
     Snapshot.publish(%{
       last_tick_at: System.monotonic_time(:millisecond),
-      stalled_operators: [],
-      intended_operators: 0,
-      bound_operators: 0,
-      producing_operators: 0,
+      stalled_relays: [],
+      intended_relays: 0,
+      bound_relays: 0,
+      producing_relays: 0,
       pending_restore: false
     })
 
@@ -334,13 +334,13 @@ defmodule Flezha.Healthz.ServerTest do
   end
 
   test "idle fleet counts as producing → 200 healthy", %{port: port} do
-    # 5 bound operators with no input and flat markers classify IDLE, which
+    # 5 bound relays with no input and flat markers classify IDLE, which
     # the Loop counts as producing — flat-because-idle is not degraded.
     Snapshot.publish(%{
       last_tick_at: System.monotonic_time(:millisecond),
-      stuck_operators: %{},
+      stuck_relays: %{},
       intent_mismatch: [],
-      operator_health:
+      relay_health:
         verdicts(for i <- 1..5, do: {op("idle_#{i}"), :healthy, reason: :idle, phase: :running}),
       pending_restore: false
     })
@@ -353,16 +353,16 @@ defmodule Flezha.Healthz.ServerTest do
     else
       assert status == 200
       assert decoded["status"] == "healthy"
-      assert decoded["producing_operators"] == 5
+      assert decoded["producing_relays"] == 5
     end
   end
 
-  test "STUCK operator (fed but frozen) → 200 degraded with per-reason detail", %{port: port} do
+  test "STUCK relay (fed but frozen) → 200 degraded with per-reason detail", %{port: port} do
     Snapshot.publish(%{
       last_tick_at: System.monotonic_time(:millisecond),
-      stuck_operators: %{"btc_feed" => %{detail: :wal_frozen, cell: "task/k1"}},
+      stuck_relays: %{"btc_feed" => %{detail: :wal_frozen, cell: "task/k1"}},
       intent_mismatch: [],
-      operator_health:
+      relay_health:
         verdicts([
           {op("btc_feed"), :degraded, reason: {:stuck, :wal_frozen}, phase: :running},
           {op("healthy_1"), :healthy, reason: :producing, phase: :running}
@@ -379,24 +379,24 @@ defmodule Flezha.Healthz.ServerTest do
       assert status == 200
       assert decoded["status"] == "degraded"
       assert decoded["reason"] == "output_stalled"
-      assert decoded["producing_operators"] == 1
-      assert decoded["stuck_operators"]["btc_feed"]["detail"] == "wal_frozen"
-      assert decoded["stuck_operators"]["btc_feed"]["cell"] == "task/k1"
+      assert decoded["producing_relays"] == 1
+      assert decoded["stuck_relays"]["btc_feed"]["detail"] == "wal_frozen"
+      assert decoded["stuck_relays"]["btc_feed"]["cell"] == "task/k1"
     end
   end
 
   test "registry wipe (durable evidence, empty intent) → 200 degraded intent_mismatch, never healthy",
        %{port: port} do
-    # The 30 h outage shape: intended == bound == 0 so every per-operator
+    # The 30 h outage shape: intended == bound == 0 so every per-relay
     # check quantifies over an empty set — the mismatch list is the witness.
     Snapshot.publish(%{
       last_tick_at: System.monotonic_time(:millisecond),
-      stalled_operators: [],
-      stuck_operators: %{},
+      stalled_relays: [],
+      stuck_relays: %{},
       intent_mismatch: ["btc_feed", "eth_feed"],
-      intended_operators: 0,
-      bound_operators: 0,
-      producing_operators: 0,
+      intended_relays: 0,
+      bound_relays: 0,
+      producing_relays: 0,
       pending_restore: false
     })
 
@@ -420,12 +420,12 @@ defmodule Flezha.Healthz.ServerTest do
 
     Snapshot.publish(%{
       last_tick_at: System.monotonic_time(:millisecond),
-      stalled_operators: [],
-      stuck_operators: %{},
+      stalled_relays: [],
+      stuck_relays: %{},
       intent_mismatch: ["btc_feed"],
-      intended_operators: 0,
-      bound_operators: 0,
-      producing_operators: 0,
+      intended_relays: 0,
+      bound_relays: 0,
+      producing_relays: 0,
       pending_restore: false
     })
 
@@ -677,10 +677,10 @@ defmodule Flezha.Healthz.ServerTest do
 
       Snapshot.publish(%{
         last_tick_at: System.monotonic_time(:millisecond),
-        stalled_operators: [],
-        intended_operators: 0,
-        bound_operators: 0,
-        producing_operators: 0,
+        stalled_relays: [],
+        intended_relays: 0,
+        bound_relays: 0,
+        producing_relays: 0,
         pending_restore: pending
       })
 

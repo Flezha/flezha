@@ -1,7 +1,7 @@
 defmodule Flezha.Plugin.Host do
   @moduledoc """
   Macro used by a module that exposes hooks (e.g.
-  `Flezha.Operator.Overwatch`).
+  `Flezha.Relay.Overwatch`).
 
       use Flezha.Plugin.Host, extensions: [
         {:on_input, :transform, Flezha.Plugin.Extension.Ctx.IO},
@@ -19,7 +19,7 @@ defmodule Flezha.Plugin.Host do
   """
 
   alias Flezha.Config
-  alias Flezha.Operator.Calls
+  alias Flezha.Relay.Calls
 
   @valid_kinds [:fold, :transform, :fanout, :request, :timer]
 
@@ -37,7 +37,7 @@ defmodule Flezha.Plugin.Host do
   @type inject_mode() :: :confirming | :verdict | :fire_and_forget | :call
 
   @doc """
-  Hand one record to the host operator. The ONE call a source makes: five
+  Hand one record to the host relay. The ONE call a source makes: five
   spellings of "the payload is yours now" were five chances for a producer to
   pick the wrong one, and the mode is what actually differs between them.
 
@@ -74,7 +74,7 @@ defmodule Flezha.Plugin.Host do
     GenServer.cast(overwatch, {:io_in, message, metadata})
   end
 
-  # A plugin calls the operator it is enabled on: its own input, so nothing
+  # A plugin calls the relay it is enabled on: its own input, so nothing
   # resolves or authorizes it again.
   def inject(overwatch, message, metadata, :call, deadline_ms),
     do: Calls.call(overwatch, message, metadata, deadline_ms, inspect(overwatch))
@@ -84,7 +84,7 @@ defmodule Flezha.Plugin.Host do
   defp verdict(other), do: other
 
   @typedoc """
-  An operator a feeding worker injects into: its Overwatch, the entry channel
+  A relay a feeding worker injects into: its Overwatch, the entry channel
   its binding names, and whether it is effectively-once, which makes its every
   record a confirming injection.
   """
@@ -96,7 +96,7 @@ defmodule Flezha.Plugin.Host do
     do: %{pid: overwatch, channel: channel, effectively_once: effectively_once?}
 
   @doc """
-  The operators a feeding worker started from `opts` injects into: the ones its
+  The relays a feeding worker started from `opts` injects into: the ones its
   shared copy names, or else the one host that started it. A worker holds them
   as its state and is told of a change by `retarget/2`, so none is looked up
   per record.
@@ -114,7 +114,7 @@ defmodule Flezha.Plugin.Host do
     ]
 
   @doc """
-  The operators the shared copy `copy` serves now, which a feeding worker it
+  The relays the shared copy `copy` serves now, which a feeding worker it
   started reads again on each connect: a `retarget/2` sent while the worker
   could take no message is lost.
   """
@@ -126,7 +126,7 @@ defmodule Flezha.Plugin.Host do
     end
   end
 
-  @doc "Tell a feeding `worker` the operators it injects into from now on."
+  @doc "Tell a feeding `worker` the relays it injects into from now on."
   @spec retarget(pid(), [target()]) :: :ok
   def retarget(worker, targets) do
     send(worker, {:targets, targets})
@@ -134,12 +134,12 @@ defmodule Flezha.Plugin.Host do
   end
 
   @doc """
-  Hand a batch of records to the host operator. With `:verdict` up to
+  Hand a batch of records to the host relay. With `:verdict` up to
   `plugin_ingest_window` records are in flight at once, the next sent as each
   answer arrives, and the answer is one `inject/5` verdict per record, in the
-  records' order, `{:error, {:unreachable, :timeout}}` for each one the operator
+  records' order, `{:error, {:unreachable, :timeout}}` for each one the relay
   had not answered by `timeout`: a source that confirms a fetched batch waits
-  once, and the batch shares the operator's journal syncs. With
+  once, and the batch shares the relay's journal syncs. With
   `:fire_and_forget` every record is cast and the answer is `:ok`.
   """
   @spec inject_many(GenServer.server(), [{binary(), map()}], :verdict, timeout()) ::
@@ -157,7 +157,7 @@ defmodule Flezha.Plugin.Host do
 
   @doc """
   The `{:ingest, …}` request of every record, with at most `window` in flight,
-  answering each record's raw reply in the records' order. The operator runs
+  answering each record's raw reply in the records' order. The relay runs
   its ingest path once per record, in order; only the caller's round trips
   overlap. A host that went away answers `{:error, {:unreachable, reason}}`,
   and a record unanswered at `timeout` after the call began answers
@@ -211,7 +211,7 @@ defmodule Flezha.Plugin.Host do
   @doc """
   Commit a value a provider's worker holds of its own onto the plugin's options,
   through its host: the live table a plugin restart prepares the plugin from, and
-  the declared manifest a controller restart rebuilds the operator from. It does
+  the declared manifest a controller restart rebuilds the relay from. It does
   not wait. A worker with no host identity has nowhere to write, and writes
   nothing.
   """
@@ -227,7 +227,7 @@ defmodule Flezha.Plugin.Host do
   `committed_at` moved. `next` is what the source does next: `:more` while it
   reads without waiting, anything else once it has caught up, failed or stopped.
 
-  A position the operator journaled (`durable_input`) is due at once, because a
+  A position the relay journaled (`durable_input`) is due at once, because a
   record read again after a restart is absorbed while the input log holds it.
   Otherwise it is due once the source stops reading without waiting, and every
   `commit_interval_ms` while it does not: one registry write per run of
@@ -249,7 +249,7 @@ defmodule Flezha.Plugin.Host do
   @doc """
   Whether a source's `position` is due to be confirmed at `now`, by the rule
   `commit_position/3` commits by: it differs from `state.committed`, and the
-  operator journaled it (`durable_input`), or the source stops reading without
+  relay journaled it (`durable_input`), or the source stops reading without
   waiting (`next` other than `:more`), or `commit_interval_ms` has passed since
   `state.committed_at`. A source that confirms upstream rather than through
   `persist_opt/4` asks the same question.
@@ -262,15 +262,15 @@ defmodule Flezha.Plugin.Host do
            now - state.committed_at >= state.commit_interval_ms)
 
   @doc """
-  The extension table a host operator holds: shareable plugins on it are served
+  The extension table a host relay holds: shareable plugins on it are served
   by their shared copy on this controller (`Flezha.Plugin.Shared`). A partition
   group's member runs every plugin it holds itself, because each member asks
   upstream for its own share of the key range only.
   """
-  @spec operator_table(map(), keyword()) :: Flezha.Plugin.Extension.Table.t()
-  def operator_table(catalog, operator_opts) do
+  @spec relay_table(map(), keyword()) :: Flezha.Plugin.Extension.Table.t()
+  def relay_table(catalog, relay_opts) do
     shared =
-      if Flezha.Partition.identity(operator_opts), do: nil, else: Flezha.Plugin.Shared
+      if Flezha.Partition.identity(relay_opts), do: nil, else: Flezha.Plugin.Shared
 
     Flezha.Plugin.Extension.Table.new(catalog, shared: shared)
   end

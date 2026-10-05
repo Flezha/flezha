@@ -158,10 +158,10 @@ pub struct CellSlot {
     pub dispatcher: Arc<dyn TaskletDispatcher>,
     pub tasklet_id: TaskletId,
     pub cell_key: Option<Arc<str>>,
-    /// The operator INSTANCE id — what a schema address names.
+    /// The relay INSTANCE id — what a schema address names.
     pub instance_id: Arc<str>,
-    pub instance: Weak<crate::operator::instance::OperatorInstance>,
-    pub topology: Arc<crate::operator::topology::OperatorTopology>,
+    pub instance: Weak<crate::relay::instance::RelayInstance>,
+    pub topology: Arc<crate::relay::topology::RelayTopology>,
     /// Whoever is owed this mailbox's next free slot under `DropNothing`,
     /// served one per successful pop.
     pub waiters: Waiters,
@@ -191,7 +191,7 @@ pub struct CellSlot {
     pub replay_open: AtomicBool,
     /// `replay_buffer.len()` as one relaxed load, for the drain's hot path.
     pub replay_depth: AtomicU64,
-    /// Wire identity `(operator instance, tasklet, cell_key)` per
+    /// Wire identity `(relay instance, tasklet, cell_key)` per
     /// `flusher::encode_cell_identity`; the controller routes on it.
     pub cell_identity: Arc<Vec<u8>>,
     /// `util::monotonic_ms` of the last successful push; the idle clock of
@@ -404,7 +404,7 @@ pub trait TaskletDispatcher: Send + Sync + 'static {
     }
 
     /// Append timer ops committed outside an invocation to this Cell's
-    /// record stream and ship them at once: a steps operator firing's removal, at
+    /// record stream and ship them at once: a steps relay firing's removal, at
     /// its stage's commit.
     fn write_timer_ops(&self, slot: &Arc<CellSlot>, ops: Vec<crate::timer::TimerOp>);
 
@@ -429,7 +429,7 @@ pub trait TaskletDispatcher: Send + Sync + 'static {
         state: &mut Box<dyn Any + Send>,
         flush_buffer: &mut Box<dyn crate::flusher::FlushableBuffer>,
         timers: &mut crate::timer::PendingTimers,
-        instance: &Weak<crate::operator::instance::OperatorInstance>,
+        instance: &Weak<crate::relay::instance::RelayInstance>,
     ) -> ItemDisposition;
 
     fn tasklet_id(&self) -> TaskletId;
@@ -440,7 +440,7 @@ pub trait TaskletDispatcher: Send + Sync + 'static {
 
     fn is_event_time(&self) -> bool;
 
-    fn correction_policy(&self) -> Option<crate::operator::topology::CorrectionPolicy>;
+    fn correction_policy(&self) -> Option<crate::relay::topology::CorrectionPolicy>;
 
     /// `instance/tasklet/key`, the string the `flz.cell` stamp carries.
     fn cell_label(&self) -> &str;
@@ -450,7 +450,7 @@ pub trait TaskletDispatcher: Send + Sync + 'static {
     /// extractor can produce.
     fn event_time_of(&self, payload: &CellPayload) -> Option<u64>;
 
-    /// A steps operator undo served in process: `compensate` over the outputs this
+    /// A steps relay undo served in process: `compensate` over the outputs this
     /// Cell recorded forward, its emits through the Cell's own sink. A host
     /// serves the `CompensateRun` activation itself and never reaches this.
     fn compensate(&self, slot: &Arc<CellSlot>, outputs: Vec<Arc<dyn Any + Send + Sync>>) {
@@ -496,7 +496,7 @@ pub struct SlotParts {
 }
 
 /// Every rendering of "which Cell is this", derived once. The WAL identity
-/// is keyed by the INSTANCE id: two operators of one factory never share a
+/// is keyed by the INSTANCE id: two relays of one factory never share a
 /// WAL.
 pub fn slot_parts(instance_id: &str, tasklet_name: &str, cell_key: Option<&str>) -> SlotParts {
     SlotParts {

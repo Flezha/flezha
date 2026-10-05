@@ -125,7 +125,7 @@ defmodule Flezha.AuthZ.QuotaPointsTest do
       File.write!(Path.join(dir, "k1.wal"), :binary.copy(<<0>>, 4_096))
       _ = Quotas.rebuild_disk_bytes("team-over")
 
-      # New allocation refused (the start_operator gate asks with 0 more
+      # New allocation refused (the start_relay gate asks with 0 more
       # bytes: over means over)...
       assert {:error, {:quota_exceeded, :max_state_bytes, _}} =
                Quotas.check_allocation("team-over", :max_state_bytes, 0)

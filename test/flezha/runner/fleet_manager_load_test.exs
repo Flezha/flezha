@@ -2,7 +2,7 @@ defmodule FlezhaTest.Runner.FleetManagerLoadTest do
   @moduledoc """
   Runner selection: the fairness cap that narrows the rendezvous ranking, the
   per-runner count it reads, and the two placement paths that reach it — one
-  operator at a time, and the recovery batch that places many before any of
+  relay at a time, and the recovery batch that places many before any of
   them is recorded.
   """
 
@@ -14,7 +14,7 @@ defmodule FlezhaTest.Runner.FleetManagerLoadTest do
   alias Flezha.Runner.FleetManager
   alias Flezha.Runner.FleetManager.Load
   alias Flezha.Service.HubManager
-  alias Flezha.Service.OperatorManager
+  alias Flezha.Service.RelayManager
   alias Flezha.State.TestHelpers, as: StateTestHelpers
   alias FlezhaTest.Helper.FleetStateHelper
   alias FlezhaTest.Helper.HubRegistryTestHelper
@@ -43,13 +43,13 @@ defmodule FlezhaTest.Runner.FleetManagerLoadTest do
   # The recovery batch's own placement call, with the child data shape
   # `StartChildrenRequest` hands the hook. Returns the runner the hook wrote
   # onto the row.
-  defp place_in_batch(ns, operator_id) do
+  defp place_in_batch(ns, relay_id) do
     child_data = %{
       child_spec: %{
-        id: operator_id,
+        id: relay_id,
         start:
           {HubRegistryTestHelper.StubChild, :start_link,
-           [{ns, %{id: operator_id, factory_id: @factory}}]}
+           [{ns, %{id: relay_id, factory_id: @factory}}]}
       },
       metadata: %{}
     }
@@ -58,22 +58,22 @@ defmodule FlezhaTest.Runner.FleetManagerLoadTest do
   end
 
   describe "the spread across a namespace's runners" do
-    test "eight runners and eight operators leave no runner idle" do
+    test "eight runners and eight relays leave no runner idle" do
       ns = namespace()
       runners = seed(ns, for(i <- 1..8, do: "spread_runner_#{i}"))
 
       assigned =
-        for i <- 1..8, do: OperatorManager.assign_runner(ns, @factory, "spread_op_#{i}")
+        for i <- 1..8, do: RelayManager.assign_runner(ns, @factory, "spread_op_#{i}")
 
       assert counts(runners, assigned) == Map.new(runners, &{&1, 1})
     end
 
-    test "five runners and twenty-five operators land five each" do
+    test "five runners and twenty-five relays land five each" do
       ns = namespace()
       runners = seed(ns, for(i <- 1..5, do: "spread_runner_#{i}"))
 
       assigned =
-        for i <- 1..25, do: OperatorManager.assign_runner(ns, @factory, "spread_op_#{i}")
+        for i <- 1..25, do: RelayManager.assign_runner(ns, @factory, "spread_op_#{i}")
 
       assert counts(runners, assigned) == Map.new(runners, &{&1, 5})
     end
@@ -93,10 +93,10 @@ defmodule FlezhaTest.Runner.FleetManagerLoadTest do
       candidates = for i <- 1..8, do: "runner_#{i}"
 
       for i <- 1..50 do
-        operator_id = "op_#{i}"
+        relay_id = "op_#{i}"
 
-        assert Load.select(candidates, operator_id, %{}) ==
-                 Enum.max_by(candidates, &:erlang.phash2({operator_id, &1}))
+        assert Load.select(candidates, relay_id, %{}) ==
+                 Enum.max_by(candidates, &:erlang.phash2({relay_id, &1}))
       end
     end
 
@@ -148,21 +148,21 @@ defmodule FlezhaTest.Runner.FleetManagerLoadTest do
 
   describe "node selection" do
     # `Heal.replacement_node/3` picks a cluster NODE through this same function.
-    # A node has no operator count in the fleet's map, and two convergence
-    # ticks that disagreed on the destination would fight over one operator.
-    test "the same operator and node set answer the same node twice, whatever the runner counts" do
+    # A node has no relay count in the fleet's map, and two convergence
+    # ticks that disagreed on the destination would fight over one relay.
+    test "the same relay and node set answer the same node twice, whatever the runner counts" do
       ns = namespace()
       runners = seed(ns, for(i <- 1..4, do: "node_runner_#{i}"))
       nodes = [:a@host, :b@host, :c@host]
 
-      first = OperatorManager.pick_runner(nodes, "node_op")
+      first = RelayManager.pick_runner(nodes, "node_op")
 
       # Fill the fleet's load map, so a node choice that consulted a runner
       # count would have a different one to consult on the second read.
-      for i <- 1..12, do: OperatorManager.assign_runner(ns, @factory, "node_fill_#{i}")
+      for i <- 1..12, do: RelayManager.assign_runner(ns, @factory, "node_fill_#{i}")
       refute FleetStateHelper.loads(ns) == Map.new(runners, &{&1, 0})
 
-      assert OperatorManager.pick_runner(nodes, "node_op") == first
+      assert RelayManager.pick_runner(nodes, "node_op") == first
       assert first == Enum.max_by(nodes, &:erlang.phash2({"node_op", &1}))
     end
   end
@@ -172,24 +172,24 @@ defmodule FlezhaTest.Runner.FleetManagerLoadTest do
       ns = namespace()
       runners = seed(ns, for(i <- 1..4, do: "count_runner_#{i}"))
 
-      first = OperatorManager.assign_runner(ns, @factory, "count_op_1")
+      first = RelayManager.assign_runner(ns, @factory, "count_op_1")
       assert FleetStateHelper.loads(ns)[first] == 1
 
-      second = OperatorManager.assign_runner(ns, @factory, "count_op_2")
+      second = RelayManager.assign_runner(ns, @factory, "count_op_2")
       refute second == first
       assert FleetStateHelper.loads(ns) == counts(runners, [first, second])
     end
 
     # `Lifecycle.bind/3` awaits a runner and `complete_init` re-resolves before
-    # its one attempt, so one operator asks twice. Two answers would send it to
+    # its one attempt, so one relay asks twice. Two answers would send it to
     # a runner its own planner did not choose, and charge both.
-    test "resolving one operator twice answers the same runner and counts once" do
+    test "resolving one relay twice answers the same runner and counts once" do
       ns = namespace()
       runners = seed(ns, for(i <- 1..4, do: "twice_runner_#{i}"))
 
-      first = OperatorManager.assign_runner(ns, @factory, "twice_op")
+      first = RelayManager.assign_runner(ns, @factory, "twice_op")
 
-      assert OperatorManager.assign_runner(ns, @factory, "twice_op") == first
+      assert RelayManager.assign_runner(ns, @factory, "twice_op") == first
       assert FleetStateHelper.loads(ns) == counts(runners, [first])
     end
 
@@ -197,14 +197,14 @@ defmodule FlezhaTest.Runner.FleetManagerLoadTest do
       ns = namespace()
       runners = seed(ns, for(i <- 1..4, do: "rebuild_runner_#{i}"))
 
-      for i <- 1..4, do: OperatorManager.assign_runner(ns, @factory, "rebuild_op_#{i}")
+      for i <- 1..4, do: RelayManager.assign_runner(ns, @factory, "rebuild_op_#{i}")
       assert FleetStateHelper.loads(ns) == Map.new(runners, &{&1, 1})
 
       # Nothing started, so the registry records none of them and only a rebuild
       # can say so. Ageing the declared interval to nothing is what makes the
       # next placement rebuild rather than read the four phantoms.
       on_exit(StateTestHelpers.override_env(:placement_load_refresh_ms, 0))
-      last = OperatorManager.assign_runner(ns, @factory, "rebuild_op_5")
+      last = RelayManager.assign_runner(ns, @factory, "rebuild_op_5")
 
       assert FleetStateHelper.loads(ns) == counts(runners, [last])
     end

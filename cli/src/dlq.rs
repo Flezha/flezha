@@ -4,13 +4,13 @@ use crate::args::{Positional, Reading};
 use crate::dispatch::{self, Command, Missing, Verb};
 use crate::{help, rpc};
 
-const ENTRY_REF: &[Positional] = &[Positional::required("<operator/tasklet/entry-id>")];
+const ENTRY_REF: &[Positional] = &[Positional::required("<relay/tasklet/entry-id>")];
 
 pub(crate) const TABLE: Command = Command {
     path: "flz dlq",
     help: help::DLQ,
     verbs: &[
-        Verb::new("list", handle_list).taking(&[Positional::optional("<operator_class>")]),
+        Verb::new("list", handle_list).taking(&[Positional::optional("<relay_class>")]),
         Verb::new("show", |read| {
             rpc::one_arg(read, ENTRY_REF[0].name, "Dlq.get")
         })
@@ -31,7 +31,7 @@ pub(crate) const TABLE: Command = Command {
 
 fn handle_list(read: &Reading) {
     let class = read
-        .maybe_pos("<operator_class>")
+        .maybe_pos("<relay_class>")
         .map_or(Value::Null, Value::from);
     rpc::door("Dlq.list", &[class], &[], read);
 }

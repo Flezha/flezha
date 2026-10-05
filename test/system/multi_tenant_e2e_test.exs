@@ -13,10 +13,10 @@ defmodule FlezhaTest.System.MultiTenantE2ETest do
 
   alias Flezha.AuthZ
   alias Flezha.AuthZ.{NamespaceStore, QuotaCounters, RoleStore, Scope, TokenStore}
-  alias Flezha.Operator.Builder
+  alias Flezha.Relay.Builder
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.Cli
-  alias Flezha.Service.OperatorManager
+  alias Flezha.Service.RelayManager
   alias FlezhaTest.Helper.AuthTestHelper
   alias FlezhaTest.Helper.NodeTestHelper
 
@@ -56,7 +56,7 @@ defmodule FlezhaTest.System.MultiTenantE2ETest do
     on_exit(fn ->
       for ns <- [@ns_a, @ns_b] do
         try do
-          OperatorManager.stop_all_operators(ns)
+          RelayManager.stop_all_relays(ns)
         catch
           _, _ -> :ok
         end
@@ -97,10 +97,10 @@ defmodule FlezhaTest.System.MultiTenantE2ETest do
     token_a: token_a,
     token_b: token_b
   } do
-    operator = %Builder{id: "alpha_op_stop_target", factory_id: "do_nothing"}
-    {:ok, _info} = OperatorManager.start_operator(@ns_a, operator)
+    relay = %Builder{id: "alpha_op_stop_target", factory_id: "do_nothing"}
+    {:ok, _info} = RelayManager.start_relay(@ns_a, relay)
 
-    # tenant-beta's user cannot stop tenant-alpha's operator...
+    # tenant-beta's user cannot stop tenant-alpha's relay...
     output =
       ExUnit.CaptureIO.capture_io(:stderr, fn ->
         assert catch_exit(stop(token_b)) == {:shutdown, 4}
@@ -119,22 +119,22 @@ defmodule FlezhaTest.System.MultiTenantE2ETest do
   } do
     output =
       ExUnit.CaptureIO.capture_io(:stderr, fn ->
-        assert catch_exit(Cli.call("Operator.list", Jason.encode!([@ns_a]), token: token_b)) ==
+        assert catch_exit(Cli.call("Relay.list", Jason.encode!([@ns_a]), token: token_b)) ==
                  {:shutdown, 4}
       end)
 
     assert output =~ "authz.namespace_mismatch"
   end
 
-  test "an over-quota namespace refuses a new operator allocation", %{token_b: _} do
-    {:ok, _} = NamespaceStore.set_quotas(@ns_b, %{max_operators: 0})
+  test "an over-quota namespace refuses a new relay allocation", %{token_b: _} do
+    {:ok, _} = NamespaceStore.set_quotas(@ns_b, %{max_relays: 0})
 
     on_exit(fn -> {:ok, _} = NamespaceStore.set_quotas(@ns_b, %{}) end)
 
-    operator = %Builder{id: "beta_quota_refused", factory_id: "do_nothing"}
+    relay = %Builder{id: "beta_quota_refused", factory_id: "do_nothing"}
 
-    assert {:error, {:quota_exceeded, :max_operators, %{limit: 0}}} =
-             OperatorManager.start_operator(@ns_b, operator)
+    assert {:error, {:quota_exceeded, :max_relays, %{limit: 0}}} =
+             RelayManager.start_relay(@ns_b, relay)
   end
 
   test "a runner for a namespace at max_runners is refused observably", %{secret_a: secret_a} do
@@ -172,7 +172,7 @@ defmodule FlezhaTest.System.MultiTenantE2ETest do
   defp stop(token),
     do:
       Cli.call(
-        "Operator.stop",
+        "Relay.stop",
         Jason.encode!([@ns_a, "alpha_op_stop_target"]),
         token: token
       )

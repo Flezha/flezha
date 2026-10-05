@@ -1,7 +1,7 @@
 # Architecture overview
 
 Flezha runs many small, independent pieces of work in parallel, on one machine
-or across many. Each piece is an operator with its own state and its own
+or across many. Each piece is a relay with its own state and its own
 messages ([What is Flezha](../getting_started/what_is_flezha.md) says this from
 the user's side). This chapter is for contributors, and for users who want to
 know how that works underneath: which process does what, what is written to
@@ -14,8 +14,8 @@ the chapter take one part each:
 | Page | What it covers |
 | --- | --- |
 | This page | Roles, how work is contained, the kernel's rules, the controller's processes, the on-disk layout, the failure model |
-| [`kernel.md`](kernel.md) | What every operator shares: the input log, the atomic effect record, the write-ahead log and snapshots, the outbox, the watermark, output identity, the epoch rule, flow control, the remote durability tier, health |
-| [`flow_profile.md`](flow_profile.md) | What `run: flow` adds: per-cell recovery, the dead-letter queue, checkpoints, late-input correction, partitioned operators |
+| [`kernel.md`](kernel.md) | What every relay shares: the input log, the atomic effect record, the write-ahead log and snapshots, the outbox, the watermark, output identity, the epoch rule, flow control, the remote durability tier, health |
+| [`flow_profile.md`](flow_profile.md) | What `run: flow` adds: per-cell recovery, the dead-letter queue, checkpoints, late-input correction, partitioned relays |
 | [`steps_profile.md`](steps_profile.md) | What `run: steps` adds: the tasklet graph, the task journal, the stage commit, undo, the durable loop, sleeping, rewind |
 | [`runner.md`](runner.md) | Inside a runner: the shared Rust kernel `flz_core`, the poll boundary, per-cell exclusivity, and what each SDK keeps for itself |
 
@@ -37,10 +37,10 @@ the chapter take one part each:
 ## The roles
 
 - **Controller**: the Elixir control plane, in `lib/flezha/`. It keeps the
-  durable copy of every operator's state, routes input, decides where each
-  operator runs and restarts what fails. Several controllers can form a
+  durable copy of every relay's state, routes input, decides where each
+  relay runs and restarts what fails. Several controllers can form a
   cluster over Erlang distribution; a ProcessHub hub per namespace spreads the
-  operators across them.
+  relays across them.
 - **Runner**: a process you run, written with one of the seven SDKs (Rust,
   Java, Node, Python, Ruby, PHP, Elixir). It runs your code. A runner always
   dials the controller, never the other way round. It holds state in memory
@@ -48,17 +48,17 @@ the chapter take one part each:
   of the SDKs share one Rust kernel, `flz_core`, for transport, ordering,
   durability, retries and timers; the Elixir SDK has its own. See
   [`runner.md`](runner.md).
-- **Operator**: what you start and stop. A **factory** is the class a runner
+- **Relay**: what you start and stop. A **factory** is the class a runner
   registers; an **instance** is one running copy of it.
-- **Tasklet**: a processing stage of your own inside an operator.
+- **Tasklet**: a processing stage of your own inside a relay.
 - **Cell**: one running copy of a tasklet with its own state.
 - **Channel**: the typed edge data travels on.
-- **Plugin**: a piece attached to an operator from outside. Sources and sinks
+- **Plugin**: a piece attached to a relay from outside. Sources and sinks
   (a WebSocket, a file, Kafka, Postgres, HTTP) are plugins, and they run on the
   controller.
 
 A cell's durable state lives on one controller node. It is not copied to the
-other nodes of a cluster as it is written. When an operator moves to another
+other nodes of a cluster as it is written. When a relay moves to another
 node, its state moves with it. Losing a controller together with its disk is
 covered by the opt-in
 [remote durability tier](kernel.md#the-remote-tier), which ships
@@ -68,8 +68,8 @@ the local disk is the only copy.
 
 ## How work is contained
 
-The controller places operators on runners. A runner holds operator
-instances, an operator holds tasklets, a tasklet holds cells, and channels are
+The controller places relays on runners. A runner holds relay
+instances, a relay holds tasklets, a tasklet holds cells, and channels are
 the edges between tasklets:
 
 ```mermaid
@@ -78,7 +78,7 @@ flowchart TB
     SRC["source plugin"]
     SINK["sink plugin"]
     subgraph RUN["runner"]
-        subgraph OPV["operator instance"]
+        subgraph OPV["relay instance"]
             subgraph P1["tasklet parse"]
                 E1(["cell BTC/USD"])
                 E2(["cell ETH/USD"])
@@ -94,14 +94,14 @@ flowchart TB
     P2 -->|"channel to a plugin"| SINK
 ```
 
-- **Operator.** Its class's `run` setting says how an instance runs: `flow`,
-  the default, or `steps` ([`../topics/basics/configuring_an_operator.md`](../topics/basics/configuring_an_operator.md)).
-  An operator started with `--partitions N` becomes N ordinary instances,
+- **Relay.** Its class's `run` setting says how an instance runs: `flow`,
+  the default, or `steps` ([`../topics/basics/configuring_a_relay.md`](../topics/basics/configuring_a_relay.md)).
+  A relay started with `--partitions N` becomes N ordinary instances,
   `<id>#p0` to `<id>#p{N-1}`, each owning part of the key space
-  ([Partitioned operators](flow_profile.md#partitioned-operators)). A steps
-  operator can be partitioned only when it loops `each: per_input`.
+  ([Partitioned relays](flow_profile.md#partitioned-relays)). A steps
+  relay can be partitioned only when it loops `each: per_input`.
 - **Tasklet.** It has a typed input and output and, when it needs one, a
-  state. It lives as long as its operator.
+  state. It lives as long as its relay.
 - **Cell.** Durability is per cell: each cell has its own write-ahead log, its
   own line of snapshots and its own position in the outbox. A cell exists
   whether or not its tasklet has state or a key; a tasklet with no key has one
@@ -159,7 +159,7 @@ flowchart TB
         OBX[("outbox")]
     end
     subgraph EXEC["runner"]
-        OPV["operator instance: tasklets and cells, state in memory"]
+        OPV["relay instance: tasklets and cells, state in memory"]
     end
     SRC -->|"1 ingest"| INLOG
     INLOG -->|"2 input and its offset"| ROUTE
@@ -178,10 +178,10 @@ first written to the input log (1, 2), then routed to the runner (3). The
 runner sends back its state changes and outputs (4), within a byte credit the
 controller grants. The controller writes the changes, the outputs and the
 offset of the input they came from as **one record under one fsync** (5), so
-state and output cannot come apart. A steps operator also records each
+state and output cannot come apart. A steps relay also records each
 finished step in its task journal (6). Outputs reach the sink only once that
 record is on disk (7). After a crash, the controller restores each cell's
-state and a steps operator's position (dashed lines).
+state and a steps relay's position (dashed lines).
 
 In the default at-least-once mode there is no input log and outputs are not
 held for the fsync: the controller sends them on as they arrive, and writes the
@@ -199,13 +199,13 @@ state changes in batches about every 5 ms. A crash can then resend an output.
 
 Both share the kernel: the write-ahead log and snapshots, the outbox, credit
 flow control, the single-owner write path, and the controller as the durable
-copy that lets an idle instance sleep and wake. A steps operator's cells are
-persisted exactly like a flow operator's, and a durable steps operator's
-input goes through the same input log an effectively-once flow operator uses.
+copy that lets an idle instance sleep and wake. A steps relay's cells are
+persisted exactly like a flow relay's, and a durable steps relay's
+input goes through the same input log an effectively-once flow relay uses.
 
 ## The kernel's rules
 
-These eight rules hold for every operator, whatever SDK it is written in.
+These eight rules hold for every relay, whatever SDK it is written in.
 
 1. **Sources and sinks are plugins.** The core assumes no particular outside
    system. Kafka, for example, is a plugin package with a consumer and a
@@ -221,7 +221,7 @@ These eight rules hold for every operator, whatever SDK it is written in.
 3. **The input log is written only when something needs it.** By default
    (`exactly: at_least_once`) there is no input log. It is written for a flow
    class on `exactly: effectively_once`, for a flow class that sets
-   `sleep_after`, and for a durable steps operator. Each cell then recovers
+   `sleep_after`, and for a durable steps relay. Each cell then recovers
    from its own consumed offset.
 4. **Output identity and the epoch rule.** An output's identity is
    `flz.cell`, `flz.seq` and `flz.key`; the outbox adds `flz.epoch`. A crash
@@ -245,7 +245,7 @@ These eight rules hold for every operator, whatever SDK it is written in.
    controller holds a frame for a limited time before it reports it
    undeliverable. See [`kernel.md`](kernel.md#flow-control).
 7. **The watermark decides retention.** The controller tracks the lowest
-   consumed offset across an operator's cells and truncates the input log
+   consumed offset across a relay's cells and truncates the input log
    below it, keeping a hold window. A payload that fails every time must not
    freeze the watermark: after its retries it is parked in the dead-letter
    queue and the cell moves past it. See
@@ -253,7 +253,7 @@ These eight rules hold for every operator, whatever SDK it is written in.
 8. **Health means work is moving.** `/healthz` and the convergence loop ask
    whether each cell's log is advancing, and only for cells that are being
    fed, so an idle cell is told apart from a stuck one. Durable state on disk
-   for an operator that is not meant to be running makes health degraded. Each
+   for a relay that is not meant to be running makes health degraded. Each
    periodic check records when it last finished, so a check that hangs shows
    as `sensor_stale` rather than switching detection off. See
    [`kernel.md`](kernel.md#health-and-liveness).
@@ -293,14 +293,14 @@ Below that tree, three sorts of process come and go:
 
 ```mermaid
 flowchart TB
-    HUB["HubManager"] -.->|"places"| OW["Operator.Overwatch, one per operator instance"]
+    HUB["HubManager"] -.->|"places"| OW["Relay.Overwatch, one per relay instance"]
     FLEET["Runner.FleetSupervisor"] -.->|"accepts"| RS["per runner session: ControlUnit, ControlChannel, primary and secondary StreamChannels"]
     STATE["State.Supervisor"] -.->|"starts on demand"| WW["State.WalWriter, one per cell"]
 ```
 
-`Flezha.Operator.Overwatch` is the process at the centre of the control
-plane. There is one per operator instance, as a ProcessHub child: it binds a
-runner, starts the operator's plugins, writes every incoming input to the
+`Flezha.Relay.Overwatch` is the process at the centre of the control
+plane. There is one per relay instance, as a ProcessHub child: it binds a
+runner, starts the relay's plugins, writes every incoming input to the
 input log when there is one, and receives every output on its way to a sink.
 `Flezha.State.WalWriter` writes one cell's log and its outbox position.
 `Flezha.Convergence.Loop` is the only process that repairs the fleet: every
@@ -310,45 +310,45 @@ difference.
 
 Placement is two choices. ProcessHub picks the **controller node** that hosts
 the Overwatch, by hashing over the nodes whose runners registered the
-operator's factory. Then a rendezvous hash of the operator id, capped so no
+relay's factory. Then a rendezvous hash of the relay id, capped so no
 runner takes more than its fair share, picks the **runner**
-(`Flezha.Service.OperatorManager.Placement`).
+(`Flezha.Service.RelayManager.Placement`).
 
 ## How a runner connects
 
 A runner dials in with a **stable identity** that survives its restarts, and
 an **incarnation**, new each time the process starts. The controller gives the
 connection a **session token**. Stream routing keys on the session token;
-which runner owns an operator keys on the stable identity. A reconnect with
+which runner owns a relay keys on the stable identity. A reconnect with
 the same identity and incarnation is the same process coming back, so its
-operators stay where they are and only their route moves to the new session.
+relays stay where they are and only their route moves to the new session.
 A new incarnation is a restarted process that runs nothing yet, so each of its
-operators is bound to it again and its state restored
+relays is bound to it again and its state restored
 (`Flezha.Runner.FleetManager.Session`).
 
 ```mermaid
 sequenceDiagram
     participant EX as runner
     participant CTRL as controller
-    participant OW as Overwatch (one per operator)
+    participant OW as Overwatch (one per relay)
 
     EX->>CTRL: connect: namespace, stable identity, incarnation, factories
     Note over CTRL: new session token, and a previous session<br/>for this identity is fenced first
     CTRL->>EX: AssignRunnerId, ConnectSocket
     EX->>CTRL: open the data streams (primary in, secondary out)
-    Note over OW: the convergence loop sees an unbound operator
+    Note over OW: the convergence loop sees an unbound relay
     OW->>EX: Ping
-    OW->>EX: AddOperator
-    EX-->>OW: AddOperatorResponse with the class's settings
+    OW->>EX: AddRelay
+    EX-->>OW: AddRelayResponse with the class's settings
     OW->>EX: RestoreInitState for each persisted cell
     Note over OW,EX: only now does input flow
 ```
 
-`AddOperator` carries the operator and factory ids, the initial values, the
-run, how many cell restores will follow, a steps operator's task-journal
+`AddRelay` carries the relay and factory ids, the initial values, the
+run, how many cell restores will follow, a steps relay's task-journal
 position, and, for a partition member, its index, the group size and the
 key-group range it owns. The response carries the class's settings as a map of
-strings, read in one place, `Flezha.Operator.ClassRegistry.decode_declarations/1`:
+strings, read in one place, `Flezha.Relay.ClassRegistry.decode_declarations/1`:
 `run`, `each`, `on_failure`, `durable`, `sleep_after_ms`, `max_duration_ms`,
 `exactly`, `ack`, `correction_ms`, `compact_after_bytes`, `compensable_tasks`,
 `leaf_tasks` and `keyed`. A missing key takes its default. `keyed` is sent
@@ -365,7 +365,7 @@ Everything durable lives under `app_data/`. The state root is
 
 ```text
 app_data/
-  state/<namespace>/<operator_class>/
+  state/<namespace>/<relay_class>/
     input.log                      the input log, when the class has one
     effectively_once, ack_checkpoint, run, ...
                                    one small file per setting that is not the default
@@ -375,12 +375,12 @@ app_data/
       <cell_key>.outbox.dedup      its outbox position
   state/<namespace>/<instance_id>/<instance_id>/task.journal
                                    a steps instance's task journal
-  dlq/<operator_class>/<tasklet_id>/entries.jsonl, <entry_id>.bin
+  dlq/<relay_class>/<tasklet_id>/entries.jsonl, <entry_id>.bin
   process_hub/<hub_id>/registry.dets
   audit/, auth/, certs/
 ```
 
-A cell's state is identified by `(operator_class, tasklet_id, cell_key)`
+A cell's state is identified by `(relay_class, tasklet_id, cell_key)`
 inside its namespace. The runner is not part of it: a runner is where the
 cell runs, not where it is kept, so a restarted runner picks up the state
 already on disk. Paths are built in `Flezha.State.Paths`.
@@ -423,15 +423,15 @@ costs in practice is in
 - **Output is at-least-once by default.** The guarantees above that need the
   input log apply only on the effectively-once tier.
 - **A factory runs only on runners of its own language.** Durable state bodies
-  are encoded per SDK, so an operator is placed only on a runner of its
+  are encoded per SDK, so a relay is placed only on a runner of its
   factory's SDK ([`runner.md`](runner.md#one-change-every-sdk)).
 
 ## See also
 
 - [`kernel.md`](kernel.md): the durable parts both ways of running share.
-- [`flow_profile.md`](flow_profile.md): recovery, the dead-letter queue, checkpoints, correction and partitions for a flow operator.
-- [`steps_profile.md`](steps_profile.md): journals, undo and the durable loop for a steps operator.
+- [`flow_profile.md`](flow_profile.md): recovery, the dead-letter queue, checkpoints, correction and partitions for a flow relay.
+- [`steps_profile.md`](steps_profile.md): journals, undo and the durable loop for a steps relay.
 - [`runner.md`](runner.md): inside a runner, and what a new SDK must do.
-- [`../topics/basics/configuring_an_operator.md`](../topics/basics/configuring_an_operator.md): the settings tree these pages refer to.
+- [`../topics/basics/configuring_a_relay.md`](../topics/basics/configuring_a_relay.md): the settings tree these pages refer to.
 - [`../topics/basics/durability.md`](../topics/basics/durability.md): what is kept and what a crash can cost, from the user's side.
 - [Wire protocol](https://github.com/flezha/flezha/blob/main/docs/sdk/protocol_spec.md): the frames between runner and controller.

@@ -46,7 +46,7 @@ defmodule Flezha.Boot.ApplicationChildrenTest do
     Flezha.Plugin.Provider.MonitoredIOForward.WorkerSup,
     Flezha.Plugin.Provider.File.Sink.WorkerSup,
     Flezha.Plugin.Provider.File.Source.WorkerSup,
-    Flezha.Plugin.Provider.OperatorForward.WorkerSup,
+    Flezha.Plugin.Provider.RelayForward.WorkerSup,
     Flezha.Plugin.Provider.HttpPoll.WorkerSup,
     Flezha.Plugin.Provider.HttpPush.WorkerSup,
     Flezha.Plugin.Provider.Postgres.WorkerSup,
@@ -55,7 +55,7 @@ defmodule Flezha.Boot.ApplicationChildrenTest do
     # The running copies of shareable plugins, one per plugin on this controller.
     Flezha.Plugin.Shared.WorkerSup,
     Flezha.Service.PortPilot,
-    Flezha.Operator.MessageHandlerTaskSup,
+    Flezha.Relay.MessageHandlerTaskSup,
     Flezha.State.WriterRegistry,
     Flezha.State.Supervisor,
     Flezha.State.FsyncBatcher,

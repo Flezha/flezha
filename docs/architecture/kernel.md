@@ -1,9 +1,9 @@
 # The durable-compute kernel
 
-This page describes the machinery under every operator: how a change to a cell's state reaches
+This page describes the machinery under every relay: how a change to a cell's state reaches
 the controller's disk, how an output gets an identity a sink can deduplicate on, how the
 controller slows a sender down, who may write a cell's log, and how the controller knows work
-is flowing. A flow operator and a steps operator use the same machinery; the pages on
+is flowing. A flow relay and a steps relay use the same machinery; the pages on
 [running in flow](flow_profile.md) and [running in steps](steps_profile.md) cover what each
 adds on top.
 
@@ -41,8 +41,8 @@ section says what happens first, then names the code that does it.
 
 ## The write path
 
-This is one input on its way from a source to a sink, for a flow operator with
-`exactly: effectively_once`. A steps operator follows the same path, except that its outputs
+This is one input on its way from a source to a sink, for a flow relay with
+`exactly: effectively_once`. A steps relay follows the same path, except that its outputs
 wait for the stage commit ([running in steps](steps_profile.md#one-outbox)).
 
 ```mermaid
@@ -67,7 +67,7 @@ sequenceDiagram
     W->>L: offset N consumed
 ```
 
-The Overwatch is the controller process that owns one operator instance. Three orderings in
+The Overwatch is the controller process that owns one relay instance. Three orderings in
 the diagram are rules, not details:
 
 - **Append before forward.** An input is written to the input log before it reaches a runner,
@@ -80,17 +80,17 @@ the diagram are rules, not details:
 
 The append is asynchronous: the Overwatch hands the payload to the log, keeps the caller's
 reply owed, and forwards the input when the log answers. Nothing else journals input. This
-lives in `Flezha.Operator.Ingest` (`Flezha.Operator.Ingest.journal_reply/2`) and
+lives in `Flezha.Relay.Ingest` (`Flezha.Relay.Ingest.journal_reply/2`) and
 `Flezha.State.InputLog`.
 
-An operator keeps its input on disk this way in three cases: a flow operator with
-`exactly: effectively_once`, a flow operator that sleeps (`sleep_after` set), and a durable
-steps operator. Any other operator skips the input log. Outside the tier and steps, cells send
+A relay keeps its input on disk this way in three cases: a flow relay with
+`exactly: effectively_once`, a flow relay that sleeps (`sleep_after` set), and a durable
+steps relay. Any other relay skips the input log. Outside the tier and steps, cells send
 plain change records, and outputs leave as they are produced.
 
 ## The record format
 
-A cell's log (its WAL, write-ahead log), the input log and a steps operator's task journal are
+A cell's log (its WAL, write-ahead log), the input log and a steps relay's task journal are
 all the same kind of file: an append-only list of framed records, each protected by a CRC.
 
 ```text
@@ -124,7 +124,7 @@ The other two files use the header differently:
 
 ## The effect record
 
-Under `exactly: effectively_once`, and for a durable steps operator, a cell does not send bare
+Under `exactly: effectively_once`, and for a durable steps relay, a cell does not send bare
 state changes. Each invocation of a tasklet produces **one** record holding everything it did:
 
 | Field | What it holds |
@@ -202,7 +202,7 @@ confirm a batch in one answer. A batch carries the same facts as single answers 
 
 A class can also hold its outputs until a checkpoint closes, with `ack: checkpoint` and
 `outputs: at_checkpoint` under `exactly.effectively_once`
-([configuring an operator](../topics/basics/configuring_an_operator.md)). The interval's
+([configuring a relay](../topics/basics/configuring_a_relay.md)). The interval's
 outputs then ride inside its checkpoint record, one append per interval, at up to
 `max_delay_ms` of extra output latency. It is off unless declared, because it changes when a
 value becomes visible downstream.
@@ -237,7 +237,7 @@ Compaction starts on whichever comes first:
 | WAL size | `:default_compact_after_bytes`, or the tasklet's own value | 8 MiB |
 | age of the oldest record not in a snapshot | `:compact_after_age_ms` | 300 000 ms (`0` turns it off) |
 
-The age trigger keeps a quiet operator from restoring by replaying a very long log. A class
+The age trigger keeps a quiet relay from restoring by replaying a very long log. A class
 with a late-input correction window raises its own age floor to that window, so a compaction
 never removes the history a correction needs.
 
@@ -262,7 +262,7 @@ restore that would reset a live cell. Deeper detail, with every setting:
 
 ## The input log and its watermark
 
-Each cell of an operator with durable input reports the input-log offset it has durably
+Each cell of a relay with durable input reports the input-log offset it has durably
 consumed. The lowest of those offsets is safe everywhere: every input at or below it is done.
 
 ```mermaid
@@ -302,7 +302,7 @@ asks for the cut and does not wait for it. This lives in `Flezha.State.InputLog`
 ## The remote tier
 
 Everything above is on one node's disk. A controller that dies **with its disk** loses its
-operators' state, and the registry record that they existed, unless a remote durability
+relays' state, and the registry record that they existed, unless a remote durability
 backend holds a copy. `FLEZHA_DURABILITY_BACKEND` names it: Postgres, S3, or a directory (meant
 for storage that outlives the cluster, such as an NFS mount). Unset means local only; in
 production the controller logs a warning on every boot and reports the posture in
@@ -333,7 +333,7 @@ flowchart LR
   removes them. Recovery reads the manifest and then runs the ordinary restore; there is no
   second restore path.
 - **The epoch fence reaches outward.** The manifest write is conditional. A controller that lost
-  ownership fails it and stops shipping, so two controllers cannot both write one operator's
+  ownership fails it and stops shipping, so two controllers cannot both write one relay's
   remote copy. On the directory backend the conditional write is read-then-write, which two
   writers can race.
 - **`durable: remote`.** A class at `remote` has each commit point acknowledged only once the
@@ -345,7 +345,7 @@ flowchart LR
 
 A backend stores bytes through five operations (`put`, `get`, `list`, `put_if`, `delete`) and
 knows nothing about WALs. On a fresh node the registry is restored from the backend before the
-process hub opens `registry.dets`, so the restored operators are seen; cell state then comes
+process hub opens `registry.dets`, so the restored relays are seen; cell state then comes
 back through the ordinary bind. The shipper is `Flezha.State.DurabilityTier.Shipper`. User
 view: [durability](../topics/basics/durability.md).
 
@@ -373,7 +373,7 @@ guarded by `(epoch, seq)`, so a re-send or a stale epoch changes nothing; the **
 
 The tier is set per class with `exactly: effectively_once`. It requires every channel that
 reaches a plugin to be keyed: an unkeyed output gives a sink nothing to deduplicate on, so the
-runner refuses the operator at registration
+runner refuses the relay at registration
 (`topology.unkeyed_channel_under_effectively_once`).
 
 The guarantee does not depend on the language. Rust, Java, Node, Python, Ruby and PHP runners
@@ -433,7 +433,7 @@ The difference matters:
   exactly.
 
 `flz.` is reserved. A tasklet that passes metadata with a `flz.` key has the emit refused, so
-stamps cannot be forged or overwritten. A durable steps operator's cells write the same effect
+stamps cannot be forged or overwritten. A durable steps relay's cells write the same effect
 record and are stamped by the same controller code.
 
 ## The epoch rule
@@ -449,14 +449,14 @@ holds, and admits a higher one, overwriting by natural key.
 | `flz dlq replay` | kept | the payload comes back as a new input, with a new offset and a new seq |
 | a runner restart that rewrites the cell's history (realign) | raised | the new run replaces the old one |
 | late-input correction | raised | the corrected output must replace the old one |
-| `flz operator replay` | raised | the same |
+| `flz relay replay` | raised | the same |
 
 The test is intent. An accident must not change what the world sees, so it repeats the same
 identity. A deliberate re-run must change it, so it raises the epoch and the sink lets it
 through. A runner restart counts as a re-run: the writer adopts the new session's history and
 raises the epoch (`Flezha.State.WalWriter.Epoch`).
 
-A steps operator's `flz operator rewind` does not move the cell epoch. It raises only the
+A steps relay's `flz relay rewind` does not move the cell epoch. It raises only the
 journal's epoch, which keys the re-run's commits; the re-run's output is a newer record of the
 same cell, so its higher `flz.seq` passes the sink's guard.
 
@@ -467,26 +467,26 @@ Data moves in three directions, and each is protected differently:
 ```mermaid
 flowchart TB
     S["source"] -->|"1. source credit: the source's call waits"| C["controller"]
-    C -->|"2. send gate: the operator waits up to 5 s"| R["runner"]
+    C -->|"2. send gate: the relay waits up to 5 s"| R["runner"]
     R -->|"3. credit window: the runner's sender waits"| C
     C --> D[("WAL and fsync")]
     D -.->|"fsync gives credit back to 3"| R
     D -.->|"watermark gives credit back to 1"| S
 ```
 
-1. **Source credit**, for an operator with durable input. When it runs out, the source's call
+1. **Source credit**, for a relay with durable input. When it runs out, the source's call
    waits. Nothing is lost.
 2. **The send gate**, controller to runner. When the transport's buffer to the runner passes 80 %
-   of its 8 MiB limit, the gate rises and the sending operator waits, up to `:send_gate_hold_ms`
+   of its 8 MiB limit, the gate rises and the sending relay waits, up to `:send_gate_hold_ms`
    (5 s by default). If the buffer has not drained by then, the input is reported undelivered
-   (`send_buffer_full`) and is not sent; an operator with durable input still has it in its
-   input log. Only that operator waits; the rest of the controller carries on.
+   (`send_buffer_full`) and is not sent; a relay with durable input still has it in its
+   input log. Only that relay waits; the rest of the controller carries on.
 3. **The credit window**, runner to controller. When the runner has spent its window, its
    sender waits. Nothing is lost.
 
 Against a slow disk, senders wait. Against a slow or dead runner, the controller waits only up
 to a limit, because one stuck runner must not hold the controller that serves every other
-operator. The 8 MiB limit stays as a last resort below the gate; a frame dropped there is a
+relay. The 8 MiB limit stays as a last resort below the gate; a frame dropped there is a
 defect, counted and reported as `send_buffer_dropping`. The gate is
 `flz_transport/src/transport/send_gate.rs` and `Flezha.Runner.StreamChannel.Gate`.
 
@@ -522,7 +522,7 @@ credit cannot reach it, so reaching it emits `[:flezha, :state, :credit_anomaly]
 
 ### The source credit loop
 
-Each input log holds its own credit, for every operator with durable input. An append uses
+Each input log holds its own credit, for every relay with durable input. An append uses
 some; when none is left, the log holds back its answer. The watermark moving forward gives the
 credit back and answers the waiting appends in the order they came.
 
@@ -534,14 +534,14 @@ that move the watermark and give the credit back. An Overwatch that waited on it
 never earn the credit it waits for.
 
 This slows the real source only if the source waits on its call. The WebSocket plugin does so
-for an effectively-once operator: its connection process waits for the answer, so a full log
+for an effectively-once relay: its connection process waits for the answer, so a full log
 stops it reading the socket, and the remote end slows down through TCP.
 
 ## Ownership and fencing
 
-An operator is owned by the stable identity of the runner it is bound to, and only one session
+A relay is owned by the stable identity of the runner it is bound to, and only one session
 of that identity may write its cells' WALs. The owner is recorded in `ClassRegistry` beside the
-operator's Overwatch, and every path a runner's frame comes in by reads it. A reconnect under
+relay's Overwatch, and every path a runner's frame comes in by reads it. A reconnect under
 the same identity moves the session, not the ownership, in a fixed order: **the old session is
 unbound before the new one is bound**, so a frame still in flight from the old one is refused
 at the binding rather than in the writer.
@@ -564,10 +564,10 @@ sequenceDiagram
 
 Above the fences is the **identity check**. `Flezha.Runner.StreamChannel.Records.admit/3`
 refuses an output, a cell write, a processed-prefix marker or a control frame
-(`OperatorCompleted`, `OperatorExited`, `IterPark`, `RunnerShutdownNotification`,
-`TaskCommit`, `IterCommit`) when the operator's record names another identity as its owner. A
-refusal acts on nothing. It is counted on the channel, reported once per session and operator
-as `[:flezha, :runner, :foreign_frame_refused]`, and answered with `RemOperator`, so a runner
+(`RelayCompleted`, `RelayExited`, `IterPark`, `RunnerShutdownNotification`,
+`TaskCommit`, `IterCommit`) when the relay's record names another identity as its owner. A
+refusal acts on nothing. It is counted on the channel, reported once per session and relay
+as `[:flezha, :runner, :foreign_frame_refused]`, and answered with `RemRelay`, so a runner
 that was evicted while still alive is told to stop the first time it speaks.
 
 The identity check cannot tell an old session of the **same** identity from the new one. Two
@@ -605,11 +605,11 @@ flowchart LR
     H --> S
 ```
 
-The heal step has nine primitives, among them rebinding an operator, resyncing a runner,
+The heal step has nine primitives, among them rebinding a relay, resyncing a runner,
 starting, stopping or restarting a plugin, and evicting a runner. Three guards keep it from
 over-reacting:
 
-- an operator must be misbound for **two ticks in a row** before it is moved;
+- a relay must be misbound for **two ticks in a row** before it is moved;
 - a failed read reports `unknown`, not "gone", and the diff skips it;
 - every primitive and target has a cooldown that grows from 2 s through 5, 10, 15, 20, 30, 45,
   60, 90, 120 and 180 s to 300 s, and stays there.
@@ -644,7 +644,7 @@ Each has its own "is it fed?" test (the input log grew, output records piled up)
 cell never reads as stuck. The consumed offset is read per cell, so the verdict names the cell
 responsible.
 
-A separate check finds an **intent mismatch**: durable state on disk for an operator that is
+A separate check finds an **intent mismatch**: durable state on disk for a relay that is
 missing from the set that should run. It reports `degraded`, with `200`, because restarting the
 pod cannot repair a wiped registry.
 
@@ -661,15 +661,15 @@ watchdog that hangs without crashing shows up as `sensor_stale`.
 | compaction trigger | the WAL passed its size or age floor | sends `CompactCell` |
 | compaction timeout | a requested snapshot has not arrived in 30 s | tells the loop, which plans a resync |
 | remote RPO | a remote ship has fallen behind | raises the RPO alarm |
-| disk quota | a namespace is over its state quota | raises an alarm and refuses new operators there |
+| disk quota | a namespace is over its state quota | raises an alarm and refuses new relays there |
 
-The input-silence check skips a checkpoint-ack operator, which writes nothing between
+The input-silence check skips a checkpoint-ack relay, which writes nothing between
 checkpoints, and a sleeping instance, which receives nothing by design.
 
 ### Finding the stalled layer
 
 When a data path goes silent, `Flezha.Convergence.StallClassifier` works out which layer
-stopped. It compares two snapshots of driver, channel and operator counters and returns the
+stopped. It compares two snapshots of driver, channel and relay counters and returns the
 **deepest** stalled layer, because a stall low down explains every symptom above it. In order:
 
 1. `driver_loop_frozen`: the transport driver thread stopped looping.
@@ -679,26 +679,26 @@ stopped. It compares two snapshots of driver, channel and operator counters and 
 5. `runner_not_consuming`: the controller sends, nothing comes back.
 6. `runner_pool_wedged`: the runner is alive and fed, but its workers stopped.
 7. `channel_not_sending`: a channel is fed but does not send.
-8. `operator_not_forwarding`: an operator is fed but does not forward.
+8. `relay_not_forwarding`: a relay is fed but does not forward.
 
 Two more verdicts report a cell whose work went missing on the runner and a producer held back
 by a slow consumer. Each check has its own "is it fed?" test, so a quiet system does not read as
 a stalled one. A change of verdict emits `[:flezha, :data_plane, :stall_localized]`. Where a
-remedy exists inside the controller (evict a wedged runner, resync a connection, rebind an
-operator) the loop applies it; where only a process restart helps, `/healthz` answers 503.
+remedy exists inside the controller (evict a wedged runner, resync a connection, rebind a
+relay) the loop applies it; where only a process restart helps, `/healthz` answers 503.
 
 ### The health endpoint
 
 | Status | HTTP | When |
 | --- | --- | --- |
-| `healthy` | 200 | every hub is normal and every bound operator is producing or idle |
-| `recovering` | 200 | a hub is recovering, the registry is restoring, or operators are rebinding within the grace period |
-| `degraded` | 200 | operators are stalled, stuck or have unhealthy plugins, an intent mismatch was found, a data-path stall was localized, or a sensor stopped completing passes |
+| `healthy` | 200 | every hub is normal and every bound relay is producing or idle |
+| `recovering` | 200 | a hub is recovering, the registry is restoring, or relays are rebinding within the grace period |
+| `degraded` | 200 | relays are stalled, stuck or have unhealthy plugins, an intent mismatch was found, a data-path stall was localized, or a sensor stopped completing passes |
 | `unhealthy` | **503** | only when the convergence loop itself has stopped or failed recovery, or the controller's own transport driver thread is wedged and stays wedged |
 
 The endpoint holds no state; it reads the published snapshot.
 
-**503 is kept for what a restart fixes.** Restarting the pod cannot rebind an operator that lost
+**503 is kept for what a restart fixes.** Restarting the pod cannot rebind a relay that lost
 its runner, repair a wiped registry, or restart a data path that is stopped on purpose; it would
 destroy a working controller and fix nothing. Two conditions qualify. A stopped convergence loop
 is one. A wedged transport driver thread in the controller (`driver_loop_frozen` or
@@ -720,7 +720,7 @@ me?" and must say no during exactly that window. Neither is derived from the oth
 | --- | --- |
 | `boot_sequence_complete` | the boot sequence has finished |
 | `hubs_recovered` | no namespace hub is recovering |
-| `durable_registry_loaded` | the controller has reloaded every operator in its durable registry |
+| `durable_registry_loaded` | the controller has reloaded every relay in its durable registry |
 | `declared_hubs_started` | every declared namespace hub has started |
 
 It answers 200 only when all are met; otherwise 503 with a JSON body naming the verdict
@@ -739,7 +739,7 @@ and has no setting of its own.
 - **A frozen watermark holds the input log.** A cell that never consumes keeps the log growing
   until its bad payload is parked.
 - **The directory backend cannot fence two writers.** Use Postgres or S3 when two controllers
-  could claim the same operator.
+  could claim the same relay.
 - **`/readyz` and `/healthz` are off by default** (`FLEZHA_HEALTHZ_ENABLED`).
 
 ## See also

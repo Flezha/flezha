@@ -120,79 +120,79 @@ defmodule Flezha.AuthZ.Verbs do
     controller_status: [action: :"controller.status", scope: :caller],
     controller_mem_top: [action: :"controller.status", scope: :caller],
     controller_hub_id: [action: :"controller.status", scope: {:argument, 1}],
-    controller_recovery: [action: :"operator.list", scope: {:argument, 1}],
+    controller_recovery: [action: :"relay.list", scope: {:argument, 1}],
     controller_stop: [
       action: :"controller.stop",
       scope: :system,
       remote: false,
       audit: {:after, :controller_service}
     ],
-    cluster_status: [action: :"operator.list", scope: {:argument, 1}],
+    cluster_status: [action: :"relay.list", scope: {:argument, 1}],
     # Listings.
-    list_namespaces: [action: :"operator.list", scope: :caller],
-    list_operators: [action: :"operator.list", scope: {:argument, 1}],
-    list_runners: [action: :"operator.list", scope: {:argument, 1}],
-    operator_info: [action: :"operator.list", scope: {:argument, 1}],
-    operator_classes: [action: :"operator.list", scope: :caller],
-    # Operator lifecycle and live work.
-    operator_start: [
-      action: :"operator.start",
+    list_namespaces: [action: :"relay.list", scope: :caller],
+    list_relays: [action: :"relay.list", scope: {:argument, 1}],
+    list_runners: [action: :"relay.list", scope: {:argument, 1}],
+    relay_info: [action: :"relay.list", scope: {:argument, 1}],
+    relay_classes: [action: :"relay.list", scope: :caller],
+    # Relay lifecycle and live work.
+    relay_start: [
+      action: :"relay.start",
       scope: {:argument, 1},
-      audit: {:after, :operator_service},
-      target: [:_, :operator]
+      audit: {:after, :relay_service},
+      target: [:_, :relay]
     ],
-    operator_stop: [
-      action: :"operator.stop",
+    relay_stop: [
+      action: :"relay.stop",
       scope: {:argument, 1},
-      audit: {:after, :operator_service},
-      target: [:_, :operator]
+      audit: {:after, :relay_service},
+      target: [:_, :relay]
     ],
-    operator_scale: [
-      action: :"operator.scale",
+    relay_scale: [
+      action: :"relay.scale",
       scope: {:argument, 1},
       audit: {:after, :steps_service},
       target: [:_, :group, :partitions]
     ],
-    operator_rewind: [
-      action: :"operator.rewind",
+    relay_rewind: [
+      action: :"relay.rewind",
       scope: {:argument, 1},
       audit: {:after, :steps_service},
-      target: [:_, :operator, :to_iteration]
+      target: [:_, :relay, :to_iteration]
     ],
-    operator_send: [
-      action: :"operator.send",
+    relay_send: [
+      action: :"relay.send",
       scope: {:argument, 1},
-      audit: {:after, :operator_service},
-      target: [:_, :operator]
+      audit: {:after, :relay_service},
+      target: [:_, :relay]
     ],
     # An outside call is an input whose answer is the sender's own.
-    operator_call: [
-      action: :"operator.send",
+    relay_call: [
+      action: :"relay.send",
       scope: {:argument, 1},
-      audit: {:after, :operator_service},
-      target: [:_, :operator]
+      audit: {:after, :relay_service},
+      target: [:_, :relay]
     ],
     # A tasklet's `ctx.spawn_steps` feeding a running instance: the right
-    # `operator_send` judges, with no record of its own because it runs once per
+    # `relay_send` judges, with no record of its own because it runs once per
     # event. A refusal is still audited, by the policy point.
-    spawn_deliver: [action: :"operator.send", scope: {:argument, 1}],
-    operator_replay: [
-      action: :"operator.replay",
+    spawn_deliver: [action: :"relay.send", scope: {:argument, 1}],
+    relay_replay: [
+      action: :"relay.replay",
       scope: {:row, :namespace},
-      audit: {:after, :operator_service},
+      audit: {:after, :relay_service},
       target: [:_, :cell]
     ],
-    operator_listen: [
-      action: :"operator.listen",
+    relay_listen: [
+      action: :"relay.listen",
       scope: {:argument, 1},
       audit: {:after, :plugin_service},
-      target: [:_, :operator]
+      target: [:_, :relay]
     ],
     cell_state: [action: :"state.get", scope: {:argument, 1}],
     schedule_run: [
-      action: :"operator.start",
+      action: :"relay.start",
       scope: {:row, :namespace},
-      audit: {:after, :operator_service},
+      audit: {:after, :relay_service},
       target: [:schedule]
     ],
     runner_connect: [action: :"runner.connect", scope: {:argument, 1}],
@@ -333,7 +333,7 @@ defmodule Flezha.AuthZ.Verbs do
       action: :"state.retention",
       scope: :system,
       audit: {:after, :state_service},
-      target: [:operator_class, :hours]
+      target: [:relay_class, :hours]
     ],
     state_outbox: [action: :"state.records", scope: {:row, :namespace}],
     state_inbox: [action: :"state.records", scope: {:row, :namespace}],

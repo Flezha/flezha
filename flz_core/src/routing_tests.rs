@@ -1,6 +1,6 @@
 //! The routing seam's tests: a plugin output whose write failed and is held
 //! for the reconnect, the entry-channel resolution — a declared name
-//! delivered, an absent one defaulted, and a name the operator does not
+//! delivered, an absent one defaulted, and a name the relay does not
 //! declare parked under the name it asked for — and a host payload fanned
 //! across several dynamic keys.
 
@@ -10,12 +10,12 @@ use std::time::Duration;
 
 use super::*;
 use crate::flusher::SendFrameFn;
-use crate::operator::instance::OperatorInstance;
+use crate::relay::instance::RelayInstance;
 use crate::state_sink;
 use crate::test_support::{capture_parks, host_class};
 
-const OPERATOR: &str = "op-plugin-emit";
-const BODY: &[u8] = b"the operator's only output";
+const RELAY: &str = "op-plugin-emit";
+const BODY: &[u8] = b"the relay's only output";
 
 /// A stream whose peer is gone: the shape the controller leaves behind
 /// when it closes the socket half of a rebound pair.
@@ -30,15 +30,15 @@ fn sink_metadata() -> HashMap<String, String> {
 }
 
 /// The dispatch handle a stream reader holds over one registered instance.
-fn handle_over(instance: &Arc<OperatorInstance>) -> OperatorDispatchHandle {
-    let registry = Arc::new(crate::operator::registry::OperatorRegistry::new());
+fn handle_over(instance: &Arc<RelayInstance>) -> RelayDispatchHandle {
+    let registry = Arc::new(crate::relay::registry::RelayRegistry::new());
     registry.register(Arc::clone(instance));
-    OperatorDispatchHandle { registry }
+    RelayDispatchHandle { registry }
 }
 
 /// One frame off the wire into `instance`, naming `channel` when it is
 /// `Some` — a `None` is the metadata a source plugin sends by default.
-fn feed(instance: &Arc<OperatorInstance>, channel: Option<&str>, payload: &[u8]) {
+fn feed(instance: &Arc<RelayInstance>, channel: Option<&str>, payload: &[u8]) {
     feed_with(
         instance,
         &channel.map(channel_metadata).unwrap_or_default(),
@@ -49,8 +49,8 @@ fn feed(instance: &Arc<OperatorInstance>, channel: Option<&str>, payload: &[u8])
 /// A topology with no entry channel. No declaration this core accepts builds
 /// one, so the test builds the topology itself — the shape `dispatch` would
 /// be handed.
-fn entry_less_instance(id: &'static str) -> Arc<OperatorInstance> {
-    let topology = crate::operator::topology::OperatorTopology {
+fn entry_less_instance(id: &'static str) -> Arc<RelayInstance> {
+    let topology = crate::relay::topology::RelayTopology {
         sdk_lang: 1,
         channels: Vec::new(),
         name_to_id: HashMap::new(),
@@ -58,19 +58,19 @@ fn entry_less_instance(id: &'static str) -> Arc<OperatorInstance> {
         tasklet_name_to_id: HashMap::new(),
         factory_id: id,
         description: "",
-        durable: crate::operator::settings::Durable::Memory,
+        durable: crate::relay::settings::Durable::Memory,
         max_duration: None,
         effectively_once: false,
         correction: None,
         ack_granularity: Default::default(),
         steps: None,
     };
-    OperatorInstance::new(Arc::new(topology), Arc::from(id))
+    RelayInstance::new(Arc::new(topology), Arc::from(id))
 }
 
 /// One frame carrying `metadata`, through the dispatch a stream reader makes;
 /// no `channel` key is the metadata a spawn payload carries.
-fn feed_with(instance: &Arc<OperatorInstance>, metadata: &HashMap<String, String>, payload: &[u8]) {
+fn feed_with(instance: &Arc<RelayInstance>, metadata: &HashMap<String, String>, payload: &[u8]) {
     handle_over(instance).dispatch(
         &instance.instance_id,
         payload.to_vec(),
@@ -96,7 +96,7 @@ fn journaled_metadata(channel: &str, offset: u64) -> HashMap<String, String> {
 /// A queued message: its entry channel, input-log offset and root values.
 type Queued = (u32, Option<u64>, Vec<Arc<dyn Any + Send + Sync>>);
 
-fn queued_messages(instance: &OperatorInstance) -> Vec<Queued> {
+fn queued_messages(instance: &RelayInstance) -> Vec<Queued> {
     let run = instance.steps.as_ref().expect("a steps instance");
     run.sheet()
         .queue
@@ -120,7 +120,7 @@ fn queued_messages(instance: &OperatorInstance) -> Vec<Queued> {
 }
 
 /// The offset a park released, once the off-thread park has landed.
-fn parked_offset(instance: &OperatorInstance) -> Option<u64> {
+fn parked_offset(instance: &RelayInstance) -> Option<u64> {
     let run = instance.steps.as_ref().expect("a steps instance");
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
     loop {
@@ -134,10 +134,10 @@ fn parked_offset(instance: &OperatorInstance) -> Option<u64> {
     }
 }
 
-/// A steps operator whose one entry channel parses: `poison` is refused, anything
+/// A steps relay whose one entry channel parses: `poison` is refused, anything
 /// else becomes its text, on a ladder of two. No host declaration builds a
 /// parsed entry, so the topology is hand-built as a typed SDK builds one.
-fn parsing_steps(id: &'static str) -> Arc<OperatorInstance> {
+fn parsing_steps(id: &'static str) -> Arc<RelayInstance> {
     use crate::channel::{ChannelDescriptor, ConsumerEdge, OverflowPolicy, RetryPolicy};
     let wrap: crate::channel::EntryWrapFn = Arc::new(|bytes: Vec<u8>| {
         if bytes == b"poison" {
@@ -145,7 +145,7 @@ fn parsing_steps(id: &'static str) -> Arc<OperatorInstance> {
         }
         Ok(Arc::new(String::from_utf8_lossy(&bytes).to_string()) as Arc<dyn Any + Send + Sync>)
     });
-    let topology = crate::operator::topology::OperatorTopology {
+    let topology = crate::relay::topology::RelayTopology {
         sdk_lang: 1,
         channels: vec![ChannelDescriptor {
             name: Arc::from("in"),
@@ -175,7 +175,7 @@ fn parsing_steps(id: &'static str) -> Arc<OperatorInstance> {
         tasklet_name_to_id: HashMap::new(),
         factory_id: id,
         description: "",
-        durable: crate::operator::settings::Durable::Memory,
+        durable: crate::relay::settings::Durable::Memory,
         max_duration: None,
         effectively_once: false,
         correction: None,
@@ -191,7 +191,7 @@ fn parsing_steps(id: &'static str) -> Arc<OperatorInstance> {
             each: crate::steps::Each::Once,
         }),
     };
-    OperatorInstance::new(Arc::new(topology), Arc::from(id))
+    RelayInstance::new(Arc::new(topology), Arc::from(id))
 }
 
 #[test]
@@ -309,14 +309,14 @@ fn a_steps_frame_a_parsed_entry_rejects_rides_the_ladder_and_parks_under_the_cha
     state_sink::reset_for_test();
 }
 
-fn queued(instance: &Arc<OperatorInstance>) -> usize {
+fn queued(instance: &Arc<RelayInstance>) -> usize {
     instance.cells[0][0].mailbox.len()
 }
 
 /// The entry channel the one queued frame resolved to: the host wrapper
 /// records the channel it was parsed for, so the mailbox itself says which
 /// entry channel took the frame.
-fn queued_channel(instance: &Arc<OperatorInstance>) -> Option<u32> {
+fn queued_channel(instance: &Arc<RelayInstance>) -> Option<u32> {
     match instance.cells[0][0].mailbox.pop()? {
         crate::cell::CellItem::Input(payload) => payload
             .value
@@ -409,7 +409,7 @@ fn a_frame_naming_a_declared_entry_channel_is_delivered_to_it() {
 /// (`UnreachableTasklet`) — but a topology can hold that shape, and
 /// `dispatch` takes topologies. So the branch is driven, not argued.
 #[test]
-fn an_operator_declaring_no_entry_channel_parks_with_its_own_reason() {
+fn a_relay_declaring_no_entry_channel_parks_with_its_own_reason() {
     let _guard = state_sink::test_guard();
     state_sink::reset_for_test();
     let parks = capture_parks();
@@ -417,7 +417,7 @@ fn an_operator_declaring_no_entry_channel_parks_with_its_own_reason() {
 
     feed(&instance, None, b"nowhere-to-go");
 
-    crate::test_support::spin_until("the entry-less operator to park", || {
+    crate::test_support::spin_until("the entry-less relay to park", || {
         !parks.lock().expect("park capture poisoned").is_empty()
     });
     let park = parks.lock().expect("park capture poisoned").remove(0);
@@ -433,7 +433,7 @@ fn an_operator_declaring_no_entry_channel_parks_with_its_own_reason() {
     state_sink::reset_for_test();
 }
 
-/// A frame naming a channel the operator DOES declare, of another kind: a
+/// A frame naming a channel the relay DOES declare, of another kind: a
 /// sink is not an entry channel, so it parks exactly as an undeclared name
 /// does. Before the kind-aware lookup this frame resolved, found no
 /// `wrap_input`, and was dropped with a line on stderr.
@@ -455,7 +455,7 @@ fn a_frame_naming_a_declared_channel_of_another_kind_is_parked_too() {
     assert_eq!(body.entry.channel, "out");
     assert_eq!(
         body.entry.error,
-        "no entry channel `out`; the operator declares: q2_in"
+        "no entry channel `out`; the relay declares: q2_in"
     );
     assert_eq!(body.entry.payload.as_deref(), Some(&b"payload-bytes"[..]));
     assert_eq!(queued(&instance), 0, "no tasklet received the frame");
@@ -463,7 +463,7 @@ fn a_frame_naming_a_declared_channel_of_another_kind_is_parked_too() {
 }
 
 #[test]
-fn the_reason_for_an_operator_with_no_entry_channel_names_that_condition() {
+fn the_reason_for_a_relay_with_no_entry_channel_names_that_condition() {
     assert_eq!(
         unresolved_entry_error(&[], ""),
         NO_ENTRY_CHANNEL_ERROR,
@@ -471,7 +471,7 @@ fn the_reason_for_an_operator_with_no_entry_channel_names_that_condition() {
     );
     assert_eq!(
         unresolved_entry_error(&["config", "prices"], "quotes"),
-        "no entry channel `quotes`; the operator declares: config, prices"
+        "no entry channel `quotes`; the relay declares: config, prices"
     );
 }
 
@@ -543,7 +543,7 @@ fn a_plugin_frame_whose_write_fails_is_held_for_replay() {
     let _guard = state_sink::test_guard();
     state_sink::reset_for_test();
 
-    send_plugin_frame(&dead_stream(), OPERATOR, BODY, &sink_metadata()).unwrap();
+    send_plugin_frame(&dead_stream(), RELAY, BODY, &sink_metadata()).unwrap();
 
     assert_eq!(
         state_sink::ring_len_for_test(),
@@ -559,8 +559,8 @@ fn a_held_plugin_frame_reaches_the_stream_the_reconnect_wires() {
     state_sink::reset_for_test();
 
     let metadata = sink_metadata();
-    let expected = payloader::build_from_binary(OPERATOR, BODY, metadata.clone()).unwrap();
-    send_plugin_frame(&dead_stream(), OPERATOR, BODY, &metadata).unwrap();
+    let expected = payloader::build_from_binary(RELAY, BODY, metadata.clone()).unwrap();
+    send_plugin_frame(&dead_stream(), RELAY, BODY, &metadata).unwrap();
 
     // The reconnect: a fresh secondary, then the sink install that replays
     // the ring onto it.
@@ -586,7 +586,7 @@ fn a_held_plugin_frame_reaches_the_stream_the_reconnect_wires() {
 
 /// A host class whose one entry is keyed into a dynamic tasklet, the shape a
 /// `key_by` behind a fanning `flat_map` declares.
-fn keyed_dynamic_instance(id: &str) -> Arc<OperatorInstance> {
+fn keyed_dynamic_instance(id: &str) -> Arc<RelayInstance> {
     let json = format!(
         r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0",
              "channels":[{{"name":"in","kind":"entry",
@@ -594,7 +594,7 @@ fn keyed_dynamic_instance(id: &str) -> Arc<OperatorInstance> {
              "tasklets":[{{"name":"p0","cell_mode":"dynamic"}}]}}"#
     );
     crate::host::register_host_class_json(json.as_bytes()).expect("class registers");
-    OperatorInstance::of_class(id, &format!("{id}_inst")).expect("class registered")
+    RelayInstance::of_class(id, &format!("{id}_inst")).expect("class registered")
 }
 
 #[test]
@@ -634,7 +634,7 @@ fn a_host_payload_fanned_across_keys_reaches_every_keyed_cell() {
 
 /// The inter-tasklet channel of a tier class, `p0` into a one-slot `p1`, with
 /// both Cells.
-fn tier_edge(id: &str) -> (Arc<OperatorInstance>, Arc<CellSlot>, Arc<CellSlot>) {
+fn tier_edge(id: &str) -> (Arc<RelayInstance>, Arc<CellSlot>, Arc<CellSlot>) {
     let instance = crate::test_support::host_class::instance(id, &["in"], &[], &[1]);
     let producer = Arc::clone(&instance.cells[0][0]);
     let consumer = Arc::clone(&instance.cells[1][0]);

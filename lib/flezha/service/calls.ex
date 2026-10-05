@@ -1,9 +1,9 @@
 defmodule Flezha.Service.Calls do
   @moduledoc """
-  Delivers operators' calls: each request to its callee, each answer back to
+  Delivers relays' calls: each request to its callee, each answer back to
   its caller, off every Overwatch's process, so no Overwatch waits on another.
 
-  One `Flezha.Plugin.Provider.OperatorForward.ForwardWorker` per caller and
+  One `Flezha.Plugin.Provider.RelayForward.ForwardWorker` per caller and
   target delivers requests in the order the caller's Overwatch sent them, and
   one per callee and caller delivers answers; each is started on first use and
   stops once its queue has been empty for `call_worker_idle_ms`. The router

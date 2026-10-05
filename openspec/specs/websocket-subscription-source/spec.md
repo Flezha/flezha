@@ -209,7 +209,7 @@ The provider SHALL accept `subscription_items` — a literal item list feeding t
 
 ### Requirement: A websocket plugin SHALL name its entry channel with an option
 
-`Plugin.Provider.Websocket` SHALL accept the entry channel it injects on as a declared option, resolved by the rule in `operator-extensions`: `channel` names it on every plugin of this provider, together with the record filter when the plugin also has a chain hook, and `channel_in` names it alone in every case.
+`Plugin.Provider.Websocket` SHALL accept the entry channel it injects on as a declared option, resolved by the rule in `relay-extensions`: `channel` names it on every plugin of this provider, together with the record filter when the plugin also has a chain hook, and `channel_in` names it alone in every case.
 
 Before this, the provider had no option naming its entry channel and a user had to write the `"channel"` key into `payload_metadata`, the general label bag, which is neither discoverable in the provider's help screen nor distinguishable from the provider's own `channel` option pointing the other way.
 
@@ -247,10 +247,10 @@ change does. No other websocket option SHALL be live.
 
 #### Scenario: Adding and removing pairs on a shared connection
 
-- **GIVEN** a websocket plugin bound to two operators, connected, with `subscription_items`
+- **GIVEN** a websocket plugin bound to two relays, connected, with `subscription_items`
   `["a", "b"]` applied
 - **WHEN** `flz plugin update` sets `subscription_items` to `["a", "c"]`
 - **THEN** a subscribe frame naming `c` and an unsubscribe frame naming `b` SHALL be sent on
   the same connection, the connection process SHALL be the same before and after, and both
-  operators SHALL keep ingesting
+  relays SHALL keep ingesting
 

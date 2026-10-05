@@ -45,7 +45,7 @@ set -e
 #     cargo run -p rust_runner
 #
 #   Run the benchmark:
-#     mix bench --num-operators 1000 --messages-per-operator 1000
+#     mix bench --num-relays 1000 --messages-per-relay 1000
 #
 #   Kafka UI is available at: http://localhost:8080/
 

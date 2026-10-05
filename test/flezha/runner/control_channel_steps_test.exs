@@ -1,12 +1,12 @@
-defmodule FlezhaTest.Runner.ControlChannelOperatorCompletedTest do
+defmodule FlezhaTest.Runner.ControlChannelRelayCompletedTest do
   @moduledoc """
-  Exercises the SDK -> Controller `OperatorCompleted` dispatch path added by
-  `operator-task-kind` to `Flezha.Runner.ControlChannel`.
+  Exercises the SDK -> Controller `RelayCompleted` dispatch path added by
+  `relay-task-kind` to `Flezha.Runner.ControlChannel`.
 
-  A task-kind unit emits `OperatorCompleted` when its run-once function returns.
+  A task-kind unit emits `RelayCompleted` when its run-once function returns.
   The controller decodes it off the `"control_command"` payload_id (same
   envelope as `RunnerShutdownNotification`) and
-  drives deregister-on-completion via `OperatorManager.stop_operator/3`. A
+  drives deregister-on-completion via `RelayManager.stop_relay/3`. A
   terminal failure (`status = "error"`) is torn down identically and
   surfaced via `[:flezha, :steps, :failed]` telemetry — no retry.
   """
@@ -19,7 +19,7 @@ defmodule FlezhaTest.Runner.ControlChannelOperatorCompletedTest do
 
   alias Flezha.Runner.ControlChannel
   alias Flezha.Runner.StreamPool
-  alias Flezha.Service.OperatorManager
+  alias Flezha.Service.RelayManager
   alias Flezha.State.Completion
   alias FlezhaTest.Helper.ControlFrameTestHelper
   alias FlezhaTest.Helper.NodeTestHelper
@@ -48,47 +48,47 @@ defmodule FlezhaTest.Runner.ControlChannelOperatorCompletedTest do
     :ok
   end
 
-  test "OperatorCompleted ok → drives stop_operator teardown + result, no failure telemetry" do
+  test "RelayCompleted ok → drives stop_relay teardown + result, no failure telemetry" do
     test_pid = self()
 
-    OperatorManager
-    |> stub(:stop_operator, fn @namespace, operator_id, [reason: :completed] ->
-      send(test_pid, {:stop_operator_called, operator_id})
+    RelayManager
+    |> stub(:stop_relay, fn @namespace, relay_id, [reason: :completed] ->
+      send(test_pid, {:stop_relay_called, relay_id})
       :ok
     end)
 
     {control_channel, _stream_ref} = start_control_channel("exec-task-a")
 
-    payload = build_operator_completed_payload("task-1", "ok", "", "the-answer", "ref-1")
+    payload = build_relay_completed_payload("task-1", "ok", "", "the-answer", "ref-1")
     send(control_channel, {:flz_data, :stream_id, "control_command", payload, %{}})
 
-    assert_receive {:stop_operator_called, "task-1"}, 500
+    assert_receive {:stop_relay_called, "task-1"}, 500
 
     # The terminal outcome + result payload is surfaced on `:completed`.
     assert_receive {:telemetry, [:flezha, :steps, :completed], %{count: 1}, meta}, 500
-    assert meta.operator_id == "task-1"
+    assert meta.relay_id == "task-1"
     assert meta.status == "ok"
     assert meta.result == "the-answer"
 
     refute_received {:telemetry, [:flezha, :steps, :failed], _m, _meta}
   end
 
-  test "OperatorCompleted error → failure telemetry + identical teardown" do
+  test "RelayCompleted error → failure telemetry + identical teardown" do
     test_pid = self()
 
-    OperatorManager
-    |> stub(:stop_operator, fn @namespace, operator_id, [reason: :completed] ->
-      send(test_pid, {:stop_operator_called, operator_id})
+    RelayManager
+    |> stub(:stop_relay, fn @namespace, relay_id, [reason: :completed] ->
+      send(test_pid, {:stop_relay_called, relay_id})
       :ok
     end)
 
     {control_channel, _stream_ref} = start_control_channel("exec-task-b")
 
-    payload = build_operator_completed_payload("task-2", "error", "boom", "", "ref-2")
+    payload = build_relay_completed_payload("task-2", "error", "boom", "", "ref-2")
     send(control_channel, {:flz_data, :stream_id, "control_command", payload, %{}})
 
     assert_receive {:telemetry, [:flezha, :steps, :failed], %{count: 1}, metadata}, 500
-    assert metadata.operator_id == "task-2"
+    assert metadata.relay_id == "task-2"
     assert metadata.error == "boom"
 
     # Errors also emit the converged `:completed`.
@@ -96,25 +96,25 @@ defmodule FlezhaTest.Runner.ControlChannelOperatorCompletedTest do
                    500
 
     # Terminal failure deregisters exactly as success — no retry.
-    assert_receive {:stop_operator_called, "task-2"}, 500
+    assert_receive {:stop_relay_called, "task-2"}, 500
   end
 
-  test "OperatorCompleted cancelled (cooperative stop) → same converged teardown + result" do
+  test "RelayCompleted cancelled (cooperative stop) → same converged teardown + result" do
     test_pid = self()
 
-    OperatorManager
-    |> stub(:stop_operator, fn @namespace, operator_id, [reason: :completed] ->
-      send(test_pid, {:stop_operator_called, operator_id})
+    RelayManager
+    |> stub(:stop_relay, fn @namespace, relay_id, [reason: :completed] ->
+      send(test_pid, {:stop_relay_called, relay_id})
       :ok
     end)
 
     {control_channel, _stream_ref} = start_control_channel("exec-task-c")
 
-    payload = build_operator_completed_payload("task-3", "cancelled", "", "partial", "ref-3")
+    payload = build_relay_completed_payload("task-3", "cancelled", "", "partial", "ref-3")
     send(control_channel, {:flz_data, :stream_id, "control_command", payload, %{}})
 
     # A cooperative external stop converges on the identical teardown path.
-    assert_receive {:stop_operator_called, "task-3"}, 500
+    assert_receive {:stop_relay_called, "task-3"}, 500
 
     assert_receive {:telemetry, [:flezha, :steps, :completed], %{count: 1}, meta}, 500
     assert meta.status == "cancelled"
@@ -138,44 +138,44 @@ defmodule FlezhaTest.Runner.ControlChannelOperatorCompletedTest do
       end
     end)
 
-    OperatorManager
-    |> stub(:stop_operator, fn @namespace, operator_id, [reason: :completed] ->
-      send(test_pid, {:stop_operator_called, operator_id})
+    RelayManager
+    |> stub(:stop_relay, fn @namespace, relay_id, [reason: :completed] ->
+      send(test_pid, {:stop_relay_called, relay_id})
       :ok
     end)
 
     {control_channel, _stream_ref} = start_control_channel("exec-task-direct")
 
-    payload = build_operator_completed_payload("task-direct", "ok", "", "", "ref-direct")
+    payload = build_relay_completed_payload("task-direct", "ok", "", "", "ref-direct")
     send(control_channel, {:flz_data, :stream_id, "control_command", payload, %{}})
 
     # The barrier is driven for the runner this completion arrived on...
     assert_receive {:flushing, "exec-task-direct", teardown}, 1_000
-    refute_received {:stop_operator_called, "task-direct"}
+    refute_received {:stop_relay_called, "task-direct"}
 
     # ...and the teardown proceeds only once it answers.
     send(teardown, :release)
-    assert_receive {:stop_operator_called, "task-direct"}, 1_000
+    assert_receive {:stop_relay_called, "task-direct"}, 1_000
   end
 
-  test "OperatorCompleted writes a durable completion record for finished-job retention" do
+  test "RelayCompleted writes a durable completion record for finished-job retention" do
     test_pid = self()
 
-    OperatorManager
-    |> stub(:stop_operator, fn @namespace, operator_id, [reason: :completed] ->
-      send(test_pid, {:stop_operator_called, operator_id})
+    RelayManager
+    |> stub(:stop_relay, fn @namespace, relay_id, [reason: :completed] ->
+      send(test_pid, {:stop_relay_called, relay_id})
       :ok
     end)
 
     {control_channel, _stream_ref} = start_control_channel("exec-task-rec")
 
     before = System.system_time(:second)
-    payload = build_operator_completed_payload("task-rec", "ok", "", "the-answer", "ref-rec")
+    payload = build_relay_completed_payload("task-rec", "ok", "", "the-answer", "ref-rec")
     send(control_channel, {:flz_data, :stream_id, "control_command", payload, %{}})
 
-    # The record is written synchronously in `handle_operator_completed` BEFORE the
+    # The record is written synchronously in `handle_relay_completed` BEFORE the
     # off-process teardown, so once teardown is observed the record must exist.
-    assert_receive {:stop_operator_called, "task-rec"}, 500
+    assert_receive {:stop_relay_called, "task-rec"}, 500
 
     assert {:ok, rec} = Completion.read("task-rec")
     assert rec.namespace == @namespace
@@ -204,12 +204,12 @@ defmodule FlezhaTest.Runner.ControlChannelOperatorCompletedTest do
     {pid, stream_ref}
   end
 
-  defp build_operator_completed_payload(operator_id, status, error, result, reference_id) do
+  defp build_relay_completed_payload(relay_id, status, error, result, reference_id) do
     ControlFrameTestHelper.encode_request(
       reference_id,
-      {:operator_completed,
-       %RunnerCommands.OperatorCompleted{
-         operator_id: operator_id,
+      {:relay_completed,
+       %RunnerCommands.RelayCompleted{
+         relay_id: relay_id,
          status: status,
          error: error,
          result: result
@@ -235,7 +235,7 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnStepsTest do
   import FlezhaTest.Helper.MimicGlobal
 
   alias Flezha.Runner.ControlChannel
-  alias Flezha.Service.OperatorManager
+  alias Flezha.Service.RelayManager
   alias FlezhaTest.Helper.ControlFrameTestHelper, as: ControlFrame
   alias FlezhaTest.Helper.NodeTestHelper
 
@@ -288,13 +288,13 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnStepsTest do
   } do
     test_pid = self()
 
-    expect(OperatorManager, :spawn_or_deliver, fn ns,
-                                                  id,
-                                                  factory,
-                                                  payload,
-                                                  if_running,
-                                                  caller,
-                                                  _identity ->
+    expect(RelayManager, :spawn_or_deliver, fn ns,
+                                               id,
+                                               factory,
+                                               payload,
+                                               if_running,
+                                               caller,
+                                               _identity ->
       send(test_pid, {:resolved, ns, id, factory, payload, if_running, caller})
       {:spawned, id}
     end)
@@ -313,13 +313,13 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnStepsTest do
   end
 
   test "a request without an id answers the id the controller generated", %{channel: channel} do
-    expect(OperatorManager, :spawn_or_deliver, fn _ns,
-                                                  "",
-                                                  _factory,
-                                                  _payload,
-                                                  _policy,
-                                                  _,
-                                                  _identity ->
+    expect(RelayManager, :spawn_or_deliver, fn _ns,
+                                               "",
+                                               _factory,
+                                               _payload,
+                                               _policy,
+                                               _,
+                                               _identity ->
       {:spawned, "worker-k7m2qzxw4pd3fn2a"}
     end)
 
@@ -330,13 +330,13 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnStepsTest do
   end
 
   test "the error policy is carried through verbatim", %{channel: channel} do
-    expect(OperatorManager, :spawn_or_deliver, fn _ns,
-                                                  id,
-                                                  _factory,
-                                                  _payload,
-                                                  :error,
-                                                  _,
-                                                  _identity ->
+    expect(RelayManager, :spawn_or_deliver, fn _ns,
+                                               id,
+                                               _factory,
+                                               _payload,
+                                               :error,
+                                               _,
+                                               _identity ->
       {:already_running, id}
     end)
 
@@ -347,13 +347,13 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnStepsTest do
   end
 
   test "an unset policy reads as deliver rather than refusing the payload", %{channel: channel} do
-    expect(OperatorManager, :spawn_or_deliver, fn _ns,
-                                                  _id,
-                                                  _factory,
-                                                  _payload,
-                                                  if_running,
-                                                  _,
-                                                  _identity ->
+    expect(RelayManager, :spawn_or_deliver, fn _ns,
+                                               _id,
+                                               _factory,
+                                               _payload,
+                                               if_running,
+                                               _,
+                                               _identity ->
       assert if_running == :deliver
       {:delivered, "w1"}
     end)
@@ -364,15 +364,15 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnStepsTest do
   end
 
   test "a refusal ships its reason so the requester can log something useful", %{channel: channel} do
-    expect(OperatorManager, :spawn_or_deliver, fn _ns,
-                                                  id,
-                                                  _factory,
-                                                  _payload,
-                                                  _policy,
-                                                  _,
-                                                  _identity ->
-      {{:refused,
-        Flezha.Error.new("quota.exceeded", kind: "max_operators", current: 1, limit: 1)}, id}
+    expect(RelayManager, :spawn_or_deliver, fn _ns,
+                                               id,
+                                               _factory,
+                                               _payload,
+                                               _policy,
+                                               _,
+                                               _identity ->
+      {{:refused, Flezha.Error.new("quota.exceeded", kind: "max_relays", current: 1, limit: 1)},
+       id}
     end)
 
     send_request(channel, instance_id: "w1", factory_id: "worker")
@@ -380,19 +380,19 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnStepsTest do
     assert {"ref-spawn", %{outcome: "", error: %{code: "quota.exceeded", details_json: details}}} =
              await_response()
 
-    assert Jason.decode!(details) == %{"kind" => "max_operators", "current" => 1, "limit" => 1}
+    assert Jason.decode!(details) == %{"kind" => "max_relays", "current" => 1, "limit" => 1}
   end
 
   test "resolution never blocks the channel", %{channel: channel} do
     parent = self()
 
-    expect(OperatorManager, :spawn_or_deliver, fn _ns,
-                                                  _id,
-                                                  _factory,
-                                                  _payload,
-                                                  _policy,
-                                                  _,
-                                                  _identity ->
+    expect(RelayManager, :spawn_or_deliver, fn _ns,
+                                               _id,
+                                               _factory,
+                                               _payload,
+                                               _policy,
+                                               _,
+                                               _identity ->
       send(parent, {:resolving, self()})
       NodeTestHelper.park()
       {:spawned, "w1"}
@@ -422,7 +422,7 @@ defmodule FlezhaTest.Runner.ControlChannelShutdownNotificationTest do
       ControlChannel SHALL cast `{:apply_external_snapshot, binary}` to
       that pid and SHALL emit `RunnerShutdownAck` on the stream.
     * Missing Overwatch — `HubManager.get_pid/2` returns `{:error, _}`
-      (the operator migrated to a peer controller). The ControlChannel SHALL
+      (the relay migrated to a peer controller). The ControlChannel SHALL
       log a warning and SHALL still emit the ack so the SDK never blocks
       on a non-existent target.
 
@@ -497,7 +497,7 @@ defmodule FlezhaTest.Runner.ControlChannelShutdownNotificationTest do
   test "missing Overwatch: logs warning, no cast delivered, ack still emitted" do
     HubManager
     |> stub(:get_pid, fn @namespace, "p_missing" ->
-      {:error, {:operator_not_found, @namespace, "p_missing"}}
+      {:error, {:relay_not_found, @namespace, "p_missing"}}
     end)
 
     {control_channel, stream_ref} = start_control_channel("ce_missing")
@@ -541,25 +541,25 @@ defmodule FlezhaTest.Runner.ControlChannelShutdownNotificationTest do
     {pid, stream_ref}
   end
 
-  defp build_notification_payload(operator_id, serialized_state, reference_id) do
+  defp build_notification_payload(relay_id, serialized_state, reference_id) do
     ControlFrameTestHelper.encode_request(
       reference_id,
       {:runner_shutdown_notification,
        %RunnerCommands.RunnerShutdownNotification{
-         operator_id: operator_id,
+         relay_id: relay_id,
          serialized_state: serialized_state
        }}
     )
   end
 
-  defp assert_ack_for(framed_payload, expected_operator_id, expected_reference_id) do
+  defp assert_ack_for(framed_payload, expected_relay_id, expected_reference_id) do
     req = ControlFrameTestHelper.decode_request(framed_payload)
 
     assert req.reference_id == expected_reference_id
 
     assert {:runner_shutdown_ack,
             %RunnerCommands.RunnerShutdownAck{
-              operator_id: ^expected_operator_id
+              relay_id: ^expected_relay_id
             }} = req.command
   end
 end

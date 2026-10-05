@@ -30,10 +30,10 @@ Cluster status for namespace 'agents':
   Local node: flezha@controller.agentdesk (leader)
 
   Nodes:
-    flezha@controller.agentdesk: 2 operator(s) recovery_state=normal [leader]
-    flezha@controller-2.agentdesk: 3 operator(s) recovery_state=normal
+    flezha@controller.agentdesk: 2 relay(s) recovery_state=normal [leader]
+    flezha@controller-2.agentdesk: 3 relay(s) recovery_state=normal
 
-  Operator health: suspended=3, healthy=2
+  Relay health: suspended=3, healthy=2
 ```
 
 > Stop the second controller and its runner, as if their machine were shut down.
@@ -41,11 +41,11 @@ Cluster status for namespace 'agents':
 
 ```sh
 $ docker compose stop controller-2 runner-2
-$ flz operator list --namespace agents
+$ flz relay list --namespace agents
 ```
 
 ```output
-  OPERATOR                          HEALTH      PARTS   NODE                  RUNNER
+  RELAY                          HEALTH      PARTS   NODE                  RUNNER
   anna                              suspended   -       flezha@controller.agentdeskagents_c8cade00c78f
   bob                               suspended   -       flezha@controller.agentdeskagents_c8cade00c78f
   carol                             suspended   -       flezha@controller.agentdeskagents_c8cade00c78f
@@ -60,7 +60,7 @@ it ran is on the first controller now.
 > {: .step}
 
 ```sh
-$ flz operator call anna --namespace agents --text 'Are you still there?'
+$ flz relay call anna --namespace agents --text 'Are you still there?'
 $ curl -s -d 'Six' localhost:8080/sessions/dave/messages
 ```
 

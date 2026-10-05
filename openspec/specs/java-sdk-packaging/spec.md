@@ -105,7 +105,7 @@ check, whose silent-continue posture is exactly how runtime skew hid).
 The Java SDK's own repository SHALL run, on every pull request, its three tiers
 against a core release (the modules' suites with the spec-coverage gate, local
 mode, and the smoke tier against the fake controller) and its format check.
-This repository's Java SDK steps operator SHALL run, on pull requests, the JNI surface
+This repository's Java SDK steps relay SHALL run, on pull requests, the JNI surface
 assertion and the integration-test matrix from the `java-sdk-testing` spec
 against the pinned submodule. Pull-request jobs SHALL NOT cross-build any
 non-host triple and SHALL NOT install `zig` or `cargo-zigbuild`.
@@ -117,7 +117,7 @@ assets for that tag. Maven-registry publication remains out of scope.
 
 #### Scenario: The Java repository proves the SDK on every pull request
 - **WHEN** a pull request is opened in the Java SDK's repository
-- **THEN** its steps operator SHALL run `scripts/ci.sh` against the pinned core release and SHALL fail when any tier fails
+- **THEN** its steps relay SHALL run `scripts/ci.sh` against the pinned core release and SHALL fail when any tier fails
 
 #### Scenario: A release tag publishes the portable matrix
 - **WHEN** a version tag is pushed
@@ -130,15 +130,15 @@ assets for that tag. Maven-registry publication remains out of scope.
 
 ### Requirement: Java SDK artifact identifiers use canonical vocabulary
 
-Java SDK Maven artifact IDs and module names SHALL use canonical vocabulary. Modules previously named with `processor`, `ops`, or `compute-engine` cells SHALL use `operator` and `runner` cells respectively. Existing module names that do not carry those terms (e.g., `flezha-sdk-api`, `flezha-sdk-runtime`, `flezha-sdk-native`) keep their names.
+Java SDK Maven artifact IDs and module names SHALL use canonical vocabulary (`flezha-sdk-api`, `flezha-sdk-runtime`, `flezha-sdk-native`).
 
 #### Scenario: Built artifacts use canonical names
 - **WHEN** `mvn -f sdk/java verify` produces SDK jars
-- **THEN** the produced artifact filenames MUST NOT contain the substrings `processor`, `compute-engine`, or `ops`; canonical module names (`flezha-sdk-api`, `flezha-sdk-runtime`, `flezha-sdk-native`) appear unchanged
+- **THEN** the produced artifact filenames SHALL be the canonical module names (`flezha-sdk-api`, `flezha-sdk-runtime`, `flezha-sdk-native`)
 
 #### Scenario: Manifest metadata reflects canonical role names
 - **WHEN** a Java SDK jar's `META-INF/MANIFEST.MF` is inspected
-- **THEN** any role-tag entries SHALL use `Runner` (not `ComputeEngine` or `User`); free-text descriptions SHALL use `Operator` rather than `Processor`
+- **THEN** any role-tag entries SHALL use `Runner`; free-text descriptions SHALL use `Relay`
 
 ### Requirement: A documented build command SHALL succeed on a repeated run
 

@@ -70,11 +70,11 @@ pub enum HostLink {
         name: Option<String>,
     },
     /// Terminates the channel on the answer to the outside call its input
-    /// carried. Takes no name: nothing outside the operator addresses it.
+    /// carried. Takes no name: nothing outside the relay addresses it.
     Response,
-    /// Terminates the chain on a call to another operator: every value that
+    /// Terminates the chain on a call to another relay: every value that
     /// reaches it, after the chain's transforms and key, is one request. The
-    /// outcome enters the operator on the entry channel `response` names.
+    /// outcome enters the relay on the entry channel `response` names.
     Call(HostCall),
     /// Closes the chain onto a consumer edge into a tasklet index.
     Into {
@@ -206,7 +206,7 @@ pub struct HostClassDecl {
     #[serde(default)]
     pub max_duration_ms: Option<u64>,
     /// How the class runs, as the settings tree writes it; absent is `flow`.
-    /// Read by [`crate::operator::settings::parse_run`], which names a
+    /// Read by [`crate::relay::settings::parse_run`], which names a
     /// misplaced setting with its parent.
     #[serde(default)]
     pub run: Option<serde_json::Value>,

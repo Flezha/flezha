@@ -4,7 +4,7 @@
 TBD - created by archiving change sdk-graph-authoring-api. Update Purpose after archive.
 ## Requirements
 ### Requirement: Producer-first stream-handle graph builder
-Every SDK SHALL author operator topologies through a producer-first fluent builder in which `.into(<tasklet>)` wires a consumer onto the current stream and returns the **consumed tasklet's own output stream handle**. `input(<type>, "name").into(A)` SHALL wire the entry consumer and return A's output stream; `stream.into(B)` SHALL add B as a consumer of `stream`'s channel and return B's output stream, so a linear pipeline is a single chained expression. A tasklet node SHALL own **exactly one output channel**, created on first use and reused by every later call on a handle whose source is that node, so wiring a second consumer, attaching a plugin sink or overriding the channel name reaches the same channel rather than declaring another. A declaration in which one tasklet produces two channels SHALL NOT be constructible: the runtime resolves a tasklet's output channel to a single id, and a second producing channel would be journaled by nothing and re-seeded by nothing on crash-resume. The handle SHALL be a lightweight, copyable reference into the operator's topology builder (Java: an object; Rust: a `Copy` value), and per-channel configuration (`keyed()`, `onFull(...)`, `retryMax(...)`, `retryBackoffMs(...)`, `named(...)`) SHALL remain available on the handle, chainable in any order relative to consumer wiring. Handles SHALL be invalidated when the topology freezes at registration; using one afterwards SHALL fail with an error naming the operator.
+Every SDK SHALL author relay topologies through a producer-first fluent builder in which `.into(<tasklet>)` wires a consumer onto the current stream and returns the **consumed tasklet's own output stream handle**. `input(<type>, "name").into(A)` SHALL wire the entry consumer and return A's output stream; `stream.into(B)` SHALL add B as a consumer of `stream`'s channel and return B's output stream, so a linear pipeline is a single chained expression. A tasklet node SHALL own **exactly one output channel**, created on first use and reused by every later call on a handle whose source is that node, so wiring a second consumer, attaching a plugin sink or overriding the channel name reaches the same channel rather than declaring another. A declaration in which one tasklet produces two channels SHALL NOT be constructible: the runtime resolves a tasklet's output channel to a single id, and a second producing channel would be journaled by nothing and re-seeded by nothing on crash-resume. The handle SHALL be a lightweight, copyable reference into the relay's topology builder (Java: an object; Rust: a `Copy` value), and per-channel configuration (`keyed()`, `onFull(...)`, `retryMax(...)`, `retryBackoffMs(...)`, `named(...)`) SHALL remain available on the handle, chainable in any order relative to consumer wiring. Handles SHALL be invalidated when the topology freezes at registration; using one afterwards SHALL fail with an error naming the relay.
 
 The runtime SHALL derive the journal codec for every inter-tasklet channel, and no builder in any SDK SHALL offer a method to declare one. An inter-tasklet channel of a durable structured steps class is journalable and re-seedable with no codec declaration and no declaration key.
 
@@ -16,12 +16,12 @@ The payload type of every non-entry channel SHALL be taken from the producing ta
 
 #### Scenario: Linear chain is one expression
 
-- **WHEN** an operator declares `c.input(OrderEvent.class, "orders").into(Validate.class).into(Alert.class).sink("alerts")` (Java) or the equivalent `c.input::<OrderEvent>("orders").into::<Validate>().into::<Alert>().sink("alerts")` (Rust)
+- **WHEN** a relay declares `c.input(OrderEvent.class, "orders").into(Validate.class).into(Alert.class).sink("alerts")` (Java) or the equivalent `c.input::<OrderEvent>("orders").into::<Validate>().into::<Alert>().sink("alerts")` (Rust)
 - **THEN** registration SHALL succeed with the topology entry→Validate→Alert→sink, and the channel between Validate and Alert SHALL carry Validate's declared `Output` type with no type token in the declaration
 
 #### Scenario: Transforms sit between consumers without adding nodes
 
-- **WHEN** an operator declares `c.input(Trade.class, "trades").filter(t -> t.qty() > 1.0).keyBy(Trade::symbol).into(Candle.class).sink("candles")`
+- **WHEN** a relay declares `c.input(Trade.class, "trades").filter(t -> t.qty() > 1.0).keyBy(Trade::symbol).into(Candle.class).sink("candles")`
 - **THEN** registration SHALL succeed with a topology containing exactly one Tasklet node, and the entry→Candle edge SHALL carry the predicate and the key function
 
 #### Scenario: Type-mismatched consumer is refused
@@ -36,8 +36,8 @@ The payload type of every non-entry channel SHALL be taken from the producing ta
 
 #### Scenario: Handle used after freeze is refused
 
-- **WHEN** user code retains a stream handle and calls `.into(...)` on it after the operator's topology has been frozen at registration
-- **THEN** the call SHALL fail with an error naming the operator and stating the topology is frozen
+- **WHEN** user code retains a stream handle and calls `.into(...)` on it after the relay's topology has been frozen at registration
+- **THEN** the call SHALL fail with an error naming the relay and stating the topology is frozen
 
 #### Scenario: No SDK declares an inter-tasklet codec
 
@@ -47,14 +47,14 @@ The payload type of every non-entry channel SHALL be taken from the producing ta
 #### Scenario: A typed SDK refuses an output it cannot write down
 
 - **WHEN** a typed-value SDK declares a tasklet whose `Output` type cannot be written to bytes and read back
-- **THEN** the program SHALL fail to compile, and the refusal SHALL name the type and state that a tasklet's output is journaled at a steps operator's commit barrier
+- **THEN** the program SHALL fail to compile, and the refusal SHALL name the type and state that a tasklet's output is journaled at a steps relay's commit barrier
 
 ### Requirement: Branching is handle reuse; `branch()` is equivalent sugar
 Using one stream handle to wire more than one consumer SHALL declare fan-out: every consumer receives every value released on that stream's channel. The builder SHALL also expose `branch(arm1, arm2, ...)` taking two or more lambdas, each invoked with a copy of the same handle; `branch` SHALL be pure sugar — the resulting topology SHALL be identical to the equivalent handle-reuse declaration, and the two spellings SHALL be freely mixable.
 
 #### Scenario: Handle reuse fans out
 
-- **WHEN** an operator holds `validated` (a stream handle) and declares `validated.into(FraudCheck)` and `validated.into(Receipt)`
+- **WHEN** a relay holds `validated` (a stream handle) and declares `validated.into(FraudCheck)` and `validated.into(Receipt)`
 - **THEN** both FraudCheck and Receipt SHALL be consumers of the same channel and each SHALL receive every value the producer releases on it
 
 #### Scenario: branch() builds the identical topology
@@ -69,7 +69,7 @@ Using one stream handle to wire more than one consumer SHALL declare fan-out: ev
 
 ### Requirement: Channel names auto-derive from the producer node's identity
 
-A channel created by wiring out of a node SHALL be named by that node's identity string (the tasklet's `name()`, or the explicit node name per the node-identity requirement) unless a `sink("...")` name or a `.named("...")` override supplies one. Both declarations name the same channel and SHALL be honoured identically wherever the channel name appears: wire metadata, journals, diagnostics, the address a plugin filter matches, and the name a local-mode callback registers under. A channel named by both `sink("...")` and `.named("...")` SHALL fail registration naming both declarations, even when the two strings are equal, so no declaration an author wrote is ever discarded and no precedence rule has to be remembered. `sink()` with no name SHALL leave the channel named exactly as it would be without the sink. Entry channels SHALL keep an explicit, mandatory name (they are the operator's external input address). Derived, sink-supplied, overridden, and entry names SHALL all live in the existing per-operator channel namespace with its duplicate check; a collision SHALL fail registration naming both declarations. Because derived names come from hand-written identity strings, renaming a language class SHALL NOT change any on-disk or on-wire name.
+A channel created by wiring out of a node SHALL be named by that node's identity string (the tasklet's `name()`, or the explicit node name per the node-identity requirement) unless a `sink("...")` name or a `.named("...")` override supplies one. Both declarations name the same channel and SHALL be honoured identically wherever the channel name appears: wire metadata, journals, diagnostics, the address a plugin filter matches, and the name a local-mode callback registers under. A channel named by both `sink("...")` and `.named("...")` SHALL fail registration naming both declarations, even when the two strings are equal, so no declaration an author wrote is ever discarded and no precedence rule has to be remembered. `sink()` with no name SHALL leave the channel named exactly as it would be without the sink. Entry channels SHALL keep an explicit, mandatory name (they are the relay's external input address). Derived, sink-supplied, overridden, and entry names SHALL all live in the existing per-relay channel namespace with its duplicate check; a collision SHALL fail registration naming both declarations. Because derived names come from hand-written identity strings, renaming a language class SHALL NOT change any on-disk or on-wire name.
 
 #### Scenario: A sink name is the channel name
 
@@ -99,16 +99,16 @@ A channel created by wiring out of a node SHALL be named by that node's identity
 
 #### Scenario: Name collision is refused
 
-- **WHEN** a `.named(...)` override, a `sink(...)` name, or a node name collides with another channel name in the same operator
+- **WHEN** a `.named(...)` override, a `sink(...)` name, or a node name collides with another channel name in the same relay
 - **THEN** registration SHALL fail with an error naming both colliding declarations
 - **AND** where the collision is two channels naming one sink, the error SHALL say so rather than reporting a bare duplicate name
 
 ### Requirement: Node identity permits reusing one Tasklet class at several graph positions
-A graph node SHALL be identified by its Tasklet class unless an explicit node name is supplied at wiring time (`.into(Filter.class, "spam_filter")` in Java, `into_named::<Filter>("spam_filter")` in Rust). Two unnamed mentions of the same class SHALL resolve to the same node. An explicit node name SHALL create a distinct node whose identity string replaces the tasklet's `name()` for every purpose identity serves today: per-cell state directories, journal entries, derived channel names, and diagnostics. Node identity strings SHALL be unique per operator; a collision (with another node name or a tasklet `name()`) SHALL fail registration.
+A graph node SHALL be identified by its Tasklet class unless an explicit node name is supplied at wiring time (`.into(Filter.class, "spam_filter")` in Java, `into_named::<Filter>("spam_filter")` in Rust). Two unnamed mentions of the same class SHALL resolve to the same node. An explicit node name SHALL create a distinct node whose identity string replaces the tasklet's `name()` for every purpose identity serves today: per-cell state directories, journal entries, derived channel names, and diagnostics. Node identity strings SHALL be unique per relay; a collision (with another node name or a tasklet `name()`) SHALL fail registration.
 
 #### Scenario: Same class reused as two named nodes
 
-- **WHEN** an operator declares `validated.into(Filter.class, "fraud_filter")` and `validated.into(Filter.class, "spam_filter")`
+- **WHEN** a relay declares `validated.into(Filter.class, "fraud_filter")` and `validated.into(Filter.class, "spam_filter")`
 - **THEN** registration SHALL succeed with two distinct nodes, and each node's cells SHALL persist state under its own identity (`fraud_filter` / `spam_filter`)
 
 #### Scenario: Unnamed mentions unify
@@ -118,25 +118,25 @@ A graph node SHALL be identified by its Tasklet class unless an explicit node na
 
 #### Scenario: Node-name collision is refused
 
-- **WHEN** a node name equals another node's identity string in the same operator
+- **WHEN** a node name equals another node's identity string in the same relay
 - **THEN** registration SHALL fail naming both nodes
 
 ### Requirement: Graphs are DAGs; fan-in accumulates in both SDKs
-The shared graph-shape rule for both kinds SHALL be: one **or more** entry channels feeding the graph, every node reachable from some entry channel, at most one output channel per node, any number of incoming channels per node, and no cycles. Multiple entry channels let a single operator ingest several external sources (e.g. a market pipeline consuming a trade feed and an order-book feed on distinct channels); the controller routes each inbound frame to its entry channel by the `metadata["channel"]` name, falling back to the first-declared entry channel when that metadata is absent. An entry channel MAY feed more than one tasklet. Validation SHALL use a topological ordering (all of a node's producers precede it); a cycle SHALL be rejected naming a node on it. A node with several incoming channels (fan-in) SHALL receive the **accumulated** contributions of all its producers — no producer's output may be overwritten or dropped. In steps operators each entry channel roots its own chain, the tasklets reachable from that channel's consumers; a message runs only the chain of the channel it arrived on, and a fan-in node SHALL be dispatched only after every one of its producers **in that pass's chain** has completed and committed, with an input batch that is the concatenation of those producers' released outputs. A producer of another chain SHALL NOT be waited for, live or on a crash-resume. In flow operators the existing per-channel dispatch SHALL deliver both producers' values to the shared consumer as they arrive. No registration refusal SHALL exist for an entry channel feeding several tasklets, for several entry channels on a steps operator, or for an entry channel as a merge source on a steps operator.
+The shared graph-shape rule for both kinds SHALL be: one **or more** entry channels feeding the graph, every node reachable from some entry channel, at most one output channel per node, any number of incoming channels per node, and no cycles. Multiple entry channels let a single relay ingest several external sources (e.g. a market pipeline consuming a trade feed and an order-book feed on distinct channels); the controller routes each inbound frame to its entry channel by the `metadata["channel"]` name, falling back to the first-declared entry channel when that metadata is absent. An entry channel MAY feed more than one tasklet. Validation SHALL use a topological ordering (all of a node's producers precede it); a cycle SHALL be rejected naming a node on it. A node with several incoming channels (fan-in) SHALL receive the **accumulated** contributions of all its producers — no producer's output may be overwritten or dropped. In steps relays each entry channel roots its own chain, the tasklets reachable from that channel's consumers; a message runs only the chain of the channel it arrived on, and a fan-in node SHALL be dispatched only after every one of its producers **in that pass's chain** has completed and committed, with an input batch that is the concatenation of those producers' released outputs. A producer of another chain SHALL NOT be waited for, live or on a crash-resume. In flow relays the existing per-channel dispatch SHALL deliver both producers' values to the shared consumer as they arrive. No registration refusal SHALL exist for an entry channel feeding several tasklets, for several entry channels on a steps relay, or for an entry channel as a merge source on a steps relay.
 
-#### Scenario: Steps operator join runs once with both contributions
+#### Scenario: Steps relay join runs once with both contributions
 
 - **WHEN** a steps graph A→(B,C)→D runs to completion
 - **THEN** D SHALL be dispatched exactly once, after both B and C committed, with an input batch containing both B's and C's released outputs
 
 #### Scenario: A join where two chains meet waits only for this pass's producer
 
-- **WHEN** a steps operator declares entry `a` feeding A→J and entry `b` feeding B→J, and a message arrives on `a`
+- **WHEN** a steps relay declares entry `a` feeding A→J and entry `b` feeding B→J, and a message arrives on `a`
 - **THEN** J SHALL be dispatched once A committed, with A's released output only, and B SHALL NOT run in that pass
 
 #### Scenario: An entry channel fans out to two roots
 
-- **WHEN** a steps operator declares entry channel `order` feeding both `reserve` and `audit`
+- **WHEN** a steps relay declares entry channel `order` feeding both `reserve` and `audit`
 - **THEN** a message on `order` SHALL be delivered to both, each through its own edge's transforms, in the same first level of the pass
 
 #### Scenario: Cycle is refused
@@ -154,12 +154,12 @@ The shared graph-shape rule for both kinds SHALL be: one **or more** entry chann
 
 #### Scenario: Typed entry with default JSON
 
-- **WHEN** an operator declares `c.input(OrderEvent.class, "orders")` and a JSON-encoded OrderEvent arrives on the wire
+- **WHEN** a relay declares `c.input(OrderEvent.class, "orders")` and a JSON-encoded OrderEvent arrives on the wire
 - **THEN** the consuming tasklet's `run` SHALL receive the deserialized `OrderEvent`
 
 #### Scenario: Custom parser overload
 
-- **WHEN** an operator declares `c.input(OrderEvent.class, "orders", bytes -> OrderEvent.parse(bytes))`
+- **WHEN** a relay declares `c.input(OrderEvent.class, "orders", bytes -> OrderEvent.parse(bytes))`
 - **THEN** the supplied parser SHALL produce the value delivered to the consumer, and the default JSON codec SHALL NOT run
 
 #### Scenario: Parse failure parks to the DLQ
@@ -169,7 +169,7 @@ The shared graph-shape rule for both kinds SHALL be: one **or more** entry chann
 
 #### Scenario: String and bytes entries are byte-identical to today
 
-- **WHEN** an operator declares a `String` or `byte[]` entry channel
+- **WHEN** a relay declares a `String` or `byte[]` entry channel
 - **THEN** delivery behavior (passthrough / UTF-8 decode, invalid-UTF-8 drop-and-log) SHALL be unchanged from the pre-change contract
 
 ### Requirement: Single `sink` egress
@@ -178,17 +178,17 @@ Plugin egress SHALL be declared by exactly one builder method in every SDK, taki
 
 #### Scenario: sink is hybrid by default
 
-- **WHEN** a flow operator declares `.sink("indicators", serializer)` and a consumer is wired from the same handle afterwards
+- **WHEN** a flow relay declares `.sink("indicators", serializer)` and a consumer is wired from the same handle afterwards
 - **THEN** each emitted value SHALL reach the typed consumer and, serialized once, the plugin layer, stamped `channel = "indicators"`
 
 #### Scenario: Terminal by construction
 
-- **WHEN** a flow operator declares `.sink("pager_sink")` and nothing further is wired from the handle
+- **WHEN** a flow relay declares `.sink("pager_sink")` and nothing further is wired from the handle
 - **THEN** the channel SHALL be plugin-bound and named `"pager_sink"`
 
 #### Scenario: The no-name form is available in every SDK
 
-- **WHEN** a flow operator declares the no-name form in any SDK
+- **WHEN** a flow relay declares the no-name form in any SDK
 - **THEN** the channel SHALL be plugin-bound, its name SHALL be whatever it would have been without the sink, and the declaration SHALL compile or register in every SDK
 
 #### Scenario: Old spellings do not exist
@@ -198,12 +198,12 @@ Plugin egress SHALL be declared by exactly one builder method in every SDK, taki
 
 #### Scenario: Every SDK stamps one name for one declaration
 
-- **WHEN** the same operator declaring `.sink("indicators", s)` is registered from a Rust host and from a host SDK
+- **WHEN** the same relay declaring `.sink("indicators", s)` is registered from a Rust host and from a host SDK
 - **THEN** frames delivered to the plugin SHALL be byte-identical, `channel = "indicators"` included, so the two naming sources cannot answer differently
 
 #### Scenario: A hybrid channel declared in a veneer SDK keeps one channel
 
-- **WHEN** a Node, Ruby, PHP or Python operator declares `.sink("mid", enc).into(Next)` on one handle
+- **WHEN** a Node, Ruby, PHP or Python relay declares `.sink("mid", enc).into(Next)` on one handle
 - **THEN** the declaration SHALL carry exactly one channel produced by that tasklet, named `mid`, of inter-tasklet kind, listing `Next` as its consumer, and each emitted value SHALL reach both `Next` and the plugin layer
 
 ### Requirement: The channel-declaration API is replaced with no coexistence
@@ -229,7 +229,7 @@ The graph builder's semantics — handle model, one output channel per producing
 
 ### Requirement: Latest-document router building block
 
-Every SDK's graph builder SHALL offer the latest-document router — `route_latest(document_stream, traffic_stream, key_fn)` in Rust, Python and Ruby, `route_latest/4` on `Flezha.SDK.Channels` in Elixir, `routeLatest(documentStream, trafficStream, keyFn)` in Java, Node and PHP — and a `_named` spelling (`route_latest_named` / `routeLatestNamed` / `route_latest_named/5`) that takes a node name, expanding to a single-cell SDK-packaged tasklet that turns an operator-wide document stream into per-key keyed deliveries. Its journaled state SHALL be `{latest document, version, delivered: key → last delivered version}`. A received document byte-identical to the retained one SHALL be inert; a differing document SHALL replace it and increment the version. On each traffic item, the tasklet SHALL emit the retained document keyed under `key_fn(item)` if and only if that key's delivered version is behind the current version, then record the delivery — so each key receives each distinct document version exactly once, always on that key's own traffic, and keys never observed in traffic receive nothing. The expansion SHALL use only existing primitives (merge, single-cell tasklet, journaled state, keyed emit): no new runtime semantics, wire format, or replay path. State mutations SHALL ride the standard change journal and satisfy the replay-determinism harness.
+Every SDK's graph builder SHALL offer the latest-document router — `route_latest(document_stream, traffic_stream, key_fn)` in Rust, Python and Ruby, `route_latest/4` on `Flezha.SDK.Channels` in Elixir, `routeLatest(documentStream, trafficStream, keyFn)` in Java, Node and PHP — and a `_named` spelling (`route_latest_named` / `routeLatestNamed` / `route_latest_named/5`) that takes a node name, expanding to a single-cell SDK-packaged tasklet that turns a relay-wide document stream into per-key keyed deliveries. Its journaled state SHALL be `{latest document, version, delivered: key → last delivered version}`. A received document byte-identical to the retained one SHALL be inert; a differing document SHALL replace it and increment the version. On each traffic item, the tasklet SHALL emit the retained document keyed under `key_fn(item)` if and only if that key's delivered version is behind the current version, then record the delivery — so each key receives each distinct document version exactly once, always on that key's own traffic, and keys never observed in traffic receive nothing. The expansion SHALL use only existing primitives (merge, single-cell tasklet, journaled state, keyed emit): no new runtime semantics, wire format, or replay path. State mutations SHALL ride the standard change journal and satisfy the replay-determinism harness.
 
 #### Scenario: Changed document reaches each key on its own next traffic
 
@@ -266,38 +266,38 @@ The Ruby, Python, Node and PHP SDKs SHALL accept a named codec on `input` and on
 
 An entry channel declared with no codec and no decoder SHALL decode JSON. A sink declared with no codec and no encoder SHALL apply the default serialization rules of the `sink` requirement: bytes unchanged, a string as UTF-8, any other value as JSON.
 
-An unknown codec name, or a codec given together with a decoder or an encoder, SHALL be refused when the operator is declared, with the SDK's declaration error naming the operator and the channel. Under `text`, a payload that is not valid UTF-8 SHALL be a decode failure riding the entry channel's retry and dead-letter ladder, and a value that is not a string SHALL be an encode failure naming the channel. Under `bytes`, a value that is not bytes SHALL be an encode failure naming the channel.
+An unknown codec name, or a codec given together with a decoder or an encoder, SHALL be refused when the relay is declared, with the SDK's declaration error naming the relay and the channel. Under `text`, a payload that is not valid UTF-8 SHALL be a decode failure riding the entry channel's retry and dead-letter ladder, and a value that is not a string SHALL be an encode failure naming the channel. Under `bytes`, a value that is not bytes SHALL be an encode failure naming the channel.
 
 The Java, Rust and Elixir SDKs carry the same formats without a codec argument: Java and Rust choose `bytes`, `text` or `json` from the declared type, and Elixir's `input/2` delivers the binary unchanged while `input_with/3` takes any other decoder.
 
 #### Scenario: A text channel is one word
 
-- **WHEN** a Ruby operator declares `c.input("in", codec: :text).into(Echo).sink("out")`, the bytes `hello` arrive on `in`, and the tasklet emits `"echo: hello"`
-- **THEN** the tasklet SHALL receive the string `hello`, and the plugin frame SHALL carry the bytes `echo: hello`, identical to what a Java operator declaring `c.input(String.class, "in")` and `.sink("out")` sends for the same output
+- **WHEN** a Ruby relay declares `c.input("in", codec: :text).into(Echo).sink("out")`, the bytes `hello` arrive on `in`, and the tasklet emits `"echo: hello"`
+- **THEN** the tasklet SHALL receive the string `hello`, and the plugin frame SHALL carry the bytes `echo: hello`, identical to what a Java relay declaring `c.input(String.class, "in")` and `.sink("out")` sends for the same output
 
 #### Scenario: A sink call is its name alone in every dynamic SDK
 
-- **WHEN** a Ruby, Python, Node or PHP operator declares its sink as `sink("out")` with no codec and no encoder, and the tasklet returns the string `echo: hello`
+- **WHEN** a Ruby, Python, Node or PHP relay declares its sink as `sink("out")` with no codec and no encoder, and the tasklet returns the string `echo: hello`
 - **THEN** registration SHALL succeed and the plugin frame SHALL carry the bytes `echo: hello`, with no quotes and no MessagePack header, in each of the four SDKs
 
 #### Scenario: A PHP sink call is its name alone when the tasklet emits
 
-- **WHEN** a PHP operator declares its sink as `sink('out')` with no codec and no encoder, and the tasklet's `run`, declared `: void`, calls `$ctx->emit('echo: hello')`
+- **WHEN** a PHP relay declares its sink as `sink('out')` with no codec and no encoder, and the tasklet's `run`, declared `: void`, calls `$ctx->emit('echo: hello')`
 - **THEN** registration SHALL succeed and the plugin frame SHALL carry the bytes `echo: hello`, with no quotes and no MessagePack header
 
 #### Scenario: A Ruby sink call is its name alone when the tasklet emits
 
-- **WHEN** a Ruby operator declares its sink as `sink("out")` with no codec and no encoder, and the tasklet's `run` calls `ctx.emit("echo: hello")`
+- **WHEN** a Ruby relay declares its sink as `sink("out")` with no codec and no encoder, and the tasklet's `run` calls `ctx.emit("echo: hello")`
 - **THEN** registration SHALL succeed and the plugin frame SHALL carry the bytes `echo: hello`, with no quotes and no MessagePack header
 
 #### Scenario: A Node sink call is its name alone when the tasklet emits
 
-- **WHEN** a Node operator declares its sink as `sink('out')` with no codec and no encoder, and the tasklet's `run` calls `ctx.emit('echo: hello')`
+- **WHEN** a Node relay declares its sink as `sink('out')` with no codec and no encoder, and the tasklet's `run` calls `ctx.emit('echo: hello')`
 - **THEN** registration SHALL succeed and the plugin frame SHALL carry the bytes `echo: hello`, with no quotes and no MessagePack header
 
 #### Scenario: An undeclared entry reads JSON in every dynamic SDK
 
-- **WHEN** a Ruby, Python, Node or PHP operator declares an entry with no codec and no decoder, and the bytes `{"a":1}` arrive on it
+- **WHEN** a Ruby, Python, Node or PHP relay declares an entry with no codec and no decoder, and the bytes `{"a":1}` arrive on it
 - **THEN** the tasklet SHALL receive a map whose key `a` holds the number 1
 
 #### Scenario: Plain text into an undeclared entry fails its decode
@@ -317,18 +317,18 @@ The Java, Rust and Elixir SDKs carry the same formats without a codec argument: 
 
 #### Scenario: MessagePack stays one word away where it ships
 
-- **WHEN** a Ruby, Python or Node operator declares an entry and a sink with codec `msgpack`
+- **WHEN** a Ruby, Python or Node relay declares an entry and a sink with codec `msgpack`
 - **THEN** the entry SHALL decode and the sink SHALL encode with that SDK's MessagePack codec, byte-identical to that SDK's class codec
 
 #### Scenario: An unknown codec name is refused at declaration
 
-- **WHEN** a Ruby, Python or Node operator declares an entry named `in` with the codec name `yaml`
-- **THEN** declaring the operator SHALL raise the SDK's declaration error naming the operator, the channel `in`, the name `yaml` and the accepted names, before any message is processed
+- **WHEN** a Ruby, Python or Node relay declares an entry named `in` with the codec name `yaml`
+- **THEN** declaring the relay SHALL raise the SDK's declaration error naming the relay, the channel `in`, the name `yaml` and the accepted names, before any message is processed
 
 #### Scenario: A codec and a callable together are refused
 
-- **WHEN** an operator in any of the four SDKs declares an entry with both a codec and a decoder, or a sink with both a codec and an encoder
-- **THEN** declaring the operator SHALL raise the SDK's declaration error naming the operator and the channel
+- **WHEN** a relay in any of the four SDKs declares an entry with both a codec and a decoder, or a sink with both a codec and an encoder
+- **THEN** declaring the relay SHALL raise the SDK's declaration error naming the relay and the channel
 
 #### Scenario: Invalid UTF-8 under text is a failure, not a replacement
 
@@ -357,21 +357,21 @@ wired after it on the same channel, exactly as after `sink`; a channel ending in
 no consumer SHALL be declared plugin-bound. The builder SHALL record it as a `response` link in the
 channel's chain, from which the runtime derives the end. `response()` SHALL NOT be a plugin egress:
 nothing it carries reaches a plugin. A graph MAY end any number of channels in `response()`, in an
-unbounded and in a steps operator.
+unbounded and in a steps relay.
 
 #### Scenario: One graph, two answering paths
 
-- **WHEN** a flow operator declares `admitted |> filter(&accepted?/1) |> into(Accept) |> response()` and `admitted |> filter(&refused?/1) |> into(Refuse) |> response()`
+- **WHEN** a flow relay declares `admitted |> filter(&accepted?/1) |> into(Accept) |> response()` and `admitted |> filter(&refused?/1) |> into(Refuse) |> response()`
 - **THEN** registration SHALL succeed with two plugin-bound channels, `Accept`'s and `Refuse`'s, each ending in a response
 
 #### Scenario: A response channel feeds a consumer too
 
-- **WHEN** a steps operator declares `.into(Turn).response().into(Log)` on one handle
+- **WHEN** a steps relay declares `.into(Turn).response().into(Log)` on one handle
 - **THEN** the channel produced by `Turn` SHALL keep its inter-tasklet kind, list `Log` as its consumer, and each emitted value SHALL both answer and reach `Log`
 
 #### Scenario: Every SDK spells it
 
-- **WHEN** the same one-tasklet operator ending in `response()` is declared in each of the seven SDKs
+- **WHEN** the same one-tasklet relay ending in `response()` is declared in each of the seven SDKs
 - **THEN** each declaration SHALL register, and each SDK's runner SHALL answer an outside call with the same payload for the same input
 
 ### Requirement: A channel SHALL carry at most one plugin end
@@ -389,12 +389,12 @@ lines; the step vocabulary SHALL gain `<x>.response`.
 
 #### Scenario: A sink beside a response is refused
 
-- **WHEN** an operator declares `.into(Plain).sink("out")` and `.response()` on the same handle
+- **WHEN** a relay declares `.into(Plain).sink("out")` and `.response()` on the same handle
 - **THEN** registration SHALL fail with `topology.channel_ends_twice` naming `Plain`'s channel, in every SDK
 
 #### Scenario: An unkeyed answer under the tier is accepted
 
-- **WHEN** a persistent, effectively-once flow operator declares `.into(Plain).response()` without `keyed`
+- **WHEN** a persistent, effectively-once flow relay declares `.into(Plain).response()` without `keyed`
 - **THEN** registration SHALL succeed, while the same declaration ending in `sink("out")` SHALL still fail as `UnkeyedChannelUnderEffectivelyOnce`
 
 ### Requirement: `call(...)` SHALL end a chain on a callee in every SDK
@@ -410,7 +410,7 @@ and the answer's decoding arguments `input` takes in that SDK: the answer type i
 named codec for both directions in Node, Python, Ruby and PHP (JSON by default), and optional
 `serialize:` and `decode:` functions in Elixir. It SHALL be a plugin end of the channel, counted by
 `ChannelEndsTwice` beside a `sink` or a `response()`. It SHALL answer a handle on a new entry
-channel of the operator, the Response channel, named after the calling channel with the suffix
+channel of the relay, the Response channel, named after the calling channel with the suffix
 `.response`, whose values are the SDK's `Response` type; the handle SHALL carry the whole surface an
 entry handle carries. A call SHALL NOT be a graph edge, so wiring the Response channel into the
 tasklet that made the call SHALL NOT be refused as a cycle. The builder SHALL record a `call` link
@@ -424,8 +424,8 @@ channel's name.
 
 #### Scenario: The Response channel is an entry channel
 
-- **WHEN** an operator declares `.into(Turn).call("pricing", deadline_ms: 500).into(Price)`
-- **THEN** registration SHALL succeed, the operator SHALL declare the entry channel `<Turn's channel>.response` with `Price` as its consumer, and each `Response` SHALL reach `Price`
+- **WHEN** a relay declares `.into(Turn).call("pricing", deadline_ms: 500).into(Price)`
+- **THEN** registration SHALL succeed, the relay SHALL declare the entry channel `<Turn's channel>.response` with `Price` as its consumer, and each `Response` SHALL reach `Price`
 
 ### Requirement: A call end SHALL be refused where it cannot work
 

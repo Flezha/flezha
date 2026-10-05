@@ -1,6 +1,6 @@
 defmodule FlezhaTest.Plugin.Extension.PhaseTest do
   @moduledoc """
-  The two-phase plugin lifecycle (capability `operator-extensions`,
+  The two-phase plugin lifecycle (capability `relay-extensions`,
   "Two-phase plugin lifecycle gated on SDK readiness"). A plugin enters the
   `:prepared` phase on `Table.bulk_subscribe/2`; `bulk_activate/2` starts its
   declared worker and calls `activate/1`, moving it to `:running`. A provider
@@ -8,8 +8,8 @@ defmodule FlezhaTest.Plugin.Extension.PhaseTest do
   silently.
   """
 
-  alias Flezha.Operator.Overwatch
-  alias Flezha.Operator.Plugins
+  alias Flezha.Relay.Overwatch
+  alias Flezha.Relay.Plugins
   alias Flezha.Plugin
   alias Flezha.Plugin.Extension.Ctx
   alias Flezha.Plugin.Extension.Table
@@ -455,9 +455,9 @@ defmodule FlezhaTest.Plugin.Extension.PhaseTest do
       assert log =~ "healthy"
     end
 
-    # A binding resolves against its plugin's entry in the operator's
+    # A binding resolves against its plugin's entry in the relay's
     # namespace; with no hub there is none, so nothing is subscribed and the
-    # bind goes on (`FlezhaTest.Operator.PackageProviderTest` is the live one).
+    # bind goes on (`FlezhaTest.Relay.PackageProviderTest` is the live one).
     test "prepare/2 records a binding it cannot bring up as not started and binds on",
          %{entries: entries} do
       state = %Overwatch{id: "op1", namespace: "default", extensions: Table.new(@catalog)}

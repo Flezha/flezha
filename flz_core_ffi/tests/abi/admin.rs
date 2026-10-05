@@ -44,7 +44,7 @@ fn no_verb_name_is_written_in_the_shared_bindings() {
             .collect::<Vec<_>>()
             .join("\n");
 
-        for spelled in ["Operator.start", "Operator.stop", "PluginManager.enable"] {
+        for spelled in ["Relay.start", "Relay.stop", "PluginManager.enable"] {
             assert!(
                 !code.contains(spelled),
                 "{relative} spells the verb `{spelled}`; the shared bindings must carry no \

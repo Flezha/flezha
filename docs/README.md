@@ -16,7 +16,7 @@ in reading order, then a section on how Flezha is built and one for contributors
 | Directory | For | What is in it |
 | --- | --- | --- |
 | [`api/`](api/README.md) | authors of a program that drives the controller | The published consumer surface, its three guards, and the manifest that keeps a consumer's calls resolving |
-| [`sdk/`](#sdk) | operator authors, SDK implementers | Authoring contract, per-SDK surfaces, wire protocol, the shared poll core |
+| [`sdk/`](#sdk) | relay authors, SDK implementers | Authoring contract, per-SDK surfaces, wire protocol, the shared poll core |
 | [`plugins/`](#plugins) | plugin authors and users | The plugin system and every first-party plugin |
 | [`operations/`](#operations) | users, contributors | Observability, the audit log, schedules, memory and benchmarking |
 | [`resilience/`](#resilience) | contributors | The mechanism behind the guarantees |
@@ -46,7 +46,7 @@ type and what you should see; the topic pages say how each piece works.
 | Doc | Covers |
 | --- | --- |
 | [`tutorials.md`](tutorials/tutorials.md) | How to follow a tutorial, and what each one builds |
-| [`echo/first_steps.md`](tutorials/echo/first_steps.md) | The echo: a controller, your own runner, an operator, a file on each side |
+| [`echo/first_steps.md`](tutorials/echo/first_steps.md) | The echo: a controller, your own runner, a relay, a file on each side |
 | [`tradedesk/tradedesk.md`](tutorials/tradedesk/tradedesk.md) | The tradedesk: an ETL stream and a workflow on a demo exchange, partitions, plugins, crashes |
 | [`agentdesk/agentdesk.md`](tutorials/agentdesk/agentdesk.md) | The agentdesk: sessions behind HTTP, calls, a cluster, Kubernetes |
 
@@ -54,16 +54,16 @@ type and what you should see; the topic pages say how each piece works.
 
 | Doc | Covers |
 | --- | --- |
-| [`building_blocks.md`](topics/basics/building_blocks.md) | Tasklets, operators and runners, and the seven SDKs on one engine |
-| [`configuring_an_operator.md`](topics/basics/configuring_an_operator.md) | The settings tree: how an operator runs, where its work is kept, as an ETL stream and as a workflow |
+| [`building_blocks.md`](topics/basics/building_blocks.md) | Tasklets, relays and runners, and the seven SDKs on one engine |
+| [`configuring_a_relay.md`](topics/basics/configuring_a_relay.md) | The settings tree: how a relay runs, where its work is kept, as an ETL stream and as a workflow |
 | [`streams.md`](topics/basics/streams.md) | A graph of tasklets: channels, edges, transforms and keys |
 | [`workflows.md`](topics/basics/workflows.md) | Steps, retries, undo, and one instance per input |
 | [`state.md`](topics/basics/state.md) | State per cell, the changes that record it, and its restore |
-| [`local_mode.md`](topics/basics/local_mode.md) | An operator run in your own process, with no controller |
-| [`topics/basics/running_operators.md`](topics/basics/running_operators.md) | Starting, watching and stopping operators, from `flz` and from code; what a restart brings back |
+| [`local_mode.md`](topics/basics/local_mode.md) | A relay run in your own process, with no controller |
+| [`topics/basics/running_relays.md`](topics/basics/running_relays.md) | Starting, watching and stopping relays, from `flz` and from code; what a restart brings back |
 | [`working_with_ai_assistants.md`](topics/working_with_ai_assistants.md) | `flz mcp`: an AI assistant gets the rules, the current SDK form and the operations |
-| [`topics/plugins/plugins.md`](topics/plugins/plugins.md) | The plugin model: installed, enabled by name, operators bound; the plugins that ship |
-| [`where_plugins_run.md`](topics/plugins/where_plugins_run.md) | Shared and single copies, partitioned operators, when a copy stops, durability |
+| [`topics/plugins/plugins.md`](topics/plugins/plugins.md) | The plugin model: installed, enabled by name, relays bound; the plugins that ship |
+| [`where_plugins_run.md`](topics/plugins/where_plugins_run.md) | Shared and single copies, partitioned relays, when a copy stops, durability |
 | [`enabling_and_binding.md`](topics/plugins/enabling_and_binding.md) | The `flz plugin` commands, their flags, hooks, updates, seeing what runs |
 | [`plugins_from_code.md`](topics/plugins/plugins_from_code.md) | Enabling and binding plugins from an SDK's `control()` handle |
 | [`plugin_examples.md`](topics/plugins/plugin_examples.md) | The echo's file plugins and the tradedesk's live feed; limits and gotchas |
@@ -71,12 +71,12 @@ type and what you should see; the topic pages say how each piece works.
 | [`topics/basics/authorization.md`](topics/basics/authorization.md) | The admin, tokens, roles, certificates and recovery |
 | [`topics/basics/durability.md`](topics/basics/durability.md) | What survives what, and the durability levels |
 | [`topics/cli/cli.md`](topics/cli/cli.md) | `flz` itself: reaching a controller, output formats, identity |
-| [`topics/advanced/partitioning.md`](topics/advanced/partitioning.md) | One logical operator in N partitions: key groups, sources, rescale |
+| [`topics/advanced/partitioning.md`](topics/advanced/partitioning.md) | One logical relay in N partitions: key groups, sources, rescale |
 | [`merged_inputs.md`](topics/advanced/merged_inputs.md) | A tasklet fed by several channels |
 | [`topics/advanced/timers.md`](topics/advanced/timers.md) | Per-cell processing-time and event-time timers |
 | [`spawning_from_a_tasklet.md`](topics/advanced/spawning_from_a_tasklet.md) | A running tasklet starts or feeds a steps instance |
-| [`topics/advanced/operator_calls.md`](topics/advanced/operator_calls.md) | Calling an operator and waiting for its answer |
-| [`topics/advanced/sending_from_runner_code.md`](topics/advanced/sending_from_runner_code.md) | Sending to an operator from a runner's own code, through the controller or locally |
+| [`topics/advanced/relay_calls.md`](topics/advanced/relay_calls.md) | Calling a relay and waiting for its answer |
+| [`topics/advanced/sending_from_runner_code.md`](topics/advanced/sending_from_runner_code.md) | Sending to a relay from a runner's own code, through the controller or locally |
 | [`topics/advanced/sessions.md`](topics/advanced/sessions.md) | A session per user: steps, one pass per message, sleeping when idle |
 | [`topics/advanced/rewinding_a_turn.md`](topics/advanced/rewinding_a_turn.md) | Taking iterations back, and a failed turn that fails alone |
 | [`topics/advanced/streamed_answers.md`](topics/advanced/streamed_answers.md) | An answer sent in parts while the turn runs |
@@ -101,9 +101,9 @@ type and what you should see; the topic pages say how each piece works.
 | Doc | Covers |
 | --- | --- |
 | [`overview.md`](architecture/overview.md) | The roles, the workload model, the kernel invariants, the failure model |
-| [`kernel.md`](architecture/kernel.md) | The durable substrate under every operator: the write path, snapshots, delivery, flow control, fencing, health |
-| [`flow_profile.md`](architecture/flow_profile.md) | An operator that runs in flow: per-cell recovery, checkpoints, late input, partitions |
-| [`steps_profile.md`](architecture/steps_profile.md) | An operator that runs in steps: stages, the task journal, undo, loops, sleeping, rewind |
+| [`kernel.md`](architecture/kernel.md) | The durable substrate under every relay: the write path, snapshots, delivery, flow control, fencing, health |
+| [`flow_profile.md`](architecture/flow_profile.md) | A relay that runs in flow: per-cell recovery, checkpoints, late input, partitions |
+| [`steps_profile.md`](architecture/steps_profile.md) | A relay that runs in steps: stages, the task journal, undo, loops, sleeping, rewind |
 | [`runner.md`](architecture/runner.md) | Inside a runner: the shared Rust kernel and the host SDK |
 
 ## Contributing
@@ -120,9 +120,9 @@ type and what you should see; the topic pages say how each piece works.
 
 | Doc | Covers |
 | --- | --- |
-| [`authoring_contract.md`](sdk/authoring_contract.md) | The three authoring tiers, signature → type inference, state → Change derivation, cell mode, the cross-SDK reference operator |
+| [`authoring_contract.md`](sdk/authoring_contract.md) | The three authoring tiers, signature → type inference, state → Change derivation, cell mode, the cross-SDK reference relay |
 | [`naming_conventions.md`](sdk/naming_conventions.md) | The numbered naming rules every SDK surface follows |
-| [`rust_operator_architecture.md`](sdk/rust_operator_architecture.md) | The Rust SDK's dispatch pipeline: channels, tasklets, cells, mailboxes, backpressure, plugin egress |
+| [`rust_relay_architecture.md`](sdk/rust_relay_architecture.md) | The Rust SDK's dispatch pipeline: channels, tasklets, cells, mailboxes, backpressure, plugin egress |
 | [`state_persistence.md`](sdk/state_persistence.md) | For SDK implementers: how per-cell state becomes durable in the SDKs |
 | [`elixir_sdk.md`](sdk/elixir_sdk.md) | The Elixir SDK: in-node native mode and the standalone runner |
 | [`java_sdk.md`](sdk/java_sdk.md) | The Java SDK: scope, how its artifacts are built, how it is tested |
@@ -134,7 +134,7 @@ type and what you should see; the topic pages say how each piece works.
 | [`stream_transforms.md`](sdk/stream_transforms.md) | Implementation notes for edge transforms: where the code lives |
 | [`multi_input_tasklets.md`](sdk/multi_input_tasklets.md) | Implementation notes for merged inputs: replay, where the code lives |
 | [`cell_timers.md`](sdk/cell_timers.md) | Implementation notes for timers: folded state, where the code lives |
-| [`partitioned_operators.md`](sdk/partitioned_operators.md) | Implementation notes for partitioning: the key-group hash and its vectors |
+| [`partitioned_relays.md`](sdk/partitioned_relays.md) | Implementation notes for partitioning: the key-group hash and its vectors |
 | [`calls.md`](sdk/calls.md) | Implementation notes for calls: the Response envelope |
 | [`protocol_spec.md`](sdk/protocol_spec.md) | The wire protocol: transports, framing, commands, lifecycle, data plane |
 | [`poll_core.md`](sdk/poll_core.md) | The shared `flz_core` kernel and its C ABI |
@@ -146,15 +146,15 @@ type and what you should see; the topic pages say how each piece works.
 | [`kafka_producer.md`](plugins/kafka_producer.md) | The Kafka producer sink, a plugin package: partitioning, idempotence, batching, the in-flight window |
 | [`kafka_consumer.md`](plugins/kafka_consumer.md) | The Kafka consumer source in the same package: a consumer group's share of topics, commits by input durability, lag |
 | [`rabbitmq.md`](plugins/rabbitmq.md) | The RabbitMQ consumer source and producer sink, a plugin package: acknowledgement by input durability, message ids, publisher confirms, reconnects |
-| [`http_poll.md`](plugins/http_poll.md) | An HTTP resource as an operator input |
+| [`http_poll.md`](plugins/http_poll.md) | An HTTP resource as a relay input |
 | [`http_push.md`](plugins/http_push.md) | Each output sent as one HTTP request, a guaranteed one held until a 2xx |
-| [`postgres_poll.md`](plugins/postgres_poll.md) | The new, and optionally the changed, rows of a Postgres table as an operator input |
+| [`postgres_poll.md`](plugins/postgres_poll.md) | The new, and optionally the changed, rows of a Postgres table as a relay input |
 | [`postgres_cdc.md`](plugins/postgres_cdc.md) | Every row change of Postgres tables from the write-ahead log, after a first copy, a plugin package: the event, the slot and its lag, confirmation by input durability |
-| [`file.md`](plugins/file.md) | A file, or an object in an S3 bucket, as an operator input and as its output |
+| [`file.md`](plugins/file.md) | A file, or an object in an S3 bucket, as a relay input and as its output |
 | [`websocket_subscription.md`](plugins/websocket_subscription.md) | Changing a live socket's subscription set without reconnecting |
-| [`operator_forward.md`](plugins/operator_forward.md) | One operator's output into another's input |
+| [`relay_forward.md`](plugins/relay_forward.md) | One relay's output into another's input |
 | [`hook_webhook.md`](plugins/hook_webhook.md) | What happens in a namespace, POSTed as JSON to a URL: the first controller plugin |
-| [`http_server.md`](plugins/http_server.md) | An operator behind HTTP, and another operator's events as server-sent events (the `flezha_http` package) |
+| [`http_server.md`](plugins/http_server.md) | A relay behind HTTP, and another relay's events as server-sent events (the `flezha_http` package) |
 | [`http_api.md`](plugins/http_api.md) | The controller's operations over HTTP, as MCP tools for AI assistants and as plain JSON, for a token's principal (the `flezha_http` package) |
 
 ## operations
@@ -163,7 +163,7 @@ type and what you should see; the topic pages say how each piece works.
 | --- | --- |
 | [`audit_log.md`](operations/audit_log.md) | The durable JSONL audit log: layout, fsync, rotation, CLI |
 | [`observability.md`](operations/observability.md) | Signals, sources, sinks, `flz observe`, Prometheus and OTLP export |
-| [`schedules.md`](operations/schedules.md) | `flz schedule`: cron-driven operator spawns |
+| [`schedules.md`](operations/schedules.md) | `flz schedule`: cron-driven relay spawns |
 | [`memory_drift.md`](operations/memory_drift.md) | Localising controller memory growth |
 | [`benchmarking.md`](operations/benchmarking.md) | `mix bench`, shapes, recorded floors, CI gates |
 
@@ -173,14 +173,14 @@ type and what you should see; the topic pages say how each piece works.
 | --- | --- |
 | [`overview.md`](resilience/overview.md) | The map of every self-healing mechanism and the durability guarantee summary |
 | [`data_durability.md`](resilience/data_durability.md) | The mechanism of the guarantees: a frame's guarantee class, the effectively-once tier's parts, the input floor |
-| [`steps_operator.md`](resilience/steps_operator.md) | The mechanism of an operator that runs in steps: barriers, the durable loop, crash-resume |
+| [`steps_relay.md`](resilience/steps_relay.md) | The mechanism of a relay that runs in steps: barriers, the durable loop, crash-resume |
 
 ## internals
 
 | Doc | Covers |
 | --- | --- |
 | [`process_hub.md`](internals/process_hub.md) | ProcessHub as the source of truth: hubs per namespace, recovery as reconcile, handover |
-| [`overwatch_lifecycle.md`](internals/overwatch_lifecycle.md) | The per-operator Overwatch: boot sequence, ping before `AddOperator`, the retry ladder and parked-error state, ingest entry points |
+| [`overwatch_lifecycle.md`](internals/overwatch_lifecycle.md) | The per-relay Overwatch: boot sequence, ping before `AddRelay`, the retry ladder and parked-error state, ingest entry points |
 | [`state_persistence.md`](internals/state_persistence.md) | The controller's WAL/snapshot store, flow control, `flz state` |
 | [`convergence_loop.md`](internals/convergence_loop.md) | The self-heal loop: tick pipeline, heal primitives, /healthz |
 | [`transport_liveness.md`](internals/transport_liveness.md) | Session liveness and data-plane stall localisation |

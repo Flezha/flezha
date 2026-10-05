@@ -80,15 +80,15 @@ pub fn call(verb: &str, args: &str) -> Result<String, AdminError> {
     }
 }
 
-/// Send `message` to the entry channel `channel` of `operator`, answering as
-/// JSON. Through the controller's `Operator.send` by default, answering its
+/// Send `message` to the entry channel `channel` of `relay`, answering as
+/// JSON. Through the controller's `Relay.send` by default, answering its
 /// verdict; `msg_id` and `key` ride as its named fields. With `local`, in
-/// process to an operator bound on this runner
-/// ([`crate::runner::BoundOperators::send`]), answering `null`; an id or a key
+/// process to a relay bound on this runner
+/// ([`crate::runner::BoundRelays::send`]), answering `null`; an id or a key
 /// beside it is refused before anything is sent, since only the controller
 /// reads them.
 pub fn send(
-    operator: &str,
+    relay: &str,
     message: &[u8],
     channel: &str,
     msg_id: Option<&str>,
@@ -104,28 +104,20 @@ pub fn send(
             ));
         }
         crate::runner::bound()
-            .send(operator, channel, message.to_vec())
+            .send(relay, channel, message.to_vec())
             .map_err(|e| AdminError::Refused(e.to_error()))?;
         return Ok("null".to_string());
     }
     let message = std::str::from_utf8(message).map_err(|_| {
         AdminError::Refused(Code::ArgumentNotUtf8.with([("argument", "message".into())]))
     })?;
-    call(
-        "Operator.send",
-        &send_args(operator, message, channel, &given),
-    )
+    call("Relay.send", &send_args(relay, message, channel, &given))
 }
 
-/// `Operator.send`'s arguments: the named fields ride only when one is given,
+/// `Relay.send`'s arguments: the named fields ride only when one is given,
 /// so a send without them is the request it always was.
-fn send_args(
-    operator: &str,
-    message: &str,
-    channel: &str,
-    given: &[(&str, Option<&str>)],
-) -> String {
-    let mut args = vec![json!(operator), json!(message), json!(channel)];
+fn send_args(relay: &str, message: &str, channel: &str, given: &[(&str, Option<&str>)]) -> String {
+    let mut args = vec![json!(relay), json!(message), json!(channel)];
     let fields: Map<String, Value> = given
         .iter()
         .filter_map(|(name, value)| value.map(|v| (name.to_string(), json!(v))))
@@ -158,7 +150,7 @@ mod tests {
     }
 
     #[test]
-    fn a_local_send_is_refused_for_an_id_a_key_or_an_operator_held_elsewhere() {
+    fn a_local_send_is_refused_for_an_id_a_key_or_a_relay_held_elsewhere() {
         let code =
             |result: Result<String, AdminError>| result.expect_err("refused").to_error().code;
         assert_eq!(
@@ -171,7 +163,7 @@ mod tests {
         );
         assert_eq!(
             code(send("elsewhere", b"x", "in", None, None, true)),
-            "runtime.operator_not_local"
+            "runtime.relay_not_local"
         );
     }
 }

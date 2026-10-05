@@ -1,6 +1,6 @@
 //! A steps instance's run: the pass sheet its events advance, its cancel
 //! token and its compensation markers, carried on the one
-//! [`OperatorInstance`](crate::operator::instance::OperatorInstance) type.
+//! [`RelayInstance`](crate::relay::instance::RelayInstance) type.
 //! The sheet is what the journal's resume state describes, kept for the whole
 //! run: a live instance and a resumed one are the same data.
 
@@ -13,7 +13,7 @@ use super::compensation::{CellRun, RecordSpan, StageRecord};
 use super::StepsError;
 use crate::cell::{CellItem, CellSlot};
 use crate::channel::ChannelId;
-use crate::operator::instance::OperatorInstance;
+use crate::relay::instance::RelayInstance;
 use crate::timer::{TimerFire, TimerKind, TimerOp};
 
 pub(crate) type Value = Arc<dyn Any + Send + Sync>;
@@ -23,7 +23,7 @@ pub(crate) type Value = Arc<dyn Any + Send + Sync>;
 pub(crate) type CellPos = (usize, Option<Arc<str>>);
 
 /// What a bind carries into an instance: the input the controller still owes
-/// it and, for a steps operator, the Cell restores to wait for, the committed
+/// it and, for a steps relay, the Cell restores to wait for, the committed
 /// journal, and whether the controller parks a failed turn.
 #[derive(Default)]
 pub struct Resume {
@@ -48,14 +48,14 @@ pub enum Deadline {
     UndoGate,
     /// A message's item found its Cell's mailbox full: try again.
     Admit,
-    /// A flow operator asked to end: report it once its Cells hold nothing.
+    /// A flow relay asked to end: report it once its Cells hold nothing.
     Complete,
 }
 
 pub struct StepsRun {
     /// The instance carrying this run, for the events that outlive a call:
     /// wakes and ack callbacks hold it weakly.
-    pub(crate) me: Weak<OperatorInstance>,
+    pub(crate) me: Weak<RelayInstance>,
     pub(crate) cancel: AtomicBool,
     /// The pass failed or was cancelled: what its Cells still have queued is
     /// consumed without running.
@@ -64,7 +64,7 @@ pub struct StepsRun {
 }
 
 impl StepsRun {
-    pub fn new(me: Weak<OperatorInstance>) -> Self {
+    pub fn new(me: Weak<RelayInstance>) -> Self {
         Self {
             me,
             cancel: AtomicBool::new(false),

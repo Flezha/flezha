@@ -18,12 +18,12 @@ defmodule Flezha.Service.Cli.PartitionTest do
   alias Flezha.Convergence.Snapshot
   alias Flezha.Observability.RingBufferSink
   alias Flezha.Observability.TestSinks
-  alias Flezha.Operator.PartitionGroup
+  alias Flezha.Relay.PartitionGroup
   alias Flezha.Partition
   alias Flezha.Service.Cli
   alias Flezha.Service.HubManager
-  alias Flezha.Service.Operator
-  alias Flezha.Service.OperatorManager
+  alias Flezha.Service.Relay
+  alias Flezha.Service.RelayManager
   alias FlezhaTest.Helper.ConvergenceFixtures
   alias FlezhaTest.Helper.CliCapture
 
@@ -49,14 +49,14 @@ defmodule Flezha.Service.Cli.PartitionTest do
     %{id: id, health: :healthy, runner: "runner-9", factory: "f", partition: nil, node: node()}
   end
 
-  # The rows `flz operator list` prints: a partition group collapsed into one.
+  # The rows `flz relay list` prints: a partition group collapsed into one.
   defp grouped(rows) do
-    stub(HubManager, :operator_rows, fn _ns -> rows end)
-    {:ok, listed} = Operator.list("default", %{source: :cli})
+    stub(HubManager, :relay_rows, fn _ns -> rows end)
+    {:ok, listed} = Relay.list("default", %{source: :cli})
     listed
   end
 
-  describe "a group in the operator list" do
+  describe "a group in the relay list" do
     test "collapses a group's members into one row with per-member placement" do
       rows = for index <- 0..2, do: member_row("ohlc", index, 3)
 
@@ -99,7 +99,7 @@ defmodule Flezha.Service.Cli.PartitionTest do
       assert group.([:recovering, :parked]) == :parked
     end
 
-    test "leaves ungrouped operators untouched" do
+    test "leaves ungrouped relays untouched" do
       rows = [plain_row("plain"), member_row("ohlc", 0, 2), member_row("ohlc", 1, 2)]
 
       assert [group, plain] = grouped(rows)
@@ -109,16 +109,16 @@ defmodule Flezha.Service.Cli.PartitionTest do
     end
   end
 
-  describe "operator info" do
+  describe "relay info" do
     defp info_output(rows) do
-      stub(HubManager, :operator_rows, fn _ns -> rows end)
-      stub(OperatorManager, :get_operator_ids, fn _ns -> {:ok, Enum.map(rows, & &1.id)} end)
+      stub(HubManager, :relay_rows, fn _ns -> rows end)
+      stub(RelayManager, :get_relay_ids, fn _ns -> {:ok, Enum.map(rows, & &1.id)} end)
 
-      stub(OperatorManager, :get_overwatch_state, fn ns, id ->
-        {:error, {:operator_not_found, ns, id}}
+      stub(RelayManager, :get_overwatch_state, fn ns, id ->
+        {:error, {:relay_not_found, ns, id}}
       end)
 
-      capture_io(fn -> Cli.call("Operator.info", Jason.encode!(["default"]), []) end)
+      capture_io(fn -> Cli.call("Relay.info", Jason.encode!(["default"]), []) end)
     end
 
     test "renders each member's range and reports clean coverage" do
@@ -160,16 +160,16 @@ defmodule Flezha.Service.Cli.PartitionTest do
         for(index <- 0..2, do: member_row("prices", index, 3, health: :failed)) ++
           [plain_row("quotes")]
 
-      stub(OperatorManager, :get_operator_ids, fn _ns -> {:ok, Enum.map(rows, & &1.id)} end)
+      stub(RelayManager, :get_relay_ids, fn _ns -> {:ok, Enum.map(rows, & &1.id)} end)
 
-      stub(OperatorManager, :get_overwatch_state, fn ns, _id ->
+      stub(RelayManager, :get_overwatch_state, fn ns, _id ->
         {:ok,
          %{
            runner_id: "r2",
            namespace: ns,
            extensions: %{},
            default_input_type: "bytes",
-           calls: %Flezha.Operator.Calls{}
+           calls: %Flezha.Relay.Calls{}
          }}
       end)
 
@@ -178,10 +178,10 @@ defmodule Flezha.Service.Cli.PartitionTest do
       %{rows: rows}
     end
 
-    test "info reads recovering for the group's members and each operator", %{rows: rows} do
+    test "info reads recovering for the group's members and each relay", %{rows: rows} do
       ConvergenceFixtures.stub_registry_rows("trading", rows, 2_000)
 
-      text = capture_io(fn -> Cli.call("Operator.info", Jason.encode!(["trading"]), []) end)
+      text = capture_io(fn -> Cli.call("Relay.info", Jason.encode!(["trading"]), []) end)
       assert text =~ ~r/p0  prices#p0 .*runner-0  recovering\n/
       assert length(Regex.scan(~r/Health: recovering\n/, text)) == 3
       assert text =~ "Health: healthy"
@@ -190,14 +190,14 @@ defmodule Flezha.Service.Cli.PartitionTest do
       json =
         Jason.decode!(
           capture_io(fn ->
-            Cli.call("Operator.info", Jason.encode!(["trading"]), output: "json")
+            Cli.call("Relay.info", Jason.encode!(["trading"]), output: "json")
           end)
         )
 
       [%{"members" => members}] = json["groups"]
       assert Enum.map(members, & &1["health"]) == List.duplicate("recovering", 3)
 
-      assert Map.new(json["operators"], &{&1["id"], &1["health"]}) ==
+      assert Map.new(json["relays"], &{&1["id"], &1["health"]}) ==
                %{
                  "prices#p0" => "recovering",
                  "prices#p1" => "recovering",
@@ -216,7 +216,7 @@ defmodule Flezha.Service.Cli.PartitionTest do
           end)
         )
 
-      assert json["operator_health"] == %{"recovering" => 3, "healthy" => 1}
+      assert json["relay_health"] == %{"recovering" => 3, "healthy" => 1}
 
       text =
         capture_io(fn ->
@@ -237,24 +237,24 @@ defmodule Flezha.Service.Cli.PartitionTest do
           end)
         )
 
-      assert json["operator_health"] == %{"failed" => 3, "healthy" => 1}
+      assert json["relay_health"] == %{"failed" => 3, "healthy" => 1}
 
-      text = capture_io(fn -> Cli.call("Operator.info", Jason.encode!(["trading"]), []) end)
+      text = capture_io(fn -> Cli.call("Relay.info", Jason.encode!(["trading"]), []) end)
       assert length(Regex.scan(~r/Health: failed\n/, text)) == 3
       refute text =~ "recovering"
     end
   end
 
-  describe "operator start rendering" do
+  describe "relay start rendering" do
     defp start(format, fields) do
-      operator = Map.new([factory_id: "candles"] ++ fields)
-      Cli.call("Operator.start", Jason.encode!(["default", operator]), output: format)
+      relay = Map.new([factory_id: "candles"] ++ fields)
+      Cli.call("Relay.start", Jason.encode!(["default", relay]), output: format)
     end
 
     defp started_as(test_pid) do
-      stub(OperatorManager, :start_operator, fn _ns, op, opts ->
+      stub(RelayManager, :start_relay, fn _ns, op, opts ->
         send(test_pid, {:started, op, opts})
-        {:ok, %{operator_id: op.id, runner_id: "r1", node: node(), pid: self()}}
+        {:ok, %{relay_id: op.id, runner_id: "r1", node: node(), pid: self()}}
       end)
     end
 
@@ -279,7 +279,7 @@ defmodule Flezha.Service.Cli.PartitionTest do
 
       err = capture_io(:stderr, fn -> catch_exit(start("text", id: "demo", channel: "order")) end)
 
-      assert err =~ "and no --text was given (operator.channel_without_text)"
+      assert err =~ "and no --text was given (relay.channel_without_text)"
       refute_received {:started, _, _}
     end
 
@@ -300,7 +300,7 @@ defmodule Flezha.Service.Cli.PartitionTest do
     end
 
     test "a live duplicate start reports a no-op instead of erroring" do
-      stub(OperatorManager, :start_operator, fn _ns, _op, _opts -> :duplicate end)
+      stub(RelayManager, :start_relay, fn _ns, _op, _opts -> :duplicate end)
 
       assert capture_io(fn -> start("text", id: "demo") end) ==
                "demo is already running, left untouched\n"
@@ -318,13 +318,13 @@ defmodule Flezha.Service.Cli.PartitionTest do
 
       TestSinks.settle(RingBufferSink)
 
-      assert Enum.any?(RingBufferSink.query(:operator_service, boundary), fn signal ->
-               signal.name == :start and signal.metadata[:operator] == generated
+      assert Enum.any?(RingBufferSink.query(:relay_service, boundary), fn signal ->
+               signal.name == :start and signal.metadata[:relay] == generated
              end)
     end
 
     test "a stale-row refusal still exits as an error" do
-      stub(OperatorManager, :start_operator, fn _ns, _op, _opts ->
+      stub(RelayManager, :start_relay, fn _ns, _op, _opts ->
         {:error, {:id_in_use, "demo"}}
       end)
 
@@ -334,7 +334,7 @@ defmodule Flezha.Service.Cli.PartitionTest do
         end)
 
       assert out =~ "demo"
-      assert out =~ "(operator.already_running)"
+      assert out =~ "(relay.already_running)"
     end
 
     test "a converge reports started and already-running members distinctly" do
@@ -377,7 +377,7 @@ defmodule Flezha.Service.Cli.PartitionTest do
 
       out = capture_io(fn -> start("text", partitions: 3, id: "ohlc") end)
 
-      assert out =~ "Operator ohlc started with 3 partitions:"
+      assert out =~ "Relay ohlc started with 3 partitions:"
       assert out =~ "  ohlc#p0"
     end
 
@@ -391,14 +391,14 @@ defmodule Flezha.Service.Cli.PartitionTest do
       end)
 
       out = capture_io(fn -> start("text", partitions: 3) end)
-      assert out =~ "Operator candles-k7m2qzxw4pd3fn2a started with 3 partitions:"
+      assert out =~ "Relay candles-k7m2qzxw4pd3fn2a started with 3 partitions:"
 
       json = capture_io(fn -> start("json", partitions: 3) end)
       assert %{"id" => "candles-k7m2qzxw4pd3fn2a", "outcome" => "started"} = Jason.decode!(json)
     end
   end
 
-  describe "operator scale rendering" do
+  describe "relay scale rendering" do
     # The summary line reads the rescale result key by key, so a key the
     # producer stops returning raises on the success path rather than being
     # rendered blank.
@@ -421,7 +421,7 @@ defmodule Flezha.Service.Cli.PartitionTest do
           Cli.call("Steps.rescale", Jason.encode!(["default", "ohlc", 3, %{}]), [])
         end)
 
-      assert out =~ "Operator ohlc rescaled 2 -> 3"
+      assert out =~ "Relay ohlc rescaled 2 -> 3"
       assert out =~ "1 cells moved, 1 trees removed"
       assert out =~ "  ohlc#p0"
       refute out =~ "Sealed"
@@ -451,7 +451,7 @@ defmodule Flezha.Service.Cli.PartitionTest do
     end
   end
 
-  describe "operator stop" do
+  describe "relay stop" do
     test "a group id stops every member" do
       members = for index <- 0..2, do: member_row("ohlc", index, 3)
       parent = self()
@@ -460,28 +460,28 @@ defmodule Flezha.Service.Cli.PartitionTest do
         if id == "ohlc", do: Enum.map(members, &%{id: &1.id, partition: &1.partition}), else: []
       end)
 
-      stub(OperatorManager, :request_stop, fn _ns, id ->
+      stub(RelayManager, :request_stop, fn _ns, id ->
         send(parent, {:stopped, id})
         :ok
       end)
 
       out =
-        capture_io(fn -> Cli.call("Operator.stop", Jason.encode!(["default", "ohlc"]), []) end)
+        capture_io(fn -> Cli.call("Relay.stop", Jason.encode!(["default", "ohlc"]), []) end)
 
-      assert out =~ "Operator group ohlc stopped (3 partitions)"
+      assert out =~ "Relay group ohlc stopped (3 partitions)"
       assert_receive {:stopped, "ohlc#p0"}, 100
       assert_receive {:stopped, "ohlc#p1"}, 100
       assert_receive {:stopped, "ohlc#p2"}, 100
     end
 
-    test "an ordinary operator takes the single-stop path" do
+    test "an ordinary relay takes the single-stop path" do
       stub(PartitionGroup, :members, fn _ns, _id -> [] end)
-      stub(OperatorManager, :request_stop, fn _ns, "plain" -> :ok end)
+      stub(RelayManager, :request_stop, fn _ns, "plain" -> :ok end)
 
       assert capture_io(fn ->
-               Cli.call("Operator.stop", Jason.encode!(["default", "plain"]), [])
+               Cli.call("Relay.stop", Jason.encode!(["default", "plain"]), [])
              end) =~
-               "Operator has been stopped"
+               "Relay has been stopped"
     end
 
     test "a failed member is named, never swallowed" do
@@ -491,21 +491,21 @@ defmodule Flezha.Service.Cli.PartitionTest do
         Enum.map(members, &%{id: &1.id, partition: &1.partition})
       end)
 
-      stub(OperatorManager, :request_stop, fn _ns, id ->
-        if id == "ohlc#p1", do: {:error, {:operator_not_running, id}}, else: :ok
+      stub(RelayManager, :request_stop, fn _ns, id ->
+        if id == "ohlc#p1", do: {:error, {:relay_not_running, id}}, else: :ok
       end)
 
       out =
         capture_io(:stderr, fn ->
           try do
-            Cli.call("Operator.stop", Jason.encode!(["default", "ohlc"]), [])
+            Cli.call("Relay.stop", Jason.encode!(["default", "ohlc"]), [])
           catch
             :exit, _ -> :ok
           end
         end)
 
-      assert out =~ "ohlc#p1 (operator 'ohlc#p1' is not running"
-      assert out =~ "(operator.group_stop_partial)"
+      assert out =~ "ohlc#p1 (relay 'ohlc#p1' is not running"
+      assert out =~ "(relay.group_stop_partial)"
     end
   end
 
@@ -513,8 +513,8 @@ defmodule Flezha.Service.Cli.PartitionTest do
     setup do
       members = for index <- 0..2, do: member_row("ohlc", index, 3)
 
-      stub(OperatorManager, :namespace_of, fn _id -> :error end)
-      stub(OperatorManager, :namespace_of_group, fn "ohlc" -> {:ok, "trading"} end)
+      stub(RelayManager, :namespace_of, fn _id -> :error end)
+      stub(RelayManager, :namespace_of_group, fn "ohlc" -> {:ok, "trading"} end)
 
       stub(PartitionGroup, :members, fn _ns, "ohlc" ->
         Enum.map(members, &%{id: &1.id, partition: &1.partition})
@@ -533,7 +533,7 @@ defmodule Flezha.Service.Cli.PartitionTest do
     test "a keyed read goes to exactly the member owning the key's group" do
       parent = self()
 
-      stub(OperatorManager, :get_cell_state, fn "trading", id, _selector ->
+      stub(RelayManager, :get_cell_state, fn "trading", id, _selector ->
         send(parent, {:read, id})
         {:ok, ~s({"candle":{"BTC-USD":{"high":42}}}), 7}
       end)
@@ -547,7 +547,7 @@ defmodule Flezha.Service.Cli.PartitionTest do
     end
 
     test "a tasklet-level read fans out and merges the members' cells" do
-      stub(OperatorManager, :get_cell_state, fn "trading", id, _selector ->
+      stub(RelayManager, :get_cell_state, fn "trading", id, _selector ->
         case id do
           "ohlc#p0" -> {:ok, ~s({"candle":{"SOL-USD":{"high":1}}}), 3}
           "ohlc#p1" -> {:ok, ~s({"candle":{"BTC-USD":{"high":2}}}), 9}

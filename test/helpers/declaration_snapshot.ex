@@ -15,9 +15,9 @@ defmodule FlezhaTest.Helper.DeclarationSnapshot do
 
   import ExUnit.Assertions
 
-  alias Flezha.Operator.Builder
-  alias Flezha.Operator.ClassRegistry
-  alias Flezha.Service.OperatorManager
+  alias Flezha.Relay.Builder
+  alias Flezha.Relay.ClassRegistry
+  alias Flezha.Service.RelayManager
   alias Flezha.Service.PortPilot
   alias FlezhaTest.Helper.MimicGlobal
   alias FlezhaTest.Helper.NodeTestHelper
@@ -57,7 +57,7 @@ defmodule FlezhaTest.Helper.DeclarationSnapshot do
 
   @doc """
   Bind `factory` in `namespace` and assert its declaration equals its golden.
-  `unique` mints the operator id, so each caller keeps its own naming rule.
+  `unique` mints the relay id, so each caller keeps its own naming rule.
   """
   def assert_matches_golden(namespace, factory, kind, unique) do
     parent = self()
@@ -70,7 +70,7 @@ defmodule FlezhaTest.Helper.DeclarationSnapshot do
     MimicGlobal.set_mimic_global_until_exit()
 
     assert {:ok, _} =
-             OperatorManager.start_operator(namespace, %Builder{
+             RelayManager.start_relay(namespace, %Builder{
                id: unique.("d_#{factory}"),
                factory_id: factory,
                run: kind
@@ -114,7 +114,7 @@ defmodule FlezhaTest.Helper.DeclarationSnapshot do
   # The same wire form `ClassRegistry.decode_declarations/1` reads, kept raw so
   # a key an SDK adds, drops or spells differently is a diff.
   defp decoded_metadata(raw) when is_binary(raw) and raw != "" do
-    case RunnerCommands.AddOperatorResponse.decode(raw) do
+    case RunnerCommands.AddRelayResponse.decode(raw) do
       {:ok, %{metadata: metadata}} -> metadata
       {:error, _} -> %{}
     end

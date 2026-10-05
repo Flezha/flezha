@@ -1,14 +1,14 @@
 defmodule Flezha.Service.NamespaceListTest do
   @moduledoc """
   What a caller may be shown when it asks which namespaces there are:
-  `Flezha.Service.Operator.list_namespaces/1`, which `flz namespace list` and a
+  `Flezha.Service.Relay.list_namespaces/1`, which `flz namespace list` and a
   console both reach, answers the durable catalog with whether each namespace
   runs a hub here.
 
   The catalog is the source because reading the running hub set left a
   namespace created a moment earlier invisible until something connected to
   it, so `create` followed by `list` disagreed. The verb row is deliberately
-  `:list_namespaces` (`operator.list` at `:caller` scope) rather than
+  `:list_namespaces` (`relay.list` at `:caller` scope) rather than
   `:namespace_list` (`authz.namespace_list` at `:system` scope), which would
   take the verb away from every namespace-scoped caller who has it.
 
@@ -31,13 +31,13 @@ defmodule Flezha.Service.NamespaceListTest do
   alias Flezha.AuthZ.Verbs
   alias Flezha.Service.Cli
   alias Flezha.Service.HubManager
-  alias Flezha.Service.Operator
+  alias Flezha.Service.Relay
 
   describe "the catalog is the source" do
     test "a namespace created a moment ago is listed" do
       {:ok, _} = NamespaceStore.create("billing")
 
-      output = capture_io(fn -> Cli.call("Operator.list_namespaces", "[]", []) end)
+      output = capture_io(fn -> Cli.call("Relay.list_namespaces", "[]", []) end)
 
       assert output =~ "billing"
       assert output =~ "_system"
@@ -50,7 +50,7 @@ defmodule Flezha.Service.NamespaceListTest do
       on_exit(fn -> HubManager.stop_hub("with-hub") end)
 
       rows =
-        capture_io(fn -> Cli.call("Operator.list_namespaces", "[]", output: "json") end)
+        capture_io(fn -> Cli.call("Relay.list_namespaces", "[]", output: "json") end)
         |> Jason.decode!()
 
       by_name = Map.new(rows, &{&1["namespace"], &1["running"]})
@@ -60,10 +60,10 @@ defmodule Flezha.Service.NamespaceListTest do
     end
 
     test "an empty answer says so rather than rendering a headerless table" do
-      output = capture_io(fn -> Cli.render({:ok, []}, "Operator.list_namespaces", "[]", []) end)
+      output = capture_io(fn -> Cli.render({:ok, []}, "Relay.list_namespaces", "[]", []) end)
 
       assert output =~ "No namespaces found."
-      assert {:ok, []} = Operator.list_namespaces(bound("nothing-here"))
+      assert {:ok, []} = Relay.list_namespaces(bound("nothing-here"))
     end
   end
 
@@ -76,12 +76,12 @@ defmodule Flezha.Service.NamespaceListTest do
 
     test "a namespace-scoped caller sees its own namespace and no other" do
       assert {:ok, [%{namespace: "team-orders"}]} =
-               Operator.list_namespaces(bound("team-orders"))
+               Relay.list_namespaces(bound("team-orders"))
     end
 
     test "an admin in the system namespace sees them all" do
       assert {:ok, rows} =
-               Operator.list_namespaces(%{
+               Relay.list_namespaces(%{
                  source: :cli,
                  role: :admin,
                  namespace: "_system",
@@ -105,7 +105,7 @@ defmodule Flezha.Service.NamespaceListTest do
 
     test "a namespace-scoped caller sees its own namespace and no other" do
       assert {:ok, [%{namespace: "team-orders", running: true}]} =
-               Operator.list_namespaces(%{
+               Relay.list_namespaces(%{
                  source: :ui,
                  role: :viewer,
                  namespace: "team-orders",
@@ -115,7 +115,7 @@ defmodule Flezha.Service.NamespaceListTest do
 
     test "an admin in the system namespace still sees the whole cluster" do
       assert {:ok, running} =
-               Operator.list_namespaces(%{
+               Relay.list_namespaces(%{
                  source: :ui,
                  role: :admin,
                  namespace: "_system",
@@ -151,7 +151,7 @@ defmodule Flezha.Service.NamespaceListTest do
 
     test "a tenant-bound caller is judged, runs, and sees only its own namespace" do
       assert {:ok, [%{namespace: "team-orders"}]} =
-               Operator.list_namespaces(%{
+               Relay.list_namespaces(%{
                  source: :ui,
                  role: :viewer,
                  namespace: "team-orders",
@@ -163,7 +163,7 @@ defmodule Flezha.Service.NamespaceListTest do
       :ok = RoleStore.bind("tenant-alice", "team-orders", :viewer, bound_by: "root")
 
       assert {:error, %Flezha.Error{code: "authz.namespace_mismatch"}} =
-               Operator.list_namespaces(%{source: :ui, principal: "tenant-alice"})
+               Relay.list_namespaces(%{source: :ui, principal: "tenant-alice"})
     end
 
     # The fail-open, pinned rather than left to be discovered. A principal the
@@ -175,15 +175,15 @@ defmodule Flezha.Service.NamespaceListTest do
       :ok = RoleStore.bind("system-alice", "_system", :viewer, bound_by: "root")
 
       assert {:ok, running} =
-               Operator.list_namespaces(%{source: :ui, principal: "system-alice"})
+               Relay.list_namespaces(%{source: :ui, principal: "system-alice"})
 
       assert "team-orders" in names(running)
       assert "team-billing" in names(running)
     end
   end
 
-  test "the verb is judged as an operator listing in the caller's own scope" do
-    assert %{action: :"operator.list", scope: :caller} = Verbs.fetch!(:list_namespaces)
+  test "the verb is judged as a relay listing in the caller's own scope" do
+    assert %{action: :"relay.list", scope: :caller} = Verbs.fetch!(:list_namespaces)
   end
 
   defp bound(namespace), do: %{source: :cli, role: :ops, namespace: namespace, principal: "op"}

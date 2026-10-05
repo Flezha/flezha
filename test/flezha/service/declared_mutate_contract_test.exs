@@ -2,11 +2,11 @@ defmodule Flezha.Service.DeclaredMutateContractTest do
   @moduledoc """
   Pins the one piece of `process_hub` Flezha reaches for that is not part of its
   public API: the coordinator's `{:declared_mutate, {:add, [spec]}}` call, which
-  `Flezha.Service.OperatorManager.Init.redeclare/2` uses to rewrite an
-  operator's declared child spec in place.
+  `Flezha.Service.RelayManager.Init.redeclare/2` uses to rewrite a
+  relay's declared child spec in place.
 
   Flezha needs it because the declared set is written at start and at stop and
-  has no update path, while an operator is bound to a plugin between the two. The registry
+  has no update path, while a relay is bound to a plugin between the two. The registry
   row cannot stand in: an auto-recovery hub opens its backend with
   `recovery_replay: false`, so its live registry starts empty after a restart
   and a row written before one is never read back.
@@ -26,13 +26,13 @@ defmodule Flezha.Service.DeclaredMutateContractTest do
   alias Flezha.Plugin
   alias Flezha.Process.Cspec
   alias Flezha.Service.HubManager
-  alias Flezha.Service.OperatorManager
+  alias Flezha.Service.RelayManager
   alias Flezha.Service.PluginManager
   alias FlezhaTest.Helper.HubRegistryTestHelper
   alias ProcessHub.Service.DeclaredChildren
 
   @namespace "declared_mutate_contract_ns"
-  @operator_id "declared_mutate_op"
+  @relay_id "declared_mutate_op"
 
   setup %{tmp: tmp_dir} do
     Application.put_env(:flezha, :auto_restore_enabled, true)
@@ -48,7 +48,7 @@ defmodule Flezha.Service.DeclaredMutateContractTest do
     assert :ok = HubManager.await_recovery_complete([hub_id], 5_000)
 
     :ok =
-      HubRegistryTestHelper.start_durable(@namespace, @operator_id,
+      HubRegistryTestHelper.start_durable(@namespace, @relay_id,
         recorded_runner: nil,
         opts: []
       )
@@ -63,7 +63,7 @@ defmodule Flezha.Service.DeclaredMutateContractTest do
     assert {:plugin, "own_entry"} in declared_ids(hub_id)
 
     refute Enum.any?(
-             HubManager.declared_operators(@namespace),
+             HubManager.declared_relays(@namespace),
              &(&1.id == {:plugin, "own_entry"})
            )
 
@@ -75,16 +75,16 @@ defmodule Flezha.Service.DeclaredMutateContractTest do
   # the re-declare answers without writing and every bind becomes a silent
   # no-op that only shows up on the next restart.
   test "a bind reaches the declared entry, starting and stopping nothing", %{hub_id: hub_id} do
-    before_pid = HubManager.get_pid(@namespace, @operator_id)
+    before_pid = HubManager.get_pid(@namespace, @relay_id)
     bind("contract_plugin")
 
     assert ["contract_plugin"] = declared_binding_ids(hub_id)
 
-    assert declared_operator_ids(hub_id) == [@operator_id],
+    assert declared_relay_ids(hub_id) == [@relay_id],
            "the upsert added or removed an entry instead of replacing one"
 
-    assert HubManager.get_pid(@namespace, @operator_id) == before_pid,
-           "re-declaring restarted the operator; it must touch no process"
+    assert HubManager.get_pid(@namespace, @relay_id) == before_pid,
+           "re-declaring restarted the relay; it must touch no process"
   end
 
   # fails when: a re-declare merges instead of replacing, so an unbind can never
@@ -93,7 +93,7 @@ defmodule Flezha.Service.DeclaredMutateContractTest do
     bind("to_be_unbound")
     assert ["to_be_unbound"] = declared_binding_ids(hub_id)
 
-    assert :ok = PluginManager.unbind_plugin(@namespace, "to_be_unbound", @operator_id)
+    assert :ok = PluginManager.unbind_plugin(@namespace, "to_be_unbound", @relay_id)
     assert [] = declared_binding_ids(hub_id)
   end
 
@@ -102,7 +102,7 @@ defmodule Flezha.Service.DeclaredMutateContractTest do
   # from the record a restart rebuilds from. The registry row merges concurrent
   # transforms inside the registry; the declared write must copy from it, and
   # re-check, rather than compute its own list.
-  test "concurrent binds on one operator all reach the declared entry", %{hub_id: hub_id} do
+  test "concurrent binds on one relay all reach the declared entry", %{hub_id: hub_id} do
     ids = for i <- 1..8, do: "racing_plugin_#{i}"
     Enum.each(ids, &enable/1)
 
@@ -113,26 +113,26 @@ defmodule Flezha.Service.DeclaredMutateContractTest do
     assert declared_binding_ids(hub_id) == Enum.sort(ids),
            "a concurrent bind was lost from the declared entry"
 
-    assert {:ok, row} = HubManager.operator_bindings(@namespace, @operator_id)
+    assert {:ok, row} = HubManager.relay_bindings(@namespace, @relay_id)
     assert row |> Enum.map(&elem(&1, 0)) |> Enum.sort() == Enum.sort(ids)
   end
 
-  # fails when: an undeclared operator gets a declaration invented for it, which
-  # would let a bind resurrect an operator a stop removed for good.
-  test "an operator with no declared entry is refused rather than declared" do
-    assert {:error, :operator_not_declared} =
-             OperatorManager.redeclare(@namespace, "never_declared_op")
+  # fails when: an undeclared relay gets a declaration invented for it, which
+  # would let a bind resurrect a relay a stop removed for good.
+  test "a relay with no declared entry is refused rather than declared" do
+    assert {:error, :relay_not_declared} =
+             RelayManager.redeclare(@namespace, "never_declared_op")
   end
 
   # fails when: a controller running with auto-restore off is told its binding
-  # is durable. That mode declares nothing at operator start either, so the
+  # is durable. That mode declares nothing at relay start either, so the
   # write must persist nothing and still succeed.
   test "durable starts disabled: the re-declare writes nothing and still succeeds",
        %{hub_id: hub_id} do
     Application.put_env(:flezha, :auto_restore_enabled, false)
     on_exit(fn -> Application.put_env(:flezha, :auto_restore_enabled, true) end)
 
-    assert :ok = OperatorManager.redeclare(@namespace, @operator_id)
+    assert :ok = RelayManager.redeclare(@namespace, @relay_id)
     assert [] = declared_binding_ids(hub_id)
   end
 
@@ -149,20 +149,20 @@ defmodule Flezha.Service.DeclaredMutateContractTest do
   defp bind_only(name),
     do:
       assert(
-        :ok = PluginManager.bind_plugin(@namespace, name, @operator_id, hooks: [{:on_output, []}])
+        :ok = PluginManager.bind_plugin(@namespace, name, @relay_id, hooks: [{:on_output, []}])
       )
 
   defp declared_binding_ids(hub_id) do
     %{children: children} = DeclaredChildren.declared_children(hub_id)
-    {:ok, arg} = children |> Enum.find(&(&1.id == @operator_id)) |> Cspec.start_arg()
+    {:ok, arg} = children |> Enum.find(&(&1.id == @relay_id)) |> Cspec.start_arg()
 
-    operator =
+    relay =
       case arg do
-        {_ns, operator} -> operator
-        {_ns, _runner, operator} -> operator
+        {_ns, relay} -> relay
+        {_ns, _runner, relay} -> relay
       end
 
-    operator.opts |> Keyword.get(:bindings, []) |> Enum.map(&elem(&1, 0)) |> Enum.sort()
+    relay.opts |> Keyword.get(:bindings, []) |> Enum.map(&elem(&1, 0)) |> Enum.sort()
   end
 
   defp declared_ids(hub_id) do
@@ -170,7 +170,7 @@ defmodule Flezha.Service.DeclaredMutateContractTest do
     Enum.map(children, & &1.id)
   end
 
-  defp declared_operator_ids(hub_id),
+  defp declared_relay_ids(hub_id),
     do: hub_id |> declared_ids() |> Enum.filter(&is_binary/1) |> Enum.sort()
 
   defmodule NoopProvider do

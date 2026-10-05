@@ -2,11 +2,11 @@
 
 ## Purpose
 
-The steps-loop-rewind capability lets a user take a looping steps operator back to a committed iteration: `flz operator rewind <instance> --to-iteration N` compensates the tasklets of every iteration above N in reverse order, restores the inter-task handoff and consumed inbox offset to the iteration-N boundary, bumps the instance's epoch so re-run output supersedes the unwound output at conforming sinks, and resumes the loop at iteration N+1. It is undo-and-continue, not replay — the unwound iterations' inputs are gone with the truncated inbox. The rewind is refused, with no durable change, when the target iteration never committed or when an unwound tasklet staged plugin output it declares no `compensate` hook to undo.
+The steps-loop-rewind capability lets a user take a looping steps relay back to a committed iteration: `flz relay rewind <instance> --to-iteration N` compensates the tasklets of every iteration above N in reverse order, restores the inter-task handoff and consumed inbox offset to the iteration-N boundary, bumps the instance's epoch so re-run output supersedes the unwound output at conforming sinks, and resumes the loop at iteration N+1. It is undo-and-continue, not replay — the unwound iterations' inputs are gone with the truncated inbox. The rewind is refused, with no durable change, when the target iteration never committed or when an unwound tasklet staged plugin output it declares no `compensate` hook to undo.
 ## Requirements
 ### Requirement: Rewind to a committed iteration
 
-`flz operator rewind <instance> --to-iteration N` SHALL: compensate the
+`flz relay rewind <instance> --to-iteration N` SHALL: compensate the
 tasklets of iterations above N in reverse order using the existing per-cell
 compensation machinery, restore the instance's inter-task handoff and consumed
 input-log offset to the iteration-N boundary, bump the epoch, and resume the loop at
@@ -33,7 +33,7 @@ crash mid-rewind resumes as a rewind rather than as a partially unwound loop.
 
 #### Scenario: Chat rewound to an earlier turn
 
-- **WHEN** a chat operator has committed iterations 1..5 and the user rewinds
+- **WHEN** a chat relay has committed iterations 1..5 and the user rewinds
   to iteration 3
 - **THEN** the tasklets of iterations 5 and 4 are compensated in that order,
   the handoff equals the iteration-3 commit, and the next input is processed as
@@ -92,7 +92,7 @@ re-send of the old one. Outputs carry no journal epoch: an output's `flz.epoch` 
 realign epoch, unchanged by a rewind, and an output emitted after a rewind is a newer record of
 the same Cell, so its `flz.seq` sorts above every output of the unwound iterations and a
 conforming sink accepts it as newer. Crash-retry re-emits within an un-rewound run SHALL keep
-their identity and be deduplicated. This is the same ordering rule a flow operator's outputs follow,
+their identity and be deduplicated. This is the same ordering rule a flow relay's outputs follow,
 and a stream correction's epoch bump stays the one thing that moves a Cell's `flz.epoch`.
 
 #### Scenario: A re-run turn's output sorts above the unwound turn's
@@ -144,7 +144,7 @@ A tasklet that wrote no plugin output SHALL require no coverage.
 
 ### Requirement: A rewind SHALL treat a dead-lettered iteration as committed and already undone
 
-A `dead_lettered` iteration SHALL count as a committed iteration for `flz operator rewind`:
+A `dead_lettered` iteration SHALL count as a committed iteration for `flz relay rewind`:
 it SHALL be a valid `--to-iteration` target, it SHALL fall inside the committed range a
 refusal reports, and the loop resumed after a rewind to it SHALL take its next input as the
 following iteration. A rewind to an iteration below it SHALL NOT compensate any of its

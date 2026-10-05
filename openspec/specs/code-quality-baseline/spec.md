@@ -1126,11 +1126,11 @@ alone and fails in the suite cannot be verified by any run of the module.
 
 Such a helper SHALL wait on the exit of what it terminated, never on time.
 
-#### Scenario: An operator stopped by the previous test cannot leak into the next
+#### Scenario: A relay stopped by the previous test cannot leak into the next
 
-- **WHEN** a test stops an operator in its teardown, the next test resets durable
-  state and starts an operator under the same id
-- **THEN** the new operator's Cell SHALL hold no input the previous test sent,
+- **WHEN** a test stops a relay in its teardown, the next test resets durable
+  state and starts a relay under the same id
+- **THEN** the new relay's Cell SHALL hold no input the previous test sent,
   on every run and at every seed
 
 #### Scenario: The full suite is as green as the module

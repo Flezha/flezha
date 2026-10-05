@@ -20,7 +20,7 @@ const COMMANDS: &[(&str, &[&str])] = &[
     ),
     ("cluster", &["status", "help"]),
     (
-        "operator",
+        "relay",
         &[
             "start", "scale", "stop", "state", "list", "info", "listen", "send", "rewind",
             "replay", "help",
@@ -181,7 +181,7 @@ fn plugin_refuses_the_help_flags_it_never_accepted() {
 /// controller reached.
 #[test]
 fn a_command_line_refusal_honours_json() {
-    let out = flz(&["operator", "start", "echo", "--nope", "--json"]);
+    let out = flz(&["relay", "start", "echo", "--nope", "--json"]);
     let line = String::from_utf8_lossy(&out.stderr);
     let doc: serde_json::Value = serde_json::from_str(line.trim()).expect("one JSON line");
 

@@ -8,8 +8,8 @@ defmodule Flezha.Observability.OtpBackend.BoundedMailboxSource do
   event on its first poll, and does nothing else. The foundation's
   degraded-source pattern.
 
-  The `5_000` budget is one metadata shape per `{namespace, operator}`:
-  ~50 namespaces × ~100 operators, raised through runtime config for
+  The `5_000` budget is one metadata shape per `{namespace, relay}`:
+  ~50 namespaces × ~100 relays, raised through runtime config for
   anything larger.
   """
 
@@ -40,7 +40,7 @@ defmodule Flezha.Observability.OtpBackend.BoundedMailboxSource do
   end
 
   def poll(state) do
-    # Future hook: enumerate per-Operator state from the NIF and emit
+    # Future hook: enumerate per-Relay state from the NIF and emit
     # :mailbox_high_water (gauge) / :messages_dropped (counter) signals.
     state
   end

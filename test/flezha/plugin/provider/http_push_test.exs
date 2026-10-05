@@ -1,6 +1,6 @@
 defmodule FlezhaTest.Plugin.Provider.HttpPushTest do
   @moduledoc """
-  `operator_http_push`'s options: each refusal answers its code, a header the
+  `relay_http_push`'s options: each refusal answers its code, a header the
   request sets itself or could not carry is refused by name, the declaration
   is a shareable row of the provider table, and nothing connects while it is
   checked.
@@ -25,8 +25,8 @@ defmodule FlezhaTest.Plugin.Provider.HttpPushTest do
     Flezha.Error.from_reason(reason, :"plugin.enable")
   end
 
-  test "it is the shareable provider operator_http_push" do
-    assert Providers.fetch("operator_http_push") == {:ok, HttpPush}
+  test "it is the shareable provider relay_http_push" do
+    assert Providers.fetch("relay_http_push") == {:ok, HttpPush}
     assert HttpPush.__provider__().shareable
   end
 

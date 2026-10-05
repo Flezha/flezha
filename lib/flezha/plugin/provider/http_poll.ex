@@ -1,13 +1,13 @@
 defmodule Flezha.Plugin.Provider.HttpPoll do
   @moduledoc """
-  Generic HTTP polling input source (an operator plugin): the member of the source
+  Generic HTTP polling input source (a relay plugin): the member of the source
   set whose upstream is a slowly-changing HTTP resource rather than a socket.
 
   It GETs `:url` every `:interval_ms` and injects the body on `:channel` as an
   ordinary entry frame — but ONLY when the body's SHA-256 differs from the last
   delivered one, so a steady endpoint costs one request per interval and zero
   frames. The first successful poll always injects, which is what converges a
-  just-started or handed-over operator within one interval; consumers must
+  just-started or handed-over relay within one interval; consumers must
   treat that seed idempotently.
 
   `:idle_after_ms` is the age of the last SETTLED poll past which the worker
@@ -84,7 +84,7 @@ defmodule Flezha.Plugin.Provider.HttpPoll do
   @doc """
   Validate and normalise. Deliberately performs no upstream I/O — the first
   poll is the worker's, and the worker is started by the extension table at
-  activation, so a slow or unreachable endpoint cannot stall the operator's
+  activation, so a slow or unreachable endpoint cannot stall the relay's
   plugin preparation.
   """
   @impl true

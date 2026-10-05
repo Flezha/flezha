@@ -9,7 +9,7 @@ defmodule FlezhaTest.System.DlqE2ETest do
   `flz dlq replay` re-dispatches the payload through the ordinary input
   path, succeeds, and removes the entry.
 
-  Tier-on (`tier_store`): the poison payload freezes the operator's
+  Tier-on (`tier_store`): the poison payload freezes the relay's
   min-watermark while it retries; the atomic park (`{no state change, dlq
   entry, consumed offset}`) un-freezes it, so input-log retention proceeds
   — the same watermark signal the source credit loop grants from (credit
@@ -26,12 +26,12 @@ defmodule FlezhaTest.System.DlqE2ETest do
   import FlezhaTest.Helper.TierE2EHarness
 
   alias Flezha.Dlq.Store
-  alias Flezha.Operator.Builder
-  alias Flezha.Operator.ClassRegistry
+  alias Flezha.Relay.Builder
+  alias Flezha.Relay.ClassRegistry
   alias Flezha.Service.Cli
-  alias Flezha.Service.OperatorManager
+  alias Flezha.Service.RelayManager
   alias Flezha.State.InputLog
-  alias FlezhaTest.Fixtures.OperatorFixture
+  alias FlezhaTest.Fixtures.RelayFixture
 
   @moduletag timeout: 300_000
 
@@ -55,52 +55,52 @@ defmodule FlezhaTest.System.DlqE2ETest do
 
   test "tier-off poison payload parks durably, cell continues, replay works" do
     namespace = unique("dlq")
-    operator_id = unique("probe")
+    relay_id = unique("probe")
     id_path = unique_id_path()
 
-    on_exit(fn -> cleanup(namespace, operator_id, id_path) end)
+    on_exit(fn -> cleanup(namespace, relay_id, id_path) end)
 
     {_port, _exec} = boot_runner(namespace, id_path)
 
     sink = %Flezha.Plugin{
       id: "probe_sink",
       namespace: namespace,
-      operator_id: operator_id,
+      relay_id: relay_id,
       provider: Flezha.Plugin.Provider.BeamMsgForward,
       opts: %{recv_pid: self(), include_metadata: true},
       hooks: [{:on_output, []}]
     }
 
     builder = %Builder{
-      id: operator_id,
+      id: relay_id,
       factory_id: "poison_probe",
       init_values: %{},
-      opts: [bindings: OperatorFixture.bindings(namespace, operator_id, [sink])]
+      opts: [bindings: RelayFixture.bindings(namespace, relay_id, [sink])]
     }
 
-    assert {:ok, _info} = OperatorManager.start_operator(namespace, builder)
+    assert {:ok, _info} = RelayManager.start_relay(namespace, builder)
 
     # Healthy payload flows end to end.
-    send_inputs(operator_id, namespace, ["a"])
+    send_inputs(relay_id, namespace, ["a"])
     assert await_output("ok:a", 30_000), "healthy payload never reached the sink"
 
     # Poison, then a healthy payload BEHIND it: the cell may only
     # process "b" after the poison payload is durably parked
     # (park-then-advance), so ok:b proves both the retries and the park.
-    send_inputs(operator_id, namespace, ["poison", "b"])
+    send_inputs(relay_id, namespace, ["poison", "b"])
     assert await_output("ok:b", 60_000), "cell never continued past the poison payload"
 
-    assert wait_until(fn -> Store.list(operator_id) != [] end, 30_000),
+    assert wait_until(fn -> Store.list(relay_id) != [] end, 30_000),
            "durable DLQ entry never appeared"
 
-    assert [entry] = Store.list(operator_id)
+    assert [entry] = Store.list(relay_id)
     assert entry["tasklet_id"] == "poison_probe_tasklet"
     assert entry["channel"] == "input"
     assert entry["attempts"] == 3, "the default retry budget is 3 total attempts"
     assert entry["error"] =~ "poison"
     assert entry["generation"] == 1
 
-    ref = "#{entry["operator_class"]}/#{entry["tasklet_id"]}/#{entry["id"]}"
+    ref = "#{entry["relay_class"]}/#{entry["tasklet_id"]}/#{entry["id"]}"
 
     # Entry inspectable: payload bytes round-tripped exactly.
     assert {:ok, _meta, "poison"} = Store.get(ref)
@@ -108,7 +108,7 @@ defmodule FlezhaTest.System.DlqE2ETest do
     assert shown =~ "poison"
 
     # Fix the tasklet, then replay through the normal input path.
-    send_inputs(operator_id, namespace, ["antidote"])
+    send_inputs(relay_id, namespace, ["antidote"])
     assert await_output("ok:antidote", 30_000)
 
     output = capture_io(fn -> Cli.call("Dlq.replay", Jason.encode!([ref]), []) end)
@@ -120,44 +120,44 @@ defmodule FlezhaTest.System.DlqE2ETest do
   @tag capability: :effectively_once, skip: FlezhaTest.SystemCase.deferral(:effectively_once)
   test "tier-on poison payload freezes the min-watermark; the park un-freezes it" do
     namespace = unique("dlq_tier")
-    operator_id = unique("tier_poison")
+    relay_id = unique("tier_poison")
     id_path = unique_id_path()
 
-    on_exit(fn -> cleanup(namespace, operator_id, id_path) end)
+    on_exit(fn -> cleanup(namespace, relay_id, id_path) end)
 
     {_port, _exec} = boot_runner(namespace, id_path)
 
     sink = %Flezha.Plugin{
       id: "tier_sink",
       namespace: namespace,
-      operator_id: operator_id,
+      relay_id: relay_id,
       provider: Flezha.Plugin.Provider.BeamMsgForward,
       opts: %{recv_pid: self(), include_metadata: true},
       hooks: [{:on_output, []}]
     }
 
     builder = %Builder{
-      id: operator_id,
+      id: relay_id,
       factory_id: "tier_store",
       init_values: %{},
-      opts: [bindings: OperatorFixture.bindings(namespace, operator_id, [sink])]
+      opts: [bindings: RelayFixture.bindings(namespace, relay_id, [sink])]
     }
 
-    assert {:ok, _info} = OperatorManager.start_operator(namespace, builder)
+    assert {:ok, _info} = RelayManager.start_relay(namespace, builder)
 
     assert wait_until(
-             fn -> ClassRegistry.effectively_once?(operator_id) end,
+             fn -> ClassRegistry.effectively_once?(relay_id) end,
              30_000
            )
 
     # Offset 0 consumed: the watermark reaches 0.
-    send_inputs(operator_id, namespace, ["k1:a"])
+    send_inputs(relay_id, namespace, ["k1:a"])
     assert await_output("k1=a", 30_000)
-    assert wait_until(fn -> InputLog.watermark(operator_id) == 0 end, 30_000)
+    assert wait_until(fn -> InputLog.watermark(relay_id) == 0 end, 30_000)
 
     # Offset 1 = poison (fails every attempt, 300 ms backoff base → park
     # after ~1 s), offset 2 = healthy but queued BEHIND the poison.
-    send_inputs(operator_id, namespace, ["kp:poison", "k2:b"])
+    send_inputs(relay_id, namespace, ["kp:poison", "k2:b"])
 
     # Frozen: while the poison payload retries, nothing past offset 0 can
     # durably consume. Sampled across the whole retry window rather than once
@@ -167,9 +167,9 @@ defmodule FlezhaTest.System.DlqE2ETest do
     # sample predates the park.
     assert wait_until(
              fn ->
-               watermark = InputLog.watermark(operator_id)
+               watermark = InputLog.watermark(relay_id)
 
-               if Store.list(operator_id) == [] do
+               if Store.list(relay_id) == [] do
                  assert watermark == 0,
                         "min-watermark advanced to #{inspect(watermark)} past an unparked poison payload"
 
@@ -188,11 +188,11 @@ defmodule FlezhaTest.System.DlqE2ETest do
     # the source credit loop granting off it) proceed.
     assert await_output("k2=b", 60_000), "cell never continued past the tier-on park"
 
-    assert wait_until(fn -> (InputLog.watermark(operator_id) || -1) >= 2 end, 30_000),
+    assert wait_until(fn -> (InputLog.watermark(relay_id) || -1) >= 2 end, 30_000),
            "min-watermark never resumed after the park"
 
-    assert wait_until(fn -> Store.list(operator_id) != [] end, 30_000)
-    assert [entry] = Store.list(operator_id)
+    assert wait_until(fn -> Store.list(relay_id) != [] end, 30_000)
+    assert [entry] = Store.list(relay_id)
     assert entry["origin_offset"] == 1, "the park must carry the poison input's offset"
     assert entry["channel"] == "input"
     assert entry["error"] =~ "poison value"
@@ -202,7 +202,7 @@ defmodule FlezhaTest.System.DlqE2ETest do
   # --- helpers ----------------------------------------------------------------
 
   defp entry_ref(entry),
-    do: "#{entry["operator_class"]}/#{entry["tasklet_id"]}/#{entry["id"]}"
+    do: "#{entry["relay_class"]}/#{entry["tasklet_id"]}/#{entry["id"]}"
 
   # Wait until `expected` shows up among everything received so far,
   # without consuming the mailbox (later assertions re-scan).

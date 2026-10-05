@@ -3,11 +3,11 @@ defmodule Flezha.Plugin.Provider.NotStartedTest do
   A sink binding that could not come up keeps a guaranteed output owed: the
   output is held and never settled, so the outbox cursor stays behind it and a
   re-drive hands it over again. A plain output to it is dropped and counted on
-  its operator's liveness counters, with nothing emitted per output.
+  its relay's liveness counters, with nothing emitted per output.
   """
   use FlezhaTest.OutboxCase, async: false
 
-  alias Flezha.Operator.Overwatch
+  alias Flezha.Relay.Overwatch
   alias Flezha.Plugin
   alias Flezha.Plugin.Extension
   alias Flezha.Plugin.Extension.Ctx
@@ -22,7 +22,7 @@ defmodule Flezha.Plugin.Provider.NotStartedTest do
       id: "out",
       provider: MyOrg.Absent,
       namespace: "ns",
-      operator_id: "op",
+      relay_id: "op",
       hooks: [{:on_output, []}]
     }
 
@@ -34,7 +34,7 @@ defmodule Flezha.Plugin.Provider.NotStartedTest do
   defp dispatch(table, payload, metadata),
     do:
       Extension.run(table, :on_output, %Ctx.IO{
-        operator_id: "op",
+        relay_id: "op",
         namespace: "ns",
         message: payload,
         metadata: metadata
@@ -59,17 +59,17 @@ defmodule Flezha.Plugin.Provider.NotStartedTest do
     assert {"owed", _md, _} = next_output()
   end
 
-  test "a plain output is dropped and counted on its operator's liveness counters" do
+  test "a plain output is dropped and counted on its relay's liveness counters" do
     :ok = Telemetry.capture([:flezha, :plugin, :not_started, :dropped])
-    table = not_started_sink(LivenessCounters.register_operator("not_started_op"))
+    table = not_started_sink(LivenessCounters.register_relay("not_started_op"))
 
     assert {:ok, _ctx} = dispatch(table, "plain", %{})
     assert {:ok, _ctx} = dispatch(table, "plain", %{})
 
     assert %{not_started_drops: 2} =
              Enum.find(
-               LivenessCounters.snapshot_all().operators,
-               &(&1.operator_id == "not_started_op")
+               LivenessCounters.snapshot_all().relays,
+               &(&1.relay_id == "not_started_op")
              )
 
     refute_received {:telemetry, _event, _measurements, _metadata}

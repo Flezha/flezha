@@ -136,7 +136,7 @@ defmodule FlezhaTest.System.PluginPackageReleaseTest do
              rows["flz_conflict"]
 
     {refusal, code} =
-      flz(ctx, ["plugin", "enable", "c", "flz_conflict_stamp", "--operator_id", "op"])
+      flz(ctx, ["plugin", "enable", "c", "flz_conflict_stamp", "--relay_id", "op"])
 
     assert code != 0
     assert refusal =~ "(plugin.provider_unavailable)"

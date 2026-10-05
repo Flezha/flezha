@@ -3,14 +3,14 @@ defmodule FlezhaTest.State.TaskJournalTest do
   `steps-task-journal` controller store: entry codec round-trip, torn-tail
   recovery, oversize rejection, reserved-type tolerance, lifecycle (path
   helper, invisibility to the Cell scanners, delete), and the resume state
-  the bind ships back on `AddOperator.task_journal`.
+  the bind ships back on `AddRelay.task_journal`.
   """
   # async: false: writes Application env; a shared on-disk root.
   use FlezhaTest.Case, fixtures: [:tmp_app_data], async: false
 
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
 
-  alias Flezha.Operator.ClassRegistry
+  alias Flezha.Relay.ClassRegistry
   alias Flezha.SDK.Wire
   alias Flezha.Service.Cli
   alias Flezha.State.{Commands, Outbox, Paths, TaskJournal, TestHelpers, WalWriter}
@@ -240,7 +240,7 @@ defmodule FlezhaTest.State.TaskJournalTest do
     inst = instance_id()
     trigger = %{cell_key: "a", kind: :processing_time, scheduled_at: 31_000}
     :ok = TaskJournal.append_task_committed(inst, 0, 4, [ran("tick")], [{1, "x"}], nil, trigger)
-    :ok = TaskJournal.append_task_committed(inst, 1, 4, [ran("relay")], [], "done")
+    :ok = TaskJournal.append_task_committed(inst, 1, 4, [ran("tock")], [], "done")
 
     assert {:ok, [root, child]} = TaskJournal.read(inst)
     assert root.payload.trigger == trigger
@@ -498,7 +498,7 @@ defmodule FlezhaTest.State.TaskJournalTest do
   # No Cell WAL is seeded: the journal is instance-scoped and rides the bind,
   # so it must assemble for a class that has no per-Cell state at all — the
   # case that ships no `RestoreInitState` and would otherwise resume at 0.
-  test "the bind ships the journal state on AddOperator" do
+  test "the bind ships the journal state on AddRelay" do
     inst = instance_id()
     seg_id = seg_identity(inst, "TaskA", "s0")
 

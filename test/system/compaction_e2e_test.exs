@@ -3,7 +3,7 @@ defmodule FlezhaTest.System.CompactionE2ETest do
   End-to-end proof that snapshot compaction actually runs — the producing half
   that `cell-compaction-is-a-stub` makes real.
 
-  Boots a real Rust runner, registers a changeful `store_input` operator,
+  Boots a real Rust runner, registers a changeful `store_input` relay,
   drives inputs to grow its per-Cell WAL, then arms a low
   `compact_after_age_ms` and forces a Watchdog sweep. The sweep ships
   `CompactCell`; the SDK must answer with a `cell_state_snapshot` frame,
@@ -26,9 +26,9 @@ defmodule FlezhaTest.System.CompactionE2ETest do
 
   use FlezhaTest.SystemCase, capability: :state_persistence
 
-  alias Flezha.Operator.Builder
+  alias Flezha.Relay.Builder
   alias Flezha.Runner.FleetManager
-  alias Flezha.Service.OperatorManager
+  alias Flezha.Service.RelayManager
   alias Flezha.State.TestHelpers
   alias Flezha.State.Watchdog
   alias FlezhaTest.Helper.CompactionAssertions, as: CA
@@ -48,7 +48,7 @@ defmodule FlezhaTest.System.CompactionE2ETest do
       Application.put_env(:flezha, :compaction_timeout_ms, prev_timeout)
 
       try do
-        OperatorManager.stop_all_operators(@namespace)
+        RelayManager.stop_all_relays(@namespace)
       catch
         _, _ -> :ok
       end
@@ -68,23 +68,23 @@ defmodule FlezhaTest.System.CompactionE2ETest do
 
     on_exit(fn -> NodeTestHelper.ensure_port_dead(port) end)
 
-    operator_id = "compaction_e2e_#{System.unique_integer([:positive])}"
-    cell_id = {operator_id, @tasklet, ""}
+    relay_id = "compaction_e2e_#{System.unique_integer([:positive])}"
+    cell_id = {relay_id, @tasklet, ""}
 
     builder = %Builder{
-      id: operator_id,
+      id: relay_id,
       factory_id: @factory,
       # The controller takes no periodic snapshot: the ONLY path to a snapshot
       # file is the compaction this test triggers.
       init_values: %{}
     }
 
-    assert {:ok, info} = OperatorManager.start_operator(@namespace, builder)
+    assert {:ok, info} = RelayManager.start_relay(@namespace, builder)
     assert info.runner_id == ce_id
 
     # Grow the WAL with changeful inputs (each PushText is one Change record).
     for i <- 1..50 do
-      OperatorManager.send_io(operator_id, @namespace, "line-#{i}-#{operator_id}", %{
+      RelayManager.send_io(relay_id, @namespace, "line-#{i}-#{relay_id}", %{
         "input_type" => "2"
       })
     end
@@ -113,7 +113,7 @@ defmodule FlezhaTest.System.CompactionE2ETest do
     TestHelpers.age_writer(writer, 50)
     :ok = Watchdog.sweep_now()
 
-    assert_receive {:compaction_completed, %{operator: ^operator_id, tasklet: @tasklet}},
+    assert_receive {:compaction_completed, %{relay: ^relay_id, tasklet: @tasklet}},
                    10_000,
                    "the SDK never produced a snapshot (a stub answers snapshot_seq: 0 and ships no frame)"
 

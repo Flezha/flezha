@@ -3,7 +3,7 @@ defmodule Flezha.Load.CreditSoakTest do
   Credit-grant flow-control soak against the 06-21 mock exchange load.
 
   Recreates the incident shape: the mock exchange WS feed drives a
-  state-persisting operator at ≥1100 msg/s sustained, against a
+  state-persisting relay at ≥1100 msg/s sustained, against a
   deliberately slowed fsync path (long batcher tick + periodic injected
   fsync stalls). Acceptance:
 
@@ -50,10 +50,10 @@ defmodule Flezha.Load.CreditSoakTest do
   import FlezhaTest.Helper.CreditTestHelper
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2, ensure_port_dead: 1]
 
-  alias Flezha.Operator.Builder
+  alias Flezha.Relay.Builder
   alias Flezha.Plugin
   alias Flezha.Runner.FleetManager
-  alias Flezha.Service.OperatorManager
+  alias Flezha.Service.RelayManager
   alias Flezha.Service.PluginManager
   alias Flezha.State.Metrics
   alias Flezha.State.WalWriter
@@ -98,7 +98,7 @@ defmodule Flezha.Load.CreditSoakTest do
       restart_fsync_batcher()
 
       try do
-        OperatorManager.stop_all_operators(@namespace)
+        RelayManager.stop_all_relays(@namespace)
       catch
         _, _ -> :ok
       end
@@ -110,8 +110,8 @@ defmodule Flezha.Load.CreditSoakTest do
       end
     end)
 
-    operator_id = "credit_soak_#{System.unique_integer([:positive])}"
-    Application.put_env(:flezha, :credit_window_bytes, %{operator_id => @window_bytes})
+    relay_id = "credit_soak_#{System.unique_integer([:positive])}"
+    Application.put_env(:flezha, :credit_window_bytes, %{relay_id => @window_bytes})
 
     # Roomy SDK input mailbox so injected fsync stalls buffer runner-side
     # (park, never drop) instead of overflowing the input edge.
@@ -128,15 +128,15 @@ defmodule Flezha.Load.CreditSoakTest do
 
     anomalies = attach_anomaly_counters()
 
-    builder = %Builder{id: operator_id, factory_id: @factory, init_values: %{}, opts: []}
-    assert {:ok, info} = OperatorManager.start_operator(@namespace, builder)
+    builder = %Builder{id: relay_id, factory_id: @factory, init_values: %{}, opts: []}
+    assert {:ok, info} = RelayManager.start_relay(@namespace, builder)
     assert info.runner_id == ce_id
 
     {:ok, "plugin enabled"} =
       PluginManager.enable_plugin(@ws_plugin_id, %Plugin{
         id: @ws_plugin_id,
         namespace: @namespace,
-        operator_id: operator_id,
+        relay_id: relay_id,
         provider: Flezha.Plugin.Provider.Websocket,
         opts: %{
           uri: "ws://localhost:#{@mock_port}",
@@ -156,14 +156,14 @@ defmodule Flezha.Load.CreditSoakTest do
     end)
 
     # Wait for the feed to flow and the credit handshake to complete.
-    cell_id = wait_for_cell(operator_id, @tasklet, 60_000)
+    cell_id = wait_for_cell(relay_id, @tasklet, 60_000)
     writer = wait_for_writer(cell_id, 10_000)
 
     assert wait_until(fn -> active_credit_row(ce_id) != nil end, 30_000),
            "credit handshake never completed"
 
     IO.puts(
-      "[credit_soak] up: operator=#{operator_id} window=#{@window_bytes}B " <>
+      "[credit_soak] up: relay=#{relay_id} window=#{@window_bytes}B " <>
         "fsync_tick=#{@fsync_tick_ms}ms stall=#{@stall_ms}ms/#{@stall_every_ms}ms " <>
         "duration=#{duration_min}m offered≈#{book_rate * 2 + 20} msg/s"
     )

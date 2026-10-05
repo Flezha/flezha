@@ -134,7 +134,7 @@ defmodule Flezha.Observability.OtpBackendTest do
       :ok = GenServer.stop(pid)
     end
 
-    test "the exposition carries a bound-operator count per runner, zero included" do
+    test "the exposition carries a bound-relay count per runner, zero included" do
       ns = "bound_count_ns_#{System.unique_integer([:positive])}"
       [busy, idle] = ["bound_runner_busy", "bound_runner_idle"]
 
@@ -145,8 +145,8 @@ defmodule Flezha.Observability.OtpBackendTest do
       HubRegistryTestHelper.seed_runners(ns, [busy, idle], "bound_factory")
       on_exit(fn -> FleetStateHelper.forget_established(ns, ["bound_factory"]) end)
 
-      HubRegistryTestHelper.inject_operator(ns, "bound_op")
-      HubManager.operator_set_runner(ns, "bound_op", busy)
+      HubRegistryTestHelper.inject_relay(ns, "bound_op")
+      HubManager.relay_set_runner(ns, "bound_op", busy)
 
       arm(:processhub)
       start_supervised!(PrometheusRegistry)
@@ -159,7 +159,7 @@ defmodule Flezha.Observability.OtpBackendTest do
       counts =
         :processhub
         |> RingBufferSink.query(0)
-        |> Enum.filter(&(&1.name == :runner_bound_operators and &1.metadata.hub == hub))
+        |> Enum.filter(&(&1.name == :runner_bound_relays and &1.metadata.hub == hub))
         |> Map.new(&{&1.metadata.runner, &1.measurements.value})
 
       # A missing series and a zero are not the same answer to a user.
@@ -191,16 +191,16 @@ defmodule Flezha.Observability.OtpBackendTest do
     # Nothing here names a metric. The layout declares which slots reach this
     # source, so the test walks the DECLARATION and asserts each row arrived —
     # a slot that stops being emitted fails here without anyone remembering to
-    # write a test for it, which is the failure `report-parked-operator-
+    # write a test for it, which is the failure `report-parked-relay-
     # visibility` and `surface-the-runner-self-report` both landed as one-off
     # fixes.
     test "every metric the layout declares reaches a signal, under its declared measurement" do
       arm(:flezha_transport)
 
       runner = "obs_decl_#{System.unique_integer([:positive])}"
-      operator = "obs_decl_rel_#{System.unique_integer([:positive])}"
+      relay = "obs_decl_rel_#{System.unique_integer([:positive])}"
       channel_ref = LivenessCounters.register_channel(runner, :secondary_1)
-      operator_ref = LivenessCounters.register_operator(operator)
+      relay_ref = LivenessCounters.register_relay(relay)
 
       # A distinct value per slot, so a row reading another row's value is a
       # failure rather than a coincidence.
@@ -211,8 +211,8 @@ defmodule Flezha.Observability.OtpBackendTest do
 
       for {slot, value} <- values, do: LivenessCounters.set_channel(channel_ref, slot, value)
 
-      for slot <- LivenessCounters.operator_slots(),
-          do: LivenessCounters.bump_operator(operator_ref, slot)
+      for slot <- LivenessCounters.relay_slots(),
+          do: LivenessCounters.bump_relay(relay_ref, slot)
 
       {:ok, pid} = TransportSource.start_link([])
       poll(pid, 1)

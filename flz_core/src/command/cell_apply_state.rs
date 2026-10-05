@@ -11,8 +11,8 @@ impl CommandAction for CellApplyState {
         _message: &str,
         errors: &mut Vec<crate::Error>,
     ) -> Reply {
-        if !runner.has_operator(&self.operator_id) {
-            errors.push(super::cell_state::operator_not_found(&self.operator_id));
+        if !runner.has_relay(&self.relay_id) {
+            errors.push(super::cell_state::relay_not_found(&self.relay_id));
             return Reply {
                 payload_id: "cell_apply_state",
                 bytes: Vec::new(),

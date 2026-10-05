@@ -3,7 +3,7 @@ defmodule FlezhaTest.System.StateFreshnessE2ETest do
   End-to-end SIGTERM verification for `ship-fresh-state-on-sdk-shutdown`.
 
   Spins up a real runner subprocess for the run's selected runtime, registers
-  an operator (the controller takes no periodic snapshot, so the only path
+  a relay (the controller takes no periodic snapshot, so the only path
   to populate `Overwatch.state.snapshot` is the SDK's shutdown notification), then sends SIGTERM to the OS pid and asserts
   the controller's snapshot is populated within the 2 s ack window.
 
@@ -14,15 +14,15 @@ defmodule FlezhaTest.System.StateFreshnessE2ETest do
       mix test --include system test/system/state_freshness_e2e_test.exs
 
   The complementary unit-level coverage lives in
-  `test/operator/overwatch_external_snapshot_test.exs` and
+  `test/relay/overwatch_external_snapshot_test.exs` and
   `test/flezha/runner/control_channel_shutdown_notification_test.exs`.
   """
 
   use FlezhaTest.SystemCase, capability: :state_persistence
 
-  alias Flezha.Operator.Builder
+  alias Flezha.Relay.Builder
   alias Flezha.Runner.FleetManager
-  alias Flezha.Service.OperatorManager
+  alias Flezha.Service.RelayManager
   alias FlezhaTest.Helper.NodeTestHelper
 
   @namespace "state_freshness_e2e"
@@ -32,7 +32,7 @@ defmodule FlezhaTest.System.StateFreshnessE2ETest do
   setup do
     on_exit(fn ->
       try do
-        OperatorManager.stop_all_operators(@namespace)
+        RelayManager.stop_all_relays(@namespace)
       catch
         _, _ -> :ok
       end
@@ -53,10 +53,10 @@ defmodule FlezhaTest.System.StateFreshnessE2ETest do
 
     {:os_pid, os_pid} = :erlang.port_info(port, :os_pid)
 
-    operator_id = "freshness_e2e_#{System.unique_integer([:positive])}"
+    relay_id = "freshness_e2e_#{System.unique_integer([:positive])}"
 
     builder = %Builder{
-      id: operator_id,
+      id: relay_id,
       factory_id: @factory,
       # The only path for `state.snapshot` to become non-nil is the SDK's
       # `RunnerShutdownNotification`. If the notification path were broken,
@@ -64,16 +64,16 @@ defmodule FlezhaTest.System.StateFreshnessE2ETest do
       init_values: %{}
     }
 
-    assert {:ok, info} = OperatorManager.start_operator(@namespace, builder)
+    assert {:ok, info} = RelayManager.start_relay(@namespace, builder)
     assert info.runner_id == ce_id
 
-    {:ok, overwatch_pid} = OperatorManager.get_operator_pid(@namespace, operator_id)
+    {:ok, overwatch_pid} = RelayManager.get_relay_pid(@namespace, relay_id)
     pre_state = :sys.get_state(overwatch_pid)
 
     assert pre_state.snapshot == nil,
            "precondition: snapshot must be nil before SIGTERM"
 
-    # Drive a few inputs so the SDK's per-operator state has something
+    # Drive a few inputs so the SDK's per-relay state has something
     # distinguishable from the empty initial state. The `store_input`
     # factory appends each text input to `state.text_inputs`; the SDK's
     # graceful-shutdown serializer then ships JSON containing those
@@ -81,25 +81,25 @@ defmodule FlezhaTest.System.StateFreshnessE2ETest do
     # empty-initial-state JSON, which is true but uninteresting — it
     # would not catch a regression where the notification fires before
     # processing in-flight inputs.
-    inputs_sent = ["alpha-#{operator_id}", "beta-#{operator_id}", "gamma-#{operator_id}"]
+    inputs_sent = ["alpha-#{relay_id}", "beta-#{relay_id}", "gamma-#{relay_id}"]
 
     Enum.each(inputs_sent, fn line ->
-      OperatorManager.send_io(operator_id, @namespace, line, %{"input_type" => "2"})
+      RelayManager.send_io(relay_id, @namespace, line, %{"input_type" => "2"})
     end)
 
-    # Inputs travel via primary stream and the operator's `run` runs
+    # Inputs travel via primary stream and the relay's `run` runs
     # async in the SDK's worker pool: the live state read shows them applied
     # before SIGTERM is sent.
     assert NodeTestHelper.wait_until(
              fn ->
-               case OperatorManager.get_cell_state(@namespace, operator_id) do
+               case RelayManager.get_cell_state(@namespace, relay_id) do
                  {:ok, json} -> Enum.all?(inputs_sent, &String.contains?(json, &1))
                  _ -> false
                end
              end,
              15_000
            ),
-           "the inputs never reached the operator's state"
+           "the inputs never reached the relay's state"
 
     {_, 0} =
       System.cmd("kill", ["-TERM", Integer.to_string(os_pid)], stderr_to_stdout: true)
@@ -116,8 +116,8 @@ defmodule FlezhaTest.System.StateFreshnessE2ETest do
     # initial state) would fail one of these.
     decoded = Jason.decode!(snapshot)
     assert is_map(decoded)
-    # Operator state serializes as `%{tasklet_name => tasklet_state}`;
-    # this single-tasklet operator has exactly one entry.
+    # Relay state serializes as `%{tasklet_name => tasklet_state}`;
+    # this single-tasklet relay has exactly one entry.
     assert map_size(decoded) == 1
     inner = decoded |> Map.values() |> hd()
     assert Map.has_key?(inner, "text_inputs")
@@ -127,8 +127,8 @@ defmodule FlezhaTest.System.StateFreshnessE2ETest do
     assert is_list(received_inputs)
 
     # The snapshot SHALL reflect the state at SIGTERM time — i.e. the
-    # inputs we sent must be present (in some order; operator input
-    # ordering is sticky per operator, so they appear in send order).
+    # inputs we sent must be present (in some order; relay input
+    # ordering is sticky per relay, so they appear in send order).
     assert Enum.sort(received_inputs) == Enum.sort(inputs_sent),
            "graceful-shutdown snapshot did not include all sent inputs.\n" <>
              "  sent:     #{inspect(inputs_sent)}\n" <>

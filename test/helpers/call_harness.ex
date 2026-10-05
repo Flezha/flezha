@@ -1,6 +1,6 @@
 defmodule FlezhaTest.Helper.CallHarness do
   @moduledoc """
-  What the operator-call Overwatch tests share: every hand-off to the call
+  What the relay-call Overwatch tests share: every hand-off to the call
   delivery, every Response channel input and every outbox report reaches the
   test process, and a call end's output as the runner stamps it.
   """

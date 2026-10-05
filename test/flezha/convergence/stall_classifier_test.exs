@@ -318,17 +318,17 @@ defmodule Flezha.Convergence.StallClassifierTest do
     assert StallClassifier.classify(curr, prev) == :ok
   end
 
-  test "operator_not_forwarding: operator fed but forwarded flat (not all filtered)" do
-    prev = snapshot(operators: [operator(io_in_received: 10, forwarded: 10, filtered_nil: 0)])
-    curr = snapshot(operators: [operator(io_in_received: 30, forwarded: 10, filtered_nil: 2)])
+  test "relay_not_forwarding: relay fed but forwarded flat (not all filtered)" do
+    prev = snapshot(relays: [relay(io_in_received: 10, forwarded: 10, filtered_nil: 0)])
+    curr = snapshot(relays: [relay(io_in_received: 30, forwarded: 10, filtered_nil: 2)])
 
-    assert {:operator_not_forwarding, ctx} = StallClassifier.classify(curr, prev)
-    assert ctx.operator_id == "operator-1"
+    assert {:relay_not_forwarding, ctx} = StallClassifier.classify(curr, prev)
+    assert ctx.relay_id == "relay-1"
   end
 
-  test "operator_not_forwarding does NOT fire when on_input filters everything" do
-    prev = snapshot(operators: [operator(io_in_received: 10, forwarded: 0, filtered_nil: 10)])
-    curr = snapshot(operators: [operator(io_in_received: 30, forwarded: 0, filtered_nil: 30)])
+  test "relay_not_forwarding does NOT fire when on_input filters everything" do
+    prev = snapshot(relays: [relay(io_in_received: 10, forwarded: 0, filtered_nil: 10)])
+    curr = snapshot(relays: [relay(io_in_received: 30, forwarded: 0, filtered_nil: 30)])
 
     assert StallClassifier.classify(curr, prev) == :ok
   end
@@ -359,7 +359,7 @@ defmodule Flezha.Convergence.StallClassifierTest do
       runner_not_consuming: :runner,
       runner_pool_wedged: :runner,
       channel_not_sending: :connection,
-      operator_not_forwarding: :operator
+      relay_not_forwarding: :relay
     }
 
     for {layer, scope} <- scopes do
@@ -410,7 +410,7 @@ defmodule Flezha.Convergence.StallClassifierTest do
       # The reported age rides the verdict so a false positive — a genuinely
       # long Tasklet — is diagnosable from the log line alone.
       assert ctx.oldest_ms == 600_000
-      assert StallClassifier.layer_scope(:cell_dispatch_stalled) == :operator
+      assert StallClassifier.layer_scope(:cell_dispatch_stalled) == :relay
     end
 
     test "does NOT fire below the threshold, nor with nothing outstanding" do
@@ -502,7 +502,7 @@ defmodule Flezha.Convergence.StallClassifierTest do
     %{
       drivers: Keyword.get(opts, :drivers, []),
       channels: Keyword.get(opts, :channels, []),
-      operators: Keyword.get(opts, :operators, [])
+      relays: Keyword.get(opts, :relays, [])
     }
   end
 
@@ -563,9 +563,9 @@ defmodule Flezha.Convergence.StallClassifierTest do
     snapshot(channels: [channel([name: :scp] ++ sent), channel([name: :scs] ++ beat)])
   end
 
-  defp operator(opts) do
+  defp relay(opts) do
     %{
-      operator_id: Keyword.get(opts, :operator_id, "operator-1"),
+      relay_id: Keyword.get(opts, :relay_id, "relay-1"),
       io_in_received: Keyword.get(opts, :io_in_received, 0),
       forwarded: Keyword.get(opts, :forwarded, 0),
       filtered_nil: Keyword.get(opts, :filtered_nil, 0)
@@ -579,7 +579,7 @@ defmodule Flezha.Convergence.StallClassifierTest do
     defp marker(overrides) do
       Map.merge(
         %{
-          operator_id: "btc",
+          relay_id: "btc",
           cell: {"task", "k1"},
           last_change_seen_at: @now,
           last_advance_at: @now
@@ -588,7 +588,7 @@ defmodule Flezha.Convergence.StallClassifierTest do
       )
     end
 
-    test "idle operator (no input, flat markers) classifies IDLE" do
+    test "idle relay (no input, flat markers) classifies IDLE" do
       m =
         marker(
           last_change_seen_at: @now - 2 * @grace,
@@ -677,7 +677,7 @@ defmodule Flezha.Convergence.StallClassifierTest do
 
       idle_other =
         marker(
-          operator_id: "eth",
+          relay_id: "eth",
           last_change_seen_at: @now - 2 * @grace,
           last_advance_at: @now - 2 * @grace
         )

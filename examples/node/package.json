@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "A worked Flezha Node operator: state, keying, a timer and an emit",
+  "description": "A worked Flezha Node relay: state, keying, a timer and an emit",
   "scripts": {
     "start": "node run.mjs",
     "start:workers": "FLEZHA_NODE_WORKERS=4 node run.mjs",

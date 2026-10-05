@@ -5,7 +5,7 @@ defmodule Flezha.AuthZ.QuotaCounters do
 
   Counters tracked:
 
-    * `:operators`           — count of active Operators
+    * `:relays`           — count of active Relays
     * `:cells`       — count of active Cells
     * `:mailbox_bytes`    — total allocated mailbox bytes
     * `:runners`        — count of connected SDK Runners
@@ -30,7 +30,7 @@ defmodule Flezha.AuthZ.QuotaCounters do
   @cache :flz_authz_quota_counters_cache
   @filename "quota_counters.dets"
 
-  @kinds [:operators, :cells, :mailbox_bytes, :runners, :disk_bytes]
+  @kinds [:relays, :cells, :mailbox_bytes, :runners, :disk_bytes]
 
   ## ----- Public API -----
 

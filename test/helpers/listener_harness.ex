@@ -1,27 +1,27 @@
 defmodule FlezhaTest.Helper.ListenerHarness do
   @moduledoc """
   What the listener and part system tests read and attach: the listener rows
-  an operator carries, and a file sink beside a listener with the lines it
+  a relay carries, and a file sink beside a listener with the lines it
   wrote.
   """
 
   alias Flezha.Plugin
-  alias Flezha.Service.{HubManager, OperatorManager}
+  alias Flezha.Service.{HubManager, RelayManager}
 
   @doc """
   The listener plugins on `id`: on its live extension table and in its
-  registry row, so a row left behind is found wherever the operator runs.
+  registry row, so a row left behind is found wherever the relay runs.
   """
   @spec listeners(String.t(), String.t()) :: [String.t()]
   def listeners(ns, id) do
     live =
-      case OperatorManager.get_overwatch_state(ns, id) do
+      case RelayManager.get_overwatch_state(ns, id) do
         {:ok, %{extensions: table}} -> Map.keys(table.entries)
         _ -> []
       end
 
     declared =
-      case HubManager.operator_bindings(ns, id) do
+      case HubManager.relay_bindings(ns, id) do
         {:ok, plugins} -> Enum.map(plugins, &elem(&1, 0))
         _ -> []
       end
@@ -36,7 +36,7 @@ defmodule FlezhaTest.Helper.ListenerHarness do
       id: id,
       provider: Flezha.Plugin.Provider.File.Sink,
       namespace: nil,
-      operator_id: nil,
+      relay_id: nil,
       opts: %{path: path},
       hooks: [{:on_output, []}]
     }

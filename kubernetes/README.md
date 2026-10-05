@@ -87,7 +87,7 @@ workload:
 | cpu | `250m` | `2` |
 | memory | `512Mi` | `2Gi` |
 
-The BEAM's steady-state footprint scales with the number of bound operators and the
+The BEAM's steady-state footprint scales with the number of bound relays and the
 per-Cell WAL write rate. Symptoms of limits set too low:
 
 - **Memory too low** → the container is `OOMKilled` (`kubectl describe pod` shows
@@ -114,7 +114,7 @@ are different questions, so the DaemonSet's probes read different endpoints:
 
 `/healthz` answers "should the kubelet restart me?" and returns `503` **only** on a real
 wedge. A planned recovery reports `recovering` with a `200` precisely so the kubelet does
-not restart the pod mid-replay, and an operator that cannot bind because its runner is
+not restart the pod mid-replay, and a relay that cannot bind because its runner is
 gone reports `degraded` with a `200` — restarting the controller would not re-bind it. Do
 not "fix" a `degraded` controller by tightening the liveness probe.
 
@@ -186,8 +186,8 @@ The DaemonSet mounts a node-local volume at `/var/lib/flezha`, which is where
 It carries **everything the controller must not lose**:
 
 - ProcessHub's persistent registry (`FLEZHA_PROCESS_HUB_REGISTRY_ROOT`) — the recovery
-  DETS files, i.e. operator child specs and recoverable plugin bindings.
-- Per-Cell WAL + snapshot files (`FLEZHA_STATE_DIR`) — operator state.
+  DETS files, i.e. relay child specs and recoverable plugin bindings.
+- Per-Cell WAL + snapshot files (`FLEZHA_STATE_DIR`) — relay state.
 - The dead-letter queue store (`FLEZHA_DLQ_DIR`).
 - Installed plugin packages (`FLEZHA_PLUGIN_ROOT`), see "Plugins" below.
 

@@ -59,7 +59,7 @@ impl Verb {
         }
     }
 
-    /// A verb that is itself a table: `flz operator` before `stop`.
+    /// A verb that is itself a table: `flz relay` before `stop`.
     pub(crate) const fn table(name: &'static str, table: &'static Command) -> Self {
         Verb {
             name,
@@ -86,7 +86,7 @@ impl Verb {
     /// Refuse a word this row does not declare: an option it does not read, or
     /// a plain word no positional takes. Six verbs do: two block the caller
     /// for as long as their options say, one deletes state, two start
-    /// operators, which a misspelled option would start without the setting
+    /// relays, which a misspelled option would start without the setting
     /// it meant, and `flz mcp`, which a program starts and nobody watches.
     pub(crate) const fn strict(mut self) -> Self {
         self.strict = true;
@@ -116,7 +116,7 @@ impl Verb {
 }
 
 pub(crate) struct Command {
-    /// What a usage line calls this command — `flz operator`.
+    /// What a usage line calls this command — `flz relay`.
     pub(crate) path: &'static str,
     /// The screen `help` prints, and the one a bare invocation falls back to.
     pub(crate) help: Help,

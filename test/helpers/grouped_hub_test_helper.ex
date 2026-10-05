@@ -42,7 +42,7 @@ defmodule FlezhaTest.Helper.GroupedHubTestHelper do
   it outlives the call that asked for it.
 
   Its id is deliberately off the `<namespace>_hub` convention, so every
-  operator-oriented walker in the controller ignores it.
+  relay-oriented walker in the controller ignores it.
   """
   @spec start_hub(atom(), keyword()) :: {:ok, pid()} | {:error, term()}
   def start_hub(hub_id, opts \\ []) do

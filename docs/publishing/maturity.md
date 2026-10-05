@@ -12,7 +12,7 @@ list exists in code or prose.
 
 **Anything this record does not name is stable.** A stable feature is covered by the
 compatibility promise: changing it in a way that breaks someone who depends on it is a
-compatibility break, announced as one. The operator model, effectively-once delivery, the
+compatibility break, announced as one. The relay model, effectively-once delivery, the
 correction window, the dead-letter queue, cell timers, state persistence and schema
 evolution are all unnamed here, and therefore stable.
 
@@ -81,7 +81,7 @@ their pages under `docs/sdk/` and nowhere else.
 
 | sdk | tier | promise | surfaces |
 |---|---|---|---|
-| <a id="sdk-rust"></a>rust | 1 | Run by the maintainer in a live deployment. Passes the full conformance run in CI and is permanently supported. | `sdk/rust/README.md`, `docs/sdk/rust_operator_architecture.md` |
+| <a id="sdk-rust"></a>rust | 1 | Run by the maintainer in a live deployment. Passes the full conformance run in CI and is permanently supported. | `sdk/rust/README.md`, `docs/sdk/rust_relay_architecture.md` |
 | <a id="sdk-java"></a>java | 1 | Run by the maintainer in a live deployment. Passes the full conformance run in CI and is permanently supported. | `sdk/java/README.md`, `docs/sdk/java_sdk.md` |
 | <a id="sdk-elixir"></a>elixir | 1 | Run by the maintainer in a live deployment. Passes the full conformance run in CI and is permanently supported. | `sdk/elixir/README.md`, `docs/sdk/elixir_sdk.md` |
 | <a id="sdk-node"></a>node | 2 | Passes the full conformance run in CI exactly as tier 1 does, with every capability present, and is permanently supported. Not yet run by the maintainer in a live deployment. | `sdk/node/README.md`, `docs/sdk/node_sdk.md` |

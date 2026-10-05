@@ -7,9 +7,9 @@ defmodule Flezha.State.DurabilityTier.Artifact do
   **Seq-addressed** references are read as a range of WAL records —
   `{:cell, cell_id}` (a Cell's WAL and snapshots; a steps instance's
   task-journal is this shape too, under `Paths`'s reserved cell key) and
-  `{:input_log, operator_class}`. **Whole-payload** ones are the
+  `{:input_log, relay_class}`. **Whole-payload** ones are the
   files they name, packed by `pack/1`: `{:cspec, {hub_id, writer}}`, `{:dlq,
-  {operator_class, tasklet_id}}` and `{:control, {store, writer}}`, each
+  {relay_class, tasklet_id}}` and `{:control, {store, writer}}`, each
   keyed by its writer or claim-fenced because their replicas are per-node.
 
   Record bundles are read at ship time and re-framed, never copied as file byte
@@ -48,7 +48,7 @@ defmodule Flezha.State.DurabilityTier.Artifact do
   @doc "Local WAL path of `ref`, or `nil` for a whole-file reference."
   @spec wal_path(ref()) :: binary() | nil
   def wal_path({:cell, cell_id}), do: Paths.wal_path(cell_id)
-  def wal_path({:input_log, operator_class}), do: Paths.input_log_path(operator_class)
+  def wal_path({:input_log, relay_class}), do: Paths.input_log_path(relay_class)
   def wal_path(_ref), do: nil
 
   @doc """
@@ -69,8 +69,8 @@ defmodule Flezha.State.DurabilityTier.Artifact do
   def payload_files({:cspec, {hub_id, _writer}}),
     do: present(Layout.file(:process_hub, hub_id), [Layout.hub_registry_file()])
 
-  def payload_files({:dlq, {operator_class, tasklet_id}}) do
-    root = Dlq.Store.task_dir(operator_class, tasklet_id)
+  def payload_files({:dlq, {relay_class, tasklet_id}}) do
+    root = Dlq.Store.task_dir(relay_class, tasklet_id)
 
     case File.ls(root) do
       {:ok, names} -> present(root, names)
@@ -113,21 +113,21 @@ defmodule Flezha.State.DurabilityTier.Artifact do
   end
 
   @doc """
-  Every parked-failure set of `operator_class` with a directory on this node.
+  Every parked-failure set of `relay_class` with a directory on this node.
 
   Deliberately not filtered by `has_local_state?/1`: an emptied set has to stay
   in the sweep so its remote entry stops naming a blob whose entries the user
   has since resolved.
   """
   @spec dlq_refs(binary()) :: [ref()]
-  def dlq_refs(operator_class) when is_binary(operator_class),
-    do: operator_class |> Dlq.Store.tasklets() |> Enum.map(&{:dlq, &1})
+  def dlq_refs(relay_class) when is_binary(relay_class),
+    do: relay_class |> Dlq.Store.tasklets() |> Enum.map(&{:dlq, &1})
 
   @doc """
-  Every operator class with parked failures on this node.
+  Every relay class with parked failures on this node.
 
   Unioned with the classes that have Cell state, because the two sets differ:
-  a stopped operator keeps its parked failures, and losing them on a disk death
+  a stopped relay keeps its parked failures, and losing them on a disk death
   is exactly what shipping them prevents.
   """
   @spec dlq_classes() :: [binary()]
@@ -151,7 +151,7 @@ defmodule Flezha.State.DurabilityTier.Artifact do
 
   @doc """
   The on-disk state key `ref` lives under — the directory name that
-  `DurabilityTier.refs_of_state_key/1` enumerates from, and the unit an operator is
+  `DurabilityTier.refs_of_state_key/1` enumerates from, and the unit a relay is
   adopted as.
   """
   @spec state_key(ref()) :: binary()
@@ -231,16 +231,16 @@ defmodule Flezha.State.DurabilityTier.Artifact do
     RuntimeError -> :unreadable
   end
 
-  @doc "`freshness/1` of every durable reference `operator_class` holds on this node."
+  @doc "`freshness/1` of every durable reference `relay_class` holds on this node."
   @spec freshness_of(binary()) :: %{ref() => term()}
-  def freshness_of(operator_class),
-    do: Map.new(Paths.durable_refs(operator_class), &{&1, freshness(&1)})
+  def freshness_of(relay_class),
+    do: Map.new(Paths.durable_refs(relay_class), &{&1, freshness(&1)})
 
   @doc """
-  Whether one operator's copy marked `theirs` replaces the local copy marked
+  Whether one relay's copy marked `theirs` replaces the local copy marked
   `ours` (both `%{ref => marker}`): each of its markers can be read, it shares
   a lineage with ours unless ours is empty, and on every shared reference it is
-  at least as new. A tie goes to it: it is the copy the operator's current
+  at least as new. A tie goes to it: it is the copy the relay's current
   owner wrote, and two histories of equal length differ only in who wrote them.
   A reference only ours holds does not count against it: the adoption keeps
   it (`Flezha.State.Adoption`).

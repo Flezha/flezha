@@ -543,7 +543,7 @@ pub unsafe extern "C" fn flz_core_abandon(ctx: *mut FlzContext, token: u64) -> i
     }
 }
 
-/// Ship every live operator's state as a `RunnerShutdownNotification`, then
+/// Ship every live relay's state as a `RunnerShutdownNotification`, then
 /// wake every blocked poller with [`FLZ_POLL_SHUTTING_DOWN`] and stop the
 /// runner loop. Unpolled work follows the existing durability rules (it is
 /// journaled controller-side and re-forwarded on the next bind).
@@ -717,8 +717,8 @@ pub unsafe extern "C" fn flz_core_part(
 /// `delivered`, `skipped_on_replay`; free it with [`flz_core_buf_free`].
 /// [`FLZ_SPAWN_PENDING`]: no answer yet, `out` untouched. [`FLZ_ERR`]: `out`
 /// untouched and [`flz_core_last_error`] holds the failure, whose code is the
-/// controller's (`operator.already_running`, `operator.factory_unknown`,
-/// `operator.factory_not_steps`, or any other refusal's own), the core's
+/// controller's (`relay.already_running`, `relay.factory_unknown`,
+/// `relay.factory_not_steps`, or any other refusal's own), the core's
 /// (`spawn.timeout`, `spawn.unavailable`), or `runtime.spawn_handle_released`
 /// for a handle whose activation was completed or abandoned. A resolved handle
 /// answers every later read the same.
@@ -765,7 +765,7 @@ pub unsafe extern "C" fn flz_core_spawn_result(
 
 /// Administer the namespace this runner's connection proved: one entry for the
 /// whole surface, because the verb is data. `verb` names a function of the
-/// controller's published consumer surface (`"Operator.start"`) and `args` is
+/// controller's published consumer surface (`"Relay.start"`) and `args` is
 /// a JSON array of that call's arguments other than the namespace, which the
 /// controller fills from the connection. The published function's own answer
 /// comes back as JSON in `result_out`/`result_len_out` (free with
@@ -802,10 +802,10 @@ pub unsafe extern "C" fn flz_core_admin_call(
     }
 }
 
-/// Send `message` to the entry channel `channel` of `operator`, as
+/// Send `message` to the entry channel `channel` of `relay`, as
 /// [`flz_core::admin::send`] does: through the controller, answering its
 /// verdict as JSON in `result_out`/`result_len_out` (free with
-/// [`flz_core_buf_free`]), or with `local` nonzero in process to an operator
+/// [`flz_core_buf_free`]), or with `local` nonzero in process to a relay
 /// bound on this runner, answering `null`. An empty `msg_id` or `key` is none.
 /// Blocks for the controller's answer, or while a local consumer's mailbox is
 /// full.
@@ -816,7 +816,7 @@ pub unsafe extern "C" fn flz_core_admin_call(
 #[no_mangle]
 pub unsafe extern "C" fn flz_core_send_message(
     ctx: *mut FlzContext,
-    operator: *const c_char,
+    relay: *const c_char,
     channel: *const c_char,
     message: *const u8,
     len: usize,
@@ -829,8 +829,8 @@ pub unsafe extern "C" fn flz_core_send_message(
     let Some(ctx) = ctx.as_ref() else {
         return FLZ_ERR;
     };
-    let (Ok(operator), Ok(channel), Ok(msg_id), Ok(key)) = (
-        CStr::from_ptr(operator).to_str(),
+    let (Ok(relay), Ok(channel), Ok(msg_id), Ok(key)) = (
+        CStr::from_ptr(relay).to_str(),
         CStr::from_ptr(channel).to_str(),
         CStr::from_ptr(msg_id).to_str(),
         CStr::from_ptr(key).to_str(),
@@ -846,7 +846,7 @@ pub unsafe extern "C" fn flz_core_send_message(
         (!msg_id.is_empty()).then_some(msg_id),
         (!key.is_empty()).then_some(key),
     );
-    match flz_core::admin::send(operator, message, channel, msg_id, key, local != 0) {
+    match flz_core::admin::send(relay, message, channel, msg_id, key, local != 0) {
         Ok(answer) => {
             hand_out(answer.into_bytes(), result_out, result_len_out);
             FLZ_OK
@@ -855,14 +855,14 @@ pub unsafe extern "C" fn flz_core_send_message(
     }
 }
 
-/// The ids of the operator instances bound on this process's runner, as a
+/// The ids of the relay instances bound on this process's runner, as a
 /// JSON array of strings in `buf_out`/`len_out` (free with
 /// [`flz_core_buf_free`]). Never contacts the controller.
 ///
 /// # Safety
 /// `ctx` must be live; `buf_out`/`len_out` must be writable.
 #[no_mangle]
-pub unsafe extern "C" fn flz_core_operators(
+pub unsafe extern "C" fn flz_core_relays(
     ctx: *mut FlzContext,
     buf_out: *mut *mut u8,
     len_out: *mut usize,
@@ -975,10 +975,7 @@ mod tests {
             .iter()
             .filter_map(|issue| issue["code"].as_str())
             .collect();
-        assert_eq!(
-            codes,
-            ["topology.no_tasklets", "topology.unknown_field"]
-        );
+        assert_eq!(codes, ["topology.no_tasklets", "topology.unknown_field"]);
         assert_eq!(error.code, codes[0], "the first issue names the refusal");
         unsafe { flz_core_context_free(ctx) };
     }

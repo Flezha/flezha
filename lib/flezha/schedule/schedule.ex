@@ -1,6 +1,6 @@
 defmodule Flezha.Service.Schedule do
   @moduledoc """
-  Published service-API surface for scheduled operator starts: the stored
+  Published service-API surface for scheduled relay starts: the stored
   entries, the hub's view of them, and the cron arithmetic a caller needs to
   show a user when a schedule fires next.
 
@@ -118,8 +118,8 @@ defmodule Flezha.Service.Schedule do
     entry = located.entry
 
     case Job.spawn_instance(entry, "#{entry.name}@manual-#{System.system_time(:second)}") do
-      {:ok, %{operator_id: id}} -> {:ok, %{operator_id: id, outcome: :spawned}}
-      :duplicate -> {:ok, %{operator_id: nil, outcome: :already_running}}
+      {:ok, %{relay_id: id}} -> {:ok, %{relay_id: id, outcome: :spawned}}
+      :duplicate -> {:ok, %{relay_id: nil, outcome: :already_running}}
       {:error, _reason} = refused -> refused
     end
   end

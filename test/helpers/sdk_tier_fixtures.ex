@@ -47,7 +47,7 @@ defmodule FlezhaTest.Helper.SdkTierFixtures do
 
   defmodule TierStoreOp do
     @moduledoc false
-    @behaviour Flezha.SDK.Operator
+    @behaviour Flezha.SDK.Relay
     def factory_id, do: "tier_store"
     def run, do: {:flow, exactly: :effectively_once}
 
@@ -65,7 +65,7 @@ defmodule FlezhaTest.Helper.SdkTierFixtures do
 
   defmodule CheckpointBatchedOp do
     @moduledoc false
-    @behaviour Flezha.SDK.Operator
+    @behaviour Flezha.SDK.Relay
     def factory_id, do: "checkpoint_batched_store"
 
     def run,
@@ -86,7 +86,7 @@ defmodule FlezhaTest.Helper.SdkTierFixtures do
 
   defmodule CheckpointStoreOp do
     @moduledoc false
-    @behaviour Flezha.SDK.Operator
+    @behaviour Flezha.SDK.Relay
     def factory_id, do: "checkpoint_store"
     def run, do: {:flow, exactly: {:effectively_once, ack: :checkpoint}}
 
@@ -102,7 +102,7 @@ defmodule FlezhaTest.Helper.SdkTierFixtures do
 
   defmodule CheckpointEveryOp do
     @moduledoc false
-    @behaviour Flezha.SDK.Operator
+    @behaviour Flezha.SDK.Relay
     def factory_id, do: "checkpoint_every"
     def run, do: {:flow, exactly: {:effectively_once, ack: {:checkpoint, every: 3}}}
 
@@ -118,7 +118,7 @@ defmodule FlezhaTest.Helper.SdkTierFixtures do
 
   defmodule CheckpointHeldOp do
     @moduledoc false
-    @behaviour Flezha.SDK.Operator
+    @behaviour Flezha.SDK.Relay
     def factory_id, do: "checkpoint_held"
 
     def run,
@@ -167,7 +167,7 @@ defmodule FlezhaTest.Helper.SdkTierFixtures do
 
   defmodule TierTimerOp do
     @moduledoc false
-    @behaviour Flezha.SDK.Operator
+    @behaviour Flezha.SDK.Relay
     def factory_id, do: "tier_timer_op"
     def run, do: {:flow, exactly: :effectively_once}
 
@@ -224,7 +224,7 @@ defmodule FlezhaTest.Helper.SdkTierFixtures do
 
   defmodule TierEdgeOp do
     @moduledoc false
-    @behaviour Flezha.SDK.Operator
+    @behaviour Flezha.SDK.Relay
     def factory_id, do: "tier_edge"
     def run, do: {:flow, exactly: :effectively_once}
 
@@ -254,7 +254,7 @@ defmodule FlezhaTest.Helper.SdkTierFixtures do
 
   defmodule StatelessTierOp do
     @moduledoc false
-    @behaviour Flezha.SDK.Operator
+    @behaviour Flezha.SDK.Relay
     def factory_id, do: "stateless_tier"
     def run, do: {:flow, exactly: :effectively_once}
 
@@ -299,7 +299,7 @@ defmodule FlezhaTest.Helper.SdkTierFixtures do
 
   defmodule CorrectionOp do
     @moduledoc false
-    @behaviour Flezha.SDK.Operator
+    @behaviour Flezha.SDK.Relay
     def factory_id, do: "correction_probe"
     def run, do: {:flow, exactly: {:effectively_once, correction_ms: 600_000}}
 
@@ -315,7 +315,7 @@ defmodule FlezhaTest.Helper.SdkTierFixtures do
 
   defmodule CorrectionDropOp do
     @moduledoc false
-    @behaviour Flezha.SDK.Operator
+    @behaviour Flezha.SDK.Relay
     def factory_id, do: "correction_probe_drop"
 
     def run,

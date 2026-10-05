@@ -1,19 +1,19 @@
 # Working with Flezha
 
-Flezha runs operators: small graphs of tasklets, written with one of seven SDKs
+Flezha runs relays: small graphs of tasklets, written with one of seven SDKs
 (Elixir, Java, Node, PHP, Python, Ruby, Rust) and served by a runner process
 that connects to a controller. These rules hold for every task.
 
 1. Before writing SDK code, call `flezha_sdk_example` for the project's
    language and follow the form it shows. The SDK forms have changed between
    releases; never write one from memory or from an older project.
-2. Try an operator in local mode before starting a controller: it runs the
-   operator's graph in your own process, with no controller and no socket.
+2. Try a relay in local mode before starting a controller: it runs the
+   relay's graph in your own process, with no controller and no socket.
    The `local_mode.md` page shows how.
 3. Every Flezha failure carries a `code` and a `hint`. Read both and follow the
    hint before retrying. Call `flezha_error` for a code you do not know. When
    you use the shell, run `flz` with `--json`.
-4. When the operation tools are connected (`operator_list`, `operator_start`,
+4. When the operation tools are connected (`relay_list`, `relay_start`,
    `dlq_list` and the rest), use them rather than the shell. A call answered
    `controller.unreachable` means no controller runs yet: its hint names the
    command that starts one.

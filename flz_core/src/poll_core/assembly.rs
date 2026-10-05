@@ -39,7 +39,7 @@ pub(super) fn event_time_due_pending(slot: &Arc<CellSlot>) -> bool {
 /// One batch: the re-handed head of line, then what an earlier round left,
 /// then the mailbox.
 pub(super) fn assemble_batch(slot: &Arc<CellSlot>) -> Vec<ItemAttempt> {
-    // A flow operator's Cell pays one field read here; only a steps operator Cell looks further.
+    // A flow relay's Cell pays one field read here; only a steps relay Cell looks further.
     if slot.topology.steps.is_some() && crate::steps::pass_dead(slot) {
         consume_dead_pass(slot);
         return Vec::new();
@@ -97,7 +97,7 @@ pub(super) fn assemble_batch(slot: &Arc<CellSlot>) -> Vec<ItemAttempt> {
     items
 }
 
-/// A steps operator Cell's firings run only where its pass sheet admits them; the
+/// A steps relay Cell's firings run only where its pass sheet admits them; the
 /// rest wait on the sheet for their pass.
 fn keep_admitted_firings(slot: &Arc<CellSlot>, items: &mut Vec<ItemAttempt>, from: usize) {
     let generated = items.split_off(from);
@@ -107,7 +107,7 @@ fn keep_admitted_firings(slot: &Arc<CellSlot>, items: &mut Vec<ItemAttempt>, fro
     }));
 }
 
-/// A failed or cancelled steps operator pass: what its Cell still has queued would
+/// A failed or cancelled steps relay pass: what its Cell still has queued would
 /// only be undone, so it is consumed unrun and the stage owes it no longer.
 fn consume_dead_pass(slot: &Arc<CellSlot>) {
     let mut dropped = slot.pending_retry.lock_recover().drain(..).count()
@@ -326,7 +326,7 @@ fn stage_input(
     }
     // Event-time timers fire on the high-water this input just advanced,
     // ascending, and BEFORE the input itself — otherwise a window would
-    // close after the record that belongs to the next one. In a steps operator
+    // close after the record that belongs to the next one. In a steps relay
     // they join the stage that delivered the input.
     let from = items.len();
     push_due_event_timers(slot, &payload.stream, items, fired, policy);
@@ -373,8 +373,8 @@ fn admit_and_track(slot: &Arc<CellSlot>, event_time: u64, replayed: bool) -> boo
         // arrival: a very old event must not drag the window backward and
         // make the inputs after it look late.
         Lateness::BeyondWindow => match policy.beyond_window {
-            crate::operator::topology::BeyondWindowPolicy::ProcessAsArrival => true,
-            crate::operator::topology::BeyondWindowPolicy::Drop => false,
+            crate::relay::topology::BeyondWindowPolicy::ProcessAsArrival => true,
+            crate::relay::topology::BeyondWindowPolicy::Drop => false,
         },
     }
 }

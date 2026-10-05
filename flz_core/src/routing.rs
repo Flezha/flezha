@@ -1,5 +1,5 @@
-//! The routing kernel: a frame off the wire into the operator it names
-//! ([`OperatorDispatchHandle::dispatch`]), a channel value to every consumer
+//! The routing kernel: a frame off the wire into the relay it names
+//! ([`RelayDispatchHandle::dispatch`]), a channel value to every consumer
 //! edge's Cell (`route_to_consumers`), and the end-of-slice broadcast. Live
 //! delivery and the controller's replay slice both travel these seams, and a
 //! `ConsumerEdge`'s closures become mailbox pushes in exactly one place
@@ -18,16 +18,16 @@ use crate::admission::{admit_from_cell, admit_from_reader, nonparking_enabled};
 use crate::cell::{make_cell_payload, CellItem, CellSlot};
 use crate::channel::{ChannelDescriptor, ChannelId, ChannelKind, ConsumerEdge};
 use crate::error::{Code, Error};
-use crate::operator::instance::OperatorInstance;
-use crate::operator::registry::OperatorRegistry;
-use crate::operator::topology::{CellMode, ChannelLookup, OperatorTopology, TaskletDescriptor};
+use crate::relay::instance::RelayInstance;
+use crate::relay::registry::RelayRegistry;
+use crate::relay::topology::{CellMode, ChannelLookup, RelayTopology, TaskletDescriptor};
 use crate::retry::{spawn_edge_ladder, spawn_entry_parse_ladder, EntryDeliver, EntryParseLadder};
 
 /// What the entrance reads off an instance of either kind: the topology the
 /// channel name resolves against, the id a park is filed under and the
 /// count of ladders holding a payload off-thread for it.
 pub trait EntryView: Send + Sync + 'static {
-    fn topology(&self) -> &Arc<OperatorTopology>;
+    fn topology(&self) -> &Arc<RelayTopology>;
     fn instance_id(&self) -> &Arc<str>;
     fn ladders(&self) -> &AtomicUsize;
 
@@ -36,8 +36,8 @@ pub trait EntryView: Send + Sync + 'static {
     fn entry_parked(&self, _offset: Option<u64>) {}
 }
 
-impl EntryView for OperatorInstance {
-    fn topology(&self) -> &Arc<OperatorTopology> {
+impl EntryView for RelayInstance {
+    fn topology(&self) -> &Arc<RelayTopology> {
         &self.topology
     }
 
@@ -49,7 +49,7 @@ impl EntryView for OperatorInstance {
         &self.ladders
     }
 
-    /// A steps operator counts the message consumed without a pass, so its park
+    /// A steps relay counts the message consumed without a pass, so its park
     /// record releases it from the input log.
     fn entry_parked(&self, offset: Option<u64>) {
         crate::steps::entry_parked(self, offset);
@@ -59,11 +59,11 @@ impl EntryView for OperatorInstance {
 /// Route one channel value to every consumer through its own edge — the one
 /// seam live delivery, the replay slice and an inter-tasklet emit share. A
 /// closure that unwinds sends the value up the channel's ladder; the other
-/// consumers are still served. A steps operator's value is not admitted here: a
+/// consumers are still served. A steps relay's value is not admitted here: a
 /// message starts or queues a pass, a stage's output is held for its commit.
 #[allow(clippy::too_many_arguments)]
 pub fn route_to_consumers(
-    instance: &Arc<OperatorInstance>,
+    instance: &Arc<RelayInstance>,
     channel: &ChannelDescriptor,
     value: &Arc<dyn Any + Send + Sync>,
     stream: &Arc<FlezhaStream>,
@@ -77,9 +77,7 @@ pub fn route_to_consumers(
             Some(producer) => {
                 crate::steps::hold_emit(instance, Some(channel), value, stream, producer)
             }
-            None => {
-                crate::steps::message(instance, channel, value, stream, consumed_offset, call)
-            }
+            None => crate::steps::message(instance, channel, value, stream, consumed_offset, call),
         }
         return false;
     }
@@ -129,7 +127,7 @@ pub(crate) enum Destination<'a> {
 /// re-attempt alike.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn deliver_edge(
-    instance: &OperatorInstance,
+    instance: &RelayInstance,
     channel: &ChannelDescriptor,
     edge: &ConsumerEdge,
     value: &Arc<dyn Any + Send + Sync>,
@@ -172,7 +170,7 @@ pub(crate) fn deliver_edge(
 /// ran the edge's transforms and key.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn deliver_host_output(
-    instance: &Arc<OperatorInstance>,
+    instance: &Arc<RelayInstance>,
     channel_id: u32,
     consumer: u32,
     value: &Arc<dyn Any + Send + Sync>,
@@ -214,7 +212,7 @@ pub(crate) fn deliver_host_output(
 /// skip.
 #[allow(clippy::too_many_arguments)]
 fn deliver_to_consumer(
-    instance: &OperatorInstance,
+    instance: &RelayInstance,
     channel: &ChannelDescriptor,
     edge: &ConsumerEdge,
     value: &Arc<dyn Any + Send + Sync>,
@@ -266,7 +264,7 @@ fn deliver_to_consumer(
 /// The declared Cells of `tasklet_id` a value reaches, with no edge between:
 /// a chained loop's carry into its roots.
 pub(crate) fn declared_cells_for(
-    instance: &OperatorInstance,
+    instance: &RelayInstance,
     tasklet_id: u32,
     value: &Arc<dyn Any + Send + Sync>,
 ) -> Vec<Arc<CellSlot>> {
@@ -281,7 +279,7 @@ pub(crate) fn declared_cells_for(
 
 /// A single or static consumer's Cells the value reaches.
 fn deliver_declared(
-    instance: &OperatorInstance,
+    instance: &RelayInstance,
     tasklet_id: u32,
     consumer: &TaskletDescriptor,
     value: &Arc<dyn Any + Send + Sync>,
@@ -297,7 +295,7 @@ fn deliver_declared(
 /// class's keys ride the payload, consulted when no edge closure exists; a
 /// payload its host fanned out answers one key per Cell it reaches.
 fn deliver_dynamic(
-    instance: &OperatorInstance,
+    instance: &RelayInstance,
     edge: &ConsumerEdge,
     value: &Arc<dyn Any + Send + Sync>,
     admit: &mut impl FnMut(&Arc<CellSlot>),
@@ -334,7 +332,7 @@ fn deliver_dynamic(
 }
 
 fn deliver_single(
-    instance: &OperatorInstance,
+    instance: &RelayInstance,
     tasklet_id: u32,
     admit: &mut impl FnMut(&Arc<CellSlot>),
 ) {
@@ -351,7 +349,7 @@ fn deliver_single(
 /// meaning all of them. A partition member leaves its out-of-range declared
 /// Cells idle — not a mis-route, somebody else's cell.
 fn deliver_static(
-    instance: &OperatorInstance,
+    instance: &RelayInstance,
     tasklet_id: u32,
     consumer: &TaskletDescriptor,
     value: &Arc<dyn Any + Send + Sync>,
@@ -400,7 +398,7 @@ fn deliver_static(
 /// not a marker on the last input: an input reaches one Cell by key. On
 /// the frame thread after every slice frame, so no Cell is still receiving
 /// members when its slice closes.
-pub fn end_replay_slice(instance: &OperatorInstance) {
+pub fn end_replay_slice(instance: &RelayInstance) {
     for slot in instance.all_slots() {
         slot.replay_open.store(false, Ordering::Release);
         // The drain may already have run dry and exited with the slice still
@@ -433,15 +431,15 @@ pub fn send_plugin_frame(
 
 /// The stream readers' handle onto the live instance registry.
 #[derive(Clone)]
-pub struct OperatorDispatchHandle {
-    pub registry: Arc<OperatorRegistry>,
+pub struct RelayDispatchHandle {
+    pub registry: Arc<RelayRegistry>,
 }
 
-impl OperatorDispatchHandle {
-    /// A frame off the wire into the operator it names: the entry channel
+impl RelayDispatchHandle {
+    /// A frame off the wire into the relay it names: the entry channel
     /// resolved, the bytes wrapped, the value routed to the consumers — or,
-    /// for a steps operator, into the pass it starts or the queue it waits in. A
-    /// name the operator does not declare is parked under that name rather
+    /// for a steps relay, into the pass it starts or the queue it waits in. A
+    /// name the relay does not declare is parked under that name rather
     /// than dropped or rerouted; past that, the input-liveness signal is taken
     /// before anything can decline the frame. A replay-end broadcast defers
     /// behind a host class's staged slice members.
@@ -453,7 +451,7 @@ impl OperatorDispatchHandle {
         stream: Arc<FlezhaStream>,
     ) {
         let Some(instance) = self.registry.get(instance_id) else {
-            eprintln!("[flezha] operator instance {} not found", instance_id);
+            eprintln!("[flezha] relay instance {} not found", instance_id);
             return;
         };
         route_stream_frame(&instance, payload, metadata, stream);
@@ -461,7 +459,7 @@ impl OperatorDispatchHandle {
 }
 
 fn route_stream_frame(
-    instance: &Arc<OperatorInstance>,
+    instance: &Arc<RelayInstance>,
     payload: Vec<u8>,
     metadata: &HashMap<String, String>,
     stream: Arc<FlezhaStream>,
@@ -517,7 +515,7 @@ fn route_stream_frame(
 /// records effects keeps so a restore can deliver the value again. A value
 /// the codec refuses is delivered live and recorded nowhere.
 pub fn edge_records(
-    instance: &OperatorInstance,
+    instance: &RelayInstance,
     channel: &ChannelDescriptor,
     channel_id: ChannelId,
     origin: Option<u64>,
@@ -532,7 +530,7 @@ pub fn edge_records(
 
 /// One consumer edge's record of `value`; see [`edge_records`].
 pub(crate) fn edge_record(
-    instance: &OperatorInstance,
+    instance: &RelayInstance,
     channel_id: ChannelId,
     consumer: u32,
     origin: Option<u64>,
@@ -562,7 +560,7 @@ pub(crate) fn edge_record(
 /// consumer): decoded through the channel's codec and admitted to that one
 /// consumer, whose floor drops it when its own records acknowledge `origin`.
 fn redeliver_edge(
-    instance: &Arc<OperatorInstance>,
+    instance: &Arc<RelayInstance>,
     edge: &str,
     payload: Vec<u8>,
     stream: Arc<FlezhaStream>,
@@ -617,7 +615,7 @@ fn redeliver_edge(
 }
 
 /// What the controller stamped: the input-log offset `flz.offset` (a flow
-/// or a steps operator with durable input), the outside call waiting on the
+/// or a steps relay with durable input), the outside call waiting on the
 /// input (`flz.reply_to`) and whether the frame is a replayed slice member.
 fn frame_facts(metadata: &HashMap<String, String>) -> (Option<u64>, Option<Arc<str>>, bool) {
     let consumed_offset = metadata
@@ -636,11 +634,11 @@ pub const CALL_KEY: &str = "flz.reply_to";
 
 /// The reason a frame that named no channel did not enter: there was nothing
 /// to default to. Both cores report it in these words.
-pub(crate) const NO_ENTRY_CHANNEL_ERROR: &str = "the operator declares no entry channel";
+pub(crate) const NO_ENTRY_CHANNEL_ERROR: &str = "the relay declares no entry channel";
 
 /// The entry channel a frame enters: the one its `channel` metadata names, or
 /// the first declared entry channel when it names none. `None` when it names
-/// a channel the operator does not declare — the payload is then parked under
+/// a channel the relay does not declare — the payload is then parked under
 /// that name, with the offset the controller stamped on the frame, neither
 /// dropped nor routed to some other channel.
 fn entry_channel_or_park<'a, V: EntryView>(
@@ -671,18 +669,18 @@ fn entry_channel_or_park<'a, V: EntryView>(
 }
 
 /// Why the frame did not enter: the name it asked for against the set the
-/// operator declares, or that it declares none at all.
+/// relay declares, or that it declares none at all.
 fn unresolved_entry_error(declared: &[&str], requested: &str) -> String {
     if declared.is_empty() {
         return NO_ENTRY_CHANNEL_ERROR.to_string();
     }
     format!(
-        "no entry channel `{requested}`; the operator declares: {}",
+        "no entry channel `{requested}`; the relay declares: {}",
         declared.join(", ")
     )
 }
 
-/// A frame naming a channel the operator does not declare: parked under the
+/// A frame naming a channel the relay does not declare: parked under the
 /// name it asked for, off the reader thread as every other park is. The budget
 /// is one — the same declared set answers every re-attempt — so the ladder
 /// parks without waiting.
@@ -727,7 +725,7 @@ fn park_unresolved_entry<V: EntryView>(
 /// the ladder.
 #[allow(clippy::too_many_arguments)]
 fn enter_channel(
-    instance: &Arc<OperatorInstance>,
+    instance: &Arc<RelayInstance>,
     channel_id: u32,
     channel: &ChannelDescriptor,
     payload: Vec<u8>,
@@ -797,7 +795,7 @@ fn wrap_entry<V: EntryView>(
     let retry_bytes = channel.entry_parsed.then(|| payload.clone());
     let Some(wrap) = &channel.wrap_input else {
         eprintln!(
-            "[flezha] operator {} channel `{}` has no entry wrapper",
+            "[flezha] relay {} channel `{}` has no entry wrapper",
             instance.instance_id(),
             channel.name
         );
@@ -817,7 +815,7 @@ fn wrap_entry<V: EntryView>(
                     deliver: deliver(),
                 }),
                 None => eprintln!(
-                    "[flezha] operator {} channel `{}`: wrap_input failed: {}",
+                    "[flezha] relay {} channel `{}`: wrap_input failed: {}",
                     instance.instance_id(),
                     channel.name,
                     e

@@ -1,14 +1,14 @@
 defmodule Flezha.Service.PluginManagerTest do
   @moduledoc """
   Asserts that `Flezha.Service.PluginManager` writes a binding through to its
-  operator's ProcessHub child spec on every bind and removes it on every
+  relay's ProcessHub child spec on every bind and removes it on every
   unbind, checks it before anything is written, and fans it over a partition
   group's members.
 
   The order is write first, then the runtime subscribe: a refused binding
   leaves no row, and a subscribe that fails rolls the row back. These tests
   stub `ProcessHub.Service.ProcessRegistry.update/4`, the plugin entries and
-  the bound operators' rows, so no hub runs; the live path is
+  the bound relays' rows, so no hub runs; the live path is
   `FlezhaTest.Plugin.NamedPluginTest`.
   """
 
@@ -18,13 +18,13 @@ defmodule Flezha.Service.PluginManagerTest do
   import FlezhaTest.Helper.MimicGlobal
 
   alias Flezha.Cluster.Directory
-  alias Flezha.Operator.PartitionGroup
+  alias Flezha.Relay.PartitionGroup
   alias Flezha.Plugin
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Service.HubManager
   alias Flezha.Service.Listener
-  alias Flezha.Service.OperatorManager
-  alias Flezha.Service.OperatorManager.Teardown
+  alias Flezha.Service.RelayManager
+  alias Flezha.Service.RelayManager.Teardown
   alias Flezha.Service.PluginManager
   alias FlezhaTest.Helper.NodeTestHelper
   alias ProcessHub.Service.ProcessRegistry
@@ -33,7 +33,7 @@ defmodule Flezha.Service.PluginManagerTest do
   setup :set_mimic_global_until_exit
 
   @namespace "default"
-  @operator_id "pm_test_p1"
+  @relay_id "pm_test_p1"
 
   defmodule NoopProvider do
     @moduledoc false
@@ -47,28 +47,28 @@ defmodule Flezha.Service.PluginManagerTest do
   end
 
   setup do
-    {:ok, store} = Agent.start_link(fn -> %{@operator_id => cspec(@operator_id, [])} end)
+    {:ok, store} = Agent.start_link(fn -> %{@relay_id => cspec(@relay_id, [])} end)
     overwatch = spawn_fake_overwatch()
 
     ProcessHub |> Mimic.stub(:is_alive?, fn _hub_id -> true end)
 
     ProcessRegistry
-    |> Mimic.stub(:update, fn _hub_id, operator_id, fun, _opts ->
-      if Map.has_key?(Agent.get(store, & &1), operator_id) do
+    |> Mimic.stub(:update, fn _hub_id, relay_id, fun, _opts ->
+      if Map.has_key?(Agent.get(store, & &1), relay_id) do
         Agent.update(store, fn rows ->
-          {new_cspec, _, _} = fun.(rows[operator_id], [], %{})
-          Map.put(rows, operator_id, new_cspec)
+          {new_cspec, _, _} = fun.(rows[relay_id], [], %{})
+          Map.put(rows, relay_id, new_cspec)
         end)
       else
         {:error, :not_found}
       end
     end)
 
-    OperatorManager
-    |> Mimic.stub(:get_operator_pid, fn ns, id ->
+    RelayManager
+    |> Mimic.stub(:get_relay_pid, fn ns, id ->
       if ns == @namespace and Map.has_key?(Agent.get(store, & &1), id),
         do: {:ok, overwatch},
-        else: {:error, {:operator_not_found, ns, id}}
+        else: {:error, {:relay_not_found, ns, id}}
     end)
 
     Mimic.stub(Directory, :hub_nodes, fn _ns -> [node()] end)
@@ -79,13 +79,13 @@ defmodule Flezha.Service.PluginManagerTest do
       {:ok, %Plugin{id: name, provider: NoopProvider, namespace: @namespace}}
     end)
 
-    Mimic.stub(HubManager, :operator_bindings, fn
+    Mimic.stub(HubManager, :relay_bindings, fn
       @namespace -> for {id, cspec} <- Agent.get(store, & &1), do: {id, bindings_of(cspec)}
     end)
 
-    Mimic.stub(HubManager, :operator_bindings, fn @namespace, id ->
+    Mimic.stub(HubManager, :relay_bindings, fn @namespace, id ->
       case Agent.get(store, & &1[id]) do
-        nil -> {:error, {:operator_not_found, @namespace, id}}
+        nil -> {:error, {:relay_not_found, @namespace, id}}
         cspec -> {:ok, bindings_of(cspec)}
       end
     end)
@@ -103,15 +103,13 @@ defmodule Flezha.Service.PluginManagerTest do
     {:ok, store: store, overwatch: overwatch}
   end
 
-  defp read_bindings(store, operator_id \\ @operator_id),
-    do: bindings_of(Agent.get(store, & &1[operator_id]))
+  defp read_bindings(store, relay_id \\ @relay_id),
+    do: bindings_of(Agent.get(store, & &1[relay_id]))
 
   describe "bind_plugin/4 writes the binding first" do
-    test "the binding reaches the cspec and the operator", %{store: store} do
+    test "the binding reaches the cspec and the relay", %{store: store} do
       assert :ok =
-               PluginManager.bind_plugin(@namespace, "sink", @operator_id,
-                 hooks: [{:on_output, []}]
-               )
+               PluginManager.bind_plugin(@namespace, "sink", @relay_id, hooks: [{:on_output, []}])
 
       assert [{"sink", %Plugin{} = binding}] = read_bindings(store)
       assert binding.provider == NoopProvider
@@ -123,7 +121,7 @@ defmodule Flezha.Service.PluginManagerTest do
     test "a failed subscribe rolls the binding back", %{store: store, overwatch: overwatch} do
       send(overwatch, {:reject_next, {:error, "boom"}})
 
-      assert {:error, "boom"} = PluginManager.bind_plugin(@namespace, "eager", @operator_id)
+      assert {:error, "boom"} = PluginManager.bind_plugin(@namespace, "eager", @relay_id)
       assert [] = read_bindings(store)
     end
 
@@ -131,29 +129,29 @@ defmodule Flezha.Service.PluginManagerTest do
       ProcessHub |> Mimic.stub(:is_alive?, fn _hub_id -> false end)
 
       assert {:error, :registry_unavailable} =
-               PluginManager.bind_plugin(@namespace, "hub_down", @operator_id)
+               PluginManager.bind_plugin(@namespace, "hub_down", @relay_id)
     end
 
     test "two binds of distinct plugins leave both", %{store: store} do
-      assert :ok = PluginManager.bind_plugin(@namespace, "plug_a", @operator_id)
-      assert :ok = PluginManager.bind_plugin(@namespace, "plug_b", @operator_id)
+      assert :ok = PluginManager.bind_plugin(@namespace, "plug_a", @relay_id)
+      assert :ok = PluginManager.bind_plugin(@namespace, "plug_b", @relay_id)
 
       assert ["plug_a", "plug_b"] =
                store |> read_bindings() |> Enum.map(&elem(&1, 0)) |> Enum.sort()
     end
 
-    test "binding a bound operator again touches nothing", %{store: store} do
-      assert :ok = PluginManager.bind_plugin(@namespace, "idem", @operator_id)
+    test "binding a bound relay again touches nothing", %{store: store} do
+      assert :ok = PluginManager.bind_plugin(@namespace, "idem", @relay_id)
       before = read_bindings(store)
       parent = self()
 
       ProcessRegistry
-      |> Mimic.stub(:update, fn _hub_id, _operator_id, _fun, _opts ->
+      |> Mimic.stub(:update, fn _hub_id, _relay_id, _fun, _opts ->
         send(parent, :cspec_write)
         :ok
       end)
 
-      assert :already_bound = PluginManager.bind_plugin(@namespace, "idem", @operator_id)
+      assert :already_bound = PluginManager.bind_plugin(@namespace, "idem", @relay_id)
       refute_received :cspec_write
       assert read_bindings(store) == before
     end
@@ -162,7 +160,7 @@ defmodule Flezha.Service.PluginManagerTest do
       Mimic.stub(HubManager, :plugin_entry, fn @namespace, _name -> :error end)
 
       assert {:error, {:plugin_not_found, "nope"}} =
-               PluginManager.bind_plugin(@namespace, "nope", @operator_id)
+               PluginManager.bind_plugin(@namespace, "nope", @relay_id)
 
       assert [] = read_bindings(store)
     end
@@ -173,7 +171,7 @@ defmodule Flezha.Service.PluginManagerTest do
     # leaving a binding that can never come up.
     test "an ill-typed sub-option leaves no binding", %{store: store} do
       assert {:error, {:invalid_hook_opts, :interval_ms, "soon"}} =
-               PluginManager.bind_plugin(@namespace, "typo", @operator_id,
+               PluginManager.bind_plugin(@namespace, "typo", @relay_id,
                  hooks: [{"on_interval", %{"interval_ms" => "soon"}}]
                )
 
@@ -184,9 +182,7 @@ defmodule Flezha.Service.PluginManagerTest do
       name = "on_never_enabled_#{System.unique_integer([:positive])}"
 
       assert {:error, {:unknown_hook, ^name, _allowed}} =
-               PluginManager.bind_plugin(@namespace, "typo_name", @operator_id,
-                 hooks: [{name, %{}}]
-               )
+               PluginManager.bind_plugin(@namespace, "typo_name", @relay_id, hooks: [{name, %{}}])
 
       assert [] = read_bindings(store)
       assert_raise ArgumentError, fn -> String.to_existing_atom(name) end
@@ -194,7 +190,7 @@ defmodule Flezha.Service.PluginManagerTest do
 
     test "what is written holds the coerced value, not the text", %{store: store} do
       assert :ok =
-               PluginManager.bind_plugin(@namespace, "typed", @operator_id,
+               PluginManager.bind_plugin(@namespace, "typed", @relay_id,
                  hooks: [{"on_interval", %{"interval_ms" => "5000"}}]
                )
 
@@ -214,7 +210,7 @@ defmodule Flezha.Service.PluginManagerTest do
          }}
       end)
 
-      catalog = Flezha.Operator.Overwatch.__extensions_catalog__()
+      catalog = Flezha.Relay.Overwatch.__extensions_catalog__()
 
       plugin = %Plugin{
         id: "k",
@@ -232,7 +228,7 @@ defmodule Flezha.Service.PluginManagerTest do
       send(overwatch, {:reject_next, {:error, {:missing_callback, :on_preview}}})
 
       assert {:error, {:missing_callback, :on_preview}} =
-               PluginManager.bind_plugin(@namespace, "sink_preview", @operator_id,
+               PluginManager.bind_plugin(@namespace, "sink_preview", @relay_id,
                  hooks: [{:on_preview, []}]
                )
 
@@ -241,7 +237,7 @@ defmodule Flezha.Service.PluginManagerTest do
   end
 
   describe "a CLI bind refuses a plain option it does not read" do
-    # Fails when: a word the bind never reads is dropped, so the operator is
+    # Fails when: a word the bind never reads is dropped, so the relay is
     # bound with less than the user wrote and the command reports success.
     test "the option is named and nothing is written", %{store: store} do
       err =
@@ -254,26 +250,26 @@ defmodule Flezha.Service.PluginManagerTest do
       assert [] = read_bindings(store)
 
       assert ExUnit.CaptureIO.capture_io(fn -> cli_bind("read_all", %{}) end) =~
-               "Plugin read_all bound to #{@operator_id}."
+               "Plugin read_all bound to #{@relay_id}."
 
       assert [{"read_all", %Plugin{}}] = read_bindings(store)
     end
   end
 
   defp cli_bind(name, extra_opts) do
-    fields = Map.merge(%{"namespace" => @namespace, "operator_id" => @operator_id}, extra_opts)
+    fields = Map.merge(%{"namespace" => @namespace, "relay_id" => @relay_id}, extra_opts)
     Flezha.Service.Cli.call("PluginManager.bind", Jason.encode!([name, fields]), [])
   end
 
   describe "unbind_plugin/3" do
-    test "removes the binding and unsubscribes the operator", %{
+    test "removes the binding and unsubscribes the relay", %{
       store: store,
       overwatch: overwatch
     } do
-      assert :ok = PluginManager.bind_plugin(@namespace, "un_a", @operator_id)
+      assert :ok = PluginManager.bind_plugin(@namespace, "un_a", @relay_id)
       send(overwatch, :record_unsubscribes)
 
-      assert :ok = PluginManager.unbind_plugin(@namespace, "un_a", @operator_id)
+      assert :ok = PluginManager.unbind_plugin(@namespace, "un_a", @relay_id)
 
       assert [] = read_bindings(store)
       send(overwatch, {:dump_unsubscribes, self()})
@@ -281,36 +277,36 @@ defmodule Flezha.Service.PluginManagerTest do
     end
 
     test "does not unsubscribe when the cspec write fails", %{overwatch: overwatch} do
-      assert :ok = PluginManager.bind_plugin(@namespace, "un_fail", @operator_id)
+      assert :ok = PluginManager.bind_plugin(@namespace, "un_fail", @relay_id)
       Mimic.stub(ProcessRegistry, :update, fn _hub, _id, _fun, _opts -> {:error, :boom} end)
       send(overwatch, :record_unsubscribes)
 
-      assert {:error, :boom} = PluginManager.unbind_plugin(@namespace, "un_fail", @operator_id)
+      assert {:error, :boom} = PluginManager.unbind_plugin(@namespace, "un_fail", @relay_id)
 
       send(overwatch, {:dump_unsubscribes, self()})
       assert_receive {:unsubscribes, []}, 500
     end
 
-    test "a binding the operator does not have is plugin.not_bound" do
-      assert {:error, {:plugin_not_bound, "never", @operator_id}} =
-               PluginManager.unbind_plugin(@namespace, "never", @operator_id)
+    test "a binding the relay does not have is plugin.not_bound" do
+      assert {:error, {:plugin_not_bound, "never", @relay_id}} =
+               PluginManager.unbind_plugin(@namespace, "never", @relay_id)
     end
 
-    test "an operator that never answers its unsubscribe is still unbound", %{
+    test "a relay that never answers its unsubscribe is still unbound", %{
       store: store,
       overwatch: overwatch
     } do
-      assert :ok = PluginManager.bind_plugin(@namespace, "un_wedged", @operator_id)
+      assert :ok = PluginManager.bind_plugin(@namespace, "un_wedged", @relay_id)
       send(overwatch, :go_silent)
 
-      assert :ok = PluginManager.unbind_plugin(@namespace, "un_wedged", @operator_id)
+      assert :ok = PluginManager.unbind_plugin(@namespace, "un_wedged", @relay_id)
       assert [] = read_bindings(store)
     end
   end
 
   describe "a listener's plugin" do
     test "detach/3 unbinds it and disables it", %{store: store} do
-      assert :ok = PluginManager.bind_plugin(@namespace, "listener_x", @operator_id)
+      assert :ok = PluginManager.bind_plugin(@namespace, "listener_x", @relay_id)
       parent = self()
 
       Mimic.stub(Teardown, :hub_stop_children, fn @namespace, [{:plugin, name}], _timeout ->
@@ -318,18 +314,18 @@ defmodule Flezha.Service.PluginManagerTest do
         :ok
       end)
 
-      assert :ok = PluginManager.detach(@namespace, @operator_id, "listener_x")
+      assert :ok = PluginManager.detach(@namespace, @relay_id, "listener_x")
       assert [] = read_bindings(store)
       assert_received {:stopped, "listener_x"}
     end
 
-    test "a released binding reads as ended only once its operator is declared no more" do
-      Mimic.stub(HubManager, :declared_operators, fn @namespace -> [] end)
-      assert Listener.attachment(@namespace, "gone_op", "l") == :operator_ended
+    test "a released binding reads as ended only once its relay is declared no more" do
+      Mimic.stub(HubManager, :declared_relays, fn @namespace -> [] end)
+      assert Listener.attachment(@namespace, "gone_op", "l") == :relay_ended
 
-      # Between two homes: declared, with no row yet, for an operator or a
+      # Between two homes: declared, with no row yet, for a relay or a
       # group whose members a rescale is restarting.
-      Mimic.stub(HubManager, :declared_operators, fn @namespace ->
+      Mimic.stub(HubManager, :declared_relays, fn @namespace ->
         [%{id: "gone_op", factory_id: nil}, %{id: "grp#p0", factory_id: nil}]
       end)
 
@@ -338,7 +334,7 @@ defmodule Flezha.Service.PluginManagerTest do
     end
   end
 
-  describe "an operator that does not answer" do
+  describe "a relay that does not answer" do
     test "a bind whose subscribe never answers writes nothing", %{
       store: store,
       overwatch: overwatch
@@ -346,7 +342,7 @@ defmodule Flezha.Service.PluginManagerTest do
       send(overwatch, :go_silent)
 
       assert {:error, :timeout} =
-               PluginManager.bind_plugin(@namespace, "bind_wedged", @operator_id)
+               PluginManager.bind_plugin(@namespace, "bind_wedged", @relay_id)
 
       assert [] = read_bindings(store)
     end
@@ -386,7 +382,7 @@ defmodule Flezha.Service.PluginManagerTest do
         id = "ohlc_ws" <> Flezha.Partition.member_suffix(index)
 
         assert [{^id, binding}] = read_bindings(store, member_id)
-        assert binding.operator_id == member_id
+        assert binding.relay_id == member_id
         assert binding.opts.partition_index == index
         assert binding.opts.partition_count == 3
 
@@ -424,9 +420,9 @@ defmodule Flezha.Service.PluginManagerTest do
     } do
       failing = Enum.at(members, 1).id
 
-      OperatorManager
-      |> Mimic.stub(:get_operator_pid, fn ns, id ->
-        if id == failing, do: {:error, {:operator_not_found, ns, id}}, else: {:ok, overwatch}
+      RelayManager
+      |> Mimic.stub(:get_relay_pid, fn ns, id ->
+        if id == failing, do: {:error, {:relay_not_found, ns, id}}, else: {:ok, overwatch}
       end)
 
       assert {:error, {:group_enable_partial, 2, 3, [^failing]}} =
@@ -436,10 +432,10 @@ defmodule Flezha.Service.PluginManagerTest do
     end
 
     test "a bind every member refuses answers a member's own reason" do
-      OperatorManager
-      |> Mimic.stub(:get_operator_pid, fn ns, id -> {:error, {:operator_not_found, ns, id}} end)
+      RelayManager
+      |> Mimic.stub(:get_relay_pid, fn ns, id -> {:error, {:relay_not_found, ns, id}} end)
 
-      assert {:error, {:operator_not_found, @namespace, member}} =
+      assert {:error, {:relay_not_found, @namespace, member}} =
                PluginManager.bind_plugin(@namespace, "ohlc_ws", @group)
 
       assert String.starts_with?(member, @group <> "#p")
@@ -453,21 +449,21 @@ defmodule Flezha.Service.PluginManagerTest do
       assert :ok = PluginManager.bind_plugin(@namespace, "out", @group)
 
       for %{id: member_id} <- members do
-        assert [{"out#p" <> _, %Plugin{operator_id: ^member_id}}] =
+        assert [{"out#p" <> _, %Plugin{relay_id: ^member_id}}] =
                  read_bindings(store, member_id)
       end
     end
   end
 
-  defp cspec(operator_id, bindings) do
+  defp cspec(relay_id, bindings) do
     %{
-      id: operator_id,
+      id: relay_id,
       start:
-        {Flezha.Operator.Overwatch, :start_link,
+        {Flezha.Relay.Overwatch, :start_link,
          [
            {@namespace,
-            %Flezha.Operator.Builder{
-              id: operator_id,
+            %Flezha.Relay.Builder{
+              id: relay_id,
               factory_id: "do_nothing",
               init_values: %{},
               opts: [bindings: bindings]
@@ -478,7 +474,7 @@ defmodule Flezha.Service.PluginManagerTest do
 
   defp bindings_of(nil), do: []
 
-  defp bindings_of(%{start: {_m, _f, [{_ns, %Flezha.Operator.Builder{opts: opts}}]}}),
+  defp bindings_of(%{start: {_m, _f, [{_ns, %Flezha.Relay.Builder{opts: opts}}]}}),
     do: Keyword.get(opts, :bindings, [])
 
   defp spawn_fake_overwatch do

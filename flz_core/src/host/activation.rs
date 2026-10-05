@@ -63,7 +63,7 @@ pub fn to_schema(act: &EngineActivation) -> schema::Activation {
 /// A prepare crossing is addressed to the channel's first consumer.
 fn prepare_target(crossing: &PrepareCrossing) -> schema::CellRef {
     schema::CellRef {
-        operator: crossing.instance.instance_id.to_string(),
+        relay: crossing.instance.instance_id.to_string(),
         tasklet: crossing
             .instance
             .topology
@@ -218,15 +218,15 @@ fn settle_items(
     let mut queue: std::collections::VecDeque<ItemAttempt> = items.into();
     let steps = slot.topology.steps.is_some();
     for mut effect in effects {
-        // A flow operator ends through its own path; a steps one through its
+        // A flow relay ends through its own path; a steps one through its
         // stage's settlement.
         let flow_end = if steps { None } else { effect.complete.take() };
         let Some(work) = queue.pop_front() else {
             core.abandon(token, Vec::new());
             return Err(Error::Answer(Code::CompletionTooManyEffects.with([])));
         };
-        // A steps operator's unreadable message rides its ladder before it parks;
-        // a flow operator's parks at once.
+        // A steps relay's unreadable message rides its ladder before it parks;
+        // a flow relay's parks at once.
         let verdict = match effect.verdict.clone() {
             schema::Verdict::Unreadable { message } if steps => {
                 schema::Verdict::RetryableError { message }
@@ -238,7 +238,7 @@ fn settle_items(
                 settle_item(slot, &work, effect, None);
                 crate::cell::DISPATCHES_COMPLETED.fetch_add(1, Ordering::Relaxed);
                 if let Some(result) = flow_end {
-                    crate::operator::completion::complete(slot, result);
+                    crate::relay::completion::complete(slot, result);
                 }
             }
             schema::Verdict::RetryableError { message } => {
@@ -405,7 +405,7 @@ pub(super) fn settle_item(
     }
 }
 
-/// A host's answer to a steps operator undo: its changes and plugin outputs settled
+/// A host's answer to a steps relay undo: its changes and plugin outputs settled
 /// as an item's are, into the undo's own record; a failed hook reported.
 pub(crate) fn settle_steps_undo(slot: &Arc<CellSlot>, outcome: schema::ActivationOutcome) {
     match outcome {
@@ -427,17 +427,14 @@ pub(crate) fn settle_steps_undo(slot: &Arc<CellSlot>, outcome: schema::Activatio
                 );
             }
         }
-        schema::ActivationOutcome::Failed(error) => crate::steps::note_failure(
-            slot,
-            crate::steps::StepsError::from(error.message),
-            None,
-            1,
-        ),
+        schema::ActivationOutcome::Failed(error) => {
+            crate::steps::note_failure(slot, crate::steps::StepsError::from(error.message), None, 1)
+        }
         _ => {}
     }
 }
 
-/// A steps operator Cell's changes, durable timer ops and plugin outputs. A class
+/// A steps relay Cell's changes, durable timer ops and plugin outputs. A class
 /// that journals writes them as one effect record, sent at once and named on
 /// the pass sheet for the stage's barrier; one that does not sends the outputs
 /// to the wire with their channel, key and metadata.
@@ -485,9 +482,9 @@ fn settle_steps_effects(
     crate::steps::ship_stage_record(slot, &mut **buffer, &facts.header(), channels);
 }
 
-/// A steps operator Cell's item: its changes and plugin outputs settled into its
+/// A steps relay Cell's item: its changes and plugin outputs settled into its
 /// record, its edge outputs held for the stage's commit and its completion
-/// noted; or, where a flow operator would park it, its stage failed with no dead
+/// noted; or, where a flow relay would park it, its stage failed with no dead
 /// letter and only its changes recorded. Either way the stage owes it no
 /// longer.
 fn settle_steps_item(
@@ -789,7 +786,7 @@ fn commit_timers(slot: &Arc<CellSlot>, timers: &[TimerOp], stream: &Arc<FlezhaSt
     crate::timer::apply_ops(slot, timers, stream);
 }
 
-/// Ship the tier-off plugin outputs. The frame's payload id is the OPERATOR
+/// Ship the tier-off plugin outputs. The frame's payload id is the RELAY
 /// ID — what the controller routes `:on_output` by.
 fn ship_plugin_outputs(
     slot: &Arc<CellSlot>,

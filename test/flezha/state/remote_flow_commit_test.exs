@@ -5,7 +5,7 @@ defmodule Flezha.State.RemoteFlowCommitTest do
   fsync releases: the dispatch of an input's outputs, which advances the
   input's consumed offset, and the credit it drained.
 
-  The test process is the operator's Overwatch (`FlezhaTest.OutboxCase`), so a
+  The test process is the relay's Overwatch (`FlezhaTest.OutboxCase`), so a
   dispatched output is a message here; the backend is the in-memory stub,
   holding each manifest write until the case lets it land.
   """
@@ -83,7 +83,7 @@ defmodule Flezha.State.RemoteFlowCommitTest do
     assert {"v0", _, _} = next_output(5_000)
 
     lose_the_disk(ctx)
-    assert :ok = DurabilityTier.hydrate_operator(ctx.rc)
+    assert :ok = DurabilityTier.hydrate_relay(ctx.rc)
 
     assert InputLog.watermark(ctx.rc) == 0
     assert [{1, "in1", _}] = InputLog.undelivered(ctx.rc)
@@ -100,7 +100,7 @@ defmodule Flezha.State.RemoteFlowCommitTest do
     assert {"open", _, _} = next_output(5_000)
 
     lose_the_disk(ctx)
-    assert :ok = DurabilityTier.hydrate_operator(ctx.rc)
+    assert :ok = DurabilityTier.hydrate_relay(ctx.rc)
 
     assert InputLog.watermark(ctx.rc) == 1
     assert [{2, "in2", _}] = InputLog.undelivered(ctx.rc)

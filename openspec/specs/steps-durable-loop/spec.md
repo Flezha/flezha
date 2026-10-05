@@ -15,7 +15,7 @@ iteration or is absent when nothing journaled seeded it. The `iter_committed` ap
 by the `FsyncBatcher` tick like a task commit, and its ack SHALL follow the
 sync. The iteration commit SHALL request no boundary snapshot and SHALL flush no outbox of its
 own: the iteration's outputs left through the Cells' own outboxes as each stage committed, and
-the instance's Cells are compacted by the Watchdog's size and age triggers as a flow operator's are, a
+the instance's Cells are compacted by the Watchdog's size and age triggers as a flow relay's are, a
 rehydrate that finds no snapshot replaying the WAL tail. Once `iter_committed(N)` is durable the controller SHALL cut the
 task-journal below the oldest entry its fold still needs, the
 latest `rewound` marker with the commits it has yet to undo, and
@@ -38,17 +38,17 @@ loop contract.
 
 #### Scenario: Turn ends with the journal entry and the watermark
 
-- **WHEN** a looping steps operator finishes iteration N
+- **WHEN** a looping steps relay finishes iteration N
 - **THEN** the journal SHALL hold `iter_committed(N)` with the consumed input-log offset, the instance's watermark row SHALL be at that offset, and no `CompactCell` SHALL have been requested for the boundary
 
 #### Scenario: The journal does not grow with the turns
 
-- **WHEN** a looping steps operator with no compensable tasklet has committed 1 000 iterations
+- **WHEN** a looping steps relay with no compensable tasklet has committed 1 000 iterations
 - **THEN** its task-journal SHALL hold the entries of the current iteration plus at most the cut threshold of settled prefix, and a rehydrate SHALL restore from them the resume point, consumed offset, handoff and epoch a full history would have given
 
 #### Scenario: A class with compensable tasklets keeps its history
 
-- **WHEN** a looping steps operator whose tasklets declare `compensate` commits an iteration
+- **WHEN** a looping steps relay whose tasklets declare `compensate` commits an iteration
 - **THEN** its task-journal SHALL NOT be cut, so an all-or-nothing rollback and a rewind still replan from every committed iteration
 
 #### Scenario: The inbox append costs the same at turn 1 and turn 10 000
@@ -59,7 +59,7 @@ loop contract.
 #### Scenario: A re-sent message is absorbed across a writer restart
 
 - **WHEN** the input log is reopened and a message whose `flz.msg_id` is still retained is sent again
-- **THEN** the append SHALL answer the existing record's offset from the index rebuilt off the file, and the operator SHALL receive the message once
+- **THEN** the append SHALL answer the existing record's offset from the index rebuilt off the file, and the relay SHALL receive the message once
 
 #### Scenario: The commit moves the watermark, the sweep cuts the file
 
@@ -68,8 +68,8 @@ loop contract.
 
 #### Scenario: A loop's Cells compact on the Watchdog's triggers
 
-- **WHEN** a looping steps operator's Cell WAL grows past `compact_after_bytes`, or its oldest unsnapshotted record ages past `compact_after_age_ms`
-- **THEN** the Watchdog requests the Cell's compaction exactly as it does for a flow operator Cell, and a rehydrate before that restores from the WAL tail
+- **WHEN** a looping steps relay's Cell WAL grows past `compact_after_bytes`, or its oldest unsnapshotted record ages past `compact_after_age_ms`
+- **THEN** the Watchdog requests the Cell's compaction exactly as it does for a flow relay Cell, and a rehydrate before that restores from the WAL tail
 
 ### Requirement: Crash-resume enters the iteration after the last committed one
 
@@ -141,20 +141,20 @@ keep-progress always does, and the loop SHALL go on.
 - **WHEN** a keep-progress `per_input` instance has journaled iterations 1–4 and iteration 5's turn fails after its retries
 - **THEN** only iteration 5's completed tasklets SHALL be undone, iterations 1–4 SHALL be kept, and the instance SHALL wait for its next message as iteration 6
 
-### Requirement: A tasklet ends its steps operator after the iteration commits
+### Requirement: A tasklet ends its steps relay after the iteration commits
 
-A tasklet running inside a steps operator SHALL be able to call `ctx.complete(result)` on its own tasklet context, in every SDK. The call SHALL NOT stop the iteration: every remaining stage of the iteration SHALL run, its outputs SHALL be recorded and released as usual, and once the iteration's commit is durable the instance SHALL end with status `ok` and `result`, instead of waiting for the next inbox item, re-seeding a chained loop, or parking. The completion SHALL travel with the iteration commit (`IterCommit`) and be journaled in its `iter_committed` entry, so an instance that crashes after that commit is durable and before its `OperatorCompleted` is sent SHALL, on resume, end with the same result rather than wait for input. The completing tasklet's own completion SHALL also travel with its task commit (`TaskCommit`) and be journaled in its `task_committed` entry, and a resume that skips that committed tasklet SHALL end the resumed iteration with it, so a crash between the two commits loses nothing. In a `once` steps operator the call SHALL set the result the single pass ends with.
+A tasklet running inside a steps relay SHALL be able to call `ctx.complete(result)` on its own tasklet context, in every SDK. The call SHALL NOT stop the iteration: every remaining stage of the iteration SHALL run, its outputs SHALL be recorded and released as usual, and once the iteration's commit is durable the instance SHALL end with status `ok` and `result`, instead of waiting for the next inbox item, re-seeding a chained loop, or parking. The completion SHALL travel with the iteration commit (`IterCommit`) and be journaled in its `iter_committed` entry, so an instance that crashes after that commit is durable and before its `RelayCompleted` is sent SHALL, on resume, end with the same result rather than wait for input. The completing tasklet's own completion SHALL also travel with its task commit (`TaskCommit`) and be journaled in its `task_committed` entry, and a resume that skips that committed tasklet SHALL end the resumed iteration with it, so a crash between the two commits loses nothing. In a `once` steps relay the call SHALL set the result the single pass ends with.
 
 When more than one cell calls `ctx.complete` in one iteration, the instance SHALL end once, with the result of the call whose tasklet is latest in the chain's commit order and, within that tasklet, whose cell key sorts last, so the result does not depend on scheduling. A tasklet that calls `ctx.complete` and then fails SHALL fail its iteration as any failure does, and the completion SHALL be discarded with the iteration.
 
 #### Scenario: A chat agent ends itself
 
-- **WHEN** a `PerInput` steps operator whose one tasklet calls `ctx.complete({"turns": n})` on a message whose kind is `end` receives three messages and then that message
+- **WHEN** a `PerInput` steps relay whose one tasklet calls `ctx.complete({"turns": n})` on a message whose kind is `end` receives three messages and then that message
 - **THEN** four iterations SHALL commit, the instance SHALL end with status `ok` and result `{"turns": n}`, and it SHALL NOT park after the fourth
 
 #### Scenario: A completion survives a crash after the commit
 
-- **WHEN** an instance crashes after `iter_committed(N)` carrying a completion is durable and before `OperatorCompleted` reaches the controller
+- **WHEN** an instance crashes after `iter_committed(N)` carrying a completion is durable and before `RelayCompleted` reaches the controller
 - **THEN** the rehydrated instance SHALL end with the journaled result and SHALL NOT wait for input
 
 #### Scenario: A completion survives a crash between the two commits
@@ -230,7 +230,7 @@ Everything else SHALL end the instance as it does today: a failure under all-or-
 failure in a `once` or a `chained` loop; a failure in a pass a timer firing opened; a stage
 or iteration commit the controller refuses; a stop; `max_duration`. An unreadable message
 SHALL keep being parked without a pass, as today. Both steps drivers SHALL behave alike:
-the shared core's, which runs the steps operators of the Rust, Java, Node, Python, Ruby
+the shared core's, which runs the steps relays of the Rust, Java, Node, Python, Ruby
 and PHP SDKs, and the Elixir SDK's.
 
 #### Scenario: A model error does not end the session
@@ -291,32 +291,32 @@ and PHP SDKs, and the Elixir SDK's.
 ### Requirement: A dead-lettered turn SHALL be visible
 
 A dead-lettered turn SHALL be visible wherever a person or a program looks for it:
-`flz dlq list <operator>` SHALL show its entry under the `_turn` slot with the entry
-channel, the offset, the error and the attempts; `flz operator info <operator>` SHALL show
+`flz dlq list <relay>` SHALL show its entry under the `_turn` slot with the entry
+channel, the offset, the error and the attempts; `flz relay info <relay>` SHALL show
 `Failed turns: <count> (last: iteration <n>)` for an instance that has dead-lettered any,
 read from the latest iteration record's running count so it survives a journal cut and a
-restart; `flz state journal <operator>` SHALL show the `dead_lettered` row with its iteration,
+restart; `flz state journal <relay>` SHALL show the `dead_lettered` row with its iteration,
 offset and tasklet; the controller SHALL execute
-`[:flezha, :steps, :turn_dead_lettered]` with a count of 1 and the namespace, operator,
+`[:flezha, :steps, :turn_dead_lettered]` with a count of 1 and the namespace, relay,
 iteration, offset, tasklet and attempts, bridged to the metric
 `flezha_steps_turns_dead_lettered_total`; and it SHALL log one warning line naming the
-operator, the iteration, the tasklet and the DLQ entry. Once `send-a-part-while-it-runs` has
-landed, the park SHALL reach the operator's listeners as its `input.dead_lettered` notice,
+relay, the iteration, the tasklet and the DLQ entry. Once `send-a-part-while-it-runs` has
+landed, the park SHALL reach the relay's listeners as its `input.dead_lettered` notice,
 released once the `dead_lettered` record is durable; whichever of the two changes lands
 second SHALL wire the turn's park to that notice.
 
 #### Scenario: Every surface shows the failed turn
 
 - **WHEN** a session dead-letters the turn of its iteration `n`
-- **THEN** `flz dlq list` SHALL show one `_turn` entry, `flz operator info` SHALL print
+- **THEN** `flz dlq list` SHALL show one `_turn` entry, `flz relay info` SHALL print
   `Failed turns: 1 (last: iteration <n>)`, `flz state journal` SHALL show a `dead_lettered`
   row for iteration `n`, and one `turn_dead_lettered` event SHALL have been executed
 
 ### Requirement: A caller waiting on a dead-lettered turn SHALL be answered with an error
 
 A caller SHALL be answered with an error in the error model's shape when the message of a
-dead-lettered turn was a call awaiting an answer (the reply of
-`call-an-operator-and-get-its-response`, or an outside caller of `answer-an-outside-caller`),
+dead-lettered turn was a call awaiting an answer (the reply of a
+call, or an outside caller's answer),
 once the `dead_lettered` record is durable, and SHALL NOT be left to its deadline. The durable
 `dead_lettered` record SHALL be that answer's release point: the controller SHALL hand the
 turn's reply token, read from the input-log record it already reads for the park, to the
@@ -331,7 +331,7 @@ second wiring the hand-off, and a replay of the entry SHALL answer no caller.
 
 #### Scenario: A called session's failed turn answers its caller
 
-- **GIVEN** an operator that calls a `per_input` keep-progress session whose turn fails on
+- **GIVEN** a relay that calls a `per_input` keep-progress session whose turn fails on
   `boom`
 - **WHEN** the caller sends `boom`
 - **THEN** the caller SHALL receive an error answer naming the DLQ entry before its deadline,

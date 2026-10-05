@@ -25,7 +25,7 @@ defmodule Flezha.State.DurabilityTier do
 
   alias Flezha.Config
   alias Flezha.Config.Durations
-  alias Flezha.Operator.ClassRegistry
+  alias Flezha.Relay.ClassRegistry
   alias Flezha.Process.Cspec
   alias Flezha.State.DurabilityTier.{Artifact, Hydrator, Shipper}
   alias Flezha.State.DurabilityTier.Backend.Config, as: BackendConfig
@@ -97,17 +97,17 @@ defmodule Flezha.State.DurabilityTier do
   end
 
   @doc """
-  This node now runs `state_key`'s operator, so it may take over that
+  This node now runs `state_key`'s relay, so it may take over that
   reference's remote lineage.
 
   Shipping alone must never be enough to claim one: a migration leaves the
-  source node holding a full copy of the state (`WalTransfer.pull_operator/3`
+  source node holding a full copy of the state (`WalTransfer.pull_relay/3`
   copies, and nothing deletes the source), so its backstop sweep would
   otherwise bid the lineage back and fence the node that actually runs the
-  operator now.
+  relay now.
   """
-  @spec adopt_operator(binary()) :: :ok
-  def adopt_operator(state_key) when is_binary(state_key) do
+  @spec adopt_relay(binary()) :: :ok
+  def adopt_relay(state_key) when is_binary(state_key) do
     if enabled?() do
       case GenServer.whereis(Shipper) do
         nil -> :ok
@@ -143,7 +143,7 @@ defmodule Flezha.State.DurabilityTier do
 
   @doc """
   Age at which an unreferenced artifact is collected even though no node holds
-  local state for its reference — a stopped operator, or one whose state moved.
+  local state for its reference — a stopped relay, or one whose state moved.
 
   Without it, scoping collection to what a node owns would leak those forever.
   Far longer than `gc_grace_ms/0` on purpose: it is the threshold past which no
@@ -228,7 +228,7 @@ defmodule Flezha.State.DurabilityTier do
 
     Without a remote durability tier this controller is both the coordination \
     brain and the durable store on one local disk: if it dies WITH that disk, \
-    every operator's state goes with it.
+    every relay's state goes with it.
 
     Two valid moves:
 
@@ -292,7 +292,7 @@ defmodule Flezha.State.DurabilityTier do
   # ---------- per-class sync mode ----------
 
   @doc """
-  Whether `operator_class` requires the remote ship to complete before a
+  Whether `relay_class` requires the remote ship to complete before a
   commit point is acknowledged (RPO 0).
 
   The class's own `durable: remote` declaration and nothing else
@@ -301,13 +301,13 @@ defmodule Flezha.State.DurabilityTier do
   wait on a backend that does not exist.
   """
   @spec sync_class?(binary()) :: boolean()
-  def sync_class?(operator_id) when is_binary(operator_id) do
-    # Callers on the commit path hold an operator ID, while the declaration is
-    # recorded against the resolved CLASS. Where an `:operator_class` override
+  def sync_class?(relay_id) when is_binary(relay_id) do
+    # Callers on the commit path hold a relay ID, while the declaration is
+    # recorded against the resolved CLASS. Where an `:relay_class` override
     # makes those differ, looking up the id finds nothing and the gate silently
     # never arms — the class asked for RPO 0 and gets ordinary async shipping.
     enabled?() and
-      Enum.any?(ClassRegistry.state_keys(operator_id), &PersistenceResolver.remote?/1)
+      Enum.any?(ClassRegistry.state_keys(relay_id), &PersistenceResolver.remote?/1)
   end
 
   # ---------- triggers ----------
@@ -322,11 +322,11 @@ defmodule Flezha.State.DurabilityTier do
 
   @doc """
   Every shippable reference stored under one on-disk STATE KEY: the durable
-  references `Paths.durable_refs/1` names (its Cells, a steps operator's journal,
+  references `Paths.durable_refs/1` names (its Cells, a steps relay's journal,
   its input log) that hold local state, and its dead-letter trees.
 
-  An operator can occupy two state keys — see `refs_of_operator/1`, which is
-  what anything holding an operator id should call.
+  A relay can occupy two state keys — see `refs_of_relay/1`, which is
+  what anything holding a relay id should call.
   """
   @spec refs_of_state_key(binary()) :: [Artifact.ref()]
   def refs_of_state_key(state_key) when is_binary(state_key) do
@@ -346,9 +346,9 @@ defmodule Flezha.State.DurabilityTier do
   @spec all_refs(binary()) :: [Artifact.ref()]
   def all_refs(writer) when is_binary(writer) do
     # Classes with Cell state UNION classes with parked failures: a stopped
-    # operator keeps its parks without holding state, and its parks are still
+    # relay keeps its parks without holding state, and its parks are still
     # this node's to ship.
-    (Paths.operator_classes() ++ Artifact.dlq_classes())
+    (Paths.relay_classes() ++ Artifact.dlq_classes())
     |> Enum.uniq()
     |> Enum.flat_map(&refs_of_state_key/1)
     |> Enum.concat(Artifact.cspec_refs(writer))
@@ -356,17 +356,17 @@ defmodule Flezha.State.DurabilityTier do
   end
 
   @doc """
-  Every shippable reference of one operator, across BOTH identities it is
+  Every shippable reference of one relay, across BOTH identities it is
   stored under — its instance id, which keys the task-journal, and its
-  resolved class, which keys the Cells and input log (for a steps operator the two
+  resolved class, which keys the Cells and input log (for a steps relay the two
   are one key).
 
-  Anything holding an operator id and wanting its whole durable identity goes
+  Anything holding a relay id and wanting its whole durable identity goes
   through here; `refs_of/1` answers the narrower question about one state key.
   """
-  @spec refs_of_operator(binary()) :: [Artifact.ref()]
-  def refs_of_operator(operator_id) when is_binary(operator_id) do
-    operator_id
+  @spec refs_of_relay(binary()) :: [Artifact.ref()]
+  def refs_of_relay(relay_id) when is_binary(relay_id) do
+    relay_id
     |> ClassRegistry.state_keys()
     |> Enum.flat_map(&refs_of_state_key/1)
     |> Enum.uniq()
@@ -387,16 +387,16 @@ defmodule Flezha.State.DurabilityTier do
   backstop sweep.
   """
   @spec on_effect_flushed(tuple(), integer() | nil) :: :ok
-  def on_effect_flushed({operator_class, _, _} = cell_id, consumed_offset)
+  def on_effect_flushed({relay_class, _, _} = cell_id, consumed_offset)
       when is_integer(consumed_offset) do
-    if enabled?() and ClassRegistry.ack_checkpoint?(operator_class) do
+    if enabled?() and ClassRegistry.ack_checkpoint?(relay_class) do
       ship({:cell, cell_id})
 
       # The input log rides the same cut. Shipping the state without it would
       # leave a hydrated Cell holding a consumed floor and nothing to replay
       # from — the inputs after the cut would be gone, and the next one would
       # land below the floor and be skipped as already consumed.
-      ship({:input_log, operator_class})
+      ship({:input_log, relay_class})
     end
 
     :ok
@@ -410,12 +410,12 @@ defmodule Flezha.State.DurabilityTier do
   reach the remote store for the instance to resume elsewhere.
   """
   @spec on_steps_commit(binary()) :: :ok
-  def on_steps_commit(operator_id) when is_binary(operator_id) do
-    if enabled?(), do: Enum.each(refs_of_operator(operator_id), &Shipper.enqueue/1)
+  def on_steps_commit(relay_id) when is_binary(relay_id) do
+    if enabled?(), do: Enum.each(refs_of_relay(relay_id), &Shipper.enqueue/1)
     :ok
   end
 
-  @doc "The registry cspec changed — what operators exist, and how they are configured."
+  @doc "The registry cspec changed — what relays exist, and how they are configured."
   @spec ship_cspec(atom() | binary()) :: :ok
   def ship_cspec(hub_id), do: ship({:cspec, {to_string(hub_id), writer_id()}})
 
@@ -425,7 +425,7 @@ defmodule Flezha.State.DurabilityTier do
   caller can withhold the acknowledgement: a failure stalls the instance at its
   commit point, loudly, which is what RPO 0 means.
 
-  The commit point is a steps instance's barrier, named by its operator id, or
+  The commit point is a steps instance's barrier, named by its relay id, or
   a flow Cell's synced records, named by its Cell id: the Cell and the input
   log its consumed offsets point into. The wait is reported as
   `[:flezha, :state, :remote_commit]` for both.
@@ -433,8 +433,8 @@ defmodule Flezha.State.DurabilityTier do
   @spec commit_sync(binary() | tuple()) :: :ok | {:error, term()}
   def commit_sync(subject) do
     started = System.monotonic_time(:millisecond)
-    {operator, refs} = commit_target(subject)
-    result = ship_through(refs, operator)
+    {relay, refs} = commit_target(subject)
+    result = ship_through(refs, relay)
 
     :telemetry.execute(
       [:flezha, :state, :remote_commit],
@@ -471,22 +471,22 @@ defmodule Flezha.State.DurabilityTier do
     :ok
   end
 
-  # The operator a commit point belongs to, and what it ships. Both key spaces
+  # The relay a commit point belongs to, and what it ships. Both key spaces
   # of a steps instance: shipping only one of them would let its barrier answer
   # `:ok` having never sent the Cell state the guarantee is about. A flow Cell
   # ships its input log first, so the floor its records carry never lands
   # remotely ahead of the inputs above it.
-  defp commit_target(operator_id) when is_binary(operator_id),
-    do: {operator_id, refs_of_operator(operator_id)}
+  defp commit_target(relay_id) when is_binary(relay_id),
+    do: {relay_id, refs_of_relay(relay_id)}
 
-  defp commit_target({operator_class, _, _} = cell_id),
-    do: {operator_class, [{:input_log, operator_class}, {:cell, cell_id}]}
+  defp commit_target({relay_class, _, _} = cell_id),
+    do: {relay_class, [{:input_log, relay_class}, {:cell, cell_id}]}
 
-  defp ship_through(refs, operator) do
+  defp ship_through(refs, relay) do
     Enum.reduce_while(refs, :ok, fn ref, :ok ->
       case Shipper.ship_now(ref) do
         :ok -> {:cont, :ok}
-        {:error, reason} -> {:halt, {:error, {:sync_ship_failed, operator, reason}}}
+        {:error, reason} -> {:halt, {:error, {:sync_ship_failed, relay, reason}}}
       end
     end)
   end
@@ -494,24 +494,24 @@ defmodule Flezha.State.DurabilityTier do
   # ---------- recovery ----------
 
   @doc """
-  Hydrate `operator_class`'s artifacts from the remote manifest when its local
+  Hydrate `relay_class`'s artifacts from the remote manifest when its local
   state is absent. A no-op when the tier is off, when nothing is shipped, or
   when local state already exists; a newer shipped copy replaces a local one
   only through `Flezha.State.Adoption`.
   """
-  @spec hydrate_operator(binary()) :: :ok
-  def hydrate_operator(operator_class) when is_binary(operator_class) do
+  @spec hydrate_relay(binary()) :: :ok
+  def hydrate_relay(relay_class) when is_binary(relay_class) do
     with {module, opts} <- BackendConfig.resolve(),
-         do: Hydrator.hydrate_operator(module, opts, operator_class)
+         do: Hydrator.hydrate_relay(module, opts, relay_class)
 
     :ok
   end
 
   @doc "`Hydrator.shipped_freshness/3` against the configured backend; `%{}` when the tier is off."
   @spec shipped_freshness(binary()) :: %{Paths.durable_ref() => term()}
-  def shipped_freshness(operator_class) do
+  def shipped_freshness(relay_class) do
     case BackendConfig.resolve() do
-      {module, opts} -> Hydrator.shipped_freshness(module, opts, operator_class)
+      {module, opts} -> Hydrator.shipped_freshness(module, opts, relay_class)
       :none -> %{}
     end
   end
@@ -524,9 +524,9 @@ defmodule Flezha.State.DurabilityTier do
   Tasklet.
   """
   @spec hydrate_cells(binary(), binary(), [binary()]) :: :ok
-  def hydrate_cells(operator_class, tasklet_id, cell_keys) do
+  def hydrate_cells(relay_class, tasklet_id, cell_keys) do
     with {module, opts} <- BackendConfig.resolve() do
-      Hydrator.hydrate_cells(module, opts, operator_class, tasklet_id, cell_keys)
+      Hydrator.hydrate_cells(module, opts, relay_class, tasklet_id, cell_keys)
     end
 
     :ok

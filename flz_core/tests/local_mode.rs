@@ -15,16 +15,15 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use flz_core::host;
 use flz_core::local::{self, LocalRun, SinkOutput};
-use flz_core::operator::instance::KeyGroupRange;
 use flz_core::poll_core::{self, Polled};
+use flz_core::relay::instance::KeyGroupRange;
 use flz_core::runner::RunnerNode;
 use flz_core::schema::{
     Activation, ActivationKind, ActivationOutcome, ItemEffect, Output, OutputTarget, PrepareAnswer,
     TimerKind, TimerOp, Verdict, WorkError, WorkItem,
 };
-use flz_core::ErrorModel;
+use flz_core::{host, ErrorModel};
 use flz_transport::service::payloader;
 use flz_transport::transport::FlezhaStream;
 
@@ -273,9 +272,9 @@ fn a_two_tasklet_graph_runs_with_no_controller() {
     assert_eq!(dynamic_cells, 2, "one Cell per resolved key");
 }
 
-/// A runner's local send: application code hands a value to an operator
+/// A runner's local send: application code hands a value to a relay
 /// bound on this runner with no frame to the controller, and the output it
-/// causes leaves on the operator's data stream as any output does.
+/// causes leaves on the relay's data stream as any output does.
 #[test]
 fn a_local_send_on_a_runner_is_handled_and_its_output_rides_the_data_stream() {
     let _serialized = one_run();
@@ -283,13 +282,13 @@ fn a_local_send_on_a_runner_is_handled_and_its_output_rides_the_data_stream() {
     flz_core::state_sink::install_global_sink(Arc::new(|_payload_id: &str, _frame: &[u8]| Ok(())));
     let _host = Host::spawn(two_step_answer);
     let node = RunnerNode::new("local-send".to_string());
-    node.start_operator(
+    node.start_relay(
         "local_two_step".to_string(),
         "orders".to_string(),
         KeyGroupRange::UNPARTITIONED,
         Default::default(),
     )
-    .expect("the operator binds");
+    .expect("the relay binds");
     let written = Arc::new(Mutex::new(Vec::<Vec<u8>>::new()));
     let into = Arc::clone(&written);
     let stream = FlezhaStream::Local(Arc::new(move |frame: &[u8]| {
@@ -325,7 +324,7 @@ fn a_local_send_on_a_runner_is_handled_and_its_output_rides_the_data_stream() {
         std::thread::sleep(Duration::from_millis(5));
     };
     assert_eq!(released, vec![("totals".to_string(), b"a1".to_vec())]);
-    assert!(node.stop_operator("orders"));
+    assert!(node.stop_relay("orders"));
 }
 
 #[test]
@@ -444,9 +443,9 @@ fn a_channel_the_declaration_does_not_carry_is_refused_by_name() {
     assert_eq!(unknown.code(), "runtime.channel_undeclared");
     let details = unknown.to_error().details;
     assert_eq!(
-        (&details["channel"], &details["operator"]),
+        (&details["channel"], &details["relay"]),
         (&"nope".into(), &"refusals-1".into()),
-        "the refusal names the channel and the operator"
+        "the refusal names the channel and the relay"
     );
 
     let not_entry = run.feed("mid", b"x".to_vec()).expect_err("refused");
@@ -546,7 +545,7 @@ fn the_same_declaration_serves_local_mode_and_class_registration() {
     // No local-mode member exists: the run is started from the factory id the
     // controller registers, and the topology it reads is the registered one.
     let run = LocalRun::start("local_two_step", "shared-decl").expect("the run starts");
-    let registered = flz_core::operator::registry::get_class("local_two_step").expect("registered");
+    let registered = flz_core::relay::registry::get_class("local_two_step").expect("registered");
     assert_eq!(
         run.instance().topology.factory_id,
         registered.factory_id,
@@ -669,25 +668,25 @@ fn a_local_run_fires_an_event_time_timer_on_the_advancing_high_water() {
 
 // ------------------------------------------------- the prepare crossing
 
-/// `in → relay → out`, keyed on the way in, so every entry payload crosses to
+/// `in → forward → out`, keyed on the way in, so every entry payload crosses to
 /// the host for its key before it is dispatched. The shape the conformance
-/// fixtures call `partition_relay` and `dynamic_cell`.
+/// fixtures call `partition_pass` and `dynamic_cell`.
 const KEYED_ENTRY: &str = r#"{
     "factory_id": "local_keyed_entry", "sdk_lang": 1, "sdk_version": "0.1.0",
     "channels": [{"name": "in",  "kind": "entry",  "chains": [[{"link": "into", "tasklet": 0}]]},
                  {"name": "out", "kind": "plugin", "producer": 0, "keyed": true,
                                  "chains": [[{"link": "sink", "name": "out"}]]}],
-    "tasklets": [{"name": "relay", "cell_mode": "dynamic"}]
+    "tasklets": [{"name": "forward", "cell_mode": "dynamic"}]
 }"#;
 
-/// `in → relay → out`, keyed on the way in, retried on a failed crossing.
+/// `in → forward → out`, keyed on the way in, retried on a failed crossing.
 const KEYED_ENTRY_RETRIED: &str = r#"{
     "factory_id": "local_keyed_entry_retried", "sdk_lang": 1, "sdk_version": "0.1.0",
     "channels": [{"name": "in",  "kind": "entry", "retry_max": 3, "retry_backoff_ms": 40,
                                  "chains": [[{"link": "into", "tasklet": 0}]]},
                  {"name": "out", "kind": "plugin", "producer": 0, "keyed": true,
                                  "chains": [[{"link": "sink", "name": "out"}]]}],
-    "tasklets": [{"name": "relay", "cell_mode": "dynamic"}]
+    "tasklets": [{"name": "forward", "cell_mode": "dynamic"}]
 }"#;
 
 /// The tasklet of both keyed classes: it releases what reaches it, under
@@ -704,8 +703,8 @@ fn echo_keyed(_activation: &Activation, item: &WorkItem) -> ItemEffect {
 }
 
 /// Feed `a:1`, `b:1`, `a:2`, settle, and return what was released, sorted.
-fn keyed_run(factory_id: &str, operator_id: &str) -> Vec<String> {
-    let run = LocalRun::start(factory_id, operator_id).expect("the run starts");
+fn keyed_run(factory_id: &str, relay_id: &str) -> Vec<String> {
+    let run = LocalRun::start(factory_id, relay_id).expect("the run starts");
     let (seen, callback) = recorder();
     run.on_sink("out", callback).expect("`out` is declared");
     for payload in ["a:1", "b:1", "a:2"] {

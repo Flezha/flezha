@@ -1,7 +1,7 @@
 defmodule Flezha.Service.Cli.Schedule do
   @moduledoc """
   `flz schedule add | list | remove | run` — the text forms of the scheduled
-  operator starts.
+  relay starts.
   """
 
   # Error reasons truncate to the column; the full reason stays in
@@ -64,7 +64,7 @@ defmodule Flezha.Service.Cli.Schedule do
   def remove(:ok, [name | _], _opts), do: IO.puts("Schedule #{name} removed")
 
   @doc "`flz schedule run`."
-  def run(%{outcome: :spawned, operator_id: id}, _args, _opts), do: IO.puts("Spawned #{id}")
+  def run(%{outcome: :spawned, relay_id: id}, _args, _opts), do: IO.puts("Spawned #{id}")
 
   def run(%{outcome: :already_running}, _args, _opts),
     do: IO.puts("instance already running; no-op")

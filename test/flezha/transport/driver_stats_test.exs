@@ -100,7 +100,7 @@ defmodule Flezha.Transport.DriverStatsTest do
     wedged = %{sample | loop_iterations: previous.loop_iterations, now_ms: sample.now_ms + 30_000}
 
     snapshot = fn d ->
-      %{drivers: [Map.put(d, :transport, :quic)], channels: [], operators: []}
+      %{drivers: [Map.put(d, :transport, :quic)], channels: [], relays: []}
     end
 
     assert {:driver_loop_frozen, ctx} =

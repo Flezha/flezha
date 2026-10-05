@@ -9,9 +9,9 @@ effectively-once tier are one implementation, not two.
 live deployment, passes the full conformance run in CI and is permanently supported.
 
 Authoring surface: one tasklet form, a class implementing
-`Tasklet<Input, State, Output>` and carrying `@Tasklet.Spec`, wired by an
-`Operator` in `channels(ChannelBuilder)` under the settings tree its `run()` and
-`durable()` declare; and the `@Operator` short form. Nothing is generated: the
+`Tasklet<Input, State, Output>` and carrying `@Tasklet.Spec`, wired by a
+`Relay` in `channels(ChannelBuilder)` under the settings tree its `run()` and
+`durable()` declare; and the `@Relay` short form. Nothing is generated: the
 class you write is the class every call names. See
 [`authoring_contract.md`](authoring_contract.md) for the rules every SDK shares
 and [`state_persistence.md`](state_persistence.md) for the state and Kryo side.
@@ -44,7 +44,7 @@ public final class TrackPrices implements Tasklet<Trade, TrackPrices.PriceWindow
 }
 ```
 
-The operator names that class: `.into(TrackPrices.class)`.
+The relay names that class: `.into(TrackPrices.class)`.
 
 - **`run(input, ctx)`** returns nothing. `ctx` is the one way out: `ctx.emit(value)`
   typed by `Output`, `ctx.emit(channel, value)` for a named channel,
@@ -115,7 +115,7 @@ list moves every id**: the saved records no longer decode, so bump
 `migrateChange`.
 
 State saved by an earlier Java SDK, whose tasklets took six type parameters, is
-not readable by this one: the ids of user types changed. Clear a Java operator's
+not readable by this one: the ids of user types changed. Clear a Java relay's
 saved state once when moving to it.
 
 ## Threading
@@ -185,7 +185,7 @@ during a drain cannot turn a clean drain into a crash.
 
 ## The settings tree
 
-`Operator` is the one base. Besides `factoryId()` and `channels(...)` it carries
+`Relay` is the one base. Besides `factoryId()` and `channels(...)` it carries
 `description()`, `maxDuration()` (a wall-clock stop for either run), `run()` and
 `durable()`. Each "one of" is a sealed interface and each nested setting a
 record component of its parent only, so a setting under the wrong parent does
@@ -201,7 +201,7 @@ not compile:
 | `durable()` | `Durable.Memory()`, `Durable.Local(sleepAfter)`, `Durable.Remote(sleepAfter)` | local; a flow never sleeps, a steps class after six hours |
 
 ```java
-public final class Checkout implements Operator {
+public final class Checkout implements Relay {
     @Override public String factoryId() { return "checkout"; }
 
     @Override public Run run() {
@@ -227,13 +227,13 @@ range is refused by the core by name.
 
 ## The short form
 
-A tasklet class annotated `@Operator` (`com.flezha.sdk.authoring`) is a whole
-operator: one class, no hand-written operator beside it. The class you wrote is
+A tasklet class annotated `@Relay` (`com.flezha.sdk.authoring`) is a whole
+relay: one class, no hand-written relay beside it. The class you wrote is
 what you register. `registerFactory` reads the annotation and declares the
-operator; nothing is generated.
+relay; nothing is generated.
 
 ```java
-@Operator(id = "upcase", sink = "out")
+@Relay(id = "upcase", sink = "out")
 public class Upcase implements Tasklet<String, Void, String> {
     @Override
     public void run(String value, Ctx<Void, String> ctx) throws TaskletException {
@@ -241,7 +241,7 @@ public class Upcase implements Tasklet<String, Void, String> {
     }
 }
 
-@Operator(id = "place", sink = "placed", input = "order", run = @Run(steps = @Steps))
+@Relay(id = "place", sink = "placed", input = "order", run = @Run(steps = @Steps))
 public class Place implements Tasklet<String, Void, String> {
     @Override
     public void run(String order, Ctx<Void, String> ctx) throws TaskletException {
@@ -255,7 +255,7 @@ Flezha.createRunner("default")
         .run();
 ```
 
-The operator is the one you would have written by hand with that single
+The relay is the one you would have written by hand with that single
 tasklet: an entry channel named `input`, or the `input` element's value; the
 class; a plugin sink named by `sink` when one is written; a `factoryId()` equal
 to `id`; and the settings tree the annotation writes. The short form takes the
@@ -267,23 +267,23 @@ only under their parent: `run = @Run(flow = @Flow(effectivelyOnce =
 `description`. A "one of" is an array holding at most one branch; two written at
 once make `registerFactory` throw naming `topology.invalid_setting`. A steps
 short form runs once over its first message unless it writes `each`:
-`flz operator start place --text '<payload>'`, or a start followed by
-`flz operator send`; a second message to a `once` instance is accepted and never
+`flz relay start place --text '<payload>'`, or a start followed by
+`flz relay send`; a second message to a `once` instance is accepted and never
 read. `each = Each.PER_INPUT` runs `run` once per message, and the instance does
 not complete after the first. `onFull` sets the entry channel's overflow policy.
-`LocalOperator.start(Upcase.class)` runs a short form locally the same way.
+`LocalRelay.start(Upcase.class)` runs a short form locally the same way.
 
 The tasklet is named after the `id`, so a short form needs no `@Tasklet.Spec`.
 It carries one only for settings (`keys`, `capacity`, `maxCells`, ...), and then
 its `name` must equal the `id`, or registration fails with
-`ShortFormNameMismatch`: one operator, one name. The output type is the class's
+`ShortFormNameMismatch`: one relay, one name. The output type is the class's
 `Output`, and a keyed emit is the body's `ctx.emitKeyed`.
 
-`sink` is optional. With none, the operator declares the entry channel and the
-tasklet and no plugin channel: the operator that only keeps state.
+`sink` is optional. With none, the relay declares the entry channel and the
+tasklet and no plugin channel: the relay that only keeps state.
 
 ```java
-@Operator(id = "counter", input = "ticks")
+@Relay(id = "counter", input = "ticks")
 public class Counter implements Tasklet<String, Counter.Seen, Void> {
 
     public static class Seen {
@@ -310,39 +310,39 @@ entry decodes by its declared type, so the short form takes no `codec` element.
 
 `.response()` ends a channel on the answer to an outside call instead of a sink,
 and `.response(Function<T, byte[]>)` takes a serializer as `.sink` does:
-[`../topics/advanced/operator_calls.md`](../topics/advanced/operator_calls.md). `.call(CallTarget.id("pricing"), Answer.class, deadlineMs)`
+[`../topics/advanced/relay_calls.md`](../topics/advanced/relay_calls.md). `.call(CallTarget.id("pricing"), Answer.class, deadlineMs)`
 (or `CallTarget.factory("agent").create(false)` after a `keyBy`) ends a tasklet's
-output chain on a call to another operator and answers an `EntryChannel` of
-`Response<Req, Answer>`: [`../topics/advanced/operator_calls.md`](../topics/advanced/operator_calls.md).
+output chain on a call to another relay and answers an `EntryChannel` of
+`Response<Req, Answer>`: [`../topics/advanced/relay_calls.md`](../topics/advanced/relay_calls.md).
 
 `id` must be written: the factory id is an address a user types, and a
 class rename must not move it. The written `id` also names the tasklet, so a
 Java tasklet's state is saved under the same name its Rust twin uses. The
 refusals are raised when the class is registered, each naming the class: an
 absent `id`; `topology.short_form_with_topology` (an annotated class that also implements
-`Operator`); `topology.sink_without_output` (a `sink` on a
-class whose `Output` is `Void`); and `ShortFormNameMismatch`. A second operator
+`Relay`); `topology.sink_without_output` (a `sink` on a
+class whose `Output` is `Void`); and `ShortFormNameMismatch`. A second relay
 under a factory id the runner holds fails `registerFactory` with
-`topology.duplicate_factory_id`, and a class that is neither an operator nor a
-short form with `topology.no_operator_exported`.
+`topology.duplicate_factory_id`, and a class that is neither a relay nor a
+short form with `topology.no_relay_exported`.
 
-Nothing registers itself. There is no aggregator class: every operator a
+Nothing registers itself. There is no aggregator class: every relay a
 runner declares is one the application handed to `registerFactory`.
 
-## Operators that run in steps
+## Relays that run in steps
 
 A class whose `run()` is `Run.Steps` declares its graph in `channels`, on the same
-builder a flow uses: `flz operator start` names the factory and nothing else.
+builder a flow uses: `flz relay start` names the factory and nothing else.
 Retry is the edge's, as in a flow: `.retryMax(n)` / `.retryBackoffMs(ms)` on the
 channel that feeds a tasklet (default 3 attempts, 50 ms), and `retryMax(0)` is
 refused as `topology.retry_max_zero`. A steps class has no `exactly`: a durable
 one already commits stage by stage.
 
-A tasklet of a steps operator registers timers as a flow tasklet does, and a
+A tasklet of a steps relay registers timers as a flow tasklet does, and a
 firing runs as a pass of its own ([`../topics/advanced/timers.md`](../topics/advanced/timers.md));
 only a `compensate` hook's context carries no timer session, and there every
 timer call throws a `FlezhaException` with the code `runtime.timers_unavailable`.
-A `spawnSteps` naming a flow factory reads `operator.factory_not_steps`. A flow
+A `spawnSteps` naming a flow factory reads `relay.factory_not_steps`. A flow
 tasklet's `complete` ends its instance once the work its cells hold has run.
 
 ## Scope

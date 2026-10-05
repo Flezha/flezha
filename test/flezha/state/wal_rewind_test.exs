@@ -13,7 +13,7 @@ defmodule Flezha.State.WalRewindTest do
   # async: false: writes Application env; a shared on-disk root; registered singletons.
   use FlezhaTest.Case, fixtures: [:tmp_app_data, :state_tree], async: false
 
-  alias Flezha.Operator.ClassRegistry
+  alias Flezha.Relay.ClassRegistry
   alias Flezha.SDK.Wire
 
   alias Flezha.State.{InputLog, Paths, RecordFrame, Supervisor, WalWriter}

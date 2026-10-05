@@ -384,8 +384,9 @@ fn as_text(value: &Value) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::json;
+
+    use super::*;
 
     fn details(value: Value) -> Map<String, Value> {
         value.as_object().cloned().unwrap_or_default()
@@ -447,7 +448,7 @@ mod tests {
     fn a_document_reads_back_as_the_error_it_renders() {
         let error = FlezhaError::new(
             "quota.exceeded",
-            details(json!({"kind": "max_operators", "current": 3, "limit": 3})),
+            details(json!({"kind": "max_relays", "current": 3, "limit": 3})),
         );
 
         assert_eq!(FlezhaError::from_document(&error.json()), Some(error));

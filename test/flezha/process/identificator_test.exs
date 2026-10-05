@@ -54,7 +54,7 @@ defmodule FlezhaTest.Process.IdentificatorTest do
                Identificator.validate(:schedule_name, "a b")
 
       assert {:error, {:malformed, :token}} = Identificator.validate(:token, "zzzzzzzz")
-      assert {:error, {:malformed, :operator}} = Identificator.validate(:operator, :not_binary)
+      assert {:error, {:malformed, :relay}} = Identificator.validate(:relay, :not_binary)
     end
 
     test "a kind no row declares is refused rather than defaulted" do
@@ -64,7 +64,7 @@ defmodule FlezhaTest.Process.IdentificatorTest do
 
   describe "mint/3" do
     test "what it mints always passes the same table that validates it" do
-      for kind <- [:runner, :operator] do
+      for kind <- [:runner, :relay] do
         for namespace <- ["a", "default", "colocation_ns", String.duplicate("z", 80)] do
           id = Identificator.mint(kind, namespace)
 
@@ -90,9 +90,9 @@ defmodule FlezhaTest.Process.IdentificatorTest do
     end
   end
 
-  describe "a generated operator id" do
+  describe "a generated relay id" do
     test "a short factory id is kept whole, followed by a time-and-random suffix" do
-      id = Identificator.mint(:operator, "echo")
+      id = Identificator.mint(:relay, "echo")
 
       assert id =~ ~r/\Aecho-[a-z2-7]{16}\z/
       assert byte_size(id) == 21
@@ -102,39 +102,39 @@ defmodule FlezhaTest.Process.IdentificatorTest do
       factory = "orders_enrichment_pipeline_v2x"
       assert byte_size(factory) == 30
 
-      id = Identificator.mint(:operator, factory)
+      id = Identificator.mint(:relay, factory)
 
-      assert Identificator.validate(:operator, id) == :ok
+      assert Identificator.validate(:relay, id) == :ok
       assert String.starts_with?(id, binary_part(factory, 0, 15))
       assert id =~ ~r/-[a-z2-7]{16}\z/
     end
 
     test "a reserve leaves room for the largest partition member suffix" do
-      base = Identificator.mint(:operator, String.duplicate("f", 30), reserve: byte_size("#p15"))
+      base = Identificator.mint(:relay, String.duplicate("f", 30), reserve: byte_size("#p15"))
 
       for member <- 0..15 do
-        assert Identificator.validate(:operator, base <> "#p#{member}") == :ok
+        assert Identificator.validate(:relay, base <> "#p#{member}") == :ok
       end
     end
 
     test "a cut never splits a multi-byte character" do
       # Byte 15, where the cut falls, is the first half of `é`.
-      id = Identificator.mint(:operator, "abcdefghijklmné_sur_mesure")
+      id = Identificator.mint(:relay, "abcdefghijklmné_sur_mesure")
 
       assert String.valid?(id)
       assert id =~ ~r/\Aabcdefghijklmn-[a-z2-7]{16}\z/
     end
 
     test "a seed mints one id in the drawn id's shape, and another seed another" do
-      id = Identificator.mint(:operator, "worker", seed: "origin-7")
-      assert id == Identificator.mint(:operator, "worker", seed: "origin-7")
+      id = Identificator.mint(:relay, "worker", seed: "origin-7")
+      assert id == Identificator.mint(:relay, "worker", seed: "origin-7")
       assert id =~ ~r/\Aworker-[a-z2-7]{16}\z/
-      assert Identificator.validate(:operator, id) == :ok
-      refute id == Identificator.mint(:operator, "worker", seed: "origin-8")
+      assert Identificator.validate(:relay, id) == :ok
+      refute id == Identificator.mint(:relay, "worker", seed: "origin-8")
     end
 
     test "ids minted in a tight loop never repeat" do
-      ids = for _ <- 1..20_000, do: Identificator.mint(:operator, "echo")
+      ids = for _ <- 1..20_000, do: Identificator.mint(:relay, "echo")
       assert length(Enum.uniq(ids)) == length(ids)
     end
   end

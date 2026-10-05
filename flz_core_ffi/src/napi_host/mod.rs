@@ -203,7 +203,7 @@ fn pick_loop(activation: &schema::Activation, loops: usize) -> usize {
     let target = &activation.target;
     let mut hash: u32 = 0x811c_9dc5;
     for byte in target
-        .operator
+        .relay
         .as_bytes()
         .iter()
         .chain(target.tasklet.to_be_bytes().iter())
@@ -331,7 +331,7 @@ fn start_fetcher() -> bool {
 ///
 /// This covers what the core can see — work queued with no thread inside
 /// `poll`, which for this host means a direct activation (a restore fold, a
-/// snapshot request, a steps operator step) arriving while every fetcher is between
+/// snapshot request, a steps relay step) arriving while every fetcher is between
 /// polls. It is not a substitute for the pool's growth rule: the core cannot
 /// see the host's completion queue, and this thread cannot see the core's.
 fn supervise_loop() {
@@ -595,20 +595,20 @@ pub(crate) fn set_log_callback(callback: Option<Function<JsLogLine, ()>>) -> Res
 mod tests {
     use super::*;
 
-    fn activation(operator: &str, tasklet: u32, key: Option<&str>) -> schema::Activation {
-        activation_of(schema::ActivationKind::Work(vec![]), operator, tasklet, key)
+    fn activation(relay: &str, tasklet: u32, key: Option<&str>) -> schema::Activation {
+        activation_of(schema::ActivationKind::Work(vec![]), relay, tasklet, key)
     }
 
     fn activation_of(
         kind: schema::ActivationKind,
-        operator: &str,
+        relay: &str,
         tasklet: u32,
         key: Option<&str>,
     ) -> schema::Activation {
         schema::Activation {
             token: 1,
             target: schema::CellRef {
-                operator: operator.to_string(),
+                relay: relay.to_string(),
                 tasklet,
                 cell_key: key.map(str::to_string),
             },

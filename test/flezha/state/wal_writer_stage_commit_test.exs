@@ -1,6 +1,6 @@
 defmodule Flezha.State.WalWriterStageCommitTest do
   @moduledoc """
-  A durable steps operator Cell's writer: its effect records' outputs are released
+  A durable steps relay Cell's writer: its effect records' outputs are released
   at the stage marker that names them, not at their fsync; a record no marker
   will name is dropped rather than released; the commit worker can wait on a
   record's durability; and a writer that boots, or an instance that binds,

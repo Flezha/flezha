@@ -286,10 +286,10 @@ runner-only boot (`controller_enabled: false`) SHALL load no package.
 
 #### Scenario: A package's modules are loaded before any subscription replay
 
-- **GIVEN** an operator whose persisted child spec enables the example package's provider
+- **GIVEN** a relay whose persisted child spec enables the example package's provider
 - **WHEN** the controller restarts
 - **THEN** the provider module SHALL be loaded and its row registered before
-  `Flezha.Service.PluginManager` starts, and the operator's bind SHALL subscribe the plugin
+  `Flezha.Service.PluginManager` starts, and the relay's bind SHALL subscribe the plugin
 
 #### Scenario: Loading is all or nothing
 
@@ -308,7 +308,7 @@ runner-only boot (`controller_enabled: false`) SHALL load no package.
 declares `<id>` and print that the package unloads at the next restart of the controller. It
 SHALL NOT touch `.loaded/` or the running VM. An id with no archive SHALL be refused with `plugin.not_installed`, and a node whose
 list is declared SHALL refuse it with `plugin.list_declared`. After the next restart,
-operators bound to plugins of the package's providers run without them, each binding
+relays bound to plugins of the package's providers run without them, each binding
 reported not started (see "Recovery interaction with installed plugins").
 
 #### Scenario: Uninstall removes the archive, the running controller keeps the package
@@ -400,58 +400,58 @@ no `installer_auto_save_ms` duration.
 ### Requirement: Recovery interaction with installed plugins
 
 A package provider's binding SHALL reach the same bring-up path as a first-party one's. A
-binding is written by `Flezha.Service.PluginManager.bind/3` into the owning operator's
-declared entry (`opts[:bindings]`) and brought up when that operator binds:
-`Flezha.Operator.Overwatch.init/1` → `handle_continue({:bind_runner, …})` →
-`Flezha.Operator.Lifecycle.complete_init/4` → `Flezha.Operator.Plugins.prepare/2` →
+binding is written by `Flezha.Service.PluginManager.bind/3` into the owning relay's
+declared entry (`opts[:bindings]`) and brought up when that relay binds:
+`Flezha.Relay.Overwatch.init/1` → `handle_continue({:bind_runner, …})` →
+`Flezha.Relay.Lifecycle.complete_init/4` → `Flezha.Relay.Plugins.prepare/2` →
 `Flezha.Plugin.Extension.Table.bulk_subscribe/2`.
 
 A binding whose provider module is not loaded (its package was refused at this boot, was
 uninstalled, or was never installed on this node) MUST NOT be subscribed and MUST NOT park
-the operator. `Plugins.prepare/2` SHALL record the binding as not started in the operator's
+the relay. `Plugins.prepare/2` SHALL record the binding as not started in the relay's
 extension table with the reason `plugin.provider_not_loaded`, naming the binding, the
 provider module and this controller and, when an archive in this node's plugin root declares
 that module, the package id and its status (refused with its code, or pending); the bind SHALL
-go on, and one warning SHALL be logged with that reason. The operator runs without the plugin,
+go on, and one warning SHALL be logged with that reason. The relay runs without the plugin,
 holding no upstream resources for it, and its health reports `plugin_unhealthy` for the
 binding until a later bring-up on a controller that loaded the package subscribes it as for a
 first-party provider.
 
-#### Scenario: An orphaned binding leaves the operator running
+#### Scenario: An orphaned binding leaves the relay running
 
-- **GIVEN** an operator whose declared entry carries a binding to plugin `s` whose provider
+- **GIVEN** a relay whose declared entry carries a binding to plugin `s` whose provider
   is `FlezhaExamplePlugin.Stamp`, and the example package was uninstalled before the restart
 - **WHEN** the controller restarts
-- **THEN** `s` SHALL NOT be subscribed, the operator SHALL bind and process its inputs, the
+- **THEN** `s` SHALL NOT be subscribed, the relay SHALL bind and process its inputs, the
   warning naming `s`, `FlezhaExamplePlugin.Stamp` and that no installed package provides it
-  SHALL be logged once, and `Convergence.Probe` SHALL report the operator `plugin_unhealthy`
+  SHALL be logged once, and `Convergence.Probe` SHALL report the relay `plugin_unhealthy`
   for `s` with `plugin.provider_not_loaded`, not parked
 
 #### Scenario: Installed plugin's binding subscribes at bind
 
-- **GIVEN** the same operator and the example package loaded at this boot
-- **WHEN** the operator binds
-- **THEN** `Flezha.Operator.Plugins.prepare/2` SHALL subscribe `s` exactly as a first-party
+- **GIVEN** the same relay and the example package loaded at this boot
+- **WHEN** the relay binds
+- **THEN** `Flezha.Relay.Plugins.prepare/2` SHALL subscribe `s` exactly as a first-party
   plugin, and `Plugins.bring_up/1` SHALL then transition it to `:running`
 
 ### Requirement: Settings payload schema uses canonical names
 
-The plugin settings payload (the JSON serialized at `cli_manager.ex` and on disk) SHALL use field names: `operator_id`, `runner_id`, `controller_id`. Fields previously named `processor_id`, `compute_engine_id`, or `agent_id` SHALL be renamed in the schema; reading a settings file with the legacy field names SHALL return an error.
+The plugin settings payload (the JSON serialized at `cli_manager.ex` and on disk) SHALL use field names: `relay_id`, `runner_id`, `controller_id`. Reading a settings file with any other field name for these SHALL return an error.
 
 #### Scenario: Modern settings round-trip
-- **WHEN** a plugin is installed with payload referencing `operator_id` and `runner_id`
+- **WHEN** a plugin is installed with payload referencing `relay_id` and `runner_id`
 - **THEN** the on-disk settings file SHALL contain those exact field names; reloading the Controller MUST produce the same in-memory plugin state
 
-#### Scenario: Legacy field names rejected
-- **WHEN** an on-disk settings file contains a field named `processor_id` or `compute_engine_id`
+#### Scenario: Unknown field names rejected
+- **WHEN** an on-disk settings file names the relay under any field other than `relay_id`
 - **THEN** the loader MUST return an error identifying the offending field; the user is expected to re-author the settings
 
-### Requirement: Disabling an operator's plugins SHALL bound every call it makes and SHALL NOT exit
+### Requirement: Disabling a relay's plugins SHALL bound every call it makes and SHALL NOT exit
 
-`PluginManager` SHALL treat a call into an operator's process as bounded and
+`PluginManager` SHALL treat a call into a relay's process as bounded and
 failable: a timeout, a dead target or any other exit SHALL be a value the handler
 acts on, and SHALL NOT terminate `PluginManager` itself. A teardown walking many
-operators SHALL continue past one that cannot be reached, and SHALL report which
+relays SHALL continue past one that cannot be reached, and SHALL report which
 ones it could not disable.
 
 The bound SHALL be applied through the one steps-call seam rather than a
@@ -459,23 +459,23 @@ The bound SHALL be applied through the one steps-call seam rather than a
 smaller than the bound the caller of `PluginManager` applies, so the two do not
 give up at the same instant.
 
-A teardown that walks many operators SHALL fan out under one bound rather than
+A teardown that walks many relays SHALL fan out under one bound rather than
 call them one at a time, so that the walk's cost is one bound and not one bound
-per unreachable operator. The fan-out SHALL NOT relocate work that owns
+per unreachable relay. The fan-out SHALL NOT relocate work that owns
 caller-scoped state: a step that creates an ETS table, unlinks a process or
 seeds a route naming the caller SHALL run in the calling process.
 
-#### Scenario: An operator is too busy to answer its unsubscribe
+#### Scenario: A relay is too busy to answer its unsubscribe
 
-- **WHEN** an operator's process does not answer `plugin_unsubscribe` inside the bound
-- **THEN** `PluginManager` SHALL stay alive, SHALL record that operator as not
+- **WHEN** a relay's process does not answer `plugin_unsubscribe` inside the bound
+- **THEN** `PluginManager` SHALL stay alive, SHALL record that relay as not
   disabled, and SHALL continue with the rest
 
-#### Scenario: A teardown of many operators finishes its walk
+#### Scenario: A teardown of many relays finishes its walk
 
-- **WHEN** `stop_all_operators/1` disables plugins for every operator in a namespace
+- **WHEN** `stop_all_relays/1` disables plugins for every relay in a namespace
   and one of them cannot be reached
-- **THEN** every other operator SHALL still be stopped and its state directory
+- **THEN** every other relay SHALL still be stopped and its state directory
   handled, and the walk SHALL NOT abandon the remainder
 
 #### Scenario: The durable row and the in-memory table do not disagree on a failure
@@ -484,12 +484,12 @@ seeds a route naming the caller SHALL run in the calling process.
 - **THEN** the two SHALL be reconciled rather than left in disagreement, so a
   restart does not read a plugin as both disabled and installed
 
-#### Scenario: Many unreachable operators cost one bound, not one each
+#### Scenario: Many unreachable relays cost one bound, not one each
 
-- **GIVEN** a namespace whose operators include several whose processes do not answer
+- **GIVEN** a namespace whose relays include several whose processes do not answer
 - **WHEN** the namespace is torn down
 - **THEN** the plugin-disable walk SHALL complete within one bound plus slack,
-  SHALL name every operator it could not disable, and `PluginManager` SHALL be
+  SHALL name every relay it could not disable, and `PluginManager` SHALL be
   the same running process afterwards
 
 ### Requirement: An installed package's provisions SHALL be rows of the provider table
@@ -506,42 +506,34 @@ or hold a second list of its own.
 
 #### Scenario: An installed provider resolves like a first-party one
 
-- **WHEN** the example package is loaded and `flz plugin enable s example_stamp --operator_id
+- **WHEN** the example package is loaded and `flz plugin enable s example_stamp --relay_id
   op` is issued
 - **THEN** the provider SHALL be resolved from the provider table, and the same row SHALL
   answer `flz plugin list`, `flz plugin help example_stamp` and a `--plugins` spec naming it
 
 #### Scenario: A package provider id that is already a row is refused
 
-- **WHEN** a package declares provider id `operator_stdout`
+- **WHEN** a package declares provider id `relay_stdout`
 - **THEN** the package SHALL be refused with `plugin.provider_conflict`, and
-  `operator_stdout` SHALL still resolve to the first-party module
+  `relay_stdout` SHALL still resolve to the first-party module
 
 #### Scenario: A package provider's worker is supervised
 
-- **WHEN** the example package is loaded and its provider is enabled on an operator
+- **WHEN** the example package is loaded and its provider is enabled on a relay
 - **THEN** its worker SHALL run under the provider's `WorkerSup` family in the controller's
   supervision tree, and a killed worker SHALL be handled by its declared restart value
 
-### Requirement: Hook names use canonical Operator vocabulary
+### Requirement: Hook names use canonical Relay vocabulary
 
 A plugin enable SHALL accept hook specs that reference hooks by their canonical names. The
-init-state hook is `:on_operator_init` (formerly `:on_processor_init`); other hook names that
-previously contained "processor" SHALL likewise use "operator". Settings serialization SHALL
-persist the new names; reading a settings file that contains `:on_processor_init` SHALL
-produce an explicit error suggesting the user re-author the settings (no silent translation).
+init-state hook is `:on_relay_init`, and every hook named after the unit uses "relay".
+Settings serialization SHALL persist these names.
 
-#### Scenario: Plugin hooks on_operator_init
+#### Scenario: Plugin hooks on_relay_init
 
-- **WHEN** a plugin is enabled with the hook `on_operator_init`
+- **WHEN** a plugin is enabled with the hook `on_relay_init`
 - **THEN** the enable MUST succeed and the persisted settings SHALL serialize the hook name as
-  `on_operator_init`
-
-#### Scenario: Settings file with legacy hook name fails loud
-
-- **WHEN** the settings file contains a hook on `:on_processor_init`
-- **THEN** plugin loading MUST return `{:error, {:unknown_hook, :on_processor_init}}` and
-  SHALL NOT fall back to `:on_operator_init` silently
+  `on_relay_init`
 
 ### Requirement: A plugin package SHALL be built by `mix flezha.plugin.package`
 
@@ -700,7 +692,7 @@ SHALL be loaded and SHALL NOT be started; a package in which such an application
 `mod` SHALL be refused with `plugin.app_callback`. A package whose library application fails
 to start SHALL be refused, and the applications it started SHALL be stopped.
 
-#### Scenario: A library application is running before operators bind
+#### Scenario: A library application is running before relays bind
 
 - **WHEN** the controller boots with the example package
 - **THEN** `stamp_lib` SHALL be in `Application.started_applications/0` before
@@ -770,12 +762,12 @@ its refusal code, and SHALL NOT answer that the provider is unknown.
 
 A loaded package's provider refusal whose reason is a tuple the error catalogue maps by its
 tag SHALL keep the code the catalogue gives it (a bare atom such as `:closed` SHALL be wrapped
-as below), on the enable path and when the refusal is nested in an
-operator's park reason. A refusal whose reason the catalogue does not map SHALL be wrapped: a
+as below), on the enable path and when the refusal is nested in a
+relay's park reason. A refusal whose reason the catalogue does not map SHALL be wrapped: a
 provider that refuses its options in `init_provider/1` SHALL answer `plugin.provider_refused`
 (invalid), and one whose declared worker fails to start SHALL answer
 `plugin.provider_failed` (internal), each with the package id, the provider id and the
-package's own text in `details`, including when the refusal is nested in an operator's park
+package's own text in `details`, including when the refusal is nested in a relay's park
 reason. A package SHALL NOT add codes to the error catalogue at boot.
 
 #### Scenario: A refused package is listed with its reason
@@ -790,14 +782,14 @@ reason. A package SHALL NOT add codes to the error catalogue at boot.
 #### Scenario: Enabling a refused package's provider names the package
 
 - **GIVEN** package `acme` declaring provider `acme_source` was refused at boot
-- **WHEN** `flz plugin enable src acme_source --operator_id op` runs
+- **WHEN** `flz plugin enable src acme_source --relay_id op` runs
 - **THEN** it SHALL fail with `plugin.provider_unavailable`, naming `acme` and its refusal
   code
 
 #### Scenario: A package provider's own refusal carries a core code
 
 - **GIVEN** the example package loaded, whose provider refuses an empty `path` option
-- **WHEN** its provider is enabled on an operator with `--Xpath=` (empty)
+- **WHEN** its provider is enabled on a relay with `--Xpath=` (empty)
 - **THEN** it SHALL fail with `plugin.provider_refused`, and `details` SHALL name the package,
   the provider and the provider's own message
 
@@ -805,12 +797,12 @@ reason. A package SHALL NOT add codes to the error catalogue at boot.
 
 - **GIVEN** a loaded package whose provider's `init_provider/1` refuses with a tagged reason
   that the error catalogue maps by its tag, as
-  `{:partitioned_host, %{provider: name, operator: member}}` maps to
+  `{:partitioned_host, %{provider: name, relay: member}}` maps to
   `plugin.partitioned_host`
-- **WHEN** its provider is enabled on an operator, and separately declared by an operator
+- **WHEN** its provider is enabled on a relay, and separately declared by a relay
   that is then started
 - **THEN** the enable SHALL fail with the catalogue's code for that tag, not
-  `plugin.provider_refused`, and the started operator's park reason SHALL carry the same code
+  `plugin.provider_refused`, and the started relay's park reason SHALL carry the same code
 
 #### Scenario: A package installed after boot is pending
 
@@ -919,7 +911,7 @@ when refused.
 When `flz plugin enable` resolves a provider, it SHALL ask every other controller that holds
 a hub for the target namespace whether its provider table has that id, bounded in time, and
 SHALL print a warning naming each controller that does not, or that did not answer, and
-stating that the plugin will not run there and that an operator bound to it there runs
+stating that the plugin will not run there and that a relay bound to it there runs
 without it. The enable SHALL proceed. No placement constraint SHALL be derived from it.
 
 #### Scenario: One controller of the namespace lacks the package

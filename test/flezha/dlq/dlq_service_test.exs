@@ -24,10 +24,10 @@ defmodule Flezha.Service.DlqTest do
     original = Application.get_env(:flezha, :dlq, [])
     Application.put_env(:flezha, :dlq, Keyword.merge(original, dir: dir, replay_grace_ms: 200))
 
-    operator_class = "dlqsvc_" <> Integer.to_string(System.unique_integer([:positive]))
+    relay_class = "dlqsvc_" <> Integer.to_string(System.unique_integer([:positive]))
 
     entry = %{
-      operator_class: operator_class,
+      relay_class: relay_class,
       tasklet_id: "task",
       cell_key: "k",
       channel: "input",
@@ -37,7 +37,7 @@ defmodule Flezha.Service.DlqTest do
       payload: "poison-bytes"
     }
 
-    %{operator_class: operator_class, entry: entry}
+    %{relay_class: relay_class, entry: entry}
   end
 
   describe "the hole: the store is not a gate" do
@@ -90,41 +90,41 @@ defmodule Flezha.Service.DlqTest do
   end
 
   describe "the reads answer data" do
-    test "list, get, stats and tasklets", %{entry: entry, operator_class: operator_class} do
+    test "list, get, stats and tasklets", %{entry: entry, relay_class: relay_class} do
       {:ok, ref} = Store.append(entry)
 
-      assert {:ok, [listed]} = DlqSvc.list(operator_class, context())
+      assert {:ok, [listed]} = DlqSvc.list(relay_class, context())
       assert listed["id"]
       assert listed["error"] == "kaboom"
 
       assert {:ok, got, "poison-bytes"} = DlqSvc.get(ref, context())
-      assert got["operator_class"] == operator_class
+      assert got["relay_class"] == relay_class
 
       assert {:ok, stats} = DlqSvc.stats(context())
 
       assert Enum.any?(
                stats,
-               &(&1.operator_class == operator_class and &1.tasklet_id == "task" and
+               &(&1.relay_class == relay_class and &1.tasklet_id == "task" and
                    &1.entries == 1)
              )
 
-      assert {:ok, tasklets} = DlqSvc.tasklets(operator_class, context())
-      assert {operator_class, "task"} in tasklets
+      assert {:ok, tasklets} = DlqSvc.tasklets(relay_class, context())
+      assert {relay_class, "task"} in tasklets
     end
   end
 
   describe "replay/2" do
     setup do
-      Flezha.Operator.ClassRegistry.ensure_table()
+      Flezha.Relay.ClassRegistry.ensure_table()
       :ok
     end
 
     test "re-enters the ordinary input path and reports removal", %{
       entry: entry,
-      operator_class: operator_class
+      relay_class: relay_class
     } do
       {:ok, ref} = Store.append(entry)
-      Flezha.Operator.ClassRegistry.put_overwatch(operator_class, self(), nil)
+      Flezha.Relay.ClassRegistry.put_overwatch(relay_class, self(), nil)
 
       assert {:ok, %{outcome: :removed, generation: nil}} = DlqSvc.replay(ref, context())
       assert_received {:"$gen_cast", {:io_in, "poison-bytes", %{"channel" => "input"}}}
@@ -133,11 +133,11 @@ defmodule Flezha.Service.DlqTest do
 
     test "reports the generation when the replay re-parks", %{
       entry: entry,
-      operator_class: operator_class
+      relay_class: relay_class
     } do
       {:ok, ref} = Store.append(entry)
       overwatch = DlqFixtures.spawn_reparking_overwatch(entry, self())
-      Flezha.Operator.ClassRegistry.put_overwatch(operator_class, overwatch, nil)
+      Flezha.Relay.ClassRegistry.put_overwatch(relay_class, overwatch, nil)
 
       assert {:ok, %{outcome: :re_parked, generation: 2}} = DlqSvc.replay(ref, context())
       assert_received :re_parked

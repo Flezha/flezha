@@ -17,11 +17,11 @@ reference for every callback.
 The controller runs a provider in two phases. `init_provider/1` validates and normalises
 the options with no upstream I/O and starts no process, so a slow or unreachable upstream
 cannot stall a plugin being prepared, and a refusal reaches the user who typed the option.
-Once the operator's SDK side is bound, the controller starts the provider's declared
+Once the relay's SDK side is bound, the controller starts the provider's declared
 worker and calls `activate/1`, where a provider acquires its upstream (a TLS connect, a
 subscribe handshake). From then on the controller calls the provider's hooks, probes its
-`health/1`, shows its `inspect_state/1` under the plugin in `flz operator info`, and on a
-disable or an operator's stop stops its workers and calls `terminate_provider/1`.
+`health/1`, shows its `inspect_state/1` under the plugin in `flz relay info`, and on a
+disable or a relay's stop stops its workers and calls `terminate_provider/1`.
 
 A plugin's processes are its providers' declared workers, which the controller supervises
 under the provider's own family. A plugin application therefore has no application
@@ -30,10 +30,10 @@ callback (`mod`).
 | Callback | What it does | Default |
 | --- | --- | --- |
 | `init_provider/1` | validate and normalise the options; no I/O, no process | the options as given |
-| `activate/1` | acquire upstream resources once the operator is bound | nothing to acquire |
+| `activate/1` | acquire upstream resources once the relay is bound | nothing to acquire |
 | `worker_specs/1` | the workers to start, as `{registry_key, worker_opts}` | one worker keyed by `:plugin_id` |
 | `health/1` | the verdict of a running instance: `:healthy` or `{:unhealthy, reason}` | the owned worker being alive |
-| `inspect_state/1` | detail shown under the plugin in `flz operator info`; `connected: false` says the upstream is not open yet | `nil` |
+| `inspect_state/1` | detail shown under the plugin in `flz relay info`; `connected: false` says the upstream is not open yet | `nil` |
 | `terminate_provider/1` | teardown of anything that is neither a worker nor an option; must be idempotent | `:ok` |
 | `reconfigure/2` | apply changed live options in place | required with a live option |
 | `on_*/2` | the hooks it can be called on | none |
@@ -71,9 +71,9 @@ in; a project outside the Flezha repository depends on `flezha` by git or Hex in
 | --- | --- | --- |
 | `options:` | one row per option, `{name, keyword}` | none |
 | `worker:` | the worker module and its `restart` value | no worker |
-| `type:` | `:operator` (acts on the records of the operators bound to it) or `:controller` (bound to none) | `:operator` |
-| `shareable:` | one running copy can serve every operator bound to the plugin on a controller | `false` |
-| `feeds:` | the provider's own worker injects records into the operator | `false` |
+| `type:` | `:relay` (acts on the records of the relays bound to it) or `:controller` (bound to none) | `:relay` |
+| `shareable:` | one running copy can serve every relay bound to the plugin on a controller | `false` |
+| `feeds:` | the provider's own worker injects records into the relay | `false` |
 | `name:` | the name in errors, help and telemetry | the module's last segment, underscored |
 | `telemetry:` | the verbs it emits beyond the shared ones, each `:metric` or `:event` | none |
 
@@ -89,7 +89,7 @@ A row with `live: true` can be changed on a running plugin by `flz plugin update
 provider then implements `reconfigure/2`, which the controller calls with the old and the
 new options, and a module that declares a live option without it does not compile.
 
-The example provider appends every payload the operator sends out to a file, each line
+The example provider appends every payload the relay sends out to a file, each line
 prefixed with a stamp from a small library the plugin bundles:
 
 ```elixir
@@ -115,22 +115,22 @@ end
 [Full file](https://github.com/flezha/flezha/blob/main/examples/elixir/plugin/lib/flezha_example_plugin/stamp.ex)
 
 This provider writes one file per plugin, so it cannot be shared. A provider whose one
-worker can serve every operator bound to its plugin declares `shareable: true`, and each
+worker can serve every relay bound to its plugin declares `shareable: true`, and each
 controller then runs one copy for all of them.
 
 ### A source
 
-A provider whose worker hands records to the operator declares `feeds: true` and calls
-`Flezha.Plugin.Host.inject/5` with the operator its options name (`opts.overwatcher_pid`).
+A provider whose worker hands records to the relay declares `feeds: true` and calls
+`Flezha.Plugin.Host.inject/5` with the relay its options name (`opts.overwatcher_pid`).
 
-A source that is also `shareable` hands each record to every operator sharing its plugin
+A source that is also `shareable` hands each record to every relay sharing its plugin
 on the controller instead: `Host.targets(opts)` lists them, each with its entry channel,
 and the worker is sent `{:targets, targets}` each time one binds or leaves. A worker that
 can miss a message (a socket library dropping them while disconnected) reads them again
 with `Host.targets_of/1` from `opts.targets_from` when it reconnects. It keeps them as its
-state, so a record costs one `:fire_and_forget` inject per operator and nothing else. An
-operator whose input is durable runs the source on its own, with itself as the one target,
-so that the worker's own operator is still the one that confirms. A shared worker that
+state, so a record costs one `:fire_and_forget` inject per relay and nothing else. A
+relay whose input is durable runs the source on its own, with itself as the one target,
+so that the worker's own relay is still the one that confirms. A shared worker that
 injects into `opts.overwatcher_pid` reaches the controller's copy, which drops the record,
 logs one warning and reports `plugin_lagging` with the count dropped.
 
@@ -138,16 +138,16 @@ A source that reads from a system with a position, such as an offset, a cursor o
 acknowledgement, fetches a batch and hands it over with `Host.inject_many/4` in `:verdict`
 mode: up to `FLEZHA_PLUGIN_INGEST_WINDOW` (default `64`) records wait for their verdicts
 at once, and the answer is one verdict per record, in order,
-`{:error, {:unreachable, :timeout}}` for any the operator had not answered in time. It
+`{:error, {:unreachable, :timeout}}` for any the relay had not answered in time. It
 moves the upstream position only past records whose verdict is `:ok`, and waits for each
 batch, which keeps its memory bounded. How often it moves the position follows the
-operator, which the plugin's options tell it:
+relay, which the plugin's options tell it:
 
-| The operator | Its plugins' options | A verdict `:ok` means | The source moves its position |
+| The relay | Its plugins' options | A verdict `:ok` means | The source moves its position |
 | --- | --- | --- | --- |
-| a flow operator without `effectively_once` that does not sleep | `durable_input: false` | the operator took the record | every few seconds |
-| a durable steps operator, or a flow operator that sleeps | `durable_input: true` | the record is in the operator's input log | after every confirmed batch |
-| a flow operator with `effectively_once` | `durable_input: true`, `effectively_once: true` | the record is in the operator's input log | after every confirmed batch; a sink that honours `effectively_once` writes each output once |
+| a flow relay without `effectively_once` that does not sleep | `durable_input: false` | the relay took the record | every few seconds |
+| a durable steps relay, or a flow relay that sleeps | `durable_input: true` | the record is in the relay's input log | after every confirmed batch |
+| a flow relay with `effectively_once` | `durable_input: true`, `effectively_once: true` | the record is in the relay's input log | after every confirmed batch; a sink that honours `effectively_once` writes each output once |
 
 Both are set by the controller when the plugin starts, over anything its stored options
 say. A source that cannot tell which member of a partition group a record's key belongs to,
@@ -157,11 +157,11 @@ as a consumer or a table reader cannot, refuses a group member from `init_provid
 
 ### A sink
 
-A sink implements `on_output` (and `on_input`, to act on what the operator ingests) and
+A sink implements `on_output` (and `on_input`, to act on what the relay ingests) and
 hands each payload to its worker, returning at once. A delivery-guaranteed output is held
-in the operator's outbox until the sink confirms it; a sink that gives one up parks it as a
+in the relay's outbox until the sink confirms it; a sink that gives one up parks it as a
 dead letter rather than dropping it, as the HTTP push and Kafka producer plugins do. The
-Postgres sink and the operator-forward plugin
+Postgres sink and the relay-forward plugin
 are the shapes to read: their catalogue pages describe the queue, the confirmation and the
 overflow policy each one follows.
 
@@ -176,34 +176,34 @@ does not declare reaches only handlers attached to it.
 ### A controller plugin
 
 A controller plugin declares `use Flezha.Plugin.ProviderBehaviour, type: :controller` and
-is bound to no operator. It is told what happened in its namespace through five hooks,
-`on_operator_started`, `on_operator_stopped`, `on_operator_failed`, `on_dead_letter` and
+is bound to no relay. It is told what happened in its namespace through five hooks,
+`on_relay_started`, `on_relay_stopped`, `on_relay_failed`, `on_dead_letter` and
 `on_plugin_unhealthy`, each a callback taking the event and the plugin's options, and
 defines only those: a module defining a hook of the other type does not compile. A hook
 runs in a process of its own and should return quickly; a provider that does slow I/O
 hands the event to its own worker, as `hook_webhook` does. [`hooks.md`](hooks.md) has
 every event's fields and when it fires.
 
-### Listening to an operator
+### Listening to a relay
 
-A plugin that streams an operator's output to a client of its own (an HTTP plugin's
+A plugin that streams a relay's output to a client of its own (an HTTP plugin's
 server-sent events, for one) reads it through `Flezha.Service.Listener.listen/4`, the
-listener `flz operator listen` uses. It runs in the calling process, hands the handler one
+listener `flz relay listen` uses. It runs in the calling process, hands the handler one
 event at a time, and detaches on every way out, a raise in the handler included. It does
 not authorize: a plugin decides for itself who may read.
 
 ```elixir
-Flezha.Service.Listener.listen(namespace, operator_id, opts, handler)
+Flezha.Service.Listener.listen(namespace, relay_id, opts, handler)
 ```
 
 `handler` receives an event and answers `:continue` or `:done`:
 
 | Event | What it is |
 |---|---|
-| `{:output, payload, metadata}` | an output on the operator's output chain |
+| `{:output, payload, metadata}` | an output on the relay's output chain |
 | `{:part, payload, metadata}` | a part: a preview a tasklet sent while it ran, `flz.part` its number within its attempt, `flz.part_attempt` the attempt |
-| `{:dead_lettered, %Flezha.Error{}, metadata}` | an input the operator dead-lettered, with the code `input.dead_lettered`, once its entry is durable |
-| `{:input, payload, metadata}` | with `direction: :input`, an input the operator ingests |
+| `{:dead_lettered, %Flezha.Error{}, metadata}` | an input the relay dead-lettered, with the code `input.dead_lettered`, once its entry is durable |
+| `{:input, payload, metadata}` | with `direction: :input`, an input the relay ingests |
 | `:idle` | with `idle_ms`, no event for that long |
 
 | Option | Default | Meaning |
@@ -214,14 +214,14 @@ Flezha.Service.Listener.listen(namespace, operator_id, opts, handler)
 | `before` | none | a function run once after the attach, before the first event |
 | `watch` | none | a process whose exit ends the listener |
 
-It answers `{:ok, :window_closed | :done | :caller_down | :operator_ended}`, or
-`{:error, %Flezha.Error{}}`: the enable's own refusal (`operator.not_found`, for one),
+It answers `{:ok, :window_closed | :done | :caller_down | :relay_ended}`, or
+`{:error, %Flezha.Error{}}`: the enable's own refusal (`relay.not_found`, for one),
 `listener.overrun` when the handler falls behind by more than `listener_pending_bytes` or
 `listener_pending_frames` of outputs (held parts are dropped first, oldest first, and a
 reader sees the gap as a jump in `flz.part`), or `listener.detached` when someone else
-disabled its plugin. The listener goes on across the operator sleeping and waking, being
+disabled its plugin. The listener goes on across the relay sleeping and waking, being
 rebound, its Overwatch restarting, moving to another controller and a group rescale, and
-ends with `:operator_ended` when the operator ends.
+ends with `:relay_ended` when the relay ends.
 
 A server-sent events stream, with a comment every 15 seconds so a proxy keeps the
 connection and a client that left is noticed:
@@ -293,12 +293,12 @@ says what a controller does with it.
 The example plugin in `examples/elixir/plugin/` has one provider, `example_stamp`. Its
 `config/config.exs` sets the bundled library's one setting, `config :stamp_lib,
 prefix: ">>"`, and the package carries it in the library's `.app`, so each line starts
-`>>[stamped]`. It is packaged and installed as any package is, then enabled on an
-operator like any plugin:
+`>>[stamped]`. It is packaged and installed as any package is, then enabled on a
+relay like any plugin:
 
 ```sh
 $ flz plugin install ./flezha_example_plugin-0.1.0.fpz
-$ flz plugin enable stamp example_stamp --operator_id my_op \
+$ flz plugin enable stamp example_stamp --relay_id my_op \
   --Xpath=/tmp/stamped.txt --hook=on_output
 ```
 

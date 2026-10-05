@@ -44,14 +44,14 @@ impl Refusing {
 /// The first five are the verbs of KI-79, which once exited 0 after a refusal.
 fn every_verb_passes_the_childs_code_through(cli: &Refusing) -> Vec<String> {
     let verbs: &[&[&str]] = &[
-        &["operator", "stop", "op1"],
-        &["operator", "rewind", "op1", "--to-iteration", "3"],
-        &["operator", "replay", "a/b/c", "--from", "5"],
-        &["operator", "state", "op1"],
+        &["relay", "stop", "op1"],
+        &["relay", "rewind", "op1", "--to-iteration", "3"],
+        &["relay", "replay", "a/b/c", "--from", "5"],
+        &["relay", "state", "op1"],
         &["controller", "start"],
-        &["operator", "send", "op1", "--text", "hi"],
-        &["operator", "call", "op1", "--text", "hi"],
-        &["operator", "list"],
+        &["relay", "send", "op1", "--text", "hi"],
+        &["relay", "call", "op1", "--text", "hi"],
+        &["relay", "list"],
         &["boot", "status"],
         &["controller", "status"],
         &["audit", "list"],
@@ -77,9 +77,9 @@ fn a_missing_flzvm_is_refused_rather_than_panicked() -> Vec<String> {
     let cases: &[&[&str]] = &[
         &["dlq", "list", "--token", "t"],
         &["controller", "status"],
-        &["operator", "list"],
+        &["relay", "list"],
         &["audit", "list"],
-        &["operator", "stop", "op1"],
+        &["relay", "stop", "op1"],
     ];
 
     cases
@@ -174,19 +174,19 @@ fn only_a_daemon_start_announces_a_start() -> Vec<String> {
         .collect()
 }
 
-/// `flz operator call` exits by what the controller answered: 0 with the answer
+/// `flz relay call` exits by what the controller answered: 0 with the answer
 /// on stdout, else the class of the failure it rendered (`call.timeout` 7,
-/// `operator.not_found` 5, `call.target_unkeyed` 2).
+/// `relay.not_found` 5, `call.target_unkeyed` 2).
 fn a_call_exits_by_its_answers_class() -> Vec<String> {
     [(0, "hello\n"), (7, ""), (5, ""), (2, "")]
         .iter()
         .filter_map(|(code, answer)| {
             let script = format!("#!/bin/sh\nprintf '{answer}'\nexit {code}\n");
-            let out = Shim::new(FLZ_BIN, &script).run(&["operator", "call", "op1", "-t", "hi"]);
+            let out = Shim::new(FLZ_BIN, &script).run(&["relay", "call", "op1", "-t", "hi"]);
             let stdout = String::from_utf8_lossy(&out.stdout).to_string();
             (out.status.code() != Some(*code) || stdout != *answer).then(|| {
                 format!(
-                    "flz operator call, flzvm exit {code}: exit {:?}, stdout {stdout:?}",
+                    "flz relay call, flzvm exit {code}: exit {:?}, stdout {stdout:?}",
                     out.status.code()
                 )
             })

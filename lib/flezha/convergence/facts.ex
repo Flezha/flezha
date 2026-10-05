@@ -51,7 +51,7 @@ defmodule Flezha.Convergence.Facts do
   @kinds %{
     output_stall: %{
       holds: true,
-      diff: :stalled_operators,
+      diff: :stalled_relays,
       reason: :output_stall,
       reset: :evidence,
       grace: true,
@@ -59,15 +59,15 @@ defmodule Flezha.Convergence.Facts do
     },
     runner_disconnected: %{
       holds: true,
-      diff: :misbound_operators,
+      diff: :misbound_relays,
       reason: :runner_disconnected,
       reset: :inline,
       grace: true,
       tick: :now
     },
-    operator_parked: %{
+    relay_parked: %{
       holds: true,
-      diff: :parked_operators,
+      diff: :parked_relays,
       reason: :parked,
       reset: :evidence,
       grace: false,
@@ -237,12 +237,12 @@ defmodule Flezha.Convergence.Facts do
   It must answer exactly what `Planner.key/1` builds for the op that fact
   plans, or a repaired target would release a key nothing walked. Two kinds
   therefore spell it out rather than take the default: a park is held per
-  `{namespace, operator}` while its rebind targets the operator, and a
-  crashed plugin is held per `{namespace, operator, plugin}` while its restart
-  keys per `{operator, plugin}`.
+  `{namespace, relay}` while its rebind targets the relay, and a
+  crashed plugin is held per `{namespace, relay, plugin}` while its restart
+  keys per `{relay, plugin}`.
   """
   @spec key({atom(), term()}) :: {atom(), term()} | nil
-  def key({:operator_parked, {_ns, id}}), do: {:parked, id}
+  def key({:relay_parked, {_ns, id}}), do: {:parked, id}
   def key({:plugin_down, {_ns, id, plugin_id}}), do: {:restart_plugin, {id, plugin_id}}
 
   def key({kind, target}) do
@@ -276,7 +276,7 @@ defmodule Flezha.Convergence.Facts do
   """
   @spec settle(t(), map(), pos_integer(), integer()) :: {t(), [{atom(), term()}]}
   def settle(facts, reality, grace_ms, now) do
-    observed = Map.get(reality, :operators, %{})
+    observed = Map.get(reality, :relays, %{})
 
     {kept, dropped} =
       Enum.split_with(facts, fn {{kind, target}, %{at: at, args: args}} ->
@@ -287,7 +287,7 @@ defmodule Flezha.Convergence.Facts do
     facts =
       Enum.reduce(observed, Map.new(kept), fn
         {ref, %{park_reason: reason}}, acc when not is_nil(reason) ->
-          Map.put_new(acc, {:operator_parked, ref}, %{at: now, args: %{reason: reason}})
+          Map.put_new(acc, {:relay_parked, ref}, %{at: now, args: %{reason: reason}})
 
         _, acc ->
           acc
@@ -300,7 +300,7 @@ defmodule Flezha.Convergence.Facts do
   defp aged_out?(_entry, _at, _grace_ms, _now), do: false
 
   # A disconnected runner is repaired once it is back in the active set, or once
-  # no operator still names it. An unreadable set (`:unknown`) is evidence of
+  # no relay still names it. An unreadable set (`:unknown`) is evidence of
   # nothing.
   defp repaired?(:runner_disconnected, {ns, runner_id}, _args, reality) do
     case get_in(reality, [:active_runners, ns]) do
@@ -311,24 +311,24 @@ defmodule Flezha.Convergence.Facts do
   end
 
   # A stall a runner's stream declared is about that binding, so it is repaired
-  # once the probe sees the operator bound to any other runner, or not at all.
+  # once the probe sees the relay bound to any other runner, or not at all.
   # The Watchdog's stall names no runner and ages out on its grace.
   defp repaired?(:output_stall, id, %{runner_id: runner_id}, reality) do
     reality
-    |> Map.get(:operators, %{})
+    |> Map.get(:relays, %{})
     |> Enum.all?(fn
       {{_ns, ^id}, %{bound_runner: bound}} -> bound not in [:unknown, runner_id]
       _ -> true
     end)
   end
 
-  # A park is repaired once the probe sees the operator unparked, and gone
-  # once the probe sees no operator at all. One a runner's exit report caused
+  # A park is repaired once the probe sees the relay unparked, and gone
+  # once the probe sees no relay at all. One a runner's exit report caused
   # also waits until the rebound instance has stayed bound for the window a
   # restarted plugin must stay up for, so one that dies again on every bind
   # waits its key's rung rather than being rebound at bind speed.
-  defp repaired?(:operator_parked, ref, args, reality) do
-    case get_in(reality, [:operators, ref]) do
+  defp repaired?(:relay_parked, ref, args, reality) do
+    case get_in(reality, [:relays, ref]) do
       %{bound_runner: :unknown} -> false
       %{park_reason: reason} = observed -> is_nil(reason) and stayed_up?(args, observed)
       _ -> true
@@ -339,7 +339,7 @@ defmodule Flezha.Convergence.Facts do
   # the stable window — the fact and the rung its restart walks clear together,
   # so a plugin that reaches `:running` and crashes again keeps both.
   defp repaired?(:plugin_down, {ns, id, plugin_id}, _args, reality) do
-    case get_in(reality, [:operators, {ns, id}]) do
+    case get_in(reality, [:relays, {ns, id}]) do
       %{bound_runner: :unknown} ->
         false
 
@@ -353,7 +353,7 @@ defmodule Flezha.Convergence.Facts do
 
   # A stale tag is repaired once the row names the bound runner.
   defp repaired?(:registry_written, ref, _args, reality) do
-    case get_in(reality, [:operators, ref]) do
+    case get_in(reality, [:relays, ref]) do
       %{bound_runner: :unknown} -> false
       %{bound_runner: bound, registry_tag: tag} -> is_nil(bound) or tag == bound
       _ -> true
@@ -371,14 +371,14 @@ defmodule Flezha.Convergence.Facts do
 
   defp repaired?(_kind, _target, _args, _reality), do: false
 
-  defp stayed_up?(%{reason: {:operator_exited, _}}, observed),
+  defp stayed_up?(%{reason: {:relay_exited, _}}, observed),
     do: (Map.get(observed, :bound_for_ms) || -1) >= stable_uptime_ms()
 
   defp stayed_up?(_args, _observed), do: true
 
   defp nobody_names?(reality, runner_id) do
     reality
-    |> Map.get(:operators, %{})
+    |> Map.get(:relays, %{})
     |> Enum.all?(fn {_ref, observed} -> Map.get(observed, :bound_runner) != runner_id end)
   end
 end

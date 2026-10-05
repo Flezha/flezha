@@ -131,7 +131,7 @@ defmodule Flezha.State.WalWriterOutboxTest do
 
     assert Outbox.read(cell_id).outbox_flushed_seq == -1
 
-    # Restart with the operator bound: the re-drive dispatches with the
+    # Restart with the relay bound: the re-drive dispatches with the
     # original durable identity.
     pid = armed_writer(rc, cell_id)
     _ = WalWriter.last_persisted_seq(pid)
@@ -162,7 +162,7 @@ defmodule Flezha.State.WalWriterOutboxTest do
     assert md_again["flz.cell"] == md_first["flz.cell"]
   end
 
-  test "re-drive waits for the operator to bind (retry path)", %{
+  test "re-drive waits for the relay to bind (retry path)", %{
     rc: rc,
     cell_id: cell_id
   } do

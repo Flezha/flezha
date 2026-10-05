@@ -4,7 +4,7 @@ USAGE:
     flz cluster <SUBCOMMAND>
 
 SUBCOMMANDS:
-    status              Show nodes, leader, per-node operator counts, operator health, recovery state
+    status              Show nodes, leader, per-node relay counts, relay health, recovery state
     help                Show this help message
 
 OPTIONS:

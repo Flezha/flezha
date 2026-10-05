@@ -68,8 +68,8 @@ end
 
 defmodule Flezha.Service.Cli.SendTest do
   @moduledoc """
-  `flz operator send <id> --text <payload> [--channel <ch>]` operations surface:
-  the confirming verdict from `OperatorManager.send_io_confirming/5` is reported
+  `flz relay send <id> --text <payload> [--channel <ch>]` operations surface:
+  the confirming verdict from `RelayManager.send_io_confirming/5` is reported
   and an optional channel is threaded into the `:io_in` metadata. The verdict
   logic itself is covered in `overwatch_confirming_ingest_test`. The error
   verdicts additionally `exit({:shutdown, 1})` for a non-zero CLI exit, so only the
@@ -91,21 +91,21 @@ defmodule Flezha.Service.Cli.SendTest do
 
   # Stub `send_io_confirming` to answer a fixed verdict and echo its args to the
   # test process, so both the output mapping and the metadata construction are
-  # asserted without a live operator.
+  # asserted without a live relay.
   defp run_send(inst, verdict, channel) do
     test = self()
 
-    stub(Flezha.Service.OperatorManager, :resolve_member, fn "default", ^inst, nil ->
+    stub(Flezha.Service.RelayManager, :resolve_member, fn "default", ^inst, nil ->
       {:ok, inst}
     end)
 
-    stub(Flezha.Service.OperatorManager, :send_io_confirming, fn id, ns, msg, md ->
+    stub(Flezha.Service.RelayManager, :send_io_confirming, fn id, ns, msg, md ->
       Kernel.send(test, {:sent, id, ns, msg, md})
       verdict
     end)
 
     capture_io(fn ->
-      Cli.call("Operator.send", Jason.encode!(["default", inst, "payload", channel, %{}]), [])
+      Cli.call("Relay.send", Jason.encode!(["default", inst, "payload", channel, %{}]), [])
     end)
   end
 
@@ -141,7 +141,7 @@ end
 
 defmodule Flezha.Service.Cli.RewindTest do
   @moduledoc """
-  `flz operator rewind <instance> --to-iteration N` operations surface: how a
+  `flz relay rewind <instance> --to-iteration N` operations surface: how a
   rewind that went through, and each verdict the Overwatch guard can return, is
   reported. The guard's own logic is covered in `overwatch_suspension_test`.
   """
@@ -159,11 +159,11 @@ defmodule Flezha.Service.Cli.RewindTest do
 
   defp instance_id(), do: "rw_#{System.unique_integer([:positive])}"
 
-  # `operator_rewind` resolves a pid and calls `{:rewind, n}` on it, so a process
+  # `relay_rewind` resolves a pid and calls `{:rewind, n}` on it, so a process
   # that answers with a fixed verdict exercises the whole CLI surface.
   defp stub_overwatch(inst, verdict) do
     pid = spawn_link(fn -> reply_loop(verdict) end)
-    stub(Flezha.Service.OperatorManager, :get_operator_pid, fn _ns, ^inst -> {:ok, pid} end)
+    stub(Flezha.Service.RelayManager, :get_relay_pid, fn _ns, ^inst -> {:ok, pid} end)
   end
 
   defp reply_loop(verdict) do
@@ -203,7 +203,7 @@ defmodule Flezha.Service.Cli.RewindTest do
     out = rewind(inst, 7)
 
     assert out =~ "iteration 7 has not committed"
-    assert out =~ "(operator.iteration_not_committed)"
+    assert out =~ "(relay.iteration_not_committed)"
   end
 
   test "a loop with nothing committed says so rather than printing an empty range" do
@@ -220,14 +220,14 @@ defmodule Flezha.Service.Cli.RewindTest do
     out = rewind(inst, 1)
 
     assert out =~ "would unwind output on replies, audit"
-    assert out =~ "no compensate hook, so it is refused (operator.rewind_uncovered)"
+    assert out =~ "no compensate hook, so it is refused (relay.rewind_uncovered)"
   end
 
-  test "an unknown operator is reported, not crashed on" do
+  test "an unknown relay is reported, not crashed on" do
     inst = instance_id()
-    stub(Flezha.Service.OperatorManager, :get_operator_pid, fn _ns, ^inst -> {:error, :nf} end)
+    stub(Flezha.Service.RelayManager, :get_relay_pid, fn _ns, ^inst -> {:error, :nf} end)
 
-    assert rewind(inst, 1) =~ "(operator.not_running)"
+    assert rewind(inst, 1) =~ "(relay.not_running)"
   end
 end
 
@@ -246,7 +246,7 @@ defmodule Flezha.Service.Cli.DlqTest do
   alias Flezha.Dlq.Store
   alias Flezha.Observability.RingBufferSink
   alias Flezha.Observability.TestSinks
-  alias Flezha.Operator.ClassRegistry
+  alias Flezha.Relay.ClassRegistry
   alias Flezha.Service.Cli
   alias FlezhaTest.Helper.DlqFixtures
 
@@ -256,7 +256,7 @@ defmodule Flezha.Service.Cli.DlqTest do
     rc = "dlqcli_" <> Integer.to_string(System.unique_integer([:positive]))
 
     entry = %{
-      operator_class: rc,
+      relay_class: rc,
       tasklet_id: "task",
       cell_key: "k",
       channel: "input",
@@ -273,7 +273,7 @@ defmodule Flezha.Service.Cli.DlqTest do
     {:ok, ref} = Store.append(entry)
 
     listing =
-      capture_io(fn -> Cli.call("Dlq.list", Jason.encode!([entry.operator_class]), []) end)
+      capture_io(fn -> Cli.call("Dlq.list", Jason.encode!([entry.relay_class]), []) end)
 
     assert listing =~ ref
     assert listing =~ "input"
@@ -335,7 +335,7 @@ end
 
 defmodule Flezha.Service.Cli.ClusterTest do
   @moduledoc """
-  CLI surface for `flz operator list` and `flz cluster status`. The data
+  CLI surface for `flz relay list` and `flz cluster status`. The data
   sources (`HubManager` registry access) are stubbed so the rendering
   and shaping are asserted deterministically.
 
@@ -356,7 +356,7 @@ defmodule Flezha.Service.Cli.ClusterTest do
   alias Flezha.Service.HubManager
   alias FlezhaTest.Helper.ConvergenceFixtures
 
-  describe "list_operators/2 (health column)" do
+  describe "list_relays/2 (health column)" do
     setup do
       prev = Snapshot.current()
       on_exit(fn -> Snapshot.publish(prev) end)
@@ -383,7 +383,7 @@ defmodule Flezha.Service.Cli.ClusterTest do
         2_000
       )
 
-      text = capture_io(fn -> Cli.call("Operator.list", Jason.encode!(["trading"]), []) end)
+      text = capture_io(fn -> Cli.call("Relay.list", Jason.encode!(["trading"]), []) end)
       assert text =~ ~r/prices\s+recovering\s+3\/3/
       assert text =~ ~r/quotes\s+recovering\s/
       refute text =~ "failed"
@@ -391,7 +391,7 @@ defmodule Flezha.Service.Cli.ClusterTest do
       rows =
         Jason.decode!(
           capture_io(fn ->
-            Cli.call("Operator.list", Jason.encode!(["trading"]), output: "json")
+            Cli.call("Relay.list", Jason.encode!(["trading"]), output: "json")
           end)
         )
 
@@ -402,11 +402,11 @@ defmodule Flezha.Service.Cli.ClusterTest do
     test "a group still failed past the grace reads failed" do
       ConvergenceFixtures.stub_registry_rows("trading", partition_group(:failed), 500_000)
 
-      assert capture_io(fn -> Cli.call("Operator.list", Jason.encode!(["trading"]), []) end) =~
+      assert capture_io(fn -> Cli.call("Relay.list", Jason.encode!(["trading"]), []) end) =~
                ~r/prices\s+failed\s+3\/3/
     end
 
-    test "json output carries per-operator health, runner, and node" do
+    test "json output carries per-relay health, runner, and node" do
       ConvergenceFixtures.stub_registry_rows(
         "shop",
         [
@@ -417,7 +417,7 @@ defmodule Flezha.Service.Cli.ClusterTest do
       )
 
       out =
-        capture_io(fn -> Cli.call("Operator.list", Jason.encode!(["shop"]), output: "json") end)
+        capture_io(fn -> Cli.call("Relay.list", Jason.encode!(["shop"]), output: "json") end)
 
       assert {:ok, decoded} = Jason.decode(out)
 
@@ -427,14 +427,14 @@ defmodule Flezha.Service.Cli.ClusterTest do
              ]
     end
 
-    test "text output shows a HEALTH column and surfaces a FAILED, unplaced operator" do
+    test "text output shows a HEALTH column and surfaces a FAILED, unplaced relay" do
       ConvergenceFixtures.stub_registry_rows(
         "shop",
         [%{id: "r2", health: :failed, runner: nil, node: nil}],
         500_000
       )
 
-      out = capture_io(fn -> Cli.call("Operator.list", Jason.encode!(["shop"]), []) end)
+      out = capture_io(fn -> Cli.call("Relay.list", Jason.encode!(["shop"]), []) end)
 
       assert out =~ "HEALTH"
       assert out =~ "r2"
@@ -443,17 +443,17 @@ defmodule Flezha.Service.Cli.ClusterTest do
     end
 
     test "empty registry renders a friendly message, not a crash" do
-      stub(HubManager, :operator_rows, fn _ns -> [] end)
-      out = capture_io(fn -> Cli.call("Operator.list", Jason.encode!(["shop"]), []) end)
-      assert out =~ "No operators found"
+      stub(HubManager, :relay_rows, fn _ns -> [] end)
+      out = capture_io(fn -> Cli.call("Relay.list", Jason.encode!(["shop"]), []) end)
+      assert out =~ "No relays found"
     end
   end
 
   describe "cluster_status/2" do
-    test "json reports the local node as leader, per-node operator counts, unplaced, and a health rollup" do
+    test "json reports the local node as leader, per-node relay counts, unplaced, and a health rollup" do
       stub(HubManager, :get_hub_nodes, fn _ns, true -> [node()] end)
 
-      stub(HubManager, :operator_rows, fn _ns ->
+      stub(HubManager, :relay_rows, fn _ns ->
         [
           %{id: "r1", health: :healthy, runner: "e1", node: node()},
           %{id: "r2", health: :degraded, runner: "e2", node: node()},
@@ -471,14 +471,14 @@ defmodule Flezha.Service.Cli.ClusterTest do
       assert {:ok, d} = Jason.decode(out)
       assert d["leader"] == to_string(node())
       assert d["is_leader"] == true
-      assert d["unplaced_operators"] == 1
-      assert d["operator_health"] == %{"healthy" => 1, "degraded" => 1, "failed" => 1}
+      assert d["unplaced_relays"] == 1
+      assert d["relay_health"] == %{"healthy" => 1, "degraded" => 1, "failed" => 1}
     end
 
     test "text output names the local node as leader" do
       stub(HubManager, :get_hub_nodes, fn _ns, true -> [node()] end)
 
-      stub(HubManager, :operator_rows, fn _ns ->
+      stub(HubManager, :relay_rows, fn _ns ->
         [%{id: "r1", health: :healthy, runner: "e1", node: node()}]
       end)
 
@@ -490,7 +490,7 @@ defmodule Flezha.Service.Cli.ClusterTest do
       assert out =~ "Cluster status for namespace 'shop'"
       assert out =~ "Leader:"
       assert out =~ to_string(node())
-      assert out =~ "1 operator(s)"
+      assert out =~ "1 relay(s)"
       assert out =~ "[leader]"
       assert out =~ "healthy=1"
     end
@@ -562,12 +562,12 @@ defmodule Flezha.Service.Cli.AuthzRenderTest do
       capture_io(fn ->
         Cli.call(
           "Namespace.set_quotas",
-          Jason.encode!(["render-ns", Jason.decode!(~s({"max_operators": 7}))]),
+          Jason.encode!(["render-ns", Jason.decode!(~s({"max_relays": 7}))]),
           token: admin_token
         )
       end)
 
-    assert set_out =~ "max_operators: 7"
+    assert set_out =~ "max_relays: 7"
 
     # `flz role bind` / `list`.
     bind_out =
@@ -759,13 +759,13 @@ defmodule Flezha.Service.Cli.AuthzRenderTest do
       # failed is still an act, so the record is written either way.
       capture_io(:stderr, fn ->
         capture_io(fn ->
-          catch_exit(Cli.call("Operator.stop", Jason.encode!(["render-ns", "o1"]), token: caller))
+          catch_exit(Cli.call("Relay.stop", Jason.encode!(["render-ns", "o1"]), token: caller))
         end)
       end)
 
       TestSinks.settle(RingBufferSink)
 
-      assert Enum.any?(RingBufferSink.query(:operator_service, boundary), fn signal ->
+      assert Enum.any?(RingBufferSink.query(:relay_service, boundary), fn signal ->
                signal.name == :stop and signal.metadata[:caller_roles] == [:ops]
              end)
 
@@ -881,16 +881,16 @@ end
 
 defmodule Flezha.Service.Cli.ReplayTest do
   @moduledoc """
-  `flz operator replay <cell> --from <seq|ts>` on a Cell of a steps class:
+  `flz relay replay <cell> --from <seq|ts>` on a Cell of a steps class:
   refused before anything is rewound, naming the journal as the instance's
-  baseline and `flz operator rewind` as the verb to use.
+  baseline and `flz relay rewind` as the verb to use.
   """
   # async: false: the class registry and the state tree are node-global.
   use FlezhaTest.Case, fixtures: [:tmp_app_data, :state_tree], async: false
 
   import ExUnit.CaptureIO
 
-  alias Flezha.Operator.ClassRegistry
+  alias Flezha.Relay.ClassRegistry
   alias Flezha.Service.Cli
   alias Flezha.State.{TestHelpers, WalWriter}
 
@@ -905,15 +905,15 @@ defmodule Flezha.Service.Cli.ReplayTest do
     stderr =
       capture_io(:stderr, fn ->
         try do
-          Cli.call("Operator.replay", Jason.encode!(["default", "#{class}/task/key", "0"]), [])
+          Cli.call("Relay.replay", Jason.encode!(["default", "#{class}/task/key", "0"]), [])
         catch
           :exit, _ -> :ok
         end
       end)
 
-    assert stderr =~ "is a Cell of a steps operator"
+    assert stderr =~ "is a Cell of a steps relay"
     assert stderr =~ "a committed iteration across every Cell"
-    assert stderr =~ "hint: flz operator rewind"
+    assert stderr =~ "hint: flz relay rewind"
     assert WalWriter.outbox_epoch(writer) == 0, "no epoch was bumped"
   end
 end

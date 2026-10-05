@@ -1,18 +1,18 @@
 # Websocket subscription source and output binding
 
-The websocket plugin holds one websocket connection open for an operator: it injects every
-frame it receives into the operator's input, can change what the socket is subscribed to
-without tearing it down, and can send the operator's outputs back out on the same socket.
+The websocket plugin holds one websocket connection open for a relay: it injects every
+frame it receives into the relay's input, can change what the socket is subscribed to
+without tearing it down, and can send the relay's outputs back out on the same socket.
 `Flezha.Plugin.Provider.Websocket` is its provider, under the provider id
-`operator_websocket`.
+`relay_websocket`.
 
 | | |
 | --- | --- |
-| Type | operator plugin |
+| Type | relay plugin |
 | Ships | built in |
-| Shareable | yes: one connection per controller for every operator bound to it, or one in the cluster with `--single` |
-| Partitioned operators | allowed: each member runs a connection of its own and subscribes only its share of the items |
-| Durability | an operator whose input is durable runs a connection of its own, which waits for it to confirm each frame; the output hop is at most once, or at least once with `sink_ack_mode: "required"`, never effectively once |
+| Shareable | yes: one connection per controller for every relay bound to it, or one in the cluster with `--single` |
+| Partitioned relays | allowed: each member runs a connection of its own and subscribes only its share of the items |
+| Durability | a relay whose input is durable runs a connection of its own, which waits for it to confirm each frame; the output hop is at most once, or at least once with `sink_ack_mode: "required"`, never effectively once |
 
 ## Options
 
@@ -46,8 +46,8 @@ without tearing it down, and can send the operator's outputs back out on the sam
 ## Example
 
 ```sh
-$ flz plugin enable prices-in operator_websocket \
-  --operator_id=prices \
+$ flz plugin enable prices-in relay_websocket \
+  --relay_id=prices \
   --Xuri=wss://feed.example/stream
 ```
 
@@ -77,12 +77,12 @@ queue and awaits no acknowledgement, and that is what a binding naming no
 
 The socket is held by the provider's own worker, which starts whether or not
 the plugin has hooks, so this plugin injects every frame it receives into the
-operator's input and sends nothing back. Naming a hook here binds the other
+relay's input and sends nothing back. Naming a hook here binds the other
 direction too: `on_input` on this provider is the same send as `on_output`, so
-`--hook=on_input` makes a source echo every payload the operator ingests back
+`--hook=on_input` makes a source echo every payload the relay ingests back
 out on the socket it arrived on.
 
-Those frames land on the operator's FIRST entry channel unless the plugin names
+Those frames land on the relay's FIRST entry channel unless the plugin names
 one: `--Xchannel trades` makes every inbound frame an entry frame on `trades`.
 `--Xchannel_in trades` says the same thing in one direction only, and is what a
 plugin that also sends writes (see below). `payload_metadata` remains the
@@ -94,7 +94,7 @@ ways is refused when the plugin is enabled, rather than resolved by precedence.
 
 | | |
 |---|---|
-| Shared | yes: one connection per controller for every operator bound to the plugin, or one in the whole cluster with `--single`; the connection hands every frame straight to every operator, and a slow one falls behind alone, in its own queue. An operator whose input is durable (effectively-once, sleeping or durable steps) runs a connection of its own, which waits for it to confirm each frame. Each member of a partitioned operator runs a connection of its own, for its own share (below) |
+| Shared | yes: one connection per controller for every relay bound to the plugin, or one in the whole cluster with `--single`; the connection hands every frame straight to every relay, and a slow one falls behind alone, in its own queue. A relay whose input is durable (effectively-once, sleeping or durable steps) runs a connection of its own, which waits for it to confirm each frame. Each member of a partitioned relay runs a connection of its own, for its own share (below) |
 | Source | one `http://` or `https://` URL, `GET` only, redirects not followed; or a literal `subscription_items` list |
 | Source response | `{"version": <integer>, "items": [<string>, …]}` |
 | Item strings | opaque: never parsed, validated or interpreted |
@@ -166,7 +166,7 @@ a fresh `req_id`. Convergence is the retry mechanism. An unanswered request is
 abandoned once its delta has been re-sent, so an acknowledgement arriving a
 full interval late cannot commit a set the source has since moved on from.
 
-Acknowledgement frames are ordinary inbound frames: they reach the operator's
+Acknowledgement frames are ordinary inbound frames: they reach the relay's
 input stream and touch `last_data_frame_at` only through the `ignore_pattern`
 classification. Put a substring of them in `ignore_pattern` if they must not
 count as data liveness, exactly as for a heartbeat.
@@ -206,7 +206,7 @@ the socket was actually subscribed to:
 | Restart | Restored from |
 |---|---|
 | Plugin restart (`Extension.Table.handle_down/5`) | the extension table's stored opts, which `init_provider/1` re-runs from |
-| Operator handover | the same stored opts, carried with the plugin |
+| Relay handover | the same stored opts, carried with the plugin |
 | Controller restart | the cspec, re-attached by `Plugins.prepare/2` |
 
 The write happens after the acknowledgement, so a crash between send and
@@ -221,8 +221,8 @@ Give the plugin an `on_output` (or `on_input`) hook and every dispatched
 payload it sees is sent as one frame on the connection it already holds:
 
 ```sh
-$ flz plugin enable prices operator_websocket \
-  --operator_id prices \
+$ flz plugin enable prices relay_websocket \
+  --relay_id prices \
   --Xuri wss://feed.example/stream \
   --Xchannel_out prices \
   --hook on_output
@@ -233,7 +233,7 @@ with the same meaning the Kafka producer gives it; with no restriction every
 output is sent.
 
 It takes several names, comma-separated, and sends the outputs of all of them:
-`--Xchannel_out alerts,audit` on an operator that also produces `metrics` sends
+`--Xchannel_out alerts,audit` on a relay that also produces `metrics` sends
 the first two and leaves the third alone. This **selects** outputs; it does not
 merge channels. Each frame still carries the channel its record named, so the
 far end can tell the two apart. Whitespace around a name is trimmed, so
@@ -249,7 +249,7 @@ refused when the plugin is enabled, saying so.
 
 `channel` names the channel this plugin is attached to in BOTH directions:
 inbound frames are injected on it AND only outputs naming it are sent. Within
-one operator an entry channel and an output channel never share a name, so a
+one relay an entry channel and an output channel never share a name, so a
 plugin that both receives and sends names two channels and writes the pair:
 `--Xchannel_in requests --Xchannel_out responses`. Writing `channel` together
 with either is refused.
@@ -284,8 +284,8 @@ delta. Put `{{cell}}` and `{{seq}}` in the same template and a consumer that
 tracks the last sequence it has applied per cell discards what it already
 has. That is the only place the dedup can work.
 
-An enable on an **effectively-once** operator warns, naming the plugin and the
-mode, and proceeds. The operator's internal guarantee is unchanged; its
+An enable on an **effectively-once** relay warns, naming the plugin and the
+mode, and proceeds. The relay's internal guarantee is unchanged; its
 websocket output hop is not effectively-once. A durable sink alongside a live
 websocket view is the standard topology, so this is a warning and not a refusal.
 
@@ -296,7 +296,7 @@ Outbound frames are held in a queue bounded by `sink_queue_max` (default
 requires a subscribe handshake sees it first. Nothing is dropped:
 
 - at the bound, the enqueueing caller is **parked** until the queue drains, so
-  back-pressure reaches the operator rather than a frame reaching the floor;
+  back-pressure reaches the relay rather than a frame reaching the floor;
 - a `"required"` frame whose retry budget is spent is **parked in the
   dead-letter store**, attributed to the output's own cell and channel, and
   its hold is then answered so the cursor advances past exactly that range;
@@ -308,7 +308,7 @@ exchange with a bounded budget (`ws_sink_handoff_timeout_ms`), never a
 synchronous call. On the effectively-once tier the socket process confirms an
 injected input by calling the Overwatch without a deadline, and the Overwatch
 is the process that runs the output chain: a synchronous send in the other
-direction would close that cycle and hang the operator permanently.
+direction would close that cycle and hang the relay permanently.
 
 ## Options in detail
 
@@ -351,14 +351,14 @@ discarded and total bandwidth equals one connection's, split. A literal
 `subscription_items` list passes through the same filter; `post_connect` stays
 an opaque boot frame and is never filtered.
 
-The item string must equal what the operator's `key_by` extracts. That is the
+The item string must equal what the relay's `key_by` extracts. That is the
 one convention partitioning rests on, and the SDK turns a violation into a park
 before any state for that key is created: see
 [`partitioning.md`](../topics/advanced/partitioning.md).
 
 ## Observability
 
-`flz operator info` renders the provider's `inspect_state/1` beneath the
+`flz relay info` renders the provider's `inspect_state/1` beneath the
 plugin: whether the socket is open and, for a subscription source, the applied
 set, the desired set, requests in flight, the last reconcile outcome and the
 last error.
@@ -409,7 +409,7 @@ in the source.
   is a convergence loop, not a push channel; shorten the interval for tighter
   bounds.
 - **One plugin owns one socket owns one set.** Nothing reconciles
-  subscriptions across plugins or operators.
+  subscriptions across plugins or relays.
 - **A source outage freezes the applied set.** The socket keeps streaming, and
   reconcile resumes when the source returns.
 - **The output hop is never effectively-once**, in either mode. See the

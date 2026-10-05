@@ -3,7 +3,7 @@ defmodule FlezhaTest.HttpPollCase do
   The fixture an `HttpPoll` test drives: a real `:gen_tcp` origin, a poller
   pointed at it, and the telemetry forward that reports what each poll did.
 
-  The host operator is stood in for by the test process, so injection is a
+  The host relay is stood in for by the test process, so injection is a
   `{:ingest, body, metadata}` **call** that `take_ingest/2` answers with any
   verdict a real Overwatch could return — including the refusals that must
   leave the content undelivered and re-offered.
@@ -75,7 +75,7 @@ defmodule FlezhaTest.HttpPollCase do
 
   @doc """
   The prepared options, refusals and all, without starting anything. The caller
-  stands in for the host operator, exactly as the extension table does.
+  stands in for the host relay, exactly as the extension table does.
   """
   def prepare(origin, extra \\ %{}) do
     opts = Map.put(base_opts(origin, extra), :overwatcher_pid, self())

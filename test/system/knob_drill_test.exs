@@ -130,7 +130,7 @@ defmodule FlezhaTest.System.KnobDrillTest do
   defp dlq_writes_under(dir) do
     {:ok, entry} =
       Entry.new(%{
-        operator_class: "knob_drill",
+        relay_class: "knob_drill",
         tasklet_id: "task",
         cell_key: "k1",
         channel: "input",

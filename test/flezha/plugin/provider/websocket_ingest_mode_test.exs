@@ -1,6 +1,6 @@
 defmodule Flezha.Plugin.Provider.WebsocketIngestModeTest do
   @moduledoc """
-  §7.2 source park, adapter side: for an effectively-once operator (its
+  §7.2 source park, adapter side: for an effectively-once relay (its
   target's `effectively_once`) the websocket ingests via a
   blocking call — a zero-credit park then stops the connection process
   reading its socket. Tier-off keeps the fire-and-forget cast unchanged.

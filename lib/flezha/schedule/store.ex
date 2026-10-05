@@ -14,7 +14,7 @@ defmodule Flezha.Schedule.Store do
 
   alias Flezha.DetsStore
   alias Flezha.Identificator
-  alias Flezha.Operator.Builder
+  alias Flezha.Relay.Builder
   alias Flezha.Plugin.SpecDecoder
   alias Flezha.Schedule.Cron
 
@@ -24,7 +24,7 @@ defmodule Flezha.Schedule.Store do
   @filename "schedules.dets"
 
   # A UTC slot renders as a fixed-width suffix; the composed cron instance
-  # id `<name>@<slot-iso>` must fit the operator id byte limit.
+  # id `<name>@<slot-iso>` must fit the relay id byte limit.
 
   @type entry :: %{
           required(:name) => binary(),
@@ -128,7 +128,7 @@ defmodule Flezha.Schedule.Store do
 
   # The name is embedded in instance ids as `<name>@<slot>`, so it must be
   # unambiguous there (no `@`, no whitespace, filesystem-safe) and short
-  # enough that every fire's composed id passes the operator id limit.
+  # enough that every fire's composed id passes the relay id limit.
   defp validate_name(name) when is_binary(name) do
     case Identificator.validate(:schedule_name, name) do
       :ok ->

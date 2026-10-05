@@ -20,9 +20,9 @@ defmodule FlezhaTest.System.CreditFlowE2ETest do
   import FlezhaTest.Helper.CreditTestHelper
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2, ensure_port_dead: 1]
 
-  alias Flezha.Operator.Builder
+  alias Flezha.Relay.Builder
   alias Flezha.Runner.FleetManager
-  alias Flezha.Service.OperatorManager
+  alias Flezha.Service.RelayManager
   alias Flezha.State.Metrics
   alias FlezhaTest.Helper.NodeTestHelper
 
@@ -59,7 +59,7 @@ defmodule FlezhaTest.System.CreditFlowE2ETest do
       restart_fsync_batcher()
 
       try do
-        OperatorManager.stop_all_operators(@namespace)
+        RelayManager.stop_all_relays(@namespace)
       catch
         _, _ -> :ok
       end
@@ -79,10 +79,10 @@ defmodule FlezhaTest.System.CreditFlowE2ETest do
   end
 
   defp run_credit_scenario do
-    operator_id = "credit_e2e_#{System.unique_integer([:positive])}"
+    relay_id = "credit_e2e_#{System.unique_integer([:positive])}"
 
-    # The stream window resolves per-Operator from the first Change's class.
-    Application.put_env(:flezha, :credit_window_bytes, %{operator_id => @window_bytes})
+    # The stream window resolves per-Relay from the first Change's class.
+    Application.put_env(:flezha, :credit_window_bytes, %{relay_id => @window_bytes})
 
     {port, ce_id} =
       NodeTestHelper.start_runner_port(@namespace,
@@ -94,18 +94,18 @@ defmodule FlezhaTest.System.CreditFlowE2ETest do
 
     on_exit(fn -> ensure_port_dead(port) end)
 
-    builder = %Builder{id: operator_id, factory_id: @factory, init_values: %{}, opts: []}
-    assert {:ok, info} = OperatorManager.start_operator(@namespace, builder)
+    builder = %Builder{id: relay_id, factory_id: @factory, init_values: %{}, opts: []}
+    assert {:ok, info} = RelayManager.start_relay(@namespace, builder)
     assert info.runner_id == ce_id
 
     # Prime with ONE input so the first state frame runs the credit
     # handshake, and burst only once the session is credit-speaking —
     # otherwise the burst races the handshake and flows un-metered.
-    OperatorManager.send_io(operator_id, @namespace, "0:prime", %{"input_type" => "2"})
+    RelayManager.send_io(relay_id, @namespace, "0:prime", %{"input_type" => "2"})
 
     # The priming Change proves state frames flow at all (separating a
     # broken persistence path from a broken handshake in the failure mode).
-    assert wait_for_cell(operator_id, @tasklet, 30_000)
+    assert wait_for_cell(relay_id, @tasklet, 30_000)
 
     credit_row = wait_until(fn -> active_credit_row(ce_id) end, 30_000)
     assert credit_row, "credit handshake never completed: #{credit_rows(ce_id)}"
@@ -116,14 +116,14 @@ defmodule FlezhaTest.System.CreditFlowE2ETest do
     payload = String.duplicate("x", @input_bytes)
 
     for i <- 1..@input_count do
-      OperatorManager.send_io(operator_id, @namespace, "#{i}:#{payload}", %{
+      RelayManager.send_io(relay_id, @namespace, "#{i}:#{payload}", %{
         "input_type" => "2"
       })
     end
 
     # Zero drops: every Change lands in seq order despite the parking
     # (seq 0 was the priming input).
-    cell_id = wait_for_cell(operator_id, @tasklet, 30_000)
+    cell_id = wait_for_cell(relay_id, @tasklet, 30_000)
     writer = wait_for_writer(cell_id, 10_000)
     await_seq(writer, @input_count, 60_000)
 

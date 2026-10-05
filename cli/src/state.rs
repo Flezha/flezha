@@ -5,18 +5,18 @@ use crate::dispatch::{self, Command, Missing, Verb};
 use crate::{args, help, rpc};
 
 /// The Cell-scoped write verbs all name the same slot.
-const CELL: &[Positional] = &[Positional::required("<operator/tasklet/cell_key>")];
+const CELL: &[Positional] = &[Positional::required("<relay/tasklet/cell_key>")];
 
 pub(crate) const TABLE: Command = Command {
     path: "flz state",
     help: help::STATE,
     verbs: &[
         Verb::new("get", |read| scoped_verb(read, "Steps.state_get"))
-            .taking(&[Positional::required("<operator/tasklet[/cell_key]>")]),
+            .taking(&[Positional::required("<relay/tasklet[/cell_key]>")]),
         Verb::new("list", |read| scoped_verb(read, "Steps.cells"))
-            .taking(&[Positional::required("<operator_class>")]),
+            .taking(&[Positional::required("<relay_class>")]),
         Verb::new("at", handle_at).taking(&[
-            Positional::required("<operator/tasklet/cell_key>"),
+            Positional::required("<relay/tasklet/cell_key>"),
             Positional::required("<seq | iso8601-timestamp>"),
         ]),
         Verb::new("rotate", |read| {
@@ -24,7 +24,7 @@ pub(crate) const TABLE: Command = Command {
         })
         .taking(CELL),
         Verb::new("retention", handle_retention).taking(&[
-            Positional::required("<operator_class>"),
+            Positional::required("<relay_class>"),
             Positional::number("<hours>"),
         ]),
         Verb::new("delete", |read| {
@@ -36,9 +36,9 @@ pub(crate) const TABLE: Command = Command {
         })
         .taking(CELL),
         Verb::new("journal", |read| scoped_verb(read, "Steps.journal"))
-            .taking(&[Positional::required("<operator/instance>")]),
+            .taking(&[Positional::required("<relay/instance>")]),
         Verb::new("inbox", |read| scoped_verb(read, "Steps.inbox"))
-            .taking(&[Positional::required("<operator/instance>")]),
+            .taking(&[Positional::required("<relay/instance>")]),
     ],
     help_verbs: dispatch::HELP_VERBS,
     missing: Missing::Refuse,
@@ -71,10 +71,7 @@ fn handle_retention(read: &Reading) {
 
     rpc::door(
         "Steps.set_retention",
-        &[
-            Value::from(read.pos("<operator_class>")),
-            Value::from(hours),
-        ],
+        &[Value::from(read.pos("<relay_class>")), Value::from(hours)],
         &[],
         read,
     );

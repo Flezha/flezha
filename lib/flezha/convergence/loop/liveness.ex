@@ -84,7 +84,7 @@ defmodule Flezha.Convergence.Loop.Liveness do
       end)
 
     # Per-runner data-stream servers (StreamAcceptor-owned) — the layer
-    # that actually carries operator traffic, invisible to get_stats/1.
+    # that actually carries relay traffic, invisible to get_stats/1.
     data_drivers =
       LivenessCounters.driver_refs()
       |> Enum.flat_map(fn {{runner_id, type}, ref} ->
@@ -94,8 +94,8 @@ defmodule Flezha.Convergence.Loop.Liveness do
         end
       end)
 
-    %{channels: channels, operators: operators} = LivenessCounters.snapshot_all()
-    %{drivers: control_drivers ++ data_drivers, channels: channels, operators: operators}
+    %{channels: channels, relays: relays} = LivenessCounters.snapshot_all()
+    %{drivers: control_drivers ++ data_drivers, channels: channels, relays: relays}
   end
 
   defp maybe_emit_stall(:ok, last) when last != nil do

@@ -1,4 +1,4 @@
-//! Tasklet-requested spawn of a steps operator
+//! Tasklet-requested spawn of a steps relay
 //! (`tasklet-requested-spawn`).
 //!
 //! [`request`] ships one `SpawnStepsRequest` on the control plane and hands
@@ -30,7 +30,7 @@ pub enum IfRunning {
     #[default]
     Deliver,
     /// Leave the running instance alone and fail the request with the
-    /// controller's `operator.already_running`.
+    /// controller's `relay.already_running`.
     Error,
 }
 
@@ -92,7 +92,7 @@ impl SpawnOrigin<'_> {
     /// Empty for an invocation that took no input-log offset: nothing re-runs
     /// it, and two of its inputs with one payload are two requests.
     fn identity(&self, factory_id: &str, payload: &[u8]) -> String {
-        use crate::operator::instance::{fnv1a128, FNV128_OFFSET_BASIS};
+        use crate::relay::instance::{fnv1a128, FNV128_OFFSET_BASIS};
         let Some(offset) = self.offset else {
             return String::new();
         };
@@ -148,8 +148,8 @@ pub struct SpawnResult {
 /// tasklet: they resolve its handle.
 #[derive(Debug, Clone, PartialEq)]
 pub enum SpawnError {
-    /// The controller's refusal under its own code: `operator.already_running`,
-    /// `operator.factory_unknown`, `operator.factory_not_steps`, a policy
+    /// The controller's refusal under its own code: `relay.already_running`,
+    /// `relay.factory_unknown`, `relay.factory_not_steps`, a policy
     /// or quota refusal, or any other.
     Refused(FlezhaError),
     /// No answer arrived within [`SPAWN_RESULT_TIMEOUT`].
@@ -540,9 +540,9 @@ mod tests {
     #[test]
     fn a_refusal_carries_the_controllers_own_code() {
         for code in [
-            "operator.already_running",
-            "operator.factory_unknown",
-            "operator.factory_not_steps",
+            "relay.already_running",
+            "relay.factory_unknown",
+            "relay.factory_not_steps",
             "quota.exceeded",
         ] {
             let refusal = FlezhaError::new(code, Default::default());

@@ -1,19 +1,19 @@
 # Postgres poll source
 
 The Postgres poll source delivers the new, and optionally the changed, rows of one Postgres
-table onto an operator's entry channel, with no replication rights: it works on a managed
+table onto a relay's entry channel, with no replication rights: it works on a managed
 database and on a read replica. It reads the table past its cursor every `interval_ms`,
 oldest first, and injects each row as one JSON object.
 `Flezha.Plugin.Provider.PostgresPoll` is its provider, under the provider id
-`operator_postgres_poll`.
+`relay_postgres_poll`.
 
 | | |
 | --- | --- |
-| Type | operator plugin |
+| Type | relay plugin |
 | Ships | built in |
-| Shareable | no: one cursor per binding, so a second operator bound to it is refused (`plugin.not_shareable`) |
-| Partitioned operators | refused (`plugin.partitioned_host`): a row's key decides which member must take it |
-| Durability | each batch waits for the operator's verdicts and the cursor moves only past the rows it took; with durable input the cursor is committed after every batch, otherwise when the reader catches up and at most every `commit_interval_ms` |
+| Shareable | no: one cursor per binding, so a second relay bound to it is refused (`plugin.not_shareable`) |
+| Partitioned relays | refused (`plugin.partitioned_host`): a row's key decides which member must take it |
+| Durability | each batch waits for the relay's verdicts and the cursor moves only past the rows it took; with durable input the cursor is committed after every batch, otherwise when the reader catches up and at most every `commit_interval_ms` |
 
 ## Options
 
@@ -38,7 +38,7 @@ oldest first, and injects each row as one JSON object.
 | `batch_size` | int | `500` | no | Rows in one read |
 | `interval_ms` | int | `1000` | no | Pause between reads once caught up, and after a failed read |
 | `timestamp_delay_ms` | int | `0` | no | Rows whose timestamp is younger than this are left for a later read |
-| `commit_interval_ms` | int | `1000` | no | Longest a new cursor waits to be committed while full batches are read, unless the operator's input is durable |
+| `commit_interval_ms` | int | `1000` | no | Longest a new cursor waits to be committed while full batches are read, unless the relay's input is durable |
 | `query_timeout_ms` | int | `30000` | no | Statement timeout of one read |
 | `failure_threshold` | int | `3` | no | Consecutive failed reads or refused rows before the plugin reports unhealthy |
 | `idle_after_ms` | int | `0` | no | Age of the last settled read past which the source is idle; 0 derives it from `interval_ms` |
@@ -47,7 +47,7 @@ oldest first, and injects each row as one JSON object.
 ## Example
 
 ```sh
-$ flz plugin enable orders-in operator_postgres_poll --operator_id=orders \
+$ flz plugin enable orders-in relay_postgres_poll --relay_id=orders \
   --Xhostname=db.internal --Xdatabase=shop --Xusername=flezha_reader \
   --Xpassword_env=SHOP_DB_PASSWORD --Xtable=sales.orders --Xid_column=id \
   --Xtimestamp_column=updated_at --Xtimestamp_delay_ms=5000 --Xchannel=orders
@@ -58,19 +58,19 @@ $ flz plugin enable orders-in operator_postgres_poll --operator_id=orders \
 | | |
 | --- | --- |
 | Hooks | none needed: the reader drives itself, so a binding names no hook (the provider also defines `:on_terminate`) |
-| Shared | no: one cursor per binding, so a second operator bound to it is refused (`plugin.not_shareable`), and a member of a partition group is refused (`plugin.partitioned_host`), because a row's key decides which member must take it |
+| Shared | no: one cursor per binding, so a second relay bound to it is refused (`plugin.not_shareable`), and a member of a partition group is refused (`plugin.partitioned_host`), because a row's key decides which member must take it |
 | Upstream | one table or view, read by a role that may `SELECT` it, on one connection the plugin owns |
 | Injection | one row as one JSON object, on the entry channel `:channel` (or `:channel_in`) names, with `flz.msg_id` set |
-| Delivery | each batch waits for the operator's verdicts, and the cursor moves only past the rows it took; a refused row is read again |
+| Delivery | each batch waits for the relay's verdicts, and the cursor moves only past the rows it took; a refused row is read again |
 | Failure posture | inject nothing, keep the cursor, read again after `interval_ms`, count toward health |
 
-As a plugin spec at operator start (`flz operator start --plugins`):
+As a plugin spec at relay start (`flz relay start --plugins`):
 
 ```json
 [
   {
     "name": "orders-in",
-    "provider": "operator_postgres_poll",
+    "provider": "relay_postgres_poll",
     "opts": {
       "hostname": "db.internal",
       "database": "shop",
@@ -173,27 +173,27 @@ has a new one.
 
 ## Delivery
 
-Every batch is handed to the operator with `Host.inject_many/4` and its verdicts waited for,
-with no timeout. The cursor moves past the longest run of rows the operator took; a row it
+Every batch is handed to the relay with `Host.inject_many/4` and its verdicts waited for,
+with no timeout. The cursor moves past the longest run of rows the relay took; a row it
 refused is read again on the next read, and so are the rows after it, up to
 `FLEZHA_PLUGIN_INGEST_WINDOW` of which may already have been taken.
 
 The cursor is committed to the binding (its internal option `cursor`), so a plugin restart, a
 move to another controller and a controller restart continue where it stopped. How often
-follows the operator's input:
+follows the relay's input:
 
 - **Durable input** (effectively-once, sleeping or durable steps): a verdict means the row is in
-  the operator's input log, and the cursor is committed after every batch. A row read again
+  the relay's input log, and the cursor is committed after every batch. A row read again
   after a restart is absorbed by its `flz.msg_id` while the input log still holds it; with
-  effectively-once the operator's outputs are effectively once on top of that.
-- **Otherwise**: a verdict means the operator accepted the row, and the cursor is committed once
+  effectively-once the relay's outputs are effectively once on top of that.
+- **Otherwise**: a verdict means the relay accepted the row, and the cursor is committed once
   the reader catches up or a read fails, and at most every `commit_interval_ms` while it reads
   full batches. A crash can lose rows taken but not processed, and reads again up to
   `commit_interval_ms` of rows.
 
 A commit is written in the background, so two close together can land out of order and the
 stored cursor can move back: that reads rows again, it never skips one. A commit at stop does
-not land when the operator itself is already stopping.
+not land when the relay itself is already stopping.
 
 The cursor is stored with the `table`, `id_column` and `timestamp_column` it was read under. A
 binding brought up with others (after `flz plugin update`, say) drops it and starts from
@@ -205,7 +205,7 @@ binding brought up with others (after `flz plugin update`, say) drops it and sta
 | --- | --- |
 | `{:unhealthy, {:table_missing, table}}` | the table does not exist, or the role cannot see it; at once, until a read succeeds |
 | `{:unhealthy, {:column_missing, column}}` | a cursor column or a `columns` entry does not exist; at once, until a read succeeds |
-| `{:unhealthy, {:read_failed, error}}` | `failure_threshold` reads in a row failed, or the operator refused a row as many times; `error` is the server's code and message |
+| `{:unhealthy, {:read_failed, error}}` | `failure_threshold` reads in a row failed, or the relay refused a row as many times; `error` is the server's code and message |
 | `{:unhealthy, {:poll_idle, age_ms}}` | no read has settled within `idle_after_ms` (three `interval_ms` when 0) |
 | `{:unhealthy, :no_reader}` / `{:unhealthy, :reader_dead}` | no reader, or a dead one |
 | `:healthy` | otherwise, including a table that does not grow |
@@ -230,7 +230,7 @@ would cost more than the read.
 - **One table per plugin**, and no `WHERE` filter or query of your own.
 - **No deletes**, and in id-only mode no updates.
 - **Polling.** A new row is seen within one `interval_ms` once the reader has caught up.
-- **A partitioned operator is refused.** Bind the source to an operator that is not
+- **A partitioned relay is refused.** Bind the source to a relay that is not
   partitioned and route from there.
 - **`channel` is not validated at attach.** As for every source, channel names are an SDK-side
   fact the controller never sees.

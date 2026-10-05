@@ -33,7 +33,7 @@ defmodule Flezha.Convergence.RemedySeamTest do
   }
 
   alias Flezha.Identificator
-  alias Flezha.Operator.Overwatch
+  alias Flezha.Relay.Overwatch
   alias Flezha.Plugin
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.HubManager
@@ -52,7 +52,7 @@ defmodule Flezha.Convergence.RemedySeamTest do
   # One sample op per primitive, against a target that does not exist: what
   # the Planner would emit, and what the executor must answer without a crash.
   @ghost_ops %{
-    rebind_operator: %{namespace: "ghost_ns", target: "ghost_op", args: %{}},
+    rebind_relay: %{namespace: "ghost_ns", target: "ghost_op", args: %{}},
     resync_runner: %{namespace: "ghost_ns", target: "ghost_op", args: %{reason: :output_stall}},
     start_plugin: %{
       namespace: "ghost_ns",
@@ -76,7 +76,7 @@ defmodule Flezha.Convergence.RemedySeamTest do
     reset_control_channel: %{
       namespace: nil,
       target: "ghost_runner",
-      args: %{operator_id: "ghost_op"}
+      args: %{relay_id: "ghost_op"}
     },
     publish_binding: %{
       namespace: "ghost_ns",
@@ -117,7 +117,7 @@ defmodule Flezha.Convergence.RemedySeamTest do
   test "clause 2: every evidence-reset kind is a ladder and every inline kind is not" do
     for {kind, entry} <- Facts.holding(),
         is_atom(entry[:reason]) and not is_nil(entry[:reason]) do
-      op = %{primitive: :rebind_operator, target: "t", args: %{reason: entry.reason}}
+      op = %{primitive: :rebind_relay, target: "t", args: %{reason: entry.reason}}
 
       assert Planner.ladder?(op) == (entry.reset == :evidence),
              "kind #{kind} (reason #{entry.reason}) has reset #{entry.reset} but ladder? disagrees"
@@ -131,10 +131,10 @@ defmodule Flezha.Convergence.RemedySeamTest do
 
   describe "clause 2: the loop keeps a ladder's key armed while the fact stands" do
     setup do
-      # One declared operator, parked, on a live runner: the probe's truth for
+      # One declared relay, parked, on a live runner: the probe's truth for
       # every tick below. Every executor answers `:ok` without touching anything.
       intent = %Intent{
-        operators: [%{namespace: :ns, operator_id: "op", factory_id: "f", plugins: []}]
+        relays: [%{namespace: :ns, relay_id: "op", factory_id: "f", plugins: []}]
       }
 
       stub(Intent, :declared, fn -> intent end)
@@ -164,14 +164,14 @@ defmodule Flezha.Convergence.RemedySeamTest do
 
       backoff = :sys.get_state(Loop).backoff
       assert Backoff.attempt(backoff, {:parked, "op"}) == 1, "the parked rung did not advance"
-      assert Map.has_key?(:sys.get_state(Loop).facts, {:operator_parked, {:ns, "op"}})
+      assert Map.has_key?(:sys.get_state(Loop).facts, {:relay_parked, {:ns, "op"}})
 
       # Repaired: the probe sees it unparked, the fact goes and the key resets.
       stub(Probe, :snapshot, fn -> reality(%{parked?: false, park_reason: nil}) end)
       :ok = Loop.tick_now()
 
       assert Backoff.attempt(:sys.get_state(Loop).backoff, {:parked, "op"}) == 0
-      refute Map.has_key?(:sys.get_state(Loop).facts, {:operator_parked, {:ns, "op"}})
+      refute Map.has_key?(:sys.get_state(Loop).facts, {:relay_parked, {:ns, "op"}})
     end
 
     test "an inline op resets its key on its own :ok" do
@@ -193,12 +193,12 @@ defmodule Flezha.Convergence.RemedySeamTest do
     opts: %{},
     hooks: [],
     namespace: "ns",
-    operator_id: "r"
+    relay_id: "r"
   }
   @rule_samples %{
-    misbound_operators: %Diff{misbound_operators: [{{:ns, "r"}, "e_dead", :probe}]},
-    parked_operators: %Diff{
-      parked_operators: [
+    misbound_relays: %Diff{misbound_relays: [{{:ns, "r"}, "e_dead", :probe}]},
+    parked_relays: %Diff{
+      parked_relays: [
         {{:ns, "r"}, %{reason: {:ping_failed, :closed}, transport: :dead}, "e1"}
       ]
     },
@@ -206,13 +206,13 @@ defmodule Flezha.Convergence.RemedySeamTest do
       data_plane_wedge: {:runner, :ns, "e1"},
       data_plane_layer: :runner_pool_wedged
     },
-    unbound_operators: %Diff{unbound_operators: [{:ns, "r"}]},
+    unbound_relays: %Diff{unbound_relays: [{:ns, "r"}]},
     resync_cells: %Diff{resync_cells: [{{"c", "p", "k"}, "e1", :seq_gap}]},
     missing_plugins: %Diff{missing_plugins: [{{:ns, "r"}, "p1", @plugin}]},
     extra_plugins: %Diff{extra_plugins: [{{:ns, "r"}, "p1", nil}]},
     unhealthy_plugins: %Diff{unhealthy_plugins: [{{:ns, "r"}, "p1", @plugin, :owned_pid_dead}]},
     stale_tags: %Diff{stale_tags: [{{:ns, "r"}, "e_old", "e1"}]},
-    stalled_operators: %Diff{stalled_operators: [{:ns, "r"}]}
+    stalled_relays: %Diff{stalled_relays: [{:ns, "r"}]}
   }
 
   test "clause 3: every declared kind is consumed by exactly one Diff field and planned by exactly one rule" do
@@ -288,17 +288,17 @@ defmodule Flezha.Convergence.RemedySeamTest do
     {Flezha.Convergence.Heal, :any, []},
     {Flezha.Runner.FleetManager, :evict_runner, []},
     {Flezha.Runner.FleetManager, :reset_control_channel, []},
-    {Flezha.Operator.Overwatch, :plugin_restart, []},
-    {Flezha.Plugin.Extension.Table, :attempt_restart, ["lib/flezha/operator/plugins.ex"]},
+    {Flezha.Relay.Overwatch, :plugin_restart, []},
+    {Flezha.Plugin.Extension.Table, :attempt_restart, ["lib/flezha/relay/plugins.ex"]},
     # A bind publishes its OWN binding, which is not a remedy: those sites run
     # in the Overwatch as it binds, and the third IS the primitive's executor
     # (the `:publish_binding` call the loop makes). Repairing a row that named
     # someone else is the loop's, and it goes through that call.
-    {Flezha.Operator.Lifecycle, :publish_binding,
+    {Flezha.Relay.Lifecycle, :publish_binding,
      [
-       "lib/flezha/operator/lifecycle.ex",
-       "lib/flezha/operator/migration.ex",
-       "lib/flezha/operator/overwatch.ex"
+       "lib/flezha/relay/lifecycle.ex",
+       "lib/flezha/relay/migration.ex",
+       "lib/flezha/relay/overwatch.ex"
      ]},
     {Flezha.Runner.ControlUnit, {:disconnect, :terminal}, []},
     {Flezha.Service.HubManager, :drain_hub,
@@ -353,7 +353,7 @@ defmodule Flezha.Convergence.RemedySeamTest do
     steps = Shutdown.all_steps()
     assert steps != []
 
-    for scope <- [:process, :operator, :namespace, :node] do
+    for scope <- [:process, :relay, :namespace, :node] do
       orders = steps |> Enum.filter(&(&1.scope == scope)) |> Enum.map(& &1.order)
       assert orders != [], "scope #{scope} declares no step"
       assert orders == Enum.uniq(orders), "scope #{scope} has a duplicate order"
@@ -367,8 +367,8 @@ defmodule Flezha.Convergence.RemedySeamTest do
   end
 
   @stop_entry_points [
-    {"lib/flezha/operator/migration.ex", :process},
-    {"lib/flezha/service/operator_manager.ex", :operator},
+    {"lib/flezha/relay/migration.ex", :process},
+    {"lib/flezha/service/relay_manager.ex", :relay},
     {"lib/flezha/runner/fleet_manager.ex", :namespace},
     {"lib/flezha/shutdown/coordinator.ex", :node}
   ]
@@ -393,12 +393,12 @@ defmodule Flezha.Convergence.RemedySeamTest do
   #
   # Scoped to the controller tree: `lib/mix/` is the bench harness, which
   # clears its own namespace directory BEFORE the application boots — offline,
-  # like `flz reset`, and never a teardown of a running operator. The plugin
+  # like `flz reset`, and never a teardown of a running relay. The plugin
   # installer and loader delete only their own expansions of package archives.
   @teardown_allowed %{
     {Flezha.Plugin.Extension.Table, :teardown_all} => [
-      "lib/flezha/operator/migration.ex",
-      "lib/flezha/operator/handover.ex",
+      "lib/flezha/relay/migration.ex",
+      "lib/flezha/relay/handover.ex",
       "lib/flezha/plugin/shared.ex"
     ],
     {File, :rm_rf} => [
@@ -495,7 +495,7 @@ defmodule Flezha.Convergence.RemedySeamTest do
     end
 
     defp rebind(id),
-      do: %{primitive: :rebind_operator, namespace: @namespace, target: id, args: %{}}
+      do: %{primitive: :rebind_relay, namespace: @namespace, target: id, args: %{}}
 
     defp inject(id, opts) do
       {:ok, pid} =

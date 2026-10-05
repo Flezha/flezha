@@ -6,14 +6,14 @@ TBD - created by archiving change node-sdk. Update Purpose after archive.
 ### Requirement: A Node Runner Entry Point Over the Poll Core
 
 The SDK SHALL provide a runner entry point that takes a namespace, accepts flow and steps
-operator declarations by module specifier, connects to the controller, and runs until shutdown. It
+relay declarations by module specifier, connects to the controller, and runs until shutdown. It
 SHALL drive `flz_core` through the C ABI and SHALL NOT re-express dispatch, ordering, overflow, the
 retry ladder, durability or the steps driver.
 
 Transport configuration SHALL ride the same environment the other poll hosts read.
 
 #### Scenario: A runner connects and serves
-- **WHEN** a runner is started with a declared flow operator
+- **WHEN** a runner is started with a declared flow relay
 - **THEN** it SHALL connect, advertise its factories, receive activations and process inputs in
   per-cell order
 
@@ -23,7 +23,7 @@ Transport configuration SHALL ride the same environment the other poll hosts rea
 
 ### Requirement: Factory-Function Authoring With Type-Driven Wiring
 
-The SDK SHALL provide a factory-function authoring surface (a tasklet definition and an operator
+The SDK SHALL provide a factory-function authoring surface (a tasklet definition and a relay
 definition taking the settings tree) wired by a fluent channel builder carrying
 entry channels, inter-tasklet edges, keying and edge transforms. Handler input and output types
 SHALL drive graph wiring: the input type is `run`'s first parameter, and the output type is the one
@@ -36,16 +36,16 @@ Decorators SHALL NOT be required, and the surface SHALL be usable from plain Jav
 build step.
 
 #### Scenario: A graph is declared and built
-- **WHEN** an operator declares an entry channel, a keying function and a tasklet
+- **WHEN** a relay declares an entry channel, a keying function and a tasklet
 - **THEN** the topology SHALL build, and the tasklet's cells SHALL be addressable by the
   declared key
 
 #### Scenario: Plain JavaScript authors without a build step
-- **WHEN** an operator is declared from a plain JavaScript module
+- **WHEN** a relay is declared from a plain JavaScript module
 - **THEN** it SHALL register and run with no transpilation
 
 #### Scenario: A tasklet's body is its run field
-- **WHEN** a module calls `defineTasklet({ name: 'upcase', run: (s, ctx) => ctx.emit(s.toUpperCase()) })` and an operator wires it
+- **WHEN** a module calls `defineTasklet({ name: 'upcase', run: (s, ctx) => ctx.emit(s.toUpperCase()) })` and a relay wires it
 - **THEN** each input SHALL reach `run`, and the value it passes to `ctx.emit` SHALL be the tasklet's output
 
 #### Scenario: The old body field is refused
@@ -94,7 +94,7 @@ Every refusal SHALL name the offending handler and the specific defect.
 
 The SDK SHALL provide the invocation context the authoring contract defines: plain, channel-selected
 and keyed emits with metadata, the deterministic clock read, the stable identifier, timer
-registration and cancellation, steps spawn, and the steps operator inbox. The reserved metadata
+registration and cancellation, steps spawn, and the steps relay inbox. The reserved metadata
 namespace SHALL be enforced.
 
 #### Scenario: A reserved metadata key is refused
@@ -167,7 +167,7 @@ the defaults the other SDKs ship, and SHALL NOT require an observability depende
 The Node channel builder SHALL offer `merge()`, returning a merge handle with `from(source, map)`, `keyBy(key)`, `into(tasklet)` and `into(tasklet, nodeName)`, with the `multi-input-tasklets` semantics: a source is an entry stream or an inter-tasklet stream declared on the same builder, each source's mapping composes after that source's own transforms, the key is declared once on the merge and applied to the mapped value on every source's edge, and `into` returns the merged tasklet's own output stream. The builder SHALL record each source as a chain closed by the core's `merge` link (`{"link": "merge", "tasklet", "group"}`) under one group per merge and SHALL take the merge refusals (`topology.merge_too_few_sources`, `topology.duplicate_merge_source`, `topology.edge_already_wired`) from the reference check, carrying no rule of its own. The builder SHALL offer `routeLatest(documents, traffic, keyFn)` and `routeLatestNamed(documents, traffic, keyFn, nodeName)` as the `sdk-graph-authoring` router, packaged in the SDK as a single-cell tasklet with journaled `{document, version, delivered}` state. Stream handles SHALL offer `flatMap(fn)` beside `map` and `filter`: the closure answers an iterable, each element reaches the consumer on its own, an empty iterable is a drop, and the transform chain is applied as a list so `filter` and `flatMap` are one mechanism; the record carries the same `transform` link as `map`.
 
 #### Scenario: Two channels merge into one tasklet
-- **WHEN** an operator declares `c.merge().from(ticks, (t) => ({kind: 'tick', ...t})).from(quotes, (q) => ({kind: 'quote', ...q})).keyBy((v) => v.symbol).into(Detector)`
+- **WHEN** a relay declares `c.merge().from(ticks, (t) => ({kind: 'tick', ...t})).from(quotes, (q) => ({kind: 'quote', ...q})).keyBy((v) => v.symbol).into(Detector)`
 - **THEN** registration SHALL succeed with one Detector node fed by two consumer edges, each edge SHALL apply its own mapping, and a value from either entry SHALL reach Detector's handler as the mapped object keyed by `symbol`
 
 #### Scenario: A duplicated source is refused by the reference name
@@ -183,31 +183,31 @@ The Node channel builder SHALL offer `merge()`, returning a merge handle with `f
 - **THEN** exactly one `{key: 'A', document}` and one `{key: 'B', document}` SHALL be emitted, and the repeated document SHALL be inert
 
 ### Requirement: The single-tasklet short form is four definition fields
-The short form SHALL be declared with `defineOperator`, the same function that declares a full-form operator, and SHALL NOT be declared with `defineTasklet`, which SHALL accept none of `sink`, `input` or `codec` and SHALL throw `FlezhaError` naming the field and the operator function when one is given. Each SHALL accept `factoryId`, `sink`, `input`, `codec` and `run` beside the tasklet fields it already reads; how it runs is the run branch it writes (`flow` or `steps`), as on the full form.
+The short form SHALL be declared with `defineRelay`, the same function that declares a full-form relay, and SHALL NOT be declared with `defineTasklet`, which SHALL accept none of `sink`, `input` or `codec` and SHALL throw `FlezhaError` naming the field and the relay function when one is given. Each SHALL accept `factoryId`, `sink`, `input`, `codec` and `run` beside the tasklet fields it already reads; how it runs is the run branch it writes (`flow` or `steps`), as on the full form.
 
-A definition SHALL be a short form exactly when it carries `run` and not `channels`; carrying both SHALL throw `FlezhaError` whose code is `topology.short_form_with_topology`, and carrying neither SHALL throw naming the missing body. `sink` SHALL be optional. With `sink`, the definition SHALL return a `ClassSpec` whose factory id is `factoryId`, wiring an entry channel named `input` (or the `input` field's value) into a generated tasklet named `factoryId` and that tasklet to the `sink` plugin channel; with no `sink`, it SHALL wire the entry channel into the tasklet and declare no plugin channel. A short form SHALL take the class settings as the full form does and SHALL refuse only `name` (`topology.setting_on_short_form`); a steps short form SHALL be a `once` steps operator unless `steps` writes another `each`, fed by its first message on the entry channel and taking `init_values` as the tasklet's initial state. `codec` SHALL take the vocabulary of `c.input(name, { codec })` and SHALL be lowered to that call, whether or not a `sink` is written. The spec SHALL be built at definition time so a refusal is raised while the module loads, as a `dup_node` graph already is.
+A definition SHALL be a short form exactly when it carries `run` and not `channels`; carrying both SHALL throw `FlezhaError` whose code is `topology.short_form_with_topology`, and carrying neither SHALL throw naming the missing body. `sink` SHALL be optional. With `sink`, the definition SHALL return a `ClassSpec` whose factory id is `factoryId`, wiring an entry channel named `input` (or the `input` field's value) into a generated tasklet named `factoryId` and that tasklet to the `sink` plugin channel; with no `sink`, it SHALL wire the entry channel into the tasklet and declare no plugin channel. A short form SHALL take the class settings as the full form does and SHALL refuse only `name` (`topology.setting_on_short_form`); a steps short form SHALL be a `once` steps relay unless `steps` writes another `each`, fed by its first message on the entry channel and taking `init_values` as the tasklet's initial state. `codec` SHALL take the vocabulary of `c.input(name, { codec })` and SHALL be lowered to that call, whether or not a `sink` is written. The spec SHALL be built at definition time so a refusal is raised while the module loads, as a `dup_node` graph already is.
 
 An absent or empty `factoryId` SHALL throw naming the required field. The runner's `registerFactory(specifier)` SHALL register the `ClassSpec` of every short form the module exports, as it registers every exported spec. A duplicate factory id SHALL throw with a message beginning `topology.duplicate_factory_id`. Whether `topology.sink_without_output` can be raised at TypeScript's type level without a build step SHALL be decided at implementation and reflected in the manifest's `topology_surfaces`, as it is today.
 
-#### Scenario: A module exporting one definition is a whole flow operator
+#### Scenario: A module exporting one definition is a whole flow relay
 
-- **WHEN** `./upcase.mjs` default-exports `defineOperator({ factoryId: 'upcase', sink: 'out', codec: 'text', run })` and the runner is given `registerFactory('./upcase.mjs')`
-- **THEN** the runner declares a flow operator `upcase` with entry channel `input` decoding text, a tasklet named `upcase` and sink `out`, and the module calls no `defineTasklet`
+- **WHEN** `./upcase.mjs` default-exports `defineRelay({ factoryId: 'upcase', sink: 'out', codec: 'text', run })` and the runner is given `registerFactory('./upcase.mjs')`
+- **THEN** the runner declares a flow relay `upcase` with entry channel `input` decoding text, a tasklet named `upcase` and sink `out`, and the module calls no `defineTasklet`
 
-#### Scenario: A module exporting one definition is a whole steps operator
+#### Scenario: A module exporting one definition is a whole steps relay
 
-- **WHEN** `./place.mjs` exports `defineOperator({ factoryId: 'place', sink: 'placed', input: 'order', codec: 'text', run })`, the runner is given `registerFactory('./place.mjs')`, an instance is started, and one message is sent on `order`
+- **WHEN** `./place.mjs` exports `defineRelay({ factoryId: 'place', sink: 'placed', input: 'order', codec: 'text', run })`, the runner is given `registerFactory('./place.mjs')`, an instance is started, and one message is sent on `order`
 - **THEN** `run` receives the message as text, the value it passes to `ctx.emit` reaches `placed`, and the instance completes
 
-#### Scenario: A short-form steps operator declares its loop mode
+#### Scenario: A short-form steps relay declares its loop mode
 
-- **WHEN** a module exports `defineOperator({ factoryId: 'chat', sink: 'replies', codec: 'text', each: 'per_input', run })` and two messages reach its entry channel
+- **WHEN** a module exports `defineRelay({ factoryId: 'chat', sink: 'replies', codec: 'text', each: 'per_input', run })` and two messages reach its entry channel
 - **THEN** the spec's `steps.each` is `per_input`, `run` runs once per message, and the instance does not complete after the first
 
 #### Scenario: A short form with no sink is declared
 
-- **WHEN** a module exports `defineOperator({ factoryId: 'counter', input: 'ticks', codec: 'text', initState, applyChange, run })`
-- **THEN** the operator declares `ticks` into the generated tasklet and no plugin channel
+- **WHEN** a module exports `defineRelay({ factoryId: 'counter', input: 'ticks', codec: 'text', initState, applyChange, run })`
+- **THEN** the relay declares `ticks` into the generated tasklet and no plugin channel
 
 #### Scenario: A codec needs no sink
 
@@ -216,28 +216,28 @@ An absent or empty `factoryId` SHALL throw naming the required field. The runner
 
 #### Scenario: A run body beside a channels body is refused
 
-- **WHEN** a module calls `defineOperator({ factoryId: 'x', run, channels })`
+- **WHEN** a module calls `defineRelay({ factoryId: 'x', run, channels })`
 - **THEN** loading it throws `FlezhaError` whose code is `topology.short_form_with_topology`
 
 #### Scenario: A definition with neither body is refused
 
-- **WHEN** a module calls `defineOperator({ factoryId: 'x' })`
+- **WHEN** a module calls `defineRelay({ factoryId: 'x' })`
 - **THEN** loading it throws `FlezhaError` naming the missing `run` or `channels`
 
-#### Scenario: An operator field on a tasklet is refused
+#### Scenario: A relay field on a tasklet is refused
 
 - **WHEN** a module calls `defineTasklet({ name: 'upcase', sink: 'out', run })`
-- **THEN** loading it throws `FlezhaError` naming `sink` and `defineOperator`
+- **THEN** loading it throws `FlezhaError` naming `sink` and `defineRelay`
 
 #### Scenario: A definition with no factory id is refused
 
-- **WHEN** a module calls `defineOperator({ sink: 'out', run })`
+- **WHEN** a module calls `defineRelay({ sink: 'out', run })`
 - **THEN** loading it throws `FlezhaError` naming the required `factoryId`
 
-#### Scenario: One function defines every operator
+#### Scenario: One function defines every relay
 
 - **WHEN** the SDK's exports are listed
-- **THEN** `defineOperator` is the one operator-defining function, beside `defineTasklet`, and it defines a flow and a steps operator alike
+- **THEN** `defineRelay` is the one relay-defining function, beside `defineTasklet`, and it defines a flow and a steps relay alike
 
 #### Scenario: Plain JavaScript still needs no build step
 
@@ -246,7 +246,7 @@ An absent or empty `factoryId` SHALL throw naming the required field. The runner
 
 #### Scenario: A short form emits only through its context
 
-- **WHEN** a module exports `defineOperator({ factoryId: 'upcase', sink: 'out', codec: 'text', run: (line, ctx) => ctx.emit(line.toUpperCase()) })` and a second exports the same with `run: (line) => line.toUpperCase()`
+- **WHEN** a module exports `defineRelay({ factoryId: 'upcase', sink: 'out', codec: 'text', run: (line, ctx) => ctx.emit(line.toUpperCase()) })` and a second exports the same with `run: (line) => line.toUpperCase()`
 - **THEN** `hello` sent to the first SHALL reach `out` as `HELLO`, nothing SHALL reach the second's `out`, and the second written in TypeScript SHALL fail to type-check
 
 #### Scenario: A short form grows into its full form unchanged
@@ -255,12 +255,12 @@ An absent or empty `factoryId` SHALL throw naming the required field. The runner
 - **THEN** the full form SHALL declare the same record and SHALL restore the Cells the short form saved
 
 ### Requirement: A Node runner registers a factory with one awaited call
-The runner SHALL provide `async registerFactory(specifier)` and `async unregisterFactory(specifier)`, and SHALL NOT provide the authoring functions or a `declare` method as runner methods. `registerFactory` SHALL be legal before and after `run()`: it SHALL import the module and read its exported operators (flow, steps or short form, the run read from each), rejecting with an error naming the specifier when the import fails or the module exports no operator; before `run()` it SHALL record the specifier for `run()`, and after `run()` it SHALL also declare every exported operator against the running core and every worker. `unregisterFactory` SHALL drop a specifier recorded before `run()`, rejecting naming the specifier when none was recorded, and after `run()` SHALL reject with an error stating that a running Node runner cannot stop serving a started declaration. The authoring functions SHALL be `defineTasklet` and `defineOperator`, module-level functions named for what they declare.
+The runner SHALL provide `async registerFactory(specifier)` and `async unregisterFactory(specifier)`, and SHALL NOT provide the authoring functions or a `declare` method as runner methods. `registerFactory` SHALL be legal before and after `run()`: it SHALL import the module and read its exported relays (flow, steps or short form, the run read from each), rejecting with an error naming the specifier when the import fails or the module exports no relay; before `run()` it SHALL record the specifier for `run()`, and after `run()` it SHALL also declare every exported relay against the running core and every worker. `unregisterFactory` SHALL drop a specifier recorded before `run()`, rejecting naming the specifier when none was recorded, and after `run()` SHALL reject with an error stating that a running Node runner cannot stop serving a started declaration. The authoring functions SHALL be `defineTasklet` and `defineRelay`, module-level functions named for what they declare.
 
 #### Scenario: Registration is awaited before run
 
-- **WHEN** a program runs `const runner = createRunner('default'); await runner.registerFactory('./echo_operator.mjs'); await runner.run();`
-- **THEN** the runner declares the module's operator at start
+- **WHEN** a program runs `const runner = createRunner('default'); await runner.registerFactory('./echo_relay.mjs'); await runner.run();`
+- **THEN** the runner declares the module's relay at start
 
 #### Scenario: A broken module rejects where it is registered
 
@@ -270,36 +270,36 @@ The runner SHALL provide `async registerFactory(specifier)` and `async unregiste
 #### Scenario: A post-start registration reaches the running core
 
 - **WHEN** `registerFactory('./late.mjs')` is awaited after `run()` has started the runner
-- **THEN** the module's operator is declared to the core and to every worker, as `declare` did
+- **THEN** the module's relay is declared to the core and to every worker, as `declare` did
 
 #### Scenario: A post-start removal is rejected, not ignored
 
-- **WHEN** `unregisterFactory('./echo_operator.mjs')` is awaited after `run()`
-- **THEN** the promise rejects saying a running Node runner cannot stop serving a started declaration, and the operator stays declared
+- **WHEN** `unregisterFactory('./echo_relay.mjs')` is awaited after `run()`
+- **THEN** the promise rejects saying a running Node runner cannot stop serving a started declaration, and the relay stays declared
 
-### Requirement: A Node operator definition carries the settings tree it wrote
+### Requirement: A Node relay definition carries the settings tree it wrote
 
-`defineOperator` SHALL take the class settings as the tree, its run written as the branch key (`flow: {...}` or `steps: {...}`) and `durable` beside it, and `toHostClassDecl` SHALL put the tree on the wire as written with every key snake-cased, so a setting under a parent that does not carry it reaches the core and is refused as `topology.unknown_field`, naming the setting and its parent, when the runner declares the class to the shared core (at start, or at the registration itself for a class registered after start), as every other core refusal in this SDK is raised, as a `FlezhaError` naming it. A definition SHALL carry no `retryAttempts`, `retryBackoffMs`, `barrierRetryAttempts` or `wakeAfterMs`, and the declaration SHALL carry no `wake_after_ms`. A tasklet context inside a steps operator SHALL offer `timerAfter`, `timerAtEventTime` and `cancelTimer` exactly as inside a flow operator, and a tasklet's `onTimer` SHALL run on its firing in both runs; only a `compensate` hook's context SHALL throw an error naming `runtime.timers_unavailable` from them.
+`defineRelay` SHALL take the class settings as the tree, its run written as the branch key (`flow: {...}` or `steps: {...}`) and `durable` beside it, and `toHostClassDecl` SHALL put the tree on the wire as written with every key snake-cased, so a setting under a parent that does not carry it reaches the core and is refused as `topology.unknown_field`, naming the setting and its parent, when the runner declares the class to the shared core (at start, or at the registration itself for a class registered after start), as every other core refusal in this SDK is raised, as a `FlezhaError` naming it. A definition SHALL carry no `retryAttempts`, `retryBackoffMs`, `barrierRetryAttempts` or `wakeAfterMs`, and the declaration SHALL carry no `wake_after_ms`. A tasklet context inside a steps relay SHALL offer `timerAfter`, `timerAtEventTime` and `cancelTimer` exactly as inside a flow relay, and a tasklet's `onTimer` SHALL run on its firing in both runs; only a `compensate` hook's context SHALL throw an error naming `runtime.timers_unavailable` from them.
 
 #### Scenario: A misplaced setting reaches the core
 
-- **WHEN** a module exports `defineOperator({ factoryId: 'w', flow: { each: 'per_input' }, channels })` and the runner declares it
-- **THEN** declaring it to the core throws an error naming `topology.unknown_field`, `each` and `flow`, and the operator is not declared
+- **WHEN** a module exports `defineRelay({ factoryId: 'w', flow: { each: 'per_input' }, channels })` and the runner declares it
+- **THEN** declaring it to the core throws an error naming `topology.unknown_field`, `each` and `flow`, and the relay is not declared
 
 #### Scenario: Remote durability is a durable level
 
-- **WHEN** a module exports `defineOperator({ factoryId: 'sd', steps: {}, durable: 'remote', channels })`
+- **WHEN** a module exports `defineRelay({ factoryId: 'sd', steps: {}, durable: 'remote', channels })`
 - **THEN** the declaration carries `durable: "remote"`, and the channel builder carries no durability call
 
 #### Scenario: A timer inside a steps tasklet fires
 
-- **WHEN** a tasklet of a running `per_input` steps operator calls `ctx.timerAfter(300)` in `run`
+- **WHEN** a tasklet of a running `per_input` steps relay calls `ctx.timerAfter(300)` in `run`
 - **THEN** the call returns the scheduled timestamp, the effect carries the timer op, and `onTimer` runs on that Cell at that timestamp, opening a pass at that tasklet
 
 #### Scenario: The retired wake field is refused
 
-- **WHEN** a module exports `defineOperator({ factoryId: 'w', steps: {}, wakeAfterMs: 5000, channels })`
-- **THEN** `defineOperator` refuses the unknown field by name (`topology.unknown_field`), and no declaration carries `wake_after_ms`
+- **WHEN** a module exports `defineRelay({ factoryId: 'w', steps: {}, wakeAfterMs: 5000, channels })`
+- **THEN** `defineRelay` refuses the unknown field by name (`topology.unknown_field`), and no declaration carries `wake_after_ms`
 
 ### Requirement: A value leaves a Node tasklet only through its context
 A value SHALL leave a Node tasklet only through its context: `ctx.emit(value, options)`, with the `key`, `channel` and `metadata` options, and `ctx.emitTo(channel, value, options)`. The SDK SHALL NOT emit a value returned from `run`, `onTimer` or `compensate`, under the dispatcher, in local mode and under `TaskletTestHarness` alike.
@@ -342,7 +342,7 @@ The clock SHALL follow from what the definition writes: event time when it write
 
 The initial state SHALL come from `initState(cellKey)`, and its absence SHALL declare a stateless tasklet. A definition writing `applyChange` without `initState` SHALL be refused with a `FlezhaError` naming both. A change SHALL be any value the codec carries, recorded with `ctx.change(value)` and folded by the definition's `applyChange(state, change)`, and no change class SHALL be required; `stateCodec` and `changeCodec` SHALL stay. `migrateState(fromVersion, bytes)` and `migrateChange(fromVersion, bytes)` SHALL keep receiving bytes.
 
-`defineTasklet` SHALL refuse a field it does not read with a `FlezhaError` naming the field and the tasklet, as an operator definition refuses its own unknown fields, whether the definition carries it as its own or inherits it. It SHALL NOT map a retired field (`dynamicCells`, `clock`, `initialState`) to its successor; the refusal SHALL name what replaced it.
+`defineTasklet` SHALL refuse a field it does not read with a `FlezhaError` naming the field and the tasklet, as a relay definition refuses its own unknown fields, whether the definition carries it as its own or inherits it. It SHALL NOT map a retired field (`dynamicCells`, `clock`, `initialState`) to its successor; the refusal SHALL name what replaced it.
 
 #### Scenario: The idle TTL is whole seconds
 
@@ -376,7 +376,7 @@ The initial state SHALL come from `initState(cellKey)`, and its absence SHALL de
 
 #### Scenario: A logical clock on a tasklet with no fold is refused
 
-- **WHEN** a tasklet with no `applyChange` writes `logicalClock: true` and its operator is declared
+- **WHEN** a tasklet with no `applyChange` writes `logicalClock: true` and its relay is declared
 - **THEN** the declaration SHALL be refused with `topology.unservable_clock` naming the tasklet
 
 #### Scenario: The initial state comes from initState
@@ -400,33 +400,33 @@ The initial state SHALL come from `initState(cellKey)`, and its absence SHALL de
 - **THEN** loading it SHALL throw `FlezhaError` naming that field and the tasklet, and the same object literal in TypeScript SHALL fail to type-check
 
 ### Requirement: A Node tasklet's cell mode is read from the wiring
-The cell mode SHALL be read per tasklet node from what is declared, never from a flag: static when the tasklet's definition writes `cells`, dynamic when a chain of the operator records a `key` link (from `keyBy` on a stream or on a merge) before the `into` or `merge` link that names the node, and single otherwise. The SDK SHALL NOT have a `dynamicCells` field or export a `DynamicCells` type. A tasklet writing `cells` and reached by a `keyBy` edge SHALL be refused with the core's `topology.key_by_on_unkeyable_target`, as a `FlezhaError` carrying that name. A dynamic node SHALL honour its `idleTtlSeconds` and `maxCells` through the core's existing eviction.
+The cell mode SHALL be read per tasklet node from what is declared, never from a flag: static when the tasklet's definition writes `cells`, dynamic when a chain of the relay records a `key` link (from `keyBy` on a stream or on a merge) before the `into` or `merge` link that names the node, and single otherwise. The SDK SHALL NOT have a `dynamicCells` field or export a `DynamicCells` type. A tasklet writing `cells` and reached by a `keyBy` edge SHALL be refused with the core's `topology.key_by_on_unkeyable_target`, as a `FlezhaError` carrying that name. A dynamic node SHALL honour its `idleTtlSeconds` and `maxCells` through the core's existing eviction.
 
 #### Scenario: keyBy alone makes a tasklet dynamic
 
-- **WHEN** an operator declares `c.input('orders').keyBy((o) => o.customer).into(Totals)` and `Totals` writes only `name`, `initState`, `applyChange` and `run`
+- **WHEN** a relay declares `c.input('orders').keyBy((o) => o.customer).into(Totals)` and `Totals` writes only `name`, `initState`, `applyChange` and `run`
 - **THEN** the declaration record SHALL carry `cell_mode` `dynamic` for `Totals`, and each customer SHALL get its own Cell
 
 #### Scenario: A keyed merge makes its tasklet dynamic
 
-- **WHEN** an operator declares `c.merge().from(a, f).from(b, g).keyBy((v) => v.symbol).into(Detector)`
+- **WHEN** a relay declares `c.merge().from(a, f).from(b, g).keyBy((v) => v.symbol).into(Detector)`
 - **THEN** the declaration record SHALL carry `cell_mode` `dynamic` for `Detector`
 
 #### Scenario: One definition takes its mode from each wiring
 
-- **WHEN** one tasklet definition is wired through `keyBy` in one operator and without it in another
-- **THEN** the first operator's record SHALL carry `cell_mode` `dynamic` for it and the second's `single`
+- **WHEN** one tasklet definition is wired through `keyBy` in one relay and without it in another
+- **THEN** the first relay's record SHALL carry `cell_mode` `dynamic` for it and the second's `single`
 
 #### Scenario: A static key set fed by keyBy is refused
 
 - **WHEN** a tasklet writing `cells: { keys: ['a', 'b'], cellsFor }` is reached by an edge declaring `keyBy`
-- **THEN** declaring the operator SHALL throw `FlezhaError` whose refusals contain `topology.key_by_on_unkeyable_target`, naming the tasklet
+- **THEN** declaring the relay SHALL throw `FlezhaError` whose refusals contain `topology.key_by_on_unkeyable_target`, naming the tasklet
 
-### Requirement: A Node cell belongs to one operator
-The Node runner SHALL keep a Cell's live state by its operator, its tasklet and its cell key, so that two operators of one factory served by the same runner, such as two instances of a steps operator or two partitions of a flow one, never read or write each other's state. Every activation that reads or writes a Cell (work, restore fold, snapshot, live state read, migration serialize, apply state and compensate) SHALL address it this way.
+### Requirement: A Node cell belongs to one relay
+The Node runner SHALL keep a Cell's live state by its relay, its tasklet and its cell key, so that two relays of one factory served by the same runner, such as two instances of a steps relay or two partitions of a flow one, never read or write each other's state. Every activation that reads or writes a Cell (work, restore fold, snapshot, live state read, migration serialize, apply state and compensate) SHALL address it this way.
 
-#### Scenario: Two operators of one factory keep their own cell
+#### Scenario: Two relays of one factory keep their own cell
 
-- **WHEN** one runner answers work for operators `order_a` and `order_b` of one factory, on the same tasklet and cell key
-- **THEN** each operator's live state SHALL hold only its own changes, and a restore, an applied state, a snapshot, a migration serialize and a compensation for one SHALL read or write that operator's cell alone
+- **WHEN** one runner answers work for relays `order_a` and `order_b` of one factory, on the same tasklet and cell key
+- **THEN** each relay's live state SHALL hold only its own changes, and a restore, an applied state, a snapshot, a migration serialize and a compensation for one SHALL read or write that relay's cell alone
 

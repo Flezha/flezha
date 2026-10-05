@@ -11,7 +11,7 @@ use flz_transport::transport::FlezhaStream;
 
 use super::*;
 use crate::cell::CellPayload;
-use crate::operator::instance::OperatorInstance;
+use crate::relay::instance::RelayInstance;
 
 /// The counters are process-wide, so the tests that read them take turns.
 fn serial() -> MutexGuard<'static, ()> {
@@ -53,7 +53,7 @@ fn slot_named(id: &str, instance: &str, end: &str, keys: &[&str]) -> Arc<crate::
              "tasklets":[{tasklets}]}}"#
     );
     crate::host::register_host_class_json(json.as_bytes()).expect("class registers");
-    let instance = OperatorInstance::of_class(id, instance).expect("registered");
+    let instance = RelayInstance::of_class(id, instance).expect("registered");
     Arc::clone(&instance.cells[0][0])
 }
 
@@ -118,7 +118,7 @@ fn an_attempt_numbers_its_parts_from_zero_and_names_its_cell() {
         assert_eq!(metadata["flz.part_attempt"], "1");
         assert_eq!(metadata["channel"], "answer");
         assert_eq!(metadata["flz.cell"], "part_numbers_inst/p0/");
-        assert_eq!(metadata["flz.operator"], "part_numbers_inst");
+        assert_eq!(metadata["flz.relay"], "part_numbers_inst");
         assert!(!metadata.contains_key("flz.key"));
     }
     assert_eq!(counter("parts_sent"), sent_before + 3);

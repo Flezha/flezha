@@ -100,7 +100,7 @@ defmodule Flezha.Boot.Loader do
   # in the directory the previous run was started from, and this line plus the
   # one above it is what says so.
   defp cold_start_line() do
-    if Paths.operator_classes() == [] do
+    if Paths.relay_classes() == [] do
       "[flezha] that directory holds no durable state: this controller is starting cold"
     end
   end

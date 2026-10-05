@@ -22,16 +22,16 @@ defmodule Flezha.Convergence.Probe.Table do
   alias Flezha.Plugin.ProviderBehaviour
 
   @detectors [
-    %{id: :binding, kind: :operator, facts: &Readers.binding/1, events: []},
+    %{id: :binding, kind: :relay, facts: &Readers.binding/1, events: []},
     %{
       id: :park,
-      kind: :operator,
+      kind: :relay,
       facts: &Readers.park/1,
-      events: [[:flezha, :operator, :parked]]
+      events: [[:flezha, :relay, :parked]]
     },
     %{
       id: :suspension,
-      kind: :operator,
+      kind: :relay,
       facts: &Readers.suspension/1,
       events: [
         [:flezha, :steps, :parked],
@@ -41,7 +41,7 @@ defmodule Flezha.Convergence.Probe.Table do
     },
     %{
       id: :output_stall,
-      kind: :operator,
+      kind: :relay,
       facts: &Readers.output_stall/1,
       events: [
         [:flezha, :state, :output_stall],
@@ -51,9 +51,9 @@ defmodule Flezha.Convergence.Probe.Table do
     },
     %{
       id: :progress,
-      kind: :operator,
+      kind: :relay,
       facts: &Readers.progress/1,
-      events: [[:flezha, :convergence, :operator_stuck]],
+      events: [[:flezha, :convergence, :relay_stuck]],
       thresholds: [:convergence_output_stall_grace_ms]
     },
     %{
@@ -101,7 +101,7 @@ defmodule Flezha.Convergence.Probe.Table do
     # only re-derive it.
     %{
       id: :bounded_call,
-      kind: :operator,
+      kind: :relay,
       facts: nil,
       events: [
         [:flezha, :convergence, :safe_call],
@@ -111,7 +111,7 @@ defmodule Flezha.Convergence.Probe.Table do
     },
     # Declaration-only: the hold is the runner's own fact and reaches the
     # controller as nothing else, so the entry exists to give the event a sink.
-    %{id: :sdk_hold, kind: :operator, facts: nil, events: [[:flezha, :sdk, :parked]]},
+    %{id: :sdk_hold, kind: :relay, facts: nil, events: [[:flezha, :sdk, :parked]]},
     # The judge's own entry. Every state transition executes it, and the
     # derived bridge half maps it from here rather than from a bridge edit.
     %{id: :verdict, kind: :any, facts: nil, events: [[:flezha, :health, :verdict]]}

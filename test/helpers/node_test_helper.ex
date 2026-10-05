@@ -306,7 +306,7 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
     :schema_evolution,
     :shorthand,
     :call_response,
-    :operator_call,
+    :relay_call,
     :parts,
     :local_send
   ]
@@ -340,7 +340,7 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
     :steps,
     :shorthand,
     :call_response,
-    :operator_call,
+    :relay_call,
     :parts
   ]
 
@@ -512,7 +512,7 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
 
   @doc """
   A real, never-bound primary `StreamChannel` under a fresh registered name, and
-  the pid serving it — the state every operator's data stream passes through
+  the pid serving it — the state every relay's data stream passes through
   between the runner's control-channel handshake and the stream the SDK opens
   after it. Stopped on exit.
 

@@ -1,10 +1,10 @@
 defmodule Flezha.Cluster.GroupedPlacementTest do
   @moduledoc """
-  Which controller an operator is placed on when the controllers of a
+  Which controller a relay is placed on when the controllers of a
   namespace do not all run its factory.
 
   Two controllers share one namespace hub and only the peer's fleet advertises
-  the factory under test. Every operator of that factory belongs on the peer —
+  the factory under test. Every relay of that factory belongs on the peer —
   at its first start, and still after a third controller that cannot run it
   joins the hub. A controller whose fleet cannot run the factory is never a placement
   candidate, so nothing has to repair a placement afterwards.
@@ -24,8 +24,8 @@ defmodule Flezha.Cluster.GroupedPlacementTest do
   alias Flezha.Cluster.GroupedHashing
   alias Flezha.Identificator
   alias Flezha.Service.HubManager
-  alias Flezha.Service.OperatorManager
-  alias FlezhaTest.Fixtures.OperatorFixture
+  alias Flezha.Service.RelayManager
+  alias FlezhaTest.Fixtures.RelayFixture
   alias FlezhaTest.Helper.FleetStateHelper
   alias FlezhaTest.Helper.NodeTestHelper
 
@@ -39,7 +39,7 @@ defmodule Flezha.Cluster.GroupedPlacementTest do
   @served "candle"
   @kept @factory_do_nothing
 
-  @operators 20
+  @relays 20
 
   setup do
     peers = start_supervised_peers()
@@ -47,18 +47,18 @@ defmodule Flezha.Cluster.GroupedPlacementTest do
     {:ok, peers}
   end
 
-  test "every operator of a factory starts on the only controller that runs it",
+  test "every relay of a factory starts on the only controller that runs it",
        %{peer_node: peer_node} do
-    placements = "first" |> start_operators() |> Enum.map(&elem(&1, 1))
+    placements = "first" |> start_relays() |> Enum.map(&elem(&1, 1))
 
     assert Enum.uniq(placements) == [peer_node],
-           "operators were not all placed on the controller that runs #{@served}: " <>
+           "relays were not all placed on the controller that runs #{@served}: " <>
              inspect(Enum.frequencies(placements))
   end
 
   test "a joining controller that cannot run the factory is handed none of them",
        %{peer_node: peer_node} do
-    started = start_operators("join")
+    started = start_relays("join")
     ids = Enum.map(started, &elem(&1, 0))
 
     assert Enum.uniq(Enum.map(started, &elem(&1, 1))) == [peer_node]
@@ -68,7 +68,7 @@ defmodule Flezha.Cluster.GroupedPlacementTest do
 
     # The joining controller's own runner advertises the factory until the test
     # cuts it down, so the join settles when the hub's table names the peer
-    # alone and every operator has been handed back.
+    # alone and every relay has been handed back.
     wait_for_sole_server(peer_node)
     settled? = NodeTestHelper.wait_until(fn -> strays(ids, peer_node) == [] end, 120_000)
 
@@ -82,10 +82,10 @@ defmodule Flezha.Cluster.GroupedPlacementTest do
 
     NodeTestHelper.stop_peer_node(joiner_pid, joiner_node)
 
-    assert settled?, "operators never came back to the controller that runs #{@served}"
+    assert settled?, "relays never came back to the controller that runs #{@served}"
 
     assert strays == [],
-           "a controller that does not run #{@served} was left holding operators of it: " <>
+           "a controller that does not run #{@served} was left holding relays of it: " <>
              inspect(Enum.frequencies(strays))
   end
 
@@ -152,15 +152,15 @@ defmodule Flezha.Cluster.GroupedPlacementTest do
     end
   end
 
-  # `{id, placement}` per operator, where a placement is the node it started
+  # `{id, placement}` per relay, where a placement is the node it started
   # on or, for a start that failed, the verdict — a start refused because the
   # chosen controller has no runner for the factory is a placement answer too.
-  defp start_operators(prefix) do
-    for index <- 1..@operators do
+  defp start_relays(prefix) do
+    for index <- 1..@relays do
       id = "#{prefix}_#{index}"
 
       placement =
-        case OperatorManager.start_operator(@ns, OperatorFixture.get(id, @served)) do
+        case RelayManager.start_relay(@ns, RelayFixture.get(id, @served)) do
           {:ok, %{node: node}} -> node
           other -> other
         end
@@ -170,15 +170,15 @@ defmodule Flezha.Cluster.GroupedPlacementTest do
   end
 
   defp hosting_node(id) do
-    case OperatorManager.get_operator_pid(@ns, id) do
+    case RelayManager.get_relay_pid(@ns, id) do
       {:ok, pid} -> node(pid)
       other -> other
     end
   end
 
   defp teardown(%{peer_pid: peer_pid, peer_node: peer_node}) do
-    for index <- 1..@operators, prefix <- ["first", "join"] do
-      OperatorManager.stop_operator(@ns, "#{prefix}_#{index}")
+    for index <- 1..@relays, prefix <- ["first", "join"] do
+      RelayManager.stop_relay(@ns, "#{prefix}_#{index}")
     end
 
     NodeTestHelper.stop_peer_node(peer_pid, peer_node)

@@ -2,7 +2,7 @@
 
 ## Purpose
 RabbitMQ in both directions, as a plugin package outside the core: a consumer that reads one
-queue onto an operator's entry channel and acknowledges each message only after the operator
+queue onto a relay's entry channel and acknowledges each message only after the relay
 took it, and a producer that publishes each output to an exchange and holds a
 delivery-guaranteed one until the broker confirms it.
 ## Requirements
@@ -16,9 +16,9 @@ boot.
 #### Scenario: Installed, it round-trips
 
 - **GIVEN** a release with the package installed and the dev broker
-- **WHEN** one operator bound to a `rabbitmq_producer` publishes 100 outputs to a queue and a
-  second operator bound to a `rabbitmq_consumer` on that queue reads it
-- **THEN** the second operator SHALL receive the 100 payloads
+- **WHEN** one relay bound to a `rabbitmq_producer` publishes 100 outputs to a queue and a
+  second relay bound to a `rabbitmq_consumer` on that queue reads it
+- **THEN** the second relay SHALL receive the 100 payloads
 
 ### Requirement: Both providers SHALL connect, report and recover the same way
 
@@ -41,34 +41,34 @@ and resume consuming or publishing.
 - **WHEN** a consumer is enabled on a queue that does not exist, without `declare`
 - **THEN** it SHALL be unhealthy with `rabbitmq.channel_closed` and the code 404
 
-### Requirement: The consumer SHALL acknowledge a delivery only after the operator took it
+### Requirement: The consumer SHALL acknowledge a delivery only after the relay took it
 
 `rabbitmq_consumer` SHALL consume its `queue` with manual acknowledgement and a prefetch of
-`prefetch`, SHALL hand deliveries to the operator in batches of at most `prefetch` or
+`prefetch`, SHALL hand deliveries to the relay in batches of at most `prefetch` or
 `batch_ms` with `inject_many/4`, SHALL acknowledge the longest prefix of deliveries whose
 verdict was `:ok`, and SHALL return every other delivery of the batch to the queue. When the
-operator's input is durable a verdict SHALL mean the input log holds the delivery.
+relay's input is durable a verdict SHALL mean the input log holds the delivery.
 
 #### Scenario: A crash with durable input loses nothing
 
-- **GIVEN** an operator with `effectively_once` bound to a consumer on a queue of 10 000
+- **GIVEN** a relay with `effectively_once` bound to a consumer on a queue of 10 000
   messages, each with a `message_id`
 - **WHEN** the controller is killed mid-way and started again
-- **THEN** every message SHALL have reached the operator, the queue SHALL be empty, and the
-  operator SHALL have received each `message_id` once while its input log held the first copy
+- **THEN** every message SHALL have reached the relay, the queue SHALL be empty, and the
+  relay SHALL have received each `message_id` once while its input log held the first copy
 
 #### Scenario: A refused delivery goes back to the queue
 
-- **GIVEN** an operator whose input log refuses one append
+- **GIVEN** a relay whose input log refuses one append
 - **WHEN** that delivery's verdict is the refusal
 - **THEN** it and the deliveries after it in the batch SHALL be returned to the queue and
   delivered again
 
 #### Scenario: Competing consumers
 
-- **GIVEN** two operators each bound to a consumer on the same queue
+- **GIVEN** two relays each bound to a consumer on the same queue
 - **WHEN** 1 000 messages are published
-- **THEN** each message SHALL reach exactly one of the two operators
+- **THEN** each message SHALL reach exactly one of the two relays
 
 ### Requirement: A delivery SHALL become an input carrying where it came from
 
@@ -104,7 +104,7 @@ carry `message_id` `<cell>/<seq>/<epoch>`.
 ### Requirement: A guaranteed output SHALL be held until the broker confirms it
 
 The producer SHALL publish on a channel in confirm mode. A plain output SHALL be published
-without the operator waiting. While the connection is down outputs SHALL wait in the plugin's
+without the relay waiting. While the connection is down outputs SHALL wait in the plugin's
 queue: a full queue SHALL drop and count plain outputs as `queue_overflow` says, and SHALL keep
 every guaranteed one. A delivery-guaranteed output SHALL be held in the outbox until the
 broker's acknowledgement, SHALL be published again with the same `message_id` after a negative
@@ -114,7 +114,7 @@ acknowledgement or a connection loss before its acknowledgement, SHALL be parked
 
 #### Scenario: A broker restart during publishing
 
-- **GIVEN** an operator with `effectively_once` emitting 1 000 outputs through the producer to
+- **GIVEN** a relay with `effectively_once` emitting 1 000 outputs through the producer to
   a durable queue
 - **WHEN** the broker is restarted in the middle
 - **THEN** the queue SHALL hold every output at least once, every copy of one output SHALL carry
@@ -123,17 +123,17 @@ acknowledgement or a connection loss before its acknowledgement, SHALL be parked
 #### Scenario: An unroutable output becomes a dead letter
 
 - **GIVEN** a producer with `mandatory: true` to an exchange with no binding for its routing key
-- **WHEN** an operator with `effectively_once` emits an output
-- **THEN** the operator's DLQ SHALL hold it with `rabbitmq.unroutable`
+- **WHEN** a relay with `effectively_once` emits an output
+- **THEN** the relay's DLQ SHALL hold it with `rabbitmq.unroutable`
 
-### Requirement: The consumer SHALL NOT be shared or bound to a partitioned operator, and the producer SHALL be shareable
+### Requirement: The consumer SHALL NOT be shared or bound to a partitioned relay, and the producer SHALL be shareable
 
-`rabbitmq_consumer` SHALL declare itself not shareable and SHALL refuse a partitioned operator
-with `plugin.partitioned_host`; `rabbitmq_producer` SHALL declare itself shareable, and operators
+`rabbitmq_consumer` SHALL declare itself not shareable and SHALL refuse a partitioned relay
+with `plugin.partitioned_host`; `rabbitmq_producer` SHALL declare itself shareable, and relays
 bound to one producer on a controller SHALL publish through one connection.
 
-#### Scenario: One producer, two operators
+#### Scenario: One producer, two relays
 
-- **GIVEN** two operators on one controller bound to one `rabbitmq_producer`
+- **GIVEN** two relays on one controller bound to one `rabbitmq_producer`
 - **THEN** the broker SHALL show one connection from that plugin on that controller
 

@@ -1,9 +1,9 @@
 # CLI
 
 `flz` is the tool a controller is operated with: starting and stopping it,
-starting operators and sending them messages, managing namespaces, tokens and
+starting relays and sending them messages, managing namespaces, tokens and
 plugins, and reading state. Each of its commands is a verb of one group, such
-as `flz operator start` or `flz namespace create`.
+as `flz relay start` or `flz namespace create`.
 
 `flz` is the file `bin/flz` in the release directory, the `flezha/` directory
 the [archive](../deploying/deploying_a_controller.md) unpacks to. It always runs by that
@@ -61,42 +61,42 @@ socket and needs neither a controller nor a cookie
 verbs with a few examples:
 
 ```sh
-$ flz operator help
+$ flz relay help
 ```
 
 ```output
-flz operator - Operator management commands
+flz relay - Relay management commands
 
 USAGE:
-    flz operator <COMMAND>
+    flz relay <COMMAND>
 
 COMMANDS:
-    start       Start an operator
+    start       Start a relay
     scale       Rescale a partition group to N partitions
-    stop        Stop an operator
-    state       Get operator state
-    list        List operators
-    info        Get operator info
-    listen      Print the frames an operator emits or ingests
-    send        Send a payload to an operator's input stream
-    call        Send one input and print the operator's answer
+    stop        Stop a relay
+    state       Get relay state
+    list        List relays
+    info        Get relay info
+    listen      Print the frames a relay emits or ingests
+    send        Send a payload to a relay's input stream
+    call        Send one input and print the relay's answer
     rewind      Rewind a steps loop to a committed iteration
     replay      Re-run a Cell's retained inputs from a point in the past
     help        Show this help message
 
 EXAMPLES:
-    flz operator start candles --id ohlc --partitions 3
-    flz operator scale ohlc 5
-    flz operator send orchestrator --text '{"task":"refactor"}'
-    flz operator send my_echo --text 'hello world' --await 2000
-    flz operator send prices --key EURUSD --text x
-    flz operator send orders --text x --msg-id orders/0/41
-    flz operator call echo --text hello
-    flz operator listen my_echo --duration-ms 10000
-    flz operator rewind chat-1 --to-iteration 3
-    flz operator replay candles/aggregate/BTC --from 1720000000000
+    flz relay start candles --id ohlc --partitions 3
+    flz relay scale ohlc 5
+    flz relay send orchestrator --text '{"task":"refactor"}'
+    flz relay send my_echo --text 'hello world' --await 2000
+    flz relay send prices --key EURUSD --text x
+    flz relay send orders --text x --msg-id orders/0/41
+    flz relay call echo --text hello
+    flz relay listen my_echo --duration-ms 10000
+    flz relay rewind chat-1 --to-iteration 3
+    flz relay replay candles/aggregate/BTC --from 1720000000000
 
-Use 'flz operator <COMMAND> --help' for more information on a specific command.
+Use 'flz relay <COMMAND> --help' for more information on a specific command.
 
 Identity for gated verbs rides `--token <token>` or the FLEZHA_TOKEN env var.
 ```
@@ -104,15 +104,15 @@ Identity for gated verbs rides `--token <token>` or the FLEZHA_TOKEN env var.
 `flz <group> <verb> --help` starts with the verb's usage line:
 
 ```sh
-$ flz operator stop --help
+$ flz relay stop --help
 ```
 
 ```output
-Usage: flz operator stop <operator_id> [--namespace | -n <namespace>]
+Usage: flz relay stop <relay_id> [--namespace | -n <namespace>]
 ```
 
-An option can go before or after the other arguments: `flz operator stop
---token t op1` and `flz operator stop op1 --token t` are the same command.
+An option can go before or after the other arguments: `flz relay stop
+--token t op1` and `flz relay stop op1 --token t` are the same command.
 Most verbs ignore an option they do not know. `flz boot await` and `flz reset`
 stop with an error instead, because a typo there could make `flz` wait far too
 long or delete the wrong data.
@@ -163,21 +163,21 @@ one line.
 | Group | What it does | Explained in |
 | --- | --- | --- |
 | [`flz controller`](controller_commands.md#flz-controller) | Starts and stops the controller, and shows its settings and memory use. | [`deploying_a_controller.md`](../deploying/deploying_a_controller.md), [graceful shutdown](../deploying/deploying_a_controller.md#graceful-shutdown), tutorial [Start the controller](../../tutorials/echo/start_the_controller.md) |
-| [`flz boot`](controller_commands.md#flz-boot) | Says whether the controller has finished starting, or waits until it has. | [`deploying_a_controller.md`](../deploying/deploying_a_controller.md#check-that-it-is-up), [after a restart](../basics/running_operators.md#after-a-controller-restart) |
-| [`flz cluster`](controller_commands.md#flz-cluster) | Shows the controllers of a cluster, which one leads, and how their operators are doing. | [`clustering.md`](../deploying/clustering.md), tutorial [Run a cluster](../../tutorials/agentdesk/run_a_cluster.md) |
+| [`flz boot`](controller_commands.md#flz-boot) | Says whether the controller has finished starting, or waits until it has. | [`deploying_a_controller.md`](../deploying/deploying_a_controller.md#check-that-it-is-up), [after a restart](../basics/running_relays.md#after-a-controller-restart) |
+| [`flz cluster`](controller_commands.md#flz-cluster) | Shows the controllers of a cluster, which one leads, and how their relays are doing. | [`clustering.md`](../deploying/clustering.md), tutorial [Run a cluster](../../tutorials/agentdesk/run_a_cluster.md) |
 | [`flz runner`](controller_commands.md#flz-runner) | Lists the runners connected to a namespace, and checks that a runner on this machine can reach the controller. | [`connecting_a_runner.md`](../deploying/connecting_a_runner.md), [check that it connected](../deploying/connecting_a_runner.md#check-that-it-connected) |
-| [`flz operator`](operator_commands.md#flz-operator) | Starts and stops operators, sends them input, and shows what they answer and emit. | [`running_operators.md`](../basics/running_operators.md), [`workflows.md`](../basics/workflows.md), [`partitioning.md`](../advanced/partitioning.md), [`operator_calls.md`](../advanced/operator_calls.md), [`rewinding_a_turn.md`](../advanced/rewinding_a_turn.md), tutorial [Run the echo](../../tutorials/echo/run_the_echo.md) |
-| [`flz namespace`](access_commands.md#flz-namespace) | Creates and deletes namespaces, the separate areas operators and runners work in, and sets their quotas. | [`namespaces.md`](../basics/namespaces.md) |
-| [`flz plugin`](plugin_commands.md#flz-plugin) | Installs plugin packages, enables plugins and connects operators to them. | [`plugins.md`](../plugins/plugins.md), [`hooks.md`](../plugins/hooks.md), [`installing_plugins.md`](../plugins/installing_plugins.md), tutorial [Feed the echo a file](../../tutorials/echo/feed_the_echo_a_file.md) |
-| [`flz state`](operator_commands.md#flz-state) | Reads an operator's stored state, now or at a point in the past, and manages how long it is kept. | [`state.md`](../basics/state.md#reading-a-cell-s-state), [`workflows.md`](../basics/workflows.md), [`durability.md`](../basics/durability.md) |
-| [`flz dlq`](operator_commands.md#flz-dlq) | Lists the inputs an operator gave up on after its retries, and replays or drops them. | [`durability.md`](../basics/durability.md#the-dead-letter-queue) |
-| [`flz schedule`](operator_commands.md#flz-schedule) | Starts a workflow on a cron schedule. | [`workflows.md`](../basics/workflows.md#one-instance-per-piece-of-work), [`configuring_an_operator.md`](../basics/configuring_an_operator.md) |
+| [`flz relay`](relay_commands.md#flz-relay) | Starts and stops relays, sends them input, and shows what they answer and emit. | [`running_relays.md`](../basics/running_relays.md), [`workflows.md`](../basics/workflows.md), [`partitioning.md`](../advanced/partitioning.md), [`relay_calls.md`](../advanced/relay_calls.md), [`rewinding_a_turn.md`](../advanced/rewinding_a_turn.md), tutorial [Run the echo](../../tutorials/echo/run_the_echo.md) |
+| [`flz namespace`](access_commands.md#flz-namespace) | Creates and deletes namespaces, the separate areas relays and runners work in, and sets their quotas. | [`namespaces.md`](../basics/namespaces.md) |
+| [`flz plugin`](plugin_commands.md#flz-plugin) | Installs plugin packages, enables plugins and connects relays to them. | [`plugins.md`](../plugins/plugins.md), [`hooks.md`](../plugins/hooks.md), [`installing_plugins.md`](../plugins/installing_plugins.md), tutorial [Feed the echo a file](../../tutorials/echo/feed_the_echo_a_file.md) |
+| [`flz state`](relay_commands.md#flz-state) | Reads a relay's stored state, now or at a point in the past, and manages how long it is kept. | [`state.md`](../basics/state.md#reading-a-cell-s-state), [`workflows.md`](../basics/workflows.md), [`durability.md`](../basics/durability.md) |
+| [`flz dlq`](relay_commands.md#flz-dlq) | Lists the inputs a relay gave up on after its retries, and replays or drops them. | [`durability.md`](../basics/durability.md#the-dead-letter-queue) |
+| [`flz schedule`](relay_commands.md#flz-schedule) | Starts a workflow on a cron schedule. | [`workflows.md`](../basics/workflows.md#one-instance-per-piece-of-work), [`configuring_a_relay.md`](../basics/configuring_a_relay.md) |
 | [`flz auth`](access_commands.md#flz-auth) | Claims the first admin token, and shows who a token belongs to. | [`authorization.md`](../basics/authorization.md#claim-the-admin), [a lost admin](../basics/authorization.md#a-lost-admin) |
 | [`flz token`](access_commands.md#flz-token) | Issues, lists and revokes tokens. | [`authorization.md`](../basics/authorization.md#tokens), [runner credentials](../basics/authorization.md#runner-credentials) |
 | [`flz role`](access_commands.md#flz-role) | Gives roles to a principal and takes them away. | [`authorization.md`](../basics/authorization.md#roles) |
 | [`flz audit`](access_commands.md#flz-audit) | Reads the record of who did what. | [`authorization.md`](../basics/authorization.md#the-audit-trail) |
 | [`flz observe`](controller_commands.md#flz-observe) | Lists the controller's sources of metrics and events, and streams their signals live. | [`hooks.md`](../plugins/hooks.md#controller-plugins-and-their-hooks) |
-| [`flz reset`](controller_commands.md#flz-reset) | Deletes the controller's data on disk, so its next start is empty. | [`running_operators.md`](../basics/running_operators.md#start-from-a-clean-slate-flz-reset) |
+| [`flz reset`](controller_commands.md#flz-reset) | Deletes the controller's data on disk, so its next start is empty. | [`running_relays.md`](../basics/running_relays.md#start-from-a-clean-slate-flz-reset) |
 | [`flz mcp`](../working_with_ai_assistants.md) | Serves Flezha to an AI assistant over MCP; the assistant starts it, not you. | [`working_with_ai_assistants.md`](../working_with_ai_assistants.md) |
 
 Which role each verb needs is in

@@ -142,7 +142,7 @@ fn previewed_channel(slot: &CellSlot) -> Result<&str, Error> {
         Some(channel) if channel.sink => Ok(&channel.name),
         _ => Err(Error::Part(Code::PartNoSink.with([
             ("tasklet", slot.dispatcher.tasklet_name().into()),
-            ("operator", slot.instance_id.as_ref().into()),
+            ("relay", slot.instance_id.as_ref().into()),
             ("channel", channel.map_or("", |c| c.name.as_ref()).into()),
         ]))),
     }
@@ -157,7 +157,7 @@ fn stamps(slot: &CellSlot, attempt: u32, number: u32, channel: &str) -> HashMap<
             "flz.cell".to_string(),
             slot.dispatcher.cell_label().to_string(),
         ),
-        ("flz.operator".to_string(), slot.instance_id.to_string()),
+        ("flz.relay".to_string(), slot.instance_id.to_string()),
     ]);
     if let Some(key) = &slot.cell_key {
         metadata.insert("flz.key".to_string(), key.to_string());

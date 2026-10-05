@@ -158,7 +158,7 @@ pub(crate) fn child(command: &str, expression: &str, out: Out) -> io::Result<Ans
         .spawn()?;
 
     let stderr = child.stderr.take().expect("stderr is piped");
-    let relay = thread::spawn(move || relay_stderr(stderr));
+    let forwarder = thread::spawn(move || forward_stderr(stderr));
 
     if let (Some(piped), Out::Filter(keep)) = (child.stdout.take(), out) {
         for line in BufReader::new(piped).lines().map_while(Result::ok) {
@@ -169,7 +169,7 @@ pub(crate) fn child(command: &str, expression: &str, out: Out) -> io::Result<Ans
     }
 
     let status = child.wait()?;
-    let unreachable = relay.join().unwrap_or(false);
+    let unreachable = forwarder.join().unwrap_or(false);
 
     Ok(Answer {
         status,
@@ -180,7 +180,7 @@ pub(crate) fn child(command: &str, expression: &str, out: Out) -> io::Result<Ans
 // The child's stderr, passed through line by line as it arrives so a streaming
 // verb's failure is not held back, except the one line that says the node
 // could not be reached: `flz` answers that one itself.
-fn relay_stderr(stderr: ChildStderr) -> bool {
+fn forward_stderr(stderr: ChildStderr) -> bool {
     let mut unreachable = false;
     let mut out = io::stderr();
 

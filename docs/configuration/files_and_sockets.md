@@ -32,7 +32,7 @@ states only which subtrees exist and what reset does with them. `flz reset`
 reports every row, the `never` row as kept, and reads none of these knobs but the
 ladder's: it clears `<app_data root>/dlq`, not a directory `FLEZHA_DLQ_DIR`
 moved it to. `--all` sets every flag in the table, so it also removes every
-credential and erases the audit trail; see [`topics/basics/running_operators.md`](../topics/basics/running_operators.md)
+credential and erases the audit trail; see [`topics/basics/running_relays.md`](../topics/basics/running_relays.md)
 for the window until the fresh bootstrap token is claimed.
 Two rows are not subdirectories of the data root. `sockets` is resolved by
 the ladder described under

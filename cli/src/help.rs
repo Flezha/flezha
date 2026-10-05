@@ -107,7 +107,7 @@ USAGE:
     flz cluster <SUBCOMMAND>
 
 SUBCOMMANDS:
-    status              Show nodes, leader, per-node operator counts, operator health, recovery state
+    status              Show nodes, leader, per-node relay counts, relay health, recovery state
     help                Show this help message
 
 OPTIONS:
@@ -196,7 +196,7 @@ EXIT CODES:
         is in flight follows it and exits with its outcome
     3   Controller not reachable (controller.unreachable)
     4   Refused for want of a token or a role (authz.*)
-    7   Partial drain: the timeout elapsed with Operators still local
+    7   Partial drain: the timeout elapsed with Relays still local
         (shutdown.partial_drain)
     Every code is listed in docs/errors.md."#;
 
@@ -217,10 +217,10 @@ Use 'flz controller <COMMAND> --help' for more information on a specific command
 pub(crate) const DLQ: Help = r#"Dead-letter queue: parked poison payloads (retry budget exhausted).
 
 Usage:
-  flz dlq list [operator]                        Parked entries, nearest-to-expiry first
-  flz dlq show <operator/tasklet/entry-id>       Entry metadata + payload preview
-  flz dlq replay <operator/tasklet/entry-id>     Re-dispatch through the normal input path
-  flz dlq drop <operator/tasklet/entry-id>       Discard the entry (audited)
+  flz dlq list [relay]                        Parked entries, nearest-to-expiry first
+  flz dlq show <relay/tasklet/entry-id>       Entry metadata + payload preview
+  flz dlq replay <relay/tasklet/entry-id>     Re-dispatch through the normal input path
+  flz dlq drop <relay/tasklet/entry-id>       Discard the entry (audited)
 
 Identity for gated verbs rides `--token <token>` or the FLEZHA_TOKEN env var."#;
 
@@ -231,8 +231,8 @@ USAGE:
 
 COMMANDS:
     controller     Controller management commands
-    cluster        Controller cluster status (nodes, leader, operator health)
-    operator       Operator management commands
+    cluster        Controller cluster status (nodes, leader, relay health)
+    relay       Relay management commands
     namespace      Namespace management commands
     runner         Runner management commands
     plugin         Plugin management commands
@@ -243,7 +243,7 @@ COMMANDS:
     observe        Observability foundation inspection (sources, sinks, tail)
     audit          Durable audit log inspection (list, read, tail, stats, rotate)
     dlq            Dead-letter queue: inspect, replay, or drop parked payloads
-    schedule       Cron-scheduled steps operator spawns (add, list, remove, run)
+    schedule       Cron-scheduled steps relay spawns (add, list, remove, run)
     auth           Bootstrap claim, identity (whoami), offline break-glass recovery
     token          Scoped-token management (issue, revoke, list)
     role           Principal → role bindings (bind, unbind, list)
@@ -267,7 +267,7 @@ Use 'flz <COMMAND> help' for more information on a specific command.
 
 EXAMPLES:
     flz controller start
-    flz operator start my_factory --id my_operator --namespace prod
+    flz relay start my_factory --id my_relay --namespace prod
     flz plugin install /path/to/my_plugin-1.0.0.fpz
     flz plugin list --installed
     flz plugin enable kafka_producer provider1 Xhosts=localhost:9092
@@ -304,7 +304,7 @@ COMMANDS:
     set-quota <name> --X<quota>=<value>  Update quota overrides
     help                                 Show this help message
 
-Quota fields: max_operators, max_cells_per_operator, max_mailbox_bytes_total,
+Quota fields: max_relays, max_cells_per_relay, max_mailbox_bytes_total,
               max_message_rate_per_second, max_state_bytes, max_runners
 
 Identity for gated verbs rides `--token <token>` or the FLEZHA_TOKEN env var."#;
@@ -344,10 +344,10 @@ COMMANDS:
     disable    Disable a source (transitions to :disabled — Bus drops emits)
     help       Show this help message"#;
 
-pub(crate) const OPERATOR_START: Help = r#"flz operator start - Start an operator
+pub(crate) const RELAY_START: Help = r#"flz relay start - Start a relay
 
 USAGE:
-    flz operator start <factory_id> [OPTIONS]
+    flz relay start <factory_id> [OPTIONS]
 
 OPTIONS:
     --id <id>, -i <id>          Id to start under (default: generated)
@@ -372,12 +372,12 @@ ID:
     {"id": ..., "outcome": "started" | "already_running"}.
 
     A start without --id that is run again after its answer was lost starts a
-    second operator, and a flow one runs until it is stopped. Pass --id
+    second relay, and a flow one runs until it is stopped. Pass --id
     when the start may be retried: a start of an id that is already running
     prints "<id> is already running, left untouched" and starts nothing.
 
 INIT VALUES:
-    A flow operator's document is keyed by Tasklet name, one entry per
+    A flow relay's document is keyed by Tasklet name, one entry per
     Tasklet to seed. Name only what you want seeded; a Tasklet you leave
     out keeps the state its class builds.
 
@@ -386,31 +386,31 @@ INIT VALUES:
 
     A name the class does not carry is ignored, not refused: the runner logs
     it and the start still succeeds, so check the spelling. A steps
-    operator's tasklets take the document as state the same way.
+    relay's tasklets take the document as state the same way.
 
 FIRST MESSAGE:
     --text is the instance's first input, on the entry channel --channel
     names or the first declared one, whichever way it runs; a steps one started
-    without it waits for `flz operator send`. --channel needs --text.
+    without it waits for `flz relay send`. --channel needs --text.
 
 EXAMPLES:
-    flz operator start do_nothing
-    flz operator start do_nothing --id my_operator
-    flz operator start candles --id ohlc --partitions 3
-    flz operator start order_aggregator -i orders --namespace prod -o json
-    flz operator start order_executor --text '{"symbol":"EUR/USD","quantity":10}' --channel order"#;
+    flz relay start do_nothing
+    flz relay start do_nothing --id my_relay
+    flz relay start candles --id ohlc --partitions 3
+    flz relay start order_aggregator -i orders --namespace prod -o json
+    flz relay start order_executor --text '{"symbol":"EUR/USD","quantity":10}' --channel order"#;
 
-pub(crate) const OPERATOR_LISTEN: Help = r#"flz operator listen - Print the frames an operator emits or ingests
+pub(crate) const RELAY_LISTEN: Help = r#"flz relay listen - Print the frames a relay emits or ingests
 
 USAGE:
-    flz operator listen <operator_id> [OPTIONS]
+    flz relay listen <relay_id> [OPTIONS]
 
 OPTIONS:
-    --input                   Listen to what the operator ingests, not what it emits
+    --input                   Listen to what the relay ingests, not what it emits
     --duration-ms <N>         Stop after N milliseconds (default 30000)
     --output <text|json>      Output format (default: text)
     --json                    The same as --output json
-    --namespace <ns>          Namespace the operator runs in (default: default)
+    --namespace <ns>          Namespace the relay runs in (default: default)
 
 OUTPUT:
     One line per frame: the channel, a tab and the payload. A frame from a
@@ -424,69 +424,69 @@ OUTPUT:
     frame's whole metadata map.
 
     The listener is detached when the window closes, on Ctrl-C, when the
-    caller goes away and when the operator ends. A partition group is
+    caller goes away and when the relay ends. A partition group is
     listened to by its group id.
 
 EXAMPLES:
-    flz operator listen my_echo --duration-ms 10000
-    flz operator listen my_echo --input
-    flz operator listen ohlc --json"#;
+    flz relay listen my_echo --duration-ms 10000
+    flz relay listen my_echo --input
+    flz relay listen ohlc --json"#;
 
-pub(crate) const OPERATOR_CALL: Help = r#"flz operator call - Send one input and print the operator's answer
+pub(crate) const RELAY_CALL: Help = r#"flz relay call - Send one input and print the relay's answer
 
 USAGE:
-    flz operator call <operator_id> --text <payload> [OPTIONS]
+    flz relay call <relay_id> --text <payload> [OPTIONS]
 
 OPTIONS:
     -t, --text <payload>      The input's payload (required)
     -c, --channel <ch>        The entry channel the input arrives on
     --key <key>               The key whose member of a partition group takes the input
-    --timeout <ms>            How long the operator has to answer (default 30000)
-    --namespace <ns>          Namespace the operator runs in (default: default)
+    --timeout <ms>            How long the relay has to answer (default 30000)
+    --namespace <ns>          Namespace the relay runs in (default: default)
 
 OUTPUT:
     The answer's payload and a newline: the output a response() end of the
-    operator's graph produced from the input. A failure is printed on stderr
+    relay's graph produced from the input. A failure is printed on stderr
     with its code and exits by its class: call.timeout 7, a denied call 4,
-    operator.not_found 5, call.target_unkeyed 2.
+    relay.not_found 5, call.target_unkeyed 2.
 
 EXAMPLES:
-    flz operator call echo --text hello
-    flz operator call prices --key EURUSD --text '{"pair":"EURUSD"}'
-    flz operator call slow --text x --timeout 100"#;
+    flz relay call echo --text hello
+    flz relay call prices --key EURUSD --text '{"pair":"EURUSD"}'
+    flz relay call slow --text x --timeout 100"#;
 
-pub(crate) const OPERATOR: Help = r#"flz operator - Operator management commands
+pub(crate) const RELAY: Help = r#"flz relay - Relay management commands
 
 USAGE:
-    flz operator <COMMAND>
+    flz relay <COMMAND>
 
 COMMANDS:
-    start       Start an operator
+    start       Start a relay
     scale       Rescale a partition group to N partitions
-    stop        Stop an operator
-    state       Get operator state
-    list        List operators
-    info        Get operator info
-    listen      Print the frames an operator emits or ingests
-    send        Send a payload to an operator's input stream
-    call        Send one input and print the operator's answer
+    stop        Stop a relay
+    state       Get relay state
+    list        List relays
+    info        Get relay info
+    listen      Print the frames a relay emits or ingests
+    send        Send a payload to a relay's input stream
+    call        Send one input and print the relay's answer
     rewind      Rewind a steps loop to a committed iteration
     replay      Re-run a Cell's retained inputs from a point in the past
     help        Show this help message
 
 EXAMPLES:
-    flz operator start candles --id ohlc --partitions 3
-    flz operator scale ohlc 5
-    flz operator send orchestrator --text '{"task":"refactor"}'
-    flz operator send my_echo --text 'hello world' --await 2000
-    flz operator send prices --key EURUSD --text x
-    flz operator send orders --text x --msg-id orders/0/41
-    flz operator call echo --text hello
-    flz operator listen my_echo --duration-ms 10000
-    flz operator rewind chat-1 --to-iteration 3
-    flz operator replay candles/aggregate/BTC --from 1720000000000
+    flz relay start candles --id ohlc --partitions 3
+    flz relay scale ohlc 5
+    flz relay send orchestrator --text '{"task":"refactor"}'
+    flz relay send my_echo --text 'hello world' --await 2000
+    flz relay send prices --key EURUSD --text x
+    flz relay send orders --text x --msg-id orders/0/41
+    flz relay call echo --text hello
+    flz relay listen my_echo --duration-ms 10000
+    flz relay rewind chat-1 --to-iteration 3
+    flz relay replay candles/aggregate/BTC --from 1720000000000
 
-Use 'flz operator <COMMAND> --help' for more information on a specific command.
+Use 'flz relay <COMMAND> --help' for more information on a specific command.
 
 Identity for gated verbs rides `--token <token>` or the FLEZHA_TOKEN env var."#;
 
@@ -495,7 +495,7 @@ pub(crate) const PLUGIN: Help = r#"flz plugin - Plugin management commands
 USAGE:
     flz plugin <COMMAND>
     flz plugin enable <name> <provider_id> [--single] [X<key>=<value>]... [OPTIONS]
-    flz plugin bind <name> --operator_id <op> [--hook=<name>]... [--channel <c>]
+    flz plugin bind <name> --relay_id <op> [--hook=<name>]... [--channel <c>]
 
 COMMANDS:
     install    Place a plugin package (.fpz) from a path or an https:// URL
@@ -503,8 +503,8 @@ COMMANDS:
     sync       Make the plugin root hold exactly the packages FLEZHA_PLUGINS
                declares
     enable     Enable a plugin by name in a namespace
-    bind       Connect an operator to an enabled plugin
-    unbind     Take an operator's connection to a plugin away
+    bind       Connect a relay to an enabled plugin
+    unbind     Take a relay's connection to a plugin away
     update     Change an enabled plugin's settings
     disable    Turn a plugin off
     list       List the plugins enabled in a namespace, the `--installed`
@@ -513,16 +513,16 @@ COMMANDS:
 
 PLUGINS:
     A plugin has a name of its own in its namespace and is enabled once, with
-    no operator; nothing runs until an operator is bound to it. A plugin runs
-    on each controller where an operator bound to it runs, and one copy there
-    serves every such operator when its provider can be shared. `--single`
-    runs one copy in the whole cluster instead. A plugin whose last operator
+    no relay; nothing runs until a relay is bound to it. A plugin runs
+    on each controller where a relay bound to it runs, and one copy there
+    serves every such relay when its provider can be shared. `--single`
+    runs one copy in the whole cluster instead. A plugin whose last relay
     leaves stops and stays enabled; only `disable` turns it off. A provider
-    that cannot be shared serves one operator, or one partition group.
+    that cannot be shared serves one relay, or one partition group.
 
-    `enable --operator_id <op>` enables and binds in one command. `update`
+    `enable --relay_id <op>` enables and binds in one command. `update`
     changes a running plugin in place when its provider declares the changed
-    settings live, and restarts it otherwise, naming the operators bound to it.
+    settings live, and restarts it otherwise, naming the relays bound to it.
 
 PACKAGES:
     install, uninstall and sync change the plugin root, never a running
@@ -530,13 +530,13 @@ PACKAGES:
     when the controller restarts; `flz plugin list --installed` shows each
     package as loaded, refused, pending or removed. An upgrade is an install
     of a newer package of the same id. While FLEZHA_PLUGINS is set, install
-    and uninstall are refused: the declared list is the node's only truth. An
-    operator bound to a plugin whose package a controller lacks runs there
+    and uninstall are refused: the declared list is the node's only truth. A
+    relay bound to a plugin whose package a controller lacks runs there
     without it, and its health says so.
 
 HOOKS:
-    A hook is a point at which the operator calls its plugin, named by the
-    callback the provider defines: on_input sends every payload the operator
+    A hook is a point at which the relay calls its plugin, named by the
+    callback the provider defines: on_input sends every payload the relay
     ingests, on_output every payload it emits, on_interval runs on a timer.
     `flz plugin help <provider_id>` lists the hooks a provider has. A hook
     belongs to a binding.
@@ -546,27 +546,27 @@ HOOKS:
     it needs `--on_interval.interval_ms=<ms>`.
 
     A binding naming no hook has no hooks. A plugin that only receives still
-    feeds its operator: its connection is held by the provider's own worker,
+    feeds its relay: its connection is held by the provider's own worker,
     which no hook governs.
 
-    enable reads --namespace, --single, --operator_id, --hook, --channel and
-    the X-prefixed provider settings; bind reads --namespace, --operator_id,
-    --hook and --channel; unbind --namespace and --operator_id; update
+    enable reads --namespace, --single, --relay_id, --hook, --channel and
+    the X-prefixed provider settings; bind reads --namespace, --relay_id,
+    --hook and --channel; unbind --namespace and --relay_id; update
     --namespace and the X-prefixed settings; disable --namespace. Each
     refuses any other option.
 
 EXAMPLES:
     flz plugin install ./flezha_example_plugin-0.1.0.fpz
     flz plugin list --installed
-    flz plugin enable trades operator_websocket \
+    flz plugin enable trades relay_websocket \
         --Xuri=ws://localhost:9000/feed --Xchannel=trades
-    flz plugin bind trades --operator_id my_op
-    flz plugin bind trades --operator_id other_op --channel ticks
-    flz plugin enable stamp example_stamp --operator_id my_op \
+    flz plugin bind trades --relay_id my_op
+    flz plugin bind trades --relay_id other_op --channel ticks
+    flz plugin enable stamp example_stamp --relay_id my_op \
         --Xpath=/tmp/stamped.txt --hook=on_output
     flz plugin update trades --Xsubscription_items='["BTC/EUR","ETH/EUR"]'
     flz plugin list --namespace default
-    flz plugin unbind trades --operator_id other_op
+    flz plugin unbind trades --relay_id other_op
     flz plugin disable trades"#;
 
 pub(crate) const RESET: Help = r#"flz reset - Clear Controller durable runtime data on disk
@@ -675,7 +675,7 @@ COMMANDS:
 
 Use 'flz runner <COMMAND> --help' for more information on a specific command."#;
 
-pub(crate) const SCHEDULE: Help = r#"flz schedule - cron-scheduled steps operator spawns
+pub(crate) const SCHEDULE: Help = r#"flz schedule - cron-scheduled steps relay spawns
 
 USAGE:
     flz schedule <SUBCOMMAND>
@@ -689,12 +689,12 @@ SUBCOMMANDS:
                  --init-values is the state every fired instance starts with;
                  --text is the first message it receives, on the entry channel
                  --channel names or the first declared one.
-                 --plugins takes the same array as `operator start --plugins`;
+                 --plugins takes the same array as `relay start --plugins`;
                  each firing binds its instance to the plugins it names.
     list         List schedules with their next fire time
     remove <name>  Remove a schedule
     run <name>     Fire one instance immediately with the stored config;
-                   judged as operator.start in the schedule's namespace
+                   judged as relay.start in the schedule's namespace
     help         Show this help message
 
 EXAMPLES:
@@ -711,27 +711,27 @@ USAGE:
     flz state <SUBCOMMAND>
 
 SUBCOMMANDS:
-    get <operator/tasklet[/key]>             Current in-memory state of a live Cell, with its change_seq
-    list <operator>                          List Cells under an Operator class
-    at <operator/tasklet/key> <seq|ts>       Query state at a point in time
-    rotate <operator/tasklet/key>            Force a compaction snapshot
-    retention <operator> <hours>             Set time-travel retention
-    delete <operator/tasklet/key>            Hard-delete a Cell's persisted state
-    outbox <operator/tasklet/key>            Effectively-once outbox status (lag, cursor, watermark)
-    journal <operator/instance>              Steps instance task-journal (committed tasks, iterations, park)
-    inbox <operator/instance>                Steps instance durable inbox (offsets, undelivered tail)
+    get <relay/tasklet[/key]>             Current in-memory state of a live Cell, with its change_seq
+    list <relay>                          List Cells under a Relay class
+    at <relay/tasklet/key> <seq|ts>       Query state at a point in time
+    rotate <relay/tasklet/key>            Force a compaction snapshot
+    retention <relay> <hours>             Set time-travel retention
+    delete <relay/tasklet/key>            Hard-delete a Cell's persisted state
+    outbox <relay/tasklet/key>            Effectively-once outbox status (lag, cursor, watermark)
+    journal <relay/instance>              Steps instance task-journal (committed tasks, iterations, park)
+    inbox <relay/instance>                Steps instance durable inbox (offsets, undelivered tail)
     help                                     Show this help message
 
 EXAMPLES:
-    flz state get MarketOperator/OhlcTasklet/M1
-    flz state get MarketOperator/OhlcTasklet --output json
-    flz state list MarketOperator
-    flz state at MarketOperator/OhlcTasklet/M1 12345
-    flz state at MarketOperator/OhlcTasklet/M1 2026-05-01T12:00:00Z
-    flz state rotate MarketOperator/OhlcTasklet/M1
-    flz state retention MarketOperator 6
-    flz state delete MarketOperator/OhlcTasklet/M1
-    flz state outbox MarketOperator/OhlcTasklet/M1
+    flz state get MarketRelay/OhlcTasklet/M1
+    flz state get MarketRelay/OhlcTasklet --output json
+    flz state list MarketRelay
+    flz state at MarketRelay/OhlcTasklet/M1 12345
+    flz state at MarketRelay/OhlcTasklet/M1 2026-05-01T12:00:00Z
+    flz state rotate MarketRelay/OhlcTasklet/M1
+    flz state retention MarketRelay 6
+    flz state delete MarketRelay/OhlcTasklet/M1
+    flz state outbox MarketRelay/OhlcTasklet/M1
     flz state journal etl-job-42
     flz state inbox chat-session-7"#;
 

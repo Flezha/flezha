@@ -1,6 +1,6 @@
 defmodule Flezha.Service.Cli.Listing do
   @moduledoc """
-  `flz namespace list`, `flz runner list`, `flz operator list` and `flz cluster
+  `flz namespace list`, `flz runner list`, `flz relay list` and `flz cluster
   status`: the text forms of the listings.
   """
 
@@ -27,13 +27,13 @@ defmodule Flezha.Service.Cli.Listing do
     Enum.each(rows, fn row -> IO.puts("  - #{row.id}#{pid_suffix(row.pid)}") end)
   end
 
-  @doc "`flz operator list`: one row per operator, a partition group as one row."
-  def operators(rows, [namespace | _], _opts) do
+  @doc "`flz relay list`: one row per relay, a partition group as one row."
+  def relays(rows, [namespace | _], _opts) do
     table(rows, %{
-      empty: "No operators found for namespace '#{namespace}'.",
-      header: "Operators in namespace '#{namespace}':",
+      empty: "No relays found for namespace '#{namespace}'.",
+      header: "Relays in namespace '#{namespace}':",
       columns: [
-        {"OPERATOR", 34, &to_string(&1.id)},
+        {"RELAY", 34, &to_string(&1.id)},
         {"HEALTH", 12, &to_string(&1.health)},
         {"PARTS", 8, &Context.label_or(&1[:partitions], "-")},
         {"NODE", 22, &Context.label_or(&1.node, "(unplaced)")},
@@ -58,16 +58,16 @@ defmodule Flezha.Service.Cli.Listing do
         marker = if n.leader, do: " [leader]", else: ""
 
         IO.puts(
-          "    #{n.node}: #{n.operator_count} operator(s) recovery_state=#{n.recovery_state}#{marker}"
+          "    #{n.node}: #{n.relay_count} relay(s) recovery_state=#{n.recovery_state}#{marker}"
         )
       end)
     end
 
-    if s.unplaced_operators > 0,
-      do: IO.puts("    (unplaced): #{s.unplaced_operators} operator(s)")
+    if s.unplaced_relays > 0,
+      do: IO.puts("    (unplaced): #{s.unplaced_relays} relay(s)")
 
     IO.puts("")
-    IO.puts("  Operator health: #{health_summary(s.operator_health)}")
+    IO.puts("  Relay health: #{health_summary(s.relay_health)}")
   end
 
   # Every listing answers with one line saying there is nothing, or a padded
@@ -99,7 +99,7 @@ defmodule Flezha.Service.Cli.Listing do
   defp pid_suffix(nil), do: ""
   defp pid_suffix(pid), do: "  pid #{pid}"
 
-  defp health_summary(health) when map_size(health) == 0, do: "no operators"
+  defp health_summary(health) when map_size(health) == 0, do: "no relays"
 
   defp health_summary(health),
     do: Enum.map_join(health, ", ", fn {state, n} -> "#{state}=#{n}" end)

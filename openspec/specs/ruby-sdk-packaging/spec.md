@@ -25,7 +25,7 @@ The SDK SHALL publish a precompiled native gem per supported platform, each embe
 
 #### Scenario: The published gem is the tested gem
 - **WHEN** the end-to-end Ruby arm runs in CI
-- **THEN** it SHALL run against the cross-built gem produced by the same steps operator, not against an ad-hoc local build
+- **THEN** it SHALL run against the cross-built gem produced by the same steps relay, not against an ad-hoc local build
 
 ### Requirement: Schema version is negotiated before any controller connection
 

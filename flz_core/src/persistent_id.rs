@@ -20,7 +20,7 @@ static STABLE_ID: OnceLock<String> = OnceLock::new();
 
 // One incarnation per process: a reconnect presents the one it connected with
 // before, a restart a new one, which is how the controller tells a process that
-// still runs its operators from one that runs none.
+// still runs its relays from one that runs none.
 static INCARNATION: OnceLock<String> = OnceLock::new();
 
 pub fn id_path() -> PathBuf {

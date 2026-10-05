@@ -4,26 +4,26 @@ USAGE:
     flz state <SUBCOMMAND>
 
 SUBCOMMANDS:
-    get <operator/tasklet[/key]>             Current in-memory state of a live Cell, with its change_seq
-    list <operator>                          List Cells under an Operator class
-    at <operator/tasklet/key> <seq|ts>       Query state at a point in time
-    rotate <operator/tasklet/key>            Force a compaction snapshot
-    retention <operator> <hours>             Set time-travel retention
-    delete <operator/tasklet/key>            Hard-delete a Cell's persisted state
-    outbox <operator/tasklet/key>            Effectively-once outbox status (lag, cursor, watermark)
-    journal <operator/instance>              Steps instance task-journal (committed tasks, iterations, park)
-    inbox <operator/instance>                Steps instance durable inbox (offsets, undelivered tail)
+    get <relay/tasklet[/key]>             Current in-memory state of a live Cell, with its change_seq
+    list <relay>                          List Cells under a Relay class
+    at <relay/tasklet/key> <seq|ts>       Query state at a point in time
+    rotate <relay/tasklet/key>            Force a compaction snapshot
+    retention <relay> <hours>             Set time-travel retention
+    delete <relay/tasklet/key>            Hard-delete a Cell's persisted state
+    outbox <relay/tasklet/key>            Effectively-once outbox status (lag, cursor, watermark)
+    journal <relay/instance>              Steps instance task-journal (committed tasks, iterations, park)
+    inbox <relay/instance>                Steps instance durable inbox (offsets, undelivered tail)
     help                                     Show this help message
 
 EXAMPLES:
-    flz state get MarketOperator/OhlcTasklet/M1
-    flz state get MarketOperator/OhlcTasklet --output json
-    flz state list MarketOperator
-    flz state at MarketOperator/OhlcTasklet/M1 12345
-    flz state at MarketOperator/OhlcTasklet/M1 2026-05-01T12:00:00Z
-    flz state rotate MarketOperator/OhlcTasklet/M1
-    flz state retention MarketOperator 6
-    flz state delete MarketOperator/OhlcTasklet/M1
-    flz state outbox MarketOperator/OhlcTasklet/M1
+    flz state get MarketRelay/OhlcTasklet/M1
+    flz state get MarketRelay/OhlcTasklet --output json
+    flz state list MarketRelay
+    flz state at MarketRelay/OhlcTasklet/M1 12345
+    flz state at MarketRelay/OhlcTasklet/M1 2026-05-01T12:00:00Z
+    flz state rotate MarketRelay/OhlcTasklet/M1
+    flz state retention MarketRelay 6
+    flz state delete MarketRelay/OhlcTasklet/M1
+    flz state outbox MarketRelay/OhlcTasklet/M1
     flz state journal etl-job-42
     flz state inbox chat-session-7

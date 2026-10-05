@@ -7,7 +7,7 @@ defmodule Flezha.MixProject do
       name: "Flezha",
       version: "0.1.0",
       elixir: "~> 1.17",
-      description: "Distributed stateful operators — durable flow and steps compute",
+      description: "Distributed stateful relays — durable flow and steps compute",
       source_url: "https://github.com/flezha/flezha",
       package: [
         licenses: ["MPL-2.0", "Apache-2.0"],
@@ -268,18 +268,19 @@ defmodule Flezha.MixProject do
         "docs/tutorials/agentdesk/run_on_kubernetes.md",
         "docs/topics/cli/cli.md",
         "docs/topics/cli/controller_commands.md",
-        "docs/topics/cli/operator_commands.md",
+        "docs/topics/cli/relay_commands.md",
         "docs/topics/cli/plugin_commands.md",
         "docs/topics/cli/access_commands.md",
         "docs/topics/cli/command_reference.md",
         "docs/topics/basics/building_blocks.md",
-        "docs/topics/basics/configuring_an_operator.md",
+        "docs/topics/basics/configuring_a_relay.md",
         "docs/topics/basics/streams.md",
         "docs/topics/basics/workflows.md",
         "docs/topics/basics/state.md",
         "docs/topics/basics/local_mode.md",
-        "docs/topics/basics/running_operators.md",
+        "docs/topics/basics/running_relays.md",
         "docs/topics/working_with_ai_assistants.md",
+        "docs/topics/ai_agents.md",
         "docs/topics/basics/namespaces.md",
         "docs/topics/basics/authorization.md",
         "docs/topics/basics/durability.md",
@@ -287,7 +288,7 @@ defmodule Flezha.MixProject do
         "docs/topics/advanced/merged_inputs.md",
         "docs/topics/advanced/timers.md",
         "docs/topics/advanced/spawning_from_a_tasklet.md",
-        "docs/topics/advanced/operator_calls.md",
+        "docs/topics/advanced/relay_calls.md",
         "docs/topics/advanced/sending_from_runner_code.md",
         "docs/topics/advanced/sessions.md",
         "docs/topics/advanced/rewinding_a_turn.md",
@@ -297,7 +298,7 @@ defmodule Flezha.MixProject do
         "docs/configuration.md",
         "docs/configuration/environment_variables.md",
         "docs/configuration/application_env.md",
-        "docs/configuration/operator_settings.md",
+        "docs/configuration/relay_settings.md",
         "docs/configuration/plugin_options.md",
         "docs/configuration/runner_environment.md",
         "docs/configuration/vm_arguments.md",
@@ -314,7 +315,7 @@ defmodule Flezha.MixProject do
         "docs/plugins/http_poll.md",
         "docs/plugins/http_push.md",
         "docs/plugins/websocket_subscription.md",
-        "docs/plugins/operator_forward.md",
+        "docs/plugins/relay_forward.md",
         "docs/plugins/postgres_sink.md",
         "docs/plugins/postgres_poll.md",
         "docs/plugins/hook_webhook.md",
@@ -357,13 +358,14 @@ defmodule Flezha.MixProject do
         "Tutorial 3: The agentdesk": ~r"docs/tutorials/agentdesk/",
         Topics: [
           "docs/topics/basics/building_blocks.md",
-          "docs/topics/basics/configuring_an_operator.md",
+          "docs/topics/basics/configuring_a_relay.md",
           "docs/topics/basics/streams.md",
           "docs/topics/basics/workflows.md",
           "docs/topics/basics/state.md",
           "docs/topics/basics/local_mode.md",
-          "docs/topics/basics/running_operators.md",
+          "docs/topics/basics/running_relays.md",
           "docs/topics/working_with_ai_assistants.md",
+          "docs/topics/ai_agents.md",
           "docs/topics/basics/namespaces.md",
           "docs/topics/basics/authorization.md",
           "docs/topics/basics/durability.md",
@@ -371,7 +373,7 @@ defmodule Flezha.MixProject do
           "docs/topics/advanced/merged_inputs.md",
           "docs/topics/advanced/timers.md",
           "docs/topics/advanced/spawning_from_a_tasklet.md",
-          "docs/topics/advanced/operator_calls.md",
+          "docs/topics/advanced/relay_calls.md",
           "docs/topics/advanced/sending_from_runner_code.md",
           "docs/topics/advanced/sessions.md",
           "docs/topics/advanced/rewinding_a_turn.md",
@@ -383,7 +385,7 @@ defmodule Flezha.MixProject do
         "The CLI": [
           "docs/topics/cli/cli.md",
           "docs/topics/cli/controller_commands.md",
-          "docs/topics/cli/operator_commands.md",
+          "docs/topics/cli/relay_commands.md",
           "docs/topics/cli/plugin_commands.md",
           "docs/topics/cli/access_commands.md",
           "docs/topics/cli/command_reference.md"
@@ -392,7 +394,7 @@ defmodule Flezha.MixProject do
           "docs/configuration.md",
           "docs/configuration/environment_variables.md",
           "docs/configuration/application_env.md",
-          "docs/configuration/operator_settings.md",
+          "docs/configuration/relay_settings.md",
           "docs/configuration/plugin_options.md",
           "docs/configuration/runner_environment.md",
           "docs/configuration/vm_arguments.md",
@@ -461,7 +463,7 @@ defmodule Flezha.MixProject do
       docs: [&register_highlighters/1, &docs_and_assistant_map/1],
       # Build the WebSocket testnet bundle that several `mix test` cases
       # reach for over WS (`flezha_test.exs` "websocket plugin connection
-      # start", "beam msg forward plugin connection start", "operator flow
+      # start", "beam msg forward plugin connection start", "relay flow
       # generation -> beam msg forward"). The bundle output at
       # `test/apps/testnet/dist/index.js` is not in git; without this
       # alias those cases skip with a clear message rather than crash
@@ -481,7 +483,7 @@ defmodule Flezha.MixProject do
         "cmd test/scripts/plugin_persistence.sh"
       ],
       # Opt-in dev-compose smoke test for `ship-fresh-state-on-sdk-shutdown`.
-      # Boots the controller + rust runner, starts an operator, sends SIGTERM
+      # Boots the controller + rust runner, starts a relay, sends SIGTERM
       # to the rust container, then asserts the controller's
       # `Overwatch.state.snapshot` was populated by the SDK's
       # `RunnerShutdownNotification`. Both periodic-enabled and

@@ -28,7 +28,7 @@ While the runner is gone its partitions show `failed`; a few seconds after the
 restart they are `healthy` again:
 
 ```sh
-$ ./bin/flz operator info trade_watcher --namespace trading
+$ ./bin/flz relay info trade_watcher --namespace trading
 ```
 
 ```output
@@ -68,7 +68,7 @@ After either restart, `flz state get` prints the same windows as before.
 > {: .step}
 
 ```sh
-$ ./bin/flz operator start order_executor --id order_2 --namespace trading --text '{"symbol": "EUR/USD", "quantity": 10}' --channel order
+$ ./bin/flz relay start order_executor --id order_2 --namespace trading --text '{"symbol": "EUR/USD", "quantity": 10}' --channel order
 ```
 
 About ten seconds after the restart, `flz state journal order_2 --namespace
@@ -101,7 +101,7 @@ dead-letter queue, so the messages behind it are not held up.
 > {: .step}
 
 ```sh
-$ ./bin/flz operator send 'trade_watcher#p1' --namespace trading --channel trades --text '{"channel": "trade", "data": [{"symbol": "EUR/USD", "price": "one euro", "ord_type": "market"}]}'
+$ ./bin/flz relay send 'trade_watcher#p1' --namespace trading --channel trades --text '{"channel": "trade", "data": [{"symbol": "EUR/USD", "price": "one euro", "ord_type": "market"}]}'
 ```
 
 ```sh

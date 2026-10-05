@@ -1,7 +1,7 @@
-defmodule FlezhaTest.Runner.ControlUnitAddOperatorTest do
+defmodule FlezhaTest.Runner.ControlUnitAddRelayTest do
   @moduledoc """
-  The resuming bind's two instance-scoped fields on `AddOperator`, both stamped
-  onto the operator's opts by `Flezha.Operator.Lifecycle`.
+  The resuming bind's two instance-scoped fields on `AddRelay`, both stamped
+  onto the relay's opts by `Flezha.Relay.Lifecycle`.
 
   `task_journal` rides the bind rather than a per-Cell `RestoreInitState`
   because it is instance-scoped: a durable steps class with no per-Cell
@@ -14,12 +14,12 @@ defmodule FlezhaTest.Runner.ControlUnitAddOperatorTest do
   import FlezhaTest.Helper.MimicGlobal
 
   alias Flezha.Identificator
-  alias Flezha.Operator.Builder
+  alias Flezha.Relay.Builder
   alias Flezha.Runner.ControlChannel
   alias Flezha.Runner.ControlUnit
   alias FlezhaTest.Helper.NodeTestHelper
 
-  @namespace "ctrl-unit-add-operator-test"
+  @namespace "ctrl-unit-add-relay-test"
 
   setup :set_mimic_global_until_exit
 
@@ -39,13 +39,13 @@ defmodule FlezhaTest.Runner.ControlUnitAddOperatorTest do
     %{runner_id: runner_id}
   end
 
-  defp start_operator(runner_id, opts) do
-    operator = %Builder{id: "op-1", factory_id: "f", run: :steps, opts: opts}
-    # The reply only lands on the AddOperator response, which never arrives here.
+  defp start_relay(runner_id, opts) do
+    relay = %Builder{id: "op-1", factory_id: "f", run: :steps, opts: opts}
+    # The reply only lands on the AddRelay response, which never arrives here.
     catch_exit(
       GenServer.call(
         Identificator.control_unit(runner_id),
-        {:start_operator, operator},
+        {:start_relay, relay},
         50
       )
     )
@@ -55,18 +55,18 @@ defmodule FlezhaTest.Runner.ControlUnitAddOperatorTest do
     runner_id: runner_id
   } do
     journal = %RunnerCommands.TaskJournalState{iter: 7, consumed_offset: 3}
-    start_operator(runner_id, resume_cell_count: 0, task_journal: journal)
+    start_relay(runner_id, resume_cell_count: 0, task_journal: journal)
 
-    assert_receive {:sent, {:add_operator, add}}, 500
+    assert_receive {:sent, {:add_relay, add}}, 500
     assert add.resume_cell_count == 0
     assert add.task_journal == journal
     assert add.dead_letter_turns
   end
 
   test "a fresh bind carries no journal", %{runner_id: runner_id} do
-    start_operator(runner_id, [])
+    start_relay(runner_id, [])
 
-    assert_receive {:sent, {:add_operator, add}}, 500
+    assert_receive {:sent, {:add_relay, add}}, 500
     assert add.resume_cell_count == 0
     assert add.task_journal == nil
     assert add.dead_letter_turns
@@ -137,7 +137,7 @@ end
 
 defmodule FlezhaTest.Runner.ControlUnitPartitionTest do
   @moduledoc """
-  Partition identity on the `AddOperator` wire.
+  Partition identity on the `AddRelay` wire.
 
   The SDK's mis-route guard is armed by these four fields and nothing else, so
   a member whose bind loses them starts accepting keys it does not own — which
@@ -151,8 +151,8 @@ defmodule FlezhaTest.Runner.ControlUnitPartitionTest do
   import FlezhaTest.Helper.MimicGlobal
 
   alias Flezha.Identificator
-  alias Flezha.Operator.Builder
-  alias Flezha.Operator.Migration
+  alias Flezha.Relay.Builder
+  alias Flezha.Relay.Migration
   alias Flezha.Partition
   alias Flezha.Runner.ControlChannel
   alias Flezha.Runner.ControlUnit
@@ -178,24 +178,24 @@ defmodule FlezhaTest.Runner.ControlUnitPartitionTest do
     %{runner_id: runner_id}
   end
 
-  defp add_operator(runner_id, opts) do
-    operator = %Builder{id: "ohlc#p1", factory_id: "candles", run: :flow, opts: opts}
+  defp add_relay(runner_id, opts) do
+    relay = %Builder{id: "ohlc#p1", factory_id: "candles", run: :flow, opts: opts}
 
     catch_exit(
       GenServer.call(
         Identificator.control_unit(runner_id),
-        {:start_operator, operator},
+        {:start_relay, relay},
         50
       )
     )
 
-    assert_receive {:sent, {:add_operator, add}}, 500
+    assert_receive {:sent, {:add_relay, add}}, 500
     add
   end
 
   test "a member's bind carries its index, count and owned range", %{runner_id: runner_id} do
     [_p0, range, _p2] = Partition.ranges(3)
-    add = add_operator(runner_id, Partition.member_opts("ohlc", 1, 3, range))
+    add = add_relay(runner_id, Partition.member_opts("ohlc", 1, 3, range))
 
     assert add.partition_index == 1
     assert add.partition_count == 3
@@ -205,7 +205,7 @@ defmodule FlezhaTest.Runner.ControlUnitPartitionTest do
   test "an unpartitioned bind encodes byte-identically to a partition-free build", %{
     runner_id: runner_id
   } do
-    add = add_operator(runner_id, [])
+    add = add_relay(runner_id, [])
 
     assert add.partition_index == 0
     assert add.partition_count == 0
@@ -214,11 +214,11 @@ defmodule FlezhaTest.Runner.ControlUnitPartitionTest do
 
     # The four fields are all zero, so proto3 emits none of them: the frame is
     # exactly the one a pre-partition controller produced.
-    {:ok, encoded, _size} = RunnerCommands.AddOperator.encode(add)
+    {:ok, encoded, _size} = RunnerCommands.AddRelay.encode(add)
 
     {:ok, reference, _ref_size} =
-      RunnerCommands.AddOperator.encode(%RunnerCommands.AddOperator{
-        operator_id: add.operator_id,
+      RunnerCommands.AddRelay.encode(%RunnerCommands.AddRelay{
+        relay_id: add.relay_id,
         factory_id: add.factory_id,
         init_values: add.init_values,
         run: add.run,
@@ -231,7 +231,7 @@ defmodule FlezhaTest.Runner.ControlUnitPartitionTest do
   end
 
   test "a one-member group is unpartitioned on the wire", %{runner_id: runner_id} do
-    add = add_operator(runner_id, Partition.member_opts("ohlc", 0, 1, {0, 255}))
+    add = add_relay(runner_id, Partition.member_opts("ohlc", 0, 1, {0, 255}))
 
     assert add.partition_count == 0
     assert add.key_group_to == 0
@@ -240,7 +240,7 @@ defmodule FlezhaTest.Runner.ControlUnitPartitionTest do
   test "the migrate-time bind re-arms the guard" do
     [_p0, range, _p2] = Partition.ranges(3)
 
-    state = %Flezha.Operator.Overwatch{
+    state = %Flezha.Relay.Overwatch{
       id: "ohlc#p1",
       factory_id: "candles",
       namespace: @namespace,
@@ -252,7 +252,7 @@ defmodule FlezhaTest.Runner.ControlUnitPartitionTest do
       }
     }
 
-    migrated = Migration.bind_operator(state)
+    migrated = Migration.bind_relay(state)
 
     # The run travels with the migrate: a steps instance re-added as a
     # flow class is refused by the runner and never heals.
@@ -271,8 +271,8 @@ defmodule FlezhaTest.Runner.ControlUnitStepsStopTest do
   @moduledoc """
   §5a.1/§6.2: the cooperative external-stop send. `ControlUnit.steps_stop/2`
   ships a `StepsStop` command over the control channel — distinct from the hard
-  `RemOperator` the stream stop uses. Fire-and-forget: the SDK trips its
-  cancellation token and the teardown follows on `OperatorCompleted`.
+  `RemRelay` the stream stop uses. Fire-and-forget: the SDK trips its
+  cancellation token and the teardown follows on `RelayCompleted`.
   """
 
   # async: false: Mimic global mode; Mimic stubs; registered runner channels.
@@ -290,7 +290,7 @@ defmodule FlezhaTest.Runner.ControlUnitStepsStopTest do
 
   setup :set_mimic_global_until_exit
 
-  test "steps_stop/2 sends a StepsStop command (cooperative), not RemOperator" do
+  test "steps_stop/2 sends a StepsStop command (cooperative), not RemRelay" do
     test_pid = self()
     runner_id = "exec-bs-#{System.unique_integer([:positive])}"
 
@@ -305,11 +305,11 @@ defmodule FlezhaTest.Runner.ControlUnitStepsStopTest do
 
     assert :ok = ControlUnit.steps_stop(runner_id, "op-1")
 
-    assert_receive {:sent, {:steps_stop, %RunnerCommands.StepsStop{operator_id: "op-1"}}},
+    assert_receive {:sent, {:steps_stop, %RunnerCommands.StepsStop{relay_id: "op-1"}}},
                    500
 
     # Cooperative stop must NOT use the hard removal command.
-    refute_received {:sent, {:rem_operator, _}}
+    refute_received {:sent, {:rem_relay, _}}
   end
 
   test "steps_stop/2 returns {:error, :no_control_unit} when the runner is gone" do
@@ -319,16 +319,16 @@ defmodule FlezhaTest.Runner.ControlUnitStepsStopTest do
   end
 end
 
-defmodule FlezhaTest.Runner.AddOperatorResponseTest do
+defmodule FlezhaTest.Runner.AddRelayResponseTest do
   @moduledoc """
-  The SDK declares its class-level capabilities in the `AddOperator` response
-  metadata (`AddOperatorResponse.raw_data`) — the effectively-once tier and the
+  The SDK declares its class-level capabilities in the `AddRelay` response
+  metadata (`AddRelayResponse.raw_data`) — the effectively-once tier and the
   chain positions that can compensate. The controller resolves absent, empty, or
   undecodable metadata to the defaults.
   """
   use ExUnit.Case, async: true
 
-  alias Flezha.Operator.ClassRegistry
+  alias Flezha.Relay.ClassRegistry
 
   defp declarations(metadata), do: ClassRegistry.decode_declarations(encode(metadata))
 
@@ -390,7 +390,7 @@ defmodule FlezhaTest.Runner.AddOperatorResponseTest do
   end
 
   test "keyless is declared only when true — a keyed class says nothing" do
-    # `partitioned-operators`: the SDK announces `keyed: "false"` for a class
+    # `partitioned-relays`: the SDK announces `keyed: "false"` for a class
     # with no keyed entry-fed tasklet, so the controller can refuse a
     # partitioned start of it before touching a runner. A keyed class declares
     # nothing, which is what keeps its response byte-identical.
@@ -440,7 +440,7 @@ defmodule FlezhaTest.Runner.AddOperatorResponseTest do
     assert declarations(%{"other" => "x"}).compensable_tasks == nil
   end
 
-  test "a steps operator's run and loop shape resolve to atoms, and anything else to none" do
+  test "a steps relay's run and loop shape resolve to atoms, and anything else to none" do
     assert declarations(%{"run" => "steps"}).run == :steps
     assert declarations(%{"run" => "bounded"}).run == :flow
     assert declarations(%{"on_failure" => "keep_progress"}).on_failure == :keep_progress
@@ -452,7 +452,7 @@ defmodule FlezhaTest.Runner.AddOperatorResponseTest do
   end
 
   test "leaf positions resolve to a list — the tree's completion rule" do
-    # A→(B,C): the operator is done when tasks 1 and 2 have committed.
+    # A→(B,C): the relay is done when tasks 1 and 2 have committed.
     assert declarations(%{"leaf_tasks" => "1,2"}).leaf_tasks == [1, 2]
     # A linear chain's single terminal is the degenerate case.
     assert declarations(%{"leaf_tasks" => "1"}).leaf_tasks == [1]
@@ -463,7 +463,7 @@ defmodule FlezhaTest.Runner.AddOperatorResponseTest do
 
   defp encode(metadata) do
     {:ok, iodata, _size} =
-      Protox.encode(%RunnerCommands.AddOperatorResponse{metadata: metadata})
+      Protox.encode(%RunnerCommands.AddRelayResponse{metadata: metadata})
 
     IO.iodata_to_binary(iodata)
   end

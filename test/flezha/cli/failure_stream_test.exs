@@ -7,7 +7,7 @@ defmodule Flezha.Service.Cli.FailureStreamTest do
   A caller who pipes a verb's output into a file or another program is
   collecting the answer, not the failure. Before the fold the stream was a
   per-call argument and 29 of the 65 sites took its `:stdio` default, so a
-  script reading `flz operator stop` collected the error text as if it were
+  script reading `flz relay stop` collected the error text as if it were
   the answer.
 
   The in-process drives below cannot see which node a device belongs to,
@@ -26,13 +26,13 @@ defmodule Flezha.Service.Cli.FailureStreamTest do
 
   # One real failure per family that renders one, through the wire seam that
   # renders it. Each is reached with the controller as this suite boots it: no
-  # runner, no operator, no plugin.
+  # runner, no relay, no plugin.
   defp failures do
     [
-      {"operator",
-       fn -> Cli.call("Operator.stop", Jason.encode!(["default", "no-such-op-xyz"]), []) end},
-      {"operator",
-       fn -> Cli.call("Operator.cell_state", Jason.encode!(["default", "no-such-op-xyz"]), []) end},
+      {"relay",
+       fn -> Cli.call("Relay.stop", Jason.encode!(["default", "no-such-op-xyz"]), []) end},
+      {"relay",
+       fn -> Cli.call("Relay.cell_state", Jason.encode!(["default", "no-such-op-xyz"]), []) end},
       {"plugin",
        fn -> Cli.call("PluginManager.disable", Jason.encode!(["no-such-plugin-xyz", %{}]), []) end},
       {"state",

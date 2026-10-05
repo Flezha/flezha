@@ -35,7 +35,7 @@ defmodule Flezha.Service.Controller do
   alias Flezha.Config
   alias Flezha.Config.Durations
   alias Flezha.Identificator
-  alias Flezha.Operator.ClassRegistry
+  alias Flezha.Relay.ClassRegistry
   alias Flezha.Plugin.Provider.File.Storage
   alias Flezha.Service.CallerContext
   alias Flezha.Service.Controller.MemTop
@@ -116,15 +116,15 @@ defmodule Flezha.Service.Controller do
   end
 
   @doc """
-  The cluster as `namespace` sees it: its nodes, each one's operator count and
-  recovery state, the unplaced operators and the operators' health.
+  The cluster as `namespace` sees it: its nodes, each one's relay count and
+  recovery state, the unplaced relays and the relays' health.
   """
   @spec cluster_status(String.t(), caller_context()) :: {:ok, map()} | {:error, term()}
   verb cluster_status(namespace, caller_context),
     args: [namespace: [type: :string, doc: "The namespace."]] do
     namespace = Namespace.or_default(namespace)
     nodes = HubManager.get_hub_nodes(namespace, true)
-    rows = HubManager.operator_rows(namespace)
+    rows = HubManager.relay_rows(namespace)
     counts = Enum.frequencies_by(rows, & &1.node)
     recovery = recovery_map(namespace, nodes)
 
@@ -141,13 +141,13 @@ defmodule Flezha.Service.Controller do
          Enum.map(nodes, fn n ->
            %{
              node: n,
-             operator_count: Map.get(counts, n, 0),
+             relay_count: Map.get(counts, n, 0),
              leader: n == node(),
              recovery_state: Map.get(recovery, n, :unknown)
            }
          end),
-       unplaced_operators: Map.get(counts, nil, 0),
-       operator_health: Enum.frequencies_by(rows, & &1.health)
+       unplaced_relays: Map.get(counts, nil, 0),
+       relay_health: Enum.frequencies_by(rows, & &1.health)
      }}
   end
 
@@ -367,7 +367,7 @@ defmodule Flezha.Service.Controller do
   # The remote durability tier as a caller reads it: which backend is
   # configured, how many references are past their RPO target, how many are
   # now shipped by another controller, and each class's level. A superseded
-  # count that keeps climbing on a node that should still own its operators is
+  # count that keeps climbing on a node that should still own its relays is
   # how a placement problem shows up here.
   defp durability_snapshot do
     %{

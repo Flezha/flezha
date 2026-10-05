@@ -264,7 +264,7 @@ pub(crate) const UNIVERSAL: &[OptSpec] = &[TOKEN, HELP, OUTPUT, JSON_SWITCH];
 
 /// The options more than one verb shares, spelled once each.
 pub(crate) const NAMESPACE: OptSpec = OptSpec::text("--namespace", "-n", "<namespace>");
-/// The document an operator starts from, on a start and on every firing of a
+/// The document a relay starts from, on a start and on every firing of a
 /// schedule.
 pub(crate) const INIT_VALUES: OptSpec = OptSpec::text("--init-values", "--init-values", "<json>");
 pub(crate) const OUTPUT: OptSpec =
@@ -316,7 +316,7 @@ impl Reading {
 
     /// The positional in the slot at `index`, for the verbs that share a
     /// handler and name the same slot differently — `flz state list` calls it
-    /// an operator class and `flz state inbox` an instance.
+    /// a relay class and `flz state inbox` an instance.
     pub(crate) fn positional_at(&self, index: usize) -> &str {
         self.positionals[index].1.as_deref().unwrap_or_default()
     }
@@ -446,7 +446,7 @@ fn optional_unless(required: bool, written: String) -> String {
 }
 
 /// The one walk. `path` is what a usage line calls the command
-/// (`flz operator`); `argv` is what the caller wrote after the verb's own
+/// (`flz relay`); `argv` is what the caller wrote after the verb's own
 /// name. Options are read wherever they stand, the positionals are the words
 /// that remain, and the refusals are the row's rather than each verb's own.
 pub(crate) fn read(

@@ -1,8 +1,8 @@
 defmodule Flezha.Process.CallDelivery do
   @moduledoc """
-  The name operator calls are delivered under, and the two hand-offs an
-  Overwatch makes to it: a request its graph made, and an answer it owes an
-  operator caller. Both are casts, so no Overwatch waits on the delivery or on
+  The name relay calls are delivered under, and the two hand-offs an
+  Overwatch makes to it: a request its graph made, and an answer it owes a
+  relay caller. Both are casts, so no Overwatch waits on the delivery or on
   another Overwatch; the process registered here (`Flezha.Service.Calls`)
   delivers each in order per caller and target, retrying until the call's
   deadline.
@@ -14,7 +14,7 @@ defmodule Flezha.Process.CallDelivery do
 
   @doc """
   Deliver the request `request` (a pending call's row, with its `id`) of the
-  operator `caller` in `namespace` to its target.
+  relay `caller` in `namespace` to its target.
   """
   @spec request(binary(), binary(), map()) :: :ok
   def request(namespace, caller, request),

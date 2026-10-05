@@ -2,26 +2,26 @@
 
 ## Purpose
 
-Defines the Java SDK for Flezha compute engines: the public authoring API and the Operator / Tasklet / Cell runtime, hosted on the shared poll core through the `FlzCore` JNI binding over `flz_core_ffi`. Conforms to `docs/sdk/protocol_spec.md` and `docs/sdk/poll_core.md`.
+Defines the Java SDK for Flezha compute engines: the public authoring API and the Relay / Tasklet / Cell runtime, hosted on the shared poll core through the `FlzCore` JNI binding over `flz_core_ffi`. Conforms to `docs/sdk/protocol_spec.md` and `docs/sdk/poll_core.md`.
 ## Requirements
 ### Requirement: Java SDK Entry Point
 
-The Java SDK SHALL provide `com.flezha.sdk.Flezha.createRunner(String namespace)` as the single entry point, returning a concrete `FlezhaRunner` directly; there SHALL be no separate `RunnerBuilder` type. Creating a runner SHALL NOT connect, claim the process singleton slot, or spawn any thread. Calling `.start()` on the runner MUST connect to the controller's control socket, send the handshake init message per `docs/sdk/protocol_spec.md` §5.2 carrying the runner's currently-declared factory ids (possibly empty), wait for `AssignRunnerId`, and return `this` for chaining. The started runner SHALL expose `getNamespace()` (replacing `getId()`) and `getOperators()` (a snapshot of currently-spawned Operator instances keyed by what the wire calls `operator_id`). `.run()` SHALL be sugar for `.start()` followed by `awaitTermination()`, never an independent implementation.
+The Java SDK SHALL provide `com.flezha.sdk.Flezha.createRunner(String namespace)` as the single entry point, returning a concrete `FlezhaRunner` directly; there SHALL be no separate `RunnerBuilder` type. Creating a runner SHALL NOT connect, claim the process singleton slot, or spawn any thread. Calling `.start()` on the runner MUST connect to the controller's control socket, send the handshake init message per `docs/sdk/protocol_spec.md` §5.2 carrying the runner's currently-declared factory ids (possibly empty), wait for `AssignRunnerId`, and return `this` for chaining. The started runner SHALL expose `getNamespace()` (replacing `getId()`) and `getRelays()` (a snapshot of currently-spawned Relay instances keyed by what the wire calls `relay_id`). `.run()` SHALL be sugar for `.start()` followed by `awaitTermination()`, never an independent implementation.
 
 #### Scenario: Successful connection on a created runner
-- **WHEN** an SDK user calls `Flezha.createRunner("my_app").registerFactory(MarketOperator.class).start()` with the controller running
+- **WHEN** an SDK user calls `Flezha.createRunner("my_app").registerFactory(MarketRelay.class).start()` with the controller running
 - **THEN** the call blocks until the controller responds with `AssignRunnerId`, returns the same `FlezhaRunner`, and `getNamespace()` returns `"my_app"`
 
 #### Scenario: Controller unavailable triggers exponential backoff retries
 - **WHEN** an SDK user calls `.start()` on a runner and the controller's control socket is not yet listening
 - **THEN** the SDK SHALL retry the connect with exponential backoff starting at 200 ms and capped at 30 s, and succeed once the controller becomes available
 
-#### Scenario: start() with zero defined operator types is legal
+#### Scenario: start() with zero defined relay types is legal
 - **WHEN** `.start()` is called on a `FlezhaRunner` with no `.registerFactory(...)` calls, whatever short-form classes are on the classpath
-- **THEN** the runner SHALL connect successfully with an empty `factory_ids` list in the handshake init message, and operator types MAY be defined later on the live runner
+- **THEN** the runner SHALL connect successfully with an empty `factory_ids` list in the handshake init message, and relay types MAY be defined later on the live runner
 
 #### Scenario: RunnerBuilder is not importable
-- **WHEN** user code references `com.flezha.sdk.RunnerBuilder`, `com.flezha.sdk.operator.OperatorRegistry`, `com.flezha.sdk.operator.OperatorRegistry`, or `Flezha.newRunner`
+- **WHEN** user code references `com.flezha.sdk.RunnerBuilder`, `com.flezha.sdk.relay.RelayRegistry`, `com.flezha.sdk.relay.RelayRegistry`, or `Flezha.newRunner`
 - **THEN** compilation SHALL fail: the builder type, both public registry facades, and the old entry-point name are deleted with no shim
 
 ### Requirement: Tasklet Interface and Per-Cell Dispatch
@@ -44,18 +44,18 @@ The runtime SHALL stamp `flz.cell`, `flz.seq`, and (on keyed emits) `flz.key` on
 
 #### Scenario: Single-mode Tasklet runs on a single cell
 - **WHEN** a Tasklet whose `@Tasklet.Spec` declares no `keys` is registered as the consumer of an entry channel, and one input arrives on that channel
-- **THEN** the SDK SHALL invoke the Tasklet's `run` once on the single allocated cell (cell index 0), whose `ctx.state()` is the state the Tasklet's initial-state rule produced at operator startup
+- **THEN** the SDK SHALL invoke the Tasklet's `run` once on the single allocated cell (cell index 0), whose `ctx.state()` is the state the Tasklet's initial-state rule produced at relay startup
 
 #### Scenario: Static-mode Tasklet creates one cell per key
 - **WHEN** a Tasklet's `@Tasklet.Spec` declares `keys = {"1m", "1h", "1d", "1w"}` and its class writes `cellsFor`
-- **THEN** at operator startup the SDK SHALL allocate exactly four `CellSlot` instances for that Tasklet, each constructed from the initial-state rule for its corresponding key
+- **THEN** at relay startup the SDK SHALL allocate exactly four `CellSlot` instances for that Tasklet, each constructed from the initial-state rule for its corresponding key
 
 #### Scenario: Static-mode cellsFor fan-out enqueues input on each named cell
 - **WHEN** a Tasklet's `cellsFor(input)` returns `["1m", "1h"]` for a given input
 - **THEN** the SDK SHALL enqueue that input on the cells identified by `"1m"` and `"1h"` (each receives its own `run` invocation), and SHALL NOT enqueue it on `"1d"` or `"1w"`
 
 #### Scenario: The author's class is the class the wiring names
-- **WHEN** a class `TrackPrices implements Tasklet<Trade, PriceWindow, Move>` carries `@Tasklet.Spec(name = "track_prices")` and an operator declares `.into(TrackPrices.class)`
+- **WHEN** a class `TrackPrices implements Tasklet<Trade, PriceWindow, Move>` carries `@Tasklet.Spec(name = "track_prices")` and a relay declares `.into(TrackPrices.class)`
 - **THEN** registration SHALL succeed, the tasklet SHALL be named `track_prices`, and no class other than those the author wrote SHALL exist for it
 
 #### Scenario: One run emits any number of values through the context
@@ -68,11 +68,11 @@ The runtime SHALL stamp `flz.cell`, `flz.seq`, and (on keyed emits) `flz.key` on
 
 #### Scenario: Run throwing TaskletException logs and continues
 - **WHEN** `Tasklet.run(...)` throws `TaskletException` on a given input and the input channel's retry budget is exhausted
-- **THEN** the SDK SHALL log the exception with `(operatorInstanceId, taskletName, cellKey)` context, SHALL discard any partial `ctx.emit(...)` calls made during this invocation, SHALL park the payload to the dead-letter queue, and SHALL continue dispatching subsequent inputs on the same cell
+- **THEN** the SDK SHALL log the exception with `(relayInstanceId, taskletName, cellKey)` context, SHALL discard any partial `ctx.emit(...)` calls made during this invocation, SHALL park the payload to the dead-letter queue, and SHALL continue dispatching subsequent inputs on the same cell
 
 #### Scenario: Run throwing arbitrary RuntimeException logs and continues
 - **WHEN** `Tasklet.run(...)` throws a non-`TaskletException` `RuntimeException`
-- **THEN** the SDK SHALL log the exception with the same `(operatorInstanceId, taskletName, cellKey)` context, discard partial emits, and continue dispatching subsequent inputs on the same cell
+- **THEN** the SDK SHALL log the exception with the same `(relayInstanceId, taskletName, cellKey)` context, discard partial emits, and continue dispatching subsequent inputs on the same cell
 
 #### Scenario: Inter-tasklet zero-copy preserves value identity
 - **WHEN** Tasklet A emits a non-null value `v` on an inter-tasklet channel that Tasklet B consumes (single-cell fan-out, single JVM)
@@ -84,7 +84,7 @@ The runtime SHALL stamp `flz.cell`, `flz.seq`, and (on keyed emits) `flz.key` on
 
 #### Scenario: Plugin-bound emit attaches the channel name as metadata on the wire
 - **WHEN** a Tasklet whose declared output is a plugin-bound channel `"ohlc.candles"` calls `ctx.emit(candle)`
-- **THEN** the SDK SHALL serialize `candle` via the channel's serializer, frame the bytes with `metadata` containing `"channel" -> "ohlc.candles"` plus the runtime's `flz.cell` and `flz.seq` identity stamps, and send the frame on the operator's secondary stream
+- **THEN** the SDK SHALL serialize `candle` via the channel's serializer, frame the bytes with `metadata` containing `"channel" -> "ohlc.candles"` plus the runtime's `flz.cell` and `flz.seq` identity stamps, and send the frame on the relay's secondary stream
 
 #### Scenario: Plugin-bound emitWithMeta appends user metadata after the channel key
 - **WHEN** a Tasklet calls `ctx.emitWithMeta(candle, Map.of("trace_id", "abc"))` on a plugin-bound channel `"ohlc.candles"`
@@ -124,13 +124,13 @@ The runtime SHALL stamp `flz.cell`, `flz.seq`, and (on keyed emits) `flz.key` on
 
 ### Requirement: Sticky Per-Cell Ordering Under ThreadPool Dispatch
 
-The runtime SHALL guarantee that for any single `(operatorInstance,
+The runtime SHALL guarantee that for any single `(relayInstance,
 tasklet, cell)` triple, two invocations of that Tasklet's `run(...)`
 never execute concurrently, and that invocations observe their inputs in
 enqueue order.
 This invariant is supplied by the core's per-cell handout exclusivity —
 a cell with an outstanding activation is never handed out again until
-its completion — and MUST hold regardless of poller count, Operator count,
+its completion — and MUST hold regardless of poller count, Relay count,
 Cell count, or transport.
 
 #### Scenario: Same cell never runs concurrently under load
@@ -152,16 +152,16 @@ the five host-participating interactions SHALL reach Java — as activation
 kinds (`RestoreFold`, `SnapshotRequest`, `LiveStateRead`, `ApplyState`,
 `MigrationSerialize`), subject to per-cell exclusivity; every other
 command (including `Ping`, credit frames, acks, `AssignRunnerId`,
-`ConnectSocket`, `RemOperator`, `StepsStop`) SHALL be answered by the
+`ConnectSocket`, `RemRelay`, `StepsStop`) SHALL be answered by the
 core without surfacing to Java. Class capability declarations
 (`effectively_once`, `ack_granularity`, `correction_window_ms`,
 `beyond_window_policy`, `compensable_tasks`, `leaf_tasks`,
 `compact_after_bytes`) SHALL ride the declaration the Java layer registers;
-the core SHALL populate `AddOperatorResponse.metadata` from it — a class
+the core SHALL populate `AddRelayResponse.metadata` from it — a class
 declaring nothing yields an empty map, byte-identical to today.
 
-#### Scenario: AddOperator spawns a Java-hosted operator instance
-- **WHEN** the controller sends `AddOperator{operator_id:"p1", factory_id:"market"}` for a declared Java class
+#### Scenario: AddRelay spawns a Java-hosted relay instance
+- **WHEN** the controller sends `AddRelay{relay_id:"p1", factory_id:"market"}` for a declared Java class
 - **THEN** the core SHALL instantiate the class's topology, respond `status = "success"` with its declared capability metadata, and subsequent entry inputs SHALL surface to Java as work activations for `"p1"`
 
 #### Scenario: Ping never reaches Java
@@ -192,9 +192,9 @@ threads (default 2; `FLEZHA_WORKER_POOL_SIZE` overrides the count) and SHALL
 run each polled activation on a virtual thread; the count of jobs underway is
 owned by the core, not by any Java pool size. The SDK SHALL sustain at least
 the throughput floor (in messages/second) measured against the v1
-implementation at merge time on the regression bench (`100 operators × 1
+implementation at merge time on the regression bench (`100 relays × 1
 tasklet × 1 cell × 10K msg`, no-op Tasklet, UDS transport, default
-worker-pool size; see `operator-mvp-java/design.md` Decision 7) invoked via
+worker-pool size; see `relay-mvp-java/design.md` Decision 7) invoked via
 `mix bench --runtime java --shape regression -n 100 -m 10000`. The
 bench-regression-java CI job is informational in v1; the literal floor value
 is recorded in this requirement once `mix bench --runtime java` has been
@@ -254,31 +254,31 @@ Java `byte[]` before being freed through the core-provided free function.
 - **WHEN** poller threads are blocked in the native `poll` call and the runner shuts down
 - **THEN** every blocked call SHALL return promptly with the distinguishable shutting-down status and the poller threads SHALL exit their loops
 
-### Requirement: Operator declares durable, frozen at instance start
+### Requirement: Relay declares durable, frozen at instance start
 
-The Java SDK's `Operator` interface SHALL declare `default Durable durable()`, answering `Durable.Local` with the run's default `sleepAfter` when the class does not override it; `Durable` SHALL be the sealed interface of `Memory`, `Local(SleepAfter sleepAfter)` and `Remote(SleepAfter sleepAfter)`, where `SleepAfter` is the sealed interface of `RunDefault` (a flow never sleeps, a steps class after six hours), `Never` and `After(Duration)`. The runtime SHALL read `durable()` from the class for either run when it builds the class declaration, SHALL write it as the declaration's `durable` tree and SHALL NOT derive it from whether any Tasklet declares a Change other than `NoChange`. The core resolves the per-instance value from the declaration when `AddOperator` is processed and announces it to the controller.
+The Java SDK's `Relay` interface SHALL declare `default Durable durable()`, answering `Durable.Local` with the run's default `sleepAfter` when the class does not override it; `Durable` SHALL be the sealed interface of `Memory`, `Local(SleepAfter sleepAfter)` and `Remote(SleepAfter sleepAfter)`, where `SleepAfter` is the sealed interface of `RunDefault` (a flow never sleeps, a steps class after six hours), `Never` and `After(Duration)`. The runtime SHALL read `durable()` from the class for either run when it builds the class declaration, SHALL write it as the declaration's `durable` tree and SHALL NOT derive it from whether any Tasklet declares a Change other than `NoChange`. The core resolves the per-instance value from the declaration when `AddRelay` is processed and announces it to the controller.
 
 The resolved value SHALL be bound to the instance and SHALL be propagated to every `CellSlot` constructed for that instance. A change to the class's method (via SDK redeploy) SHALL NOT affect already-running instances.
 
 #### Scenario: Default-on with no override
 
-- **WHEN** an Operator's `durable()` is the default
+- **WHEN** a Relay's `durable()` is the default
 - **THEN** the class declaration SHALL announce `durable: "local"`, leaving the sleep interval to the run, and the instance SHALL keep its state
 
 #### Scenario: Code-declared opt-out is honored
 
-- **WHEN** `MarketOperator.durable()` returns `new Durable.Memory()` (user override)
+- **WHEN** `MarketRelay.durable()` returns `new Durable.Memory()` (user override)
 - **THEN** the class declaration SHALL announce `durable: false` and the core SHALL drain-and-discard this instance's change bytes — no `cell_state_change` frame reaches the wire
 
-#### Scenario: A flow operator's opt-out is read from the class, not its Tasklets
+#### Scenario: A flow relay's opt-out is read from the class, not its Tasklets
 
-- **WHEN** an `Operator` whose Tasklets keep state (a non-`Void` State) returns `new Durable.Memory()` from `durable()`
+- **WHEN** a `Relay` whose Tasklets keep state (a non-`Void` State) returns `new Durable.Memory()` from `durable()`
 - **THEN** the class declaration SHALL announce `durable: false`, no `cell_state_change` frame SHALL reach the wire, and a rebind after the runner dies SHALL restore nothing
 
 #### Scenario: Resolved value frozen at instance start
 
 - **WHEN** an instance is constructed keeping its state, AND the class is redeployed returning `new Durable.Memory()` while the instance runs
-- **THEN** the running instance SHALL continue keeping its state; the new value SHALL take effect only on the next `stop_operator` + `start_operator` cycle for that instance
+- **THEN** the running instance SHALL continue keeping its state; the new value SHALL take effect only on the next `stop_relay` + `start_relay` cycle for that instance
 
 ### Requirement: Per-Cell flusher with toggle-aware drain
 
@@ -316,7 +316,7 @@ The Java SDK's `ctx.change(change)` SHALL pay exactly: one `change.applyTo(state
 
 The Java SDK SHALL use Kryo for `format_id = 4` serialization with `setRegistrationRequired(true)`. The runtime SHALL register built-in flezha types (primitives, common collections and the runtime's own payload types) at SDK init in a fixed order (stable IDs 1-N).
 
-A tasklet's user types SHALL by default be discovered at registration: its state class, every member class (declared in a class body, at any depth) of the tasklet class, a class above it, or the state class that implements `Change`, and every non-JDK class reachable from the fields and record components of those classes. Each discovered type SHALL be registered under an id derived from its name and placed in a band above the built-in ids, so that adding a type never changes the id of another. A type nested at any depth in the tasklet class SHALL be named by the tasklet's durable name (its `@Tasklet.Spec` name, or a short form's operator id) followed by its binary name relative to the tasklet class, so renaming or moving the tasklet class changes no id; any other type SHALL be named by its binary class name. Two discovered types deriving the same id SHALL fail registration naming both classes.
+A tasklet's user types SHALL by default be discovered at registration: its state class, every member class (declared in a class body, at any depth) of the tasklet class, a class above it, or the state class that implements `Change`, and every non-JDK class reachable from the fields and record components of those classes. Each discovered type SHALL be registered under an id derived from its name and placed in a band above the built-in ids, so that adding a type never changes the id of another. A type nested at any depth in the tasklet class SHALL be named by the tasklet's durable name (its `@Tasklet.Spec` name, or a short form's relay id) followed by its binary name relative to the tasklet class, so renaming or moving the tasklet class changes no id; any other type SHALL be named by its binary class name. Two discovered types deriving the same id SHALL fail registration naming both classes.
 
 A tasklet that overrides `kryoTypes()` SHALL own its ids from its first save: the returned list SHALL replace discovery, and its types SHALL be registered after the built-ins in list order (stable IDs N+1, N+2, ...); a listed class Kryo already registers SHALL keep its id and take no slot. Reordering that list between versions SHALL be an unsupported breaking change; appending to its end SHALL be safe. Switching an existing tasklet between discovery and a list moves every id, and SHALL be treated as a schema change: a `schemaVersion` bump with `migrateState` / `migrateChange`.
 
@@ -352,25 +352,21 @@ The Java SDK SHALL refuse to serialize any user-supplied object whose runtime cl
 - **WHEN** a tasklet records a change whose class is declared outside the tasklet and its state and is not in an overriding `kryoTypes()`
 - **THEN** the first flush SHALL throw `StateSerializeException::UnregisteredClass` naming the class and both fixes, and the JVM SHALL NOT silently succeed with auto-IDs
 
-### Requirement: Public Java SDK handler classes use canonical Operator vocabulary
+### Requirement: Public Java SDK handler classes use canonical Relay vocabulary
 
-The Java SDK SHALL expose handler classes whose names use canonical vocabulary: `AddOperatorHandler`, `RemOperatorHandler`, `OperatorMessageHandler`, `CellStateHandler`, `CellApplyStateHandler`. Classes previously named `AddProcessorHandler`, `RemProcessorHandler`, `ProcessorMessageHandler`, `ProcessorStateHandler`, `ProcessorApplyStateHandler` SHALL NOT be present in the published API. Java packages SHALL likewise migrate any package-path components that contained `processor`, `ops`, `agent`, or `compute_engine` to the canonical replacements (`operator`, `runner`, `controller`). `FleetManager`-equivalent classes keep their names.
-
-#### Scenario: Old handler classes do not exist
-- **WHEN** a downstream Java consumer imports `com.flezha.sdk.handlers.AddProcessorHandler`
-- **THEN** the import MUST fail to compile (class not found); the consumer MUST migrate to `com.flezha.sdk.handlers.AddOperatorHandler`
+The Java SDK SHALL expose handler classes whose names use canonical vocabulary: `AddRelayHandler`, `RemRelayHandler`, `RelayMessageHandler`, `CellStateHandler`, `CellApplyStateHandler`. `FleetManager`-equivalent classes keep their names.
 
 #### Scenario: New handlers wire into dispatch
-- **WHEN** a Java SDK Runner receives an `AddOperator` protobuf command from the Controller
-- **THEN** dispatch MUST route the message to `AddOperatorHandler.handle(...)` with the protobuf `operator_id` field exposed under the same name (`getOperatorId()`)
+- **WHEN** a Java SDK Runner receives an `AddRelay` protobuf command from the Controller
+- **THEN** dispatch MUST route the message to `AddRelayHandler.handle(...)` with the protobuf `relay_id` field exposed under the same name (`getRelayId()`)
 
-### Requirement: Public Operator / Tasklet / Cell user-facing API names
+### Requirement: Public Relay / Tasklet / Cell user-facing API names
 
-The Java SDK SHALL expose user-extensible base classes/interfaces under the canonical names `Operator`, `Tasklet`, `Cell`, and `Channel`. The Runner process startup hook SHALL be `Runner.start(Config)` (or equivalent factory entry point); class names referring to the SDK process itself SHALL use `Runner` as the role term, not `ComputeEngine` or `User`.
+The Java SDK SHALL expose user-extensible base classes/interfaces under the canonical names `Relay`, `Tasklet`, `Cell`, and `Channel`. The Runner process startup hook SHALL be `Runner.start(Config)` (or equivalent factory entry point); class names referring to the SDK process itself SHALL use `Runner` as the role term, not `ComputeEngine` or `User`.
 
-#### Scenario: User extends Operator
-- **WHEN** a user-defined Operator class declares `extends Operator`
-- **THEN** the class MUST compile against the published Java SDK; declaring `extends Processor` MUST fail
+#### Scenario: User extends Relay
+- **WHEN** a user-defined Relay class declares `extends Relay`
+- **THEN** the class MUST compile against the published Java SDK
 
 ### Requirement: Java SDK implements the effectively-once output tier
 
@@ -387,7 +383,7 @@ Declaring `.keyed()` SHALL be required on every plugin-bound channel of a tier-e
 - **WHEN** a tier-enabled Tasklet's `run` applies two Changes and emits one keyed output for an input carrying `flz.offset = 7`
 - **THEN** the SDK SHALL ship exactly one `cell_effect_record` frame whose decoded body has `changes.length == 2`, `outputs.length == 1`, and `consumed_offset == 7`; and SHALL NOT ship any `cell_state_change` frame for that invocation
 
-#### Scenario: A durable steps operator invocation ships the same record
+#### Scenario: A durable steps relay invocation ships the same record
 
 - **WHEN** a durable Java steps tasklet's `run` applies one Change and emits one keyed output
 - **THEN** exactly one `cell_effect_record` frame SHALL leave for that cell, with `changes.length == 1`, `outputs.length == 1` and no `consumed_offset`, and its output SHALL carry no `flz.` stamp from the runtime
@@ -461,17 +457,17 @@ A replay SHALL NOT lower the event-time high-water mark.
 - **WHEN** a class declares `c.correctionWindow(60_000)` without declaring a policy, and an input arrives whose event time is older than the window
 - **THEN** the input SHALL be processed as an arrival (not dropped), since declaring a window must never silently start dropping data
 
-### Requirement: Java SDK implements the steps operator task-journal and TaskCommit handshake
+### Requirement: Java SDK implements the steps relay task-journal and TaskCommit handshake
 
 The Java SDK SHALL implement the `steps-task-journal` capability. At every task barrier of a durable structured steps class, the shared core SHALL ship `TaskCommit` (tag 28) on the SDK's behalf, carrying the cells that ran, each with the seq of its last effect record in the stage and the plugin channels it wrote on, and the channel-tagged handoff blobs, and SHALL await the controller's `TaskCommitResponse` (tag 29) under the same `reference_id` for up to 30 seconds. A failure or timeout SHALL produce a terminal error and trigger compensation. The Java runtime SHALL hand the core each invocation's changes and outputs as it does for a flow tasklet, and the core SHALL settle them into the cell's effect record and send it before the barrier; the runtime SHALL keep no staged output of its own.
 
 The SDK SHALL declare no inter-tasklet codec and SHALL offer no method to declare one: it hands the core bytes, so the core derives the journal codec from the channel's kind. Classes that opt out of persistence SHALL skip the journal and the handshake entirely, preserving re-run-from-top, and their plugin outputs SHALL reach the wire with their channel, key and metadata as an opted-out stream's do.
 
-On resume, the SDK SHALL read the journal state shipped on `AddOperator.task_journal`, SHALL **skip** tasks already recorded as committed, and SHALL seed the next task's batch from the journaled handoff via the channel codec.
+On resume, the SDK SHALL read the journal state shipped on `AddRelay.task_journal`, SHALL **skip** tasks already recorded as committed, and SHALL seed the next task's batch from the journaled handoff via the channel codec.
 
 #### Scenario: A committed task is skipped on resume, not re-run
 
-- **WHEN** a durable steps class commits task A, then the runner is SIGKILLed, then the operator is rebound with a journal recording task A as committed
+- **WHEN** a durable steps class commits task A, then the runner is SIGKILLed, then the relay is rebound with a journal recording task A as committed
 - **THEN** task A's `run` SHALL NOT be invoked again, and task B SHALL run seeded from task A's journaled handoff
 
 #### Scenario: A handoff is journaled with nothing declared
@@ -494,13 +490,13 @@ On resume, the SDK SHALL read the journal state shipped on `AddOperator.task_jou
 - **WHEN** the controller does not answer a `TaskCommit` within 30 seconds
 - **THEN** the SDK SHALL treat the task as terminally failed and SHALL run the compensation plan
 
-### Requirement: Java SDK implements the steps operator durable loop and suspension
+### Requirement: Java SDK implements the steps relay durable loop and suspension
 
-The Java SDK SHALL implement the `steps-durable-loop` and `durable-suspension` capabilities. `Operator` SHALL declare `each()` returning `ONCE` (the default, byte-identical to the current single pass), `PER_INPUT` (one iteration per inbox item), or `CHAINED` (each iteration seeded by the previous iteration's terminal handoff), and no wake setting: a sleeping instance's wake deadline is the earliest pending processing-time timer its tasklets registered.
+The Java SDK SHALL implement the `steps-durable-loop` and `durable-suspension` capabilities. `Relay` SHALL declare `each()` returning `ONCE` (the default, byte-identical to the current single pass), `PER_INPUT` (one iteration per inbox item), or `CHAINED` (each iteration seeded by the previous iteration's terminal handoff), and no wake setting: a sleeping instance's wake deadline is the earliest pending processing-time timer its tasklets registered.
 
 At every iteration boundary the SDK SHALL ship `IterCommit` (tag 30) carrying the iteration index, the consumed input-log offset when the iteration's input carried one and no offset otherwise, the terminal handoff, and a tasklet's completion request with its result when one was made, and SHALL await `IterCommitResponse` (tag 31). A durable `CHAINED` loop whose terminal task releases no inter-tasklet channel, whether it owns no output channel at all or only a plugin-bound one, which the runtime gives no journal codec, SHALL be rejected by the core when the class is declared, and SHALL NOT be re-judged by this SDK, exactly as the branching-chained-loop refusal already is: the rule belongs to the registration every host reaches, not to one SDK's builder.
 
-When the loop is idle past the park hysteresis, the SDK SHALL ship `IterPark` (tag 32) carrying the earliest pending processing-time timer across the instance's Cells as its wake deadline (`0` when none) and exit **without** `OperatorCompleted`, yielding a parked outcome. The offset an input carries SHALL be read from the inbound `flz.offset` metadata key by the shared core on the SDK's behalf; the SDK SHALL read no offset key of its own.
+When the loop is idle past the park hysteresis, the SDK SHALL ship `IterPark` (tag 32) carrying the earliest pending processing-time timer across the instance's Cells as its wake deadline (`0` when none) and exit **without** `RelayCompleted`, yielding a parked outcome. The offset an input carries SHALL be read from the inbound `flz.offset` metadata key by the shared core on the SDK's behalf; the SDK SHALL read no offset key of its own.
 
 #### Scenario: Each loop iteration commits at its boundary
 
@@ -510,7 +506,7 @@ When the loop is idle past the park hysteresis, the SDK SHALL ship `IterPark` (t
 #### Scenario: An idle loop parks instead of completing
 
 - **WHEN** a durable looping steps class has no inbox item for longer than the park hysteresis
-- **THEN** the SDK SHALL ship `IterPark` and exit without shipping `OperatorCompleted`
+- **THEN** the SDK SHALL ship `IterPark` and exit without shipping `RelayCompleted`
 
 #### Scenario: A resumed loop restarts at the journaled iteration
 
@@ -524,19 +520,19 @@ When the loop is idle past the park hysteresis, the SDK SHALL ship `IterPark` (t
 
 ### Requirement: Java SDK implements the steps cell retry ladder
 
-The Java SDK SHALL implement the `steps-cell-retry` capability. The ladder's budget SHALL be the consuming edge's `retryMax()` / `retryBackoffMs()` (default 3 total attempts, 50 ms base), the same builder calls and the same `RetryPolicy` a flow operator's edge declares; `Operator` SHALL declare no `retryAttempts()` or `retryBackoff()`. Only the failing cell SHALL re-run its batch; siblings SHALL stay buffered at the barrier, and each attempt SHALL use a fresh sink so a failed attempt's staged output is dropped rather than double-emitted.
+The Java SDK SHALL implement the `steps-cell-retry` capability. The ladder's budget SHALL be the consuming edge's `retryMax()` / `retryBackoffMs()` (default 3 total attempts, 50 ms base), the same builder calls and the same `RetryPolicy` a flow relay's edge declares; `Relay` SHALL declare no `retryAttempts()` or `retryBackoff()`. Only the failing cell SHALL re-run its batch; siblings SHALL stay buffered at the barrier, and each attempt SHALL use a fresh sink so a failed attempt's staged output is dropped rather than double-emitted.
 
-Backoff SHALL reuse the dead-letter ladder's helper (`base × 2^(n-1)` with ±50% jitter, capped at 5 s) and the wait SHALL be cancellation-aware, so a stop or `maxDuration` ends it at once. Retry is strictly pre-commit: a journaled task SHALL never be retried. `retryMax(1)` SHALL be a single attempt and `retryMax(0)` SHALL be refused at registration with `topology.retry_max_zero`, as on a flow operator. A `StepsException` SHALL carry a `nonRetryable` flag; a thrown `RuntimeException` SHALL stay retryable.
+Backoff SHALL reuse the dead-letter ladder's helper (`base × 2^(n-1)` with ±50% jitter, capped at 5 s) and the wait SHALL be cancellation-aware, so a stop or `maxDuration` ends it at once. Retry is strictly pre-commit: a journaled task SHALL never be retried. `retryMax(1)` SHALL be a single attempt and `retryMax(0)` SHALL be refused at registration with `topology.retry_max_zero`, as on a flow relay. A `StepsException` SHALL carry a `nonRetryable` flag; a thrown `RuntimeException` SHALL stay retryable.
 
 #### Scenario: A transient cell failure recovers on retry
 
 - **WHEN** a steps cell's batch throws on its first attempt and succeeds on its second
-- **THEN** the operator SHALL complete successfully, only the failing cell SHALL have re-run, and its first attempt's staged output SHALL NOT be emitted
+- **THEN** the relay SHALL complete successfully, only the failing cell SHALL have re-run, and its first attempt's staged output SHALL NOT be emitted
 
 #### Scenario: An exhausted ladder compensates
 
 - **WHEN** a steps cell fails all three attempts
-- **THEN** the operator SHALL abort and run the compensation plan
+- **THEN** the relay SHALL abort and run the compensation plan
 
 #### Scenario: A non-retryable error skips the ladder
 
@@ -545,8 +541,8 @@ Backoff SHALL reuse the dead-letter ladder's helper (`base × 2^(n-1)` with ±50
 
 #### Scenario: The edge's budget bounds the ladder
 
-- **WHEN** a steps operator wires `c.input(String.class, "in").retryMax(2).into(Flaky.class)` and `Flaky` throws on every attempt
-- **THEN** the cell SHALL run exactly twice before the operator aborts, and `retryMax(0)` on that edge SHALL be refused at `registerFactory` naming `topology.retry_max_zero`
+- **WHEN** a steps relay wires `c.input(String.class, "in").retryMax(2).into(Flaky.class)` and `Flaky` throws on every attempt
+- **THEN** the cell SHALL run exactly twice before the relay aborts, and `retryMax(0)` on that edge SHALL be refused at `registerFactory` naming `topology.retry_max_zero`
 
 ### Requirement: Java SDK implements steps loop rewind
 
@@ -571,11 +567,11 @@ A rewind SHALL NOT replay inputs: the controller truncates the inbox at each ite
 - **WHEN** a looping steps class is rewound to iteration 1
 - **THEN** the inputs consumed by iterations 2 and 3 SHALL NOT be re-delivered; the loop SHALL resume waiting, and the next inbound message SHALL become the next iteration
 
-### Requirement: Java SDK implements steps operator branching
+### Requirement: Java SDK implements steps relay branching
 
 The Java SDK SHALL implement the `steps-branching` capability. `StepsSpec` SHALL model the task graph as a tree (`order` plus `children`) rather than the current `List<Integer> chain`; a linear chain SHALL be the degenerate single-child case. `StepsSpec.linearChain()`'s refusal of any non-linear graph SHALL be removed and replaced with validation over the tree.
 
-The SDK SHALL declare the tree's leaf tasks to the controller via the `leaf_tasks` key of `AddOperatorResponse.metadata`. Fan-in SHALL NOT silently overwrite an edge. Compensation SHALL run in reverse-topological order, which the existing BFS numbering already yields — the compensation planner SHALL NOT be changed.
+The SDK SHALL declare the tree's leaf tasks to the controller via the `leaf_tasks` key of `AddRelayResponse.metadata`. Fan-in SHALL NOT silently overwrite an edge. Compensation SHALL run in reverse-topological order, which the existing BFS numbering already yields — the compensation planner SHALL NOT be changed.
 
 #### Scenario: A branching chain runs its branches and joins
 
@@ -606,36 +602,36 @@ The Java SDK's `data_heartbeat` frame SHALL carry the same metrics the Rust SDK 
 - **WHEN** a Java runner stops making dispatch progress while inputs continue to arrive
 - **THEN** the heartbeat's `dispatches` count SHALL stop advancing while the runner keeps sending heartbeats, giving the controller the signal it needs to localize the stall
 
-### Requirement: Operator Type Declaration
+### Requirement: Relay Type Declaration
 
-The Java SDK SHALL provide `FlezhaRunner.registerFactory(Class<? extends Operator>)` and its inverse `FlezhaRunner.unregisterFactory(Class<? extends Operator>)` as chainable builder methods, `registerFactory` reading the run from the class's `run()` and refusing a class that is neither an operator nor a short form with a `FlezhaException` whose code is `topology.no_operator_exported`, callable **before and after** `.start()`/`.run()`. For each declared Operator class the SDK SHALL: (a) instantiate the class via its public no-arg constructor; (b) call its `factoryId()` method to obtain the controller-facing factory id; (c) call its `channels(ChannelBuilder)` method exactly once — the builder being the producer-first graph builder of `sdk-graph-authoring` — and freeze the resulting `OperatorTopology`; (d) verify wiring constraints (entry-channel deserializability, type-equality between a flow operator's payload type and its consumer Tasklets' input types, node reachability from the entry, at most one output channel per node, acyclicity, node-identity and channel-name uniqueness, static-mode and dynamic-mode default-impl detection); (e) record `(factoryId → topology)` in the class registry. The registry SHALL stay mutable after `.start()` for as long as the runner is open: `registerFactory` and its `unregisterFactory` inverse are legal on a started runner, and every post-start change SHALL re-sync the runner's full current factory set rather than a delta — the set the next connect/reconnect init frame carries to the controller. A started runner that has been closed SHALL refuse every `registerFactory`/`unregisterFactory` call with an `IllegalStateException` naming the closed runner, and the refused call SHALL NOT reach the class registries or the core — `.close()` destroys the core context, so a declaration made afterwards would otherwise carry a freed handle back across the JNI boundary. A never-started runner has no context to free, so `.close()` on one leaves it mutable, as the runner-lifecycle requirement already states. `unregisterFactory` SHALL throw `FlezhaException` with the code `runtime.class_not_registered` naming the factory id when that id is not defined on this runner, and with the code `runtime.operator_type_in_use` naming the factory id when the runner is started and live operator instances of it exist, leaving the type defined. There SHALL be no `OperatorHandler`-style factory registration in the public surface.
+The Java SDK SHALL provide `FlezhaRunner.registerFactory(Class<? extends Relay>)` and its inverse `FlezhaRunner.unregisterFactory(Class<? extends Relay>)` as chainable builder methods, `registerFactory` reading the run from the class's `run()` and refusing a class that is neither a relay nor a short form with a `FlezhaException` whose code is `topology.no_relay_exported`, callable **before and after** `.start()`/`.run()`. For each declared Relay class the SDK SHALL: (a) instantiate the class via its public no-arg constructor; (b) call its `factoryId()` method to obtain the controller-facing factory id; (c) call its `channels(ChannelBuilder)` method exactly once — the builder being the producer-first graph builder of `sdk-graph-authoring` — and freeze the resulting `RelayTopology`; (d) verify wiring constraints (entry-channel deserializability, type-equality between a flow relay's payload type and its consumer Tasklets' input types, node reachability from the entry, at most one output channel per node, acyclicity, node-identity and channel-name uniqueness, static-mode and dynamic-mode default-impl detection); (e) record `(factoryId → topology)` in the class registry. The registry SHALL stay mutable after `.start()` for as long as the runner is open: `registerFactory` and its `unregisterFactory` inverse are legal on a started runner, and every post-start change SHALL re-sync the runner's full current factory set rather than a delta — the set the next connect/reconnect init frame carries to the controller. A started runner that has been closed SHALL refuse every `registerFactory`/`unregisterFactory` call with an `IllegalStateException` naming the closed runner, and the refused call SHALL NOT reach the class registries or the core — `.close()` destroys the core context, so a declaration made afterwards would otherwise carry a freed handle back across the JNI boundary. A never-started runner has no context to free, so `.close()` on one leaves it mutable, as the runner-lifecycle requirement already states. `unregisterFactory` SHALL throw `FlezhaException` with the code `runtime.class_not_registered` naming the factory id when that id is not defined on this runner, and with the code `runtime.relay_type_in_use` naming the factory id when the runner is started and live relay instances of it exist, leaving the type defined. There SHALL be no `RelayHandler`-style factory registration in the public surface.
 
-Dynamic cell mode SHALL be supported: a Tasklet reached by a consumer edge declaring `keyBy`, declaring no `@Tasklet.Spec` `keys`, SHALL be declared successfully and create Cells lazily per key at dispatch time, per the `operator-state-persistence` dynamic-cell behaviour. Eviction SHALL be off by default (`@Tasklet.Spec` `idleTtlSeconds` is 0); when a TTL is declared, the per-Tasklet reaper SHALL evict idle Cells destructively by shipping `delete_cell_state`, and a recreated Cell SHALL cold-start fresh rather than restore from disk.
+Dynamic cell mode SHALL be supported: a Tasklet reached by a consumer edge declaring `keyBy`, declaring no `@Tasklet.Spec` `keys`, SHALL be declared successfully and create Cells lazily per key at dispatch time, per the `relay-state-persistence` dynamic-cell behaviour. Eviction SHALL be off by default (`@Tasklet.Spec` `idleTtlSeconds` is 0); when a TTL is declared, the per-Tasklet reaper SHALL evict idle Cells destructively by shipping `delete_cell_state`, and a recreated Cell SHALL cold-start fresh rather than restore from disk.
 
 Because Java's type erasure precludes Rust's compile-time topology refusals, every constraint Rust enforces at compile time SHALL be enforced at declaration time, throwing `FlezhaException` whose code is the code of the corresponding Rust `TopologyIssue` variant and whose message carries the same diagnostic content.
 
-#### Scenario: Declaring a flow operator class before start() succeeds
-- **WHEN** user code calls `Flezha.createRunner("my_app").registerFactory(MarketOperator.class).start()`
-- **THEN** the handshake init JSON SHALL include `"market"` (the value `MarketOperator::factoryId` returns) in `factory_ids`, and subsequent `AddOperator{factory_id:"market"}` commands SHALL succeed by spawning an `OperatorInstance`
+#### Scenario: Declaring a flow relay class before start() succeeds
+- **WHEN** user code calls `Flezha.createRunner("my_app").registerFactory(MarketRelay.class).start()`
+- **THEN** the handshake init JSON SHALL include `"market"` (the value `MarketRelay::factoryId` returns) in `factory_ids`, and subsequent `AddRelay{factory_id:"market"}` commands SHALL succeed by spawning a `RelayInstance`
 
-#### Scenario: Declaring an operator type after start() is accepted
+#### Scenario: Declaring a relay type after start() is accepted
 - **WHEN** user code calls `.registerFactory(...)` on a started `FlezhaRunner` already declaring `"market"`, for a class whose `factoryId()` returns `"orders"`
 - **THEN** the call SHALL succeed and return the runner, the new class SHALL be declared to the core immediately, and the runner's declared set SHALL become the full set `{"market", "orders"}` the next connect/reconnect init frame carries
 
-#### Scenario: Duplicate factoryId across two flow operator classes is rejected
-- **WHEN** two distinct Operator classes both return `"market"` from `factoryId()` and both are declared on the same builder
+#### Scenario: Duplicate factoryId across two flow relay classes is rejected
+- **WHEN** two distinct Relay classes both return `"market"` from `factoryId()` and both are declared on the same builder
 - **THEN** the second `.registerFactory(...)` call SHALL throw a `FlezhaException` with the code `topology.duplicate_factory_id`, naming the duplicate factoryId
 
 #### Scenario: Wiring mismatch fails declaration with a diagnosable error
-- **WHEN** an Operator wires `.into(OhlcTasklet.class)` onto `ParseTasklet`'s output stream but `ParseTasklet.outputType()` returns `Trade.class` while `OhlcTasklet.inputType()` returns `Candle.class`
+- **WHEN** a Relay wires `.into(OhlcTasklet.class)` onto `ParseTasklet`'s output stream but `ParseTasklet.outputType()` returns `Trade.class` while `OhlcTasklet.inputType()` returns `Candle.class`
 - **THEN** `.registerFactory(...)` SHALL throw `FlezhaException` whose message names the channel, the stream's payload type (`Trade`), and the consumer-input type (`Candle`)
 
 #### Scenario: Typed entry channel deserializes at the edge
-- **WHEN** an Operator declares `c.input(Trade.class, "trade.raw").into(ParseTasklet.class)` and a JSON-encoded Trade arrives
+- **WHEN** a Relay declares `c.input(Trade.class, "trade.raw").into(ParseTasklet.class)` and a JSON-encoded Trade arrives
 - **THEN** `.registerFactory(...)` SHALL succeed and `ParseTasklet.run` SHALL receive the Jackson-deserialized `Trade`, per the typed-entry-input contract of `sdk-graph-authoring`
 
 #### Scenario: Unreachable node fails declaration
-- **WHEN** an Operator's `channels(c)` wires a Tasklet that is not reachable from the entry channel
+- **WHEN** a Relay's `channels(c)` wires a Tasklet that is not reachable from the entry channel
 - **THEN** `.registerFactory(...)` SHALL throw `FlezhaException` naming the unreachable Tasklet
 
 #### Scenario: Static-mode tasklet that declares no cellsFor is rejected
@@ -643,7 +639,7 @@ Because Java's type erasure precludes Rust's compile-time topology refusals, eve
 - **THEN** `.registerFactory(...)` SHALL throw `FlezhaException` naming the Tasklet and stating that a static-mode tasklet must declare `cellsFor`
 
 #### Scenario: A declared hook needs no second declaration
-- **WHEN** a steps operator Tasklet declares `compensate` and nothing else about it
+- **WHEN** a steps relay Tasklet declares `compensate` and nothing else about it
 - **THEN** `.registerFactory(...)` SHALL record it as compensable and the class declaration shipped to the controller SHALL carry `compensate_overridden` for it, with no further member written by the author
 
 #### Scenario: Dynamic-mode tasklet declares and creates cells lazily
@@ -660,9 +656,9 @@ Because Java's type erasure precludes Rust's compile-time topology refusals, eve
 - **THEN** the call SHALL throw `FlezhaException` with the code `runtime.class_not_registered`, naming the class's factory id, and the runner's declared set SHALL be unchanged
 
 #### Scenario: Removing a type with live instances is refused and keeps it defined
-- **GIVEN** a started runner declaring `"market"` with at least one live operator instance of that factory
-- **WHEN** code calls `.unregisterFactory(MarketOperator.class)`
-- **THEN** the call SHALL throw `FlezhaException` with the code `runtime.operator_type_in_use`, naming `"market"`, the type SHALL remain defined and registered, and no factory set SHALL be shipped
+- **GIVEN** a started runner declaring `"market"` with at least one live relay instance of that factory
+- **WHEN** code calls `.unregisterFactory(MarketRelay.class)`
+- **THEN** the call SHALL throw `FlezhaException` with the code `runtime.relay_type_in_use`, naming `"market"`, the type SHALL remain defined and registered, and no factory set SHALL be shipped
 
 ### Requirement: Runner process singleton guard
 
@@ -691,7 +687,7 @@ The Java SDK SHALL allow at most one runner to be **started** per JVM process. `
 
 ### Requirement: Runner lifecycle — start, run, awaitTermination, close
 
-`FlezhaRunner.start()` SHALL connect (per the `Java SDK Entry Point` requirement) and return `this` without blocking the calling thread for the runner's ongoing lifetime. `FlezhaRunner.awaitTermination()` SHALL block the calling thread until the runner shuts down (via `.close()`, SIGTERM-triggered graceful shutdown, or a controller-driven stop), replacing any user-authored keep-alive loop; called on a never-started runner it SHALL throw `IllegalStateException` ("runner not started"), as SHALL `getOperators()`. `FlezhaRunner.run()` SHALL be exactly `.start()` followed by `awaitTermination()`, with no independently-implemented blocking logic. `FlezhaRunner` SHALL implement `AutoCloseable`; `.close()` on a started runner SHALL run the existing graceful-shutdown sequence (ship-fresh-state-on-sdk-shutdown), release the singleton slot, and cause any thread blocked in `awaitTermination()` to return; `.close()` on a never-started runner SHALL be a no-op; `.close()` SHALL be idempotent.
+`FlezhaRunner.start()` SHALL connect (per the `Java SDK Entry Point` requirement) and return `this` without blocking the calling thread for the runner's ongoing lifetime. `FlezhaRunner.awaitTermination()` SHALL block the calling thread until the runner shuts down (via `.close()`, SIGTERM-triggered graceful shutdown, or a controller-driven stop), replacing any user-authored keep-alive loop; called on a never-started runner it SHALL throw `IllegalStateException` ("runner not started"), as SHALL `getRelays()`. `FlezhaRunner.run()` SHALL be exactly `.start()` followed by `awaitTermination()`, with no independently-implemented blocking logic. `FlezhaRunner` SHALL implement `AutoCloseable`; `.close()` on a started runner SHALL run the existing graceful-shutdown sequence (ship-fresh-state-on-sdk-shutdown), release the singleton slot, and cause any thread blocked in `awaitTermination()` to return; `.close()` on a never-started runner SHALL be a no-op; `.close()` SHALL be idempotent.
 
 #### Scenario: start() returns immediately after the handshake, before shutdown
 - **WHEN** an SDK user calls `.start()` on a runner
@@ -709,7 +705,7 @@ The Java SDK SHALL allow at most one runner to be **started** per JVM process. `
 
 #### Scenario: Pre-start lifecycle calls
 - **GIVEN** a `FlezhaRunner` created but never started
-- **WHEN** code calls `.awaitTermination()` or `.getOperators()`
+- **WHEN** code calls `.awaitTermination()` or `.getRelays()`
 - **THEN** each SHALL throw `IllegalStateException` stating the runner is not started
 - **AND** calling `.close()` on the same never-started runner SHALL return without effect
 
@@ -734,7 +730,7 @@ The Java SDK SHALL allow at most one runner to be **started** per JVM process. `
 
 Each Cell SHALL invoke `run` on its own Tasklet instance, as the Rust SDK does by holding one Tasklet instance per Cell alongside that Cell's State, so that a class authored against either SDK means the same thing.
 
-Today `OperatorInstance` builds one Tasklet per `TaskletDispatcher` and `TaskletDispatcher` invokes `run` on that single object for every Cell it owns — static-key, keyless, and dynamic alike. The per-Cell instances it also constructs are used only for `initState` and a `schemaVersion()` read. No instance-level lock guards `run`; the per-Cell `stateLock` and `changeBufferLock` are distinct objects per Cell and serialise nothing between Cells, which drain concurrently on the worker pool. Any mutable field on a user's Tasklet is therefore a shared, unsynchronised channel across Cell keys.
+Today `RelayInstance` builds one Tasklet per `TaskletDispatcher` and `TaskletDispatcher` invokes `run` on that single object for every Cell it owns — static-key, keyless, and dynamic alike. The per-Cell instances it also constructs are used only for `initState` and a `schemaVersion()` read. No instance-level lock guards `run`; the per-Cell `stateLock` and `changeBufferLock` are distinct objects per Cell and serialise nothing between Cells, which drain concurrently on the worker pool. Any mutable field on a user's Tasklet is therefore a shared, unsynchronised channel across Cell keys.
 
 #### Scenario: Instance state does not leak between Cell keys
 
@@ -831,14 +827,14 @@ A snapshot answered through the `SnapshotRequest` activation SHALL reach the wir
 
 ### Requirement: The Java SDK SHALL ship its declared compact_after_bytes to the Controller
 
-The Java SDK SHALL place its Tasklet's declared `compactAfterBytes` value into the `AddOperator` metadata the Controller reads, so the per-Tasklet threshold is resolvable. Today the value reaches `TaskletDescriptor` and stops — `compact_after_bytes` appears nowhere in the Java SDK's metadata construction, so a user's override changes nothing.
+The Java SDK SHALL place its Tasklet's declared `compactAfterBytes` value into the `AddRelay` metadata the Controller reads, so the per-Tasklet threshold is resolvable. Today the value reaches `TaskletDescriptor` and stops — `compact_after_bytes` appears nowhere in the Java SDK's metadata construction, so a user's override changes nothing.
 
 The **default value** itself is owned by `java-state-guard-and-dead-knobs`, which aligns it with Rust and the Controller and runs first. This requirement covers only the transport of whatever value is declared.
 
 #### Scenario: A declared override reaches the Controller
 
 - **WHEN** a Java Tasklet declares a `compactAfterBytes` different from the default
-- **THEN** the SDK SHALL ship that value in the `AddOperator` metadata
+- **THEN** the SDK SHALL ship that value in the `AddRelay` metadata
 - **AND** the Controller SHALL resolve it as that Tasklet's size threshold
 
 ### Requirement: The Java runtime is a poll host over the shared core
@@ -855,7 +851,7 @@ thread's carrier. The runtime SHALL NOT reimplement kernel mechanisms the
 core owns — command handling, flushing, credit, DLQ parks, timer wheels, the
 steps driver, reconnect, wire framing — and the classes that did
 (`runtime/control` handlers, `CellFlusher`, `CreditWindow`, `DlqPark`,
-`TimerWheel`, `OperatorRunner`, the reconnect loop, `AckRegistry`)
+`TimerWheel`, the reconnect loop, `AckRegistry`)
 SHALL be deleted, not shimmed. The Java SDK SHALL encode and decode the
 Activation/ActivationResult schema byte-identically to the core's hex-pinned
 fixtures, reproduced in a Java fixture suite.
@@ -998,37 +994,37 @@ of mixed-language runners SHALL not have to except the Java ones.
 - **WHEN** the application supplies its own logger through the runner builder
 - **THEN** the variable SHALL NOT filter what reaches that logger, which decides for itself what it writes
 
-### Requirement: The operator base and its settings tree live in one package
+### Requirement: The relay base and its settings tree live in one package
 
-The Java SDK SHALL place the one authoring base, `Operator`, and its settings tree (`Run`,
+The Java SDK SHALL place the one authoring base, `Relay`, and its settings tree (`Run`,
 `Exactly`, `Ack`, `Durable`, `Each`, `OnFailure` and their members) in
-`com.flezha.sdk.operator`, with the steps operator supporting types (`OperatorCtx`,
-`StepsLoopBody` and the steps operator exception types) beside them.
+`com.flezha.sdk.relay`, with the steps relay supporting types (`RelayCtx`,
+`StepsLoopBody` and the steps relay exception types) beside them.
 
 #### Scenario: The one base and its settings tree resolve from one package
 
 - **WHEN** the authoring surface is enumerated
-- **THEN** `Operator`, `Run`, `Durable`, `Each` and `OnFailure` SHALL all resolve from
-  `com.flezha.sdk.operator`, and no operator type SHALL resolve from a package of its own
+- **THEN** `Relay`, `Run`, `Durable`, `Each` and `OnFailure` SHALL all resolve from
+  `com.flezha.sdk.relay`, and no relay type SHALL resolve from a package of its own
 
-### Requirement: Every operator declares its graph in `channels` on the `Operator` base
+### Requirement: Every relay declares its graph in `channels` on the `Relay` base
 
-`channels(ChannelBuilder)` SHALL be declared once, abstract, on `com.flezha.sdk.operator.Operator`, and `Operator` SHALL carry no `tasklets` method. A steps class SHALL be built through the same `OperatorTopologyBuilder` entry a flow class is, which reads the run from the class's `run()`, and SHALL be registered as the same `OperatorTopology` a flow class is; the `@Tasklet` processor SHALL emit `channels` for a generated operator of either run. `Operator`'s settings SHALL be `description()`, `maxDuration()`, `run()` and `durable()`; `retryAttempts()`, `retryBackoff()`, `barrierRetryAttempts()` and `wakeAfter()` SHALL NOT exist, and no `FlezhaException` SHALL carry the code `topology.zero_retry_backoff`. The javadoc of `Operator`, `com.flezha.sdk.operator.package-info` and `com.flezha.sdk.channel.package-info` SHALL describe a steps operator as a graph of tasklets committed stage by stage and resumed at the stage, and SHALL NOT describe it as ordered steps, a step sequence, or resuming at a step.
+`channels(ChannelBuilder)` SHALL be declared once, abstract, on `com.flezha.sdk.relay.Relay`, and `Relay` SHALL carry no `tasklets` method. A steps class SHALL be built through the same `RelayTopologyBuilder` entry a flow class is, which reads the run from the class's `run()`, and SHALL be registered as the same `RelayTopology` a flow class is; the `@Tasklet` processor SHALL emit `channels` for a generated relay of either run. `Relay`'s settings SHALL be `description()`, `maxDuration()`, `run()` and `durable()`; `retryAttempts()`, `retryBackoff()`, `barrierRetryAttempts()` and `wakeAfter()` SHALL NOT exist, and no `FlezhaException` SHALL carry the code `topology.zero_retry_backoff`. The javadoc of `Relay`, `com.flezha.sdk.relay.package-info` and `com.flezha.sdk.channel.package-info` SHALL describe a steps relay as a graph of tasklets committed stage by stage and resumed at the stage, and SHALL NOT describe it as ordered steps, a step sequence, or resuming at a step.
 
 #### Scenario: A steps class writes channels
 
-- **WHEN** a class implementing `Operator` overrides `channels(ChannelBuilder c)` and wires `c.input(OrderTicket.class, "order").into(ReserveFunds.class)`
-- **THEN** `registerFactory` SHALL declare a steps operator whose graph is that wiring, and a class that instead declares `tasklets(ChannelBuilder)` SHALL compile only as an unrelated method the runtime never calls, its `channels` being abstract and unimplemented
+- **WHEN** a class implementing `Relay` overrides `channels(ChannelBuilder c)` and wires `c.input(OrderTicket.class, "order").into(ReserveFunds.class)`
+- **THEN** `registerFactory` SHALL declare a steps relay whose graph is that wiring, and a class that instead declares `tasklets(ChannelBuilder)` SHALL compile only as an unrelated method the runtime never calls, its `channels` being abstract and unimplemented
 
-#### Scenario: A class that is neither an operator nor a short form is refused at registration
+#### Scenario: A class that is neither a relay nor a short form is refused at registration
 
-- **WHEN** `registerFactory` is handed a class that neither implements `Operator` nor carries `@Operator`
-- **THEN** it SHALL throw `FlezhaException` whose code is `topology.no_operator_exported`, naming the class
+- **WHEN** `registerFactory` is handed a class that neither implements `Relay` nor carries `@Relay`
+- **THEN** it SHALL throw `FlezhaException` whose code is `topology.no_relay_exported`, naming the class
 
 #### Scenario: The retry knobs are gone from the interface
 
-- **WHEN** a class overrides `retryAttempts()` on `Operator`
-- **THEN** compilation SHALL fail, because the interface declares no such method, and the edge's `retryMax` / `retryBackoffMs` SHALL be the only retry declaration a steps operator can write
+- **WHEN** a class overrides `retryAttempts()` on `Relay`
+- **THEN** compilation SHALL fail, because the interface declares no such method, and the edge's `retryMax` / `retryBackoffMs` SHALL be the only retry declaration a steps relay can write
 
 #### Scenario: The javadoc speaks in the graph vocabulary
 
@@ -1037,7 +1033,7 @@ The Java SDK SHALL place the one authoring base, `Operator`, and its settings tr
 
 ### Requirement: A Java setting under the wrong parent does not compile, and a steps class has no wake
 
-The settings tree SHALL make a setting under the wrong parent a type error: the tier, its checkpoint and its correction window are members of `Run.Flow`'s `Exactly`, and a loop shape and failure mode are members of `Run.Steps`, so neither can be written under the other. The one combination the types allow and the guarantee cannot keep, `Exactly.EffectivelyOnce` with `Durable.Memory`, SHALL be refused by the core at `registerFactory` with `topology.effectively_once_without_persistence`, thrown as `FlezhaException` with that code. `Operator` SHALL declare no `wakeAfter()`, and the declaration SHALL carry no `wake_after_ms`. Inside a steps instance, `OperatorInstance.runItem` SHALL attach a `TimerSession` to the `EmitContext` exactly as it does for a flow instance, for `run` and for `onTimer`, so `timerAfter`, `timerAtEventTime`, `cancelProcessingTimeTimer` and `cancelEventTimeTimer` work in both runs; `compensate` SHALL attach none.
+The settings tree SHALL make a setting under the wrong parent a type error: the tier, its checkpoint and its correction window are members of `Run.Flow`'s `Exactly`, and a loop shape and failure mode are members of `Run.Steps`, so neither can be written under the other. The one combination the types allow and the guarantee cannot keep, `Exactly.EffectivelyOnce` with `Durable.Memory`, SHALL be refused by the core at `registerFactory` with `topology.effectively_once_without_persistence`, thrown as `FlezhaException` with that code. `Relay` SHALL declare no `wakeAfter()`, and the declaration SHALL carry no `wake_after_ms`. Inside a steps instance, `RelayInstance.runItem` SHALL attach a `TimerSession` to the `EmitContext` exactly as it does for a flow instance, for `run` and for `onTimer`, so `timerAfter`, `timerAtEventTime`, `cancelProcessingTimeTimer` and `cancelEventTimeTimer` work in both runs; `compensate` SHALL attach none.
 
 #### Scenario: A setting under the wrong parent does not compile
 
@@ -1051,12 +1047,12 @@ The settings tree SHALL make a setting under the wrong parent a type error: the 
 
 #### Scenario: A timer inside a steps tasklet fires
 
-- **WHEN** a tasklet of a running `PER_INPUT` steps operator calls `ctx.timerAfter(Duration.ofMillis(300))` in `run`
+- **WHEN** a tasklet of a running `PER_INPUT` steps relay calls `ctx.timerAfter(Duration.ofMillis(300))` in `run`
 - **THEN** the call SHALL answer the scheduled timestamp, the timer op SHALL reach the effect, and `onTimer` SHALL run on that Cell at that timestamp with `firedAt` equal to it, opening a pass at that tasklet
 
 #### Scenario: The retired wake method does not compile
 
-- **WHEN** a class implementing `Operator` writes `@Override public Optional<Duration> wakeAfter()`
+- **WHEN** a class implementing `Relay` writes `@Override public Optional<Duration> wakeAfter()`
 - **THEN** compilation fails, the interface declaring no such method
 
 ### Requirement: A change applies itself through the context

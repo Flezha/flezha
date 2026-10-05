@@ -18,6 +18,6 @@ EXIT CODES:
         is in flight follows it and exits with its outcome
     3   Controller not reachable (controller.unreachable)
     4   Refused for want of a token or a role (authz.*)
-    7   Partial drain: the timeout elapsed with Operators still local
+    7   Partial drain: the timeout elapsed with Relays still local
         (shutdown.partial_drain)
     Every code is listed in docs/errors.md.

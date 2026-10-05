@@ -9,7 +9,7 @@
 # an earlier module left running reads the value the current module set.
 #
 # The remedy is to state the quantity where the thing is built.
-# `Flezha.SDK.Hold.new/1` takes `:cap` and `Flezha.SDK.Operator.Server` takes
+# `Flezha.SDK.Hold.new/1` takes `:cap` and `Flezha.SDK.Relay.Server` takes
 # `:hold_cap`, so a test that needs a small reconnect ring says so and depends
 # on no global at all.
 #
@@ -157,7 +157,7 @@ sys.exit(naming_gate.walk_baselined(
     prefilter=lambda text: "System.put_env" in text,
     headline="a test sets an OS variable a runner reads while it is running:",
     hint="State the quantity where the thing is built - `Hold.new(cap: ...)`, "
-         "`start_operator(Op, hold_cap: ...)` - so no other holder in the run "
+         "`start_relay(Op, hold_cap: ...)` - so no other holder in the run "
          "reads it. A module that cannot goes in " + BASELINE + " with the "
          "reason.",
     ok_message=f"live env in tests OK ({len(VARIABLES)} runner-read variables)",

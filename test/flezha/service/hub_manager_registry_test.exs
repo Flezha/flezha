@@ -3,8 +3,8 @@ defmodule Flezha.Service.HubManagerRegistryTest do
   Multi-node-safe registry access.
 
   Pattern-matching a single-element `[{_node, pid}]` registry entry raises
-  `FunctionClauseError` the moment an operator is registered on more than one
-  node, which is the `flz operator list` crash. These tests exercise the shared
+  `FunctionClauseError` the moment a relay is registered on more than one
+  node, which is the `flz relay list` crash. These tests exercise the shared
   `HubManager.live_pid/1` resolver and inject a synthetic two-node registry entry
   to assert the consumers select the live/local pid instead of crashing.
   """
@@ -61,46 +61,46 @@ defmodule Flezha.Service.HubManagerRegistryTest do
       :ok
     end
 
-    test "get_all_operators/1 returns the live/local pid for an operator registered on two nodes" do
+    test "get_all_relays/1 returns the live/local pid for a relay registered on two nodes" do
       dead_node_pid = spawn(&NodeTestHelper.park/0)
       local_pid = self()
 
-      inject_operator(@namespace, "operator_mn", [
+      inject_relay(@namespace, "relay_mn", [
         {:dead@nohost, dead_node_pid},
         {node(), local_pid}
       ])
 
-      operators = HubManager.get_all_operators(@namespace)
+      relays = HubManager.get_all_relays(@namespace)
 
-      assert {"operator_mn", got_pid} =
-               Enum.find(operators, fn {id, _} -> id == "operator_mn" end)
+      assert {"relay_mn", got_pid} =
+               Enum.find(relays, fn {id, _} -> id == "relay_mn" end)
 
       assert got_pid == local_pid
     end
 
-    test "get_all_operators/1 omits an operator that has only dead-node entries" do
-      inject_operator(@namespace, "operator_dead", [{:dead@nohost, spawn(fn -> :ok end)}])
+    test "get_all_relays/1 omits a relay that has only dead-node entries" do
+      inject_relay(@namespace, "relay_dead", [{:dead@nohost, spawn(fn -> :ok end)}])
 
-      operators = HubManager.get_all_operators(@namespace)
+      relays = HubManager.get_all_relays(@namespace)
 
-      assert Enum.find(operators, fn {id, _} -> id == "operator_dead" end) == nil
+      assert Enum.find(relays, fn {id, _} -> id == "relay_dead" end) == nil
     end
 
-    test "flz operator list (Flezha.list_operators/1) lists a multi-node operator without crashing" do
-      # Backs `flz operator list` via OperatorManager.get_operator_ids → get_all_operators.
+    test "flz relay list (Flezha.list_relays/1) lists a multi-node relay without crashing" do
+      # Backs `flz relay list` via RelayManager.get_relay_ids → get_all_relays.
       dead_node_pid = spawn(&NodeTestHelper.park/0)
 
-      inject_operator(@namespace, "operator_cli_mn", [
+      inject_relay(@namespace, "relay_cli_mn", [
         {:dead@nohost, dead_node_pid},
         {node(), self()}
       ])
 
-      assert {:ok, ids} = Flezha.list_operators(@namespace)
-      assert "operator_cli_mn" in ids
+      assert {:ok, ids} = Flezha.list_relays(@namespace)
+      assert "relay_cli_mn" in ids
     end
   end
 
-  describe "operator_rows/1 health surface" do
+  describe "relay_rows/1 health surface" do
     @health_ns "mn_health_test"
 
     setup do
@@ -117,45 +117,45 @@ defmodule Flezha.Service.HubManagerRegistryTest do
 
     test "reflects the Convergence Loop's classified health, not the absent metadata key" do
       # `metadata[:health]` is a key nothing ever writes, so reading it reports
-      # `:unknown` forever even for a producing operator. `operator_rows/1`
-      # must read the loop's published per-operator health instead.
-      inject_operator(@health_ns, "operator_health", [{node(), self()}])
+      # `:unknown` forever even for a producing relay. `relay_rows/1`
+      # must read the loop's published per-relay health instead.
+      inject_relay(@health_ns, "relay_health", [{node(), self()}])
 
       Snapshot.publish(%{
-        operator_health:
+        relay_health:
           FlezhaTest.Helper.ConvergenceFixtures.verdicts([
-            {{:operator, {@health_ns, "operator_health"}}, :healthy}
+            {{:relay, {@health_ns, "relay_health"}}, :healthy}
           ])
       })
 
-      row = Enum.find(HubManager.operator_rows(@health_ns), &(&1.id == "operator_health"))
+      row = Enum.find(HubManager.relay_rows(@health_ns), &(&1.id == "relay_health"))
       assert row.health == :healthy
     end
 
-    test "a failed operator reads recovering inside the unmet-intent grace, failed past it" do
-      inject_operator(@health_ns, "operator_moving", [{node(), self()}])
+    test "a failed relay reads recovering inside the unmet-intent grace, failed past it" do
+      inject_relay(@health_ns, "relay_moving", [{node(), self()}])
 
       health_after = fn unmet_intent_ms ->
         Snapshot.publish(%{
-          operator_health:
+          relay_health:
             FlezhaTest.Helper.ConvergenceFixtures.verdicts([
-              {{:operator, {@health_ns, "operator_moving"}}, :failed}
+              {{:relay, {@health_ns, "relay_moving"}}, :failed}
             ]),
           unmet_intent_ms: unmet_intent_ms
         })
 
-        Enum.find(HubManager.operator_rows(@health_ns), &(&1.id == "operator_moving")).health
+        Enum.find(HubManager.relay_rows(@health_ns), &(&1.id == "relay_moving")).health
       end
 
       assert health_after.(2_000) == :recovering
       assert health_after.(500_000) == :failed
     end
 
-    test "an operator the loop has not yet observed reports :unknown, not a crash" do
-      inject_operator(@health_ns, "operator_unseen", [{node(), self()}])
-      Snapshot.publish(%{operator_health: %{}})
+    test "a relay the loop has not yet observed reports :unknown, not a crash" do
+      inject_relay(@health_ns, "relay_unseen", [{node(), self()}])
+      Snapshot.publish(%{relay_health: %{}})
 
-      row = Enum.find(HubManager.operator_rows(@health_ns), &(&1.id == "operator_unseen"))
+      row = Enum.find(HubManager.relay_rows(@health_ns), &(&1.id == "relay_unseen"))
       assert row.health == :unknown
     end
   end
@@ -171,7 +171,7 @@ defmodule Flezha.Service.HubManagerRegistryTest do
       # `durable_registry_pending?/0` reads EVERY running hub, so an unbound row
       # left by an earlier file answers for this one. Retire those hubs first —
       # and bring them back afterwards: `default` is shared suite-wide, and
-      # leaving it down makes every later `start_operator` fail
+      # leaving it down makes every later `start_relay` fail
       # `Validator.valid_namespace/1` with "no runners in namespace default".
       retired =
         HubManager.get_running_namespaces()
@@ -185,7 +185,7 @@ defmodule Flezha.Service.HubManagerRegistryTest do
 
       # Empty root so the unstarted-hub on-disk branch can never fire from
       # residue left by other suites — these assertions isolate the
-      # running-hub `dump`-vs-`get_all_operators` discriminator.
+      # running-hub `dump`-vs-`get_all_relays` discriminator.
       Application.put_env(:flezha, :process_hub_registry_root, root)
       Application.put_env(:flezha, :auto_restore_enabled, true)
 
@@ -194,17 +194,17 @@ defmodule Flezha.Service.HubManagerRegistryTest do
       :ok
     end
 
-    test "false when every durable operator is bound to a live pid" do
-      inject_operator(@pending_ns, "operator_bound", [{node(), self()}])
+    test "false when every durable relay is bound to a live pid" do
+      inject_relay(@pending_ns, "relay_bound", [{node(), self()}])
 
       refute HubManager.durable_registry_pending?()
     end
 
-    test "true when a durable operator has no live pid (replayed but not yet reseated)" do
+    test "true when a durable relay has no live pid (replayed but not yet reseated)" do
       # The DETS row survives a restart with a stale node entry, so `dump/1`
-      # counts it while `get_all_operators/1` (live-pid filtered) drops it — the
+      # counts it while `get_all_relays/1` (live-pid filtered) drops it — the
       # registry-loaded-but-unbound window.
-      inject_operator(@pending_ns, "operator_unbound", [{:dead@nohost, spawn(fn -> :ok end)}])
+      inject_relay(@pending_ns, "relay_unbound", [{:dead@nohost, spawn(fn -> :ok end)}])
 
       assert HubManager.durable_registry_pending?()
     end

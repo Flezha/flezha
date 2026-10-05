@@ -85,7 +85,7 @@ This covers the condition the core can observe — a queued direct activation wi
 `poll` — which is distinct from, and not a substitute for, the completion-pool growth rule.
 
 #### Scenario: A queued direct activation is promoted
-- **WHEN** a restore fold, snapshot request or steps operator step is queued with no thread inside `poll`
+- **WHEN** a restore fold, snapshot request or steps relay step is queued with no thread inside `poll`
   for the core's dwell
 - **THEN** the observation SHALL result in a thread entering `poll` and the activation SHALL be
   handed out

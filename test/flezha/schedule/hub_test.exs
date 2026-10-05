@@ -8,7 +8,7 @@ defmodule Flezha.Schedule.HubTest do
 
   alias Flezha.Schedule.{Hub, Job}
   alias Flezha.Service.HubManager
-  alias Flezha.Service.OperatorManager
+  alias Flezha.Service.RelayManager
   alias FlezhaTest.Helper.ScheduleTestHelper, as: Helper
 
   setup :set_mimic_global_until_exit
@@ -18,8 +18,8 @@ defmodule Flezha.Schedule.HubTest do
 
     # Belt and braces: no entry here is due, but a stray fire must not raise
     # inside a job process.
-    stub(OperatorManager, :start_steps, fn _ns, id, _factory, _init, _opts ->
-      {:ok, %{operator_id: id}}
+    stub(RelayManager, :start_steps, fn _ns, id, _factory, _init, _opts ->
+      {:ok, %{relay_id: id}}
     end)
 
     :ok
@@ -92,7 +92,7 @@ defmodule Flezha.Schedule.HubTest do
       :ok = :sys.resume(pid)
     end
 
-    test "the schedule hub stays invisible to the operator-oriented walkers" do
+    test "the schedule hub stays invisible to the relay-oriented walkers" do
       refute HubManager.schedule_hub_id() in HubManager.list_running_hub_ids()
       refute "flz_schedules" in HubManager.get_running_namespaces()
     end

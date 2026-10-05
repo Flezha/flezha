@@ -33,10 +33,10 @@ defmodule Flezha.Service.AdminTest do
 
   # Each verb's own smallest well-formed argument list: the calls below are
   # asserted on their refusal, never on their result.
-  defp args_for("Operator.start"), do: ~s([{"id":"o1"}])
-  defp args_for("Operator.send"), do: ~s(["o1", "hello", "in"])
-  defp args_for("Operator.stop"), do: ~s(["o1"])
-  defp args_for("PluginManager.enable"), do: ~s(["p1", {"provider": "operator_stdout"}])
+  defp args_for("Relay.start"), do: ~s([{"id":"o1"}])
+  defp args_for("Relay.send"), do: ~s(["o1", "hello", "in"])
+  defp args_for("Relay.stop"), do: ~s(["o1"])
+  defp args_for("PluginManager.enable"), do: ~s(["p1", {"provider": "relay_stdout"}])
   defp args_for("PluginManager.disable"), do: ~s(["p1", {}])
 
   # The door as a runner connection reaches it: the namespace it proved.
@@ -51,9 +51,9 @@ defmodule Flezha.Service.AdminTest do
       assert :ok = AuthZ.authorize(context, :"runner.connect", Scope.build(@ns))
 
       for action <- [
-            :"operator.start",
-            :"operator.stop",
-            :"operator.send",
+            :"relay.start",
+            :"relay.stop",
+            :"relay.send",
             :"plugin.enable",
             :"plugin.disable"
           ] do
@@ -64,7 +64,7 @@ defmodule Flezha.Service.AdminTest do
 
     test "the door refuses a start and the error names the missing grant" do
       assert {:error, %Flezha.Error{code: "authz.role_insufficient", class: :denied}} =
-               door("Operator.start", ~s([{"id":"o1"}]))
+               door("Relay.start", ~s([{"id":"o1"}]))
     end
   end
 
@@ -89,7 +89,7 @@ defmodule Flezha.Service.AdminTest do
       assert Session.runner_caller_context(@ns).roles == [:runner]
 
       assert {:error, %Flezha.Error{code: "authz.role_insufficient"}} =
-               door("Operator.stop", ~s(["o1"]))
+               door("Relay.stop", ~s(["o1"]))
     end
 
     test "a binding made for another namespace grants nothing here" do
@@ -111,7 +111,7 @@ defmodule Flezha.Service.AdminTest do
 
       assert Session.runner_caller_context(@ns).roles == [:spawner, :stopper]
 
-      for verb <- ["Operator.start", "Operator.send", "Operator.stop"] do
+      for verb <- ["Relay.start", "Relay.send", "Relay.stop"] do
         refute denied?(door(verb, args_for(verb))), verb
       end
 
@@ -122,11 +122,11 @@ defmodule Flezha.Service.AdminTest do
       :ok = RoleStore.bind(@principal, @ns, :stopper)
       assert Session.runner_caller_context(@ns).roles == [:stopper]
 
-      refute denied?(door("Operator.stop", args_for("Operator.stop")))
+      refute denied?(door("Relay.stop", args_for("Relay.stop")))
 
       for verb <- [
-            "Operator.start",
-            "Operator.send",
+            "Relay.start",
+            "Relay.send",
             "PluginManager.enable",
             "PluginManager.disable"
           ] do
@@ -139,10 +139,10 @@ defmodule Flezha.Service.AdminTest do
       :ok = RoleStore.bind(@principal, @ns, :stopper)
       boundary = System.monotonic_time(:microsecond)
 
-      _ = door("Operator.stop", ~s(["o1"]))
+      _ = door("Relay.stop", ~s(["o1"]))
       TestSinks.settle(RingBufferSink)
 
-      assert [record] = RingBufferSink.query(:operator_service, boundary)
+      assert [record] = RingBufferSink.query(:relay_service, boundary)
       assert record.name == :stop
       assert record.metadata.caller_roles == [:spawner, :stopper]
     end
@@ -152,7 +152,7 @@ defmodule Flezha.Service.AdminTest do
       context = Session.runner_caller_context(@ns)
 
       assert {:error, {:forbidden, :namespace_mismatch}} =
-               AuthZ.authorize(context, :"operator.stop", Scope.build(@other))
+               AuthZ.authorize(context, :"relay.stop", Scope.build(@other))
     end
 
     test "a user's role is never held by a connection, though the connect passes" do
@@ -163,7 +163,7 @@ defmodule Flezha.Service.AdminTest do
       assert :ok = Verb.run(:runner_connect, context, [@ns], fn _call -> :ok end)
 
       assert {:error, {:forbidden, :role_insufficient}} =
-               AuthZ.authorize(context, :"operator.stop", Scope.build(@ns))
+               AuthZ.authorize(context, :"relay.stop", Scope.build(@ns))
     end
 
     test "spawner plus admin holds spawner alone, so the quota surface stays shut" do
@@ -172,7 +172,7 @@ defmodule Flezha.Service.AdminTest do
 
       assert Session.runner_caller_context(@ns).roles == [:spawner]
 
-      assert denied?(door("Namespace.set_quotas", ~s([{"max_operators": 1}])))
+      assert denied?(door("Namespace.set_quotas", ~s([{"max_relays": 1}])))
 
       # Deleting a namespace is not reachable over a connection at all.
       assert {:error, %Flezha.Error{code: "control.unknown_function"}} =
@@ -187,12 +187,12 @@ defmodule Flezha.Service.AdminTest do
     end
 
     test "the proven namespace is inserted where the row declares it, so there is no slot" do
-      # `list_operators` takes (namespace, context). The wire array holds the
+      # `list_relays` takes (namespace, context). The wire array holds the
       # arguments after the namespace, so naming one is an argument too many.
-      assert {:ok, _json} = door("Operator.list_operators", "[]")
+      assert {:ok, _json} = door("Relay.list_relays", "[]")
 
       assert {:error, %Flezha.Error{code: "control.wrong_arity"}} =
-               door("Operator.list_operators", ~s(["#{@other}"]))
+               door("Relay.list_relays", ~s(["#{@other}"]))
     end
 
     test "a row-scoped verb's namespace field is stamped, not read from the caller" do
@@ -206,7 +206,7 @@ defmodule Flezha.Service.AdminTest do
         door(
           "PluginManager.enable",
           ~s(["p1", {"provider": "Elixir.Flezha.Plugin.Provider.HttpPush",
-                     "operator_id": "o1", "namespace": "#{@other}"}])
+                     "relay_id": "o1", "namespace": "#{@other}"}])
         )
 
       TestSinks.settle(RingBufferSink)
@@ -221,7 +221,7 @@ defmodule Flezha.Service.AdminTest do
       assert {:error, %Flezha.Error{code: "plugin.fields_unknown", details: details}} =
                door(
                  "PluginManager.enable",
-                 ~s(["p_old", {"provider": "operator_stdout", "operator_id": "o1",
+                 ~s(["p_old", {"provider": "relay_stdout", "relay_id": "o1",
                                "trigger": "on_output"}])
                )
 
@@ -248,7 +248,7 @@ defmodule Flezha.Service.AdminTest do
     end
 
     test "a read the app role grants is authorized" do
-      assert {:ok, json} = door("Operator.list_operators", "[]")
+      assert {:ok, json} = door("Relay.list_relays", "[]")
       assert {:ok, _list} = Jason.decode(json)
     end
 
@@ -274,13 +274,13 @@ defmodule Flezha.Service.AdminTest do
 
     test "the terminal's own entry is not a door, though it lives under the prefix" do
       assert {:error, %Flezha.Error{code: "control.unknown_function"}} =
-               door("Cli.call", ~s(["Operator.stop", "[]", []]))
+               door("Cli.call", ~s(["Relay.stop", "[]", []]))
     end
 
     test "a name nothing declares is refused without minting an atom" do
       before = :erlang.system_info(:atom_count)
 
-      assert {:error, _} = door("Operator.no_such_function", "[]")
+      assert {:error, _} = door("Relay.no_such_function", "[]")
       assert {:error, _} = door("NoSuchModule.anything", "[]")
       assert {:error, _} = door("malformed", "[]")
 
@@ -290,7 +290,7 @@ defmodule Flezha.Service.AdminTest do
     # Fails when: a runner reaches a stream, whose task and listener stay
     # attached long after the one reply it can receive.
     test "an operation that streams is not reachable from a runner connection" do
-      for {name, args} <- [{"Operator.listen", ~s(["o1"])}, {"Observability.tail", ~s(["x"])}] do
+      for {name, args} <- [{"Relay.listen", ~s(["o1"])}, {"Observability.tail", ~s(["x"])}] do
         assert {:error, %Flezha.Error{code: "control.unknown_function"}} = door(name, args)
       end
     end
@@ -310,7 +310,7 @@ defmodule Flezha.Service.AdminTest do
     # Fails when: `null` reaches the body as `nil` instead of the declared default.
     test "an optional argument written as null takes its default" do
       assert {:error, %Flezha.Error{code: code}} =
-               door("Operator.send", ~s(["o1", "m", "", null]))
+               door("Relay.send", ~s(["o1", "m", "", null]))
 
       refute code == "internal.uncatalogued"
     end
@@ -327,18 +327,18 @@ defmodule Flezha.Service.AdminTest do
 
       # The start itself fails (no runner advertises the factory); the record is
       # written either way, because an authorized act that failed is still an act.
-      _ = door("Operator.start", ~s([{"id":"o1","factory_id":"f1"}]))
+      _ = door("Relay.start", ~s([{"id":"o1","factory_id":"f1"}]))
       TestSinks.settle(RingBufferSink)
 
-      assert [record] = RingBufferSink.query(:operator_service, boundary)
+      assert [record] = RingBufferSink.query(:relay_service, boundary)
       assert record.name == :start
-      assert record.metadata.action == :"operator.start"
+      assert record.metadata.action == :"relay.start"
       assert record.metadata.principal == @principal
       assert record.metadata.namespace == @ns
       assert record.metadata.caller_source == :sdk
-      assert record.metadata.operator == "o1"
+      assert record.metadata.relay == "o1"
       assert record.metadata.outcome == :error
-      assert record.metadata.error_code == "operator.factory_unknown"
+      assert record.metadata.error_code == "relay.factory_unknown"
     end
 
     test "a denial is recorded with the code the caller receives" do
@@ -346,7 +346,7 @@ defmodule Flezha.Service.AdminTest do
       boundary = System.monotonic_time(:microsecond)
 
       assert {:error, %Flezha.Error{code: "authz.role_insufficient"}} =
-               door("Operator.stop", ~s(["o1"]))
+               door("Relay.stop", ~s(["o1"]))
 
       TestSinks.settle(RingBufferSink)
 
@@ -356,23 +356,23 @@ defmodule Flezha.Service.AdminTest do
     end
 
     test "a start over quota is refused with the quota's code and its details" do
-      Mimic.stub(Flezha.Service.OperatorManager, :start_operator, fn _ns, _operator, _opts ->
-        {:error, {:quota_exceeded, :max_operators, %{current: 3, limit: 3}}}
+      Mimic.stub(Flezha.Service.RelayManager, :start_relay, fn _ns, _relay, _opts ->
+        {:error, {:quota_exceeded, :max_relays, %{current: 3, limit: 3}}}
       end)
 
       assert {:error, %Flezha.Error{code: "quota.exceeded", class: :conflict} = error} =
-               door("Operator.start", ~s([{"id":"o1","factory_id":"f1"}]))
+               door("Relay.start", ~s([{"id":"o1","factory_id":"f1"}]))
 
-      assert error.details == %{"kind" => "max_operators", "current" => 3, "limit" => 3}
+      assert error.details == %{"kind" => "max_relays", "current" => 3, "limit" => 3}
     end
 
     test "a read writes no audit record, matching its row's declaration" do
       boundary = System.monotonic_time(:microsecond)
 
-      assert {:ok, _json} = door("Operator.list_operators", "[]")
+      assert {:ok, _json} = door("Relay.list_relays", "[]")
       TestSinks.settle(RingBufferSink)
 
-      assert RingBufferSink.query(:operator_service, boundary) == []
+      assert RingBufferSink.query(:relay_service, boundary) == []
     end
   end
 
@@ -400,8 +400,8 @@ defmodule Flezha.Service.AdminTest do
       assert offered != []
       assert Enum.all?(offered, &(&1.remote and &1.stream != true))
       assert Enum.all?(offered, &(&1.action == :public or Policy.grants?(:viewer, &1.action)))
-      refute Enum.any?(offered, &(&1.name == "Operator.start"))
-      assert Enum.any?(Admin.catalogue(http_context(:app)), &(&1.name == "Operator.start"))
+      refute Enum.any?(offered, &(&1.name == "Relay.start"))
+      assert Enum.any?(Admin.catalogue(http_context(:app)), &(&1.name == "Relay.start"))
       assert Admin.catalogue(%{source: :http}) == []
     end
 
@@ -413,7 +413,7 @@ defmodule Flezha.Service.AdminTest do
         offered = Admin.catalogue(%{source: :mcp})
 
         assert offered == Admin.reachable(%{source: :mcp})
-        assert Enum.any?(offered, &(&1.name == "Operator.start"))
+        assert Enum.any?(offered, &(&1.name == "Relay.start"))
         refute Enum.any?(offered, &(&1.name == "Controller.stop"))
       after
         Application.put_env(:flezha, :authn_authz, prev)
@@ -423,13 +423,13 @@ defmodule Flezha.Service.AdminTest do
     test "a start is recorded naming the principal and the source http" do
       boundary = System.monotonic_time(:microsecond)
       args = Jason.encode!([@ns, %{id: "o1", factory_id: "f1"}])
-      _ = Admin.call("Operator.start", args, http_context(:app), :given)
+      _ = Admin.call("Relay.start", args, http_context(:app), :given)
       TestSinks.settle(RingBufferSink)
 
-      assert [record] = RingBufferSink.query(:operator_service, boundary)
+      assert [record] = RingBufferSink.query(:relay_service, boundary)
       assert record.metadata.principal == "alice"
       assert record.metadata.caller_source == :http
-      assert record.metadata.action == :"operator.start"
+      assert record.metadata.action == :"relay.start"
     end
   end
 

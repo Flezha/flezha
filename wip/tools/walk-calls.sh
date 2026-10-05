@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# The operator-call hand run (`call-an-operator-and-get-its-response` 1.2 and its
-# live run), against the private controller `env.sh up rust` started, with the
+# The relay-call hand run, against the private controller `env.sh up rust` started, with the
 # Rust test app as its runner.
 #
 #   wip/tools/walk-calls.sh gap    # spawn_requester: a spawn's handle says spawned or
@@ -17,28 +16,28 @@ OUT=${WALK_OUT:-$(git -C "$(dirname "$0")" rev-parse --show-toplevel)/wip/tools/
 # shellcheck source=walk-lib.sh
 source "$(dirname "$0")/walk-lib.sh"
 
-# What an operator's sinks emit while `$2` is sent to it on its entry channel `in`.
+# What a relay's sinks emit while `$2` is sent to it on its entry channel `in`.
 send_and_listen() {
   local op=$1 text=$2 out=$OUT/$1-$3.txt
-  flz operator listen "$op" --namespace "$NS" --duration-ms 3000 >"$out" 2>&1 &
+  flz relay listen "$op" --namespace "$NS" --duration-ms 3000 >"$out" 2>&1 &
   local listener=$!
   sleep 1
-  flz operator send "$op" --namespace "$NS" --channel in --text "$text" >>"$OUT/send.txt" 2>&1
+  flz relay send "$op" --namespace "$NS" --channel in --text "$text" >>"$OUT/send.txt" 2>&1
   wait "$listener"
   echo "== $op <- $text"; cat "$out"
 }
 
 gap() {
-  start_operator spawn_requester spawner
+  start_relay spawn_requester spawner
   send_and_listen spawner session-1 gap
   echo "== the runner's spawn handles"; grep spawn_result "$RUN/logs/runner.log"
 }
 
 run() {
-  start_operator call_pricing pricing
-  start_operator call_orders orders
+  start_relay call_pricing pricing
+  start_relay call_orders orders
   send_and_listen orders o1 priced
-  start_operator call_gateway gateway
+  start_relay call_gateway gateway
   send_and_listen gateway anna-1:hello refused
   flz role bind "runner@$NS" spawner "$NS" >"$OUT/bind.txt" 2>&1
   send_and_listen gateway anna-1:hello created

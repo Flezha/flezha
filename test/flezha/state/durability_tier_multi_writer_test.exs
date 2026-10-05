@@ -1,7 +1,7 @@
 defmodule Flezha.State.DurabilityTierMultiWriterTest do
   @moduledoc """
   Collection with more than one controller on one backend — the configuration
-  the tier exists to serve, since a fresh node adopting another's operators is
+  the tier exists to serve, since a fresh node adopting another's relays is
   the whole point.
 
   Two `Shipper`s over disjoint state roots and one shared store stand in for two
@@ -125,7 +125,7 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
            "every artifact the manifest names must still exist"
 
     TestHelpers.wipe_cell(ctx.cell_id)
-    assert :ok = DurabilityTier.hydrate_operator(ctx.class)
+    assert :ok = DurabilityTier.hydrate_relay(ctx.class)
     assert Artifact.seq_bounds(ref) == {0, 5}
   end
 
@@ -152,7 +152,7 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
     assert blob in Stub.keys()
 
     TestHelpers.wipe_cell(ctx.cell_id)
-    assert :ok = DurabilityTier.hydrate_operator(ctx.class)
+    assert :ok = DurabilityTier.hydrate_relay(ctx.class)
     assert Artifact.seq_bounds(ref) == {0, 3}
   end
 
@@ -198,7 +198,7 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
 
     peer = start_peer_node(ctx.peer_base)
 
-    # The operator is stopped and its state deleted, so now NO node holds local
+    # The relay is stopped and its state deleted, so now NO node holds local
     # state for this reference and scoping alone would strand the orphan.
     TestHelpers.wipe_cell(ctx.cell_id)
 
@@ -220,7 +220,7 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
       assert :ok = Shipper.ship_now(ref)
       assert Stub.stored_manifest(ref).owner == this_writer()
 
-      # The operator migrates, and its parked failures move with it: the parks
+      # The relay migrates, and its parked failures move with it: the parks
       # are claim-fenced exactly like the Cell state, so the new node bids the
       # lineage up rather than writing beside it.
       peer = start_peer_node(ctx.peer_base)
@@ -284,7 +284,7 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
     assert :ok = Shipper.ship_now(ref)
 
     # The peer holds the same reference with different records above the shipped
-    # cut — what an ordinary migration leaves behind, since `pull_operator/3`
+    # cut — what an ordinary migration leaves behind, since `pull_relay/3`
     # copies and nothing deletes the source.
     peer = start_peer_node(ctx.peer_base)
 
@@ -338,7 +338,7 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
       assert DurabilityTier.breaches() == []
     end
 
-    test "a node that lost the operator cannot bid its lineage back", ctx do
+    test "a node that lost the relay cannot bid its lineage back", ctx do
       ref = {:cell, ctx.cell_id}
 
       TestHelpers.write_wal(ctx.cell_id, 0..3)
@@ -348,7 +348,7 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
 
       peer_adopts_and_ships(ctx, ref)
 
-      # This node still holds every file — `pull_operator/3` copies and nothing
+      # This node still holds every file — `pull_relay/3` copies and nothing
       # deletes the source — so "has the state" would let it claim straight
       # back. Only never having adopted stops it.
       :ok = Shipper.sweep_now()
@@ -390,7 +390,7 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
 
       assert %{owner: @peer_writer, claim: 1} = Stub.stored_manifest(ref)
 
-      # The operator comes back here. Adoption is what entitles this node to
+      # The relay comes back here. Adoption is what entitles this node to
       # take the lineage back — and it costs one claim, so the counter records
       # how many times ownership actually moved.
       GenServer.cast(Shipper, {:adopt, ctx.class})
@@ -400,7 +400,7 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
     end
 
     # fails when: hydration skips every reference with local files, so the node
-    # an operator returns to binds from the copy it was left holding and loses
+    # a relay returns to binds from the copy it was left holding and loses
     # the turns taken elsewhere.
     test "a returning node adopts the newer lineage over the stale copy it kept", ctx do
       ref = {:cell, ctx.cell_id}
@@ -496,7 +496,7 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
     assert Enum.all?(Manifest.blob_keys(manifest), &(&1 in Stub.keys()))
 
     TestHelpers.wipe_cell(ctx.cell_id)
-    capture_log(fn -> assert :ok = DurabilityTier.hydrate_operator(ctx.class) end)
+    capture_log(fn -> assert :ok = DurabilityTier.hydrate_relay(ctx.class) end)
     assert Artifact.seq_bounds(ref) == {0, 5}
   end
 
@@ -533,7 +533,7 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
 
   defp status_of(ref), do: Enum.find(Shipper.status(), &(&1.ref == ref))
 
-  # The operator migrates: the peer adopts it and ships. The adopt is a cast and
+  # The relay migrates: the peer adopts it and ships. The adopt is a cast and
   # the ship a call on the same mailbox, so both are served inside the window
   # where the peer's own state root is in place.
   defp peer_adopts_and_ships(ctx, ref) do
@@ -548,7 +548,7 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
     peer
   end
 
-  # The operator moves away and back: this node shipped 0..3 and kept the files,
+  # The relay moves away and back: this node shipped 0..3 and kept the files,
   # the peer adopted it, took turns 4..5 and shipped them. Returns the peer's WAL.
   defp ship_stale_here_newer_on_peer(ctx, ref) do
     TestHelpers.write_wal(ctx.cell_id, 0..3)

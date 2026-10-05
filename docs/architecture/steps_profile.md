@@ -1,12 +1,12 @@
 # Running in steps
 
-This page describes what `run: steps` adds to an operator. A class that sets it is a **steps
-operator**: a job with a beginning and an end, such as an ETL run, a payment saga or an AI chat
+This page describes what `run: steps` adds to a relay. A class that sets it is a **steps
+relay**: a job with a beginning and an end, such as an ETL run, a payment saga or an AI chat
 session. The rest of its settings tree says how it runs: `each` for the shape of its loop,
 `on_failure` for what a step that fails for good undoes, and `durable` for where its work is
-kept ([configuring an operator](../topics/basics/configuring_an_operator.md)).
+kept ([configuring a relay](../topics/basics/configuring_a_relay.md)).
 
-A steps operator uses the same tasklets, channels and cells as a flow operator, and the same
+A steps relay uses the same tasklets, channels and cells as a flow relay, and the same
 [kernel](kernel.md) underneath. What changes is the schedule: it runs its tasklets in graph
 order, writes its progress to a journal at every step, can undo what it did, and can wait for
 input for hours while holding nothing on a runner. The page is for contributors and for users
@@ -50,7 +50,7 @@ A tasklet receives exactly the values sent on the channels it consumes. A join c
 producer's values rather than letting one overwrite another. Branches run independently until
 they meet at a join.
 
-The runner checks the graph when it registers the operator and refuses anything that is not a
+The runner checks the graph when it registers the relay and refuses anything that is not a
 graph without cycles, rooted at the entry channels, naming the offending tasklet:
 
 | Shape | Refusal |
@@ -67,7 +67,7 @@ Each entry channel roots its own chain, and a message runs only the chain of the
 arrived on. A join where two chains meet waits only for the producers of the chain that is
 running, both live and after a crash.
 
-Inside one tasklet, cells work in parallel exactly as in a flow operator: one cell, or one per
+Inside one tasklet, cells work in parallel exactly as in a flow relay: one cell, or one per
 key, each with its own state and WAL. A tasklet reached by a keyed edge gets a cell per key,
 created when a stage first routes an item to that key and capped by `max_cells` (100 000 by
 default); a new key past the cap is dropped and counted in `inputs_dropped_capped_total`. A
@@ -80,11 +80,11 @@ with an undo is kept until the instance ends, under `keep_progress` only the run
 cells are. A stage entry counts its cells in 16 bits, so one pass of one tasklet runs at most
 65 535 cells; a class that keys more than that per pass declares a smaller `max_cells`.
 
-A `per_input` steps operator whose entry edge is keyed can be
+A `per_input` steps relay whose entry edge is keyed can be
 [partitioned](../topics/advanced/partitioning.md) into N instances that each end, undo and
 commit on their own. A `once` or `chained` one cannot.
 
-Cells are named `(operator class, tasklet, cell key)`, the same as in a flow operator.
+Cells are named `(relay class, tasklet, cell key)`, the same as in a flow relay.
 
 ## The task journal
 
@@ -169,7 +169,7 @@ state, which is why a tasklet must be safe to run twice.
 
 ## One outbox
 
-In a durable steps operator, `ctx.emit` writes into the cell's effect record, as a flow cell
+In a durable steps relay, `ctx.emit` writes into the cell's effect record, as a flow cell
 does under `exactly: effectively_once`: one record per invocation, holding the state changes
 and the plugin outputs ([the effect record](kernel.md#the-effect-record)). The record is on
 disk before the stage commit; its outputs wait for the commit.
@@ -226,8 +226,8 @@ Retries happen only **before** the commit. A committed tasklet is never retried.
 are kept in memory, so a crash in the middle of the retries resumes as an ordinary uncommitted
 tasklet with the count reset.
 
-A steps operator's answer to a failure that will not go away is abort and undo, where a flow
-operator parks the payload in the dead-letter queue. Two cases park here too: a message the entry
+A steps relay's answer to a failure that will not go away is abort and undo, where a flow
+relay parks the payload in the dead-letter queue. Two cases park here too: a message the entry
 channel cannot read, and a failed turn of a `per_input` loop with `on_failure: keep_progress`.
 That turn's message is parked under the `_turn` slot with a `dead_lettered` journal entry, the
 turn is undone, and the loop takes its next message.
@@ -280,7 +280,7 @@ a hook keeps its state change.
 
 ## The durable loop
 
-An operator can run its graph more than once. `each` decides how:
+A relay can run its graph more than once. `each` decides how:
 
 | `each` | Behaviour |
 | --- | --- |
@@ -306,10 +306,10 @@ At each boundary the runner sends `IterCommit`. The controller journals **one**
 `iter_committed` entry with the final hand-off and the consumed input-log offset, answers, and
 only then releases the consumed input in the log and asks for the journal to be cut. The
 boundary takes no snapshot and releases no outputs: each stage's outputs left at its own commit,
-and the watchdog's size and age triggers compact a steps operator's cells as they do a flow
-operator's. A failure in that clean-up costs work, not correctness.
+and the watchdog's size and age triggers compact a steps relay's cells as they do a flow
+relay's. A failure in that clean-up costs work, not correctness.
 
-**The input log.** A durable steps operator's input is written to the same per-instance input
+**The input log.** A durable steps relay's input is written to the same per-instance input
 log the effectively-once tier uses, before it is forwarded, and stamped `flz.offset`
 ([the write path](kernel.md#the-write-path)). A repeat of a `flz.msg_id` the log still holds is
 absorbed and never delivered twice; a message without an id is never a duplicate. A failed append
@@ -334,7 +334,7 @@ sequenceDiagram
     Note over R1: iteration N committed, the wait elapsed
     R1->>C: IterPark (iteration N, earliest pending timer)
     C->>C: write the park record, durable first
-    C->>R1: RemOperator
+    C->>R1: RemRelay
     Note over C: hours pass, and a controller restart re-arms the wake timer from the record
     U->>C: a new message
     C->>C: append to the input log
@@ -344,8 +344,8 @@ sequenceDiagram
 ```
 
 Waking is **the ordinary bind**. Crash recovery, moving to another runner and waking all take
-the same path. The journal state rides in the bind (`AddOperator.task_journal`) rather than in a
-cell restore, because it belongs to the instance: an operator whose tasklets keep no state has
+the same path. The journal state rides in the bind (`AddRelay.task_journal`) rather than in a
+cell restore, because it belongs to the instance: a relay whose tasklets keep no state has
 no cell to restore, and would otherwise wake at iteration 0 every time.
 
 The wake deadline is the instance's earliest pending processing-time timer. When it passes, the
@@ -357,15 +357,15 @@ The park record is written before the instance is removed from the runner, and c
 bind that wakes it. At boot, an instance with a park record and no waiting input starts asleep,
 without binding; waiting input, or a deadline already passed, wakes it. A sleeping instance holds
 no pass in flight, so it is ready to move to another runner at once. Stopping a sleeping steps
-operator wakes it with the stop, so it ends `cancelled` as it would awake. The code is
-`Flezha.Operator.Migration`.
+relay wakes it with the stop, so it ends `cancelled` as it would awake. The code is
+`Flezha.Relay.Migration`.
 
 ## Rewind
 
 A rewind takes a loop back to a committed iteration and undoes everything above it:
 
 ```sh
-$ flz operator rewind <instance> --to-iteration N
+$ flz relay rewind <instance> --to-iteration N
 ```
 
 A rewind is a **marker**, not a cut; the journal stays append-only.
@@ -423,10 +423,10 @@ Field-level detail: [`protocol_spec.md`](https://github.com/flezha/flezha/blob/m
 ## Commands
 
 ```sh
-$ flz state journal <operator/instance>   # every journal entry, and whether the graph is complete
-$ flz state inbox <operator/instance>     # the input log, flow or steps, and how far it is consumed
-$ flz operator info                       # each operator's phase, suspended while asleep
-$ flz operator rewind <instance> --to-iteration N
+$ flz state journal <relay/instance>   # every journal entry, and whether the graph is complete
+$ flz state inbox <relay/instance>     # the input log, flow or steps, and how far it is consumed
+$ flz relay info                       # each relay's phase, suspended while asleep
+$ flz relay rewind <instance> --to-iteration N
 ```
 
 ## Host languages
@@ -455,14 +455,14 @@ and [`runner.md`](runner.md).
   rewind is refused.
 - **A rewind does not replay inputs.** It undoes and carries on.
 - **One pass of one tasklet runs at most 65 535 cells.**
-- **Only a `per_input` operator with a keyed entry edge can be partitioned.**
+- **Only a `per_input` relay with a keyed entry edge can be partitioned.**
 
 ## See also
 
 - [`kernel.md`](kernel.md): the WAL, the effect record, the outbox and the epoch rule this page builds on.
-- [`flow_profile.md`](flow_profile.md): the other way an operator runs.
+- [`flow_profile.md`](flow_profile.md): the other way a relay runs.
 - [`overview.md`](overview.md): the controller, the runners and how they connect.
 - [`../topics/basics/workflows.md`](../topics/basics/workflows.md): steps, undo and crash recovery from the user's side.
-- [`../topics/basics/configuring_an_operator.md`](../topics/basics/configuring_an_operator.md): `each`, `on_failure`, `durable` and `sleep_after`.
+- [`../topics/basics/configuring_a_relay.md`](../topics/basics/configuring_a_relay.md): `each`, `on_failure`, `durable` and `sleep_after`.
 - [`../topics/advanced/sessions.md`](../topics/advanced/sessions.md), [`../topics/advanced/rewinding_a_turn.md`](../topics/advanced/rewinding_a_turn.md), [`../topics/advanced/partitioning.md`](../topics/advanced/partitioning.md).
-- [`steps_operator.md`](https://github.com/flezha/flezha/blob/main/docs/resilience/steps_operator.md): the mechanism in more depth.
+- [`steps_relay.md`](https://github.com/flezha/flezha/blob/main/docs/resilience/steps_relay.md): the mechanism in more depth.

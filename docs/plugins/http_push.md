@@ -1,17 +1,17 @@
 # HTTP push plugin
 
-The HTTP push plugin sends an operator's outputs to an HTTP endpoint: a REST API, a webhook
+The HTTP push plugin sends a relay's outputs to an HTTP endpoint: a REST API, a webhook
 receiver, or any service that takes a request per record. It hooks `on_output`, or
-`on_input` for what the operator ingested, and sends each payload as one request.
+`on_input` for what the relay ingested, and sends each payload as one request.
 `Flezha.Plugin.Provider.HttpPush` is its provider, under the provider id
-`operator_http_push`.
+`relay_http_push`.
 
 | | |
 | --- | --- |
-| Type | operator plugin |
+| Type | relay plugin |
 | Ships | built in |
-| Shareable | yes: every operator bound to it on a controller sends through one worker, one queue and its connections |
-| Partitioned operators | allowed: each member has its own copy |
+| Shareable | yes: every relay bound to it on a controller sends through one worker, one queue and its connections |
+| Partitioned relays | allowed: each member has its own copy |
 | Durability | a delivery-guaranteed output stays in the outbox until a 2xx; a plain output is dropped and counted once its retries are spent |
 
 ## Options
@@ -41,11 +41,11 @@ receiver, or any service that takes a request per record. It hooks `on_output`, 
 ## Example
 
 ```sh
-$ flz plugin enable orders_out operator_http_push \
+$ flz plugin enable orders_out relay_http_push \
   --Xurl=https://api.example.test/orders \
   --Xheaders='{"authorization": "Bearer <token>"}' \
   --Xcontent_type=application/json --Xchannel=orders
-$ flz plugin bind orders_out --operator_id orders --hook on_output
+$ flz plugin bind orders_out --relay_id orders --hook on_output
 ```
 
 ## Contract
@@ -55,7 +55,7 @@ $ flz plugin bind orders_out --operator_id orders --hook on_output
 | Hooks | `on_output`, `on_input` |
 | Request | `POST` (or `PUT`) to `url`, the payload as the body unchanged, `content_type` as its `content-type`, the configured `headers` and the output's identity headers |
 | Connections | `max_in_flight` (default 1), each kept open between requests; with one, payloads are sent in the order they were dispatched |
-| Shared | every operator bound to the plugin on a controller sends through one worker, one queue and its connections; each member of a partitioned operator has its own |
+| Shared | every relay bound to the plugin on a controller sends through one worker, one queue and its connections; each member of a partitioned relay has its own |
 | Plain output | queued and sent; dropped and counted once its retries are spent |
 | Guaranteed output | held in the outbox until a 2xx; parked as a dead letter when it is refused or its retries run out |
 | Redirects | never followed |
@@ -79,7 +79,7 @@ Every request carries the output's identity, each header present when its metada
 | Header | Metadata | Value |
 | --- | --- | --- |
 | `flz-key` | `flz.key` | the natural key of a `.keyed()` channel |
-| `flz-cell` | `flz.cell` | `<operator>/<tasklet>/<cell key>` |
+| `flz-cell` | `flz.cell` | `<relay>/<tasklet>/<cell key>` |
 | `flz-seq` | `flz.seq` | the output's sequence in its Cell |
 | `flz-epoch` | `flz.epoch` | the outbox epoch |
 | `idempotency-key` | all three of `flz.cell`, `flz.seq`, `flz.epoch` | `<cell>/<seq>/<epoch>`, the Kafka producer's `flezha.dedup_key` |
@@ -91,11 +91,11 @@ otherwise, so a key in another script reaches the receiver intact.
 
 ## Delivery
 
-The plugin follows its operator's settings. A plain output makes no delivery promise: the
+The plugin follows its relay's settings. A plain output makes no delivery promise: the
 dispatch queues it and goes on, and an output that still fails after its retries is
 dropped, counted, and logged at warning level once per plugin and reason. A
-delivery-guaranteed output (an operator with `effectively_once`) is held in the outbox
-before it is queued, confirmed on a 2xx answer, and otherwise parked in the operator's DLQ
+delivery-guaranteed output (a relay with `effectively_once`) is held in the outbox
+before it is queued, confirmed on a 2xx answer, and otherwise parked in the relay's DLQ
 with the error `http_push.rejected` (its `status` detail) or `http_push.exhausted` (its
 `reason` detail: the last status or transport error), never dropped; `flz dlq replay` sends
 it again. One still queued when the plugin stops is parked with `http_push.exhausted` and

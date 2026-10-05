@@ -1,5 +1,5 @@
 //! Graceful shutdown: on SIGTERM, `Drop` of the runner handle or a
-//! controller-ordered disconnect, each live operator's state is serialized
+//! controller-ordered disconnect, each live relay's state is serialized
 //! and shipped as a `RunnerShutdownNotification`, and the process exits once
 //! the acks land or the bounded wait expires — never blocking its
 //! container's grace period. Also the waiter registry every SDK-initiated
@@ -17,8 +17,8 @@ use prost::Message;
 
 use crate::pb;
 
-/// Per-operator ack wait, run in parallel so the total is bounded by this
-/// regardless of operator count (Kubernetes' default grace period is 30 s).
+/// Per-relay ack wait, run in parallel so the total is bounded by this
+/// regardless of relay count (Kubernetes' default grace period is 30 s).
 /// Public so a controller can wait exactly as long as the runner does for the
 /// notification it is about to answer, rather than pick its own number.
 pub const ACK_TIMEOUT: Duration = Duration::from_secs(2);
@@ -27,7 +27,7 @@ pub const ACK_TIMEOUT: Duration = Duration::from_secs(2);
 const SHUTDOWN_PAYLOAD_ID: &str = "control_command";
 
 /// `(instance_id, serialized state)` per live flow instance.
-pub type OperatorSnapshotFn = Box<dyn Fn() -> Vec<(String, Vec<u8>)> + Send + Sync>;
+pub type RelaySnapshotFn = Box<dyn Fn() -> Vec<(String, Vec<u8>)> + Send + Sync>;
 
 /// What a graceful shutdown needs of the runner, reachable from the SIGTERM
 /// handler through [`active_bridge`] and from the runner handle's `Drop`.
@@ -35,7 +35,7 @@ pub struct ShutdownBridge {
     /// The live control stream, replaced on every reconnect.
     control_stream: Mutex<Option<Arc<FlezhaStream>>>,
 
-    snapshot_fn: Mutex<Option<OperatorSnapshotFn>>,
+    snapshot_fn: Mutex<Option<RelaySnapshotFn>>,
 
     /// A shutdown runs at most once per bridge, whichever of SIGTERM and
     /// `Drop` comes first.
@@ -55,7 +55,7 @@ impl ShutdownBridge {
         *self.control_stream.lock().unwrap() = stream;
     }
 
-    pub fn set_snapshot_fn(&self, snapshot_fn: OperatorSnapshotFn) {
+    pub fn set_snapshot_fn(&self, snapshot_fn: RelaySnapshotFn) {
         *self.snapshot_fn.lock().unwrap() = Some(snapshot_fn);
     }
 
@@ -75,19 +75,19 @@ impl ShutdownBridge {
             }
         };
 
-        let operators = match self.snapshot_fn.lock().unwrap().as_ref() {
+        let relays = match self.snapshot_fn.lock().unwrap().as_ref() {
             Some(f) => f(),
             None => return,
         };
 
-        if operators.is_empty() {
+        if relays.is_empty() {
             return;
         }
 
-        let wait_handles: Vec<_> = operators
+        let wait_handles: Vec<_> = relays
             .into_iter()
-            .filter_map(|(operator_id, serialized_state)| {
-                ship_notification(&stream, operator_id, serialized_state)
+            .filter_map(|(relay_id, serialized_state)| {
+                ship_notification(&stream, relay_id, serialized_state)
             })
             .collect();
 
@@ -97,20 +97,20 @@ impl ShutdownBridge {
     }
 }
 
-/// Write one operator's notification and spawn the wait for its ack;
+/// Write one relay's notification and spawn the wait for its ack;
 /// `None` when the write failed. A timed-out wait drops its registration.
 fn ship_notification(
     stream: &Arc<FlezhaStream>,
-    operator_id: String,
+    relay_id: String,
     serialized_state: Vec<u8>,
 ) -> Option<thread::JoinHandle<()>> {
-    let reference_id = format!("shutdown-{}-{}", operator_id, crate::util::nonce_suffix());
+    let reference_id = format!("shutdown-{}-{}", relay_id, crate::util::nonce_suffix());
 
     let request = pb::CommandRequest {
         reference_id: reference_id.clone(),
         command: Some(pb::command_request::Command::RunnerShutdownNotification(
             pb::RunnerShutdownNotification {
-                operator_id: operator_id.clone(),
+                relay_id: relay_id.clone(),
                 serialized_state,
             },
         )),
@@ -121,7 +121,7 @@ fn ship_notification(
 
     let rx = pending_ack_channel(reference_id.clone());
 
-    // The operator's final state is what makes a reconnect-resume loss-free,
+    // The relay's final state is what makes a reconnect-resume loss-free,
     // so a refused write is held for the next bound stream rather than printed
     // and lost. Only what reached the wire is waited on: an ack cannot answer
     // a held frame.
@@ -137,7 +137,7 @@ fn ship_notification(
         Ok(_) => {}
         Err(_) => {
             say(&format!(
-                "[flezha] RunnerShutdownAck timeout for {operator_id}"
+                "[flezha] RunnerShutdownAck timeout for {relay_id}"
             ));
             drop_pending_ack(&reference_id);
         }
@@ -148,7 +148,7 @@ fn ship_notification(
 // Process-global registries.
 //
 // `PENDING_ACKS` lets the controller->SDK `RunnerShutdownAck` command handler
-// (in `command::runner_shutdown_ack`) signal a per-operator wait
+// (in `command::runner_shutdown_ack`) signal a per-relay wait
 // channel without needing access to the originating bridge — handlers
 // only see `&mut RunnerNode`, so a global keyed by reference_id is
 // the simplest plumbing.
@@ -204,7 +204,7 @@ pub(crate) fn has_pending_ack(reference_id: &str) -> bool {
 }
 
 /// How long a caller waits for the controller's reply to a request [`ask`]
-/// shipped. Generous: the controller may have to start an operator, which
+/// shipped. Generous: the controller may have to start a relay, which
 /// waits for a runner advertising the factory.
 pub const REPLY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
@@ -367,7 +367,7 @@ pub(crate) fn say(line: &str) {
     let _ = writeln!(std::io::stderr(), "{line}");
 }
 
-/// The one exit both facts lead to: ship every operator's final state, tell
+/// The one exit both facts lead to: ship every relay's final state, tell
 /// the host's pollers to stop so its own workers drain, give a healthy runner
 /// `grace_ms` to finish, then end. A host needs no thread and no callback of
 /// its own for either, so a runner cannot drain differently for one than for
@@ -393,7 +393,7 @@ fn end_gracefully(what: &str, grace_ms: u32) -> ! {
 /// still alive, and often while it is tearing itself down: exit handlers run
 /// from here destroy state the host's main thread is still using, and a Node
 /// main thread leaving its event loop then locks a destroyed mutex and aborts.
-/// Every operator's state has shipped by now, so the handlers have nothing
+/// Every relay's state has shipped by now, so the handlers have nothing
 /// left to do.
 fn end_process(code: i32) -> ! {
     use std::io::Write;
@@ -477,8 +477,8 @@ mod tests {
     use crate::pb;
     use crate::test_support::stream_pair;
 
-    fn build_bridge_with_operator(
-        operator_id: &str,
+    fn build_bridge_with_relay(
+        relay_id: &str,
         snapshot: Vec<u8>,
     ) -> (Arc<ShutdownBridge>, UnixStream) {
         let (stream, controller_side) = stream_pair();
@@ -486,7 +486,7 @@ mod tests {
         let bridge = ShutdownBridge::new();
         bridge.set_control_stream(Some(stream));
 
-        let pid = operator_id.to_string();
+        let pid = relay_id.to_string();
         let snap = snapshot.clone();
         bridge.set_snapshot_fn(Box::new(move || vec![(pid.clone(), snap.clone())]));
 
@@ -496,7 +496,7 @@ mod tests {
     #[test]
     fn graceful_shutdown_emits_framed_runner_shutdown_notification() {
         let snapshot = b"final-state-bytes".to_vec();
-        let (bridge, mut controller_side) = build_bridge_with_operator("p1", snapshot.clone());
+        let (bridge, mut controller_side) = build_bridge_with_relay("p1", snapshot.clone());
 
         let bridge_for_run = Arc::clone(&bridge);
         // run_graceful_shutdown blocks waiting for an ack we never send;
@@ -522,7 +522,7 @@ mod tests {
             other => panic!("expected RunnerShutdownNotification, got {:?}", other),
         };
 
-        assert_eq!(notif.operator_id, "p1");
+        assert_eq!(notif.relay_id, "p1");
         assert_eq!(notif.serialized_state, snapshot);
         assert!(!request.reference_id.is_empty());
 
@@ -535,14 +535,13 @@ mod tests {
 
     #[test]
     fn graceful_shutdown_returns_within_2s_when_ack_never_arrives() {
-        let (bridge, _controller_side) =
-            build_bridge_with_operator("p_timeout", b"unused".to_vec());
+        let (bridge, _controller_side) = build_bridge_with_relay("p_timeout", b"unused".to_vec());
 
         let started = Instant::now();
         bridge.run_graceful_shutdown();
         let elapsed = started.elapsed();
 
-        // Timeout is 2 s per operator; allow a small slack for thread
+        // Timeout is 2 s per relay; allow a small slack for thread
         // spawn + join. The Kubernetes default grace period is 30 s, so
         // anything significantly above 2.5 s here would mean we have a
         // bug that could blow past the grace period.
@@ -599,7 +598,7 @@ mod tests {
 
     #[test]
     fn run_graceful_shutdown_is_idempotent() {
-        let (bridge, _controller_side) = build_bridge_with_operator("p_idem", b"x".to_vec());
+        let (bridge, _controller_side) = build_bridge_with_relay("p_idem", b"x".to_vec());
 
         // First run — exercises the timeout path. Second run sees
         // shutdown_started == true and returns immediately.

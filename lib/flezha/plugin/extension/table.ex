@@ -21,7 +21,7 @@ defmodule Flezha.Plugin.Extension.Table do
   by probing exports, and no provider starts or stops a lifecycle process of its
   own.
 
-  An operator's table is built with `shared:`, the module running shareable
+  A relay's table is built with `shared:`, the module running shareable
   plugins once per controller, which a shareable plugin joins at activation
   (`Workers.subscriber?/2`). A binding that cannot come up is recorded
   `{:not_started, reason}` (`put_not_started/5`).
@@ -56,8 +56,8 @@ defmodule Flezha.Plugin.Extension.Table do
             # The module serving shareable plugins on this controller, or nil
             # for a table that runs every plugin it holds itself.
             shared: nil,
-            # Operator-level facts resolved at bind time
-            # (`Operator.Plugins.env/1`), merged into every provider's opts at
+            # Relay-level facts resolved at bind time
+            # (`Relay.Plugins.env/1`), merged into every provider's opts at
             # activation, including plugin-heal re-activations.
             activation_env: %{}
 
@@ -110,7 +110,7 @@ defmodule Flezha.Plugin.Extension.Table do
   that refused and the rows the halt left unattempted.
 
   This is the table's ONE subscribe: a single plugin is a list of one. A second
-  entry point is what let the bulk path park an operator with no plugin named
+  entry point is what let the bulk path park a relay with no plugin named
   while the single path answered honestly.
   """
   @spec bulk_subscribe(t(), [{binary(), Plugin.t()}]) ::
@@ -166,8 +166,8 @@ defmodule Flezha.Plugin.Extension.Table do
   by `:on_input` / `:on_output` and is naturally quiescent until input
   arrives). Already-running plugins are skipped.
 
-  Invoked by operator hosts after `start_operator_sdk/2` returns `{:ok, _}` — see
-  `operator-extensions` "Two-phase plugin lifecycle gated on SDK readiness".
+  Invoked by relay hosts after `start_relay_sdk/2` returns `{:ok, _}` — see
+  `relay-extensions` "Two-phase plugin lifecycle gated on SDK readiness".
 
   An `activate/1` callback that fails or raises is logged at `:error` level and
   the plugin remains in `:prepared`. It is also RETURNED: the second element is
@@ -230,7 +230,7 @@ defmodule Flezha.Plugin.Extension.Table do
 
       # Under a worker key of its own, beside the shared copy's.
       Workers.own_source?(table, provider) ->
-        key = "#{plugin_id}@#{plugin.operator_id}"
+        key = "#{plugin_id}@#{plugin.relay_id}"
         table = put_plugin_opt(table, plugin_id, :plugin_id, key)
         start_and_activate(table, plugin_id, provider, Map.put(opts, :plugin_id, key))
 
@@ -239,7 +239,7 @@ defmodule Flezha.Plugin.Extension.Table do
     end
   end
 
-  # Operator-level facts resolved at bind time (`Operator.Plugins.env/1`) are
+  # Relay-level facts resolved at bind time (`Relay.Plugins.env/1`) are
   # merged last, so stored opts cannot spoof them.
   defp start_and_activate(table, plugin_id, provider, opts) do
     opts = Map.merge(opts || %{}, table.activation_env)
@@ -577,7 +577,7 @@ defmodule Flezha.Plugin.Extension.Table do
   from the manifest would silently discard it.
 
   The one restart path: the convergence loop's `restart_plugin` reaches it
-  through `Flezha.Operator.Plugins.restart/3`.
+  through `Flezha.Relay.Plugins.restart/3`.
   """
   @spec attempt_restart(t(), binary(), Plugin.t()) :: {:ok, t()} | {:error, term(), t()}
   def attempt_restart(%__MODULE__{} = table, plugin_id, %Plugin{} = declared) do
@@ -676,7 +676,7 @@ defmodule Flezha.Plugin.Extension.Table do
 
   # Preparation is: the declaration normalises the options, then the provider
   # interprets them. Nothing is started here for any provider, so a plugin on an
-  # operator whose SDK side never binds holds no process at all.
+  # relay whose SDK side never binds holds no process at all.
   defp run_init_provider(table, %Plugin{provider: provider, opts: opts} = plugin) do
     if Code.ensure_loaded?(provider) do
       case ProviderOptions.normalise_opts(
@@ -708,9 +708,9 @@ defmodule Flezha.Plugin.Extension.Table do
 
   defp settle_init(_plugin, other), do: {:error, {:invalid_init_provider_return, other}}
 
-  # The host operator's own identity, merged last so stored opts cannot spoof
+  # The host relay's own identity, merged last so stored opts cannot spoof
   # it, the same rule `bulk_activate/2` applies to `activation_env`. A provider
-  # whose destination is another operator needs it to refuse a self-target or a
+  # whose destination is another relay needs it to refuse a self-target or a
   # cross-namespace target at enable time; a provider that persists its own
   # committed state needs `:source_plugin_id` to name the cspec row to write.
   #
@@ -720,7 +720,7 @@ defmodule Flezha.Plugin.Extension.Table do
   defp with_host_identity(table, opts, %Plugin{} = plugin) do
     Map.merge(opts, %{
       source_namespace: plugin.namespace,
-      source_operator_id: plugin.operator_id,
+      source_relay_id: plugin.relay_id,
       source_plugin_id: plugin.id,
       overwatcher_pid: table.host_pid,
       subscribed_extensions: Enum.map(plugin.hooks, &elem(&1, 0))

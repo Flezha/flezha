@@ -12,7 +12,7 @@ defmodule Flezha.State.TimeTravel do
   v1 `query/2` returns the assembled bytes payload + the resolved
   terminal seq. The replay-on-SDK round-trip is wired by
   `Flezha.State.Commands.dispatch_restore_init_state/2` and is invoked by the CLI
-  command `flz state at <operator/tasklet/cell> <seq | timestamp>`.
+  command `flz state at <relay/tasklet/cell> <seq | timestamp>`.
 
   A target older than the retention window is refused naming the earliest
   point that is kept.

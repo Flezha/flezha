@@ -17,7 +17,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
   import FlezhaTest.Helper.MimicGlobal
   import FlezhaTest.Helper.NodeTestHelper, only: [override_log_level: 1, wait_until: 2]
 
-  alias Flezha.Operator.ClassRegistry
+  alias Flezha.Relay.ClassRegistry
   alias Flezha.Runner.{ControlChannel, ControlUnit}
   alias Flezha.Runner.ControlChannel.Commits
   alias Flezha.SDK.Wire
@@ -183,7 +183,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
     send(channel, {:flz_data, :stream_id, "control_command", IO.iodata_to_binary(iodata), %{}})
   end
 
-  # A durable steps operator Cell of `inst` whose writer holds one effect record at
+  # A durable steps relay Cell of `inst` whose writer holds one effect record at
   # `seq` carrying one output keyed `k` with a metadata pair, on `channel`.
   defp steps_cell(inst, seq, payload, opts \\ []) do
     :ok = ClassRegistry.put(inst, :steps)
@@ -476,7 +476,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
     assert InputLog.watermark(inst) == 1
   end
 
-  test "the iteration boundary requests no snapshot: the Watchdog compacts a steps operator's Cells" do
+  test "the iteration boundary requests no snapshot: the Watchdog compacts a steps relay's Cells" do
     inst = "iter_snap_#{System.unique_integer([:positive])}"
 
     seg_id = {inst, "TaskA", "s0"}
@@ -505,7 +505,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
     {control_channel, _stream_ref} = start_control_channel("park")
 
     # Stand in as the instance's Overwatch: the suspension is cast at us. The
-    # park runs in a Task (the eviction's RemOperator reply returns on this very
+    # park runs in a Task (the eviction's RemRelay reply returns on this very
     # control stream), so the stub must be visible outside the test process.
     test_pid = self()
     set_mimic_global_until_exit()
@@ -667,7 +667,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
     {channel, stream_ref}
   end
 
-  # Stand in as the bound operator, owned by the channel's own session.
+  # Stand in as the bound relay, owned by the channel's own session.
   defp own(inst, control_channel),
     do: ClassRegistry.put_overwatch(inst, self(), :sys.get_state(control_channel).identity)
 
@@ -702,7 +702,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
   end
 
   defp build_task_commit_payload(
-         operator_id,
+         relay_id,
          task_idx,
          cells_ran,
          handoff,
@@ -713,7 +713,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
       reference_id,
       {:task_commit,
        %RunnerCommands.TaskCommit{
-         operator_id: operator_id,
+         relay_id: relay_id,
          task_idx: task_idx,
          iter: 0,
          cells_ran: Enum.map(cells_ran, &committed_cell/1),
@@ -741,7 +741,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
   defp committed_cell(id) when is_binary(id), do: %RunnerCommands.CommittedCell{cell_id: id}
 
   defp build_iter_commit_payload(
-         operator_id,
+         relay_id,
          iter,
          consumed_offset,
          handoff,
@@ -751,7 +751,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
     ControlFrameTestHelper.encode_request(reference_id, {
       :iter_commit,
       %RunnerCommands.IterCommit{
-        operator_id: operator_id,
+        relay_id: relay_id,
         iter: iter,
         consumed_offset: consumed_offset,
         handoff:
@@ -764,11 +764,11 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
     })
   end
 
-  defp build_dead_letter_payload(operator_id, iter, consumed_offset, reference_id) do
+  defp build_dead_letter_payload(relay_id, iter, consumed_offset, reference_id) do
     ControlFrameTestHelper.encode_request(reference_id, {
       :iter_commit,
       %RunnerCommands.IterCommit{
-        operator_id: operator_id,
+        relay_id: relay_id,
         iter: iter,
         consumed_offset: consumed_offset,
         entry_channel: "in",
@@ -781,11 +781,11 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
     })
   end
 
-  defp build_iter_park_payload(operator_id, iter, wake_deadline_ms, reference_id, consumed) do
+  defp build_iter_park_payload(relay_id, iter, wake_deadline_ms, reference_id, consumed) do
     ControlFrameTestHelper.encode_request(reference_id, {
       :iter_park,
       %RunnerCommands.IterPark{
-        operator_id: operator_id,
+        relay_id: relay_id,
         iter: iter,
         wake_deadline_ms: wake_deadline_ms,
         consumed_offset: consumed

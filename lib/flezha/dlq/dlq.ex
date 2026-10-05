@@ -24,20 +24,20 @@ defmodule Flezha.Service.Dlq do
 
   use Flezha.AuthZ.Verb
 
-  @entry_ref [type: :string, doc: "The entry, as `<operator>/<tasklet>/<id>`."]
-  @operator_class [
+  @entry_ref [type: :string, doc: "The entry, as `<relay>/<tasklet>/<id>`."]
+  @relay_class [
     type: :string,
     default: nil,
-    doc: "The operator whose entries to read; every operator when absent."
+    doc: "The relay whose entries to read; every relay when absent."
   ]
 
   alias Flezha.Config.Durations
   alias Flezha.AuthZ.Namespace
   alias Flezha.Dlq.Store
-  alias Flezha.Operator.Lookup
+  alias Flezha.Relay.Lookup
   alias Flezha.Plugin.Host
   alias Flezha.Service.CallerContext
-  alias Flezha.Service.OperatorManager
+  alias Flezha.Service.RelayManager
 
   @type caller_context :: CallerContext.t()
   @type entry :: map()
@@ -52,11 +52,11 @@ defmodule Flezha.Service.Dlq do
 
   @doc "Parked entries, nearest-to-expiry first; `nil` for every class."
   @spec list(String.t() | nil, caller_context()) :: {:ok, [entry()]} | {:error, term()}
-  verb list(operator_class, caller_context),
+  verb list(relay_class, caller_context),
     verb: :dlq_list,
     row: &class_scope/1,
-    args: [operator_class: @operator_class] do
-    {:ok, Store.list(operator_class)}
+    args: [relay_class: @relay_class] do
+    {:ok, Store.list(relay_class)}
   end
 
   @doc "One entry and its payload bytes, or `nil` bytes when it carries none."
@@ -76,14 +76,14 @@ defmodule Flezha.Service.Dlq do
     {:ok, Store.stats()}
   end
 
-  @doc "The `{operator_class, tasklet_id}` pairs that hold parked entries."
+  @doc "The `{relay_class, tasklet_id}` pairs that hold parked entries."
   @spec tasklets(String.t() | nil, caller_context()) ::
           {:ok, [{String.t(), String.t()}]} | {:error, term()}
-  verb tasklets(operator_class, caller_context),
+  verb tasklets(relay_class, caller_context),
     verb: :dlq_list,
     row: &class_scope/1,
-    args: [operator_class: @operator_class] do
-    {:ok, Store.tasklets(operator_class)}
+    args: [relay_class: @relay_class] do
+    {:ok, Store.tasklets(relay_class)}
   end
 
   # ---------- Mutations ----------
@@ -101,7 +101,7 @@ defmodule Flezha.Service.Dlq do
   end
 
   @doc """
-  Re-dispatch a parked payload to its operator through the ordinary input
+  Re-dispatch a parked payload to its relay through the ordinary input
   path.
 
   A clean replay removes the entry; a failing one re-parks it with `generation`
@@ -124,8 +124,7 @@ defmodule Flezha.Service.Dlq do
   defp locate([entry_ref]) do
     case Store.get(entry_ref) do
       {:ok, entry, payload} ->
-        {:ok,
-         %{namespace: class_namespace(entry["operator_class"]), entry: entry, payload: payload}}
+        {:ok, %{namespace: class_namespace(entry["relay_class"]), entry: entry, payload: payload}}
 
       {:error, :not_found} ->
         {:error, {:entry_not_found, entry_ref}}
@@ -135,11 +134,11 @@ defmodule Flezha.Service.Dlq do
     end
   end
 
-  defp class_scope([operator_class]), do: {:ok, %{namespace: class_namespace(operator_class)}}
+  defp class_scope([relay_class]), do: {:ok, %{namespace: class_namespace(relay_class)}}
 
   defp redrive(entry_ref, entry, payload) do
     with :ok <- replayable(entry_ref, payload),
-         {:ok, overwatch} <- resolve_overwatch(entry["operator_class"]) do
+         {:ok, overwatch} <- resolve_overwatch(entry["relay_class"]) do
       generation_before = entry["generation"] || 1
       :ok = Store.mark_replaying(entry_ref)
       Host.inject(overwatch, payload, %{"channel" => entry["channel"]}, :fire_and_forget)
@@ -155,26 +154,26 @@ defmodule Flezha.Service.Dlq do
   # A verb that names a class is judged in that class's namespace; one that
   # names none reads across every namespace, which is a `_system` read.
   defp class_namespace(nil), do: Namespace.system_name()
-  defp class_namespace(operator_class), do: OperatorManager.namespace_of_class(operator_class)
+  defp class_namespace(relay_class), do: RelayManager.namespace_of_class(relay_class)
 
   defp replayable(entry_ref, nil), do: {:error, {:payload_not_replayable, entry_ref}}
   defp replayable(_entry_ref, _payload), do: :ok
 
-  defp resolve_overwatch(operator_class) do
-    case Lookup.overwatch(operator_class) do
+  defp resolve_overwatch(relay_class) do
+    case Lookup.overwatch(relay_class) do
       {:ok, pid} -> {:ok, pid}
-      {:error, _reason} -> resolve_overwatch_cluster(operator_class)
+      {:error, _reason} -> resolve_overwatch_cluster(relay_class)
     end
   end
 
   # The class registry is node-local; a target hosted on a peer resolves
   # through the routed pid lookup and the re-injection cast rides distribution.
-  defp resolve_overwatch_cluster(operator_class) do
-    with {:ok, namespace} <- OperatorManager.namespace_of(operator_class),
-         {:ok, pid} <- OperatorManager.get_operator_pid(namespace, operator_class) do
+  defp resolve_overwatch_cluster(relay_class) do
+    with {:ok, namespace} <- RelayManager.namespace_of(relay_class),
+         {:ok, pid} <- RelayManager.get_relay_pid(namespace, relay_class) do
       {:ok, pid}
     else
-      _ -> {:error, {:operator_not_running, operator_class}}
+      _ -> {:error, {:relay_not_running, relay_class}}
     end
   end
 

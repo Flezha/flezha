@@ -1,11 +1,11 @@
 defmodule Flezha.State.WalTransfer do
   @moduledoc """
-  Cross-controller pull of an operator's durable files, one reference at a
-  time: a Cell's file set (`{:cell, cell_id}`, a steps operator's journal among them
+  Cross-controller pull of a relay's durable files, one reference at a
+  time: a Cell's file set (`{:cell, cell_id}`, a steps relay's journal among them
   under its reserved identity) or the instance's input log
   (`{:input_log, class}`).
 
-  A controller that loses every runner drains its operators to a peer. The
+  A controller that loses every runner drains its relays to a peer. The
   handover carries the SDK's in-memory state — but it sources that from the
   **runner**, dead by construction on that path, so it arrives empty. What
   survives is on the source controller's disk, and nothing else can move it:
@@ -73,28 +73,28 @@ defmodule Flezha.State.WalTransfer do
   # ---------- destination side ----------
 
   @doc """
-  Pull every durable file of `operator_class` from `source_node`: its Cells,
-  a steps operator's journal, and its input log, which travel together because a
+  Pull every durable file of `relay_class` from `source_node`: its Cells,
+  a steps relay's journal, and its input log, which travel together because a
   journal pulled without its log seeds the instance's floor in an empty
   offset space. Returns the number of references whose files landed; `0`
   means the source held nothing and a cold start is correct. A per-reference
   failure is logged via telemetry and skipped — one unreadable Cell must not
-  cost the operator the rest.
+  cost the relay the rest.
   """
-  @spec pull_operator(node(), binary(), keyword()) :: non_neg_integer()
-  def pull_operator(source_node, operator_class, opts \\ [])
+  @spec pull_relay(node(), binary(), keyword()) :: non_neg_integer()
+  def pull_relay(source_node, relay_class, opts \\ [])
 
-  def pull_operator(source_node, _operator_class, _opts) when source_node == node(), do: 0
+  def pull_relay(source_node, _relay_class, _opts) when source_node == node(), do: 0
 
-  def pull_operator(source_node, operator_class, opts) do
+  def pull_relay(source_node, relay_class, opts) do
     timeout = Keyword.get(opts, :timeout, Durations.get(:wal_transfer_call_ms))
 
-    case call(source_node, Paths, :durable_refs, [operator_class], timeout) do
+    case call(source_node, Paths, :durable_refs, [relay_class], timeout) do
       {:ok, refs} ->
         Enum.count(refs, &landed?(pull_cell(source_node, &1, opts)))
 
       {:error, reason} ->
-        emit(:wal_pull_failed, %{operator_class: operator_class, reason: reason})
+        emit(:wal_pull_failed, %{relay_class: relay_class, reason: reason})
         0
     end
   end
@@ -103,24 +103,24 @@ defmodule Flezha.State.WalTransfer do
   defp landed?(_), do: false
 
   @doc """
-  How new `source_node`'s copy of `operator_class` is (`Artifact.freshness_of/1`),
+  How new `source_node`'s copy of `relay_class` is (`Artifact.freshness_of/1`),
   `%{}`, logged, when the source cannot be asked.
   """
   @spec freshness(node(), binary()) :: %{ref() => term()}
-  def freshness(source_node, operator_class) do
+  def freshness(source_node, relay_class) do
     timeout = Durations.get(:wal_transfer_call_ms)
 
-    case call(source_node, Artifact, :freshness_of, [operator_class], timeout) do
+    case call(source_node, Artifact, :freshness_of, [relay_class], timeout) do
       {:ok, theirs} ->
         theirs
 
       {:error, reason} ->
         Logger.warning(
-          "[state] #{operator_class}: #{source_node} could not be asked for its copy " <>
+          "[state] #{relay_class}: #{source_node} could not be asked for its copy " <>
             "(#{inspect(reason)}); the local copy is bound unchecked"
         )
 
-        emit(:wal_pull_failed, %{operator_class: operator_class, reason: reason})
+        emit(:wal_pull_failed, %{relay_class: relay_class, reason: reason})
         %{}
     end
   end
@@ -130,7 +130,7 @@ defmodule Flezha.State.WalTransfer do
   `{:ok, 0}` means the source held nothing — a cold start is correct.
 
   `:as` writes the files under a different reference of the same kind — for a
-  Cell, the same tasklet and key under another Operator class, which is what
+  Cell, the same tasklet and key under another Relay class, which is what
   a partition rescale's cross-controller move is. The cell key is unchanged,
   so every basename resolves in the destination's layout.
   """

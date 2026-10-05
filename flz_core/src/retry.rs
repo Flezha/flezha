@@ -2,7 +2,7 @@
 //! counted and logged — and the two off-thread ladders the routing seam
 //! climbs: a poison entry parse and an unwinding edge closure, each parked to
 //! the dead-letter queue once exhausted. A third caller, the frame naming a
-//! channel the operator does not declare, walks the same ladder with a
+//! channel the relay does not declare, walks the same ladder with a
 //! budget of one.
 
 use std::any::Any;
@@ -15,8 +15,8 @@ use flz_transport::transport::FlezhaStream;
 use flz_transport::utility::noise::{noise, xorshift64};
 
 use crate::channel::{ChannelDescriptor, RetryPolicy};
-use crate::operator::instance::OperatorInstance;
 use crate::park::RETRIES_TOTAL;
+use crate::relay::instance::RelayInstance;
 use crate::routing::{deliver_edge, EntryView};
 
 /// What a park is attributed to, and how hard the ladder tries first.
@@ -45,7 +45,7 @@ impl<'a> ParkTarget<'a> {
         Self::declared(channel, "_edge")
     }
 
-    /// A steps operator's failed turn on its entry channel, under the one
+    /// A steps relay's failed turn on its entry channel, under the one
     /// `_turn` slot whichever tasklet failed.
     pub(crate) fn turn(channel: &'a ChannelDescriptor) -> Self {
         Self {
@@ -56,7 +56,7 @@ impl<'a> ParkTarget<'a> {
         }
     }
 
-    /// A name off the wire the operator does not declare: parked at a budget
+    /// A name off the wire the relay does not declare: parked at a budget
     /// of one, because the same declared set answers every re-attempt, and
     /// under this side's own slot, because a frame-controlled name never
     /// becomes a path component.
@@ -115,7 +115,7 @@ fn backoff(base_ms: u64, attempt: u32) -> Duration {
     Duration::from_millis(jittered.min(crate::channel::RETRY_BACKOFF_MAX_MS))
 }
 
-/// Where a re-parsed entry value goes: a flow operator's consumers, a steps operator's
+/// Where a re-parsed entry value goes: a flow relay's consumers, a steps relay's
 /// inbox. The one place the two kinds differ on the entry ladder.
 pub type EntryDeliver = Box<dyn Fn(Arc<dyn Any + Send + Sync>) -> Result<(), String> + Send + Sync>;
 
@@ -196,7 +196,7 @@ pub(crate) fn run_entrance_ladder<V: EntryView>(
 /// Re-attempt one step per the target's budget, then park what still fails;
 /// `attempt_step` re-runs AND delivers, so the ladders differ only in the
 /// step. A [`ParkTarget`] travels rather than a `ChannelDescriptor`, because a
-/// frame naming a channel the operator does not declare has no descriptor to
+/// frame naming a channel the relay does not declare has no descriptor to
 /// park under and must park all the same. `true` when the ladder parked.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn run_retry_park_ladder(
@@ -297,7 +297,7 @@ pub(crate) fn park_exhausted(
 /// parked and observable rather than a dead thread.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn spawn_edge_ladder(
-    instance: &Arc<OperatorInstance>,
+    instance: &Arc<RelayInstance>,
     channel: &crate::channel::ChannelDescriptor,
     edge: &crate::channel::ConsumerEdge,
     value: &Arc<dyn Any + Send + Sync>,
@@ -364,7 +364,7 @@ impl<V: EntryView> Drop for LadderRunning<V> {
 }
 
 struct EdgeLadder {
-    instance: Arc<OperatorInstance>,
+    instance: Arc<RelayInstance>,
     channel_id: u32,
     edge: crate::channel::ConsumerEdge,
     value: Arc<dyn Any + Send + Sync>,

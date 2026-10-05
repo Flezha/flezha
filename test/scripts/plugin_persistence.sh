@@ -3,13 +3,13 @@
 #
 # Asserts the contract from
 # openspec/specs/plugin-subscription-persistence/spec.md: plugins
-# enabled via `flz plugin enable` after `flz operator start` SHALL
+# enabled via `flz plugin enable` after `flz relay start` SHALL
 # survive a `docker compose restart rust` without runner
 # intervention. Before the cspec-persistence change, this fails — the
 # Rust restart triggers `alter_child_data` to rewrite the cspec start
 # args with a fresh runner_id, ProcessHub stops + restarts
 # the Overwatch under the new spec, and the runtime plugin extensions
-# table boots empty (only plugins from `flz operator start
+# table boots empty (only plugins from `flz relay start
 # --plugins` are restored).
 #
 # Reuses the same dedicated compose project pattern as
@@ -29,7 +29,7 @@ HEALING_COMPOSE="${REPO_ROOT}/docker/dev/docker-compose.healing.yml"
 
 REJOIN_TIMEOUT_S="${REJOIN_TIMEOUT_S:-300}"
 DEMO_NAMESPACE="${FLEZHA_DEMO_NAMESPACE:-default}"
-PROCESSOR_ID="${FLEZHA_PERSISTENCE_PROCESSOR:-pp_test_operator}"
+PROCESSOR_ID="${FLEZHA_PERSISTENCE_PROCESSOR:-pp_test_relay}"
 PLUGIN_WS_ID="pp_test_ws"
 PLUGIN_SINK_ID="pp_test_sink"
 
@@ -89,9 +89,9 @@ wait_for_new_ce_id() {
 assert_plugin_listed() {
   local plugin_id="$1"
   local stage="$2"
-  if ! flz operator info "${DEMO_NAMESPACE}" 2>/dev/null | grep -q "${plugin_id}"; then
-    echo "[plugin_persistence] FAIL (${stage}): plugin '${plugin_id}' not listed by 'flz operator info'" >&2
-    flz operator info "${DEMO_NAMESPACE}" >&2 || true
+  if ! flz relay info "${DEMO_NAMESPACE}" 2>/dev/null | grep -q "${plugin_id}"; then
+    echo "[plugin_persistence] FAIL (${stage}): plugin '${plugin_id}' not listed by 'flz relay info'" >&2
+    flz relay info "${DEMO_NAMESPACE}" >&2 || true
     return 1
   fi
   note "${stage}: plugin '${plugin_id}' present"
@@ -114,18 +114,18 @@ if [ -z "${INITIAL_CE_ID}" ]; then
 fi
 note "initial runner_id: ${INITIAL_CE_ID}"
 
-note "starting operator ${PROCESSOR_ID}"
-flz operator start "${PROCESSOR_ID}" store_input \
+note "starting relay ${PROCESSOR_ID}"
+flz relay start "${PROCESSOR_ID}" store_input \
   --init_values '{"binary_inputs": [], "text_inputs": ["FIRST"]}'
 
 note "enabling websocket plugin ${PLUGIN_WS_ID}"
-flz plugin enable "${PLUGIN_WS_ID}" operator_websocket \
-  --operator_id="${PROCESSOR_ID}" \
+flz plugin enable "${PLUGIN_WS_ID}" relay_websocket \
+  --relay_id="${PROCESSOR_ID}" \
   --Xuri="ws://localhost:4500"
 
 note "enabling file sink plugin ${PLUGIN_SINK_ID}"
-flz plugin enable "${PLUGIN_SINK_ID}" operator_file_sink \
-  --operator_id="${PROCESSOR_ID}" \
+flz plugin enable "${PLUGIN_SINK_ID}" relay_file_sink \
+  --relay_id="${PROCESSOR_ID}" \
   --hook=on_output \
   --Xpath="${PROCESSOR_ID}.test.ndjson"
 

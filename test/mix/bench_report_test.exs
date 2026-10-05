@@ -18,7 +18,7 @@ defmodule Mix.Tasks.Bench.ReportTest do
       rendered =
         Report.table(
           ["phase", "elapsed"],
-          [["operator creation", "217.1 ms"], ["plugin setup", "42.3 ms"]],
+          [["relay creation", "217.1 ms"], ["plugin setup", "42.3 ms"]],
           [:left, :right]
         )
 
@@ -29,7 +29,7 @@ defmodule Mix.Tasks.Bench.ReportTest do
         assert String.length(line) <= String.length(header) + 8
       end
 
-      assert String.starts_with?(rule, String.duplicate("─", String.length("operator creation")))
+      assert String.starts_with?(rule, String.duplicate("─", String.length("relay creation")))
       assert String.ends_with?(first, "217.1 ms")
       # Right-aligned: the shorter value is padded on the left, so both end
       # at the same column.

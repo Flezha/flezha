@@ -113,7 +113,7 @@ spec:
               containerPort: 9569
               protocol: TCP
           # Starting points, not tuned numbers. The BEAM's steady-state
-          # footprint scales with the number of bound operators and the
+          # footprint scales with the number of bound relays and the
           # per-Cell WAL write rate — tune to your workload and watch for
           # the symptoms documented in README "Resources".
           resources:

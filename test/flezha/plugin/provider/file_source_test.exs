@@ -4,7 +4,7 @@ defmodule Flezha.Plugin.Provider.FileSourceTest do
   confirming ingest, followed as the file grows, and resumed from a committed
   offset.
 
-  The test process stands in for the host operator, so every injection is an
+  The test process stands in for the host relay, so every injection is an
   `{:ingest, line, metadata}` call the test answers and every commit is a
   `{:plugin_opt_persist, …}` cast it receives. Polls after the first are driven
   by sending `:poll`, with `poll_interval_ms` parked at a minute, unless the
@@ -46,18 +46,18 @@ defmodule Flezha.Plugin.Provider.FileSourceTest do
   end
 
   describe "the provider id" do
-    test "an enable naming operator_file_source prepares and activates on an operator's table",
+    test "an enable naming relay_file_source prepares and activates on a relay's table",
          %{events: file} do
       File.write!(file, "")
 
-      assert {:ok, provider} = Providers.fetch("operator_file_source"),
-             "operator_file_source is not a provider id the system can enable"
+      assert {:ok, provider} = Providers.fetch("relay_file_source"),
+             "relay_file_source is not a provider id the system can enable"
 
       plugin = %Plugin{
         id: "file-source-enable",
         provider: provider,
         namespace: :default,
-        operator_id: "file-source-op",
+        relay_id: "file-source-op",
         opts: %{path: "events.ndjson", channel_in: @channel},
         hooks: [{:on_terminate, []}]
       }
@@ -262,7 +262,7 @@ defmodule Flezha.Plugin.Provider.FileSourceTest do
                2_000
              )
 
-      # What `flz operator info` renders beneath the plugin.
+      # What `flz relay info` renders beneath the plugin.
       assert Source.inspect_state(Map.put(opts, :owned_pid, reader)) ==
                %{path: file, health: {:unhealthy, {:file_missing, file}}}
 

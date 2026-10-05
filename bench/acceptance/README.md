@@ -1,6 +1,6 @@
-# Steps operator bench acceptance harness
+# Steps relay bench acceptance harness
 
-Repeatable, configurable runs of the steps operator bench
+Repeatable, configurable runs of the steps relay bench
 (`mix bench.steps`), with progress streamed as each run lands and a
 median summary at the end that flags regressions against a saved baseline.
 

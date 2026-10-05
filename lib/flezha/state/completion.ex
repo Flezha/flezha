@@ -1,18 +1,18 @@
 defmodule Flezha.State.Completion do
   @moduledoc """
-  The per-operator *completion record* of a finished steps operator.
+  The per-relay *completion record* of a finished steps relay.
 
   On terminal teardown (status `ok | error | cancelled`) the controller writes
-  a small durable term alongside the operator's retained Cell state, so the
-  outcome stays inspectable via `flz operator info` until the retention window
+  a small durable term alongside the relay's retained Cell state, so the
+  outcome stays inspectable via `flz relay info` until the retention window
   elapses (`Flezha.State.Retention` sweeps both).
 
   The record lives at
-  `<state_root>/<namespace>/<operator_class>/completion.record` — a file
+  `<state_root>/<namespace>/<relay_class>/completion.record` — a file
   sibling to the tasklet directories, inert to every
   `Flezha.State.Paths` scanner (which only recognise `.wal` /
   `.snap.<seq>` / `.outbox.dedup`). Its
-  presence is also the retain-vs-delete signal for `stop_operator`.
+  presence is also the retain-vs-delete signal for `stop_relay`.
   """
 
   require Logger
@@ -31,11 +31,11 @@ defmodule Flezha.State.Completion do
         }
 
   @spec path(binary()) :: binary()
-  def path(operator_class),
-    do: Path.join(Paths.class_dir(operator_class), @filename)
+  def path(relay_class),
+    do: Path.join(Paths.class_dir(relay_class), @filename)
 
   @spec exists?(binary()) :: boolean()
-  def exists?(operator_class), do: File.exists?(path(operator_class))
+  def exists?(relay_class), do: File.exists?(path(relay_class))
 
   @doc """
   Atomically write the completion record (`.tmp` → rename, so a reader never
@@ -43,8 +43,8 @@ defmodule Flezha.State.Completion do
   teardown never crashes on a record write.
   """
   @spec write(binary(), t()) :: :ok
-  def write(operator_class, %{} = record) when is_binary(operator_class) do
-    final = Path.join(Paths.class_dir(operator_class), @filename)
+  def write(relay_class, %{} = record) when is_binary(relay_class) do
+    final = Path.join(Paths.class_dir(relay_class), @filename)
     bytes = :erlang.term_to_binary(record)
 
     case Paths.atomic_install(final, &:file.write(&1, bytes), :completion) do
@@ -53,7 +53,7 @@ defmodule Flezha.State.Completion do
 
       {:error, reason} ->
         Logger.warning(
-          "[state] completion record write failed for #{operator_class}: #{inspect(reason)}"
+          "[state] completion record write failed for #{relay_class}: #{inspect(reason)}"
         )
 
         :ok
@@ -61,8 +61,8 @@ defmodule Flezha.State.Completion do
   end
 
   @spec read(binary()) :: {:ok, t()} | :error
-  def read(operator_class) when is_binary(operator_class) do
-    case File.read(path(operator_class)) do
+  def read(relay_class) when is_binary(relay_class) do
+    case File.read(path(relay_class)) do
       {:ok, bin} ->
         try do
           {:ok, :erlang.binary_to_term(bin, [:safe])}
@@ -76,8 +76,8 @@ defmodule Flezha.State.Completion do
   end
 
   @spec delete(binary()) :: :ok
-  def delete(operator_class) when is_binary(operator_class) do
-    _ = File.rm(path(operator_class))
+  def delete(relay_class) when is_binary(relay_class) do
+    _ = File.rm(path(relay_class))
     :ok
   end
 end

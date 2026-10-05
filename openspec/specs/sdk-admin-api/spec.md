@@ -5,18 +5,18 @@ TBD - created by archiving change let-an-application-administer-its-namespace. U
 ## Requirements
 ### Requirement: An application administers its own namespace from runner code
 
-The SDK SHALL offer, on the runner object rather than on a tasklet context, a surface reached as `control()` (`control` in Ruby, `$runner->control()` in PHP, `Flezha.SDK.Control` in Elixir) by which ordinary application code administers the namespace its connection proved. The surface SHALL cover starting and stopping an operator, enabling and disabling a plugin by name, binding a plugin to an operator and unbinding it, and reading operators, plugins and cell state. It SHALL not carry sending to an operator, which is on the runner object itself, and no SDK SHALL offer the surface under its former name `admin`. It SHALL require no tasklet to be running and SHALL require the application to hold no credential of its own beyond what its connection already presented. Starting SHALL take the same specification `flz operator start` takes: the factory, and an id only when the application chooses one. Enabling SHALL take the same specification `flz plugin enable` takes: the name, the provider and its options, and an operator only when the application binds in the same call.
+The SDK SHALL offer, on the runner object rather than on a tasklet context, a surface reached as `control()` (`control` in Ruby, `$runner->control()` in PHP, `Flezha.SDK.Control` in Elixir) by which ordinary application code administers the namespace its connection proved. The surface SHALL cover starting and stopping a relay, enabling and disabling a plugin by name, binding a plugin to a relay and unbinding it, and reading relays, plugins and cell state. It SHALL not carry sending to a relay, which is on the runner object itself, and no SDK SHALL offer the surface under its former name `admin`. It SHALL require no tasklet to be running and SHALL require the application to hold no credential of its own beyond what its connection already presented. Starting SHALL take the same specification `flz relay start` takes: the factory, and an id only when the application chooses one. Enabling SHALL take the same specification `flz plugin enable` takes: the name, the provider and its options, and a relay only when the application binds in the same call.
 
-#### Scenario: An application starts an operator it implements
+#### Scenario: An application starts a relay it implements
 
-- **WHEN** application code on a connected runner asks to start an operator,
-  giving the same specification `flz operator start` takes
-- **THEN** the operator SHALL start in the namespace the connection proved
+- **WHEN** application code on a connected runner asks to start a relay,
+  giving the same specification `flz relay start` takes
+- **THEN** the relay SHALL start in the namespace the connection proved
 
-#### Scenario: An application starts an operator without naming it
+#### Scenario: An application starts a relay without naming it
 
-- **WHEN** application code asks to start an operator giving only its factory
-- **THEN** the operator SHALL start in the namespace the connection proved under a
+- **WHEN** application code asks to start a relay giving only its factory
+- **THEN** the relay SHALL start in the namespace the connection proved under a
   generated id
 
 #### Scenario: The call needs no tasklet
@@ -31,18 +31,18 @@ The SDK SHALL offer, on the runner object rather than on a tasklet context, a su
 - **THEN** no credential held by the application SHALL have lapsed, and the call
   SHALL be judged exactly as it would have been on the first day
 
-#### Scenario: An application shares a plugin between two operators
+#### Scenario: An application shares a plugin between two relays
 
-- **WHEN** application code enables a plugin by name and binds it to two operators
+- **WHEN** application code enables a plugin by name and binds it to two relays
   it started
-- **THEN** both operators SHALL be bound to the one plugin, and unbinding one SHALL
+- **THEN** both relays SHALL be bound to the one plugin, and unbinding one SHALL
   leave the other bound and the plugin enabled
 
 #### Scenario: The surface is reached as control
 
-- **WHEN** application code asks a started runner for `control()` and starts an operator
+- **WHEN** application code asks a started runner for `control()` and starts a relay
   through it
-- **THEN** the operator SHALL start, and the runner SHALL offer no `admin()`
+- **THEN** the relay SHALL start, and the runner SHALL offer no `admin()`
 
 ### Requirement: The act is judged and recorded like any other user act
 
@@ -57,20 +57,20 @@ An SDK-issued act SHALL be judged at the same policy point, against the same dec
 
 #### Scenario: The audit names the requester
 
-- **WHEN** an application starts an operator
+- **WHEN** an application starts a relay
 - **THEN** the audit record SHALL name the requesting runner's principal and the
   namespace, and SHALL be indistinguishable in shape from a user-issued one
 
 #### Scenario: Quotas are enforced unchanged
 
-- **WHEN** an application asks to start an operator that would exceed the
-  namespace's `max_operators`
+- **WHEN** an application asks to start a relay that would exceed the
+  namespace's `max_relays`
 - **THEN** the call SHALL be refused with the code `quota.exceeded` and the same details
   (`kind`, `current`, `limit`) a user would receive from `flz`
 
 #### Scenario: A read writes no audit record
 
-- **WHEN** an application reads operators, plugins or cell state
+- **WHEN** an application reads relays, plugins or cell state
 - **THEN** the read SHALL be authorized and SHALL write no audit record, matching
   the declaration its row already carries
 
@@ -106,19 +106,19 @@ An SDK caller SHALL NOT be able to install, upgrade or uninstall a plugin, stop 
   permitted or forbidden names
 - **THEN** none SHALL exist, because reachability follows the role's grant set
 
-### Requirement: A started operator outlives its requester
+### Requirement: A started relay outlives its requester
 
-An operator started through this surface SHALL be owned by the cluster and not by the connection that asked for it. It SHALL survive the requesting runner's disconnection and SHALL be visible and stoppable by a user.
+A relay started through this surface SHALL be owned by the cluster and not by the connection that asked for it. It SHALL survive the requesting runner's disconnection and SHALL be visible and stoppable by a user.
 
 #### Scenario: The requesting runner disconnects
 
-- **WHEN** the runner whose application started an operator disconnects
-- **THEN** the operator SHALL continue, subject to the same rebinding rules as
+- **WHEN** the runner whose application started a relay disconnects
+- **THEN** the relay SHALL continue, subject to the same rebinding rules as
   one a user started
 
 #### Scenario: A user can see and stop it
 
-- **WHEN** a user lists and stops operators in that namespace
+- **WHEN** a user lists and stops relays in that namespace
 - **THEN** one started from application code SHALL appear and SHALL stop
 
 ### Requirement: Every SDK carries the surface over one shared entry
@@ -140,21 +140,21 @@ Every SDK SHALL expose the surface, and the hosts that share `flz_core` SHALL re
 ### Requirement: Starting from application code SHALL answer the id and the outcome
 
 Every SDK's start call SHALL take the factory first and the id as an optional named argument, in
-the form its language has: `OperatorSpec::new(factory).id(..)` in Rust,
-`OperatorSpec.of(factory).id(..)` in Java, a keyword list in Elixir, keyword arguments in Python
+the form its language has: `RelaySpec::new(factory).id(..)` in Rust,
+`RelaySpec.of(factory).id(..)` in Java, a keyword list in Elixir, keyword arguments in Python
 and Ruby, named arguments in PHP and an options object in Node. A successful start SHALL answer one
-result carrying two fields, the same in every SDK: `id`, the id the operator runs under whether
+result carrying two fields, the same in every SDK: `id`, the id the relay runs under whether
 the application gave it or the controller generated it, and `outcome`, one of `started` and
 `already_running`. `already_running` SHALL be answered only for an id the application gave, when a
-live instance already holds it. The answer SHALL carry nothing else; where an operator runs is read
-through `flz operator info` or the read surface. A refused start SHALL be reported as the SDK's one error type, carrying the `code`,
+live instance already holds it. The answer SHALL carry nothing else; where a relay runs is read
+through `flz relay info` or the read surface. A refused start SHALL be reported as the SDK's one error type, carrying the `code`,
 `class`, `message`, `details` and `hint` the controller answered.
 
 #### Scenario: A start without an id answers the generated id
 
 - **WHEN** application code starts factory `echo` with no id
 - **THEN** the call SHALL answer `id` set to the generated id and `outcome` set to `started`, and
-  that id SHALL be the one `flz operator list` shows and a stop through the same surface accepts
+  that id SHALL be the one `flz relay list` shows and a stop through the same surface accepts
 
 #### Scenario: A start of a running id answers already running
 
@@ -165,14 +165,14 @@ through `flz operator info` or the read surface. A refused start SHALL be report
 
 #### Scenario: The answer has one shape in every SDK
 
-- **WHEN** each SDK's own suite starts an operator with and without an id through its wrapper
+- **WHEN** each SDK's own suite starts a relay with and without an id through its wrapper
 - **THEN** every SDK SHALL expose the same two fields, `id` and `outcome`, with the same outcome
   words, and no `node`, `runner_id` or `pid`
 
 #### Scenario: A refused start carries its code
 
-- **WHEN** application code asks to start an operator that would exceed the namespace's
-  `max_operators`
+- **WHEN** application code asks to start a relay that would exceed the namespace's
+  `max_relays`
 - **THEN** the call SHALL be refused with the SDK's one error type, its `code` SHALL be
   `quota.exceeded` in every SDK, and its details SHALL name the quota kind, the current count
   and the limit

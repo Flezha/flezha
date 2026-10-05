@@ -23,12 +23,12 @@ defmodule FlezhaTest.System.EffectivelyOnceCheckpointE2ETest do
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
   import FlezhaTest.Helper.TierE2EHarness
 
-  alias Flezha.Operator.Builder
-  alias Flezha.Operator.ClassRegistry
+  alias Flezha.Relay.Builder
+  alias Flezha.Relay.ClassRegistry
   alias Flezha.Runner.FleetManager
-  alias Flezha.Service.OperatorManager
+  alias Flezha.Service.RelayManager
   alias Flezha.State.InputLog
-  alias FlezhaTest.Fixtures.OperatorFixture
+  alias FlezhaTest.Fixtures.RelayFixture
 
   @moduletag timeout: 300_000
 
@@ -36,68 +36,68 @@ defmodule FlezhaTest.System.EffectivelyOnceCheckpointE2ETest do
 
   test "the offset holds for the interval, and a mid-interval kill replays it" do
     namespace = unique("cp_ack")
-    operator_id = unique("checkpoint_store")
+    relay_id = unique("checkpoint_store")
     id_path = unique_id_path()
 
-    on_exit(fn -> cleanup(namespace, operator_id, id_path) end)
+    on_exit(fn -> cleanup(namespace, relay_id, id_path) end)
 
     {port_a, exec_a} = boot_runner(namespace, id_path)
 
     sink = %Flezha.Plugin{
       id: "tier_sink",
       namespace: namespace,
-      operator_id: operator_id,
+      relay_id: relay_id,
       provider: Flezha.Plugin.Provider.BeamMsgForward,
       opts: %{recv_pid: self(), include_metadata: true},
       hooks: [{:on_output, []}]
     }
 
     builder = %Builder{
-      id: operator_id,
+      id: relay_id,
       factory_id: @factory,
       init_values: %{},
-      opts: [bindings: OperatorFixture.bindings(namespace, operator_id, [sink])]
+      opts: [bindings: RelayFixture.bindings(namespace, relay_id, [sink])]
     }
 
-    assert {:ok, info} = OperatorManager.start_operator(namespace, builder)
+    assert {:ok, info} = RelayManager.start_relay(namespace, builder)
 
     assert info.runner_id == exec_a
 
-    assert wait_until(fn -> ClassRegistry.effectively_once?(operator_id) end, 30_000),
+    assert wait_until(fn -> ClassRegistry.effectively_once?(relay_id) end, 30_000),
            "the tier declaration never reached the controller"
 
-    assert wait_until(fn -> ClassRegistry.ack_checkpoint?(operator_id) end, 30_000),
+    assert wait_until(fn -> ClassRegistry.ack_checkpoint?(relay_id) end, 30_000),
            "the checkpoint ack-granularity declaration never reached the controller"
 
     # --- Phase 1: an open interval acknowledges nothing --------------------
     # Offsets 0 and 1. Their outputs flush as they happen (checkpointing moves
     # the acknowledgement, not the output) — but nothing is durably consumed.
-    send_inputs(operator_id, namespace, ["k1:a", "k2:a"])
+    send_inputs(relay_id, namespace, ["k1:a", "k2:a"])
     assert await_changelog(%{"k1" => "k1=a", "k2" => "k2=a"}, 30_000)
 
     # The outputs are out, and the watermark has still never moved.
-    refute InputLog.watermark(operator_id),
+    refute InputLog.watermark(relay_id),
            "an open interval must not advance the durable consumed-offset"
 
     # --- Phase 2: the checkpoint closes the interval ------------------------
     # Offset 2. One record carries the interval's accumulated state AND the
     # offset that acknowledges every input folded into it.
-    send_inputs(operator_id, namespace, ["commit:1"])
+    send_inputs(relay_id, namespace, ["commit:1"])
 
-    assert wait_until(fn -> InputLog.watermark(operator_id) == 2 end, 30_000),
+    assert wait_until(fn -> InputLog.watermark(relay_id) == 2 end, 30_000),
            "the checkpoint never advanced the watermark to the interval's closing offset"
 
     # --- Phase 3: SIGKILL mid-interval --------------------------------------
     # Offsets 3 and 4 fold into a NEW interval and are never checkpointed. Their
     # state is not durable; their outputs already are. The kill abandons the
     # open interval.
-    send_inputs(operator_id, namespace, ["k3:a", "k1:b"])
+    send_inputs(relay_id, namespace, ["k3:a", "k1:b"])
     assert await_changelog(%{"k3" => "k3=a", "k1" => "k1=b"}, 30_000)
 
     sigkill(os_pid(port_a))
 
     # An input arriving with no runner alive: journaled, undeliverable.
-    send_inputs(operator_id, namespace, ["k4:a"])
+    send_inputs(relay_id, namespace, ["k4:a"])
 
     {_port_b, exec_b} = boot_runner(namespace, id_path)
     assert exec_b != exec_a
@@ -109,13 +109,13 @@ defmodule FlezhaTest.System.EffectivelyOnceCheckpointE2ETest do
            "the interval's inputs were not re-forwarded after the kill"
 
     # --- Phase 4: the replayed interval checkpoints -------------------------
-    send_inputs(operator_id, namespace, ["commit:2"])
+    send_inputs(relay_id, namespace, ["commit:2"])
 
-    assert wait_until(fn -> InputLog.watermark(operator_id) == 6 end, 60_000),
+    assert wait_until(fn -> InputLog.watermark(relay_id) == 6 end, 60_000),
            "the replayed interval never acknowledged its inputs"
 
     # --- Conformance over EVERYTHING the sink ever saw ----------------------
-    assert await_outbox_drained(operator_id), "the outbox never drained"
+    assert await_outbox_drained(relay_id), "the outbox never drained"
     outputs = drain_outputs([])
 
     expected_final = %{"k1" => "k1=b", "k2" => "k2=a", "k3" => "k3=a", "k4" => "k4=a"}

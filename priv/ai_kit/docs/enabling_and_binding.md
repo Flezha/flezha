@@ -1,6 +1,6 @@
 # Enabling and binding
 
-`flz plugin` enables a plugin by name and binds operators to it. This page covers the
+`flz plugin` enables a plugin by name and binds relays to it. This page covers the
 commands, their flags and hooks, changing a running plugin and seeing what runs.
 [Plugins](plugins.md) has the model, and [Plugin commands](../cli/plugin_commands.md)
 shows what each command prints.
@@ -13,15 +13,15 @@ shows what each command prints.
 4. [Hooks](#hooks)
 5. [Change a running plugin](#change-a-running-plugin)
 6. [See what runs](#see-what-runs)
-7. [At an operator's start](#at-an-operator-s-start)
+7. [At a relay's start](#at-a-relay-s-start)
 
 ## The commands
 
 | Command | What it does |
 | --- | --- |
-| `flz plugin enable <name> <provider> [--single] [--X<option>=<value>]...` | enable a plugin by name; with `--operator_id` it also binds that operator |
-| `flz plugin bind <name> --operator_id <op> [--hook=<hook>]... [--channel <c>]` | bind an operator to an enabled plugin |
-| `flz plugin unbind <name> --operator_id <op>` | take the binding away; the plugin stays enabled |
+| `flz plugin enable <name> <provider> [--single] [--X<option>=<value>]...` | enable a plugin by name; with `--relay_id` it also binds that relay |
+| `flz plugin bind <name> --relay_id <op> [--hook=<hook>]... [--channel <c>]` | bind a relay to an enabled plugin |
+| `flz plugin unbind <name> --relay_id <op>` | take the binding away; the plugin stays enabled |
 | `flz plugin update <name> [--X<option>=<value>]...` | change an enabled plugin's options |
 | `flz plugin disable <name>` | turn the plugin off |
 | `flz plugin list` | the plugins enabled in the namespace |
@@ -30,9 +30,9 @@ shows what each command prints.
 | `flz plugin help <provider>` | a provider's options and hooks |
 
 Every verb takes `--namespace` (default `default`). `enable` reads `--namespace`,
-`--single`, `--operator_id`, `--hook`, `--channel` and the X-prefixed settings; `bind`
-reads `--namespace`, `--operator_id`, `--hook` and `--channel`; `unbind` reads
-`--namespace` and `--operator_id`; `update` reads `--namespace` and the X-prefixed
+`--single`, `--relay_id`, `--hook`, `--channel` and the X-prefixed settings; `bind`
+reads `--namespace`, `--relay_id`, `--hook` and `--channel`; `unbind` reads
+`--namespace` and `--relay_id`; `update` reads `--namespace` and the X-prefixed
 settings; `disable` reads `--namespace`. Each refuses any other option rather than
 dropping it.
 
@@ -42,7 +42,7 @@ dropping it.
 
 | Flag | Belongs to | For example |
 |---|---|---|
-| `--operator_id`, `--namespace`, `--single`, `--channel` | the command: which operator the plugin is bound to, and how | `--operator_id=trade_watcher` |
+| `--relay_id`, `--namespace`, `--single`, `--channel` | the command: which relay the plugin is bound to, and how | `--relay_id=trade_watcher` |
 | `--hook` | the binding: when the controller calls the plugin | `--hook=on_output` |
 | `--X<option>` | the plugin: its own settings, one flag each | `--Xuri=ws://localhost:4500/` |
 
@@ -57,14 +57,14 @@ Every provider lists its settings, required ones first, then its type and the ho
 supports:
 
 ```sh
-$ flz plugin help operator_websocket
+$ flz plugin help relay_websocket
 ```
 
 ```output
 Websocket Plugin Help
 
 USAGE:
-    flz plugin enable <name> operator_websocket [OPTIONS]
+    flz plugin enable <name> relay_websocket [OPTIONS]
 
 REQUIRED PARAMETERS (X-prefixed):
     --Xuri <value>    The websocket endpoint to connect to
@@ -80,13 +80,13 @@ OPTIONAL PARAMETERS (X-prefixed):
 - A name is unique in its namespace. Enabling a name that is enabled with the same
   provider leaves the existing plugin untouched and says so (its options are not
   compared); with another provider it is refused with `plugin.id_taken`.
-- `enable ... --operator_id <op>` enables and binds in one command. A bind that fails there
+- `enable ... --relay_id <op>` enables and binds in one command. A bind that fails there
   leaves the plugin enabled, and the output says so before the refusal.
 - A bind to a name that is not enabled is refused with `plugin.not_found`; an unbind of a
-  binding the operator does not have, with `plugin.not_bound`. Binding a controller plugin
+  binding the relay does not have, with `plugin.not_bound`. Binding a controller plugin
   is refused with `plugin.not_bindable`.
-- `--channel` on a bind names the entry channel that operator's records arrive on, when it
-  is not the one the plugin was enabled with: one plugin can feed `trades` on one operator
+- `--channel` on a bind names the entry channel that relay's records arrive on, when it
+  is not the one the plugin was enabled with: one plugin can feed `trades` on one relay
   and `ticks` on another.
 - Options belong to the enable and the update; a bind that carries `--X` settings is
   refused.
@@ -100,8 +100,8 @@ not the binding names a hook.
 | Hook | The plugin is called |
 |---|---|
 | none | never; a source pushes its input in by itself |
-| `on_output` | with everything the operator sends out |
-| `on_input` | with everything the operator takes in |
+| `on_output` | with everything the relay sends out |
+| `on_input` | with everything the relay takes in |
 | `on_interval` | on a timer, every `interval_ms`, which it requires |
 
 `--hook=<name>` names one and may be repeated. A hook takes settings of its own, written
@@ -122,7 +122,7 @@ Plugin trades updated in place.
 `flz plugin update` validates the new options against the provider's declaration and
 records them. When every changed option is one the provider declares live, every running
 copy applies it in place, with no restart and no reconnect. Otherwise every running copy
-restarts with the new options, and the command prints a warning naming the bound operators:
+restarts with the new options, and the command prints a warning naming the bound relays:
 
 ```output
 Plugin trades updated; its running copies restarted.
@@ -134,7 +134,7 @@ An update that changes nothing prints `Plugin trades is unchanged.`
 ## See what runs
 
 `flz plugin list` shows each plugin in the namespace: its name, its provider's name,
-whether it is `single`, the operators bound to it, and the controllers it runs on, or
+whether it is `single`, the relays bound to it, and the controllers it runs on, or
 `idle`. A controller plugin's row also names its hooks and the controllers its copy lags
 on. `--json` prints the same rows as JSON.
 
@@ -146,21 +146,21 @@ $ flz plugin list --namespace trading
 exchange  websocket  bound: trade_watcher  runs on: flezha@127.0.0.1
 ```
 
-`flz operator info` lists every operator in the namespace and, under each one, the plugins
+`flz relay info` lists every relay in the namespace and, under each one, the plugins
 bound to it: the plugin's name, its provider module, the hook it is on, what the provider
 reports about itself (a file plugin's full path, a websocket's subscriptions), and whether
-it is healthy. When an operator shows `degraded`, this is where to look for the plugin
+it is healthy. When a relay shows `degraded`, this is where to look for the plugin
 that is not healthy.
 
 ```sh
-$ flz operator info
+$ flz relay info
 ```
 
 ```output
-Fetching operator information for namespace 'default'...
-Operator information for namespace 'default':
+Fetching relay information for namespace 'default'...
+Relay information for namespace 'default':
 
-Operator: my_echo
+Relay: my_echo
   Run: flow
   Durable: local (sleep_after: false)
   Phase: running
@@ -182,24 +182,24 @@ Operator: my_echo
 
 `reader` has no hook line, because a source is not sent anything.
 
-## At an operator's start
+## At a relay's start
 
-`flz operator start` (and `flz schedule add`) take `--plugins`, a JSON array of plugin
-specs to bind at start. Each spec names a plugin (`name`) and the hooks the operator is
+`flz relay start` (and `flz schedule add`) take `--plugins`, a JSON array of plugin
+specs to bind at start. Each spec names a plugin (`name`) and the hooks the relay is
 bound with (`hooks`, which a source may leave out). A spec that also names a `provider`,
 with its `opts` and `single`, enables the plugin when it is not enabled yet; a spec that
 only binds may name the binding's `channel` in its `opts`. Any other key is refused.
 
 ```sh
-$ flz operator start order_executor --id order_1 --namespace trading \
+$ flz relay start order_executor --id order_1 --namespace trading \
   --text '{"symbol": "EUR/USD", "quantity": 10}' --channel order \
-  --plugins '[{"name": "order_1_file", "provider": "operator_file_sink", "opts": {"path": "order_1.txt"}, "hooks": [["on_output", {}]]}]'
+  --plugins '[{"name": "order_1_file", "provider": "relay_file_sink", "opts": {"path": "order_1.txt"}, "hooks": [["on_output", {}]]}]'
 ```
 
 ```output
 Started order_1
 ```
 
-An operator entry declared with plugin rows of the earlier form (plugins carried on the
-operator rather than enabled by name) starts without them, and one warning names the
-operator and the old plugin ids: enable and bind them again. Nothing converts them.
+A relay entry declared with plugin rows of the earlier form (plugins carried on the
+relay rather than enabled by name) starts without them, and one warning names the
+relay and the old plugin ids: enable and bind them again. Nothing converts them.

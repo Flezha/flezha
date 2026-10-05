@@ -29,9 +29,9 @@ pub struct Scenario {
     pub socket_dir: PathBuf,
     /// The connection's session token; it names the data sockets.
     pub runner_id: String,
-    /// The class to start and the operator id to start it under.
+    /// The class to start and the relay id to start it under.
     pub factory_id: String,
-    pub operator_id: String,
+    pub relay_id: String,
     /// The entry channel inputs are fed to; `None` uses the first declared.
     pub channel: Option<String>,
     /// One input payload per element, fed in order on the primary stream.

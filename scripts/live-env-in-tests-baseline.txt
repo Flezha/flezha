@@ -6,7 +6,7 @@
 #
 # Six modules held the shape when the gate landed and two came off in the same
 # change: the reconnect-ring cap was one option away, because `Hold.new/1`
-# already took `:cap` and only the Operator had no way to state it.
+# already took `:cap` and only the Relay had no way to state it.
 #
 # The four here split in two. Two want a value and have no seam to state it at;
 # two are ABOUT the variable, which is a different test and not an exemption

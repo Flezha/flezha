@@ -41,7 +41,7 @@ defmodule Flezha.Plugin.Provider.PostgresPollTest do
       assert decl.feeds
       refute decl.shareable
       assert decl.telemetry == [caught_up: :event]
-      assert Flezha.Plugin.Providers.fetch("operator_postgres_poll") == {:ok, PostgresPoll}
+      assert Flezha.Plugin.Providers.fetch("relay_postgres_poll") == {:ok, PostgresPoll}
     end
   end
 
@@ -91,10 +91,9 @@ defmodule Flezha.Plugin.Provider.PostgresPollTest do
     end
 
     test "a member of a partition group is refused" do
-      member = opts(%{partition_index: 0, partition_count: 2, source_operator_id: "pg#p0"})
+      member = opts(%{partition_index: 0, partition_count: 2, source_relay_id: "pg#p0"})
 
-      assert {:error,
-              {:partitioned_host, %{provider: "postgres_poll", operator: "pg#p0"}} = reason} =
+      assert {:error, {:partitioned_host, %{provider: "postgres_poll", relay: "pg#p0"}} = reason} =
                ProviderPrepare.prepare(PostgresPoll, member)
 
       assert code(reason) == "plugin.partitioned_host"

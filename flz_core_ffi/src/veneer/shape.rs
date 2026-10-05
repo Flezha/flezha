@@ -42,7 +42,7 @@ impl Key {
 // --- the field keys --------------------------------------------------------
 
 pub const TOKEN: Key = Key::flat("token");
-pub const OPERATOR: Key = Key::flat("operator");
+pub const RELAY: Key = Key::flat("relay");
 pub const TASKLET: Key = Key::flat("tasklet");
 pub const CELL_KEY: Key = Key::of("cell_key", "cellKey");
 pub const CHANGE_SEQ: Key = Key::of("change_seq", "changeSeq");
@@ -99,7 +99,7 @@ pub mod record {
 
     pub const ACTIVATION: &[Key] = &[
         TOKEN,
-        OPERATOR,
+        RELAY,
         TASKLET,
         CELL_KEY,
         CHANGE_SEQ,
@@ -285,8 +285,8 @@ pub fn activation<S: Sink>(s: &S, act: schema::Activation) -> Result<S::Value, S
     let mut out = s.map()?;
     let token = s.u64(act.token)?;
     s.set(&mut out, TOKEN, token)?;
-    let operator = s.text(act.target.operator)?;
-    s.set(&mut out, OPERATOR, operator)?;
+    let relay = s.text(act.target.relay)?;
+    s.set(&mut out, RELAY, relay)?;
     let tasklet = s.u32(act.target.tasklet)?;
     s.set(&mut out, TASKLET, tasklet)?;
     if let Some(key) = act.target.cell_key {

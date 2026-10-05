@@ -13,7 +13,7 @@ defmodule FlezhaTest.System.CrossSdkPlacementE2ETest do
 
   Durable `State` and `Change` bodies are per-SDK below the shared 16-byte
   envelope (serde-postcard in Rust, Kryo in Java), and a restore ships them
-  verbatim to whichever runner bound the Cell. So: an operator of a factory
+  verbatim to whichever runner bound the Cell. So: a relay of a factory
   established at one language is placed only on a runner of that language, and
   killing that runner leaves it unbound with a language reason rather than
   rerouting onto the other runtime.
@@ -34,10 +34,10 @@ defmodule FlezhaTest.System.CrossSdkPlacementE2ETest do
 
   @moduletag skip: FlezhaTest.Tiers.skip_unless_included(:interop)
 
-  alias Flezha.Operator.Builder
-  alias Flezha.Operator.ClassRegistry
+  alias Flezha.Relay.Builder
+  alias Flezha.Relay.ClassRegistry
   alias Flezha.Runner.FleetManager
-  alias Flezha.Service.OperatorManager
+  alias Flezha.Service.RelayManager
   alias Flezha.Service.PortPilot
   alias FlezhaTest.Helper.NodeTestHelper
 
@@ -63,7 +63,7 @@ defmodule FlezhaTest.System.CrossSdkPlacementE2ETest do
       # FleetManager holding a namespace whose ETS table is gone — which the
       # next cleanup tick walks and dies on.
       for step <- [
-            fn -> OperatorManager.stop_all_operators(@namespace) end,
+            fn -> RelayManager.stop_all_relays(@namespace) end,
             fn -> FleetManager.stop_namespace(@namespace) end,
             fn -> Enum.each([rust_port, java_port], &Port.close/1) end,
             fn -> ClassRegistry.delete_established(@namespace, @shared_factory) end
@@ -106,9 +106,9 @@ defmodule FlezhaTest.System.CrossSdkPlacementE2ETest do
       opts: []
     }
 
-    assert {:ok, _} = OperatorManager.start_operator(@namespace, placed)
+    assert {:ok, _} = RelayManager.start_relay(@namespace, placed)
 
-    assert OperatorManager.assign_runner(@namespace, @shared_factory, placed.id) ==
+    assert RelayManager.assign_runner(@namespace, @shared_factory, placed.id) ==
              ctx.rust_runner
 
     # -- the reroute off a dead runner reads the same filter --
@@ -127,7 +127,7 @@ defmodule FlezhaTest.System.CrossSdkPlacementE2ETest do
 
     # -- and the refusal names the language, never "does not exist" --
     {:error, reason} =
-      OperatorManager.start_operator(@namespace, %Builder{
+      RelayManager.start_relay(@namespace, %Builder{
         id: "cross_sdk_refused_#{System.unique_integer([:positive])}",
         factory_id: @shared_factory,
         opts: []

@@ -1,10 +1,10 @@
 # Sessions
 
-A session is an operator instance that lives for as long as a conversation does: it has a
+A session is a relay instance that lives for as long as a conversation does: it has a
 beginning, it takes one message after another, and it remembers what was said. A chat with a
 model, a support case or a user's shopping basket all have that shape.
 
-Flezha has no separate session type. A session is an operator that runs in steps, once per
+Flezha has no separate session type. A session is a relay that runs in steps, once per
 message it is sent, with its state kept between messages. Each conversation is an instance
 of its own, started under its own id, with its own state. Where a workflow instance runs its
 steps once and ends, a session runs them again for every message, and each run is a
@@ -19,7 +19,7 @@ flowchart LR
     S -. "read" .-> T
 ```
 
-- **One instance per conversation.** The operator class is started once per conversation,
+- **One instance per conversation.** The relay class is started once per conversation,
   each time with its own id (for example the user's name). The instances share the class's
   graph and nothing else.
 - **One turn per message.** A message that arrives on the entry channel runs the chain once.
@@ -29,8 +29,8 @@ flowchart LR
   exactly as any tasklet keeps state ([state.md](../basics/state.md)). The next turn reads
   the state the previous one left.
 - **An answer to the sender.** A chain that ends in a `response()` end sends its output back
-  to whoever sent the message, for example `flz operator call` or another operator's call
-  ([operator_calls.md](operator_calls.md)).
+  to whoever sent the message, for example `flz relay call` or another relay's call
+  ([relay_calls.md](relay_calls.md)).
 - **An idle session sleeps.** A session waiting for its next message still holds a place on
   its runner, and with many sessions that adds up. So an instance that keeps its state on
   the controller sleeps when it has been idle for a while: it leaves its runner, the
@@ -38,7 +38,7 @@ flowchart LR
 
 ## Configure a session
 
-A session is an operator that runs in steps with `each` set to per input. Its durability
+A session is a relay that runs in steps with `each` set to per input. Its durability
 setting says where its state is kept and when an idle instance sleeps.
 
 | Setting | Java | Elixir | Meaning |
@@ -51,7 +51,7 @@ setting says where its state is kept and when an idle instance sleeps.
 When the class says nothing about sleeping, the run decides: a steps instance sleeps after
 six hours idle, a flow instance never sleeps. `sleep_after` exists only on `local` and
 `remote` durability; an instance kept in memory only (`durable: false`) has nothing to wake
-from, so it does not sleep. [configuring_an_operator.md](../basics/configuring_an_operator.md)
+from, so it does not sleep. [configuring_a_relay.md](../basics/configuring_a_relay.md)
 has the whole settings tree.
 
 By default a failed turn ends the whole session and undoes every turn, as a failed step ends a
@@ -61,7 +61,7 @@ that does that.
 
 ## Example
 
-In the agentdesk example, the operator `agent` is a session: one per user, named after the
+In the agentdesk example, the relay `agent` is a session: one per user, named after the
 user. The tasklet `reply` answers each message with a demo model and keeps the conversation,
 the list of messages so far, in its state. The model sees the conversation, so its answer can
 say which message this is.
@@ -98,8 +98,8 @@ public final class Reply implements Tasklet<String, Reply.Conversation, Reply.An
 Full file: [`Reply.java`](https://github.com/flezha/flezha_java_sdk/blob/main/examples/agentdesk/src/main/java/com/flezha/examples/agentdesk/Reply.java)
 
 ```java
-// AgentOperator.java: one conversation, one turn per message.
-public final class AgentOperator implements Operator {
+// AgentRelay.java: one conversation, one turn per message.
+public final class AgentRelay implements Relay {
 
     @Override
     public String factoryId() {
@@ -126,7 +126,7 @@ public final class AgentOperator implements Operator {
                 .response();                             // to whoever called
 ```
 
-Full file: [`AgentOperator.java`](https://github.com/flezha/flezha_java_sdk/blob/main/examples/agentdesk/src/main/java/com/flezha/examples/agentdesk/AgentOperator.java)
+Full file: [`AgentRelay.java`](https://github.com/flezha/flezha_java_sdk/blob/main/examples/agentdesk/src/main/java/com/flezha/examples/agentdesk/AgentRelay.java)
 
 ### Elixir
 
@@ -158,9 +158,9 @@ defmodule Agentdesk.Reply do
 Full file: [`reply.ex`](https://github.com/flezha/flezha_elixir_sdk/blob/main/examples/agentdesk/lib/agentdesk/reply.ex)
 
 ```elixir
-# lib/agentdesk/agent_operator.ex: one conversation, one turn per message.
-defmodule Agentdesk.AgentOperator do
-  use Flezha.SDK.Operator,
+# lib/agentdesk/agent_relay.ex: one conversation, one turn per message.
+defmodule Agentdesk.AgentRelay do
+  use Flezha.SDK.Relay,
     factory_id: "agent",
     # one turn per message; a failed turn fails alone
     run: {:steps, each: :per_input, on_failure: :keep_progress},
@@ -177,7 +177,7 @@ defmodule Agentdesk.AgentOperator do
     |> response()
 ```
 
-Full file: [`agent_operator.ex`](https://github.com/flezha/flezha_elixir_sdk/blob/main/examples/agentdesk/lib/agentdesk/agent_operator.ex)
+Full file: [`agent_relay.ex`](https://github.com/flezha/flezha_elixir_sdk/blob/main/examples/agentdesk/lib/agentdesk/agent_relay.ex)
 
 <!-- tabs-close -->
 
@@ -189,22 +189,22 @@ example is needed. Its third argument receives each token as it is written, whic
 
 ### Start a session and talk to it
 
-A session is started like any operator, with an id: the id names the conversation.
+A session is started like any relay, with an id: the id names the conversation.
 
 ```sh
-$ flz operator start agent --id anna --namespace agents
+$ flz relay start agent --id anna --namespace agents
 ```
 
 ```output
 Started anna
 ```
 
-`flz operator call` sends one message and waits for the answer the `response()` end produces
-from it ([operator_calls.md](operator_calls.md) is its contract):
+`flz relay call` sends one message and waits for the answer the `response()` end produces
+from it ([relay_calls.md](relay_calls.md) is its contract):
 
 ```sh
-$ flz operator call anna --namespace agents --text 'Hello'
-$ flz operator call anna --namespace agents --text 'What can you do?'
+$ flz relay call anna --namespace agents --text 'Hello'
+$ flz relay call anna --namespace agents --text 'What can you do?'
 ```
 
 ```output
@@ -221,12 +221,12 @@ After its idle interval, the controller reports the instance as `suspended`: it 
 session's state, and no runner holds it.
 
 ```sh
-$ flz operator info anna --namespace agents
+$ flz relay info anna --namespace agents
 ```
 
 ```output
 ...
-Operator: anna
+Relay: anna
   Run: steps (each: per_input, on_failure: keep_progress)
   Durable: local (sleep_after: 10s)
   Phase: suspended
@@ -238,7 +238,7 @@ Operator: anna
 The next message wakes it, on the same runner or another one, with its conversation:
 
 ```sh
-$ flz operator call anna --namespace agents --text 'Are you still there?'
+$ flz relay call anna --namespace agents --text 'Are you still there?'
 ```
 
 ```output
@@ -251,7 +251,7 @@ $ flz operator call anna --namespace agents --text 'Are you still there?'
   counts against the call's deadline.
 - **Start each session with an id.** The id is what later messages and calls address. A
   start without an id gets a generated name, and a start retried after a lost reply starts a
-  second instance ([running_operators.md](../basics/running_operators.md)).
+  second instance ([running_relays.md](../basics/running_relays.md)).
 - **A failed turn ends the session by default.** Without `on_failure: keep_progress`, a turn
   that fails undoes every turn and ends the instance; see
   [rewinding_a_turn.md](rewinding_a_turn.md).
@@ -263,8 +263,8 @@ $ flz operator call anna --namespace agents --text 'Are you still there?'
 - [rewinding_a_turn.md](rewinding_a_turn.md): take turns back, and let a turn fail alone.
 - [streamed_answers.md](streamed_answers.md): send the answer while the model writes it, also
   over HTTP.
-- [operator_calls.md](operator_calls.md): send a session a message from another operator.
-- [workflows.md](../basics/workflows.md), [configuring_an_operator.md](../basics/configuring_an_operator.md),
+- [relay_calls.md](relay_calls.md): send a session a message from another relay.
+- [workflows.md](../basics/workflows.md), [configuring_a_relay.md](../basics/configuring_a_relay.md),
   [state.md](../basics/state.md), [durability.md](../basics/durability.md).
-- [`operator_commands.md`](../cli/operator_commands.md#flz-operator) for `flz operator start`, `call` and `info`.
+- [`relay_commands.md`](../cli/relay_commands.md#flz-relay) for `flz relay start`, `call` and `info`.
 - Tutorial: [start_a_session.md](../../tutorials/agentdesk/start_a_session.md).

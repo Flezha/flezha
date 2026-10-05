@@ -17,7 +17,7 @@ defmodule FlezhaTest.Plugin.Provider.MonitoredIOForwardTest do
 
   defp opts(extra) do
     Map.merge(
-      %{recv_pid: self(), plugin_id: "mio-test", operator_id: "op", namespace: "ns"},
+      %{recv_pid: self(), plugin_id: "mio-test", relay_id: "op", namespace: "ns"},
       extra
     )
   end

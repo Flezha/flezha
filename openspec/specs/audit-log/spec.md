@@ -274,7 +274,7 @@ Metadata SHALL be rendered by one rule for every sink, and a binary that is not
 valid UTF-8 SHALL be rendered rather than passed through to an encoder that raises
 on it. The audit log SHALL NOT be able to fail on a record it produced itself.
 
-#### Scenario: An operator's metadata carries a non-UTF-8 binary
+#### Scenario: A relay's metadata carries a non-UTF-8 binary
 
 - **WHEN** a signal's metadata holds a binary for which `String.valid?/1` is false
 - **THEN** the shared typed rule SHALL render it the way the text renderer already

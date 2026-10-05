@@ -1,10 +1,10 @@
 defmodule Flezha.Convergence.RunnerReturnLatencyTest do
   @moduledoc """
   The acceptance check driven live: a real runner over the real transport, a
-  real operator, and a convergence Loop whose periodic tick is far outside the
+  real relay, and a convergence Loop whose periodic tick is far outside the
   assertion budget — so only the release a connecting runner performs, and the
-  immediate tick it triggers, can rebind the operator in time. The same fleet
-  then checks the health a rebound operator reports.
+  immediate tick it triggers, can rebind the relay in time. The same fleet
+  then checks the health a rebound relay reports.
   """
 
   # async: false: real runners, the global EventManager, a shared on-disk root.
@@ -14,16 +14,16 @@ defmodule Flezha.Convergence.RunnerReturnLatencyTest do
   alias Flezha.Convergence.{Loop, Planner}
   alias Flezha.Convergence.Snapshot, as: ConvergenceSnapshot
   alias Flezha.Runner.FleetManager
-  alias Flezha.Service.OperatorManager
+  alias Flezha.Service.RelayManager
   alias Flezha.State.TestHelpers
-  alias FlezhaTest.Fixtures.OperatorFixture
+  alias FlezhaTest.Fixtures.RelayFixture
   alias FlezhaTest.Helper.NodeTestHelper
 
   @namespace "test_temp_namespace"
   @factory "store_input"
-  @operator "returning_op"
+  @relay "returning_op"
 
-  # Far outside the budget below. A periodic tick that could bind the operator
+  # Far outside the budget below. A periodic tick that could bind the relay
   # on its own would make the assertion prove nothing.
   @periodic_tick_ms 120_000
   @budget_ms 5_000
@@ -33,7 +33,7 @@ defmodule Flezha.Convergence.RunnerReturnLatencyTest do
     ConvergenceSnapshot.reset_recovery_states()
 
     on_exit(fn ->
-      OperatorManager.stop_all_operators(@namespace)
+      RelayManager.stop_all_relays(@namespace)
       FleetManager.stop_namespace(@namespace)
     end)
 
@@ -41,23 +41,23 @@ defmodule Flezha.Convergence.RunnerReturnLatencyTest do
   end
 
   @tag :runner_return_latency
-  test "an operator waiting out a rung binds within seconds of a capable runner returning" do
+  test "a relay waiting out a rung binds within seconds of a capable runner returning" do
     {:ok, _} = start_supervised({Loop, tick_ms: @periodic_tick_ms})
 
     first = NodeTestHelper.start_runner(@namespace)
 
     {:ok, _info} =
-      @operator
-      |> OperatorFixture.get(@factory)
-      |> OperatorFixture.start(@namespace)
+      @relay
+      |> RelayFixture.get(@factory)
+      |> RelayFixture.start(@namespace)
 
-    assert bound_to?(first), "the operator never bound to the first runner"
+    assert bound_to?(first), "the relay never bound to the first runner"
 
     NodeTestHelper.stop_runner(@namespace, first)
     :ok = Loop.tick_now()
     :ok = Loop.tick_now()
 
-    # The outage has been going a while: every cooldown key a waiting operator
+    # The outage has been going a while: every cooldown key a waiting relay
     # can be planned on sits on the top rung, which is what a connecting runner
     # has to clear. Seeded rather than waited for, because that rung is five
     # minutes and waiting it out is the defect, not the test.
@@ -66,32 +66,32 @@ defmodule Flezha.Convergence.RunnerReturnLatencyTest do
     second = NodeTestHelper.start_runner(@namespace)
 
     assert bound_to?(second),
-           "the operator did not bind within #{@budget_ms} ms of a capable runner returning"
+           "the relay did not bind within #{@budget_ms} ms of a capable runner returning"
   end
 
   @tag :runner_return_latency
-  test "an operator rebound after its runner died reads healthy within seconds, not after the stall grace" do
+  test "a relay rebound after its runner died reads healthy within seconds, not after the stall grace" do
     {:ok, _} = start_supervised({Loop, tick_ms: @periodic_tick_ms})
 
     {first_port, first} = NodeTestHelper.start_runner_port(@namespace, port_opts: [:exit_status])
     on_exit(fn -> NodeTestHelper.ensure_port_dead(first_port) end)
 
     {:ok, _info} =
-      @operator
-      |> OperatorFixture.get(@factory)
-      |> OperatorFixture.start(@namespace)
+      @relay
+      |> RelayFixture.get(@factory)
+      |> RelayFixture.start(@namespace)
 
-    assert bound_to?(first), "the operator never bound to the first runner"
+    assert bound_to?(first), "the relay never bound to the first runner"
 
-    # A data stream names only the operators that have taken an input on it,
+    # A data stream names only the relays that have taken an input on it,
     # and only those are flagged when it closes.
-    OperatorManager.send_io(@operator, @namespace, "before the stop", %{"input_type" => "2"})
+    RelayManager.send_io(@relay, @namespace, "before the stop", %{"input_type" => "2"})
 
     assert NodeTestHelper.wait_until(
-             fn -> Enum.any?(data_stream_channels(first), &carries_operator?/1) end,
+             fn -> Enum.any?(data_stream_channels(first), &carries_relay?/1) end,
              @budget_ms
            ),
-           "no data stream of the first runner ever carried the operator"
+           "no data stream of the first runner ever carried the relay"
 
     # A runner that dies closes its data streams and its control session in no
     # fixed order, and only a data stream the controller sees close first
@@ -103,24 +103,24 @@ defmodule Flezha.Convergence.RunnerReturnLatencyTest do
     assert_receive {^first_port, {:exit_status, _}}, @budget_ms
 
     second = NodeTestHelper.start_runner(@namespace)
-    assert bound_to?(second), "the operator never bound to the second runner"
+    assert bound_to?(second), "the relay never bound to the second runner"
 
     assert NodeTestHelper.wait_until(
              fn ->
                :ok = Loop.tick_now()
-               ConvergenceSnapshot.operator_health(@namespace, @operator) == :healthy
+               ConvergenceSnapshot.relay_health(@namespace, @relay) == :healthy
              end,
              @budget_ms,
              100
            ),
-           "the rebound operator still read " <>
-             "#{ConvergenceSnapshot.operator_health(@namespace, @operator)} after #{@budget_ms} ms"
+           "the rebound relay still read " <>
+             "#{ConvergenceSnapshot.relay_health(@namespace, @relay)} after #{@budget_ms} ms"
   end
 
   defp bound_to?(runner_id) do
     NodeTestHelper.wait_until(
       fn ->
-        case OperatorManager.get_overwatch_state(@namespace, @operator) do
+        case RelayManager.get_overwatch_state(@namespace, @relay) do
           {:ok, %{runner_id: ^runner_id}} -> true
           _other -> false
         end
@@ -141,8 +141,8 @@ defmodule Flezha.Convergence.RunnerReturnLatencyTest do
         do: pid
   end
 
-  defp carries_operator?(channel) do
-    Map.has_key?(:sys.get_state(channel).operator_mapping, @operator)
+  defp carries_relay?(channel) do
+    Map.has_key?(:sys.get_state(channel).relay_mapping, @relay)
   end
 
   defp seed_top_rung() do
@@ -152,7 +152,7 @@ defmodule Flezha.Convergence.RunnerReturnLatencyTest do
     :sys.replace_state(Loop, fn state ->
       entries =
         Enum.reduce(
-          Planner.waiting_keys({@namespace, @operator}),
+          Planner.waiting_keys({@namespace, @relay}),
           state.backoff.entries,
           &Map.put(&2, &1, {top, cooling_until})
         )

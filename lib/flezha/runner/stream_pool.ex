@@ -71,27 +71,27 @@ defmodule Flezha.Runner.StreamPool do
   end
 
   @doc """
-  Route `operator_id`'s output frames on `runner_id`'s channels to `pid`. The
+  Route `relay_id`'s output frames on `runner_id`'s channels to `pid`. The
   Overwatch's publish is the one caller, so a route exists only in the
-  channels of the session that owns the operator.
+  channels of the session that owns the relay.
   """
   @spec put_route(binary(), binary(), pid()) :: :ok
-  def put_route(runner_id, operator_id, pid) when is_pid(pid),
-    do: call_channels(runner_id, {:operator_pid_update, operator_id, [pid]})
+  def put_route(runner_id, relay_id, pid) when is_pid(pid),
+    do: call_channels(runner_id, {:relay_pid_update, relay_id, [pid]})
 
   @doc """
-  Drop `operator_id`'s route from `runner_id`'s channels: the session its
+  Drop `relay_id`'s route from `runner_id`'s channels: the session its
   binding moved away from, or the target of a migrate that failed. Idempotent
   on a session that is gone.
   """
   @spec drop_route(binary(), binary()) :: :ok
-  def drop_route(runner_id, operator_id) do
-    call_channels(runner_id, {:operator_pid_remove, operator_id})
+  def drop_route(runner_id, relay_id) do
+    call_channels(runner_id, {:relay_pid_remove, relay_id})
 
     :telemetry.execute(
       [:flezha, :hub, :pid_removed],
       %{count: 1},
-      %{runner_id: runner_id, operator_id: operator_id}
+      %{runner_id: runner_id, relay_id: relay_id}
     )
 
     :ok
@@ -100,7 +100,7 @@ defmodule Flezha.Runner.StreamPool do
   @doc """
   Flush `runner_id`'s channels: answer only once every frame already in each
   channel's mailbox has been routed and cast onward. What a completed
-  steps operator's teardown drives before its Overwatch is stopped, and an
+  steps relay's teardown drives before its Overwatch is stopped, and an
   exit report before its Overwatch is told.
 
   The barrier is the CALL, not what it asks — a `GenServer.call` is a message

@@ -5,8 +5,8 @@ defmodule Flezha.Convergence.Planner do
   `%{primitive: atom, namespace: atom, target: term, args: map}`.
 
   Ordering rules: a runner is evicted (`evict_runner`) and a dead channel cut
-  (`reset_control_channel`) before another binding claims their operators; a
-  operator is bound (`rebind_operator`) before its plugins start; a row is
+  (`reset_control_channel`) before another binding claims their relays; a
+  relay is bound (`rebind_relay`) before its plugins start; a row is
   re-published (`publish_binding`) after every move. Ops still inside their
   `Backoff` cooldown are dropped, and the per-tick op count is capped at
   `max_ops`.
@@ -33,11 +33,11 @@ defmodule Flezha.Convergence.Planner do
   # opposed to a structural divergence (misbound, unbound, plugin drift).
   @proved_not_producing [@ladder_reason, @wedge_reason]
 
-  # The plugin primitives key on `{primitive, {operator_id, plugin_id}}`: one
+  # The plugin primitives key on `{primitive, {relay_id, plugin_id}}`: one
   # crashing plugin must never throttle its siblings' starts.
   @plugin_primitives [:start_plugin, :stop_plugin, :restart_plugin]
 
-  # A parked operator whose bind's ping merely timed out is a busy runner:
+  # A parked relay whose bind's ping merely timed out is a busy runner:
   # its channel is live and carries every other instance on it, so the
   # channel is cut only once the parked ladder has walked this many rungs.
   @busy_runner_cut_at 2
@@ -47,16 +47,16 @@ defmodule Flezha.Convergence.Planner do
   # declared kinds: a kind nobody plans, a primitive no rule names, or a field
   # planned twice fails there by name.
   @rules [
-    misbound_operators: [:evict_runner, :rebind_operator],
-    parked_operators: [:reset_control_channel, :rebind_operator],
-    data_plane_wedge: [:restart_runner, :evict_runner, :resync_runner, :rebind_operator],
-    unbound_operators: [:rebind_operator],
+    misbound_relays: [:evict_runner, :rebind_relay],
+    parked_relays: [:reset_control_channel, :rebind_relay],
+    data_plane_wedge: [:restart_runner, :evict_runner, :resync_runner, :rebind_relay],
+    unbound_relays: [:rebind_relay],
     resync_cells: [:resync_runner],
     missing_plugins: [:start_plugin],
     extra_plugins: [:stop_plugin],
     unhealthy_plugins: [:restart_plugin],
     stale_tags: [:publish_binding],
-    stalled_operators: [:resync_runner, :rebind_operator]
+    stalled_relays: [:resync_runner, :rebind_relay]
   ]
 
   @spec plan(Diff.t(), Backoff.t(), keyword()) :: [op()]
@@ -69,7 +69,7 @@ defmodule Flezha.Convergence.Planner do
       |> Backoff.filter(backoff, &key/1)
       |> Enum.take(max_ops)
 
-    # The ladder is appended past `max_ops` on purpose: an operator that has
+    # The ladder is appended past `max_ops` on purpose: a relay that has
     # stopped producing must not be starved by a large structural divergence
     # filling the tick's budget.
     planned ++ stall_ops(delta, backoff, planned)
@@ -84,20 +84,20 @@ defmodule Flezha.Convergence.Planner do
   def rules(), do: @rules
 
   @doc """
-  Every cooldown key an operator waiting for a runner can be held on.
+  Every cooldown key a relay waiting for a runner can be held on.
 
   DERIVED, never listed: the binding rules are run over a Diff carrying the
-  operator in each waiting field, under every reason the declared kinds stamp
+  relay in each waiting field, under every reason the declared kinds stamp
   on those fields, and each resulting op goes through `key/1` — the same
   function the plan keys on. A rebind planned under a reason added later joins
   this set on its own, which a hand-written list of key shapes could not do.
   """
-  @spec waiting_keys(Diff.operator_ref()) :: [Backoff.key()]
+  @spec waiting_keys(Diff.relay_ref()) :: [Backoff.key()]
   def waiting_keys(ref) do
     %Diff{
-      unbound_operators: [ref],
-      misbound_operators: for(r <- Facts.reasons_for(Diff.waiting_fields()), do: {ref, nil, r}),
-      parked_operators: [{ref, %{}, nil}]
+      unbound_relays: [ref],
+      misbound_relays: for(r <- Facts.reasons_for(Diff.waiting_fields()), do: {ref, nil, r}),
+      parked_relays: [{ref, %{}, nil}]
     }
     |> waiting_ops()
     |> Enum.map(&key/1)
@@ -105,13 +105,13 @@ defmodule Flezha.Convergence.Planner do
   end
 
   # The ops those fields plan, and only those: the eviction and the channel
-  # reset planned beside them target the RUNNER, and no waiting operator cools
+  # reset planned beside them target the RUNNER, and no waiting relay cools
   # on a key of its runner's.
   defp waiting_ops(%Diff{} = d), do: bind_ops(d)
 
   @doc """
   Backoff key for an op: `{primitive, target}`; for a plugin op
-  `{primitive, {operator_id, plugin_id}}`; for an op carrying a declared
+  `{primitive, {relay_id, plugin_id}}`; for an op carrying a declared
   reason `{reason, target}`, so every rung of that reason's ladder walks ONE
   cooldown instead of restarting the throttle under a fresh key — which is
   also what makes the attempt count the rung.
@@ -149,7 +149,7 @@ defmodule Flezha.Convergence.Planner do
 
   `Heal` reads it to waive the guards that exist to spare a *healthy* target —
   the active-runner rebind check and the "never evict a live runner" rule.
-  Neither an output-stalled operator nor a classifier-wedged runner is
+  Neither an output-stalled relay nor a classifier-wedged runner is
   healthy, and in the wedge case the target still being connected is exactly
   what stops anything else from dislodging it.
   """
@@ -157,20 +157,20 @@ defmodule Flezha.Convergence.Planner do
   def proved_wedged?(%{args: %{reason: reason}}), do: reason in @proved_not_producing
   def proved_wedged?(_op), do: false
 
-  # One op per stalled operator the plan does not already cover, laddered:
+  # One op per stalled relay the plan does not already cover, laddered:
   # resync the existing binding first (cheap, no migration), migrate only once
   # that failed to restore production. The rung is read off the ladder's own
   # cooldown attempt count — the counter that already throttles it — so there
-  # is no second piece of per-operator bookkeeping.
-  defp stall_ops(%Diff{stalled_operators: []}, _backoff, _planned), do: []
+  # is no second piece of per-relay bookkeeping.
+  defp stall_ops(%Diff{stalled_relays: []}, _backoff, _planned), do: []
 
-  defp stall_ops(%Diff{stalled_operators: stalled}, backoff, planned) do
+  defp stall_ops(%Diff{stalled_relays: stalled}, backoff, planned) do
     covered = MapSet.new(planned, & &1.target)
 
     stalled
     |> Enum.reject(fn {_ns, rid} -> MapSet.member?(covered, rid) end)
     |> Enum.map(fn {ns, rid} ->
-      op(rung(backoff, @ladder_reason, rid, :resync_runner, :rebind_operator), ns, rid, %{
+      op(rung(backoff, @ladder_reason, rid, :resync_runner, :rebind_relay), ns, rid, %{
         reason: @ladder_reason
       })
     end)
@@ -203,9 +203,9 @@ defmodule Flezha.Convergence.Planner do
   end
 
   # The tick's classifier verdict, already resolved to the cell that can be
-  # healed. Remedy by scope: a wedged runner is evicted (its operators rebind
+  # healed. Remedy by scope: a wedged runner is evicted (its relays rebind
   # through the existing ordering), a wedged connection is resynced in place,
-  # a wedged operator is rebound.
+  # a wedged relay is rebound.
   defp wedge_ops(%Diff{data_plane_wedge: nil}, _backoff), do: []
 
   # A runner rides its own two-rung ladder. The terminal restart first, on the
@@ -232,33 +232,33 @@ defmodule Flezha.Convergence.Planner do
     Enum.map(refs, fn {ns, rid} -> op(:resync_runner, ns, rid, wedge_args(layer)) end)
   end
 
-  defp wedge_ops(%Diff{data_plane_wedge: {:operator, refs}, data_plane_layer: layer}, _backoff) do
-    Enum.map(refs, fn {ns, rid} -> op(:rebind_operator, ns, rid, wedge_args(layer)) end)
+  defp wedge_ops(%Diff{data_plane_wedge: {:relay, refs}, data_plane_layer: layer}, _backoff) do
+    Enum.map(refs, fn {ns, rid} -> op(:rebind_relay, ns, rid, wedge_args(layer)) end)
   end
 
   defp wedge_args(layer), do: %{reason: @wedge_reason, layer: layer}
 
-  defp eviction_ops(%Diff{misbound_operators: misbound}) do
+  defp eviction_ops(%Diff{misbound_relays: misbound}) do
     misbound
     |> Enum.map(fn {_ref, dead_runner, _reason} -> dead_runner end)
     |> Enum.uniq()
     |> Enum.map(&op(:evict_runner, nil, &1, %{}))
   end
 
-  # A parked operator's bind reported its runner's transport dead: cut the
+  # A parked relay's bind reported its runner's transport dead: cut the
   # channel before anything is placed on it. A ping that merely timed out says
   # the runner is busy — its channel is live and carries every other instance
   # on it — so it is retried, and cut only once the parked ladder has walked
   # `@busy_runner_cut_at` rungs. The verdict rides the fact: the bind that
   # failed is what knows what its own failure meant.
-  defp reset_ops(%Diff{parked_operators: parked}, backoff) do
+  defp reset_ops(%Diff{parked_relays: parked}, backoff) do
     parked
     |> Enum.filter(fn {{_ns, id}, args, runner} ->
       is_binary(runner) and
         cut_channel?(args[:transport], Backoff.attempt(backoff, {:parked, id}))
     end)
     |> Enum.map(fn {{ns, id}, _args, runner} ->
-      op(:reset_control_channel, ns, runner, %{operator_id: id})
+      op(:reset_control_channel, ns, runner, %{relay_id: id})
     end)
     |> Enum.uniq_by(& &1.target)
   end
@@ -269,23 +269,23 @@ defmodule Flezha.Convergence.Planner do
 
   defp bind_ops(%Diff{} = d) do
     rebind =
-      Enum.map(d.misbound_operators, fn {{ns, rid}, _dead, reason} ->
-        op(:rebind_operator, ns, rid, reasoned(reason))
+      Enum.map(d.misbound_relays, fn {{ns, rid}, _dead, reason} ->
+        op(:rebind_relay, ns, rid, reasoned(reason))
       end)
 
-    # A parked operator binds via the same rebind primitive on the
+    # A parked relay binds via the same rebind primitive on the
     # `{:parked, id}` ladder: it resolves a runner and sends `:runner_migrate`,
     # which un-parks it; the outcome is only visible later, when the probe sees
     # it bound.
     unpark =
-      Enum.map(d.parked_operators, fn {{ns, rid}, args, _runner} ->
-        op(:rebind_operator, ns, rid, %{reason: :parked, park: args[:reason]})
+      Enum.map(d.parked_relays, fn {{ns, rid}, args, _runner} ->
+        op(:rebind_relay, ns, rid, %{reason: :parked, park: args[:reason]})
       end)
 
-    # Unbound operators bind via the same rebind primitive too.
+    # Unbound relays bind via the same rebind primitive too.
     start =
-      Enum.map(d.unbound_operators, fn {ns, rid} ->
-        op(:rebind_operator, ns, rid, %{})
+      Enum.map(d.unbound_relays, fn {ns, rid} ->
+        op(:rebind_relay, ns, rid, %{})
       end)
 
     rebind ++ unpark ++ start

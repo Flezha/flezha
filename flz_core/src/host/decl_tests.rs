@@ -33,7 +33,7 @@ mod checkpoint_interval_decl_tests {
     //! crosses the C ABI as JSON, so its value refusals live here.
 
     use super::{decl, factory, issue};
-    use crate::operator::topology::CheckpointOutputs;
+    use crate::relay::topology::CheckpointOutputs;
 
     fn tier_class(id: &str, ack: &str) -> String {
         format!(
@@ -46,8 +46,8 @@ mod checkpoint_interval_decl_tests {
         )
     }
 
-    fn policy_of(id: &str) -> crate::operator::topology::CheckpointPolicy {
-        crate::operator::registry::get_class(id)
+    fn policy_of(id: &str) -> crate::relay::topology::CheckpointPolicy {
+        crate::relay::registry::get_class(id)
             .expect("class registered")
             .ack_granularity
             .checkpoint()
@@ -104,13 +104,13 @@ mod checkpoint_interval_decl_tests {
 
 mod durable_decl_tests {
     //! `durable` is where a class keeps its work. `remote` gates a steps
-    //! operator's stage acknowledgement on the remote ship; a flow operator
+    //! relay's stage acknowledgement on the remote ship; a flow relay
     //! cannot carry it yet.
 
     use std::time::Duration;
 
     use super::{decl, factory, issue};
-    use crate::operator::settings::{Durable, DEFAULT_SLEEP_AFTER};
+    use crate::relay::settings::{Durable, DEFAULT_SLEEP_AFTER};
 
     fn class(id: &str, members: &str) -> String {
         format!(
@@ -121,13 +121,13 @@ mod durable_decl_tests {
     }
 
     fn durable_of(id: &str) -> Durable {
-        crate::operator::registry::get_class(id)
+        crate::relay::registry::get_class(id)
             .expect("class registered")
             .durable
     }
 
     fn sleep_after_of(id: &str) -> Option<Duration> {
-        crate::operator::registry::get_class(id)
+        crate::relay::registry::get_class(id)
             .expect("class registered")
             .sleep_after()
     }
@@ -323,7 +323,7 @@ mod sdk_lang_declaration_tests {
             "the refusal names the missing field: {err:?}"
         );
         assert!(
-            crate::operator::registry::get_class(&id).is_none(),
+            crate::relay::registry::get_class(&id).is_none(),
             "a refused declaration registers nothing"
         );
     }
@@ -366,7 +366,7 @@ mod sdk_lang_declaration_tests {
             ))
             .expect("a declared class registers");
 
-            let topology = crate::operator::registry::get_class(&id).expect("class registered");
+            let topology = crate::relay::registry::get_class(&id).expect("class registered");
             assert_eq!(topology.sdk_lang, lang);
             let header = topology.tasklets[0]
                 .host_facts
@@ -374,7 +374,7 @@ mod sdk_lang_declaration_tests {
                 .expect("a host class carries host facts")
                 .header();
             assert_eq!((header.sdk_lang, header.format_id), (lang, format));
-            let advertised = crate::operator::registry::advertised_for_factory(&id);
+            let advertised = crate::relay::registry::advertised_for_factory(&id);
             assert_eq!(
                 (advertised.sdk_lang, advertised.run.as_str()),
                 (u32::from(lang), "flow"),
@@ -386,7 +386,7 @@ mod sdk_lang_declaration_tests {
             crate::test_support::host_class::steps_json(&steps, &["in"], 1).as_bytes(),
         )
         .expect("a steps class registers");
-        let advertised = crate::operator::registry::advertised_for_factory(&steps);
+        let advertised = crate::relay::registry::advertised_for_factory(&steps);
         assert_eq!(
             (
                 advertised.run.as_str(),
@@ -396,7 +396,7 @@ mod sdk_lang_declaration_tests {
             ("steps", "once", "undo_all"),
             "the run is what the class declaration carried"
         );
-        let unknown = crate::operator::registry::advertised_for_factory("never_declared");
+        let unknown = crate::relay::registry::advertised_for_factory("never_declared");
         assert_eq!(
             (unknown.sdk_lang, unknown.run.as_str()),
             (u32::from(SDK_LANG_UNSPECIFIED), ""),
@@ -543,7 +543,7 @@ mod sdk_version_decl_tests {
         ))
         .expect("the class registers");
 
-        let topology = crate::operator::registry::get_class(&id).expect("class registered");
+        let topology = crate::relay::registry::get_class(&id).expect("class registered");
         let facts = topology
             .tasklet(0)
             .and_then(|p| p.host_facts.clone())
@@ -577,7 +577,7 @@ mod sdk_version_decl_tests {
 
             issue(&err, "topology.unusable_sdk_version");
             assert!(
-                crate::operator::registry::get_class(&id).is_none(),
+                crate::relay::registry::get_class(&id).is_none(),
                 "a refused declaration registers nothing"
             );
         }

@@ -16,7 +16,7 @@ Contributing groups.
 
 - **WHEN** `mix docs` has run
 - **THEN** `doc/llms.txt` SHALL NOT contain `Mix.Tasks.Bench` or `Flezha.AuthN.Cert`, and
-  SHALL contain `Flezha.Service.Operator`
+  SHALL contain `Flezha.Service.Relay`
 
 #### Scenario: The start list points at the essentials
 

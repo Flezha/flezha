@@ -72,10 +72,10 @@ defmodule FlezhaTest.SdkConformance.GateTest do
   # change that owes it in its manifest and comes off this map in the same
   # commit.
   @admin_verbs ~w(
-    Operator.start
-    Operator.stop
-    Operator.list_operators
-    Operator.cell_state
+    Relay.start
+    Relay.stop
+    Relay.list_relays
+    Relay.cell_state
     PluginManager.enable
     PluginManager.bind
     PluginManager.unbind
@@ -93,13 +93,13 @@ defmodule FlezhaTest.SdkConformance.GateTest do
     elixir: "sdk/elixir/lib/flezha/sdk/control.ex"
   }
 
-  # Names the steps operator authoring surface retired: a steps operator declares its graph
-  # in `channels` and its retry ladder on the edge, as a flow operator does, and both are
-  # one `Operator` class, so no kind class survives. Each pattern is the spelling a
+  # Names the steps relay authoring surface retired: a steps relay declares its graph
+  # in `channels` and its retry ladder on the edge, as a flow relay does, and both are
+  # one `Relay` class, so no kind class survives. Each pattern is the spelling a
   # definition or a use would take, never prose.
   @retired_steps_names [
     {"a `tasklets` body", ~r/\b(?:fn|def|void)\s+tasklets\s*\(/},
-    {"a kind class", ~r/\b(?:Unbounded|Bounded)Operator\b|\b(?:unbounded|bounded)_operator\b/},
+    {"a kind class", ~r/\b(?:Unbounded|Bounded)Relay\b|\b(?:unbounded|bounded)_relay\b/},
     {"a class-level retry knob",
      ~r/\b(?:retry_attempts|retryAttempts|barrier_retry_attempts|barrierRetryAttempts)\b|\bfn retry_backoff\(|\bretryBackoff\(/},
     {"`ZeroRetryBackoff`", ~r/\bZeroRetryBackoff\b/}

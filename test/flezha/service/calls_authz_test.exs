@@ -1,7 +1,7 @@
 defmodule FlezhaTest.Service.CallsAuthzTest do
   @moduledoc """
-  An operator's call is judged as its namespace's runner identity, exactly as
-  a tasklet's spawn: creating the callee against the `operator_start` row,
+  A relay's call is judged as its namespace's runner identity, exactly as
+  a tasklet's spawn: creating the callee against the `relay_start` row,
   which records it, and a delivery against `spawn_deliver`. A refusal ends the
   call with its `authz.*` code and starts nothing. The delivery runs the real
   router over `FakeStartRegistry`; the caller is the test process.
@@ -21,7 +21,7 @@ defmodule FlezhaTest.Service.CallsAuthzTest do
   alias Flezha.AuthZ.RoleStore
   alias Flezha.Observability.RingBufferSink
   alias Flezha.Process.CallDelivery
-  alias Flezha.Service.OperatorManager
+  alias Flezha.Service.RelayManager
   alias FlezhaTest.Helper.FakeStartRegistry
   alias FlezhaTest.Helper.NodeTestHelper
 
@@ -35,9 +35,9 @@ defmodule FlezhaTest.Service.CallsAuthzTest do
     test_pid = self()
 
     # The caller's Overwatch: every report of the delivery reaches the test.
-    stub(OperatorManager, :get_operator_pid, fn
+    stub(RelayManager, :get_relay_pid, fn
       @ns, "gateway" -> {:ok, test_pid}
-      ns, id -> Mimic.call_original(OperatorManager, :get_operator_pid, [ns, id])
+      ns, id -> Mimic.call_original(RelayManager, :get_relay_pid, [ns, id])
     end)
 
     %{registry: registry, session: "s-#{System.unique_integer([:positive])}"}
@@ -89,7 +89,7 @@ defmodule FlezhaTest.Service.CallsAuthzTest do
     record =
       NodeTestHelper.wait_until(
         fn ->
-          :operator_service
+          :relay_service
           |> RingBufferSink.query(boundary)
           |> Enum.find(&(&1.name == :start))
         end,
@@ -97,9 +97,9 @@ defmodule FlezhaTest.Service.CallsAuthzTest do
         25
       )
 
-    assert record.metadata.action == :"operator.start"
+    assert record.metadata.action == :"relay.start"
     assert record.metadata.principal == @principal
-    assert record.metadata.operator == ctx.session
+    assert record.metadata.relay == ctx.session
     assert record.metadata.outcome == :ok
   end
 end

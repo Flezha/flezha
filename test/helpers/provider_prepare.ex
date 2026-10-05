@@ -1,7 +1,7 @@
 defmodule FlezhaTest.Helper.ProviderPrepare do
   @moduledoc """
   Preparation and activation as `Flezha.Plugin.Extension.Table` performs them,
-  for a test that drives one provider rather than a whole operator.
+  for a test that drives one provider rather than a whole relay.
 
   The table does two things before a provider's `init_provider/1` runs: it
   merges the host's identity and it normalises the options through the
@@ -28,7 +28,7 @@ defmodule FlezhaTest.Helper.ProviderPrepare do
   end
 
   # What `Table.with_host_identity/3` merges: the caller stands in for the host
-  # operator, which is what a provider's worker is handed. The subscription
+  # relay, which is what a provider's worker is handed. The subscription
   # list is one of the five, and a provider that allocates only for the
   # directions it is bound in reads it — an absent key is a shape the table
   # never produces.
@@ -37,7 +37,7 @@ defmodule FlezhaTest.Helper.ProviderPrepare do
       %{
         overwatcher_pid: self(),
         source_namespace: :default,
-        source_operator_id: "test-operator",
+        source_relay_id: "test-relay",
         source_plugin_id: Map.get(opts, :plugin_id),
         subscribed_extensions: []
       },
@@ -72,7 +72,7 @@ defmodule FlezhaTest.Helper.ProviderPrepare do
 
   @doc """
   Answer the next confirming ingest a source's worker made of the calling test,
-  which stands in for the host operator, with `verdict`: anything a real
+  which stands in for the host relay, with `verdict`: anything a real
   Overwatch could answer, the refusals included. Answers what was injected.
   """
   @spec take_ingest(term(), timeout()) :: {binary(), map()}

@@ -10,7 +10,7 @@
       provider: Flezha.Examples.HelloWorld,
       hooks: [{:on_input, []}],
       default_opts: %{greeting: "hello"},
-      scope: :operator
+      scope: :relay
     }
   ],
   dependencies: []

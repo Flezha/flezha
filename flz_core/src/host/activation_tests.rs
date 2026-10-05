@@ -238,7 +238,7 @@ fn outside_the_tier_the_record_carrying_the_offset_keeps_the_edge_value() {
 
 /// `p0` feeds `p1`, whose channel `ans` ends in `response()`, and `p2`, whose
 /// channel `out` ends in a keyed sink; unkeyed `ans` registers under the tier.
-fn answering_instance(id: &str, tier: bool) -> Arc<crate::operator::instance::OperatorInstance> {
+fn answering_instance(id: &str, tier: bool) -> Arc<crate::relay::instance::RelayInstance> {
     let run = if tier {
         r#"{"flow":{"exactly":"effectively_once"}}"#
     } else {
@@ -256,7 +256,7 @@ fn answering_instance(id: &str, tier: bool) -> Arc<crate::operator::instance::Op
              "tasklets":[{{"name":"p0"}},{{"name":"p1"}},{{"name":"p2"}}]}}"#
     );
     crate::host::register_host_class_json(json.as_bytes()).expect("class registers");
-    crate::operator::instance::OperatorInstance::of_class(id, &format!("{id}_inst"))
+    crate::relay::instance::RelayInstance::of_class(id, &format!("{id}_inst"))
         .expect("class registered")
 }
 
@@ -427,7 +427,7 @@ fn a_tier_off_park_carries_the_call_only_when_its_item_had_one() {
 
 /// `p0` feeds `p1`, whose channel `ask` ends in a factory call answered on
 /// `ask.response`, and `p2`, whose channel `out` ends in a keyed sink.
-fn calling_instance(id: &str, tier: bool) -> Arc<crate::operator::instance::OperatorInstance> {
+fn calling_instance(id: &str, tier: bool) -> Arc<crate::relay::instance::RelayInstance> {
     let run = if tier {
         r#"{"flow":{"exactly":"effectively_once"}}"#
     } else {
@@ -448,7 +448,7 @@ fn calling_instance(id: &str, tier: bool) -> Arc<crate::operator::instance::Oper
              "tasklets":[{{"name":"p0"}},{{"name":"p1"}},{{"name":"p2"}}]}}"#
     );
     crate::host::register_host_class_json(json.as_bytes()).expect("class registers");
-    crate::operator::instance::OperatorInstance::of_class(id, &format!("{id}_inst"))
+    crate::relay::instance::RelayInstance::of_class(id, &format!("{id}_inst"))
         .expect("class registered")
 }
 

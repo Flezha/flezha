@@ -1,7 +1,7 @@
 defmodule FlezhaTest.State.CompensationMarkersTest do
   @moduledoc """
-  §4.3 durable saga compensation records (controller half). A durable steps operator
-  operator ships `compensation_intent` / `compensation_done` frames; the stream
+  §4.3 durable saga compensation records (controller half). A durable steps relay
+  relay ships `compensation_intent` / `compensation_done` frames; the stream
   channel persists them as per-Cell markers, and the bind-time restore path
   ships them back on `RestoreInitState` so a respawned driver finishes the
   remaining hooks and skips already-undone ones.

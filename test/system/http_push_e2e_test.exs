@@ -1,8 +1,8 @@
 defmodule FlezhaTest.System.HttpPushE2ETest do
   @moduledoc """
-  `operator_http_push` end to end against live runners: a plain flow operator
+  `relay_http_push` end to end against live runners: a plain flow relay
   (`store_input`) sends every output and drops a refused one; two
-  effectively-once operators (`tier_store`) bound to one shared plugin send over
+  effectively-once relays (`tier_store`) bound to one shared plugin send over
   one connection, and while the server fails their outputs wait and arrive in
   order once it recovers, leaving the outbox owing nothing, and a refusal parks
   the output as a dead letter.
@@ -18,11 +18,11 @@ defmodule FlezhaTest.System.HttpPushE2ETest do
   import FlezhaTest.Helper.TierE2EHarness
 
   alias Flezha.Dlq.Store
-  alias Flezha.Operator.Builder
-  alias Flezha.Operator.ClassRegistry
+  alias Flezha.Relay.Builder
+  alias Flezha.Relay.ClassRegistry
   alias Flezha.Plugin
   alias Flezha.Plugin.Provider.HttpPush
-  alias Flezha.Service.OperatorManager
+  alias Flezha.Service.RelayManager
   alias Flezha.Service.PluginManager
   alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.Helper.WebhookServer
@@ -42,9 +42,9 @@ defmodule FlezhaTest.System.HttpPushE2ETest do
     :ok
   end
 
-  defp start!(namespace, operator_id, factory) do
-    builder = %Builder{id: operator_id, factory_id: factory, init_values: %{}, opts: []}
-    assert {:ok, _info} = OperatorManager.start_operator(namespace, builder)
+  defp start!(namespace, relay_id, factory) do
+    builder = %Builder{id: relay_id, factory_id: factory, init_values: %{}, opts: []}
+    assert {:ok, _info} = RelayManager.start_relay(namespace, builder)
   end
 
   # The bodies the server received, in order, a retried one read once.
@@ -58,13 +58,13 @@ defmodule FlezhaTest.System.HttpPushE2ETest do
   end
 
   # One namespace, one runner and one `push` plugin on `server`, with
-  # `operators` started from `factory` and bound to it.
-  defp bound!(factory, operators, server) do
+  # `relays` started from `factory` and bound to it.
+  defp bound!(factory, relays, server) do
     namespace = unique("push")
     id_path = unique_id_path()
     on_exit(fn -> cleanup(namespace, nil, id_path) end)
     {_port, _exec} = boot_runner(namespace, id_path)
-    Enum.each(operators, &start!(namespace, &1, factory))
+    Enum.each(relays, &start!(namespace, &1, factory))
 
     {:ok, _} =
       PluginManager.enable_plugin("push", %Plugin{
@@ -82,14 +82,13 @@ defmodule FlezhaTest.System.HttpPushE2ETest do
 
     on_exit(fn -> PluginManager.disable_plugin(namespace, "push") end)
 
-    for operator <- operators,
-        do:
-          :ok = PluginManager.bind_plugin(namespace, "push", operator, hooks: [{:on_output, []}])
+    for relay <- relays,
+        do: :ok = PluginManager.bind_plugin(namespace, "push", relay, hooks: [{:on_output, []}])
 
     namespace
   end
 
-  describe "a plain flow operator" do
+  describe "a plain flow relay" do
     @describetag capability: :state_persistence,
                  skip: FlezhaTest.SystemCase.deferral(:state_persistence)
 
@@ -122,13 +121,13 @@ defmodule FlezhaTest.System.HttpPushE2ETest do
     end
   end
 
-  test "two guaranteed operators share one connection, outlast an outage and park a refusal" do
+  test "two guaranteed relays share one connection, outlast an outage and park a refusal" do
     server = WebhookServer.start([200])
     [first, second] = [unique("eo_a"), unique("eo_b")]
     namespace = bound!("tier_store", [first, second], server)
 
-    for operator <- [first, second],
-        do: assert(wait_until(fn -> ClassRegistry.effectively_once?(operator) end, 30_000))
+    for relay <- [first, second],
+        do: assert(wait_until(fn -> ClassRegistry.effectively_once?(relay) end, 30_000))
 
     send_inputs(first, namespace, ["k1:a"])
     assert_receive {:request, _, headers, "k1=a"}, 30_000

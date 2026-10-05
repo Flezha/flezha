@@ -122,12 +122,12 @@ defmodule Flezha.Transport.DriverParityTest do
            "the driver clock never advanced"
   end
 
-  defp relay(pid) do
+  defp forward(pid) do
     receive do
-      message -> send(pid, {:relayed, message})
+      message -> send(pid, {:forwarded, message})
     end
 
-    relay(pid)
+    forward(pid)
   end
 
   defp await_stream_row(server, stream_id, want) do
@@ -212,12 +212,14 @@ defmodule Flezha.Transport.DriverParityTest do
         :ok = Native.set_active_once(server_handle)
         assert_receive {:flz_data, ^server_id, ^first, _, _}, 5_000
 
-        next_owner = spawn(fn -> relay(test_pid) end)
+        next_owner = spawn(fn -> forward(test_pid) end)
         on_exit(fn -> Process.exit(next_owner, :kill) end)
         :ok = Native.controlling_process(server_handle, next_owner)
         :ok = Native.set_active(server_handle)
 
-        for id <- held, do: assert_receive({:relayed, {:flz_data, ^server_id, ^id, _, _}}, 5_000)
+        for id <- held,
+            do: assert_receive({:forwarded, {:flz_data, ^server_id, ^id, _, _}}, 5_000)
+
         refute_received {:flz_data, ^server_id, _, _, _}
       end
 

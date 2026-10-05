@@ -1,8 +1,8 @@
 defmodule Flezha.Service.PluginDisableOverlapTest do
   @moduledoc """
-  M unreachable operators cost one bound, not M: the walk that takes every
+  M unreachable relays cost one bound, not M: the walk that takes every
   binding off a rescaled group's members (`PluginManager.unbind_all/2`) runs
-  the per-operator unsubscribe waits side by side, and names every operator it
+  the per-relay unsubscribe waits side by side, and names every relay it
   could not reach.
   """
 
@@ -14,7 +14,7 @@ defmodule Flezha.Service.PluginDisableOverlapTest do
   alias Flezha.Config.Durations
   alias Flezha.Plugin
   alias Flezha.Service.HubManager
-  alias Flezha.Service.OperatorManager
+  alias Flezha.Service.RelayManager
   alias Flezha.Service.PluginManager
   alias ProcessHub.Service.ProcessRegistry
 
@@ -29,19 +29,19 @@ defmodule Flezha.Service.PluginDisableOverlapTest do
     ProcessHub |> Mimic.stub(:is_alive?, fn _hub_id -> true end)
     ProcessRegistry |> Mimic.stub(:update, fn _hub, _id, _fun, _opts -> :ok end)
 
-    Mimic.stub(HubManager, :operator_bindings, fn @namespace, id ->
-      {:ok, [{"overlap_plugin", %Plugin{id: "overlap_plugin", provider: nil, operator_id: id}}]}
+    Mimic.stub(HubManager, :relay_bindings, fn @namespace, id ->
+      {:ok, [{"overlap_plugin", %Plugin{id: "overlap_plugin", provider: nil, relay_id: id}}]}
     end)
 
-    # Every operator resolves to a pid that never answers, so the real
+    # Every relay resolves to a pid that never answers, so the real
     # `Overwatch.plugin_unsubscribe` runs its full bound for each of them.
     wedged = spawn(fn -> receive do: (:never -> :never) end)
-    OperatorManager |> Mimic.stub(:get_operator_pid, fn _ns, _id -> {:ok, wedged} end)
+    RelayManager |> Mimic.stub(:get_relay_pid, fn _ns, _id -> {:ok, wedged} end)
 
     {:ok, ids: ids}
   end
 
-  test "M unreachable operators cost one inner bound, not M", %{ids: ids} do
+  test "M unreachable relays cost one inner bound, not M", %{ids: ids} do
     inner_ms = Durations.get(:plugin_call_timeout_ms)
 
     {elapsed_us, reply} = :timer.tc(fn -> PluginManager.unbind_all(@namespace, ids) end)

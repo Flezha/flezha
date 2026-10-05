@@ -20,10 +20,10 @@ use super::decl::{
 };
 use super::issue::{render_issues, TopologyIssue};
 use crate::error::Error;
-use crate::operator::settings::{
-    self, Durable, Each, Exactly, OnFailure, Run, SettingIssue,
+use crate::relay::settings::{self, Durable, Each, Exactly, OnFailure, Run, SettingIssue};
+use crate::relay::topology::{
+    AckGranularity, BeyondWindowPolicy, CheckpointOutputs, RelayTopology,
 };
-use crate::operator::topology::{AckGranularity, BeyondWindowPolicy, CheckpointOutputs, OperatorTopology};
 use crate::steps::spec::{graph_order, GraphSeed, StepsSpec, TaskDag};
 use crate::ErrorModel;
 
@@ -175,7 +175,7 @@ pub(super) fn ack_of(run: &Run) -> AckGranularity {
     }
 }
 
-/// One namespace per operator for channels, one for nodes: a derived name,
+/// One namespace per relay for channels, one for nodes: a derived name,
 /// a `named(...)` override and an entry name all collide here. A name also has
 /// to fit the frame it rides, and this is where the author can still be told.
 fn refuse_names(
@@ -259,7 +259,7 @@ fn setting_issue(factory_id: &str, issue: SettingIssue) -> TopologyIssue {
             declaration,
             fields,
         } => TopologyIssue::UnknownField {
-            declaration: format!("'{declaration}' of operator '{factory_id}'"),
+            declaration: format!("'{declaration}' of relay '{factory_id}'"),
             fields,
         },
         SettingIssue::InvalidSetting {
@@ -267,7 +267,7 @@ fn setting_issue(factory_id: &str, issue: SettingIssue) -> TopologyIssue {
             value,
             expected,
         } => TopologyIssue::InvalidSetting {
-            declaration: format!("operator '{factory_id}'"),
+            declaration: format!("relay '{factory_id}'"),
             setting,
             value,
             expected,
@@ -583,7 +583,7 @@ fn register(derived: Derived) -> Result<(), Error> {
     let (channels, name_to_id) = build_channels(&decl, &derived_channels);
     let (tasklets, tasklet_name_to_id) =
         build_tasklets(&decl, &class, &channels, &derived_channels);
-    let mut topology = OperatorTopology {
+    let mut topology = RelayTopology {
         sdk_lang: decl.sdk_lang,
         channels,
         name_to_id,
@@ -601,7 +601,7 @@ fn register(derived: Derived) -> Result<(), Error> {
     if let Run::Steps { each, on_failure } = run {
         topology.steps = Some(structured_steps(&topology, each, on_failure)?);
     }
-    crate::operator::registry::register_class(class.factory_id, Arc::new(topology));
+    crate::relay::registry::register_class(class.factory_id, Arc::new(topology));
     Ok(())
 }
 
@@ -618,7 +618,7 @@ fn register(derived: Derived) -> Result<(), Error> {
 /// `declare_class`. The typed Rust SDK refuses the same shape in its own
 /// vocabulary, because it never passes through here.
 fn refuse_loop_terminal_without_handoff(
-    topology: &OperatorTopology,
+    topology: &RelayTopology,
     each: Each,
     dag: &TaskDag,
 ) -> Result<(), Error> {
@@ -639,7 +639,7 @@ fn refuse_loop_terminal_without_handoff(
 /// A structured chain: its DAG from the topology, a chained loop decided
 /// against it.
 fn structured_steps(
-    topology: &OperatorTopology,
+    topology: &RelayTopology,
     each: Each,
     on_failure: OnFailure,
 ) -> Result<StepsSpec, Error> {

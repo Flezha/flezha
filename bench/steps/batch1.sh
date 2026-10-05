@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Steps operator bench matrix, batch 1: chain sweep, turns, kill. One log per case.
+# Steps relay bench matrix, batch 1: chain sweep, turns, kill. One log per case.
 set -u
 cd "$(dirname "$0")/../.."
 OUT=bench/steps/reports

@@ -104,7 +104,7 @@ defmodule Flezha.Plugin.Extension.Table.Workers do
   @doc """
   Whether a shareable `provider` runs a worker of its own on `table`: a source
   whose host's input is durable must have each record confirmed, which the
-  shared copy, handing records on to other operators too, never waits for.
+  shared copy, handing records on to other relays too, never waits for.
   """
   @spec own_source?(map(), module()) :: boolean()
   def own_source?(%{shared: nil}, _provider), do: false

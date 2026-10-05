@@ -2,8 +2,8 @@
 //!
 //! An option is read wherever the caller writes it, and the positionals are
 //! the words that remain — so a flag written BEFORE the subject of the command
-//! is a flag and not the subject. `flz operator stop --token t op1` used to
-//! send `--token` as the operator id and drop the credential entirely; every
+//! is a flag and not the subject. `flz relay stop --token t op1` used to
+//! send `--token` as the relay id and drop the credential entirely; every
 //! case below is the same invocation written both ways, and the values carry
 //! the three characters an argument list has historically lost.
 //!
@@ -22,24 +22,24 @@ const ECHOING: &str = "#!/bin/sh\nprintf '%s\\n' \"$@\"\nexit 0\n";
 
 const CASES: &[(&[&str], &str)] = &[
     // An option written before the positionals reads as an option, and the
-    // words that remain are the positionals. `flz operator stop --token t
-    // op1` used to send `--token` as the operator id and drop the credential
+    // words that remain are the positionals. `flz relay stop --token t
+    // op1` used to send `--token` as the relay id and drop the credential
     // entirely; every verb below is the same invocation written both ways.
     (
-        &["operator", "stop", "--token", "t", "op1"],
-        r#"Flezha.Service.Cli.call("Operator.stop", "[\"default\",\"op1\"]", [token: "t"])"#,
+        &["relay", "stop", "--token", "t", "op1"],
+        r#"Flezha.Service.Cli.call("Relay.stop", "[\"default\",\"op1\"]", [token: "t"])"#,
     ),
     (
-        &["operator", "stop", "op1", "--token", "t"],
-        r#"Flezha.Service.Cli.call("Operator.stop", "[\"default\",\"op1\"]", [token: "t"])"#,
+        &["relay", "stop", "op1", "--token", "t"],
+        r#"Flezha.Service.Cli.call("Relay.stop", "[\"default\",\"op1\"]", [token: "t"])"#,
     ),
     (
-        &["operator", "stop", "-n", "prod", "op1"],
-        r#"Flezha.Service.Cli.call("Operator.stop", "[\"prod\",\"op1\"]", [])"#,
+        &["relay", "stop", "-n", "prod", "op1"],
+        r#"Flezha.Service.Cli.call("Relay.stop", "[\"prod\",\"op1\"]", [])"#,
     ),
     (
-        &["operator", "state", "--namespace=prod", "op1"],
-        r#"Flezha.Service.Cli.call("Operator.cell_state", "[\"prod\",\"op1\"]", [])"#,
+        &["relay", "state", "--namespace=prod", "op1"],
+        r#"Flezha.Service.Cli.call("Relay.cell_state", "[\"prod\",\"op1\"]", [])"#,
     ),
     (
         &["state", "get", "--output", "json", "a/b/c"],
@@ -54,49 +54,33 @@ const CASES: &[(&[&str], &str)] = &[
         &["token", "issue", "--ttl", "60", "p", "ns", "viewer"],
         r#"Flezha.Service.Cli.call("Namespace.issue_token", "[\"p\",\"ns\",\"viewer\",{\"ttl\":60}]", [])"#,
     ),
-    // A switch and the credential read the same on either side of the operator.
+    // A switch and the credential read the same on either side of the relay.
     (
-        &["operator", "listen", "--input", "--token", "t", "op1"],
-        r#"Flezha.Service.Cli.call("Operator.listen", "[\"default\",\"op1\",\"input\",{\"window_ms\":30000}]", [token: "t"])"#,
+        &["relay", "listen", "--input", "--token", "t", "op1"],
+        r#"Flezha.Service.Cli.call("Relay.listen", "[\"default\",\"op1\",\"input\",{\"window_ms\":30000}]", [token: "t"])"#,
     ),
     (
-        &["operator", "listen", "op1", "--token", "t", "--input"],
-        r#"Flezha.Service.Cli.call("Operator.listen", "[\"default\",\"op1\",\"input\",{\"window_ms\":30000}]", [token: "t"])"#,
+        &["relay", "listen", "op1", "--token", "t", "--input"],
+        r#"Flezha.Service.Cli.call("Relay.listen", "[\"default\",\"op1\",\"input\",{\"window_ms\":30000}]", [token: "t"])"#,
     ),
     // A value carrying a quote, a backslash and a non-ASCII letter survives
     // whichever side of the positionals it was written on.
     (
-        &[
-            "operator",
-            "send",
-            "--text",
-            "a\"b\\cä",
-            "-n",
-            "prod",
-            "op1",
-        ],
-        r#"Flezha.Service.Cli.call("Operator.send", "[\"prod\",\"op1\",\"a\\\"b\\\\cä\",\"\",{}]", [])"#,
+        &["relay", "send", "--text", "a\"b\\cä", "-n", "prod", "op1"],
+        r#"Flezha.Service.Cli.call("Relay.send", "[\"prod\",\"op1\",\"a\\\"b\\\\cä\",\"\",{}]", [])"#,
     ),
     (
-        &[
-            "operator",
-            "send",
-            "op1",
-            "-n",
-            "prod",
-            "--text",
-            "a\"b\\cä",
-        ],
-        r#"Flezha.Service.Cli.call("Operator.send", "[\"prod\",\"op1\",\"a\\\"b\\\\cä\",\"\",{}]", [])"#,
+        &["relay", "send", "op1", "-n", "prod", "--text", "a\"b\\cä"],
+        r#"Flezha.Service.Cli.call("Relay.send", "[\"prod\",\"op1\",\"a\\\"b\\\\cä\",\"\",{}]", [])"#,
     ),
     // `call`'s deadline defaults and has no short spelling: `-t` is `--text`.
     (
-        &["operator", "call", "echo", "-t", "hello"],
-        r#"Flezha.Service.Cli.call("Operator.call", "[\"default\",\"echo\",\"hello\",\"\",{\"deadline_ms\":30000}]", [])"#,
+        &["relay", "call", "echo", "-t", "hello"],
+        r#"Flezha.Service.Cli.call("Relay.call", "[\"default\",\"echo\",\"hello\",\"\",{\"deadline_ms\":30000}]", [])"#,
     ),
     (
         &[
-            "operator",
+            "relay",
             "call",
             "--timeout",
             "100",
@@ -106,19 +90,15 @@ const CASES: &[(&[&str], &str)] = &[
             "--text",
             "x",
         ],
-        r#"Flezha.Service.Cli.call("Operator.call", "[\"default\",\"prices\",\"x\",\"\",{\"deadline_ms\":100,\"key\":\"EURUSD\"}]", [])"#,
+        r#"Flezha.Service.Cli.call("Relay.call", "[\"default\",\"prices\",\"x\",\"\",{\"deadline_ms\":100,\"key\":\"EURUSD\"}]", [])"#,
     ),
     (
-        &[
-            "operator", "send", "prices", "--key", "EURUSD", "--text", "x",
-        ],
-        r#"Flezha.Service.Cli.call("Operator.send", "[\"default\",\"prices\",\"x\",\"\",{\"key\":\"EURUSD\"}]", [])"#,
+        &["relay", "send", "prices", "--key", "EURUSD", "--text", "x"],
+        r#"Flezha.Service.Cli.call("Relay.send", "[\"default\",\"prices\",\"x\",\"\",{\"key\":\"EURUSD\"}]", [])"#,
     ),
     (
-        &[
-            "operator", "send", "orders", "--msg-id", "a1", "--text", "x",
-        ],
-        r#"Flezha.Service.Cli.call("Operator.send", "[\"default\",\"orders\",\"x\",\"\",{\"msg_id\":\"a1\"}]", [])"#,
+        &["relay", "send", "orders", "--msg-id", "a1", "--text", "x"],
+        r#"Flezha.Service.Cli.call("Relay.send", "[\"default\",\"orders\",\"x\",\"\",{\"msg_id\":\"a1\"}]", [])"#,
     ),
     (
         &["audit", "read", "--source", "x\"y", "f.log"],

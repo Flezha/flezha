@@ -149,7 +149,7 @@ defmodule Flezha.Plugin.Provider.Websocket.Sink do
   The payload goes out verbatim when no template is configured. A template
   substitutes the payload, the correlation id and the `flz.cell` / `flz.seq`
   stamps the output already carries (`Flezha.State.Outbox.output_stamps/1`), so
-  the identity a consumer dedups on is the one the operator committed.
+  the identity a consumer dedups on is the one the relay committed.
   """
   @spec enqueue(map(), binary(), map(), GenServer.from()) :: map()
   def enqueue(%{sink: sink} = state, message, metadata, from) do

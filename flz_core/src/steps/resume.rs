@@ -10,9 +10,9 @@ use super::compensation::{CellRun, StageRecord};
 use super::instance::{CommittedTask, Completion, JournalResume, MidResume, Release, Value};
 use super::run::{unwired_stream, Run};
 use super::spec::Chain;
-use super::{StepsError, OnFailure};
+use super::{OnFailure, StepsError};
 use crate::channel::{ChannelId, ChannelKind};
-use crate::operator::topology::OperatorTopology;
+use crate::relay::topology::RelayTopology;
 
 /// The chain a carry-fed pass re-enters: the one the loop's first message
 /// picked, from the journaled entry channel.
@@ -27,7 +27,7 @@ pub(super) fn carried_channel(r: &Run<'_>, resume: &JournalResume) -> ChannelId 
 /// A journaled handoff back into values through each item's producing
 /// channel's codec; `only` restricts it to one edge.
 pub(super) fn seed_from_journal(
-    topology: &OperatorTopology,
+    topology: &RelayTopology,
     handoff: &[(u32, Vec<u8>)],
     only: Option<ChannelId>,
 ) -> Result<Vec<Value>, StepsError> {
@@ -159,9 +159,7 @@ pub(super) fn journaled_stages(
     let undoable: Vec<CommittedTask> = resume
         .committed_tasks
         .iter()
-        .filter(|task| {
-            r.spec.on_failure == OnFailure::UndoAll || task.iter >= resume.iter
-        })
+        .filter(|task| r.spec.on_failure == OnFailure::UndoAll || task.iter >= resume.iter)
         .cloned()
         .collect();
     let mut by_iter = stages_by_iter(r, &undoable);

@@ -17,8 +17,8 @@ has no model of a Channel's consumers, so a merge is invisible to it.
 
 | Piece | Rust | Java |
 | --- | --- | --- |
-| `ChannelBuilder::merge`, `Merge`, `MergeSource`, the `TopologyIssue` variants; `attach_consumer` is the one place an edge is recorded and a second declaration on a mapped edge is refused | `sdk/rust/src/channel/builder/` | `flezha-sdk-api/.../channel/Merge.java`; `flezha-sdk-runtime/.../operator/builder/OperatorTopologyBuilder.java` (`MergeImpl`, `wireConsumer`) |
-| `ConsumerEdge` (`tasklet` + composed `transform` + optional `key`); `consumer_ids()` is the id-only view the graph walk and the steps operator DAG use | `flz_core/src/channel.rs` | `flezha-sdk-runtime/.../operator/ConsumerEdge.java` |
+| `ChannelBuilder::merge`, `Merge`, `MergeSource`, the `TopologyIssue` variants; `attach_consumer` is the one place an edge is recorded and a second declaration on a mapped edge is refused | `sdk/rust/src/channel/builder/` | `flezha-sdk-api/.../channel/Merge.java`; `flezha-sdk-runtime/.../relay/builder/RelayTopologyBuilder.java` (`MergeImpl`, `wireConsumer`) |
+| `ConsumerEdge` (`tasklet` + composed `transform` + optional `key`); `consumer_ids()` is the id-only view the graph walk and the steps relay DAG use | `flz_core/src/channel.rs` | `flezha-sdk-runtime/.../relay/ConsumerEdge.java` |
 | The one mapping site on the routing path | `flz_core/src/routing.rs` | `flezha-sdk-runtime/.../core/ActivationDispatcher.java` |
 | `ChainCtx::edge` + `extend_mapped` at the accumulate and re-seed sites | `flz_core/src/steps/{driver,spec}.rs` | shared core |
 

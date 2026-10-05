@@ -2,7 +2,7 @@ defmodule Flezha.Dlq.Store do
   @moduledoc """
   Durable dead-letter store (`dead-letter-queue`).
 
-  One controller-wide GenServer owning `app_data/dlq/<operator_class>/<tasklet_id>/`:
+  One controller-wide GenServer owning `app_data/dlq/<relay_class>/<tasklet_id>/`:
   a JSONL metadata index (`entries.jsonl`, one record per parked payload)
   with payload bytes in adjacent `<entry_id>.bin` blob files. Appends are
   fsynced before the caller's durable-ack callback fires — the SDK holds
@@ -31,7 +31,7 @@ defmodule Flezha.Dlq.Store do
   alias Flezha.Config.Durations
   alias Flezha.Dlq.Entry
   alias Flezha.Layout.Table, as: Layout
-  alias Flezha.Operator.Lookup
+  alias Flezha.Relay.Lookup
   alias Flezha.State.DurabilityTier
   alias Flezha.State.Paths
 
@@ -52,7 +52,7 @@ defmodule Flezha.Dlq.Store do
   def append(server \\ __MODULE__, entry), do: GenServer.call(server, {:append, entry}, 30_000)
 
   @doc """
-  Tell the operator serving `operator_class` that one of its inputs is durably
+  Tell the relay serving `relay_class` that one of its inputs is durably
   dead-lettered: a caller waiting on it under `notice.token` is answered
   `call.failed`, and its listeners are handed the `input.dead_lettered` notice.
   Every input park route calls this once its park is durable; a payload parked
@@ -62,8 +62,8 @@ defmodule Flezha.Dlq.Store do
   text), `channel`, `offset` (or `nil`), `tasklet` and `attempts`.
   """
   @spec announce(binary(), map()) :: :ok
-  def announce(operator_class, notice) do
-    with {:ok, overwatch} <- Lookup.overwatch(operator_class),
+  def announce(relay_class, notice) do
+    with {:ok, overwatch} <- Lookup.overwatch(relay_class),
          do: GenServer.cast(overwatch, {:dead_lettered, notice})
 
     :ok
@@ -92,12 +92,12 @@ defmodule Flezha.Dlq.Store do
         ) :: :ok
   def park_async(server \\ __MODULE__, cell_id, park, on_durable)
 
-  def park_async(server, {operator_class, tasklet_id, cell_key}, park, on_durable) do
+  def park_async(server, {relay_class, tasklet_id, cell_key}, park, on_durable) do
     entry =
       park
       |> Map.take([:channel, :origin_offset, :error, :attempts, :payload, :park_id])
       |> Map.merge(%{
-        operator_class: operator_class,
+        relay_class: relay_class,
         tasklet_id: tasklet_id,
         cell_key: cell_key
       })
@@ -107,12 +107,12 @@ defmodule Flezha.Dlq.Store do
   end
 
   @doc """
-  List parked entries, nearest-to-expiry (oldest) first. `operator_class`
+  List parked entries, nearest-to-expiry (oldest) first. `relay_class`
   narrows to one class; `nil` lists everything.
   """
   @spec list(pid() | atom(), String.t() | nil) :: [map()]
-  def list(server \\ __MODULE__, operator_class),
-    do: GenServer.call(server, {:list, operator_class}, 30_000)
+  def list(server \\ __MODULE__, relay_class),
+    do: GenServer.call(server, {:list, relay_class}, 30_000)
 
   @doc "Fetch one entry (with payload bytes) by `<class>/<tasklet>/<id>` ref."
   @spec get(pid() | atom(), String.t()) :: {:ok, map(), binary() | nil} | {:error, term()}
@@ -135,7 +135,7 @@ defmodule Flezha.Dlq.Store do
   @spec resolve(pid() | atom(), String.t()) :: :ok | {:error, term()}
   def resolve(server \\ __MODULE__, entry_ref), do: drop(server, entry_ref)
 
-  @doc "Per-tasklet usage: `[%{operator_class, tasklet_id, entries, bytes}]`."
+  @doc "Per-tasklet usage: `[%{relay_class, tasklet_id, entries, bytes}]`."
   @spec stats(pid() | atom()) :: [map()]
   def stats(server \\ __MODULE__), do: GenServer.call(server, :stats, 30_000)
 
@@ -144,16 +144,16 @@ defmodule Flezha.Dlq.Store do
   def sweep(server \\ __MODULE__), do: GenServer.call(server, :sweep, 60_000)
 
   @doc """
-  Every `{operator_class, tasklet_id}` with a parked-failure directory on
+  Every `{relay_class, tasklet_id}` with a parked-failure directory on
   disk, as the directory names — `nil` lists every class.
 
   The names are already path-sanitised, which is what makes them safe to use as
   a durable artifact identity: `task_dir/2` maps one back to the same directory.
   """
   @spec tasklets(String.t() | nil) :: [{String.t(), String.t()}]
-  def tasklets(operator_class \\ nil) do
+  def tasklets(relay_class \\ nil) do
     classes =
-      case operator_class do
+      case relay_class do
         nil -> File.ls(root()) |> ok_or([])
         rc -> [safe(rc)]
       end
@@ -173,7 +173,7 @@ defmodule Flezha.Dlq.Store do
 
   @doc """
   One identity component as it appears on disk. The durable-tier artifact for a
-  parked set is addressed by these, so a caller holding a live operator class
+  parked set is addressed by these, so a caller holding a live relay class
   maps it through here to name the artifact.
   """
   @spec path_component(String.t()) :: String.t()
@@ -193,9 +193,9 @@ defmodule Flezha.Dlq.Store do
     {:reply, do_append(entry), state}
   end
 
-  def handle_call({:list, operator_class}, _from, state) do
+  def handle_call({:list, relay_class}, _from, state) do
     entries =
-      tasklets(operator_class)
+      tasklets(relay_class)
       |> Enum.flat_map(fn {rc, sh} -> load_entries(rc, sh) end)
       |> Enum.sort_by(& &1["ts_ms"])
 
@@ -248,7 +248,7 @@ defmodule Flezha.Dlq.Store do
         entries = load_entries(rc, sh)
 
         %{
-          operator_class: rc,
+          relay_class: rc,
           tasklet_id: sh,
           entries: length(entries),
           bytes: dir_bytes(rc, sh)
@@ -285,7 +285,7 @@ defmodule Flezha.Dlq.Store do
   # ---------- append ----------
 
   defp do_append(entry) do
-    rc = Map.fetch!(entry, :operator_class)
+    rc = Map.fetch!(entry, :relay_class)
     sh = Map.fetch!(entry, :tasklet_id)
     id = entry_id(entry)
     payload = Map.get(entry, :payload)
@@ -317,7 +317,7 @@ defmodule Flezha.Dlq.Store do
     record = %{
       "id" => id,
       "ts_ms" => System.system_time(:millisecond),
-      "operator_class" => rc,
+      "relay_class" => rc,
       "tasklet_id" => sh,
       "cell_key" => Map.get(entry, :cell_key, ""),
       "channel" => Map.get(entry, :channel, ""),
@@ -332,7 +332,7 @@ defmodule Flezha.Dlq.Store do
     append_line(rc, sh, record)
 
     :telemetry.execute([:flezha, :dlq, :parked], %{count: 1}, %{
-      operator_class: rc,
+      relay_class: rc,
       tasklet_id: sh,
       cell_key: record["cell_key"],
       channel: record["channel"],
@@ -341,7 +341,7 @@ defmodule Flezha.Dlq.Store do
 
     # A re-park of a replayed entry is not a new dead letter, and is not told.
     :telemetry.execute([:flezha, :dlq, :dead_lettered], %{count: 1}, %{
-      operator: rc,
+      relay: rc,
       entry: ref(rc, sh, id),
       channel: record["channel"],
       error: record["error"]
@@ -371,7 +371,7 @@ defmodule Flezha.Dlq.Store do
       end)
 
     :telemetry.execute([:flezha, :dlq, :parked], %{count: 1}, %{
-      operator_class: rc,
+      relay_class: rc,
       tasklet_id: sh,
       cell_key: existing["cell_key"],
       channel: existing["channel"],
@@ -431,7 +431,7 @@ defmodule Flezha.Dlq.Store do
   defp shrink_to_cap([], _total, _cap), do: :ok
 
   defp retention_drop(entry, reason) do
-    rc = entry["operator_class"]
+    rc = entry["relay_class"]
     sh = entry["tasklet_id"]
     bytes = entry_bytes(entry)
 
@@ -443,7 +443,7 @@ defmodule Flezha.Dlq.Store do
     )
 
     :telemetry.execute([:flezha, :dlq, :retention_dropped], %{count: 1, bytes: bytes}, %{
-      operator_class: rc,
+      relay_class: rc,
       tasklet_id: sh,
       cell_key: entry["cell_key"],
       channel: entry["channel"],
@@ -575,7 +575,7 @@ defmodule Flezha.Dlq.Store do
     :telemetry.execute(
       [:flezha, :dlq, :usage],
       %{entries: length(load_entries(rc, sh)), bytes: dir_bytes(rc, sh)},
-      %{operator_class: rc, tasklet_id: sh}
+      %{relay_class: rc, tasklet_id: sh}
     )
 
     DurabilityTier.ship({:dlq, {safe(rc), safe(sh)}})

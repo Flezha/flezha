@@ -1,10 +1,10 @@
 defmodule Flezha.Plugin.Provider.FileSourceRestartTest do
   @moduledoc """
   A file source's committed offset survives a controller restart: the commit is
-  written to the declared manifest a restart rebuilds the operator from, and a
+  written to the declared manifest a restart rebuilds the relay from, and a
   reader prepared from that manifest starts at it.
 
-  The operator is `HubRegistryTestHelper.StubChild`, so the restart is real
+  The relay is `HubRegistryTestHelper.StubChild`, so the restart is real
   and the plugin list it rebuilds from is read off the stub's start argument.
   """
 
@@ -38,7 +38,7 @@ defmodule Flezha.Plugin.Provider.FileSourceRestartTest do
   test "a reader rebuilt from the declared manifest starts at the committed offset",
        %{files: files} do
     hub_id = Identificator.hub(@namespace)
-    operator_id = "file_source_restart_op"
+    relay_id = "file_source_restart_op"
     plugin_id = "file_source_restart_plugin"
 
     HubRegistryTestHelper.seed_runner(@namespace, "file_source_runner", "market")
@@ -46,7 +46,7 @@ defmodule Flezha.Plugin.Provider.FileSourceRestartTest do
     assert :ok = HubManager.await_recovery_complete([hub_id], 5_000)
 
     :ok =
-      HubRegistryTestHelper.start_durable(@namespace, operator_id,
+      HubRegistryTestHelper.start_durable(@namespace, relay_id,
         recorded_runner: nil,
         opts: []
       )
@@ -58,22 +58,22 @@ defmodule Flezha.Plugin.Provider.FileSourceRestartTest do
         opts: %{path: "events.ndjson", channel_in: "events"},
         hooks: [{:on_terminate, []}],
         namespace: @namespace,
-        operator_id: operator_id
+        relay_id: relay_id
       )
 
     assert {:ok, _} = PluginManager.enable_plugin(plugin_id, plugin)
 
     # The durable half of what the Overwatch does with a reader's commit: a
-    # reader's offset is its operator's position, so it is the binding's.
-    assert :ok = PluginManager.persist_opt(@namespace, operator_id, plugin_id, :offset, 6)
+    # reader's offset is its relay's position, so it is the binding's.
+    assert :ok = PluginManager.persist_opt(@namespace, relay_id, plugin_id, :offset, 6)
 
     HubRegistryTestHelper.stop_hub_keeping_registry(@namespace)
     {:ok, _} = HubManager.start_hub(@namespace)
     assert :ok = HubManager.await_recovery_complete([hub_id], 10_000)
-    assert HubRegistryTestHelper.await_bound_node(hub_id, operator_id, 10_000) == node()
+    assert HubRegistryTestHelper.await_bound_node(hub_id, relay_id, 10_000) == node()
 
     assert [{^plugin_id, %Plugin{opts: %{offset: 6}} = binding}] =
-             HubRegistryTestHelper.started_plugins(hub_id, operator_id)
+             HubRegistryTestHelper.started_plugins(hub_id, relay_id)
 
     # What the reader is brought up from: the binding laid over its entry.
     assert {:ok, %Plugin{opts: declared}} = PluginManager.resolve(@namespace, binding)

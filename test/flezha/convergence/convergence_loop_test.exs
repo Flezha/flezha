@@ -22,35 +22,35 @@ defmodule Flezha.Convergence.LoopTest do
   describe "Loop.apply_misbound_streak/2 (B5)" do
     alias Flezha.Convergence.Loop
 
-    test "an operator misbound for one tick is not yet migrated; two ticks releases it" do
-      delta = %Diff{misbound_operators: [{{:ns, "r"}, "e_dead", :probe}]}
+    test "a relay misbound for one tick is not yet migrated; two ticks releases it" do
+      delta = %Diff{misbound_relays: [{{:ns, "r"}, "e_dead", :probe}]}
 
       {streaks, tick1} = Loop.apply_misbound_streak(%{}, delta)
-      assert tick1.misbound_operators == []
+      assert tick1.misbound_relays == []
 
       {_streaks, tick2} = Loop.apply_misbound_streak(streaks, delta)
-      assert tick2.misbound_operators == [{{:ns, "r"}, "e_dead", :probe}]
+      assert tick2.misbound_relays == [{{:ns, "r"}, "e_dead", :probe}]
     end
 
     test "a declared disconnect is not streak-gated: the fleet observed the close" do
-      delta = %Diff{misbound_operators: [{{:ns, "r"}, "e_dead", :runner_disconnected}]}
+      delta = %Diff{misbound_relays: [{{:ns, "r"}, "e_dead", :runner_disconnected}]}
 
       {_streaks, tick1} = Loop.apply_misbound_streak(%{}, delta)
-      assert tick1.misbound_operators == [{{:ns, "r"}, "e_dead", :runner_disconnected}]
+      assert tick1.misbound_relays == [{{:ns, "r"}, "e_dead", :runner_disconnected}]
     end
 
-    test "an operator seen bound again resets its streak" do
-      delta = %Diff{misbound_operators: [{{:ns, "r"}, "e_dead", :probe}]}
+    test "a relay seen bound again resets its streak" do
+      delta = %Diff{misbound_relays: [{{:ns, "r"}, "e_dead", :probe}]}
       {streaks, _} = Loop.apply_misbound_streak(%{}, delta)
 
       # Bound again this tick → drops out → streak resets.
-      {streaks, _} = Loop.apply_misbound_streak(streaks, %Diff{misbound_operators: []})
+      {streaks, _} = Loop.apply_misbound_streak(streaks, %Diff{misbound_relays: []})
       {_streaks, tick} = Loop.apply_misbound_streak(streaks, delta)
-      assert tick.misbound_operators == []
+      assert tick.misbound_relays == []
     end
   end
 
-  describe "a runner connecting is news for the operators it can take" do
+  describe "a runner connecting is news for the relays it can take" do
     alias Flezha.Config.Backoff
     alias Flezha.Convergence.{Facts, Heal, Loop, Probe, RecoveryGate}
     alias Flezha.Runner.FleetManager
@@ -64,7 +64,7 @@ defmodule Flezha.Convergence.LoopTest do
 
     setup do
       intent = %Intent{
-        operators: [%{namespace: :ns, operator_id: "op", factory_id: "f", plugins: []}]
+        relays: [%{namespace: :ns, relay_id: "op", factory_id: "f", plugins: []}]
       }
 
       stub(Intent, :declared, fn -> intent end)
@@ -78,7 +78,7 @@ defmodule Flezha.Convergence.LoopTest do
       :ok
     end
 
-    # One declared operator bound to a runner the active set no longer holds,
+    # One declared relay bound to a runner the active set no longer holds,
     # so the tick judges it `failed`. `@fresh` is in the set, so no hub is
     # reclaimed under the tick.
     defp reality(observed \\ %{}) do
@@ -104,11 +104,11 @@ defmodule Flezha.Convergence.LoopTest do
 
     defp attempt(key), do: Backoff.attempt(:sys.get_state(Loop).backoff, key)
 
-    # fails when: the release walks only the parked operators and resets only
-    # the two key shapes it listed. An operator misbound to a departed runner
+    # fails when: the release walks only the parked relays and resets only
+    # the two key shapes it listed. A relay misbound to a departed runner
     # is in neither set, so it waited out its own rung — up to five minutes —
     # with a healthy runner already there.
-    test "an operator whose runner died is released the moment a capable one connects" do
+    test "a relay whose runner died is released the moment a capable one connects" do
       arm_misbound_rung()
 
       connect(@fresh)
@@ -118,8 +118,8 @@ defmodule Flezha.Convergence.LoopTest do
     end
 
     # fails when: the guard goes missing and any runner wakes every waiting
-    # operator in its namespace, whatever it can actually serve.
-    test "a runner advertising nothing the operator needs wakes nobody" do
+    # relay in its namespace, whatever it can actually serve.
+    test "a runner advertising nothing the relay needs wakes nobody" do
       stub(FleetManager, :factories_for_runner, fn _ns, _runner -> MapSet.new(["other"]) end)
       arm_misbound_rung()
 
@@ -130,7 +130,7 @@ defmodule Flezha.Convergence.LoopTest do
 
     # fails when: a runner that has advertised nothing YET — an SDK may send
     # its factories on a later frame — is read as one that serves nothing, and
-    # the operator it was going to take waits out its rung anyway.
+    # the relay it was going to take waits out its rung anyway.
     test "a runner that has advertised nothing yet still releases" do
       stub(FleetManager, :factories_for_runner, fn _ns, _runner -> MapSet.new() end)
       arm_misbound_rung()
@@ -180,7 +180,7 @@ defmodule Flezha.Convergence.LoopTest do
     # — "a runner arriving mid-cooldown is used at once" — is now carried by
     # the verdict records rather than by the parked facts, so it needs a test
     # that goes through the judge.
-    test "a parked operator is released by the same path" do
+    test "a parked relay is released by the same path" do
       stub(Probe, :snapshot, fn ->
         reality(%{parked?: true, park_reason: {:ping_failed, :timeout}, bound_runner: @fresh})
       end)
@@ -200,8 +200,8 @@ defmodule Flezha.Convergence.LoopTest do
     test "an instance that keeps exiting is rebound on its rung, and one that stays up clears it" do
       test_pid = self()
       stub(Heal, :execute, fn op -> send(test_pid, {:healed, op.primitive}) && :ok end)
-      exited = {:operator_exited, ":killed"}
-      park = {:operator_parked, {:ns, "op"}, %{reason: exited, transport: nil}}
+      exited = {:relay_exited, ":killed"}
+      park = {:relay_parked, {:ns, "op"}, %{reason: exited, transport: nil}}
       observe = fn fields -> stub(Probe, :snapshot, fn -> reality(fields) end) end
 
       up_for = fn ms ->
@@ -210,7 +210,7 @@ defmodule Flezha.Convergence.LoopTest do
 
       observe.(%{parked?: true, park_reason: exited, bound_runner: @fresh})
       Facts.declare(park)
-      assert_receive {:healed, :rebind_operator}, 1_000
+      assert_receive {:healed, :rebind_relay}, 1_000
       assert attempt({:parked, "op"}) == 1
 
       observe.(up_for.(10))
@@ -247,16 +247,16 @@ defmodule Flezha.Convergence.LoopTest do
     alias Flezha.Config.Backoff
     alias Flezha.Convergence.{Facts, Planner}
 
-    # One operator in every waiting field at once, under every reason the
+    # One relay in every waiting field at once, under every reason the
     # kinds table stamps on those fields plus the probe's reasonless one: what
-    # the Planner can key a binding op on for a single operator.
+    # the Planner can key a binding op on for a single relay.
     defp every_waiting_shape(ref) do
       reasons = [:probe | Facts.reasons_for(Diff.waiting_fields())]
 
       %Diff{
-        unbound_operators: [ref],
-        misbound_operators: Enum.map(reasons, &{ref, "e_dead", &1}),
-        parked_operators: [{ref, %{reason: :timeout}, "e_dead"}]
+        unbound_relays: [ref],
+        misbound_relays: Enum.map(reasons, &{ref, "e_dead", &1}),
+        parked_relays: [{ref, %{reason: :timeout}, "e_dead"}]
       }
     end
 
@@ -265,7 +265,7 @@ defmodule Flezha.Convergence.LoopTest do
     # ops and the released keys together; a hand-written list of key shapes
     # would move only one of them, which is how `{:runner_disconnected, id}`
     # escaped and waited out a rung nothing would clear.
-    test "every key the binding rules can plan for one operator is released" do
+    test "every key the binding rules can plan for one relay is released" do
       planned =
         {:ns, "op-1"}
         |> every_waiting_shape()
@@ -290,7 +290,7 @@ defmodule Flezha.Convergence.LoopTest do
     # per-tick cap is the only thing bounding it — the heal row carries no
     # jitter — so 500 released keys must still yield one capped plan.
     test "releasing a whole namespace still plans at most one tick's cap" do
-      delta = %Diff{unbound_operators: for(n <- 1..500, do: {:ns, "op-#{n}"})}
+      delta = %Diff{unbound_relays: for(n <- 1..500, do: {:ns, "op-#{n}"})}
 
       assert length(Planner.plan(delta, Backoff.new(:heal))) == Planner.max_ops()
     end
@@ -306,22 +306,22 @@ defmodule Flezha.Convergence.LoopTest do
 
       # Other suites leak hubs into the global registry; pin the durable-
       # registry evidence to empty so only the on-disk dirs drive these tests.
-      stub(HubManager, :durable_operator_ids, fn -> MapSet.new() end)
+      stub(HubManager, :durable_relay_ids, fn -> MapSet.new() end)
 
       {:ok, root: root}
     end
 
-    defp seed_cell(root, operator, tasklet, key) do
-      dir = Path.join([root, "_system", operator, tasklet])
+    defp seed_cell(root, relay, tasklet, key) do
+      dir = Path.join([root, "_system", relay, tasklet])
       File.mkdir_p!(dir)
       File.write!(Path.join(dir, "#{key}.wal"), <<1, 2, 3>>)
     end
 
     defp intent_for(ids) do
       %Intent{
-        operators:
+        relays:
           Enum.map(ids, fn id ->
-            %{namespace: :ns, operator_id: id, factory_id: nil, plugins: []}
+            %{namespace: :ns, relay_id: id, factory_id: nil, plugins: []}
           end)
       }
     end
@@ -330,17 +330,17 @@ defmodule Flezha.Convergence.LoopTest do
       assert {[], _cache} = Intent.intent_mismatch(intent_for([]), nil)
     end
 
-    test "wiped registry with on-disk evidence → mismatch names the operators", %{root: root} do
+    test "wiped registry with on-disk evidence → mismatch names the relays", %{root: root} do
       seed_cell(root, "btc_feed", "op", "k1")
       seed_cell(root, "eth_feed", "op", "k1")
 
       assert {["btc_feed", "eth_feed"], cache} = Intent.intent_mismatch(intent_for([]), nil)
 
-      # Live intent covering one operator clears exactly that entry.
+      # Live intent covering one relay clears exactly that entry.
       assert {["eth_feed"], _} = Intent.intent_mismatch(intent_for(["btc_feed"]), cache)
     end
 
-    test "a finished steps operator retained for inspection is not evidence", %{root: root} do
+    test "a finished steps relay retained for inspection is not evidence", %{root: root} do
       seed_cell(root, "btc_feed", "op", "k1")
       seed_cell(root, "done_steps", "op", "k1")
 
@@ -357,9 +357,9 @@ defmodule Flezha.Convergence.LoopTest do
     end
 
     test "durable-registry rows without live intent also count as evidence" do
-      stub(HubManager, :durable_operator_ids, fn -> MapSet.new(["ghost_operator"]) end)
+      stub(HubManager, :durable_relay_ids, fn -> MapSet.new(["ghost_relay"]) end)
 
-      assert {["ghost_operator"], _} = Intent.intent_mismatch(intent_for([]), nil)
+      assert {["ghost_relay"], _} = Intent.intent_mismatch(intent_for([]), nil)
     end
 
     test "flz state delete clears the entry", %{root: root} do
@@ -375,7 +375,7 @@ defmodule Flezha.Convergence.LoopTest do
 
   describe "Progress.progress_markers/0 — the tier cursors reach the classifier" do
     alias Flezha.Convergence.{Loop, StallClassifier}
-    alias Flezha.Operator.ClassRegistry
+    alias Flezha.Relay.ClassRegistry
     alias Flezha.State.{InputLog, Supervisor, WalWriter}
 
     setup do
@@ -413,7 +413,7 @@ defmodule Flezha.Convergence.LoopTest do
       :ok = WalWriter.append(pid, 0, effect_hdr(), effect([], 0))
       :ok = WalWriter.fsync(pid)
 
-      marker = Enum.find(Progress.progress_markers(), &(&1.operator_id == rc))
+      marker = Enum.find(Progress.progress_markers(), &(&1.relay_id == rc))
 
       assert marker.cell == {"op", "k1"}
       assert marker.input_log_tail == 1
@@ -437,13 +437,13 @@ defmodule Flezha.Convergence.LoopTest do
       :ok = WalWriter.append(pid, 0, <<1, 0, 0, 0, 1, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0>>, "change")
       :ok = WalWriter.fsync(pid)
 
-      marker = Enum.find(Progress.progress_markers(), &(&1.operator_id == rc))
+      marker = Enum.find(Progress.progress_markers(), &(&1.relay_id == rc))
 
       refute Map.has_key?(marker, :input_log_tail)
       refute Map.has_key?(marker, :consumed_offset)
 
       assert Supervisor.lookup({rc, :input_log}) == :error,
-             "polling markers must never conjure an input log for a tier-off operator"
+             "polling markers must never conjure an input log for a tier-off relay"
 
       :ok = WalWriter.close(pid)
     end
@@ -458,14 +458,14 @@ defmodule Flezha.Convergence.LoopTest do
       :ok = WalWriter.append(pid, 0, effect_hdr(), effect([], 0))
       :ok = WalWriter.fsync(pid)
 
-      baseline = Enum.filter(Progress.progress_markers(), &(&1.operator_id == rc))
+      baseline = Enum.filter(Progress.progress_markers(), &(&1.relay_id == rc))
 
       # The source keeps feeding, but this Cell never consumes another offset —
       # a poison payload mid-retry, or a tasklet wedged on it.
       {:ok, 1} = InputLog.append(rc, "i1", %{})
       {:ok, 2} = InputLog.append(rc, "i2", %{})
 
-      current = Enum.filter(Progress.progress_markers(), &(&1.operator_id == rc))
+      current = Enum.filter(Progress.progress_markers(), &(&1.relay_id == rc))
 
       assert %{^rc => {:stuck, :watermark_frozen, %{cell: {"op", "poisoned"}}}} =
                StallClassifier.classify_producing(current, baseline, %{
@@ -508,7 +508,7 @@ defmodule Flezha.Convergence.LoopTest do
       :telemetry.attach_many(
         handler_id,
         [
-          [:flezha, :convergence, :operator_stuck],
+          [:flezha, :convergence, :relay_stuck],
           [:flezha, :convergence, :intent_mismatch]
         ],
         fn event, measurements, metadata, _ ->
@@ -521,23 +521,23 @@ defmodule Flezha.Convergence.LoopTest do
       {:ok, ref: ref}
     end
 
-    test "freshly-stuck operators emit operator_stuck once, not on steady state", %{ref: ref} do
+    test "freshly-stuck relays emit relay_stuck once, not on steady state", %{ref: ref} do
       stuck = %{"btc" => %{detail: :wal_frozen, cell: "op/k1"}}
 
       Progress.note_stuck_transitions(%{}, stuck)
 
-      assert_receive {^ref, [:flezha, :convergence, :operator_stuck], %{count: 1},
-                      %{operator_id: "btc", detail: :wal_frozen, cell: "op/k1"}}
+      assert_receive {^ref, [:flezha, :convergence, :relay_stuck], %{count: 1},
+                      %{relay_id: "btc", detail: :wal_frozen, cell: "op/k1"}}
 
       Progress.note_stuck_transitions(stuck, stuck)
-      refute_received {^ref, [:flezha, :convergence, :operator_stuck], _, _}
+      refute_received {^ref, [:flezha, :convergence, :relay_stuck], _, _}
     end
 
-    test "intent-mismatch transitions emit with the named operators", %{ref: ref} do
+    test "intent-mismatch transitions emit with the named relays", %{ref: ref} do
       Intent.note_intent_mismatch_transition([], ["btc", "eth"])
 
       assert_receive {^ref, [:flezha, :convergence, :intent_mismatch], %{count: 2},
-                      %{operators: ["btc", "eth"]}}
+                      %{relays: ["btc", "eth"]}}
 
       # Unchanged and cleared transitions do not re-emit.
       Intent.note_intent_mismatch_transition(["btc", "eth"], ["btc", "eth"])

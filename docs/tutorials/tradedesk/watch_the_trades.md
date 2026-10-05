@@ -9,7 +9,7 @@ its symbol so every symbol gets a cell with its own window of prices, and emits
 a buy signal when a price is more than 2 % above the window's average.
 [Streams](../../topics/basics/streams.md) explains the graph,
 [State](../../topics/basics/state.md) the window kept per cell, and
-[Configuring an operator](../../topics/basics/configuring_an_operator.md) why it
+[Configuring a relay](../../topics/basics/configuring_a_relay.md) why it
 runs in flow, the default.
 
 <!-- tabs-open -->
@@ -17,8 +17,8 @@ runs in flow, the default.
 ### Java
 
 ```java
-// TradeWatcherOperator.java: the ETL stream
-public final class TradeWatcherOperator implements Operator {
+// TradeWatcherRelay.java: the ETL stream
+public final class TradeWatcherRelay implements Relay {
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record TradeMessage(String channel, List<Trade> data) {}
 
@@ -42,7 +42,7 @@ public final class TradeWatcherOperator implements Operator {
 }
 ```
 
-[`TradeWatcherOperator.java`](https://github.com/flezha/flezha_java_sdk/blob/main/examples/tradedesk/src/main/java/com/flezha/examples/tradedesk/TradeWatcherOperator.java)
+[`TradeWatcherRelay.java`](https://github.com/flezha/flezha_java_sdk/blob/main/examples/tradedesk/src/main/java/com/flezha/examples/tradedesk/TradeWatcherRelay.java)
 
 ### Rust
 
@@ -56,9 +56,9 @@ pub struct TradeMessage {
     data: Vec<Trade>,
 }
 
-pub struct TradeWatcherOperator;
+pub struct TradeWatcherRelay;
 
-impl Operator for TradeWatcherOperator {
+impl Relay for TradeWatcherRelay {
     fn factory_id() -> &'static str {
         "trade_watcher"
     }
@@ -81,8 +81,8 @@ impl Operator for TradeWatcherOperator {
 ### Node
 
 ```javascript
-// trade_watcher_operator.mjs: the ETL stream
-export default defineOperator({
+// trade_watcher_relay.mjs: the ETL stream
+export default defineRelay({
   factoryId: 'trade_watcher',
   channels: (c) => {
     c.input('trades') // JSON from the exchange
@@ -97,13 +97,13 @@ export default defineOperator({
 });
 ```
 
-[`trade_watcher_operator.mjs`](https://github.com/flezha/flezha_node_sdk/blob/main/examples/tradedesk/trade_watcher_operator.mjs)
+[`trade_watcher_relay.mjs`](https://github.com/flezha/flezha_node_sdk/blob/main/examples/tradedesk/trade_watcher_relay.mjs)
 
 ### Python
 
 ```python
 # trade_watcher.py: the ETL stream
-@flezha.operator("trade_watcher")
+@flezha.relay("trade_watcher")
 def trade_watcher(c: flezha.Channels) -> None:
     (
         c.input("trades")  # JSON from the exchange
@@ -122,8 +122,8 @@ def trade_watcher(c: flezha.Channels) -> None:
 ### Ruby
 
 ```ruby
-# trade_watcher_operator.rb: the ETL stream
-class TradeWatcherOperator < Flezha::Operator
+# trade_watcher_relay.rb: the ETL stream
+class TradeWatcherRelay < Flezha::Relay
   factory_id "trade_watcher"
 
   channels do |c|
@@ -139,14 +139,14 @@ class TradeWatcherOperator < Flezha::Operator
 end
 ```
 
-[`trade_watcher_operator.rb`](https://github.com/flezha/flezha_ruby_sdk/blob/main/examples/tradedesk/trade_watcher_operator.rb)
+[`trade_watcher_relay.rb`](https://github.com/flezha/flezha_ruby_sdk/blob/main/examples/tradedesk/trade_watcher_relay.rb)
 
 ### PHP
 
 ```php
-// src/TradeWatcherOperator.php: the ETL stream
-#[Operator(factoryId: 'trade_watcher')]
-final class TradeWatcherOperator extends \Flezha\Operator
+// src/TradeWatcherRelay.php: the ETL stream
+#[Relay(factoryId: 'trade_watcher')]
+final class TradeWatcherRelay extends \Flezha\Relay
 {
     public static function channels(Builder $c): void
     {
@@ -162,14 +162,14 @@ final class TradeWatcherOperator extends \Flezha\Operator
 }
 ```
 
-[`src/TradeWatcherOperator.php`](https://github.com/flezha/flezha_php_sdk/blob/main/examples/tradedesk/src/TradeWatcherOperator.php)
+[`src/TradeWatcherRelay.php`](https://github.com/flezha/flezha_php_sdk/blob/main/examples/tradedesk/src/TradeWatcherRelay.php)
 
 ### Elixir
 
 ```elixir
 # lib/tradedesk/trade_watcher.ex: the ETL stream
 defmodule Tradedesk.TradeWatcher do
-  use Flezha.SDK.Operator, factory_id: "trade_watcher"
+  use Flezha.SDK.Relay, factory_id: "trade_watcher"
 
   @impl true
   def channels(c) do
@@ -202,11 +202,11 @@ end
 > {: .step}
 
 ```sh
-$ ./bin/flz operator start trade_watcher --id trade_watcher --partitions 2 --namespace trading
+$ ./bin/flz relay start trade_watcher --id trade_watcher --partitions 2 --namespace trading
 ```
 
 ```output
-Operator trade_watcher started with 2 partitions:
+Relay trade_watcher started with 2 partitions:
   trade_watcher#p0
   trade_watcher#p1
 ```
@@ -219,9 +219,9 @@ the same one. [Partitioning](../../topics/advanced/partitioning.md) covers how.
 > {: .step}
 
 ```sh
-$ ./bin/flz operator send 'trade_watcher#p0' --namespace trading --channel trades --text '{"channel": "trade", "data": [{"symbol": "EUR/USD", "price": 1.0850, "ord_type": "market"}]}'
-$ ./bin/flz operator send 'trade_watcher#p0' --namespace trading --channel trades --text '{"channel": "trade", "data": [{"symbol": "EUR/USD", "price": 1.0853, "ord_type": "market"}]}'
-$ ./bin/flz operator send 'trade_watcher#p0' --namespace trading --channel trades --text '{"channel": "trade", "data": [{"symbol": "EUR/USD", "price": 1.1100, "ord_type": "market"}]}' --await 3000
+$ ./bin/flz relay send 'trade_watcher#p0' --namespace trading --channel trades --text '{"channel": "trade", "data": [{"symbol": "EUR/USD", "price": 1.0850, "ord_type": "market"}]}'
+$ ./bin/flz relay send 'trade_watcher#p0' --namespace trading --channel trades --text '{"channel": "trade", "data": [{"symbol": "EUR/USD", "price": 1.0853, "ord_type": "market"}]}'
+$ ./bin/flz relay send 'trade_watcher#p0' --namespace trading --channel trades --text '{"channel": "trade", "data": [{"symbol": "EUR/USD", "price": 1.1100, "ord_type": "market"}]}' --await 3000
 ```
 
 ```output
@@ -243,7 +243,7 @@ booked:
 > {: .step}
 
 ```sh
-$ ./bin/flz operator send 'trade_watcher#p1' --namespace trading --channel trades --text '{"channel": "trade", "data": [{"symbol": "GBP/USD", "price": 1.3400, "ord_type": "market"}]}'
+$ ./bin/flz relay send 'trade_watcher#p1' --namespace trading --channel trades --text '{"channel": "trade", "data": [{"symbol": "GBP/USD", "price": 1.3400, "ord_type": "market"}]}'
 ```
 
 Read every symbol's window, from every partition:
@@ -262,12 +262,12 @@ state get trade_watcher/track_prices:
 > {: .step}
 
 ```sh
-$ ./bin/flz operator scale trade_watcher 3 --namespace trading
+$ ./bin/flz relay scale trade_watcher 3 --namespace trading
 ```
 
 ```output
-Scaling operator group trade_watcher to 3...
-Operator trade_watcher rescaled 2 -> 3 (2 cells moved, 0 trees removed):
+Scaling relay group trade_watcher to 3...
+Relay trade_watcher rescaled 2 -> 3 (2 cells moved, 0 trees removed):
   trade_watcher#p0
   trade_watcher#p1
   trade_watcher#p2

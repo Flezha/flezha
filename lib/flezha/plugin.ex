@@ -1,24 +1,24 @@
 defmodule Flezha.Plugin do
   @moduledoc """
   Unified plugin struct used by every hook on a host (e.g.
-  `Flezha.Operator.Overwatch`).
+  `Flezha.Relay.Overwatch`).
 
   A hook is a point at which the host calls a plugin, named by the provider
   callback it runs. A single `%Flezha.Plugin{}` may have hooks on several
   points. Each entry in `hooks` is a `{hook_name, hook_opts}` tuple; the
   provider module MUST export a callback for each hook (e.g. `on_input/2`,
-  `on_message/2`, `on_operator_init/2`, ...).
+  `on_message/2`, `on_relay_init/2`, ...).
 
   At the boundary the name may be text or an atom and the opts a map or a
-  keyword list — the shapes the CLI, the operator-start spec, an installed
+  keyword list — the shapes the CLI, the relay-start spec, an installed
   package manifest and direct construction produce.
   `Flezha.Plugin.Extension.Table.canonicalise/2` reduces all of them to
   `{atom, keyword}` with typed values, which is what every later reader sees.
 
   The struct has two readings. A plugin ENTRY is a named plugin in a namespace:
-  its provider, its options and `single`, with no operator and no hooks. A
-  BINDING is that plugin on one operator: the hooks, and the options this
-  operator writes over the entry's (its channel, a non-shareable plugin's
+  its provider, its options and `single`, with no relay and no hooks. A
+  BINDING is that plugin on one relay: the hooks, and the options this
+  relay writes over the entry's (its channel, a non-shareable plugin's
   committed position). `resolve/2` lays a binding over its entry.
   """
 
@@ -34,7 +34,7 @@ defmodule Flezha.Plugin do
           opts: map(),
           hooks: [hook()],
           namespace: atom() | binary() | nil,
-          operator_id: binary() | nil,
+          relay_id: binary() | nil,
           single: boolean()
         }
 
@@ -45,7 +45,7 @@ defmodule Flezha.Plugin do
     opts: %{},
     hooks: [],
     namespace: nil,
-    operator_id: nil,
+    relay_id: nil,
     single: false
   ]
 
@@ -80,7 +80,7 @@ defmodule Flezha.Plugin do
     end
   end
 
-  @fields [:id, :provider, :opts, :hooks, :namespace, :operator_id, :single]
+  @fields [:id, :provider, :opts, :hooks, :namespace, :relay_id, :single]
 
   @doc """
   Refuse any of a caller's named `fields` but the namespace and those in
@@ -95,15 +95,15 @@ defmodule Flezha.Plugin do
   end
 
   @doc """
-  The operator a binding's named `fields` target (`:operator_id`), after
-  `read_only/2` with `read` and the operator.
+  The relay a binding's named `fields` target (`:relay_id`), after
+  `read_only/2` with `read` and the relay.
   """
   @spec binding_target(keyword(), [atom()]) :: {:ok, binary()} | {:error, term()}
   def binding_target(fields, read) do
-    with :ok <- read_only(fields, [:operator_id | read]) do
-      case fields[:operator_id] do
-        operator_id when is_binary(operator_id) and operator_id != "" ->
-          {:ok, operator_id}
+    with :ok <- read_only(fields, [:relay_id | read]) do
+      case fields[:relay_id] do
+        relay_id when is_binary(relay_id) and relay_id != "" ->
+          {:ok, relay_id}
 
         _none ->
           {:error, {:plugin_target_missing, Keyword.get(fields, :namespace, "default"), nil}}
@@ -198,12 +198,12 @@ defmodule Flezha.Plugin do
   def optional_hooks(written), do: hooks(written)
 
   @doc """
-  Whether `plugin`'s hooks have an operator to send to: an operator plugin's
-  hooks say what it sends to an operator, so they belong to a binding, which
+  Whether `plugin`'s hooks have a relay to send to: a relay plugin's
+  hooks say what it sends to a relay, so they belong to a binding, which
   needs one. A controller plugin's hooks are its own.
   """
   @spec targeted(t()) :: :ok | {:error, term()}
-  def targeted(%__MODULE__{hooks: [_ | _], operator_id: nil} = plugin) do
+  def targeted(%__MODULE__{hooks: [_ | _], relay_id: nil} = plugin) do
     if controller?(plugin),
       do: :ok,
       else: {:error, {:plugin_target_missing, plugin.namespace, nil}}
@@ -235,7 +235,7 @@ defmodule Flezha.Plugin do
   Point this plugin at one member of a partition group.
 
   The one definition of what a fanned-out plugin instance is: the member's
-  operator id, the member's `#pK` appended to the plugin id (which is also
+  relay id, the member's `#pK` appended to the plugin id (which is also
   what keeps this node's plugin ids unique when two members land on it), and
   the member's partition opts merged in as integers. `plugin_id` is
   deliberately not injected — providers that key workers by it default to a
@@ -250,7 +250,7 @@ defmodule Flezha.Plugin do
     %__MODULE__{
       plugin
       | id: base_id(plugin.id) <> Flezha.Partition.member_suffix(identity.index),
-        operator_id: member_id,
+        relay_id: member_id,
         opts: Map.merge(plugin.opts, Flezha.Partition.provider_opts(identity))
     }
   end
@@ -267,9 +267,9 @@ defmodule Flezha.Plugin do
     end
   end
 
-  @doc "The partition group a member's id names, or the id itself for an operator that is none."
+  @doc "The partition group a member's id names, or the id itself for a relay that is none."
   @spec group_of(binary()) :: binary()
-  def group_of(operator_id), do: base_id(operator_id)
+  def group_of(relay_id), do: base_id(relay_id)
 
   # The options that name the channel a plugin is attached to. A binding that
   # names one replaces all three of the entry's, so the two never meet as two
@@ -278,7 +278,7 @@ defmodule Flezha.Plugin do
 
   @doc """
   `binding` laid over its plugin `entry`: the entry's provider and options, the
-  binding's id, operator and hooks, and the binding's own options written over
+  binding's id, relay and hooks, and the binding's own options written over
   the entry's.
   """
   @spec resolve(t(), t()) :: t()
@@ -314,7 +314,7 @@ defmodule Flezha.Plugin do
 
   @doc """
   Whether this is a controller plugin: one its provider declares `type:
-  :controller`, which is bound to no operator and hears its namespace's hooks.
+  :controller`, which is bound to no relay and hears its namespace's hooks.
   A provider this controller did not load cannot say, and answers false.
   """
   @spec controller?(t()) :: boolean()

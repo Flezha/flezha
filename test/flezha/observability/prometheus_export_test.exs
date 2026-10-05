@@ -194,7 +194,7 @@ defmodule Flezha.Observability.PrometheusExportTest do
 
     test "a tuple metadata value renders instead of killing the registry" do
       # The shape two live TelemetryBridge paths carry today: the WAL writer's
-      # 3-tuple cell id, and operator-forward's {:unreachable, _} reason.
+      # 3-tuple cell id, and relay-forward's {:unreachable, _} reason.
       source = metric_source(:wal_tuple)
       registry = Process.whereis(PrometheusRegistry)
 

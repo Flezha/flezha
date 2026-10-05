@@ -40,7 +40,7 @@ pub(crate) fn saturate<P: Send + 'static>(mailbox: &Mailbox<P>, item: P) {
 /// addressed to, and the body inside it.
 #[cfg(test)]
 pub(crate) struct CapturedPark {
-    /// `(operator_class, tasklet_id, cell_key)` — the triple the
+    /// `(relay_class, tasklet_id, cell_key)` — the triple the
     /// controller keys the row by, and whose middle element it makes a
     /// directory.
     pub identity: (String, String, String),
@@ -87,7 +87,7 @@ fn decode_park(frame: &[u8]) -> CapturedPark {
 pub(crate) mod host_class {
     use std::sync::Arc;
 
-    use crate::operator::instance::OperatorInstance;
+    use crate::relay::instance::RelayInstance;
 
     /// One entry-channel declaration per name, each chaining into `p0`.
     /// An entry channel per name, each into tasklet 0; `facts` are extra
@@ -113,7 +113,7 @@ pub(crate) mod host_class {
         entries: &[&str],
         keys: &[&str],
         consumers: &[u32],
-    ) -> Arc<OperatorInstance> {
+    ) -> Arc<RelayInstance> {
         instance_of(id, entries, keys, consumers, true)
     }
 
@@ -124,7 +124,7 @@ pub(crate) mod host_class {
         keys: &[&str],
         consumers: &[u32],
         tier: bool,
-    ) -> Arc<OperatorInstance> {
+    ) -> Arc<RelayInstance> {
         let chain_list = consumers
             .iter()
             .map(|c| format!(r#"[{{"link":"into","tasklet":{c}}}]"#))
@@ -166,7 +166,7 @@ pub(crate) mod host_class {
                  "tasklets":[{tasks}]}}"#
         );
         crate::host::register_host_class_json(json.as_bytes()).expect("class registers");
-        OperatorInstance::of_class(id, &format!("{id}_inst")).expect("class registered")
+        RelayInstance::of_class(id, &format!("{id}_inst")).expect("class registered")
     }
 
     /// A host `once` steps class: an entry channel per name in `entries`,
@@ -187,7 +187,7 @@ pub(crate) mod host_class {
         )
     }
 
-    /// Bind `id` of `factory` as the controller does, through `AddOperator`;
+    /// Bind `id` of `factory` as the controller does, through `AddRelay`;
     /// the refusals it answered.
     pub(crate) fn bind(
         node: &mut crate::runner::RunnerNode,
@@ -198,8 +198,8 @@ pub(crate) mod host_class {
     ) -> Vec<crate::Error> {
         use crate::command::CommandAction;
         let mut errors = Vec::new();
-        crate::pb::AddOperator {
-            operator_id: id.to_string(),
+        crate::pb::AddRelay {
+            relay_id: id.to_string(),
             factory_id: factory.to_string(),
             init_values: init.to_string(),
             inbox_tail_count: owed,
@@ -211,9 +211,9 @@ pub(crate) mod host_class {
 
     /// A host steps instance built as the bind builds it and not yet
     /// opened, so a test reads the messages its run queues.
-    pub(crate) fn steps(id: &str, entries: &[&str]) -> Arc<OperatorInstance> {
+    pub(crate) fn steps(id: &str, entries: &[&str]) -> Arc<RelayInstance> {
         crate::host::register_host_class_json(steps_json(id, entries, 1).as_bytes())
             .expect("class registers");
-        OperatorInstance::of_class(id, &format!("{id}_inst")).expect("class registered")
+        RelayInstance::of_class(id, &format!("{id}_inst")).expect("class registered")
     }
 }

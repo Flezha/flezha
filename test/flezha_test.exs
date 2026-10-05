@@ -2,13 +2,13 @@ defmodule FlezhaTest do
   alias Flezha.Identificator
   alias Flezha.Payloader
   alias Flezha.Runner.FleetManager
-  alias Flezha.Service.OperatorManager
+  alias Flezha.Service.RelayManager
   alias Flezha.Service.PluginManager
   alias Flezha.State.TestHelpers
   alias Flezha.Testnet
-  alias FlezhaTest.Fixtures.OperatorFixture
+  alias FlezhaTest.Fixtures.RelayFixture
   alias FlezhaTest.Helper.NodeTestHelper
-  alias FlezhaTest.Helper.OperatorTestHelper
+  alias FlezhaTest.Helper.RelayTestHelper
   alias ProcessHub.Constant.Hook
 
   use ExUnit.Case
@@ -21,7 +21,7 @@ defmodule FlezhaTest do
   @node_name NodeTestHelper.node_name()
 
   @test_store_input_factory "store_input"
-  @test_operator_factory "do_nothing"
+  @test_relay_factory "do_nothing"
   @test_compare_filter_factory "compare_filter"
 
   # WS-dependent tests below connect to a Node.js testnet daemon at
@@ -37,13 +37,13 @@ defmodule FlezhaTest do
   end
 
   setup _context do
-    # Restore now rehydrates an operator from its WAL on (re)bind, so leftover
-    # per-Cell state from an earlier test that reused the same operator_id
+    # Restore now rehydrates a relay from its WAL on (re)bind, so leftover
+    # per-Cell state from an earlier test that reused the same relay_id
     # would leak in. Start each test from empty cells.
     TestHelpers.reset_all_cells()
 
     on_exit(fn ->
-      OperatorManager.stop_all_operators(@default_namespace)
+      RelayManager.stop_all_relays(@default_namespace)
       FleetManager.stop_namespace(@temp_namespace)
     end)
 
@@ -56,72 +56,72 @@ defmodule FlezhaTest do
     Enum.each(res, &assert(is_binary(&1)))
   end
 
-  @tag :operator_start
-  test "operator adding" do
-    operator = %Flezha.Operator.Builder{
-      id: "default_operator_test",
-      factory_id: @test_operator_factory
+  @tag :relay_start
+  test "relay adding" do
+    relay = %Flezha.Relay.Builder{
+      id: "default_relay_test",
+      factory_id: @test_relay_factory
     }
 
-    {status, info} = OperatorManager.start_operator(@default_namespace, operator)
+    {status, info} = RelayManager.start_relay(@default_namespace, relay)
 
     assert status === :ok,
-           "start_operator failed: #{inspect(info)}"
+           "start_relay failed: #{inspect(info)}"
 
-    assert info[:operator_id] === "default_operator_test"
+    assert info[:relay_id] === "default_relay_test"
     assert info[:node] === @node_name
     assert is_pid(info[:pid])
     assert is_binary(info[:runner_id])
   end
 
-  test "operator removing" do
-    operator_id = "default_operator_stop_test"
+  test "relay removing" do
+    relay_id = "default_relay_stop_test"
 
-    {:ok, %{pid: _operator_pid}} =
-      operator_id
-      |> OperatorFixture.get(@test_store_input_factory)
-      |> OperatorFixture.start()
+    {:ok, %{pid: _relay_pid}} =
+      relay_id
+      |> RelayFixture.get(@test_store_input_factory)
+      |> RelayFixture.start()
 
-    assert :ok === OperatorManager.stop_operator(@default_namespace, operator_id)
+    assert :ok === RelayManager.stop_relay(@default_namespace, relay_id)
 
     assert NodeTestHelper.wait_until(
-             fn -> not OperatorManager.exist?(@default_namespace, operator_id) end,
+             fn -> not RelayManager.exist?(@default_namespace, relay_id) end,
              5_000
            ),
-           "the stopped operator is still registered"
+           "the stopped relay is still registered"
   end
 
-  test "operator adding non existing factory" do
-    operator_id = "non_existing_factory_err"
+  test "relay adding non existing factory" do
+    relay_id = "non_existing_factory_err"
 
-    operator = %Flezha.Operator.Builder{
-      id: operator_id,
+    relay = %Flezha.Relay.Builder{
+      id: relay_id,
       factory_id: "non_existing_factory"
     }
 
     # An unknown factory is refused cluster-wide now: no local runner
     # advertises it and the cluster directory names no capable peer either.
     assert {:error, {:factory_unknown, @default_namespace, "non_existing_factory"}} =
-             OperatorManager.start_operator(@default_namespace, operator)
+             RelayManager.start_relay(@default_namespace, relay)
   end
 
   @tag :websocket_plugin
   @tag :testnet
   test "websocket plugin connection start" do
-    operator_id = "websocket_plugin_test"
+    relay_id = "websocket_plugin_test"
 
-    operator = %Flezha.Operator.Builder{
-      id: operator_id,
-      factory_id: @test_operator_factory
+    relay = %Flezha.Relay.Builder{
+      id: relay_id,
+      factory_id: @test_relay_factory
     }
 
-    {:ok, _} = OperatorManager.start_operator(@default_namespace, operator)
+    {:ok, _} = RelayManager.start_relay(@default_namespace, relay)
 
     res =
       PluginManager.enable_plugin("websocket_plugin", %Flezha.Plugin{
         id: "websocket_plugin",
         namespace: @default_namespace,
-        operator_id: operator_id,
+        relay_id: relay_id,
         provider: Flezha.Plugin.Provider.Websocket,
         opts: %{
           uri: Testnet.ws_uri(),
@@ -140,20 +140,20 @@ defmodule FlezhaTest do
 
   @tag :testnet
   test "beam msg forward plugin connection start" do
-    operator_id = "beam_msg_forw_plugin_test"
+    relay_id = "beam_msg_forw_plugin_test"
 
-    operator = %Flezha.Operator.Builder{
-      id: operator_id,
-      factory_id: @test_operator_factory
+    relay = %Flezha.Relay.Builder{
+      id: relay_id,
+      factory_id: @test_relay_factory
     }
 
-    {:ok, _} = OperatorManager.start_operator(@default_namespace, operator)
+    {:ok, _} = RelayManager.start_relay(@default_namespace, relay)
 
     res =
       PluginManager.enable_plugin("beam_msg_forward", %Flezha.Plugin{
         id: "beam_msg_forward",
         namespace: @default_namespace,
-        operator_id: operator_id,
+        relay_id: relay_id,
         provider: Flezha.Plugin.Provider.BeamMsgForward,
         opts: %{recv_pid: self()},
         hooks: [{:on_output, []}]
@@ -162,25 +162,25 @@ defmodule FlezhaTest do
     assert res === {:ok, "plugin enabled"}
   end
 
-  @tag :operator_flow_msg_forward
+  @tag :relay_flow_msg_forward
   @tag :testnet
-  test "operator flow generation -> beam msg forward" do
-    operator_id = "data_flow_test"
+  test "relay flow generation -> beam msg forward" do
+    relay_id = "data_flow_test"
 
-    operator = %Flezha.Operator.Builder{
-      id: operator_id,
+    relay = %Flezha.Relay.Builder{
+      id: relay_id,
       factory_id: @test_compare_filter_factory,
       init_values: %{
         "compare_filter_tasklet" => %{"comparable" => "hello world", "inverted" => false}
       }
     }
 
-    {:ok, _} = OperatorManager.start_operator(@default_namespace, operator)
+    {:ok, _} = RelayManager.start_relay(@default_namespace, relay)
 
     PluginManager.enable_plugin("beam_msg_forward", %Flezha.Plugin{
       id: "beam_msg_forward",
       namespace: @default_namespace,
-      operator_id: operator_id,
+      relay_id: relay_id,
       provider: Flezha.Plugin.Provider.BeamMsgForward,
       opts: %{recv_pid: self()},
       hooks: [{:on_output, []}]
@@ -189,7 +189,7 @@ defmodule FlezhaTest do
     PluginManager.enable_plugin("websocket_plugin", %Flezha.Plugin{
       id: "websocket_plugin",
       namespace: @default_namespace,
-      operator_id: operator_id,
+      relay_id: relay_id,
       provider: Flezha.Plugin.Provider.Websocket,
       opts: %{
         uri: Testnet.ws_uri(),
@@ -214,20 +214,20 @@ defmodule FlezhaTest do
   end
 
   @tag :get_cell_state
-  test "get operator state" do
-    operator_id = "get_state_test"
+  test "get relay state" do
+    relay_id = "get_state_test"
 
-    {:ok, %{pid: _operator_pid}} =
-      operator_id
-      |> OperatorFixture.get(@test_store_input_factory)
-      |> OperatorFixture.start()
-      |> OperatorFixture.attach_output_msg()
+    {:ok, %{pid: _relay_pid}} =
+      relay_id
+      |> RelayFixture.get(@test_store_input_factory)
+      |> RelayFixture.start()
+      |> RelayFixture.attach_output_msg()
 
-    OperatorTestHelper.send_sync_io(operator_id, @default_namespace, "state_1", %{})
-    OperatorTestHelper.send_sync_io(operator_id, @default_namespace, "state_2", %{})
+    RelayTestHelper.send_sync_io(relay_id, @default_namespace, "state_1", %{})
+    RelayTestHelper.send_sync_io(relay_id, @default_namespace, "state_2", %{})
 
     {:ok, json_state} =
-      OperatorManager.get_cell_state(@default_namespace, operator_id)
+      RelayManager.get_cell_state(@default_namespace, relay_id)
 
     cell_state = Payloader.json_to_map(json_state)
 
@@ -239,20 +239,20 @@ defmodule FlezhaTest do
            }
   end
 
-  @tag :operator_migration
-  test "operator migration" do
+  @tag :relay_migration
+  test "relay migration" do
     {peer_pid, peer_node} = NodeTestHelper.start_peer_node(:anode1)
 
-    operator_id = "operator_migration_test"
+    relay_id = "relay_migration_test"
 
-    {:ok, %{pid: _operator_pid, node: pnode}} =
-      operator_id
-      |> OperatorFixture.get(@test_store_input_factory)
-      |> OperatorFixture.start()
-      |> OperatorFixture.attach_output_msg()
+    {:ok, %{pid: _relay_pid, node: pnode}} =
+      relay_id
+      |> RelayFixture.get(@test_store_input_factory)
+      |> RelayFixture.start()
+      |> RelayFixture.attach_output_msg()
 
-    OperatorTestHelper.send_sync_io(operator_id, @default_namespace, "test_state_1", %{})
-    OperatorTestHelper.send_sync_io(operator_id, @default_namespace, "test_state_2", %{})
+    RelayTestHelper.send_sync_io(relay_id, @default_namespace, "test_state_1", %{})
+    RelayTestHelper.send_sync_io(relay_id, @default_namespace, "test_state_2", %{})
 
     test_state = %{
       "store_input_tasklet" => %{
@@ -264,17 +264,17 @@ defmodule FlezhaTest do
     PluginManager.enable_plugin("stdout_plugin", %Flezha.Plugin{
       id: "stdout_plugin",
       namespace: @default_namespace,
-      operator_id: operator_id,
+      relay_id: relay_id,
       provider: Flezha.Plugin.Provider.StdOut,
       opts: %{},
       hooks: [{:on_output, []}]
     })
 
     {:ok, json_state} =
-      OperatorManager.get_cell_state(@default_namespace, operator_id)
+      RelayManager.get_cell_state(@default_namespace, relay_id)
 
     {:ok, old_overwatch_state} =
-      OperatorManager.get_overwatch_state(@default_namespace, operator_id)
+      RelayManager.get_overwatch_state(@default_namespace, relay_id)
 
     cell_state = Payloader.json_to_map(json_state)
 
@@ -312,10 +312,10 @@ defmodule FlezhaTest do
     )
 
     {:ok, json_state} =
-      OperatorManager.get_cell_state(@default_namespace, operator_id)
+      RelayManager.get_cell_state(@default_namespace, relay_id)
 
     {:ok, new_overwatch_state} =
-      OperatorManager.get_overwatch_state(@default_namespace, operator_id)
+      RelayManager.get_overwatch_state(@default_namespace, relay_id)
 
     cell_state = Payloader.json_to_map(json_state)
 

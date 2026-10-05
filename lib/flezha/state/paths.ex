@@ -5,7 +5,7 @@ defmodule Flezha.State.Paths do
   Path resolution for per-Cell WAL, snapshot, and outbox-dedup files.
 
   All persistence files live under
-  `<state_root>/<namespace>/<operator_class>/<tasklet_id>/`, where
+  `<state_root>/<namespace>/<relay_class>/<tasklet_id>/`, where
   `<state_root>` is the `:flezha, :state_root` application env (set by tests
   for isolation), else `app_data/state`. The user-facing knob is the
   `FLEZHA_STATE_DIR` OS env, which fills that key once at boot in
@@ -23,7 +23,7 @@ defmodule Flezha.State.Paths do
   alias Flezha.State.Durable
 
   @type cell_id ::
-          {operator_class :: binary(), tasklet_id :: binary(), cell_key :: binary()}
+          {relay_class :: binary(), tasklet_id :: binary(), cell_key :: binary()}
 
   @type scan_result :: %{
           wal_files: [{cell_key :: binary(), path :: binary()}],
@@ -62,7 +62,7 @@ defmodule Flezha.State.Paths do
 
   @doc """
   Reserved journal identity for a steps instance's task-journal
-  (`steps-task-journal`). Steps operator per-instance state is keyed by the
+  (`steps-task-journal`). Steps relay per-instance state is keyed by the
   instance id in the class position, so both dir levels carry it.
   """
   @spec journal_id(binary()) :: cell_id()
@@ -90,9 +90,9 @@ defmodule Flezha.State.Paths do
 
   # ----- namespace resolution (finish-platform-authn-authz) -----
   #
-  # Durable state lives under `<state_root>/<namespace>/<operator_class>/`.
+  # Durable state lives under `<state_root>/<namespace>/<relay_class>/`.
   # The wire's cell_id stays the 3-tuple: the namespace is resolved HERE,
-  # from the class→namespace claim an Operator records when it binds, else
+  # from the class→namespace claim a Relay records when it binds, else
   # from the on-disk layout, else `_system`. One seam — every path in this
   # module (and every consumer of `class_dir/1`) inherits it.
 
@@ -123,42 +123,42 @@ defmodule Flezha.State.Paths do
   end
 
   @doc """
-  Record that `operator_class`'s durable state belongs to `namespace`.
+  Record that `relay_class`'s durable state belongs to `namespace`.
 
   A class already owned by ANOTHER namespace — live claim or durable files
-  on disk — is refused: without this, starting a same-named Operator in a
+  on disk — is refused: without this, starting a same-named Relay in a
   second namespace would silently write into (or read out of) the first
   one's state. The compatibility namespace `_system` is the exception: a
   class migrated there by `Flezha.Boot.StatePathMigrator` is ADOPTED by the
   first real namespace that claims it (one atomic rename), which is what
-  keeps a pre-namespace deployment's operators restarting seamlessly.
+  keeps a pre-namespace deployment's relays restarting seamlessly.
   """
   @spec claim_namespace(binary(), binary()) ::
           :ok | {:error, {:namespace_conflict, binary(), binary()}}
-  def claim_namespace(operator_class, namespace)
-      when is_binary(operator_class) and is_binary(namespace) do
-    case current_owner(operator_class) do
+  def claim_namespace(relay_class, namespace)
+      when is_binary(relay_class) and is_binary(namespace) do
+    case current_owner(relay_class) do
       nil ->
-        put_claim(operator_class, namespace)
+        put_claim(relay_class, namespace)
 
       ^namespace ->
-        put_claim(operator_class, namespace)
+        put_claim(relay_class, namespace)
 
       "_system" ->
-        adopt_from_system(operator_class, namespace)
+        adopt_from_system(relay_class, namespace)
 
       other ->
-        {:error, {:namespace_conflict, operator_class, other}}
+        {:error, {:namespace_conflict, relay_class, other}}
     end
   end
 
   @doc """
-  The namespace owning `operator_class`'s durable state: the live claim,
+  The namespace owning `relay_class`'s durable state: the live claim,
   else the on-disk layout, else `_system`.
   """
   @spec namespace_of_class(binary()) :: binary()
-  def namespace_of_class(operator_class) when is_binary(operator_class) do
-    claimed_namespace(operator_class) || disk_namespace(operator_class) || "_system"
+  def namespace_of_class(relay_class) when is_binary(relay_class) do
+    claimed_namespace(relay_class) || disk_namespace(relay_class) || "_system"
   end
 
   @doc "Directory holding one namespace's durable state — the first level under `state_root/0`."
@@ -167,10 +167,10 @@ defmodule Flezha.State.Paths do
     Path.join(state_root(), namespace)
   end
 
-  @doc "Directory holding every durable file of one Operator class."
+  @doc "Directory holding every durable file of one Relay class."
   @spec class_dir(binary()) :: binary()
-  def class_dir(operator_class) when is_binary(operator_class) do
-    Path.join(namespace_dir(namespace_of_class(operator_class)), operator_class)
+  def class_dir(relay_class) when is_binary(relay_class) do
+    Path.join(namespace_dir(namespace_of_class(relay_class)), relay_class)
   end
 
   @doc """
@@ -181,8 +181,8 @@ defmodule Flezha.State.Paths do
   directory stays until it is empty.
   """
   @spec delete_class_dir(binary()) :: :ok
-  def delete_class_dir(operator_class) when is_binary(operator_class) do
-    class_dir = class_dir(operator_class)
+  def delete_class_dir(relay_class) when is_binary(relay_class) do
+    class_dir = class_dir(relay_class)
 
     case File.ls(class_dir) do
       {:ok, names} ->
@@ -219,75 +219,75 @@ defmodule Flezha.State.Paths do
   # Claims are keyed by {state_root, class}: a claim is a fact about ONE
   # on-disk tree, and tests (as well as `FLEZHA_STATE_DIR` changes) repoint
   # the root — a stale claim from another tree must not leak into this one.
-  defp claimed_namespace(operator_class) do
+  defp claimed_namespace(relay_class) do
     case :ets.whereis(@claims_table) do
       :undefined ->
         nil
 
       _tid ->
-        case :ets.lookup(@claims_table, {state_root(), operator_class}) do
+        case :ets.lookup(@claims_table, {state_root(), relay_class}) do
           [{_, namespace}] -> namespace
           [] -> nil
         end
     end
   end
 
-  defp put_claim(operator_class, namespace) do
+  defp put_claim(relay_class, namespace) do
     if :ets.whereis(@claims_table) != :undefined do
-      :ets.insert(@claims_table, {{state_root(), operator_class}, namespace})
+      :ets.insert(@claims_table, {{state_root(), relay_class}, namespace})
     end
 
     :ok
   end
 
-  defp current_owner(operator_class) do
-    claimed_namespace(operator_class) || disk_namespace(operator_class)
+  defp current_owner(relay_class) do
+    claimed_namespace(relay_class) || disk_namespace(relay_class)
   end
 
   # The disk knows: the layout is `<root>/<namespace>/<class>/`, so the
   # namespace directory containing the class dir IS the owner.
-  defp disk_namespace(operator_class) do
-    Enum.find(namespaces(), &class_on_disk?(operator_class, &1))
+  defp disk_namespace(relay_class) do
+    Enum.find(namespaces(), &class_on_disk?(relay_class, &1))
   end
 
-  @doc "Whether `operator_class` has a state directory under `namespace` on this node."
+  @doc "Whether `relay_class` has a state directory under `namespace` on this node."
   @spec class_on_disk?(binary(), binary()) :: boolean()
-  def class_on_disk?(operator_class, namespace)
-      when is_binary(operator_class) and is_binary(namespace) do
-    File.dir?(Path.join(namespace_dir(namespace), operator_class))
+  def class_on_disk?(relay_class, namespace)
+      when is_binary(relay_class) and is_binary(namespace) do
+    File.dir?(Path.join(namespace_dir(namespace), relay_class))
   end
 
-  defp adopt_from_system(operator_class, namespace) do
-    from = Path.join(namespace_dir("_system"), operator_class)
-    to = Path.join(namespace_dir(namespace), operator_class)
+  defp adopt_from_system(relay_class, namespace) do
+    from = Path.join(namespace_dir("_system"), relay_class)
+    to = Path.join(namespace_dir(namespace), relay_class)
 
     cond do
       not File.dir?(from) ->
-        put_claim(operator_class, namespace)
+        put_claim(relay_class, namespace)
 
       File.exists?(to) ->
-        {:error, {:namespace_conflict, operator_class, "_system"}}
+        {:error, {:namespace_conflict, relay_class, "_system"}}
 
       true ->
         File.mkdir_p!(Path.dirname(to))
 
         case File.rename(from, to) do
           :ok ->
-            put_claim(operator_class, namespace)
+            put_claim(relay_class, namespace)
 
           {:error, _} ->
             # Lost an adoption race; re-resolve against the winner.
-            case current_owner(operator_class) do
-              ^namespace -> put_claim(operator_class, namespace)
-              owner -> {:error, {:namespace_conflict, operator_class, owner || "_system"}}
+            case current_owner(relay_class) do
+              ^namespace -> put_claim(relay_class, namespace)
+              owner -> {:error, {:namespace_conflict, relay_class, owner || "_system"}}
             end
         end
     end
   end
 
   @spec state_dir(cell_id()) :: binary()
-  def state_dir({operator_class, tasklet_id, _cell_key}) do
-    Path.join(class_dir(operator_class), tasklet_id)
+  def state_dir({relay_class, tasklet_id, _cell_key}) do
+    Path.join(class_dir(relay_class), tasklet_id)
   end
 
   @spec wal_path(cell_id()) :: binary()
@@ -329,22 +329,22 @@ defmodule Flezha.State.Paths do
   end
 
   @doc """
-  Path of an instance's durable input log (a flow operator on the effectively-once
-  tier, or a durable steps operator). Lives at the class level beside the `kind`
+  Path of an instance's durable input log (a flow relay on the effectively-once
+  tier, or a durable steps relay). Lives at the class level beside the `kind`
   sidecar — inert to the Cell scanners, which only walk `<class>/<tasklet_id>/`
   dirs.
   """
   @spec input_log_path(binary()) :: binary()
-  def input_log_path(operator_class) when is_binary(operator_class) do
-    Path.join(class_dir(operator_class), "input.log")
+  def input_log_path(relay_class) when is_binary(relay_class) do
+    Path.join(class_dir(relay_class), "input.log")
   end
 
   @doc """
-  Path of a per-Cell saga compensation marker (`operator-saga`
+  Path of a per-Cell saga compensation marker (`relay-saga`
   §4.3). `:intent` marks that the Cell's tasklet completed forward and may
   need undo; `:done` marks that its compensation already ran. Presence is the
   signal (empty file). Inert to `scan_dir/1` (unknown suffix), so a marker never
-  registers a phantom Cell; reclaimed with the operator-class dir on
+  registers a phantom Cell; reclaimed with the relay-class dir on
   retention sweep.
   """
   @spec compensation_marker_path(cell_id(), :intent | :done) :: binary()
@@ -397,32 +397,32 @@ defmodule Flezha.State.Paths do
 
   @typedoc """
   A unit of an instance's durable state that moves between nodes whole: one
-  Cell's file set (a steps operator's journal is this shape, under its reserved
+  Cell's file set (a steps relay's journal is this shape, under its reserved
   identity) or the instance's input log.
   """
   @type durable_ref :: {:cell, cell_id()} | {:input_log, binary()}
 
   @doc """
-  The durable references this node holds for `operator_class`: its Cells, a
-  steps operator's journal and the input log, each only when present.
+  The durable references this node holds for `relay_class`: its Cells, a
+  steps relay's journal and the input log, each only when present.
   """
   @spec durable_refs(binary()) :: [durable_ref()]
-  def durable_refs(operator_class) when is_binary(operator_class) do
+  def durable_refs(relay_class) when is_binary(relay_class) do
     journal =
-      if File.exists?(journal_path(operator_class)), do: [journal_id(operator_class)], else: []
+      if File.exists?(journal_path(relay_class)), do: [journal_id(relay_class)], else: []
 
     log =
-      if File.exists?(input_log_path(operator_class)),
-        do: [{:input_log, operator_class}],
+      if File.exists?(input_log_path(relay_class)),
+        do: [{:input_log, relay_class}],
         else: []
 
-    for(cell <- Enum.uniq(cells_of(operator_class) ++ journal), do: {:cell, cell}) ++ log
+    for(cell <- Enum.uniq(cells_of(relay_class) ++ journal), do: {:cell, cell}) ++ log
   end
 
   @doc "Every path `ref` is made of, whether or not the file exists."
   @spec durable_files(durable_ref()) :: [binary()]
   def durable_files({:cell, cell_id}), do: cell_files(cell_id)
-  def durable_files({:input_log, operator_class}), do: [input_log_path(operator_class)]
+  def durable_files({:input_log, relay_class}), do: [input_log_path(relay_class)]
 
   @doc """
   Resolve one basename of `ref` back to its full path, or `nil` when the
@@ -439,7 +439,7 @@ defmodule Flezha.State.Paths do
     named(ref, name) || snapshot_file_path(pid, cell_key, name)
   end
 
-  def durable_file_path({:input_log, _operator_class} = ref, name) when is_binary(name),
+  def durable_file_path({:input_log, _relay_class} = ref, name) when is_binary(name),
     do: named(ref, name)
 
   defp named(ref, name), do: Enum.find(durable_files(ref), &(Path.basename(&1) == name))
@@ -448,19 +448,19 @@ defmodule Flezha.State.Paths do
   @spec delete_durable(durable_ref()) :: :ok
   def delete_durable({:cell, cell_id}), do: delete_files(cell_id)
 
-  def delete_durable({:input_log, operator_class} = ref) do
+  def delete_durable({:input_log, relay_class} = ref) do
     ref |> durable_files() |> Enum.each(&File.rm/1)
-    prune_class_dir(operator_class)
+    prune_class_dir(relay_class)
   end
 
-  @doc "Where `operator_class`'s directory is set aside while a newer copy replaces it."
+  @doc "Where `relay_class`'s directory is set aside while a newer copy replaces it."
   @spec set_aside_dir(binary()) :: binary()
-  def set_aside_dir(operator_class), do: class_dir(operator_class) <> @set_aside
+  def set_aside_dir(relay_class), do: class_dir(relay_class) <> @set_aside
 
-  @doc "Rename `operator_class`'s directory aside (`set_aside_dir/1`)."
+  @doc "Rename `relay_class`'s directory aside (`set_aside_dir/1`)."
   @spec set_aside(binary()) :: :ok
-  def set_aside(operator_class),
-    do: File.rename!(class_dir(operator_class), set_aside_dir(operator_class))
+  def set_aside(relay_class),
+    do: File.rename!(class_dir(relay_class), set_aside_dir(relay_class))
 
   @doc """
   Put a set-aside copy back in place of whatever an interrupted or failed
@@ -468,13 +468,13 @@ defmodule Flezha.State.Paths do
   a no-op when neither exists.
   """
   @spec restore_set_aside(binary()) :: :ok
-  def restore_set_aside(operator_class) do
-    {:ok, _} = File.rm_rf(class_dir(operator_class) <> @discarded)
-    aside = set_aside_dir(operator_class)
+  def restore_set_aside(relay_class) do
+    {:ok, _} = File.rm_rf(class_dir(relay_class) <> @discarded)
+    aside = set_aside_dir(relay_class)
 
     if File.exists?(aside) do
-      {:ok, _} = File.rm_rf(class_dir(operator_class))
-      File.rename!(aside, class_dir(operator_class))
+      {:ok, _} = File.rm_rf(class_dir(relay_class))
+      File.rename!(aside, class_dir(relay_class))
     end
 
     :ok
@@ -486,25 +486,25 @@ defmodule Flezha.State.Paths do
   next `restore_set_aside/1` finishes removing, never puts back.
   """
   @spec drop_set_aside(binary()) :: :ok
-  def drop_set_aside(operator_class) do
-    aside = set_aside_dir(operator_class)
-    discarded = class_dir(operator_class) <> @discarded
+  def drop_set_aside(relay_class) do
+    aside = set_aside_dir(relay_class)
+    discarded = class_dir(relay_class) <> @discarded
 
     if File.exists?(aside), do: File.rename!(aside, discarded)
-    _ = File.rm(class_dir(operator_class) <> @landed)
+    _ = File.rm(class_dir(relay_class) <> @landed)
     {:ok, _} = File.rm_rf(discarded)
     :ok
   end
 
   @doc """
-  Record that the copy replacing `operator_class`'s set-aside one has landed,
+  Record that the copy replacing `relay_class`'s set-aside one has landed,
   with the paths (relative to the class directory) to copy back from it.
   """
   @spec mark_landed(binary(), [binary()]) :: :ok | {:error, term()}
-  def mark_landed(operator_class, kept) do
-    if File.exists?(set_aside_dir(operator_class)) do
+  def mark_landed(relay_class, kept) do
+    if File.exists?(set_aside_dir(relay_class)) do
       bytes = :erlang.term_to_binary(kept)
-      atomic_install(class_dir(operator_class) <> @landed, &:file.write(&1, bytes), :landed_mark)
+      atomic_install(class_dir(relay_class) <> @landed, &:file.write(&1, bytes), :landed_mark)
     else
       :ok
     end
@@ -512,8 +512,8 @@ defmodule Flezha.State.Paths do
 
   @doc "The paths `mark_landed/2` recorded, or `:none` when no landing is recorded."
   @spec landed_kept(binary()) :: {:ok, [binary()]} | :none
-  def landed_kept(operator_class) do
-    case File.read(class_dir(operator_class) <> @landed) do
+  def landed_kept(relay_class) do
+    case File.read(class_dir(relay_class) <> @landed) do
       {:ok, bytes} -> {:ok, :erlang.binary_to_term(bytes, [:safe])}
       {:error, _} -> :none
     end
@@ -530,19 +530,19 @@ defmodule Flezha.State.Paths do
   end
 
   @doc """
-  Cell ids under one Operator class — the per-Operator view every caller
+  Cell ids under one Relay class — the per-Relay view every caller
   actually wants.
 
   Scans only this class's subtree. Filtering `all_cells/0` would make every
-  caller pay for the whole state root, which turns any per-operator loop into
-  a walk of every operator on the node.
+  caller pay for the whole state root, which turns any per-relay loop into
+  a walk of every relay on the node.
   """
   @spec cells_of(binary()) :: [cell_id()]
-  def cells_of(operator_class) when is_binary(operator_class) do
-    for tasklet_id <- list_dir(class_dir(operator_class)),
-        cell_key <- cell_keys_under({operator_class, tasklet_id, ""}),
+  def cells_of(relay_class) when is_binary(relay_class) do
+    for tasklet_id <- list_dir(class_dir(relay_class)),
+        cell_key <- cell_keys_under({relay_class, tasklet_id, ""}),
         uniq: true,
-        do: {operator_class, tasklet_id, cell_key}
+        do: {relay_class, tasklet_id, cell_key}
   end
 
   @doc """
@@ -551,7 +551,7 @@ defmodule Flezha.State.Paths do
   dynamic-mode hard-delete path (`Flezha.State.Supervisor.delete_cell/1`).
   """
   @spec delete_files(cell_id()) :: :ok
-  def delete_files({operator_class, _, _} = pid) do
+  def delete_files({relay_class, _, _} = pid) do
     pid
     |> cell_files()
     |> Enum.each(&File.rm/1)
@@ -560,17 +560,17 @@ defmodule Flezha.State.Paths do
     # evidence of prior intent (intent-mismatch detection); rmdir fails
     # harmlessly while a sibling Cell or Tasklet still holds files.
     _ = File.rmdir(state_dir(pid))
-    prune_class_dir(operator_class)
+    prune_class_dir(relay_class)
   end
 
-  defp prune_class_dir(operator_class) do
-    class_dir = class_dir(operator_class)
+  defp prune_class_dir(relay_class) do
+    class_dir = class_dir(relay_class)
     _ = File.rmdir(class_dir)
 
     # A fully-reclaimed class releases its namespace claim, so the name can
     # be reused elsewhere without tripping the conflict refusal on a ghost.
     if not File.dir?(class_dir) and :ets.whereis(@claims_table) != :undefined do
-      :ets.delete(@claims_table, {state_root(), operator_class})
+      :ets.delete(@claims_table, {state_root(), relay_class})
     end
 
     :ok
@@ -585,12 +585,12 @@ defmodule Flezha.State.Paths do
   end
 
   @doc """
-  Enumerate Cell files under an Operator tree.
+  Enumerate Cell files under a Relay tree.
 
-  Pass `{operator_class, tasklet_id, ""}` to scan the whole Tasklet. Returns lists
+  Pass `{relay_class, tasklet_id, ""}` to scan the whole Tasklet. Returns lists
   of `{cell_key, ...}` tuples grouped by file type. A file wearing any
   in-progress suffix `Flezha.State.Durable` declares is skipped — it is
-  crash-residue from an atomic-rename steps operator, not a Cell.
+  crash-residue from an atomic-rename steps relay, not a Cell.
   """
   @spec scan_dir(cell_id()) :: scan_result()
   def scan_dir({_, _, _} = pid) do
@@ -641,17 +641,17 @@ defmodule Flezha.State.Paths do
   @doc """
   Enumerate every Cell that has any persistence file on disk under
   `state_root()`. Walks the directory tree
-  `<state_root>/<namespace>/<operator_class>/<tasklet_id>/`.
+  `<state_root>/<namespace>/<relay_class>/<tasklet_id>/`.
   """
   @spec all_cells() :: [cell_id()]
   def all_cells() do
-    Enum.flat_map(operator_classes(), &cells_of/1)
+    Enum.flat_map(relay_classes(), &cells_of/1)
   end
 
   @doc """
   Namespace directories under `state_root/` — the on-disk answer to "which
   namespaces hold durable state on this node", shared by the Watchdog's
-  disk-quota sweep, the boot-time counter rebuild, and `operator_classes/0`.
+  disk-quota sweep, the boot-time counter rebuild, and `relay_classes/0`.
   """
   @spec namespaces() :: [binary()]
   def namespaces() do
@@ -659,8 +659,8 @@ defmodule Flezha.State.Paths do
   end
 
   @doc """
-  Operator classes holding durable state on this node — the on-disk answer to
-  "which operators are here at all", shared by the retention sweep, the remote
+  Relay classes holding durable state on this node — the on-disk answer to
+  "which relays are here at all", shared by the retention sweep, the remote
   durability tier's backstop, and `all_cells/0`.
 
   The tree is `<root>/<namespace>/<class>/`, so classes are the second level;
@@ -668,8 +668,8 @@ defmodule Flezha.State.Paths do
   files, so the directory filter is what separates a class from its own
   metadata.
   """
-  @spec operator_classes() :: [binary()]
-  def operator_classes() do
+  @spec relay_classes() :: [binary()]
+  def relay_classes() do
     for namespace <- namespaces(),
         dir = namespace_dir(namespace),
         class <- list_dir(dir),

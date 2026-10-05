@@ -75,7 +75,7 @@ defmodule Flezha.ErrorCatalogueTest do
   end
 
   test "an unknown hook is refused in the one catalogued shape wherever it is named" do
-    catalog = Flezha.Operator.Overwatch.__extensions_catalog__()
+    catalog = Flezha.Relay.Overwatch.__extensions_catalog__()
     table = Flezha.Plugin.Extension.Table.new(catalog)
 
     {:error, at_dispatch} = Flezha.Plugin.Extension.run(table, :on_nothing, %{})

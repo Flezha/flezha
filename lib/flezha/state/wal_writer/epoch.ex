@@ -39,7 +39,7 @@ defmodule Flezha.State.WalWriter.Epoch do
       :telemetry.execute(
         [:flezha, :state, :stale_writer_refused],
         %{count: 1},
-        %{operator: rc, tasklet: sh, key: pk, session: runner_id}
+        %{relay: rc, tasklet: sh, key: pk, session: runner_id}
       )
 
       %{state | refused_sessions: MapSet.put(state.refused_sessions, runner_id)}
@@ -135,7 +135,7 @@ defmodule Flezha.State.WalWriter.Epoch do
       :telemetry.execute(
         [:flezha, :state, :baseline_seed],
         %{first_seq: seq},
-        %{operator: rc, tasklet: sh, key: pk, runner: runner_id}
+        %{relay: rc, tasklet: sh, key: pk, runner: runner_id}
       )
     end
 
@@ -166,7 +166,7 @@ defmodule Flezha.State.WalWriter.Epoch do
     :telemetry.execute(
       [:flezha, :state, :wal_realign],
       %{from_seq: from_seq, to_seq: to_seq},
-      %{operator: rc, tasklet: sh, key: pk, runner: runner_id}
+      %{relay: rc, tasklet: sh, key: pk, runner: runner_id}
     )
   end
 
@@ -260,7 +260,7 @@ defmodule Flezha.State.WalWriter.Epoch do
     :telemetry.execute(
       [:flezha, :state, :wal_rewind],
       %{from_seq: from_seq, to_seq: to_seq},
-      %{operator: rc, tasklet: sh, key: pk, epoch: epoch}
+      %{relay: rc, tasklet: sh, key: pk, epoch: epoch}
     )
   end
 
@@ -287,8 +287,8 @@ defmodule Flezha.State.WalWriter.Epoch do
   end
 
   defp rewind_input_watermark(state, max_consumed) do
-    {operator_class, _, _} = state.cell_id
-    InputLog.rewind_consumed(operator_class, state.cell_id, max_consumed || -1)
+    {relay_class, _, _} = state.cell_id
+    InputLog.rewind_consumed(relay_class, state.cell_id, max_consumed || -1)
   end
 
   # ---------- Effect-record scan ----------

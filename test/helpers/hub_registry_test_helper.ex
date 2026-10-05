@@ -21,13 +21,13 @@ defmodule FlezhaTest.Helper.HubRegistryTestHelper do
     @moduledoc false
     use GenServer
 
-    def start_link({_ns, _operator} = arg), do: GenServer.start_link(__MODULE__, arg)
-    def start_link({_ns, _runner, _operator} = arg), do: GenServer.start_link(__MODULE__, arg)
+    def start_link({_ns, _relay} = arg), do: GenServer.start_link(__MODULE__, arg)
+    def start_link({_ns, _runner, _relay} = arg), do: GenServer.start_link(__MODULE__, arg)
 
     @doc """
     The start argument this instance was handed. An Overwatch reads its plugin
-    set out of exactly this argument (`Flezha.Operator.Lifecycle.complete_init/4`
-    hands `operator.opts[:plugins]` to `Plugins.prepare/2`), so a test that
+    set out of exactly this argument (`Flezha.Relay.Lifecycle.complete_init/4`
+    hands `relay.opts[:plugins]` to `Plugins.prepare/2`), so a test that
     cannot afford a live runner asks the stub what it would have subscribed.
     """
     def started_with(pid), do: GenServer.call(pid, :started_with)
@@ -51,7 +51,7 @@ defmodule FlezhaTest.Helper.HubRegistryTestHelper do
     def handle_call({:plugin_unsubscribe, _id}, _from, state), do: {:reply, :ok, state}
 
     # Overwatch verbs (`:get_overwatch_state`, quota reads) probed by the stop
-    # path must not kill the stub — answer as an unreadable operator instead.
+    # path must not kill the stub — answer as an unreadable relay instead.
     def handle_call(_msg, _from, state), do: {:reply, {:error, :stub}, state}
   end
 
@@ -98,14 +98,13 @@ defmodule FlezhaTest.Helper.HubRegistryTestHelper do
 
   @doc """
   Inject a synthetic registry entry with an explicit `node_pids` list, so a
-  multi-node operator is reproduced without a real peer node + runner.
+  multi-node relay is reproduced without a real peer node + runner.
   """
-  def inject_operator(ns, operator_id, node_pids) do
-    inject_operator(ns, operator_id, node_pids, %{
-      id: operator_id,
+  def inject_relay(ns, relay_id, node_pids) do
+    inject_relay(ns, relay_id, node_pids, %{
+      id: relay_id,
       start:
-        {StubChild, :start_link,
-         [{ns, @recorded_runner, %{id: operator_id, factory_id: "market"}}]}
+        {StubChild, :start_link, [{ns, @recorded_runner, %{id: relay_id, factory_id: "market"}}]}
     })
   end
 
@@ -113,52 +112,52 @@ defmodule FlezhaTest.Helper.HubRegistryTestHelper do
   Inject a synthetic registry entry carrying an explicit `child_spec`, for tests
   that need a start-args shape other than the default one.
   """
-  def inject_operator(ns, operator_id, node_pids, child_spec) do
+  def inject_relay(ns, relay_id, node_pids, child_spec) do
     hub_id = Identificator.hub(ns)
 
-    :ok = ProcessRegistry.bulk_insert(hub_id, %{operator_id => {child_spec, node_pids, %{}}})
+    :ok = ProcessRegistry.bulk_insert(hub_id, %{relay_id => {child_spec, node_pids, %{}}})
   end
 
   @doc """
-  Inject a registered operator bound to a live local pid — the common case,
-  and the shape a durably-suspended operator keeps (only its runner binding is
+  Inject a registered relay bound to a live local pid — the common case,
+  and the shape a durably-suspended relay keeps (only its runner binding is
   cleared, its Overwatch pid stays in the registry).
   """
-  def inject_operator(ns, operator_id),
+  def inject_relay(ns, relay_id),
     do:
-      inject_operator(ns, operator_id, [
+      inject_relay(ns, relay_id, [
         {node(), spawn(&NodeTestHelper.park/0)}
       ])
 
   @doc """
-  Start `operator_id` durably in `namespace`, through the same declared-set
+  Start `relay_id` durably in `namespace`, through the same declared-set
   precommit every real start rides — so the hub's declared set holds it,
   whether or not anything is running it.
 
   Options: `:factory_id`, and `:recorded_runner` for the runner position of the
   start args. Passing `recorded_runner: nil` declares the two-element shape a
-  real operator start submits, so the declared entry the reconcile replays is
+  real relay start submits, so the declared entry the reconcile replays is
   the production one; the default names a runner instead. `:opts` puts an
-  option list on the declared operator, which is where a plugin manifest
-  lives; without it the operator carries no `:opts` key at all.
+  option list on the declared relay, which is where a plugin manifest
+  lives; without it the relay carries no `:opts` key at all.
   """
-  def start_durable(namespace, operator_id, opts \\ []) do
+  def start_durable(namespace, relay_id, opts \\ []) do
     factory_id = Keyword.get(opts, :factory_id, "market")
 
-    operator =
+    relay =
       case Keyword.fetch(opts, :opts) do
-        {:ok, operator_opts} -> %{id: operator_id, factory_id: factory_id, opts: operator_opts}
-        :error -> %{id: operator_id, factory_id: factory_id}
+        {:ok, relay_opts} -> %{id: relay_id, factory_id: factory_id, opts: relay_opts}
+        :error -> %{id: relay_id, factory_id: factory_id}
       end
 
     arg =
       case Keyword.get(opts, :recorded_runner, @recorded_runner) do
-        nil -> {namespace, operator}
-        runner -> {namespace, runner, operator}
+        nil -> {namespace, relay}
+        runner -> {namespace, runner, relay}
       end
 
     spec = %{
-      id: operator_id,
+      id: relay_id,
       start: {StubChild, :start_link, [arg]},
       restart: :transient
     }
@@ -202,31 +201,31 @@ defmodule FlezhaTest.Helper.HubRegistryTestHelper do
   end
 
   @doc """
-  The bindings a restored operator was started with. An Overwatch builds its
-  extension table from exactly these (`Flezha.Operator.Lifecycle.complete_init/4`
-  hands `operator.opts[:bindings]` to `Plugins.prepare/2`), and `StubChild`
+  The bindings a restored relay was started with. An Overwatch builds its
+  extension table from exactly these (`Flezha.Relay.Lifecycle.complete_init/4`
+  hands `relay.opts[:bindings]` to `Plugins.prepare/2`), and `StubChild`
   stands in for it, so the stub is asked what it was handed.
   """
-  def started_plugins(hub_id, operator_id) do
-    operator =
+  def started_plugins(hub_id, relay_id) do
+    relay =
       ProcessRegistry.dump(hub_id)
-      |> Map.fetch!(operator_id)
+      |> Map.fetch!(relay_id)
       |> elem(1)
       |> HubManager.live_pid()
       |> StubChild.started_with()
       |> then(fn
-        {_ns, operator} -> operator
-        {_ns, _runner, operator} -> operator
+        {_ns, relay} -> relay
+        {_ns, _runner, relay} -> relay
       end)
 
-    Keyword.get(operator.opts, :bindings, [])
+    Keyword.get(relay.opts, :bindings, [])
   end
 
-  @doc "The node `operator_id`'s registry row names a live pid on, awaited up to `timeout_ms`."
-  def await_bound_node(hub_id, operator_id, timeout_ms) do
+  @doc "The node `relay_id`'s registry row names a live pid on, awaited up to `timeout_ms`."
+  def await_bound_node(hub_id, relay_id, timeout_ms) do
     NodeTestHelper.wait_until(
       fn ->
-        case Map.get(ProcessRegistry.dump(hub_id), operator_id) do
+        case Map.get(ProcessRegistry.dump(hub_id), relay_id) do
           {_cspec, node_pids, _meta} -> HubManager.live_node(node_pids)
           _ -> nil
         end

@@ -2,8 +2,8 @@ defmodule FlezhaTest.System.TaskKindE2ETest do
   @moduledoc """
   End-to-end proof of the steps run against a live runner of the selected
   SDK runtime: a start that names only the factory takes the kind its runner
-  announced, flows `AddOperator` with kind `steps` → the SDK runs the pass
-  once → emits `OperatorCompleted` → the controller drives
+  announced, flows `AddRelay` with kind `steps` → the SDK runs the pass
+  once → emits `RelayCompleted` → the controller drives
   deregister-on-completion. The whole loop is observable as the unit
   disappearing from the durable registry without an explicit stop. Tagged
   `:system` (boots a real subprocess); run with
@@ -17,19 +17,19 @@ defmodule FlezhaTest.System.TaskKindE2ETest do
   import FlezhaTest.Helper.StepsResumeHarness,
     only: [collect_loop: 1, forward_sink: 2, await_outputs: 3, send_turn: 3]
 
-  alias Flezha.Operator.Builder
+  alias Flezha.Relay.Builder
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.HubManager
-  alias Flezha.Service.OperatorManager
+  alias Flezha.Service.RelayManager
   alias Flezha.State.Completion
-  alias FlezhaTest.Fixtures.OperatorFixture
+  alias FlezhaTest.Fixtures.RelayFixture
   alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.Helper.TierE2EHarness
 
   @namespace "task_kind_e2e"
   @factory "echo_steps"
 
-  # One fleet for the module: every scenario names its own operator.
+  # One fleet for the module: every scenario names its own relay.
   setup_all do
     {port, _ce_id} = NodeTestHelper.start_runner_port(@namespace)
 
@@ -49,7 +49,7 @@ defmodule FlezhaTest.System.TaskKindE2ETest do
   setup do
     on_exit(fn ->
       try do
-        OperatorManager.stop_all_operators(@namespace)
+        RelayManager.stop_all_relays(@namespace)
       catch
         _, _ -> :ok
       end
@@ -59,11 +59,11 @@ defmodule FlezhaTest.System.TaskKindE2ETest do
   end
 
   test "task runs once on its first message and is deregistered on completion" do
-    operator_id = "task_e2e_#{System.unique_integer([:positive])}"
+    relay_id = "task_e2e_#{System.unique_integer([:positive])}"
 
     # No kind: the factory's runner announced it.
     builder = %Builder{
-      id: operator_id,
+      id: relay_id,
       factory_id: @factory,
       init_values: %{},
       opts: [seed_input: {"hi", %{}}]
@@ -72,32 +72,32 @@ defmodule FlezhaTest.System.TaskKindE2ETest do
     # Start succeeds even for a near-instant task: a run-once unit may
     # complete (and self-deregister) before its binding is observable, and a
     # clean exit during start confirmation is not a failure.
-    assert {:ok, _info} = OperatorManager.start_operator(@namespace, builder)
+    assert {:ok, _info} = RelayManager.start_relay(@namespace, builder)
 
-    # The SDK runs the task once and ships `OperatorCompleted`; the controller
+    # The SDK runs the task once and ships `RelayCompleted`; the controller
     # tears it down. Deregister-on-completion: the unit drops out of the
     # durable registry with no explicit stop — proof the full loop ran.
-    assert wait_until(fn -> not registered?(operator_id) end, 5_000),
+    assert wait_until(fn -> not registered?(relay_id) end, 5_000),
            "task was never deregistered after completion"
   end
 
   # A steps tasklet declaring static cells is offered every message, and the
   # cells `cells_for` names run it: two of the three here, each emitting its key.
   test "a static-cell steps tasklet runs on each cell its cells_for names" do
-    operator_id = "static_cell_steps_#{System.unique_integer([:positive])}"
+    relay_id = "static_cell_steps_#{System.unique_integer([:positive])}"
     collector = spawn_link(fn -> collect_loop([]) end)
     sink = forward_sink("static_cell_sink", collector)
 
     assert {:ok, _} =
-             OperatorManager.start_operator(@namespace, %Builder{
-               id: operator_id,
+             RelayManager.start_relay(@namespace, %Builder{
+               id: relay_id,
                factory_id: "static_cell_steps",
-               opts: [bindings: OperatorFixture.bindings(@namespace, operator_id, [sink])]
+               opts: [bindings: RelayFixture.bindings(@namespace, relay_id, [sink])]
              })
 
-    send_turn(@namespace, operator_id, "go")
+    send_turn(@namespace, relay_id, "go")
 
-    delivered = collector |> await_outputs(2, operator_id) |> Enum.map(&elem(&1, 0))
+    delivered = collector |> await_outputs(2, relay_id) |> Enum.map(&elem(&1, 0))
     assert Enum.sort(delivered) == ["a:go", "b:go"]
   end
 
@@ -111,7 +111,7 @@ defmodule FlezhaTest.System.TaskKindE2ETest do
 
     on_exit(fn ->
       try do
-        OperatorManager.stop_all_operators(namespace)
+        RelayManager.stop_all_relays(namespace)
         FleetManager.stop_namespace(namespace)
       catch
         _, _ -> :ok
@@ -124,13 +124,13 @@ defmodule FlezhaTest.System.TaskKindE2ETest do
     named = "spawn-named-#{System.unique_integer([:positive])}"
 
     assert {:ok, _} =
-             OperatorManager.start_operator(namespace, %Builder{
+             RelayManager.start_relay(namespace, %Builder{
                id: requester,
                factory_id: "spawn_requester"
              })
 
     for _ <- 1..2 do
-      assert :ok = OperatorManager.send_io_confirming(requester, namespace, named, %{})
+      assert :ok = RelayManager.send_io_confirming(requester, namespace, named, %{})
     end
 
     seen = NodeTestHelper.read_port(port, &(length(spawn_results(&1)) >= 4), 60_000)
@@ -149,7 +149,7 @@ defmodule FlezhaTest.System.TaskKindE2ETest do
              [{named, "spawned"}, {named, "delivered"}]
   end
 
-  # KB-381: a tasklet spawns a `once` steps operator whose entry channel `order`
+  # KB-381: a tasklet spawns a `once` steps relay whose entry channel `order`
   # decodes the payload's type. The spawned instance runs its one pass over
   # the decoded ticket (the runner prints `once_ran <text>`), completes with
   # status `ok` carrying the text, and is torn down. The runner's stdout is the
@@ -160,7 +160,7 @@ defmodule FlezhaTest.System.TaskKindE2ETest do
 
     on_exit(fn ->
       try do
-        OperatorManager.stop_all_operators(namespace)
+        RelayManager.stop_all_relays(namespace)
         FleetManager.stop_namespace(namespace)
       catch
         _, _ -> :ok
@@ -172,12 +172,12 @@ defmodule FlezhaTest.System.TaskKindE2ETest do
     requester = "spawn_once_requester_#{System.unique_integer([:positive])}"
 
     assert {:ok, _} =
-             OperatorManager.start_operator(namespace, %Builder{
+             RelayManager.start_relay(namespace, %Builder{
                id: requester,
                factory_id: "spawn_once_requester"
              })
 
-    assert :ok = OperatorManager.send_io_confirming(requester, namespace, "ticket-7", %{})
+    assert :ok = RelayManager.send_io_confirming(requester, namespace, "ticket-7", %{})
 
     seen = NodeTestHelper.read_port(port, &(once_results(&1) != [] and &1 =~ "once_ran "), 60_000)
     assert [{spawned, "spawned"}] = once_results(seen), "no spawn result in:\n#{seen}"
@@ -213,12 +213,12 @@ defmodule FlezhaTest.System.TaskKindE2ETest do
     on_exit(fn -> TierE2EHarness.cleanup(namespace, requester, id_path) end)
 
     assert {:ok, _} =
-             OperatorManager.start_operator(namespace, %Builder{
+             RelayManager.start_relay(namespace, %Builder{
                id: requester,
                factory_id: "spawn_hold_requester"
              })
 
-    assert :ok = OperatorManager.send_io_confirming(requester, namespace, "job-1", %{})
+    assert :ok = RelayManager.send_io_confirming(requester, namespace, "job-1", %{})
 
     seen = NodeTestHelper.read_port(port_a, &(hold_results(&1) != []), 60_000)
     assert [{first, "spawned"}] = hold_results(seen), "no spawn result in:\n#{seen}"
@@ -253,7 +253,7 @@ defmodule FlezhaTest.System.TaskKindE2ETest do
         do: {label, id, String.trim(outcome)}
   end
 
-  defp registered?(operator_id) do
-    match?({:ok, pid} when is_pid(pid), HubManager.get_pid(@namespace, operator_id))
+  defp registered?(relay_id) do
+    match?({:ok, pid} when is_pid(pid), HubManager.get_pid(@namespace, relay_id))
   end
 end

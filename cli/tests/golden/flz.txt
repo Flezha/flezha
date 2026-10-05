@@ -5,8 +5,8 @@ USAGE:
 
 COMMANDS:
     controller     Controller management commands
-    cluster        Controller cluster status (nodes, leader, operator health)
-    operator       Operator management commands
+    cluster        Controller cluster status (nodes, leader, relay health)
+    relay       Relay management commands
     namespace      Namespace management commands
     runner         Runner management commands
     plugin         Plugin management commands
@@ -17,7 +17,7 @@ COMMANDS:
     observe        Observability foundation inspection (sources, sinks, tail)
     audit          Durable audit log inspection (list, read, tail, stats, rotate)
     dlq            Dead-letter queue: inspect, replay, or drop parked payloads
-    schedule       Cron-scheduled steps operator spawns (add, list, remove, run)
+    schedule       Cron-scheduled steps relay spawns (add, list, remove, run)
     auth           Bootstrap claim, identity (whoami), offline break-glass recovery
     token          Scoped-token management (issue, revoke, list)
     role           Principal → role bindings (bind, unbind, list)
@@ -41,7 +41,7 @@ Use 'flz <COMMAND> help' for more information on a specific command.
 
 EXAMPLES:
     flz controller start
-    flz operator start my_factory --id my_operator --namespace prod
+    flz relay start my_factory --id my_relay --namespace prod
     flz plugin install /path/to/my_plugin-1.0.0.fpz
     flz plugin list --installed
     flz plugin enable kafka_producer provider1 Xhosts=localhost:9092

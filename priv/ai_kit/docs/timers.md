@@ -98,10 +98,10 @@ An `on_timer` that fails climbs the input channel's retry ladder and then goes t
 dead-letter queue, exactly as a failing `run` does. The timer's removal is durable either way,
 so a poison timer parks once instead of firing forever.
 
-## Timers in a steps operator
+## Timers in a steps relay
 
-A steps tasklet's cell sets, saves and restores its timers as a flow operator's cell does. What
-differs is when a firing runs, since a steps operator runs one pass at a time and commits it
+A steps tasklet's cell sets, saves and restores its timers as a flow relay's cell does. What
+differs is when a firing runs, since a steps relay runs one pass at a time and commits it
 step by step:
 
 - **A firing starts a pass** at the tasklet that set the timer; `on_timer`'s emits travel down
@@ -112,8 +112,8 @@ step by step:
   behind a queued firing, so a loop that feeds itself never starves a timer.
 - **The removal is durable when the step commits.** A served firing stays pending until the step
   that ran it commits. A crash before the pass's root commits fires the timer again into a new
-  pass; a crash after it does not. An operator that journals nothing commits the removal with
-  the firing, as a flow operator does.
+  pass; a crash after it does not. A relay that journals nothing commits the removal with
+  the firing, as a flow relay does.
 - **A sleeping instance wakes at its earliest timer.** A parked instance records its earliest
   pending processing-time timer as its wake time; the controller wakes it then, and the timer
   fires into a new pass. Event-time timers need an input, and an input wakes the instance
@@ -121,14 +121,14 @@ step by step:
 - **Timers end with the instance.** When an instance completes, fails, is stopped or ends its
   `once` pass, its cells and their pending timers are removed. A `once` instance's timer
   therefore fires only while its own step is still running; to wait on a timer after the last
-  step, run the operator `each: per_input`.
+  step, run the relay `each: per_input`.
 - **An `on_timer` failure is a tasklet failure**: it climbs the retry ladder and, once retries
-  are spent, the operator's failure rule applies (its rollback, for example).
+  are spent, the relay's failure rule applies (its rollback, for example).
 
 ## Example
 
 In the tradedesk example's PHP runner, `confirm_fill` asks the exchange whether an order filled.
-The paper exchange answers ten seconds later. A PHP runner serves every operator on one thread,
+The paper exchange answers ten seconds later. A PHP runner serves every relay on one thread,
 so a `sleep()` would hold up the price stream too; instead `run` keeps the order in the cell and
 sets a timer, and `onTimer` reads the answer and ends the instance:
 
@@ -162,7 +162,7 @@ sets a timer, and `onTimer` reads the answer and ends the instance:
 <!-- tabs-close -->
 
 The timer is saved with the cell, so it still fires after a runner restart. Because the timer
-fires after the operator's last step has run, `order_executor` runs `each: per_input`: a `once`
+fires after the relay's last step has run, `order_executor` runs `each: per_input`: a `once`
 instance would end, timers and all, as soon as its last step committed.
 
 <!-- tabs-open -->
@@ -170,11 +170,11 @@ instance would end, timers and all, as soon as its last step committed.
 ### PHP
 
 ```php
-// OrderExecutorOperator.php: per_input keeps the instance alive until the timer ends it.
-#[Operator(factoryId: 'order_executor', run: ['steps' => ['each' => 'per_input', 'on_failure' => 'undo_all']])]
+// OrderExecutorRelay.php: per_input keeps the instance alive until the timer ends it.
+#[Relay(factoryId: 'order_executor', run: ['steps' => ['each' => 'per_input', 'on_failure' => 'undo_all']])]
 ```
 
-[Full file](https://github.com/flezha/flezha_php_sdk/blob/main/examples/tradedesk/src/OrderExecutorOperator.php)
+[Full file](https://github.com/flezha/flezha_php_sdk/blob/main/examples/tradedesk/src/OrderExecutorRelay.php)
 
 <!-- tabs-close -->
 
@@ -189,7 +189,7 @@ uses a timer.
 - Per tasklet, counters track pending, set, fired, cancelled and refused timers. Every runner
   heartbeat carries `timers_armed` (processing-time timers waiting, across the runner) and
   `timers_fired`. A `timers_fired` that stops moving while `timers_armed` climbs means firings
-  are stuck, not that the operator is idle.
+  are stuck, not that the relay is idle.
 
 ## Limits
 

@@ -389,7 +389,7 @@ pub fn assert_activation_maps(act: &schema::Activation) {
     let recorded = shape::activation(&Recorder, act.clone()).expect("the shape builds it");
     let h = obj(&recorded);
     assert_eq!(num(h, "token"), act.token);
-    assert_eq!(text(h, "operator"), act.target.operator);
+    assert_eq!(text(h, "relay"), act.target.relay);
     assert_eq!(num(h, "tasklet") as u32, act.target.tasklet);
     assert_eq!(opt_text(h, "cell_key"), act.target.cell_key);
     assert_eq!(num(h, "change_seq"), act.change_seq);

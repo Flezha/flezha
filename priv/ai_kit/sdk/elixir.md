@@ -21,7 +21,7 @@ Three files, one for each part the guides describe:
 | File | Part | What it does |
 |---|---|---|
 | `lib/echo/tasklet.ex` | the tasklet | the processing stage: prefixes each message |
-| `lib/echo/operator.ex` | the operator | the graph: `in` feeds the tasklet, output lands on `out` |
+| `lib/echo/relay.ex` | the relay | the graph: `in` feeds the tasklet, output lands on `out` |
 | `lib/echo/application.ex` | the runner | this node: registers the echo factory and waits |
 
 ## Run it
@@ -38,8 +38,8 @@ mix run --no-halt
 Then, from another terminal:
 
 ```sh
-flz operator start echo --id my_echo
-flz operator send my_echo --text 'hello world' --await 2000
+flz relay start echo --id my_echo
+flz relay send my_echo --text 'hello world' --await 2000
 ```
 
 ```
@@ -83,11 +83,11 @@ is.
 defmodule Echo.Application do
   @moduledoc """
   Starts a runner: a process that connects to the controller and serves your
-  operators.
+  relays.
 
   The runner is a child of this application's supervision tree, so a crash
-  restarts it and it reconnects under the same identity. Declare every operator
-  you want served in `operators:`, however it runs: how it runs is read from
+  restarts it and it reconnects under the same identity. Declare every relay
+  you want served in `relays:`, however it runs: how it runs is read from
   the module, never named by the list.
   """
   use Application
@@ -98,26 +98,26 @@ defmodule Echo.Application do
     namespace = List.first(System.argv(), "default")
 
     children = [
-      # connects to the controller and serves these operators
+      # connects to the controller and serves these relays
       # `:uds` because this node is not the controller's. The default, `:native`,
       # is for code running inside the controller's own node.
-      {Flezha.SDK, namespace: namespace, operators: [Echo.Operator], transport: :uds}
+      {Flezha.SDK, namespace: namespace, relays: [Echo.Relay], transport: :uds}
     ]
 
     {:ok, supervisor} = Supervisor.start_link(children, strategy: :one_for_one)
 
-    # Everything `flz operator` and `flz plugin` do is also a function in
+    # Everything `flz relay` and `flz plugin` do is also a function in
     # `Flezha.SDK.Control`, and `Flezha.SDK.send/5` hands a message to an
-    # operator. The runner is connected once its child has started, so
+    # relay. The runner is connected once its child has started, so
     # uncomment to drive this namespace from the application instead of from a
     # terminal:
     #
     # alias Flezha.SDK.Control
     # runner = Flezha.SDK.RunnerServer
-    # {:ok, %{id: "my_echo"}} = Control.start_operator(runner, "echo", id: "my_echo")
+    # {:ok, %{id: "my_echo"}} = Control.start_relay(runner, "echo", id: "my_echo")
     #
     # {:ok, _} =
-    #   Control.enable_plugin(runner, "writer", "operator_file_sink",
+    #   Control.enable_plugin(runner, "writer", "relay_file_sink",
     #     opts: %{"path" => "echo-out.txt"}
     #   )
     #
@@ -134,12 +134,12 @@ defmodule Echo.Application do
 end
 ````
 
-## examples/echo/lib/echo/operator.ex
+## examples/echo/lib/echo/relay.ex
 
 ````elixir
-defmodule Echo.Operator do
+defmodule Echo.Relay do
   @moduledoc """
-  The deployable unit. An operator declares the graph a message travels: the
+  The deployable unit. A relay declares the graph a message travels: the
   entry channel it arrives on, the steps it passes through, and the channel its
   result leaves on.
 
@@ -147,8 +147,8 @@ defmodule Echo.Operator do
   cannot work is refused at startup.
   """
 
-  # the name `flz operator start` takes
-  use Flezha.SDK.Operator, factory_id: "echo"
+  # the name `flz relay start` takes
+  use Flezha.SDK.Relay, factory_id: "echo"
 
   @impl true
   def channels(c) do
@@ -168,11 +168,11 @@ end
 ````elixir
 defmodule Echo.Tasklet do
   @moduledoc """
-  A processing stage of the operator's graph, run once per message. This one
+  A processing stage of the relay's graph, run once per message. This one
   prefixes the input and emits the result.
 
   With no `state` block, nothing is kept between messages and nothing is
-  journaled. Where the result goes is not decided here: the operator decides
+  journaled. Where the result goes is not decided here: the relay decides
   that, so the graph can be rewired without touching this module.
   """
 
@@ -181,7 +181,7 @@ defmodule Echo.Tasklet do
 
   @impl true
   def run(input, state, ctx) do
-    # where it goes is the operator's business
+    # where it goes is the relay's business
     emit(ctx, "echo: " <> input)
     {:ok, state}
   end

@@ -1,9 +1,9 @@
 # SDK Authoring Contract
 
-For operator authors who use the attribute/annotation sugar and for SDK
+For relay authors who use the attribute/annotation sugar and for SDK
 implementers who must keep it identical across bindings. It specifies how a
 declaration (`#[flezha::tasklet]`, the short-form attributes and
-`flezha::operator!` in Rust) maps onto the `Operator` / `Tasklet` / `Change` / `Channel`
+`flezha::relay!` in Rust) maps onto the `Relay` / `Tasklet` / `Change` / `Channel`
 trait (interface) surface. The sugar is **pure expansion**: a macro
 (`sdk/rust/macros/`) writes exactly the items a user would write by hand, against the unchanged
 runtime. There is no parallel runtime path, no new protobuf message and no
@@ -18,7 +18,7 @@ author's class implements `Tasklet<Input, State, Output>` and carries
 `@Tasklet.Spec`, its changes are records applied through `ctx.change(...)`, and
 nothing is generated ([`java_sdk.md`](java_sdk.md#tasklets)). The Elixir SDK expands the same
 declarations through `use` macros — `use Flezha.SDK.Tasklet`,
-`use Flezha.SDK.Operator` takes
+`use Flezha.SDK.Relay` takes
 the scalar settings as options named after the behaviour's own callbacks and
 define only the callbacks written, so every default stays where
 `function_exported?` resolves it; a `state do field … end` block declares a
@@ -26,22 +26,22 @@ state's fields and defaults, and `defchange` is the one way to write a change.
 The plain `@behaviour` form, every callback and `apply_change/2` written by
 hand, is the reference form: it keeps working, and is documented in
 [`elixir_sdk.md`](elixir_sdk.md) only. The Node SDK exposes factory functions —
-`defineTasklet`, `defineOperator`, `defineOperator`, `registerFactory`, wired by a fluent
+`defineTasklet`, `defineRelay`, `defineRelay`, `registerFactory`, wired by a fluent
 channel builder — and no decorators, because a decorator needs a build step,
 does not apply to a plain function, and cannot reshape the decorated type,
 which is what a typed graph needs ([`node_sdk.md`](node_sdk.md)). The Ruby SDK
-exposes classes — `Flezha::Tasklet`, `Flezha::Operator`,
-`Flezha::Operator`, wired by the same fluent channel builder — and
+exposes classes — `Flezha::Tasklet`, `Flezha::Relay`,
+`Flezha::Relay`, wired by the same fluent channel builder — and
 reads which optional hooks a tasklet declares from the methods it defines, so
 a declaration and its implementation cannot disagree
 ([`ruby_sdk.md`](ruby_sdk.md)). The PHP SDK exposes classes too —
-`Flezha\Tasklet`, `Flezha\Operator`, `Flezha\Operator`, wired
+`Flezha\Tasklet`, `Flezha\Relay`, `Flezha\Relay`, wired
 by the same fluent channel builder — with the scalar declarations in a
 `#[Task]` attribute and the optional hooks read from the methods a tasklet
 **overrides**, which is the closest PHP comes to Java's annotations without a
 build step ([`php_sdk.md`](php_sdk.md)). The Python SDK exposes decorators —
-`@flezha.tasklet`, `@flezha.state`, `@flezha.operator`,
-`@flezha.operator`, wired by the same fluent channel builder — over a
+`@flezha.tasklet`, `@flezha.state`, `@flezha.relay`,
+`@flezha.relay`, wired by the same fluent channel builder — over a
 named tasklet class whose `run` takes the value and a `Ctx[State, Output]` and
 whose other methods are the hooks, with the input, output, state and change
 types all read from the type hints, which is what makes a wrong edge a
@@ -87,7 +87,7 @@ backstop for what typing cannot see.
 | SDK | Compile-time edge typing | Where the refusals are pinned |
 | --- | --- | --- |
 | Rust | yes | 29 compile-fail tests in `sdk/rust/tests/ui/` |
-| Java | yes, through the generic `Tasklet<…>` arguments | `FlezhaException` cases in `sdk/java/.../ClockAndKeyedValidationTest` and `OperatorTopologyBuilderTest` |
+| Java | yes, through the generic `Tasklet<…>` arguments | `FlezhaException` cases in `sdk/java/.../ClockAndKeyedValidationTest` and `RelayTopologyBuilderTest` |
 | Node | yes, through the channel builder's type parameters | `@ts-expect-error` fixtures in `sdk/node/types-tests/`, compiled under `tsc --noEmit`, plus a negative control that strips the directives and requires each pinned line to still produce a diagnostic |
 | Elixir | no — the language cannot | registration-time refusals, plus the `use` macros' `CompileError`s for a declaration named wrongly, in `sdk/elixir/test/flezha/sdk/authoring_macros_test.exs` and `tasklet_clock_test.exs` |
 | Ruby | no — the language cannot | registration-time refusals only, in `sdk/ruby/test/authoring_test.rb` |
@@ -102,11 +102,11 @@ and which side owns the threading model.
 ## 1. Escape-hatch equivalence (non-negotiable)
 
 - Generated code is equivalent to a valid hand-written `Tasklet` /
-  `Operator` implementation. It compiles and runs identically; no
+  `Relay` implementation. It compiles and runs identically; no
   protocol, controller or WAL change is required for it to run.
-- An operator MAY mix sugared and hand-written tasklets wired together.
+- A relay MAY mix sugared and hand-written tasklets wired together.
 - "Ejecting" a sugared tasklet to a full impl is a paste of its expansion —
-  the operator behaves identically afterwards with no other change.
+  the relay behaves identically afterwards with no other change.
 
 The replay-determinism harness (`TaskletTestHarness::replay_equals` in Rust,
 `TaskletTestHarness.replayEquals()` in Java) is the conformance gate for
@@ -184,8 +184,8 @@ returns its output instead.
   completes the block rather than defaults on the trait. The same block
   without the attribute writes every one of those items by hand; that
   reference form is documented in
-  [`rust_operator_architecture.md`](rust_operator_architecture.md#the-reference-form)
-  and composes with the everyday form in one operator.
+  [`rust_relay_architecture.md`](rust_relay_architecture.md#the-reference-form)
+  and composes with the everyday form in one relay.
 
 **Explicit always wins.** A written Java hook (`initState`, `kryoTypes`) is
 authoritative over the default it replaces, and a written Rust `init_state`
@@ -225,7 +225,7 @@ record. In Elixir it is the one way to change state.
 ### 3.0 Changing a State or Change type after it has been deployed
 
 > **A factory id is single-language.** Because the persisted encodings below are
-> per-SDK, an operator is placed only on a runner of its factory's language,
+> per-SDK, a relay is placed only on a runner of its factory's language,
 > and a restore refuses a record another SDK stamped. Re-authoring a factory in
 > another language is therefore not an upgrade — it is drain-and-cutover under a
 > new factory id (stop, compact, `flz state get`, start the new factory), or
@@ -386,7 +386,7 @@ Tasklet that registers a timer without handling it cannot be refused at
 build time. Full contract, including which
 kind to reach for, in [`cell_timers.md`](cell_timers.md).
 
-The contract holds in both runs. In a steps operator, a firing is one more thing
+The contract holds in both runs. In a steps relay, a firing is one more thing
 that starts a pass: it opens a pass at the tasklet that set the timer, or
 joins that tasklet's stage while it runs, or waits its turn behind the pass in
 flight, and its timer leaves the pending set when that stage commits. Only a
@@ -427,7 +427,7 @@ runtime-applied after `init_state` returns, so the hook never sees it.
 A keyed tasklet cannot receive a broadcast: both keying declarations are
 total — `cells_for` names the Cells an input belongs to, `.key_by(f)`
 names exactly one — and inside a partitioned member the computed key is
-admitted against that member's key-group range. "One operator-wide document
+admitted against that member's key-group range. "One relay-wide document
 that every keyed Cell must eventually see" (a threshold table, a feature
 flag, a config document) is therefore packaged as one builder method:
 
@@ -467,7 +467,7 @@ re-poll a document source performs after every reconnect); a differing one
 bumps the version, so every key is owed one delivery again. A document type
 without value equality makes every arrival a new version.
 
-Two routers in one operator need the node-named spelling
+Two routers in one relay need the node-named spelling
 (`route_latest_named(.., "primary")` / the `routeLatest` overload taking a node
 name) — by [`naming_conventions.md`](naming_conventions.md) rule 10 two unnamed
 mentions of one class are one node, and here that means one retained document
@@ -477,75 +477,75 @@ shared between them.
 
 Exactly **one** topology may be written short: a single tasklet from a
 controller input to at most one named sink (`input → tasklet → plugin(sink)`,
-or `input → tasklet` with no sink), as an operator of either run. **Every
+or `input → tasklet` with no sink), as a relay of either run. **Every
 SDK carries it**: Rust, Java, Python, Node, Ruby, PHP and Elixir.
 
-**The short form is an operator declaration**, written at the SDK's one
-operator entry point, the one a full-form operator already uses. An operator
+**The short form is a relay declaration**, written at the SDK's one
+relay entry point, the one a full-form relay already uses. A relay
 declaration is a short form exactly when it carries its one tasklet's body
-**instead of** a topology body, `channels`, the one name every operator gives
+**instead of** a topology body, `channels`, the one name every relay gives
 it in every SDK.
-The body is `run`, the name every SDK gives a tasklet's body. How the operator
-runs is a class setting, written as the full form writes it. The identity is the operator's factory id, spelled as
+The body is `run`, the name every SDK gives a tasklet's body. How the relay
+runs is a class setting, written as the full form writes it. The identity is the relay's factory id, spelled as
 that SDK's full form spells it, and is **written by the author**: an SDK that
 otherwise derives a name does not derive a factory id, because the factory id
 is an address a user types and a rename must not move it.
 
 | SDK | Flow short form | Steps short form |
 | --- | --- | --- |
-| Rust | `#[flezha::operator(id = "echo", sink = "out", input = "in")] fn echo(s: String) -> String`, or the same attribute on an `impl Tasklet for Echo` block | `#[flezha::operator(..., run = steps)]` |
-| Java | `@Operator(id = "echo", sink = "out", input = "in") class Echo implements Tasklet<String, Void, String> { void run(String s, Ctx<Void, String> ctx) }` | `@Operator(..., run = @Run(steps = @Steps))` |
-| Python | `@flezha.operator(id="echo", sink="out", input="in", codec="text") def echo(s: str) -> str`, or the same decorator on a class whose `run(self, s, ctx)` emits through `ctx` | `@flezha.operator(..., run="steps")` |
-| Node | `defineOperator({ factoryId: 'echo', sink: 'out', input: 'in', codec: 'text', run: (s, ctx) => ctx.emit(s) })` | `defineOperator({ ..., steps: {} })` |
-| Ruby | `class Echo < Flezha::Operator; factory_id "echo"; sink "out"; input "in"; codec :text; def run(s, ctx) = ctx.emit(s); end` | `run :steps` in the class body |
-| PHP | `#[Operator(factoryId: 'echo', sink: 'out', input: 'in', codec: ChannelCodec::Text)] final class Echo extends \Flezha\Operator { public function run(mixed $s, Ctx $ctx): void }` | `#[Operator(..., run: 'steps')]` |
-| Elixir | `use Flezha.SDK.Operator, factory_id: "echo", sink: "out", input: "in"` with `run/3` | `use Flezha.SDK.Operator, ..., run: :steps` |
+| Rust | `#[flezha::relay(id = "echo", sink = "out", input = "in")] fn echo(s: String) -> String`, or the same attribute on an `impl Tasklet for Echo` block | `#[flezha::relay(..., run = steps)]` |
+| Java | `@Relay(id = "echo", sink = "out", input = "in") class Echo implements Tasklet<String, Void, String> { void run(String s, Ctx<Void, String> ctx) }` | `@Relay(..., run = @Run(steps = @Steps))` |
+| Python | `@flezha.relay(id="echo", sink="out", input="in", codec="text") def echo(s: str) -> str`, or the same decorator on a class whose `run(self, s, ctx)` emits through `ctx` | `@flezha.relay(..., run="steps")` |
+| Node | `defineRelay({ factoryId: 'echo', sink: 'out', input: 'in', codec: 'text', run: (s, ctx) => ctx.emit(s) })` | `defineRelay({ ..., steps: {} })` |
+| Ruby | `class Echo < Flezha::Relay; factory_id "echo"; sink "out"; input "in"; codec :text; def run(s, ctx) = ctx.emit(s); end` | `run :steps` in the class body |
+| PHP | `#[Relay(factoryId: 'echo', sink: 'out', input: 'in', codec: ChannelCodec::Text)] final class Echo extends \Flezha\Relay { public function run(mixed $s, Ctx $ctx): void }` | `#[Relay(..., run: 'steps')]` |
+| Elixir | `use Flezha.SDK.Relay, factory_id: "echo", sink: "out", input: "in"` with `run/3` | `use Flezha.SDK.Relay, ..., run: :steps` |
 
-**`sink` is optional.** With a `sink`, the generated operator declares an
+**`sink` is optional.** With a `sink`, the generated relay declares an
 entry channel, the tasklet, and a plugin sink of that name. With no `sink`,
 it declares the entry channel and the tasklet and no plugin channel, which is
-the topology a full-form operator declares when its channel ends at a
-tasklet: the operator that only keeps state is one declaration. `input` and
+the topology a full-form relay declares when its channel ends at a
+tasklet: the relay that only keeps state is one declaration. `input` and
 `codec` are accepted either way, because an entry channel exists either way.
 
-**The generated operator is the hand-written one, nothing more.** One entry
+**The generated relay is the hand-written one, nothing more.** One entry
 channel named by `input` (or `input` when none is written) and decoded by
 `codec` where one is written (Python, Node, Ruby, PHP); the tasklet; the sink
 when one is written; a factory id equal to the identity; and the class
 settings it writes, as the full form takes them. A flow short form is a default
-stream. A steps short form is a `once` steps operator unless it declares another
+stream. A steps short form is a `once` steps relay unless it declares another
 loop shape: its entry channel receives the instance's first message, from a
-spawn, `flz operator send` or `flz operator start --text`, the tasklet runs
+spawn, `flz relay send` or `flz relay start --text`, the tasklet runs
 once, its output reaches the sink after the commit, and the instance
-completes; `--init-values` is the tasklet's initial state, as on a flow operator.
+completes; `--init-values` is the tasklet's initial state, as on a flow relay.
 With `each: per_input` the tasklet runs once per message and the instance
 stays. The tree is written in the spelling the SDK's full form gives it:
 `run = steps(each = per_input)` on the Rust attribute,
-`run = @Run(steps = @Steps(each = Each.PER_INPUT))` on `@Operator`,
+`run = @Run(steps = @Steps(each = Each.PER_INPUT))` on `@Relay`,
 `steps: { each: 'per_input' }` on the Node definition,
 `run={"steps": {"each": "per_input"}}` on the Python decorator,
 `run steps: { each: :per_input }` in the Ruby class body,
-`run: ['steps' => ['each' => 'per_input']]` on PHP's `#[Operator]`,
+`run: ['steps' => ['each' => 'per_input']]` on PHP's `#[Relay]`,
 `run: {:steps, each: :per_input}` on the Elixir `use`. A value outside its
 choice is refused naming it (`topology.invalid_setting`).
 
-**The expansion is an ordinary tasklet and an ordinary operator, and the
+**The expansion is an ordinary tasklet and an ordinary relay, and the
 tasklet is named after the factory id, verbatim.** A cell lives at
 `<state_root>/<namespace>/<class>/<tasklet_id>/<cell_key>`, so a
 tasklet's name is a durable address; pinning it to the factory id is what
 makes growing out of the short form keep its state. Where an SDK generates
 code, the two are separate types and the author-facing name is the
-operator's: Rust emits the operator `Echo` and the tasklet `EchoTasklet`;
+relay's: Rust emits the relay `Echo` and the tasklet `EchoTasklet`;
 Elixir generates the nested module `Echo.Tasklet`. Java generates nothing: the
-class the author wrote is the tasklet, and registering it builds the operator
+class the author wrote is the tasklet, and registering it builds the relay
 at registration.
 Rust's short form on an `impl Tasklet for Echo` block generates no type: it
 completes the block as `#[flezha::tasklet]` does, names the tasklet after the
-`id`, accepts the tasklet setting keys beside the operator keys, and implements
-the operator trait on `Echo` itself. That is the form for a one-tasklet
-operator with state or hooks; a function short form takes no state and
+`id`, accepts the tasklet setting keys beside the relay keys, and implements
+the relay trait on `Echo` itself. That is the form for a one-tasklet
+relay with state or hooks; a function short form takes no state and
 refuses a `&mut` parameter with `ShortFormStateOnFunction`.
-The generated tasklet composes in another operator's topology body like any
+The generated tasklet composes in another relay's topology body like any
 tasklet.
 
 Growing out of the short form is a move, not a rewrite. With the flow short
@@ -565,7 +565,7 @@ impl Tasklet for EchoTasklet {
 }
 
 struct Echo;
-impl Operator for Echo {
+impl Relay for Echo {
     fn factory_id() -> &'static str { "echo" }
     fn channels(c: &ChannelBuilder) {
         c.input::<String>("in").into::<EchoTasklet>().sink_named("out");
@@ -573,7 +573,7 @@ impl Operator for Echo {
 }
 ```
 
-The tasklet keeps the name `echo` and the operator keeps the name `Echo`,
+The tasklet keeps the name `echo` and the relay keeps the name `Echo`,
 so `register_factory(Echo)` is unchanged and the cells stay at
 `<class>/echo/<cell_key>`.
 
@@ -599,49 +599,49 @@ the short form's, describing the entry channel it generates.
   `retry_backoff_ms`, for both runs.
 
 - **Registration is written by the author, in every SDK.** The author hands the
-  short form to the runner's `register_factory` like any operator, naming the
+  short form to the runner's `register_factory` like any relay, naming the
   declaration they wrote and never a generated type; nothing is harvested,
   scanned or collected. A program that declares a short form and never
-  registers it declares no operator.
+  registers it declares no relay.
 
 ### 5.1 One `register_factory`, one `unregister_factory`
 
-Every SDK has one operator base, `Operator`: a trait in Rust, an interface in
-Java, a base class in Python, Ruby and PHP, `defineOperator` in Node and a `use`
+Every SDK has one relay base, `Relay`: a trait in Rust, an interface in
+Java, a base class in Python, Ruby and PHP, `defineRelay` in Node and a `use`
 macro in Elixir. Its members are `factory_id()`, `channels` (the graph, on the
 same builder in every SDK) and one settings tree: `run` (`flow` or `steps` with
 their members), `durable`, `max_duration_ms` and `description`
-([Operator settings](../configuration/operator_settings.md#class-settings)).
+([Relay settings](../configuration/relay_settings.md#class-settings)).
 
-An operator declares how it runs where it is written, so a runner call that
+A relay declares how it runs where it is written, so a runner call that
 names it again says nothing new and can disagree with the declaration. Every
 runner has **one** registration method and **one** inverse, both taking the
 same argument:
 
 | SDK | Register | Unregister | How the run is read |
 | --- | --- | --- | --- |
-| Rust | `runner.register_factory(EchoOperator)?` | `runner.unregister_factory(EchoOperator)?` | `Operator::settings()` |
-| Java | `runner.registerFactory(EchoOperator.class)` | `runner.unregisterFactory(EchoOperator.class)` | `Operator.run()` |
-| Python | `runner.register_factory(echo)`, `runner.register_modules("app.ops")` | `runner.unregister_factory(echo)` | read from the operator |
+| Rust | `runner.register_factory(EchoRelay)?` | `runner.unregister_factory(EchoRelay)?` | `Relay::settings()` |
+| Java | `runner.registerFactory(EchoRelay.class)` | `runner.unregisterFactory(EchoRelay.class)` | `Relay.run()` |
+| Python | `runner.register_factory(echo)`, `runner.register_modules("app.ops")` | `runner.unregister_factory(echo)` | read from the relay |
 | Node | `await runner.registerFactory('./echo.mjs')` | `await runner.unregisterFactory('./echo.mjs')` | read from the module's exports |
 | Ruby | `runner.register_factory(Echo)` | `runner.unregister_factory(Echo)` | read from the class |
 | PHP | `$runner->registerFactory(Echo::class)` | `$runner->unregisterFactory(Echo::class)` | read from the class |
-| Elixir | `Flezha.SDK.register_factory(runner, Echo)`, child spec `operators: [Echo]` | `Flezha.SDK.unregister_factory(runner, Echo)` | the module's `run/0`, from its `use` |
+| Elixir | `Flezha.SDK.register_factory(runner, Echo)`, child spec `relays: [Echo]` | `Flezha.SDK.unregister_factory(runner, Echo)` | the module's `run/0`, from its `use` |
 
 Both are methods on the concrete runner handle (functions over the handle in
 Elixir), legal before and after `start()`, and generic over the shared base
-where the host language expresses such a bound. Rust passes the operator as a
-value; operators are unit structs, so the value costs nothing.
+where the host language expresses such a bound. Rust passes the relay as a
+value; relays are unit structs, so the value costs nothing.
 
 `unregister_factory` undoes a registration made before the runner starts in
 every SDK, and one made after start in every SDK whose runner can stop serving
 a started declaration. A runner that cannot **rejects** a post-start call with
 an error that says so, and never ignores it.
 
-A class that is not an operator, such as a tasklet handed to the registration,
-is refused at registration with the code `topology.no_operator_exported`, naming
+A class that is not a relay, such as a tasklet handed to the registration,
+is refused at registration with the code `topology.no_relay_exported`, naming
 the class or module. In Rust such a type cannot be passed to `register_factory`
-at all: it does not implement `Operator`, so it is a compile error.
+at all: it does not implement `Relay`, so it is a compile error.
 
 **The runner announces the run it read.** Every factory entry a runner ships,
 in its connect frame and in each `UpdateFactories`, carries `run`, exactly
@@ -650,14 +650,14 @@ Elixir fill it from the registered class, and the shared core fills it for
 Java, Node, Python, Ruby and PHP from the class declaration. The controller
 establishes a factory's run from the first announcement, as it establishes its
 language, and a runner announcing the other run, or none, is never a placement
-candidate for it. So a start names only the factory: `flz operator start` and
+candidate for it. So a start names only the factory: `flz relay start` and
 `flz schedule add` take no run, a schedule of a factory announced as flow is
 refused at `add`, and a tasklet's spawn naming one answers `factory_not_steps`.
 
 Node's registration imports a module, which is asynchronous, so its pair is
 awaited: before `run()` it imports, reads the exports and records the
-specifier, so a module that fails to load or exports no operator rejects at
-the line that registers it; after `run()` it also declares the operator
+specifier, so a module that fails to load or exports no relay rejects at
+the line that registers it; after `run()` it also declares the relay
 against the running core and every worker.
 
 ### 5.2 The three refusal codes
@@ -670,9 +670,9 @@ against:
 
 | Code | Condition |
 | --- | --- |
-| `topology.short_form_with_topology` | an operator declaration carries a tasklet body and also a `channels` body |
+| `topology.short_form_with_topology` | a relay declaration carries a tasklet body and also a `channels` body |
 | `topology.sink_without_output` | a `sink` on a body the SDK can see declares no output |
-| `topology.duplicate_factory_id` | a second operator, of either run, under a factory id the runner holds |
+| `topology.duplicate_factory_id` | a second relay, of either run, under a factory id the runner holds |
 
 They are not `TopologyIssue` variants: the core never sees a short form. An SDK
 whose tasklet bodies declare no output type the SDK can read (Node, Ruby,
@@ -682,11 +682,11 @@ a value leaves only through `ctx.emit`, so nothing in a class says whether it
 emits. A Node definition names its output type only in TypeScript types, erased
 before the SDK runs, and its `run` returns nothing either, so nothing the SDK
 can see says whether a short form emits. A declaration with neither body, or with no written identity, is
-refused by the rule every operator already obeys, not by a short-form name.
-There is no other short-form refusal: an operator declaration always has a
+refused by the rule every relay already obeys, not by a short-form name.
+There is no other short-form refusal: a relay declaration always has a
 run, the default `flow` when it writes none, and `input` and `codec` need no sink.
 
-**Duplicate factory id fails fast across runs.** Declaring a second operator
+**Duplicate factory id fails fast across runs.** Declaring a second relay
 under a factory id the runner already holds fails at that call, however
 either one runs, with the code `topology.duplicate_factory_id` and the colliding
 id in its details (Rust: `FlezhaError::DuplicateFactoryId`; Elixir:
@@ -719,12 +719,12 @@ the five host SDKs pass the tree as written and the shared core judges it.
 Timers belong to a tasklet and work in either run; `compact_after_bytes`
 belongs to a tasklet and is accepted on either run.
 
-## 6. Canonical reference operator (cross-SDK conformance anchor)
+## 6. Canonical reference relay (cross-SDK conformance anchor)
 
-Every SDK's conformance test asserts that this one operator — the
-`StaticCellOperator` shape — expands to the same topology and
+Every SDK's conformance test asserts that this one relay — the
+`StaticCellRelay` shape — expands to the same topology and
 associated-type mapping. It is a two-tasklet, static-mode, linear
-operator.
+relay.
 
 **Authored (Rust):**
 
@@ -754,7 +754,7 @@ impl Tasklet for StaticDownstream {
     }
 }
 
-flezha::operator! {
+flezha::relay! {
     pub struct StaticCell;
     id: "static_cell",
     pipeline: input::<String> -> StaticEntry -> StaticDownstream -> plugin::<Vec<u8>>("test_kafka")
@@ -778,13 +778,13 @@ flezha::operator! {
 
 The wall clock for both.
 
-Where the fixtures live: the hand-written `StaticCellOperator`
+Where the fixtures live: the hand-written `StaticCellRelay`
 (`factory_id` `static_cell`) is in `test/apps/rust_runner/src/cell.rs` and
-its `operator!` twin `sugar_static_cell` in `test/apps/rust_runner/src/sugar.rs`; the Java twin is
-`test/apps/java_runner/src/main/java/com/flezha/test/SugarStaticCellOperator.java`
+its `relay!` twin `sugar_static_cell` in `test/apps/rust_runner/src/sugar.rs`; the Java twin is
+`test/apps/java_runner/src/main/java/com/flezha/test/SugarStaticCellRelay.java`
 (`sugar_static_cell`, `SugarEntry` writing `cellsFor`), asserted by
-`SugarTwinTest.referenceOperatorMatchesContract`. Java has no pipeline macro,
-so its two-tasklet twin is an explicit `Operator` class with a
+`SugarTwinTest.referenceRelayMatchesContract`. Java has no pipeline macro,
+so its two-tasklet twin is an explicit `Relay` class with a
 `channels()` body.
 
 ### 6.1 Canonical keyed-collection reference tasklet

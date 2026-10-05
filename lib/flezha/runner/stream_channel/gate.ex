@@ -22,8 +22,8 @@ defmodule Flezha.Runner.StreamChannel.Gate do
   # so the frame is offered again once the buffer has drained. Any other error
   # is a driver that is gone: the frame IS lost, and it is reported through the
   # same counter and event an unbound stream uses rather than a second one.
-  def send_held(channel, stream_ref, liveness_ref, operator_id, message, metadata) do
-    case Flezha.Transport.Stream.send_frame(stream_ref, operator_id, message, metadata) do
+  def send_held(channel, stream_ref, liveness_ref, relay_id, message, metadata) do
+    case Flezha.Transport.Stream.send_frame(stream_ref, relay_id, message, metadata) do
       :ok ->
         :ok
 
@@ -31,22 +31,22 @@ defmodule Flezha.Runner.StreamChannel.Gate do
         LivenessCounters.bump_channel(liveness_ref, :send_gate_held)
 
         case await_send_gate(channel, send_gate_hold_ms()) do
-          :open -> send_held(channel, stream_ref, liveness_ref, operator_id, message, metadata)
-          :closed -> undeliverable({nil, liveness_ref}, operator_id)
+          :open -> send_held(channel, stream_ref, liveness_ref, relay_id, message, metadata)
+          :closed -> undeliverable({nil, liveness_ref}, relay_id)
           :timeout -> {:error, :send_buffer_full}
         end
 
       {:error, _driver_gone} ->
-        undeliverable({nil, liveness_ref}, operator_id)
+        undeliverable({nil, liveness_ref}, relay_id)
     end
   end
 
   # One statement of "this channel could not carry the frame", for the three
   # ways that happens: no binding, a stream that closed under a held sender,
   # and a driver thread that is gone.
-  def undeliverable(published, operator_id) do
+  def undeliverable(published, relay_id) do
     if published, do: LivenessCounters.bump_channel(elem(published, 1), :nil_drops)
-    :telemetry.execute([:flezha, :stream, :drop], %{count: 1}, %{operator_id: operator_id})
+    :telemetry.execute([:flezha, :stream, :drop], %{count: 1}, %{relay_id: relay_id})
     {:error, :no_stream}
   end
 
@@ -114,13 +114,13 @@ defmodule Flezha.Runner.StreamChannel.Gate do
   Block the CALLING process until `channel` has a bound stream, at most
   `timeout_ms`.
 
-  Used by the operator bind so nothing downstream of it — the durable restore,
+  Used by the relay bind so nothing downstream of it — the durable restore,
   the journal re-forward, the first ingest queued behind it — is issued onto a
   stream that cannot carry it. The wait is a selective receive, so every other
   message the caller is holding stays queued, which is what makes the caller's
   mailbox the queue an unbound stream needs.
 
-  `:ok` also answers a channel that is not running: an operator whose runner has
+  `:ok` also answers a channel that is not running: a relay whose runner has
   no channel pool has nothing to wait for and its delivery failure is reported by
   `io_in/3` as before.
   """

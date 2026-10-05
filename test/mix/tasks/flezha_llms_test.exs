@@ -17,7 +17,7 @@ defmodule Mix.Tasks.Flezha.LlmsTest do
   @exdoc_llms """
   # Flezha v0.1.0 - Table of Contents
 
-  > Distributed stateful operators
+  > Distributed stateful relays
 
   ## Pages
 
@@ -69,7 +69,7 @@ defmodule Mix.Tasks.Flezha.LlmsTest do
 
     1. [Start](#start)
 
-    Local mode runs an operator inside your
+    Local mode runs a relay inside your
     test, with no controller. It is fast.
     """,
     "cli.md" => """
@@ -112,7 +112,7 @@ defmodule Mix.Tasks.Flezha.LlmsTest do
     refute map =~ "setting_up.md"
     refute map =~ "## Pages"
 
-    assert map =~ "> Distributed stateful operators\n"
+    assert map =~ "> Distributed stateful relays\n"
     assert map =~ "## A new group\n\n- [A new page](new_page.md)\n"
 
     [_, api] = Regex.run(~r/## Published API\n\n(.*)\z/s, map)
@@ -132,7 +132,7 @@ defmodule Mix.Tasks.Flezha.LlmsTest do
                "for stateless and stateful data processing.\n"
 
     assert map =~
-             "- [Local mode](local_mode.md): Local mode runs an operator inside your test, " <>
+             "- [Local mode](local_mode.md): Local mode runs a relay inside your test, " <>
                "with no controller.\n"
 
     assert map =~ "- [The CLI](cli.md): `flz` is the command line.\n"

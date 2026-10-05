@@ -1,7 +1,7 @@
 # Flezha Node example
 
-One operator: a per-user session with journaled state, an idle timer and an
-emit on close. It exercises the four things every Flezha operator is built
+One relay: a per-user session with journaled state, an idle timer and an
+emit on close. It exercises the four things every Flezha relay is built
 from — a change fold, the deterministic clock, keying declared on the wiring,
 and an emit — and it is the same code under both dispatch configurations.
 
@@ -10,7 +10,7 @@ npm install
 npm test          # the handler, with no runner and no controller
 npm start         # dispatch on the main event loop
 npm run start:workers   # dispatch on four worker threads
-npm run local     # a second operator, run with no controller at all
+npm run local     # a second relay, run with no controller at all
 ```
 
 Running it needs a Flezha controller on the configured transport. The test does

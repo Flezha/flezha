@@ -1,7 +1,7 @@
 # Connecting a runner
 
-A runner is a program of your own that runs your operators. It connects to a
-controller, tells it which operator factories it can run, and then does the
+A runner is a program of your own that runs your relays. It connects to a
+controller, tells it which relay factories it can run, and then does the
 work the controller gives it. This page covers how a runner reaches its
 controller, how to run it as a service, and how to check that it connected.
 
@@ -54,7 +54,7 @@ rather than a fatal error. A runner that has connected once dials that
 address first on later attempts, and orders the other candidates randomly, so
 a fleet-wide restart does not converge on one node. Reconnecting to the same
 controller only moves the binding; reconnecting to another leaves the previous
-controller's operators stranded until its own convergence loop heals them.
+controller's relays stranded until its own convergence loop heals them.
 `FLEZHA_QUIC_ADDRESS` is retired and not aliased: set alone, it refuses the
 start, naming the replacement. The controller's own listen address is
 `FLEZHA_QUIC_LISTEN_ADDRESS`.
@@ -175,7 +175,7 @@ attached to it: [`kubernetes.md`](kubernetes.md).
 Elixir SDK's in-node mode is a function call:
 
 ```elixir
-children = [{Flezha.SDK, namespace: "default", operators: [MyOperator], transport: :native}]
+children = [{Flezha.SDK, namespace: "default", relays: [MyRelay], transport: :native}]
 ```
 
 `:native` is the default, and it is deliberately not taken from the
@@ -239,7 +239,7 @@ The namespace follows `--`: `cargo run --release -- my_app`.
 $ npm install && node runner.mjs
 ```
 
-Start it from the example's folder, because the operator's module specifier
+Start it from the example's folder, because the relay's module specifier
 resolves against the working directory. The first argument is the namespace.
 
 ### Python
@@ -311,14 +311,14 @@ already running. Serving two namespaces means two processes.
 
 Two runner processes in the same namespace, on one machine, are an ordinary
 way to spread the work, but each needs an identity file of its own. The
-controller binds operators to a runner's durable identity, which the runner
+controller binds relays to a runner's durable identity, which the runner
 reads from `FLEZHA_RUNNER_ID_PATH`, `/var/lib/flezha-runner/id` by default.
 Two processes reading one file present one identity, and the newer one takes
 the older one's work. Give each process its own path, or run them in
 containers, where the default path is separate already.
 
-The identity is also what lets a restarted runner pick its operators back up:
-it presents the same identity, and the controller binds the operators it held
+The identity is also what lets a restarted runner pick its relays back up:
+it presents the same identity, and the controller binds the relays it held
 onto it again.
 
 ## Limits and gotchas
@@ -328,8 +328,8 @@ onto it again.
 - **Short paths.** The socket directory is capped at 60 bytes.
 - **Different users need a shared group** (`FLEZHA_SOCKET_DIR_GROUP`); the
   directory is not opened wider than `0750`.
-- **A runner that connects runs nothing yet.** Operators are started
-  separately ([`running_operators.md`](../basics/running_operators.md)).
+- **A runner that connects runs nothing yet.** Relays are started
+  separately ([`running_relays.md`](../basics/running_relays.md)).
 
 ## See also
 

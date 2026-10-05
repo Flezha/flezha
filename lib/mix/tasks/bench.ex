@@ -1,25 +1,25 @@
 defmodule Mix.Tasks.Bench do
   use Mix.Task
   alias Flezha.Config
-  alias Flezha.Service.OperatorManager
+  alias Flezha.Service.RelayManager
   alias Flezha.Service.PluginManager
   alias Mix.Tasks.Bench.Fleet
   alias Mix.Tasks.Bench.Report
 
-  @shortdoc "Run performance tests for Flezha operators"
+  @shortdoc "Run performance tests for Flezha relays"
   @moduledoc """
-  Run performance tests for Flezha operators.
+  Run performance tests for Flezha relays.
 
   ## Usage
 
-      mix bench --num-operators 1000 --messages-per-operator 1000
+      mix bench --num-relays 1000 --messages-per-relay 1000
       mix bench --runtime java -n 100 -m 1000
       mix bench --runtime rust --shape cell --pool-sizes 1,8
 
   ## Options
 
-    * `--num-operators` / `-n` - Number of operators to create (default: 100)
-    * `--messages-per-operator` / `-m` - Number of messages to send per operator (default: 100)
+    * `--num-relays` / `-n` - Number of relays to create (default: 100)
+    * `--messages-per-relay` / `-m` - Number of messages to send per relay (default: 100)
     * `--runtime` / `-r` - Which SDK to benchmark: `rust` (default), or any
       other SDK with a test-app manifest. Each is launched from that manifest
       (`test/apps/<runtime>_runner/conformance.json`, `bench` profile), which
@@ -30,7 +30,7 @@ defmodule Mix.Tasks.Bench do
       fixed at `8 × 20_000` so the numbers stay comparable across runs, swept
       across the comma-list in
       `--pool-sizes`), `dynamic` (the dynamic cell-mode shape, factory
-      `dynamic_cell`, lazy per-key Cells with 8 keys/operator,
+      `dynamic_cell`, lazy per-key Cells with 8 keys/relay,
       dimensions from `-n` / `-m`), `tier` (the effectively-once tier, factory
       `tier_store`, keyed like `dynamic`), or `sleeping` (a persistent stream
       that sleeps when idle, factory `sleeping_counter`, keyed like `dynamic`).
@@ -38,12 +38,12 @@ defmodule Mix.Tasks.Bench do
       only honored when `--shape cell`. Each value spawns a fresh
       Rust runner binary with `FLEZHA_WORKER_POOL_SIZE=<N>` and
       reports throughput per-size; the scaling ratio is carried in the report.
-    * `--warmup` / `-w` - Untimed messages per operator sent (and their
+    * `--warmup` / `-w` - Untimed messages per relay sent (and their
       responses drained) before the measured phase, so one-time runner
       cold-start — class loading, JIT, lazy codec init — stays out of the
       numbers (default: 10, `0` disables).
     * `--hook-url` - Enable the `hook_webhook` controller plugin, with every
-      hook, against this URL in the bench namespace before the operators
+      hook, against this URL in the bench namespace before the relays
       start, so the run carries the hook path's cost.
 
   ## Comparing SDKs
@@ -75,8 +75,8 @@ defmodule Mix.Tasks.Bench do
   @bench_namespace "bench"
 
   @switches [
-    num_operators: :integer,
-    messages_per_operator: :integer,
+    num_relays: :integer,
+    messages_per_relay: :integer,
     runtime: :string,
     shape: :string,
     pool_sizes: :string,
@@ -85,8 +85,8 @@ defmodule Mix.Tasks.Bench do
   ]
 
   @aliases [
-    n: :num_operators,
-    m: :messages_per_operator,
+    n: :num_relays,
+    m: :messages_per_relay,
     r: :runtime,
     w: :warmup
   ]
@@ -99,17 +99,17 @@ defmodule Mix.Tasks.Bench do
     pool_sizes = parse_pool_sizes(opts[:pool_sizes])
     warmup = max(opts[:warmup] || 10, 0)
 
-    {num_operators, messages_per_operator} = dimensions_for_shape(shape, opts)
+    {num_relays, messages_per_relay} = dimensions_for_shape(shape, opts)
 
     Process.put(:bench_runtime, runtime)
     Process.put(:bench_hook_url, opts[:hook_url])
 
-    open_report(runtime, shape, pool_sizes, warmup, {num_operators, messages_per_operator})
+    open_report(runtime, shape, pool_sizes, warmup, {num_relays, messages_per_relay})
 
     # A run killed mid-flight (a timeout, Ctrl-C) never reaches the `after`
-    # block, so its operators stay in the hub's declared set and their state
+    # block, so its relays stay in the hub's declared set and their state
     # dirs stay on disk. The convergence loop then spends every later run trying
-    # to restore dead operators, which slows operator creation and quietly
+    # to restore dead relays, which slows relay creation and quietly
     # skews the numbers. `@bench_namespace` is this task's own scratch namespace,
     # so reset it before the controller boots and can restore anything. The
     # `default` namespace is left alone — it may hold runners this task reuses.
@@ -120,14 +120,14 @@ defmodule Mix.Tasks.Bench do
 
     case shape do
       :cell ->
-        run_cell_shape(num_operators, messages_per_operator, pool_sizes, warmup)
+        run_cell_shape(num_relays, messages_per_relay, pool_sizes, warmup)
 
       shape ->
-        run_default_shape(runtime, num_operators, messages_per_operator, shape, warmup)
+        run_default_shape(runtime, num_relays, messages_per_relay, shape, warmup)
     end
   end
 
-  defp open_report(runtime, shape, pool_sizes, warmup, {num_operators, messages_per_operator}) do
+  defp open_report(runtime, shape, pool_sizes, warmup, {num_relays, messages_per_relay}) do
     Report.open(
       "mix bench",
       [
@@ -137,9 +137,9 @@ defmodule Mix.Tasks.Bench do
         {"transport", to_string(Config.get(:transport))},
         {"shape", to_string(shape)},
         {"durability", durability_backend()},
-        {"operators", to_string(num_operators)},
-        {"messages/operator", to_string(messages_per_operator)},
-        {"warmup/operator", to_string(warmup)}
+        {"relays", to_string(num_relays)},
+        {"messages/relay", to_string(messages_per_relay)},
+        {"warmup/relay", to_string(warmup)}
       ] ++
         if(shape == :cell, do: [{"pool sizes", Enum.join(pool_sizes, ",")}], else: []) ++
         [{"mix env", to_string(Mix.env())}]
@@ -152,7 +152,7 @@ defmodule Mix.Tasks.Bench do
   # The keyed shapes reuse the same harness with their own factory and keyed
   # inputs (see `input_for_shape/3`).
 
-  defp run_default_shape(runtime, num_operators, messages_per_operator, shape, warmup) do
+  defp run_default_shape(runtime, num_relays, messages_per_relay, shape, warmup) do
     namespace =
       cond do
         runtime != :rust ->
@@ -171,7 +171,7 @@ defmodule Mix.Tasks.Bench do
       Report.emit(%{durability: durability_backend()})
 
       metrics =
-        run_performance_test(namespace, num_operators, messages_per_operator, shape, warmup)
+        run_performance_test(namespace, num_relays, messages_per_relay, shape, warmup)
 
       Report.finish(report_name(shape), %{metrics: metrics})
     after
@@ -183,7 +183,7 @@ defmodule Mix.Tasks.Bench do
 
   # ----- Shape: cell (new — sweeps pool sizes, emits scaling summary) -----
 
-  defp run_cell_shape(num_operators, messages_per_operator, pool_sizes, warmup) do
+  defp run_cell_shape(num_relays, messages_per_relay, pool_sizes, warmup) do
     results =
       Enum.map(pool_sizes, fn pool ->
         # Always bring up a fresh bench namespace per pool size — the default
@@ -198,8 +198,8 @@ defmodule Mix.Tasks.Bench do
           metrics =
             run_performance_test(
               @bench_namespace,
-              num_operators,
-              messages_per_operator,
+              num_relays,
+              messages_per_relay,
               :cell,
               warmup
             )
@@ -290,7 +290,7 @@ defmodule Mix.Tasks.Bench do
   defp factory_for_shape(:sleeping), do: "sleeping_counter"
 
   defp dimensions_for_shape(:cell, opts) do
-    if opts[:num_operators] || opts[:messages_per_operator] do
+    if opts[:num_relays] || opts[:messages_per_relay] do
       IO.warn(
         "--shape cell ignores -n/-m; dimensions are fixed at 8 × 20_000 so the " <>
           "numbers stay comparable across runs. Use --shape regression for " <>
@@ -302,24 +302,24 @@ defmodule Mix.Tasks.Bench do
   end
 
   defp dimensions_for_shape(_shape, opts) do
-    {opts[:num_operators] || 100, opts[:messages_per_operator] || 100}
+    {opts[:num_relays] || 100, opts[:messages_per_relay] || 100}
   end
 
-  defp run_performance_test(namespace, num_operators, test_messages_per_operator, shape, warmup) do
+  defp run_performance_test(namespace, num_relays, test_messages_per_relay, shape, warmup) do
     factory = factory_for_shape(shape)
-    IO.puts("Starting #{num_operators} operators (factory=#{factory})...")
+    IO.puts("Starting #{num_relays} relays (factory=#{factory})...")
 
     enable_hooks(namespace, Process.get(:bench_hook_url))
-    {creation_us, operator_infos} = start_operators(namespace, factory, num_operators)
-    plugin_setup_us = enable_forwarders(namespace, operator_infos)
-    warmup_us = warmup_pass(operator_infos, shape, warmup)
+    {creation_us, relay_infos} = start_relays(namespace, factory, num_relays)
+    plugin_setup_us = enable_forwarders(namespace, relay_infos)
+    warmup_us = warmup_pass(relay_infos, shape, warmup)
 
-    total_messages = length(operator_infos) * test_messages_per_operator
+    total_messages = length(relay_infos) * test_messages_per_relay
 
-    IO.puts("Sending #{total_messages} inputs (#{test_messages_per_operator} per operator)...")
+    IO.puts("Sending #{total_messages} inputs (#{test_messages_per_relay} per relay)...")
 
     {send_us, _} =
-      :timer.tc(fn -> send_inputs(operator_infos, shape, test_messages_per_operator) end)
+      :timer.tc(fn -> send_inputs(relay_infos, shape, test_messages_per_relay) end)
 
     expected_responses = expected_responses(shape, total_messages)
 
@@ -328,7 +328,7 @@ defmodule Mix.Tasks.Bench do
 
     metrics =
       metrics(%{
-        operators: length(operator_infos),
+        relays: length(relay_infos),
         total_messages: total_messages,
         expected_responses: expected_responses,
         creation_us: creation_us,
@@ -340,7 +340,7 @@ defmodule Mix.Tasks.Bench do
 
     print_results(metrics, warmup)
 
-    OperatorManager.stop_all_operators(namespace)
+    RelayManager.stop_all_relays(namespace)
 
     if total_messages == 0 do
       exit("No messages were processed")
@@ -349,23 +349,23 @@ defmodule Mix.Tasks.Bench do
     metrics
   end
 
-  defp start_operators(namespace, factory, num_operators) do
+  defp start_relays(namespace, factory, num_relays) do
     {elapsed, infos} =
       :timer.tc(fn ->
-        Flezha.Parallel.map(1..num_operators, fn i ->
-          operator_id = "flow_test_#{i}"
+        Flezha.Parallel.map(1..num_relays, fn i ->
+          relay_id = "flow_test_#{i}"
 
-          operator = %Flezha.Operator.Builder{
-            id: operator_id,
+          relay = %Flezha.Relay.Builder{
+            id: relay_id,
             factory_id: factory
           }
 
-          case OperatorManager.start_operator(namespace, operator) do
+          case RelayManager.start_relay(namespace, relay) do
             {:ok, info} ->
-              {operator_id, info}
+              {relay_id, info}
 
             error ->
-              IO.puts("Failed to start operator #{operator_id}: #{inspect(error)}")
+              IO.puts("Failed to start relay #{relay_id}: #{inspect(error)}")
               nil
           end
         end)
@@ -377,7 +377,7 @@ defmodule Mix.Tasks.Bench do
     # and reports a timeout instead of the refusal that actually stopped it.
     if infos == [] do
       Mix.raise(
-        "no operators started — every start was refused. The refusal is logged above; " <>
+        "no relays started — every start was refused. The refusal is logged above; " <>
           "a placement refusal naming an sdk_lang means this namespace's factory state " <>
           "disagrees with the runners you started."
       )
@@ -401,18 +401,18 @@ defmodule Mix.Tasks.Bench do
       })
   end
 
-  defp enable_forwarders(namespace, operator_infos) do
+  defp enable_forwarders(namespace, relay_infos) do
     recv_pid = self()
 
     {elapsed, _} =
       :timer.tc(fn ->
-        Flezha.Parallel.map(operator_infos, fn {operator_id, _info} ->
+        Flezha.Parallel.map(relay_infos, fn {relay_id, _info} ->
           PluginManager.enable_plugin(
-            operator_id <> "_beam_msg_forward",
+            relay_id <> "_beam_msg_forward",
             %Flezha.Plugin{
-              id: operator_id <> "_beam_msg_forward",
+              id: relay_id <> "_beam_msg_forward",
               namespace: namespace,
-              operator_id: operator_id,
+              relay_id: relay_id,
               provider: Flezha.Plugin.Provider.BeamMsgForward,
               opts: %{recv_pid: recv_pid},
               hooks: [{:on_output, []}]
@@ -420,11 +420,11 @@ defmodule Mix.Tasks.Bench do
           )
 
           PluginManager.enable_plugin(
-            operator_id <> "_stdout_plugin",
+            relay_id <> "_stdout_plugin",
             %Flezha.Plugin{
-              id: operator_id <> "_stdout_plugin",
+              id: relay_id <> "_stdout_plugin",
               namespace: namespace,
-              operator_id: operator_id,
+              relay_id: relay_id,
               provider: Flezha.Plugin.Provider.StdOut,
               opts: %{},
               hooks: []
@@ -436,14 +436,14 @@ defmodule Mix.Tasks.Bench do
     elapsed
   end
 
-  defp warmup_pass(_operator_infos, _shape, warmup) when warmup <= 0, do: nil
+  defp warmup_pass(_relay_infos, _shape, warmup) when warmup <= 0, do: nil
 
-  defp warmup_pass(operator_infos, shape, warmup) do
-    warmup_total = length(operator_infos) * warmup
+  defp warmup_pass(relay_infos, shape, warmup) do
+    warmup_total = length(relay_infos) * warmup
 
     {elapsed, _} =
       :timer.tc(fn ->
-        send_inputs(operator_infos, shape, warmup)
+        send_inputs(relay_infos, shape, warmup)
         await_responses(expected_responses(shape, warmup_total), "warmup")
       end)
 
@@ -458,10 +458,10 @@ defmodule Mix.Tasks.Bench do
     end_to_end_us = w.send_us + w.receive_us
 
     %{
-      operators: w.operators,
+      relays: w.relays,
       inputs_dispatched: w.total_messages,
       responses_received: w.expected_responses,
-      operator_creation_ms: rounded_ms(w.creation_us),
+      relay_creation_ms: rounded_ms(w.creation_us),
       plugin_setup_ms: rounded_ms(w.plugin_setup_us),
       warmup_ms: w.warmup_us && rounded_ms(w.warmup_us),
       send_ms: rounded_ms(w.send_us),
@@ -483,7 +483,7 @@ defmodule Mix.Tasks.Bench do
     Report.section(
       "totals",
       Report.kv([
-        {"operators", Integer.to_string(m.operators)},
+        {"relays", Integer.to_string(m.relays)},
         {"inputs dispatched", Report.rate(m.inputs_dispatched)},
         {"responses received", Report.rate(m.responses_received)}
       ])
@@ -515,11 +515,11 @@ defmodule Mix.Tasks.Bench do
   defp phases_section(m, warmup) do
     phases =
       [
-        {"operator creation", m.operator_creation_ms, ""},
+        {"relay creation", m.relay_creation_ms, ""},
         {"plugin setup", m.plugin_setup_ms, ""}
       ] ++
         if(m.warmup_ms,
-          do: [{"warmup", m.warmup_ms, "#{warmup}/operator, excluded from the windows below"}],
+          do: [{"warmup", m.warmup_ms, "#{warmup}/relay, excluded from the windows below"}],
           else: []
         ) ++
         [
@@ -537,12 +537,12 @@ defmodule Mix.Tasks.Bench do
     )
   end
 
-  defp send_inputs(operator_infos, shape, messages_per_operator) do
-    Enum.each(operator_infos, fn {operator_id, %{pid: operator_pid}} ->
-      for msg_num <- 1..messages_per_operator do
+  defp send_inputs(relay_infos, shape, messages_per_relay) do
+    Enum.each(relay_infos, fn {relay_id, %{pid: relay_pid}} ->
+      for msg_num <- 1..messages_per_relay do
         GenServer.cast(
-          operator_pid,
-          {:io_in, input_for_shape(shape, operator_id, msg_num), %{}}
+          relay_pid,
+          {:io_in, input_for_shape(shape, relay_id, msg_num), %{}}
         )
       end
     end)
@@ -576,15 +576,15 @@ defmodule Mix.Tasks.Bench do
   defp expected_responses(_shape, total_messages), do: total_messages
 
   # Per-shape wire input. The keyed shapes prefix a bounded key (`k0`..`k7`)
-  # so a steady burst exercises 8 Cells per operator without tripping the
+  # so a steady burst exercises 8 Cells per relay without tripping the
   # dynamic soft cap; `sleeping_counter` folds the value as an integer delta.
-  defp input_for_shape(:sleeping, _operator_id, msg_num), do: "k#{rem(msg_num, 8)}:1"
+  defp input_for_shape(:sleeping, _relay_id, msg_num), do: "k#{rem(msg_num, 8)}:1"
 
-  defp input_for_shape(shape, operator_id, msg_num) when shape in [:dynamic, :tier] do
-    "k#{rem(msg_num, 8)}:test_msg_#{operator_id}_#{msg_num}"
+  defp input_for_shape(shape, relay_id, msg_num) when shape in [:dynamic, :tier] do
+    "k#{rem(msg_num, 8)}:test_msg_#{relay_id}_#{msg_num}"
   end
 
-  defp input_for_shape(_shape, operator_id, msg_num) do
-    "test_msg_#{operator_id}_#{msg_num}"
+  defp input_for_shape(_shape, relay_id, msg_num) do
+    "test_msg_#{relay_id}_#{msg_num}"
   end
 end

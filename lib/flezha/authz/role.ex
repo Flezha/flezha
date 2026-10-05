@@ -13,12 +13,12 @@ defmodule Flezha.AuthZ.Role do
   connection proved. Its set is a strict subset of `ops`, which
   additionally carries actions that destroy a record or move work.
 
-  `spawner` is for the same identity and grants less: `operator.start` and
-  `operator.send` in its namespace, which a tasklet's `ctx.spawn_steps`
-  needs and which also open `Operator.start` and `Operator.send` on the
+  `spawner` is for the same identity and grants less: `relay.start` and
+  `relay.send` in its namespace, which a tasklet's `ctx.spawn_steps`
+  needs and which also open `Relay.start` and `Relay.send` on the
   administration surface; no stop and no plugin verbs.
 
-  `stopper` is the other half of that pair: `operator.stop` in its namespace
+  `stopper` is the other half of that pair: `relay.stop` in its namespace
   and nothing else, so an application that starts and stops its own work holds
   `spawner` and `stopper` and still enables no plugin.
   """

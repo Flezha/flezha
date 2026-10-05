@@ -1,7 +1,7 @@
 # grouped-hashing-distribution Specification
 
 ## Purpose
-TBD - created by archiving change place-an-operator-among-the-controllers-that-run-its-factory. Update Purpose after archive.
+TBD - created by archiving change place-a-relay-among-the-controllers-that-run-its-factory. Update Purpose after archive.
 ## Requirements
 ### Requirement: A grouped child is placed only among the nodes that serve its group
 

@@ -18,7 +18,7 @@ the value and the type.
 1. [Transport and TLS](#transport-and-tls)
 2. [Cluster and nodes](#cluster-and-nodes)
 3. [State, WAL and durability](#state-wal-and-durability)
-4. [Runner and operator lifecycle](#runner-and-operator-lifecycle)
+4. [Runner and relay lifecycle](#runner-and-relay-lifecycle)
 5. [Resilience and convergence](#resilience-and-convergence)
 6. [Observability and audit](#observability-and-audit)
 7. [Security](#security)
@@ -112,7 +112,7 @@ Every variable of the area:
 | `FLEZHA_INPUT_LOG_HOLD_WINDOW_MS` | `0` | `:input_log_hold_window_ms`, a floor; a declared `correction_ms` raises its own hold above it |
 | `FLEZHA_CREDIT_FLOW_CONTROL` | `true` | `:credit_flow_control_enabled` |
 | `FLEZHA_RETENTION_CHECK_INTERVAL_MS` | `60000` | `:time_travel_retention_check_interval_ms` (not in test) |
-| `FLEZHA_STEPS_RETENTION_HOURS` | `72` | `:default_operator_completed_retention_hours` (not in test); how long the record and state of a finished instance are kept, a completed flow instance's as well as a steps one's |
+| `FLEZHA_STEPS_RETENTION_HOURS` | `72` | `:default_relay_completed_retention_hours` (not in test); how long the record and state of a finished instance are kept, a completed flow instance's as well as a steps one's |
 | `FLEZHA_DURABILITY_BACKEND` | `none` (prod warns when it was defaulted) | `:durability_tier[:backend]`; `none`, `postgres`, `s3`, `local_path`; any other spelling resolves to `none` and warns. A selected backend missing an option it cannot work without refuses the boot naming it. A class at `durable: local` ships to it asynchronously; one at `durable: remote` needs it and waits on it before each acknowledgement |
 | `FLEZHA_DURABILITY_WRITER_ID` | `node()` | read at runtime by `Flezha.State.DurabilityTier.writer_id/0`; the stable lineage-writer identity for a controller whose node name changes on reschedule |
 | `FLEZHA_DURABILITY_SHIP_INTERVAL_MS` | `30000` | `:durability_tier[:ship_interval_ms]` |
@@ -136,14 +136,14 @@ Every variable of the area:
 | `FLEZHA_DURABILITY_S3_REGION` | `us-east-1` | `backend_opts[:region]` for `s3` |
 | `FLEZHA_DURABILITY_S3_PREFIX` | `flezha` | `backend_opts[:prefix]` for `s3` |
 
-## Runner and operator lifecycle
+## Runner and relay lifecycle
 
 | Variable | Default | Sets / notes |
 |---|---|---|
 | `FLEZHA_RUNNER_KEEPALIVE` | `30000` | `:runner_keepalive`; how long a disconnected runner is kept before removal, `0` removes at once |
 | `FLEZHA_RUNNER_RETIRING_MARK_TTL_MS` | `30000` | `:runner_retiring_mark_ttl_ms`; how long a controller-initiated disconnect stays marked, so the close it produces is reported as expected rather than as an incident. A runner id is reused across reconnects, so the mark expires: past this window a close is diagnosed as unexpected again |
-| `FLEZHA_GROUP_WITHDRAW_GRACE_MS` | `5000` | `:group_withdraw_grace_ms`; how long this controller keeps declaring a factory to the namespace hub after its last runner for it goes. A runner back inside the grace moves no operator; past it the hub reassigns them to a controller that still runs the factory. A disconnect the controller asked for skips the grace |
-| `FLEZHA_PLACEMENT_LOAD_CAP_PERCENT` | `100` | `:placement_load_cap_percent`; the fairness cap on runner selection, as a percentage of the candidate set's fair share. At `100` the cap is exactly the fair share, so a namespace holding fewer operators than it has runners still uses all of them; a value high enough that no candidate reaches the cap is plain rendezvous hashing |
+| `FLEZHA_GROUP_WITHDRAW_GRACE_MS` | `5000` | `:group_withdraw_grace_ms`; how long this controller keeps declaring a factory to the namespace hub after its last runner for it goes. A runner back inside the grace moves no relay; past it the hub reassigns them to a controller that still runs the factory. A disconnect the controller asked for skips the grace |
+| `FLEZHA_PLACEMENT_LOAD_CAP_PERCENT` | `100` | `:placement_load_cap_percent`; the fairness cap on runner selection, as a percentage of the candidate set's fair share. At `100` the cap is exactly the fair share, so a namespace holding fewer relays than it has runners still uses all of them; a value high enough that no candidate reaches the cap is plain rendezvous hashing |
 | `FLEZHA_MIGRATION_CONSENT_TIMEOUT_MS` | `5000` | `:migration_consent[:consent_timeout_ms]` |
 | `FLEZHA_MIGRATION_RETRY_INTERVAL_MS` | `2000` | `:migration_consent[:retry_interval_ms]` |
 | `FLEZHA_MIGRATION_MAX_DEFER_MS` | unset → the graceful-shutdown timeout (derived) | `:migration_consent[:max_defer_ms]` |
@@ -153,14 +153,14 @@ Every variable of the area:
 | `FLEZHA_PROCESS_HUB_RECONCILE_INTERVAL_MS` | `30000` | `:process_hub_reconcile_interval_ms` (not in test) |
 | `FLEZHA_BOOT_REPLAY_TIMEOUT_MS` | `60000` | `:boot_replay_timeout_ms` (not in test) |
 | `FLEZHA_AUTO_RESTORE_ENABLED` | `true` | `:auto_restore_enabled` (not in test); true only for `true`/`1` |
-| `FLEZHA_CALL_PENDING_MAX` | `10000` | `:call_pending_max`; the answers one callee operator owes to the callers waiting on it, outside callers and operators alike. A call past it is refused `call.busy` before anything is ingested; an operator's own outbound calls never count against it, its own or a callee's |
-| `FLEZHA_CALL_RETENTION_MARGIN_MS` | `300000` | `:call_retention_margin_ms`; how long an input log keeps a record carrying an operator's call (the request in the callee's log, the `Response` in the caller's) past the call's deadline, so a request sent again is absorbed and a recovered caller finds its `Response`. A call whose caller was down past its deadline plus this margin is settled with no `Response` (`[:flezha, :call, :recovered_unanswered]`) |
-| `FLEZHA_LISTENER_PENDING_BYTES` | `4194304` | `:listener_pending_bytes`; the payload bytes one listener (`flz operator listen`, or a plugin through `Flezha.Service.Listener.listen/4`) holds that its handler has not taken. Parts are dropped oldest first to stay inside it; an output or a dead-letter notice that still does not fit ends the listener `listener.overrun` |
+| `FLEZHA_CALL_PENDING_MAX` | `10000` | `:call_pending_max`; the answers one callee relay owes to the callers waiting on it, outside callers and relays alike. A call past it is refused `call.busy` before anything is ingested; a relay's own outbound calls never count against it, its own or a callee's |
+| `FLEZHA_CALL_RETENTION_MARGIN_MS` | `300000` | `:call_retention_margin_ms`; how long an input log keeps a record carrying a relay's call (the request in the callee's log, the `Response` in the caller's) past the call's deadline, so a request sent again is absorbed and a recovered caller finds its `Response`. A call whose caller was down past its deadline plus this margin is settled with no `Response` (`[:flezha, :call, :recovered_unanswered]`) |
+| `FLEZHA_LISTENER_PENDING_BYTES` | `4194304` | `:listener_pending_bytes`; the payload bytes one listener (`flz relay listen`, or a plugin through `Flezha.Service.Listener.listen/4`) holds that its handler has not taken. Parts are dropped oldest first to stay inside it; an output or a dead-letter notice that still does not fit ends the listener `listener.overrun` |
 | `FLEZHA_LISTENER_PENDING_FRAMES` | `4096` | `:listener_pending_frames`; the frames one listener holds that its handler has not taken, with the same drops and the same end as `FLEZHA_LISTENER_PENDING_BYTES` |
 | `FLEZHA_PLUGIN_BACKLOG_BYTES` | `4194304` | `:plugin_backlog_bytes`; the bytes of the hook events one copy of a controller plugin has not run. An event that does not fit drops the oldest waiting ones, counted, the copy's health says `plugin_lagging`, and `flz plugin list` shows the controllers it lags on |
 | `FLEZHA_PLUGIN_BACKLOG_FRAMES` | `4096` | `:plugin_backlog_frames`; the hook events one copy of a controller plugin has not run, with the same drops as `FLEZHA_PLUGIN_BACKLOG_BYTES` |
-| `FLEZHA_PLUGIN_INGEST_WINDOW` | `64` | `:plugin_ingest_window`; the records of one batch a source hands over with `Flezha.Plugin.Host.inject_many/4` that wait for their verdicts at once; the next is sent as each answer arrives. Also the default window of `OperatorManager.send_io_confirming_many/5` |
-| `FLEZHA_PLUGIN_IDLE_STOP_MS` | `60000` | `:plugin_idle_stop_ms`; how long a plugin's running copy whose last operator on that controller went down or moved away waits for one to come back before it stops. A deliberate leave (an unbind, an operator stop) stops it at once; the plugin stays enabled either way |
+| `FLEZHA_PLUGIN_INGEST_WINDOW` | `64` | `:plugin_ingest_window`; the records of one batch a source hands over with `Flezha.Plugin.Host.inject_many/4` that wait for their verdicts at once; the next is sent as each answer arrives. Also the default window of `RelayManager.send_io_confirming_many/5` |
+| `FLEZHA_PLUGIN_IDLE_STOP_MS` | `60000` | `:plugin_idle_stop_ms`; how long a plugin's running copy whose last relay on that controller went down or moved away waits for one to come back before it stops. A deliberate leave (an unbind, a relay stop) stops it at once; the plugin stays enabled either way |
 
 ## Resilience and convergence
 
@@ -178,7 +178,7 @@ Every variable of the area:
 | `FLEZHA_CONVERGENCE_UNMET_INTENT_GRACE_MS` | `120000` | `:convergence_unmet_intent_grace_ms` (not in test) |
 | `FLEZHA_CONVERGENCE_CELL_STALL_MS` | `300000` | `:convergence_cell_stall_ms` (not in test) |
 | `FLEZHA_FABRIC_503_POLLS` | `3` | `:convergence_fabric_503_polls` (not in test); consecutive classifier polls reporting `driver_loop_frozen` / `nif_queue_backing_up` before `/healthz` answers 503; `0` disables the fabric 503 |
-| `FLEZHA_HEALTHZ_ENABLED` | `false` | `:healthz_enabled` (not in test); true only for `true`/`1`. The endpoint folds the convergence loop's verdict records: `degraded` names every reason it folded (`parked`, `dead_runner`, `plugin_unhealthy`, `output_stalled`, `intent_mismatch`, `sensor_stale`, `data_plane_wedged`, joined with `+`), and the body carries `unknown_operators` |
+| `FLEZHA_HEALTHZ_ENABLED` | `false` | `:healthz_enabled` (not in test); true only for `true`/`1`. The endpoint folds the convergence loop's verdict records: `degraded` names every reason it folded (`parked`, `dead_runner`, `plugin_unhealthy`, `output_stalled`, `intent_mismatch`, `sensor_stale`, `data_plane_wedged`, joined with `+`), and the body carries `unknown_relays` |
 | `FLEZHA_HEALTHZ_PORT` | `9569` | `:healthz_port` (not in test) |
 | `FLEZHA_HEALTHZ_BIND` | `0.0.0.0` | `:healthz_bind` (not in test) |
 | `FLEZHA_DATA_PLANE_LIVENESS` | `true` | `:observability[:data_plane_liveness]`; `false` drops the driver poll and the stall classifier, the counters stay |

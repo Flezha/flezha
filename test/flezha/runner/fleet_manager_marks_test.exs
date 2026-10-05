@@ -33,14 +33,14 @@ defmodule FlezhaTest.Runner.FleetManagerMarksTest do
 
   @doc false
   def forward_stall(_event, _measurements, meta, dest),
-    do: send(dest, {:output_stall, meta.operator_instance})
+    do: send(dest, {:output_stall, meta.relay_instance})
 
-  defp start_channel(operator_id) do
+  defp start_channel(relay_id) do
     runner_id = "exec_rc_#{System.unique_integer([:positive])}"
     name = :"rc_#{System.unique_integer([:positive])}"
 
     {:ok, pid} = StreamChannel.start_link({runner_id, name, :primary})
-    :ok = GenServer.call(name, {:operator_pid_update, operator_id, [self()]})
+    :ok = GenServer.call(name, {:relay_pid_update, relay_id, [self()]})
 
     {runner_id, name, pid}
   end
@@ -74,10 +74,10 @@ defmodule FlezhaTest.Runner.FleetManagerMarksTest do
   end
 
   test "an unmarked close is an incident; a marked one is not" do
-    operator_id = "op_rc_#{System.unique_integer([:positive])}"
+    relay_id = "op_rc_#{System.unique_integer([:positive])}"
 
-    {_runner_a, name_a, pid_a} = start_channel(operator_id)
-    {runner_b, name_b, pid_b} = start_channel(operator_id)
+    {_runner_a, name_a, pid_a} = start_channel(relay_id)
+    {runner_b, name_b, pid_b} = start_channel(relay_id)
 
     {log_a, stalled_a, published_a} = close(name_a, pid_a)
 
@@ -101,8 +101,8 @@ defmodule FlezhaTest.Runner.FleetManagerMarksTest do
   end
 
   test "an expired mark reports as unexpected" do
-    operator_id = "op_rc_#{System.unique_integer([:positive])}"
-    {runner_id, name, pid} = start_channel(operator_id)
+    relay_id = "op_rc_#{System.unique_integer([:positive])}"
+    {runner_id, name, pid} = start_channel(relay_id)
 
     # A mark that outlived its disconnect must not silence the diagnosis of a
     # later, genuine close: `runner_id` is a durable identity reused across
@@ -170,7 +170,7 @@ defmodule FlezhaTest.Runner.FleetManagerMarksTest do
       assert Marks.identity_of(session) == session
     end
 
-    test "a refusal is first once per session and operator, until the session is forgotten",
+    test "a refusal is first once per session and relay, until the session is forgotten",
          %{session: session} do
       assert Marks.first_refusal?(session, "op-1")
       refute Marks.first_refusal?(session, "op-1")

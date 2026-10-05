@@ -497,7 +497,7 @@ defmodule Flezha.Plugin.Provider.Websocket.Subscription do
   end
 
   # The applied set is written to the plugin cspec — the same record the enable
-  # lives in — so a plugin restart, an operator handover and a controller
+  # lives in — so a plugin restart, a relay handover and a controller
   # restart all resume with what the socket actually holds. Written after the
   # commit, so a crash between send and acknowledgement degrades to a re-send
   # rather than to a subscription nobody remembers.

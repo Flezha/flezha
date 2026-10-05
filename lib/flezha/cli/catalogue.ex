@@ -22,7 +22,7 @@ defmodule Flezha.Service do
     Flezha.Service.Fleet,
     Flezha.Service.Namespace,
     Flezha.Service.Observability,
-    Flezha.Service.Operator,
+    Flezha.Service.Relay,
     Flezha.Service.PluginManager,
     Flezha.Service.Schedule,
     Flezha.Service.Steps

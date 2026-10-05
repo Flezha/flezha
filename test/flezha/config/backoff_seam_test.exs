@@ -152,7 +152,7 @@ defmodule Flezha.Config.BackoffSeamTest do
       commit = File.read!("flz_core/src/steps/commit.rs")
       liveness = File.read!("flz_transport/src/transport/liveness.rs")
       shutdown = File.read!("flz_core/src/shutdown.rs")
-      sleep = File.read!("flz_core/src/operator/sleep.rs")
+      sleep = File.read!("flz_core/src/relay/sleep.rs")
 
       retry = Knob.ladder(:sdk_retry)
       reconnect = Knob.ladder(:sdk_reconnect)

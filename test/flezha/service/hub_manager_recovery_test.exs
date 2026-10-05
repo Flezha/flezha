@@ -8,7 +8,7 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
     * every boot runs a reconcile round and reaches `:normal`, so
       `await_recovery_complete/1` returns without user action —
       there is no marker to arm;
-    * a warm restart against a surviving registry replays the operator
+    * a warm restart against a surviving registry replays the relay
       list and rebinds it;
     * `await_recovery_complete/2` blocks on a missing :complete event
       and times out cleanly.
@@ -27,13 +27,13 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
 
   alias Flezha.Convergence.Snapshot, as: ConvergenceSnapshot
   alias Flezha.Identificator
-  alias Flezha.Operator.Builder
-  alias Flezha.Operator.Overwatch
+  alias Flezha.Relay.Builder
+  alias Flezha.Relay.Overwatch
   alias Flezha.Plugin
   alias Flezha.Process.Cspec
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.HubManager
-  alias Flezha.Service.OperatorManager
+  alias Flezha.Service.RelayManager
   alias Flezha.Service.PluginManager
   alias Flezha.State.DurabilityTier.DeclaredManifest
   alias Flezha.State.TestHelpers
@@ -76,32 +76,32 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
     assert {:error, :unknown_hub} = HubManager.recovery_state(hub_id)
   end
 
-  # fails when: a warm restart leaves a persisted operator listed but
+  # fails when: a warm restart leaves a persisted relay listed but
   # `(unplaced)` — bound to the previous boot's dead pid, invisible to the
   # convergence reconciler, producing no data until the user re-declares it.
-  test "recovery replay rebinds a persisted operator even when no runner is placeable" do
+  test "recovery replay rebinds a persisted relay even when no runner is placeable" do
     # Zero budget removes every timing dependency: the hook gets exactly one
     # lookup, which cannot succeed because no runner is ever seeded.
     on_exit(TestHelpers.override_env(:hub_runner_assign_wait_ms, 0))
 
     hub_id = Identificator.hub(@namespace)
-    operator_id = "replay_no_runner_op"
+    relay_id = "replay_no_runner_op"
 
-    replay_hub(hub_id, [{operator_id, "market"}])
+    replay_hub(hub_id, [{relay_id, "market"}])
 
-    assert await_bound_node(hub_id, operator_id, 10_000) == node(),
-           "recovery replay left #{operator_id} bound to a dead pid — `flz operator list` renders it as (unplaced)"
+    assert await_bound_node(hub_id, relay_id, 10_000) == node(),
+           "recovery replay left #{relay_id} bound to a dead pid — `flz relay list` renders it as (unplaced)"
 
     # The recorded runner is kept rather than the batch dying. It is not a
     # binding: a real Overwatch re-resolves the runner, finds none, and is held
     # unbound until the convergence loop binds it to one that connects.
-    assert registry_tag(ProcessRegistry.dump(hub_id), operator_id) == @recorded_runner
+    assert registry_tag(ProcessRegistry.dump(hub_id), relay_id) == @recorded_runner
   end
 
-  # fails when: one operator whose factory no runner advertises drags the whole
+  # fails when: one relay whose factory no runner advertises drags the whole
   # replay batch past `cross_node_request_timeout`, so WorkerQueue kills the
   # request and every row in it — placeable or not — keeps its dead pid.
-  test "unplaceable operators do not strand the rest of the replay batch" do
+  test "unplaceable relays do not strand the rest of the replay batch" do
     # 800ms × 3 unplaceable children takes 2.4s if the wait is per-child;
     # shared, the whole batch waits 800ms once.
     budget = 800
@@ -122,9 +122,9 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
 
     elapsed = replay_hub(hub_id, rows)
 
-    for {operator_id, _factory} <- rows do
-      assert await_bound_node(hub_id, operator_id, 15_000) == node(),
-             "#{operator_id} kept its dead pid — the start request was killed before update_registry"
+    for {relay_id, _factory} <- rows do
+      assert await_bound_node(hub_id, relay_id, 15_000) == node(),
+             "#{relay_id} kept its dead pid — the start request was killed before update_registry"
     end
 
     # The reconcile round that does the placement only starts once the grace
@@ -138,33 +138,33 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
     dump = ProcessRegistry.dump(hub_id)
     assert registry_tag(dump, placeable) == @seeded_runner
 
-    for operator_id <- unplaceable do
-      assert registry_tag(dump, operator_id) == @recorded_runner
+    for relay_id <- unplaceable do
+      assert registry_tag(dump, relay_id) == @recorded_runner
     end
   end
 
   # fails when: the reconcile replays a declaration whose start args name no
-  # runner — the only shape a real operator start ever declares — and the alter
+  # runner — the only shape a real relay start ever declares — and the alter
   # hook raises instead of degrading. The raise runs inside the hub's shared
   # WorkerQueue, so it takes the worker down with the whole batch, the
   # coordinator's pending work count never comes back, and the next round does
   # it again.
   test "a declaration that records no runner replays without raising" do
     hub_id = Identificator.hub(@namespace)
-    operator_id = "declared_no_recorded_runner_op"
+    relay_id = "declared_no_recorded_runner_op"
 
     seed_runner(@seeded_runner, "market")
     {:ok, _} = HubRegistryTestHelper.ensure_hub(@namespace)
     assert :ok = HubManager.await_recovery_complete([hub_id], 5_000)
 
-    # The shape `OperatorManager.Init.start_child/2` submits: no runner
+    # The shape `RelayManager.Init.start_child/2` submits: no runner
     # position at all. The declared entry commits before the alter hook runs and
     # the hook's rewrite only ever reaches the registry row, so this is the shape
     # every later reconcile replays.
-    :ok = HubRegistryTestHelper.start_durable(@namespace, operator_id, recorded_runner: nil)
+    :ok = HubRegistryTestHelper.start_durable(@namespace, relay_id, recorded_runner: nil)
 
-    assert declared_start_arg(operator_id) ==
-             {@namespace, %{id: operator_id, factory_id: "market"}}
+    assert declared_start_arg(relay_id) ==
+             {@namespace, %{id: relay_id, factory_id: "market"}}
 
     # The runner's session goes but the fleet still advertises `market`, so this
     # controller still serves the factory's group and the hub still places the
@@ -177,20 +177,20 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
     {bound_node, log} =
       ExUnit.CaptureLog.with_log(fn ->
         restart_hub(hub_id)
-        await_bound_node(hub_id, operator_id, 10_000)
+        await_bound_node(hub_id, relay_id, 10_000)
       end)
 
     refute log =~ "No active compute engines available",
            "the reconcile replay still raises, which kills the hub's shared WorkerQueue"
 
     assert bound_node == node(),
-           "the replay never placed #{operator_id} — the alter hook took the start request with it"
+           "the replay never placed #{relay_id} — the alter hook took the start request with it"
 
-    # The tag is what the hook wrote: nothing owns the operator. A real
+    # The tag is what the hook wrote: nothing owns the relay. A real
     # Overwatch would then be held unbound until the convergence loop binds it;
     # `StubChild` stands still instead, which is what keeps this test about the
     # hook and the batch.
-    assert registry_tag(ProcessRegistry.dump(hub_id), operator_id) == nil
+    assert registry_tag(ProcessRegistry.dump(hub_id), relay_id) == nil
 
     assert NodeTestHelper.wait_until(
              fn -> :sys.get_state(hub_id).pending_work_count == 0 end,
@@ -201,12 +201,12 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
 
   # fails when: a binding a user made is erased by the very restart it was
   # written to survive. The bind writes the hub's registry row; the reconcile
-  # round starts the operator from the DECLARED entry, whose spec was committed
-  # at `flz operator start` and carries no bindings, and that start writes its
+  # round starts the relay from the DECLARED entry, whose spec was committed
+  # at `flz relay start` and carries no bindings, and that start writes its
   # own spec into the row verbatim.
   test "a restart-driven start does not erase a binding" do
     hub_id = Identificator.hub(@namespace)
-    operator_id = "plugin_survives_restart_op"
+    relay_id = "plugin_survives_restart_op"
     name = "plugin_survives_restart_plugin"
 
     seed_runner(@seeded_runner, "market")
@@ -214,41 +214,41 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
     assert :ok = HubManager.await_recovery_complete([hub_id], 5_000)
 
     :ok =
-      HubRegistryTestHelper.start_durable(@namespace, operator_id,
+      HubRegistryTestHelper.start_durable(@namespace, relay_id,
         recorded_runner: nil,
         opts: []
       )
 
-    assert {:ok, _} = PluginManager.enable_plugin(name, plugin(operator_id, name))
+    assert {:ok, _} = PluginManager.enable_plugin(name, plugin(relay_id, name))
 
-    assert {:ok, [{^name, %Plugin{}}]} = HubManager.operator_bindings(@namespace, operator_id),
+    assert {:ok, [{^name, %Plugin{}}]} = HubManager.relay_bindings(@namespace, relay_id),
            "the bind did not reach a durable record at all"
 
     restart_hub(hub_id)
-    assert await_bound_node(hub_id, operator_id, 10_000) == node()
+    assert await_bound_node(hub_id, relay_id, 10_000) == node()
 
     # What a restored Overwatch would bring up: `Lifecycle.complete_init/4`
-    # hands `operator.opts[:bindings]` from its own start argument to
+    # hands `relay.opts[:bindings]` from its own start argument to
     # `Plugins.prepare/2`, and that list IS the extension table it builds.
-    refute started_plugins(hub_id, operator_id) == [],
-           "binding list empty after restart: the restored operator was started " <>
+    refute started_plugins(hub_id, relay_id) == [],
+           "binding list empty after restart: the restored relay was started " <>
              "from a declared spec that carries no bindings"
 
     # The convergence I2 backstop reads this. A fix that repaired only the
     # started spec would leave the backstop blind to any later divergence.
-    assert {:ok, [{^name, %Plugin{}}]} = HubManager.operator_bindings(@namespace, operator_id),
+    assert {:ok, [{^name, %Plugin{}}]} = HubManager.relay_bindings(@namespace, relay_id),
            "the bindings the convergence backstop reads are empty after a restart"
 
     # The plugin itself is declared intent of its own and survives with them.
     assert {:ok, %Plugin{id: ^name}} = HubManager.plugin_entry(@namespace, name)
   end
 
-  # fails when: an unbind reaches only the live operator and the declared entry
+  # fails when: an unbind reaches only the live relay and the declared entry
   # keeps the binding, so the next restart switches back on what a user
   # deliberately switched off, and nothing short of a second unbind stops it.
   test "a restart-driven start does not resurrect an unbound binding" do
     hub_id = Identificator.hub(@namespace)
-    operator_id = "plugin_disabled_before_restart_op"
+    relay_id = "plugin_disabled_before_restart_op"
     name = "plugin_disabled_before_restart_plugin"
 
     seed_runner(@seeded_runner, "market")
@@ -256,29 +256,29 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
     assert :ok = HubManager.await_recovery_complete([hub_id], 5_000)
 
     :ok =
-      HubRegistryTestHelper.start_durable(@namespace, operator_id,
+      HubRegistryTestHelper.start_durable(@namespace, relay_id,
         recorded_runner: nil,
         opts: []
       )
 
-    assert {:ok, _} = PluginManager.enable_plugin(name, plugin(operator_id, name))
-    assert {:ok, [{^name, %Plugin{}}]} = HubManager.operator_bindings(@namespace, operator_id)
+    assert {:ok, _} = PluginManager.enable_plugin(name, plugin(relay_id, name))
+    assert {:ok, [{^name, %Plugin{}}]} = HubManager.relay_bindings(@namespace, relay_id)
 
-    assert :ok = PluginManager.unbind_plugin(@namespace, name, operator_id)
-    assert {:ok, []} = HubManager.operator_bindings(@namespace, operator_id)
+    assert :ok = PluginManager.unbind_plugin(@namespace, name, relay_id)
+    assert {:ok, []} = HubManager.relay_bindings(@namespace, relay_id)
 
     restart_hub(hub_id)
-    assert await_bound_node(hub_id, operator_id, 10_000) == node()
+    assert await_bound_node(hub_id, relay_id, 10_000) == node()
 
-    assert started_plugins(hub_id, operator_id) == [],
+    assert started_plugins(hub_id, relay_id) == [],
            "the restart brought back a binding the user removed"
 
-    assert {:ok, []} = HubManager.operator_bindings(@namespace, operator_id)
+    assert {:ok, []} = HubManager.relay_bindings(@namespace, relay_id)
   end
 
-  # fails when: a plugin enabled with no operator lives anywhere a cold start
+  # fails when: a plugin enabled with no relay lives anywhere a cold start
   # does not read, so a whole-cluster restart forgets it.
-  test "a plugin with no operator survives a cold start" do
+  test "a plugin with no relay survives a cold start" do
     hub_id = Identificator.hub(@namespace)
     {:ok, _} = HubRegistryTestHelper.ensure_hub(@namespace)
     assert :ok = HubManager.await_recovery_complete([hub_id], 5_000)
@@ -308,7 +308,7 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
     {:ok, _} = HubRegistryTestHelper.ensure_hub(@namespace)
     assert :ok = HubManager.await_recovery_complete([hub_id], 5_000)
 
-    HubRegistryTestHelper.inject_operator(@namespace, good, [{node(), dead_pid()}], %{
+    HubRegistryTestHelper.inject_relay(@namespace, good, [{node(), dead_pid()}], %{
       id: good,
       start:
         {HubRegistryTestHelper.StubChild, :start_link,
@@ -316,9 +316,9 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
     })
 
     # An arg shape no current clause understands — an older or corrupted row.
-    HubRegistryTestHelper.inject_operator(@namespace, malformed, [{node(), dead_pid()}], %{
+    HubRegistryTestHelper.inject_relay(@namespace, malformed, [{node(), dead_pid()}], %{
       id: malformed,
-      start: {HubRegistryTestHelper.StubChild, :start_link, [{@namespace, :not_an_operator_map}]}
+      start: {HubRegistryTestHelper.StubChild, :start_link, [{@namespace, :not_a_relay_map}]}
     })
 
     log =
@@ -336,7 +336,7 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
 
   # fails when: await_runner stops iterating and degrades to the single shot it
   # was meant to replace, so a runner that becomes placeable part-way through the
-  # budget is missed and the operator is left unplaced.
+  # budget is missed and the relay is left unplaced.
   test "await_runner polls repeatedly inside one budget" do
     seed_runner(@seeded_runner, "market")
 
@@ -347,7 +347,7 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
     ready_fun = fn _runner -> Agent.get_and_update(attempts, &{&1 >= 3, &1 + 1}) end
 
     assert {:ok, @seeded_runner} =
-             OperatorManager.await_runner(@namespace, "market", "polling_op", 1_000, ready_fun)
+             RelayManager.await_runner(@namespace, "market", "polling_op", 1_000, ready_fun)
 
     assert Agent.get(attempts, & &1) >= 4,
            "await_runner gave up after one attempt instead of polling the budget"
@@ -365,7 +365,7 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
 
     for i <- 1..5 do
       # `:timeout`, not `:unavailable` — the budget was gone, the fleet unasked.
-      assert OperatorManager.await_runner(@namespace, "market", "spent_budget_task_#{i}", 0) ==
+      assert RelayManager.await_runner(@namespace, "market", "spent_budget_task_#{i}", 0) ==
                {:error, :timeout}
     end
 
@@ -386,7 +386,7 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
     started_at = System.monotonic_time(:millisecond)
 
     assert {:error, :unavailable} =
-             OperatorManager.await_runner(@namespace, "market", "clamped_op", budget)
+             RelayManager.await_runner(@namespace, "market", "clamped_op", budget)
 
     elapsed = System.monotonic_time(:millisecond) - started_at
 
@@ -396,7 +396,7 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
 
   # fails when: a FleetManager that never answers within the bind window crashes
   # the Overwatch with an unmatched `{:error, :unavailable}`, so the user
-  # sees a CaseClauseError rather than the reason the operator did not come up.
+  # sees a CaseClauseError rather than the reason the relay did not come up.
   test "Overwatch holds unbound when FleetManager never answers the bind lookup" do
     on_exit(TestHelpers.override_env(:overwatch_runner_wait_ms, 300))
     :sys.suspend(FleetManager)
@@ -441,12 +441,12 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
   end
 
   # fails when: a bind that finds no runner stops the Overwatch. The restored
-  # operators all wait together, so they all stop together, and a namespace
+  # relays all wait together, so they all stop together, and a namespace
   # declaring more of them than `dsup_max_restarts: 100` per `dsup_max_seconds:
   # 4` — ProcessHub's defaults, which this hub does not override — exhausts the
   # dist_sup's restart intensity and loses its whole supervision tree.
   @tag timeout: 120_000
-  test "a runnerless namespace holding more operators than the restart intensity keeps them all" do
+  test "a runnerless namespace holding more relays than the restart intensity keeps them all" do
     on_exit(TestHelpers.override_env(:hub_runner_assign_wait_ms, 0))
     on_exit(TestHelpers.override_env(:overwatch_runner_wait_ms, 300))
 
@@ -457,7 +457,7 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
     assert :ok = HubManager.await_recovery_complete([hub_id], 5_000)
 
     Enum.each(ids, fn id ->
-      HubRegistryTestHelper.inject_operator(@namespace, id, [{node(), dead_pid()}], %{
+      HubRegistryTestHelper.inject_relay(@namespace, id, [{node(), dead_pid()}], %{
         id: id,
         restart: :transient,
         start:
@@ -491,7 +491,7 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
     refute_receive {:DOWN, _, :process, _, _}, 1_000
 
     assert Enum.all?(pids, &Process.alive?/1),
-           "the namespace lost operators its dist_sup gave up restarting"
+           "the namespace lost relays its dist_sup gave up restarting"
 
     # The supervision tree itself: `is_partitioned?/1` is true once the local
     # distributed supervisor is gone, which is how the intensity is exhausted.
@@ -510,13 +510,13 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
     test "a cold start restores the declared set after registry-row loss" do
       on_exit(TestHelpers.override_env(:hub_runner_assign_wait_ms, 0))
       hub_id = Identificator.hub(@namespace)
-      operator_id = "declared_cold_start_op"
+      relay_id = "declared_cold_start_op"
 
       {:ok, _} = HubRegistryTestHelper.ensure_hub(@namespace)
       assert :ok = HubManager.await_recovery_complete([hub_id], 5_000)
 
-      start_durable_stub(hub_id, operator_id)
-      assert operator_id in declared_ids()
+      start_durable_stub(hub_id, relay_id)
+      assert relay_id in declared_ids()
 
       HubRegistryTestHelper.stop_hub_keeping_registry(@namespace)
       drop_registry_rows()
@@ -524,9 +524,9 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
       {:ok, _} = HubManager.start_hub(@namespace)
       assert :ok = HubManager.await_recovery_complete([hub_id], 10_000)
 
-      assert operator_id in declared_ids()
+      assert relay_id in declared_ids()
 
-      assert await_bound_node(hub_id, operator_id, 10_000) == node(),
+      assert await_bound_node(hub_id, relay_id, 10_000) == node(),
              "the declared set survived row loss but the reconcile did not restore from it"
     end
 
@@ -536,24 +536,24 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
     test "a deliberate stop removes the declared entry and no later boot resurrects it" do
       on_exit(TestHelpers.override_env(:hub_runner_assign_wait_ms, 0))
       hub_id = Identificator.hub(@namespace)
-      operator_id = "declared_stop_op"
+      relay_id = "declared_stop_op"
 
       {:ok, _} = HubRegistryTestHelper.ensure_hub(@namespace)
       assert :ok = HubManager.await_recovery_complete([hub_id], 5_000)
 
-      start_durable_stub(hub_id, operator_id)
-      assert operator_id in declared_ids()
+      start_durable_stub(hub_id, relay_id)
+      assert relay_id in declared_ids()
 
       # The flezha stop seam: declared removal rides the hub stop path
       # (remove-before-terminate), and the registry row goes with it.
-      assert :ok = OperatorManager.stop_operator(@namespace, operator_id)
-      refute operator_id in declared_ids()
-      refute Map.has_key?(ProcessRegistry.dump(hub_id), operator_id)
+      assert :ok = RelayManager.stop_relay(@namespace, relay_id)
+      refute relay_id in declared_ids()
+      refute Map.has_key?(ProcessRegistry.dump(hub_id), relay_id)
 
       restart_hub(hub_id)
 
-      refute operator_id in declared_ids()
-      refute Map.has_key?(ProcessRegistry.dump(hub_id), operator_id)
+      refute relay_id in declared_ids()
+      refute Map.has_key?(ProcessRegistry.dump(hub_id), relay_id)
     end
 
     # fails when: the declared set has no off-cluster copy — losing every
@@ -574,18 +574,18 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
       on_exit(fn -> File.rm_rf(tier_dir) end)
 
       hub_id = Identificator.hub(@namespace)
-      operator_id = "declared_disk_loss_op"
+      relay_id = "declared_disk_loss_op"
 
       {:ok, _} = HubRegistryTestHelper.ensure_hub(@namespace)
       assert :ok = HubManager.await_recovery_complete([hub_id], 5_000)
 
-      start_durable_stub(hub_id, operator_id)
-      assert operator_id in declared_ids()
+      start_durable_stub(hub_id, relay_id)
+      assert relay_id in declared_ids()
 
       # The remote ship is asynchronous — wait for the tier to hold a copy
-      # that already declares the operator.
+      # that already declares the relay.
       assert NodeTestHelper.wait_until(
-               fn -> operator_id in remote_declared_ids(hub_id) end,
+               fn -> relay_id in remote_declared_ids(hub_id) end,
                10_000
              ),
              "the declared list never reached the durability tier"
@@ -596,10 +596,10 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
       {:ok, _} = HubManager.start_hub(@namespace)
       assert :ok = HubManager.await_recovery_complete([hub_id], 10_000)
 
-      assert operator_id in declared_ids(),
+      assert relay_id in declared_ids(),
              "the boot did not adopt the declared set from the remote manifest"
 
-      assert await_bound_node(hub_id, operator_id, 10_000) == node()
+      assert await_bound_node(hub_id, relay_id, 10_000) == node()
     end
   end
 
@@ -607,16 +607,16 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
   # the on-disk shape of a deployment upgrading from before the
   # declared-children model. The restart's first-enablement seed mints the
   # declared list from these rows, and the same boot's reconcile replays them.
-  defp replay_hub(hub_id, operators) do
+  defp replay_hub(hub_id, relays) do
     {:ok, _} = HubRegistryTestHelper.ensure_hub(@namespace)
     assert :ok = HubManager.await_recovery_complete([hub_id], 5_000)
 
-    Enum.each(operators, fn {operator_id, factory_id} ->
-      HubRegistryTestHelper.inject_operator(@namespace, operator_id, [{node(), dead_pid()}], %{
-        id: operator_id,
+    Enum.each(relays, fn {relay_id, factory_id} ->
+      HubRegistryTestHelper.inject_relay(@namespace, relay_id, [{node(), dead_pid()}], %{
+        id: relay_id,
         start:
           {HubRegistryTestHelper.StubChild, :start_link,
-           [{@namespace, @recorded_runner, %{id: operator_id, factory_id: factory_id}}]}
+           [{@namespace, @recorded_runner, %{id: relay_id, factory_id: factory_id}}]}
       })
     end)
 
@@ -669,13 +669,13 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
   end
 
   # The durable start every real start rides, from the fixture helper.
-  defp start_durable_stub(_hub_id, operator_id) do
-    :ok = HubRegistryTestHelper.start_durable(@namespace, operator_id)
+  defp start_durable_stub(_hub_id, relay_id) do
+    :ok = HubRegistryTestHelper.start_durable(@namespace, relay_id)
   end
 
   # Through flezha's own declared reader — the seam Convergence.Intent uses.
   defp declared_ids do
-    HubManager.declared_operators(@namespace) |> Enum.map(& &1.id)
+    HubManager.declared_relays(@namespace) |> Enum.map(& &1.id)
   end
 
   defp remote_declared_ids(hub_id) do
@@ -690,15 +690,15 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
 
   # The single start argument of the hub's declared entry — the manifest the
   # reconcile replays from, which is not the registry row the alter hook rewrote.
-  defp declared_start_arg(operator_id) do
+  defp declared_start_arg(relay_id) do
     %{children: children} = DeclaredChildren.declared_children(Identificator.hub(@namespace))
-    {:ok, arg} = children |> Enum.find(&(&1.id == operator_id)) |> Cspec.start_arg()
+    {:ok, arg} = children |> Enum.find(&(&1.id == relay_id)) |> Cspec.start_arg()
     arg
   end
 
   # The owning runner recorded on a registry row (`metadata.tag`).
-  defp registry_tag(dump, operator_id) do
-    {_cspec, _node_pids, metadata} = Map.fetch!(dump, operator_id)
+  defp registry_tag(dump, relay_id) do
+    {_cspec, _node_pids, metadata} = Map.fetch!(dump, relay_id)
     metadata[:tag]
   end
 
@@ -712,14 +712,14 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
   defp seed_runner(runner_id, factory_id),
     do: HubRegistryTestHelper.seed_runner(@namespace, runner_id, factory_id)
 
-  defp plugin(operator_id, plugin_id) do
+  defp plugin(relay_id, plugin_id) do
     Plugin.new(
       id: plugin_id,
       provider: __MODULE__.NoopProvider,
       opts: %{},
       hooks: [{:on_output, []}],
       namespace: @namespace,
-      operator_id: operator_id
+      relay_id: relay_id
     )
   end
 

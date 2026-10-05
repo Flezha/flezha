@@ -2,7 +2,7 @@
 
 The `flezha` gem is a poll host over `flz_core`, the runner kernel the Rust,
 Java and Node SDKs also drive. The kernel owns transport, ordering, per-cell
-exclusivity, durability, retries, timers, credit, routing and the steps operator
+exclusivity, durability, retries, timers, credit, routing and the steps relay
 driver. This gem supplies threads and user code, and nothing else —
 [`poll_core.md` → "The core decides, the SDK brings the threads"](poll_core.md#the-core-decides-the-sdk-brings-the-threads).
 
@@ -72,7 +72,7 @@ class Tally < Flezha::Tasklet
   end
 end
 
-class WordCount < Flezha::Operator
+class WordCount < Flezha::Relay
   factory_id "local_word_count_example"
   channels do |c|
     c.input("lines", codec: :text)
@@ -96,8 +96,8 @@ drop its `nil`.
 **A part previews the output while `run` is still working**: `ctx.part(value)`
 sends `value` on the tasklet's own output channel, encoded as `ctx.emit(value)`
 would encode it, and returns without waiting. It works in `run` and in
-`on_timer`, in a flow operator and in a steps operator's stage. The
-operator's listeners receive the parts before the output; a sink never does,
+`on_timer`, in a flow relay and in a steps relay's stage. The
+relay's listeners receive the parts before the output; a sink never does,
 and a part is never durable or replayed. Parts are numbered from 0 within each
 attempt, so a retry starts its preview again.
 
@@ -115,7 +115,7 @@ after its invocation returned raises `part.outside_invocation`. The testing
 harness sends nothing.
 
 **Every tasklet writes `tasklet_name`**, and a class wired without one is
-refused when its operator is declared, naming the class. The name is the
+refused when its relay is declared, naming the class. The name is the
 tasklet's identity: its Cells' state is saved under it, so a class can be
 renamed freely and the name is chosen once. It is not inherited, so a
 subclass writes its own. It is spelled `tasklet_name` rather than `name`
@@ -141,7 +141,7 @@ class-body declaration raises `NoMethodError` naming what replaced it.
 - **Cell mode.** The wiring decides it. A tasklet reached through `key_by`,
   on an edge or a merge, has one Cell per key; one writing `cell_keys` has that
   static set; anything else has a single Cell. One class can be keyed in one
-  operator and single in another. A `cell_keys` tasklet fed by `key_by` is
+  relay and single in another. A `cell_keys` tasklet fed by `key_by` is
   refused as `topology.key_by_on_unkeyable_target`.
 - **Eviction.** `idle_ttl_seconds`, a positive whole number of seconds, evicts
   a keyed Cell that has been idle that long; unset, none is evicted.
@@ -161,16 +161,16 @@ same reasons, as the Rust builder's `TopologyIssue`.
 
 ### The short form
 
-A `Flezha::Operator` subclass that defines `run` instead of `channels` is a
-whole operator: the class carries its one tasklet's body, and no
+A `Flezha::Relay` subclass that defines `run` instead of `channels` is a
+whole relay: the class carries its one tasklet's body, and no
 `Flezha::Tasklet` stands beside it. `factory_id` is required; `sink`, `input`
 and `codec` are optional, each its own call, and `codec` is the entry codec the
 builder's `input` takes. A `sink` written on a `Flezha::Tasklet` is refused,
-naming the operator base. The class-body `run :steps` is a class setting and
+naming the relay base. The class-body `run :steps` is a class setting and
 the instance method `run` the tasklet's body; Ruby keeps the two apart.
 
 ```ruby
-class Upcase < Flezha::Operator
+class Upcase < Flezha::Relay
   factory_id "upcase"
   sink "out"
   codec :text
@@ -178,7 +178,7 @@ class Upcase < Flezha::Operator
   def run(value, ctx) = ctx.emit(value.upcase)
 end
 
-class Place < Flezha::Operator
+class Place < Flezha::Relay
   factory_id "place"
   run :steps
   sink "placed"
@@ -191,19 +191,19 @@ end
 Flezha.create_runner("default").register_factory(Upcase).register_factory(Place).run
 ```
 
-The generated operator is the one you would have written by hand with that
+The generated relay is the one you would have written by hand with that
 single tasklet: an entry channel named `input`, or the `input` value,
 decoded by `codec`, the tasklet, a plugin sink named by `sink` when one is
 written, a factory id equal to `factory_id`, and the class settings it
 writes, as the full form takes them. The tasklet is named after the factory id, so a full form that
-names its tasklet the same keeps every cell where it was. A steps operator short
-form is a `once` steps operator, run once over its first message: `flz operator
-start --text '<payload>'`, or a start followed by `flz operator send`; a
+names its tasklet the same keeps every cell where it was. A steps relay short
+form is a `once` steps relay, run once over its first message: `flz relay
+start --text '<payload>'`, or a start followed by `flz relay send`; a
 second message to a `once` instance is accepted and never read. With
 `each` written it loops, still one class:
 
 ```ruby
-class Chat < Flezha::Operator
+class Chat < Flezha::Relay
   factory_id "chat"
   sink "replies"
   codec :text
@@ -213,11 +213,11 @@ class Chat < Flezha::Operator
 end
 ```
 
-With no `sink`, the operator declares the entry channel and the tasklet and
-no plugin channel: the operator that only keeps state.
+With no `sink`, the relay declares the entry channel and the tasklet and
+no plugin channel: the relay that only keeps state.
 
 ```ruby
-class Counter < Flezha::Operator
+class Counter < Flezha::Relay
   factory_id "counter"
   input "ticks"
   codec :text
@@ -245,7 +245,7 @@ written beside `channels` is refused rather than ignored.
 and a class rename must not move it. A class without one is refused at
 `register_factory`, where this SDK places every refusal. So is a class defining
 both `run` and `channels`, naming `topology.short_form_with_topology`, and one defining
-neither. A second operator under a factory id the runner already holds, short
+neither. A second relay under a factory id the runner already holds, short
 or full, fails naming `topology.duplicate_factory_id` when the runner declares its
 classes.
 
@@ -255,7 +255,7 @@ The class body takes the class settings, in either form, written as the
 tree's own data:
 
 ```ruby
-class Orders < Flezha::Operator
+class Orders < Flezha::Relay
   factory_id "orders"
   run steps: { each: :per_input, on_failure: :keep_progress }
   durable local: { sleep_after: 10_000 }
@@ -281,7 +281,7 @@ The core judges the tree when the runner declares its classes: a setting under
 a parent that does not carry it is `topology.unknown_field`, naming the setting
 and the parent, and a value outside its choice is `topology.invalid_setting`.
 
-A steps operator retries a failing tasklet on the edge that feeds it, as a flow
+A steps relay retries a failing tasklet on the edge that feeds it, as a flow
 does: `retry_max` and `retry_backoff_ms` on the channel (3 attempts, 50 ms base
 by default), so `retry_max(1)` is fail-fast.
 
@@ -289,7 +289,7 @@ A steps tasklet registers timers as a flow tasklet does, and a firing
 runs as a pass of its own ([`../topics/advanced/timers.md`](../topics/advanced/timers.md));
 only inside a `compensate` hook do `ctx.timer_after`, `ctx.timer_at_event_time`
 and `ctx.cancel_timer` raise a `Flezha::Error` with the code `runtime.timers_unavailable`. A `ctx.spawn_steps`
-naming a flow factory resolves its handle to a `Flezha::Error` with the code `operator.factory_not_steps`.
+naming a flow factory resolves its handle to a `Flezha::Error` with the code `relay.factory_not_steps`.
 
 ### Channel payloads
 
@@ -314,16 +314,16 @@ beside a callable on one channel, is refused when the class is declared, naming
 the class and the channel.
 
 `.response` ends a channel on the answer to an outside call instead of a sink,
-and takes the sink's `encode:` and `codec:`: [`../topics/advanced/operator_calls.md`](../topics/advanced/operator_calls.md).
+and takes the sink's `encode:` and `codec:`: [`../topics/advanced/relay_calls.md`](../topics/advanced/relay_calls.md).
 `.call("pricing", deadline_ms: 500)` or `.call(factory: "agent", deadline_ms: ..., create: false, codec: ...)`
-ends a chain on a call to another operator and answers an edge of `Flezha::Response`s:
-[`../topics/advanced/operator_calls.md`](../topics/advanced/operator_calls.md).
+ends a chain on a call to another relay and answers an edge of `Flezha::Response`s:
+[`../topics/advanced/relay_calls.md`](../topics/advanced/relay_calls.md).
 
 Ruby's integers survive JSON at any width. A `Float` that is `NaN` or infinite,
 or a `String` that is not valid UTF-8, cannot be sent as JSON and fails the emit
 naming the channel.
 
-A value passed between two tasklets of one operator never crosses a channel
+A value passed between two tasklets of one relay never crosses a channel
 codec: it stays MessagePack. An Elixir entry declared with no decoder hands its
 tasklet the binary instead, since an Elixir string is its binary, so the same
 bytes on an undeclared entry are a `Hash` here and a string there.
@@ -384,12 +384,12 @@ each process is one runner — which is what HRW placement spreads across.
 
 ## Local mode: run a graph with no controller
 
-`Flezha::LocalOperator.start` takes the operator class you deploy and runs
+`Flezha::LocalRelay.start` takes the relay class you deploy and runs
 its declared graph in this process — no controller, no socket, no local-mode
 member on the class:
 
 ```ruby
-run = Flezha::LocalOperator.start(WordCount)
+run = Flezha::LocalRelay.start(WordCount)
 begin
   run.on_sink("totals") { |output| puts output.payload }
   run.feed("lines", "the quick brown fox")
@@ -425,7 +425,7 @@ refused at startup, naming it. Walk-through:
   1024), regardless of pool size. The pool is a servicing detail, never the
   concurrency bound.
 - **The lever for CPU-bound handlers is process count, not thread count**:
-  run more runner processes, and start the operator with `--partitions N` so
+  run more runner processes, and start the relay with `--partitions N` so
   its keys spread across them.
 
 Worked example. Handlers that spend 90% of their time on I/O and 10% on Ruby,
@@ -524,7 +524,7 @@ bare mutable global holds any of it.
 The manifest at `test/apps/ruby_runner/conformance.json` defers nothing: every
 capability is carried with the reference's fixtures, the persistence, schema
 evolution and effectively-once set in `test/apps/ruby_runner/fixtures_state.rb`,
-the steps operator set in `fixtures_steps.rb`, and the rest in `fixtures.rb`.
+the steps relay set in `fixtures_steps.rb`, and the rest in `fixtures.rb`.
 
 ## The runner image
 

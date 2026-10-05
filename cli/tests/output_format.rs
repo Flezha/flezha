@@ -83,26 +83,26 @@ const CASES: &[(&[&str], Want)] = &[
         &["cluster", "status", "--output", "yaml"],
         Refused("unknown output format"),
     ),
-    // `flz runner list` and `flz operator list` share `cluster status`'s
+    // `flz runner list` and `flz relay list` share `cluster status`'s
     // reader, so the switch has to reach them too.
     (
         &["runner", "list", "--json"],
         Rpc(r#"Flezha.Service.Cli.call("Fleet.runners", "[\"default\"]", [output: "json"])"#),
     ),
     (
-        &["operator", "list", "--output", "json"],
-        Rpc(r#"Flezha.Service.Cli.call("Operator.list", "[\"default\"]", [output: "json"])"#),
+        &["relay", "list", "--output", "json"],
+        Rpc(r#"Flezha.Service.Cli.call("Relay.list", "[\"default\"]", [output: "json"])"#),
     ),
-    // `flz operator listen`: output by default, the window always carried.
+    // `flz relay listen`: output by default, the window always carried.
     (
-        &["operator", "listen", "op"],
+        &["relay", "listen", "op"],
         Rpc(
-            r#"Flezha.Service.Cli.call("Operator.listen", "[\"default\",\"op\",\"output\",{\"window_ms\":30000}]", [])"#,
+            r#"Flezha.Service.Cli.call("Relay.listen", "[\"default\",\"op\",\"output\",{\"window_ms\":30000}]", [])"#,
         ),
     ),
     (
         &[
-            "operator",
+            "relay",
             "listen",
             "op",
             "--input",
@@ -113,28 +113,26 @@ const CASES: &[(&[&str], Want)] = &[
             "prod",
         ],
         Rpc(
-            r#"Flezha.Service.Cli.call("Operator.listen", "[\"prod\",\"op\",\"input\",{\"window_ms\":500}]", [output: "json"])"#,
+            r#"Flezha.Service.Cli.call("Relay.listen", "[\"prod\",\"op\",\"input\",{\"window_ms\":500}]", [output: "json"])"#,
         ),
     ),
     (
-        &["operator", "listen", "op", "--duration", "5"],
+        &["relay", "listen", "op", "--duration", "5"],
         Refused("unknown option '--duration'"),
     ),
     (
-        &["operator", "listen", "op", "extra"],
+        &["relay", "listen", "op", "extra"],
         Refused("unexpected argument 'extra'"),
     ),
     // `--await` rides the options list only when written.
     (
-        &["operator", "send", "op", "--text", "hi"],
-        Rpc(
-            r#"Flezha.Service.Cli.call("Operator.send", "[\"default\",\"op\",\"hi\",\"\",{}]", [])"#,
-        ),
+        &["relay", "send", "op", "--text", "hi"],
+        Rpc(r#"Flezha.Service.Cli.call("Relay.send", "[\"default\",\"op\",\"hi\",\"\",{}]", [])"#),
     ),
     (
-        &["operator", "send", "op", "--text", "hi", "--await", "2000"],
+        &["relay", "send", "op", "--text", "hi", "--await", "2000"],
         Rpc(
-            r#"Flezha.Service.Cli.call("Operator.send", "[\"default\",\"op\",\"hi\",\"\",{}]", [await_ms: 2000])"#,
+            r#"Flezha.Service.Cli.call("Relay.send", "[\"default\",\"op\",\"hi\",\"\",{}]", [await_ms: 2000])"#,
         ),
     ),
     // `flz audit` — the `--json` dialect.
@@ -201,7 +199,7 @@ const CASES: &[(&[&str], Want)] = &[
     // `flz namespace list` and `flz state` — the `--output` dialect again.
     (
         &["namespace", "list", "--json"],
-        Rpc(r#"Flezha.Service.Cli.call("Operator.list_namespaces", "[]", [output: "json"])"#),
+        Rpc(r#"Flezha.Service.Cli.call("Relay.list_namespaces", "[]", [output: "json"])"#),
     ),
     // An acting verb takes the format too: it rides the list, and only the
     // form of a failure changes.
@@ -228,15 +226,15 @@ const CASES: &[(&[&str], Want)] = &[
     ),
     (
         &["namespace", "list", "--output", "json"],
-        Rpc(r#"Flezha.Service.Cli.call("Operator.list_namespaces", "[]", [output: "json"])"#),
+        Rpc(r#"Flezha.Service.Cli.call("Relay.list_namespaces", "[]", [output: "json"])"#),
     ),
     (
-        &["state", "list", "MarketOperator", "--json"],
-        Rpc(r#"Flezha.Service.Cli.call("Steps.cells", "[\"MarketOperator\"]", [output: "json"])"#),
+        &["state", "list", "MarketRelay", "--json"],
+        Rpc(r#"Flezha.Service.Cli.call("Steps.cells", "[\"MarketRelay\"]", [output: "json"])"#),
     ),
     (
-        &["state", "list", "MarketOperator", "--output", "json"],
-        Rpc(r#"Flezha.Service.Cli.call("Steps.cells", "[\"MarketOperator\"]", [output: "json"])"#),
+        &["state", "list", "MarketRelay", "--output", "json"],
+        Rpc(r#"Flezha.Service.Cli.call("Steps.cells", "[\"MarketRelay\"]", [output: "json"])"#),
     ),
     // `flz plugin list` — the format flag renders; `--installed` and
     // `--providers` choose the collection. Neither may do the other's job.
@@ -325,28 +323,20 @@ const CASES: &[(&[&str], Want)] = &[
             "plugin",
             "bind",
             "trades",
-            "--operator_id",
+            "--relay_id",
             "a",
             "--hook=on_output",
             "--channel",
             "ticks",
         ],
         Rpc(
-            r#"Flezha.Service.Cli.call("PluginManager.bind", "[\"trades\",{\"channel\":\"ticks\",\"hooks\":[{\"name\":\"on_output\",\"opts\":{}}],\"namespace\":\"default\",\"operator_id\":\"a\"}]", [])"#,
+            r#"Flezha.Service.Cli.call("PluginManager.bind", "[\"trades\",{\"channel\":\"ticks\",\"hooks\":[{\"name\":\"on_output\",\"opts\":{}}],\"namespace\":\"default\",\"relay_id\":\"a\"}]", [])"#,
         ),
     ),
     (
-        &[
-            "plugin",
-            "unbind",
-            "trades",
-            "--operator_id",
-            "a",
-            "-n",
-            "n",
-        ],
+        &["plugin", "unbind", "trades", "--relay_id", "a", "-n", "n"],
         Rpc(
-            r#"Flezha.Service.Cli.call("PluginManager.unbind", "[\"trades\",{\"namespace\":\"n\",\"operator_id\":\"a\"}]", [])"#,
+            r#"Flezha.Service.Cli.call("PluginManager.unbind", "[\"trades\",{\"namespace\":\"n\",\"relay_id\":\"a\"}]", [])"#,
         ),
     ),
     (
@@ -362,15 +352,9 @@ const CASES: &[(&[&str], Want)] = &[
         ),
     ),
     (
-        &[
-            "plugin",
-            "enable",
-            "trades",
-            "operator_websocket",
-            "--single",
-        ],
+        &["plugin", "enable", "trades", "relay_websocket", "--single"],
         Rpc(
-            r#"Flezha.Service.Cli.call("PluginManager.enable", "[\"trades\",{\"namespace\":\"default\",\"provider\":\"operator_websocket\",\"single\":true}]", [])"#,
+            r#"Flezha.Service.Cli.call("PluginManager.enable", "[\"trades\",{\"namespace\":\"default\",\"provider\":\"relay_websocket\",\"single\":true}]", [])"#,
         ),
     ),
     // `flz boot await` takes one option, and it is one option in all four of
@@ -446,7 +430,7 @@ const CASES: &[(&[&str], Want)] = &[
         Refused("--ttl requires a value"),
     ),
     (
-        &["operator", "scale", "g", "2", "--timeout"],
+        &["relay", "scale", "g", "2", "--timeout"],
         Refused("--timeout requires a value"),
     ),
     // The identity readers: a default that is another namespace, or another
@@ -460,7 +444,7 @@ const CASES: &[(&[&str], Want)] = &[
         Refused("--token requires a value"),
     ),
     (
-        &["operator", "start", "fac", "--id"],
+        &["relay", "start", "fac", "--id"],
         Refused("--id requires a value"),
     ),
     (
@@ -486,9 +470,9 @@ const CASES: &[(&[&str], Want)] = &[
     // A value the caller wrote and left empty IS a value: it is not refused,
     // and `json`'s own rule for an empty value still answers `{}`.
     (
-        &["operator", "start", "fac", "--init-values", ""],
+        &["relay", "start", "fac", "--init-values", ""],
         Rpc(
-            r#"Flezha.Service.Cli.call("Operator.start", "[\"default\",{\"factory_id\":\"fac\",\"init_values\":{}}]", [])"#,
+            r#"Flezha.Service.Cli.call("Relay.start", "[\"default\",{\"factory_id\":\"fac\",\"init_values\":{}}]", [])"#,
         ),
     ),
     // A NUMBER the reader cannot parse is the same request as one nobody
@@ -543,52 +527,44 @@ const CASES: &[(&[&str], Want)] = &[
     // The two verbs that never parsed at all: they shipped the word the
     // caller typed to the controller as a JSON string.
     (
-        &[
-            "operator",
-            "start",
-            "fac",
-            "--id",
-            "op",
-            "--partitions",
-            "4",
-        ],
+        &["relay", "start", "fac", "--id", "op", "--partitions", "4"],
         Rpc(
-            r#"Flezha.Service.Cli.call("Operator.start", "[\"default\",{\"factory_id\":\"fac\",\"id\":\"op\",\"partitions\":4}]", [])"#,
+            r#"Flezha.Service.Cli.call("Relay.start", "[\"default\",{\"factory_id\":\"fac\",\"id\":\"op\",\"partitions\":4}]", [])"#,
         ),
     ),
     (
-        &["operator", "start", "fac", "--partitions", "abc"],
+        &["relay", "start", "fac", "--partitions", "abc"],
         Refused("invalid --partitions value 'abc'"),
     ),
     // The snapshot interval is the controller's environment, not a start's.
     (
-        &["operator", "start", "echo", "--snapshot-interval", "5000"],
+        &["relay", "start", "echo", "--snapshot-interval", "5000"],
         Refused("unknown option '--snapshot-interval'"),
     ),
     (
-        &["operator", "scale", "g", "2"],
+        &["relay", "scale", "g", "2"],
         Rpc(r#"Flezha.Service.Cli.call("Steps.rescale", "[\"default\",\"g\",2,{}]", [])"#),
     ),
     (
-        &["operator", "scale", "g", "2", "--timeout", "5000"],
+        &["relay", "scale", "g", "2", "--timeout", "5000"],
         Rpc(
             r#"Flezha.Service.Cli.call("Steps.rescale", "[\"default\",\"g\",2,{\"quiesce_timeout_ms\":5000}]", [])"#,
         ),
     ),
     (
-        &["operator", "scale", "g", "2", "--timeout", "abc"],
+        &["relay", "scale", "g", "2", "--timeout", "abc"],
         Refused("invalid --timeout value 'abc'"),
     ),
     // A number written as a POSITIONAL is the same request as one written as
     // an option, and was the one spelling KI-176's reader never saw. Until it
-    // did, `flz operator scale g abc --timeout abc` refused the flag and
+    // did, `flz relay scale g abc --timeout abc` refused the flag and
     // forwarded the word — one verb answering one typo two ways.
     (
-        &["operator", "scale", "g", "abc"],
+        &["relay", "scale", "g", "abc"],
         Refused("invalid <partitions> value 'abc'"),
     ),
     (
-        &["operator", "scale", "g", "abc", "--timeout", "abc"],
+        &["relay", "scale", "g", "abc", "--timeout", "abc"],
         Refused("invalid <partitions> value 'abc'"),
     ),
     (
@@ -665,45 +641,45 @@ const CASES: &[(&[&str], Want)] = &[
         Refused("invalid --timeout-ms value 'abc'"),
     ),
     (
-        &["operator", "rewind", "op", "--to-iteration", "abc"],
+        &["relay", "rewind", "op", "--to-iteration", "abc"],
         Refused("invalid --to-iteration value 'abc'"),
     ),
     (
         &["reset", "--dry-run", "--probe-timeout-ms", "abc", NO_ROOT],
         Refused("invalid --probe-timeout-ms value 'abc'"),
     ),
-    // `flz operator start` carries `--id` and `--plugins` in the options
+    // `flz relay start` carries `--id` and `--plugins` in the options
     // list, and only when written; the two verbs whose credential once rode a
     // JSON document or nowhere at all now end with the same list as every
     // other.
     (
-        &["operator", "start", "fac", "--id", "op", "--plugins", "[]"],
+        &["relay", "start", "fac", "--id", "op", "--plugins", "[]"],
         Rpc(
-            r#"Flezha.Service.Cli.call("Operator.start", "[\"default\",{\"factory_id\":\"fac\",\"id\":\"op\",\"plugins\":[]}]", [])"#,
+            r#"Flezha.Service.Cli.call("Relay.start", "[\"default\",{\"factory_id\":\"fac\",\"id\":\"op\",\"plugins\":[]}]", [])"#,
         ),
     ),
     // A start without an id carries no id at all: the controller generates it.
     (
-        &["operator", "start", "echo"],
+        &["relay", "start", "echo"],
         Rpc(
-            r#"Flezha.Service.Cli.call("Operator.start", "[\"default\",{\"factory_id\":\"echo\"}]", [])"#,
+            r#"Flezha.Service.Cli.call("Relay.start", "[\"default\",{\"factory_id\":\"echo\"}]", [])"#,
         ),
     ),
     (
-        &["operator", "start", "echo", "-i", "my_echo"],
+        &["relay", "start", "echo", "-i", "my_echo"],
         Rpc(
-            r#"Flezha.Service.Cli.call("Operator.start", "[\"default\",{\"factory_id\":\"echo\",\"id\":\"my_echo\"}]", [])"#,
+            r#"Flezha.Service.Cli.call("Relay.start", "[\"default\",{\"factory_id\":\"echo\",\"id\":\"my_echo\"}]", [])"#,
         ),
     ),
     (
-        &["operator", "start", "echo", "-o", "json"],
+        &["relay", "start", "echo", "-o", "json"],
         Rpc(
-            r#"Flezha.Service.Cli.call("Operator.start", "[\"default\",{\"factory_id\":\"echo\"}]", [output: "json"])"#,
+            r#"Flezha.Service.Cli.call("Relay.start", "[\"default\",{\"factory_id\":\"echo\"}]", [output: "json"])"#,
         ),
     ),
     (
         &[
-            "operator",
+            "relay",
             "start",
             "echo",
             "--json",
@@ -711,14 +687,14 @@ const CASES: &[(&[&str], Want)] = &[
             r#"{"a":1}"#,
         ],
         Rpc(
-            r#"Flezha.Service.Cli.call("Operator.start", "[\"default\",{\"factory_id\":\"echo\",\"init_values\":{\"a\":1}}]", [output: "json"])"#,
+            r#"Flezha.Service.Cli.call("Relay.start", "[\"default\",{\"factory_id\":\"echo\",\"init_values\":{\"a\":1}}]", [output: "json"])"#,
         ),
     ),
     // A first message rides the options list as text, with the entry channel
     // it names; a channel with no message names nothing.
     (
         &[
-            "operator",
+            "relay",
             "start",
             "order_executor",
             "--text",
@@ -727,37 +703,37 @@ const CASES: &[(&[&str], Want)] = &[
             "order",
         ],
         Rpc(
-            r#"Flezha.Service.Cli.call("Operator.start", "[\"default\",{\"channel\":\"order\",\"factory_id\":\"order_executor\",\"text\":\"{\\\"symbol\\\":\\\"EUR/USD\\\",\\\"quantity\\\":10}\"}]", [])"#,
+            r#"Flezha.Service.Cli.call("Relay.start", "[\"default\",{\"channel\":\"order\",\"factory_id\":\"order_executor\",\"text\":\"{\\\"symbol\\\":\\\"EUR/USD\\\",\\\"quantity\\\":10}\"}]", [])"#,
         ),
     ),
     (
-        &["operator", "start", "echo", "-t", "hello"],
+        &["relay", "start", "echo", "-t", "hello"],
         Rpc(
-            r#"Flezha.Service.Cli.call("Operator.start", "[\"default\",{\"factory_id\":\"echo\",\"text\":\"hello\"}]", [])"#,
+            r#"Flezha.Service.Cli.call("Relay.start", "[\"default\",{\"factory_id\":\"echo\",\"text\":\"hello\"}]", [])"#,
         ),
     ),
     (
-        &["operator", "start", "echo", "--channel", "order"],
-        Refused("(operator.channel_without_text)"),
+        &["relay", "start", "echo", "--channel", "order"],
+        Refused("(relay.channel_without_text)"),
     ),
     (
-        &["operator", "start", "my_echo", "echo"],
+        &["relay", "start", "my_echo", "echo"],
         Refused("unexpected argument 'echo'"),
     ),
     // The spellings the rule retired are refused, not dropped: a start that
     // ignored them would run without the values the caller wrote.
     (
-        &["operator", "start", "echo", "-iv", r#"{"a":1}"#],
+        &["relay", "start", "echo", "-iv", r#"{"a":1}"#],
         Refused("unknown option '-iv'"),
     ),
     (
-        &["operator", "start", "echo", "--init_values", r#"{"a":1}"#],
+        &["relay", "start", "echo", "--init_values", r#"{"a":1}"#],
         Refused("unknown option '--init_values'"),
     ),
     // The kind is the factory's, announced by its runner: a written one is an
     // option neither verb declares.
     (
-        &["operator", "start", "echo", "--kind", "flow"],
+        &["relay", "start", "echo", "--kind", "flow"],
         Refused("unknown option '--kind'"),
     ),
     (
@@ -793,7 +769,7 @@ const CASES: &[(&[&str], Want)] = &[
         Refused("unknown option '-iv'"),
     ),
     (
-        &["operator", "scale", "g", "2", "--token", "t"],
+        &["relay", "scale", "g", "2", "--token", "t"],
         Rpc(
             r#"Flezha.Service.Cli.call("Steps.rescale", "[\"default\",\"g\",2,{}]", [token: "t"])"#,
         ),
@@ -882,7 +858,7 @@ const CASES: &[(&[&str], Want)] = &[
             "--channel",
             "requests",
         ],
-        Refused("(operator.channel_without_text)"),
+        Refused("(relay.channel_without_text)"),
     ),
     (
         &[
@@ -942,17 +918,17 @@ const TOKEN_BEARERS: &[&[&str]] = &[
     &["observe", "tail", "beam_vm"],
     &["observe", "enable", "s"],
     &["observe", "disable", "s"],
-    &["operator", "start", "fac"],
-    &["operator", "scale", "g", "2"],
-    &["operator", "stop", "op"],
-    &["operator", "state", "op"],
-    &["operator", "list"],
-    &["operator", "info"],
-    &["operator", "listen", "op"],
-    &["operator", "send", "op", "--text", "hi", "--await", "500"],
-    &["operator", "send", "op", "--text", "hi"],
-    &["operator", "rewind", "op", "--to-iteration", "1"],
-    &["operator", "replay", "a/b/c", "--from", "1"],
+    &["relay", "start", "fac"],
+    &["relay", "scale", "g", "2"],
+    &["relay", "stop", "op"],
+    &["relay", "state", "op"],
+    &["relay", "list"],
+    &["relay", "info"],
+    &["relay", "listen", "op"],
+    &["relay", "send", "op", "--text", "hi", "--await", "500"],
+    &["relay", "send", "op", "--text", "hi"],
+    &["relay", "rewind", "op", "--to-iteration", "1"],
+    &["relay", "replay", "a/b/c", "--from", "1"],
     &["plugin", "enable", "p", "prov"],
     &["plugin", "disable", "p"],
     &["plugin", "help", "prov"],
@@ -990,19 +966,11 @@ const TOKEN_BEARERS: &[&[&str]] = &[
     &["token", "list"],
 ];
 
-/// One invocation, thirty-two runs: `operator start` built its options from a
+/// One invocation, thirty-two runs: `relay start` built its options from a
 /// `HashMap`, and `RandomState` seeds itself per process, so the key order was
 /// a property of the run rather than of what the caller typed (KI-177). One
 /// flip is enough to fail this; on the defect it flipped within two runs.
-const REPEATED: &[&str] = &[
-    "operator",
-    "start",
-    "fac",
-    "--id",
-    "op",
-    "--partitions",
-    "4",
-];
+const REPEATED: &[&str] = &["relay", "start", "fac", "--id", "op", "--partitions", "4"];
 const REPEATS: usize = 32;
 
 /// The one door call the run reached, as the shim echoed it.

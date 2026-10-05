@@ -1,19 +1,19 @@
 # guide-narrative Specification
 
 ## Purpose
-What the tutorials, the topic pages and the glossary teach about operators: one operator described by its settings, never by a kind; the words bounded and unbounded kept for input data; and each part's example run from its pages in the languages it is written for.
+What the tutorials, the topic pages and the glossary teach about relays: one relay described by its settings, never by a kind; the words bounded and unbounded kept for input data; and each part's example run from its pages in the languages it is written for.
 ## Requirements
-### Requirement: The guides SHALL name no operator kind
+### Requirement: The guides SHALL name no relay kind
 
-The tutorial and topic pages SHALL describe how an operator runs by its settings, in flow or in
+The tutorial and topic pages SHALL describe how a relay runs by its settings, in flow or in
 steps. No page under `docs/tutorials/` or `docs/topics/`, and neither `docs/glossary.md` nor
-`docs/getting_started/what_is_flezha.md`, SHALL describe an operator as bounded or unbounded,
-as a kind, or by the names of the retired classes.
+`docs/getting_started/what_is_flezha.md`, SHALL describe a relay as bounded or unbounded,
+or as a kind.
 
-#### Scenario: A grep over the guides finds no kind word about an operator
+#### Scenario: A grep over the guides finds no kind word about a relay
 
-- **WHEN** the tutorial and topic pages, the glossary and `what_is_flezha.md` are searched for `bounded`, `unbounded`, `UnboundedOperator`, `BoundedOperator`, `defineBounded`, `bounded_operator` and `operator kind`
-- **THEN** every match SHALL be one of the input-data or mailbox senses of the next requirement, and no match SHALL describe an operator
+- **WHEN** the tutorial and topic pages, the glossary and `what_is_flezha.md` are searched for `bounded`, `unbounded` and `relay kind`
+- **THEN** every match SHALL be one of the input-data or mailbox senses of the next requirement, and no match SHALL describe a relay
 
 ### Requirement: Bounded and unbounded SHALL describe input data only
 
@@ -24,23 +24,23 @@ such as a live feed, or a mailbox's capacity. The glossary SHALL carry one entry
 #### Scenario: The words appear only next to data or a mailbox
 
 - **WHEN** a match of `bounded` or `unbounded` is read in context in a guide page or the glossary
-- **THEN** the noun it qualifies SHALL be an input, data, a file, a feed, a log or a mailbox, never an operator, a class, a run or a kind
+- **THEN** the noun it qualifies SHALL be an input, data, a file, a feed, a log or a mailbox, never a relay, a class, a run or a kind
 
 #### Scenario: The glossary defines the input sense
 
 - **WHEN** the glossary is read
-- **THEN** it SHALL carry an entry "Bounded / unbounded (input)" stating that the words describe a finite and an endless input and are not a property of an operator
+- **THEN** it SHALL carry an entry "Bounded / unbounded (input)" stating that the words describe a finite and an endless input and are not a property of a relay
 
 ### Requirement: Every class setting a guide shows SHALL be a leaf of the settings tree
 
-Every operator setting shown in a tutorial or topic page's code, in any language tab, SHALL be
-one the settled settings tree of `merge-the-two-operator-kinds-into-one`
+Every relay setting shown in a tutorial or topic page's code, in any language tab, SHALL be
+one the settled settings tree
 defines, written in the form that SDK's reference page documents. No such page SHALL show a
 retired setting, a retired builder call or a retired environment variable.
 
 #### Scenario: The workflow example declares steps in every tab
 
-- **WHEN** the "As a workflow" section of `docs/topics/basics/configuring_an_operator.md` and the Part 2 tutorial page that places orders are read
+- **WHEN** the "As a workflow" section of `docs/topics/basics/configuring_a_relay.md` and the Part 2 tutorial page that places orders are read
 - **THEN** each of their seven language tabs SHALL declare the order executor's run as steps, with its loop shape and failure mode, in that SDK's settled form, and none SHALL name a retired class or flag
 
 #### Scenario: The durability page shows the ladder once
@@ -55,12 +55,12 @@ retired setting, a retired builder call or a retired environment variable.
 
 ### Requirement: Part 3 SHALL build the session in steps and reach it from the gateway with a call
 
-The Part 3 tutorial under `docs/tutorials/agentdesk/` SHALL build the session as an operator
+The Part 3 tutorial under `docs/tutorials/agentdesk/` SHALL build the session as a relay
 that runs in steps, one pass per turn, started and driven from the CLI, and SHALL let the
 reader watch an idle session sleep. It SHALL run the gateway in flow, SHALL have the gateway
 call the user's session, and SHALL keep each user's daily token budget on the gateway in state
 keyed by user, fed by the token count the call's Response carries.
-`docs/topics/advanced/sessions.md` and `docs/topics/advanced/operator_calls.md` SHALL teach
+`docs/topics/advanced/sessions.md` and `docs/topics/advanced/relay_calls.md` SHALL teach
 the session and `call` with excerpts of the same example.
 
 #### Scenario: The tutorial shows a session sleeping
@@ -80,7 +80,7 @@ the session and `call` with excerpts of the same example.
 
 ### Requirement: The glossary SHALL define run, durable and steps
 
-`docs/glossary.md` SHALL define how an operator runs (flow or steps), where its work is
+`docs/glossary.md` SHALL define how a relay runs (flow or steps), where its work is
 kept (memory, the controller's disk, the remote copy), and what steps add (pass, stage,
 journal, undo, rewind, the loop shapes).
 
@@ -99,7 +99,7 @@ language tabs say the page is not yet written for them.
 #### Scenario: Part 1 runs
 
 - **WHEN** the tutorial pages of Part 1 are followed in order in one SDK language
-- **THEN** the echo operator SHALL read the input file and write the output file the pages show
+- **THEN** the echo relay SHALL read the input file and write the output file the pages show
 
 #### Scenario: Part 2 runs
 

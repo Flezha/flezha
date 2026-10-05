@@ -2,10 +2,10 @@
 
 ## Purpose
 
-The HTTP server plugin, the package `flezha_http` built in its own repository, puts an
-operator of either kind behind an HTTP/1.1 port: every request becomes one outside call of
-that operator carrying a request envelope, its `response()` answer becomes the response or a
-stream of another operator's events as server-sent events, every resource it holds is
+The HTTP server plugin, the package `flezha_http` built in its own repository, puts a
+relay of either kind behind an HTTP/1.1 port: every request becomes one outside call of
+that relay carrying a request envelope, its `response()` answer becomes the response or a
+stream of another relay's events as server-sent events, every resource it holds is
 bounded, and every failure is an HTTP status with the error model's document.
 ## Requirements
 ### Requirement: The HTTP server SHALL be a plugin package built outside the Flezha repository
@@ -49,13 +49,13 @@ hook `on_terminate`, which does nothing.
 
 #### Scenario: Loopback is the default
 
-- **WHEN** the plugin is enabled on an operator with `port` and `channel` only
+- **WHEN** the plugin is enabled on a relay with `port` and `channel` only
 - **THEN** it SHALL listen on `127.0.0.1` and on no other address
 
 #### Scenario: A bad bind address is refused before anything opens
 
 - **WHEN** the plugin is enabled with `bind` set to `localhost`
-- **THEN** the enable SHALL be refused naming `bind`, no row SHALL remain on the operator, and no socket SHALL have been opened
+- **THEN** the enable SHALL be refused naming `bind`, no row SHALL remain on the relay, and no socket SHALL have been opened
 
 #### Scenario: A header name that is not a lower-case token is refused
 
@@ -70,14 +70,14 @@ hook `on_terminate`, which does nothing.
 ### Requirement: The listener SHALL run as the plugin's declared worker and follow the plugin's lifecycle
 
 The server SHALL be the provider's declared worker, started by the extension table when the
-plugin activates and stopped when the plugin is disabled or its operator torn down, keyed by
-the operator's namespace, the operator's id and the plugin's id. It SHALL serve HTTP/1.1
-only. It SHALL stop when its host operator's Overwatch goes away, SHALL release its port
+plugin activates and stopped when the plugin is disabled or its relay torn down, keyed by
+the relay's namespace, the relay's id and the plugin's id. It SHALL serve HTTP/1.1
+only. It SHALL stop when its host relay's Overwatch goes away, SHALL release its port
 before its stop returns, and SHALL NOT be reused by a new Overwatch while its own host is
 gone. A port it cannot bind SHALL fail the activation with the code `http.listen_failed`,
-naming the address, the port and the reason. `flz operator info` SHALL show, under the
+naming the address, the port and the reason. `flz relay info` SHALL show, under the
 plugin, the address it listens on, the requests waiting, the streams open and the requests
-refused by a cap since it started. This SHALL hold for a host operator of either kind.
+refused by a cap since it started. This SHALL hold for a host relay of either kind.
 
 #### Scenario: Disabling the plugin closes the port
 
@@ -86,20 +86,20 @@ refused by a cap since it started. This SHALL hold for a host operator of either
 
 #### Scenario: A restarted Overwatch gets a new server on the same port
 
-- **WHEN** the host operator's Overwatch process is killed and restarted from the declared set
-- **THEN** the old server SHALL have stopped, a new one SHALL listen on the same port, and a request SHALL be answered by the restarted operator
+- **WHEN** the host relay's Overwatch process is killed and restarted from the declared set
+- **THEN** the old server SHALL have stopped, a new one SHALL listen on the same port, and a request SHALL be answered by the restarted relay
 
 #### Scenario: A port already taken fails the activation with a code
 
-- **WHEN** a second operator on the same controller enables the plugin on a port the first one already listens on
-- **THEN** its activation SHALL fail with `http.listen_failed` naming the address and the port, and the first operator's server SHALL keep answering
+- **WHEN** a second relay on the same controller enables the plugin on a port the first one already listens on
+- **THEN** its activation SHALL fail with `http.listen_failed` naming the address and the port, and the first relay's server SHALL keep answering
 
-#### Scenario: The operator info shows the server
+#### Scenario: The relay info shows the server
 
-- **WHEN** `flz operator info` is run on an operator carrying the plugin
+- **WHEN** `flz relay info` is run on a relay carrying the plugin
 - **THEN** it SHALL show the listening address and port and the counts of waiting requests, open streams and refusals
 
-### Requirement: The plugin SHALL refuse a partitioned host operator
+### Requirement: The plugin SHALL refuse a partitioned host relay
 
 The provider's `init_provider/1` SHALL refuse a plugin whose options carry a partition
 identity with the core's `Flezha.Plugin.ProviderBehaviour.refuse_partitioned/2`, whose code is
@@ -107,7 +107,7 @@ identity with the core's `Flezha.Plugin.ProviderBehaviour.refuse_partitioned/2`,
 partition group SHALL therefore fail on every member with that code and leave no plugin row,
 and a group started with the plugin in its declared set SHALL NOT start: its start SHALL be
 refused on the existing plugin-prepare failure, whose reason names `partitioned_host`,
-and no member SHALL remain. This SHALL hold for a group of either operator kind.
+and no member SHALL remain. This SHALL hold for a group of either relay kind.
 
 #### Scenario: Enabling on a group is refused
 
@@ -122,7 +122,7 @@ and no member SHALL remain. This SHALL hold for a group of either operator kind.
 ### Requirement: Every request SHALL become one outside call carrying a request envelope
 
 Every HTTP request the server accepts SHALL become exactly one outside call of the host
-operator, made with `Flezha.Plugin.Host.inject/5` in `:call` mode on the configured entry
+relay, made with `Flezha.Plugin.Host.inject/5` in `:call` mode on the configured entry
 channel with a deadline of `deadline_ms`. The metadata the plugin hands to `inject/5` SHALL
 carry `channel` and nothing else. The input's payload SHALL be one JSON object, the request envelope, holding
 `method` (upper case), `path` (the request path as received), `query` (the raw query string,
@@ -137,7 +137,7 @@ log a header or a body.
 
 - **GIVEN** the plugin enabled with `pass_headers` set to `x-api-key`
 - **WHEN** a client sends `POST /sessions/anna-42/messages?user=anna` with the headers `x-api-key: k1` and `authorization: Bearer t`, and the body `{"text":"hi"}`
-- **THEN** the operator's input SHALL be the envelope with `method` `POST`, `path` `/sessions/anna-42/messages`, `query` `user=anna`, `headers` `{"x-api-key":"k1"}` and `body` `{"text":"hi"}`, and no field of the input SHALL hold `Bearer t`
+- **THEN** the relay's input SHALL be the envelope with `method` `POST`, `path` `/sessions/anna-42/messages`, `query` `user=anna`, `headers` `{"x-api-key":"k1"}` and `body` `{"text":"hi"}`, and no field of the input SHALL hold `Bearer t`
 
 #### Scenario: A binary body is carried in base64
 
@@ -157,17 +157,17 @@ A request whose `content-length` exceeds `max_body_bytes` SHALL be answered 413 
 for the whole read SHALL be answered 408 with the code `http.body_timeout`, however slowly
 its bytes arrive. A request carrying a body without `content-length` (a chunked body) SHALL
 be answered 411 with the code `http.length_required` before any of it is read; a request with
-neither a length nor a body SHALL be served. None of these SHALL reach the operator.
+neither a length nor a body SHALL be served. None of these SHALL reach the relay.
 
 #### Scenario: A body over the limit is refused
 
 - **GIVEN** `max_body_bytes` set to 1024
 - **WHEN** a client posts 2048 bytes, once with a `content-length` and once chunked
-- **THEN** both SHALL be answered 413 with the code `http.body_too_large` and a `limit` of 1024, and the operator SHALL receive no input
+- **THEN** both SHALL be answered 413 with the code `http.body_too_large` and a `limit` of 1024, and the relay SHALL receive no input
 
 ### Requirement: Waiting requests SHALL be bounded
 
-At most `max_waiting` requests SHALL wait for their operator's answer at once, counting a
+At most `max_waiting` requests SHALL wait for their relay's answer at once, counting a
 request from before its body is read. A request past that SHALL be answered 503 with
 `retry-after: 1` and the code `http.busy` before its body is read and before anything is
 injected. At most `max_connections` connections SHALL be open at once; a connection past that
@@ -176,7 +176,7 @@ SHALL be closed at once.
 #### Scenario: A chunked body is refused unread
 
 - **WHEN** a client posts `hello` with `transfer-encoding: chunked` and no `content-length`
-- **THEN** it SHALL receive 411 with the code `http.length_required`, the operator SHALL receive no input, and the same body posted with its `content-length` SHALL be served
+- **THEN** it SHALL receive 411 with the code `http.length_required`, the relay SHALL receive no input, and the same body posted with its `content-length` SHALL be served
 
 #### Scenario: A connection past the cap is closed
 
@@ -188,7 +188,7 @@ SHALL be closed at once.
 
 - **GIVEN** `max_waiting` set to 2 and a host whose answers take two seconds
 - **WHEN** three requests arrive together
-- **THEN** one SHALL be answered 503 with `http.busy` at once, and the operator SHALL receive two inputs
+- **THEN** one SHALL be answered 503 with `http.busy` at once, and the relay SHALL receive two inputs
 
 ### Requirement: A plain answer envelope SHALL become the HTTP response
 
@@ -198,7 +198,7 @@ when that answer is a JSON object with an integer `status` from 200 to 599, and 
 bytes with the default content type `text/plain; charset=utf-8`; any other JSON value SHALL
 be sent JSON-encoded with the default `application/json`; `body_base64` SHALL be sent as its
 decoded bytes with the default `application/octet-stream`; a `content-type` header SHALL
-override the default. This SHALL hold for a host operator of either kind.
+override the default. This SHALL hold for a host relay of either kind.
 
 #### Scenario: The gateway answers 202 at once
 
@@ -212,12 +212,12 @@ override the default. This SHALL hold for a host operator of either kind.
 
 #### Scenario: A steps host answers a request
 
-- **WHEN** the plugin is enabled on a `per_input` steps operator whose turn answers `{"status":200,"body":"pong"}` through `response()`, and a client sends `GET /ping`
+- **WHEN** the plugin is enabled on a `per_input` steps relay whose turn answers `{"status":200,"body":"pong"}` through `response()`, and a client sends `GET /ping`
 - **THEN** the client SHALL receive status 200 and the body `pong`
 
 ### Requirement: An answer that is not an envelope SHALL be answered 502
 
-The plugin SHALL answer 502 with the code `http.answer_invalid`, naming the operator and the
+The plugin SHALL answer 502 with the code `http.answer_invalid`, naming the relay and the
 rule that failed, when the call's answer is not a JSON object; carries a key other than
 `status`, `headers`, `body`, `body_base64` and `stream`; has neither `status` nor `stream`;
 carries `stream` beside `status`, `body` or `body_base64`; carries both `body` and
@@ -250,11 +250,11 @@ Every failure the plugin answers SHALL carry the body `{"error": {"code", "class
 `call.busy` and `call.unavailable` 503 with `retry-after: 1`; `call.callee_ended` 503;
 `call.failed` 500; `call.absorbed` and `call.not_accepted` 409; `http.body_too_large` 413;
 `http.body_timeout` 408; `http.length_required` 411; `http.busy` and `http.streams_full` 503 with `retry-after: 1`;
-`http.answer_invalid` 502; `operator.not_found` 404; and any other code by its class:
+`http.answer_invalid` 502; `relay.not_found` 404; and any other code by its class:
 `invalid` 400, `denied` 403, `not_found` 404, `conflict` 409, `unavailable` 503,
 `unreachable` 502, `internal` 500. An error the controller answered (the call's, a refused
 attach's, a stream's end) SHALL reach the client with its code, its class, its catalogue
-message filled only from the details naming the operator, the namespace, the channel, the
+message filled only from the details naming the relay, the namespace, the channel, the
 attempts and the call's bounds, and no hint; the author's error text, a dead-letter entry and
 an exit reason SHALL NOT reach the client. The seven `http.*` codes SHALL be entries of the
 one error catalogue.
@@ -273,7 +273,7 @@ one error catalogue.
 #### Scenario: A dead-lettered call's body carries no author's text
 
 - **WHEN** the call answers `call.failed` whose error text is `upstream key sk-123 rejected` and whose entry is `dlq-9`
-- **THEN** the client SHALL receive 500 with `call.failed`, `details` holding only `operator`, a null `hint`, and a body containing neither `sk-123` nor `dlq-9`
+- **THEN** the client SHALL receive 500 with `call.failed`, `details` holding only `relay`, a null `hint`, and a body containing neither `sk-123` nor `dlq-9`
 
 #### Scenario: A code the plugin does not name is mapped by its class
 
@@ -285,16 +285,16 @@ one error catalogue.
 - **WHEN** the error catalogue is read
 - **THEN** it SHALL hold `http.body_too_large`, `http.body_timeout`, `http.length_required`, `http.busy`, `http.streams_full`, `http.answer_invalid` and `http.listen_failed`, each with its class, message and details
 
-### Requirement: A stream answer SHALL stream the named operator of the host's namespace over SSE
+### Requirement: A stream answer SHALL stream the named relay of the host's namespace over SSE
 
 When the call answers `{"stream": <id>}`, optionally with `headers`, the plugin SHALL attach
-a listener with `Flezha.Service.Listener.listen/4` to the operator or partition group `<id>`
-in the host operator's own namespace, and SHALL write nothing before the attach succeeds.
+a listener with `Flezha.Service.Listener.listen/4` to the relay or partition group `<id>`
+in the host relay's own namespace, and SHALL write nothing before the attach succeeds.
 Once it succeeds, the plugin SHALL answer 200 with `content-type: text/event-stream`,
 `cache-control: no-cache`, `x-accel-buffering: no` and the envelope's headers, and SHALL
 write each event the listener hands it on the same connection. It SHALL never attach a
 listener in another namespace. A refused attach SHALL be answered with its code's status
-and body. The streamed operator SHALL be either kind, awake or asleep.
+and body. The streamed relay SHALL be either kind, awake or asleep.
 
 #### Scenario: A session's parts, then its answer
 
@@ -302,22 +302,22 @@ and body. The streamed operator SHALL be either kind, awake or asleep.
 - **WHEN** a client reads the events endpoint with `curl -N` and a message is then posted to the session
 - **THEN** the client SHALL read three `part` events in order and then one `output` event carrying the answer
 
-#### Scenario: A flow operator's outputs
+#### Scenario: A flow relay's outputs
 
-- **WHEN** the gateway answers a stream envelope naming a flow operator that emits on a sink, and that operator is sent an input
+- **WHEN** the gateway answers a stream envelope naming a flow relay that emits on a sink, and that relay is sent an input
 - **THEN** the client SHALL read an `output` event carrying that output
 
 #### Scenario: An asleep session is streamed
 
-- **GIVEN** a session operator that is asleep
+- **GIVEN** a session relay that is asleep
 - **WHEN** a client opens its stream and a message is then posted to the session
 - **THEN** the attach SHALL succeed while the session sleeps, and the client SHALL read the woken turn's parts and answer
 
 #### Scenario: The same id in another namespace is never streamed
 
-- **GIVEN** an operator `anna-42` only in the namespace `other`, and a gateway in `default`
+- **GIVEN** a relay `anna-42` only in the namespace `other`, and a gateway in `default`
 - **WHEN** the gateway answers `{"stream":"anna-42"}`
-- **THEN** no listener SHALL be attached in `other`, and the client SHALL receive 404 with `operator.not_found` once `stream_wait_ms` has passed
+- **THEN** no listener SHALL be attached in `other`, and the client SHALL receive 404 with `relay.not_found` once `stream_wait_ms` has passed
 
 ### Requirement: The SSE events SHALL have fixed names and data
 
@@ -326,8 +326,8 @@ line. A part SHALL be `part` with `{"channel", "part", "attempt"}` taken from `c
 `flz.part` and `flz.part_attempt`, and the payload; an output SHALL be `output` with
 `{"channel"}` and the payload; the payload SHALL be `payload` when it is valid UTF-8 and
 `payload_base64` otherwise. A dead-lettered input SHALL be `dead_lettered` with the error
-document of `input.dead_lettered`, whose `details` SHALL hold only `operator`, `channel` and
-`attempts` and whose `hint` SHALL be null. The operator ending SHALL be `ended` with `{}`,
+document of `input.dead_lettered`, whose `details` SHALL hold only `relay`, `channel` and
+`attempts` and whose `hint` SHALL be null. The relay ending SHALL be `ended` with `{}`,
 after which the response SHALL end. A listener ending with an error SHALL be `closed` with
 that error's document, after which the response SHALL end. No other metadata key SHALL be
 written. No `id:` line SHALL be written, and a `Last-Event-ID` header SHALL be ignored. After
@@ -335,7 +335,7 @@ every `heartbeat_ms` with no event written, the plugin SHALL write the comment l
 
 #### Scenario: A part's data
 
-- **WHEN** the streamed operator sends the part `Hel` on the channel `events` as the first part of its first attempt
+- **WHEN** the streamed relay sends the part `Hel` on the channel `events` as the first part of its first attempt
 - **THEN** the client SHALL read `event: part` and `data: {"channel":"events","part":0,"attempt":1,"payload":"Hel"}` in some key order
 
 #### Scenario: A failed turn is told without the author's text
@@ -349,7 +349,7 @@ every `heartbeat_ms` with no event written, the plugin SHALL write the comment l
 - **WHEN** a stream stays without events for three seconds
 - **THEN** the client SHALL read at least two comment lines in that time
 
-#### Scenario: The operator ends
+#### Scenario: The relay ends
 
 - **WHEN** the streamed session completes
 - **THEN** the client SHALL read an `ended` event and the response SHALL end
@@ -362,31 +362,31 @@ every `heartbeat_ms` with no event written, the plugin SHALL write the comment l
 ### Requirement: A stream SHALL end and detach when its client goes
 
 When a write to a stream's connection fails, the plugin SHALL end the listener, which
-detaches its plugin from the streamed operator. A client that closes its connection while
+detaches its plugin from the streamed relay. A client that closes its connection while
 the stream is quiet SHALL be noticed at the latest at the second heartbeat after it left.
 
 #### Scenario: A disconnected client leaves no listener
 
 - **GIVEN** `heartbeat_ms` set to 1000 and a client streaming a session
 - **WHEN** the client process is killed
-- **THEN** within three seconds `flz operator info` on the session SHALL show no listener plugin
+- **THEN** within three seconds `flz relay info` on the session SHALL show no listener plugin
 
-### Requirement: A stream for an operator not running yet SHALL wait a bounded time
+### Requirement: A stream for a relay not running yet SHALL wait a bounded time
 
-When the attach answers `operator.not_found`, the plugin SHALL attach again every 250 ms until
+When the attach answers `relay.not_found`, the plugin SHALL attach again every 250 ms until
 `stream_wait_ms` has passed since the first attempt, and SHALL then answer 404 with that
 error. With `stream_wait_ms` set to 0 it SHALL answer 404 at once.
 
 #### Scenario: A session created just after its stream was opened
 
-- **WHEN** a client opens a stream for a session the gateway has registered but whose operator the gateway's call starts one second later
-- **THEN** the stream SHALL attach once the operator exists and SHALL answer 200 with the event stream
+- **WHEN** a client opens a stream for a session the gateway has registered but whose relay the gateway's call starts one second later
+- **THEN** the stream SHALL attach once the relay exists and SHALL answer 200 with the event stream
 
 #### Scenario: A session that never exists
 
 - **GIVEN** `stream_wait_ms` set to 1000
-- **WHEN** the gateway answers a stream envelope naming an operator that never starts
-- **THEN** the client SHALL receive 404 with `operator.not_found` after about one second
+- **WHEN** the gateway answers a stream envelope naming a relay that never starts
+- **THEN** the client SHALL receive 404 with `relay.not_found` after about one second
 
 ### Requirement: Open streams SHALL be bounded
 

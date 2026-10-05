@@ -1,11 +1,11 @@
 # http-push-plugin Specification
 
 ## Purpose
-The first-party `operator_http_push` provider sends each payload an operator emits (or ingests) as one HTTP request, carrying the output's identity, holding a delivery-guaranteed output until a 2xx or parking it as a dead letter, from a bounded queue shared by the operators bound to it.
+The first-party `relay_http_push` provider sends each payload a relay emits (or ingests) as one HTTP request, carrying the output's identity, holding a delivery-guaranteed output until a 2xx or parking it as a dead letter, from a bounded queue shared by the relays bound to it.
 ## Requirements
-### Requirement: `operator_http_push` SHALL send each payload as one HTTP request
+### Requirement: `relay_http_push` SHALL send each payload as one HTTP request
 
-The first-party provider `operator_http_push` SHALL, for each payload dispatched to its
+The first-party provider `relay_http_push` SHALL, for each payload dispatched to its
 `on_output` or `on_input` hook on a channel it sends, issue one HTTP request with the
 configured `method` (`POST` by default, or `PUT`) to its `url`, the payload as the body
 unchanged, `content-type` set to `content_type`, and the configured `headers`. It SHALL keep
@@ -14,19 +14,19 @@ send payloads over one connection in the order they were dispatched.
 
 #### Scenario: An output reaches the endpoint
 
-- **GIVEN** a local HTTP test server and an operator bound to an `operator_http_push` plugin
+- **GIVEN** a local HTTP test server and a relay bound to a `relay_http_push` plugin
   on its output
-- **WHEN** the operator emits three outputs
+- **WHEN** the relay emits three outputs
 - **THEN** the server SHALL receive three `POST` requests in emit order, each body equal to
   the output's payload, over one connection
 
 #### Scenario: Another channel is not sent
 
 - **GIVEN** the plugin set to `channel: alerts`
-- **WHEN** the operator emits on `alerts` and on `prices`
+- **WHEN** the relay emits on `alerts` and on `prices`
 - **THEN** the server SHALL receive only the output on `alerts`
 
-### Requirement: `operator_http_push` SHALL validate its options without I/O
+### Requirement: `relay_http_push` SHALL validate its options without I/O
 
 `url` SHALL be required, `http` or `https`, with a host and no credentials, refused otherwise
 with `plugin.url_scheme_unsupported`, `plugin.url_without_host` or
@@ -60,9 +60,9 @@ visible ASCII and at its `%` characters, and unchanged otherwise.
 
 #### Scenario: A retried guaranteed output keeps its key
 
-- **GIVEN** an operator with `effectively_once` and a test server answering 503 once and then
+- **GIVEN** a relay with `effectively_once` and a test server answering 503 once and then
   200
-- **WHEN** the operator emits one output
+- **WHEN** the relay emits one output
 - **THEN** the server SHALL receive two requests with the same `idempotency-key`
 
 ### Requirement: The dispatch SHALL wait only on a full queue
@@ -75,9 +75,9 @@ the backoff curve while its attempts after the first stay within `retries` and t
 its first attempt within `delivery_timeout_ms`, and SHALL then be dropped, counted and logged
 once per reason per plugin. Any other status SHALL drop it at once.
 
-#### Scenario: A failing endpoint does not stop the operator
+#### Scenario: A failing endpoint does not stop the relay
 
-- **GIVEN** an operator bound to the plugin and a test server answering 500
+- **GIVEN** a relay bound to the plugin and a test server answering 500
 - **WHEN** 100 plain outputs are dispatched
 - **THEN** every dispatch SHALL return without waiting on the server, and the plugin's drop
   count SHALL reach 100 once every retry is spent
@@ -97,17 +97,17 @@ guaranteed output SHALL be held and left in the outbox, and a plain one dropped 
 
 #### Scenario: A receiver that recovers
 
-- **GIVEN** an operator with `effectively_once` and a test server that fails every request for
+- **GIVEN** a relay with `effectively_once` and a test server that fails every request for
   2 seconds
-- **WHEN** the operator emits outputs during the outage
+- **WHEN** the relay emits outputs during the outage
 - **THEN** the server SHALL receive every one of them after it comes back, in order, and the
   outbox SHALL hold none of them afterwards
 
 #### Scenario: A refused output becomes a dead letter
 
-- **GIVEN** an operator with `effectively_once` and a test server answering 422
-- **WHEN** the operator emits one output
-- **THEN** the server SHALL receive it once, and the operator's DLQ SHALL hold it with the
+- **GIVEN** a relay with `effectively_once` and a test server answering 422
+- **WHEN** the relay emits one output
+- **THEN** the server SHALL receive it once, and the relay's DLQ SHALL hold it with the
   error `http_push.rejected` and the status 422
 
 #### Scenario: A redirect is refused
@@ -170,14 +170,14 @@ the status of the plugin's worker or of its shared copy.
 - **THEN** the plugin SHALL be unhealthy after three failed requests and healthy after the
   first 2xx, and no captured log line SHALL contain the URL's path
 
-### Requirement: Operators bound to one plugin SHALL share its worker
+### Requirement: Relays bound to one plugin SHALL share its worker
 
-`operator_http_push` SHALL declare itself shareable; every operator bound to one such plugin on
+`relay_http_push` SHALL declare itself shareable; every relay bound to one such plugin on
 a controller SHALL send through the same worker, connection and queue.
 
-#### Scenario: Two operators, one connection
+#### Scenario: Two relays, one connection
 
-- **GIVEN** two operators on one controller bound to one `operator_http_push` plugin
+- **GIVEN** two relays on one controller bound to one `relay_http_push` plugin
 - **WHEN** each emits an output
 - **THEN** the test server SHALL see both requests on one connection
 

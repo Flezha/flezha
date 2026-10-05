@@ -26,7 +26,7 @@ defmodule Flezha.Service.Cli.Dlq do
     )
 
     Enum.each(entries, fn e ->
-      ref = "#{e["operator_class"]}/#{e["tasklet_id"]}/#{e["id"]}"
+      ref = "#{e["relay_class"]}/#{e["tasklet_id"]}/#{e["id"]}"
       age_s = div(System.system_time(:millisecond) - (e["ts_ms"] || 0), 1000)
 
       IO.puts(
@@ -42,7 +42,7 @@ defmodule Flezha.Service.Cli.Dlq do
   @doc "`flz dlq show`: the entry's fields and a preview of its payload."
   def show([entry, payload], _args, _opts) do
     Enum.each(
-      ~w(id operator_class tasklet_id cell_key channel origin_offset error attempts generation status ts_ms payload_bytes),
+      ~w(id relay_class tasklet_id cell_key channel origin_offset error attempts generation status ts_ms payload_bytes),
       fn key ->
         IO.puts(String.pad_trailing(key, 18) <> to_string(inspect(entry[key])))
       end

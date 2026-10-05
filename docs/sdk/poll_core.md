@@ -2,7 +2,7 @@
 
 For SDK implementers and for anyone reading the kernel. `flz_core` is the
 language-agnostic runner kernel: transport, ordering, durability, retries,
-timers, credit, routing and a steps operator's pass live in one Rust crate. A host
+timers, credit, routing and a steps relay's pass live in one Rust crate. A host
 language SDK drives it through exactly one invocation surface:
 
 ```text
@@ -41,7 +41,7 @@ the C ABI and where the code lives; the system-level picture is
 | `flz_core_ffi/src/jni_glue.rs`         | `Java_com_flezha_sdk_native_1_FlzCore_*` exports behind the `jni` feature |
 | `flz_core_ffi/tests/abi_scenario.rs`   | The CI scenario that drives the whole runtime through the C ABI |
 | `flz_transport/`                       | The transport tier both the kernel and the controller NIF share: `transport/` (QUIC, TLS, config, liveness, `protocol.rs` stream constants `STREAM_TYPE_PRIMARY 0x01` / `STREAM_TYPE_SECONDARY 0x02`), `service/payloader.rs` (binary framing), `utility/socket_dir.rs` (socket paths), `utility/socket_probe.rs` (reachability) |
-| `sdk/rust/src/`                        | The Rust SDK — the typed layer over `flz_core`: `lib.rs` (runner handle), `tasklet/`, `channel/` (builder DSL), `operator/` (typed dispatcher, poll pool), `cell/`, `steps/`, `runner/`, `testing/` (harness), `diag.rs` |
+| `sdk/rust/src/`                        | The Rust SDK — the typed layer over `flz_core`: `lib.rs` (runner handle), `tasklet/`, `channel/` (builder DSL), `relay/` (typed dispatcher, poll pool), `cell/`, `steps/`, `runner/`, `testing/` (harness), `diag.rs` |
 | `sdk/java/`                            | The Java SDK (Maven): `flezha-sdk-api` (authoring surface), `flezha-sdk-runtime` (`PollHost`, `ActivationDispatcher`, codec), `flezha-sdk-native` (`FlzCore`, `NativeLibraryLoader`, bundled binaries), `flezha-sdk-testing` (`TaskletTestHarness`), `flezha-sdk-examples` (the `E01`–`E12` authoring samples), `flezha-sdk` (fat-jar aggregator) |
 
 ## The core decides, the SDK brings the threads
@@ -55,13 +55,13 @@ durability, and caps how many work activations may be underway at once —
 `FLEZHA_MAX_INFLIGHT_ACTIVATIONS`, default 1024, enforced at handout: at the
 cap `poll` blocks as if nothing were ready, and the completion that drops the
 count below it releases the next one. Direct activations (restore folds,
-snapshot requests, the other command crossings, a steps operator's undo) are exempt —
+snapshot requests, the other command crossings, a steps relay's undo) are exempt —
 a command crossing answers a caller blocked on a rendezvous, so holding one
 behind capped cell work would deadlock that caller, and an undo holds its
 cell's gate until it is answered. They are also what a queued direct
 activation with no thread inside `poll` reports as starvation: a blocked caller
 must be able to buy a thread. A steps stage's items are ordinary cell work
-and take the cap like a flow operator's.
+and take the cap like a flow relay's.
 
 **The SDK brings the threads**, with whatever its runtime does best. The count
 is a servicing detail, not a limit on concurrency — that limit is the core's
@@ -241,7 +241,7 @@ re-handing one that already ran would execute it twice, which is the one thing
 this seam may never do.
 
 **Make the answer structural, not a discipline.** An RAII guard in Rust
-(`operator::dispatcher::Handout`, whose `Drop` abandons), a `finally` in Java
+(`relay::dispatcher::Handout`, whose `Drop` abandons), a `finally` in Java
 (`PollHost.runActivation`), an `after` in Elixir — so a panic, an exception, an
 early return or a `?` cannot skip it. A contract a reviewer has to notice is
 not a contract: the discipline version of this rule produced two live leak
@@ -264,7 +264,7 @@ one.
 What it does instead is **report**: `outstanding_count()` and
 `outstanding_oldest_age_ms()` ride the data-channel heartbeat as `inflight` and
 `inflight_oldest_ms`, the controller's classifier mints
-`cell_dispatch_stalled` from them, and the remedy is an operator rebind that
+`cell_dispatch_stalled` from them, and the remedy is a relay rebind that
 resumes from durable state — the path that is already safe. Detection is the
 core's; the judgement and the remedy are the controller's.
 
@@ -358,7 +358,7 @@ Context lifecycle: `flz_core_context_new(shim_schema_version)` →
   different one than the thread that polled. No affinity.
 - **A host whose unit of concurrency is bound to one thread must keep every
   blocking entry point off that thread.** The blocking ones are the poll, the
-  starvation wait, the completion, the steps operator receive, the spawn result read
+  starvation wait, the completion, the steps relay receive, the spawn result read
   with a nonzero timeout and the runner start. The spawn request, and the spawn
   result read with a timeout of zero, never wait. An event loop is the case this rule exists for, and
   `flz_core_complete` is what makes it a correctness rule rather than a latency
@@ -390,7 +390,7 @@ Context lifecycle: `flz_core_context_new(shim_schema_version)` →
   without keeping a second clock in step.
 
 The CI scenario (`flz_core_ffi/tests/abi_scenario.rs`, `c_abi_full_scenario`)
-drives connect, AddOperator over the real control path, input activations, a
+drives connect, AddRelay over the real control path, input activations, a
 timer firing, a restore fold, a live state read, a
 keyed dynamic route through the prepare crossing, an effectively-once floor
 skip, a steps tasklet completing its instance and shutdown entirely
@@ -435,14 +435,14 @@ At runtime the full contract crosses the boundary:
 - **Inter-tasklet edges route on `(edge, key)`**: outputs name their
   consumer; keys and event times are producer-evaluated (the host holds the
   typed value and the extractor; the core holds neither).
-- **Steps operator lifecycles run under poll**: a steps stage's items are routed
+- **Steps relay lifecycles run under poll**: a steps stage's items are routed
   into its cells' mailboxes and handed out as ordinary `Work` batches, and an
   undo crosses as a `CompensateRun` on the direct queue. Nothing waits for
   them: a settled item, a commit ack, a deadline and an undo's answer are
   events that advance a pass sheet on the instance, on the thread that brings
   each one. Both language paths take that route, so a stage costs exactly the
   SDK threads that run its items and no core thread belongs to an instance.
-  The retry ladder is the flow operator's; barriers, the task journal, loop modes,
+  The retry ladder is the flow relay's; barriers, the task journal, loop modes,
   suspension and rewind are the sheet's
   ([`../architecture/steps_profile.md`](../architecture/steps_profile.md)).
 
@@ -463,7 +463,7 @@ class — `schemaVersion()`, `contextNew(shimSchemaVersion)`,
 `complete(ctx, result)`, `spawnRequest` / `spawnResult`, `monotonicNanos()`,
 `shutdown(ctx)`, `contextFree(ctx)`. `PollHost`'s fetcher threads loop
 `poll → decode Activation → hand off → poll`; the kernel (transport, ordering,
-durability, retries, timers, credit, routing, a steps operator's pass, reconnect)
+durability, retries, timers, credit, routing, a steps relay's pass, reconnect)
 lives entirely in the core.
 
 **The shipped binary.** One `libflz_core_ffi.{so,dylib,dll}` per platform
@@ -553,6 +553,6 @@ and the per-SDK matrix live in
 - [`authoring_contract.md`](authoring_contract.md) — the sugar that expands onto this kernel
 - [`protocol_spec.md`](protocol_spec.md) — the wire protocol the transport tier carries
 - [`state_persistence.md`](state_persistence.md) — WAL layout and restore the flusher feeds
-- [`rust_operator_architecture.md`](rust_operator_architecture.md) — the Rust typed layer in detail
+- [`rust_relay_architecture.md`](rust_relay_architecture.md) — the Rust typed layer in detail
 - [`../architecture/runner.md`](../architecture/runner.md) — the runner drawn, all three hosts
 - [`../internals/nif_transport.md`](../internals/nif_transport.md) — the controller's side of `flz_transport`

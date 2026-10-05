@@ -1,12 +1,12 @@
 defmodule FlezhaTest.Plugin.SharedInjectionTest do
   @moduledoc """
   The record path of a shared source: its one worker injects each record
-  straight into every bound operator, without waiting on any of them. An
-  operator whose input is durable runs the source on its own and confirms
+  straight into every bound relay, without waiting on any of them. A
+  relay whose input is durable runs the source on its own and confirms
   every record, so a slow one holds only its own upstream; a poller of its own
-  advances its content only once the operator took it.
+  advances its content only once the relay took it.
 
-  The test process stands in for an operator: it holds the extension table, so
+  The test process stands in for a relay: it holds the extension table, so
   every injection lands in its own mailbox.
   """
 
@@ -18,7 +18,7 @@ defmodule FlezhaTest.Plugin.SharedInjectionTest do
   import ExUnit.CaptureLog
 
   alias Flezha.Cluster.Directory
-  alias Flezha.Operator.Overwatch
+  alias Flezha.Relay.Overwatch
   alias Flezha.Plugin
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Plugin.Provider.HttpPoll
@@ -64,7 +64,7 @@ defmodule FlezhaTest.Plugin.SharedInjectionTest do
     def worker_specs(opts), do: [{opts.source_plugin_id, opts}]
   end
 
-  # What `Operator.Plugins.env/1` says of an effectively-once operator.
+  # What `Relay.Plugins.env/1` says of an effectively-once relay.
   @effectively_once %{effectively_once: true, durable_input: true}
 
   defp websocket(server, name) do
@@ -72,7 +72,7 @@ defmodule FlezhaTest.Plugin.SharedInjectionTest do
       id: name,
       provider: Websocket,
       namespace: @namespace,
-      operator_id: "op",
+      relay_id: "op",
       opts: %{uri: "ws://127.0.0.1:#{server.port}/feed", channel: "input"}
     }
   end
@@ -82,7 +82,7 @@ defmodule FlezhaTest.Plugin.SharedInjectionTest do
       id: name,
       provider: HttpPoll,
       namespace: @namespace,
-      operator_id: "op",
+      relay_id: "op",
       opts: %{
         url: "http://127.0.0.1:#{origin.port}/config",
         channel: "config_in",
@@ -92,7 +92,7 @@ defmodule FlezhaTest.Plugin.SharedInjectionTest do
     }
   end
 
-  # Bind `plugin` on an operator table the calling process holds.
+  # Bind `plugin` on a relay table the calling process holds.
   defp bind(plugin, env) do
     {:ok, table} =
       Overwatch.__extensions_catalog__()
@@ -103,32 +103,32 @@ defmodule FlezhaTest.Plugin.SharedInjectionTest do
     table
   end
 
-  # A second operator bound to `plugin`: it answers every injection with
+  # A second relay bound to `plugin`: it answers every injection with
   # `verdict` and reports it to the test as `{:other, kind, message}`.
-  defp other_operator(plugin, env, verdict) do
+  defp other_relay(plugin, env, verdict) do
     test = self()
 
     pid =
       spawn_link(fn ->
         table = bind(plugin, env)
         send(test, {:bound, self()})
-        relay(test, table, verdict)
+        forward(test, table, verdict)
       end)
 
     assert_receive {:bound, ^pid}, 5_000
     pid
   end
 
-  defp relay(test, table, verdict) do
+  defp forward(test, table, verdict) do
     receive do
       {:"$gen_call", from, {kind, message, _metadata}} ->
         send(test, {:other, kind, message})
         GenServer.reply(from, verdict)
-        relay(test, table, verdict)
+        forward(test, table, verdict)
 
       {:"$gen_cast", {:io_in, message, _metadata}} ->
         send(test, {:other, :cast, message})
-        relay(test, table, verdict)
+        forward(test, table, verdict)
 
       {:unbind, from} ->
         Table.teardown_all(table, :now)
@@ -171,7 +171,7 @@ defmodule FlezhaTest.Plugin.SharedInjectionTest do
       %{server: WebsocketServer.start()}
     end
 
-    test "confirms every frame for an effectively-once operator and drops none",
+    test "confirms every frame for an effectively-once relay and drops none",
          %{server: server} do
       table = bind(websocket(server, "eo_feed"), @effectively_once)
       assert_receive {:ws_open, _}, 5_000
@@ -185,17 +185,17 @@ defmodule FlezhaTest.Plugin.SharedInjectionTest do
       Table.teardown_all(table, :now)
     end
 
-    test "an effectively-once operator runs a connection of its own beside the shared one",
+    test "an effectively-once relay runs a connection of its own beside the shared one",
          %{server: server} do
       plugin = websocket(server, "split_feed")
-      plain = other_operator(plugin, %{}, :ok)
+      plain = other_relay(plugin, %{}, :ok)
       assert_receive {:ws_open, _}, 5_000
       table = bind(plugin, @effectively_once)
       assert_receive {:ws_open, _}, 5_000
       assert WebsocketServer.connections(server) == 2
 
-      # The effectively-once operator answers nothing: its own socket waits on
-      # it, and the plain operator's frames keep coming.
+      # The effectively-once relay answers nothing: its own socket waits on
+      # it, and the plain relay's frames keep coming.
       for n <- 1..5, do: WebsocketServer.broadcast(server, "w#{n}")
       for _ <- 1..5, do: assert_receive({:other, :cast, "w" <> _}, 5_000)
 
@@ -203,11 +203,11 @@ defmodule FlezhaTest.Plugin.SharedInjectionTest do
       Table.teardown_all(table, :now)
     end
 
-    test "casts to each bound operator, stamped with its channel", %{server: server} do
+    test "casts to each bound relay, stamped with its channel", %{server: server} do
       plugin = websocket(server, "mixed_feed")
       table = bind(plugin, %{})
       assert_receive {:ws_open, _}, 5_000
-      other = other_operator(put_in(plugin.opts.channel, "other_in"), %{}, :ok)
+      other = other_relay(put_in(plugin.opts.channel, "other_in"), %{}, :ok)
 
       WebsocketServer.broadcast(server, "both")
 
@@ -223,7 +223,7 @@ defmodule FlezhaTest.Plugin.SharedInjectionTest do
     end
   end
 
-  test "operators bound while the socket cannot connect get frames once it does" do
+  test "relays bound while the socket cannot connect get frames once it does" do
     log = capture_log(fn -> late_frames(free_port()) end)
     assert log =~ "Connecting to host failed"
   end
@@ -231,7 +231,7 @@ defmodule FlezhaTest.Plugin.SharedInjectionTest do
   defp late_frames(port) do
     plugin = websocket(%{port: port}, "late_feed")
     table = bind(plugin, %{})
-    other = other_operator(plugin, %{}, :ok)
+    other = other_relay(plugin, %{}, :ok)
 
     # The socket has taken both retargets, while it could not connect.
     {:disconnected, _data} = :sys.get_state(WorkerSup.worker_pid(Websocket, "late_feed"))
@@ -255,7 +255,7 @@ defmodule FlezhaTest.Plugin.SharedInjectionTest do
       id: "legacy",
       provider: LegacySource,
       namespace: @namespace,
-      operator_id: "op",
+      relay_id: "op",
       opts: %{test: self()}
     }
 
@@ -276,7 +276,7 @@ defmodule FlezhaTest.Plugin.SharedInjectionTest do
       %{origin: start_origin(body: "v1", etag: "e1")}
     end
 
-    test "of an operator whose input is durable offers content again until it is taken",
+    test "of a relay whose input is durable offers content again until it is taken",
          %{origin: origin} do
       table = bind(poll(origin, "refused_poll"), %{durable_input: true})
 
@@ -287,12 +287,12 @@ defmodule FlezhaTest.Plugin.SharedInjectionTest do
       Table.teardown_all(table, :now)
     end
 
-    test "shared casts to each operator and seeds a newly bound one", %{origin: origin} do
+    test "shared casts to each relay and seeds a newly bound one", %{origin: origin} do
       plugin = poll(origin, "two_poll")
       table = bind(plugin, %{})
       assert {"v1", %{"channel" => "config_in"}} = cast_frame()
 
-      other = other_operator(plugin, %{}, :ok)
+      other = other_relay(plugin, %{}, :ok)
       assert_receive {:other, :cast, "v1"}, 5_000
       refute_received {:"$gen_cast", _}
 
@@ -303,11 +303,11 @@ defmodule FlezhaTest.Plugin.SharedInjectionTest do
       Table.teardown_all(table, :now)
     end
 
-    test "shared, an operator refusing what it is handed holds back no other",
+    test "shared, a relay refusing what it is handed holds back no other",
          %{origin: origin} do
       plugin = poll(origin, "refusing_poll")
       table = bind(plugin, %{})
-      refusing = other_operator(plugin, %{}, {:error, :refused})
+      refusing = other_relay(plugin, %{}, {:error, :refused})
       assert {"v1", _} = cast_frame()
 
       # The validator was committed, so the next poll asks for a change only.

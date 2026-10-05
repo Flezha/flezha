@@ -38,7 +38,7 @@ defmodule Flezha.Plugin.Provider.File.WriteWorker do
   defstruct [
     :plugin_id,
     :path,
-    :operator_id,
+    :relay_id,
     :commit,
     :linger_ms,
     :max_batch,
@@ -107,7 +107,7 @@ defmodule Flezha.Plugin.Provider.File.WriteWorker do
       # Seeded at start: a sink that has never synced is measured from its own
       # birth, so a failing first write is judged by the same window.
       |> Map.merge(%{
-        operator_id: opts[:source_operator_id],
+        relay_id: opts[:source_relay_id],
         storage: Storage.Config.of(opts.path),
         target: if(opts.commit == "append", do: opts.path),
         last_flush_ms: now()
@@ -205,7 +205,7 @@ defmodule Flezha.Plugin.Provider.File.WriteWorker do
   # cursor past it.
   defp park(state, msg, metadata) do
     DlqEntry.new!(%{
-      operator_class: state.operator_id || @provider,
+      relay_class: state.relay_id || @provider,
       tasklet_id: state.plugin_id,
       cell_key: Map.get(metadata, "flz.cell") || state.plugin_id,
       channel: Map.get(metadata, "channel", ""),

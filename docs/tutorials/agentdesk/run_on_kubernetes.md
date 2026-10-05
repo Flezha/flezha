@@ -33,8 +33,8 @@ partitioned roll out complete: 1 new pods have been updated...
 
 ```sh
 $ alias flz='kubectl -n agentdesk exec agentdesk-0 -c controller -- bin/flz'
-$ flz operator start agent --id anna --namespace agents && flz operator start gateway --id gateway --namespace agents
-$ flz plugin enable web http_server --operator_id=gateway --namespace agents --hook=on_terminate --Xport=8080 --Xbind=0.0.0.0 --Xchannel=http
+$ flz relay start agent --id anna --namespace agents && flz relay start gateway --id gateway --namespace agents
+$ flz plugin enable web http_server --relay_id=gateway --namespace agents --hook=on_terminate --Xport=8080 --Xbind=0.0.0.0 --Xchannel=http
 ```
 
 > Forward the service to port 8090 in a second terminal, and send Anna a message through it.
@@ -58,7 +58,7 @@ sent to anna
 ```sh
 $ kubectl -n agentdesk delete pod agentdesk-0
 $ kubectl -n agentdesk rollout status statefulset/agentdesk --timeout=300s
-$ flz operator call anna --namespace agents --text 'Are you still there?'
+$ flz relay call anna --namespace agents --text 'Are you still there?'
 ```
 
 ```output

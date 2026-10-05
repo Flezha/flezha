@@ -9,14 +9,14 @@ defmodule Flezha.SDK.PersistenceTest do
 
   import ExUnit.CaptureLog
 
-  import FlezhaTest.Helper.SdkOperatorHarness
+  import FlezhaTest.Helper.SdkRelayHarness
 
   alias Flezha.SDK.{
     Codec,
     Counters,
     Ctx,
     Cell,
-    Operator,
+    Relay,
     Park,
     Tasklet,
     Record,
@@ -24,7 +24,7 @@ defmodule Flezha.SDK.PersistenceTest do
     Topology
   }
 
-  alias Flezha.SDK.Operator.Inbox
+  alias Flezha.SDK.Relay.Inbox
   alias Flezha.SDK.Wire
 
   alias FlezhaTest.Helper.SdkPersistenceFixtures.{
@@ -300,15 +300,15 @@ defmodule Flezha.SDK.PersistenceTest do
 
   describe "the clocks" do
     test "Ctx.now/1 serves the declared clock: the seq the dispatch started at, the input's event time, or the epoch millisecond" do
-      %{op: op} = start_operator(LogicalClockOp)
+      %{op: op} = start_relay(LogicalClockOp)
       for n <- [5, 6, 7], do: Inbox.input(op, "in", Integer.to_string(n), %{})
       assert for({"op-1", out, _} <- frames(6), do: out) == ["0", "1", "2"]
 
-      %{op: op} = start_operator(EventTimeOp, operator_id: "op-2")
+      %{op: op} = start_relay(EventTimeOp, relay_id: "op-2")
       Inbox.input(op, "in", "1720000000000", %{})
       assert [{"op-2", "1720000000000", _}] = frames(1)
 
-      %{op: op} = start_operator(NowOp, operator_id: "op-3")
+      %{op: op} = start_relay(NowOp, relay_id: "op-3")
       before = System.system_time(:millisecond)
       Inbox.input(op, "in", "x", %{})
       assert [{"op-3", now, _}] = frames(1)
@@ -318,7 +318,7 @@ defmodule Flezha.SDK.PersistenceTest do
 
   describe "timers" do
     test "a registration ships one timer-ops record after the dispatch's change records, at the next seq" do
-      %{op: op} = start_operator(TimerOp)
+      %{op: op} = start_relay(TimerOp)
       before = System.system_time(:millisecond)
       Inbox.input(op, "in", "3", %{})
       [r0, r1, out] = frames(3)
@@ -338,7 +338,7 @@ defmodule Flezha.SDK.PersistenceTest do
     end
 
     test "compaction re-states the pending set above the snapshot's seq, and the slot carries it" do
-      %{op: op} = start_operator(TimerOp)
+      %{op: op} = start_relay(TimerOp)
       Inbox.input(op, "in", "1", %{})
       [_r0, r1, _out] = frames(3)
       {1, [%{scheduled_at: at}], _} = timer_ops(r1)
@@ -398,7 +398,7 @@ defmodule Flezha.SDK.PersistenceTest do
     @label "op-1/stamped/k0"
 
     test "a keyed sink stamps flz.cell, flz.seq and flz.key after user metadata; the ordinal advances per plugin output and restarts per item" do
-      %{op: op} = start_operator(KeyedOp)
+      %{op: op} = start_relay(KeyedOp)
       Inbox.input(op, "in", "4", %{})
 
       assert [{"cell_state_change", _, _}, {"op-1", "a", first}, {"op-1", "b", second}] =
@@ -427,7 +427,7 @@ defmodule Flezha.SDK.PersistenceTest do
     end
 
     test "a plain sink beside a keyed one advances the ordinal without being stamped" do
-      %{op: op} = start_operator(MixedSinksOp)
+      %{op: op} = start_relay(MixedSinksOp)
       Inbox.input(op, "in", "4", %{})
 
       assert [
@@ -444,7 +444,7 @@ defmodule Flezha.SDK.PersistenceTest do
     end
 
     test "a keyless emit from a Single Cell on a keyed sink is refused at emit time, nothing emitted" do
-      %{op: op, counters: counters} = start_operator(SingleKeyedOp)
+      %{op: op, counters: counters} = start_relay(SingleKeyedOp)
       Inbox.input(op, "in", "x", %{})
 
       assert_receive {:"$gen_cast", {:park, _pid, _identity, %{error: error}}}, 2_000
@@ -467,12 +467,12 @@ defmodule Flezha.SDK.PersistenceTest do
       do: send(pid, {:dynamic, measurements, metadata})
 
     test "a dynamic node with max_cells 2 mints two Cells and drops the third key's input, counting it" do
-      %{op: op, counters: counters} = start_operator(CappedOp)
+      %{op: op, counters: counters} = start_relay(CappedOp)
       for n <- ~w(1 2 3), do: Inbox.input(op, "in", n, %{})
       # Two dispatches: two records and two outputs, and nothing for k3.
       [_, _, _, _] = frames(4)
-      assert [{"capped", :dynamic, [{"k1", _}, {"k2", _}]}] = Operator.Server.cells(op)
-      assert_receive {:dynamic, %{count: 1}, %{operator_id: "op-1", event: :capped}}, 1_000
+      assert [{"capped", :dynamic, [{"k1", _}, {"k2", _}]}] = Relay.Server.cells(op)
+      assert_receive {:dynamic, %{count: 1}, %{relay_id: "op-1", event: :capped}}, 1_000
       assert Counters.dispatches(counters) == 2
 
       # A live key is unaffected by the cap.
@@ -481,52 +481,52 @@ defmodule Flezha.SDK.PersistenceTest do
     end
 
     test "a Cell idle past its TTL is evicted on the sweep: delete_cell_state follows its record, the slot is gone, the key reads evicted, the next input cold-starts at seq 0" do
-      %{op: op} = start_operator(TtlOp)
+      %{op: op} = start_relay(TtlOp)
       Inbox.input(op, "in", "5", %{})
       assert [{"cell_state_change", _, _}, {"op-1", "5", _}] = frames(2)
-      {:ok, pid} = Operator.Server.lookup(op, "ttl", "k5")
+      {:ok, pid} = Relay.Server.lookup(op, "ttl", "k5")
 
       # A sweep right after the push keeps it: not idle past the TTL yet.
       send(op, :reap)
-      assert {:ok, ^pid} = Operator.Server.lookup(op, "ttl", "k5")
+      assert {:ok, ^pid} = Relay.Server.lookup(op, "ttl", "k5")
 
       assert_evicted(pid, {"op-1", "ttl", "k5"})
-      assert_receive {:dynamic, %{count: 1}, %{operator_id: "op-1", event: :evicted}}, 1_000
-      assert {:error, :cell_evicted} = Operator.Server.lookup(op, "ttl", "k5")
-      assert {:error, :cell_not_found} = Operator.Server.lookup(op, "ttl", "never")
-      assert [{"ttl", :dynamic, []}] = Operator.Server.cells(op)
+      assert_receive {:dynamic, %{count: 1}, %{relay_id: "op-1", event: :evicted}}, 1_000
+      assert {:error, :cell_evicted} = Relay.Server.lookup(op, "ttl", "k5")
+      assert {:error, :cell_not_found} = Relay.Server.lookup(op, "ttl", "never")
+      assert [{"ttl", :dynamic, []}] = Relay.Server.cells(op)
 
       # A cold start for the same key: `init_state/1` at seq 0, so the value
       # reads 5 rather than the evicted 10.
       Inbox.input(op, "in", "5", %{})
       assert [{"cell_state_change", _, _} = r, {"op-1", "5", _}] = frames(2)
       assert {0, {:delta, 5}, _} = record(r)
-      assert {:ok, fresh} = Operator.Server.lookup(op, "ttl", "k5")
+      assert {:ok, fresh} = Relay.Server.lookup(op, "ttl", "k5")
       assert fresh != pid
     end
 
     test "a busy Cell is skipped by the sweep and evicted once it is idle" do
-      %{op: op} = start_operator(GatedTtlOp)
+      %{op: op} = start_relay(GatedTtlOp)
       Inbox.input(op, "in", "x", %{})
-      {:ok, pid} = Operator.Server.lookup(op, "gated_ttl", "x")
+      {:ok, pid} = Relay.Server.lookup(op, "gated_ttl", "x")
 
       # Blocked inside run/3: the probe finds it busy and the sweep moves on.
       send(op, :reap)
-      assert {:ok, ^pid} = Operator.Server.lookup(op, "gated_ttl", "x")
+      assert {:ok, ^pid} = Relay.Server.lookup(op, "gated_ttl", "x")
       assert Process.alive?(pid)
 
       ref = Process.monitor(pid)
       send(pid, :go)
       assert_receive {:flz_data, _, "op-1", "x", _}, 2_000
       assert_receive {:DOWN, ^ref, :process, ^pid, :normal}, 3_000
-      assert_receive {:dynamic, %{count: 1}, %{operator_id: "op-1", event: :evicted}}, 1_000
-      assert {:error, :cell_evicted} = Operator.Server.lookup(op, "gated_ttl", "x")
+      assert_receive {:dynamic, %{count: 1}, %{relay_id: "op-1", event: :evicted}}, 1_000
+      assert {:error, :cell_evicted} = Relay.Server.lookup(op, "gated_ttl", "x")
     end
   end
 
   describe "schema evolution" do
     test "a tasklet declaring schema_version 2 stamps 2; with a floor of 1 a v1 snapshot and a v1 change fold through its migrations and the fold reports migrated" do
-      %{op: op} = start_operator(CounterV2Op)
+      %{op: op} = start_relay(CounterV2Op)
       Inbox.input(op, "in", "1", %{})
       assert [{"cell_state_change", frame, _}, {"op-1", "1", _}] = frames(2)
       assert {:ok, %{header: <<3, _::32, 2::32-big, 7, _::binary>>}} = Wire.decode_frame(frame)
@@ -568,12 +568,12 @@ defmodule Flezha.SDK.PersistenceTest do
 
   describe "the Cell" do
     test "a changeful dispatch ships one record per change, each before its own output frame" do
-      %{op: op} = start_operator(CounterOp)
+      %{op: op} = start_relay(CounterOp)
       Inbox.input(op, "in", "3", %{})
       Inbox.input(op, "in", "4", %{})
 
       # The Cell writes its records to the stream itself and hands its
-      # outputs to the Operator, so a later dispatch's record may overtake an
+      # outputs to the Relay, so a later dispatch's record may overtake an
       # earlier dispatch's output: the invariant is per dispatch.
       four = frames(4)
       ids = Enum.map(four, &elem(&1, 0))
@@ -602,7 +602,7 @@ defmodule Flezha.SDK.PersistenceTest do
     end
 
     test "no output leaves ahead of the change that produced it, in a burst and one dispatch at a time" do
-      %{op: op} = start_operator(KeyedOp)
+      %{op: op} = start_relay(KeyedOp)
 
       # Even inputs all key to `k0`, so one Cell holds one seq line and a
       # dispatch's handout seq — the `flz.seq` its keyed outputs carry — is the
@@ -618,7 +618,7 @@ defmodule Flezha.SDK.PersistenceTest do
       assert_change_before_output(Enum.map(frames(3 * length(burst)), &kind/1), length(burst))
 
       # Then one dispatch at a time, its frames read before the next input is
-      # sent. The Operator is idle when the emits reach it, so an output
+      # sent. The Relay is idle when the emits reach it, so an output
       # released ahead of its record reaches the stream first every time rather
       # than only when the Cell loses a race — which is what makes this half
       # able to fail.
@@ -632,7 +632,7 @@ defmodule Flezha.SDK.PersistenceTest do
     end
 
     test "a tasklet without apply_change/2 ships nothing and holds no seq" do
-      %{op: op} = start_operator(EchoOp)
+      %{op: op} = start_relay(EchoOp)
       Inbox.input(op, "in", "hi", %{})
       assert [{"op-1", "hi", _}] = frames(1)
       refute_received {:flz_data, _, "cell_state_change", _, _}
@@ -640,7 +640,7 @@ defmodule Flezha.SDK.PersistenceTest do
     end
 
     test "with the class's persistence off the seq advances and nothing ships" do
-      %{op: op} = start_operator(OptedOutCounterOp)
+      %{op: op} = start_relay(OptedOutCounterOp)
       Inbox.input(op, "in", "1", %{})
       Inbox.input(op, "in", "2", %{})
       assert [{"op-1", "1", _}, {"op-1", "3", _}] = frames(2)
@@ -649,7 +649,7 @@ defmodule Flezha.SDK.PersistenceTest do
     end
 
     test "a Cell killed untrappably comes back on its seq line from the slot" do
-      %{op: op} = start_operator(CounterOp)
+      %{op: op} = start_relay(CounterOp)
       Inbox.input(op, "in", "1", %{})
       Inbox.input(op, "in", "2", %{})
       [_, _, _, _] = frames(4)
@@ -662,24 +662,24 @@ defmodule Flezha.SDK.PersistenceTest do
       assert cell!(op, "counter") != first
     end
 
-    test "the Cell of a stopped Operator is dead, and of a killed one too" do
-      %{op: op} = start_operator(CounterOp)
+    test "the Cell of a stopped Relay is dead, and of a killed one too" do
+      %{op: op} = start_relay(CounterOp)
       stopped = cell!(op, "counter")
       ref = Process.monitor(stopped)
-      Operator.Server.stop(op)
+      Relay.Server.stop(op)
       assert_receive {:DOWN, ^ref, :process, ^stopped, :normal}, 2_000
 
-      %{op: op} = start_operator(CounterOp, operator_id: "op-2")
+      %{op: op} = start_relay(CounterOp, relay_id: "op-2")
       killed = cell!(op, "counter")
       ref = Process.monitor(killed)
       Process.unlink(op)
       Process.exit(op, :kill)
-      # Quietly, whatever ended the Operator: the Cell did not crash.
+      # Quietly, whatever ended the Relay: the Cell did not crash.
       assert_receive {:DOWN, ^ref, :process, ^killed, :normal}, 2_000
     end
 
     test "a restore re-seats the state and the seq, and dispatch continues from terminal + 1" do
-      %{op: op} = start_operator(CounterOp)
+      %{op: op} = start_relay(CounterOp)
       pid = cell!(op, "counter")
       snap = Record.encode_body(%{value: 10})
       log = change_record(4, {:delta, 5})
@@ -694,7 +694,7 @@ defmodule Flezha.SDK.PersistenceTest do
     end
 
     test "a refused restore names its reason and leaves the Cell as it was" do
-      %{op: op} = start_operator(CounterOp)
+      %{op: op} = start_relay(CounterOp)
       pid = cell!(op, "counter")
       foreign = change_record(0, {:delta, 1}, 3)
 
@@ -705,7 +705,7 @@ defmodule Flezha.SDK.PersistenceTest do
     end
 
     test "compaction ships the snapshot after the records, at change_seq - 1" do
-      %{op: op} = start_operator(CounterOp)
+      %{op: op} = start_relay(CounterOp)
       Inbox.input(op, "in", "1", %{})
       Inbox.input(op, "in", "2", %{})
       [_, _, _, _] = frames(4)
@@ -720,7 +720,7 @@ defmodule Flezha.SDK.PersistenceTest do
     end
 
     test "apply_state goes through state_from_json/1 and the read sees it" do
-      %{op: op} = start_operator(CounterOp)
+      %{op: op} = start_relay(CounterOp)
       pid = cell!(op, "counter")
       assert :ok = Cell.apply_state(pid, %{"value" => 9})
       assert {:ok, %{value: 9}, 0} = Cell.read(pid, 1_000)
@@ -729,7 +729,7 @@ defmodule Flezha.SDK.PersistenceTest do
     end
 
     test "a fresh secondary reaches the Cells that already exist" do
-      %{op: op} = start_operator(CounterOp)
+      %{op: op} = start_relay(CounterOp)
       Inbox.input(op, "in", "1", %{})
       [_, _] = frames(2)
 
@@ -741,16 +741,16 @@ defmodule Flezha.SDK.PersistenceTest do
     end
 
     test "lookup names what is missing, and materialises a dynamic key only when asked" do
-      %{op: op} = start_operator(DynCounterOp)
-      assert {:error, :tasklet_not_found} = Operator.Server.lookup(op, "nope", nil)
-      assert {:error, :cell_not_found} = Operator.Server.lookup(op, "counter", "k1")
-      assert {:ok, pid} = Operator.Server.lookup(op, "counter", "k1", materialise: true)
-      assert {:ok, ^pid} = Operator.Server.lookup(op, "counter", "k1")
-      assert [{"counter", :dynamic, [{"k1", ^pid}]}] = Operator.Server.cells(op)
+      %{op: op} = start_relay(DynCounterOp)
+      assert {:error, :tasklet_not_found} = Relay.Server.lookup(op, "nope", nil)
+      assert {:error, :cell_not_found} = Relay.Server.lookup(op, "counter", "k1")
+      assert {:ok, pid} = Relay.Server.lookup(op, "counter", "k1", materialise: true)
+      assert {:ok, ^pid} = Relay.Server.lookup(op, "counter", "k1")
+      assert [{"counter", :dynamic, [{"k1", ^pid}]}] = Relay.Server.cells(op)
 
-      %{op: single} = start_operator(CounterOp)
-      assert {:error, :cell_not_found} = Operator.Server.lookup(single, "counter", "k")
-      assert [{"counter", :single, [{nil, _}]}] = Operator.Server.cells(single)
+      %{op: single} = start_relay(CounterOp)
+      assert {:error, :cell_not_found} = Relay.Server.lookup(single, "counter", "k")
+      assert [{"counter", :single, [{nil, _}]}] = Relay.Server.cells(single)
     end
   end
 

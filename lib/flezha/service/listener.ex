@@ -1,19 +1,19 @@
 defmodule Flezha.Service.Listener do
   @moduledoc """
-  The one listener in the controller: `flz operator listen`, `flz operator send
-  --await` and any plugin (the HTTP plugin's SSE stream first) read an
-  operator's frames through `listen/4`.
+  The one listener in the controller: `flz relay listen`, `flz relay send
+  --await` and any plugin (the HTTP plugin's SSE stream first) read a
+  relay's frames through `listen/4`.
 
   `listen/4` enables a `Flezha.Plugin.Provider.MonitoredIOForward` plugin under
-  a generated name and binds the operator (every member of a partition group)
-  to it, with a relay on the caller's own node as its receiver, and hands the
-  caller one event at a time.
-  The relay (`Flezha.Service.Listener.Relay`) answers the plugin's heartbeat and
+  a generated name and binds the relay (every member of a partition group)
+  to it, with a receiver on the caller's own node, and hands the caller one
+  event at a time.
+  The receiver (`Flezha.Service.Listener.Receiver`) answers the plugin's heartbeat and
   holds what the handler has not taken, inside `listener_pending_bytes` and
-  `listener_pending_frames`, so a slow handler grows neither the operator's
+  `listener_pending_frames`, so a slow handler grows neither the relay's
   memory nor the caller's mailbox. Every way out unbinds and disables the
-  plugin by the operator's namespace and id (`detach/3`), which holds wherever
-  the operator runs by then.
+  plugin by the relay's namespace and id (`detach/3`), which holds wherever
+  the relay runs by then.
 
   It does not authorize: the CLI's verbs authorize through their rows before
   they call it, and a plugin that calls it is trusted code that decides for
@@ -24,7 +24,7 @@ defmodule Flezha.Service.Listener do
   alias Flezha.Plugin
   alias Flezha.Plugin.Provider.MonitoredIOForward
   alias Flezha.Service.HubManager
-  alias Flezha.Service.Listener.Relay
+  alias Flezha.Service.Listener.Receiver
   alias Flezha.Service.PluginManager
 
   @type event ::
@@ -32,22 +32,22 @@ defmodule Flezha.Service.Listener do
           | {:dead_lettered, Flezha.Error.t(), map()}
           | :idle
   @type outcome ::
-          {:ok, :window_closed | :done | :caller_down | :operator_ended}
+          {:ok, :window_closed | :done | :caller_down | :relay_ended}
           | {:error, Flezha.Error.t()}
 
   @hooks [output: [{:on_output, []}, {:on_preview, []}], input: [{:on_input, []}]]
 
   @doc """
-  Listen to `operator_id` in `namespace` from the calling process until
+  Listen to `relay_id` in `namespace` from the calling process until
   `handler` answers `:done`, the window closes, the watched process exits, the
-  operator ends, or the listener is ended by its bound or by another caller's
+  relay ends, or the listener is ended by its bound or by another caller's
   disable.
 
   `handler` takes an `t:event/0` and answers `:continue` or `:done`; it runs in
   the calling process, and a raise from it detaches and propagates. Options:
 
     * `direction` - `:output` (outputs, parts and dead-letter notices, the
-      default) or `:input` (the inputs the operator ingests).
+      default) or `:input` (the inputs the relay ingests).
     * `window_ms` - a positive integer, or `:infinity` (the default).
     * `idle_ms` - a positive integer, or `:infinity` (the default): after that
       long with no event handed over, `handler` is called with `:idle`.
@@ -57,7 +57,7 @@ defmodule Flezha.Service.Listener do
     * `watch` - a process whose exit ends the listener with `:caller_down`.
   """
   @spec listen(String.t(), String.t(), keyword(), (event() -> :continue | :done)) :: outcome()
-  def listen(namespace, operator_id, opts, handler) when is_function(handler, 1) do
+  def listen(namespace, relay_id, opts, handler) when is_function(handler, 1) do
     direction = Keyword.get(opts, :direction, :output)
 
     Keyword.has_key?(@hooks, direction) ||
@@ -65,7 +65,7 @@ defmodule Flezha.Service.Listener do
 
     target = %{
       namespace: namespace,
-      operator_id: operator_id,
+      relay_id: relay_id,
       plugin_id: Identificator.mint(:plugin, "io_listener"),
       direction: direction,
       window_ms: span!(opts, :window_ms),
@@ -75,31 +75,31 @@ defmodule Flezha.Service.Listener do
     # A target neither registered nor declared is refused on one read, with
     # nothing to detach: the enable and the detach would each wait out a hub
     # that has not settled before saying so.
-    if attachment(namespace, operator_id, target.plugin_id) == :operator_ended,
-      do: refused({:operator_not_found, namespace, operator_id}),
+    if attachment(namespace, relay_id, target.plugin_id) == :relay_ended,
+      do: refused({:relay_not_found, namespace, relay_id}),
       else: attached(target, opts, handler)
   end
 
   defp attached(
-         %{namespace: namespace, operator_id: operator_id, plugin_id: plugin_id} = t,
+         %{namespace: namespace, relay_id: relay_id, plugin_id: plugin_id} = t,
          opts,
          handler
        ) do
-    {:ok, relay} =
-      Relay.start_link(%{
+    {:ok, receiver} =
+      Receiver.start_link(%{
         caller: self(),
         watch: Keyword.get(opts, :watch),
         namespace: namespace,
-        operator_id: operator_id,
+        relay_id: relay_id,
         plugin_id: plugin_id,
         direction: t.direction
       })
 
     try do
-      with :ok <- attach(namespace, operator_id, plugin_id, t.direction, relay),
+      with :ok <- attach(namespace, relay_id, plugin_id, t.direction, receiver),
            :ok <- Keyword.get(opts, :before, fn -> :ok end).() do
         loop(%{
-          relay: relay,
+          receiver: receiver,
           handler: handler,
           asked: false,
           deadline: deadline(t.window_ms),
@@ -107,21 +107,21 @@ defmodule Flezha.Service.Listener do
         })
       end
     after
-      PluginManager.detach(namespace, operator_id, plugin_id)
-      Relay.stop(relay)
+      PluginManager.detach(namespace, relay_id, plugin_id)
+      Receiver.stop(receiver)
     end
   end
 
-  defp attach(namespace, operator_id, plugin_id, direction, relay) do
+  defp attach(namespace, relay_id, plugin_id, direction, receiver) do
     plugin = %Plugin{
       id: plugin_id,
       provider: MonitoredIOForward,
       namespace: namespace,
-      operator_id: operator_id,
+      relay_id: relay_id,
       opts: %{
-        recv_pid: relay,
+        recv_pid: receiver,
         plugin_id: plugin_id,
-        operator_id: operator_id,
+        relay_id: relay_id,
         namespace: namespace
       },
       hooks: Keyword.fetch!(@hooks, direction)
@@ -136,15 +136,15 @@ defmodule Flezha.Service.Listener do
 
   defp refused(reason), do: {:error, Flezha.Error.from_reason(reason, nil)}
 
-  # One request to the relay is outstanding at a time; an idle call leaves it
+  # One request to the receiver is outstanding at a time; an idle call leaves it
   # standing, so the event it answers is never lost or reordered.
-  defp loop(%{relay: relay} = l) do
+  defp loop(%{receiver: receiver} = l) do
     l = ask(l)
 
     receive do
-      {:listener_event, ^relay, event} -> handle(%{l | asked: false}, event)
-      {:listener_end, ^relay, outcome} -> outcome
-      {:EXIT, ^relay, reason} -> exit(reason)
+      {:listener_event, ^receiver, event} -> handle(%{l | asked: false}, event)
+      {:listener_end, ^receiver, outcome} -> outcome
+      {:EXIT, ^receiver, reason} -> exit(reason)
     after
       wait(l) ->
         if expired?(l.deadline), do: {:ok, :window_closed}, else: handle(l, :idle)
@@ -160,8 +160,8 @@ defmodule Flezha.Service.Listener do
 
   defp ask(%{asked: true} = l), do: l
 
-  defp ask(%{relay: relay} = l) do
-    Relay.next(relay)
+  defp ask(%{receiver: receiver} = l) do
+    Receiver.next(receiver)
     %{l | asked: true}
   end
 
@@ -191,15 +191,15 @@ defmodule Flezha.Service.Listener do
   ## The listener's plugin
 
   @doc """
-  Whether `operator_id` (or a member of the group it names) is still bound to
+  Whether `relay_id` (or a member of the group it names) is still bound to
   `name`: `:attached` while any target carries the binding, `:detached` when
-  the targets are registered without it, `:operator_ended` when none is
+  the targets are registered without it, `:relay_ended` when none is
   registered or declared, and `:unknown` when the rows cannot be read.
   """
   @spec attachment(binary(), binary(), binary()) ::
-          :attached | :detached | :operator_ended | :unknown
-  def attachment(namespace, operator_id, name) do
-    args = [namespace, operator_id, name]
+          :attached | :detached | :relay_ended | :unknown
+  def attachment(namespace, relay_id, name) do
+    args = [namespace, relay_id, name]
 
     with {:error, _unreadable} <-
            PluginManager.on_hub_node(namespace, {__MODULE__, :attachment_here}, args, :unknown),
@@ -207,38 +207,38 @@ defmodule Flezha.Service.Listener do
   end
 
   @doc false
-  def attachment_here(namespace, operator_id, name) do
-    declared = MapSet.new(HubManager.declared_operators(namespace), & &1.id)
+  def attachment_here(namespace, relay_id, name) do
+    declared = MapSet.new(HubManager.declared_relays(namespace), & &1.id)
 
     namespace
-    |> PluginManager.targets(operator_id)
+    |> PluginManager.targets(relay_id)
     |> Enum.map(fn {member_id, _} -> row_attachment(namespace, member_id, name, declared) end)
     |> Enum.reduce(&stronger_attachment/2)
   end
 
-  # A declared operator with no row is between two homes, a move or a rescale
+  # A declared relay with no row is between two homes, a move or a rescale
   # away from one, and not ended.
-  defp row_attachment(namespace, operator_id, name, declared) do
-    case HubManager.operator_bindings(namespace, operator_id) do
+  defp row_attachment(namespace, relay_id, name, declared) do
+    case HubManager.relay_bindings(namespace, relay_id) do
       {:ok, bindings} ->
         if Enum.any?(bindings, &(Plugin.base_id(elem(&1, 0)) == name)),
           do: :attached,
           else: :detached
 
-      {:error, {:operator_not_found, _, _}} ->
-        if declared?(declared, operator_id), do: :unknown, else: :operator_ended
+      {:error, {:relay_not_found, _, _}} ->
+        if declared?(declared, relay_id), do: :unknown, else: :relay_ended
 
       {:error, _hub_down} ->
         :unknown
     end
   end
 
-  defp declared?(declared, operator_id) do
-    MapSet.member?(declared, operator_id) or
-      Enum.any?(declared, &(Plugin.group_of(&1) == operator_id))
+  defp declared?(declared, relay_id) do
+    MapSet.member?(declared, relay_id) or
+      Enum.any?(declared, &(Plugin.group_of(&1) == relay_id))
   end
 
   # One member still carrying the row is enough to go on.
   defp stronger_attachment(a, b),
-    do: Enum.find([:attached, :unknown, :detached, :operator_ended], &(&1 in [a, b]))
+    do: Enum.find([:attached, :unknown, :detached, :relay_ended], &(&1 in [a, b]))
 end

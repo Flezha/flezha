@@ -20,7 +20,7 @@ error mapping are the same on both.
 
 #### Scenario: An operation called while no controller runs
 
-- **WHEN** `operator_list` is called and no controller runs
+- **WHEN** `relay_list` is called and no controller runs
 - **THEN** the result SHALL be a tool error carrying the code `controller.unreachable` and
   its hint
 
@@ -32,8 +32,8 @@ error mapping are the same on both.
 
 #### Scenario: A controller started later is found
 
-- **WHEN** a controller is started after `flz mcp` and `operator_list` is called again
-- **THEN** the call SHALL answer the controller's operators without `flz mcp` being
+- **WHEN** a controller is started after `flz mcp` and `relay_list` is called again
+- **THEN** the call SHALL answer the controller's relays without `flz mcp` being
   restarted
 
 ### Requirement: `flz mcp` SHALL expose exactly the operations the HTTP API exposes, as the caller's token
@@ -50,7 +50,7 @@ callable, whatever the token.
 
 #### Scenario: A role is enforced
 
-- **WHEN** a `viewer` token calls `operator_start`
+- **WHEN** a `viewer` token calls `relay_start`
 - **THEN** the result SHALL be a tool error with an `authz` code and its hint, and the
   refusal SHALL be audited
 

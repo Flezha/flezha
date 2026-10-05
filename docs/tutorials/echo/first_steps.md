@@ -1,7 +1,7 @@
 # The echo
 
 This tutorial builds the smallest complete Flezha deployment by hand: a
-controller, a runner of your own that serves an `echo` operator, and a file on
+controller, a runner of your own that serves an `echo` relay, and a file on
 each side of it. A line added to one file comes back as its echo at the end of
 the other.
 
@@ -45,6 +45,6 @@ $ git clone --recurse-submodules https://github.com/flezha/flezha.git
 |---|---|
 | [Start the controller](start_the_controller.md) | A controller running, and a check that it is up |
 | [Write the echo runner](write_the_echo_runner.md) | Your own runner connected to it, registering the `echo` factory |
-| [Run the echo](run_the_echo.md) | An operator started on that runner, taking messages and answering them |
+| [Run the echo](run_the_echo.md) | A relay started on that runner, taking messages and answering them |
 | [Feed the echo a file](feed_the_echo_a_file.md) | A file as its input and another as its output |
 | [Stop everything](stop_everything.md) | Everything above stopped |

@@ -31,7 +31,7 @@ four lines because the alternative is inconvenient.
 
 A cross-cutting job is decided once, in one seam, and every caller submits to
 it. Judging whether a topology is one the runtime can honour, authorizing an
-administration verb, choosing a remedy for an unhealthy operator: each of these is
+administration verb, choosing a remedy for an unhealthy relay: each of these is
 one job. When the same job is decided in six builders, adding one rule means
 editing six files, and the sixth is the one that gets missed and ships a class
 that registers on one SDK and dies at boot on another.

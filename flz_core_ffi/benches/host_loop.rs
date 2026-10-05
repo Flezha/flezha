@@ -1,7 +1,7 @@
 //! The erased-path twin of `sdk/rust/benches/dispatch.rs`'s
 //! `regression_100x1x1x10k`: the same shape (100 instances × 1 tasklet × 1
 //! cell × 10K inputs, no change), fed through the same
-//! `OperatorDispatchHandle`, but the class is a `HostClassDecl` whose
+//! `RelayDispatchHandle`, but the class is a `HostClassDecl` whose
 //! activations leave through `flz_core_poll` and come back through
 //! `flz_core_complete` from a fixed set of fetcher threads — `to_schema` →
 //! encode → decode → `apply_result` → `resolve_item`, with no veneer in the
@@ -16,9 +16,9 @@ use criterion::{criterion_group, criterion_main, Criterion};
 use flz_core::bench_support::{
     allocations, fan_in, measurement_secs, ok_effect, report, stream_pair, Counting, Settle,
 };
-use flz_core::operator::instance::OperatorInstance;
-use flz_core::operator::registry::{get_class, OperatorRegistry};
-use flz_core::runner::OperatorDispatchHandle;
+use flz_core::relay::instance::RelayInstance;
+use flz_core::relay::registry::{get_class, RelayRegistry};
+use flz_core::runner::RelayDispatchHandle;
 use flz_core::schema;
 use flz_core_ffi::*;
 
@@ -82,7 +82,7 @@ fn host_loop_bench(c: &mut Criterion) {
     let ctx = flz_core_context_new(flz_core::SCHEMA_VERSION);
     assert!(!ctx.is_null(), "context creation");
     // One entry channel, one wall-clock single-cell tasklet, no state:
-    // the erased twin of `RegressionOperator`. The entry channel keeps the
+    // the erased twin of `RegressionRelay`. The entry channel keeps the
     // `drop_nothing` default the typed bench opts into explicitly.
     let decl = br#"{
         "factory_id": "host_loop_bench",
@@ -97,15 +97,15 @@ fn host_loop_bench(c: &mut Criterion) {
         last_error(ctx)
     );
     let topology = get_class("host_loop_bench").expect("the declared class");
-    let registry = Arc::new(OperatorRegistry::new());
+    let registry = Arc::new(RelayRegistry::new());
     let instance_ids: Vec<String> = (0..n_instances).map(|i| format!("host-loop-{i}")).collect();
     for id in &instance_ids {
-        registry.register(OperatorInstance::new(
+        registry.register(RelayInstance::new(
             Arc::clone(&topology),
             Arc::from(id.as_str()),
         ));
     }
-    let handle = OperatorDispatchHandle { registry };
+    let handle = RelayDispatchHandle { registry };
     let stream = stream_pair().0;
     let payload: Vec<u8> = b"x".repeat(64);
 

@@ -5,7 +5,7 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
   alias Flezha.Dlq.Store, as: DlqStore
   alias Flezha.Observability.{Registry, Signal, TelemetryBridge}
   alias Flezha.Observability.TestSinks.Counting
-  alias Flezha.Operator.{Calls, Lifecycle, Overwatch}
+  alias Flezha.Relay.{Calls, Lifecycle, Overwatch}
   alias FlezhaTest.Helper.DlqFixtures
   alias FlezhaTest.Helper.NodeTestHelper
 
@@ -31,7 +31,7 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
     :telemetry.execute(
       [:flezha, :state, :wal, :backpressure],
       %{bytes: 1024},
-      %{operator: "r1"}
+      %{relay: "r1"}
     )
 
     signal =
@@ -45,7 +45,7 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
     assert signal
     assert signal.kind == :metric
     assert signal.measurements[:bytes] == 1024
-    assert signal.metadata[:operator] == "r1"
+    assert signal.metadata[:relay] == "r1"
   end
 
   test "websocket re-subscribe event is bridged" do
@@ -82,7 +82,7 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
     :telemetry.execute(
       [:flezha, :state, :output_stall],
       %{stalled_ms: 60_000, last_seq: 100},
-      %{operator: "btc_feed", tasklet: "ohlc", key: "1m"}
+      %{relay: "btc_feed", tasklet: "ohlc", key: "1m"}
     )
 
     stall =
@@ -91,16 +91,16 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
     assert stall
     assert stall.measurements[:stalled_ms] == 60_000
     assert stall.measurements[:last_seq] == 100
-    assert stall.metadata[:operator] == "btc_feed"
+    assert stall.metadata[:relay] == "btc_feed"
 
-    :telemetry.execute([:flezha, :state, :seq_gap], %{expected: 101, got: 137}, %{operator: "r"})
+    :telemetry.execute([:flezha, :state, :seq_gap], %{expected: 101, got: 137}, %{relay: "r"})
     gap = receive_until(fn s -> s.source == :flezha_state and s.name == :seq_gap end, 500)
     assert gap
     assert gap.measurements[:expected] == 101
     assert gap.measurements[:got] == 137
 
     :telemetry.execute([:flezha, :state, :compaction_timeout], %{waited_ms: 5_000}, %{
-      operator: "r"
+      relay: "r"
     })
 
     compaction =
@@ -112,7 +112,7 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
     :telemetry.execute(
       [:flezha, :state, :stale_writer_refused],
       %{count: 1},
-      %{operator: "r", tasklet: "s", key: "k", session: "sess_old"}
+      %{relay: "r", tasklet: "s", key: "k", session: "sess_old"}
     )
 
     refused =
@@ -143,7 +143,7 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
     :telemetry.execute(
       [:flezha, :state, :input_log_syncer_died],
       %{count: 1},
-      %{operator: "btc_feed", reason: :killed}
+      %{relay: "btc_feed", reason: :killed}
     )
 
     died =
@@ -196,26 +196,26 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
     drain_mailbox()
 
     :telemetry.execute(
-      [:flezha, :convergence, :operator_stuck],
+      [:flezha, :convergence, :relay_stuck],
       %{count: 1},
-      %{operator_id: "btc_feed", detail: :wal_frozen, cell: "ohlc/1m"}
+      %{relay_id: "btc_feed", detail: :wal_frozen, cell: "ohlc/1m"}
     )
 
     stuck =
       receive_until(
-        fn s -> s.source == :flezha_health and s.name == :operator_stuck end,
+        fn s -> s.source == :flezha_health and s.name == :relay_stuck end,
         500
       )
 
     assert stuck
     assert stuck.kind == :event
     assert stuck.metadata[:detail] == :wal_frozen
-    assert stuck.metadata[:operator_id] == "btc_feed"
+    assert stuck.metadata[:relay_id] == "btc_feed"
 
     :telemetry.execute(
       [:flezha, :convergence, :intent_mismatch],
       %{count: 2},
-      %{operators: ["btc_feed", "eth_feed"]}
+      %{relays: ["btc_feed", "eth_feed"]}
     )
 
     mismatch =
@@ -226,10 +226,10 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
 
     assert mismatch
     assert mismatch.measurements[:count] == 2
-    assert mismatch.metadata[:operators] == ["btc_feed", "eth_feed"]
+    assert mismatch.metadata[:relays] == ["btc_feed", "eth_feed"]
   end
 
-  test "an operator park reaches the bus from the real lifecycle call site" do
+  test "a relay park reaches the bus from the real lifecycle call site" do
     park_sink = :"obs_tbridge_park_sink_#{:erlang.unique_integer([:positive])}"
     ref = :counters.new(1, [:atomics])
 
@@ -237,25 +237,25 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
       Registry.register_sink(%{
         name: park_sink,
         module: Counting,
-        config: %{counter_ref: ref, parent: self(), sources: [:flezha_operator]}
+        config: %{counter_ref: ref, parent: self(), sources: [:flezha_relay]}
       })
 
     on_exit(fn -> Registry.unregister_sink(park_sink) end)
     drain_mailbox()
 
     reason = {:plugin_prepare_failed, "exchange_sink", {:provider_refused, "pkg", "sink", :bad}}
-    Lifecycle.park(%Overwatch{id: "obs_park_operator", namespace: "default"}, reason)
+    Lifecycle.park(%Overwatch{id: "obs_park_relay", namespace: "default"}, reason)
 
     parked =
       receive_until(
-        fn s -> s.source == :flezha_operator and s.name == :operator_parked_total end,
+        fn s -> s.source == :flezha_relay and s.name == :relay_parked_total end,
         500
       )
 
     assert parked
     assert parked.kind == :metric
     assert parked.measurements[:count] == 1
-    assert parked.metadata[:operator_id] == "obs_park_operator"
+    assert parked.metadata[:relay_id] == "obs_park_relay"
     assert parked.metadata[:plugin_id] == "exchange_sink"
     assert parked.metadata[:reason] == reason
   end
@@ -274,7 +274,7 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
     on_exit(fn -> Registry.unregister_sink(call_sink) end)
     drain_mailbox()
 
-    callee = %{namespace: "default", operator_id: "obs_call_operator"}
+    callee = %{namespace: "default", relay_id: "obs_call_relay"}
     {:ok, answered, calls} = Calls.admit(%Calls{}, callee, {self(), make_ref()}, "in", 5_000)
     {:ok, waiting, calls} = Calls.admit(calls, callee, {self(), make_ref()}, "in", 5_000)
     {:diverted, calls} = Calls.divert(calls, callee, "a", %{"flz.reply_to" => answered})
@@ -303,7 +303,7 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
       assert signal, "#{name} never reached the bus"
       assert signal.kind == :metric
       assert is_integer(signal.measurements[measurement])
-      assert signal.metadata[:operator_id] == "obs_call_operator"
+      assert signal.metadata[:relay_id] == "obs_call_relay"
     end
   end
 
@@ -325,7 +325,7 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
 
     {:ok, _ref} =
       DlqStore.append(%{
-        operator_class: "ObsOperator",
+        relay_class: "ObsRelay",
         tasklet_id: "task",
         cell_key: "k",
         channel: "input",
@@ -341,7 +341,7 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
     assert parked
     assert parked.kind == :metric
     assert parked.measurements[:count] == 1
-    assert parked.metadata[:operator_class] == "ObsOperator"
+    assert parked.metadata[:relay_class] == "ObsRelay"
     assert parked.metadata[:channel] == "input"
 
     usage = receive_until(fn s -> s.source == :flezha_dlq and s.name == :dlq_usage end, 1_000)
@@ -351,7 +351,7 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
 
     # retention_seconds = 0: the sweep drops the just-parked entry, loudly —
     # once the entry's own millisecond has passed (expiry is strictly older).
-    [%{"ts_ms" => ts_ms}] = DlqStore.list("ObsOperator")
+    [%{"ts_ms" => ts_ms}] = DlqStore.list("ObsRelay")
 
     assert NodeTestHelper.wait_until(
              fn -> System.system_time(:millisecond) > ts_ms end,
@@ -371,7 +371,7 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
     assert dropped.measurements[:count] == 1
     assert dropped.measurements[:bytes] > 0
     assert dropped.metadata[:reason] == :age
-    assert dropped.metadata[:operator_class] == "ObsOperator"
+    assert dropped.metadata[:relay_class] == "ObsRelay"
   end
 
   defmodule AcmeSink do

@@ -11,7 +11,7 @@ defmodule Mix.Tasks.Bench.Steps.Run do
 
   alias Flezha.Identificator
   alias Flezha.Runner.FleetManager
-  alias Flezha.Service.OperatorManager
+  alias Flezha.Service.RelayManager
   alias Flezha.State.Completion
   alias Flezha.State.InputLog
   alias Flezha.State.Paths
@@ -107,8 +107,8 @@ defmodule Mix.Tasks.Bench.Steps.Run do
   end
 
   @doc false
-  def handle_event([:flezha, :steps, :completed], _m, %{operator_id: id}, {pid, _c}) do
-    msg = {:operator_completed, id, now_ns()}
+  def handle_event([:flezha, :steps, :completed], _m, %{relay_id: id}, {pid, _c}) do
+    msg = {:relay_completed, id, now_ns()}
 
     case :ets.lookup(@waiters, id) do
       [{_, _, _, waiter}] when is_pid(waiter) -> send(waiter, msg)
@@ -118,10 +118,10 @@ defmodule Mix.Tasks.Bench.Steps.Run do
     send(pid, msg)
   end
 
-  def handle_event([:flezha, :steps, :suspended], _m, %{operator_id: id}, {pid, _c}),
+  def handle_event([:flezha, :steps, :suspended], _m, %{relay_id: id}, {pid, _c}),
     do: send(pid, {:steps_suspended, id, now_ns()})
 
-  def handle_event([:flezha, :steps, :rehydrating], _m, %{operator_id: id}, {pid, _c}),
+  def handle_event([:flezha, :steps, :rehydrating], _m, %{relay_id: id}, {pid, _c}),
     do: send(pid, {:steps_rehydrating, id, now_ns()})
 
   def handle_event([:flezha, :steps, :failed], _m, _md, {_pid, c}),
@@ -262,7 +262,7 @@ defmodule Mix.Tasks.Bench.Steps.Run do
     progress(st)
   end
 
-  defp handle({:operator_completed, id, at}, st) do
+  defp handle({:relay_completed, id, at}, st) do
     st =
       case :ets.lookup(@waiters, id) do
         [{_, seq, seed_ts, _}] when is_integer(seed_ts) ->
@@ -366,7 +366,7 @@ defmodule Mix.Tasks.Bench.Steps.Run do
         undelivered = for {offset, _message, _metadata} <- InputLog.undelivered(id), do: offset
 
         overwatch =
-          case OperatorManager.get_operator_pid(@namespace, id) do
+          case RelayManager.get_relay_pid(@namespace, id) do
             {:ok, pid} ->
               pid
               |> GenServer.call(:get_overwatch_state, 5_000)
@@ -453,7 +453,7 @@ defmodule Mix.Tasks.Bench.Steps.Run do
   # Heap before and after a forced collection: a sleeper that never hibernates
   # carries its bind-time garbage until the next major GC.
   def overwatch_heap_kib do
-    case OperatorManager.get_operator_pid(@namespace, "steps_0") do
+    case RelayManager.get_relay_pid(@namespace, "steps_0") do
       {:ok, pid} ->
         before = pid |> Process.info(:memory) |> elem(1) |> div(1024)
         :erlang.garbage_collect(pid)

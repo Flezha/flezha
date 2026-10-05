@@ -1,13 +1,13 @@
 defmodule Flezha.Service.Cli.ListenTest do
   @moduledoc """
-  `flz operator listen` and `flz operator send --await` on the controller,
+  `flz relay listen` and `flz relay send --await` on the controller,
   with the plugin manager and the delivery stubbed: what a frame, a part and a
   dead-letter notice print as, what ends the loop, and that the listener is
   detached on every route out. The listener itself is
   `test/flezha/service/listener_test.exs`.
 
-  The live operator, the real forwarder and a partition group are
-  `test/system/operator_listen_e2e_test.exs`.
+  The live relay, the real forwarder and a partition group are
+  `test/system/relay_listen_e2e_test.exs`.
   """
   # async: false: Mimic global mode, because the verb runs in a process the test spawns.
   use ExUnit.Case, async: false
@@ -16,10 +16,10 @@ defmodule Flezha.Service.Cli.ListenTest do
   import FlezhaTest.Helper.MimicGlobal
 
   alias Flezha.Cluster.Directory
-  alias Flezha.Operator.PartitionGroup
+  alias Flezha.Relay.PartitionGroup
   alias Flezha.Plugin
   alias Flezha.Plugin.Provider.MonitoredIOForward
-  alias Flezha.Service.{Cli, HubManager, OperatorManager, PluginManager}
+  alias Flezha.Service.{Cli, HubManager, RelayManager, PluginManager}
   alias FlezhaTest.Helper.CliCapture
 
   setup :set_mimic_global_until_exit
@@ -27,7 +27,7 @@ defmodule Flezha.Service.Cli.ListenTest do
   setup do
     test = self()
 
-    # The forwarder sends to its `recv_pid`, the listener's relay: the frames
+    # The forwarder sends to its `recv_pid`, the listener's receiver: the frames
     # the verb's process staged are sent there once it is attached.
     stub(PluginManager, :enable_plugin, fn id, plugin ->
       send(test, {:call, :enable, {id, plugin, self()}})
@@ -40,13 +40,13 @@ defmodule Flezha.Service.Cli.ListenTest do
       :ok
     end)
 
-    # The operator is registered: the listener's existence read lets it attach.
+    # The relay is registered: the listener's existence read lets it attach.
     stub(Directory, :hub_nodes, fn _ns -> [node()] end)
     stub(PartitionGroup, :members, fn _ns, _op -> [] end)
-    stub(HubManager, :declared_operators, fn _ns -> [] end)
-    stub(HubManager, :operator_bindings, fn _ns, _op -> {:ok, []} end)
+    stub(HubManager, :declared_relays, fn _ns -> [] end)
+    stub(HubManager, :relay_bindings, fn _ns, _op -> {:ok, []} end)
 
-    stub(OperatorManager, :send_io_confirming, fn _op, _ns, _message, _metadata ->
+    stub(RelayManager, :send_io_confirming, fn _op, _ns, _message, _metadata ->
       send(test, {:call, :deliver, nil})
       :ok
     end)
@@ -54,7 +54,7 @@ defmodule Flezha.Service.Cli.ListenTest do
     %{parent: test}
   end
 
-  describe "operator_listen/5" do
+  describe "relay_listen/5" do
     test "text prints the channel, the payload and a keyed frame's stamps" do
       out =
         in_caller(fn ->
@@ -68,7 +68,7 @@ defmodule Flezha.Service.Cli.ListenTest do
           })
 
           forward("again", %{"input_type" => "2"})
-          Cli.call("Operator.listen", Jason.encode!(["ns", "op", "output", %{window_ms: 50}]), [])
+          Cli.call("Relay.listen", Jason.encode!(["ns", "op", "output", %{window_ms: 50}]), [])
         end)
 
       assert out ==
@@ -83,7 +83,7 @@ defmodule Flezha.Service.Cli.ListenTest do
           preview("hel", %{"channel" => "answer", "flz.part" => "0", "flz.part_attempt" => "1"})
           forward("hello", %{"channel" => "answer"})
           notice("in")
-          Cli.call("Operator.listen", Jason.encode!(["ns", "op", "output", %{window_ms: 50}]), [])
+          Cli.call("Relay.listen", Jason.encode!(["ns", "op", "output", %{window_ms: 50}]), [])
         end)
 
       assert [part, output, notice] = String.split(out, "\n", trim: true)
@@ -102,7 +102,7 @@ defmodule Flezha.Service.Cli.ListenTest do
           forward("hello", %{"channel" => "answer"})
           notice("in")
 
-          Cli.call("Operator.listen", Jason.encode!(["ns", "op", "output", %{window_ms: 50}]),
+          Cli.call("Relay.listen", Jason.encode!(["ns", "op", "output", %{window_ms: 50}]),
             output: "json"
           )
         end)
@@ -123,7 +123,7 @@ defmodule Flezha.Service.Cli.ListenTest do
           forward("hello", %{"channel" => "echo", "flz.key" => "k"})
           forward(<<255, 0>>, %{"flz.key" => <<255>>})
 
-          Cli.call("Operator.listen", Jason.encode!(["ns", "op", "output", %{window_ms: 50}]),
+          Cli.call("Relay.listen", Jason.encode!(["ns", "op", "output", %{window_ms: 50}]),
             output: "json"
           )
         end)
@@ -147,7 +147,7 @@ defmodule Flezha.Service.Cli.ListenTest do
     test "the forwarder is attached to the chain the direction names, then detached" do
       in_caller(fn ->
         Cli.call(
-          "Operator.listen",
+          "Relay.listen",
           Jason.encode!(["default", "op", "input", %{window_ms: 10}]),
           []
         )
@@ -158,17 +158,17 @@ defmodule Flezha.Service.Cli.ListenTest do
       assert %Plugin{
                provider: MonitoredIOForward,
                namespace: "default",
-               operator_id: "op",
+               relay_id: "op",
                hooks: [{:on_input, []}],
-               opts: %{recv_pid: relay, plugin_id: ^id}
+               opts: %{recv_pid: receiver, plugin_id: ^id}
              } = plugin
 
-      assert is_pid(relay) and relay != listener
+      assert is_pid(receiver) and receiver != listener
     end
 
     test "an output listener takes the output chain and the previews" do
       in_caller(fn ->
-        Cli.call("Operator.listen", Jason.encode!(["ns", "op", "output", %{window_ms: 10}]), [])
+        Cli.call("Relay.listen", Jason.encode!(["ns", "op", "output", %{window_ms: 10}]), [])
       end)
 
       assert [{:enable, {_id, plugin, _}}, {:detach, _}] = calls()
@@ -183,7 +183,7 @@ defmodule Flezha.Service.Cli.ListenTest do
           Process.group_leader(self(), leader)
 
           Cli.call(
-            "Operator.listen",
+            "Relay.listen",
             Jason.encode!(["ns", "op", "output", %{window_ms: 60_000}]),
             []
           )
@@ -207,7 +207,7 @@ defmodule Flezha.Service.Cli.ListenTest do
 
         {reason, err} =
           refused(fn ->
-            Cli.call("Operator.listen", Jason.encode!(["ns", "op", "output", %{}]), [])
+            Cli.call("Relay.listen", Jason.encode!(["ns", "op", "output", %{}]), [])
           end)
 
         assert reason == {:shutdown, exit}
@@ -220,7 +220,7 @@ defmodule Flezha.Service.Cli.ListenTest do
       for {direction, word} <- [{"sideways", "direction"}] do
         {reason, err} =
           refused(fn ->
-            Cli.call("Operator.listen", Jason.encode!(["ns", "op", direction, %{}]), [])
+            Cli.call("Relay.listen", Jason.encode!(["ns", "op", direction, %{}]), [])
           end)
 
         assert reason == {:shutdown, 2}
@@ -231,29 +231,29 @@ defmodule Flezha.Service.Cli.ListenTest do
     end
   end
 
-  describe "operator_send/5 with await_ms" do
-    # `op` is a plain operator: the send reaches it by its own id.
+  describe "relay_send/5 with await_ms" do
+    # `op` is a plain relay: the send reaches it by its own id.
     setup do
-      stub(OperatorManager, :resolve_member, fn "ns", "op", nil -> {:ok, "op"} end)
+      stub(RelayManager, :resolve_member, fn "ns", "op", nil -> {:ok, "op"} end)
       :ok
     end
 
     test "attaches before it delivers, prints the verdict, then what came back", %{parent: test} do
-      stub(OperatorManager, :send_io_confirming, fn "op", "ns", "hello", %{} ->
+      stub(RelayManager, :send_io_confirming, fn "op", "ns", "hello", %{} ->
         send(test, {:call, :deliver, nil})
-        send(Process.get(:relay), {:message_forward, {"hello", %{"channel" => "echo"}}})
+        send(Process.get(:receiver), {:message_forward, {"hello", %{"channel" => "echo"}}})
         :ok
       end)
 
       stub(PluginManager, :enable_plugin, fn id, plugin ->
         send(test, {:call, :enable, {id, plugin, self()}})
-        Process.put(:relay, plugin.opts.recv_pid)
+        Process.put(:receiver, plugin.opts.recv_pid)
         {:ok, "plugin enabled"}
       end)
 
       out =
         in_caller(fn ->
-          Cli.call("Operator.send", Jason.encode!(["ns", "op", "hello", "", %{}]), await_ms: 50)
+          Cli.call("Relay.send", Jason.encode!(["ns", "op", "hello", "", %{}]), await_ms: 50)
         end)
 
       assert out == "Delivered to 'op'.\necho\thello\n"
@@ -263,7 +263,7 @@ defmodule Flezha.Service.Cli.ListenTest do
     test "with nothing emitted it prints the verdict alone" do
       out =
         in_caller(fn ->
-          Cli.call("Operator.send", Jason.encode!(["ns", "op", "hello", "", %{}]), await_ms: 20)
+          Cli.call("Relay.send", Jason.encode!(["ns", "op", "hello", "", %{}]), await_ms: 20)
         end)
 
       assert out == "Delivered to 'op'.\n"
@@ -273,25 +273,25 @@ defmodule Flezha.Service.Cli.ListenTest do
     # Fails when: the refusal is rendered inside the listen, whose exit the door
     # then reports a second time as an internal failure with the wrong exit code.
     test "a refused send is reported once, with its own code, and detaches" do
-      stub(OperatorManager, :resolve_member, fn "ns", "op", nil ->
-        {:error, {:operator_not_found, "ns", "op"}}
+      stub(RelayManager, :resolve_member, fn "ns", "op", nil ->
+        {:error, {:relay_not_found, "ns", "op"}}
       end)
 
       {reason, err} =
         refused(fn ->
-          Cli.call("Operator.send", Jason.encode!(["ns", "op", "hello", "", %{}]), await_ms: 50)
+          Cli.call("Relay.send", Jason.encode!(["ns", "op", "hello", "", %{}]), await_ms: 50)
         end)
 
       assert reason == {:shutdown, 5}
       assert [_one] = String.split(err, "error:", trim: true)
-      assert err =~ "(operator.not_found)"
+      assert err =~ "(relay.not_found)"
       assert [:enable, :detach] = Enum.map(calls(), &elem(&1, 0))
     end
 
     test "without it nothing is attached" do
       out =
         in_caller(fn ->
-          Cli.call("Operator.send", Jason.encode!(["ns", "op", "hello", "", %{}]), [])
+          Cli.call("Relay.send", Jason.encode!(["ns", "op", "hello", "", %{}]), [])
         end)
 
       assert out == "Delivered to 'op'.\n"
@@ -308,14 +308,14 @@ defmodule Flezha.Service.Cli.ListenTest do
     {reason, err}
   end
 
-  # Staged in the verb's process; the enable stub hands them to the relay.
+  # Staged in the verb's process; the enable stub hands them to the receiver.
   defp forward(payload, metadata), do: stage({:message_forward, {payload, metadata}})
   defp preview(payload, metadata), do: stage({:preview_forward, {payload, metadata}})
 
   defp notice(channel) do
     error =
       Flezha.Error.new("input.dead_lettered",
-        operator: "op",
+        relay: "op",
         channel: channel,
         entry: "op/t/e1",
         attempts: 3,

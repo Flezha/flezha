@@ -10,31 +10,31 @@ A backend SHALL implement exactly the blob-level contract — `put`, `get`, `lis
 - **WHEN** a new backend module is added
 - **THEN** it implements only the five blob operations and the tier's shipping, manifest, and recovery behavior work against it unchanged
 
-### Requirement: Shipped artifact scope covers the operator's full durable identity
-The tier SHALL ship every durable artifact an operator needs to resurrect elsewhere: its Cell WALs and snapshots, its task-journal, its durable input log, and the registry cspec. There SHALL be no separate inbox artifact: a steps instance's post-start input is the same input log a flow operator on the effectively-once tier ships, and a steps operator's commit SHALL enqueue it for shipping with the journal suffix.
+### Requirement: Shipped artifact scope covers the relay's full durable identity
+The tier SHALL ship every durable artifact a relay needs to resurrect elsewhere: its Cell WALs and snapshots, its task-journal, its durable input log, and the registry cspec. There SHALL be no separate inbox artifact: a steps instance's post-start input is the same input log a flow relay on the effectively-once tier ships, and a steps relay's commit SHALL enqueue it for shipping with the journal suffix.
 
-An operator's artifacts SHALL be located through both of the identities it is stored under, its instance id, which keys the task-journal, and its resolved operator class, which keys the Cells and the input log. Where the two differ, a request naming one SHALL NOT silently return only the artifacts stored under it; in particular a synchronous-durability barrier SHALL NOT report success having shipped neither the Cell state nor the input log, and the per-class synchronous-durability gate SHALL resolve for a caller holding either identity.
+A relay's artifacts SHALL be located through both of the identities it is stored under, its instance id, which keys the task-journal, and its resolved relay class, which keys the Cells and the input log. Where the two differ, a request naming one SHALL NOT silently return only the artifacts stored under it; in particular a synchronous-durability barrier SHALL NOT report success having shipped neither the Cell state nor the input log, and the per-class synchronous-durability gate SHALL resolve for a caller holding either identity.
 
 The registry cspec SHALL be stored per writing controller rather than under one shared key, because each controller holds its own replica of a gossiped registry and all of them are legitimate writers. Recovery SHALL select one replica deterministically.
 
 #### Scenario: The log a cut resumes from ships with the cut
-- **WHEN** an effectively-once operator closes a checkpoint interval
+- **WHEN** an effectively-once relay closes a checkpoint interval
 - **THEN** both the Cell's state cut and the input log covering its consumed offset are shipped, so a hydrated Cell has a log to replay from
 
-#### Scenario: A steps operator's input ships with its commit
+#### Scenario: A steps relay's input ships with its commit
 - **WHEN** a durable steps instance commits an iteration
 - **THEN** its journal suffix and its input log are enqueued for shipping, and a controller hydrating the instance finds the input the instance has not consumed in that log
 
-#### Scenario: An operator's existence survives with its state
+#### Scenario: A relay's existence survives with its state
 - **WHEN** a controller boots with an empty state directory against a backend holding shipped artifacts
-- **THEN** it hydrates the registry cspec before any hub starts, so the operators it names are started and their state hydrated on bind
+- **THEN** it hydrates the registry cspec before any hub starts, so the relays it names are started and their state hydrated on bind
 
 #### Scenario: Source position ships with the state cut
 - **WHEN** a Cell's shipped cut is hydrated onto a fresh controller
 - **THEN** its consumed offset, WAL-owner epoch and compensation markers are restored with it, not only its records
 
 #### Scenario: A synchronous barrier ships both identity spaces
-- **WHEN** an operator whose instance id and resolved class differ reaches a commit barrier under synchronous durability
+- **WHEN** a relay whose instance id and resolved class differ reaches a commit barrier under synchronous durability
 - **THEN** the barrier ships the artifacts stored under both identities before it is acknowledged
 
 #### Scenario: Two controllers' registry replicas do not collide
@@ -42,14 +42,14 @@ The registry cspec SHALL be stored per writing controller rather than under one 
 - **THEN** both are stored without either overwriting the other, and a cold controller hydrates exactly one of them
 
 ### Requirement: Shipping triggers reuse existing boundaries plus an RPO backstop
-The tier SHALL ship at existing boundaries — compaction completion, checkpoint-interval close, and steps operator TaskCommit/IterCommit barriers — and SHALL additionally run a periodic backstop sweep every `ship_interval_ms` (default 30 000) that ships unshipped record ranges for cells that reached no other boundary. A steps operator barrier's ship SHALL cover the Cell records the journal entry names as well as the journal suffix, through the operator's full artifact set; no boundary snapshot is requested at an iteration commit, so a steps operator Cell's snapshot ships when the Watchdog's compaction lands, as a flow operator Cell's does. Shipping SHALL be per-cell and uncoordinated: no cross-cell barrier or alignment.
+The tier SHALL ship at existing boundaries — compaction completion, checkpoint-interval close, and steps relay TaskCommit/IterCommit barriers — and SHALL additionally run a periodic backstop sweep every `ship_interval_ms` (default 30 000) that ships unshipped record ranges for cells that reached no other boundary. A steps relay barrier's ship SHALL cover the Cell records the journal entry names as well as the journal suffix, through the relay's full artifact set; no boundary snapshot is requested at an iteration commit, so a steps relay Cell's snapshot ships when the Watchdog's compaction lands, as a flow relay Cell's does. Shipping SHALL be per-cell and uncoordinated: no cross-cell barrier or alignment.
 
 #### Scenario: Compaction snapshot ships
 - **WHEN** a compaction completes for a cell
 - **THEN** the snapshot and the segments it supersedes are reflected in a new shipped manifest entry for that cell
 
 #### Scenario: A stage barrier ships the records it names
-- **WHEN** a durable steps operator's `task_committed` entry naming a Cell record at seq 5 is acked
+- **WHEN** a durable steps relay's `task_committed` entry naming a Cell record at seq 5 is acked
 - **THEN** that Cell's range through seq 5 and the journal suffix are enqueued for shipping together
 
 #### Scenario: Quiet cell is bounded by the backstop
@@ -91,20 +91,20 @@ Garbage collection SHALL NOT delete an artifact younger than the configured coll
 For every class at `durable: local`, shipping SHALL run off the ack paths: a slow or failing backend SHALL NOT delay any append, fsync, ack, or watermark advance. Failed ships SHALL retry with the shared exponential backoff ladder while local operation continues.
 
 #### Scenario: Backend outage does not stall dataflow
-- **WHEN** the remote backend becomes unreachable while a flow operator at `durable: local` processes input
+- **WHEN** the remote backend becomes unreachable while a flow relay at `durable: local` processes input
 - **THEN** throughput and ack latency are unchanged, shipping retries with backoff, and the RPO alarm (below) fires when the target is exceeded
 
 ### Requirement: Recovery hydrates from the manifest into the existing restore path
-Recovery SHALL rebuild local durable files from the manifest and then run the existing restore-and-replay path unchanged. A reference with local durable files SHALL NOT be overwritten by that hydration. When an operator arrives on a controller, its local copy SHALL be replaced by the shipped one only when another controller wrote it and it is the newer copy: on every reference both hold the shipped cut is at least as new, judged by the WAL-owner epoch and then the highest seq covered, a tie going to the shipped copy. The local copy SHALL be set aside whole while the shipped one is hydrated, a reference only the local copy holds SHALL be kept, never deleted, and the local copy SHALL come back whole when any reference of the shipped one does not land.
+Recovery SHALL rebuild local durable files from the manifest and then run the existing restore-and-replay path unchanged. A reference with local durable files SHALL NOT be overwritten by that hydration. When a relay arrives on a controller, its local copy SHALL be replaced by the shipped one only when another controller wrote it and it is the newer copy: on every reference both hold the shipped cut is at least as new, judged by the WAL-owner epoch and then the highest seq covered, a tie going to the shipped copy. The local copy SHALL be set aside whole while the shipped one is hydrated, a reference only the local copy holds SHALL be kept, never deleted, and the local copy SHALL come back whole when any reference of the shipped one does not land.
 
 A manifest that references an artifact the backend does not hold SHALL be reported as an alarm-grade event naming the reference and the missing artifact. It SHALL NOT be degraded into a silent cold start, because a corrupt lineage and an unreachable backend are different conditions calling for different user responses.
 
 #### Scenario: Node-loss recovery
 - **WHEN** a controller dies with its disk and a fresh controller boots against the same backend
-- **THEN** it hydrates the shipped artifacts into the local layout and the ordinary restore-and-replay brings each operator back at its last shipped cut
+- **THEN** it hydrates the shipped artifacts into the local layout and the ordinary restore-and-replay brings each relay back at its last shipped cut
 
 #### Scenario: A returning controller hydrates over the copy it kept
-- **WHEN** an operator moves back to a controller still holding the copy it shipped before the operator moved away, and another controller has since shipped a newer cut
+- **WHEN** a relay moves back to a controller still holding the copy it shipped before the relay moved away, and another controller has since shipped a newer cut
 - **THEN** the controller replaces its copy with the newer cut, and a copy with a reference newer than its shipped cut is kept
 
 #### Scenario: Partial hydration by cell key
@@ -124,14 +124,14 @@ Every manifest write SHALL be applied conditionally against a claim counter held
 
 The fencing token SHALL NOT be any value that travels with the local state it protects. The WAL-owner epoch does travel — it is copied when state is transferred between controllers and restored verbatim by hydration — and therefore SHALL NOT be used as the guard; it remains in the manifest as the supersession fact recovery reads.
 
-Taking over a reference's lineage SHALL require that the controller has adopted the operator, not merely that it holds local state for it: state transfer copies rather than moves, so a controller that has lost an operator still holds its files. Losing a claim SHALL be reported as a routine handover rather than an alarm, and SHALL NOT leave the reference counted as having unshipped progress.
+Taking over a reference's lineage SHALL require that the controller has adopted the relay, not merely that it holds local state for it: state transfer copies rather than moves, so a controller that has lost a relay still holds its files. Losing a claim SHALL be reported as a routine handover rather than an alarm, and SHALL NOT leave the reference counted as having unshipped progress.
 
 #### Scenario: Split-brain claimant is fenced
 - **WHEN** two controllers both attempt to ship manifests for the same cell and one does not hold the claim
 - **THEN** that controller's conditional write is refused and it ceases shipping that cell
 
-#### Scenario: A controller that lost an operator cannot take its lineage back
-- **WHEN** an operator migrates to another controller, which adopts it and ships, while the source controller still holds every local file
+#### Scenario: A controller that lost a relay cannot take its lineage back
+- **WHEN** a relay migrates to another controller, which adopts it and ships, while the source controller still holds every local file
 - **THEN** the source controller's backstop sweep does not reclaim the lineage, and the manifest continues to name the adopting controller
 
 #### Scenario: A restart extends rather than bids
@@ -154,16 +154,16 @@ Setting the backend to `none` on a controller with intact local state SHALL be a
 
 #### Scenario: Rollback by configuration
 - **WHEN** a user disables the tier and restarts the controller
-- **THEN** all operators restore from local state exactly as before the tier existed
+- **THEN** all relays restore from local state exactly as before the tier existed
 
 ### Requirement: Platform durable stores ship with the tier
 
-Beyond the operator's durable identity, the tier SHALL ship the platform
+Beyond the relay's durable identity, the tier SHALL ship the platform
 stores a replacement controller needs to resurrect completely: the dead-letter
 queue's parked records and the authn/authz state (the roles/tokens/quotas
 store, namespace claims, and the durable bootstrap-enabled flag). These SHALL
 ship under the writing controller's claim with the same manifest-last
-atomicity and fencing as operator artifacts. Recovery SHALL hydrate authz
+atomicity and fencing as relay artifacts. Recovery SHALL hydrate authz
 state before any hub starts or any verb is accepted, so a resurrected
 controller enforces from its first accepted connection and the one-shot
 bootstrap claim cannot be re-run. Every other durable store under the state
@@ -175,7 +175,7 @@ shipping); an undocumented gap is a spec violation, not an accepted loss.
 
 - **WHEN** a controller dies with its disk after parking records to the DLQ
 - **THEN** a replacement controller hydrates the parked records with their
-  owning operators, and `flz dlq` operations see them
+  owning relays, and `flz dlq` operations see them
 
 #### Scenario: A resurrected controller stays locked
 

@@ -1,6 +1,6 @@
 # Kafka producer plugin
 
-The Kafka producer plugin publishes what an operator ingests or emits to a Kafka topic. It
+The Kafka producer plugin publishes what a relay ingests or emits to a Kafka topic. It
 hooks `:on_input` or `:on_output` and publishes chain messages to the topic, choosing each
 record's partition by its key, with retries, linger batching, gzip compression, a bounded
 in-process queue per partition, an idempotent producer session per partition and a window
@@ -12,11 +12,11 @@ the durability trade-offs, and how broker clients are shared.
 
 | | |
 | --- | --- |
-| Type | operator plugin |
+| Type | relay plugin |
 | Ships | package `flezha_kafka` |
-| Shareable | yes: every operator bound to it publishes through one producer per controller, or one in the cluster with `--single` |
-| Partitioned operators | allowed: each member runs a producer of its own |
-| Durability | a delivery-guaranteed output is confirmed when its batch is acked and parked when it is given up; an effectively-once operator's records carry a `flezha.dedup_key` header |
+| Shareable | yes: every relay bound to it publishes through one producer per controller, or one in the cluster with `--single` |
+| Partitioned relays | allowed: each member runs a producer of its own |
+| Durability | a delivery-guaranteed output is confirmed when its batch is acked and parked when it is given up; an effectively-once relay's records carry a `flezha.dedup_key` header |
 
 ## Options
 
@@ -62,7 +62,7 @@ the durability trade-offs, and how broker clients are shared.
 
 ```sh
 $ flz plugin enable trades-producer kafka_producer \
-  --operator_id=trades \
+  --relay_id=trades \
   --hook=on_output \
   --Xhosts=kafka:9092 \
   --Xtopic=trades \
@@ -72,7 +72,7 @@ $ flz plugin enable trades-producer kafka_producer \
 ```
 
 The hook is what makes this a producer: `--hook=on_output` publishes what the
-operator emits, and `--hook=on_input` publishes what it ingests instead. An
+relay emits, and `--hook=on_input` publishes what it ingests instead. An
 enable that names no hook publishes nothing.
 
 ## Installing
@@ -94,16 +94,16 @@ $ flz plugin list --installed
 The package bundles the `kafka_ex` client and starts none of that library's own workers; the
 checksum library the Kafka record format needs, `crc32cer`, is native code, which a package
 may not carry, so the release ships it. Before the package existed the provider was built in
-with the id `operator_kafka_producer`; a plugin enabled under that id is not converted, so
+with the id `relay_kafka_producer`; a plugin enabled under that id is not converted, so
 enable `kafka_producer` in its place.
 
 ## Contract
 
 The plugin:
 
-- Can be shared: every operator bound to one plugin publishes through one producer per
+- Can be shared: every relay bound to one plugin publishes through one producer per
   controller, or one in the whole cluster with `--single`. Each member of a partitioned
-  operator runs a producer of its own.
+  relay runs a producer of its own.
 - Retries every transient broker error (`:no_broker`, `:not_leader_for_partition`,
   `:network_exception`, `:request_timed_out`, `:not_enough_replicas`,
   `:not_enough_replicas_after_append`, `:replica_not_available`, `:leader_not_available`,
@@ -134,12 +134,12 @@ record reports only through telemetry (below), and a synchronous `enqueue/4` cal
 
 ## Effectively-once records
 
-Records from an `exactly: effectively_once` operator carry the outbox identity stamps
+Records from an `exactly: effectively_once` relay carry the outbox identity stamps
 `flz.cell`, `flz.seq` (`<record WAL seq>.<emit ordinal>`) and `flz.epoch`. For them the
 plugin uses `flz.key` (the emitting Cell's key, or `emit_keyed`'s) as the Kafka message
 key (stable partitioning across replays, latest-value semantics on compacted topics) and
 writes the full identity as the record header
-`flezha.dedup_key = <flz.cell>/<outbox seq>/<epoch>` (e.g. `MarketOperator/s1/k1/42.0/1`).
+`flezha.dedup_key = <flz.cell>/<outbox seq>/<epoch>` (e.g. `MarketRelay/s1/k1/42.0/1`).
 Records without the stamps use `flz.key`, else a caller-stamped `flezha.dedup_key`, else
 `kafka_msg_key` as the message key and carry no `flezha.dedup_key` header.
 
@@ -159,7 +159,7 @@ With `partition` set, every record goes to that partition. Without it, the produ
   once a batch has left from it.
 
 Order is kept per partition; records without a key keep no order among themselves. The choice is made by the plugin's one worker per topic, not by
-the operator's hook: every operator bound to the plugin casts its records to that worker,
+the relay's hook: every relay bound to the plugin casts its records to that worker,
 which keeps a lane per partition, each with its own queue, window and producer session. The
 partition count is read from the topic's metadata when the worker starts, after a broker
 client swap, after a metadata refresh and after the producer creates the topic; a topic the
@@ -197,20 +197,20 @@ identical key, header and partition:
 ## Options in detail
 
 `channel` names the channel this plugin is attached to; the producer only acts on the
-records passing through the operator, so on it that means "produce only records whose
+records passing through the relay, so on it that means "produce only records whose
 metadata names this channel". `channel_out` is the explicit spelling of the same
 restriction, for a user writing one vocabulary across every provider. Writing both,
 or writing either on a plugin with neither an `on_input` nor an `on_output` hook, is
 refused when the plugin is enabled, because nothing would read it. There is no
-`channel_in`: the producer never feeds the operator.
+`channel_in`: the producer never feeds the relay.
 
 Either spelling takes several names, comma-separated, and produces the records of all of
-them: `--Xchannel alerts,audit` on an operator that also produces `metrics` produces the
+them: `--Xchannel alerts,audit` on a relay that also produces `metrics` produces the
 first two and leaves the third to pass through the chain untouched.
 
 ```sh
 $ flz plugin enable alerts kafka_producer \
-  --operator_id=op1 \
+  --relay_id=op1 \
   --hook=on_output \
   --Xhosts=broker-1:9092 \
   --Xtopic=alerts \
@@ -424,7 +424,7 @@ producer starts it under the provider's own worker family, where no plugin's tea
 it.
 
 One worker serves a plugin's topic on a controller, per namespace: two namespaces enabling
-the same name do not share it, and each member of a partitioned operator, whose plugin id
+the same name do not share it, and each member of a partitioned relay, whose plugin id
 carries its `#pK` suffix, runs its own. Within it each partition keeps its own queue,
 producer id and sequence counter. A worker restart rewinds every partition's in-flight
 window to the head of its queue; the duplicate bound is the window, as above.

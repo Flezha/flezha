@@ -2,28 +2,28 @@ defmodule Flezha.SDK.RecordHoldTest do
   @moduledoc """
   Every frame the SDK writes to a secondary stream that no stream will take: a
   Cell's records, the delete an evicted one ships, and the steps driver's
-  writes the runner relays. Each is held and replayed on the next bound stream,
+  writes the runner forwards. Each is held and replayed on the next bound stream,
   in the order it was written, still ahead of the outputs of its own dispatch —
   and the credit window is debited by the write rather than by the hold.
   """
   # async: false: the reason WAS `FLEZHA_RECONNECT_RING_CAPACITY`, and the cap
   # tests now state their bound instead of writing it, so that reason is gone
-  # and no other has been established. The module keeps its own Operators,
+  # and no other has been established. The module keeps its own Relays,
   # Cells, counters and streams, and its Mimic stub is private to the test
   # process, so nothing here is known to be shared. Flipping it is a deliberate
   # change to the async budget and is nobody's side effect.
   use ExUnit.Case, async: false
   use Mimic
 
-  import FlezhaTest.Helper.SdkOperatorHarness
+  import FlezhaTest.Helper.SdkRelayHarness
 
   alias Flezha.SDK.{Codec, Counters, Credit, Cell, Hold, Record, RunnerServer}
-  alias Flezha.SDK.Operator.Inbox
+  alias Flezha.SDK.Relay.Inbox
   alias Flezha.SDK.RunnerServer.State, as: ServerState
   alias Flezha.SDK.Wire
   alias Flezha.SDK.LocalStream
   alias FlezhaTest.Helper.NodeTestHelper
-  alias FlezhaTest.Helper.SdkOperatorHarness
+  alias FlezhaTest.Helper.SdkRelayHarness
   alias FlezhaTest.Helper.SdkPersistenceFixtures.{CounterOp, OptedOutCounterOp, TimerOp}
 
   # The saga marker the steps driver ships on the record wire: a real payload
@@ -37,7 +37,7 @@ defmodule Flezha.SDK.RecordHoldTest do
   defp kinds(n), do: n |> frames() |> Enum.map(&kind/1)
 
   # Every dispatch is finished and every output already cast to the router: an
-  # input reaches the Cell through the Operator, so one read can overtake
+  # input reaches the Cell through the Relay, so one read can overtake
   # inputs still on their way, and the Cell is asked until it has written the
   # records of all of them. A cast is in the router's mailbox before the
   # dispatch that sent it returns. Without it a rebind can overtake the
@@ -50,14 +50,14 @@ defmodule Flezha.SDK.RecordHoldTest do
   # A secondary this process owns whose stream is already gone: what a rebind
   # onto a wire that died again hands the Cell.
   defp dead_secondary do
-    {sdk, _ctrl} = SdkOperatorHarness.own_secondary()
+    {sdk, _ctrl} = SdkRelayHarness.own_secondary()
     :ok = close_secondary(sdk)
     sdk
   end
 
   describe "a record no stream would take" do
     test "keeps its dispatch's timer-ops record behind its change, in seq order" do
-      %{op: op} = start_operator(TimerOp)
+      %{op: op} = start_relay(TimerOp)
       send(op, {:secondaries, []})
 
       feed(op, 1)
@@ -69,7 +69,7 @@ defmodule Flezha.SDK.RecordHoldTest do
   end
 
   test "a replayed output never arrives without the record of the change that produced it" do
-    %{op: op, sdk_secondary: sdk} = start_operator(CounterOp)
+    %{op: op, sdk_secondary: sdk} = start_relay(CounterOp)
     :ok = close_secondary(sdk)
 
     for n <- 1..3, do: feed(op, n)
@@ -90,7 +90,7 @@ defmodule Flezha.SDK.RecordHoldTest do
   end
 
   test "the hold is bounded, and what it sheds is counted where every drop-oldest is" do
-    %{op: op, counters: counters} = start_operator(CounterOp, hold_cap: 2)
+    %{op: op, counters: counters} = start_relay(CounterOp, hold_cap: 2)
     send(op, {:secondaries, []})
     for n <- 1..5, do: feed(op, n)
     settled(op, "counter", 5)
@@ -98,7 +98,7 @@ defmodule Flezha.SDK.RecordHoldTest do
     rebind_secondary(op)
 
     # Drop-oldest: the last two records survive, and the three shed are counted
-    # rather than lost in silence. The Operator's own hold sheds three outputs
+    # rather than lost in silence. The Relay's own hold sheds three outputs
     # at the same cap, so the counter carries six.
     assert [{:change, 3, {:delta, 4}}, {:change, 4, {:delta, 5}} | _] = kinds(2)
     assert Counters.drops_oldest(counters) == 6
@@ -117,7 +117,7 @@ defmodule Flezha.SDK.RecordHoldTest do
   test "the credit window is debited by the write, never by the hold" do
     counters = Counters.new()
     {:ok, credit} = Credit.start_link(counters: counters)
-    %{op: op} = start_operator(CounterOp, credit: credit)
+    %{op: op} = start_relay(CounterOp, credit: credit)
 
     # A window one byte wide: a record that debited on the way into the hold
     # would park the Cell here, waiting on a controller that is not there.
@@ -138,7 +138,7 @@ defmodule Flezha.SDK.RecordHoldTest do
   end
 
   test "compaction still ships the snapshot below its re-stated timers after a replay" do
-    %{op: op} = start_operator(TimerOp)
+    %{op: op} = start_relay(TimerOp)
     send(op, {:secondaries, []})
 
     feed(op, 1)
@@ -158,7 +158,7 @@ defmodule Flezha.SDK.RecordHoldTest do
   end
 
   test "an eviction whose delete the wire refuses is replayed on the next bound stream" do
-    %{op: op, sdk_secondary: sdk} = start_operator(CounterOp)
+    %{op: op, sdk_secondary: sdk} = start_relay(CounterOp)
     feed(op, 1)
     settled(op, "counter", 1)
     assert [{:change, 0, {:delta, 1}}, {:output, "op-1", "1", _}] = kinds(2)
@@ -173,7 +173,7 @@ defmodule Flezha.SDK.RecordHoldTest do
   end
 
   test "a Cell evicted while holding hands its records and its delete on" do
-    %{op: op} = start_operator(CounterOp)
+    %{op: op} = start_relay(CounterOp)
     send(op, {:secondaries, []})
     feed(op, 2)
     settled(op, "counter", 1)
@@ -199,7 +199,7 @@ defmodule Flezha.SDK.RecordHoldTest do
   end
 
   test "a class that persists nothing owes no delete and hands on nothing" do
-    %{op: op} = start_operator(OptedOutCounterOp)
+    %{op: op} = start_relay(OptedOutCounterOp)
     send(op, {:secondaries, []})
     feed(op, 2)
     settled(op, "counter", 1)
@@ -208,7 +208,7 @@ defmodule Flezha.SDK.RecordHoldTest do
     rebind_secondary(op)
 
     # Nothing was written and no delete is owed, so the only frame the rebind
-    # brings back is the output the Operator held for itself. A handed-on
+    # brings back is the output the Relay held for itself. A handed-on
     # delete would be replayed BEFORE that output, so this position is the
     # assertion that no delete exists — there is nothing to refute.
     assert [{:output, "op-1", "2", _}] = kinds(1)

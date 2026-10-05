@@ -39,7 +39,7 @@ The sessions survived the new controller. They are asleep, and wake on the
 next message:
 
 ```sh
-$ flz operator call anna --namespace agents --text 'Did you notice anything?'
+$ flz relay call anna --namespace agents --text 'Did you notice anything?'
 ```
 
 ```output

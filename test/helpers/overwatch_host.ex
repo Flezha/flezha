@@ -1,6 +1,6 @@
 defmodule FlezhaTest.Helper.OverwatchHost do
   @moduledoc """
-  A bare process around an `Flezha.Operator.Overwatch` struct, for the cases
+  A bare process around an `Flezha.Relay.Overwatch` struct, for the cases
   whose unit is the Overwatch's loop: a durable log answers its mailbox, and a
   reply it owes a caller is a real call that has not returned. Started with
   `{:absorb, state, handover}` it absorbs a handover itself, so the deadlines
@@ -8,7 +8,7 @@ defmodule FlezhaTest.Helper.OverwatchHost do
   """
   use GenServer
 
-  alias Flezha.Operator.{Builder, Handover, Overwatch}
+  alias Flezha.Relay.{Builder, Handover, Overwatch}
   alias Flezha.Plugin.Extension.Table
 
   def start_link(arg), do: GenServer.start_link(__MODULE__, arg)

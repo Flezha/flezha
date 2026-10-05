@@ -2,14 +2,14 @@ defmodule FlezhaTest.System.CallResponseE2ETest do
   @moduledoc """
   An outside caller's call answered through `response()`, end to end on the
   runtime `FLEZHA_E2E_RUNTIME` selects, through the published
-  `Flezha.Service.Operator.call/6`:
+  `Flezha.Service.Relay.call/6`:
 
     * `call_echo`: one tasklet answers with its input.
     * `call_downstream`: the second tasklet of a chain answers `re:<input>`.
     * `call_split`: one tasklet feeds two filtered paths, each ending in
       `response()`; an input starting `no` is answered `refused:<input>`, every
       other `accepted:<input>`.
-    * `call_turn`: a durable `:per_input` steps operator whose turn answers
+    * `call_turn`: a durable `:per_input` steps relay whose turn answers
       with its input.
 
       FLEZHA_E2E_RUNTIME=node mix test --include system test/system/call_response_e2e_test.exs
@@ -19,9 +19,9 @@ defmodule FlezhaTest.System.CallResponseE2ETest do
 
   import FlezhaTest.Helper.TierE2EHarness, only: [unique: 1]
 
-  alias Flezha.Operator.Builder
+  alias Flezha.Relay.Builder
   alias Flezha.Runner.FleetManager
-  alias Flezha.Service.{Operator, OperatorManager}
+  alias Flezha.Service.{Relay, RelayManager}
   alias Flezha.State.TaskJournal
   alias FlezhaTest.Helper.NodeTestHelper
 
@@ -37,7 +37,7 @@ defmodule FlezhaTest.System.CallResponseE2ETest do
     {:ok, namespace: namespace}
   end
 
-  test "a flow operator and a steps turn both answer the call", ctx do
+  test "a flow relay and a steps turn both answer the call", ctx do
     echo = start(ctx.namespace, "call_echo", :flow)
     assert {:ok, "hello", %{"channel" => _}} = call(ctx.namespace, echo, "hello")
 
@@ -64,7 +64,7 @@ defmodule FlezhaTest.System.CallResponseE2ETest do
     :telemetry.attach(
       handler,
       [:flezha, :call, :answer_dropped],
-      fn _event, _measurements, %{operator_id: ^split, reason: reason}, _ ->
+      fn _event, _measurements, %{relay_id: ^split, reason: reason}, _ ->
         send(test_pid, {:dropped, reason})
       end,
       nil
@@ -77,19 +77,19 @@ defmodule FlezhaTest.System.CallResponseE2ETest do
     refute_receive {:dropped, "answered"}, 1_000
   end
 
-  defp call(namespace, operator_id, message),
-    do: Operator.call(namespace, operator_id, message, "", [deadline_ms: @deadline_ms], @context)
+  defp call(namespace, relay_id, message),
+    do: Relay.call(namespace, relay_id, message, "", [deadline_ms: @deadline_ms], @context)
 
   defp start(namespace, factory, kind) do
-    operator_id = unique(factory)
+    relay_id = unique(factory)
 
     assert {:ok, _} =
-             OperatorManager.start_operator(namespace, %Builder{
-               id: operator_id,
+             RelayManager.start_relay(namespace, %Builder{
+               id: relay_id,
                factory_id: factory,
                run: kind
              })
 
-    operator_id
+    relay_id
   end
 end

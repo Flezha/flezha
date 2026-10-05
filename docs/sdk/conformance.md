@@ -119,7 +119,7 @@ The vocabulary is one list in `FlezhaTest.Helper.NodeTestHelper.capabilities/0`:
 `pool_wedge`, `retry_ladder`, `state_persistence`, `effectively_once`,
 `cell_timers`, `correction_window`, `keyed_channels`, `steps`,
 `dynamic_cell`, `partitioned`, `schema_evolution`, `shorthand`,
-`call_response`, `operator_call`, `parts`, `local_send`.
+`call_response`, `relay_call`, `parts`, `local_send`.
 
 `local_send` is the one capability an SDK defers today: PHP's runner serves on
 the thread its application code runs on, so the test app cannot send from its
@@ -265,7 +265,7 @@ builds the core, and none needs a checkout of it.
 
 What an SDK repository cannot see is everything in the capability vocabulary
 the controller owns: persistence, effectively-once, correction, partitioning,
-steps operators, liveness, restarts. Every one of those is an end-to-end scenario and
+steps relays, liveness, restarts. Every one of those is an end-to-end scenario and
 runs here, against the commit this tree pins the SDK at. Bumping that pin is
 what brings an SDK change into end-to-end.
 
@@ -279,7 +279,7 @@ published for every supported triple beside the native libraries, with its
 checksum in the same manifest.
 
 ```
-flz-fake-controller --factory <id> [--operator <id>] [--transport uds]
+flz-fake-controller --factory <id> [--relay <id>] [--transport uds]
                     [--channel <name>] [--inputs <file>] [--input <payload>]...
                     [--runner-id <id>] [--expect-outputs <n>] [--timeout-ms <ms>]
                     [--socket-dir <dir>] [-- <runner command>]
@@ -404,14 +404,14 @@ so the conformance app runs the standalone binary protocol like the other six.
 
 `shorthand` is a required capability: the §5 single-tasklet short form is one
 every SDK carries, so no manifest may defer it. Five fixtures, each one
-operator declaration in every app, with no hand-written operator beside it:
+relay declaration in every app, with no hand-written relay beside it:
 
 | Id | Kind | Entry | Sink |
 | --- | --- | --- | --- |
 | `sugar_do_nothing` | stream | `input`, text | `sugar_do_nothing_echo` |
 | `sugar_store_input` | stream | `input`, text | `sugar_store_sink` |
 | `sugar_named_input` | stream | `prices`, text | `sugar_named_input_sink` |
-| `sugar_steps` | steps operator | `order`, text | `sugar_steps_placed` |
+| `sugar_steps` | steps relay | `order`, text | `sugar_steps_placed` |
 | `sugar_state_only` | stream | `ticks`, text | none |
 
 Text entries, so the bytes a sink carries are equal across runtimes: a JSON
@@ -445,7 +445,7 @@ the compile-fail test that pins it:
 ```json
 {"topology": "shorthand_with_topology", "outcome": "cited",
  "names": ["topology.short_form_with_topology"],
- "citation": "sdk/rust/tests/ui/operator_with_hand_written_impl.rs"}
+ "citation": "sdk/rust/tests/ui/relay_with_hand_written_impl.rs"}
 ```
 
 The drill checks the cited file exists and carries the code, so a citation
@@ -457,8 +457,8 @@ boots for real everywhere.
 ## Golden declaration snapshots
 
 The smoke tier binds one fixture per declaration key the controller reads and
-compares the decoded `AddOperatorResponse` metadata — intercepted at
-`Flezha.Operator.ClassRegistry.decode_declarations/1`, the one place the wire
+compares the decoded `AddRelayResponse` metadata — intercepted at
+`Flezha.Relay.ClassRegistry.decode_declarations/1`, the one place the wire
 form is decoded — against `test/fixtures/declarations/<fixture>.json`. One more
 snapshot pins the `flz.*` identity stamps on a keyed output. A key one SDK adds,
 drops or spells differently is a diff on every other.
@@ -609,8 +609,8 @@ record in `flz_core/src/header.rs` — one value per SDK, assigned when the SDK
 lands, never asserted by a proposal in advance.
 
 An SDK that persists nothing still declares one. The byte identifies the runtime
-at the *placement* seam, not only in a record header: the controller places an
-operator only on a runner advertising its factory's established language, and
+at the *placement* seam, not only in a record header: the controller places a
+relay only on a runner advertising its factory's established language, and
 the conformance fleet gives different SDKs the same factory ids on purpose so
 one workload can be measured on each runtime. Without the byte those shared ids
 would be a cross-language restore waiting to happen; with it they are safe.

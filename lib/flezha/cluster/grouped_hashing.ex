@@ -11,8 +11,8 @@ defmodule Flezha.Cluster.GroupedHashing do
   placement afterwards. A child with no group is hashed over every hub node,
   which is what `ProcessHub.Strategy.Distribution.ConsistentHashing` does.
 
-  Nothing here names a namespace, a runner or a factory. Flezha passes an
-  operator's factory id as its group and `Flezha.Runner.FleetManager` declares
+  Nothing here names a namespace, a runner or a factory. Flezha passes a
+  relay's factory id as its group and `Flezha.Runner.FleetManager` declares
   the factories its fleet can run, but that vocabulary stays outside.
 
   ## What holds one answer together on every node

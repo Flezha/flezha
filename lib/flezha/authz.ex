@@ -310,7 +310,7 @@ defmodule Flezha.AuthZ do
 
       Namespace.system?(bound_ns) and admin? ->
         # admin@_system can act on any namespace's non-auth-state
-        # caller actions (e.g. list operators cross-namespace for the
+        # caller actions (e.g. list relays cross-namespace for the
         # console). Read-only actions are also covered here.
         :ok
 

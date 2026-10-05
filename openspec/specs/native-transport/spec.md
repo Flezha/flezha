@@ -16,8 +16,8 @@ The control channel SHALL write through `send_frame/4` (payload-ids `control_com
 Server-lifecycle NIFs (`start_uds_server/2`, `start_quic_server/5`, `stop_server/1`, `driver_stats/1`) are out of the seam's scope. `send_frame/4` on a native handle SHALL deliver `{:flz_data, stream_id, payload_id, message, metadata}` to the other side's current owner process through the stream process, without serialization or framing, preserving per-stream order, and no native-transport code SHALL assume `message` is a binary.
 
 #### Scenario: Data frame delivered as a plain message
-- **WHEN** a process calls `Flezha.Transport.Stream.send_frame(native_handle, "operator-1", message, metadata)`
-- **THEN** the handle's owner process receives `{:flz_data, id, "operator-1", message, metadata}` with `message` and `metadata` passed by term identity (no encode/decode)
+- **WHEN** a process calls `Flezha.Transport.Stream.send_frame(native_handle, "relay-1", message, metadata)`
+- **THEN** the handle's owner process receives `{:flz_data, id, "relay-1", message, metadata}` with `message` and `metadata` passed by term identity (no encode/decode)
 
 #### Scenario: Ownership transfer
 - **WHEN** `controlling_process(native_handle, new_pid)` is called
@@ -44,7 +44,7 @@ The `:native` `Transport.Server` instance SHALL accept connections via a local f
 
 #### Scenario: Reconnect with the same stable identity takes over
 - **WHEN** a second native connection presents a `stable_id` that already has a live session
-- **THEN** the controller resolves it newest-wins — the old session is fenced, its operator bindings swap to the new session token, and the old session is evicted — identically to a UDS/QUIC reconnect
+- **THEN** the controller resolves it newest-wins — the old session is fenced, its relay bindings swap to the new session token, and the old session is evicted — identically to a UDS/QUIC reconnect
 
 #### Scenario: Stream close synthesized from process death
 - **WHEN** the SDK-side owner process of a bound native stream dies

@@ -12,7 +12,7 @@ How `flz` reaches the controller, its options and its exit codes are on the
 
 ## `flz namespace`
 
-Creates and deletes namespaces, the separate areas operators and runners work in, and sets their quotas. Explained in [`namespaces.md`](../basics/namespaces.md).
+Creates and deletes namespaces, the separate areas relays and runners work in, and sets their quotas. Explained in [`namespaces.md`](../basics/namespaces.md).
 
 ```sh
 $ flz namespace help
@@ -32,7 +32,7 @@ COMMANDS:
     set-quota <name> --X<quota>=<value>  Update quota overrides
     help                                 Show this help message
 
-Quota fields: max_operators, max_cells_per_operator, max_mailbox_bytes_total,
+Quota fields: max_relays, max_cells_per_relay, max_mailbox_bytes_total,
               max_message_rate_per_second, max_state_bytes, max_runners
 
 Identity for gated verbs rides `--token <token>` or the FLEZHA_TOKEN env var.
@@ -46,10 +46,10 @@ $ flz namespace create trading
 namespace trading created
 namespace: trading
 quotas:
-  max_cells_per_operator: 1024
+  max_cells_per_relay: 1024
   max_mailbox_bytes_total: 268435456
   max_message_rate_per_second: 100000
-  max_operators: 100
+  max_relays: 100
   max_runners: 32
   max_state_bytes: 107374182400
 ```

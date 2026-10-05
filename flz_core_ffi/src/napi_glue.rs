@@ -363,11 +363,11 @@ pub fn start<'a>(env: &'a Env, namespace: String) -> Result<Object<'a>> {
 /// alternative to [`start`], never an addition. The host keeps driving its
 /// own fetchers, which is what runs the tasklets.
 #[napi]
-pub fn local_start(factory_id: String, operator_id: String) -> Result<()> {
+pub fn local_start(factory_id: String, relay_id: String) -> Result<()> {
     let ctx = context()?;
     let factory = veneer::c_string("factory id", &factory_id)?;
-    let operator = veneer::c_string("operator id", &operator_id)?;
-    Ok(veneer::local_start(ctx, &factory, &operator)?)
+    let relay = veneer::c_string("relay id", &relay_id)?;
+    Ok(veneer::local_start(ctx, &factory, &relay)?)
 }
 
 /// Queue the declared sink `channel` for [`local_next_output`]. A channel the
@@ -535,29 +535,29 @@ pub fn admin_call<'a>(env: &'a Env, verb: String, args: String) -> Result<Object
 #[napi(ts_return_type = "Promise<string>")]
 pub fn send_message<'a>(
     env: &'a Env,
-    operator: String,
+    relay: String,
     channel: String,
     message: Buffer,
     msg_id: Option<String>,
     key: Option<String>,
     local: bool,
 ) -> Result<Object<'a>> {
-    let operator = veneer::c_string("operator", &operator)?;
+    let relay = veneer::c_string("relay", &relay)?;
     let channel = veneer::c_string("entry channel", &channel)?;
     let msg_id = veneer::c_string("message id", msg_id.as_deref().unwrap_or_default())?;
     let key = veneer::c_string("key", key.as_deref().unwrap_or_default())?;
     let message = message.to_vec();
     off_loop(env, context()?, move |ctx| {
         Ok(veneer::send_message(
-            ctx, &operator, &channel, &message, &msg_id, &key, local,
+            ctx, &relay, &channel, &message, &msg_id, &key, local,
         )?)
     })
 }
 
-/// The ids of the operator instances bound on this runner.
+/// The ids of the relay instances bound on this runner.
 #[napi]
-pub fn operators() -> Result<Vec<String>> {
-    Ok(veneer::operators(context()?)?)
+pub fn relays() -> Result<Vec<String>> {
+    Ok(veneer::relays(context()?)?)
 }
 
 /// The core's monotonic clock in nanoseconds.
@@ -653,7 +653,7 @@ pub fn native_surface() -> Vec<JsNativeExport> {
         veneer("spawnWait", "flz_core_spawn_result"),
         veneer("adminCall", "flz_core_admin_call"),
         veneer("sendMessage", "flz_core_send_message"),
-        veneer("operators", "flz_core_operators"),
+        veneer("relays", "flz_core_relays"),
         veneer("monotonicNanos", "flz_core_monotonic_nanos"),
         veneer("lastError", "flz_core_last_error"),
         host("setLogCallback", None, false),

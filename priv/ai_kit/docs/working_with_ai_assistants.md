@@ -82,11 +82,11 @@ always match the version you run:
 
 The rules also go in the server's instructions, which most clients show the
 model before it does anything: read the SDK example before writing SDK code, try
-an operator in [local mode](basics/local_mode.md) first, act on an error's
+a relay in [local mode](basics/local_mode.md) first, act on an error's
 `code` and `hint`.
 
 Once a controller answers, each operation the token's role allows is a tool as
-well: `operator_list`, `operator_start`, `operator_send`, `dlq_list`,
+well: `relay_list`, `relay_start`, `relay_send`, `dlq_list`,
 `dlq_replay` and the rest, the same set the [HTTP API](../plugins/http_api.md)
 serves. A failed call comes back with its [error](../errors.md) code and hint,
 so the assistant can correct itself. Before a controller runs, every operation
@@ -134,7 +134,7 @@ for this project's language before writing SDK code.
 
 - **Each message starts a short VM.** A call takes about a quarter of a second
   with a controller, and about twice that without one.
-- **No streaming operations.** `flz operator listen` and `flz observe tail` are
+- **No streaming operations.** `flz relay listen` and `flz observe tail` are
   not tools, as over HTTP.
 - **A message up to about 120 KiB.** A larger one is refused before it is sent.
 - **The token is read when the assistant starts the server.** After issuing a new

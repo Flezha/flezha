@@ -1,8 +1,8 @@
 defmodule FlezhaTest.Service.CallsTest do
   @moduledoc """
-  The delivery of operators' calls: the forward worker a caller's requests to
+  The delivery of relays' calls: the forward worker a caller's requests to
   one target share, the per-payload deadline and idle stop it gains for them,
-  and `OperatorManager.spawn_or_deliver/8`'s call options over
+  and `RelayManager.spawn_or_deliver/8`'s call options over
   `FakeStartRegistry`, whose `insert_new` is the real registry claim.
   Authorization is off here; the judgment is the last describe's.
   """
@@ -12,9 +12,9 @@ defmodule FlezhaTest.Service.CallsTest do
   import ExUnit.CaptureLog
   import FlezhaTest.Helper.MimicGlobal
 
-  alias Flezha.Plugin.Provider.OperatorForward.ForwardWorker
+  alias Flezha.Plugin.Provider.RelayForward.ForwardWorker
   alias Flezha.Process.CallDelivery
-  alias Flezha.Service.{HubManager, OperatorManager}
+  alias Flezha.Service.{HubManager, RelayManager}
   alias Flezha.State.{Outbox, TestHelpers, WriterRegistry}
   alias FlezhaTest.Helper.FakeStartRegistry
   alias FlezhaTest.Helper.FakeStartRegistry.Instance
@@ -44,8 +44,8 @@ defmodule FlezhaTest.Service.CallsTest do
       base = %{
         plugin_id: "call",
         source_namespace: @ns,
-        source_operator_id: "gateway",
-        target_operator_id: "call",
+        source_relay_id: "gateway",
+        target_relay_id: "call",
         queue_max: :infinity,
         retry_backoff_ms: 10,
         retry_max_backoff_ms: 20,
@@ -105,19 +105,19 @@ defmodule FlezhaTest.Service.CallsTest do
       on_exit(TestHelpers.override_env(:call_worker_idle_ms, 100))
       test_pid = self()
 
-      stub(OperatorManager, :spawn_or_deliver, fn @ns,
-                                                  "anna-42",
-                                                  "agent",
-                                                  payload,
-                                                  :deliver,
-                                                  _ctx,
-                                                  id,
-                                                  opts ->
+      stub(RelayManager, :spawn_or_deliver, fn @ns,
+                                               "anna-42",
+                                               "agent",
+                                               payload,
+                                               :deliver,
+                                               _ctx,
+                                               id,
+                                               opts ->
         send(test_pid, {:reached, payload, id, opts})
         {:delivered, "anna-42"}
       end)
 
-      stub(OperatorManager, :get_operator_pid, fn @ns, "gateway" -> {:ok, test_pid} end)
+      stub(RelayManager, :get_relay_pid, fn @ns, "gateway" -> {:ok, test_pid} end)
 
       request = fn id, text ->
         %{
@@ -166,7 +166,7 @@ defmodule FlezhaTest.Service.CallsTest do
     # worker holding it.
     defp answer_in_flight(id) do
       test_pid = self()
-      stub(OperatorManager, :get_operator_pid, fn @ns, "gateway" -> {:ok, test_pid} end)
+      stub(RelayManager, :get_relay_pid, fn @ns, "gateway" -> {:ok, test_pid} end)
       answer_to_gateway(id)
       assert_receive {:"$gen_call", from, {:call_answer, ^id, _outcome}}
       router = Process.whereis(CallDelivery.name())
@@ -230,11 +230,11 @@ defmodule FlezhaTest.Service.CallsTest do
       cell = {"agent", "account", "k"}
       observe_answer(cell)
 
-      stub(OperatorManager, :get_operator_pid, fn @ns, "gateway" ->
-        {:error, {:operator_not_found, @ns, "gateway"}}
+      stub(RelayManager, :get_relay_pid, fn @ns, "gateway" ->
+        {:error, {:relay_not_found, @ns, "gateway"}}
       end)
 
-      stub(HubManager, :declared_operators, fn @ns, _unreadable ->
+      stub(HubManager, :declared_relays, fn @ns, _unreadable ->
         [%{id: "agent-c3", factory_id: nil}]
       end)
 
@@ -242,7 +242,7 @@ defmodule FlezhaTest.Service.CallsTest do
       assert_receive {:"$gen_cast", {:outbox_confirmed, {:cursor, 4}}}, 1_000
 
       assert_receive {:answer_dropped,
-                      %{reason: "caller_gone", caller: "gateway", operator_id: "agent-c3"}}
+                      %{reason: "caller_gone", caller: "gateway", relay_id: "agent-c3"}}
     end
 
     test "an answer to an absent caller whose hub cannot be read is retried, not dropped" do
@@ -252,11 +252,11 @@ defmodule FlezhaTest.Service.CallsTest do
       tries = :counters.new(1, [])
 
       # The namespace has no live hub here: its declared set cannot be read.
-      stub(OperatorManager, :get_operator_pid, fn @ns, "gateway" ->
+      stub(RelayManager, :get_relay_pid, fn @ns, "gateway" ->
         :counters.add(tries, 1, 1)
 
         if :counters.get(tries, 1) == 1,
-          do: {:error, {:operator_not_found, @ns, "gateway"}},
+          do: {:error, {:relay_not_found, @ns, "gateway"}},
           else: {:ok, test_pid}
       end)
 
@@ -280,7 +280,7 @@ defmodule FlezhaTest.Service.CallsTest do
 
     defp call_to(id, opts),
       do:
-        OperatorManager.spawn_or_deliver(
+        RelayManager.spawn_or_deliver(
           @ns,
           id,
           "agent",
@@ -323,14 +323,14 @@ defmodule FlezhaTest.Service.CallsTest do
       assert [_other] = Instance.calls(pid)
     end
 
-    test "an absent id with creation off is operator.not_found and starts nothing" do
-      assert {{:refused, %Flezha.Error{code: "operator.not_found"}}, "carol-1"} =
+    test "an absent id with creation off is relay.not_found and starts nothing" do
+      assert {{:refused, %Flezha.Error{code: "relay.not_found"}}, "carol-1"} =
                call_to("carol-1", if_absent: :not_found)
 
       assert FakeStartRegistry.started() == []
     end
 
-    test "a creation past the namespace's max_operators is quota.exceeded" do
+    test "a creation past the namespace's max_relays is quota.exceeded" do
       stub(Flezha.AuthZ.Quotas, :check_allocation, fn _ns, key, _n ->
         {:error, {:quota_exceeded, key, %{limit: 0}}}
       end)
@@ -357,7 +357,7 @@ defmodule FlezhaTest.Service.CallsTest do
       opts = [runs: [:steps, :flow], metadata: %{}, call: call("c1")]
 
       assert {:spawned, "user-1"} =
-               OperatorManager.spawn_or_deliver(
+               RelayManager.spawn_or_deliver(
                  @ns,
                  "user-1",
                  "agent",
@@ -370,8 +370,8 @@ defmodule FlezhaTest.Service.CallsTest do
 
       assert [%{run: :flow}] = FakeStartRegistry.started()
 
-      assert {{:refused, %Flezha.Error{code: "operator.factory_not_steps"}}, _} =
-               OperatorManager.spawn_or_deliver(@ns, "", "agent", "t", :deliver, @caller, "c2", [
+      assert {{:refused, %Flezha.Error{code: "relay.factory_not_steps"}}, _} =
+               RelayManager.spawn_or_deliver(@ns, "", "agent", "t", :deliver, @caller, "c2", [
                  {:runs, [:steps]} | Keyword.delete(opts, :runs)
                ])
     end

@@ -2,15 +2,15 @@ defmodule Flezha.Transport.LivenessCounters do
   @moduledoc """
   Always-on, lock-free liveness counters for the controller data plane.
 
-  Each `StreamChannel` and `Operator.Overwatch` owns an `:atomics`-backed
+  Each `StreamChannel` and `Relay.Overwatch` owns an `:atomics`-backed
   `:counters` array and bumps slots locally (single-process, no contention).
   The ref is registered in a public ETS table so the `:flezha_transport`
   observability source and the convergence stall classifier can read every
-  channel/operator's counters in one lock-free scan, and collapse a runner's
+  channel/relay's counters in one lock-free scan, and collapse a runner's
   channel rows to one with `by_runner/1`.
 
   Cardinality is bounded: one entry per channel (runner + stream name) and
-  one per operator instance — never per frame. Entries whose owner process has
+  one per relay instance — never per frame. Entries whose owner process has
   died are pruned on the next `snapshot_all/0`.
 
   The counters add **zero** data-plane behaviour — they are pure
@@ -18,7 +18,7 @@ defmodule Flezha.Transport.LivenessCounters do
 
   ## One row per counted fact
 
-  `@channel_rows` and `@operator_rows` are the single declaration this
+  `@channel_rows` and `@relay_rows` are the single declaration this
   subsystem derives from. A row says everything about its slot:
 
     * `name:` — the slot, and its key in `snapshot_all/0`.
@@ -27,7 +27,7 @@ defmodule Flezha.Transport.LivenessCounters do
     * `scope:` — whose fact it is. `:channel` is about this stream;
       `:runner` is one fact about the runner that every channel row of that
       runner repeats, because the runner sends the same heartbeat on every
-      secondary stream it holds; `:operator` is about an operator instance.
+      secondary stream it holds; `:relay` is about a relay instance.
     * `aggregate:` — how a reader reduces the slot ACROSS runners. A count
       sums; an age gauge takes the larger, because summing two ages means
       nothing.
@@ -66,13 +66,13 @@ defmodule Flezha.Transport.LivenessCounters do
   # DropNothing block counter and `hb_drops_newest`/`hb_drops_oldest` the shed
   # counts — dispatches frozen with blocked parks climbing is healthy
   # backpressure, frozen with it flat is a wedge, and the two drop counters are
-  # the only outside handle on a shedding operator's loss.
+  # the only outside handle on a shedding relay's loss.
   # `hb_restore_discarded_inputs` mirrors what a rebind threw away, which is
   # correct only where the controller re-forwards from a durable log, so a
   # climbing value is the user's one handle on the size of that loss.
   # `hb_timers_armed`/`hb_timers_fired` are the wake list's occupancy and its
   # firings: armed climbing while fired stays flat is promotion wedged rather
-  # than an idle Operator. `hb_parts_sent` and the three `hb_parts_dropped_*`
+  # than an idle Relay. `hb_parts_sent` and the three `hb_parts_dropped_*`
   # slots mirror the parts a runner sent and the ones it dropped by reason: a
   # part is a lossy preview, and these are where its loss shows.
   #
@@ -294,8 +294,8 @@ defmodule Flezha.Transport.LivenessCounters do
       [
         name: :foreign_frame_refused,
         kind: :count,
-        # Every frame refused because its runner does not own the operator it
-        # names. The bridged event goes out once per session and operator, so
+        # Every frame refused because its runner does not own the relay it
+        # names. The bridged event goes out once per session and relay, so
         # a copy that keeps speaking is counted here.
         surface: [{:telemetry, [:flezha, :runner, :foreign_frame_refused]}]
       ],
@@ -303,22 +303,22 @@ defmodule Flezha.Transport.LivenessCounters do
     ]
 
   use Flezha.SDK.CounterTable,
-    table: :operator,
-    defaults: [kind: :count, scope: :operator],
+    table: :relay,
+    defaults: [kind: :count, scope: :relay],
     slots: [
-      [name: :io_in_received, surface: [{:metric, :operator_io_in_received}]],
-      [name: :forwarded, surface: [{:metric, :operator_forwarded}]],
-      [name: :filtered_nil, surface: [{:metric, :operator_filtered_nil}]],
-      # Ingress casts a parked operator dropped; the confirming entry point
+      [name: :io_in_received, surface: [{:metric, :relay_io_in_received}]],
+      [name: :forwarded, surface: [{:metric, :relay_forwarded}]],
+      [name: :filtered_nil, surface: [{:metric, :relay_filtered_nil}]],
+      # Ingress casts a parked relay dropped; the confirming entry point
       # refuses instead, so this counts only what a cast-based source lost.
-      [name: :parked_drops, surface: [{:metric, :operator_parked_drops}]],
+      [name: :parked_drops, surface: [{:metric, :relay_parked_drops}]],
       # Plain outputs to a binding recorded not started: it makes no delivery
       # promise, so it drops them.
-      [name: :not_started_drops, surface: [{:metric, :operator_not_started_drops}]]
+      [name: :not_started_drops, surface: [{:metric, :relay_not_started_drops}]]
     ]
 
-  # `channel_slots/0`, `operator_slots/0`, `channel_rows/0`,
-  # `operator_rows/0`, the index clauses, `channel_reduce/3` and the snapshot
+  # `channel_slots/0`, `relay_slots/0`, `channel_rows/0`,
+  # `relay_rows/0`, the index clauses, `channel_reduce/3` and the snapshot
   # readers are all generated from the two row lists above.
 
   @heartbeat_pairs for row <- @channel_rows,
@@ -355,9 +355,9 @@ defmodule Flezha.Transport.LivenessCounters do
   release and not the next because an emit line was forgotten.
   """
   @spec surfaces(:metric | :verdict | :telemetry | :internal) ::
-          [{:channels | :operators, CounterTable.row(), term()}]
+          [{:channels | :relays, CounterTable.row(), term()}]
   def surfaces(kind) do
-    for {group, rows} <- [channels: @channel_rows, operators: @operator_rows],
+    for {group, rows} <- [channels: @channel_rows, relays: @relay_rows],
         row <- rows,
         {^kind, payload} <- Keyword.fetch!(row, :surface),
         do: {group, row, payload}
@@ -374,9 +374,9 @@ defmodule Flezha.Transport.LivenessCounters do
   `aggregate:` decides, and its `measurement:` names the key the reading is
   emitted under.
   """
-  @spec metric_readings(%{channels: [map()], operators: [map()]}) :: [{atom(), map()}]
-  def metric_readings(%{channels: channels, operators: operators}) do
-    rows = %{channels: Map.values(by_runner(channels)), operators: operators}
+  @spec metric_readings(%{channels: [map()], relays: [map()]}) :: [{atom(), map()}]
+  def metric_readings(%{channels: channels, relays: relays}) do
+    rows = %{channels: Map.values(by_runner(channels)), relays: relays}
 
     for {group, row, name} <- surfaces(:metric) do
       slot = Keyword.fetch!(row, :name)
@@ -389,7 +389,7 @@ defmodule Flezha.Transport.LivenessCounters do
   end
 
   defp reduce(:channels, slot, a, b), do: channel_reduce(slot, a, b)
-  defp reduce(:operators, slot, a, b), do: operator_reduce(slot, a, b)
+  defp reduce(:relays, slot, a, b), do: relay_reduce(slot, a, b)
 
   @doc """
   Whether the ~1 Hz driver poll + stall classifier should run. The counters
@@ -442,14 +442,14 @@ defmodule Flezha.Transport.LivenessCounters do
   end
 
   @doc """
-  Register an operator's counter array, keyed by `operator_id`. Pass `self()` as the
+  Register a relay's counter array, keyed by `relay_id`. Pass `self()` as the
   owner. Returns the `:counters` ref.
   """
-  @spec register_operator(term()) :: :counters.counters_ref()
-  def register_operator(operator_id) do
+  @spec register_relay(term()) :: :counters.counters_ref()
+  def register_relay(relay_id) do
     ensure_table()
-    ref = operator_new()
-    :ets.insert(@table, {{:operator, operator_id}, ref, self()})
+    ref = relay_new()
+    :ets.insert(@table, {{:relay, relay_id}, ref, self()})
     ref
   end
 
@@ -501,35 +501,35 @@ defmodule Flezha.Transport.LivenessCounters do
   def set_channel(nil, _slot, _value), do: :ok
   def set_channel(ref, slot, value), do: channel_set(ref, slot, value)
 
-  @doc "Increment an operator counter slot by one."
-  @spec bump_operator(:counters.counters_ref() | nil, atom()) :: :ok
-  def bump_operator(nil, _slot), do: :ok
-  def bump_operator(ref, slot), do: operator_bump(ref, slot)
+  @doc "Increment a relay counter slot by one."
+  @spec bump_relay(:counters.counters_ref() | nil, atom()) :: :ok
+  def bump_relay(nil, _slot), do: :ok
+  def bump_relay(ref, slot), do: relay_bump(ref, slot)
 
   # ---------- read side ----------
 
   @doc """
-  Snapshot every live channel and operator counter array, pruning entries whose
-  owner has died. Returns `%{channels: [...], operators: [...]}`.
+  Snapshot every live channel and relay counter array, pruning entries whose
+  owner has died. Returns `%{channels: [...], relays: [...]}`.
   """
-  @spec snapshot_all() :: %{channels: [map()], operators: [map()]}
+  @spec snapshot_all() :: %{channels: [map()], relays: [map()]}
   def snapshot_all() do
     case :ets.whereis(@table) do
       :undefined ->
-        %{channels: [], operators: []}
+        %{channels: [], relays: []}
 
       _ ->
         entries = :ets.tab2list(@table)
 
-        {channels, operators} =
+        {channels, relays} =
           Enum.reduce(entries, {[], []}, fn {key, ref, owner}, {chans, rels} ->
             if Process.alive?(owner) do
               case key do
                 {:channel, runner_id, name} ->
                   {[channel_snapshot(ref, %{runner_id: runner_id, name: name}) | chans], rels}
 
-                {:operator, operator_id} ->
-                  {chans, [operator_snapshot(ref, %{operator_id: operator_id}) | rels]}
+                {:relay, relay_id} ->
+                  {chans, [relay_snapshot(ref, %{relay_id: relay_id}) | rels]}
 
                 # Driver server refs are polled via `driver_refs/0`, not here.
                 {:driver, _runner_id, _type} ->
@@ -541,7 +541,7 @@ defmodule Flezha.Transport.LivenessCounters do
             end
           end)
 
-        %{channels: channels, operators: operators}
+        %{channels: channels, relays: relays}
     end
   end
 

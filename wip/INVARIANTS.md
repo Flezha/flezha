@@ -6,7 +6,7 @@
 ## What must not change
 
 - **The architecture stays.** Controller and runners, stateful streams, and
-  bounded operators are the system's shape. Work inside them, never around them.
+  bounded relays are the system's shape. Work inside them, never around them.
 - **No new third party dependency without the maintainer's consent.** A new entry in
   `Cargo.toml`, `mix.exs`, `package.json`, `pom.xml`, `composer.json` or
   `Gemfile` is a decision, not an implementation detail.

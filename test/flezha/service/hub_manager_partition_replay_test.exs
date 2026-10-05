@@ -110,7 +110,7 @@ defmodule Flezha.Service.HubManagerPartitionReplayTest do
 
   defp member_ids, do: @namespace |> HubManager.partition_members(@group) |> Enum.map(& &1.id)
 
-  # The start `OperatorManager.Init.start_child/2` submits for a partition
+  # The start `RelayManager.Init.start_child/2` submits for a partition
   # member: the declared two-element start args, durable, and the identity on
   # the row's metadata from the first registration.
   defp start_member(index) do

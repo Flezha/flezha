@@ -269,7 +269,7 @@ pub struct ChannelDescriptor {
     /// a `response()` end's outputs are taken aside before any listener.
     pub sink: bool,
     /// The channel's plugin end is a `call(...)`: every output is a request
-    /// to another operator, stamped with the end's facts, and never reaches a
+    /// to another relay, stamped with the end's facts, and never reaches a
     /// plugin or a listener.
     pub call: Option<CallEnd>,
     /// `.keyed()`: plugin emits require a key and carry `flz.*` stamps.
@@ -279,7 +279,7 @@ pub struct ChannelDescriptor {
     /// Byte codec for inter-tasklet payloads, derived by the runtime and
     /// declared by no SDK. `Some` exactly when `kind` is
     /// [`ChannelKind::InterTasklet`], because that is the channel the journal
-    /// reads back: a durable structured steps operator re-seeds a resumed tasklet
+    /// reads back: a durable structured steps relay re-seeds a resumed tasklet
     /// through it, and nothing re-seeds from an entry or a plugin-bound
     /// terminal.
     pub codec: Option<ChannelCodec>,
@@ -319,14 +319,14 @@ pub type CellBuilder =
     Box<dyn Fn(BuildCellArgs<'_>) -> Arc<crate::cell::CellSlot> + Send + Sync + 'static>;
 
 pub struct BuildCellArgs<'a> {
-    pub topology: Arc<crate::operator::topology::OperatorTopology>,
-    pub instance: std::sync::Weak<crate::operator::instance::OperatorInstance>,
-    /// The operator INSTANCE id, which keys the WAL.
+    pub topology: Arc<crate::relay::topology::RelayTopology>,
+    pub instance: std::sync::Weak<crate::relay::instance::RelayInstance>,
+    /// The relay INSTANCE id, which keys the WAL.
     pub instance_id: Arc<str>,
     pub tasklet_id: TaskletId,
     pub cell_key: Option<&'a str>,
     pub cell_index: usize,
     pub keeps_state: bool,
-    /// The instance's processed prefix, `None` for a steps operator.
+    /// The instance's processed prefix, `None` for a steps relay.
     pub prefix: Option<Arc<crate::prefix::PrefixLedger>>,
 }

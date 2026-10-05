@@ -1,4 +1,4 @@
-//! The events that advance a steps operator's pass sheet, each handled on the
+//! The events that advance a steps relay's pass sheet, each handled on the
 //! thread that brings it: a message on the data reader, a settled item on the
 //! worker that ran it, a barrier's ack on the control reader, a deadline on
 //! the poller that promotes it. Every event decides under the sheet lock and
@@ -18,22 +18,22 @@ use super::compensation::{
     RecordSpan,
 };
 use super::instance::{
-    AfterUndo, Attempt, Barrier, BarrierFor, StepsRun, Carry, CellPos, Deadline, Failure, Firing,
-    FiringKey, Message, MidResume, Pass, PassOrigin, PassSheet, Phase, Release, Stage, StageState,
+    AfterUndo, Attempt, Barrier, BarrierFor, Carry, CellPos, Deadline, Failure, Firing, FiringKey,
+    Message, MidResume, Pass, PassOrigin, PassSheet, Phase, Release, Stage, StageState, StepsRun,
     Trigger, Undo, UndoStep, Value,
 };
 use super::resume::{carried_channel, journaled_stages, resumed_seed, seed_from_journal, Seed};
-use super::spec::{StepsSpec, Chain};
-use super::{StepsError, Each, OnFailure};
+use super::spec::{Chain, StepsSpec};
+use super::{Each, OnFailure, StepsError};
 use crate::cell::{make_cell_payload, CellItem, CellSlot};
 use crate::channel::{ChannelDescriptor, ChannelId, ChannelKind, ConsumerEdge, OverflowPolicy};
 use crate::flusher::FlushableBuffer;
 use crate::header::HeaderTemplate;
 use crate::host::HostPayload;
-use crate::operator::instance::OperatorInstance;
-use crate::operator::sleep::{iter_park, OWED_INBOX_WAIT};
-use crate::operator::topology::{CellMode, TaskletDescriptor};
 use crate::pb::command_request::Command;
+use crate::relay::instance::RelayInstance;
+use crate::relay::sleep::{iter_park, OWED_INBOX_WAIT};
+use crate::relay::topology::{CellMode, TaskletDescriptor};
 use crate::routing::Destination;
 use crate::state_sink::{COMPENSATION_DONE_PAYLOAD_ID, COMPENSATION_INTENT_PAYLOAD_ID};
 use crate::timer::{TimerFire, TimerKind, TimerOp};
@@ -43,18 +43,18 @@ const ADMIT_RETRY: Duration = Duration::from_millis(5);
 /// How long an undo waits for its Cell's handout to be answered.
 const UNDO_GATE_RETRY: Duration = Duration::from_millis(1);
 /// The restore gate's cap: a restore that never lands degrades to a
-/// best-effort re-run rather than a hung operator.
+/// best-effort re-run rather than a hung relay.
 const RESTORE_GATE: Duration = Duration::from_secs(30);
 
 /// One steps instance's run with the class facts every event reads.
 pub(crate) struct Run<'a> {
-    pub(crate) inst: &'a OperatorInstance,
+    pub(crate) inst: &'a RelayInstance,
     pub(crate) run: &'a StepsRun,
     pub(crate) spec: &'a StepsSpec,
 }
 
 impl<'a> Run<'a> {
-    pub(crate) fn of(inst: &'a OperatorInstance) -> Option<Self> {
+    pub(crate) fn of(inst: &'a RelayInstance) -> Option<Self> {
         Some(Self {
             inst,
             run: inst.steps.as_ref()?,
@@ -64,7 +64,7 @@ impl<'a> Run<'a> {
 
     /// Whether this run journals its task boundaries: the one gate on the
     /// `TaskCommit` handshake, and the same fact that makes its Cells write
-    /// effect records (`OperatorTopology::records_effects`).
+    /// effect records (`RelayTopology::records_effects`).
     pub(crate) fn journaling(&self) -> bool {
         self.inst.durable()
     }
@@ -100,7 +100,7 @@ impl<'a> Run<'a> {
         }
     }
 
-    fn weak(&self) -> Weak<OperatorInstance> {
+    fn weak(&self) -> Weak<RelayInstance> {
         self.run.me.clone()
     }
 
@@ -123,7 +123,7 @@ impl<'a> Run<'a> {
 
 /// The bind is complete: `init_values` are in place. Arms `max_duration` and
 /// opens the restore gate once every restore the bind announced has landed.
-pub fn open(inst: &OperatorInstance) {
+pub fn open(inst: &RelayInstance) {
     let Some(r) = Run::of(inst) else { return };
     r.decide(|d| {
         if let Some(limit) = d.r.inst.topology.max_duration {
@@ -139,7 +139,7 @@ pub fn open(inst: &OperatorInstance) {
 }
 
 /// One Cell restore landed, with the saga markers the controller persisted.
-pub fn restore_landed(inst: &OperatorInstance, cell_id: &[u8], intent: bool, done: bool) {
+pub fn restore_landed(inst: &RelayInstance, cell_id: &[u8], intent: bool, done: bool) {
     let Some(r) = Run::of(inst) else { return };
     r.decide(|d| {
         if intent {
@@ -157,7 +157,7 @@ pub fn restore_landed(inst: &OperatorInstance, cell_id: &[u8], intent: bool, don
 }
 
 /// A cooperative stop (`StepsStop`, or `max_duration`).
-pub fn stop(inst: &OperatorInstance) {
+pub fn stop(inst: &RelayInstance) {
     if let Some(r) = Run::of(inst) {
         r.decide(|d| d.stop());
     }
@@ -165,7 +165,7 @@ pub fn stop(inst: &OperatorInstance) {
 
 /// The registry dropped the instance: every later event finds it done. Its
 /// Cells' flusher entries go with it.
-pub fn removed(inst: &OperatorInstance) {
+pub fn removed(inst: &RelayInstance) {
     let Some(r) = Run::of(inst) else { return };
     // One step under the lock: an event racing the removal sees it whole.
     r.decide(|d| {
@@ -187,7 +187,7 @@ pub fn removed(inst: &OperatorInstance) {
 /// that unwinds, or a key this partition member does not own, rides the
 /// channel's ladder off the reader and opens no pass.
 pub fn message(
-    inst: &OperatorInstance,
+    inst: &RelayInstance,
     channel: &ChannelDescriptor,
     value: &Value,
     stream: &Arc<FlezhaStream>,
@@ -225,7 +225,7 @@ pub fn pass_call(slot: &CellSlot) -> Option<Arc<str>> {
 
 /// A message on its way into the dead-letter queue instead of a pass; the
 /// run counts it consumed.
-pub fn entry_parked(inst: &OperatorInstance, offset: Option<u64>) {
+pub fn entry_parked(inst: &RelayInstance, offset: Option<u64>) {
     if let Some(r) = Run::of(inst) {
         r.decide(|d| {
             d.s.parked_offset = d.s.parked_offset.max(offset);
@@ -238,7 +238,7 @@ pub fn entry_parked(inst: &OperatorInstance, offset: Option<u64>) {
 /// `cells_for` run here, and the addressed items wait on the sheet for the
 /// stage's commit. A chained loop's leaf addresses its value to the roots.
 pub fn hold_emit(
-    inst: &OperatorInstance,
+    inst: &RelayInstance,
     channel: Option<&ChannelDescriptor>,
     value: &Value,
     stream: &Arc<FlezhaStream>,
@@ -278,7 +278,7 @@ pub fn hold_emit(
     });
 }
 
-/// Ship a steps operator Cell's just-settled effect record at once, ahead of the
+/// Ship a steps relay Cell's just-settled effect record at once, ahead of the
 /// stage's barrier, and name it on the pass sheet with the plugin `channels`
 /// its outputs were written on, for the barrier to name in turn. The one step
 /// both settle sites take, the erased host's and the typed worker's; a settle
@@ -321,7 +321,7 @@ pub fn complete(slot: &Arc<CellSlot>, result: Vec<u8>) {
     });
 }
 
-/// An item's final or non-retryable failure, where a flow operator would park it.
+/// An item's final or non-retryable failure, where a flow relay would park it.
 /// `payload` is the item's wire bytes, what an unreadable message parks.
 pub fn note_failure(
     slot: &Arc<CellSlot>,
@@ -419,7 +419,7 @@ pub(crate) fn firings_joined(slot: &Arc<CellSlot>, count: usize) {
 
 /// Hold a served firing's removal on its attempt, to be written when the
 /// stage commits; `false` when the run journals nothing, where it commits at
-/// settle as a flow operator's does.
+/// settle as a flow relay's does.
 pub(crate) fn hold_removal(slot: &Arc<CellSlot>, op: TimerOp) -> bool {
     let mut held = false;
     with_cell(slot, |r, node, cell| {
@@ -471,8 +471,8 @@ pub(crate) fn committed_firings(slot: &Arc<CellSlot>) -> Vec<(TimerKind, u64)> {
 
 /// The Cells an idle sweep of `inst` must keep: `None` — every one — unless
 /// the run waits between passes, else those a rollback of the declared mode
-/// could still reach through a compensation hook. A flow operator keeps none.
-pub(crate) fn reap_holds(inst: &OperatorInstance) -> Option<HashSet<Arc<Vec<u8>>>> {
+/// could still reach through a compensation hook. A flow relay keeps none.
+pub(crate) fn reap_holds(inst: &RelayInstance) -> Option<HashSet<Arc<Vec<u8>>>> {
     let Some(r) = Run::of(inst) else {
         return Some(HashSet::new());
     };
@@ -496,7 +496,7 @@ pub(crate) fn reap_holds(inst: &OperatorInstance) -> Option<HashSet<Arc<Vec<u8>>
 /// place — or, when the crossing's ladder gave up, the stage fails where a
 /// stream would park the value.
 pub(crate) fn crossed(
-    inst: &OperatorInstance,
+    inst: &RelayInstance,
     node: usize,
     answer: Result<(Value, Arc<FlezhaStream>), String>,
 ) {
@@ -505,7 +505,7 @@ pub(crate) fn crossed(
     r.decide(|d| d.crossed(node, items));
 }
 
-/// Whether `slot` belongs to a steps operator pass that failed or was cancelled.
+/// Whether `slot` belongs to a steps relay pass that failed or was cancelled.
 pub(crate) fn pass_dead(slot: &CellSlot) -> bool {
     slot.instance
         .upgrade()
@@ -519,7 +519,7 @@ pub(crate) fn pass_dead(slot: &CellSlot) -> bool {
 
 /// A deadline the deferred-wake list promoted; stale when it was re-armed or
 /// disarmed since.
-pub(crate) fn deadline_due(inst: &OperatorInstance, deadline: Deadline, due: u64) {
+pub(crate) fn deadline_due(inst: &RelayInstance, deadline: Deadline, due: u64) {
     if let Some(r) = Run::of(inst) {
         r.decide(|d| {
             if d.s.armed.get(&deadline) != Some(&due) {
@@ -542,7 +542,7 @@ fn with_cell(slot: &Arc<CellSlot>, f: impl FnOnce(&Run<'_>, usize, CellPos)) {
 }
 
 /// A barrier's controller reply, on the control reader.
-fn barrier_acked(inst: &Weak<OperatorInstance>, id: u64, result: Result<(), String>) {
+fn barrier_acked(inst: &Weak<RelayInstance>, id: u64, result: Result<(), String>) {
     let Some(inst) = inst.upgrade() else { return };
     let Some(r) = Run::of(&inst) else { return };
     r.decide(|d| {
@@ -556,7 +556,7 @@ fn barrier_acked(inst: &Weak<OperatorInstance>, id: u64, result: Result<(), Stri
 
 /// A Cell's undo answered, on the thread that completed it.
 fn undo_answered(
-    inst: &Weak<OperatorInstance>,
+    inst: &Weak<RelayInstance>,
     slot: &Arc<CellSlot>,
     outcome: crate::schema::ActivationOutcome,
 ) {
@@ -573,7 +573,7 @@ fn undo_answered(
 /// A message whose entry edge unwound, re-attempted off the reader as a
 /// stream's edge is; parked under the channel when it never enters.
 fn entry_ladder(
-    inst: &OperatorInstance,
+    inst: &RelayInstance,
     channel_id: ChannelId,
     value: &Value,
     stream: &Arc<FlezhaStream>,
@@ -665,7 +665,7 @@ impl Run<'_> {
     }
 
     /// Whether `value` needs its host to key it for `edge`: a host releases a
-    /// steps operator value untransformed and unkeyed, and a keyed consumer has no
+    /// steps relay value untransformed and unkeyed, and a keyed consumer has no
     /// Cell until the edge's transforms and key have run. An entry value
     /// crossed on its way in.
     fn asks_host_for_keys(
@@ -855,13 +855,13 @@ impl Run<'_> {
     }
 }
 
-/// A steps operator Cell's input: no input-log offset (the pass records it) and
+/// A steps relay Cell's input: no input-log offset (the pass records it) and
 /// never a replay member.
 pub(crate) fn steps_item(value: &Value, stream: &Arc<FlezhaStream>) -> CellItem {
     CellItem::Input(make_cell_payload(value, stream, None, false))
 }
 
-/// The connection a steps operator value that arrived on none rides — a journal
+/// The connection a steps relay value that arrived on none rides — a journal
 /// re-seed, an undo: the runner's secondary stream, or a detached one before
 /// any is connected.
 pub fn unwired_stream() -> Arc<FlezhaStream> {
@@ -2234,7 +2234,7 @@ impl Run<'_> {
         }
         if let Some((status, error, result)) = completed {
             self.log_dropped_timers();
-            crate::runner::emit_operator_completed(
+            crate::runner::emit_relay_completed(
                 self.inst.instance_id.to_string(),
                 status,
                 error,
@@ -2249,7 +2249,7 @@ impl Run<'_> {
         }
     }
 
-    /// An ended instance's pending timers go with its Cells, as a flow operator's
+    /// An ended instance's pending timers go with its Cells, as a flow relay's
     /// do on removal; the completion record says nothing of them.
     fn log_dropped_timers(&self) {
         let pending: usize = self

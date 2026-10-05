@@ -28,10 +28,10 @@ defmodule FlezhaTest.System.DurableFrameE2ETest do
 
   import ExUnit.CaptureLog
 
-  alias Flezha.Operator.Builder
+  alias Flezha.Relay.Builder
   alias Flezha.Runner.FleetManager
   alias Flezha.SDK.RecordFrame, as: Frame
-  alias Flezha.Service.OperatorManager
+  alias Flezha.Service.RelayManager
   alias Flezha.State.Paths
   alias Flezha.State.RecordFrame
   alias Flezha.State.Restore
@@ -46,7 +46,7 @@ defmodule FlezhaTest.System.DurableFrameE2ETest do
   setup do
     on_exit(fn ->
       try do
-        OperatorManager.stop_all_operators(@namespace)
+        RelayManager.stop_all_relays(@namespace)
       catch
         _, _ -> :ok
       end
@@ -109,7 +109,7 @@ defmodule FlezhaTest.System.DurableFrameE2ETest do
     # bytes are taken while they are being appended and trimmed to the last
     # whole record. Everything after this point is the test's own file.
     whole = complete_prefix(File.read!(path))
-    :ok = OperatorManager.stop_all_operators(@namespace)
+    :ok = RelayManager.stop_all_relays(@namespace)
     File.mkdir_p!(Path.dirname(path))
     File.write!(path, whole)
 
@@ -172,26 +172,26 @@ defmodule FlezhaTest.System.DurableFrameE2ETest do
     binary_part(bytes, 0, consumed)
   end
 
-  # Boot a runner, register a changeful operator, push `n` inputs and wait for
+  # Boot a runner, register a changeful relay, push `n` inputs and wait for
   # its WAL to hold bytes. Answers the Cell and its WAL path.
   defp drive_a_wal(n) do
     {port, ce_id} = NodeTestHelper.start_runner_port(@namespace)
     on_exit(fn -> NodeTestHelper.ensure_port_dead(port) end)
 
-    operator_id = "durable_frame_e2e_#{System.unique_integer([:positive])}"
-    cell_id = {operator_id, @tasklet, ""}
+    relay_id = "durable_frame_e2e_#{System.unique_integer([:positive])}"
+    cell_id = {relay_id, @tasklet, ""}
 
     builder = %Builder{
-      id: operator_id,
+      id: relay_id,
       factory_id: @factory,
       init_values: %{}
     }
 
-    assert {:ok, info} = OperatorManager.start_operator(@namespace, builder)
+    assert {:ok, info} = RelayManager.start_relay(@namespace, builder)
     assert info.runner_id == ce_id
 
     for i <- 1..n do
-      OperatorManager.send_io(operator_id, @namespace, "line-#{i}-#{operator_id}", %{
+      RelayManager.send_io(relay_id, @namespace, "line-#{i}-#{relay_id}", %{
         "input_type" => "2"
       })
     end

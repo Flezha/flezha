@@ -422,7 +422,7 @@ defmodule Flezha.Plugin.Provider.WebsocketSubscriptionSourceTest do
       assert Table.put_plugin_opt(table, "gone", :applied_subscriptions, ["a"]) == table
     end
 
-    # The applied set describes the one connection every bound operator
+    # The applied set describes the one connection every bound relay
     # shares, so it is written to the plugin's own entry.
     test "the cspec transform round-trips the applied set for a controller restart" do
       plugin = %Flezha.Plugin{

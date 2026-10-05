@@ -53,7 +53,7 @@ defmodule Flezha.AuthZ.EnforcementTest do
       assert AuthZ.enforcement_posture() == :bootstrap_pending
 
       assert :ok =
-               AuthZ.authorize(%{source: :internal}, :"operator.start", Scope.build("default"))
+               AuthZ.authorize(%{source: :internal}, :"relay.start", Scope.build("default"))
 
       runner_ctx = FleetManager.runner_caller_context("team-orders")
       assert :ok = AuthZ.authorize(runner_ctx, :"runner.connect", Scope.build("team-orders"))
@@ -166,9 +166,9 @@ defmodule Flezha.AuthZ.EnforcementTest do
                      Jason.encode!([
                        "some_plugin",
                        %{
-                         provider: "operator_stdout",
+                         provider: "relay_stdout",
                          namespace: "_system",
-                         operator_id: "some_op"
+                         relay_id: "some_op"
                        }
                      ]),
                      token: raw

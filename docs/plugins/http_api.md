@@ -106,8 +106,8 @@ $ claude mcp list
 flezha: http://127.0.0.1:8765/mcp (HTTP) - ✔ Connected
 ```
 
-Each operation is a tool, named after it in snake case: `operator_start`,
-`operator_send`, `dlq_list`, `dlq_replay`. A failed call comes back as a tool error
+Each operation is a tool, named after it in snake case: `relay_start`,
+`relay_send`, `dlq_list`, `dlq_replay`. A failed call comes back as a tool error
 carrying the error object, so the model reads its `code` and `hint` and can correct
 itself. Beside them are the four tools that need no controller, `flezha_guide`,
 `flezha_sdk_example`, `flezha_error` and `flezha_docs`. Any other MCP client connects
@@ -122,7 +122,7 @@ The same operations without MCP. `POST /v1/call/<Name>` takes the arguments as a
 array, in the order the catalogue gives them, and answers what `flz ... --json` prints:
 
 ```sh
-$ curl -s -X POST http://127.0.0.1:8765/v1/call/Operator.list \
+$ curl -s -X POST http://127.0.0.1:8765/v1/call/Relay.list \
   -H "Authorization: Bearer $FLEZHA_TOKEN" -d '["default"]'
 ```
 
@@ -138,7 +138,7 @@ failure answers the error object with the HTTP status of its class: `404` for
 
 Whatever the token: stopping the controller, issuing or revoking tokens, binding or
 unbinding roles, deleting a namespace and claiming the admin are not reachable over HTTP,
-nor is any operation that streams (`flz operator listen`, `flz observe tail`). They are
+nor is any operation that streams (`flz relay listen`, `flz observe tail`). They are
 not listed, and a call naming one is answered as an unknown operation. Use `flz` on the
 controller's machine for those ([cli.md](../topics/cli/cli.md)).
 
@@ -152,9 +152,9 @@ controller's machine for those ([cli.md](../topics/cli/cli.md)).
 - **A port taken at start stays down.** If the port is in use when the listener starts,
   `flz plugin list` shows `runs on: idle`. Free the port, then disable and enable the
   plugin.
-- **Dead letters of a namespace are listed by operator.** Listing every operator's is a
-  `_system` read, so a namespace token passes the operator: `dlq_list` with
-  `operator_class`.
+- **Dead letters of a namespace are listed by relay.** Listing every relay's is a
+  `_system` read, so a namespace token passes the relay: `dlq_list` with
+  `relay_class`.
 - **A call past `deadline_ms` answers `control.timeout`.** The operation itself carries on.
 - **Tool lists are kept for a minute.** A client may keep the tool list it read for 60
   seconds, so a role changed since shows within the minute. Every call is still judged
@@ -168,4 +168,4 @@ controller's machine for those ([cli.md](../topics/cli/cli.md)).
 
 - [authorization.md](../topics/basics/authorization.md): tokens, roles and the audit trail
 - [hooks.md](../topics/plugins/hooks.md): controller plugins
-- [http_server.md](http_server.md): an operator behind HTTP, in the same package
+- [http_server.md](http_server.md): a relay behind HTTP, in the same package

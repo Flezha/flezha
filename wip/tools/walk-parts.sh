@@ -4,7 +4,7 @@
 # started, with the Rust test app as its runner.
 #
 #   wip/tools/walk-parts.sh run      # part_echo: listen in one shell, send 5 in another
-#   wip/tools/walk-parts.sh timing   # 200 sequential attach+detach on one operator
+#   wip/tools/walk-parts.sh timing   # 200 sequential attach+detach on one relay
 #
 # Output goes to $OUT (default wip/tools/.cache/walk/parts): listen.txt and
 # send.txt for `run`, timing.txt for `timing`; the runner's own output to
@@ -20,14 +20,14 @@ source "$(dirname "$0")/walk-lib.sh"
 runner() {
   [ -f "$RUN/runner.pid" ] && return 0
   start_runner
-  start_operator part_echo "$OP"
+  start_relay part_echo "$OP"
 }
 
 run() {
-  flz operator listen "$OP" --namespace "$NS" --duration-ms 10000 >"$OUT/listen.txt" 2>&1 &
+  flz relay listen "$OP" --namespace "$NS" --duration-ms 10000 >"$OUT/listen.txt" 2>&1 &
   local listener=$!
   sleep 2
-  flz operator send "$OP" --namespace "$NS" --text 5 >"$OUT/send.txt" 2>&1
+  flz relay send "$OP" --namespace "$NS" --text 5 >"$OUT/send.txt" 2>&1
   wait "$listener"
   echo "== listen"; cat "$OUT/listen.txt"
   echo "== send"; cat "$OUT/send.txt"

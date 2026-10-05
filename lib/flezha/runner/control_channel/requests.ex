@@ -1,15 +1,15 @@
 defmodule Flezha.Runner.ControlChannel.Requests do
   @moduledoc """
   The requests a runner's SDK initiates on its control stream: the ones that
-  act on one operator (a graceful-shutdown notification, a steps operator
+  act on one relay (a graceful-shutdown notification, a steps relay
   completion, an iteration park, an exit report, a durability barrier) and the ones scoped to
   the runner or its namespace (a factory update, a tasklet-requested spawn,
   an admin call).
 
-  An operator request is judged first by the operator's ownership record
+  A relay request is judged first by the relay's ownership record
   (`Flezha.Runner.StreamChannel.Records.admit/3`), so a runner acts only on the
-  operators bound to its stable identity, and a refused request does nothing
-  to the operator. A runner or namespace request is judged as the identity
+  relays bound to its stable identity, and a refused request does nothing
+  to the relay. A runner or namespace request is judged as the identity
   the connection proved.
 
   Every function runs in the control channel's process and takes its state.
@@ -20,7 +20,7 @@ defmodule Flezha.Runner.ControlChannel.Requests do
   """
 
   alias Flezha.Config.Durations
-  alias Flezha.Operator.Migration
+  alias Flezha.Relay.Migration
   alias Flezha.Runner.ControlChannel.Commits
   alias Flezha.Runner.FleetManager
   alias Flezha.Runner.FleetManager.Session
@@ -28,13 +28,13 @@ defmodule Flezha.Runner.ControlChannel.Requests do
   alias Flezha.Runner.StreamPool
   alias Flezha.Service.Admin
   alias Flezha.Service.HubManager
-  alias Flezha.Service.OperatorManager
+  alias Flezha.Service.RelayManager
   alias Flezha.State.{Completion, TaskJournal}
 
   require Logger
 
   @doc """
-  Apply the SDK's final state to the operator's `Overwatch`, and answer the
+  Apply the SDK's final state to the relay's `Overwatch`, and answer the
   `RunnerShutdownAck` for the channel to write back.
 
   The cast-not-call ordering is deliberate: the snapshot is enqueued on the
@@ -49,44 +49,44 @@ defmodule Flezha.Runner.ControlChannel.Requests do
   @spec runner_shutdown(map(), RunnerCommands.RunnerShutdownNotification.t()) ::
           {tuple(), binary()}
   def runner_shutdown(state, %RunnerCommands.RunnerShutdownNotification{} = notif) do
-    %{operator_id: operator_id, serialized_state: serialized_state} = notif
+    %{relay_id: relay_id, serialized_state: serialized_state} = notif
 
-    if Records.admit(state, operator_id, :runner_shutdown_notification) do
-      case HubManager.get_pid(state.namespace, operator_id) do
+    if Records.admit(state, relay_id, :runner_shutdown_notification) do
+      case HubManager.get_pid(state.namespace, relay_id) do
         {:ok, pid} when is_pid(pid) ->
           GenServer.cast(pid, {:apply_external_snapshot, serialized_state})
 
         _ ->
           Logger.warning(
             "[control_channel] Overwatch missing for shutdown notification — assumed migrated. " <>
-              "namespace=#{inspect(state.namespace)} operator_id=#{inspect(operator_id)}"
+              "namespace=#{inspect(state.namespace)} relay_id=#{inspect(relay_id)}"
           )
       end
     end
 
-    {{:runner_shutdown_ack, %RunnerCommands.RunnerShutdownAck{operator_id: operator_id}},
-     "RunnerShutdownAck operator=#{inspect(operator_id)}"}
+    {{:runner_shutdown_ack, %RunnerCommands.RunnerShutdownAck{relay_id: relay_id}},
+     "RunnerShutdownAck relay=#{inspect(relay_id)}"}
   end
 
   @doc """
-  Converged teardown for every steps operator exit trigger (quiescence, ctx.complete,
+  Converged teardown for every steps relay exit trigger (quiescence, ctx.complete,
   loop terminal, max_duration, cooperative stop): surface the outcome and the
-  result payload, then deregister on completion so the operator never replays
+  result payload, then deregister on completion so the relay never replays
   on boot. A `status = "error"` tears down identically, with no retry. A
   completion from a runner that does not own the instance is not an exit
   trigger.
   """
-  @spec operator_completed(map(), RunnerCommands.OperatorCompleted.t()) :: :ok
-  def operator_completed(state, %RunnerCommands.OperatorCompleted{} = completed) do
-    if Records.admit(state, completed.operator_id, :operator_completed),
+  @spec relay_completed(map(), RunnerCommands.RelayCompleted.t()) :: :ok
+  def relay_completed(state, %RunnerCommands.RelayCompleted{} = completed) do
+    if Records.admit(state, completed.relay_id, :relay_completed),
       do: complete(state, completed)
 
     :ok
   end
 
   defp complete(state, completed) do
-    %RunnerCommands.OperatorCompleted{
-      operator_id: operator_id,
+    %RunnerCommands.RelayCompleted{
+      relay_id: relay_id,
       status: status,
       error: error,
       result: result
@@ -97,58 +97,58 @@ defmodule Flezha.Runner.ControlChannel.Requests do
       %{count: 1},
       %{
         namespace: state.namespace,
-        operator_id: operator_id,
+        relay_id: relay_id,
         status: status,
         result: result
       }
     )
 
-    if status == "error", do: report_steps_failure(state, operator_id, error)
+    if status == "error", do: report_steps_failure(state, relay_id, error)
 
     # Finished-job retention: record the terminal outcome (durably, before the
-    # teardown) so `flz operator info` can surface it and `stop_operator`
+    # teardown) so `flz relay info` can surface it and `stop_relay`
     # retains the state instead of deleting it. `finished_at` is stamped
     # controller-side (the wire carries no timestamp).
     _ =
-      Completion.write(operator_id, %{
+      Completion.write(relay_id, %{
         namespace: state.namespace,
-        run: Atom.to_string(Records.run_of(operator_id)),
+        run: Atom.to_string(Records.run_of(relay_id)),
         status: status,
         error: error,
         result: result,
         finished_at: System.system_time(:second)
       })
 
-    deregister_on_completion(state, operator_id)
+    deregister_on_completion(state, relay_id)
   end
 
-  defp report_steps_failure(state, operator_id, error) do
+  defp report_steps_failure(state, relay_id, error) do
     Logger.warning(
-      "[control_channel] steps operator #{inspect(operator_id)} failed in namespace " <>
+      "[control_channel] steps relay #{inspect(relay_id)} failed in namespace " <>
         "#{inspect(state.namespace)}: #{inspect(error)}"
     )
 
     :telemetry.execute(
       [:flezha, :steps, :failed],
       %{count: 1},
-      %{namespace: state.namespace, operator_id: operator_id, error: error}
+      %{namespace: state.namespace, relay_id: relay_id, error: error}
     )
   end
 
-  # Tear down off the control-channel process: `stop_operator` drives a
-  # RemOperator round-trip whose CommandResponse returns on THIS control
+  # Tear down off the control-channel process: `stop_relay` drives a
+  # RemRelay round-trip whose CommandResponse returns on THIS control
   # stream, so calling it inline would deadlock the reader.
-  defp deregister_on_completion(%{namespace: namespace, runner_id: runner_id}, operator_id) do
+  defp deregister_on_completion(%{namespace: namespace, runner_id: runner_id}, relay_id) do
     Task.start(fn ->
-      drain_owed_outputs(runner_id, operator_id)
+      drain_owed_outputs(runner_id, relay_id)
 
-      case OperatorManager.stop_operator(namespace, operator_id, reason: :completed) do
+      case RelayManager.stop_relay(namespace, relay_id, reason: :completed) do
         :ok ->
           :ok
 
         {:error, reason} ->
           Logger.warning(
-            "[control_channel] steps operator #{inspect(operator_id)} teardown failed: #{inspect(reason)}"
+            "[control_channel] steps relay #{inspect(relay_id)} teardown failed: #{inspect(reason)}"
           )
       end
     end)
@@ -172,17 +172,17 @@ defmodule Flezha.Runner.ControlChannel.Requests do
   #     a stage marker belongs to a stage that never committed, and is owed
   #     nothing.
 
-  defp drain_owed_outputs(runner_id, operator_id) do
+  defp drain_owed_outputs(runner_id, relay_id) do
     StreamPool.flush_channels(runner_id)
 
     await_owed_outboxes(
-      operator_id,
+      relay_id,
       System.monotonic_time(:millisecond) + Durations.get(:drain_owed_ms)
     )
   end
 
-  defp await_owed_outboxes(operator_id, deadline) do
-    owed = TaskJournal.owed_outputs(operator_id)
+  defp await_owed_outboxes(relay_id, deadline) do
+    owed = TaskJournal.owed_outputs(relay_id)
 
     cond do
       owed == 0 ->
@@ -190,13 +190,13 @@ defmodule Flezha.Runner.ControlChannel.Requests do
 
       System.monotonic_time(:millisecond) >= deadline ->
         Logger.warning(
-          "[control_channel] steps operator #{inspect(operator_id)} completed with " <>
+          "[control_channel] steps relay #{inspect(relay_id)} completed with " <>
             "#{owed} outbox entries still owed"
         )
 
       true ->
         Process.sleep(50)
-        await_owed_outboxes(operator_id, deadline)
+        await_owed_outboxes(relay_id, deadline)
     end
   end
 
@@ -208,19 +208,19 @@ defmodule Flezha.Runner.ControlChannel.Requests do
   is written under the instance's own key so the sleep is rediscovered when the
   instance is next started.
 
-  Off this process: the eviction drives a `RemOperator` whose response returns
+  Off this process: the eviction drives a `RemRelay` whose response returns
   on this control stream, so doing it inline would deadlock the reader, the
   same reason as the steps-completed teardown.
   """
   @spec iter_park(map(), RunnerCommands.IterPark.t()) :: :ok
   def iter_park(state, %RunnerCommands.IterPark{} = park) do
-    if Records.admit(state, park.operator_id, :iter_park), do: park_instance(state, park)
+    if Records.admit(state, park.relay_id, :iter_park), do: park_instance(state, park)
     :ok
   end
 
   defp park_instance(state, park) do
     %RunnerCommands.IterPark{
-      operator_id: operator_id,
+      relay_id: relay_id,
       iter: iter,
       wake_deadline_ms: wake_deadline_ms,
       consumed_offset: consumed_offset
@@ -231,7 +231,7 @@ defmodule Flezha.Runner.ControlChannel.Requests do
     :telemetry.execute(
       [:flezha, :steps, :parked],
       %{count: 1},
-      %{namespace: state.namespace, operator_id: operator_id, iter: iter}
+      %{namespace: state.namespace, relay_id: relay_id, iter: iter}
     )
 
     namespace = state.namespace
@@ -241,8 +241,8 @@ defmodule Flezha.Runner.ControlChannel.Requests do
       # Journaled before the park is recorded, and before the suspension asks
       # the log whether input is still owed: a message the run parked unread
       # is consumed, not owed, and the journal keeps that across a restart.
-      with :ok <- TaskJournal.release_unread(operator_id, consumed_offset),
-           do: Migration.suspend(namespace, operator_id, iter, park)
+      with :ok <- TaskJournal.release_unread(relay_id, consumed_offset),
+           do: Migration.suspend(namespace, relay_id, iter, park)
     end)
   end
 
@@ -255,15 +255,15 @@ defmodule Flezha.Runner.ControlChannel.Requests do
   frame the dead incarnation wrote is read before the rebind restores its
   Cells, and the flush waits on channels this process does not own.
   """
-  @spec operator_exited(map(), RunnerCommands.OperatorExited.t()) :: :ok
-  def operator_exited(state, %RunnerCommands.OperatorExited{} = exited) do
-    %RunnerCommands.OperatorExited{operator_id: operator_id, reason: reason} = exited
+  @spec relay_exited(map(), RunnerCommands.RelayExited.t()) :: :ok
+  def relay_exited(state, %RunnerCommands.RelayExited{} = exited) do
+    %RunnerCommands.RelayExited{relay_id: relay_id, reason: reason} = exited
     %{namespace: namespace, runner_id: runner_id} = state
 
-    if Records.admit(state, operator_id, :operator_exited) do
+    if Records.admit(state, relay_id, :relay_exited) do
       Task.start(fn ->
         StreamPool.flush_channels(runner_id)
-        Migration.operator_exited(namespace, operator_id, runner_id, reason)
+        Migration.relay_exited(namespace, relay_id, runner_id, reason)
       end)
     end
 
@@ -278,7 +278,7 @@ defmodule Flezha.Runner.ControlChannel.Requests do
   """
   @spec barrier(map(), :task_commit | :iter_commit, struct(), binary()) :: :ok
   def barrier(state, kind, commit, reference_id) do
-    if Records.admit(state, commit.operator_id, kind),
+    if Records.admit(state, commit.relay_id, kind),
       do: Commits.commit(state.runner_id, reference_id, commit),
       else: Commits.refuse(state.runner_id, reference_id, commit)
   end
@@ -336,7 +336,7 @@ defmodule Flezha.Runner.ControlChannel.Requests do
     answer_off_process(reference_id, fn ->
       judged =
         once_admitted(state, fn ->
-          OperatorManager.spawn_or_deliver(
+          RelayManager.spawn_or_deliver(
             namespace,
             instance_id,
             factory_id,
@@ -356,7 +356,7 @@ defmodule Flezha.Runner.ControlChannel.Requests do
         end
 
       :telemetry.execute(
-        [:flezha, :operator, :requested_spawn],
+        [:flezha, :relay, :requested_spawn],
         %{count: 1},
         %{
           namespace: namespace,
@@ -424,7 +424,7 @@ defmodule Flezha.Runner.ControlChannel.Requests do
   end
 
   # A request whose answer cannot be worked out on the channel's process:
-  # resolving it drives an `AddOperator` or a `RemOperator` whose response
+  # resolving it drives an `AddRelay` or a `RemRelay` whose response
   # returns on this control stream, so doing it inline would deadlock the
   # reader. `answer` runs off-process and hands back the reply command and its
   # log label, which the channel writes.

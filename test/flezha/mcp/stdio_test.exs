@@ -39,10 +39,10 @@ defmodule Flezha.Mcp.StdioTest do
       listed = tools(offline(rpc("tools/list")))
 
       assert "flezha_sdk_example" in listed
-      assert "operator_list" in listed
-      assert "operator_start" in listed
+      assert "relay_list" in listed
+      assert "relay_start" in listed
       refute "controller_stop" in listed
-      refute "operator_listen" in listed
+      refute "relay_listen" in listed
       refute "namespace_issue_token" in listed
     end
 
@@ -54,7 +54,7 @@ defmodule Flezha.Mcp.StdioTest do
 
       assert text =~ "examples/echo/src/main.rs"
 
-      answer = result(offline(rpc("tools/call", %{"name" => "operator_list"})))
+      answer = result(offline(rpc("tools/call", %{"name" => "relay_list"})))
       error = answer["structuredContent"]["error"]
 
       assert answer["isError"]
@@ -97,16 +97,16 @@ defmodule Flezha.Mcp.StdioTest do
       {:ok, token, _} = TokenStore.issue("assistant", "default", :viewer, 3600)
       listed = tools(online(rpc("tools/list"), token: token))
 
-      assert "operator_list" in listed
+      assert "relay_list" in listed
       assert "flezha_guide" in listed
-      refute "operator_start" in listed
+      refute "relay_start" in listed
 
       boundary = System.monotonic_time(:microsecond)
-      operator = %{"id" => "o1", "factory_id" => "echo"}
+      relay = %{"id" => "o1", "factory_id" => "echo"}
 
       start = %{
-        "name" => "operator_start",
-        "arguments" => %{"namespace" => "default", "operator" => operator}
+        "name" => "relay_start",
+        "arguments" => %{"namespace" => "default", "relay" => relay}
       }
 
       answer = result(online(rpc("tools/call", start), token: token))
@@ -122,7 +122,7 @@ defmodule Flezha.Mcp.StdioTest do
 
     test "a token that does not verify refuses every operation with its own error" do
       listed = tools(online(rpc("tools/list"), token: "flzt_not_a_token"))
-      call = %{"name" => "operator_list", "arguments" => %{"namespace" => "default"}}
+      call = %{"name" => "relay_list", "arguments" => %{"namespace" => "default"}}
       answer = result(online(rpc("tools/call", call), token: "flzt_not_a_token"))
 
       assert listed == ~w(flezha_guide flezha_sdk_example flezha_error flezha_docs)

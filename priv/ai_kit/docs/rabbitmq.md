@@ -1,7 +1,7 @@
 # RabbitMQ plugins
 
-The RabbitMQ plugins deliver the messages of a RabbitMQ queue onto an operator's entry
-channel, and publish an operator's outputs to a RabbitMQ exchange. Both providers live in
+The RabbitMQ plugins deliver the messages of a RabbitMQ queue onto a relay's entry
+channel, and publish a relay's outputs to a RabbitMQ exchange. Both providers live in
 the RabbitMQ plugin package: `FlezhaRabbitmq.Consumer` under the provider id
 `rabbitmq_consumer`, and `FlezhaRabbitmq.Producer` under the provider id
 `rabbitmq_producer`. This page covers installing the package, the connection both share,
@@ -10,11 +10,11 @@ confirms, recovery, topology declaration, health, telemetry and limits.
 
 | | `rabbitmq_consumer` | `rabbitmq_producer` |
 | --- | --- | --- |
-| Type | operator plugin | operator plugin |
+| Type | relay plugin | relay plugin |
 | Ships | package `flezha_rabbitmq` | package `flezha_rabbitmq` |
-| Shareable | no: one consumer per binding (`plugin.not_shareable`) | yes: every operator bound to it on a controller publishes through one worker and one connection |
-| Partitioned operators | refused (`plugin.partitioned_host`) | allowed: each member runs its own copy |
-| Durability | a delivery is acknowledged only after the operator took it; with durable input `flz.msg_id` absorbs a redelivery | a delivery-guaranteed output is held until the broker confirms it; a plain one is not awaited |
+| Shareable | no: one consumer per binding (`plugin.not_shareable`) | yes: every relay bound to it on a controller publishes through one worker and one connection |
+| Partitioned relays | refused (`plugin.partitioned_host`) | allowed: each member runs its own copy |
+| Durability | a delivery is acknowledged only after the relay took it; with durable input `flz.msg_id` absorbs a redelivery | a delivery-guaranteed output is held until the broker confirms it; a plain one is not awaited |
 
 ## Options
 
@@ -39,7 +39,7 @@ confirms, recovery, topology declaration, health, telemetry and limits.
 | `channel_in` | names | none | no | Entry channel every message is injected on, and one name; the explicit spelling of `channel`. Required, unless `channel` names it |
 | `plugin_id` | string | none | no | Plugin id; defaults to the id it was enabled under |
 | `prefetch` | int | `200` | no | Deliveries the broker sends before the first of them is acknowledged |
-| `batch_ms` | int | `10` | no | Longest a delivery waits for others before its batch goes to the operator |
+| `batch_ms` | int | `10` | no | Longest a delivery waits for others before its batch goes to the relay |
 | `msg_id_header` | string | none | no | A header whose value is the message's id, in place of its `message_id` |
 | `declare` | bool | `false` | no | Declare `queue` durable when it does not exist |
 | `bind_exchange` | string | none | no | With `declare`: an exchange the queue is bound to |
@@ -86,9 +86,9 @@ confirms, recovery, topology declaration, health, telemetry and limits.
 ## Example
 
 ```sh
-$ flz plugin enable rates-in rabbitmq_consumer --operator_id=pricer \
+$ flz plugin enable rates-in rabbitmq_consumer --relay_id=pricer \
   --Xhost=broker --Xqueue=rates --Xchannel=rates --Xpassword_env=RABBITMQ_PASSWORD
-$ flz plugin enable rates-out rabbitmq_producer --operator_id=pricer --hook=on_output \
+$ flz plugin enable rates-out rabbitmq_producer --relay_id=pricer --hook=on_output \
   --Xhost=broker --Xexchange=rates --Xrouting_key_from=flz_key \
   --Xpassword_env=RABBITMQ_PASSWORD
 ```
@@ -131,20 +131,20 @@ then resumes consuming or publishing without the plugin being enabled again.
 | | |
 | --- | --- |
 | Hooks | none needed: the consumer drives itself, so a binding names no hook (the provider also defines `:on_terminate`) |
-| Shared | no: one consumer per binding, so a second operator bound to it is refused (`plugin.not_shareable`), and a member of a partition group is refused (`plugin.partitioned_host`) |
+| Shared | no: one consumer per binding, so a second relay bound to it is refused (`plugin.not_shareable`), and a member of a partition group is refused (`plugin.partitioned_host`) |
 | Upstream | one queue, with a prefetch window |
 | Injection | one message as one input, its body as the payload, on the entry channel `:channel` (or `:channel_in`) names |
-| Delivery | each batch waits for the operator's verdicts; a delivery is acknowledged only after the operator took it |
+| Delivery | each batch waits for the relay's verdicts; a delivery is acknowledged only after the relay took it |
 
 Enabled and bound in two commands, with the settings written without their dashes:
 
 ```sh
 $ flz plugin enable rates-in rabbitmq_consumer Xhost=broker Xqueue=rates Xchannel=rates \
   Xpassword_env=RABBITMQ_PASSWORD
-$ flz plugin bind rates-in --operator_id pricer --hook=on_terminate
+$ flz plugin bind rates-in --relay_id pricer --hook=on_terminate
 ```
 
-Several operators bound to consumers of one queue are competing consumers, as RabbitMQ
+Several relays bound to consumers of one queue are competing consumers, as RabbitMQ
 intends: each message reaches one of them.
 
 ### A message as an input
@@ -165,21 +165,21 @@ The payload is the message body. The metadata carries the entry channel and:
 
 The consumer consumes with manual acknowledgement and a prefetch of `prefetch`. Deliveries
 collect until half the prefetch or `batch_ms`, so the broker keeps sending while a batch is
-with the operator, then go to the operator in one batch. The longest prefix of the batch the
-operator took is acknowledged with one `basic.ack`; the first refused delivery, every one
+with the relay, then go to the relay in one batch. The longest prefix of the batch the
+relay took is acknowledged with one `basic.ack`; the first refused delivery, every one
 after it and every one held behind the batch go back to the queue with one `basic.nack`. A
 returned delivery comes straight back, so after a refusal the consumer waits along its
-backoff curve before it hands the operator anything again.
+backoff curve before it hands the relay anything again.
 
 What a level guarantees:
 
-- **With durable input** (an `effectively_once` operator, or one that journals its input), a
+- **With durable input** (an `effectively_once` relay, or one that journals its input), a
   verdict means the input log holds the delivery. A crash before the acknowledgement
   redelivers it, and its `flz.msg_id` absorbs the copy while the log holds the first one. A
   message with no id is at least once.
-- **Without it**, a delivery is acknowledged once the operator accepted it. A crash loses what
-  the operator had not processed, and a delivery the broker redelivers (the connection was lost
-  before its acknowledgement) reaches the operator twice, because nothing absorbs it.
+- **Without it**, a delivery is acknowledged once the relay accepted it. A crash loses what
+  the relay had not processed, and a delivery the broker redelivers (the connection was lost
+  before its acknowledgement) reaches the relay twice, because nothing absorbs it.
 
 A delivery tag belongs to its channel: when the connection or the channel is lost, the
 deliveries held are forgotten, never acknowledged on the new channel, and the broker delivers
@@ -190,14 +190,14 @@ them again.
 | | |
 | --- | --- |
 | Hooks | `:on_output` or `:on_input` |
-| Shared | yes: every operator bound to one plugin on a controller publishes through one worker and one connection |
+| Shared | yes: every relay bound to one plugin on a controller publishes through one worker and one connection |
 | Downstream | one exchange |
-| Delivery | a guaranteed output is held until the broker confirms it; a plain one is published without the operator waiting |
+| Delivery | a guaranteed output is held until the broker confirms it; a plain one is published without the relay waiting |
 
 ```sh
 $ flz plugin enable rates-out rabbitmq_producer Xhost=broker Xexchange=rates \
   Xrouting_key_from=flz_key Xpassword_env=RABBITMQ_PASSWORD
-$ flz plugin bind rates-out --operator_id pricer --hook=on_output
+$ flz plugin bind rates-out --relay_id pricer --hook=on_output
 ```
 
 The hook holds a delivery-guaranteed output in the outbox and hands it to the plugin's
@@ -254,7 +254,7 @@ exclusive, so a queue the plugins share is durable.
 | `{:read_failed, error}` | the consumer's last `failure_threshold` batches were refused |
 
 The worker is asked for its facts with a bounded probe; one busy handing a batch to a slow
-operator does not answer in time, which reads as uncertain and so healthy.
+relay does not answer in time, which reads as uncertain and so healthy.
 
 ## Telemetry
 

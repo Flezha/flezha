@@ -27,7 +27,7 @@ runner_key() {
   cat "$RUN/runner.key"
 }
 
-# The Rust test app as the namespace's runner; `start_operator <factory> <id>`
+# The Rust test app as the namespace's runner; `start_relay <factory> <id>`
 # retries until the runner serves the factory.
 start_runner() {
   cargo build --quiet --manifest-path="$ROOT/sdk/rust/test_app/Cargo.toml" --target-dir="$ROOT/target" ||
@@ -36,9 +36,9 @@ start_runner() {
     "$ROOT/target/debug/rust_runner" "$NS"
 }
 
-start_operator() {
+start_relay() {
   for _ in $(seq 120); do
-    flz operator start "$1" --id "$2" --namespace "$NS" >"$OUT/start-$2.txt" 2>&1 && return 0
+    flz relay start "$1" --id "$2" --namespace "$NS" >"$OUT/start-$2.txt" 2>&1 && return 0
     sleep 0.5
   done
   cat "$OUT/start-$2.txt" >&2

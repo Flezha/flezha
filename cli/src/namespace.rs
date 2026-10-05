@@ -32,7 +32,7 @@ pub(crate) const TABLE: Command = Command {
 /// scope, so `rpc::scoped_read`'s shape does not fit it.
 fn handle_list(read: &Reading) {
     rpc::progress_line(read, "Fetching namespaces...");
-    rpc::bare(read, "Operator.list_namespaces");
+    rpc::bare(read, "Relay.list_namespaces");
 }
 
 fn handle_create(read: &Reading) {

@@ -24,12 +24,12 @@
   {
     "code": "quota.exceeded",
     "details": {
-      "kind": "max_operators",
+      "kind": "max_relays",
       "current": 3,
       "limit": 3
     },
-    "text": "error: the namespace's max_operators quota is reached (3 of 3) (quota.exceeded)\nhint: flz namespace show",
-    "json": "{\"error\":{\"code\":\"quota.exceeded\",\"class\":\"conflict\",\"message\":\"the namespace's max_operators quota is reached (3 of 3)\",\"details\":{\"current\":3,\"kind\":\"max_operators\",\"limit\":3},\"hint\":\"flz namespace show\"}}"
+    "text": "error: the namespace's max_relays quota is reached (3 of 3) (quota.exceeded)\nhint: flz namespace show",
+    "json": "{\"error\":{\"code\":\"quota.exceeded\",\"class\":\"conflict\",\"message\":\"the namespace's max_relays quota is reached (3 of 3)\",\"details\":{\"current\":3,\"kind\":\"max_relays\",\"limit\":3},\"hint\":\"flz namespace show\"}}"
   },
   {
     "code": "quota.exceeded",
@@ -54,12 +54,12 @@
     "details": {
       "option": "--nope",
       "usage": [
-        "flz operator start",
+        "flz relay start",
         "<factory>"
       ]
     },
-    "text": "error: unknown option '--nope' (usage.unknown_option)\nhint: flz operator start, <factory>",
-    "json": "{\"error\":{\"code\":\"usage.unknown_option\",\"class\":\"invalid\",\"message\":\"unknown option '--nope'\",\"details\":{\"option\":\"--nope\",\"usage\":[\"flz operator start\",\"<factory>\"]},\"hint\":\"flz operator start, <factory>\"}}"
+    "text": "error: unknown option '--nope' (usage.unknown_option)\nhint: flz relay start, <factory>",
+    "json": "{\"error\":{\"code\":\"usage.unknown_option\",\"class\":\"invalid\",\"message\":\"unknown option '--nope'\",\"details\":{\"option\":\"--nope\",\"usage\":[\"flz relay start\",\"<factory>\"]},\"hint\":\"flz relay start, <factory>\"}}"
   },
   {
     "code": "internal.uncatalogued",

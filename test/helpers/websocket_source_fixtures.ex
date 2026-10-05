@@ -79,7 +79,7 @@ defmodule FlezhaTest.Helper.WebsocketSourceFixtures do
       last_error: nil,
       source_plugin_id: "ws_plugin",
       source_namespace: "default",
-      source_operator_id: "op-1"
+      source_relay_id: "op-1"
     }
     |> Map.merge(Map.new(overrides))
     |> with_targets()

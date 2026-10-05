@@ -13,8 +13,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::flusher::{build_effect_record_frame, frame_change_bodies, FlushFrame, FlushableBuffer};
 use crate::header::HeaderTemplate;
-use crate::operator::topology::{CheckpointOutputs, CheckpointPolicy};
 use crate::prefix::Hold;
+use crate::relay::topology::{CheckpointOutputs, CheckpointPolicy};
 /// A park inside an effect record: it rides the SAME record as the
 /// consumed-offset advance. One definition — the boundary schema's.
 pub use crate::schema::DlqEntry as DlqEntryBody;
@@ -505,9 +505,9 @@ impl<B: Bodies> FlushableBuffer for EffectBuffer<B> {
 #[derive(Debug, Clone, Copy)]
 pub struct SettlePolicy {
     /// One effect record per invocation: the effectively-once tier, or a
-    /// durable steps operator Cell ([`OperatorTopology::records_effects`]).
+    /// durable steps relay Cell ([`RelayTopology::records_effects`]).
     ///
-    /// [`OperatorTopology::records_effects`]: crate::operator::topology::OperatorTopology::records_effects
+    /// [`RelayTopology::records_effects`]: crate::relay::topology::RelayTopology::records_effects
     pub records_effects: bool,
     pub checkpoint: Option<CheckpointPolicy>,
     /// Whether tier-off changes and timer ops are kept for a drain at all —
@@ -783,7 +783,7 @@ mod effect_buffer_tests {
 #[cfg(test)]
 mod staged_interval_tests {
     use super::*;
-    use crate::operator::topology::{CheckpointOutputs, CheckpointPolicy};
+    use crate::relay::topology::{CheckpointOutputs, CheckpointPolicy};
 
     fn output(payload: &str) -> OutputRecord {
         OutputRecord {

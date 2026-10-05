@@ -433,7 +433,7 @@ fn a_kind_literal_is_refused_by_name() {
 }
 
 /// A setting written under a parent that does not carry it is refused naming
-/// both, and a class that says nothing is a flow operator kept locally.
+/// both, and a class that says nothing is a flow relay kept locally.
 #[test]
 fn a_misplaced_setting_names_itself_and_its_parent() {
     let row = |steps: &str| Row {
@@ -447,17 +447,29 @@ fn a_misplaced_setting_names_itself_and_its_parent() {
         let error = issues[0].to_error();
         assert_eq!(error.code, "topology.unknown_field", "{steps}");
         (
-            error.details["declaration"].as_str().unwrap_or_default().to_string(),
-            error.details["fields"].as_str().unwrap_or_default().to_string(),
+            error.details["declaration"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string(),
+            error.details["fields"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string(),
         )
     };
     assert_eq!(
         details(r#"class.run({"flow":{"each":"per_input"}})"#),
-        ("'flow' of operator 'misplaced'".to_string(), "each".to_string())
+        (
+            "'flow' of relay 'misplaced'".to_string(),
+            "each".to_string()
+        )
     );
     assert_eq!(
         details(r#"class.durable({"false":{"sleep_after":1000}})"#),
-        ("'false' of operator 'misplaced'".to_string(), "sleep_after".to_string())
+        (
+            "'false' of relay 'misplaced'".to_string(),
+            "sleep_after".to_string()
+        )
     );
     let accepted = check(record_of(&Row {
         refusal: "ok".into(),
@@ -466,8 +478,8 @@ fn a_misplaced_setting_names_itself_and_its_parent() {
         needs: "-".into(),
     }))
     .expect("a class that says nothing registers");
-    assert_eq!(accepted.run, crate::operator::settings::Run::default());
-    assert_eq!(accepted.durable, crate::operator::settings::Durable::local());
+    assert_eq!(accepted.run, crate::relay::settings::Run::default());
+    assert_eq!(accepted.durable, crate::relay::settings::Durable::local());
 }
 
 /// Every variant a builder can reach is produced by some row; the `unrowed` codes are

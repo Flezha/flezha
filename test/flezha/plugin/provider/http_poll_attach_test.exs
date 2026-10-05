@@ -145,7 +145,7 @@ defmodule Flezha.Plugin.Provider.HttpPollAttachTest do
                  url: "http://x/y",
                  channel: @channel,
                  source_namespace: "default",
-                 source_operator_id: "detector"
+                 source_relay_id: "detector"
                })
     end
 

@@ -9,7 +9,7 @@ report that is the machine contract CI reads.
 
 Every bench task (`mix bench`, `mix bench.roundtrip`, `mix bench.steps`) SHALL print, before any measurement, a header composed of three blocks rendered by one shared module:
 
-* **run** — the SDK runtime and its dispatch model (from the manifest's `dispatch` key, with the current value of each env var it names), the transport, whether the runner is embedded or spawned (derived from the transport, not declared), the workload shape, the durability backend, the dimensions (operators, messages per operator, warmup), and `MIX_ENV`.
+* **run** — the SDK runtime and its dispatch model (from the manifest's `dispatch` key, with the current value of each env var it names), the transport, whether the runner is embedded or spawned (derived from the transport, not declared), the workload shape, the durability backend, the dimensions (relays, messages per relay, warmup), and `MIX_ENV`.
 * **system** — CPU model and logical core count, total memory, 1-minute load average, CPU governor, OTP release, Elixir version, the launched runtime's own toolchain version, and the git SHA with a dirty flag.
 * **artifacts** — for each launched runtime: the resolved artifact path, its mtime and size, whether that path was the profile's first choice or a fallback, and whether the manifest `build` command ran or was skipped.
 
@@ -43,7 +43,7 @@ The run SHALL proceed in every case. No condition SHALL abort a bench, because a
 
 ### Requirement: Results render as aligned tables with fixed precision
 
-Bench results SHALL be rendered as aligned plain-text tables by the shared module: a header row, a single horizontal rule, and space-aligned columns. Tables SHALL NOT use box-drawing borders or colour, because the documented comparison steps operator pipes bench output through `tee` and `diff` and the output is read on terminals that are not reliably UTF-8.
+Bench results SHALL be rendered as aligned plain-text tables by the shared module: a header row, a single horizontal rule, and space-aligned columns. Tables SHALL NOT use box-drawing borders or colour, because the documented comparison steps relay pipes bench output through `tee` and `diff` and the output is read on terminals that are not reliably UTF-8.
 
 Durations SHALL be rendered in milliseconds by the shared module's formatter and rates as integers. No float SHALL reach output text by interpolation: Elixir renders a float of magnitude 1000 or more that lands on a round value in scientific notation, so a window that measures a whole number of milliseconds prints `1.0e3` where a reader and a `diff` expect `1000.0`. One decimal place is the default and what every table uses; a row whose own resolution needs more SHALL ask the shared formatter for the decimals it needs, and SHALL NOT keep a rounding rule of its own.
 
@@ -69,7 +69,7 @@ A value that a bench ships as a **number** SHALL stay a number. The JSON report'
 
 A bench SHALL report the **end-to-end** rate — total messages over the window from the first input dispatched to the last response received — as its headline throughput, and SHALL report the receive-window rate beside it. Each row SHALL name its window in the row label, because the two differ by the send window and are not interchangeable.
 
-The metric `Average time per operator` SHALL be removed. It divides total elapsed time across four unrelated phases by a count of concurrently-running operators and does not measure a per-operator cost.
+The metric `Average time per relay` SHALL be removed. It divides total elapsed time across four unrelated phases by a count of concurrently-running relays and does not measure a per-relay cost.
 
 #### Scenario: Both rates are reported and distinguishable
 - **WHEN** a regression bench sends 1,000,000 messages, spending 7664.9 ms sending and 2841.7 ms receiving
@@ -77,7 +77,7 @@ The metric `Average time per operator` SHALL be removed. It divides total elapse
 
 #### Scenario: The meaningless average is gone
 - **WHEN** any bench shape completes
-- **THEN** no output line and no report field reports total elapsed time divided by operator count
+- **THEN** no output line and no report field reports total elapsed time divided by relay count
 
 ### Requirement: Every bench run writes a structured report, and CI reads that report
 
@@ -160,7 +160,7 @@ Every measured noise floor SHALL be recorded in tracked repository documentation
 
 A comparison between two runtimes SHALL use one untimed warm-up value on every arm, sized so the slowest-warming runtime in the comparison reaches steady state, and SHALL state that value and its dimensions in the report. A warm-up sized for a runtime that starts cold in microseconds measures a just-in-time-compiled runtime before its hottest tier engages and reports that difference as though it were the effect being claimed — a failure mode a same-runtime A/B cannot have, because there the warm-up is symmetric whatever its value.
 
-The harness default is ten untimed messages per operator (`lib/mix/tasks/bench.ex`), sized for a natively compiled runner, and the merge gate's dimensions are chosen to gate rather than to compare. A cross-runtime comparison SHALL therefore state its own warm-up and dimensions rather than inherit either.
+The harness default is ten untimed messages per relay (`lib/mix/tasks/bench.ex`), sized for a natively compiled runner, and the merge gate's dimensions are chosen to gate rather than to compare. A cross-runtime comparison SHALL therefore state its own warm-up and dimensions rather than inherit either.
 
 Where a workload carries more than one throughput window, the comparison SHALL report every window and SHALL take its verdict only from a window whose measured spread is smaller than the difference claimed — including when that is not the window CI gates. Which window is the quieter one is a measured property of the workload, not a property of what the window means.
 

@@ -1,16 +1,16 @@
 # Write the echo runner
 
 On this page you get the echo runner in your language and start it. A runner is
-a program of your own: it connects to the controller, registers the operator
+a program of your own: it connects to the controller, registers the relay
 factories it can serve, and runs what the controller places on it. The echo has
-the three pieces every runner has: a tasklet, an operator and the runner itself.
+the three pieces every runner has: a tasklet, a relay and the runner itself.
 [Building blocks](../../topics/basics/building_blocks.md) explains each one, and
 [Connecting a runner](../../topics/deploying/connecting_a_runner.md) covers how a
 runner finds its controller.
 
 The three files, in your language. The tasklet emits `echo: ` plus what it
-got; the operator routes the channel `in` into it and names its output
-channel `out`; the runner registers the operator's factory, `echo`, and
+got; the relay routes the channel `in` into it and names its output
+channel `out`; the runner registers the relay's factory, `echo`, and
 serves.
 
 <!-- tabs-open -->
@@ -25,7 +25,7 @@ In your clone: `sdk/java/examples/echo` ([on GitHub](https://github.com/flezha/f
 public final class Echo implements Tasklet<String, Void, String> {
     @Override
     public void run(String input, Ctx<Void, String> ctx) throws TaskletException {
-        ctx.emit("echo: " + input);          // where it goes is the operator's business
+        ctx.emit("echo: " + input);          // where it goes is the relay's business
     }
 }
 ```
@@ -33,12 +33,12 @@ public final class Echo implements Tasklet<String, Void, String> {
 [`Echo.java`](https://github.com/flezha/flezha_java_sdk/blob/main/examples/echo/src/main/java/com/flezha/examples/echo/Echo.java)
 
 ```java
-// EchoOperator.java: the operator
-public final class EchoOperator implements Operator {
+// EchoRelay.java: the relay
+public final class EchoRelay implements Relay {
     @Override
     @Nonnull
     public String factoryId() {
-        return "echo";                       // the name `flz operator start` takes
+        return "echo";                       // the name `flz relay start` takes
     }
 
     @Override
@@ -50,14 +50,14 @@ public final class EchoOperator implements Operator {
 }
 ```
 
-[`EchoOperator.java`](https://github.com/flezha/flezha_java_sdk/blob/main/examples/echo/src/main/java/com/flezha/examples/echo/EchoOperator.java)
+[`EchoRelay.java`](https://github.com/flezha/flezha_java_sdk/blob/main/examples/echo/src/main/java/com/flezha/examples/echo/EchoRelay.java)
 
 ```java
 // Main.java: the runner
 public final class Main {
     public static void main(String[] args) throws Exception {
         FlezhaRunner runner = Flezha.createRunner(args.length > 0 ? args[0] : "default")
-                .registerFactory(EchoOperator.class)     // the operators this runner serves
+                .registerFactory(EchoRelay.class)     // the relays this runner serves
                 .start();                                // connects to the controller
 
         runner.awaitTermination();
@@ -85,7 +85,7 @@ impl Tasklet for Echo {
     type Output = String;
 
     fn run(&mut self, input: String, ctx: &mut Ctx<'_, Self>) -> Result<(), TaskletError> {
-        ctx.emit(format!("echo: {input}")) // where it goes is the operator's business
+        ctx.emit(format!("echo: {input}")) // where it goes is the relay's business
     }
 }
 ```
@@ -93,12 +93,12 @@ impl Tasklet for Echo {
 [`src/tasklet.rs`](https://github.com/flezha/flezha_rust_sdk/blob/main/examples/echo/src/tasklet.rs)
 
 ```rust
-// src/operator.rs: the operator
-pub struct EchoOperator;
+// src/relay.rs: the relay
+pub struct EchoRelay;
 
-impl Operator for EchoOperator {
+impl Relay for EchoRelay {
     fn factory_id() -> &'static str {
-        "echo" // the name `flz operator start` takes
+        "echo" // the name `flz relay start` takes
     }
 
     fn channels(c: &ChannelBuilder) {
@@ -109,7 +109,7 @@ impl Operator for EchoOperator {
 }
 ```
 
-[`src/operator.rs`](https://github.com/flezha/flezha_rust_sdk/blob/main/examples/echo/src/operator.rs)
+[`src/relay.rs`](https://github.com/flezha/flezha_rust_sdk/blob/main/examples/echo/src/relay.rs)
 
 ```rust
 // src/main.rs: the runner
@@ -119,8 +119,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or_else(|| "default".to_string());
 
     let runner = Flezha::create_runner(namespace)?;
-    // connects to the controller and serves these operators
-    runner.register_factory(operator::EchoOperator)?.start()?;
+    // connects to the controller and serves these relays
+    runner.register_factory(relay::EchoRelay)?.start()?;
 
     runner.await_termination()?;
     Ok(())
@@ -137,16 +137,16 @@ In your clone: `sdk/node/examples/echo` ([on GitHub](https://github.com/flezha/f
 // echo_tasklet.mjs: the tasklet
 export const EchoTasklet = defineTasklet({
   name: 'echo', // state is saved under this name, so choose it once
-  run: (input, ctx) => ctx.emit(`echo: ${input}`), // where it goes is the operator's business
+  run: (input, ctx) => ctx.emit(`echo: ${input}`), // where it goes is the relay's business
 });
 ```
 
 [`echo_tasklet.mjs`](https://github.com/flezha/flezha_node_sdk/blob/main/examples/echo/echo_tasklet.mjs)
 
 ```javascript
-// echo_operator.mjs: the operator
-export default defineOperator({
-  factoryId: 'echo', // the name `flz operator start` takes
+// echo_relay.mjs: the relay
+export default defineRelay({
+  factoryId: 'echo', // the name `flz relay start` takes
   channels: (c) => {
     c.input('in', { codec: 'text' }) // messages arrive on the entry channel "in"
       .into(EchoTasklet) // each one runs through the echo tasklet
@@ -155,14 +155,14 @@ export default defineOperator({
 });
 ```
 
-[`echo_operator.mjs`](https://github.com/flezha/flezha_node_sdk/blob/main/examples/echo/echo_operator.mjs)
+[`echo_relay.mjs`](https://github.com/flezha/flezha_node_sdk/blob/main/examples/echo/echo_relay.mjs)
 
 ```javascript
 // runner.mjs: the runner
 const namespace = process.argv[2] ?? 'default';
 
 const runner = createRunner(namespace);
-await runner.registerFactory('./echo_operator.mjs'); // the operators this runner serves
+await runner.registerFactory('./echo_relay.mjs'); // the relays this runner serves
 
 await runner.run(); // connects to the controller
 ```
@@ -178,15 +178,15 @@ In your clone: `sdk/python/examples/echo` ([on GitHub](https://github.com/flezha
 @flezha.tasklet(name="echo")  # state is saved under this name, so choose it once
 class Echo:
     def run(self, value: str, ctx: flezha.Ctx[None, str]) -> None:
-        ctx.emit(f"echo: {value}")  # where it goes is the operator's business
+        ctx.emit(f"echo: {value}")  # where it goes is the relay's business
 ```
 
 [`echo_tasklet.py`](https://github.com/flezha/flezha_python_sdk/blob/main/examples/echo/echo_tasklet.py)
 
 ```python
-# echo_operator.py: the operator
-@flezha.operator("echo")  # the name `flz operator start` takes
-def echo_operator(c: flezha.Channels) -> None:
+# echo_relay.py: the relay
+@flezha.relay("echo")  # the name `flz relay start` takes
+def echo_relay(c: flezha.Channels) -> None:
     (
         c.input("in", codec="text")  # messages arrive on the entry channel "in"
         .into(Echo)  # each one runs through the echo tasklet
@@ -194,7 +194,7 @@ def echo_operator(c: flezha.Channels) -> None:
     )
 ```
 
-[`echo_operator.py`](https://github.com/flezha/flezha_python_sdk/blob/main/examples/echo/echo_operator.py)
+[`echo_relay.py`](https://github.com/flezha/flezha_python_sdk/blob/main/examples/echo/echo_relay.py)
 
 ```python
 # runner.py: the runner
@@ -202,8 +202,8 @@ def main() -> None:
     namespace = sys.argv[1] if len(sys.argv) > 1 else "default"
     flezha.configure_logging("info")
 
-    # the operators this runner serves
-    runner = flezha.create_runner(namespace).register_factory(echo_operator)
+    # the relays this runner serves
+    runner = flezha.create_runner(namespace).register_factory(echo_relay)
 
     runner.start()  # connects to the controller
 
@@ -224,16 +224,16 @@ In your clone: `sdk/ruby/examples/echo` ([on GitHub](https://github.com/flezha/f
 class EchoTasklet < Flezha::Tasklet
   tasklet_name "echo" # state is saved under this name, so choose it once
 
-  def run(input, ctx) = ctx.emit("echo: #{input}") # where it goes is the operator's business
+  def run(input, ctx) = ctx.emit("echo: #{input}") # where it goes is the relay's business
 end
 ```
 
 [`echo_tasklet.rb`](https://github.com/flezha/flezha_ruby_sdk/blob/main/examples/echo/echo_tasklet.rb)
 
 ```ruby
-# echo_operator.rb: the operator
-class EchoOperator < Flezha::Operator
-  factory_id "echo" # the name `flz operator start` takes
+# echo_relay.rb: the relay
+class EchoRelay < Flezha::Relay
+  factory_id "echo" # the name `flz relay start` takes
 
   channels do |c|
     c.input("in", codec: :text) # messages arrive on the entry channel "in"
@@ -243,14 +243,14 @@ class EchoOperator < Flezha::Operator
 end
 ```
 
-[`echo_operator.rb`](https://github.com/flezha/flezha_ruby_sdk/blob/main/examples/echo/echo_operator.rb)
+[`echo_relay.rb`](https://github.com/flezha/flezha_ruby_sdk/blob/main/examples/echo/echo_relay.rb)
 
 ```ruby
 # runner.rb: the runner
 namespace = ARGV[0] || "default"
 
-# the operators this runner serves
-runner = Flezha.create_runner(namespace).register_factory(EchoOperator)
+# the relays this runner serves
+runner = Flezha.create_runner(namespace).register_factory(EchoRelay)
 
 runner.boot # connects to the controller
 
@@ -270,7 +270,7 @@ final class EchoTasklet extends Tasklet
 {
     public function run(mixed $input, Ctx $ctx): void
     {
-        $ctx->emit('echo: ' . $input); // where it goes is the operator's business
+        $ctx->emit('echo: ' . $input); // where it goes is the relay's business
     }
 }
 ```
@@ -278,9 +278,9 @@ final class EchoTasklet extends Tasklet
 [`src/EchoTasklet.php`](https://github.com/flezha/flezha_php_sdk/blob/main/examples/echo/src/EchoTasklet.php)
 
 ```php
-// src/EchoOperator.php: the operator
-#[Operator(factoryId: 'echo')] // the name `flz operator start` takes
-final class EchoOperator extends \Flezha\Operator
+// src/EchoRelay.php: the relay
+#[Relay(factoryId: 'echo')] // the name `flz relay start` takes
+final class EchoRelay extends \Flezha\Relay
 {
     public static function channels(Builder $c): void
     {
@@ -291,12 +291,12 @@ final class EchoOperator extends \Flezha\Operator
 }
 ```
 
-[`src/EchoOperator.php`](https://github.com/flezha/flezha_php_sdk/blob/main/examples/echo/src/EchoOperator.php)
+[`src/EchoRelay.php`](https://github.com/flezha/flezha_php_sdk/blob/main/examples/echo/src/EchoRelay.php)
 
 ```php
 // runner.php: the runner
 $runner = Flezha::createRunner($argv[1] ?? 'default')
-    ->registerFactory(EchoOperator::class) // the operators this runner serves
+    ->registerFactory(EchoRelay::class) // the relays this runner serves
     ->start();                             // connects to the controller
 
 $runner->awaitTermination();
@@ -316,7 +316,7 @@ defmodule Echo.Tasklet do
 
   @impl true
   def run(input, state, ctx) do
-    # where it goes is the operator's business
+    # where it goes is the relay's business
     emit(ctx, "echo: " <> input)
     {:ok, state}
   end
@@ -326,10 +326,10 @@ end
 [`lib/echo/tasklet.ex`](https://github.com/flezha/flezha_elixir_sdk/blob/main/examples/echo/lib/echo/tasklet.ex)
 
 ```elixir
-# lib/echo/operator.ex: the operator
-defmodule Echo.Operator do
-  # the name `flz operator start` takes
-  use Flezha.SDK.Operator, factory_id: "echo"
+# lib/echo/relay.ex: the relay
+defmodule Echo.Relay do
+  # the name `flz relay start` takes
+  use Flezha.SDK.Relay, factory_id: "echo"
 
   @impl true
   def channels(c) do
@@ -344,7 +344,7 @@ defmodule Echo.Operator do
 end
 ```
 
-[`lib/echo/operator.ex`](https://github.com/flezha/flezha_elixir_sdk/blob/main/examples/echo/lib/echo/operator.ex)
+[`lib/echo/relay.ex`](https://github.com/flezha/flezha_elixir_sdk/blob/main/examples/echo/lib/echo/relay.ex)
 
 ```elixir
 # lib/echo/application.ex: the runner
@@ -356,8 +356,8 @@ defmodule Echo.Application do
     namespace = List.first(System.argv(), "default")
 
     children = [
-      # connects to the controller and serves these operators
-      {Flezha.SDK, namespace: namespace, operators: [Echo.Operator], transport: :uds}
+      # connects to the controller and serves these relays
+      {Flezha.SDK, namespace: namespace, relays: [Echo.Relay], transport: :uds}
     ]
 
     {:ok, supervisor} = Supervisor.start_link(children, strategy: :one_for_one)
@@ -447,4 +447,4 @@ every reason with its fix.
 ## Next
 
 Nothing runs on the runner yet. [Run the echo](run_the_echo.md) starts the
-first operator.
+first relay.

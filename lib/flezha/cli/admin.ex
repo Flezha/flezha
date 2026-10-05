@@ -29,7 +29,7 @@ defmodule Flezha.Service.Admin do
   ## The wire form
 
   `name` is `"<Module>.<function>"` for a module of `Flezha.Service.modules/0`,
-  for example `"Operator.start"` or `"PluginManager.enable"`.
+  for example `"Relay.start"` or `"PluginManager.enable"`.
 
   `args` is a JSON array of the arguments before the caller context. Each is
   converted by the argument row its operation declares (`Flezha.Service`); an

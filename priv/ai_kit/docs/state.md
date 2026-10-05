@@ -45,7 +45,7 @@ with its own state: you write the tasklet once, and each cell runs it on its
 own messages and keeps its own memory. A cell handles its messages one at a
 time, in the order they arrived, and different cells work side by side.
 
-How many cells a tasklet gets is decided in the operator, not in the tasklet:
+How many cells a tasklet gets is decided in the relay, not in the tasklet:
 
 - **With `keyBy`** on the edge that feeds it, every key gets a cell of its own,
   made the first time a message with that key arrives
@@ -55,8 +55,8 @@ How many cells a tasklet gets is decided in the operator, not in the tasklet:
   `cellKeys`, with a `cellsFor` function that routes each input), it has that
   set of cells and no other.
 
-A cell is what Flezha saves. A namespace caps how many cells one operator may
-hold, with `max_cells_per_operator` ([`namespaces.md`](namespaces.md#quotas)),
+A cell is what Flezha saves. A namespace caps how many cells one relay may
+hold, with `max_cells_per_relay` ([`namespaces.md`](namespaces.md#quotas)),
 and a tasklet caps its own dynamic cells with `max_cells` (100 000 by default;
 new keys past it are dropped). An idle dynamic cell can be evicted after
 `idle_ttl_seconds`; eviction deletes its state for good.
@@ -91,7 +91,7 @@ new keys past it are dropped). An idle dynamic cell can be evicted after
 ## Example: a window of prices
 
 In the tradedesk example, `track_prices` keeps each symbol's last ten prices.
-The operator keys it by symbol, so each symbol has a cell, and each cell its
+The relay keys it by symbol, so each symbol has a cell, and each cell its
 own window. Each trade records one change, "this price was seen", whose fold
 adds the price and drops the oldest once there are more than ten.
 
@@ -305,7 +305,7 @@ decoding of a state read back from the controller.
 
 ## Where the state is kept
 
-The class's `durable` setting ([`configuring_an_operator.md`](configuring_an_operator.md))
+The class's `durable` setting ([`configuring_a_relay.md`](configuring_a_relay.md))
 decides where a cell's log lives, for a stream and a workflow alike. It is
 fixed on an instance when it starts: a change to the class applies from the
 next stop and start.
@@ -335,7 +335,7 @@ state get anna/reply:
 
 `change_seq` counts the changes the cell has recorded. A cell of an instance
 that sleeps, or of a class kept in memory, cannot be read this way. The other
-`flz state` commands, such as a point-in-time read, are in [`operator_commands.md`](../cli/operator_commands.md#flz-state).
+`flz state` commands, such as a point-in-time read, are in [`relay_commands.md`](../cli/relay_commands.md#flz-state).
 
 ## Per-tasklet settings
 

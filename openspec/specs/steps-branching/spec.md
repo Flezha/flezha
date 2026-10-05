@@ -5,14 +5,14 @@ Tree-shaped steps tasklet chains: fan-out registration, per-channel handoff
 routing, branch scheduling, the leaf-completion rule, reverse-topological
 compensation, and subtree-precise crash-resume.
 ## Requirements
-### Requirement: Branches run after their parent commits; the operator completes when all leaves commit
+### Requirement: Branches run after their parent commits; the relay completes when all leaves commit
 
 A child tasklet SHALL become runnable only after **every** parent tasklet
 feeding it has had its commit acknowledged — for a single-parent child this is
 the existing rule unchanged; a join node waits for all of its producers.
 Sibling branches SHALL be independent and MAY interleave. Each tasklet SHALL
 keep the existing per-task barrier, commit gating, staged outbox, and
-cell-retry semantics unchanged. The operator SHALL terminate with status
+cell-retry semantics unchanged. The relay SHALL terminate with status
 `ok` exactly when every **leaf** tasklet has committed.
 
 #### Scenario: Parent commit releases both branches
@@ -28,7 +28,7 @@ cell-retry semantics unchanged. The operator SHALL terminate with status
 #### Scenario: DONE requires every leaf
 
 - **WHEN** leaf B has committed but leaf C has not
-- **THEN** the operator SHALL NOT be complete; it SHALL complete only once C also commits
+- **THEN** the relay SHALL NOT be complete; it SHALL complete only once C also commits
 
 ### Requirement: Compensation over a tree is reverse topological
 

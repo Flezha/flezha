@@ -19,7 +19,7 @@ defmodule Flezha.Plugin.ProviderBehaviour.Declaration do
   @controller_callbacks ProviderBehaviour.controller_callbacks()
 
   # Each type's hooks; a provider that defines the other type's is refused.
-  @type_hooks %{operator: @extension_callbacks, controller: @controller_callbacks}
+  @type_hooks %{relay: @extension_callbacks, controller: @controller_callbacks}
 
   @doc """
   Write the declaration into the provider: the attributes that hold it, the
@@ -27,9 +27,9 @@ defmodule Flezha.Plugin.ProviderBehaviour.Declaration do
   for every lifecycle callback the provider does not write itself.
 
   `feeds: true` declares that the provider's own worker injects payloads into
-  the operator. It defaults to false and only the providers whose worker calls
+  the relay. It defaults to false and only the providers whose worker calls
   `Flezha.Plugin.Host.inject/4` write it. `shareable: true` declares that one
-  running copy can serve several bound operators; it defaults to false.
+  running copy can serve several bound relays; it defaults to false.
   `namespace: name` declares the one namespace the provider may be enabled in.
   """
   defmacro __using__(opts) do
@@ -47,7 +47,7 @@ defmodule Flezha.Plugin.ProviderBehaviour.Declaration do
     contract = ProviderBehaviour
     options = Keyword.get(opts, :options, [])
     worker = Keyword.get(opts, :worker)
-    type = Keyword.get(opts, :type, :operator)
+    type = Keyword.get(opts, :type, :relay)
     name = Keyword.get(opts, :name)
     feeds = Keyword.get(opts, :feeds, false)
     shareable = Keyword.get(opts, :shareable, false)
@@ -317,7 +317,7 @@ defmodule Flezha.Plugin.ProviderBehaviour.Declaration do
   end
 
   defp validate_type!(env, type),
-    do: raise_row!(env, "type #{inspect(type)} must be :operator or :controller")
+    do: raise_row!(env, "type #{inspect(type)} must be :relay or :controller")
 
   # An own verb that repeats a shared one would be a second account of the same
   # fact under a kind the vocabulary already fixes.

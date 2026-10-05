@@ -1,8 +1,8 @@
 defmodule FlezhaTest.System.ShorthandE2ETest do
   @moduledoc """
   The §5 short form, driven end to end on the runtime `FLEZHA_E2E_RUNTIME`
-  selects. Six fixtures, one operator declaration each in every app — no
-  hand-written operator stands beside them, which is what the `shorthand`
+  selects. Six fixtures, one relay declaration each in every app — no
+  hand-written relay stands beside them, which is what the `shorthand`
   capability asserts:
 
     * `sugar_do_nothing`: the default entry channel `input`, echoing onto
@@ -33,11 +33,11 @@ defmodule FlezhaTest.System.ShorthandE2ETest do
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
   import FlezhaTest.Helper.TierE2EHarness, only: [send_inputs: 4, unique: 1]
 
-  alias Flezha.Operator.Builder
+  alias Flezha.Relay.Builder
   alias Flezha.Payloader
   alias Flezha.Runner.FleetManager
-  alias Flezha.Service.OperatorManager
-  alias FlezhaTest.Fixtures.OperatorFixture
+  alias Flezha.Service.RelayManager
+  alias FlezhaTest.Fixtures.RelayFixture
   alias FlezhaTest.Helper.NodeTestHelper
 
   @moduletag timeout: 300_000
@@ -50,95 +50,95 @@ defmodule FlezhaTest.System.ShorthandE2ETest do
   end
 
   test "a short form with no entry name is reached on `input`", ctx do
-    operator_id = start(ctx.namespace, "sugar_do_nothing")
+    relay_id = start(ctx.namespace, "sugar_do_nothing")
 
-    send_inputs(operator_id, ctx.namespace, ["alpha", "beta"], %{"channel" => "input"})
+    send_inputs(relay_id, ctx.namespace, ["alpha", "beta"], %{"channel" => "input"})
 
     assert receive_payloads(2) == ["alpha", "beta"]
   end
 
   test "a short form is reached on the entry channel its author named", ctx do
-    operator_id = start(ctx.namespace, "sugar_named_input")
+    relay_id = start(ctx.namespace, "sugar_named_input")
 
-    send_inputs(operator_id, ctx.namespace, ["AAPL:1"], %{"channel" => "prices"})
+    send_inputs(relay_id, ctx.namespace, ["AAPL:1"], %{"channel" => "prices"})
 
     assert receive_payloads(1) == ["AAPL:1"]
   end
 
   test "a stateful short form keeps its state and echoes its input", ctx do
-    operator_id = start(ctx.namespace, "sugar_store_input")
+    relay_id = start(ctx.namespace, "sugar_store_input")
 
-    send_inputs(operator_id, ctx.namespace, ["one", "two"], %{"channel" => "input"})
+    send_inputs(relay_id, ctx.namespace, ["one", "two"], %{"channel" => "input"})
 
     assert receive_payloads(2) == ["one", "two"]
 
     assert wait_until(
-             fn -> stored(ctx.namespace, operator_id, "sugar_store_input") == ["one", "two"] end,
+             fn -> stored(ctx.namespace, relay_id, "sugar_store_input") == ["one", "two"] end,
              30_000
            ),
            "the short form's state never came back; read " <>
-             inspect(state_of(ctx.namespace, operator_id))
+             inspect(state_of(ctx.namespace, relay_id))
   end
 
   test "a short form with no sink keeps what it was sent in state", ctx do
-    operator_id = start(ctx.namespace, "sugar_state_only")
+    relay_id = start(ctx.namespace, "sugar_state_only")
 
-    send_inputs(operator_id, ctx.namespace, ["one", "two"], %{"channel" => "ticks"})
+    send_inputs(relay_id, ctx.namespace, ["one", "two"], %{"channel" => "ticks"})
 
     assert wait_until(
-             fn -> stored(ctx.namespace, operator_id, "sugar_state_only") == ["one", "two"] end,
+             fn -> stored(ctx.namespace, relay_id, "sugar_state_only") == ["one", "two"] end,
              30_000
            ),
            "the sinkless short form's state never came back; read " <>
-             inspect(state_of(ctx.namespace, operator_id))
+             inspect(state_of(ctx.namespace, relay_id))
 
     refute_receive {:message_forward, _payload, _metadata}, 500
   end
 
   test "a steps short form runs once on its first message and completes", ctx do
-    operator_id = unique("sugar_steps")
+    relay_id = unique("sugar_steps")
 
     assert {:ok, _} =
-             OperatorManager.start_operator(ctx.namespace, %Builder{
-               id: operator_id,
+             RelayManager.start_relay(ctx.namespace, %Builder{
+               id: relay_id,
                factory_id: "sugar_steps",
-               opts: [bindings: sink(ctx.namespace, operator_id)]
+               opts: [bindings: sink(ctx.namespace, relay_id)]
              })
 
     # The instance waits for its message; the send on `order` is what runs the
     # one pass, so what reaches the sink is the message's own bytes.
-    send_until_accepted(ctx.namespace, operator_id, "o-1", %{"channel" => "order"})
+    send_until_accepted(ctx.namespace, relay_id, "o-1", %{"channel" => "order"})
     assert [payload] = receive_payloads(1)
     assert payload =~ "o-1"
 
-    # A `once` steps operator self-terminates, and the controller deregisters it on
+    # A `once` steps relay self-terminates, and the controller deregisters it on
     # the completion it ships. The unit leaving the registry with no stop is
     # the whole loop having run.
-    assert wait_until(fn -> not registered?(ctx.namespace, operator_id) end, 30_000),
+    assert wait_until(fn -> not registered?(ctx.namespace, relay_id) end, 30_000),
            "the steps short form never completed"
   end
 
   test "a steps short form that declares its loop mode runs once per message", ctx do
-    operator_id = start(ctx.namespace, "sugar_steps_per_input")
+    relay_id = start(ctx.namespace, "sugar_steps_per_input")
 
-    send_until_accepted(ctx.namespace, operator_id, "m-1", %{"channel" => "input"})
+    send_until_accepted(ctx.namespace, relay_id, "m-1", %{"channel" => "input"})
     assert receive_payloads(1) == ["m-1"]
 
-    send_until_accepted(ctx.namespace, operator_id, "m-2", %{"channel" => "input"})
+    send_until_accepted(ctx.namespace, relay_id, "m-2", %{"channel" => "input"})
     assert receive_payloads(1) == ["m-2"]
 
-    assert registered?(ctx.namespace, operator_id),
+    assert registered?(ctx.namespace, relay_id),
            "a per_input steps completed after a pass, as a once steps does"
   end
 
   # A send that lands before the bind is retryable; only an accepted one is
   # the instance's message.
-  defp send_until_accepted(namespace, operator_id, message, metadata) do
+  defp send_until_accepted(namespace, relay_id, message, metadata) do
     assert wait_until(
              fn ->
                not match?(
                  {:error, _},
-                 OperatorManager.send_io_confirming(operator_id, namespace, message, metadata)
+                 RelayManager.send_io_confirming(relay_id, namespace, message, metadata)
                )
              end,
              10_000
@@ -147,16 +147,16 @@ defmodule FlezhaTest.System.ShorthandE2ETest do
   end
 
   defp start(namespace, factory) do
-    operator_id = unique(factory)
+    relay_id = unique(factory)
 
     assert {:ok, _} =
-             OperatorManager.start_operator(namespace, %Builder{
-               id: operator_id,
+             RelayManager.start_relay(namespace, %Builder{
+               id: relay_id,
                factory_id: factory,
-               opts: [bindings: sink(namespace, operator_id)]
+               opts: [bindings: sink(namespace, relay_id)]
              })
 
-    operator_id
+    relay_id
   end
 
   defp receive_payloads(count) do
@@ -166,8 +166,8 @@ defmodule FlezhaTest.System.ShorthandE2ETest do
     end
   end
 
-  defp state_of(namespace, operator_id) do
-    case OperatorManager.get_cell_state(namespace, operator_id) do
+  defp state_of(namespace, relay_id) do
+    case RelayManager.get_cell_state(namespace, relay_id) do
       {:ok, json} -> Payloader.json_to_map(json)
       _ -> nil
     end
@@ -176,8 +176,8 @@ defmodule FlezhaTest.System.ShorthandE2ETest do
   # The text inputs a stateful short form pushed, whatever the SDK spells the
   # field's container as: every runtime's state is one tasklet's, named after
   # the factory id, and its one list field is what the fixture accumulates.
-  defp stored(namespace, operator_id, tasklet) do
-    case state_of(namespace, operator_id) do
+  defp stored(namespace, relay_id, tasklet) do
+    case state_of(namespace, relay_id) do
       %{^tasklet => cell} when is_map(cell) ->
         cell |> Map.values() |> Enum.find(&is_list/1)
 
@@ -186,15 +186,15 @@ defmodule FlezhaTest.System.ShorthandE2ETest do
     end
   end
 
-  defp registered?(namespace, operator_id) do
-    case OperatorManager.get_operator_pid(namespace, operator_id) do
+  defp registered?(namespace, relay_id) do
+    case RelayManager.get_relay_pid(namespace, relay_id) do
       {:ok, _pid} -> true
       _ -> false
     end
   end
 
-  defp sink(namespace, operator_id) do
-    OperatorFixture.bindings(namespace, operator_id, [
+  defp sink(namespace, relay_id) do
+    RelayFixture.bindings(namespace, relay_id, [
       %Flezha.Plugin{
         id: "shorthand_sink",
         provider: Flezha.Plugin.Provider.BeamMsgForward,

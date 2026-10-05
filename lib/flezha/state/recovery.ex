@@ -20,7 +20,7 @@ defmodule Flezha.State.Recovery do
   require Logger
 
   alias Flezha.Config
-  alias Flezha.Operator.Replay
+  alias Flezha.Relay.Replay
   alias Flezha.Process.Cspec
   alias Flezha.Service.HubManager
   alias Flezha.State.Commands
@@ -35,7 +35,7 @@ defmodule Flezha.State.Recovery do
   end
 
   @doc """
-  Re-issue the per-Cell WAL replay for an operator that is already bound,
+  Re-issue the per-Cell WAL replay for a relay that is already bound,
   against `runner_id`, the runner its Overwatch is bound to, so the replay
   never depends on a class→runner lookup in the durable registry. The
   convergence loop's `resync_runner` heal is the caller; a bind restores its
@@ -50,7 +50,7 @@ defmodule Flezha.State.Recovery do
   end
 
   @doc """
-  Resolve the `runner_id` currently owning `operator_class` from the
+  Resolve the `runner_id` currently owning `relay_class` from the
   ProcessHub registry. Returns `{:ok, runner_id}` or `{:error, term}`.
 
   The CLI `flz state rotate` surface is its only caller; the resync path
@@ -61,11 +61,11 @@ defmodule Flezha.State.Recovery do
     case HubManager.get_registry("default") do
       {:ok, registry} ->
         match =
-          Enum.find_value(registry, fn {_operator_id, entry} ->
+          Enum.find_value(registry, fn {_relay_id, entry} ->
             {cspec, _node_pids, metadata} = normalize_entry(entry)
             tag = Map.get(metadata, :tag)
 
-            if is_binary(tag) and operator_class(cspec) == rc, do: tag
+            if is_binary(tag) and relay_class(cspec) == rc, do: tag
           end)
 
         case match do
@@ -120,34 +120,34 @@ defmodule Flezha.State.Recovery do
     end
   end
 
-  # The durable registry stores `{operator_id, {cspec, node_pids, metadata}}` (a
+  # The durable registry stores `{relay_id, {cspec, node_pids, metadata}}` (a
   # pre-namespace row may omit metadata). The owning runner is `metadata.tag`;
-  # the operator_class is the operator's `:operator_class` opt (default: its id), carried
-  # in the cspec's start args — mirror of `Reconciler.Probe.operator_from_cspec/1`.
+  # the relay_class is the relay's `:relay_class` opt (default: its id), carried
+  # in the cspec's start args — mirror of `Reconciler.Probe.relay_from_cspec/1`.
   defp normalize_entry({cspec, node_pids, metadata}), do: {cspec, node_pids, metadata}
   defp normalize_entry({cspec, node_pids}), do: {cspec, node_pids, %{}}
 
-  defp operator_class(cspec) do
+  defp relay_class(cspec) do
     case Cspec.start_arg(cspec) do
-      {:ok, arg} -> operator_class_from_arg(arg)
+      {:ok, arg} -> relay_class_from_arg(arg)
       :error -> nil
     end
   end
 
-  defp operator_class_from_arg(arg) do
+  defp relay_class_from_arg(arg) do
     case arg do
-      {_namespace, operator} when is_map(operator) ->
-        operator_class_of(operator)
+      {_namespace, relay} when is_map(relay) ->
+        relay_class_of(relay)
 
-      {_namespace, _runner_id, operator} when is_map(operator) ->
-        operator_class_of(operator)
+      {_namespace, _runner_id, relay} when is_map(relay) ->
+        relay_class_of(relay)
 
       _ ->
         nil
     end
   end
 
-  defp operator_class_of(operator) do
-    Keyword.get(Map.get(operator, :opts, []), :operator_class, Map.get(operator, :id))
+  defp relay_class_of(relay) do
+    Keyword.get(Map.get(relay, :opts, []), :relay_class, Map.get(relay, :id))
   end
 end

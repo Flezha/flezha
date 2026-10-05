@@ -195,15 +195,15 @@ The image inherits the prod image's HEALTHCHECK (control-socket readiness, see t
    - **Disabled** (`FLEZHA_GRACEFUL_SHUTDOWN_ENABLED` set to `false`/`0`/`no`/`off` case-insensitive): the trap SHALL `kill -TERM` the agent directly, bypassing the coordinator. This is the kill-switch fall-through, and it matches what the same variable means inside the BEAM (`controller-graceful-shutdown`: `SignalHandler` installs no OS handlers, so kernel's `erl_signal_handler` stays the owner).
 5. `wait` on the agent PID.
 
-Restart survival SHALL come from ProcessHub's durable registry and the per-Cell WAL (`auto-restore-on-boot`, `operator-state-persistence`). The entrypoint SHALL NOT write or read a cluster-wide snapshot file, and the image SHALL NOT ship a pre-stop snapshot hook.
+Restart survival SHALL come from ProcessHub's durable registry and the per-Cell WAL (`auto-restore-on-boot`, `relay-state-persistence`). The entrypoint SHALL NOT write or read a cluster-wide snapshot file, and the image SHALL NOT ship a pre-stop snapshot hook.
 
 The image SHALL declare a HEALTHCHECK that tests for the existence of `${FLEZHA_SOCKET_FILES_PATH}/runner_control_channel.sock`.
 
 #### Scenario: SIGTERM with graceful shutdown enabled drives the BEAM coordinator
 
-- **GIVEN** a running container with `FLEZHA_GRACEFUL_SHUTDOWN_ENABLED=true` (default), one Operator locally hosted, and a peer container reachable
+- **GIVEN** a running container with `FLEZHA_GRACEFUL_SHUTDOWN_ENABLED=true` (default), one Relay locally hosted, and a peer container reachable
 - **WHEN** the orchestrator sends SIGTERM (e.g. `docker stop`)
-- **THEN** the entrypoint trap execs `/flezha/bin/flz controller stop --timeout-ms <timeout>`; the CLI streams drain progress; the BEAM exits cleanly within `stop_grace_period`; the Operator is alive on the peer
+- **THEN** the entrypoint trap execs `/flezha/bin/flz controller stop --timeout-ms <timeout>`; the CLI streams drain progress; the BEAM exits cleanly within `stop_grace_period`; the Relay is alive on the peer
 
 #### Scenario: SIGTERM with graceful shutdown disabled terminates the agent directly
 
@@ -234,9 +234,9 @@ Users changing `FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS` MUST update `stop_grace_per
 
 #### Scenario: `docker compose stop` lets the BEAM drain without SIGKILL
 
-- **GIVEN** a `docker compose up` of `docker/prod/docker-compose.yml` with a controller hosting one Operator and a peer service running
+- **GIVEN** a `docker compose up` of `docker/prod/docker-compose.yml` with a controller hosting one Relay and a peer service running
 - **WHEN** the user runs `docker compose stop`
-- **THEN** docker sends SIGTERM (per `stop_signal`); the controller drains within 60 s; the 75 s `stop_grace_period` elapses without docker escalating to SIGKILL; the controller exits cleanly; the Operator is running on the peer
+- **THEN** docker sends SIGTERM (per `stop_signal`); the controller drains within 60 s; the 75 s `stop_grace_period` elapses without docker escalating to SIGKILL; the controller exits cleanly; the Relay is running on the peer
 
 ### Requirement: K8s DaemonSet SHALL declare a preStop hook and a tuned termination grace period
 
@@ -249,9 +249,9 @@ Users changing `FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS` MUST update `stop_grace_per
 
 #### Scenario: K8s pod deletion runs preStop, then SIGTERM, exits within grace
 
-- **GIVEN** a controller pod hosting one Operator with a peer pod available
+- **GIVEN** a controller pod hosting one Relay with a peer pod available
 - **WHEN** the user runs `kubectl delete pod <pod>`
-- **THEN** k8s runs `flz controller stop --timeout-ms 60000` via preStop (which drives `Flezha.Shutdown.Coordinator` to drain the Operator to the peer), then sends SIGTERM (the SignalHandler observes it as a second-signal during shutdown and ignores), then waits up to 75 s; the pod exits cleanly with the Operator running on the peer
+- **THEN** k8s runs `flz controller stop --timeout-ms 60000` via preStop (which drives `Flezha.Shutdown.Coordinator` to drain the Relay to the peer), then sends SIGTERM (the SignalHandler observes it as a second-signal during shutdown and ignores), then waits up to 75 s; the pod exits cleanly with the Relay running on the peer
 
 #### Scenario: User-tuned timeout takes effect via configmap
 
@@ -356,7 +356,7 @@ A workflow (either `.github/workflows/elixir.yml` or a dedicated `docker.yml`) S
 
 #### Scenario: PR that doesn't touch packaging skips the gate
 
-- **GIVEN** a PR whose diff is exclusively under `lib/flezha/operator/**`
+- **GIVEN** a PR whose diff is exclusively under `lib/flezha/relay/**`
 - **WHEN** CI runs
 - **THEN** the docker-size gate is not triggered (the workflow's path filter excludes the change)
 
@@ -455,7 +455,7 @@ to default to. Those are two different jobs and they get two different budgets.
 
 The node a `flz` verb starts SHALL run with the Erlang break handler disabled, so
 that SIGINT terminates it. A verb that streams until a window closes, such as
-`flz operator listen` or `flz observe tail`, is ended by Ctrl-C, and the default
+`flz relay listen` or `flz observe tail`, is ended by Ctrl-C, and the default
 handler would answer that with the `BREAK:` menu instead, leaving the node alive and
 the controller-side process it spawned orphaned.
 

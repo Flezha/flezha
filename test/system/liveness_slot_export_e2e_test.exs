@@ -6,7 +6,7 @@ defmodule FlezhaTest.System.LivenessSlotExportE2ETest do
   The scatter this closes is a counted fact restated in five places: the slot
   layout, the exporter's row list, the mirror's key list, the SDK's heartbeat
   map and two documents. Three defects came out of it, each closed at one site
-  (`report-parked-operator-visibility`, `count-a-runner-self-report-once`,
+  (`report-parked-relay-visibility`, `count-a-runner-self-report-once`,
   KI-192). This scenario is the end-to-end half of the guard: a real runner on
   a real transport, its heartbeat mirrored into real slots, and the declared
   metrics scraped out of a real `/metrics` body.
@@ -29,11 +29,11 @@ defmodule FlezhaTest.System.LivenessSlotExportE2ETest do
   alias Flezha.Observability.Export.{PrometheusHttp, PrometheusRegistry, PrometheusSink}
   alias Flezha.Observability.OtpBackend.TransportSource
   alias Flezha.Observability.TestSinks
-  alias Flezha.Operator.Builder
+  alias Flezha.Relay.Builder
   alias Flezha.Runner.FleetManager
-  alias Flezha.Service.OperatorManager
+  alias Flezha.Service.RelayManager
   alias Flezha.Transport.LivenessCounters
-  alias FlezhaTest.Fixtures.OperatorFixture
+  alias FlezhaTest.Fixtures.RelayFixture
 
   @factory "wedge_probe"
   @heartbeat_ms 200
@@ -55,9 +55,9 @@ defmodule FlezhaTest.System.LivenessSlotExportE2ETest do
     hb_inflight_oldest_ms: :here,
     forwarded: :here,
     # Driven by the scenario that owns the mechanism.
-    nil_drops: "test/flezha/operator/ingest_test.exs",
-    filtered_nil: "test/flezha/operator/ingest_test.exs",
-    parked_drops: "test/flezha/operator/ingest_test.exs",
+    nil_drops: "test/flezha/relay/ingest_test.exs",
+    filtered_nil: "test/flezha/relay/ingest_test.exs",
+    parked_drops: "test/flezha/relay/ingest_test.exs",
     hb_credit_parked: "test/system/credit_flow_e2e_test.exs",
     credit_active: "test/system/credit_flow_e2e_test.exs",
     credit_ledger_level: "test/system/credit_flow_e2e_test.exs",
@@ -85,7 +85,7 @@ defmodule FlezhaTest.System.LivenessSlotExportE2ETest do
 
     on_exit(fn ->
       try do
-        OperatorManager.stop_all_operators(namespace)
+        RelayManager.stop_all_relays(namespace)
       catch
         _, _ -> :ok
       end
@@ -105,7 +105,7 @@ defmodule FlezhaTest.System.LivenessSlotExportE2ETest do
   test "every declared slot names the action that moves it" do
     slots =
       Enum.map(
-        LivenessCounters.channel_rows() ++ LivenessCounters.operator_rows(),
+        LivenessCounters.channel_rows() ++ LivenessCounters.relay_rows(),
         &Keyword.fetch!(&1, :name)
       )
 
@@ -142,7 +142,7 @@ defmodule FlezhaTest.System.LivenessSlotExportE2ETest do
     start_supervised!(PrometheusHttp)
     {:ok, port} = PrometheusHttp.listen_port()
 
-    operator_id = "liveness_#{System.unique_integer([:positive])}"
+    relay_id = "liveness_#{System.unique_integer([:positive])}"
 
     {_port, runner_id} =
       boot_runner(namespace, unique_id_path("liveness_e2e"),
@@ -150,10 +150,10 @@ defmodule FlezhaTest.System.LivenessSlotExportE2ETest do
       )
 
     assert {:ok, %{runner_id: ^runner_id}} =
-             OperatorManager.start_operator(namespace, builder(namespace, operator_id, self()))
+             RelayManager.start_relay(namespace, builder(namespace, relay_id, self()))
 
-    assert produces?(operator_id, namespace, "one", "ok:one", 60_000),
-           "the operator never produced, so nothing counted"
+    assert produces?(relay_id, namespace, "one", "ok:one", 60_000),
+           "the relay never produced, so nothing counted"
 
     # The slots hold the zero a runner starts at until its first heartbeat
     # lands, so wait for a real self-report rather than for a number of
@@ -270,21 +270,21 @@ defmodule FlezhaTest.System.LivenessSlotExportE2ETest do
     end
   end
 
-  defp builder(namespace, operator_id, recv_pid) do
+  defp builder(namespace, relay_id, recv_pid) do
     sink = %Flezha.Plugin{
       id: "liveness_sink",
       namespace: nil,
-      operator_id: operator_id,
+      relay_id: relay_id,
       provider: Flezha.Plugin.Provider.BeamMsgForward,
       opts: %{recv_pid: recv_pid, include_metadata: true},
       hooks: [{:on_output, []}]
     }
 
     %Builder{
-      id: operator_id,
+      id: relay_id,
       factory_id: @factory,
       init_values: %{},
-      opts: [bindings: OperatorFixture.bindings(namespace, operator_id, [sink])]
+      opts: [bindings: RelayFixture.bindings(namespace, relay_id, [sink])]
     }
   end
 end

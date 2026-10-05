@@ -1,6 +1,6 @@
 defmodule FlezhaTest.Plugin.Provider.HttpPushWorkerTest do
   @moduledoc """
-  `operator_http_push` against a local HTTP server, through its worker
+  `relay_http_push` against a local HTTP server, through its worker
   (`Flezha.Plugin.Provider.HttpSend`): one request per payload in order on one
   connection, the identity headers, a guaranteed output confirmed on a 2xx and
   parked when it is refused or its retries run out, a plain one dropped and

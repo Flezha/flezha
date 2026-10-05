@@ -130,7 +130,7 @@ defmodule FlezhaTest.Plugin.Provider.WebsocketChannelTest do
     setup :stub_sink
 
     defp ctx(metadata) do
-      %Ctx.IO{operator_id: "op", namespace: :default, message: "out", metadata: metadata}
+      %Ctx.IO{relay_id: "op", namespace: :default, message: "out", metadata: metadata}
     end
 
     test "one `channel` names the entry channel and the output filter",

@@ -1,8 +1,8 @@
 defmodule FlezhaTest.Plugin.SharedTest do
   @moduledoc """
-  A shareable plugin bound to several operators on one controller runs once:
-  one upstream connection, every record to every operator, a slow operator
-  falling behind alone and losing nothing, a stop when its last operator leaves, and a live option
+  A shareable plugin bound to several relays on one controller runs once:
+  one upstream connection, every record to every relay, a slow relay
+  falling behind alone and losing nothing, a stop when its last relay leaves, and a live option
   changed on the open connection.
   """
 
@@ -11,8 +11,8 @@ defmodule FlezhaTest.Plugin.SharedTest do
   import ExUnit.CaptureLog
 
   alias Flezha.Cluster.Directory
-  alias Flezha.Operator.Builder
-  alias Flezha.Operator.PartitionGroup
+  alias Flezha.Relay.Builder
+  alias Flezha.Relay.PartitionGroup
   alias Flezha.Plugin
   alias Flezha.Plugin.Host
   alias Flezha.Plugin.Provider.BeamMsgForward
@@ -23,17 +23,17 @@ defmodule FlezhaTest.Plugin.SharedTest do
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.HubManager
-  alias Flezha.Service.OperatorManager
+  alias Flezha.Service.RelayManager
   alias Flezha.Service.PluginManager
   alias Flezha.State.TestHelpers
-  alias FlezhaTest.Fixtures.OperatorFixture
+  alias FlezhaTest.Fixtures.RelayFixture
   alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.Helper.WebsocketServer
 
   @namespace "shared_plugin_ns"
   @factory "store_input"
 
-  # One runner for the module; each test's operators and plugins go with it.
+  # One runner for the module; each test's relays and plugins go with it.
   setup_all do
     TestHelpers.reset_all_cells()
     runner_id = NodeTestHelper.start_runner(@namespace)
@@ -46,22 +46,22 @@ defmodule FlezhaTest.Plugin.SharedTest do
     :ok
   end
 
-  # The server is started first so the test's operators and plugins are gone
+  # The server is started first so the test's relays and plugins are gone
   # before it closes.
   setup do
     server = WebsocketServer.start()
 
     on_exit(fn ->
-      OperatorManager.stop_all_operators(@namespace)
+      RelayManager.stop_all_relays(@namespace)
       Enum.each(["trades", "poll", "solo"], &PluginManager.disable_plugin(@namespace, &1))
     end)
 
     %{server: server}
   end
 
-  # An operator whose every ingested record reaches the test as `{id, record}`.
-  defp operator(id) do
-    {:ok, _} = id |> OperatorFixture.get(@factory) |> OperatorFixture.start(@namespace)
+  # A relay whose every ingested record reaches the test as `{id, record}`.
+  defp relay(id) do
+    {:ok, _} = id |> RelayFixture.get(@factory) |> RelayFixture.start(@namespace)
     test = self()
 
     collector = spawn_link(fn -> collect(test, id) end)
@@ -71,7 +71,7 @@ defmodule FlezhaTest.Plugin.SharedTest do
         id: "in_#{id}",
         provider: BeamMsgForward,
         namespace: @namespace,
-        operator_id: id,
+        relay_id: id,
         opts: %{recv_pid: collector},
         hooks: [{:on_input, []}]
       })
@@ -108,15 +108,15 @@ defmodule FlezhaTest.Plugin.SharedTest do
 
   defp copies, do: Directory.plugin_hosts(@namespace, "trades")
 
-  defp table(operator_id) do
-    {:ok, %{extensions: table}} = OperatorManager.get_overwatch_state(@namespace, operator_id)
+  defp table(relay_id) do
+    {:ok, %{extensions: table}} = RelayManager.get_overwatch_state(@namespace, relay_id)
     table
   end
 
-  test "two operators on one controller share one connection and each ingests a frame once",
+  test "two relays on one controller share one connection and each ingests a frame once",
        %{server: server} do
-    a = operator("share_a")
-    b = operator("share_b")
+    a = relay("share_a")
+    b = relay("share_b")
     trades(server)
 
     :ok = PluginManager.bind_plugin(@namespace, "trades", a)
@@ -132,18 +132,18 @@ defmodule FlezhaTest.Plugin.SharedTest do
     assert [_one] = copies()
   end
 
-  test "the copy stops at once when its last operator is stopped", %{server: server} do
-    a = operator("stop_a")
-    b = operator("stop_b")
+  test "the copy stops at once when its last relay is stopped", %{server: server} do
+    a = relay("stop_a")
+    b = relay("stop_b")
     trades(server)
     :ok = PluginManager.bind_plugin(@namespace, "trades", a)
     :ok = PluginManager.bind_plugin(@namespace, "trades", b)
     assert_receive {:ws_open, socket}, 5_000
 
-    :ok = OperatorManager.stop_operator(@namespace, a)
+    :ok = RelayManager.stop_relay(@namespace, a)
     refute_receive {:ws_closed, ^socket}, 300
 
-    :ok = OperatorManager.stop_operator(@namespace, b)
+    :ok = RelayManager.stop_relay(@namespace, b)
     assert_receive {:ws_closed, ^socket}, 2_000
     assert copies() == []
 
@@ -154,7 +154,7 @@ defmodule FlezhaTest.Plugin.SharedTest do
   test "a killed Overwatch back inside the idle stop keeps the one connection",
        %{server: server} do
     Application.put_env(:flezha, :plugin_idle_stop_ms, 5_000)
-    a = operator("kill_a")
+    a = relay("kill_a")
     trades(server)
     :ok = PluginManager.bind_plugin(@namespace, "trades", a)
     assert_receive {:ws_open, socket}, 5_000
@@ -182,8 +182,8 @@ defmodule FlezhaTest.Plugin.SharedTest do
     assert WebsocketServer.connections(server) == 1
   end
 
-  test "an idle plugin starts again for an operator bound to it", %{server: server} do
-    a = operator("idle_a")
+  test "an idle plugin starts again for a relay bound to it", %{server: server} do
+    a = relay("idle_a")
     trades(server)
     :ok = PluginManager.bind_plugin(@namespace, "trades", a)
     assert_receive {:ws_open, _}, 5_000
@@ -191,15 +191,15 @@ defmodule FlezhaTest.Plugin.SharedTest do
     assert_receive {:ws_closed, _}, 2_000
     assert copies() == []
 
-    b = operator("idle_b")
+    b = relay("idle_b")
     :ok = PluginManager.bind_plugin(@namespace, "trades", b)
     assert_receive {:ws_open, _}, 5_000
     assert [_one] = copies()
   end
 
-  test "a stalled operator falls behind alone and loses nothing", %{server: server} do
-    a = operator("lag_a")
-    b = operator("lag_b")
+  test "a stalled relay falls behind alone and loses nothing", %{server: server} do
+    a = relay("lag_a")
+    b = relay("lag_b")
     trades(server)
     :ok = PluginManager.bind_plugin(@namespace, "trades", a)
     :ok = PluginManager.bind_plugin(@namespace, "trades", b)
@@ -220,8 +220,8 @@ defmodule FlezhaTest.Plugin.SharedTest do
   end
 
   test "a live option changes the subscription on the same connection", %{server: server} do
-    a = operator("live_a")
-    b = operator("live_b")
+    a = relay("live_a")
+    b = relay("live_b")
 
     trades(server, %{
       subscription_items: ["a", "b"],
@@ -247,22 +247,22 @@ defmodule FlezhaTest.Plugin.SharedTest do
     assert_receive {:ingested, ^b, "after-update"}, 5_000
   end
 
-  test "any other option restarts the copy and names the bound operators", %{server: server} do
+  test "any other option restarts the copy and names the bound relays", %{server: server} do
     other = WebsocketServer.start()
     on_exit(fn -> PluginManager.disable_plugin(@namespace, "trades") end)
-    a = operator("restart_a")
-    b = operator("restart_b")
+    a = relay("restart_a")
+    b = relay("restart_b")
     trades(server)
     :ok = PluginManager.bind_plugin(@namespace, "trades", a)
     :ok = PluginManager.bind_plugin(@namespace, "trades", b)
     assert_receive {:ws_open, old}, 5_000
 
-    assert {:ok, %{applied: :restarted, operators: operators}} =
+    assert {:ok, %{applied: :restarted, relays: relays}} =
              PluginManager.update_plugin(@namespace, "trades", %{
                uri: "ws://127.0.0.1:#{other.port}/feed"
              })
 
-    assert Enum.sort(operators) == Enum.sort([a, b])
+    assert Enum.sort(relays) == Enum.sort([a, b])
     assert_receive {:ws_closed, ^old}, 5_000
     assert_receive {:ws_open, _new}, 5_000
     assert WebsocketServer.connections(other) == 1
@@ -270,8 +270,8 @@ defmodule FlezhaTest.Plugin.SharedTest do
 
   test "disable stops every copy, the bindings stay and come up when it is enabled again",
        %{server: server} do
-    a = operator("off_a")
-    b = operator("off_b")
+    a = relay("off_a")
+    b = relay("off_b")
     trades(server)
     :ok = PluginManager.bind_plugin(@namespace, "trades", a)
     :ok = PluginManager.bind_plugin(@namespace, "trades", b)
@@ -284,7 +284,7 @@ defmodule FlezhaTest.Plugin.SharedTest do
 
     for op <- [a, b] do
       assert Table.phase(table(op), "trades") == {:not_started, {:plugin_not_found, "trades"}}
-      assert {:ok, [_ | _]} = HubManager.operator_bindings(@namespace, op)
+      assert {:ok, [_ | _]} = HubManager.relay_bindings(@namespace, op)
     end
 
     trades(server)
@@ -296,9 +296,9 @@ defmodule FlezhaTest.Plugin.SharedTest do
     assert_receive {:ingested, ^b, "back"}, 5_000
   end
 
-  test "an http_poll plugin bound to two operators runs one poller" do
-    a = operator("poll_a")
-    b = operator("poll_b")
+  test "an http_poll plugin bound to two relays runs one poller" do
+    a = relay("poll_a")
+    b = relay("poll_b")
 
     {:ok, _} =
       PluginManager.enable_plugin("poll", %Plugin{
@@ -317,9 +317,9 @@ defmodule FlezhaTest.Plugin.SharedTest do
     assert [_one] = Directory.plugin_hosts(@namespace, "poll")
   end
 
-  test "an operator bound with an output hook finds the outbound half on the shared connection",
+  test "a relay bound with an output hook finds the outbound half on the shared connection",
        %{server: server} do
-    a = operator("send_a")
+    a = relay("send_a")
     trades(server)
     :ok = PluginManager.bind_plugin(@namespace, "trades", a, hooks: [{:on_output, []}])
     assert_receive {:ws_open, _}, 5_000
@@ -332,7 +332,7 @@ defmodule FlezhaTest.Plugin.SharedTest do
        %{server: server} do
     other = WebsocketServer.start()
     on_exit(fn -> PluginManager.disable_plugin(@namespace, "solo") end)
-    a = operator("solo_a")
+    a = relay("solo_a")
     trades(server, %{}, "solo", true)
     assert_receive {:ws_open, first}, 5_000
     :ok = PluginManager.bind_plugin(@namespace, "solo", a)
@@ -419,18 +419,18 @@ defmodule FlezhaTest.Plugin.SharedTest do
 
   test "a join that reaches a copy as it stops idle is served by a new copy",
        %{server: server} do
-    a = operator("late_a")
-    b = operator("late_b")
+    a = relay("late_a")
+    b = relay("late_b")
     trades(server)
     :ok = PluginManager.bind_plugin(@namespace, "trades", a)
     assert_receive {:ws_open, _}, 5_000
     [copy] = copies()
     {:ok, ow_a} = HubManager.get_pid(@namespace, a)
-    # Its socket has read its operators from the copy, which it does on connect.
+    # Its socket has read its relays from the copy, which it does on connect.
     _ = :sys.get_state(WorkerSup.worker_pid(Websocket, "trades"))
 
-    # The copy takes, in this order: its last operator leaving, its idle stop,
-    # and a new operator's join.
+    # The copy takes, in this order: its last relay leaving, its idle stop,
+    # and a new relay's join.
     :sys.suspend(copy)
     Shared.leave(copy, ow_a, :idle)
     send(copy, :idle_stop)
@@ -451,16 +451,16 @@ defmodule FlezhaTest.Plugin.SharedTest do
 
   # Under `ranges(2)`, SOL-USD hashes to key group 60 (p0), BTC-USD to 129 and
   # ETH-USD to 213 (both p1).
-  test "a partitioned operator runs a copy per member beside the shared copy",
+  test "a partitioned relay runs a copy per member beside the shared copy",
        %{server: server} do
-    a = operator("member_a")
+    a = relay("member_a")
     group = "member_grp"
-    on_exit(fn -> OperatorManager.stop_operator(@namespace, group) end)
+    on_exit(fn -> RelayManager.stop_relay(@namespace, group) end)
 
     {:ok, _} =
       PartitionGroup.start(
         @namespace,
-        %Builder{id: group, factory_id: "partition_relay", init_values: %{}, opts: []},
+        %Builder{id: group, factory_id: "partition_pass", init_values: %{}, opts: []},
         2
       )
 
@@ -505,7 +505,7 @@ defmodule FlezhaTest.Plugin.SharedTest do
   end
 
   test "an update that changes no option restarts nothing", %{server: server} do
-    a = operator("same_a")
+    a = relay("same_a")
     trades(server)
     :ok = PluginManager.bind_plugin(@namespace, "trades", a)
     assert_receive {:ws_open, socket}, 5_000

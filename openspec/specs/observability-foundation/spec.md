@@ -9,7 +9,7 @@ The observability-foundation capability provides the Flezha Controller's first-c
 The observability subsystem SHALL define exactly one signal envelope structure used by all producers and all consumers. The structure SHALL include the fields `kind`, `source`, `name`, `measurements`, `metadata`, and `ts`. The field `kind` SHALL be one of the atoms `:metric`, `:event`, `:log`, or `:trace_span`. The structure SHALL be exposed as a module struct under the foundation namespace and SHALL be the only on-bus signal shape.
 
 #### Scenario: Constructing a metric signal
-- **WHEN** a producer constructs a signal with `kind: :metric`, `source: :flezha_state`, `name: :wal_backpressure`, `measurements: %{count: 1, bytes: 16_384}`, `metadata: %{operator: "orders", tasklet: 3}`
+- **WHEN** a producer constructs a signal with `kind: :metric`, `source: :flezha_state`, `name: :wal_backpressure`, `measurements: %{count: 1, bytes: 16_384}`, `metadata: %{relay: "orders", tasklet: 3}`
 - **THEN** the resulting struct SHALL be accepted by the bus without error and SHALL carry a monotonic-time `ts` field set automatically when not supplied
 
 #### Scenario: Rejecting an unknown signal kind
@@ -166,31 +166,31 @@ The foundation SHALL install a `:logger` handler at supervisor start that conver
 
 ### Requirement: Telemetry bridge lifts existing `:telemetry` events onto the bus
 
-The foundation SHALL attach a single dispatching `:telemetry` handler at supervisor start that maps each known `[:flezha, ...]` event onto an observability signal. The mapping SHALL have three halves: a hand-kept lifecycle half defined inside the bridge module, which SHALL include at minimum the events `[:flezha, :state, :wal, :backpressure]`, `[:flezha, :state, :fsync, :tick]`, `[:flezha, :boot, :recovery_complete]`, `[:flezha, :shutdown, :requested]`, `[:flezha, :plugin_package, :loaded]`, `[:flezha, :plugin_package, :refused]`, `[:flezha, :plugin, :websocket, :idle_reconnect]`, `[:flezha, :plugin, :websocket, :resubscribe]`, `[:flezha, :state, :seq_gap]`, `[:flezha, :state, :output_stall]`, `[:flezha, :state, :compaction_timeout]`, `[:flezha, :state, :wal_realign]`, `[:flezha, :reconcile, :action]`, `[:flezha, :reconcile, :health]`, `[:flezha, :leadership, :transition]`, and `[:flezha, :stream, :drop]`; and a half DERIVED from the convergence loop's detector table, mapping every event a detector entry declares (including `[:flezha, :health, :verdict]`, executed on every verdict-state transition with metadata `kind`, `id`, `state` and `reason`) so a detector's event is bridged by its declaration and never by a bridge edit; and a third half DERIVED at bridge start from the providers installed packages add to the provider table: for every such provider, `[:flezha, :plugin, <provider name>, verb]` for each of the declared verbs (`shipped`, `retried` and `overflowed` as metrics, `failed` as an event) and for each verb the provider declares as its own, sourced `flezha_<provider name>` and named by the verb, where the provider name is the one its declaration answers and its events are written under. A first-party provider's events SHALL be hand-kept lines, so a core with no package derives nothing and registers no source for it. The third half SHALL cost an event no more than the other two: it is built once at bridge start, each of its events is handled with its own line, the bridge's handler of the other halves carries nothing more per event than before, and it is not part of the merged mapping the tree walk below judges. A hand-kept line SHALL win over a derived one of either kind. The two package events SHALL map to the source `:flezha_plugin_packages` with the names `:loaded` and `:refused`. An operator's deliberate start, its stop or completion, and its runner's report that it exited, `[:flezha, :operator, :started]`, `[:flezha, :operator, :stopped]` and `[:flezha, :operator, :exited]`, SHALL map to the source `:flezha_operator` with the names `:operator_started`, `:operator_stopped` and `:operator_exited`, and each SHALL reach every sink that accepts it, the controller hooks' sink among them, from its one `:telemetry.execute`. Existing call-sites SHALL NOT be modified.
+The foundation SHALL attach a single dispatching `:telemetry` handler at supervisor start that maps each known `[:flezha, ...]` event onto an observability signal. The mapping SHALL have three halves: a hand-kept lifecycle half defined inside the bridge module, which SHALL include at minimum the events `[:flezha, :state, :wal, :backpressure]`, `[:flezha, :state, :fsync, :tick]`, `[:flezha, :boot, :recovery_complete]`, `[:flezha, :shutdown, :requested]`, `[:flezha, :plugin_package, :loaded]`, `[:flezha, :plugin_package, :refused]`, `[:flezha, :plugin, :websocket, :idle_reconnect]`, `[:flezha, :plugin, :websocket, :resubscribe]`, `[:flezha, :state, :seq_gap]`, `[:flezha, :state, :output_stall]`, `[:flezha, :state, :compaction_timeout]`, `[:flezha, :state, :wal_realign]`, `[:flezha, :reconcile, :action]`, `[:flezha, :reconcile, :health]`, `[:flezha, :leadership, :transition]`, and `[:flezha, :stream, :drop]`; and a half DERIVED from the convergence loop's detector table, mapping every event a detector entry declares (including `[:flezha, :health, :verdict]`, executed on every verdict-state transition with metadata `kind`, `id`, `state` and `reason`) so a detector's event is bridged by its declaration and never by a bridge edit; and a third half DERIVED at bridge start from the providers installed packages add to the provider table: for every such provider, `[:flezha, :plugin, <provider name>, verb]` for each of the declared verbs (`shipped`, `retried` and `overflowed` as metrics, `failed` as an event) and for each verb the provider declares as its own, sourced `flezha_<provider name>` and named by the verb, where the provider name is the one its declaration answers and its events are written under. A first-party provider's events SHALL be hand-kept lines, so a core with no package derives nothing and registers no source for it. The third half SHALL cost an event no more than the other two: it is built once at bridge start, each of its events is handled with its own line, the bridge's handler of the other halves carries nothing more per event than before, and it is not part of the merged mapping the tree walk below judges. A hand-kept line SHALL win over a derived one of either kind. The two package events SHALL map to the source `:flezha_plugin_packages` with the names `:loaded` and `:refused`. A relay's deliberate start, its stop or completion, and its runner's report that it exited, `[:flezha, :relay, :started]`, `[:flezha, :relay, :stopped]` and `[:flezha, :relay, :exited]`, SHALL map to the source `:flezha_relay` with the names `:relay_started`, `:relay_stopped` and `:relay_exited`, and each SHALL reach every sink that accepts it, the controller hooks' sink among them, from its one `:telemetry.execute`. Existing call-sites SHALL NOT be modified.
 
-Every `[:flezha, ...]` event NAME written anywhere in the controller SHALL be a key of the merged mapping or a member of an explicit unexported list inside the bridge module. The judged unit SHALL be the name wherever it is written, not only the `:telemetry.execute` call, because an event name may be assembled into a term in one module and executed in another, or assembled from a provider's own identifier. Each unexported entry SHALL name a reason that is a PROPERTY of the event rather than the change that owes it a sink: a reason naming a change expires when that change lands, and the list then passes while stating nothing. The unexported list is a ratchet: its length SHALL be pinned by the suite so it never grows, and an event name that is neither mapped nor unexported SHALL fail the suite naming where it is written and the event. A `:telemetry.execute` whose event argument the walk cannot resolve SHALL be a named entry in a pinned relay list, so a name the walk cannot read is refused rather than silently omitted.
+Every `[:flezha, ...]` event NAME written anywhere in the controller SHALL be a key of the merged mapping or a member of an explicit unexported list inside the bridge module. The judged unit SHALL be the name wherever it is written, not only the `:telemetry.execute` call, because an event name may be assembled into a term in one module and executed in another, or assembled from a provider's own identifier. Each unexported entry SHALL name a reason that is a PROPERTY of the event rather than the change that owes it a sink: a reason naming a change expires when that change lands, and the list then passes while stating nothing. The unexported list is a ratchet: its length SHALL be pinned by the suite so it never grows, and an event name that is neither mapped nor unexported SHALL fail the suite naming where it is written and the event. A `:telemetry.execute` whose event argument the walk cannot resolve SHALL be a named entry in a pinned forward list, so a name the walk cannot read is refused rather than silently omitted.
 
 The mapping SHALL also name, in the other direction, every mapped event nothing in the controller writes any more, each with the reason its line stays, and the suite SHALL assert that set exactly so a dead key can neither appear nor be resurrected unnoticed.
 
 #### Scenario: Bridged event becomes a signal
-- **WHEN** code calls `:telemetry.execute([:flezha, :state, :wal, :backpressure], %{bytes: 1024}, %{operator: "r1"})`
-- **THEN** a signal with `kind: :event`, `source: :flezha_state`, `name: :wal_backpressure`, `measurements.bytes: 1024`, `metadata.operator: "r1"` SHALL appear on the bus
+- **WHEN** code calls `:telemetry.execute([:flezha, :state, :wal, :backpressure], %{bytes: 1024}, %{relay: "r1"})`
+- **THEN** a signal with `kind: :event`, `source: :flezha_state`, `name: :wal_backpressure`, `measurements.bytes: 1024`, `metadata.relay: "r1"` SHALL appear on the bus
 
 #### Scenario: A package the boot refused is bridged
 - **WHEN** the controller executes `[:flezha, :plugin_package, :refused]` with metadata `id: "acme"` and `code: "plugin.library_conflict"`
 - **THEN** a signal with `kind: :event`, `source: :flezha_plugin_packages`, `name: :refused` carrying that metadata SHALL appear on the bus
 
-#### Scenario: An operator's start and stop reach every sink
-- **GIVEN** a controller plugin taking `on_operator_started` and `on_operator_stopped`
-- **WHEN** an operator is started and then stopped
-- **THEN** signals with `source: :flezha_operator` and the names `:operator_started` and `:operator_stopped` SHALL appear in the ring buffer, and the plugin SHALL receive each hook event exactly once
+#### Scenario: A relay's start and stop reach every sink
+- **GIVEN** a controller plugin taking `on_relay_started` and `on_relay_stopped`
+- **WHEN** a relay is started and then stopped
+- **THEN** signals with `source: :flezha_relay` and the names `:relay_started` and `:relay_stopped` SHALL appear in the ring buffer, and the plugin SHALL receive each hook event exactly once
 
 #### Scenario: Websocket re-subscribe event is bridged
 - **WHEN** code calls `:telemetry.execute([:flezha, :plugin, :websocket, :resubscribe], %{data_silence_ms: 120_000}, %{plugin_id: "wss://feed.example.com"})`
 - **THEN** a signal sourced from the websocket provider carrying `measurements.data_silence_ms: 120_000` and `metadata.plugin_id: "wss://feed.example.com"` SHALL appear on the bus
 
 #### Scenario: Persistence stall/gap events are bridged
-- **WHEN** code calls `:telemetry.execute([:flezha, :state, :output_stall], %{stalled_ms: 60_000, last_seq: 100}, %{operator: "btc_feed", tasklet: "ohlc", key: "1m"})`
+- **WHEN** code calls `:telemetry.execute([:flezha, :state, :output_stall], %{stalled_ms: 60_000, last_seq: 100}, %{relay: "btc_feed", tasklet: "ohlc", key: "1m"})`
 - **THEN** a signal sourced from the state subsystem carrying the stalled duration, last seq, and Cell metadata SHALL appear on the bus
 - **AND** the same bridging SHALL hold for `[:flezha, :state, :seq_gap]` and `[:flezha, :state, :compaction_timeout]`
 
@@ -203,8 +203,8 @@ The mapping SHALL also name, in the other direction, every mapped event nothing 
 - **THEN** a signal for it SHALL appear on the bus, mapped from the detector table's declaration, and the bridge module's hand-kept half SHALL hold no line for it
 
 #### Scenario: A verdict transition is bridged
-- **WHEN** an operator's verdict record changes state from `healthy` to `parked`
-- **THEN** a signal named `verdict` sourced from the health seam SHALL appear on the bus with metadata `kind: :operator`, the operator id, `state: :parked` and the park reason, and no signal SHALL appear while the state holds
+- **WHEN** a relay's verdict record changes state from `healthy` to `parked`
+- **THEN** a signal named `verdict` sourced from the health seam SHALL appear on the bus with metadata `kind: :relay`, the relay id, `state: :parked` and the park reason, and no signal SHALL appear while the state holds
 
 #### Scenario: An event nobody bridges fails the suite
 - **WHEN** a `:telemetry.execute` of a `[:flezha, ...]` event is added to the controller and the event is neither a key of the merged mapping nor a member of the unexported list
@@ -316,7 +316,7 @@ The producer-side emit function SHALL be allocation-light: it SHALL accept `meas
 - **THEN** the emit SHALL not enqueue any sink mailbox message and SHALL not insert into any ETS table
 
 #### Scenario: Emit accepts map measurements without conversion
-- **WHEN** a producer emits with `measurements: %{count: 1}` and `metadata: %{operator: "r"}`
+- **WHEN** a producer emits with `measurements: %{count: 1}` and `metadata: %{relay: "r"}`
 - **THEN** the signal SHALL be delivered without the producer being required to convert the maps to lists or keyword lists
 
 ### Requirement: A name that cannot be rendered in the exposition SHALL be refused where it is declared

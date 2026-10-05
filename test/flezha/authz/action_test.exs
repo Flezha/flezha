@@ -12,8 +12,8 @@ defmodule Flezha.AuthZ.ActionTest do
 
   test "known?/1 accepts documented actions" do
     for action <- [
-          :"operator.start",
-          :"operator.listen",
+          :"relay.start",
+          :"relay.listen",
           :"plugin.enable",
           :"audit.read",
           :"runner.connect"

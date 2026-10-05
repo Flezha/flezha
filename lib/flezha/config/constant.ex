@@ -8,7 +8,7 @@ defmodule Flezha.Constant do
   defmacro __using__(_) do
     quote do
       @default_namespace "default"
-      @operator_id_max_bytes 32
+      @relay_id_max_bytes 32
 
       # What a data-socket name can hold in its runner-id field. The transport
       # shortens anything longer into a name the minting side never chose, so

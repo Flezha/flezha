@@ -1,7 +1,7 @@
 # Start the controller
 
 On this page you start one controller and leave it running for the rest of the
-tutorial. The controller places operators on runners, keeps their state durable
+tutorial. The controller places relays on runners, keeps their state durable
 and answers `flz`; [Deploying a controller](../../topics/deploying/deploying_a_controller.md)
 covers it in full, including Kubernetes and running it inside an Elixir
 application.

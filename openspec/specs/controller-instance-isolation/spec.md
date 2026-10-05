@@ -79,7 +79,7 @@ SHALL refuse to start, naming the resolved state root and the holder.
 
 The documentation SHALL state that co-locating or adding controllers provides capacity and
 isolation and SHALL NOT be relied on to survive the loss of a controller with its disk: the hub's
-redundancy strategy runs each operator on exactly one node with no replicas, and cross-controller
+redundancy strategy runs each relay on exactly one node with no replicas, and cross-controller
 state transfer requires the source controller to be alive to serve it. It SHALL name the remote
 durability tier as the mechanism that does survive that loss.
 

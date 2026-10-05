@@ -1,17 +1,17 @@
 # Partitioning
 
-An operator started the usual way is one instance: all of its keys and all of their cells run
+A relay started the usual way is one instance: all of its keys and all of their cells run
 on one runner, and that runner's machine is the limit. When input arrives faster than one
-machine can handle it, starting more runners does not help, because the operator can only be
+machine can handle it, starting more runners does not help, because the relay can only be
 in one place.
 
-Partitioning splits the operator into several instances, called partitions or members. Each
+Partitioning splits the relay into several instances, called partitions or members. Each
 one runs the same code but owns only some of the keys, so every key belongs to exactly one
 partition, and its input and its state stay there. The partitions are placed like any other
-operator, so with more runners they spread out and each one does part of the work. You still
-handle the group as one operator: you start, list, read, scale and stop it by its one name.
+relay, so with more runners they spread out and each one does part of the work. You still
+handle the group as one relay: you start, list, read, scale and stop it by its one name.
 
-A flow operator and a `per_input` steps operator can be partitioned. The operator must be
+A flow relay and a `per_input` steps relay can be partitioned. The relay must be
 keyed: its entry edge needs a `key_by`.
 
 ## Partitions and cells
@@ -21,8 +21,8 @@ A cell is one copy of a tasklet with its own state, one per key (see
 
 | | A cell | A partition |
 |---|---|---|
-| What it is | one copy of a tasklet with its own state, one per key | one copy of the whole operator, owning part of the keys |
-| Made by | `key_by` in the operator's code | `--partitions` when the operator is started |
+| What it is | one copy of a tasklet with its own state, one per key | one copy of the whole relay, owning part of the keys |
+| Made by | `key_by` in the relay's code | `--partitions` when the relay is started |
 | Spreads work | inside one runner: cells run side by side on its cores | across runners and controllers: each partition can run on a different machine |
 | In the tradedesk example | one per currency pair: EUR/USD's window, USD/JPY's window | `trade_watcher#p0` and `trade_watcher#p1`, each with the cells of its own pairs |
 
@@ -77,12 +77,12 @@ be left with nothing to do.
 
 Once a partition exists, the controller places it in two steps:
 
-1. **A controller.** Among the controllers whose runners registered the operator's factory,
+1. **A controller.** Among the controllers whose runners registered the relay's factory,
    one is picked by hashing the partition's name. A controller with no such runner is never
    picked.
 2. **A runner on that controller.** Among its runners that registered the factory, one is
    picked by hashing again, with a cap so that no runner takes more than its fair share of the
-   operators already bound.
+   relays already bound.
 
 Both steps are hashes, so the answer is the same every time it is worked out. With one runner,
 all partitions share it; with as many runners as partitions, each partition usually gets one
@@ -97,43 +97,43 @@ flowchart LR
     P1 --> R
 ```
 
-## Start a partitioned operator
+## Start a partitioned relay
 
-`--partitions N` on `flz operator start` starts N members as one group. Each member is an
+`--partitions N` on `flz relay start` starts N members as one group. Each member is an
 ordinary instance named `<id>#p<K>`:
 
 ```sh
-$ flz operator start trade_watcher --id trade_watcher --partitions 2 --namespace trading
+$ flz relay start trade_watcher --id trade_watcher --partitions 2 --namespace trading
 ```
 
 ```output
-Operator trade_watcher started with 2 partitions:
+Relay trade_watcher started with 2 partitions:
   trade_watcher#p0
   trade_watcher#p1
 ```
 
 - `--partitions 1`, the default, is an unpartitioned start. N must be between 2 and 256,
-  otherwise the start is refused as `operator.partitions_out_of_range`.
+  otherwise the start is refused as `relay.partitions_out_of_range`.
 - A partitioned start carries no first message: `--text` names one instance, and a group's
   message reaches its member by key, so `--partitions` with `--text` is refused
-  (`operator.partitioned_first_message`) before any member starts.
-- The group id must leave room for the `#pK` suffix inside the operator-id byte limit
-  (`operator.group_id_too_long`).
-- N partitions take N units of the namespace's `max_operators` quota.
-- An operator with no keyed entry-fed tasklet (neither `key_by` nor declared cell keys) is
+  (`relay.partitioned_first_message`) before any member starts.
+- The group id must leave room for the `#pK` suffix inside the relay-id byte limit
+  (`relay.group_id_too_long`).
+- N partitions take N units of the namespace's `max_relays` quota.
+- A relay with no keyed entry-fed tasklet (neither `key_by` nor declared cell keys) is
   refused as `topology.partitions_without_keyed_tasklet`: each partition would fold a slice of
-  the input into its own copy of the same state. A **statically** keyed operator partitions
+  the input into its own copy of the same state. A **statically** keyed relay partitions
   normally: every member declares every key, and the ones outside its range receive no input.
-- A steps operator that reads one message (`each: once` or `chained`) is refused as
-  `topology.partitions_without_per_input_loop`. Only a `per_input` steps operator is a group.
+- A steps relay that reads one message (`each: once` or `chained`) is refused as
+  `topology.partitions_without_per_input_loop`. Only a `per_input` steps relay is a group.
 
 After a refused start, the controller remembers the factory's verdict, so a later partitioned
 start of the same factory is refused before any runner is touched.
 
-`flz operator info` shows each member's key groups, the runner it is on and its health:
+`flz relay info` shows each member's key groups, the runner it is on and its health:
 
 ```sh
-$ flz operator info trade_watcher --namespace trading
+$ flz relay info trade_watcher --namespace trading
 ```
 
 ```output
@@ -144,11 +144,11 @@ Partition group: trade_watcher (2/2)
 ...
 ```
 
-`flz operator list` shows one row per group, with the **worst** member's health and where each
+`flz relay list` shows one row per group, with the **worst** member's health and where each
 member runs:
 
 ```output
-  OPERATOR      HEALTH      PARTS   NODE       RUNNER
+  RELAY      HEALTH      PARTS   NODE       RUNNER
   ohlc          healthy     3/3     node@a     p0→r1, p1→r2, p2→r1
 ```
 
@@ -158,12 +158,12 @@ that: a group moving off a dead runner is the usual case. Coverage is worked out
 members on every read, and a missing member or an overlapping range is shown as a warning
 naming the gap or the contested key group.
 
-`flz operator stop <group>` stops every member.
+`flz relay stop <group>` stops every member.
 
 ## The one rule: route by the `key_by` value
 
-For a partitioned operator, whatever routes a record to a member must equal the value `key_by`
-extracts: a source plugin's subscription string, or the `flz.key` an upstream operator's emit
+For a partitioned relay, whatever routes a record to a member must equal the value `key_by`
+extracts: a source plugin's subscription string, or the `flz.key` an upstream relay's emit
 carries.
 
 A plain `emit` on a keyed channel keeps this rule by construction. What is left to get wrong
@@ -180,17 +180,17 @@ The error code is `runtime.key_outside_partition`.
 
 ## Send to, call and read a group
 
-The group's id names no single operator, so a message needs a key or a member id:
+The group's id names no single relay, so a message needs a key or a member id:
 
 ```sh
-$ flz operator send 'trade_watcher#p1' --namespace trading --channel trades --text '{"channel": "trade", "data": [{"symbol": "GBP/USD", "price": 1.3400, "ord_type": "market"}]}'
+$ flz relay send 'trade_watcher#p1' --namespace trading --channel trades --text '{"channel": "trade", "data": [{"symbol": "GBP/USD", "price": 1.3400, "ord_type": "market"}]}'
 ```
 
 ```output
 Delivered to 'trade_watcher#p1'.
 ```
 
-- `flz operator send <group> --key <key>` and `flz operator call <group> --key <key>` reach the
+- `flz relay send <group> --key <key>` and `flz relay call <group> --key <key>` reach the
   member whose range owns the key. Without a key, both are refused, naming the members (for a
   call, `call.target_unkeyed`). The quotes around `trade_watcher#p1` keep some shells from
   reading the `#` as a comment.
@@ -207,33 +207,33 @@ state get trade_watcher/track_prices:
   state:      {"track_prices":{"EUR/USD":{"prices":[1.085,1.0853,1.11]},"GBP/USD":{"prices":[1.34]}}}
 ```
 
-## Plugins on a partitioned operator
+## Plugins on a partitioned relay
 
-A plugin bound to a group is bound to every member: `flz plugin bind <name> --operator_id
+A plugin bound to a group is bound to every member: `flz plugin bind <name> --relay_id
 <group>` binds each member with its partition identity (its index, the member count and its
 key-group range) added to the plugin's options, and `flz plugin unbind` is symmetric. A partial
 bind reports which members succeeded and which failed, by name (`plugin.group_enable_partial`).
-`--plugins` on a partitioned `flz operator start` is applied the same way, once per member.
+`--plugins` on a partitioned `flz relay start` is applied the same way, once per member.
 
-A plugin that can be shared is not shared with a partitioned operator: each member asks
+A plugin that can be shared is not shared with a partitioned relay: each member asks
 upstream for its own share of the key range, so each runs its own copy. An unpartitioned
-operator bound to the same plugin keeps its controller's shared copy.
+relay bound to the same plugin keeps its controller's shared copy.
 
 Sources filter what they ask for, never the data:
 
 | Source | On a member |
 | --- | --- |
 | [Websocket subscription](../../plugins/websocket_subscription.md) | subscribes only to the items whose key group the member owns, from a polled list or from a static `subscription_items` list |
-| [HTTP poll](../../plugins/http_poll.md) | `{{partition_index}}` and `{{partition_count}}` in `url` are filled in at start; a placeholder on an operator that is not partitioned is refused as `plugin.partition_placeholder_unfilled` |
+| [HTTP poll](../../plugins/http_poll.md) | `{{partition_index}}` and `{{partition_count}}` in `url` are filled in at start; a placeholder on a relay that is not partitioned is refused as `plugin.partition_placeholder_unfilled` |
 
 A source that cannot tell which member a record's key belongs to refuses a group member as
 `plugin.partitioned_host`: the Kafka consumer, the RabbitMQ consumer, Postgres CDC, Postgres
-poll and the HTTP server. Enable those on an operator that is not partitioned and forward into
+poll and the HTTP server. Enable those on a relay that is not partitioned and forward into
 the group.
 
 ## Forward into a group
 
-[`operator_forward`](../../plugins/operator_forward.md) targeting a group keeps one worker per
+[`relay_forward`](../../plugins/relay_forward.md) targeting a group keeps one worker per
 member, so a slow member does not hold up the others, and routes each message by the key group
 of its `flz.key` to the member that owns it. A message with no `flz.key` (an emit on a channel
 not declared `.keyed()`) is parked with `partitioned target requires keyed emit`; it is never
@@ -247,11 +247,11 @@ restores its cell state from disk, so the start command is also the repair for a
 lost a member.
 
 ```sh
-$ flz operator start candles --id ohlc --partitions 3
+$ flz relay start candles --id ohlc --partitions 3
 ```
 
 ```output
-Operator ohlc converged: started 1 missing member(s), 2 already running:
+Relay ohlc converged: started 1 missing member(s), 2 already running:
   started ohlc#p2
   already running ohlc#p0
   already running ohlc#p1
@@ -260,24 +260,24 @@ Operator ohlc converged: started 1 missing member(s), 2 already running:
 A complete group exits 0 with nothing started. Converge checks presence only: the survivors'
 factory, init values, options and plugins are not compared, and `--plugins` applies only to the
 members this run starts. Converge never changes N: a count that differs from what the survivors
-declare is refused before anything starts (`operator.group_partition_mismatch`), naming
-`flz operator scale`. Also refused: a plain start of a live group's id
-(`operator.group_base_taken`), and a `--partitions` start of an id held by a live unpartitioned
-operator (`operator.unpartitioned_running`).
+declare is refused before anything starts (`relay.group_partition_mismatch`), naming
+`flz relay scale`. Also refused: a plain start of a live group's id
+(`relay.group_base_taken`), and a `--partitions` start of an id held by a live unpartitioned
+relay (`relay.unpartitioned_running`).
 
 ## Change the number of partitions
 
-`flz operator scale <group> <N>` changes how many partitions a running group has. The key
+`flz relay scale <group> <N>` changes how many partitions a running group has. The key
 groups are split again, and every cell whose key now belongs to another member moves there with
 its state:
 
 ```sh
-$ flz operator scale trade_watcher 3 --namespace trading
+$ flz relay scale trade_watcher 3 --namespace trading
 ```
 
 ```output
-Scaling operator group trade_watcher to 3...
-Operator trade_watcher rescaled 2 -> 3 (2 cells moved, 0 trees removed):
+Scaling relay group trade_watcher to 3...
+Relay trade_watcher rescaled 2 -> 3 (2 cells moved, 0 trees removed):
   trade_watcher#p0
   trade_watcher#p1
   trade_watcher#p2
@@ -286,18 +286,18 @@ Operator trade_watcher rescaled 2 -> 3 (2 cells moved, 0 trees removed):
 A rescale runs in these steps:
 
 1. **Quiesce.** Every member's source plugins are turned off. The command refuses while any
-   member holds parked dead-letter entries (`operator.rescale_parked_entries`: replay or drop
+   member holds parked dead-letter entries (`relay.rescale_parked_entries`: replay or drop
    them first, `flz dlq list`), then waits until every member has consumed its input log. The
    wait is bounded by `--timeout` in milliseconds (default 30000). On timeout it stops with
-   nothing stopped and nothing moved (`operator.rescale_quiesce_timeout`), naming the lagging
-   member; only the sources are off. Run it again with a longer `--timeout`. An operator that
+   nothing stopped and nothing moved (`relay.rescale_quiesce_timeout`), naming the lagging
+   member; only the sources are off. Run it again with a longer `--timeout`. A relay that
    commits at checkpoints advances only at a checkpoint, so the wait follows its checkpoint
    cadence.
 2. **Preflight.** The ranges for the new count are worked out, and the id-length and
-   `max_operators` checks a partitioned start runs apply to the change in members. A failure
+   `max_relays` checks a partitioned start runs apply to the change in members. A failure
    leaves every member running.
 3. **Stop.** Members stop with their state kept; the command waits up to 15 seconds for each id
-   to be released (`operator.rescale_id_held`).
+   to be released (`relay.rescale_id_held`).
 4. **Move.** Every cell whose key group changes owner has its stored files moved to the new
    owner: a rename on the same controller, a copy then delete across controllers.
 5. **Start.** The new members start with their new ranges and restore from disk, which costs
@@ -305,26 +305,26 @@ A rescale runs in these steps:
 6. **Clean up.** A member past the new count, which no longer owns anything, is removed.
 
 A crash in the middle of a rescale is recoverable: before the move nothing durable has
-changed, each cell moves as one unit, and running `flz operator scale` again finishes the
-remaining moves (`operator.rescale_move_failed` says so). Only one rescale of a group runs at a
-time, cluster-wide (`operator.rescale_running`). Forwards into the group follow it: a forwarding
+changed, each cell moves as one unit, and running `flz relay scale` again finishes the
+remaining moves (`relay.rescale_move_failed` says so). Only one rescale of a group runs at a
+time, cluster-wide (`relay.rescale_running`). Forwards into the group follow it: a forwarding
 plugin whose members no longer match restarts and reads the member set again, a surviving
 member keeps its queued messages, and a removed member's queue goes to the new owner.
 
-## A per-input steps operator as a group
+## A per-input steps relay as a group
 
-A `per_input` steps operator partitions like a flow operator: N ordinary steps instances, each
+A `per_input` steps relay partitions like a flow relay: N ordinary steps instances, each
 with its own key-group range, journal and input log, through the same start, converge and
 rescale. Its entry edge must be keyed. A message reaches its member by key, through a keyed
-forward, or by member id (`flz operator send orders#p1 ...`); a key the member does not own
-parks under the entry channel and starts no pass. What a steps operator adds:
+forward, or by member id (`flz relay send orders#p1 ...`); a key the member does not own
+parks under the entry channel and starts no pass. What a steps relay adds:
 
 - **Each member ends and undoes its own work.** `ctx.complete`, `max_duration`, a stop or a
   final failure ends that member alone, with its own completion record, and its rollback undoes
   its own passes. There is no group-wide end, result or rollback. A member that ended leaves a
-  gap in `flz operator info` until a converge restarts it.
-- **Per member, by member id**: `flz operator rewind`, `flz state journal`, `flz state inbox`.
-  `flz operator stop <group>` is one cooperative stop per member.
+  gap in `flz relay info` until a converge restarts it.
+- **Per member, by member id**: `flz relay rewind`, `flz state journal`, `flz state inbox`.
+  `flz relay stop <group>` is one cooperative stop per member.
 - **A rescale happens between passes.** The quiesce waits until no pass is in flight and no
   message is queued; a pass that outlives `--timeout` refuses the rescale with nothing changed.
 - **A rescale seals.** Each surviving member's journal is cut to its latest committed iteration
@@ -347,7 +347,7 @@ member asks the exchange for those pairs only.
 ### Java
 
 ```java
-// TradeWatcherOperator.java: the desk's stream, keyed by currency pair.
+// TradeWatcherRelay.java: the desk's stream, keyed by currency pair.
         c.input(TradeMessage.class, "trades")
                 .filter(message -> "trade".equals(message.channel())) // trade messages only
                 .flatMap(Trade.class, TradeMessage::data)            // a message into its trades
@@ -356,7 +356,7 @@ member asks the exchange for those pairs only.
                 .into(TrackPrices.class)
 ```
 
-[Full file](https://github.com/flezha/flezha_java_sdk/blob/main/examples/tradedesk/src/main/java/com/flezha/examples/tradedesk/TradeWatcherOperator.java)
+[Full file](https://github.com/flezha/flezha_java_sdk/blob/main/examples/tradedesk/src/main/java/com/flezha/examples/tradedesk/TradeWatcherRelay.java)
 
 ### Rust
 
@@ -375,7 +375,7 @@ member asks the exchange for those pairs only.
 ### Node
 
 ```js
-// trade_watcher_operator.mjs: the desk's stream, keyed by currency pair.
+// trade_watcher_relay.mjs: the desk's stream, keyed by currency pair.
     c.input('trades')
       .filter((message) => message.channel === 'trade') // trade messages only
       .flatMap((message) => message.data) // a message into its trades
@@ -384,7 +384,7 @@ member asks the exchange for those pairs only.
       .into(TrackPrices)
 ```
 
-[Full file](https://github.com/flezha/flezha_node_sdk/blob/main/examples/tradedesk/trade_watcher_operator.mjs)
+[Full file](https://github.com/flezha/flezha_node_sdk/blob/main/examples/tradedesk/trade_watcher_relay.mjs)
 
 ### Python
 
@@ -403,7 +403,7 @@ member asks the exchange for those pairs only.
 ### Ruby
 
 ```ruby
-# trade_watcher_operator.rb: the desk's stream, keyed by currency pair.
+# trade_watcher_relay.rb: the desk's stream, keyed by currency pair.
     c.input("trades")
      .filter { |message| message[:channel] == "trade" }      # trade messages only
      .flat_map { |message| message[:data] }                  # a message into its trades
@@ -412,12 +412,12 @@ member asks the exchange for those pairs only.
      .into(TrackPrices)
 ```
 
-[Full file](https://github.com/flezha/flezha_ruby_sdk/blob/main/examples/tradedesk/trade_watcher_operator.rb)
+[Full file](https://github.com/flezha/flezha_ruby_sdk/blob/main/examples/tradedesk/trade_watcher_relay.rb)
 
 ### PHP
 
 ```php
-// TradeWatcherOperator.php: the desk's stream, keyed by currency pair.
+// TradeWatcherRelay.php: the desk's stream, keyed by currency pair.
         $c->input('trades')
             ->filter(fn (array $message) => ($message['channel'] ?? null) === 'trade') // trade messages only
             ->flatMap(fn (array $message) => $message['data'])                         // a message into its trades
@@ -426,7 +426,7 @@ member asks the exchange for those pairs only.
             ->into(TrackPrices::class)
 ```
 
-[Full file](https://github.com/flezha/flezha_php_sdk/blob/main/examples/tradedesk/src/TradeWatcherOperator.php)
+[Full file](https://github.com/flezha/flezha_php_sdk/blob/main/examples/tradedesk/src/TradeWatcherRelay.php)
 
 ### Elixir
 
@@ -448,10 +448,10 @@ member asks the exchange for those pairs only.
 ## Hot keys: aggregate in two stages
 
 One key is served by one cell on one machine, to keep its order. A key hot enough to saturate
-a core cannot be split by partitioning, so split it in the operator instead. A first,
-partitioned operator keys by a sub-key (the key plus a small bucket number, such as the pair and
+a core cannot be split by partitioning, so split it in the relay instead. A first,
+partitioned relay keys by a sub-key (the key plus a small bucket number, such as the pair and
 the trade id modulo 8) and aggregates locally; it emits its partial results on a keyed channel.
-A second operator, unpartitioned or with a smaller N, receives them through `operator_forward`,
+A second relay, unpartitioned or with a smaller N, receives them through `relay_forward`,
 keys them by the pair alone and merges the partials. The first stage's `key_by` must return the
 sub-key, not the pair, or the guard above refuses the first record.
 
@@ -461,25 +461,25 @@ sub-key, not the pair, or the guard above refuses the first record.
   others and add no parallelism, so start the runners before the group.
 - **Placement spreads by count, not by anti-affinity.** A group of N members across N runners
   normally lands one per runner, but nothing pins a particular member to a particular runner,
-  and two members can share one when the fleet is already uneven. `flz operator info` shows
+  and two members can share one when the fleet is already uneven. `flz relay info` shows
   where each landed.
 - **One partition's whole state lives on one controller.** Each partition opens its own source
   connections, and each partition's sink plugins open their own connections too.
 - **A rescale stops the group** and restores it cold: no warm handoff and no rescale while
   input keeps flowing.
 - **Assignment is contiguous and even.** There is no way to weight it.
-- **A `once` or `chained` steps operator cannot be partitioned.**
+- **A `once` or `chained` steps relay cannot be partitioned.**
 
 ## See also
 
-- [Configuring an operator](../basics/configuring_an_operator.md): flow and steps, and `key_by`
+- [Configuring a relay](../basics/configuring_a_relay.md): flow and steps, and `key_by`
 - [Streams](../basics/streams.md): keys and cells
 - [State](../basics/state.md): what a moved cell carries
 - [Plugins](../plugins/plugins.md): sharing, and which plugins refuse a group member
-- [Operator calls](operator_calls.md): calling a group by key
+- [Relay calls](relay_calls.md): calling a group by key
 - [Clustering](../deploying/clustering.md): several controllers
 - [`websocket_subscription`](../../plugins/websocket_subscription.md),
   [`http_poll`](../../plugins/http_poll.md),
-  [`operator_forward`](../../plugins/operator_forward.md)
+  [`relay_forward`](../../plugins/relay_forward.md)
 - [Errors](../../errors.md), [Glossary](https://github.com/flezha/flezha/blob/main/docs/glossary.md): partition, key group, group
 - Tutorial: [watch the trades](../../tutorials/tradedesk/watch_the_trades.md)

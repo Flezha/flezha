@@ -1,8 +1,8 @@
 # Local mode
 
-Local mode runs an operator inside your own process, with no controller, no
-Docker and no socket. It takes the operator class you would deploy, runs its
-declared graph, and hands you the output. It is the way to try an operator, to
+Local mode runs a relay inside your own process, with no controller, no
+Docker and no socket. It takes the relay class you would deploy, runs its
+declared graph, and hands you the output. It is the way to try a relay, to
 develop one and to test its graph.
 
 ## Nothing here is durable
@@ -18,7 +18,7 @@ Local mode is not a deployment. These need a controller:
 | Durability: the write-ahead log, snapshots, resuming after a crash, point-in-time queries | The controller owns the durable store |
 | Effectively-once delivery | An output rides its effect record and is released once that record is durable |
 | Plugins: Kafka, Postgres, HTTP, WebSocket | Plugins run on the controller |
-| Placement, migration, rescale, partitioning | A member's key-group range arrives with `AddOperator` |
+| Placement, migration, rescale, partitioning | A member's key-group range arrives with `AddRelay` |
 | The dead-letter queue | A park is durable, and the controller acknowledges it |
 | Observability export, authorization, several runners | Controller surfaces |
 
@@ -29,7 +29,7 @@ ladder, and the delivery between tasklets.
 
 ## How it is used
 
-Every SDK has the same four calls: start the operator, register a callback on a
+Every SDK has the same four calls: start the relay, register a callback on a
 sink, feed an input channel, and run until the graph is idle.
 
 - **`feed(channel, bytes)`** enters where a frame off the wire enters, so the
@@ -40,7 +40,7 @@ sink, feed an input channel, and run until the graph is idle.
   `.sink_named("totals")` and registers `"totals"`. A sink without a name is
   named after the tasklet that feeds it.
 - A channel name the declaration does not carry is refused, naming the channel,
-  the operator and the channels that are declared. A value released on a sink
+  the relay and the channels that are declared. A value released on a sink
   with no callback is reported rather than discarded. A declaration that needs
   a controller is refused at startup, naming the capability.
 - **`run_until_idle(budget)`** blocks until the graph has nothing left to do. A
@@ -48,12 +48,12 @@ sink, feed an input channel, and run until the graph is idle.
 
 | SDK | Entry point | Worked example |
 | --- | --- | --- |
-| Rust | `LocalOperator::start` | [`sdk/rust/examples/local_word_count.rs`](https://github.com/flezha/flezha_rust_sdk/blob/main/examples/local_word_count.rs) |
-| Java | `LocalOperator.start` | [`sdk/java/flezha-sdk-examples/.../local/`](https://github.com/flezha/flezha_java_sdk/tree/main/flezha-sdk-examples/src/main/java/com/flezha/examples/local) |
-| Node | `LocalOperator.start` | [`examples/node/local_word_count.mjs`](https://github.com/flezha/flezha/blob/main/examples/node/local_word_count.mjs) |
-| Python | `LocalOperator.start` | [`sdk/python/examples/local_word_count.py`](https://github.com/flezha/flezha_python_sdk/blob/main/examples/local_word_count.py) |
-| Ruby | `Flezha::LocalOperator.start` | [`sdk/ruby/examples/local_word_count.rb`](https://github.com/flezha/flezha_ruby_sdk/blob/main/examples/local_word_count.rb) |
-| PHP | `LocalOperator::start` | [`sdk/php/examples/E07_LocalMode.php`](https://github.com/flezha/flezha_php_sdk/blob/main/examples/E07_LocalMode.php) |
+| Rust | `LocalRelay::start` | [`sdk/rust/examples/local_word_count.rs`](https://github.com/flezha/flezha_rust_sdk/blob/main/examples/local_word_count.rs) |
+| Java | `LocalRelay.start` | [`sdk/java/flezha-sdk-examples/.../local/`](https://github.com/flezha/flezha_java_sdk/tree/main/flezha-sdk-examples/src/main/java/com/flezha/examples/local) |
+| Node | `LocalRelay.start` | [`examples/node/local_word_count.mjs`](https://github.com/flezha/flezha/blob/main/examples/node/local_word_count.mjs) |
+| Python | `LocalRelay.start` | [`sdk/python/examples/local_word_count.py`](https://github.com/flezha/flezha_python_sdk/blob/main/examples/local_word_count.py) |
+| Ruby | `Flezha::LocalRelay.start` | [`sdk/ruby/examples/local_word_count.rb`](https://github.com/flezha/flezha_ruby_sdk/blob/main/examples/local_word_count.rb) |
+| PHP | `LocalRelay::start` | [`sdk/php/examples/E07_LocalMode.php`](https://github.com/flezha/flezha_php_sdk/blob/main/examples/E07_LocalMode.php) |
 | Elixir | `Flezha.SDK.Local.start` | the snippet below |
 
 ## Example: counting words
@@ -62,7 +62,7 @@ A graph that splits lines into words, keys each word to a cell of its own and
 counts it. In Rust, the declaration and the run:
 
 ```rust
-impl Operator for WordCount {
+impl Relay for WordCount {
     fn factory_id() -> &'static str {
         "local_word_count"
     }
@@ -78,7 +78,7 @@ impl Operator for WordCount {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let run = LocalOperator::start::<WordCount>()?;
+    let run = LocalRelay::start::<WordCount>()?;
     run.on_sink("totals", |out| {
         println!("{}", String::from_utf8_lossy(&out.payload));
     })?;
@@ -103,7 +103,7 @@ It prints the notice, then one line per word occurrence, counted per word:
 The same run in Java:
 
 ```java
-try (LocalOperator run = LocalOperator.start(WordCount.class)) {
+try (LocalRelay run = LocalRelay.start(WordCount.class)) {
     run.onSink("totals", out -> System.out.println(new String(out.payload(), UTF_8)));
     run.feed("lines", "the quick brown fox");
     run.runUntilIdle(Duration.ofSeconds(5));
@@ -144,6 +144,6 @@ Flezha::create_runner("default")?.register_factory(WordCount)?.run()?;
 
 ## See also
 
-- [Building blocks](building_blocks.md): tasklets, operators and runners
+- [Building blocks](building_blocks.md): tasklets, relays and runners
 - [Streams](streams.md): edges, transforms and keys
 - [Try it](../../getting_started/try_it.md): the same `echo` with a controller, in Docker

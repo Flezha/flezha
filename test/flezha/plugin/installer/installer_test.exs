@@ -117,10 +117,10 @@ defmodule Flezha.Plugin.InstallerTest do
 
       release =
         sibling(tmp, "flz_stdout", [
-          {:manifest, &%{&1 | providers: %{"operator_stdout" => FlzStdout.Provider}}}
+          {:manifest, &%{&1 | providers: %{"relay_stdout" => FlzStdout.Provider}}}
         ])
 
-      assert {:error, {:provider_id_taken, "operator_stdout", "the release"}} =
+      assert {:error, {:provider_id_taken, "relay_stdout", "the release"}} =
                Installer.install(release)
 
       spec = {:application, :jason, [vsn: ~c"0.0.1", modules: []]}

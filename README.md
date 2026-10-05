@@ -36,9 +36,11 @@ The same building blocks carry many shapes of data processing:
   its state on disk, and starts it again elsewhere when something fails.
 - **A runner** is your own program, written with one of the seven SDKs. It
   connects to the controller and runs the code you registered.
-- **An operator** is one running copy of that code. Inside it, your logic is
-  split into small processing stages, called tasklets, wired into a graph.
-- **Plugins** connect operators to the outside world (files, HTTP, Kafka,
+- **A relay** is one running copy of that code: a small processing unit, a
+  worker with its own state, that carries data through its tasklets. Flezha runs
+  thousands of relays in parallel. Inside a relay, your logic is split into small
+  processing stages, called tasklets, wired into a graph.
+- **Plugins** connect relays to the outside world (files, HTTP, Kafka,
   Postgres, RabbitMQ and more) without changing their code.
 
 [What is Flezha](docs/getting_started/what_is_flezha.md) explains the pieces in
@@ -59,27 +61,27 @@ class Echo:
         ctx.emit(f"echo: {value}")
 ```
 
-**2. Wire it into an operator.** The operator says where messages come in, which
+**2. Wire it into a relay.** The relay says where messages come in, which
 stages they pass through and where results leave:
 
 ```python
-@flezha.operator("echo")
-def echo_operator(c: flezha.Channels) -> None:
+@flezha.relay("echo")
+def echo_relay(c: flezha.Channels) -> None:
     c.input("in", codec="text").into(Echo).sink("out")
 ```
 
 **3. Serve it from a runner,** a process that connects to the controller:
 
 ```python
-flezha.create_runner("default").register_factory(echo_operator).run()
+flezha.create_runner("default").register_factory(echo_relay).run()
 ```
 
 **4. Start it and send it a message** with `flz`, the command-line tool that
 comes with the controller:
 
 ```sh
-$ ./bin/flz operator start echo --id my_echo
-$ ./bin/flz operator send my_echo --text 'hello world' --await 2000
+$ ./bin/flz relay start echo --id my_echo
+$ ./bin/flz relay send my_echo --text 'hello world' --await 2000
 Delivered to 'my_echo'.
 out	echo: hello world
 ```
@@ -94,11 +96,11 @@ repository:
 ```sh
 $ cd sdk/python/examples/echo_deployment
 $ docker compose up -d --wait
-$ docker compose exec controller /flezha/bin/flz operator start echo --id my_echo
-$ docker compose exec controller /flezha/bin/flz operator send my_echo --text 'hello world' --await 2000
+$ docker compose exec controller /flezha/bin/flz relay start echo --id my_echo
+$ docker compose exec controller /flezha/bin/flz relay send my_echo --text 'hello world' --await 2000
 ```
 
-To try an operator without a controller or Docker,
+To try a relay without a controller or Docker,
 [local mode](docs/topics/basics/local_mode.md) runs it inside your own process.
 The [tutorials](docs/tutorials/tutorials.md) then build three example
 applications step by step.

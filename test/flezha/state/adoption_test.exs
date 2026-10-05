@@ -20,10 +20,10 @@ defmodule FlezhaTest.State.AdoptionTest do
     %{class: class, cell_id: cell_id, old: old}
   end
 
-  # fails when: a set-aside copy reads as an operator class, so the retention
+  # fails when: a set-aside copy reads as a relay class, so the retention
   # sweep or the durability tier's backstop treats it as one.
-  test "a copy set aside is not an operator class", ctx do
-    refute Enum.any?(Paths.operator_classes(), &String.starts_with?(&1, ctx.class))
+  test "a copy set aside is not a relay class", ctx do
+    refute Enum.any?(Paths.relay_classes(), &String.starts_with?(&1, ctx.class))
   end
 
   # fails when: a copy set aside is never read back, so the class binds with
@@ -46,7 +46,7 @@ defmodule FlezhaTest.State.AdoptionTest do
     File.rename!(Paths.set_aside_dir(ctx.class), discarded)
     TestHelpers.write_wal(ctx.cell_id, 0..5, "newer")
     newer = File.read!(Paths.wal_path(ctx.cell_id))
-    refute Enum.any?(Paths.operator_classes(), &String.starts_with?(&1, ctx.class <> "."))
+    refute Enum.any?(Paths.relay_classes(), &String.starts_with?(&1, ctx.class <> "."))
 
     assert :ok = Adoption.adopt_newest(ctx.class, nil)
 

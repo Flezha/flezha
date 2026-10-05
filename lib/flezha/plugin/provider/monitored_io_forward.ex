@@ -4,7 +4,7 @@ defmodule Flezha.Plugin.Provider.MonitoredIOForward do
   GenServer that keeps the remote receiver alive. The table starts it at
   activation and monitors it — if it dies the plugin is disabled.
 
-  Required opts: `:recv_pid`, `:plugin_id`, `:operator_id`, `:namespace`.
+  Required opts: `:recv_pid`, `:plugin_id`, `:relay_id`, `:namespace`.
   Optional: `:heartbeat_interval` (ms, default 5000).
   """
 
@@ -24,7 +24,7 @@ defmodule Flezha.Plugin.Provider.MonitoredIOForward do
         required: true,
         doc: "The plugin id the heartbeat detaches, with every member a group fanned it out to"
       ],
-      operator_id: [type: :string, required: true, doc: "The operator this binding belongs to"],
+      relay_id: [type: :string, required: true, doc: "The relay this binding belongs to"],
       namespace: [type: :any, required: true, doc: "The namespace this binding belongs to"],
       heartbeat_interval: [
         type: :int,
@@ -86,7 +86,7 @@ defmodule Flezha.Plugin.Provider.MonitoredIOForward do
      arm_heartbeat(%{
        recv_pid: Map.fetch!(opts, :recv_pid),
        plugin_id: Map.fetch!(opts, :plugin_id),
-       operator_id: Map.fetch!(opts, :operator_id),
+       relay_id: Map.fetch!(opts, :relay_id),
        namespace: Map.fetch!(opts, :namespace),
        heartbeat_interval: interval
      })}
@@ -109,7 +109,7 @@ defmodule Flezha.Plugin.Provider.MonitoredIOForward do
     after
       state.heartbeat_interval ->
         Task.start(fn ->
-          PluginManager.detach(state.namespace, state.operator_id, state.plugin_id)
+          PluginManager.detach(state.namespace, state.relay_id, state.plugin_id)
         end)
 
         {:stop, :normal, state}

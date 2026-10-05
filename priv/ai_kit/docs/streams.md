@@ -1,6 +1,6 @@
 # Streams
 
-A stream is an operator that runs in flow, the default run: you start it once,
+A stream is a relay that runs in flow, the default run: you start it once,
 and it handles each message the moment it arrives, for as long as it runs. It
 suits an endless input, such as trades from an exchange, events from a queue
 or rows from a change feed. An ETL stream (extract, transform, load) is the
@@ -24,16 +24,16 @@ flowchart LR
 ```
 
 - **An entry channel** is where messages come in: from a plugin such as a
-  WebSocket or Kafka source, from `flz operator send`, or from another
-  operator. Its name is an address that outside things use.
+  WebSocket or Kafka source, from `flz relay send`, or from another
+  relay. Its name is an address that outside things use.
 - **Transforms** are small steps written into the path, with no class of their
   own: `filter` drops messages, `map` reshapes one into another, `flatMap`
   splits one into several.
 - **`keyBy`** decides which cell of the next tasklet each message goes to.
 - **`into`** hands each message to a tasklet. What a tasklet emits flows on
   like any other message, so the next tasklet is added with another `into`.
-- **A sink** is a named exit where results leave the operator for whatever
-  listens there: a plugin, `flz operator listen`, another operator.
+- **A sink** is a named exit where results leave the relay for whatever
+  listens there: a plugin, `flz relay listen`, another relay.
 
 A stream's commit point is one input. Each input's state changes and outputs
 are recorded as it is handled, so after a crash the stream carries on from the
@@ -102,7 +102,7 @@ left. Different cells work side by side.
 In the tradedesk example, `trade_watcher` takes trades from an exchange. A
 trade message says `"channel": "trade"` and carries one or more trades in its
 `data` list; the same connection also carries other messages, such as the
-confirmation of a subscription. The operator keeps the trade messages, splits
+confirmation of a subscription. The relay keeps the trade messages, splits
 each into its trades, keeps the market orders, and keys them by symbol into
 `track_prices`, which keeps each symbol's last ten prices. `buy_above_average`
 then decides whether to buy, and its lines leave on the sink `signals`.
@@ -120,7 +120,7 @@ flowchart LR
 ### Java
 
 ```java
-// TradeWatcherOperator.java: the stream. Trades in, signals out.
+// TradeWatcherRelay.java: the stream. Trades in, signals out.
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record TradeMessage(String channel, List<Trade> data) {}
 ...
@@ -137,7 +137,7 @@ public void channels(@Nonnull ChannelBuilder c) {
 }
 ```
 
-Full file: [`TradeWatcherOperator.java`](https://github.com/flezha/flezha_java_sdk/blob/main/examples/tradedesk/src/main/java/com/flezha/examples/tradedesk/TradeWatcherOperator.java).
+Full file: [`TradeWatcherRelay.java`](https://github.com/flezha/flezha_java_sdk/blob/main/examples/tradedesk/src/main/java/com/flezha/examples/tradedesk/TradeWatcherRelay.java).
 
 `map` and `flatMap` take the type they produce as an explicit `Class`, here
 `Trade.class`, because erasure cannot recover it from a lambda; `filter` and
@@ -179,7 +179,7 @@ compile time that `P` takes what the edge carries.
 ### Node
 
 ```javascript
-// trade_watcher_operator.mjs: the stream. Trades in, signals out.
+// trade_watcher_relay.mjs: the stream. Trades in, signals out.
 channels: (c) => {
   c.input('trades')
     .filter((message) => message.channel === 'trade') // trade messages only
@@ -192,7 +192,7 @@ channels: (c) => {
 },
 ```
 
-Full file: [`trade_watcher_operator.mjs`](https://github.com/flezha/flezha_node_sdk/blob/main/examples/tradedesk/trade_watcher_operator.mjs).
+Full file: [`trade_watcher_relay.mjs`](https://github.com/flezha/flezha_node_sdk/blob/main/examples/tradedesk/trade_watcher_relay.mjs).
 
 The entry names no codec, so each message arrives as the object its JSON
 decodes to, and each transform is a function over that object. The
@@ -224,7 +224,7 @@ to. The confirmation has no `channel`, so the first `filter` reads it with
 ### Ruby
 
 ```ruby
-# trade_watcher_operator.rb: the stream. Trades in, signals out.
+# trade_watcher_relay.rb: the stream. Trades in, signals out.
 channels do |c|
   c.input("trades")
    .filter { |message| message[:channel] == "trade" }      # trade messages only
@@ -237,7 +237,7 @@ channels do |c|
 end
 ```
 
-Full file: [`trade_watcher_operator.rb`](https://github.com/flezha/flezha_ruby_sdk/blob/main/examples/tradedesk/trade_watcher_operator.rb).
+Full file: [`trade_watcher_relay.rb`](https://github.com/flezha/flezha_ruby_sdk/blob/main/examples/tradedesk/trade_watcher_relay.rb).
 
 Each message arrives as the Hash its JSON decodes to, with Symbol keys. The
 confirmation has no `:channel`, so the first `filter` reads `nil` there and
@@ -246,7 +246,7 @@ drops it.
 ### PHP
 
 ```php
-// src/TradeWatcherOperator.php: the stream. Trades in, signals out.
+// src/TradeWatcherRelay.php: the stream. Trades in, signals out.
 public static function channels(Builder $c): void
 {
     $c->input('trades')
@@ -260,7 +260,7 @@ public static function channels(Builder $c): void
 }
 ```
 
-Full file: [`src/TradeWatcherOperator.php`](https://github.com/flezha/flezha_php_sdk/blob/main/examples/tradedesk/src/TradeWatcherOperator.php).
+Full file: [`src/TradeWatcherRelay.php`](https://github.com/flezha/flezha_php_sdk/blob/main/examples/tradedesk/src/TradeWatcherRelay.php).
 
 Each message arrives as the array its JSON decodes to. The confirmation has no
 `channel`, so the first `filter` reads it with `?? null` and drops it.
@@ -287,7 +287,7 @@ Full file: [`lib/tradedesk/trade_watcher.ex`](https://github.com/flezha/flezha_e
 
 The entry channel hands on the bytes each message arrives as, so
 `input_with/3` names a parser, `Jason.decode/1`, and each transform is a
-function over the map it decodes to. `use Flezha.SDK.Operator` imports the
+function over the map it decodes to. `use Flezha.SDK.Relay` imports the
 builder, so the pipe needs no module prefix.
 
 <!-- tabs-close -->
@@ -352,12 +352,12 @@ and a workflow alike:
 
 A cell's mailbox holds 1024 messages unless the tasklet sets
 `mailbox_capacity` or the environment sets `FLEZHA_MAILBOX_CAPACITY`. The
-[configuration reference](../../configuration/operator_settings.md#channel-and-edge-options) has
+[configuration reference](../../configuration/relay_settings.md#channel-and-edge-options) has
 the full table.
 
 ## Starting work from a stream
 
-A tasklet in a stream can start another operator. In the tradedesk example,
+A tasklet in a stream can start another relay. In the tradedesk example,
 `buy_above_average` starts one `order_executor` workflow for each buy, and
 hands it the order as its first message:
 
@@ -367,7 +367,7 @@ hands it the order as its first message:
 
 ```java
 // BuyAboveAverage.java: buys when a price is far enough above its average.
-ctx.spawnSteps("order_executor", new OrderTicket(move.symbol(), quantity));   // one steps operator per order
+ctx.spawnSteps("order_executor", new OrderTicket(move.symbol(), quantity));   // one steps relay per order
 ```
 
 Full file: [`BuyAboveAverage.java`](https://github.com/flezha/flezha_java_sdk/blob/main/examples/tradedesk/src/main/java/com/flezha/examples/tradedesk/BuyAboveAverage.java).
@@ -377,7 +377,7 @@ Full file: [`BuyAboveAverage.java`](https://github.com/flezha/flezha_java_sdk/bl
 ```rust
 // src/buy_above_average.rs: buys when a price is far enough above its average.
 let order = serde_json::to_vec(&ticket).map_err(|e| TaskletError::Custom(e.to_string()))?;
-let _ = ctx.spawn_steps("order_executor", order); // one steps operator per order
+let _ = ctx.spawn_steps("order_executor", order); // one steps relay per order
 ```
 
 Full file: [`src/buy_above_average.rs`](https://github.com/flezha/flezha_rust_sdk/blob/main/examples/tradedesk/src/buy_above_average.rs).
@@ -387,7 +387,7 @@ Full file: [`src/buy_above_average.rs`](https://github.com/flezha/flezha_rust_sd
 ```javascript
 // buy_above_average.mjs: buys when a price is far enough above its average.
 const order = { symbol: move.symbol, quantity };
-ctx.spawnSteps('order_executor', order); // one steps operator per order
+ctx.spawnSteps('order_executor', order); // one steps relay per order
 ```
 
 Full file: [`buy_above_average.mjs`](https://github.com/flezha/flezha_node_sdk/blob/main/examples/tradedesk/buy_above_average.mjs).
@@ -397,7 +397,7 @@ Full file: [`buy_above_average.mjs`](https://github.com/flezha/flezha_node_sdk/b
 ```python
 # buy_above_average.py: buys when a price is far enough above its average.
 order = OrderTicket(symbol=move["symbol"], quantity=quantity)
-ctx.spawn_steps("order_executor", order)  # one steps operator per order
+ctx.spawn_steps("order_executor", order)  # one steps relay per order
 ```
 
 Full file: [`buy_above_average.py`](https://github.com/flezha/flezha_python_sdk/blob/main/examples/tradedesk/buy_above_average.py).
@@ -407,7 +407,7 @@ Full file: [`buy_above_average.py`](https://github.com/flezha/flezha_python_sdk/
 ```ruby
 # buy_above_average.rb: buys when a price is far enough above its average.
 order = { symbol: move[:symbol], quantity: quantity }
-ctx.spawn_steps("order_executor", order)               # one steps operator per order
+ctx.spawn_steps("order_executor", order)               # one steps relay per order
 ```
 
 Full file: [`buy_above_average.rb`](https://github.com/flezha/flezha_ruby_sdk/blob/main/examples/tradedesk/buy_above_average.rb).
@@ -417,7 +417,7 @@ Full file: [`buy_above_average.rb`](https://github.com/flezha/flezha_ruby_sdk/bl
 ```php
 // src/BuyAboveAverage.php: buys when a price is far enough above its average.
 $order = ['symbol' => $input['symbol'], 'quantity' => $quantity];
-$ctx->spawnSteps('order_executor', $order);        // one steps operator per order
+$ctx->spawnSteps('order_executor', $order);        // one steps relay per order
 ```
 
 Full file: [`src/BuyAboveAverage.php`](https://github.com/flezha/flezha_php_sdk/blob/main/examples/tradedesk/src/BuyAboveAverage.php).
@@ -426,7 +426,7 @@ Full file: [`src/BuyAboveAverage.php`](https://github.com/flezha/flezha_php_sdk/
 
 ```elixir
 # lib/tradedesk/buy_above_average.ex: buys when a price is far enough above its average.
-# One steps operator per order.
+# One steps relay per order.
 spawn_steps(ctx, "order_executor", %{symbol: symbol, quantity: quantity})
 ```
 
@@ -443,7 +443,7 @@ a spawn without an id, are in
 
 ## Refusals
 
-The graph is checked when the runner registers the operator, the same way in
+The graph is checked when the runner registers the relay, the same way in
 every SDK:
 
 | Code | When |
@@ -479,7 +479,7 @@ allowed and wires one edge, not two.
 
 ## See also
 
-- [`configuring_an_operator.md`](configuring_an_operator.md): the settings tree, and `run: flow`.
+- [`configuring_a_relay.md`](configuring_a_relay.md): the settings tree, and `run: flow`.
 - [`state.md`](state.md): cells and their state.
 - [`workflows.md`](workflows.md): the other run.
 - [`durability.md`](durability.md): what a stream keeps through a crash.

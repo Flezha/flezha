@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The kafka-producer-plugin capability defines the production-grade contract that any Flezha Kafka producer plugin SHALL satisfy when publishing messages from an operator chain to a Kafka cluster. The contract supersedes the prior "thin `KafkaEx.produce` wrapper" behaviour, which surfaced every transient broker condition (`:not_leader_for_partition`, `:no_broker`, `:unknown_topic_or_partition`, `:network_exception`, `:request_timed_out`, `:not_enough_replicas`) directly to the chain, dropped messages on every error, spawned one `KafkaEx.Server` worker per plugin instance, and let upstream mailboxes grow unbounded during outages until the BEAM was OOM-killed. This capability specifies the retry, idempotence, batching, bounded-queue, shared-worker, active metadata refresh, auto-topic-creation, and telemetry semantics a conforming producer SHALL implement, and the configuration surface (`:retries`, `:retry_backoff_ms`, `:retry_max_backoff_ms`, `:delivery_timeout_ms`, `:linger_ms`, `:max_batch_bytes`, `:queue_max`, `:queue_overflow`, `:idempotent`, `:auto_create_topic`, `:auto_create_partitions`, `:auto_create_replication_factor`, `:required_acks`) runners tune to express durability and back-pressure trade-offs. A conforming producer SHALL never surface raw transient broker errors to the chain for messages that ultimately succeed, SHALL bound mailbox and queue growth under sustained outages, and SHALL expose every state transition as a `:telemetry` event so runners can monitor health without parsing log lines.
+The kafka-producer-plugin capability defines the production-grade contract that any Flezha Kafka producer plugin SHALL satisfy when publishing messages from a relay chain to a Kafka cluster. The contract supersedes the prior "thin `KafkaEx.produce` wrapper" behaviour, which surfaced every transient broker condition (`:not_leader_for_partition`, `:no_broker`, `:unknown_topic_or_partition`, `:network_exception`, `:request_timed_out`, `:not_enough_replicas`) directly to the chain, dropped messages on every error, spawned one `KafkaEx.Server` worker per plugin instance, and let upstream mailboxes grow unbounded during outages until the BEAM was OOM-killed. This capability specifies the retry, idempotence, batching, bounded-queue, shared-worker, active metadata refresh, auto-topic-creation, and telemetry semantics a conforming producer SHALL implement, and the configuration surface (`:retries`, `:retry_backoff_ms`, `:retry_max_backoff_ms`, `:delivery_timeout_ms`, `:linger_ms`, `:max_batch_bytes`, `:queue_max`, `:queue_overflow`, `:idempotent`, `:auto_create_topic`, `:auto_create_partitions`, `:auto_create_replication_factor`, `:required_acks`) runners tune to express durability and back-pressure trade-offs. A conforming producer SHALL never surface raw transient broker errors to the chain for messages that ultimately succeed, SHALL bound mailbox and queue growth under sustained outages, and SHALL expose every state transition as a `:telemetry` event so runners can monitor health without parsing log lines.
 ## Requirements
 ### Requirement: Producer retries every transient broker error transparently
 
@@ -254,7 +254,7 @@ The producer-id rotation introduced by step 4 SHALL be bounded by the existing `
 #### Scenario: KafkaEx worker crashes mid-batch and queued records continue flowing
 - **GIVEN** a `ProducerWorker` is steadily delivering `btc_demo.ohlc.v1` records at 50 msg/sec and has 200 records in `state.queue`, 50 across the in-flight window, and 0 in `state.blocked`
 - **AND** `$MARKET_COMPOSE` names `docker/dev/docker-compose.yml` in the user's own checkout of the separate `flezha_market` repository, which owns that stack and which this repository does not carry
-- **AND** the user runs `docker compose -f "$MARKET_COMPOSE" exec -T flezha-controller /flezha/bin/iex --remsh flezha@... -e ':sys.terminate(pid, :forced)'` against the live KafkaEx worker pid for the operator's canonical identity
+- **AND** the user runs `docker compose -f "$MARKET_COMPOSE" exec -T flezha-controller /flezha/bin/iex --remsh flezha@... -e ':sys.terminate(pid, :forced)'` against the live KafkaEx worker pid for the relay's canonical identity
 - **WHEN** `WorkerRegistry` observes the worker's DOWN
 - **THEN** within 1 second the producer SHALL receive `{:kafka_worker_dead, registry_ref, _reason}`, acquire a new worker via `swap/2`, re-run `InitProducerId`, and resume sending
 - **AND** the topic end-offset of `btc_demo.ohlc.v1` (read via `docker compose ... exec kafka /opt/kafka/bin/kafka-get-offsets.sh --bootstrap-server kafka:9092 --topic btc_demo.ohlc.v1`) SHALL advance by at least 200 records within the next 10 seconds
@@ -406,20 +406,20 @@ The bounded outbound queue SHALL be FIFO regardless of admission primitive. Reco
 
 The Kafka producer plugin SHALL compute its dedup key from the durable outbox
 identity as `<flz.cell>/<outbox_seq>/<epoch>` (where `flz.cell` is
-`operator_class/tasklet_id/cell_key` and `outbox_seq` is
+`relay_class/tasklet_id/cell_key` and `outbox_seq` is
 `<record WAL seq>.<emit ordinal>`). When outbox identity metadata is absent
-(at-least-once operators), the plugin SHALL fall back to the caller-supplied
+(at-least-once relays), the plugin SHALL fall back to the caller-supplied
 `kafka_msg_key` behaviour unchanged. The plugin SHALL NOT use any value derived
-from the prior `processor_id` term in the dedup key composition; per-Operator
-identity in the dedup key is captured by `<operator_class>` (the Operator's
+from the prior `processor_id` term in the dedup key composition; per-Relay
+identity in the dedup key is captured by `<relay_class>` (the Relay's
 module/class name) within `flz.cell`.
 
 #### Scenario: Dedup key uses outbox identity
 
 - **WHEN** the plugin emits a tier record produced by Cell `k1` of Tasklet
-  `s1` of Operator class `MarketOperator` with outbox seq `42.0` and epoch `1`
+  `s1` of Relay class `MarketRelay` with outbox seq `42.0` and epoch `1`
 - **THEN** the message MUST carry a `flezha.dedup_key` header equal to
-  `MarketOperator/s1/k1/42.0/1`
+  `MarketRelay/s1/k1/42.0/1`
 
 #### Scenario: Backward-compat keys are not produced
 
@@ -670,7 +670,7 @@ hold no module, configuration row or provider table row of the Kafka producer.
 #### Scenario: Installed, it produces
 
 - **GIVEN** a release with the package installed and a broker on the dev stack
-- **WHEN** an operator bound to a `kafka_producer` plugin emits 100 outputs
+- **WHEN** a relay bound to a `kafka_producer` plugin emits 100 outputs
 - **THEN** the topic SHALL hold 100 records, and no default `kafka_ex` worker SHALL have been
   started at boot
 
@@ -688,7 +688,7 @@ other record SHALL be sent to the current sticky partition, which SHALL change t
 partition after each batch is sent. With `partition` set, every record SHALL be sent to that
 partition. Order SHALL be kept per partition; unkeyed records keep no order among themselves.
 
-The choice SHALL be made inside the producer's worker, never in the operator's hook: the hook
+The choice SHALL be made inside the producer's worker, never in the relay's hook: the hook
 SHALL hold the output and cast it to the plugin's one worker per `(namespace, plugin, topic)`
 and do nothing else, and that worker SHALL keep one lane per partition, each with its own
 bounded queue, in-flight window and idempotent producer session. The partition count SHALL be
@@ -730,7 +730,7 @@ retried on the produce backoff.
 
 #### Scenario: The hook routes nothing
 
-- **WHEN** an operator's `on_output` hook hands an output to the producer
+- **WHEN** a relay's `on_output` hook hands an output to the producer
 - **THEN** it SHALL hold the output and cast it to the plugin's one worker for the topic, and
   SHALL choose no partition and start no worker
 
@@ -766,7 +766,7 @@ name starts with `flz.` or equals `flezha.dedup_key` SHALL be refused at enable 
 
 #### Scenario: A guaranteed output's headers
 
-- **GIVEN** an operator with `effectively_once` and a plugin with `headers` `{"source":
+- **GIVEN** a relay with `effectively_once` and a plugin with `headers` `{"source":
   "flezha"}`
 - **WHEN** it emits an output with key `k`
 - **THEN** the record SHALL carry `flz.key` `k`, `flz.cell`, `flz.seq`, `flz.epoch`,
@@ -774,7 +774,7 @@ name starts with `flz.` or equals `flezha.dedup_key` SHALL be refused at enable 
 
 #### Scenario: A plain output's headers
 
-- **GIVEN** an at-least-once operator with no delivery guarantee on a keyed channel and a
+- **GIVEN** an at-least-once relay with no delivery guarantee on a keyed channel and a
   plugin with `headers` `{"source": "flezha"}`
 - **WHEN** it emits an output with key `k`
 - **THEN** the record's Kafka key SHALL be `k`

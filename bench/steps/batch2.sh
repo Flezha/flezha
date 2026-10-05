@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Steps operator bench matrix, batch 2: the sleep family (rest, wake storms, boot), a churn soak, repro cases.
+# Steps relay bench matrix, batch 2: the sleep family (rest, wake storms, boot), a churn soak, repro cases.
 set -u
 cd "$(dirname "$0")/../.."
 OUT=bench/steps/reports

@@ -380,7 +380,7 @@ pub fn arm_interval_deadline(slot: &Arc<CellSlot>) {
     }
 }
 
-/// A steps operator firing served inside a pass leaves the pending set durably
+/// A steps relay firing served inside a pass leaves the pending set durably
 /// when its stage commits, as a message leaves the input log at the commit
 /// that consumed it: its removal is taken out of the ops an attempt makes
 /// durable and held on the pass until the stage's ack. The live set drops it
@@ -415,7 +415,7 @@ pub fn restated(slot: &Arc<CellSlot>, live: &PendingTimers) -> PendingTimers {
 }
 
 /// Re-arm a restored Cell's processing-time timers; anything past its
-/// deadline fires on the next promotion, ascending. A steps operator Cell first
+/// deadline fires on the next promotion, ascending. A steps relay Cell first
 /// drops every firing its journal records as committed.
 pub fn rearm_restored(slot: &Arc<CellSlot>) {
     drop_committed_firings(slot);

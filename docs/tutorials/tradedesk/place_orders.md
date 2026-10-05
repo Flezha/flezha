@@ -9,7 +9,7 @@ place the order, then confirm the fill and book the order side by side. Each
 finished step is written down before the next one starts, and a step that
 fails for good undoes the ones before it, last one first.
 [Workflows](../../topics/basics/workflows.md) explains steps, retries and undo,
-and [Configuring an operator](../../topics/basics/configuring_an_operator.md)
+and [Configuring a relay](../../topics/basics/configuring_a_relay.md)
 the `run` setting that turns steps on.
 
 <!-- tabs-open -->
@@ -17,8 +17,8 @@ the `run` setting that turns steps on.
 ### Java
 
 ```java
-// OrderExecutorOperator.java: the workflow: one instance is one order
-public final class OrderExecutorOperator implements Operator {
+// OrderExecutorRelay.java: the workflow: one instance is one order
+public final class OrderExecutorRelay implements Relay {
     public record OrderTicket(String symbol, int quantity) {}
 
     @Override
@@ -46,7 +46,7 @@ public final class OrderExecutorOperator implements Operator {
 }
 ```
 
-[`OrderExecutorOperator.java`](https://github.com/flezha/flezha_java_sdk/blob/main/examples/tradedesk/src/main/java/com/flezha/examples/tradedesk/OrderExecutorOperator.java)
+[`OrderExecutorRelay.java`](https://github.com/flezha/flezha_java_sdk/blob/main/examples/tradedesk/src/main/java/com/flezha/examples/tradedesk/OrderExecutorRelay.java)
 
 ### Rust
 
@@ -58,9 +58,9 @@ pub struct OrderTicket {
     pub quantity: u32,
 }
 
-pub struct OrderExecutorOperator;
+pub struct OrderExecutorRelay;
 
-impl Operator for OrderExecutorOperator {
+impl Relay for OrderExecutorRelay {
     fn factory_id() -> &'static str {
         "order_executor"
     }
@@ -79,12 +79,12 @@ impl Operator for OrderExecutorOperator {
             ]);
     }
 
-    fn settings() -> OperatorSettings {
-        OperatorSettings {
+    fn settings() -> RelaySettings {
+        RelaySettings {
             // one instance per order; each step runs once
             // a failed step undoes the finished ones
             run: Run::Steps { each: Each::Once, on_failure: OnFailure::UndoAll },
-            ..OperatorSettings::default()
+            ..RelaySettings::default()
         }
     }
 }
@@ -95,8 +95,8 @@ impl Operator for OrderExecutorOperator {
 ### Node
 
 ```javascript
-// order_executor_operator.mjs: the workflow: one instance is one order
-export default defineOperator({
+// order_executor_relay.mjs: the workflow: one instance is one order
+export default defineRelay({
   factoryId: 'order_executor',
   // one instance per order; each step runs once
   // a failed step undoes the finished ones
@@ -113,7 +113,7 @@ export default defineOperator({
 });
 ```
 
-[`order_executor_operator.mjs`](https://github.com/flezha/flezha_node_sdk/blob/main/examples/tradedesk/order_executor_operator.mjs)
+[`order_executor_relay.mjs`](https://github.com/flezha/flezha_node_sdk/blob/main/examples/tradedesk/order_executor_relay.mjs)
 
 ### Python
 
@@ -121,7 +121,7 @@ export default defineOperator({
 # order_executor.py: the workflow: one instance is one order
 # one instance per order; each step runs once
 # a failed step undoes the finished ones
-@flezha.operator("order_executor", run={"steps": {"each": "once", "on_failure": "undo_all"}})
+@flezha.relay("order_executor", run={"steps": {"each": "once", "on_failure": "undo_all"}})
 def order_executor(c: flezha.Channels) -> None:
     (
         c.input("order")  # the order to carry out
@@ -139,8 +139,8 @@ def order_executor(c: flezha.Channels) -> None:
 ### Ruby
 
 ```ruby
-# order_executor_operator.rb: the workflow: one instance is one order
-class OrderExecutorOperator < Flezha::Operator
+# order_executor_relay.rb: the workflow: one instance is one order
+class OrderExecutorRelay < Flezha::Relay
   factory_id "order_executor"
   # one instance per order; each step runs once
   # a failed step undoes the finished ones
@@ -158,16 +158,16 @@ class OrderExecutorOperator < Flezha::Operator
 end
 ```
 
-[`order_executor_operator.rb`](https://github.com/flezha/flezha_ruby_sdk/blob/main/examples/tradedesk/order_executor_operator.rb)
+[`order_executor_relay.rb`](https://github.com/flezha/flezha_ruby_sdk/blob/main/examples/tradedesk/order_executor_relay.rb)
 
 ### PHP
 
 ```php
-// src/OrderExecutorOperator.php: the workflow: one instance is one order
+// src/OrderExecutorRelay.php: the workflow: one instance is one order
 // one instance per order; it stays until confirm_fill completes it
 // a failed step undoes the finished ones
-#[Operator(factoryId: 'order_executor', run: ['steps' => ['each' => 'per_input', 'on_failure' => 'undo_all']])]
-final class OrderExecutorOperator extends \Flezha\Operator
+#[Relay(factoryId: 'order_executor', run: ['steps' => ['each' => 'per_input', 'on_failure' => 'undo_all']])]
+final class OrderExecutorRelay extends \Flezha\Relay
 {
     public static function channels(Builder $c): void
     {
@@ -182,14 +182,14 @@ final class OrderExecutorOperator extends \Flezha\Operator
 }
 ```
 
-[`src/OrderExecutorOperator.php`](https://github.com/flezha/flezha_php_sdk/blob/main/examples/tradedesk/src/OrderExecutorOperator.php)
+[`src/OrderExecutorRelay.php`](https://github.com/flezha/flezha_php_sdk/blob/main/examples/tradedesk/src/OrderExecutorRelay.php)
 
 ### Elixir
 
 ```elixir
 # lib/tradedesk/order_executor.ex: the workflow: one instance is one order
 defmodule Tradedesk.OrderExecutor do
-  use Flezha.SDK.Operator,
+  use Flezha.SDK.Relay,
     factory_id: "order_executor",
     # one instance per order; each step runs once
     # a failed step undoes the finished ones
@@ -219,7 +219,7 @@ end
 > {: .step}
 
 ```sh
-$ ./bin/flz operator start order_executor --id order_1 --namespace trading --text '{"symbol": "EUR/USD", "quantity": 10}' --channel order
+$ ./bin/flz relay start order_executor --id order_1 --namespace trading --text '{"symbol": "EUR/USD", "quantity": 10}' --channel order
 ```
 
 ```output

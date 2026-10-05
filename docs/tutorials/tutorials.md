@@ -38,9 +38,9 @@ ids, tokens and times will differ.
 
 | Tutorial | What it runs |
 |---|---|
-| [The echo](echo/first_steps.md) | A controller, a runner of your own and an `echo` operator, with a file on each side of it |
+| [The echo](echo/first_steps.md) | A controller, a runner of your own and an `echo` relay, with a file on each side of it |
 | [The tradedesk](tradedesk/tradedesk.md) | A toy trader: an ETL stream that watches prices, and a workflow that places orders on a demo exchange |
-| [The agentdesk](agentdesk/agentdesk.md) | An AI agent behind an HTTP service: sessions, streamed answers, calls between operators, several controllers and Kubernetes |
+| [The agentdesk](agentdesk/agentdesk.md) | An AI agent behind an HTTP service: sessions, streamed answers, calls between relays, several controllers and Kubernetes |
 
 ## Also useful
 
@@ -48,5 +48,5 @@ ids, tokens and times will differ.
   its output formats.
 - [Troubleshooting](../troubleshooting/runner_cannot_connect.md): from a symptom
   to its fix.
-- [Local mode](../topics/basics/local_mode.md): run an operator's graph in your
+- [Local mode](../topics/basics/local_mode.md): run a relay's graph in your
   own process, with no controller.

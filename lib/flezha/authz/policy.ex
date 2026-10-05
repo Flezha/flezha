@@ -4,9 +4,9 @@ defmodule Flezha.AuthZ.Policy do
 
   Roles inherit upward: `admin` ⊇ `ops` ⊇ `app` ⊇ `viewer`, with three
   roles outside the hierarchy: `runner` grants only `runner.connect`, `spawner`
-  adds to it only `operator.start` and `operator.send`, which a
+  adds to it only `relay.start` and `relay.send`, which a
   tasklet-requested spawn needs and which also judge the administration
-  surface's start and send, and `stopper` adds to it only `operator.stop`.
+  surface's start and send, and `stopper` adds to it only `relay.stop`.
   `app` holds everything `spawner` and `stopper` do, and `ops` inherits
   everything `app` adds except the connect. An `ops` credential is not a
   runner.
@@ -24,7 +24,7 @@ defmodule Flezha.AuthZ.Policy do
   # is here because the schedule registry names no business data — a viewer sees
   # what fires and when, not what any of it produced.
   @viewer_actions [
-    :"operator.list",
+    :"relay.list",
     :"plugin.list",
     :"plugin.info",
     :"audit.read",
@@ -43,35 +43,35 @@ defmodule Flezha.AuthZ.Policy do
   ]
 
   # What a tasklet-requested spawn performs: a start, or a delivery.
-  @spawn_actions [:"operator.start", :"operator.send"]
+  @spawn_actions [:"relay.start", :"relay.send"]
 
   # What a stop performs. Held apart from the spawn so `spawner` and `stopper`
   # combine, and so `app` is spelled from both rather than repeating either.
-  @stop_actions [:"operator.stop"]
+  @stop_actions [:"relay.stop"]
 
   # App adds the namespace-scoped lifecycle an application performs on its own
   # work, reading the frames that work carries, and nothing that destroys a
   # record or moves work it did not create.
-  # `operator.scale` is deliberately absent: rescaling moves live work between
+  # `relay.scale` is deliberately absent: rescaling moves live work between
   # partitions, which is a caller's call over a whole namespace rather than
   # an application's over its own instance.
   @app_extra @spawn_actions ++
-               @stop_actions ++ [:"operator.listen", :"plugin.enable", :"plugin.disable"]
+               @stop_actions ++ [:"relay.listen", :"plugin.enable", :"plugin.disable"]
 
-  # Ops adds the rest of the operator/plugin lifecycle, audit rotation,
+  # Ops adds the rest of the relay/plugin lifecycle, audit rotation,
   # observability mutate, schedule management, the dead-letter queue whole and
   # the records in flight. The DLQ reads and `state.records` sit here rather
   # than with the viewer reads because a parked payload or a journaled input is
   # the business record itself: whoever may read one may already replay or
   # destroy it, and no viewer workflow needs it.
   @ops_extra [
-    :"operator.replay",
+    :"relay.replay",
     :"audit.rotate",
     :"observability.enable_source",
     :"observability.disable_source",
     :"state.rotate",
-    :"operator.scale",
-    :"operator.rewind",
+    :"relay.scale",
+    :"relay.rewind",
     :"dlq.list",
     :"dlq.show",
     :"dlq.replay",

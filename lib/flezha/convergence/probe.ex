@@ -23,7 +23,7 @@ defmodule Flezha.Convergence.Probe do
         }
 
   @type reality :: %{
-          operators: %{{binary(), binary()} => map()},
+          relays: %{{binary(), binary()} => map()},
           active_runners: %{binary() => MapSet.t() | :unknown},
           placement: placement(),
           recovery: %{atom() => atom()},
@@ -42,7 +42,7 @@ defmodule Flezha.Convergence.Probe do
   defdelegate judge(context, previous), to: Judge
 
   @doc """
-  The tick's judging context: the declared operators, the probed reality, the
+  The tick's judging context: the declared relays, the probed reality, the
   loop signals the readers name (`facts`, `stuck`, `stall_verdict`,
   `runner_facts`, `liveness`) and the tick instant.
 
@@ -52,8 +52,8 @@ defmodule Flezha.Convergence.Probe do
   """
   @spec context(Flezha.Convergence.Intent.t(), reality(), map(), integer()) ::
           Flezha.Convergence.Probe.Readers.context()
-  def context(%Flezha.Convergence.Intent{operators: operators}, reality, signals, now) do
-    %{operators: operators, reality: reality, signals: signals, now: now}
+  def context(%Flezha.Convergence.Intent{relays: relays}, reality, signals, now) do
+    %{relays: relays, reality: reality, signals: signals, now: now}
   end
 
   # ---------- reality ----------
@@ -61,12 +61,12 @@ defmodule Flezha.Convergence.Probe do
   @spec snapshot() :: reality()
   def snapshot() do
     namespaces = running_namespaces()
-    operators = operators(namespaces)
+    relays = relays(namespaces)
 
     %{
-      operators: operators,
+      relays: relays,
       active_runners: active_runners(namespaces),
-      placement: placement(operators),
+      placement: placement(relays),
       recovery: Snapshot.recovery_states(),
       writers: live_writers(),
       tick_at: System.monotonic_time(:millisecond)
@@ -84,20 +84,20 @@ defmodule Flezha.Convergence.Probe do
     :exit, _ -> :unknown
   end
 
-  # Probe every operator concurrently: one wedged Overwatch costs ~one timeout,
-  # not N×timeout serial in the Loop process. An operator we cannot read is
+  # Probe every relay concurrently: one wedged Overwatch costs ~one timeout,
+  # not N×timeout serial in the Loop process. A relay we cannot read is
   # recorded as `bound_runner: :unknown` so the Diff skips it — a failed
   # observation must never drive a mutating heal.
-  defp operators(namespaces) do
+  defp relays(namespaces) do
     pairs =
       Enum.flat_map(namespaces, fn ns ->
-        Enum.map(safe_operators(ns), fn {operator_id, pid} -> {{ns, operator_id}, pid} end)
+        Enum.map(safe_relays(ns), fn {relay_id, pid} -> {{ns, relay_id}, pid} end)
       end)
 
     pairs
-    |> Parallel.results(fn {_ref, pid} -> observe_operator(pid) end,
+    |> Parallel.results(fn {_ref, pid} -> observe_relay(pid) end,
       max_concurrency: System.schedulers_online() * 4,
-      timeout: Durations.get(:operator_call_timeout_ms) + Durations.get(:health_probe_budget_ms)
+      timeout: Durations.get(:relay_call_timeout_ms) + Durations.get(:health_probe_budget_ms)
     )
     |> Enum.reduce(%{}, fn
       {{ref, _pid}, {:ok, observed}}, acc -> Map.put(acc, ref, observed)
@@ -105,8 +105,8 @@ defmodule Flezha.Convergence.Probe do
     end)
   end
 
-  defp observe_operator(pid) when is_pid(pid) do
-    case SafeCall.bounded(pid, :get_overwatch_state, Durations.get(:operator_call_timeout_ms)) do
+  defp observe_relay(pid) when is_pid(pid) do
+    case SafeCall.bounded(pid, :get_overwatch_state, Durations.get(:relay_call_timeout_ms)) do
       {:ok, ow} when is_map(ow) ->
         observed(%{
           pid: pid,
@@ -129,13 +129,13 @@ defmodule Flezha.Convergence.Probe do
     end
   end
 
-  defp observe_operator(_), do: observed()
+  defp observe_relay(_), do: observed()
 
-  # An operator whose state could not be read at all. `:unknown` rather than
+  # A relay whose state could not be read at all. `:unknown` rather than
   # `nil` for the binding: "we could not tell" must not be diffed as "unbound".
   defp unreadable(), do: observed(%{bound_runner: :unknown})
 
-  # The one shape an observed operator has. `Diff` reads every key through a
+  # The one shape an observed relay has. `Diff` reads every key through a
   # default, so a field added to one constructor and forgotten in another would
   # not fail — it would silently read as "nothing diverged". There is therefore
   # exactly one place the keys are listed.
@@ -185,11 +185,11 @@ defmodule Flezha.Convergence.Probe do
   # resets a restarted plugin's key.
   defp plugin_uptimes(ow), do: with_table(ow, %{}, &Table.uptimes/1)
 
-  # The runner the operator's durable row names. A rebind that raced a start's
+  # The runner the relay's durable row names. A rebind that raced a start's
   # late registry write leaves it naming the old runner; the Diff reports the
   # difference and `publish_binding` re-writes it.
   defp registry_tag(ow) do
-    HubManager.operator_runner_tag(Map.get(ow, :namespace), Map.get(ow, :id))
+    HubManager.relay_runner_tag(Map.get(ow, :namespace), Map.get(ow, :id))
   catch
     _, _ -> nil
   end
@@ -202,7 +202,7 @@ defmodule Flezha.Convergence.Probe do
     if node(pid) == node(), do: with_table(ow, %{}, &Table.health/1), else: %{}
   end
 
-  # The one read of an operator's extension table. A snapshot that carries no
+  # The one read of a relay's extension table. A snapshot that carries no
   # table, or a read that fails, answers `default` — which for every caller is
   # the value that plans nothing.
   defp with_table(ow, default, fun) do
@@ -218,12 +218,12 @@ defmodule Flezha.Convergence.Probe do
 
   # For every observed `{namespace, factory}` pair: this node's runners
   # advertising the factory, and the OTHER nodes whose fleets do. The facts
-  # that tell a doomed local rebind — the hub is already moving the operator
+  # that tell a doomed local rebind — the hub is already moving the relay
   # to a controller that can run it — from one worth planning. A failed local
   # read is `:unknown`, never `[]`, so the Diff never stops planning for an
-  # operator on the strength of a read that failed.
-  defp placement(operators) do
-    operators
+  # relay on the strength of a read that failed.
+  defp placement(relays) do
+    relays
     |> Enum.flat_map(fn {{ns, _rid}, observed} ->
       case Map.get(observed, :factory_id) do
         factory when is_binary(factory) -> [{ns, factory}]
@@ -248,7 +248,7 @@ defmodule Flezha.Convergence.Probe do
 
   # On a failed FleetManager read we record `:unknown`, NOT an empty set:
   # the Diff must skip misbound classification for the namespace rather than
-  # mass-migrate every operator on a transient read failure.
+  # mass-migrate every relay on a transient read failure.
   defp active_runners(namespaces) do
     Enum.into(namespaces, %{}, fn ns ->
       runners =
@@ -270,8 +270,8 @@ defmodule Flezha.Convergence.Probe do
     :exit, _ -> []
   end
 
-  defp safe_operators(namespace) do
-    HubManager.get_all_operators(namespace)
+  defp safe_relays(namespace) do
+    HubManager.get_all_relays(namespace)
   catch
     :exit, _ -> []
   end

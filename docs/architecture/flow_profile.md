@@ -1,7 +1,7 @@
 # Running in flow
 
-What `run: flow` adds to an operator. A class that runs in flow, the default,
-is a **flow operator**: it takes input for as long as it lives, such as a
+What `run: flow` adds to a relay. A class that runs in flow, the default,
+is a **flow relay**: it takes input for as long as it lives, such as a
 price feed, a click stream or readings from devices. It handles each message
 as it arrives, with no barrier between tasklets, and each of its cells
 recovers on its own.
@@ -9,7 +9,7 @@ recovers on its own.
 It runs on the [kernel](kernel.md) unchanged. This page covers what is its
 own: how a cell recovers, what happens to a message that always fails, how a
 class acknowledges input in batches, how it corrects results that a late
-input made wrong, and how one operator is split across several runners. The
+input made wrong, and how one relay is split across several runners. The
 user's side of the same features is in
 [`../topics/advanced/effectively_once.md`](../topics/advanced/effectively_once.md),
 [`../topics/advanced/partitioning.md`](../topics/advanced/partitioning.md) and
@@ -24,7 +24,7 @@ user's side of the same features is in
 5. [Late-input correction](#late-input-correction)
    1. [What a correction needs](#what-a-correction-needs)
    2. [Manual replay](#manual-replay)
-6. [Partitioned operators](#partitioned-operators)
+6. [Partitioned relays](#partitioned-relays)
 7. [Limits and gotchas](#limits-and-gotchas)
 8. [See also](#see-also)
 
@@ -81,7 +81,7 @@ sequenceDiagram
 
     EX->>CTRL: effect records up to offset 5000
     Note over EX: crash
-    CTRL->>CTRL: the operator is now unbound
+    CTRL->>CTRL: the relay is now unbound
     EX2->>CTRL: connect with the same stable identity, empty state
     Note over CTRL,EX2: takeover: the old session is unbound before the new one is bound
     CTRL-->>EX2: RestoreInitState: snapshot at 4800 and records 4801 to 5000
@@ -91,7 +91,7 @@ sequenceDiagram
 ```
 
 On the tier this replay is exact. The controller re-sends the input log from
-the lowest offset any of the operator's cells has consumed, every input
+the lowest offset any of the relay's cells has consumed, every input
 stamped with its offset, and each cell skips what its own records already
 cover, so it handles exactly its unconsumed tail. A late frame from the old
 session is refused by the write-ahead log, so it cannot change the restored
@@ -100,7 +100,7 @@ and inputs that were in flight are not replayed.
 
 The same re-send path is used for two more things: replaying a checkpoint
 interval after a crash, and replaying the slice a correction rewinds. There is
-one replay mechanism, in `Flezha.Operator.Replay`, started from three places.
+one replay mechanism, in `Flezha.Relay.Replay`, started from three places.
 
 ## The dead-letter queue
 
@@ -150,7 +150,7 @@ steps, and the acknowledgement orders them: the cell does not move past an
 input until the controller has confirmed its park (`flz_core/src/park.rs`).
 
 **The store.** `Flezha.Dlq.Store` keeps
-`app_data/dlq/<operator_class>/<tasklet_id>/entries.jsonl` plus one file per
+`app_data/dlq/<relay_class>/<tasklet_id>/entries.jsonl` plus one file per
 payload, fsynced before the acknowledgement. An entry's id comes from where
 the payload came from: `cell_key@offset` on the tier, the channel and a hash
 of the payload without it. So a park sent again after a lost acknowledgement,
@@ -161,7 +161,7 @@ as `[:flezha, :dlq, :retention_dropped]`, because it was never replayed and is
 now gone.
 
 **Replaying.** `flz dlq list`, `show`, `replay` and `drop` work on the store. A
-replay marks the entry `replaying` and sends the payload to the operator again
+replay marks the entry `replaying` and sends the payload to the relay again
 as a new input. If no new park arrives within a grace window, the replay
 counts as a success and the entry is removed; if it fails again, it parks
 again with its `generation` raised. Replay is a command you run on purpose,
@@ -169,7 +169,7 @@ because an automatic replay would simply poison the cell again. An entry stored
 without its payload bytes can only be shown or dropped. Some inputs park with no attempt at all; the list is in
 [the dead-letter queue section of `durability.md`](../topics/basics/durability.md#the-dead-letter-queue).
 
-A steps operator answers a lasting failure by undoing its finished steps
+A steps relay answers a lasting failure by undoing its finished steps
 instead ([`steps_profile.md`](steps_profile.md#retry-then-abort)); a
 `keep_progress` loop parks the failed turn's message.
 
@@ -185,7 +185,7 @@ meant to publish, and a restore would resume past them.
 Such a class sets `ack: checkpoint` under `exactly: effectively_once`. The
 interval closes after `every` inputs, after `max_delay_ms`, or when the
 tasklet calls `ctx.checkpoint()`, whichever comes first
-([`../topics/basics/configuring_an_operator.md`](../topics/basics/configuring_an_operator.md)).
+([`../topics/basics/configuring_a_relay.md`](../topics/basics/configuring_a_relay.md)).
 
 ```mermaid
 sequenceDiagram
@@ -266,7 +266,7 @@ sequenceDiagram
 
 The runner sees an event time and the controller does not, so the runner
 detects a late input (`flz_core/src/correction.rs`) and the controller runs
-the correction (`Flezha.Operator.Replay.run_correction/3`). Four details carry
+the correction (`Flezha.Relay.Replay.run_correction/3`). Four details carry
 the design:
 
 - **The baseline is found by scanning forward.** It is the record just before
@@ -319,10 +319,10 @@ keeping 60 s of input log and 60 s of log history, so a declared window raises
 both floors to meet it: the input log's hold window becomes at least the
 window, and age-based compaction never keeps less history than the window (an
 age floor of `0` turns age-based compaction off and already keeps
-everything). A floor the operator configured higher stays. Because one line
+everything). A floor the relay configured higher stays. Because one line
 of code can commit the controller to real disk, a floor that was raised is
 logged and emitted as `[:flezha, :correction, :retention_derived]` when the
-operator binds (`Flezha.State.PersistenceResolver`).
+relay binds (`Flezha.State.PersistenceResolver`).
 
 ### Manual replay
 
@@ -330,7 +330,7 @@ The same transaction, with the baseline chosen by a person instead of by a
 late input:
 
 ```sh
-$ flz operator replay <operator/tasklet/key> --from <seq|time>
+$ flz relay replay <relay/tasklet/key> --from <seq|time>
 ```
 
 Deploy a fix, then heal the recent past with it: the command rewinds the cell
@@ -343,23 +343,23 @@ from the window, such as a candle or an aggregate per interval, because the
 corrected run sends the same set of keys; it is not safe for a set of keys
 that shrinks.
 
-## Partitioned operators
+## Partitioned relays
 
-A flow operator is bound to one runner, so its cells spread over that
-machine's cores and no further. `--partitions N` goes past that: the operator
+A flow relay is bound to one runner, so its cells spread over that
+machine's cores and no further. `--partitions N` goes past that: the relay
 becomes **N ordinary instances** (`trade_watcher#p0` to `trade_watcher#p2`),
 each with its own Overwatch, registry row, runner, input log, state files,
 plugins and dead-letter entries. There is no group record. Each member's
 stored start options name its group, its index, the group size and its
 key-group range, and every view of the group (the one row in
-`flz operator list`, the coverage check in `info`) is worked out from the
+`flz relay list`, the coverage check in `info`) is worked out from the
 members when it is read, so nothing can drift from the registry. Placement,
 convergence, rebinding, moving and recovery all work per member, unchanged.
 
 ```mermaid
 flowchart TB
     SRC["source plugin: each member asks upstream only for its own keys"]
-    FWD["operator_forward into the group: routes by the key group of flz.key"]
+    FWD["relay_forward into the group: routes by the key group of flz.key"]
     subgraph GROUP["group trade_watcher, worked out from three ordinary instances"]
         P0["trade_watcher#p0, key groups 0 to 84"]
         P1["trade_watcher#p1, key groups 85 to 169"]
@@ -373,12 +373,12 @@ flowchart TB
 
 - **Key groups, not `mod N`.** A key hashes into one of 256 fixed key groups
   (FNV-1a-128 of its bytes), and each member owns a contiguous range. The
-  range is stored in the member's options and sent in `AddOperator`, never
+  range is stored in the member's options and sent in `AddRelay`, never
   worked out again from the index and size (`Flezha.Partition`). A rescale
   therefore moves whole slices of key groups instead of moving almost every
   key, and an uneven split later would need no format change. The hash has
   two implementations, kept equal by one fixture set: `flz_core`
-  (`flz_core/src/operator/instance.rs`), used by the six SDKs on it, and the
+  (`flz_core/src/relay/instance.rs`), used by the six SDKs on it, and the
   Elixir SDK's `Flezha.SDK.KeyGroup`, which the controller uses too.
 - **The routing rule is checked, not trusted.** The item a source subscribes
   with, and the `flz.key` a forward routes on, must equal what `key_by`
@@ -387,19 +387,19 @@ flowchart TB
   error that names the rule (`flz_core/src/routing.rs`), instead of folding
   part of the traffic into the wrong state. A forward into the group parks a
   message that has no key, or whose key no member owns, rather than guessing
-  (`Flezha.Plugin.Provider.OperatorForward`).
+  (`Flezha.Plugin.Provider.RelayForward`).
 - **The controller refuses a group it cannot split.** A class with no keyed
   tasklet fed by an entry channel is refused
   (`partitions_without_keyed_tasklet`): N copies of one unkeyed cell would be N
   different states that each look like the state. A steps class is refused
   unless it loops `each: per_input`. Both checks run before any runner is
-  asked (`Flezha.Operator.PartitionGroup`).
+  asked (`Flezha.Relay.PartitionGroup`).
 - **Sources split what they ask for.** The WebSocket subscription source keeps
   only the items its member owns before it subscribes, so the total traffic is
   that of one connection, divided. `http_poll` fills `{{partition_index}}` and
   `{{partition_count}}` into its URL. How plugins attach to a group is in
-  [`../topics/advanced/partitioning.md`](../topics/advanced/partitioning.md#plugins-on-a-partitioned-operator).
-- **A rescale is quiesce, move, restart.** `flz operator scale <group> M`
+  [`../topics/advanced/partitioning.md`](../topics/advanced/partitioning.md#plugins-on-a-partitioned-relay).
+- **A rescale is quiesce, move, restart.** `flz relay scale <group> M`
   stops the group's sources, refuses while any member has dead-letter
   entries, and waits until every member has consumed its input log. It then
   works out the new ranges, moves the files of each cell that changes owner (a
@@ -430,6 +430,6 @@ flowchart TB
 - [`kernel.md`](kernel.md): the input log, the effect record, the watermark and the epoch rule in detail.
 - [`steps_profile.md`](steps_profile.md): the other way to run, for comparison.
 - [`../topics/advanced/effectively_once.md`](../topics/advanced/effectively_once.md): turning the tier on, from the user's side.
-- [`../topics/advanced/partitioning.md`](../topics/advanced/partitioning.md): starting, scaling and feeding a partitioned operator.
+- [`../topics/advanced/partitioning.md`](../topics/advanced/partitioning.md): starting, scaling and feeding a partitioned relay.
 - [`../topics/basics/durability.md`](../topics/basics/durability.md): what a crash costs, and the dead-letter queue from the user's side.
-- [Partitioned operators, the full contract](https://github.com/flezha/flezha/blob/main/docs/sdk/partitioned_operators.md): preflight, id budget, quota and coverage checks.
+- [Partitioned relays, the full contract](https://github.com/flezha/flezha/blob/main/docs/sdk/partitioned_relays.md): preflight, id budget, quota and coverage checks.

@@ -10,7 +10,7 @@ defmodule Flezha.State.Supervisor do
 
   use DynamicSupervisor
 
-  alias Flezha.Operator.ClassRegistry
+  alias Flezha.Relay.ClassRegistry
   alias Flezha.Process.Cspec
   alias Flezha.State.FsyncBatcher
   alias Flezha.State.InputLog
@@ -42,7 +42,7 @@ defmodule Flezha.State.Supervisor do
     # DynamicSupervisor default (3 restarts in 5 s) is a budget for ONE
     # supervised subsystem, not for a fleet: four unrelated writers crashing in
     # the same five seconds would take this supervisor down, and with it every
-    # other operator's writer AND the three ETS tables owned above, which the
+    # other relay's writer AND the three ETS tables owned above, which the
     # data plane reads. The intensity is therefore sized for independent
     # children; a genuine restart storm still trips it, just not a burst.
     DynamicSupervisor.init([strategy: :one_for_one] ++ Cspec.intensity())
@@ -52,7 +52,7 @@ defmodule Flezha.State.Supervisor do
   Returns the pid of the writer for `cell_id`, starting one if it is
   not yet running. Safe to call from many processes concurrently. A
   3-tuple id resolves a per-Cell `WalWriter`; the 2-tuple
-  `{operator_class, :input_log}` resolves the operator's durable
+  `{relay_class, :input_log}` resolves the relay's durable
   `InputLog` (same registry, so the shared `FsyncBatcher` drains both).
   """
   @spec find_or_start(tuple()) :: {:ok, pid()} | {:error, term()}
@@ -64,7 +64,7 @@ defmodule Flezha.State.Supervisor do
       :error ->
         spec =
           case cell_id do
-            {operator_class, :input_log} -> {Flezha.State.InputLog, operator_class}
+            {relay_class, :input_log} -> {Flezha.State.InputLog, relay_class}
             _ -> {WalWriter, cell_id}
           end
 
@@ -94,9 +94,9 @@ defmodule Flezha.State.Supervisor do
     FsyncBatcher.forget(cell_id)
     Paths.delete_files(cell_id)
 
-    # A deleted Cell must stop holding the operator's input-log watermark.
-    {operator_class, _, _} = cell_id
-    InputLog.forget_cell(operator_class, cell_id)
+    # A deleted Cell must stop holding the relay's input-log watermark.
+    {relay_class, _, _} = cell_id
+    InputLog.forget_cell(relay_class, cell_id)
 
     {:ok, %{cell_id: cell_id, status: :ok}}
   end
@@ -105,20 +105,20 @@ defmodule Flezha.State.Supervisor do
   @spec lookup(tuple()) :: {:ok, pid()} | :error
   defdelegate lookup(cell_id), to: WriterRegistry
 
-  @doc "Pids of every live Cell writer for `operator_class`."
+  @doc "Pids of every live Cell writer for `relay_class`."
   @spec live_writers(String.t()) :: [pid()]
-  defdelegate live_writers(operator_class), to: WriterRegistry
+  defdelegate live_writers(relay_class), to: WriterRegistry
 
   @doc """
-  Stop every live writer of `operator_class` and its input log; the files
-  stay. What a stopped operator owes whether its state is deleted, retained
+  Stop every live writer of `relay_class` and its input log; the files
+  stay. What a stopped relay owes whether its state is deleted, retained
   for inspection or kept for a rescale to move.
   """
   @spec close_writers(String.t()) :: :ok
-  def close_writers(operator_class) do
-    Enum.each(live_writers(operator_class), &WalWriter.close/1)
+  def close_writers(relay_class) do
+    Enum.each(live_writers(relay_class), &WalWriter.close/1)
 
-    case lookup({operator_class, :input_log}) do
+    case lookup({relay_class, :input_log}) do
       {:ok, pid} -> _ = DynamicSupervisor.terminate_child(__MODULE__, pid)
       :error -> :ok
     end
@@ -130,7 +130,7 @@ defmodule Flezha.State.Supervisor do
   defdelegate flush_all(), to: FsyncBatcher
 
   @doc "Confirm an instance's processed prefix in its input log (`InputLog.confirm_prefix/3`)."
-  defdelegate confirm_prefix(operator_class, offset, opts), to: InputLog
+  defdelegate confirm_prefix(relay_class, offset, opts), to: InputLog
 
   @doc "Every registered writer id — Cell writers and input logs alike."
   @spec registered_ids() :: [tuple()]

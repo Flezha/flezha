@@ -34,9 +34,9 @@ defmodule Flezha.Convergence.Snapshot do
 
   @default_current %{
     last_tick_at: nil,
-    stuck_operators: %{},
+    stuck_relays: %{},
     intent_mismatch: [],
-    operator_health: %{}
+    relay_health: %{}
   }
 
   # ---------- public API ----------
@@ -77,34 +77,34 @@ defmodule Flezha.Convergence.Snapshot do
   end
 
   @doc """
-  The Loop's verdict record for `{namespace, operator_id}`, or `nil` for an
-  operator it has not judged yet (before the first tick, or a durable-registry
+  The Loop's verdict record for `{namespace, relay_id}`, or `nil` for a
+  relay it has not judged yet (before the first tick, or a durable-registry
   row with no live placement).
   """
   @spec verdict(String.t(), term()) :: Verdict.t() | nil
-  def verdict(namespace, operator_id), do: record({:operator, {namespace, operator_id}})
+  def verdict(namespace, relay_id), do: record({:relay, {namespace, relay_id}})
 
   @doc """
   The Loop's verdict record for any subject — a runner, a plugin, a channel or
-  a driver as well as an operator — or `nil` for one it has not judged. The
+  a driver as well as a relay — or `nil` for one it has not judged. The
   one read of the published health map, so no reader digs into the snapshot's
   shape for itself.
   """
   @spec record({Verdict.kind(), term()}) :: Verdict.t() | nil
   def record(subject) do
-    current() |> Map.get(:operator_health, %{}) |> Map.get(subject)
+    current() |> Map.get(:relay_health, %{}) |> Map.get(subject)
   end
 
   @doc """
-  Per-operator health for `{namespace, operator_id}` as every user surface
+  Per-relay health for `{namespace, relay_id}` as every user surface
   shows it: the state of the one verdict record the Loop published for it,
-  worded by `Verdict.listed_state/2`, so a `:failed` or `:unbound` operator
-  reads `:recovering` inside the unmet-intent grace. `:unknown` for an operator
+  worded by `Verdict.listed_state/2`, so a `:failed` or `:unbound` relay
+  reads `:recovering` inside the unmet-intent grace. `:unknown` for a relay
   it has not judged. A caller that decides from the state reads `verdict/2`.
   """
-  @spec operator_health(String.t(), term()) :: Verdict.state() | :recovering
-  def operator_health(namespace, operator_id) do
-    case verdict(namespace, operator_id) do
+  @spec relay_health(String.t(), term()) :: Verdict.state() | :recovering
+  def relay_health(namespace, relay_id) do
+    case verdict(namespace, relay_id) do
       %Verdict{state: state} -> Verdict.listed_state(state, unmet_intent())
       _ -> :unknown
     end

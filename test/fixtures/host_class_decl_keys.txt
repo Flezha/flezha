@@ -1,7 +1,7 @@
 # Every key of the `HostClassDecl` JSON the SDKs send the poll core, one per
 # line, `section.key` for the nested declarations. `class.run` and
 # `class.durable` carry the settings tree as its JSON (`flz_core`'s
-# `operator::settings`), which the core reads and refuses by the member's
+# `relay::settings`), which the core reads and refuses by the member's
 # name. Six readers pin it: a `flz_core` test serialises a fully populated declaration and asserts its key
 # set is exactly this; `HostClassDeclarationTest` asserts the Java builder emits
 # every key here; `sdk/node/test/decl-keys.test.mjs` asserts the same of the

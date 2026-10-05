@@ -7,7 +7,7 @@ defmodule Flezha.Observability.OtpBackend.ProcessHubSource do
   registered-process counts and recovery state.
 
   Cardinality math: the two hub-wide metrics carry one shape per hub, so a
-  cluster with N namespaces emits N of them; `runner_bound_operators` carries
+  cluster with N namespaces emits N of them; `runner_bound_relays` carries
   one shape per runner per hub, so it emits N x runners. The declared budget is
   sized for a fleet of a few hundred runner-namespace pairs, which is what the
   default per-source budget allows too.
@@ -54,7 +54,7 @@ defmodule Flezha.Observability.OtpBackend.ProcessHubSource do
       hub: hub
     })
 
-    emit_bound_operators(namespace, hub)
+    emit_bound_relays(namespace, hub)
   end
 
   # The spread the placement cap governs, read from the registry's runner tags
@@ -62,12 +62,12 @@ defmodule Flezha.Observability.OtpBackend.ProcessHubSource do
   # that may never have started, and a user is owed the binding rather than
   # the intention. `Load.counts/2` seeds every active runner, so a runner
   # holding nothing reports `0` instead of vanishing from the exposition.
-  defp emit_bound_operators(namespace, hub) do
+  defp emit_bound_relays(namespace, hub) do
     namespace
     |> HubManager.registry_dump()
     |> Load.counts(safe_active_runners(namespace))
     |> Enum.each(fn {runner_id, bound} ->
-      emit_metric(:runner_bound_operators, %{value: bound}, %{hub: hub, runner: runner_id})
+      emit_metric(:runner_bound_relays, %{value: bound}, %{hub: hub, runner: runner_id})
     end)
   end
 

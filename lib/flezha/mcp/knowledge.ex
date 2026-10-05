@@ -28,7 +28,7 @@ defmodule Flezha.Mcp.Knowledge do
       name: "Flezha.sdk_example",
       doc:
         "The current echo example of one SDK: every source file of a small runner that " <>
-          "registers an operator, in the form this release's SDK takes. Read it before " <>
+          "registers a relay, in the form this release's SDK takes. Read it before " <>
           "writing SDK code; never write an SDK form from memory.",
       args: [
         language: [type: :enum, values: @languages, required: true, doc: "The SDK's language"]

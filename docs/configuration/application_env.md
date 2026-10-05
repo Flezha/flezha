@@ -56,9 +56,9 @@ retry is a row of `lib/flezha/config/backoff.ex`, announced on
 | `:compaction_timeout_ms` | `30_000` | `lib/flezha/state/persistence_resolver.ex`; `0` disables the compaction-timeout sweep |
 | `:record_log_cut_after_bytes` | `64 * 1024` | `lib/flezha/state/persistence_resolver.ex`; `0` rewrites at every release |
 | `:default_time_travel_retention_hours` | `6` | `lib/flezha/state/persistence_resolver.ex` |
-| `:default_operator_completed_retention_hours` | `72` | `lib/flezha/state/persistence_resolver.ex` |
+| `:default_relay_completed_retention_hours` | `72` | `lib/flezha/state/persistence_resolver.ex` |
 | `:default_output_stall_timeout_ms` | `60_000` | `lib/flezha/state/persistence_resolver.ex` |
-| `:operator_persistence` / `:time_travel_retention_hours` / `:operator_completed_retention_hours` / `:compact_after_bytes` / `:compact_after_age_ms` / `:output_stall_timeout_ms` / `:credit_window_bytes` | `%{}` | `lib/flezha/state/persistence_resolver.ex`: per-class user overrides, `%{"OperatorClass" => value}`, winning over the SDK declaration and the instance metadata; `:operator_persistence` overrides whether a class keeps its work on disk. `durable: remote` is the class's own and has no override |
+| `:relay_persistence` / `:time_travel_retention_hours` / `:relay_completed_retention_hours` / `:compact_after_bytes` / `:compact_after_age_ms` / `:output_stall_timeout_ms` / `:credit_window_bytes` | `%{}` | `lib/flezha/state/persistence_resolver.ex`: per-class user overrides, `%{"RelayClass" => value}`, winning over the SDK declaration and the instance metadata; `:relay_persistence` overrides whether a class keeps its work on disk. `durable: remote` is the class's own and has no override |
 | `:wal_high_watermark_bytes` | `16 * 1024 * 1024` | `lib/flezha/state/persistence_resolver.ex` — the one Cell-scale payload bound |
 | `:wal_low_watermark_bytes` | half the high watermark (derived) | `lib/flezha/state/wal_writer.ex` |
 | `:wal_hard_watermark_bytes` | 4 × the high watermark (derived) | `lib/flezha/state/wal_writer.ex` |
@@ -69,7 +69,7 @@ retry is a row of `lib/flezha/config/backoff.ex`, announced on
 | `:credit_flow_control_enabled` | `true` | `lib/flezha/runner/stream_channel.ex` |
 | `:credit_low_watermark_bytes` | half the credit window (derived) | `lib/flezha/runner/stream_channel.ex` |
 | `:agent_fsync_interval_ms` | `5` | `lib/flezha/state/fsync_batcher.ex` |
-| `:input_log_hold_window_ms` | `0` | `lib/flezha/operator/class_registry.ex`, `lib/flezha/state/input_log.ex` |
+| `:input_log_hold_window_ms` | `0` | `lib/flezha/relay/class_registry.ex`, `lib/flezha/state/input_log.ex` |
 | `:time_travel_retention_check_interval_ms` | `60_000` | `lib/flezha/state/retention.ex` |
 | `:restore_await_timeout_ms` | `15_000` | `lib/flezha/state/commands.ex` |
 | `:state_resync_fun` | unset | `lib/flezha/state/recovery.ex` |
@@ -77,7 +77,7 @@ retry is a row of `lib/flezha/config/backoff.ex`, announced on
 | `:durability_tier[:ship_interval_ms]` / `[:rpo_target_ms]` / `[:gc_interval_ms]` / `[:gc_grace_ms]` / `[:gc_abandoned_after_ms]` | `30_000` / `120_000` / `3_600_000` / `3_600_000` / `604_800_000` | `lib/flezha/state/durability_tier.ex` (a non-positive value falls back to the default) |
 | `:durability_tier[:backend_opts]` | see the `FLEZHA_DURABILITY_PG_*` / `_S3_*` / `_PATH` rows | `lib/flezha/state/durability_tier/backend.ex` |
 
-## Runner and operator lifecycle
+## Runner and relay lifecycle
 
 | Key | Default | Read in |
 |---|---|---|
@@ -88,21 +88,21 @@ retry is a row of `lib/flezha/config/backoff.ex`, announced on
 | `:process_hub_reconcile_grace_ms` / `:process_hub_reconcile_interval_ms` | `45_000` / `30_000` | `lib/flezha/service/hub_manager.ex` |
 | `:hub_runner_assign_wait_ms` | `2_000` | `lib/flezha/service/hub_manager.ex` |
 | `:migration_consent[:consent_timeout_ms]` / `[:retry_interval_ms]` / `[:max_defer_ms]` | `5_000` / `2_000` / `:graceful_shutdown_timeout_ms` (derived) | `lib/flezha/service/hub_manager.ex` |
-| `:overwatch_call_timeout_ms` | `5_000` | `lib/flezha/service/operator_manager.ex` |
-| `:call_pending_max` | `10_000` | `lib/flezha/operator/calls.ex`; the answers one operator owes the callers waiting on it |
-| `:call_grace_ms` | `1_000` | `lib/flezha/operator/calls.ex`; how long an outside caller waits past its call's deadline, so the operator's own `call.timeout` reaches it first |
-| `:call_retention_margin_ms` | `300_000` | `lib/flezha/state/input_log.ex`, `lib/flezha/operator/ingest.ex`; see `FLEZHA_CALL_RETENTION_MARGIN_MS` |
-| `:call_worker_idle_ms` | `30_000` | `lib/flezha/service/calls.ex`; how long an operator call's delivery worker (one per caller and target) waits with an empty queue before it stops |
-| `:listener_release_check_ms` | `5_000` | `lib/flezha/service/listener/relay.ex`; how long a listener waits after its plugin was released before it asks the registry whether the operator moved, ended or had the listener disabled, and between asks |
-| `:overwatch_ping_enabled` | `true` | `lib/flezha/operator/lifecycle.ex` |
+| `:overwatch_call_timeout_ms` | `5_000` | `lib/flezha/service/relay_manager.ex` |
+| `:call_pending_max` | `10_000` | `lib/flezha/relay/calls.ex`; the answers one relay owes the callers waiting on it |
+| `:call_grace_ms` | `1_000` | `lib/flezha/relay/calls.ex`; how long an outside caller waits past its call's deadline, so the relay's own `call.timeout` reaches it first |
+| `:call_retention_margin_ms` | `300_000` | `lib/flezha/state/input_log.ex`, `lib/flezha/relay/ingest.ex`; see `FLEZHA_CALL_RETENTION_MARGIN_MS` |
+| `:call_worker_idle_ms` | `30_000` | `lib/flezha/service/calls.ex`; how long a relay call's delivery worker (one per caller and target) waits with an empty queue before it stops |
+| `:listener_release_check_ms` | `5_000` | `lib/flezha/service/listener/receiver.ex`; how long a listener waits after its plugin was released before it asks the registry whether the relay moved, ended or had the listener disabled, and between asks |
+| `:overwatch_ping_enabled` | `true` | `lib/flezha/relay/lifecycle.ex` |
 | `:overwatch_ping_timeout_ms` | `2_000` | `lib/flezha/runner/control_unit.ex` |
-| `:overwatch_task_warn_ms` | `2_000` | `lib/flezha/operator/overwatch.ex` |
-| `:overwatch_runner_wait_ms` | `30_000` | `lib/flezha/operator/lifecycle.ex` |
-| `:stream_bind_wait_ms` | `30_000` | `lib/flezha/operator/lifecycle.ex` |
-| `:correction_debounce_ms` | `200` | `lib/flezha/operator/replay.ex` |
-| `:bind_restore_concurrency` | `16` | `lib/flezha/operator/replay.ex` — how many of a class's Cells a bind restores at once |
+| `:overwatch_task_warn_ms` | `2_000` | `lib/flezha/relay/overwatch.ex` |
+| `:overwatch_runner_wait_ms` | `30_000` | `lib/flezha/relay/lifecycle.ex` |
+| `:stream_bind_wait_ms` | `30_000` | `lib/flezha/relay/lifecycle.ex` |
+| `:correction_debounce_ms` | `200` | `lib/flezha/relay/replay.ex` |
+| `:bind_restore_concurrency` | `16` | `lib/flezha/relay/replay.ex` — how many of a class's Cells a bind restores at once |
 | `:placement_load_cap_percent` | `100` | `lib/flezha/runner/fleet_manager/load.ex` — the fairness cap on runner selection, as a percentage of the fair share |
-| `:placement_load_refresh_ms` | `1_000` | `lib/flezha/runner/fleet_manager.ex` — how long the per-runner operator count a placement reads may go without being rebuilt from the hub registry |
+| `:placement_load_refresh_ms` | `1_000` | `lib/flezha/runner/fleet_manager.ex` — how long the per-runner relay count a placement reads may go without being rebuilt from the hub registry |
 | `:control_unit_heartbeat_interval_ms` | `15_000` | `lib/flezha/runner/control_unit.ex` |
 | `:control_unit_pending_reply_timeout_ms` | `90_000` | `lib/flezha/runner/control_unit.ex` |
 
@@ -117,13 +117,13 @@ retry is a row of `lib/flezha/config/backoff.ex`, announced on
 | `:convergence_health_enabled` | `true` | `lib/flezha/application.ex` |
 | `:convergence_tick_ms` | `5_000` | `lib/flezha/convergence/loop.ex`, `lib/flezha/healthz/server.ex` |
 | `:convergence_output_stall_grace_ms` | `60_000` | `lib/flezha/convergence/loop.ex` |
-| `:convergence_unmet_intent_grace_ms` | `120_000` | `lib/flezha/convergence/snapshot.ex`: how long a `failed` or `unbound` operator reads `recovering` on `/healthz`, in `flz operator list` and `info`, in `flz cluster status` and in the admin `operator_rows` verb before any of them shows its own word |
+| `:convergence_unmet_intent_grace_ms` | `120_000` | `lib/flezha/convergence/snapshot.ex`: how long a `failed` or `unbound` relay reads `recovering` on `/healthz`, in `flz relay list` and `info`, in `flz cluster status` and in the admin `relay_rows` verb before any of them shows its own word |
 | `:convergence_fabric_503_polls` | `3` | `lib/flezha/healthz/server.ex` |
-| `:convergence_cell_stall_ms` | `300_000` (the classifier's own default, `lib/flezha/convergence/stall_classifier.ex`) | `lib/flezha/convergence/loop/liveness.ex` — how long a handout may be out before the per-operator classifier calls that Cell stalled; a non-positive value leaves the default in place |
+| `:convergence_cell_stall_ms` | `300_000` (the classifier's own default, `lib/flezha/convergence/stall_classifier.ex`) | `lib/flezha/convergence/loop/liveness.ex` — how long a handout may be out before the per-relay classifier calls that Cell stalled; a non-positive value leaves the default in place |
 | `:healthz_enabled` | `false` | `lib/flezha/application.ex` |
 | `:healthz_port` / `:healthz_bind` | `9569` / `"0.0.0.0"` (`Flezha.Healthz.Server.default_bind/0`, the one default; `config/test.exs` binds loopback) | `lib/flezha/healthz/server.ex` |
 | `:output_watchdog_interval_ms` | `10_000` | `lib/flezha/state/watchdog.ex` |
-| `:input_silence_timeout_ms` | `0` (off) | `lib/flezha/state/watchdog.ex`: how long a flow operator that produced output earlier may receive no Change before one warning is logged and `[:flezha, :state, :input_silence]` is emitted. Off by default: silence is not a fault, and the sweep cannot tell a dead upstream from a source that reports hourly. Set a positive value on a feed you know to be continuous |
+| `:input_silence_timeout_ms` | `0` (off) | `lib/flezha/state/watchdog.ex`: how long a flow relay that produced output earlier may receive no Change before one warning is logged and `[:flezha, :state, :input_silence]` is emitted. Off by default: silence is not a fault, and the sweep cannot tell a dead upstream from a source that reports hourly. Set a positive value on a feed you know to be continuous |
 
 ## Observability and audit
 
@@ -177,6 +177,6 @@ retry is a row of `lib/flezha/config/backoff.ex`, announced on
 
 | Key | Default | Read in |
 |---|---|---|
-| `:env` | `Mix.env()` (`config/config.exs`) | `lib/flezha/operator/handover.ex`, `lib/flezha/runner/control_unit.ex` |
+| `:env` | `Mix.env()` (`config/config.exs`) | `lib/flezha/relay/handover.ex`, `lib/flezha/runner/control_unit.ex` |
 | `:pre_hooks` / `:post_hooks` | `[]` | `lib/flezha/boot/loader.ex` |
 | `:testnet_enabled` | `true` in dev/test, `false` in prod (`config/<env>.exs`) | `lib/flezha/application.ex` |

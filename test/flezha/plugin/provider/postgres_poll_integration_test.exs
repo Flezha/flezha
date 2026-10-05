@@ -7,7 +7,7 @@ defmodule Flezha.Plugin.Provider.PostgresPollIntegrationTest do
       POSTGRES_INTEGRATION=1 mix test --include postgres_integration \\
         test/flezha/plugin/provider/postgres_poll_integration_test.exs
 
-  The test process stands in for the host operator: every injection is an
+  The test process stands in for the host relay: every injection is an
   `{:ingest, row, metadata}` call it answers, and every cursor commit a
   `{:plugin_opt_persist, …}` cast it receives. The reader connects as a role of
   its own with a literal password, so each case also proves the password the

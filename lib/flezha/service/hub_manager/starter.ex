@@ -44,7 +44,7 @@ defmodule Flezha.Service.HubManager.Starter do
 
   What it answers is whether boot-time creation has finished, not whether
   every hub is still up. A hub this node later reclaims because it serves
-  none of that namespace's operators is a deliberate teardown, and holding
+  none of that namespace's relays is a deliberate teardown, and holding
   the node out of rotation for it would strand a controller that is healthy.
 
   A node with the auto-restore kill-switch off owes nothing: it creates no

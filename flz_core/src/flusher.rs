@@ -47,13 +47,13 @@ struct FlusherEntry {
 }
 
 /// The wire `cell_id_bytes` the controller's `decode_cell_id` reads.
-pub fn encode_cell_identity(operator_class: &str, tasklet_id: &str, cell_key: &str) -> Vec<u8> {
-    let rc = operator_class.as_bytes();
+pub fn encode_cell_identity(relay_class: &str, tasklet_id: &str, cell_key: &str) -> Vec<u8> {
+    let rc = relay_class.as_bytes();
     let sh = tasklet_id.as_bytes();
     let pk = cell_key.as_bytes();
     assert!(
         rc.len() <= 255 && sh.len() <= 255,
-        "operator_class / tasklet_id ≤ 255 bytes"
+        "relay_class / tasklet_id ≤ 255 bytes"
     );
     assert!(pk.len() <= 0xFFFF, "cell_key ≤ 65535 bytes");
     let mut out = Vec::with_capacity(1 + rc.len() + 1 + sh.len() + 2 + pk.len());
@@ -210,12 +210,12 @@ impl CellFlusher {
         id
     }
 
-    /// Whether a Cell of `operator_class` is registered, for tests.
+    /// Whether a Cell of `relay_class` is registered, for tests.
     #[cfg(test)]
-    pub(crate) fn holds_class(&self, operator_class: &str) -> bool {
+    pub(crate) fn holds_class(&self, relay_class: &str) -> bool {
         self.entries.iter().any(|entry| {
             decode_cell_identity(&entry.cell_identity)
-                .is_some_and(|(class, _, _)| class == operator_class)
+                .is_some_and(|(class, _, _)| class == relay_class)
         })
     }
 

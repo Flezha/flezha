@@ -9,7 +9,7 @@ on the command line.
 | Command | What it does |
 | --- | --- |
 | `flz controller start [--mode <mode>]` | Starts the controller, in this terminal or as a daemon |
-| `flz controller stop [--timeout-ms <n>] [--no-wait] [--force]` | Stops it once its operators have drained |
+| `flz controller stop [--timeout-ms <n>] [--no-wait] [--force]` | Stops it once its relays have drained |
 | `flz controller status` | Prints its settings, and whether a shutdown is running |
 | `flz controller mem-top` | Lists what uses the most memory in the controller |
 
@@ -24,7 +24,7 @@ on the command line.
 
 | Command | What it does |
 | --- | --- |
-| `flz cluster status` | Lists the cluster's controllers, its leader and its operators' health |
+| `flz cluster status` | Lists the cluster's controllers, its leader and its relays' health |
 
 ## [`flz runner`](controller_commands.md#flz-runner)
 
@@ -55,46 +55,46 @@ on the command line.
 | --- | --- |
 | `flz mcp` | Serves Flezha to an AI assistant over MCP, on stdin and stdout |
 
-## [`flz operator`](operator_commands.md#flz-operator)
+## [`flz relay`](relay_commands.md#flz-relay)
 
 | Command | What it does |
 | --- | --- |
-| `flz operator start <factory_id>` | Starts an operator from a factory a runner offers |
-| `flz operator stop <operator_id>` | Stops an operator |
-| `flz operator list` | Lists the operators in a namespace, with their health |
-| `flz operator info` | Shows each operator's details and plugins |
-| `flz operator state <operator_id>` | Prints an operator's state |
-| `flz operator send <operator_id> --text <payload>` | Sends an input |
-| `flz operator call <operator_id> --text <payload>` | Sends an input and prints the operator's answer |
-| `flz operator listen <operator_id>` | Prints what an operator emits, or with `--input` what it takes in |
-| `flz operator scale <group> <partitions>` | Changes the number of members of a partition group |
-| `flz operator rewind <operator_id> --to-iteration <n>` | Takes a workflow loop back to an earlier iteration |
-| `flz operator replay <operator/tasklet/key> --from <seq|time>` | Runs a cell's kept inputs again from a point in the past |
+| `flz relay start <factory_id>` | Starts a relay from a factory a runner offers |
+| `flz relay stop <relay_id>` | Stops a relay |
+| `flz relay list` | Lists the relays in a namespace, with their health |
+| `flz relay info` | Shows each relay's details and plugins |
+| `flz relay state <relay_id>` | Prints a relay's state |
+| `flz relay send <relay_id> --text <payload>` | Sends an input |
+| `flz relay call <relay_id> --text <payload>` | Sends an input and prints the relay's answer |
+| `flz relay listen <relay_id>` | Prints what a relay emits, or with `--input` what it takes in |
+| `flz relay scale <group> <partitions>` | Changes the number of members of a partition group |
+| `flz relay rewind <relay_id> --to-iteration <n>` | Takes a workflow loop back to an earlier iteration |
+| `flz relay replay <relay/tasklet/key> --from <seq|time>` | Runs a cell's kept inputs again from a point in the past |
 
-## [`flz state`](operator_commands.md#flz-state)
-
-| Command | What it does |
-| --- | --- |
-| `flz state get <operator/tasklet[/key]>` | Prints a cell's current state |
-| `flz state list <operator>` | Lists an operator's cells |
-| `flz state at <operator/tasklet/key> <seq|time>` | Prints a cell's state at a point in the past |
-| `flz state rotate <operator/tasklet/key>` | Writes a snapshot of a cell's state now |
-| `flz state retention <operator> <hours>` | Sets how long past states are kept |
-| `flz state delete <operator/tasklet/key>` | Deletes a cell's stored state |
-| `flz state outbox <operator/tasklet/key>` | Shows a cell's effectively-once outbox |
-| `flz state journal <operator/instance>` | Shows the steps a workflow instance has committed |
-| `flz state inbox <operator/instance>` | Shows a workflow instance's stored inputs |
-
-## [`flz dlq`](operator_commands.md#flz-dlq)
+## [`flz state`](relay_commands.md#flz-state)
 
 | Command | What it does |
 | --- | --- |
-| `flz dlq list [operator]` | Lists the parked inputs |
+| `flz state get <relay/tasklet[/key]>` | Prints a cell's current state |
+| `flz state list <relay>` | Lists a relay's cells |
+| `flz state at <relay/tasklet/key> <seq|time>` | Prints a cell's state at a point in the past |
+| `flz state rotate <relay/tasklet/key>` | Writes a snapshot of a cell's state now |
+| `flz state retention <relay> <hours>` | Sets how long past states are kept |
+| `flz state delete <relay/tasklet/key>` | Deletes a cell's stored state |
+| `flz state outbox <relay/tasklet/key>` | Shows a cell's effectively-once outbox |
+| `flz state journal <relay/instance>` | Shows the steps a workflow instance has committed |
+| `flz state inbox <relay/instance>` | Shows a workflow instance's stored inputs |
+
+## [`flz dlq`](relay_commands.md#flz-dlq)
+
+| Command | What it does |
+| --- | --- |
+| `flz dlq list [relay]` | Lists the parked inputs |
 | `flz dlq show <entry>` | Shows one parked input |
-| `flz dlq replay <entry>` | Sends it through the operator again |
+| `flz dlq replay <entry>` | Sends it through the relay again |
 | `flz dlq drop <entry>` | Deletes it |
 
-## [`flz schedule`](operator_commands.md#flz-schedule)
+## [`flz schedule`](relay_commands.md#flz-schedule)
 
 | Command | What it does |
 | --- | --- |
@@ -110,11 +110,11 @@ on the command line.
 | `flz plugin install <path-or-https-url>` | Places a plugin package in the plugin folder |
 | `flz plugin uninstall <plugin_id>` | Removes a plugin package |
 | `flz plugin sync` | Makes the plugin folder hold exactly what `FLEZHA_PLUGINS` lists |
-| `flz plugin enable <name> <provider_id>` | Enables a plugin under a name; `--operator_id` binds an operator too |
-| `flz plugin bind <name> --operator_id <op>` | Connects an operator to an enabled plugin |
-| `flz plugin unbind <name> --operator_id <op>` | Disconnects it; the plugin stays enabled |
+| `flz plugin enable <name> <provider_id>` | Enables a plugin under a name; `--relay_id` binds a relay too |
+| `flz plugin bind <name> --relay_id <op>` | Connects a relay to an enabled plugin |
+| `flz plugin unbind <name> --relay_id <op>` | Disconnects it; the plugin stays enabled |
 | `flz plugin update <name>` | Changes a plugin's settings |
-| `flz plugin disable <name>` | Turns a plugin off for every operator |
+| `flz plugin disable <name>` | Turns a plugin off for every relay |
 | `flz plugin list` | Lists the enabled plugins; `--installed` the packages, `--providers` the providers |
 | `flz plugin help <provider_id>` | Lists a provider's settings and hooks |
 

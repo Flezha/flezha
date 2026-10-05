@@ -73,7 +73,7 @@ fn the_heartbeat_carries_every_overflow_counter() {
     }
 }
 
-/// An idle Operator's heartbeat is its only outbound signal; one that
+/// An idle Relay's heartbeat is its only outbound signal; one that
 /// reaches no stream must ask for a reconnect, or the stall is silent.
 #[test]
 fn heartbeat_reaching_no_stream_arms_the_reconnect_ladder() {
@@ -99,14 +99,16 @@ fn heartbeat_reaching_no_stream_arms_the_reconnect_ladder() {
     crate::state_sink::reset_for_test();
 }
 
-/// A removed steps operator's Cells leave the flusher with it: an entry holds its
+/// A removed steps relay's Cells leave the flusher with it: an entry holds its
 /// Cell's buffer, so one left behind is drained for the life of the process.
 #[test]
 fn a_stopped_steps_leaves_no_cell_with_the_flusher() {
     let _env = crate::runner::env_test_guard();
     let factory = format!("flusher_stop_{}", std::process::id());
-    let class = crate::test_support::host_class::steps_json(&factory, &["in"], 1)
-        .replace(r#""durable":false"#, r#""durable":{"local":{"sleep_after":false}}"#);
+    let class = crate::test_support::host_class::steps_json(&factory, &["in"], 1).replace(
+        r#""durable":false"#,
+        r#""durable":{"local":{"sleep_after":false}}"#,
+    );
     crate::host::register_host_class_json(class.as_bytes()).expect("class registers");
     let mut node = RunnerNode::new("test-ns".to_string());
     let id = format!("{factory}_inst");
@@ -115,13 +117,13 @@ fn a_stopped_steps_leaves_no_cell_with_the_flusher() {
     let flusher = crate::flusher::CellFlusher::instance();
     assert!(flusher.holds_class(&id), "its Cell was registered");
 
-    assert!(node.stop_operator(&id));
+    assert!(node.stop_relay(&id));
 
     assert!(!flusher.holds_class(&id), "its Cell left with it");
 }
 
-/// A local send reaches only what this runner holds: an operator bound
-/// elsewhere, a channel the operator does not declare and one that is not an
+/// A local send reaches only what this runner holds: a relay bound
+/// elsewhere, a channel the relay does not declare and one that is not an
 /// entry channel are each refused by code, and nothing is dispatched.
 #[test]
 fn a_local_send_is_refused_for_what_this_runner_cannot_take() {
@@ -138,7 +140,7 @@ fn a_local_send_is_refused_for_what_this_runner_cannot_take() {
         |result: Result<(), crate::Error>| crate::ErrorModel::code(&result.expect_err("refused"));
     assert_eq!(
         code(bound.send("elsewhere", "in", b"x".to_vec())),
-        "runtime.operator_not_local"
+        "runtime.relay_not_local"
     );
     assert_eq!(
         code(bound.send(&id, "nope", b"x".to_vec())),
@@ -149,9 +151,9 @@ fn a_local_send_is_refused_for_what_this_runner_cannot_take() {
         "runtime.channel_wrong_kind"
     );
 
-    assert!(node.stop_operator(&id));
+    assert!(node.stop_relay(&id));
     assert!(
         bound.ids().is_empty(),
-        "an unbound operator is no longer listed"
+        "an unbound relay is no longer listed"
     );
 }

@@ -5,7 +5,7 @@ defmodule FlezhaTest.System.PartStreamE2ETest do
   `1..n` for the input `n` and then emit `done:<n>` on their sink `answer`, and
   `retry:<n>` sends them again on a second attempt.
 
-  Read through `flz operator listen` (text and JSON), through
+  Read through `flz relay listen` (text and JSON), through
   `Flezha.Service.Listener.listen/4` from this process as a plugin would, and
   beside a file sink that must hold the output alone. A dead-lettered input
   reaches a listener as a notice.
@@ -20,11 +20,11 @@ defmodule FlezhaTest.System.PartStreamE2ETest do
   import FlezhaTest.Helper.TierE2EHarness, only: [unique: 1]
   import FlezhaTest.Helper.ListenerHarness
 
-  alias Flezha.Operator.Builder
+  alias Flezha.Relay.Builder
   alias Flezha.Runner.FleetManager
-  alias Flezha.Service.{Cli, Listener, OperatorManager}
+  alias Flezha.Service.{Cli, Listener, RelayManager}
   alias Flezha.Transport.LivenessCounters
-  alias FlezhaTest.Fixtures.OperatorFixture
+  alias FlezhaTest.Fixtures.RelayFixture
   alias FlezhaTest.Helper.NodeTestHelper
 
   @moduletag timeout: 300_000
@@ -40,7 +40,7 @@ defmodule FlezhaTest.System.PartStreamE2ETest do
 
   for {factory, kind} <- @fixtures do
     describe "#{factory}" do
-      test "flz operator listen prints the parts, then the output, in text and in JSON",
+      test "flz relay listen prints the parts, then the output, in text and in JSON",
            %{namespace: ns} do
         id = start!(ns, unquote(factory), unquote(kind))
 
@@ -120,7 +120,7 @@ defmodule FlezhaTest.System.PartStreamE2ETest do
     end
   end
 
-  test "a dead-lettered input of a flow operator is printed as a notice",
+  test "a dead-lettered input of a flow relay is printed as a notice",
        %{namespace: ns} do
     id = start!(ns, :poison_probe, :flow)
     text = cli_listen(ns, id, "text", fn -> send!(ns, id, "poison") end, &(&1 =~ "error="))
@@ -158,19 +158,19 @@ defmodule FlezhaTest.System.PartStreamE2ETest do
       id: id,
       factory_id: to_string(factory),
       run: kind,
-      opts: [bindings: OperatorFixture.bindings(ns, id, plugins)]
+      opts: [bindings: RelayFixture.bindings(ns, id, plugins)]
     }
 
-    assert {:ok, _} = OperatorManager.start_operator(ns, builder)
+    assert {:ok, _} = RelayManager.start_relay(ns, builder)
     id
   end
 
   defp send!(ns, id, text) do
-    assert capture_io(fn -> Cli.call("Operator.send", Jason.encode!([ns, id, text, ""]), []) end) =~
+    assert capture_io(fn -> Cli.call("Relay.send", Jason.encode!([ns, id, text, ""]), []) end) =~
              "to '#{id}'"
   end
 
-  # `flz operator listen` in a process of its own whose group leader collects
+  # `flz relay listen` in a process of its own whose group leader collects
   # what it prints, until a line `done?` accepts (an output by default).
   defp cli_listen(ns, id, format, before, done? \\ &String.contains?(&1, "done:")) do
     {:ok, device} = StringIO.open("")
@@ -180,7 +180,7 @@ defmodule FlezhaTest.System.PartStreamE2ETest do
         Process.group_leader(self(), device)
 
         Cli.call(
-          "Operator.listen",
+          "Relay.listen",
           Jason.encode!([ns, id, "output", %{"window_ms" => 60_000}]),
           output: format
         )

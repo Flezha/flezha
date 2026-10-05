@@ -11,7 +11,7 @@ defmodule Flezha.Service.Cli.ScheduleTest do
   alias Flezha.Runner.FleetManager
   alias Flezha.Schedule.Store, as: ScheduleStore
   alias Flezha.Service.Cli
-  alias Flezha.Service.OperatorManager
+  alias Flezha.Service.RelayManager
   alias FlezhaTest.Helper.ScheduleTestHelper
 
   setup do
@@ -68,8 +68,8 @@ defmodule Flezha.Service.Cli.ScheduleTest do
         assert catch_exit(add_digest(factory_id: "prices")) == {:shutdown, 2}
       end)
 
-    assert err =~ "factory 'prices' is a flow operator"
-    assert err =~ "(operator.factory_not_steps)"
+    assert err =~ "factory 'prices' is a flow relay"
+    assert err =~ "(relay.factory_not_steps)"
     assert ScheduleStore.get("digest") == :error
   end
 
@@ -179,7 +179,7 @@ defmodule Flezha.Service.Cli.ScheduleTest do
     stub(FleetManager, :runners_for_factory, fn _, _ -> ["runner-1"] end)
 
     spec =
-      ~s([{"name":"out","provider":"operator_stdout","opts":{},"hooks":["on_output"]}])
+      ~s([{"name":"out","provider":"relay_stdout","opts":{},"hooks":["on_output"]}])
 
     output = add_digest(plugins: spec)
 
@@ -192,10 +192,10 @@ defmodule Flezha.Service.Cli.ScheduleTest do
 
     add_digest()
 
-    expect(OperatorManager, :start_steps, fn "default", id, factory_id, _init, _opts ->
+    expect(RelayManager, :start_steps, fn "default", id, factory_id, _init, _opts ->
       assert id =~ ~r/^digest@manual-\d+$/
       assert factory_id == "ai_digest"
-      {:ok, %{operator_id: id}}
+      {:ok, %{relay_id: id}}
     end)
 
     output = capture_io(fn -> Cli.call("Schedule.run", Jason.encode!(["digest"]), []) end)

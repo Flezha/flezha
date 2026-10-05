@@ -14,10 +14,10 @@ defmodule FlezhaTest.System.ControlPlaneWedgeE2ETest do
   import FlezhaTest.Helper.TierE2EHarness,
     only: [boot_runner: 3, peek_outputs: 0, produces?: 5, unique_id_path: 1]
 
-  alias Flezha.Operator.Builder
+  alias Flezha.Relay.Builder
   alias Flezha.Runner.FleetManager
-  alias Flezha.Service.OperatorManager
-  alias FlezhaTest.Fixtures.OperatorFixture
+  alias Flezha.Service.RelayManager
+  alias FlezhaTest.Fixtures.RelayFixture
 
   @factory "wedge_probe"
   @heartbeat_ms 300
@@ -28,7 +28,7 @@ defmodule FlezhaTest.System.ControlPlaneWedgeE2ETest do
 
     on_exit(fn ->
       try do
-        OperatorManager.stop_all_operators(namespace)
+        RelayManager.stop_all_relays(namespace)
       catch
         _, _ -> :ok
       end
@@ -53,17 +53,17 @@ defmodule FlezhaTest.System.ControlPlaneWedgeE2ETest do
   @tag timeout: 180_000
   test "a worker aborted mid-dispatch recovers without losing its cell",
        %{namespace: namespace} do
-    {operator_id, _port, _runner} = probe_on_its_own_runner(namespace, "aborted")
+    {relay_id, _port, _runner} = probe_on_its_own_runner(namespace, "aborted")
 
-    assert produces?(operator_id, namespace, "one", "ok:one", 60_000),
-           "the operator never produced before the abort"
+    assert produces?(relay_id, namespace, "one", "ok:one", 60_000),
+           "the relay never produced before the abort"
 
     # The fixture ends this activation as violently as its host allows.
-    OperatorManager.send_io(operator_id, namespace, "abort", %{"input_type" => "2"})
+    RelayManager.send_io(relay_id, namespace, "abort", %{"input_type" => "2"})
 
     # No user action, no rebind: a pool that did not come back to size, or
     # a cell left holding an unanswered handout, would never serve this.
-    assert produces?(operator_id, namespace, "two", "ok:two", 120_000),
+    assert produces?(relay_id, namespace, "two", "ok:two", 120_000),
            "the cell was never served again after its worker was aborted"
 
     # And the aborting item never ran twice: it produced at most once, whether
@@ -76,36 +76,36 @@ defmodule FlezhaTest.System.ControlPlaneWedgeE2ETest do
 
   # ---------- helpers ----------
 
-  # A fresh runner and a `wedge_probe` operator bound to it, with the outputs
+  # A fresh runner and a `wedge_probe` relay bound to it, with the outputs
   # forwarded to the calling test. Every drill starts here: the interesting
   # part of each is what happens to that pair afterwards.
   defp probe_on_its_own_runner(namespace, label, opts \\ []) do
-    operator_id = "#{label}_#{System.unique_integer([:positive])}"
+    relay_id = "#{label}_#{System.unique_integer([:positive])}"
 
     {port, runner_id} =
       boot_runner(namespace, unique_id_path("wedge_e2e"), [env: heartbeat_env()] ++ opts)
 
     assert {:ok, %{runner_id: ^runner_id}} =
-             OperatorManager.start_operator(namespace, builder(namespace, operator_id, self()))
+             RelayManager.start_relay(namespace, builder(namespace, relay_id, self()))
 
-    {operator_id, port, runner_id}
+    {relay_id, port, runner_id}
   end
 
-  defp builder(namespace, operator_id, recv_pid) do
+  defp builder(namespace, relay_id, recv_pid) do
     sink = %Flezha.Plugin{
       id: "wedge_sink",
       namespace: nil,
-      operator_id: operator_id,
+      relay_id: relay_id,
       provider: Flezha.Plugin.Provider.BeamMsgForward,
       opts: %{recv_pid: recv_pid, include_metadata: true},
       hooks: [{:on_output, []}]
     }
 
     %Builder{
-      id: operator_id,
+      id: relay_id,
       factory_id: @factory,
       init_values: %{},
-      opts: [bindings: OperatorFixture.bindings(namespace, operator_id, [sink])]
+      opts: [bindings: RelayFixture.bindings(namespace, relay_id, [sink])]
     }
   end
 

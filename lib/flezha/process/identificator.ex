@@ -12,7 +12,7 @@ defmodule Flezha.Identificator do
 
   @typedoc "The kinds of identifier this tree bounds."
   @type kind ::
-          :operator
+          :relay
           | :namespace
           | :plugin
           | :schedule_name
@@ -33,7 +33,7 @@ defmodule Flezha.Identificator do
   # has passed, and two nodes minting in the same millisecond still differ.
   @suffixes %{hex: {"_", 12}, time: {"-", 16}}
 
-  # `<name>@<slot>` is one operator id, and the slot is an ISO-8601 instant,
+  # `<name>@<slot>` is one relay id, and the slot is an ISO-8601 instant,
   # so a schedule name may spend only what the slot leaves.
   @schedule_slot_bytes byte_size("@2026-01-01T00:00:00Z")
 
@@ -51,13 +51,13 @@ defmodule Flezha.Identificator do
   # is pinned to it by test rather than read from it: this module names nothing
   # above its own layer.
   @kinds %{
-    operator: %{min: 1, max: @operator_id_max_bytes, regex: nil, suffix: :time},
+    relay: %{min: 1, max: @relay_id_max_bytes, regex: nil, suffix: :time},
     runner: %{min: 1, max: @stream_socket_id_max_bytes, regex: nil},
     namespace: %{min: 1, max: 63, regex: ~r/\A[a-z][a-z0-9_-]{0,62}\z/},
     plugin: %{min: 1, max: 64, regex: ~r/^[a-z0-9][a-z0-9_]*$/},
     schedule_name: %{
       min: 1,
-      max: @operator_id_max_bytes - @schedule_slot_bytes,
+      max: @relay_id_max_bytes - @schedule_slot_bytes,
       regex: ~r/^[A-Za-z0-9][A-Za-z0-9_-]*$/
     },
     token: %{min: 8, max: 64, regex: ~r/^[0-9a-f]+$/},
@@ -111,7 +111,7 @@ defmodule Flezha.Identificator do
   member's `#p15`.
 
   A `:hex` id is drawn again when the registry already holds it. A `:time` id
-  names an operator, which this registry never holds; the start that claims
+  names a relay, which this registry never holds; the start that claims
   it is its only check. `seed:` derives the suffix from the seed instead of
   drawing it, in the same shape, so one seed always mints one id.
   """

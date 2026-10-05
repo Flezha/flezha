@@ -7,18 +7,18 @@ defmodule Flezha.Healthz.Server do
 
   Endpoint contract:
 
-    * `GET /healthz` — JSON body carrying `bound_operators` and
-      `producing_operators` as distinct counters.
+    * `GET /healthz` — JSON body carrying `bound_relays` and
+      `producing_relays` as distinct counters.
       - `200 OK` `{"status":"healthy", ...}` when every namespace hub is
-        `:normal` and `producing_operators == bound_operators`.
+        `:normal` and `producing_relays == bound_relays`.
         `producing` derives from durable progress markers with the fed
-        precondition: an IDLE operator (no input, flat markers) counts as
+        precondition: an IDLE relay (no input, flat markers) counts as
         producing; a STUCK one (fed but flat past grace) does not.
       - `200 OK` `{"status":"degraded", ...}` when
-        `producing_operators < bound_operators` (operators output-stalled or
-        STUCK — per-operator detail `wal_frozen | watermark_frozen |
-        outbox_flat` in `stuck_operators`), when `intent_mismatch` is
-        non-empty (durable state evidence for operators absent from the
+        `producing_relays < bound_relays` (relays output-stalled or
+        STUCK — per-relay detail `wal_frozen | watermark_frozen |
+        outbox_flat` in `stuck_relays`), when `intent_mismatch` is
+        non-empty (durable state evidence for relays absent from the
         live intended set — a wiped registry must never read healthy), or
         when a periodic sensor has stopped completing passes
         (`sensor_stale`). None is a restart signal — kubelet must leave the
@@ -40,7 +40,7 @@ defmodule Flezha.Healthz.Server do
         transport is covered. The `:native` in-node transport runs no driver,
         so `data_plane_fabric_wedged` cannot be minted on a native-only
         controller and a `200` there is evidence about the loop, the
-        operators and the plugins — not about the data plane.
+        relays and the plugins — not about the data plane.
 
     * `GET /readyz` — the readiness verdict of `Flezha.Boot.Readiness`, a
       different question with a different answer: health says whether the
@@ -193,7 +193,7 @@ defmodule Flezha.Healthz.Server do
   # the record module's, so this endpoint and the CLI can never drift apart.
   defp compute_health() do
     current = Snapshot.current()
-    Verdict.fold(Map.get(current, :operator_health, %{}), facts(current))
+    Verdict.fold(Map.get(current, :relay_health, %{}), facts(current))
   end
 
   # The tick's NON-verdict facts: everything the fold weighs that is about the
@@ -209,7 +209,7 @@ defmodule Flezha.Healthz.Server do
       tick_stale?: loop_hard_wedged?(last_tick_at),
       tick_gapped?: loop_tick_gapped?(last_tick_at),
       tick_age_ms: tick_age(last_tick_at),
-      stuck: Map.get(current, :stuck_operators, %{}),
+      stuck: Map.get(current, :stuck_relays, %{}),
       intent_mismatch: Map.get(current, :intent_mismatch, []),
       pending_restore: Map.get(current, :pending_restore, false),
       rpo_breaches: DurabilityTier.breaches(),
@@ -237,7 +237,7 @@ defmodule Flezha.Healthz.Server do
   # pause/wake could explain. Tick age is the only authoritative liveness
   # signal: a slow-but-completing tick is alive, not wedged, so escalating it
   # would make kubelet kill a producing pod. Shorter freezes are `recovering`
-  # via the gapped grace below; a merely output-stalled operator is `degraded`.
+  # via the gapped grace below; a merely output-stalled relay is `degraded`.
   defp loop_hard_wedged?(nil), do: false
   defp loop_hard_wedged?(last_tick_at), do: now_ms() - last_tick_at > tick_ms() * 24
 

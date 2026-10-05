@@ -271,7 +271,7 @@ pub enum Class {
     /// state ship: held in the bounded ring, drop-oldest counted, replayed in
     /// write order on the next bound stream.
     Durable,
-    /// A plugin or steps operator emit: held **already framed**, so a keyed output's
+    /// A plugin or steps relay emit: held **already framed**, so a keyed output's
     /// channel and its `flz.*` identity stamps survive the replay — the ring
     /// re-frames a record with empty metadata and would strip them.
     Output,

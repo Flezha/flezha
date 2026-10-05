@@ -6,9 +6,9 @@ defmodule Flezha.Plugin.Provider.File.ReadWorker do
   or an S3 object alike, read through `Flezha.Plugin.Provider.File.Storage`.
 
   A line is injected through the confirming ingest and the offset moves only
-  once the operator has taken it, so a refused line is offered again. A chunk
+  once the relay has taken it, so a refused line is offered again. A chunk
   is read only when no whole line is buffered, so the reader is never more than
-  one chunk ahead of what the operator confirmed, and one chunk is handled per
+  one chunk ahead of what the relay confirmed, and one chunk is handled per
   message, so the mailbox stays answerable behind a large target.
 
   Log lines, telemetry and verdicts name the path, an offset or a count, never
@@ -53,7 +53,7 @@ defmodule Flezha.Plugin.Provider.File.ReadWorker do
   The facts the provider's `health/1` judges: the path, where the reader
   stopped if it did, whether the target is missing, the failure run and the
   time of the last settled poll. `:timeout` when the worker does not answer,
-  which is also what a reader waiting out a parked operator's ingest looks
+  which is also what a reader waiting out a parked relay's ingest looks
   like.
   """
   @spec probe(pid()) :: {:ok, map()} | :timeout
@@ -95,7 +95,7 @@ defmodule Flezha.Plugin.Provider.File.ReadWorker do
   @impl true
   def handle_info(:poll, state), do: {:noreply, state |> timer_fired(:poll) |> poll()}
 
-  # The operator this reader feeds is gone.
+  # The relay this reader feeds is gone.
   def handle_info({:DOWN, ref, :process, _pid, _reason}, state) do
     case Watch.down(state.watch, ref) do
       {[:host], _watch} -> {:stop, :normal, close(state)}
@@ -297,9 +297,9 @@ defmodule Flezha.Plugin.Provider.File.ReadWorker do
     %{state | stopped: {reason, state.offset}}
   end
 
-  # The confirming ingest, waited out for as long as the operator takes: a park
+  # The confirming ingest, waited out for as long as the relay takes: a park
   # at zero credit is the back-pressure the reader exists to feel, and a timeout
-  # would re-offer a line the operator may still take. A host that dies ends
+  # would re-offer a line the relay may still take. A host that dies ends
   # the call through the monitor every call holds.
   defp confirm(state, line) do
     Host.inject(

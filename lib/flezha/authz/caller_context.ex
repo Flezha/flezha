@@ -16,7 +16,7 @@ defmodule Flezha.Service.CallerContext do
   # The sources held to what the network may reach: a runner connection, HTTP,
   # and an AI assistant through `flz mcp`, which rides the controller's own
   # distribution but must reach no more than one over HTTP. The others run on
-  # that distribution with the operator's full reach.
+  # that distribution with the relay's full reach.
   @networked_sources [:sdk, :http, :mcp]
 
   @type t :: Flezha.AuthZ.caller_context()

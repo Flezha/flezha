@@ -16,7 +16,7 @@ defmodule Flezha.Dlq.StoreTest do
   defp entry(overrides \\ %{}) do
     Map.merge(
       %{
-        operator_class: "MarketOperator",
+        relay_class: "MarketRelay",
         tasklet_id: "ohlc",
         cell_key: "BTC",
         channel: "input",
@@ -52,7 +52,7 @@ defmodule Flezha.Dlq.StoreTest do
     fresh = start_supervised!(Supervisor.child_spec({Store, name: fresh_name}, id: fresh_name))
 
     assert [listed] = Store.list(fresh, nil)
-    assert "MarketOperator/ohlc/" <> _ = ref
+    assert "MarketRelay/ohlc/" <> _ = ref
     assert {:ok, _entry, "poison-bytes"} = Store.get(fresh, ref)
     assert listed["error"] == "boom"
   end
@@ -92,7 +92,7 @@ defmodule Flezha.Dlq.StoreTest do
 
     assert [listed] = Store.list(store, nil)
     assert listed["channel"] == "../../../../etc"
-    assert {"MarketOperator", "_unresolved"} in Store.tasklets("MarketOperator")
+    assert {"MarketRelay", "_unresolved"} in Store.tasklets("MarketRelay")
     assert {:ok, _entry, "poison-bytes"} = Store.get(store, ref)
   end
 
@@ -136,14 +136,14 @@ defmodule Flezha.Dlq.StoreTest do
     assert Store.list(store, nil) == []
     assert {:error, :not_found} = Store.get(store, ref)
 
-    ["MarketOperator", "ohlc", id] = String.split(ref, "/")
-    refute File.exists?(Path.join([dir, "MarketOperator", "ohlc", id <> ".bin"]))
+    ["MarketRelay", "ohlc", id] = String.split(ref, "/")
+    refute File.exists?(Path.join([dir, "MarketRelay", "ohlc", id <> ".bin"]))
   end
 
   test "append_async runs the durable callback with the entry ref", %{store: store} do
     parent = self()
     :ok = Store.append_async(store, entry(), fn ref -> send(parent, {:durable, ref}) end)
-    assert_receive {:durable, "MarketOperator/ohlc/" <> _}, 2_000
+    assert_receive {:durable, "MarketRelay/ohlc/" <> _}, 2_000
     assert [_] = Store.list(store, nil)
   end
 
@@ -192,6 +192,6 @@ defmodule Flezha.Dlq.StoreTest do
 
     assert :ok = Store.sweep(store)
     assert [survivor] = Store.list(store, nil)
-    refute "MarketOperator/ohlc/#{survivor["id"]}" == first, "oldest entry must be dropped"
+    refute "MarketRelay/ohlc/#{survivor["id"]}" == first, "oldest entry must be dropped"
   end
 end

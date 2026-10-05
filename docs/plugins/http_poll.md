@@ -1,19 +1,19 @@
 # HTTP poll plugin
 
 The HTTP poll plugin delivers a slowly-changing HTTP resource (runtime configuration,
-reference data, external state) onto an operator's entry channel. It polls one URL on an
+reference data, external state) onto a relay's entry channel. It polls one URL on an
 interval and injects the body as an ordinary journaled entry frame, only when its content
 changed. Authors can read it as the smallest two-phase source provider.
 `Flezha.Plugin.Provider.HttpPoll` is its provider, under the provider id
-`operator_http_poll`.
+`relay_http_poll`.
 
 | | |
 | --- | --- |
-| Type | operator plugin |
+| Type | relay plugin |
 | Ships | built in |
-| Shareable | yes: one poller per controller for every operator bound to it, or one in the cluster with `--single` |
-| Partitioned operators | allowed: each member runs a poller of its own, and `url` may name the member's partition |
-| Durability | an operator whose input is durable runs a poller of its own, whose content advances only once the operator took it; a shared poller hands the content without waiting |
+| Shareable | yes: one poller per controller for every relay bound to it, or one in the cluster with `--single` |
+| Partitioned relays | allowed: each member runs a poller of its own, and `url` may name the member's partition |
+| Durability | a relay whose input is durable runs a poller of its own, whose content advances only once the relay took it; a shared poller hands the content without waiting |
 
 ## Options
 
@@ -35,7 +35,7 @@ changed. Authors can read it as the smallest two-phase source provider.
 ## Example
 
 ```sh
-$ flz plugin enable signal-config operator_http_poll --operator_id=detector \
+$ flz plugin enable signal-config relay_http_poll --relay_id=detector \
   --Xurl=https://api.internal/internal/signal-config \
   --Xchannel=config_in --Xinterval_ms=30000
 ```
@@ -45,15 +45,15 @@ $ flz plugin enable signal-config operator_http_poll --operator_id=detector \
 | | |
 | --- | --- |
 | Hooks | none needed: the poller drives itself, so a binding names no hook (the provider also defines `:on_terminate`) |
-| Shared | yes: one poller per controller for every operator bound to the plugin, or one in the whole cluster with `--single`, which hands each operator the content without waiting for it, so a parked one loses that content until it changes. An operator whose input is durable (effectively-once, sleeping or durable steps), and each member of a partitioned operator, runs a poller of its own, which confirms as below |
+| Shared | yes: one poller per controller for every relay bound to the plugin, or one in the whole cluster with `--single`, which hands each relay the content without waiting for it, so a parked one loses that content until it changes. A relay whose input is durable (effectively-once, sleeping or durable steps), and each member of a partitioned relay, runs a poller of its own, which confirms as below |
 | Upstream | one `http://` or `https://` URL, `GET` only, redirects not followed |
-| Injection | the response body, on the entry channel `:channel` (or `:channel_in`) names, only to an operator whose last delivered body had another SHA-256 |
-| Delivery | a poller of its own operator uses the confirming ingest: the hash advances only once the operator has taken the payload, and a refused one is offered again |
-| Seed | the first successful poll after a (re)start, or after an operator binds, injects to every operator that holds nothing yet |
+| Injection | the response body, on the entry channel `:channel` (or `:channel_in`) names, only to a relay whose last delivered body had another SHA-256 |
+| Delivery | a poller of its own relay uses the confirming ingest: the hash advances only once the relay has taken the payload, and a refused one is offered again |
+| Seed | the first successful poll after a (re)start, or after a relay binds, injects to every relay that holds nothing yet |
 | Failure posture | inject nothing, keep the last hash, count toward health |
 
 Because the frame is journaled like any other entry input, replay determinism, the
-effectively-once tier and a steps operator's durable input behave exactly as for any other source.
+effectively-once tier and a steps relay's durable input behave exactly as for any other source.
 
 From Elixir inside the controller, the same enable and bind:
 
@@ -65,19 +65,19 @@ Flezha.Service.PluginManager.enable_plugin(
     provider: Flezha.Plugin.Provider.HttpPoll,
     opts: %{url: "https://api.internal/internal/signal-config", channel: "config_in", interval_ms: 30_000},
     namespace: "default",
-    operator_id: "detector",
+    relay_id: "detector",
     hooks: [{:on_terminate, []}]
   )
 )
 ```
 
-As a plugin spec at operator start (`flz operator start --plugins`):
+As a plugin spec at relay start (`flz relay start --plugins`):
 
 ```json
 [
   {
     "name": "signal-config",
-    "provider": "operator_http_poll",
+    "provider": "relay_http_poll",
     "opts": {
       "url": "https://api.internal/internal/signal-config",
       "channel": "config_in",
@@ -95,7 +95,7 @@ As a plugin spec at operator start (`flz operator start --plugins`):
 explicit spelling of the same name, for a user writing one vocabulary
 across every provider; one of the two is required, and writing both is refused.
 `channel_out` is not a parameter here: the poller never acts on the records
-passing through the operator, so the option would have nothing to read.
+passing through the relay, so the option would have nothing to read.
 
 Either spelling takes exactly one name. A body is injected on exactly one channel, so
 several names comma-separated (`trades,quotes`) are refused when the plugin is enabled
@@ -141,21 +141,21 @@ unchanged poll: bandwidth only; the local hash stays the injection gate.
 ### The seed
 
 A fresh poller holds no hash, so its first success always injects. Provider state is not
-portable across a handover, and the seed is what converges an operator that was just
+portable across a handover, and the seed is what converges a relay that was just
 started, recovered, migrated or had its plugin restarted onto current content within one
-interval. The cost: a rejoining operator may see content it already had.
+interval. The cost: a rejoining relay may see content it already had.
 **Consumers of a polled channel must treat its frames idempotently**: free for
 configuration-shaped payloads. The frames are journaled either way, so replay stays
 deterministic.
 
 ## Delivery is confirmed
 
-For a poller of its own operator, injection is `GenServer.call(overwatch, {:ingest, body, %{"channel" => entry_channel}})`,
+For a poller of its own relay, injection is `GenServer.call(overwatch, {:ingest, body, %{"channel" => entry_channel}})`,
 where `entry_channel` is the name `channel` or `channel_in` resolved to when the plugin was
 enabled. It is never the fire-and-forget `:io_in` cast, which drops silently in ordinary
-states: a parked operator, an unbound stream, a failed durable input-log append. A refused
+states: a parked relay, an unbound stream, a failed durable input-log append. A refused
 or not-ready ingest is a failure like any other: it counts toward health and leaves the
-hash alone, so the next poll re-offers the same content. `{:ok, :absorbed}` (a duplicate the operator
+hash alone, so the next poll re-offers the same content. `{:ok, :absorbed}` (a duplicate the relay
 already holds) and `{:ok, :suspended}` (journaled, delivered on wake) both count as
 delivered.
 
@@ -164,7 +164,7 @@ delivered.
 Timeouts, connection errors, any status outside 2xx (including 3xx), a body over
 `max_body_bytes`, a body that is not valid UTF-8, and a refused ingest are failures. A
 failure injects nothing and retains the last delivered hash: being unable to re-read the
-resource does not invalidate what the operator already holds.
+resource does not invalidate what the relay already holds.
 
 - Non-UTF-8 is a failure rather than a frame because the SDKs seal entry payloads to
   strings.
@@ -188,7 +188,7 @@ costs one frame whether or not the content moved.
 
 - `init_provider/1` validates and normalises with no upstream I/O, so a slow or
   unreachable endpoint cannot stall plugin preparation.
-- `activate/1` (after the operator's SDK side is bound) starts the poller and returns;
+- `activate/1` (after the relay's SDK side is bound) starts the poller and returns;
   the first request is scheduled, not executed.
 - Every HTTP wait runs in a short-lived monitored child of the poller. The host's dispatch
   path is never inside a request, and the poller stays answerable while one is
@@ -197,7 +197,7 @@ costs one frame whether or not the content moved.
 - A tick that lands while a request is outstanding is dropped: a slow endpoint stretches
   the cadence instead of stacking requests.
 - The host tracks the poller, kills it when the plugin is removed and re-runs both phases when it
-  dies; the poller monitors the host in turn and cannot outlive the operator it feeds.
+  dies; the poller monitors the host in turn and cannot outlive the relay it feeds.
 
 ## Telemetry
 
@@ -218,10 +218,10 @@ plugin's health verdict, not on a failure-rate metric.
 - **`GET` only.** No POST, streaming, webhooks, or auth beyond static headers.
 - **No per-item diffing.** A changed byte anywhere re-injects the whole body.
 - **`channel` is not validated at attach.** Channel names are an SDK-side topology fact
-  that never reaches the controller (`AddOperatorResponse.metadata` carries capability
-  facts only), and attach happens before the operator binds. An undeclared name surfaces
+  that never reaches the controller (`AddRelayResponse.metadata` carries capability
+  facts only), and attach happens before the relay binds. An undeclared name surfaces
   on the runner as a dead-letter park under that name, exactly as a mistyped
-  `flz operator send --channel` does: `flz dlq list` shows the frames and
+  `flz relay send --channel` does: `flz dlq list` shows the frames and
   `flz dlq replay` re-injects them once a channel of that name exists.
 - **HTTPS is verified** against the system CA store; a host with no usable store fails the
   poll rather than dropping to an unverified connection.

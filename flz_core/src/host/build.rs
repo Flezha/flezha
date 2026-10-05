@@ -20,15 +20,15 @@ use super::decl::{
 };
 use super::issue::TopologyIssue;
 use super::register::DerivedChannel;
-use crate::operator::settings::{Exactly, Run};
-use crate::steps::spec::{graph_order, GraphSeed, TaskDag};
 use crate::channel::{
     ChannelDescriptor, ChannelKind, EntryWrapFn, OverflowPolicy, RetryPolicy, TaskletId,
 };
 use crate::error::Error;
-use crate::operator::topology::{
-    AckGranularity, CellMode, CorrectionPolicy, OperatorTopology, TaskletDescriptor,
+use crate::relay::settings::{Exactly, Run};
+use crate::relay::topology::{
+    AckGranularity, CellMode, CorrectionPolicy, RelayTopology, TaskletDescriptor,
 };
+use crate::steps::spec::{graph_order, GraphSeed, TaskDag};
 use crate::ErrorModel;
 
 /// The class facts every tasklet and the topology read, resolved once so
@@ -45,11 +45,7 @@ pub(super) struct ClassFacts {
     pub(super) compact_after_bytes: usize,
 }
 
-pub(super) fn resolve_class_facts(
-    decl: &HostClassDecl,
-    run: &Run,
-    persistent: bool,
-) -> ClassFacts {
+pub(super) fn resolve_class_facts(decl: &HostClassDecl, run: &Run, persistent: bool) -> ClassFacts {
     let (effectively_once, correction) = match run {
         Run::Flow {
             exactly:
@@ -76,10 +72,10 @@ pub(super) fn resolve_class_facts(
         ack_granularity: super::register::ack_of(run),
         compact_after_bytes: decl
             .compact_after_bytes
-            .unwrap_or(crate::operator::topology::DEFAULT_COMPACT_AFTER_BYTES),
+            .unwrap_or(crate::relay::topology::DEFAULT_COMPACT_AFTER_BYTES),
     }
 }
-/// Every channel descriptor, and the per-operator name index the runtime
+/// Every channel descriptor, and the per-relay name index the runtime
 /// resolves a channel by. The names are the DERIVED ones, so a `named`
 /// override reaches the runtime and the index at once.
 pub(super) fn build_channels(
@@ -304,7 +300,7 @@ fn host_facts(
 /// Kahn toposort from every entry channel's consumers, refusing what the
 /// typed builder refuses: no entry channel, several outputs, cycles,
 /// disconnected tasklets.
-pub(super) fn build_host_dag(topology: &OperatorTopology) -> Result<TaskDag, Error> {
+pub(super) fn build_host_dag(topology: &RelayTopology) -> Result<TaskDag, Error> {
     let entries = topology.entry_consumers();
     if entries.is_empty() {
         return Err(Error::Declaration(TopologyIssue::NoEntryChannel.to_error()));
@@ -334,9 +330,9 @@ pub(super) fn build_host_dag(topology: &OperatorTopology) -> Result<TaskDag, Err
     Ok(TaskDag::from_walk(walk, entries))
 }
 
-/// Producer → consumer pairs over the inter-task channels only: a steps operator's
+/// Producer → consumer pairs over the inter-task channels only: a steps relay's
 /// stages are wired to each other, never through the entry channel.
-fn inter_task_edges(topology: &OperatorTopology) -> Vec<(TaskletId, TaskletId)> {
+fn inter_task_edges(topology: &RelayTopology) -> Vec<(TaskletId, TaskletId)> {
     let mut edges = Vec::new();
     for channel in &topology.channels {
         if channel.kind != ChannelKind::InterTasklet {
@@ -353,7 +349,7 @@ fn inter_task_edges(topology: &OperatorTopology) -> Vec<(TaskletId, TaskletId)> 
 }
 
 /// No tasklet producing two channels: a stage has one output a child reads.
-fn refuse_several_outputs(topology: &OperatorTopology) -> Result<(), Error> {
+fn refuse_several_outputs(topology: &RelayTopology) -> Result<(), Error> {
     for (task_id, _) in topology.tasklets.iter().enumerate() {
         let produced = topology
             .channels
