@@ -3,6 +3,21 @@
 For SDK implementers and contributors. How to use it is on
 [Relay calls](../topics/advanced/relay_calls.md).
 
+## The stamps
+
+The runner core stamps `flz.reply_to` on every sink output whose input carried a call's token,
+and on no other output: an output of an input nobody called carries no such key at all. The
+Elixir SDK stamps the same in its own routing. A call end's request carries the target
+(`flz.call`), the Response channel (`flz.call_response`), the deadline (`flz.deadline_at`), the
+callee's entry channel (`flz.call_channel`) and answer channel (`flz.call_answer_channel`) when
+the end names them, `flz.call_create` when it may not create its callee, and its key. A host
+cannot write any of these keys: the core drops them from whatever a host put on an output.
+
+The controller hands an output carrying a token to the caller waiting on it when the call names
+no answer channel or names the output's own, removes the token, and passes the output on to the
+`on_output` chain like any other. A relay caller's answer channel rides in the relay token
+itself, so a callee that restarted since it took the call still answers from that channel.
+
 ## The `Response`
 
 The Response channel is an entry channel named after the calling channel with `.response`

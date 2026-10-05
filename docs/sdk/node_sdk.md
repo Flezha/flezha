@@ -114,7 +114,7 @@ leave at once is dropped. A listener receives it, numbered from 0 within each
 attempt; a sink never does, and nothing about it is durable. It works in `run`
 and `onTimer`, for a flow tasklet and a steps stage alike. It throws a
 `FlezhaError` with code `part.no_sink` when the output channel does not end in
-a sink (a `response()` end is not one), and `part.outside_invocation` through a
+a sink (a call end is not one), and `part.outside_invocation` through a
 context kept past its invocation.
 
 **The output type is declared, never read off the body.** Name it with the
@@ -409,9 +409,9 @@ four does not type-check, and from JavaScript it is refused when the relay
 is declared, as is a codec given beside a function on one channel, naming the
 relay and the channel.
 
-`.response()` ends a channel on the answer to an outside call instead of a sink,
-and takes the sink's arguments, an encoder or `{ codec }`: [`../topics/advanced/relay_calls.md`](../topics/advanced/relay_calls.md).
-`.call("pricing", { deadlineMs, codec })` or `.call({ factory: "agent", create: false }, { deadlineMs })`
+A called input's first sink output answers its caller and still reaches the sink's plugins:
+[`../topics/advanced/relay_calls.md`](../topics/advanced/relay_calls.md).
+`.call("pricing", { deadlineMs, answerChannel, codec })` or `.call({ factory: "agent", create: false }, { deadlineMs })`
 ends a chain on a call to another relay and answers a stream of `Response`s:
 [`../topics/advanced/relay_calls.md`](../topics/advanced/relay_calls.md).
 

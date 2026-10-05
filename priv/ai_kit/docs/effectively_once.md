@@ -62,7 +62,7 @@ A declaration that cannot hold is refused when the relay is registered:
 | Code | When |
 | --- | --- |
 | `topology.effectively_once_without_persistence` | the relay is kept in memory only (`durable: false`): the tier is durable state |
-| `topology.unkeyed_channel_under_effectively_once` | a channel that ends in a sink plugin is not declared `.keyed()`: the tier drops a repeated output by its identity, so a sink plugin's channel must be keyed |
+| `topology.unkeyed_channel_under_effectively_once` | a channel that ends in a sink plugin is not declared `.keyed()`: the tier drops a repeated output by its identity, so a sink plugin's channel must be keyed, a channel whose outputs answer calls included. A tasklet with no key of its own names one with its SDK's keyed emit |
 | `topology.dropping_policy_under_effectively_once` | a channel declares a dropping overflow policy: a shed input would be lost for good and reported nowhere |
 
 ## Example

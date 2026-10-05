@@ -49,9 +49,8 @@ pub struct HostChannelDecl {
 
 /// One link of a fluent chain declared off a channel handle, in the order the
 /// builder was called. A chain closed by `Into` or `Merge` wires an edge;
-/// `Sink` terminates the channel on a plugin, `Response` on the caller's
-/// answer; `Branch` records the sugar's arity and closes the chain it stands
-/// in.
+/// `Sink` terminates the channel on a plugin; `Branch` records the sugar's
+/// arity and closes the chain it stands in.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
 #[serde(tag = "link", rename_all = "snake_case")]
 pub enum HostLink {
@@ -69,9 +68,6 @@ pub enum HostLink {
         #[serde(default)]
         name: Option<String>,
     },
-    /// Terminates the channel on the answer to the outside call its input
-    /// carried. Takes no name: nothing outside the relay addresses it.
-    Response,
     /// Terminates the chain on a call to another relay: every value that
     /// reaches it, after the chain's transforms and key, is one request. The
     /// outcome enters the relay on the entry channel `response` names.
@@ -107,6 +103,9 @@ pub struct HostCall {
     /// The callee's entry channel the request enters on; its first when absent.
     #[serde(default)]
     pub channel: Option<String>,
+    /// The callee's channel whose output answers; its first output when absent.
+    #[serde(default)]
+    pub answer_channel: Option<String>,
     /// The caller's entry channel each outcome arrives on.
     pub response: String,
 }

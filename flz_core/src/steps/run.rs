@@ -215,7 +215,7 @@ pub fn message(
 }
 
 /// The outside call the pass `slot` is running in carries, if any: what a
-/// `response()` end's output answers.
+/// sink output of the pass answers.
 pub fn pass_call(slot: &CellSlot) -> Option<Arc<str>> {
     let inst = slot.instance.upgrade()?;
     let r = Run::of(&inst)?;

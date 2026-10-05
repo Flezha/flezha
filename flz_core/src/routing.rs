@@ -629,7 +629,7 @@ fn frame_facts(metadata: &HashMap<String, String>) -> (Option<u64>, Option<Arc<s
 }
 
 /// The metadata key a call's token rides: stamped by the controller on the
-/// input, and by the runner on every output of a `response()` end.
+/// input, and by the runner on every sink output that input caused.
 pub const CALL_KEY: &str = "flz.reply_to";
 
 /// The reason a frame that named no channel did not enter: there was nothing

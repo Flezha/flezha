@@ -1,7 +1,7 @@
 # Relay calls
 
-A call sends one input to a relay and gets one answer back: the output that a `response()`
-end of the relay's graph produced from that input, or one coded error saying why none came.
+A call sends one input to a relay and gets one answer back: the first output that input caused
+on a sink of the relay's graph, or one coded error saying why none came.
 There are two kinds:
 
 - An **outside call** comes from outside Flezha and waits for its answer: `flz relay call`,
@@ -23,7 +23,7 @@ relay; a script calls a relay and prints what it answered.
 flowchart LR
     P(["request"]) --> G["calling relay"]
     G -->|"call"| S["called relay"]
-    S -->|"response() end"| A{{"answer"}}
+    S -->|"first sink output"| A{{"answer"}}
     A -.->|"Response, later, as an input"| G
 ```
 
@@ -32,45 +32,36 @@ The controller ties an input to the outputs it causes with a token in the input'
 caller's metadata carried. Every other way into a relay drops that key, so no hook, plugin or
 sender can add, drop or change one. The token is journaled with the input wherever the relay
 journals input, so a sleep, a move to another runner or a crash re-run deliver it again. The
-runner carries it from the input to every value derived from it and stamps it on each output of a
-response end; a tasklet never sees it, and a timer firing carries none. `flz relay listen
---input` shows it on the arriving input, but it is of no use there: an answer only ever goes to
-the caller waiting for it.
+runner carries it from the input to every value derived from it and stamps it on each sink
+output the input causes; a tasklet never sees it, and a timer firing carries none. `flz relay
+listen --input` shows it on the arriving input, but it is of no use there: an answer only ever
+goes to the caller waiting for it, and no plugin or listener sees it on an output.
 
 The answer may come from any tasklet downstream of the input, not only the one that received it:
-in `input("in") |> into(Parse) |> into(Price) |> response()` the value `Price` emits answers the
-call. In a steps relay the answer comes from the pass the call's input opened.
+in `input("in") |> into(Parse) |> into(Price) |> sink("quotes")` the value `Price` emits answers
+the call. In a steps relay the answer comes from the pass the call's input opened.
 
-## Answering: `response()`
+## Answering: the relay's outputs
 
-`response()` ends a channel on the answer to the call its input carried. It is a plugin end, like
-a sink, and takes the sink's serializer arguments. It takes no name, because nothing outside the
-relay addresses a response end by name, so the channel keeps the name it would have without
-it. As after a sink, consumers may follow it on the same handle. Tasklets do not change.
+A relay does not say which of its channels answers a caller. Whether an answer is wanted is a
+fact of how an input arrived: when it came from a call, the first output it causes on a sink
+answers the call. That output then goes on to the sink's plugins and to `flz relay listen` like
+any other output, so one tasklet answers a caller and records the answer with no extra step.
+Tasklets do not change.
 
-| SDK | Spelling |
-| --- | --- |
-| Rust | `.response()`, or `.response_with(serializer)` |
-| Java | `.response()`, or `.response(Function<T, byte[]>)` |
-| Node | `.response()`, `.response(encode)` or `.response({ codec })` |
-| Python | `.response()`, with `encode=` or `codec=` |
-| Ruby | `.response`, with `encode:` or `codec:` |
-| PHP | `->response(?callable $encode, ?ChannelCodec $codec)` |
-| Elixir | `response/1`, or `response_with/2` with a serializer |
-
-A value is serialized as the SDK's sink serializes it.
-
-- **One plugin end per channel.** A `sink` and a `response()` on one channel, two `response()`,
-  or a `response()` and a `call(...)`, are refused when the relay is declared, as
-  `topology.channel_ends_twice`. Where one tasklet must both answer and record, a pass-through
-  tasklet gives the second end a channel of its own.
-- **Several response channels per graph.** An accepted path and a refused path may each end in
-  `response()`; whichever answers first wins.
-- **No key needed.** Under the effectively-once tier a sink's channel must be `.keyed()`, so a
-  sink can drop a duplicate by its key. A response channel need not be: an answer is identified
-  by its call.
-- **The short form has no `response` option.** A relay that answers is written in the full
-  form.
+- **The caller may name the answering channel.** `flz relay call --answer-channel quotes`,
+  `answer_channel` in the options of `Relay.call/6`, or the answer channel of a `call(...)` end
+  (see [below](#where-a-call-goes)). Then only an output on that channel answers, and every other
+  output the input causes is an ordinary output. Without a name, the first sink output answers.
+- **Several sinks per graph.** An accepted path and a refused path may each end in a sink;
+  whichever output comes first answers, unless the caller names a channel.
+- **One answer per call.** Later outputs of the same input are ordinary outputs.
+- **Parts never answer.** A [part](streamed_answers.md) goes to listeners while the tasklet works;
+  only a finished emit answers.
+- **Every sink is keyed under the effectively-once tier**, answering ones included, because an
+  answer also reaches the sink's plugins, which drop a duplicate by its key.
+- **One plugin end per channel.** A sink and a `call(...)` on one channel, or two `call(...)`
+  ends, are refused when the relay is declared, as `topology.channel_ends_twice`.
 
 ### Where an answer leaves
 
@@ -85,20 +76,19 @@ never answered before the state change its turn made is durable, where the relay
 | a durable steps relay | when the step that produced it commits (for a one-tasklet turn, the iteration's commit) |
 | a steps relay that journals nothing | at settle |
 
-Answers are taken off the output path before the `on_output` hooks run: no plugin, no
-`flz relay listen` and no sink sees one. Then:
+An output that answers a call goes to its caller first, and then on to the `on_output` hooks
+without the token, so sink plugins and `flz relay listen` see it as an ordinary output. Then:
 
-- the first answer for a waiting call goes to its caller and ends the call;
-- a later answer for the same call is dropped and counted with the reason `answered` (after the
-  deadline, `unclaimed`);
-- an output on a response end that nobody waits for (its input came through `flz relay send`,
-  a plugin or a forward, or its caller already timed out) is dropped and counted as `unclaimed`.
+- the first matching output for a waiting call goes to its caller and ends the call;
+- every later output of the same input, and every output whose input nobody waits for (it came
+  through `flz relay send`, a plugin or a forward, or its caller already timed out), is an
+  ordinary output and nothing more.
 
 ## Outside calls
 
 Every outside call carries a positive deadline in milliseconds, measured by the called relay
 from the moment the call reached it. With no answer by then, the caller receives `call.timeout`.
-The input stays accepted: its turn still runs, and its answer, if any, is dropped. A slow turn
+The input stays accepted: its turn still runs, and its outputs still reach the relay's plugins. A slow turn
 that costs something, such as a paid request to another service, still costs it after its caller
 has given up. A call to a sleeping instance is journaled, the append wakes it, and the time the
 wake takes counts against the deadline.
@@ -106,11 +96,12 @@ wake takes counts against the deadline.
 ### `flz relay call`
 
 ```text
-flz relay call <relay_id> --text <payload> [--channel <ch>] [--key <k>] [--timeout <ms>] [--namespace <ns>]
+flz relay call <relay_id> --text <payload> [--channel <ch>] [--answer-channel <ch>] [--key <k>] [--timeout <ms>] [--namespace <ns>]
 ```
 
-It prints the answer's payload and a newline on stdout and exits 0. `--timeout` defaults to 30000
-and has no short spelling, because `-t` is `--text`. A failure is written on stderr with its code
+It prints the answer's payload and a newline on stdout and exits 0. `--channel` names the entry
+channel the input arrives on, and `--answer-channel` the channel whose output answers. `--timeout`
+defaults to 30000 and has no short spelling, because `-t` is `--text`. A failure is written on stderr with its code
 and exits by its class (see [the CLI](../cli/cli.md)):
 
 ```sh
@@ -136,7 +127,7 @@ Flezha.Service.Relay.call(namespace, relay_id, message, channel, opts, caller_co
 ```
 
 `channel` is the entry channel, `nil` or `""` for none. `opts` carries `deadline_ms` (required, a
-positive integer) and `key`. It answers `{:ok, payload, %{"channel" => channel}}`, naming the
+positive integer), `answer_channel` (the channel whose output answers) and `key`. It answers `{:ok, payload, %{"channel" => channel}}`, naming the
 channel that produced the answer, or `{:error, %Flezha.Error{}}`. Its own wait lasts the deadline
 plus `call_grace_ms`, so the relay's `call.timeout` always reaches the caller first.
 
@@ -167,7 +158,8 @@ its members; a member named directly (`prices#p0`) is called directly. `flz rela
 
 A call through `flz relay call` or `Relay.call/6` is judged as `relay.send` in the
 relay's namespace and audited like a send, naming the relay, with the error code on a
-failure. A refused call delivers no input and keeps its own `authz.*` code (exit 4). A plugin's
+failure. A caller allowed to send can so read any output its own input causes on a sink, and
+pick which one with the answer channel; outputs of other inputs stay behind `relay.listen`. A refused call delivers no input and keeps its own `authz.*` code (exit 4). A plugin's
 call on its own relay is that relay's own input and is not judged again. See
 [authorization](../basics/authorization.md).
 
@@ -189,6 +181,8 @@ into the calling tasklet is fan-in, not a cycle.
 
 - The request enters the called relay on the entry channel `channel` names, or on its first
   declared entry channel.
+- The called relay's output on the channel the answer channel names answers the call, or, when
+  the end names none, its first sink output for the request.
 - A target is always in the caller's namespace.
 - Creating and delivering go through the controller's one spawn-or-deliver (the one
   [`ctx.spawn_steps`](spawning_from_a_tasklet.md) uses), so two calls racing for one absent id
@@ -204,15 +198,15 @@ into the calling tasklet is fan-in, not a cycle.
   may start a flow instance: it runs until it is stopped, and sleeps when idle as its settings
   say.
 
-| SDK | Spelling |
-| --- | --- |
-| Rust | `.call::<Answer>(CallTarget::id("pricing"), 500)`, `CallTarget::factory("agent").create(false).channel("turn")` |
-| Java | `.call(CallTarget.id("pricing"), Answer.class, 500)`, `CallTarget.factory("agent").create(false).channel("turn")` |
-| Node | `.call("pricing", { deadlineMs: 500, codec })`, `.call({ factory: "agent", create: false, channel: "turn" }, { deadlineMs })` |
-| Python | `.call("pricing", deadline_ms=500)`, `.call(factory="agent", deadline_ms=..., create=False, channel="turn", codec=...)` |
-| Ruby | `.call("pricing", deadline_ms: 500)`, `.call(factory: "agent", deadline_ms: ..., create: false, channel: "turn", codec: ...)` |
-| PHP | `->call(target: 'pricing', deadlineMs: 500)`, `->call(factory: 'agent', deadlineMs: ..., create: false, channel: 'turn', codec: ...)` |
-| Elixir | `call(s, "pricing", deadline_ms: 500)`, `call(s, factory: "agent", deadline_ms: ..., create: false, channel: "turn", serialize: f, decode: g)` |
+| SDK | Spelling | Answer channel |
+| --- | --- | --- |
+| Rust | `.call::<Answer>(CallTarget::id("pricing"), 500)`, `CallTarget::factory("agent").create(false).channel("turn")` | `CallTarget::id("pricing").answer_channel("quotes")` |
+| Java | `.call(CallTarget.id("pricing"), Answer.class, 500)`, `CallTarget.factory("agent").create(false).channel("turn")` | `CallTarget.id("pricing").answerChannel("quotes")` |
+| Node | `.call("pricing", { deadlineMs: 500, codec })`, `.call({ factory: "agent", create: false, channel: "turn" }, { deadlineMs })` | `{ deadlineMs: 500, answerChannel: "quotes" }` |
+| Python | `.call("pricing", deadline_ms=500)`, `.call(factory="agent", deadline_ms=..., create=False, channel="turn", codec=...)` | `answer_channel="quotes"` |
+| Ruby | `.call("pricing", deadline_ms: 500)`, `.call(factory: "agent", deadline_ms: ..., create: false, channel: "turn", codec: ...)` | `answer_channel: "quotes"` |
+| PHP | `->call(target: 'pricing', deadlineMs: 500)`, `->call(factory: 'agent', deadlineMs: ..., create: false, channel: 'turn', codec: ...)` | `answerChannel: 'quotes'` |
+| Elixir | `call(s, "pricing", deadline_ms: 500)`, `call(s, factory: "agent", deadline_ms: ..., create: false, channel: "turn", serialize: f, decode: g)` | `answer_channel: "quotes"` |
 
 The request is written the way a `sink` writes, and the answer read the way an `input` reads: the
 answer type in Rust and Java, one named codec for both directions in Node, Python, Ruby and PHP
@@ -224,7 +218,7 @@ Registration refuses:
 
 | Code | When |
 | --- | --- |
-| `topology.channel_ends_twice` | the channel already ends in a sink, a `response()` or another call |
+| `topology.channel_ends_twice` | the channel already ends in a sink or another call |
 | `topology.call_deadline_zero` | the deadline is zero |
 | `topology.call_without_key` | a factory call with `create: false` and no `key_by` before it |
 | `topology.call_response_unread` | the Response channel feeds no tasklet, so every outcome would be journaled and read by nobody; use `relay_forward` when no outcome is wanted |
@@ -275,7 +269,7 @@ timer and `ctx.complete`) no longer holds its id: a call creates a new empty ins
 In the agentdesk example, a `gateway` relay takes HTTP requests from the
 [HTTP server plugin](../../plugins/http_server.md). A POST to `/sessions/<user>/messages` is a
 message for the user's session. The gateway keeps each user's daily token budget in a `budget`
-cell per user, answers the request itself with 202 or 429 through one `response()` end, and,
+cell per user, answers the request itself with 202 or 429 on a sink, and,
 when the message is admitted, **calls** the user's session with it. The tokens the answer used
 come back as a `Response` into the same `budget` tasklet.
 
@@ -290,7 +284,8 @@ come back as a `Response` into the same `budget` tasklet.
                 .keyBy(Event::user)                          // one cell per user
                 .into(Budget.class);
         verdicts.into(Admit.class)
-                .response();                                 // 202, or 429 over the budget
+                .keyed()
+                .sink();                                     // 202, or 429 over the budget
         verdicts.filter(Verdict::admitted)
                 .map(Message.class, Verdict::message)
                 .keyBy(Message::user)                        // the user's session
@@ -308,8 +303,9 @@ come back as a `Response` into the same `budget` tasklet.
 # lib/agentdesk/gateway_relay.ex: answers every request, and calls the session a message is for.
     verdicts
     |> into(Admit)
+    |> keyed()
     # 202, or 429 over the budget
-    |> response()
+    |> sink()
 
     verdicts
     |> filter(&Budget.admitted?/1)
@@ -337,8 +333,9 @@ come back as a `Response` into the same `budget` tasklet.
   `flz relay start`. `channel("message")` is the entry channel it arrives on.
 - **The call waits for nothing.** Its outcome comes back later as a `Response` on the gateway's
   Response channel, within the 60-second deadline at the latest.
-- **Two `response()` ends** in one graph (the other answers the non-message requests): whichever
-  answers first answers the request. The 202 leaves before the session has read the message.
+- **Two sinks** in one graph (the other answers the non-message requests): whichever output
+  comes first answers the request. The 202 leaves before the session has read the message. Both
+  are `keyed()`, as every sink of an effectively-once relay is.
 
 The `Response` carries the request it answers, which is where the user comes from. A turn that
 failed, or took too long, used no tokens:
@@ -376,8 +373,8 @@ failed, or took too long, used no tokens:
 <!-- tabs-close -->
 
 On the called side, the session takes the gateway's message on an entry channel of its own,
-`message`, beside the `turn` channel the CLI uses, and answers through its own `response()`
-end. Both channels reach the same `reply` tasklet, with the same conversation:
+`message`, beside the `turn` channel the CLI uses, and answers from its sink `answer`, which
+listeners read too. Both channels reach the same `reply` tasklet, with the same conversation:
 
 <!-- tabs-open -->
 
@@ -387,9 +384,7 @@ end. Both channels reach the same `reply` tasklet, with the same conversation:
 // AgentRelay.java: one conversation, answering whoever called.
         c.input(String.class, "turn")
                 .into(Reply.class)
-                .sink("answer")                          // to whoever listens
-                .into(Deliver.class)
-                .response();                             // to whoever called
+                .sink("answer");                         // to whoever called, and whoever listens
         c.input(Message.class, "message")                // from the gateway
                 .map(String.class, Message::text)
                 .into(Reply.class);
@@ -404,11 +399,8 @@ end. Both channels reach the same `reply` tasklet, with the same conversation:
     c
     |> input("turn")
     |> into(Reply)
-    # to whoever listens
+    # to whoever called, and whoever listens
     |> sink("answer")
-    |> into(Deliver)
-    # to whoever called
-    |> response()
 
     # from the gateway
     c
@@ -546,8 +538,8 @@ For a durable pair:
 
 The deadline of a relay call is the caller's alone: a wall-clock time taken when the calling
 invocation emitted the request. The time a sleeping called relay takes to wake counts against
-it. When it passes, the caller receives `call.timeout` and the called turn still runs; its answer
-is dropped and counted.
+it. When it passes, the caller receives `call.timeout` and the called turn still runs; its outputs
+still reach the called relay's plugins.
 
 ## Order and bounds
 
@@ -575,8 +567,8 @@ that much input: the `input_log_frozen_watermark` signal reports a log that keep
 ## Observing calls
 
 The controller emits `[:flezha, :call, :answered]` with the answer's latency,
-`[:flezha, :call, :timeout]`, `[:flezha, :call, :answer_dropped]` with its reason (`answered`,
-`unclaimed`, or `caller_gone`) and `[:flezha, :call, :refused]` with its code, each naming the
+`[:flezha, :call, :timeout]`, `[:flezha, :call, :answer_dropped]` with its reason (`unclaimed`,
+an outcome no pending call of the caller takes, or `caller_gone`) and `[:flezha, :call, :refused]` with its code, each naming the
 namespace and the relay; a relay caller's `timeout` and
 `[:flezha, :call, :recovered_unanswered]` also name the call's `target`. The observability source
 `flezha_call` exports them as the histogram `flezha_call_answer_duration` and the counters
@@ -601,5 +593,5 @@ start-up. A relay call to a sleeping session, from the input reaching the gatewa
 - [Effectively once](effectively_once.md): the tier an answer can wait for
 - [Durability](../basics/durability.md), [Authorization](../basics/authorization.md)
 - [HTTP server plugin](../../plugins/http_server.md)
-- [Errors](../../errors.md), [Glossary](https://github.com/flezha/flezha/blob/main/docs/glossary.md): call, response end, Response
+- [Errors](../../errors.md), [Glossary](https://github.com/flezha/flezha/blob/main/docs/glossary.md): call, answer channel, Response
 - Tutorial: [call the session](../../tutorials/agentdesk/call_the_session.md)

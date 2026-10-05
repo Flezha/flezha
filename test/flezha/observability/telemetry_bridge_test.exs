@@ -275,10 +275,11 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
     drain_mailbox()
 
     callee = %{namespace: "default", relay_id: "obs_call_relay"}
-    {:ok, answered, calls} = Calls.admit(%Calls{}, callee, {self(), make_ref()}, "in", 5_000)
-    {:ok, waiting, calls} = Calls.admit(calls, callee, {self(), make_ref()}, "in", 5_000)
-    {:diverted, calls} = Calls.divert(calls, callee, "a", %{"flz.reply_to" => answered})
-    {:diverted, calls} = Calls.divert(calls, callee, "b", %{"flz.reply_to" => answered})
+    entry = %{"channel" => "in"}
+    {:ok, answered, calls} = Calls.admit(%Calls{}, callee, {self(), make_ref()}, entry, 5_000)
+    {:ok, waiting, calls} = Calls.admit(calls, callee, {self(), make_ref()}, entry, 5_000)
+    {:answered, calls, _} = Calls.divert(calls, callee, "a", %{"flz.reply_to" => answered})
+    :ok = Calls.unclaimed(callee)
     _ = Calls.expire(calls, callee, waiting)
     _ = Calls.refused(callee, "call.busy", %{pending_max: 1})
     deadline_at = Integer.to_string(System.system_time(:millisecond))

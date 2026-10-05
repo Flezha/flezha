@@ -1382,14 +1382,13 @@ fn a_run_that_journals_nothing_parks_its_failed_turn_and_answers_the_next() {
 }
 
 /// A two-stage `per_input` pass answers the call its message carried from the
-/// second stage, which never saw the message; a message nobody called is
-/// answered with the empty token.
+/// second stage's sink, which never saw the message; a message nobody called
+/// carries no token.
 #[test]
 fn a_per_input_pass_answers_its_call_from_its_last_stage() {
     let (_env, _sink, rx) = turn_env();
     let id = format!("turn_answer_{}", std::process::id());
-    let json = turn_json(&id, false, "per_input", "keep_progress")
-        .replace(r#"{"link":"sink","name":"out"}"#, r#"{"link":"response"}"#);
+    let json = turn_json(&id, false, "per_input", "keep_progress");
     crate::host::register_host_class_json(json.as_bytes()).expect("class registers");
     let mid = crate::relay::registry::get_class(&id)
         .and_then(|topology| topology.lookup_channel_id("mid"))
@@ -1415,7 +1414,7 @@ fn a_per_input_pass_answers_its_call_from_its_last_stage() {
         answers,
         vec![
             (b"re:hello".to_vec(), Some("w:one".to_string())),
-            (b"re:plain".to_vec(), Some(String::new())),
+            (b"re:plain".to_vec(), None),
         ]
     );
     assert_no_completion(&rx, "turn-answer-1", Duration::from_millis(200));

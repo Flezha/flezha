@@ -152,7 +152,6 @@ fn build_channel(
         // descriptor carries no serializer — the kind is the whole record
         // of its plugin egress.
         plugin_sink: None,
-        response: derived.response,
         sink: derived.sink.is_some(),
         call: derived.call.as_ref().map(call_end),
         keyed: channel_decl.keyed,
@@ -185,6 +184,7 @@ pub fn call_end(derived: &super::register::DerivedCall) -> crate::channel::CallE
         create: end.create,
         deadline_ms: end.deadline_ms,
         channel: end.channel.as_deref().map(Arc::from),
+        answer_channel: end.answer_channel.as_deref().map(Arc::from),
         response: Arc::from(end.response.as_str()),
         transform: None,
         key: None,

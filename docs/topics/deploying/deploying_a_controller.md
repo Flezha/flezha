@@ -312,7 +312,7 @@ values:
 | `FLEZHA_DLQ_DIR` | the dead-letter queue |
 | `FLEZHA_NODE_NAME` (with `FLEZHA_NODE_HOST`) | the node name; two nodes on one host cannot share one |
 | `FLEZHA_HEALTHZ_PORT` | the probe listener, when enabled |
-| `FLEZHA_QUIC_LISTEN_ADDRESS` | the QUIC listener, when enabled |
+| `FLEZHA_QUIC_LISTEN_ADDRESS` | the QUIC listener ([experimental: quic](../../publishing/maturity.md#quic)), when enabled |
 | `FLEZHA_AUTHZ_DIR`, `FLEZHA_SCHEDULE_DIR`, `FLEZHA_AUDIT_DIR`, `FLEZHA_PLUGIN_ROOT`, `FLEZHA_LOG_PATH` | the remaining durable trees |
 
 The unit of separation is the directory, not a file name inside a shared one,

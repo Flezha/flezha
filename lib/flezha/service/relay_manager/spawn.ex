@@ -153,8 +153,7 @@ defmodule Flezha.Service.RelayManager.Spawn do
 
       {:ok, :flow} when instance_id != "" ->
         if :flow in request.runs,
-          do:
-            spawn_fresh(namespace, instance_id, factory_id, :flow, request, caller_context),
+          do: spawn_fresh(namespace, instance_id, factory_id, :flow, request, caller_context),
           else: {not_steps(namespace, factory_id), instance_id}
 
       {:ok, :flow} ->

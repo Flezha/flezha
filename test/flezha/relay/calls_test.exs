@@ -41,7 +41,7 @@ defmodule FlezhaTest.Relay.CallsTest do
   defp from, do: {self(), make_ref()}
 
   defp admit(calls, from, deadline_ms \\ 5_000) do
-    {:ok, token, calls} = Calls.admit(calls, @callee, from, "in", deadline_ms)
+    {:ok, token, calls} = Calls.admit(calls, @callee, from, %{"channel" => "in"}, deadline_ms)
     {token, calls}
   end
 
@@ -58,36 +58,93 @@ defmodule FlezhaTest.Relay.CallsTest do
       assert Calls.waiting(calls) == 2
 
       assert {:error, %Error{code: "call.busy"}} =
-               Calls.admit(calls, @callee, from(), "in", 5_000)
+               Calls.admit(calls, @callee, from(), %{"channel" => "in"}, 5_000)
 
       assert_received {:call_event, :refused, _, %{code: "call.busy", relay_id: "callee"}}
 
       # An answered row no longer counts against the bound.
-      {:diverted, calls} = Calls.divert(calls, @callee, "a", %{"flz.reply_to" => t1})
-      assert {:ok, _t3, _calls} = Calls.admit(calls, @callee, from(), "in", 5_000)
+      {:answered, calls, _} = Calls.divert(calls, @callee, "a", %{"flz.reply_to" => t1})
+      assert {:ok, _t3, _calls} = Calls.admit(calls, @callee, from(), %{"channel" => "in"}, 5_000)
     end
 
-    test "the first answer wins, a later one is counted as answered, a stray one as unclaimed" do
+    test "the first output answers; every output goes on without its token, none counted as dropped" do
       {pid, ref} = caller = from()
       assert pid == self()
       {token, calls} = admit(%Calls{}, caller)
 
       assert :output = Calls.divert(calls, @callee, "record", %{"channel" => "audit"})
 
-      {:diverted, calls} =
+      {:answered, calls, %{"channel" => "ok"} = first} =
         Calls.divert(calls, @callee, "first", %{"flz.reply_to" => token, "channel" => "ok"})
 
+      assert first == %{"channel" => "ok"}
       assert_received {^ref, {:ok, "first", %{"channel" => "ok"}}}
       assert_received {:call_event, :answered, %{duration_us: _}, %{relay_id: "callee"}}
 
-      {:diverted, _} = Calls.divert(calls, @callee, "second", %{"flz.reply_to" => token})
+      assert {:answered, _, %{}} =
+               Calls.divert(calls, @callee, "second", %{"flz.reply_to" => token})
+
       refute_received {^ref, _}
-      assert_received {:call_event, :answer_dropped, %{count: 1}, %{reason: "answered"}}
 
       for stray <- ["", "w:nobody"] do
-        {:diverted, _} = Calls.divert(calls, @callee, "x", %{"flz.reply_to" => stray})
-        assert_received {:call_event, :answer_dropped, _, %{reason: "unclaimed"}}
+        assert {:answered, _, %{"k" => "v"} = output} =
+                 Calls.divert(calls, @callee, "x", %{"flz.reply_to" => stray, "k" => "v"})
+
+        refute Map.has_key?(output, "flz.reply_to")
       end
+
+      refute_received {:call_event, :answer_dropped, _, _}
+    end
+
+    test "a named answer channel picks the answer; the first output answers without one" do
+      {_, named_ref} = named = from()
+      {_, first_ref} = first = from()
+
+      {:ok, named_token, calls} =
+        Calls.admit(
+          %Calls{},
+          @callee,
+          named,
+          %{"channel" => "in", "flz.call_answer_channel" => "quotes"},
+          5_000
+        )
+
+      {first_token, calls} = admit(calls, first)
+
+      Enum.reduce(
+        [
+          {named_token, "audit", "a1"},
+          {first_token, "audit", "a2"},
+          {named_token, "quotes", "q1"},
+          {first_token, "quotes", "q2"}
+        ],
+        calls,
+        fn {token, channel, message}, calls ->
+          metadata = %{"flz.reply_to" => token, "channel" => channel}
+          {:answered, calls, _output} = Calls.divert(calls, @callee, message, metadata)
+          calls
+        end
+      )
+
+      assert_received {^named_ref, {:ok, "q1", %{"channel" => "quotes"}}}
+      assert_received {^first_ref, {:ok, "a2", %{"channel" => "audit"}}}
+      refute_received {^named_ref, _}
+      refute_received {^first_ref, _}
+    end
+
+    test "the answer channel stays in the row, not on the input; an empty one names none" do
+      metadata = %{"channel" => "in", "flz.call_answer_channel" => "quotes"}
+      {:ok, token, calls} = Calls.admit(%Calls{}, @callee, from(), metadata, 5_000)
+      assert calls.rows[token].answer_channel == "quotes"
+
+      empty = %{metadata | "flz.call_answer_channel" => ""}
+      {:ok, unnamed, calls} = Calls.admit(calls, @callee, from(), empty, 5_000)
+      assert calls.rows[unnamed].answer_channel == nil
+
+      assert Calls.entry_metadata(metadata, token) == %{
+               "channel" => "in",
+               "flz.reply_to" => token
+             }
     end
 
     test "a deadline answers a waiting caller call.timeout and retires an answered row silently" do
@@ -95,7 +152,10 @@ defmodule FlezhaTest.Relay.CallsTest do
       {_, answered_ref} = answered = from()
       {waiting_token, calls} = admit(%Calls{}, waiting, 100)
       {answered_token, calls} = admit(calls, answered, 100)
-      {:diverted, calls} = Calls.divert(calls, @callee, "a", %{"flz.reply_to" => answered_token})
+
+      {:answered, calls, _} =
+        Calls.divert(calls, @callee, "a", %{"flz.reply_to" => answered_token})
+
       assert_received {^answered_ref, {:ok, "a", _}}
 
       calls = Calls.expire(calls, @callee, waiting_token)
@@ -108,9 +168,11 @@ defmodule FlezhaTest.Relay.CallsTest do
       refute_received {^answered_ref, _}
       assert calls.rows == %{}
 
-      # Its late answer names no row now.
-      {:diverted, _} = Calls.divert(calls, @callee, "late", %{"flz.reply_to" => waiting_token})
-      assert_received {:call_event, :answer_dropped, _, %{reason: "unclaimed"}}
+      # Its late output names no row now, and is an ordinary output.
+      assert {:answered, _, %{}} =
+               Calls.divert(calls, @callee, "late", %{"flz.reply_to" => waiting_token})
+
+      refute_received {:call_event, :answer_dropped, _, _}
     end
 
     test "an ended instance answers each waiting caller call.callee_ended with its status" do
@@ -120,7 +182,7 @@ defmodule FlezhaTest.Relay.CallsTest do
       {_t1, calls} = admit(%Calls{}, c1)
       {_t2, calls} = admit(calls, c2)
       {t3, calls} = admit(calls, c3)
-      {:diverted, calls} = Calls.divert(calls, @callee, "a", %{"flz.reply_to" => t3})
+      {:answered, calls, _} = Calls.divert(calls, @callee, "a", %{"flz.reply_to" => t3})
       assert_received {^r3, {:ok, "a", _}}
 
       assert %Calls{rows: rows} = Calls.end_all(calls, @callee, "error")
@@ -159,10 +221,10 @@ defmodule FlezhaTest.Relay.CallsTest do
     setup do
       test_pid = self()
 
-      # Every output the `:on_output` chain is given is reported, so a test can
-      # show an answer never reaches it.
+      # Every output the `:on_output` chain is given is reported, with its
+      # metadata, so a test can show an answer reaches it without its token.
       stub(Plugins, :transform_io, fn state, chain, message, metadata ->
-        if chain == :on_output, do: send(test_pid, {:on_output, message})
+        if chain == :on_output, do: send(test_pid, {:on_output, message, metadata})
         Mimic.call_original(Plugins, :transform_io, [state, chain, message, metadata])
       end)
 
@@ -205,7 +267,8 @@ defmodule FlezhaTest.Relay.CallsTest do
       token
     end
 
-    test "the answer reaches its caller and never the :on_output chain", %{inst: inst} do
+    test "the answer reaches its caller and then the :on_output chain, without a token",
+         %{inst: inst} do
       {:ok, host} = start_supervised({Host, state(inst)})
       forged = %{"channel" => "in", "flz.reply_to" => "o:gateway:c1"}
       caller = call(host, "hello", forged)
@@ -218,9 +281,28 @@ defmodule FlezhaTest.Relay.CallsTest do
       GenServer.cast(host, {:io_out, "hello", %{"flz.reply_to" => token, "channel" => "out"}})
 
       assert Task.await(caller) == {:ok, "hello", %{"channel" => "out"}}
-      assert_receive {:on_output, "record"}
-      refute_received {:on_output, _}
-      assert_received {:call_event, :answer_dropped, _, %{reason: "unclaimed"}}
+      assert_receive {:on_output, "record", %{"channel" => "audit"}}
+      assert_receive {:on_output, "forged", forged_output}
+      assert_receive {:on_output, "hello", %{"channel" => "out"} = answer}
+      refute Map.has_key?(forged_output, "flz.reply_to")
+      refute Map.has_key?(answer, "flz.reply_to")
+      refute_received {:call_event, :answer_dropped, _, _}
+    end
+
+    test "a call naming its answer channel is answered from that channel alone", %{inst: inst} do
+      {:ok, host} = start_supervised({Host, state(inst)})
+      caller = call(host, "EUR/USD", %{"flz.call_answer_channel" => "quotes"})
+
+      assert_receive {:channel_got, ^inst, {"EUR/USD", input}}, 2_000
+      refute Map.has_key?(input, "flz.call_answer_channel")
+      token = input["flz.reply_to"]
+
+      GenServer.cast(host, {:io_out, "seen", %{"flz.reply_to" => token, "channel" => "audit"}})
+      GenServer.cast(host, {:io_out, "1.08", %{"flz.reply_to" => token, "channel" => "quotes"}})
+
+      assert Task.await(caller) == {:ok, "1.08", %{"channel" => "quotes"}}
+      assert_receive {:on_output, "seen", %{"channel" => "audit"}}
+      assert_receive {:on_output, "1.08", %{"channel" => "quotes"}}
     end
 
     test "an answer in an outbox batch goes to its caller and its entry still settles",
@@ -240,11 +322,11 @@ defmodule FlezhaTest.Relay.CallsTest do
 
       assert {:ok, "hello", %{"channel" => "out"}} = Task.await(caller)
       assert_receive {:"$gen_cast", {:outbox_settled_many, [{7, 0}, {8, 0}]}}
-      assert_received {:on_output, "record"}
-      refute_received {:on_output, "hello"}
+      assert_received {:on_output, "record", _}
+      assert_received {:on_output, "hello", %{"channel" => "out"}}
     end
 
-    test "an answer a migrate task held is diverted when it is released", %{inst: inst} do
+    test "an answer a migrate task held answers when it is released", %{inst: inst} do
       {:ok, host} = start_supervised({Host, state(inst)})
       caller = call(host, "hello")
       token = called_token(inst)
@@ -259,7 +341,7 @@ defmodule FlezhaTest.Relay.CallsTest do
       ExUnit.CaptureLog.capture_log(fn -> send(host, {:EXIT, self(), :bind_failed}) end)
 
       assert {:ok, "hello", _} = Task.await(caller)
-      refute_received {:on_output, _}
+      assert_received {:on_output, "hello", _}
     end
 
     test "a dead-lettered called input answers its caller call.failed", %{inst: inst} do
@@ -299,13 +381,11 @@ defmodule FlezhaTest.Relay.CallsTest do
       token = called_token(inst)
 
       GenServer.cast(host, {:io_part, "hel", %{"channel" => "events", "flz.part" => "0"}})
-      GenServer.cast(host, {:io_out, "hello", %{"channel" => "events"}})
-      GenServer.cast(host, {:io_out, "used:5", %{"flz.reply_to" => token, "channel" => "answer"}})
+      GenServer.cast(host, {:io_out, "hello", %{"flz.reply_to" => token, "channel" => "events"}})
 
-      assert Task.await(caller) == {:ok, "used:5", %{"channel" => "answer"}}
+      assert Task.await(caller) == {:ok, "hello", %{"channel" => "events"}}
       assert_receive {:preview_forward, {"hel", %{"channel" => "events"}}}
       assert_receive {:message_forward, {"hello", %{"channel" => "events"}}}
-      refute_received {:message_forward, {"used:5", _}}
       refute_received {:preview_forward, _}
     end
 
@@ -322,8 +402,8 @@ defmodule FlezhaTest.Relay.CallsTest do
 
       GenServer.cast(host, {:io_out, "late", %{"flz.reply_to" => token}})
       assert :pong = GenServer.call(host, :ping)
-      assert_received {:call_event, :answer_dropped, _, %{reason: "unclaimed"}}
-      refute_received {:on_output, _}
+      assert_received {:on_output, "late", %{}}
+      refute_received {:call_event, :answer_dropped, _, _}
     end
 
     test "a call the relay cannot take is refused at once, nothing ingested", %{inst: inst} do

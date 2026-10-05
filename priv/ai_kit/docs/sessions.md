@@ -14,7 +14,7 @@ steps once and ends, a session runs them again for every message, and each run i
 
 ```mermaid
 flowchart LR
-    M(["message"]) --> E["entry channel"] --> T["tasklets (one turn)"] --> R(["response() end"])
+    M(["message"]) --> E["entry channel"] --> T["tasklets (one turn)"] --> R(["sink"])
     T -. "change" .-> S[("session state")]
     S -. "read" .-> T
 ```
@@ -28,9 +28,9 @@ flowchart LR
 - **State between turns.** A tasklet keeps the conversation in its state through changes,
   exactly as any tasklet keeps state ([state.md](../basics/state.md)). The next turn reads
   the state the previous one left.
-- **An answer to the sender.** A chain that ends in a `response()` end sends its output back
-  to whoever sent the message, for example `flz relay call` or another relay's call
-  ([relay_calls.md](relay_calls.md)).
+- **An answer to the sender.** When the message came from a call, for example `flz relay call`
+  or another relay's call, the turn's first sink output goes back to the caller, and on to the
+  sink's plugins and listeners ([relay_calls.md](relay_calls.md)).
 - **An idle session sleeps.** A session waiting for its next message still holds a place on
   its runner, and with many sessions that adds up. So an instance that keeps its state on
   the controller sleeps when it has been idle for a while: it leaves its runner, the
@@ -122,8 +122,7 @@ public final class AgentRelay implements Relay {
     public void channels(ChannelBuilder c) {
         c.input(String.class, "turn")
                 .into(Reply.class)
-                ...
-                .response();                             // to whoever called
+                .sink("answer");                         // to whoever called, and whoever listens
 ```
 
 Full file: [`AgentRelay.java`](https://github.com/flezha/flezha_java_sdk/blob/main/examples/agentdesk/src/main/java/com/flezha/examples/agentdesk/AgentRelay.java)
@@ -172,9 +171,8 @@ defmodule Agentdesk.AgentRelay do
     c
     |> input("turn")
     |> into(Reply)
-    ...
-    # to whoever called
-    |> response()
+    # to whoever called, and whoever listens
+    |> sink("answer")
 ```
 
 Full file: [`agent_relay.ex`](https://github.com/flezha/flezha_elixir_sdk/blob/main/examples/agentdesk/lib/agentdesk/agent_relay.ex)
@@ -185,7 +183,7 @@ An answer is its text and the number of tokens the model used for it. `DemoModel
 for a model's client: it answers each message with one canned sentence, so nothing outside the
 example is needed. Its third argument receives each token as it is written, which
 [streamed_answers.md](streamed_answers.md) uses. The lines elided above add an undo
-([rewinding_a_turn.md](rewinding_a_turn.md)) and a sink for streamed parts.
+([rewinding_a_turn.md](rewinding_a_turn.md)).
 
 ### Start a session and talk to it
 
@@ -199,8 +197,8 @@ $ flz relay start agent --id anna --namespace agents
 Started anna
 ```
 
-`flz relay call` sends one message and waits for the answer the `response()` end produces
-from it ([relay_calls.md](relay_calls.md) is its contract):
+`flz relay call` sends one message and waits for the first output the turn sends to its sink
+([relay_calls.md](relay_calls.md) is its contract):
 
 ```sh
 $ flz relay call anna --namespace agents --text 'Hello'

@@ -20,7 +20,7 @@ fn serial() -> MutexGuard<'static, ()> {
 }
 
 /// A host class whose one tasklet `p0` ends its output channel in `end`: a
-/// sink named `answer`, a `response()`, or an edge into `p1`.
+/// sink named `answer`, a call, or an edge into `p1`.
 fn slot(id: &str, end: &str, keys: &[&str]) -> Arc<crate::cell::CellSlot> {
     slot_named(id, &format!("{id}_inst"), end, keys)
 }
@@ -37,7 +37,6 @@ fn slot_named(id: &str, instance: &str, end: &str, keys: &[&str]) -> Arc<crate::
     };
     let (out, tasklets) = match end {
         "sink" => (r#"{"name":"answer","kind":"plugin","producer":0,"chains":[[{"link":"sink","name":"answer"}]]}"#.to_string(), p0),
-        "response" => (r#"{"name":"answer","kind":"plugin","producer":0,"chains":[[{"link":"response"}]]}"#.to_string(), p0),
         "call" => (r#"{"name":"answer","kind":"plugin","producer":0,"chains":[[{"link":"call","target":"pricing","deadline_ms":500,"response":"answer.response"}]]},
                {"name":"answer.response","kind":"entry","chains":[[{"link":"into","tasklet":0}]]}"#.to_string(), p0),
         _ => (
@@ -153,7 +152,6 @@ fn a_channel_without_a_sink_refuses_a_part() {
     let _g = serial();
     for (id, end, channel) in [
         ("part_edge", "edge", "mid"),
-        ("part_response", "response", "answer"),
         ("part_call", "call", "answer"),
     ] {
         let slot = slot(id, end, &[]);

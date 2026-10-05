@@ -340,7 +340,7 @@ returns: encoded as an emit of the value would be, numbered `flz.part` from `0` 
 attempt and stamped with `flz.part_attempt`, `flz.cell` and `flz.key`; it goes to the
 relay's listeners and to nothing else, never waits, is dropped and counted when the wire
 cannot take it at once, and is sent by no replayed input; it answers `part.no_sink` when the
-node's channel ends in no sink, a `response/1` or `call/3` end included, and `part.outside_invocation`
+node's channel ends in no sink, a `call/3` end included, and `part.outside_invocation`
 through a ctx whose invocation returned),
 `apply/3` (fold a change and record it; a `defchange` recorder calls it),
 `complete/2` (end the instance with a result, encoded as `spawn_steps` encodes its
@@ -370,10 +370,11 @@ or `branch/2`, which calls each arm of a list with the same stream and answers i
 unnamed mentions of one module unify (fan-in). A sink names the channel it terminates:
 `sink("input")` makes the frame `channel = "input"`, which is what reaches a forward
 target's `input` entry, and `sink/1` leaves the name derived — `named/2`'s name, else the
-tasklet's `name/0`. Naming one channel twice is refused. `response/1`, or `response_with/2`
-with a serializer, ends a channel on the answer to an outside call instead of a sink
+tasklet's `name/0`. Naming one channel twice is refused. A called input's first sink output
+answers its caller and still reaches the sink's plugins
 ([`../topics/advanced/relay_calls.md`](../topics/advanced/relay_calls.md)). `call(handle, "pricing", deadline_ms: 500)`, or
-`call(handle, factory: "agent", deadline_ms: ..., create: false)` after a `key_by/2`, ends a
+`call(handle, factory: "agent", deadline_ms: ..., create: false)` after a `key_by/2`, with
+`answer_channel:` to name the callee's answering channel, ends a
 chain on a call to another relay and answers a handle on its Response channel, whose
 values are `%Flezha.SDK.Response{}` ([`../topics/advanced/relay_calls.md`](../topics/advanced/relay_calls.md)). The user's metadata rides the frame. Cell mode is derived: non-empty `cell_keys/0` → static; a keyed edge into a
 keyless tasklet → dynamic; else single. Refusals accumulate into one

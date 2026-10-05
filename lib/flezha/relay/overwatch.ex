@@ -827,22 +827,24 @@ defmodule Flezha.Relay.Overwatch do
     end
   end
 
-  # One output on either route: an answer goes to its caller and a request to
-  # its callee, and neither reaches the `:on_output` chain, so no plugin,
-  # listener or sink sees it. A durable output they take stays held until the
-  # caller has its outcome.
+  # One output on either route: a request goes to its callee and never reaches
+  # the `:on_output` chain. An output carrying a call's token answers its
+  # caller first and then goes on, without the token, like any other. A
+  # durable output a call takes stays held until the caller has its outcome.
   defp output(%__MODULE__{} = state, message, metadata) do
     case Calls.divert(state.calls, callee(state), message, metadata) do
       :output ->
         Plugins.transform_io(state, :on_output, message, metadata)
         state
 
-      {:diverted, calls} ->
+      {:answered, calls, output} ->
+        Plugins.transform_io(state, :on_output, message, output)
         %{state | calls: calls}
 
-      {:held, calls} ->
+      {:held, calls, output} ->
         Outbox.hold(metadata)
-        %{state | calls: calls}
+        Plugins.transform_io(state, :on_output, message, output)
+        Ingest.retire_at_deadline(%{state | calls: calls}, metadata["flz.reply_to"])
 
       :call ->
         Outbox.hold(metadata)

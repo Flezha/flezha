@@ -31,8 +31,8 @@ defmodule Flezha.Plugin.Host do
   * `:verdict` waits and answers what the host decided, which a poller reads to
     know whether to advance its content hash.
   * `:fire_and_forget` does not wait. The host owns the payload from the cast.
-  * `:call` sends one input and waits for the host's answer to it, the output
-    a `response()` end of its graph produced.
+  * `:call` sends one input and waits for the host's answer to it, the first
+    output it caused on a sink of the graph.
   """
   @type inject_mode() :: :confirming | :verdict | :fire_and_forget | :call
 

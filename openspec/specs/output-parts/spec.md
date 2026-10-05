@@ -4,7 +4,6 @@
 A part: a preview of the output a tasklet's invocation is producing, sent while it runs, what it
 carries, how it leaves the runner and the controller, when it is dropped or refused, and that it is
 never durable and never reaches a sink or a waiting caller.
-
 ## Requirements
 ### Requirement: A tasklet SHALL be able to send a part while it runs
 
@@ -146,13 +145,12 @@ reason, and the count SHALL be readable where the runner's other liveness counte
 
 The part call SHALL raise the SDK's one error type (in Elixir, answer the error) and send
 nothing when the tasklet's output channel does not end in a sink, with the code
-`part.no_sink`: only a sink satisfies a part, and neither a `response()` end
-nor a `call` end is
-one, since each is a plugin end whose output is taken aside before any listener. It SHALL
-also refuse when it is made through a context whose invocation has already returned, with
-the code `part.outside_invocation`. Both codes SHALL be of class `invalid` and SHALL be listed in the
-error catalogue. A raise from the part call inside `run` SHALL fail the invocation as any
-raise does.
+`part.no_sink`: only a sink satisfies a part, and a `call` end
+is not one, since its output is a request taken aside
+before any listener. It SHALL also refuse when it is made through a context whose invocation has
+already returned, with the code `part.outside_invocation`. Both codes SHALL be of class `invalid`
+and SHALL be listed in the error catalogue. A raise from the part call inside `run` SHALL fail the
+invocation as any raise does.
 
 #### Scenario: A tasklet with no sink cannot send a part
 
@@ -161,9 +159,9 @@ raise does.
 - **THEN** the call SHALL fail with `part.no_sink` naming the tasklet and its channel, and
   no frame SHALL leave the runner
 
-#### Scenario: A tasklet whose channel answers a caller cannot send a part
+#### Scenario: A tasklet whose channel calls another relay cannot send a part
 
-- **GIVEN** a tasklet whose output channel ends in `response()` or in a `call` end, and no sink
+- **GIVEN** a tasklet whose output channel ends in a `call` end, and no sink
 - **WHEN** it sends a part
 - **THEN** the call SHALL fail with `part.no_sink`, and no frame SHALL leave the runner
 
@@ -236,16 +234,16 @@ tell from a part's destination.
 
 ### Requirement: A caller waiting for an answer SHALL NOT receive parts
 
-A caller waiting for an answer SHALL receive only the answer, never a part: an outside
-caller waiting for a relay's answer and a relay waiting
-on a call alike. A caller
-that wants the preview attaches a listener.
+A caller waiting for an answer SHALL receive only the answer, never a part: an outside caller
+waiting for a relay's answer and a relay waiting on a call alike. A part SHALL NOT answer a
+call, even when it is sent on the channel whose output answers. A caller that wants the preview
+attaches a listener.
 
 #### Scenario: An outside caller sees the answer alone
 
-- **GIVEN** a relay declaring `input("turn") |> into(Turn) |> sink("events") |> into(Usage) |> response()`,
-  whose `Turn` sends parts and emits its answer, and whose `Usage` answers the caller
+- **GIVEN** a relay declaring `input("turn") |> into(Turn) |> sink("events")`,
+  whose `Turn` sends parts and then emits its answer
 - **WHEN** an outside caller sends it an input and waits, with a listener attached beside it
-- **THEN** the caller SHALL receive `Usage`'s answer only, and the listener SHALL receive
+- **THEN** the caller SHALL receive `Turn`'s output only, and the listener SHALL receive
   `Turn`'s parts and then its output, each on channel `events`
 

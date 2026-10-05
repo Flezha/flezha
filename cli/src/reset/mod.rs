@@ -9,9 +9,8 @@ use std::path::PathBuf;
 use std::process::exit;
 use std::time::Instant;
 
-use flz_transport::errors::FlezhaError;
-
 use clear::measure_and_clear;
+use flz_transport::errors::FlezhaError;
 use plan::{build_plan, opt_in_flags, preflight_guard, Action, Root};
 use report::{print_human, print_json};
 

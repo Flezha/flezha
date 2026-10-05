@@ -24,6 +24,7 @@ repository, `Flezha/flezha_http_plugin`, which this repository carries as the su
 | `bind` | string | `"127.0.0.1"` | no | The address it listens on: an IPv4 or IPv6 literal, never a name |
 | `channel` | names | none | no | The entry channel every request is injected on, one name. Required, unless `channel_in` names it |
 | `channel_in` | names | none | no | The explicit spelling of `channel`. Required, unless `channel` names it |
+| `answer_channel` | string | none | no | The relay's channel whose output answers a request; the first output on a sink when unset |
 | `deadline_ms` | int | `30000` | no | How long a request waits for the relay's answer, 100 to 600000 |
 | `max_body_bytes` | int | `1048576` | no | The largest request body accepted, up to 16777216; a larger one is answered 413 |
 | `max_waiting` | int | `1000` | no | Requests waiting for an answer at once, up to 100000; one more is answered 503 |
@@ -54,7 +55,7 @@ $ flz plugin enable web http_server \
 | Hooks | none needed: the server drives itself, so a binding names no hook (the provider also defines `:on_terminate`) |
 | Server | HTTP/1.1 only, on `bind` and `port`, started when the plugin activates and stopped when it is disabled or its relay stops |
 | Request | one outside call of the relay the plugin is enabled on, on its entry channel, with a JSON request envelope as the input |
-| Answer | the relay's `response()` output, a JSON answer envelope: a plain response, or a stream |
+| Answer | the first sink output the request causes, a JSON answer envelope: a plain response, or a stream |
 | Host | any relay, in flow or in steps; a member of a partition group is refused (`plugin.partitioned_host`) |
 
 ## Install and enable
@@ -114,7 +115,9 @@ byte reaches it. The plugin has no routes; the relay's graph routes on `method` 
 
 ## The answer envelope
 
-The relay answers through a `response()` end with one JSON object.
+The relay answers with one JSON object, the first output the request causes on a sink, or the
+output on the channel `answer_channel` names. The same output also reaches the sink's plugins and
+listeners. Under the effectively-once tier that sink is `.keyed()`, as every sink is.
 
 A plain answer:
 
@@ -270,6 +273,6 @@ events.addEventListener("ended", () => events.close());
 ## See also
 
 - [streamed_answers.md](../topics/advanced/streamed_answers.md): parts and server-sent events
-- [relay_calls.md](../topics/advanced/relay_calls.md): outside calls and the `response()` answer
+- [relay_calls.md](../topics/advanced/relay_calls.md): outside calls and how a relay's output answers them
 - [installing_plugins.md](../topics/plugins/installing_plugins.md): installing a plugin package
 - [plugins.md](../topics/plugins/plugins.md): the plugin model

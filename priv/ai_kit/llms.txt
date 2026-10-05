@@ -67,7 +67,7 @@ only the pages a task needs: each link is that page's full Markdown, next to thi
 - [Merged inputs](merged_inputs.md): A tasklet takes one type of input, and `into` connects it to one channel.
 - [Timers](timers.md): Some work is triggered by time rather than by input: a session that closes after 30 seconds of quiet, an idle buffer that flushes, a join that gives up waiting, a window that closes.
 - [Spawning from a tasklet](spawning_from_a_tasklet.md): A running tasklet can start a steps relay with one call: `ctx.spawn_steps`.
-- [Relay calls](relay_calls.md): A call sends one input to a relay and gets one answer back: the output that a `response()` end of the relay's graph produced from that input, or one coded error saying why none came.
+- [Relay calls](relay_calls.md): A call sends one input to a relay and gets one answer back: the first output that input caused on a sink of the relay's graph, or one coded error saying why none came.
 - [Sending from runner code](sending_from_runner_code.md): Application code in a runner process often holds a source of its own: a Kafka consumer, a queue client, a poll loop.
 - [Sessions](sessions.md): A session is a relay instance that lives for as long as a conversation does: it has a beginning, it takes one message after another, and it remembers what was said.
 - [Rewinding a turn](rewinding_a_turn.md): A conversation sometimes has to go back.

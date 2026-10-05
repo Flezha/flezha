@@ -105,7 +105,10 @@ defmodule FlezhaTest.Service.RelayInfoTest do
 
   test "the callers waiting on a relay are counted on both surfaces" do
     callee = %{namespace: @namespace, relay_id: "op-1"}
-    {:ok, _token, calls} = Calls.admit(%Calls{}, callee, {self(), make_ref()}, "in", 5_000)
+
+    {:ok, _token, calls} =
+      Calls.admit(%Calls{}, callee, {self(), make_ref()}, %{"channel" => "in"}, 5_000)
+
     stub_one(%{steps_state(0) | calls: calls})
 
     assert capture_io(fn -> Cli.call("Relay.info", Jason.encode!([@namespace]), []) end) =~

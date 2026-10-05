@@ -57,7 +57,7 @@ The relay names that class: `.into(TrackPrices.class)`.
   it, numbered from 0 within each attempt; a sink never does, and nothing about
   it is durable. It works in `run` and in `onTimer`, for a flow tasklet
   and a steps stage alike. It throws `part.no_sink` when the output channel
-  does not end in a sink (a `response()` end is not one), and
+  does not end in a sink (a call end is not one), and
   `part.outside_invocation` through a context kept past its invocation.
 - **State** is read with `ctx.state()` and changed only with `ctx.change(change)`.
   A change is a record implementing `Change<State>`; its `applyTo(state)` is the
@@ -305,13 +305,13 @@ public class Counter implements Tasklet<String, Counter.Seen, Void> {
 ```
 
 Anything more is the full form: a second tasklet, a fan-out, a merge, a keyed
-edge, an edge's retry ladder, a `.response()` end. Java names no entry codec: an
+edge, an edge's retry ladder, a `.call(...)` end. Java names no entry codec: an
 entry decodes by its declared type, so the short form takes no `codec` element.
 
-`.response()` ends a channel on the answer to an outside call instead of a sink,
-and `.response(Function<T, byte[]>)` takes a serializer as `.sink` does:
+A called input's first sink output answers its caller and still reaches the sink's plugins:
 [`../topics/advanced/relay_calls.md`](../topics/advanced/relay_calls.md). `.call(CallTarget.id("pricing"), Answer.class, deadlineMs)`
-(or `CallTarget.factory("agent").create(false)` after a `keyBy`) ends a tasklet's
+(or `CallTarget.factory("agent").create(false)` after a `keyBy`, and
+`.answerChannel("quotes")` to name the callee's answering channel) ends a tasklet's
 output chain on a call to another relay and answers an `EntryChannel` of
 `Response<Req, Answer>`: [`../topics/advanced/relay_calls.md`](../topics/advanced/relay_calls.md).
 

@@ -22,6 +22,9 @@ const INPUT: OptSpec = OptSpec::switch("--input", "--input");
 const AWAIT: OptSpec = OptSpec::number("--await", "--await", "<ms>");
 const KEY: OptSpec = OptSpec::text("--key", "--key", "<key>");
 const MSG_ID: OptSpec = OptSpec::text("--msg-id", "--msg-id", "<id>");
+/// The callee's channel whose output answers a call; `--channel` names the
+/// entry channel.
+const ANSWER_CHANNEL: OptSpec = OptSpec::text("--answer-channel", "--answer-channel", "<ch>");
 /// `call`'s deadline: no short spelling, since `-t` is `--text`.
 const CALL_TIMEOUT: OptSpec = OptSpec::number("--timeout", "--timeout", "<ms>");
 const CALL_TIMEOUT_DEFAULT_MS: u64 = 30_000;
@@ -73,7 +76,14 @@ pub(crate) const TABLE: Command = Command {
             .reading(&[PAYLOAD, CHANNEL, KEY, MSG_ID, AWAIT, NAMESPACE]),
         Verb::new("call", handle_call)
             .taking(RELAY_ID)
-            .reading(&[PAYLOAD, CHANNEL, KEY, CALL_TIMEOUT, NAMESPACE])
+            .reading(&[
+                PAYLOAD,
+                CHANNEL,
+                ANSWER_CHANNEL,
+                KEY,
+                CALL_TIMEOUT,
+                NAMESPACE,
+            ])
             .strict()
             .screen(help::RELAY_CALL),
         Verb::new("rewind", handle_rewind)
@@ -225,8 +235,9 @@ fn handle_send(read: &Reading) {
 }
 
 /// `flz relay call <relay_id> --text <payload> [--channel <ch>]
-/// [--key <k>] [--timeout <ms>]`: send one input and print the answer a
-/// `response()` end produced from it; a failure exits by its class.
+/// [--answer-channel <ch>] [--key <k>] [--timeout <ms>]`: send one input and
+/// print the first output it caused on a sink (on the answer channel when one
+/// is named); a failure exits by its class.
 fn handle_call(read: &Reading) {
     let deadline_ms = read
         .num::<u64>(CALL_TIMEOUT.long)
@@ -243,6 +254,9 @@ fn handle_call(read: &Reading) {
 
     let mut fields = key_fields(read);
     fields.insert("deadline_ms".into(), Value::from(deadline_ms));
+    if let Some(channel) = read.opt(ANSWER_CHANNEL.long) {
+        fields.insert("answer_channel".into(), Value::from(channel));
+    }
 
     rpc::door("Relay.call", &input(read, fields), &[], read);
 }

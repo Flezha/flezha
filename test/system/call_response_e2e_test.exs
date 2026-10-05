@@ -1,16 +1,18 @@
 defmodule FlezhaTest.System.CallResponseE2ETest do
   @moduledoc """
-  An outside caller's call answered through `response()`, end to end on the
+  An outside caller's call answered by a sink output, end to end on the
   runtime `FLEZHA_E2E_RUNTIME` selects, through the published
   `Flezha.Service.Relay.call/6`:
 
     * `call_echo`: one tasklet answers with its input.
     * `call_downstream`: the second tasklet of a chain answers `re:<input>`.
-    * `call_split`: one tasklet feeds two filtered paths, each ending in
-      `response()`; an input starting `no` is answered `refused:<input>`, every
-      other `accepted:<input>`.
+    * `call_split`: one tasklet feeds two filtered paths, each ending in a
+      sink; an input starting `no` is answered `refused:<input>`, every other
+      `accepted:<input>`.
     * `call_turn`: a durable `:per_input` steps relay whose turn answers
       with its input.
+
+  The answer also reaches a listener, without the call's token.
 
       FLEZHA_E2E_RUNTIME=node mix test --include system test/system/call_response_e2e_test.exs
   """
@@ -21,7 +23,7 @@ defmodule FlezhaTest.System.CallResponseE2ETest do
 
   alias Flezha.Relay.Builder
   alias Flezha.Runner.FleetManager
-  alias Flezha.Service.{Relay, RelayManager}
+  alias Flezha.Service.{Listener, Relay, RelayManager}
   alias Flezha.State.TaskJournal
   alias FlezhaTest.Helper.NodeTestHelper
 
@@ -75,6 +77,31 @@ defmodule FlezhaTest.System.CallResponseE2ETest do
     assert {:ok, "refused:no-thanks", _} = call(ctx.namespace, split, "no-thanks")
     assert {:ok, "accepted:yes", _} = call(ctx.namespace, split, "yes")
     refute_receive {:dropped, "answered"}, 1_000
+  end
+
+  test "the answer also reaches a listener, with no token on it", ctx do
+    echo = start(ctx.namespace, "call_echo", :flow)
+    test = self()
+
+    before = fn ->
+      spawn(fn -> send(test, {:answer, call(ctx.namespace, echo, "hello")}) end)
+      :ok
+    end
+
+    outcome =
+      Listener.listen(ctx.namespace, echo, [window_ms: @deadline_ms, before: before], fn
+        {:output, payload, metadata} ->
+          send(test, {:heard, payload, metadata})
+          :done
+
+        _event ->
+          :continue
+      end)
+
+    assert outcome == {:ok, :done}
+    assert_receive {:answer, {:ok, "hello", %{"channel" => channel}}}, @deadline_ms
+    assert_received {:heard, "hello", %{"channel" => ^channel} = metadata}
+    refute Map.has_key?(metadata, "flz.reply_to")
   end
 
   defp call(namespace, relay_id, message),

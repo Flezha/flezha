@@ -345,77 +345,48 @@ The Java, Rust and Elixir SDKs carry the same formats without a codec argument: 
 - **WHEN** a tasklet emits the number 42 to a sink declared with codec `bytes`
 - **THEN** the invocation SHALL fail with an error naming the channel, and no plugin frame SHALL carry the value; a Ruby or PHP string, which is the byte value in those languages, SHALL pass through unchanged
 
-### Requirement: `response()` SHALL end a channel on the caller's answer in every SDK
-
-Every SDK's graph builder SHALL offer `response()` on a stream handle, spelled `.response()` in
-Rust, Java and Node, `response()` in Python and Ruby, `->response()` in PHP and `response/1` in
-Elixir. It SHALL take the serialization arguments `sink` takes in that SDK and nothing else: a
-named codec or an encoder in Node, Python, Ruby and PHP, the declared output type in Rust and Java,
-and in Elixir an optional serializer through `response_with/2`. It SHALL take no name: the channel
-keeps the name it would have without the end. It SHALL return the handle, so consumers MAY be
-wired after it on the same channel, exactly as after `sink`; a channel ending in `response()` with
-no consumer SHALL be declared plugin-bound. The builder SHALL record it as a `response` link in the
-channel's chain, from which the runtime derives the end. `response()` SHALL NOT be a plugin egress:
-nothing it carries reaches a plugin. A graph MAY end any number of channels in `response()`, in an
-unbounded and in a steps relay.
-
-#### Scenario: One graph, two answering paths
-
-- **WHEN** a flow relay declares `admitted |> filter(&accepted?/1) |> into(Accept) |> response()` and `admitted |> filter(&refused?/1) |> into(Refuse) |> response()`
-- **THEN** registration SHALL succeed with two plugin-bound channels, `Accept`'s and `Refuse`'s, each ending in a response
-
-#### Scenario: A response channel feeds a consumer too
-
-- **WHEN** a steps relay declares `.into(Turn).response().into(Log)` on one handle
-- **THEN** the channel produced by `Turn` SHALL keep its inter-tasklet kind, list `Log` as its consumer, and each emitted value SHALL both answer and reach `Log`
-
-#### Scenario: Every SDK spells it
-
-- **WHEN** the same one-tasklet relay ending in `response()` is declared in each of the seven SDKs
-- **THEN** each declaration SHALL register, and each SDK's runner SHALL answer an outside call with the same payload for the same input
-
 ### Requirement: A channel SHALL carry at most one plugin end
 
-A channel SHALL end in at most one of `sink` and `response()`. A channel declaring `sink` and
-`response()`, or `response()` twice, SHALL fail registration as `ChannelEndsTwice`, code
+A channel SHALL end in at most one of `sink` and `call(...)`. A channel declaring `sink` and a
+call end, or two call ends, SHALL fail registration as `ChannelEndsTwice`, code
 `topology.channel_ends_twice`, naming the channel, judged by `flz_core::host::register::check` for
 the six SDKs that share `flz_core` and by the Elixir SDK's re-expression of it. Two `sink` ends on
 one channel SHALL stay `DuplicatePluginSink`. `UnkeyedChannelUnderEffectivelyOnce` SHALL apply to
-a channel ending in `sink` only; a channel ending in `response()` SHALL need no key under the
-effectively-once tier. `test/fixtures/reference_topologies.txt` SHALL carry a `ChannelEndsTwice`
-row for `sink` beside `response()` and for two `response()` ends, and `ok` rows for two channels
-each ending in `response()` and for an unkeyed `response()` under the tier, with their derived
-lines; the step vocabulary SHALL gain `<x>.response`.
+every channel ending in `sink`, whether or not its outputs answer calls.
+`test/fixtures/reference_topologies.txt` SHALL carry a `ChannelEndsTwice` row for `sink` beside a
+call end and SHALL carry no `response` step or row.
 
-#### Scenario: A sink beside a response is refused
+#### Scenario: A sink beside a call end is refused
 
-- **WHEN** a relay declares `.into(Plain).sink("out")` and `.response()` on the same handle
+- **WHEN** a relay declares `.into(Plain).sink("out")` and `.call("pricing", deadline_ms: 500)` on the same handle
 - **THEN** registration SHALL fail with `topology.channel_ends_twice` naming `Plain`'s channel, in every SDK
 
-#### Scenario: An unkeyed answer under the tier is accepted
+#### Scenario: An unkeyed sink under the tier is refused even when it answers calls
 
-- **WHEN** a persistent, effectively-once flow relay declares `.into(Plain).response()` without `keyed`
-- **THEN** registration SHALL succeed, while the same declaration ending in `sink("out")` SHALL still fail as `UnkeyedChannelUnderEffectivelyOnce`
+- **WHEN** a persistent, effectively-once flow relay declares `.into(Plain).sink("quotes")` without `keyed` and is meant to answer calls
+- **THEN** registration SHALL fail as `UnkeyedChannelUnderEffectivelyOnce`, and the same declaration with `.keyed()` SHALL register
 
 ### Requirement: `call(...)` SHALL end a chain on a callee in every SDK
 
 Every SDK's graph builder SHALL offer `call` on a stream handle with a static target or a factory,
 a required positive deadline in milliseconds, an optional `channel` naming the callee's entry
-channel and, for a factory, an optional `create` defaulting to true, spelled in the SDK's idiom for named arguments: `call("pricing", deadline_ms: 500)` and
+channel, an optional `answer_channel` naming the callee's channel whose output answers the call
+and, for a factory, an optional `create` defaulting to true, spelled in the SDK's idiom for named
+arguments: `call("pricing", deadline_ms: 500)` and
 `call(factory: "agent", deadline_ms: 60_000, create: false)` in Elixir and Ruby, keyword arguments
 in Python, an options object in Node, named arguments in PHP, and a target value
 (`CallTarget::id(..)` / `CallTarget::factory(..)`, `CallTarget.id(..)` / `CallTarget.factory(..)`)
-with a deadline in Rust and Java. It SHALL take the request's serialization arguments `sink` takes
-and the answer's decoding arguments `input` takes in that SDK: the answer type in Rust and Java, one
-named codec for both directions in Node, Python, Ruby and PHP (JSON by default), and optional
-`serialize:` and `decode:` functions in Elixir. It SHALL be a plugin end of the channel, counted by
-`ChannelEndsTwice` beside a `sink` or a `response()`. It SHALL answer a handle on a new entry
-channel of the relay, the Response channel, named after the calling channel with the suffix
-`.response`, whose values are the SDK's `Response` type; the handle SHALL carry the whole surface an
-entry handle carries. A call SHALL NOT be a graph edge, so wiring the Response channel into the
-tasklet that made the call SHALL NOT be refused as a cycle. The builder SHALL record a `call` link
-carrying the target or factory, the deadline, the callee's entry channel, `create` and the Response
-channel's name.
+with a deadline in Rust and Java, where `answer_channel` is a method on the target value. It SHALL
+take the request's serialization arguments `sink` takes and the answer's decoding arguments `input`
+takes in that SDK: the answer type in Rust and Java, one named codec for both directions in Node,
+Python, Ruby and PHP (JSON by default), and optional `serialize:` and `decode:` functions in Elixir.
+It SHALL be a plugin end of the channel, counted by `ChannelEndsTwice` beside a `sink`. It SHALL
+answer a handle on a new entry channel of the relay, the Response channel, named after the
+calling channel with the suffix `.response`, whose values are the SDK's `Response` type; the handle
+SHALL carry the whole surface an entry handle carries. A call SHALL NOT be a graph edge, so wiring
+the Response channel into the tasklet that made the call SHALL NOT be refused as a cycle. The
+builder SHALL record a `call` link carrying the target or factory, the deadline, the callee's entry
+channel, the answer channel, `create` and the Response channel's name.
 
 #### Scenario: The same gateway in every SDK
 
@@ -426,6 +397,11 @@ channel's name.
 
 - **WHEN** a relay declares `.into(Turn).call("pricing", deadline_ms: 500).into(Price)`
 - **THEN** registration SHALL succeed, the relay SHALL declare the entry channel `<Turn's channel>.response` with `Price` as its consumer, and each `Response` SHALL reach `Price`
+
+#### Scenario: The answer channel is carried on the request
+
+- **WHEN** a relay declares `.into(Turn).call("pricing", deadline_ms: 500, answer_channel: "quotes")` in any SDK
+- **THEN** every request frame the end produces SHALL carry `flz.call_answer_channel` = `quotes`
 
 ### Requirement: A call end SHALL be refused where it cannot work
 
@@ -441,8 +417,7 @@ six SDKs sharing `flz_core` and in the Elixir SDK's re-expression:
 - a call end whose Response channel feeds nothing, as `CallResponseUnread`
   (`topology.call_response_unread`), because every outcome would be journaled and delivered to no
   tasklet;
-- a call end beside a `sink`, a `response()` or another call end on one channel, as
-  `ChannelEndsTwice`.
+- a call end beside a `sink` or another call end on one channel, as `ChannelEndsTwice`.
 
 `test/fixtures/reference_topologies.txt` SHALL carry one row for each, the steps `<x>.call(<target>)`,
 `<x>.call_factory(<factory>)`, `<x>.call_factory_nocreate(<factory>)`, `<x>.call_deadline(0)` and `<x>.call_unread(<target>)`,

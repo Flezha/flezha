@@ -82,9 +82,10 @@ owns the mechanism; for concepts, [`architecture/`](https://github.com/flezha/fl
 - **Channel** — the typed edge between stages: **entry** (input from outside), **inter-tasklet**,
   or **plugin-bound** (output to a sink, declared with `.sink(name)`). Terminality is derived from
   the wiring, never declared.
-- **Response end**: `response()`, a plugin end that turns each output of its channel into the
-  answer to the outside call whose input caused it; no plugin, listener or sink sees that output.
-  A channel carries one plugin end, a sink or a response. See [`topics/advanced/relay_calls.md`](topics/advanced/relay_calls.md).
+- **Answer channel**: the channel whose output answers a call. A caller may name it
+  (`--answer-channel`, `answer_channel` in `Relay.call/6`'s options, or the option of a
+  `call(...)` end); without one, the first sink output the call's input causes answers. The
+  answer still reaches the sink's plugins and listeners. See [`topics/advanced/relay_calls.md`](topics/advanced/relay_calls.md).
 - **Part**: a preview of the output an invocation is producing, sent from inside `run` with
   `ctx.part(value)` (`part(ctx, value)` in Elixir) and delivered at once to the relay's
   listeners, and to nothing else. It carries its channel, a number from `0` within its attempt
@@ -96,12 +97,12 @@ owns the mechanism; for concepts, [`architecture/`](https://github.com/flezha/fl
   `listener_pending_frames`, it survives the relay sleeping, being rebound, restarted,
   moved or rescaled, ends when the relay ends, and leaves no plugin row behind.
 - **Call**: one input an outside caller (`flz relay call`, `Flezha.Service.Relay.call/6`
-  or a feeding plugin) sends to a relay, waiting up to a deadline for the first answer a
-  response end produces from it; or one request a relay's `call(...)` end sends to another
+  or a feeding plugin) sends to a relay, waiting up to a deadline for the first sink output it
+  causes (on the answer channel, when the caller names one); or one request a relay's `call(...)` end sends to another
   relay, whose outcome comes back as a Response. See [`topics/advanced/relay_calls.md`](topics/advanced/relay_calls.md).
 - **Call token**: `flz.reply_to`, the input metadata key the controller mints for each call
   and the runner core carries to every output the input causes. Nothing else can set it, and
-  no tasklet sees it. See [`topics/advanced/relay_calls.md`](topics/advanced/relay_calls.md).
+  no tasklet, plugin or listener sees it. See [`topics/advanced/relay_calls.md`](topics/advanced/relay_calls.md).
 - **Response**: the outcome of one relay call as the caller receives it: an ordinary input
   carrying the request, the answer or the error that ended the call (a timeout being
   `call.timeout`), the instance that answered and whether the call started it. See
@@ -168,7 +169,7 @@ owns the mechanism; for concepts, [`architecture/`](https://github.com/flezha/fl
 - **HTTP server plugin** — the `flezha_http` package's provider `http_server`, built outside this
   repository: every HTTP request becomes one call of the relay it is enabled on, carrying a
   **request envelope** (method, path, query, the allowed headers, the body), and the relay's
-  `response()` answers with an **answer envelope**, a status, headers and a body, or a **stream
+  first sink output answers with an **answer envelope**, a status, headers and a body, or a **stream
   answer** naming a relay whose parts and outputs the plugin writes as server-sent events
   through a listener ([`plugins/http_server.md`](plugins/http_server.md)).
 

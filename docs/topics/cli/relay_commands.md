@@ -227,9 +227,11 @@ Relay has been stopped
 Relay stopped successfully.
 ```
 
-`call` waits for the answer and prints only that, so a script can use it as
-it is. The echo of [`relay_calls.md`](../advanced/relay_calls.md#example)
-answers through a `response()` end:
+`call` waits for the answer, the first output the input causes on a sink, and
+prints only that, so a script can use it as it is. `--answer-channel <ch>` waits
+for the output on that channel instead
+([`relay_calls.md`](../advanced/relay_calls.md)). An echo relay whose tasklet
+ends in a sink answers with its input:
 
 ```sh
 $ flz relay call echo --text hello

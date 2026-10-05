@@ -165,9 +165,12 @@ defmodule FlezhaTest.System.PartStreamE2ETest do
     id
   end
 
+  # `:ok`, which a listener's `before` must answer to go on listening.
   defp send!(ns, id, text) do
     assert capture_io(fn -> Cli.call("Relay.send", Jason.encode!([ns, id, text, ""]), []) end) =~
              "to '#{id}'"
+
+    :ok
   end
 
   # `flz relay listen` in a process of its own whose group leader collects

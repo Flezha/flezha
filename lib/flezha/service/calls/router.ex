@@ -196,6 +196,7 @@ defmodule Flezha.Service.Calls.Router do
       caller: caller,
       call: request.id,
       deadline_at: request.deadline_at,
+      answer_channel: Map.get(request, :answer_channel),
       created: false,
       factory: factory
     }

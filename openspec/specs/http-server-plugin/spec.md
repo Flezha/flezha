@@ -202,7 +202,7 @@ override the default. This SHALL hold for a host relay of either kind.
 
 #### Scenario: The gateway answers 202 at once
 
-- **WHEN** a flow host's graph answers `{"status":202,"body":{"accepted":true}}` through `response()`
+- **WHEN** a flow host's graph emits `{"status":202,"body":{"accepted":true}}` on a sink
 - **THEN** the client SHALL receive status 202, `content-type: application/json` and the body `{"accepted":true}`
 
 #### Scenario: The gateway refuses a user over budget
@@ -212,7 +212,7 @@ override the default. This SHALL hold for a host relay of either kind.
 
 #### Scenario: A steps host answers a request
 
-- **WHEN** the plugin is enabled on a `per_input` steps relay whose turn answers `{"status":200,"body":"pong"}` through `response()`, and a client sends `GET /ping`
+- **WHEN** the plugin is enabled on a `per_input` steps relay whose turn emits `{"status":200,"body":"pong"}` on a sink, and a client sends `GET /ping`
 - **THEN** the client SHALL receive status 200 and the body `pong`
 
 ### Requirement: An answer that is not an envelope SHALL be answered 502

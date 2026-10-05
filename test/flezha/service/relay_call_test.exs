@@ -110,6 +110,30 @@ defmodule Flezha.Service.RelayCallTest do
       refute_received {:called, _, _, _, _}
     end
 
+    test "names the answer channel to the callee beside the entry channel" do
+      opts = [deadline_ms: 100, answer_channel: "quotes"]
+      assert {:ok, _, _} = Relay.call("default", "echo", "x", "in", opts, @context)
+
+      assert_received {:called, "echo", "x",
+                       %{"channel" => "in", "flz.call_answer_channel" => "quotes"}, 100}
+
+      assert {:ok, _, _} = Relay.call("default", "echo", "x", "", [deadline_ms: 100], @context)
+      assert_received {:called, "echo", "x", metadata, 100}
+      refute Map.has_key?(metadata, "flz.call_answer_channel")
+
+      assert {:error, %Error{code: "usage.not_text"}} =
+               Relay.call(
+                 "default",
+                 "echo",
+                 "x",
+                 "",
+                 [deadline_ms: 100, answer_channel: 7],
+                 @context
+               )
+
+      refute_received {:called, _, _, _, _}
+    end
+
     test "a relay that is not running is not found" do
       assert {:error, %Error{code: "relay.not_found"}} =
                Relay.call("default", "ghost", "x", "", [deadline_ms: 100], @context)

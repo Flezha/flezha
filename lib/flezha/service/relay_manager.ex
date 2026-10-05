@@ -480,8 +480,9 @@ defmodule Flezha.Service.RelayManager do
 
   @doc """
   Call `relay_id` (a partition group's member by `key`) with one input and
-  wait for its answer: the one output a `response()` end produced from it, or
-  a coded error saying why none came by `deadline_ms`.
+  wait for its answer: the first output it caused on a sink (on the channel
+  `metadata` names under `flz.call_answer_channel`, when it names one), or a
+  coded error saying why none came by `deadline_ms`.
   """
   @spec call_relay(String.t(), String.t(), binary(), map(), pos_integer(), String.t() | nil) ::
           {:ok, binary(), map()} | {:error, term()}

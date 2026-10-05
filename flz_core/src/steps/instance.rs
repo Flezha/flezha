@@ -364,7 +364,7 @@ pub(crate) struct Pass {
     pub(crate) channel: ChannelId,
     pub(crate) consumed_offset: Option<u64>,
     /// The outside call the pass's message carried: every output its stages
-    /// settle on a `response()` end answers it. `None` for a timer-fed or a
+    /// settle on a sink answers it. `None` for a timer-fed or a
     /// carry-fed pass.
     pub(crate) call: Option<Arc<str>>,
     pub(crate) stages: BTreeMap<usize, Stage>,

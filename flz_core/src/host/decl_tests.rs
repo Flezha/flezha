@@ -653,36 +653,6 @@ mod journal_codec_tests {
     }
 
     #[test]
-    fn a_response_link_marks_its_descriptor_and_a_sink_does_not() {
-        let derived = check_class_json(
-            r#"{"factory_id":"response_link","sdk_lang":1,"sdk_version":"0.1.0",
-                 "channels":[{"name":"in","kind":"entry",
-                              "chains":[[{"link":"into","tasklet":0}],[{"link":"into","tasklet":1}]]},
-                             {"name":"ans","kind":"inter_task","producer":0,
-                              "chains":[[{"link":"response"}]]},
-                             {"name":"out","kind":"inter_task","producer":1,
-                              "chains":[[{"link":"sink","name":"out"}]]}],
-                 "tasklets":[{"name":"p0"},{"name":"p1"}]}"#
-                .as_bytes(),
-        )
-        .expect("the class is well formed");
-        let built: Vec<(String, ChannelKind, bool)> =
-            build_channels(&derived.decl, &derived.channels)
-                .0
-                .into_iter()
-                .map(|c| (c.name.to_string(), c.kind, c.response))
-                .collect();
-        assert_eq!(
-            built,
-            vec![
-                ("in".to_string(), ChannelKind::Entry, false),
-                ("ans".to_string(), ChannelKind::PluginBound, true),
-                ("out".to_string(), ChannelKind::PluginBound, false),
-            ]
-        );
-    }
-
-    #[test]
     fn a_call_link_builds_its_end_and_create_defaults_to_true() {
         let derived = check_class_json(
             r#"{"factory_id":"call_link","sdk_lang":1,"sdk_version":"0.1.0",
@@ -690,6 +660,7 @@ mod journal_codec_tests {
                              {"name":"ask","kind":"inter_task","producer":0,
                               "chains":[[{"link":"key"},{"link":"call","factory":"agent",
                                           "deadline_ms":120000,"channel":"turn",
+                                          "answer_channel":"quotes",
                                           "response":"ask.response"}]]},
                              {"name":"ask.response","kind":"entry",
                               "chains":[[{"link":"into","tasklet":0}]]}],
@@ -700,7 +671,7 @@ mod journal_codec_tests {
         let built = build_channels(&derived.decl, &derived.channels).0;
         let end = built[1].call.as_ref().expect("the call end");
         assert_eq!(built[1].kind, ChannelKind::PluginBound);
-        assert!(!built[1].sink && !built[1].response);
+        assert!(!built[1].sink);
         assert_eq!(&*end.target, "factory:agent");
         assert!(
             end.create,
@@ -708,6 +679,7 @@ mod journal_codec_tests {
         );
         assert_eq!(end.deadline_ms, 120_000);
         assert_eq!(end.channel.as_deref(), Some("turn"));
+        assert_eq!(end.answer_channel.as_deref(), Some("quotes"));
         assert_eq!(&*end.response, "ask.response");
         assert!(built[0].call.is_none() && built[2].call.is_none());
         assert_eq!(
@@ -717,6 +689,7 @@ mod journal_codec_tests {
                 ("flz.call_response".to_string(), "ask.response".to_string()),
                 ("flz.deadline_at".to_string(), "121000".to_string()),
                 ("flz.call_channel".to_string(), "turn".to_string()),
+                ("flz.call_answer_channel".to_string(), "quotes".to_string()),
                 ("flz.key".to_string(), "anna-42".to_string()),
             ]
         );

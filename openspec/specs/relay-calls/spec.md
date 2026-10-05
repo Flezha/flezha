@@ -57,43 +57,18 @@ same in its re-expression; no SDK's tasklet surface SHALL see the token.
 
 #### Scenario: A downstream tasklet answers
 
-- **WHEN** a flow relay declares `input("in") |> into(Parse) |> into(Price) |> response()` and an outside caller calls it
+- **WHEN** a flow relay declares `input("in") |> into(Parse) |> into(Price) |> sink("quotes")` and an outside caller calls it
 - **THEN** the value `Price` emits for that input SHALL answer the caller, although `Price` never received the input itself
 
 #### Scenario: A steps turn answers from its last stage
 
-- **WHEN** a `:per_input` steps relay declares two tasklets in a chain ending in `response()` and is called
+- **WHEN** a `:per_input` steps relay declares two tasklets in a chain ending in a sink and is called
 - **THEN** the output of the second tasklet in the pass that call's input opened SHALL answer the caller
 
 #### Scenario: A restored edge value keeps its call
 
 - **WHEN** an effectively-once flow relay's runner dies after the first tasklet's record is durable and before the second tasklet answered, and the restore delivers the recorded edge value again
 - **THEN** the second tasklet's output SHALL carry the call's token and SHALL answer the caller if it is still waiting
-
-### Requirement: A `response()` end's output SHALL be its caller's answer and SHALL never reach a plugin
-
-Every output of a channel that ends in `response()` SHALL carry `flz.reply_to`: the token of the
-input that caused it, or an empty value when that input carried none. No output of any other end
-SHALL carry `flz.reply_to`. The Overwatch SHALL take every output carrying `flz.reply_to` off both
-output routes before the `:on_output` chain runs, so no plugin, no listener and no sink sees an
-answer. An answer whose token names a waiting caller SHALL be handed to that caller with its
-payload and the name of the channel that produced it. An answer whose token is empty or names no
-waiting caller SHALL be dropped and counted with the reason `unclaimed`.
-
-#### Scenario: The answer reaches the caller and nothing else
-
-- **WHEN** an outside caller calls a flow relay whose tasklet's channel ends in `response()`, and a Kafka sink plugin is enabled on the relay
-- **THEN** the caller SHALL receive the answer's payload, and the Kafka producer SHALL receive nothing
-
-#### Scenario: An output nobody asked for is dropped and counted
-
-- **WHEN** `flz relay send` delivers an input to a relay whose graph ends in `response()`
-- **THEN** the output SHALL be dropped, SHALL be counted with the reason `unclaimed`, and SHALL reach no plugin
-
-#### Scenario: A sink output carries no token
-
-- **WHEN** a called relay's input causes an output on a channel that ends in `sink("audit")`
-- **THEN** the frame the sink plugin receives SHALL carry no `flz.reply_to` key
 
 ### Requirement: An answer SHALL leave when its tier releases outputs
 
@@ -111,7 +86,7 @@ durability.
 
 #### Scenario: A durable steps answer follows its stage's commit
 
-- **WHEN** a durable `:per_input` steps relay's turn emits on a `response()` end
+- **WHEN** a durable `:per_input` steps relay's turn emits on a sink for a called input
 - **THEN** the answer SHALL reach the caller only after the stage that emitted it has committed
 
 #### Scenario: An answer off the tier leaves at once
@@ -121,30 +96,36 @@ durability.
 
 ### Requirement: The first answer SHALL win
 
-A call SHALL be answered at most once. The first answer that reaches the Overwatch for a waiting
-call SHALL be handed to the caller and SHALL end the call; every later answer carrying the same
-token SHALL be dropped and counted, with the reason `answered` until the call's deadline and
-`unclaimed` after it. A frame sent while a tasklet runs
-(a part, as `send-a-part-while-it-runs` defines it) SHALL NOT answer a call and SHALL NOT end one.
+A call SHALL be answered at most once. The first output that reaches the Overwatch carrying a
+waiting call's token, on the call's answer channel when it names one, SHALL be handed to the caller
+and SHALL end the call. Every later output carrying the same token SHALL be an ordinary output: it
+SHALL reach the output routes and SHALL NOT be counted as a dropped answer. A frame sent while a
+tasklet runs (a part, as `send-a-part-while-it-runs` defines it) SHALL NOT answer a call and SHALL
+NOT end one.
 
-#### Scenario: Two answers for one call
+#### Scenario: Two outputs for one call
 
-- **WHEN** a called relay's input fans out to two Cells whose channels both end in `response()`, and both emit
-- **THEN** the caller SHALL receive the first answer to arrive, and the second SHALL be dropped and counted as `answered`
+- **WHEN** a called relay's input fans out to two Cells whose channels both end in a sink, and both emit
+- **THEN** the caller SHALL receive the first output to arrive, and both outputs SHALL reach the sink plugins
+
+#### Scenario: A part does not answer
+
+- **WHEN** a called tasklet sends the part `Hel` and then emits `Hello` on a sink
+- **THEN** the caller SHALL receive `Hello`, and a listener SHALL receive the part and then the output
 
 ### Requirement: A call SHALL end at its deadline with `call.timeout`
 
 Every outside call SHALL carry a positive deadline in milliseconds, measured by the callee's
 Overwatch from the moment the call reached it. When no answer has arrived by then, the caller SHALL
 be answered with the error `call.timeout` (class `unavailable`), whose details carry the deadline.
-The input SHALL stay accepted: its turn SHALL still run, and its answer, if any, SHALL be dropped
-and counted as `unclaimed`. The time an asleep instance takes to wake SHALL count against the
+The input SHALL stay accepted: its turn SHALL still run, and its outputs SHALL reach the output
+routes as ordinary outputs. The time an asleep instance takes to wake SHALL count against the
 deadline.
 
 #### Scenario: A slow turn times out and still runs
 
 - **WHEN** a caller calls a steps relay with a deadline of 100 ms and the turn takes 2 000 ms
-- **THEN** the caller SHALL receive `call.timeout` after about 100 ms, the turn SHALL commit, and its answer SHALL be dropped and counted as `unclaimed`
+- **THEN** the caller SHALL receive `call.timeout` after about 100 ms, the turn SHALL commit, and its output SHALL reach the relay's sink plugins
 
 ### Requirement: A call that cannot be answered SHALL be answered at once with a code
 
@@ -248,8 +229,8 @@ is enabled on, so no authorization runs for it.
 
 #### Scenario: A plugin gets its answer
 
-- **WHEN** a plugin enabled on a gateway relay calls `Host.inject(overwatch, envelope, %{"channel" => "http"}, :call, 5_000)` and the gateway's graph answers through `response()`
-- **THEN** the call SHALL answer `{:ok, answer, %{"channel" => channel}}`, where `answer` is the answer's payload
+- **WHEN** a plugin enabled on a gateway relay calls `Host.inject(overwatch, envelope, %{"channel" => "http"}, :call, 5_000)` and the gateway's graph emits on a sink
+- **THEN** the call SHALL answer `{:ok, answer, %{"channel" => channel}}`, where `answer` is the output's payload
 
 #### Scenario: A plugin's call times out with the Overwatch's code
 
@@ -276,15 +257,21 @@ SHALL reach that member.
 ### Requirement: Calls SHALL be observable
 
 The controller SHALL emit `[:flezha, :call, :answered]` with the answer latency,
-`[:flezha, :call, :timeout]`, `[:flezha, :call, :answer_dropped]` with its reason, and
-`[:flezha, :call, :refused]` with its code, each naming the namespace and the relay, and the
-observability bridge SHALL export them. `flz relay info` SHALL show how many callers wait on the
+`[:flezha, :call, :timeout]`, `[:flezha, :call, :answer_dropped]` with its reason for an answer the
+call router drops, and `[:flezha, :call, :refused]` with its code, each naming the namespace and
+the relay, and the observability bridge SHALL export them. An output that answers no call SHALL
+NOT be counted as a dropped answer. `flz relay info` SHALL show how many callers wait on the
 relay.
 
 #### Scenario: A timeout is counted
 
 - **WHEN** a call times out
 - **THEN** one `[:flezha, :call, :timeout]` event SHALL be emitted naming the relay, and the exported counter SHALL move by one
+
+#### Scenario: A plain output is not counted as dropped
+
+- **WHEN** `flz relay send` delivers an input to a relay that emits on a sink
+- **THEN** no `[:flezha, :call, :answer_dropped]` event SHALL be emitted
 
 ### Requirement: A relay SHALL call another relay through a `call` end in its graph
 
@@ -301,17 +288,19 @@ be one of:
   flow factory there SHALL be answered `relay.factory_not_steps`.
 
 The request SHALL enter the callee on the entry channel the end names with `channel:`, or, when it
-names none, on the callee's first declared entry channel. The target SHALL always be resolved in
-the caller's namespace, and a factory call SHALL reach only
-an instance of that factory: a key naming a running instance of another factory SHALL be answered
-`relay.factory_mismatch` and nothing SHALL be delivered. Creating and delivering SHALL go
-through the controller's one spawn-or-deliver, so two concurrent calls for one absent id start one
-instance and deliver the other request to it. A call SHALL never block the invocation that made it.
+names none, on the callee's first declared entry channel. The callee's output on the channel the
+end names with `answer_channel:`, or, when it names none, its first output for the request, SHALL
+be the call's answer. The target SHALL always be resolved in the caller's namespace, and a factory
+call SHALL reach only an instance of that factory: a key naming a running instance of another
+factory SHALL be answered `relay.factory_mismatch` and nothing SHALL be delivered. Creating and
+delivering SHALL go through the controller's one spawn-or-deliver, so two concurrent calls for one
+absent id start one instance and deliver the other request to it. A call SHALL never block the
+invocation that made it.
 
 #### Scenario: One stream calls another by name
 
-- **WHEN** a flow `orders` relay ends a chain in `call("pricing", deadline_ms: 500)` and `pricing` is a flow relay whose graph ends in `response()`
-- **THEN** each order SHALL reach `pricing` as an input, and each answer SHALL reach `orders` as a `Response`
+- **WHEN** a flow `orders` relay ends a chain in `call("pricing", deadline_ms: 500)` and `pricing` is a flow relay whose graph ends in a sink
+- **THEN** each order SHALL reach `pricing` as an input, and `pricing`'s first output for it SHALL reach `orders` as its one `Response`
 
 #### Scenario: A session is created on its first call and reached on its second
 
@@ -341,7 +330,7 @@ instance and deliver the other request to it. A call SHALL never block the invoc
 ### Requirement: A relay call's token SHALL come only from the controller's delivery
 
 A callee SHALL take the relay form of a call token (`o:` followed by the caller's instance id,
-the call id, whether the call started the callee and the call's deadline) only from the controller's own call delivery, the delivery worker's message to
+the call id, whether the call started the callee, the call's deadline and its answer channel) only from the controller's own call delivery, the delivery worker's message to
 its call entry point, and from the seed option that delivery sets on `spawn_or_deliver` when the
 call creates the callee. It SHALL NEVER read a token from an input's or a plugin's metadata, which
 every entry point strips of `flz.reply_to`. Because no path outside the controller's delivery can
@@ -350,7 +339,7 @@ stamps SHALL NOT let anyone answer a call.
 
 #### Scenario: A forged relay token answers nobody
 
-- **GIVEN** a gateway with a call pending on its session `anna-42` under the call id `c1`, and a plugin enabled on a relay whose graph ends in `response()`
+- **GIVEN** a gateway with a call pending on its session `anna-42` under the call id `c1`, and a plugin enabled on a relay whose graph ends in a sink
 - **WHEN** the plugin calls `Host.inject/5`, in `:call` mode and in `:confirming` mode, with metadata carrying `flz.reply_to: "o:gateway:c1"`
 - **THEN** the input SHALL carry no `o:` token, no `Response` SHALL reach the gateway or any other relay from it, and the gateway's call SHALL end only with its session's answer or its deadline
 
@@ -370,7 +359,7 @@ the request's bytes) and the value with its answer codec, so that
 
 #### Scenario: A steps callee's answer returns to a flow caller
 
-- **WHEN** a gateway calls a `:per_input` steps session whose turn emits `{"tokens": 812}` on its `response()` end
+- **WHEN** a gateway calls a `:per_input` steps session whose turn emits `{"tokens": 812}` on a sink
 - **THEN** the gateway SHALL receive a `Response` whose result is ok with that value, whose request is what it sent, and whose `target` is the session's id
 
 #### Scenario: The calling tasklet receives its own call's outcome
@@ -543,4 +532,60 @@ its teardown, asleep or awake. A call whose creation the quota refuses SHALL be 
 
 - **WHEN** the namespace's `max_relays` is reached and a call would create a new session
 - **THEN** the caller SHALL receive `quota.exceeded`, and the calls to running sessions SHALL still be delivered
+
+### Requirement: A called input's output SHALL answer its caller and SHALL also reach every output route
+
+Every output on a channel that ends in a sink SHALL carry `flz.reply_to` with the token of the
+input that caused it, when that input carried one, and SHALL carry no `flz.reply_to` otherwise. No
+output on any other end SHALL carry it. For an output carrying a token, the Overwatch SHALL hand
+the payload and the name of the channel that produced it to the caller waiting on that token, when
+one waits and the call's answer channel is unset or equal to the output's channel. In every case
+the Overwatch SHALL remove `flz.reply_to` from the output's metadata and SHALL pass the output on
+to the `:on_output` chain like an output whose input carried no token, so sink plugins and
+listeners receive it. An output whose input carried no token SHALL take the same path, with no
+added call, lookup or clause, that it took before this requirement.
+
+#### Scenario: The answer reaches the caller and the sink plugin
+
+- **WHEN** an outside caller calls a flow relay whose tasklet's channel ends in `sink("quotes")`, and a Kafka sink plugin is bound to the relay
+- **THEN** the caller SHALL receive the output's payload, and the Kafka producer SHALL receive the same output on channel `quotes`
+
+#### Scenario: A plain send is not an answer
+
+- **WHEN** `flz relay send` delivers an input to the same relay
+- **THEN** the output SHALL reach the Kafka producer, and no answer SHALL be handed to anyone
+
+#### Scenario: No plugin sees the token
+
+- **WHEN** a called relay's input causes an output on a channel that ends in `sink("audit")`
+- **THEN** the frame the sink plugin receives and the frame a listener receives SHALL carry no `flz.reply_to` key
+
+#### Scenario: A tasklet both answers and records without a second tasklet
+
+- **WHEN** a relay declares `input("turn") |> into(Reply) |> sink("answer")` and is called while a listener is attached
+- **THEN** the caller SHALL receive `Reply`'s output, and the listener SHALL receive the same output on channel `answer`
+
+### Requirement: A caller MAY name the channel whose output answers it
+
+An outside call SHALL accept an optional answer channel: `answer_channel` in the options of
+`Flezha.Service.Relay.call/6`, and so in every surface the catalogue serves. A `call(...)` end
+SHALL accept the same option in every SDK. When a call names an answer channel, only an output on
+that channel SHALL answer it. Every other output its input causes SHALL be an ordinary output.
+When a call names none, the first output carrying its token SHALL answer it. The answer channel
+SHALL be compared only for outputs that carry a token.
+
+#### Scenario: The named channel answers
+
+- **WHEN** a relay's input causes an output on `audit` and then an output on `quotes`, and a caller calls it with `answer_channel: "quotes"`
+- **THEN** the caller SHALL receive the `quotes` output, and both outputs SHALL reach the sink plugins
+
+#### Scenario: Without a name the first output answers
+
+- **WHEN** the same relay is called with no answer channel
+- **THEN** the caller SHALL receive the `audit` output
+
+#### Scenario: A relay call names its answer channel
+
+- **WHEN** a gateway ends a chain in `call("pricing", deadline_ms: 500, answer_channel: "quotes")` and `pricing` emits on `audit` before `quotes`
+- **THEN** the gateway's `Response` SHALL carry the `quotes` output
 

@@ -29,6 +29,7 @@ defmodule FlezhaTest.Relay.RelayCallsTest do
   alias Flezha.Plugin.Host, as: PluginHost
   alias Flezha.State.{InputLog, TestHelpers}
   alias FlezhaTest.Helper.CallHarness
+  alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.Helper.OverwatchHost, as: Host
 
   setup :set_mimic_global_until_exit
@@ -172,7 +173,7 @@ defmodule FlezhaTest.Relay.RelayCallsTest do
       forged = %{"channel" => "in", "flz.reply_to" => "o:gateway:c9:1:1"}
       assert :ok = GenServer.call(host, {:call, "turn", forged, call})
 
-      token = "o:gateway:c1:0:#{call.deadline_at}"
+      token = "o:gateway:c1:0:#{call.deadline_at}:"
       assert_receive {:channel_got, ^inst, {"turn", metadata}}
       assert metadata["flz.reply_to"] == token
       assert metadata["flz.msg_id"] == "c1"
@@ -185,10 +186,10 @@ defmodule FlezhaTest.Relay.RelayCallsTest do
 
       assert outcome == %{result: {:ok, "answer"}, target: inst, created: false}
 
-      # A second answer to the same call is dropped where it was made.
+      # A second output of the same call is an ordinary output.
       GenServer.cast(host, {:io_out, "again", %{"flz.reply_to" => token}})
-      assert_receive {:call_event, :answer_dropped, %{reason: "answered"}}
-      refute_received {:delivery_answer, _, _, _, _, _}
+      refute_receive {:delivery_answer, _, _, _, _, _}, 100
+      refute_received {:call_event, :answer_dropped, _}
     end
 
     test "owing call_pending_max answers, it refuses the next call and ingests nothing", %{
@@ -219,7 +220,7 @@ defmodule FlezhaTest.Relay.RelayCallsTest do
       inst: inst
     } do
       host = start_supervised!({Host, Host.state(inst, channel: :fake_channel)})
-      token = "o:gateway:c1:1:#{now() + 5_000}"
+      token = "o:gateway:c1:1:#{now() + 5_000}:"
 
       notice = %{
         token: token,
@@ -241,7 +242,7 @@ defmodule FlezhaTest.Relay.RelayCallsTest do
 
     test "a forged relay token answers nobody", %{inst: inst} do
       host = start_supervised!({Host, Host.state(inst, channel: :fake_channel)})
-      forged = %{"channel" => "in", "flz.reply_to" => "o:gateway:c1:0:#{now() + 5_000}"}
+      forged = %{"channel" => "in", "flz.reply_to" => "o:gateway:c1:0:#{now() + 5_000}:"}
 
       for mode <- [:call, :confirming] do
         task = Task.async(fn -> PluginHost.inject(host, "x", forged, mode, 300) end)
@@ -259,8 +260,8 @@ defmodule FlezhaTest.Relay.RelayCallsTest do
     test "an ended callee answers the calls it took and never ran call.callee_ended" do
       callee = %{namespace: "default", relay_id: "agent-1"}
       deadline_at = now() + 5_000
-      waiting = "o:gateway:c1:0:#{deadline_at}"
-      tail = "o:tools:c2:1:#{deadline_at}"
+      waiting = "o:gateway:c1:0:#{deadline_at}:"
+      tail = "o:tools:c2:1:#{deadline_at}:"
 
       {:ok, ^waiting, calls} =
         Calls.admit_relay(%Calls{}, callee, %{
@@ -286,7 +287,7 @@ defmodule FlezhaTest.Relay.RelayCallsTest do
       host = start_supervised!({Host, Host.state(inst, channel: :fake_channel)})
       call = relay_call()
       assert :ok = GenServer.call(host, {:call, "turn", %{"channel" => "in"}, call})
-      token = "o:gateway:c1:0:#{call.deadline_at}"
+      token = "o:gateway:c1:0:#{call.deadline_at}:"
       held = %{"flz.reply_to" => token, "flz.cell" => "agent/account/k", "flz.seq" => "7.0"}
 
       # The delivery that took the first died with it: the outbox re-dispatches it.
@@ -296,20 +297,104 @@ defmodule FlezhaTest.Relay.RelayCallsTest do
       end
 
       GenServer.cast(host, {:io_out, "other", %{held | "flz.seq" => "8.0"}})
-      assert_receive {:call_event, :answer_dropped, %{reason: "answered"}}
-      refute_received {:delivery_answer, _, _, _, _, _}
+      refute_receive {:delivery_answer, _, _, _, _, _}, 100
+      refute_received {:call_event, :answer_dropped, _}
+    end
+
+    test "a relay call naming its answer channel is answered from it, row or not", %{
+      inst: inst
+    } do
+      host = start_supervised!({Host, Host.state(inst, channel: :fake_channel)})
+      call = relay_call(%{answer_channel: "quotes"})
+      assert :ok = GenServer.call(host, {:call, "EUR/USD", %{"channel" => "in"}, call})
+      token = "o:gateway:c1:0:#{call.deadline_at}:" <> Base.url_encode64("quotes", padding: false)
+      assert_receive {:channel_got, ^inst, {"EUR/USD", %{"flz.reply_to" => ^token}}}
+
+      # The callee restarted since it took the call: the token alone decides.
+      for rows <- [:kept, :lost] do
+        if rows == :lost, do: :sys.replace_state(host, &%{&1 | calls: %Calls{}})
+        GenServer.cast(host, {:io_out, "seen", %{"flz.reply_to" => token, "channel" => "audit"}})
+        refute_receive {:delivery_answer, _, _, _, _, _}, 100
+
+        GenServer.cast(host, {:io_out, "1.08", %{"flz.reply_to" => token, "channel" => "quotes"}})
+
+        assert_receive {:delivery_answer, _, ^inst, %{call: "c1", answer_channel: "quotes"},
+                        %{result: {:ok, "1.08"}}, _}
+      end
+    end
+
+    test "with no row, a relay call is answered once before its deadline and never after it",
+         %{inst: inst} do
+      # A callee restarted since it took the calls: no row for either token.
+      host = start_supervised!({Host, Host.state(inst, channel: :fake_channel)})
+      live = "o:gateway:c1:0:#{now() + 300}:"
+      past = "o:gateway:c2:0:#{now() - 1}:"
+
+      for message <- ["first", "second"],
+          do: GenServer.cast(host, {:io_out, message, %{"flz.reply_to" => live}})
+
+      assert_receive {:delivery_answer, _, ^inst, %{call: "c1"}, %{result: {:ok, "first"}}, _}
+      refute_receive {:delivery_answer, _, _, _, _, _}, 100
+
+      GenServer.cast(host, {:io_out, "late", %{"flz.reply_to" => past}})
+      refute_receive {:delivery_answer, _, _, _, _, _}, 100
+      refute_received {:call_event, :answer_dropped, _}
+
+      # The row the first answer left is retired at the call's deadline.
+      assert NodeTestHelper.wait_until(fn -> :sys.get_state(host).calls.rows == %{} end, 2_000)
+    end
+
+    test "a durable relay caller's answer and its sink write each take a hold", %{inst: inst} do
+      test_pid = self()
+
+      # A durable sink in the `:on_output` chain holds what it is handed.
+      stub(Flezha.Relay.Plugins, :transform_io, fn
+        _state, :on_output, message, metadata ->
+          Flezha.State.Outbox.hold(metadata)
+          send(test_pid, {:sink_got, message, metadata})
+          {message, metadata}
+
+        state, chain, message, metadata ->
+          Mimic.call_original(Flezha.Relay.Plugins, :transform_io, [
+            state,
+            chain,
+            message,
+            metadata
+          ])
+      end)
+
+      host = start_supervised!({Host, Host.state(inst, channel: :fake_channel)})
+      call = relay_call()
+      assert :ok = GenServer.call(host, {:call, "turn", %{"channel" => "in"}, call})
+
+      answer =
+        request_metadata(now() + 30_000)
+        |> Map.take(["flz.cell", "flz.seq", "flz.epoch", "flz.ack"])
+        |> Map.merge(%{
+          "flz.reply_to" => "o:gateway:c1:0:#{call.deadline_at}:",
+          "channel" => "out"
+        })
+
+      dispatch(host, "answer", answer)
+
+      assert_receive {:delivery_answer, _, ^inst, %{call: "c1"}, %{result: {:ok, "answer"}}, _}
+      assert_receive {:sink_got, "answer", sunk}
+      refute Map.has_key?(sunk, "flz.reply_to")
+      assert_receive {:"$gen_cast", {:outbox_settled_many, [{4, 2}]}}
     end
 
     test "a stopped callee leaves its relay callers to its next run only if it journals them",
          %{inst: inst} do
       call = %{caller: "gateway", call: "c1", created: false, deadline_at: now() + 5_000}
-      token = "o:gateway:c1:0:#{call.deadline_at}"
+      token = "o:gateway:c1:0:#{call.deadline_at}:"
 
       for journals? <- [true, false] do
         state = Host.state(inst, durable_steps: journals?, runner_id: nil)
         {:ok, ^token, calls} = Calls.admit_relay(%Calls{}, Overwatch.callee(state), call)
         from = {self(), make_ref()}
-        {:ok, _outside, calls} = Calls.admit(calls, Overwatch.callee(state), from, "in", 5_000)
+
+        {:ok, _outside, calls} =
+          Calls.admit(calls, Overwatch.callee(state), from, %{"channel" => "in"}, 5_000)
 
         :ok = Migration.terminate(%{state | calls: calls}, :shutdown)
 

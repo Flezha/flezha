@@ -676,7 +676,7 @@ fn run(&mut self, input: String, ctx: &mut Ctx<'_, Self>) -> Result<(), TaskletE
 A part that cannot leave at once (no stream, a local run, a stream that would
 block, a frame over the limit) is dropped and counted, and a replayed input
 sends none. A channel that does not end in a sink (it only feeds another
-tasklet, or ends in `response()` or `call(...)`) answers `TaskletError::Part` with the code
+tasklet, or ends in `call(...)`) answers `TaskletError::Part` with the code
 `part.no_sink`. A `compensate` hook previews no work item and answers
 `part.outside_invocation`; the testing harness sends nothing.
 
@@ -707,8 +707,8 @@ inter-tasklet delivery: the producer gets
 stays alive. Channels naming one plugin fan in at the controller, told apart
 by the `channel` metadata key; Rust and Java frames are byte-identical there.
 
-`.response()` and `.call::<A>(target, deadline_ms)` are the channel's two other
-plugin ends, one per channel. A call end keeps the transform and key of the chain
+`.call::<A>(target, deadline_ms)` is the channel's other plugin end, one per
+channel. A call end keeps the transform and key of the chain
 that closed on it, as an edge does: each value emitted on the channel becomes the
 requests that chain yields, each serialized by the sink rule and stamped with the
 call's target, deadline, Response channel and key before it leaves as a plugin

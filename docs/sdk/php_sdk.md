@@ -161,8 +161,8 @@ implementation therefore cannot disagree.
   never does, and a part is never durable or replayed. Parts are numbered from
   0 within each attempt, so a retry starts its preview again. A part that
   cannot leave at once, such as in a local run, is dropped. A channel that
-  does not end in a sink (it only feeds another tasklet, or ends in
-  `response()`) throws a `FlezhaException` coded `part.no_sink`, and a context
+  does not end in a sink (it only feeds another tasklet, or ends in a
+  call) throws a `FlezhaException` coded `part.no_sink`, and a context
   kept after its invocation returned throws `part.outside_invocation`. The
   testing harness sends nothing.
 - **`initState(?string $cellKey)`** is a cell's state before anything has
@@ -368,10 +368,9 @@ for anything else, and a codec given beside a callable on one channel is refused
 when the relay is declared, naming the relay and the channel. PHP ships
 no MessagePack library, so the enum has no MessagePack case.
 
-`->response()` ends a channel on the answer to an outside call instead of a
-sink, and takes the sink's arguments, `?callable $encode` and
-`?ChannelCodec $codec`: [`../topics/advanced/relay_calls.md`](../topics/advanced/relay_calls.md). `->call(target: 'pricing', deadlineMs: 500)`
-or `->call(factory: 'agent', deadlineMs: ..., create: false, codec: ...)` ends a chain on a
+A called input's first sink output answers its caller and still reaches the sink's plugins:
+[`../topics/advanced/relay_calls.md`](../topics/advanced/relay_calls.md). `->call(target: 'pricing', deadlineMs: 500)`
+or `->call(factory: 'agent', deadlineMs: ..., create: false, answerChannel: 'quotes', codec: ...)` ends a chain on a
 call to another relay and answers an edge of readonly `Flezha\Response` values:
 [`../topics/advanced/relay_calls.md`](../topics/advanced/relay_calls.md).
 

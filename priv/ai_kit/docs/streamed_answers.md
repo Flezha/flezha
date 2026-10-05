@@ -22,14 +22,12 @@ report's sections, a long computation's progress.
   and stamps the attempt, the cell and the channel, so a turn that is tried again starts its
   preview again.
 - **The output channel must end in a sink.** A tasklet sends parts only when its output
-  channel ends in a sink; a `response()` end is not one. A channel ends in one sink or one
-  `response()`, never both, so a tasklet that both streams and answers a caller ends in a
-  sink, and a second tasklet after the sink passes the finished output to the `response()`
-  end.
+  channel ends in a sink; a `call(...)` end is not one. The same sink's finished output answers
+  a caller, so one tasklet both streams and answers.
 
 ```mermaid
 flowchart LR
-    T(["turn"]) --> R["reply"] -->|"answer (sink)"| D["deliver"] --> C(["response()"])
+    T(["turn"]) --> R["reply"] -->|"answer (sink)"| C(["caller and listeners"])
     R -. "parts" .-> L(["listeners"])
 ```
 
@@ -74,32 +72,17 @@ Full file: [`DemoModel.java`](https://github.com/flezha/flezha_java_sdk/blob/mai
 A real model's client would be called here instead, handing each token it streams to `part`
 the same way.
 
-`reply`'s channel ends in the sink `answer`, and `deliver` passes the finished answer on to
-the caller:
+`reply`'s channel ends in the sink `answer`, whose finished output answers the caller and
+reaches every listener:
 
 ```java
-// AgentRelay.java: reply's channel ends in a sink, deliver answers the caller.
+// AgentRelay.java: reply's sink answers the caller and the listeners.
         c.input(String.class, "turn")
                 .into(Reply.class)
-                .sink("answer")                          // to whoever listens
-                .into(Deliver.class)
-                .response();                             // to whoever called
+                .sink("answer");                         // to whoever called, and whoever listens
 ```
 
 Full file: [`AgentRelay.java`](https://github.com/flezha/flezha_java_sdk/blob/main/examples/agentdesk/src/main/java/com/flezha/examples/agentdesk/AgentRelay.java)
-
-```java
-// Deliver.java: hands the finished answer to the caller.
-@Tasklet.Spec(name = "deliver")
-public final class Deliver implements Tasklet<Answer, Void, Answer> {
-
-    @Override
-    public void run(Answer answer, Ctx<Void, Answer> ctx) throws TaskletException {
-        ctx.emit(answer);
-    }
-```
-
-Full file: [`Deliver.java`](https://github.com/flezha/flezha_java_sdk/blob/main/examples/agentdesk/src/main/java/com/flezha/examples/agentdesk/Deliver.java)
 
 ### Elixir
 
@@ -123,41 +106,21 @@ Full file: [`demo_model.ex`](https://github.com/flezha/flezha_elixir_sdk/blob/ma
 A real model's client would be called here instead, handing each token it streams to `part`
 the same way.
 
-`reply`'s channel ends in the sink `answer`, and `deliver` passes the finished answer on to
-the caller:
+`reply`'s channel ends in the sink `answer`, whose finished output answers the caller and
+reaches every listener:
 
 ```elixir
-# lib/agentdesk/agent_relay.ex: reply's channel ends in a sink, deliver answers the caller.
+# lib/agentdesk/agent_relay.ex: reply's sink answers the caller and the listeners.
     c
     |> input("turn")
     |> into(Reply)
-    # to whoever listens
+    # to whoever called, and whoever listens
     |> sink("answer")
-    |> into(Deliver)
-    # to whoever called
-    |> response()
 ```
 
 Full file: [`agent_relay.ex`](https://github.com/flezha/flezha_elixir_sdk/blob/main/examples/agentdesk/lib/agentdesk/agent_relay.ex)
 
-```elixir
-# lib/agentdesk/deliver.ex: hands the finished answer to the caller.
-defmodule Agentdesk.Deliver do
-  use Flezha.SDK.Tasklet, name: "deliver"
-
-  @impl true
-  def run(answer, state, ctx) do
-    emit(ctx, answer)
-    {:ok, state}
-  end
-```
-
-Full file: [`deliver.ex`](https://github.com/flezha/flezha_elixir_sdk/blob/main/examples/agentdesk/lib/agentdesk/deliver.ex)
-
 <!-- tabs-close -->
-
-`deliver`'s output leaves the session too, so a [rewind](rewinding_a_turn.md) needs an undo
-from it, and it declares an empty one.
 
 ### Watch a turn stream
 
@@ -213,9 +176,9 @@ relay that answers HTTP requests.
 ### A request is an input
 
 The plugin turns every HTTP request into one input of the relay it is enabled on, as a
-JSON envelope: the method, the path, the body and a few more fields. Whatever a `response()`
-end of the relay produces from that input is the HTTP answer: a status and a body, or the
-name of a relay to stream. The plugin has no routes of its own: the relay's graph
+JSON envelope: the method, the path, the body and a few more fields. The first output that
+input causes on a sink of the relay is the HTTP answer: a status and a body, or the name of a
+relay to stream. The plugin has no routes of its own: the relay's graph
 routes on the method and the path.
 
 When the answer names a relay to stream, for example `{"stream":"anna"}`, the plugin
@@ -288,7 +251,9 @@ public final class Watch implements Tasklet<Request, Void, Http> {
 
     @Override
     public void run(Request request, Ctx<Void, Http> ctx) throws TaskletException {
-        ctx.emit(request.listens() ? Http.stream(request.user()) : Http.of(404, "no such route"));
+        // keyed by the user: a sink of an effectively-once relay needs a key
+        ctx.emitKeyed(
+                request.user(), request.listens() ? Http.stream(request.user()) : Http.of(404, "no such route"));
     }
 }
 ```
@@ -300,7 +265,8 @@ Full file: [`Watch.java`](https://github.com/flezha/flezha_java_sdk/blob/main/ex
         EntryChannel<Request> http = c.input(Request.class, "http");
         http.filter(request -> !request.sends())
                 .into(Watch.class)
-                .response();                                 // a stream, or 404
+                .keyed()
+                .sink();                                     // a stream, or 404
 ```
 
 Full file: [`GatewayRelay.java`](https://github.com/flezha/flezha_java_sdk/blob/main/examples/agentdesk/src/main/java/com/flezha/examples/agentdesk/GatewayRelay.java)
@@ -355,8 +321,10 @@ defmodule Agentdesk.Watch do
 
   @impl true
   def run(request, state, ctx) do
-    emit(
+    # keyed by the user: a sink of an effectively-once relay needs a key
+    emit_keyed(
       ctx,
+      Request.user(request),
       if Request.listens?(request) do
         %{stream: Request.user(request)}
       else
@@ -381,8 +349,9 @@ stream. The plugin refuses an answer with a key it does not know.
     http
     |> filter(&(not Request.sends?(&1)))
     |> into(Watch)
+    |> keyed()
     # a stream, or 404
-    |> response()
+    |> sink()
 ```
 
 Full file: [`gateway_relay.ex`](https://github.com/flezha/flezha_elixir_sdk/blob/main/examples/agentdesk/lib/agentdesk/gateway_relay.ex)
@@ -485,7 +454,7 @@ the few lines that show a growing answer.
 - **A caller never sees parts.** `flz relay call` and a relay's call get the finished
   output only.
 - **The streaming tasklet's channel must end in a sink,** or the part is refused with
-  `part.no_sink`; put a second tasklet after the sink to answer a caller.
+  `part.no_sink`. That sink's finished output also answers a caller.
 - **The HTTP stream starts at the live edge.** No event id is written, so a client that
   reconnects misses what was sent while it was away.
 

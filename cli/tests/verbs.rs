@@ -92,6 +92,19 @@ const CASES: &[(&[&str], &str)] = &[
         ],
         r#"Flezha.Service.Cli.call("Relay.call", "[\"default\",\"prices\",\"x\",\"\",{\"deadline_ms\":100,\"key\":\"EURUSD\"}]", [])"#,
     ),
+    // The answer channel rides beside the deadline; `--channel` stays the entry.
+    (
+        &[
+            "relay",
+            "call",
+            "quoter",
+            "--text",
+            "EUR/USD",
+            "--answer-channel",
+            "quotes",
+        ],
+        r#"Flezha.Service.Cli.call("Relay.call", "[\"default\",\"quoter\",\"EUR/USD\",\"\",{\"answer_channel\":\"quotes\",\"deadline_ms\":30000}]", [])"#,
+    ),
     (
         &["relay", "send", "prices", "--key", "EURUSD", "--text", "x"],
         r#"Flezha.Service.Cli.call("Relay.send", "[\"default\",\"prices\",\"x\",\"\",{\"key\":\"EURUSD\"}]", [])"#,

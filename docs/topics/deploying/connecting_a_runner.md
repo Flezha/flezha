@@ -324,7 +324,7 @@ onto it again.
 ## Limits and gotchas
 
 - **Socket transport is one machine.** A runner on another machine needs a
-  controller of its own there, or the experimental QUIC transport.
+  controller of its own there, or the QUIC transport ([experimental: quic](../../publishing/maturity.md#quic)).
 - **Short paths.** The socket directory is capped at 60 bytes.
 - **Different users need a shared group** (`FLEZHA_SOCKET_DIR_GROUP`); the
   directory is not opened wider than `0750`.

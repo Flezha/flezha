@@ -127,7 +127,7 @@ def word_count(c: Channels) -> None:
   attempt; a sink never does, and nothing about it is durable. It works in
   `run` and `on_timer`, for a flow tasklet and a steps stage alike. It
   raises `FlezhaError` coded `part.no_sink` when the output channel does not
-  end in a sink (a `response()` end is not one), and `part.outside_invocation`
+  end in a sink (a call end is not one), and `part.outside_invocation`
   through a context kept past its invocation.
 - **State starts from the state class.** It is `state=`, else the state
   argument of `run`'s context hint, else what `init_state` returns. A new
@@ -372,9 +372,9 @@ callable takes the place of a codec for anything else. A codec name outside the
 four, or a codec named beside a callable on one channel, is refused when the
 relay is declared, naming the relay and the channel.
 
-`.response()` ends a channel on the answer to an outside call instead of a sink,
-and takes the sink's `encode=` and `codec=`: [`../topics/advanced/relay_calls.md`](../topics/advanced/relay_calls.md).
-`.call("pricing", deadline_ms=500)` or `.call(factory="agent", deadline_ms=..., create=False, codec=...)`
+A called input's first sink output answers its caller and still reaches the sink's plugins:
+[`../topics/advanced/relay_calls.md`](../topics/advanced/relay_calls.md).
+`.call("pricing", deadline_ms=500)` or `.call(factory="agent", deadline_ms=..., create=False, answer_channel="quotes", codec=...)`
 ends a chain on a call to another relay and answers an edge of `Response`s:
 [`../topics/advanced/relay_calls.md`](../topics/advanced/relay_calls.md).
 

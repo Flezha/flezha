@@ -3,7 +3,8 @@ defmodule FlezhaTest.System.RelayCallE2ETest do
   A relay calling another, end to end on the runtime `FLEZHA_E2E_RUNTIME`
   selects, through the `relay_call` fixtures:
 
-    * `call_orders` calls `call_pricing` by name (unbounded to unbounded);
+    * `call_orders` calls `call_pricing` by name (unbounded to unbounded),
+      naming `call_pricing`'s sink `quotes` as its answer channel;
     * `call_gateway` calls `call_agent` by key through its factory (flow
       to a per-session durable steps relay): the first call creates the
       session, the second reaches it, a failed turn is answered `call.failed`
@@ -48,7 +49,7 @@ defmodule FlezhaTest.System.RelayCallE2ETest do
 
   alias Flezha.Relay.Builder
   alias Flezha.Runner.FleetManager
-  alias Flezha.Service.RelayManager
+  alias Flezha.Service.{Listener, RelayManager}
   alias Flezha.State.{InputLog, TaskJournal}
   alias FlezhaTest.Fixtures.RelayFixture
   alias FlezhaTest.Helper.NodeTestHelper
@@ -111,13 +112,36 @@ defmodule FlezhaTest.System.RelayCallE2ETest do
 
   defp session(prefix), do: "#{prefix}-#{System.unique_integer([:positive])}"
 
-  test "a flow relay calls another by name", ctx do
+  test "a flow relay calls another by name, naming its answer channel", ctx do
     boot(ctx)
     start(ctx.namespace, "call_pricing", :flow, "pricing")
     orders = start(ctx.namespace, "call_orders", :flow, unique("orders"), ctx.collector)
+    test = self()
 
-    send_in(ctx.namespace, orders, "o1")
-    send_in(ctx.namespace, orders, "o2")
+    before = fn ->
+      send_in(ctx.namespace, orders, "o1")
+      send_in(ctx.namespace, orders, "o2")
+    end
+
+    # The callee's input carries the relay token the request's stamps built,
+    # its last field the answer channel the call end named.
+    assert {:ok, :done} =
+             Listener.listen(
+               ctx.namespace,
+               "pricing",
+               [direction: :input, window_ms: 60_000, before: before],
+               fn
+                 {:input, _payload, metadata} ->
+                   send(test, {:token, metadata["flz.reply_to"]})
+                   :done
+
+                 _event ->
+                   :continue
+               end
+             )
+
+    assert_received {:token, "o:" <> _ = token}
+    assert String.ends_with?(token, ":" <> Base.url_encode64("quotes", padding: false))
 
     assert lines(ctx.collector, 2) == [
              "o1=ok:price:o1@pricing/false",

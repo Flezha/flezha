@@ -939,13 +939,12 @@ runner and assert, on every host runtime, that the record precedes the entry nam
 
 `call_response` SHALL join the capability vocabulary and the required set, so no manifest may defer
 it. Every manifest SHALL list it under `fixtures` with exactly the reference's ids: `call_echo`, a
-flow relay whose one tasklet answers with its input through `response()`;
-`call_downstream`, a flow relay whose second tasklet answers; `call_split`, a flow
-relay whose one tasklet feeds two filtered paths, each ending in `response()` through a tasklet
-of its own; and `call_turn`, a durable `:per_input` steps relay whose turn answers through
-`response()`. Every test app SHALL declare each fixture through its SDK's builder, and SHALL list
-the `response` step under `topology_surfaces`. `test/system/call_response_e2e_test.exs` SHALL be
-tagged `capability: :call_response` and SHALL drive every fixture on the selected runtime through
+flow relay whose one tasklet emits its input on a sink; `call_downstream`, a flow relay whose
+second tasklet emits on a sink; `call_split`, a flow relay whose one tasklet feeds two filtered
+paths, each ending in a sink of its own through a tasklet of its own; and `call_turn`, a durable
+`:per_input` steps relay whose turn emits on a sink. Every test app SHALL declare each fixture
+through its SDK's builder. `test/system/call_response_e2e_test.exs` SHALL be tagged
+`capability: :call_response` and SHALL drive every fixture on the selected runtime through
 `Flezha.Service.Relay.call/6`, and the reference refusal rows for `ChannelEndsTwice` SHALL be
 driven through every runtime's real boot like every other reference refusal.
 
@@ -957,7 +956,12 @@ driven through every runtime's real boot like every other reference refusal.
 #### Scenario: Every runtime answers from the path the input took
 
 - **WHEN** the scenario calls `call_split` with an input its filter sends down the refused path
-- **THEN** the answer SHALL be the refused path's output, and nothing SHALL be dropped as `answered`
+- **THEN** the answer SHALL be the refused path's output
+
+#### Scenario: Every runtime also delivers the answer to a listener
+
+- **WHEN** the scenario attaches a listener to `call_echo` and calls it with `hello`
+- **THEN** the caller SHALL receive `hello`, and the listener SHALL receive the same output on `call_echo`'s sink channel, with no `flz.reply_to` key
 
 #### Scenario: A manifest deferring the capability fails the gate
 
@@ -998,21 +1002,27 @@ and with a file sink attached beside the listener.
 
 `relay_call` SHALL join the capability vocabulary and the required set, so no manifest may defer
 it. Every manifest SHALL list it under `fixtures` with exactly the reference's ids: `call_pricing`,
-a flow callee answering through `response()`; `call_orders`, a flow caller calling
-`call_pricing` by name; `call_agent`, a durable `:per_input` steps callee; `call_gateway`, a
-flow caller calling `call_agent` by key through its factory, with its Response channel wired
-back into its calling tasklet; and `call_tool_session`, a durable `:per_input` steps caller calling
-`call_pricing` from a turn. Every test app SHALL declare each through its SDK's builder and list the
-`call` steps under `topology_surfaces`. `test/system/relay_call_e2e_test.exs` SHALL be tagged
-`capability: :relay_call` and SHALL drive every fixture on the selected runtime, including the
-two crash drills (the callee's runner killed mid-turn, the caller killed with a call pending) with
-the assertion of exactly one `Response` per call. The reference refusal rows of the call end SHALL
-be driven through every runtime's real boot.
+a flow callee emitting on a sink; `call_orders`, a flow caller calling `call_pricing` by name and
+naming `call_pricing`'s sink channel as its answer channel; `call_agent`, a durable `:per_input`
+steps callee; `call_gateway`, a flow caller calling `call_agent` by key through its factory, with
+its Response channel wired back into its calling tasklet; and `call_tool_session`, a durable
+`:per_input` steps caller calling `call_pricing` from a turn. Every test app SHALL declare each
+through its SDK's builder and list the `call` steps under `topology_surfaces`.
+`test/system/relay_call_e2e_test.exs` SHALL be tagged `capability: :relay_call` and SHALL
+drive every fixture on the selected runtime, including the two crash drills (the callee's runner
+killed mid-turn, the caller killed with a call pending) with the assertion of exactly one
+`Response` per call. The reference refusal rows of the call end SHALL be driven through every
+runtime's real boot.
 
 #### Scenario: Both kinds call and are called on every runtime
 
 - **WHEN** the scenario runs `call_orders`, `call_gateway` and `call_tool_session` on any runtime
 - **THEN** each SHALL receive one `Response` per call, `call_gateway`'s first saying `created: true` and its second `created: false`
+
+#### Scenario: Every runtime spells the answer channel
+
+- **WHEN** the scenario runs `call_orders` on any runtime
+- **THEN** each request frame SHALL carry `flz.call_answer_channel` naming `call_pricing`'s sink channel, and each `Response` SHALL carry that channel's output
 
 #### Scenario: A crash drill holds on every runtime
 

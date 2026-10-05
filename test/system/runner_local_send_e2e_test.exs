@@ -85,7 +85,9 @@ defmodule FlezhaTest.System.RunnerLocalSendE2ETest do
 
     File.touch!(go)
     assert local_send_answer(port_a) == "ok"
-    assert wait_until(fn -> seen(output.("l:1")) == 1 end, 30_000), "the local input was not handled"
+
+    assert wait_until(fn -> seen(output.("l:1")) == 1 end, 30_000),
+           "the local input was not handled"
 
     sigkill(os_pid(port_a))
     journaled = Keyword.get(opts, :journaled)

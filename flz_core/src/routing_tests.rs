@@ -159,7 +159,6 @@ fn parsing_steps(id: &'static str) -> Arc<RelayInstance> {
             wrap_input: Some(wrap),
             entry_parsed: true,
             plugin_sink: None,
-            response: false,
             sink: false,
             call: None,
             keyed: false,

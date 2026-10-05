@@ -71,7 +71,6 @@ commit_block_chain | 1 | mid | inter_task | 0 | 1 | mid
 #   <x>.map                    a chain nothing closes
 #   <x>.sink(<name>)           terminate x on the plugin layer, naming it
 #   <x>.sink                   the same, leaving the name derived
-#   <x>.response               terminate x on the caller's answer (`response()`)
 #   <x>.call(<target>)         end x in a call to the instance <target>, with a
 #                              500 ms deadline, its Response channel
 #                              (`<x's channel>.response`) wired into the
@@ -133,8 +132,6 @@ commit_block_chain | 1 | mid | inter_task | 0 | 1 | mid
 #              compile-fail fixture there instead
 #   shorthand  the §5 single-tasklet short form. Every SDK carries it, so no
 #              manifest may lack this one
-#   response   the `response()` plugin end. Every SDK carries it, so no
-#              manifest may lack this one
 #   call       the `call(...)` end. Every SDK carries it, so no manifest may
 #              lack this one
 #   shorthand_typed_output  a short form on a tasklet whose output the SDK can
@@ -161,8 +158,6 @@ topology.unkeyed_edge_into_dynamic_tasklet | unkeyed_dynamic  | entry(in); entry
 topology.mailbox_capacity_zero     | mailbox_zero     | entry(in); in.into(plain); plain.mailbox(0)                                           | -
 topology.mailbox_capacity_too_large | mailbox_huge     | entry(in); in.into(plain); plain.mailbox(2000000)                                     | -
 topology.duplicate_plugin_sink     | dup_sink         | entry(in); in.into(plain); plain.sink(out); plain.sink(out)                           | -
-topology.channel_ends_twice        | response_beside_sink | entry(in); in.into(plain); plain.sink(out); plain.response                        | response
-topology.channel_ends_twice        | two_responses    | entry(in); in.into(plain); plain.named(answer); plain.response; plain.response        | response
 topology.channel_ends_twice        | call_beside_sink | entry(in); in.into(plain); plain.sink(out); plain.call(pricing)                    | call
 topology.call_outside_per_input_loop | call_once_steps | class.run("steps"); entry(in); in.into(plain); plain.named(ask); plain.call(pricing)   | steps
 topology.call_without_key          | call_nocreate_unkeyed | entry(in); in.into(plain); plain.named(ask); plain.call_factory_nocreate(agent) | call
@@ -212,8 +207,6 @@ ok                                 | sink_names_channel | entry(in); in.into(pla
 ok                                 | ack_checkpoint   | class.run({"flow":{"exactly":{"effectively_once":{"ack":"checkpoint"}}}}); entry(in); in.into(plain) | -
 ok                                 | checkpoint_every | class.run({"flow":{"exactly":{"effectively_once":{"ack":{"checkpoint":{"every":500}}}}}}); entry(in); in.into(plain) | -
 ok                                 | hold_outputs     | class.run({"flow":{"exactly":{"effectively_once":{"ack":{"checkpoint":{"outputs":"at_checkpoint","max_delay_ms":50}}}}}}); entry(in); in.into(plain) | -
-ok                                 | two_response_ends | entry(in); in.into(plain); in.into(second); plain.named(accepted); plain.response; second.named(refused); second.response | response
-ok                                 | eo_unkeyed_response | class.run({"flow":{"exactly":"effectively_once"}}); entry(in); in.into(plain); plain.named(answer); plain.response | response
 ok                                 | call_back_into_caller | entry(in); in.into(plain); plain.named(ask); plain.call(pricing)                | call
 ok                                 | call_factory_by_key | entry(in); in.into(plain); plain.named(ask); plain.key.call_factory(agent)      | call
 ok                                 | hybrid_channel   | cited above                                                                           | -
@@ -231,11 +224,6 @@ sink_names_channel | 1 | items_output | plugin | 0 | - | items_output
 ack_checkpoint | 0 | in | entry | - | 0 | -
 checkpoint_every | 0 | in | entry | - | 0 | -
 hold_outputs | 0 | in | entry | - | 0 | -
-two_response_ends | 0 | in | entry | - | 0,1 | -
-two_response_ends | 1 | accepted | plugin | 0 | - | -
-two_response_ends | 2 | refused | plugin | 1 | - | -
-eo_unkeyed_response | 0 | in | entry | - | 0 | -
-eo_unkeyed_response | 1 | answer | plugin | 0 | - | -
 call_back_into_caller | 0 | in | entry | - | 0 | -
 call_back_into_caller | 1 | ask | plugin | 0 | - | -
 call_back_into_caller | 2 | ask.response | entry | - | 0 | -

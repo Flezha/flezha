@@ -592,9 +592,10 @@ honour a `--json` or `--output json` written anywhere in it.
 ### Requirement: `flz relay call` SHALL print the answer and exit by the failure's class
 
 `flz relay call <relay_id>` SHALL read `--text` / `-t` (required, the input's payload),
-`--channel` / `-c` (the entry channel, optional), `--key` (a partition group's key, optional),
-`--timeout` (the deadline in milliseconds, no short spelling, default 30 000) and `--namespace`,
-declared in its verb row like every verb's. It SHALL call the relay through the published
+`--channel` / `-c` (the entry channel, optional), `--answer-channel` (the channel whose output
+answers, optional, no short spelling), `--key` (a partition group's key, optional), `--timeout`
+(the deadline in milliseconds, no short spelling, default 30 000) and `--namespace`, declared in
+its verb row like every verb's. It SHALL call the relay through the published
 `Flezha.Service.Relay.call/6`, print the answer's payload on stdout followed by one newline,
 and exit 0. A failure SHALL be rendered on stderr in the error model of `give-every-error-a-code`
 and SHALL exit with the code of its class: `call.timeout` 7, a denied act 4,
@@ -602,8 +603,13 @@ and SHALL exit with the code of its class: `call.timeout` 7, a denied act 4,
 
 #### Scenario: An answer is printed
 
-- **WHEN** `flz relay call echo --text hello` is run against a relay that answers with its input
+- **WHEN** `flz relay call echo --text hello` is run against a relay that emits its input on a sink
 - **THEN** stdout SHALL be `hello` and one newline, stderr SHALL be empty, and the exit code SHALL be 0
+
+#### Scenario: The answer channel picks the answer
+
+- **WHEN** `flz relay call quoter --text EUR/USD --answer-channel quotes` is run against a relay that emits on `audit` and then on `quotes`
+- **THEN** stdout SHALL be the `quotes` output and one newline
 
 #### Scenario: A timeout exits 7
 

@@ -115,7 +115,7 @@ defmodule Flezha.Relay.Ingest do
   end
 
   defp admit(calls, callee, from, metadata, deadline_ms) when is_integer(deadline_ms),
-    do: Calls.admit(calls, callee, from, Map.get(metadata, "channel"), deadline_ms)
+    do: Calls.admit(calls, callee, from, metadata, deadline_ms)
 
   defp admit(calls, callee, _from, _metadata, call), do: Calls.admit_relay(calls, callee, call)
 
@@ -314,6 +314,19 @@ defmodule Flezha.Relay.Ingest do
       %{deadline_at: at} -> arm_call(state, id, max(until(at), 1_000), {:call_timeout, id})
       nil -> state
     end
+  end
+
+  @doc """
+  Arm the deadline that retires the row of the relay call `token` names,
+  unless one is armed: a held answer of a callee restarted since it took the
+  call has just made that row.
+  """
+  @spec retire_at_deadline(Overwatch.t(), Calls.token()) :: Overwatch.t()
+  def retire_at_deadline(%Overwatch{} = state, token) do
+    if Timer.armed?(state.timers, {:call, token}) or not Map.has_key?(state.calls.rows, token),
+      do: state,
+      else:
+        arm_call(state, token, Calls.remaining_ms(state.calls, token), {:call_deadline, token})
   end
 
   defp arm_call(%Overwatch{} = state, key, ms, message),

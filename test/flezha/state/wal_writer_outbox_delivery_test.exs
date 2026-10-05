@@ -245,7 +245,7 @@ defmodule Flezha.State.WalWriterOutboxDeliveryTest do
     on_exit(fn -> Application.delete_env(:flezha, :outbox_resettle_ms) end)
 
     pid = armed_writer(rc, cell_id)
-    answer = [{"flz.reply_to", "o:gateway:c1:0:1"}]
+    answer = [{"flz.reply_to", "o:gateway:c1:0:1:"}]
     append_effect(pid, 0, [output("k", "answer", answer)], 1)
     assert {"answer", md, _} = next_output()
     :ok = Outbox.hold(md)

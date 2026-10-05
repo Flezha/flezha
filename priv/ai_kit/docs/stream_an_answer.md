@@ -3,8 +3,8 @@
 On this page you watch Anna's answer arrive token by token while the turn runs.
 
 `reply` sends each token as a part, through `ctx.part`, while it works. Parts
-reach whoever listens on the `answer` sink at once; the whole answer follows
-once the turn's step is done, and `deliver` hands it to the caller.
+reach whoever listens on the `answer` sink at once; the whole answer follows on
+the same sink once the turn's step is done, and also answers the caller.
 [Streamed answers](../../topics/advanced/streamed_answers.md) explains parts.
 
 <!-- tabs-open -->
@@ -12,22 +12,13 @@ once the turn's step is done, and `deliver` hands it to the caller.
 ### Java
 
 ```java
-// Deliver.java: hands the finished answer to the caller
-@Tasklet.Spec(name = "deliver")
-public final class Deliver implements Tasklet<Answer, Void, Answer> {
-    @Override
-    public void run(Answer answer, Ctx<Void, Answer> ctx) throws TaskletException {
-        // The whole answer, to whoever called.
-        ctx.emit(answer);
-    }
-
-    // The undo, when a turn is taken back: an answer already given has nothing to take back.
-    @Override
-    public void compensate(List<Answer> sent, Ctx<Void, Answer> ctx) {}
-}
+// AgentRelay.java: reply's sink answers the caller and the listeners
+        c.input(String.class, "turn")                    // entry 1: `flz relay call`
+                .into(Reply.class)
+                .sink("answer");                         // to whoever called, and whoever listens
 ```
 
-[`Deliver.java`](https://github.com/flezha/flezha_java_sdk/blob/main/examples/agentdesk/src/main/java/com/flezha/examples/agentdesk/Deliver.java)
+[`AgentRelay.java`](https://github.com/flezha/flezha_java_sdk/blob/main/examples/agentdesk/src/main/java/com/flezha/examples/agentdesk/AgentRelay.java)
 
 ### Rust
 
@@ -52,24 +43,16 @@ TODO: this page is not yet written for PHP.
 ### Elixir
 
 ```elixir
-# lib/agentdesk/deliver.ex: hands the finished answer to the caller
-defmodule Agentdesk.Deliver do
-  use Flezha.SDK.Tasklet, name: "deliver"
-
-  @impl true
-  def run(answer, state, ctx) do
-    # The whole answer, to whoever called.
-    emit(ctx, answer)
-    {:ok, state}
-  end
-
-  # The undo, when a turn is taken back: an answer already given has nothing to take back.
-  @impl true
-  def compensate(_answers, state, _ctx), do: {:ok, state}
-end
+# lib/agentdesk/agent_relay.ex: reply's sink answers the caller and the listeners
+    c
+    # entry 1: `flz relay call`
+    |> input("turn")
+    |> into(Reply)
+    # to whoever called, and whoever listens
+    |> sink("answer")
 ```
 
-[`lib/agentdesk/deliver.ex`](https://github.com/flezha/flezha_elixir_sdk/blob/main/examples/agentdesk/lib/agentdesk/deliver.ex)
+[`lib/agentdesk/agent_relay.ex`](https://github.com/flezha/flezha_elixir_sdk/blob/main/examples/agentdesk/lib/agentdesk/agent_relay.ex)
 
 <!-- tabs-close -->
 

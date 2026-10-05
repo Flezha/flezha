@@ -410,7 +410,7 @@ to the caller's. The boundary can be widened to exactly one named group with
 a deliberate loosening that is logged on every boot; the alternative, running
 the runner as the controller's user, is a broader grant.
 
-**QUIC** ([experimental](../../publishing/maturity.md#quic)) requires a client
+**QUIC** ([experimental: quic](../../publishing/maturity.md#quic)) requires a client
 certificate that chains to the trust anchor at `FLEZHA_QUIC_CLIENT_CA`. On
 first boot the controller generates a complete mutual-TLS set (CA, server
 pair, and a `client.pem` / `client.key` leaf with the `clientAuth` extended key

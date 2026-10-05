@@ -756,11 +756,7 @@ mod tests {
         // The digest is SHA-256 over the runner id's bytes, so it is
         // reproducible outside this repository: `printf %s <id> | sha256sum`.
         assert_eq!(field, "schema_evol~d33017db4b61");
-        assert_eq!(
-            steps_id(LONG_ID),
-            field,
-            "the same id gives the same field"
-        );
+        assert_eq!(steps_id(LONG_ID), field, "the same id gives the same field");
 
         // The literal every other end of this name is pinned to;
         // `Flezha.Socket.SupportTest` asserts the same string from the

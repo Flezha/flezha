@@ -320,8 +320,11 @@ defmodule Flezha.Mcp do
            {:ok, positional} <- positional(entry.args, arguments),
            do: door.(entry.name, positional)
          ) do
-      {:error, %Error{code: "control.unknown_function"}} -> unknown_tool(id, tool_name(entry.name))
-      answer -> tool_result(id, answer)
+      {:error, %Error{code: "control.unknown_function"}} ->
+        unknown_tool(id, tool_name(entry.name))
+
+      answer ->
+        tool_result(id, answer)
     end
   end
 

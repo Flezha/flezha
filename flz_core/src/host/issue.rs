@@ -68,7 +68,7 @@ pub enum TopologyIssue {
     DuplicatePluginSink {
         channel: String,
     },
-    /// Two plugin ends (a `sink`, a `response()`, a `call(...)`) on one
+    /// Two plugin ends (a `sink` and a `call(...)`, or two calls) on one
     /// channel: a channel carries at most one.
     ChannelEndsTwice {
         channel: String,

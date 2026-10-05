@@ -28,7 +28,7 @@ A rewind is refused when it cannot undo what it would have to:
 
 | Code | When |
 | --- | --- |
-| `relay.rewind_uncovered` | a tasklet whose output left the instance (through a sink or a `response()` end) between the target and now declares no `compensate` |
+| `relay.rewind_uncovered` | a tasklet whose output left the instance (through a sink) between the target and now declares no `compensate` |
 | `relay.iteration_not_committed` | the target iteration has not committed, so there is no boundary to rewind to |
 
 A steps instance is taken back only as a whole: `flz relay replay` of one of its cells is
@@ -109,18 +109,6 @@ undos can be seen in the runner's log.
 
 Full file: [`Reply.java`](https://github.com/flezha/flezha_java_sdk/blob/main/examples/agentdesk/src/main/java/com/flezha/examples/agentdesk/Reply.java)
 
-The tasklet `deliver`, which hands the answer to the caller, has nothing to take back, and
-declares an empty undo so that a rewind passes:
-
-```java
-// Deliver.java: an answer already given has nothing to take back.
-    // The undo, when a turn is taken back: an answer already given has nothing to take back.
-    @Override
-    public void compensate(List<Answer> sent, Ctx<Void, Answer> ctx) {}
-```
-
-Full file: [`Deliver.java`](https://github.com/flezha/flezha_java_sdk/blob/main/examples/agentdesk/src/main/java/com/flezha/examples/agentdesk/Deliver.java)
-
 ### Elixir
 
 ```elixir
@@ -138,18 +126,6 @@ Full file: [`Deliver.java`](https://github.com/flezha/flezha_java_sdk/blob/main/
 ```
 
 Full file: [`reply.ex`](https://github.com/flezha/flezha_elixir_sdk/blob/main/examples/agentdesk/lib/agentdesk/reply.ex)
-
-The tasklet `deliver`, which hands the answer to the caller, has nothing to take back, and
-declares an empty undo so that a rewind passes:
-
-```elixir
-# lib/agentdesk/deliver.ex: an answer already given has nothing to take back.
-  # The undo, when a turn is taken back: an answer already given has nothing to take back.
-  @impl true
-  def compensate(_answers, state, _ctx), do: {:ok, state}
-```
-
-Full file: [`deliver.ex`](https://github.com/flezha/flezha_elixir_sdk/blob/main/examples/agentdesk/lib/agentdesk/deliver.ex)
 
 <!-- tabs-close -->
 

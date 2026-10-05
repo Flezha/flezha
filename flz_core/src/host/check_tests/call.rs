@@ -27,10 +27,7 @@ fn a_call_is_a_plugin_end_whose_response_channel_is_an_entry() {
         HostChannelKind::Plugin,
         "a call with no consumer is the terminal"
     );
-    assert!(
-        ask.sink.is_none() && !ask.response,
-        "a call is neither a sink nor a response"
-    );
+    assert!(ask.sink.is_none(), "a call is not a sink");
     let call = ask.call.as_ref().expect("the channel ends in the call");
     assert_eq!(call.end.factory.as_deref(), Some("agent"));
     assert!(
@@ -62,8 +59,8 @@ fn a_call_closes_only_its_own_chain() {
 #[test]
 fn a_call_counts_as_a_plugin_end() {
     for steps in [
-        "entry(in); in.into(plain); plain.named(ask); plain.call(pricing); plain.response",
-        "entry(in); in.into(plain); plain.named(ask); plain.response; plain.call(pricing)",
+        "entry(in); in.into(plain); plain.named(ask); plain.call(pricing); plain.sink",
+        "entry(in); in.into(plain); plain.named(ask); plain.sink; plain.call(pricing)",
         "entry(in); in.into(plain); plain.named(ask); plain.call(pricing); plain.call(orders)",
     ] {
         let issues = check(record(steps)).expect_err("two plugin ends");

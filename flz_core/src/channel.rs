@@ -182,6 +182,8 @@ pub struct CallEnd {
     pub deadline_ms: u64,
     /// The callee's entry channel the request enters on.
     pub channel: Option<Arc<str>>,
+    /// The callee's channel whose output answers; its first output when absent.
+    pub answer_channel: Option<Arc<str>>,
     /// The caller's entry channel each outcome enters on.
     pub response: Arc<str>,
     pub transform: Option<EdgeTransformFn>,
@@ -214,8 +216,8 @@ impl CallEnd {
     /// The metadata every request of this end carries: the target, whether
     /// it may create its callee (only when it may not), the Response channel,
     /// the wall-clock millisecond its call expires (`now_ms` plus the
-    /// deadline), the callee's entry channel when named, and the request's
-    /// key when it has one.
+    /// deadline), the callee's entry and answer channels when named, and the
+    /// request's key when it has one.
     pub fn stamps(&self, key: Option<&str>, now_ms: u64) -> Vec<(String, String)> {
         let mut stamps = vec![
             (CALL_TARGET_KEY.to_string(), self.target.to_string()),
@@ -230,6 +232,9 @@ impl CallEnd {
         }
         if let Some(channel) = &self.channel {
             stamps.push((CALL_CHANNEL_KEY.to_string(), channel.to_string()));
+        }
+        if let Some(channel) = &self.answer_channel {
+            stamps.push((CALL_ANSWER_CHANNEL_KEY.to_string(), channel.to_string()));
         }
         if let Some(key) = key.filter(|key| !key.is_empty()) {
             stamps.push(("flz.key".to_string(), key.to_string()));
@@ -247,6 +252,7 @@ pub const CALL_TARGET_KEY: &str = "flz.call";
 pub const CALL_CREATE_KEY: &str = "flz.call_create";
 pub const CALL_RESPONSE_KEY: &str = "flz.call_response";
 pub const CALL_CHANNEL_KEY: &str = "flz.call_channel";
+pub const CALL_ANSWER_CHANNEL_KEY: &str = "flz.call_answer_channel";
 pub const DEADLINE_AT_KEY: &str = "flz.deadline_at";
 
 pub struct ChannelDescriptor {
@@ -261,12 +267,8 @@ pub struct ChannelDescriptor {
     pub entry_parsed: bool,
     /// The plugin egress; hybrid or terminal is read off `consumers`.
     pub plugin_sink: Option<PluginSink>,
-    /// The channel's plugin end is a `response()`, not a sink: every output
-    /// carries `flz.reply_to` and answers its caller instead of reaching a
-    /// plugin. A typed channel still serializes through `plugin_sink`.
-    pub response: bool,
-    /// The channel's plugin end is a sink: the one end a part previews, since
-    /// a `response()` end's outputs are taken aside before any listener.
+    /// The channel's plugin end is a sink: the one end a part previews and
+    /// whose outputs answer the call their input came from.
     pub sink: bool,
     /// The channel's plugin end is a `call(...)`: every output is a request
     /// to another relay, stamped with the end's facts, and never reaches a

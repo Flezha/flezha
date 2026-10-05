@@ -958,7 +958,7 @@
     },
     {
       "name": "Relay.call",
-      "doc": "Call `relay_id` with `message` and wait for its answer: the one output a `response()` end produced from it, as `{:ok, payload, %{\"channel\" => channel}}`, or a coded error saying why none came.",
+      "doc": "Call `relay_id` with `message` and wait for its answer: the first output it caused on a sink, as `{:ok, payload, %{\"channel\" => channel}}`, or a coded error saying why none came.",
       "action": "relay.send",
       "remote": true,
       "stream": false,
@@ -992,7 +992,7 @@
           "name": "opts",
           "type": "keyword",
           "required": true,
-          "doc": "`deadline_ms`, and `key` for a partition group."
+          "doc": "`deadline_ms`, `answer_channel` (the channel whose output answers), and `key` for a partition group."
         }
       ]
     },

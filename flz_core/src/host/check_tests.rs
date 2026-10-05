@@ -228,7 +228,6 @@ impl Interpreter {
                 "named" => format!(r#"{{"link":"named","name":"{arg}"}}"#),
                 "sink" if arg.is_empty() => r#"{"link":"sink"}"#.to_string(),
                 "sink" => format!(r#"{{"link":"sink","name":"{arg}"}}"#),
-                "response" => r#"{"link":"response"}"#.to_string(),
                 "into" => {
                     let tasklet = self.tasklet(arg);
                     format!(r#"{{"link":"into","tasklet":{tasklet}}}"#)
@@ -618,26 +617,6 @@ mod derivation {
     }
 
     #[test]
-    fn a_response_end_is_a_plugin_end_that_names_nothing() {
-        let derived = derive("entry(in); in.into(plain); plain.response");
-        let channel = &derived.channels[1];
-        assert_eq!(channel.name, "plain_out", "`response()` takes no name");
-        assert!(channel.response && channel.sink.is_none());
-        assert_eq!(
-            channel.kind,
-            HostChannelKind::Plugin,
-            "a response with no consumer IS the plugin terminal"
-        );
-
-        let hybrid = derive("entry(in); in.into(plain); plain.response; plain.into(second)");
-        assert_eq!(
-            hybrid.channels[1].kind,
-            HostChannelKind::InterTask,
-            "a response WITH a consumer behind it is hybrid, as a sink is"
-        );
-    }
-
-    #[test]
     fn two_sinks_stay_a_duplicate_sink_and_never_ends_twice() {
         let issues = refuse("entry(in); in.into(plain); plain.sink(out); plain.sink(out)");
         assert!(
@@ -646,22 +625,6 @@ mod derivation {
                 .all(|i| !matches!(i, TopologyIssue::ChannelEndsTwice { .. })),
             "read {issues:?}"
         );
-    }
-
-    #[test]
-    fn a_response_after_a_sink_or_a_sink_after_a_response_ends_twice() {
-        for steps in [
-            "entry(in); in.into(plain); plain.sink(out); plain.response",
-            "entry(in); in.into(plain); plain.response; plain.sink",
-        ] {
-            let issues = refuse(steps);
-            assert!(
-                issues
-                    .iter()
-                    .any(|i| matches!(i, TopologyIssue::ChannelEndsTwice { .. })),
-                "`{steps}` read {issues:?}"
-            );
-        }
     }
 
     #[test]

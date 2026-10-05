@@ -278,7 +278,8 @@ defmodule Flezha.Service.Relay do
     ] do
     namespace = Namespace.or_default(namespace)
 
-    with {:ok, metadata} <- with_msg_id(RelayManager.channel_metadata(channel), opts[:msg_id]),
+    with {:ok, metadata} <-
+           put_text(RelayManager.channel_metadata(channel), "flz.msg_id", opts[:msg_id], "msg_id"),
          {:ok, member} <- RelayManager.resolve_member(namespace, relay_id, opts[:key]) do
       member
       |> RelayManager.send_io_confirming(namespace, message, metadata)
@@ -287,13 +288,14 @@ defmodule Flezha.Service.Relay do
   end
 
   @doc """
-  Call `relay_id` with `message` and wait for its answer: the one output
-  a `response()` end produced from it, as `{:ok, payload, %{"channel" =>
-  channel}}`, or a coded error saying why none came.
+  Call `relay_id` with `message` and wait for its answer: the first output
+  it caused on a sink, as `{:ok, payload, %{"channel" => channel}}`, or a
+  coded error saying why none came.
 
-  `opts` carries `deadline_ms` (required, a positive integer) and `key`, the
-  key whose member of a partition group takes the input. The call is judged
-  as a send: its act is an input, and its answer is the sender's own.
+  `opts` carries `deadline_ms` (required, a positive integer),
+  `answer_channel`, the channel whose output answers, and `key`, the key whose
+  member of a partition group takes the input. The call is judged as a send:
+  its act is an input, and its answer is the sender's own.
   """
   @spec call(String.t(), String.t(), binary(), String.t(), keyword(), caller_context()) ::
           {:ok, binary(), map()} | {:error, term()}
@@ -304,24 +306,40 @@ defmodule Flezha.Service.Relay do
       relay_id: @relay_id,
       message: @message,
       channel: @channel,
-      opts: [type: :keyword, doc: "`deadline_ms`, and `key` for a partition group."]
+      opts: [
+        type: :keyword,
+        doc:
+          "`deadline_ms`, `answer_channel` (the channel whose output answers), and `key` for a partition group."
+      ]
     ] do
-    case Keyword.get(opts, :deadline_ms) do
-      deadline_ms when is_integer(deadline_ms) and deadline_ms > 0 ->
-        RelayManager.call_relay(
-          Namespace.or_default(namespace),
-          relay_id,
-          message,
-          RelayManager.channel_metadata(channel),
-          deadline_ms,
-          Keyword.get(opts, :key)
-        )
-
-      written ->
-        {:error,
-         Flezha.Error.new("usage.invalid_number", option: "deadline_ms", value: inspect(written))}
+    # The answer channel rides the call's metadata to the row
+    # `Flezha.Relay.Calls.admit/5` keeps, where `""` names none.
+    with {:ok, deadline_ms} <- deadline(Keyword.get(opts, :deadline_ms)),
+         {:ok, metadata} <-
+           put_text(
+             RelayManager.channel_metadata(channel),
+             "flz.call_answer_channel",
+             opts[:answer_channel],
+             "answer_channel"
+           ) do
+      RelayManager.call_relay(
+        Namespace.or_default(namespace),
+        relay_id,
+        message,
+        metadata,
+        deadline_ms,
+        Keyword.get(opts, :key)
+      )
     end
   end
+
+  defp deadline(deadline_ms) when is_integer(deadline_ms) and deadline_ms > 0,
+    do: {:ok, deadline_ms}
+
+  defp deadline(written),
+    do:
+      {:error,
+       Flezha.Error.new("usage.invalid_number", option: "deadline_ms", value: inspect(written))}
 
   @doc """
   Hand every frame `relay_id` emits (with its parts and dead-letter
@@ -485,13 +503,14 @@ defmodule Flezha.Service.Relay do
   defp member_failure({id, {:error, reason}}),
     do: "#{id} (#{Flezha.Error.from_reason(reason, :"relay.stop").message})"
 
-  defp with_msg_id(metadata, nil), do: {:ok, metadata}
+  # An optional text option, put on the input's metadata under `key`.
+  defp put_text(metadata, _key, nil, _option), do: {:ok, metadata}
 
-  defp with_msg_id(metadata, id) when is_binary(id),
-    do: {:ok, Map.put(metadata, "flz.msg_id", id)}
+  defp put_text(metadata, key, text, _option) when is_binary(text),
+    do: {:ok, Map.put(metadata, key, text)}
 
-  defp with_msg_id(_metadata, id),
-    do: {:error, Flezha.Error.new("usage.not_text", option: "msg_id", value: inspect(id))}
+  defp put_text(_metadata, _key, written, option),
+    do: {:error, Flezha.Error.new("usage.not_text", option: option, value: inspect(written))}
 
   defp delivered(:ok, member), do: {:ok, %{to: member, verdict: :delivered}}
   defp delivered({:ok, verdict}, member), do: {:ok, %{to: member, verdict: verdict}}

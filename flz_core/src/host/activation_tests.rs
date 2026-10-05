@@ -234,10 +234,10 @@ fn outside_the_tier_the_record_carrying_the_offset_keeps_the_edge_value() {
     crate::state_sink::reset_for_test();
 }
 
-// ---- a response end's answers ------------------------------------------------
+// ---- a called input's answers ------------------------------------------------
 
-/// `p0` feeds `p1`, whose channel `ans` ends in `response()`, and `p2`, whose
-/// channel `out` ends in a keyed sink; unkeyed `ans` registers under the tier.
+/// `p0` feeds `p1`, whose channel `ans` ends in a keyed sink, and `p2`, whose
+/// channel `out` ends in a keyed sink.
 fn answering_instance(id: &str, tier: bool) -> Arc<crate::relay::instance::RelayInstance> {
     let run = if tier {
         r#"{"flow":{"exactly":"effectively_once"}}"#
@@ -250,7 +250,8 @@ fn answering_instance(id: &str, tier: bool) -> Arc<crate::relay::instance::Relay
              "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","tasklet":0}}]]}},
                          {{"name":"mid","kind":"inter_task","producer":0,
                            "chains":[[{{"link":"into","tasklet":1}}],[{{"link":"into","tasklet":2}}]]}},
-                         {{"name":"ans","kind":"plugin","producer":1,"chains":[[{{"link":"response"}}]]}},
+                         {{"name":"ans","kind":"plugin","producer":1,"keyed":true,
+                           "chains":[[{{"link":"sink","name":"ans"}}]]}},
                          {{"name":"out","kind":"plugin","producer":2,"keyed":true,
                            "chains":[[{{"link":"sink","name":"out"}}]]}}],
              "tasklets":[{{"name":"p0"}},{{"name":"p1"}},{{"name":"p2"}}]}}"#
@@ -261,7 +262,7 @@ fn answering_instance(id: &str, tier: bool) -> Arc<crate::relay::instance::Relay
 }
 
 /// One input carrying `call` on `stream`, and a completion emitting to both
-/// plugin ends, the sink's output with a forged `flz.reply_to`.
+/// sinks, `out`'s output with a forged `flz.reply_to`.
 fn answering_work(
     stream: Arc<flz_transport::transport::FlezhaStream>,
     call: Option<&str>,
@@ -297,10 +298,11 @@ fn reply_to_of(metadata: &[(String, String)]) -> Option<&str> {
         .map(|(_, value)| value.as_str())
 }
 
-/// Off the tier the outputs leave on the item's connection at settle: the
-/// response end's carries the call, or an empty value, and the sink's none.
+/// Off the tier the outputs leave on the item's connection at settle: every
+/// sink output of a called input carries its call, the forged one replaced,
+/// and a plain input's or a timer's carries no `flz.reply_to` at all.
 #[test]
-fn off_the_tier_only_the_response_output_carries_the_call() {
+fn off_the_tier_every_sink_output_of_a_called_input_carries_the_call() {
     use flz_transport::service::payloader;
 
     let id = format!("answer_off_tier_{}", std::process::id());
@@ -318,7 +320,7 @@ fn off_the_tier_only_the_response_output_carries_the_call() {
             frames.push((payload, metadata.get("flz.reply_to").cloned()));
         }
     }
-    // A timer firing answers nobody: its answer carries the empty token.
+    // A timer firing answers nobody.
     let (mut work, effect) = answering_work(Arc::clone(&stream), None);
     work.item = CellItem::Timer(crate::timer::TimerFire {
         kind: crate::timer::TimerKind::ProcessingTime,
@@ -335,10 +337,10 @@ fn off_the_tier_only_the_response_output_carries_the_call() {
         frames,
         vec![
             (b"ans".to_vec(), Some("w:tok".to_string())),
+            (b"out".to_vec(), Some("w:tok".to_string())),
+            (b"ans".to_vec(), None),
             (b"out".to_vec(), None),
-            (b"ans".to_vec(), Some(String::new())),
-            (b"out".to_vec(), None),
-            (b"ans".to_vec(), Some(String::new())),
+            (b"ans".to_vec(), None),
             (b"out".to_vec(), None),
         ]
     );
@@ -379,7 +381,7 @@ fn recorded_outputs(settle: impl FnOnce()) -> Vec<crate::effect::OutputRecord> {
 
 /// Under the tier the outputs ride the effect record with the same stamps.
 #[test]
-fn under_the_tier_the_recorded_response_output_carries_the_call() {
+fn under_the_tier_every_recorded_sink_output_carries_the_call() {
     let id = format!("answer_tier_{}", std::process::id());
     let instance = answering_instance(&id, true);
     let producer = Arc::clone(&instance.cells[0][0]);
@@ -389,7 +391,7 @@ fn under_the_tier_the_recorded_response_output_carries_the_call() {
         .iter()
         .map(|o| (o.channel.as_str(), reply_to_of(&o.metadata)))
         .collect();
-    assert_eq!(stamps, vec![("ans", Some("w:tok")), ("out", None)]);
+    assert_eq!(stamps, vec![("ans", Some("w:tok")), ("out", Some("w:tok"))]);
 }
 
 /// Off the tier a Cell's failed input parks on its own frame, which carries the
@@ -441,7 +443,8 @@ fn calling_instance(id: &str, tier: bool) -> Arc<crate::relay::instance::RelayIn
                            "chains":[[{{"link":"into","tasklet":1}}],[{{"link":"into","tasklet":2}}]]}},
                          {{"name":"ask","kind":"plugin","producer":1,
                            "chains":[[{{"link":"key"}},{{"link":"call","factory":"agent","deadline_ms":60000,
-                                        "create":false,"channel":"turn","response":"ask.response"}}]]}},
+                                        "create":false,"channel":"turn","answer_channel":"quotes",
+                                        "response":"ask.response"}}]]}},
                          {{"name":"ask.response","kind":"entry","chains":[[{{"link":"into","tasklet":0}}]]}},
                          {{"name":"out","kind":"plugin","producer":2,"keyed":true,
                            "chains":[[{{"link":"sink","name":"out"}}]]}}],
@@ -464,6 +467,8 @@ fn calling_work(
     let forged = vec![
         ("flz.call".to_string(), "id:elsewhere".to_string()),
         ("flz.deadline_at".to_string(), "1".to_string()),
+        ("flz.call_answer_channel".to_string(), "forged".to_string()),
+        ("flz.reply_to".to_string(), "forged".to_string()),
     ];
     let plugin = |channel: &str| schema::Output {
         target: schema::OutputTarget::Plugin {
@@ -503,6 +508,7 @@ fn call_stamps(metadata: &[(String, String)], window: (u64, u64)) -> Vec<(String
 fn expected_call_stamps() -> Vec<(String, String)> {
     [
         ("flz.call", "factory:agent"),
+        ("flz.call_answer_channel", "quotes"),
         ("flz.call_channel", "turn"),
         ("flz.call_create", "false"),
         ("flz.call_response", "ask.response"),
@@ -531,6 +537,23 @@ fn only_a_call_end_reads_the_clock() {
     assert!(sink[0].metadata.is_empty(), "the forged stamps are gone");
     crate::host::stamp::stamp_plugin_ends(slot, None, &mut both, clock);
     assert_eq!(reads.get(), 1, "one read for the batch's call end");
+}
+
+/// A called input's request carries no `flz.reply_to`, the forged one gone;
+/// its sink output carries the call.
+#[test]
+fn a_called_inputs_request_carries_no_token() {
+    let instance = calling_instance(&format!("call_token_{}", std::process::id()), false);
+    let (_, mut effect) = calling_work(stream_pair().0);
+    let token: Arc<str> = Arc::from("w:tok");
+    let slot = &instance.cells[0][0];
+    crate::host::stamp::stamp_plugin_ends(slot, Some(&token), &mut effect.outputs, || 0);
+    let calls: Vec<_> = effect
+        .outputs
+        .iter()
+        .map(|o| reply_to_of(&o.metadata))
+        .collect();
+    assert_eq!(calls, vec![None, Some("w:tok")]);
 }
 
 /// Off the tier a request leaves on the item's connection with every stamp,
