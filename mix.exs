@@ -337,7 +337,7 @@ defmodule Flezha.MixProject do
         ],
         "Up and running": ~r"docs/tutorials/echo/",
         Tutorials: ~r"^tutorials/",
-        Topics: [
+        "Core topics": [
           "docs/topics/basics/building_blocks.md",
           "docs/topics/basics/configuring_a_relay.md",
           "docs/topics/basics/streams.md",
@@ -364,7 +364,6 @@ defmodule Flezha.MixProject do
           "docs/topics/advanced/recorded_effects.md",
           "docs/publishing/maturity.md"
         ],
-        Deploying: ~r"docs/topics/deploying/",
         "The CLI": [
           "docs/topics/cli/cli.md",
           "docs/topics/cli/controller_commands.md",
@@ -386,6 +385,7 @@ defmodule Flezha.MixProject do
         ],
         Plugins: ~r"docs/topics/plugins/",
         "Plugin catalogue": ~r"docs/plugins/",
+        Deploying: ~r"docs/topics/deploying/",
         Architecture: ~r"docs/architecture/",
         Reference: ~r"docs/(errors|troubleshooting/)",
         Contributing: ~r"docs/contributing/"

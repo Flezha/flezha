@@ -26,7 +26,7 @@ only the pages a task needs: each link is that page's full Markdown, next to thi
 - [Feed the echo a file](feed_the_echo_a_file.md): On this page you attach a file to each side of `my_echo`: lines added to one file go in, and their echoes land in another.
 - [Stop everything](stop_everything.md): On this page you stop what these pages started, in reverse order: the plugins, the relay, the runner, then the controller.
 
-## Topics
+## Core topics
 
 - [Building blocks](building_blocks.md): Code that runs on Flezha is made of three pieces: tasklets, relays and runners.
 - [Configuring a relay](configuring_a_relay.md): A relay is configured by one settings tree, declared in its class.
@@ -53,15 +53,6 @@ only the pages a task needs: each link is that page's full Markdown, next to thi
 - [Effectively once](effectively_once.md): A message that is lost is a question nobody answers.
 - [Recorded effects](recorded_effects.md): A tasklet that calls something outside its relay (a model, a tool, a payment service) runs that call again whenever the invocation runs again: after a crash, on a replay, when a sleeping instance wakes or a relay moves to another runner.
 - [Feature maturity](maturity.md): This record says which parts of Flezha are not yet settled.
-
-## Deploying
-
-- [Deploying a controller](deploying_a_controller.md): The controller is the part of Flezha that decides and remembers.
-- [Docker](docker.md): The image `flezha/flezha` holds the same release as the binaries, on Debian, and runs it as the user `flezha` (uid 1000).
-- [Building from source](building_from_source.md): The [release archive](deploying_a_controller.md) is built for Linux x86_64.
-- [Connecting a runner](connecting_a_runner.md): A runner is a program of your own that runs your relays.
-- [Clustering](clustering.md): One controller can carry a whole application, but it is then a single machine to lose.
-- [Kubernetes](kubernetes.md): A controller and its runners run on Kubernetes as they run in Docker or Docker Compose: the same images, the same settings as environment variables, and a shared folder for the Unix sockets the runner reaches the controller through.
 
 ## The CLI
 
@@ -111,6 +102,15 @@ only the pages a task needs: each link is that page's full Markdown, next to thi
 - [Kafka producer plugin](kafka_producer.md): The Kafka producer plugin publishes what a relay ingests or emits to a Kafka topic.
 - [RabbitMQ plugins](rabbitmq.md): The RabbitMQ plugins deliver the messages of a RabbitMQ queue onto a relay's entry channel, and publish a relay's outputs to a RabbitMQ exchange.
 - [Postgres change capture](postgres_cdc.md): The Postgres change capture plugin delivers every inserted, updated and deleted row of Postgres tables onto a relay's entry channel, in commit order, after a first copy of the rows already there.
+
+## Deploying
+
+- [Deploying a controller](deploying_a_controller.md): The controller is the part of Flezha that decides and remembers.
+- [Docker](docker.md): The image `flezha/flezha` holds the same release as the binaries, on Debian, and runs it as the user `flezha` (uid 1000).
+- [Building from source](building_from_source.md): The [release archive](deploying_a_controller.md) is built for Linux x86_64.
+- [Connecting a runner](connecting_a_runner.md): A runner is a program of your own that runs your relays.
+- [Clustering](clustering.md): One controller can carry a whole application, but it is then a single machine to lose.
+- [Kubernetes](kubernetes.md): A controller and its runners run on Kubernetes as they run in Docker or Docker Compose: the same images, the same settings as environment variables, and a shared folder for the Unix sockets the runner reaches the controller through.
 
 ## Reference
 

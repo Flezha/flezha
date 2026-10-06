@@ -227,22 +227,6 @@ and send it through again. Relays can feed each other directly, and
 [a plugin of your own](../topics/plugins/writing_a_plugin.md) connects Flezha to any system
 you can reach from code.
 
-### Where it fits
-
-Some of the products it can be the backend of:
-
-- **Fintech:** payments and transfers as workflows with a compensation for each
-  step, and a cell per account.
-- **Online games:** play rooms and matches, with a cell per room, moves handled
-  in the order they arrive, and timers for turns and timeouts.
-- **Real-time systems:** live feeds handled message by message, with state per
-  key.
-- **IoT:** a cell per device, with its readings folded into its state.
-- **E-commerce:** orders and stock reservations as workflows, and a cart per
-  customer.
-- **SaaS:** a namespace per customer, with its own data, keys and limits.
-- **AI products:** an agent session per user, kept as durable state.
-
 ## What comes with it
 
 - **Durable by default.** Every change your code makes to its state is written
