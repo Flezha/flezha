@@ -239,12 +239,9 @@ defmodule Flezha.MixProject do
       main: "what_is_flezha",
       extras: [
         "docs/getting_started/what_is_flezha.md",
-        "docs/tutorials/echo/first_steps.md",
-        "docs/tutorials/echo/start_the_controller.md",
-        "docs/tutorials/echo/write_the_echo_runner.md",
-        "docs/tutorials/echo/run_the_echo.md",
-        "docs/tutorials/echo/feed_the_echo_a_file.md",
-        "docs/tutorials/echo/stop_everything.md",
+        "docs/getting_started/up_and_running.md",
+        "docs/getting_started/connect_a_plugin.md",
+        "docs/getting_started/stop_and_clean_up.md",
         {"The tradedesk", url: "tutorials/tradedesk.html"},
         {"The agentdesk", url: "tutorials/agentdesk.html"},
         "docs/topics/cli/cli.md",
@@ -331,9 +328,11 @@ defmodule Flezha.MixProject do
       ],
       groups_for_extras: [
         "Getting started": [
-          "docs/getting_started/what_is_flezha.md"
+          "docs/getting_started/what_is_flezha.md",
+          "docs/getting_started/up_and_running.md",
+          "docs/getting_started/connect_a_plugin.md",
+          "docs/getting_started/stop_and_clean_up.md"
         ],
-        "Up and running": ~r"docs/tutorials/echo/",
         Tutorials: ~r"^tutorials/",
         "Core topics": [
           "docs/topics/basics/building_blocks.md",

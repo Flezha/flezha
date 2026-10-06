@@ -132,7 +132,7 @@ structured content. [A relay's API](docs/topics/basics/relay_api.md) covers the 
 
 To start a project of your own, `flz template create <language> <dir>` writes a small,
 tested one in any of the seven languages ([Template commands](docs/topics/cli/template_commands.md)).
-[Up and running](docs/tutorials/echo/first_steps.md) builds the echo by hand, and the
+[Up and running](docs/getting_started/up_and_running.md) builds the echo by hand, and the
 [tutorials](docs/tutorials/tutorials.md) then build two larger example applications step by step.
 
 ## Working with AI
@@ -167,7 +167,7 @@ Decide which ones, then specify each in OpenSpec. -->
 | Where to go | What you find |
 |---|---|
 | [Getting started](docs/getting_started/what_is_flezha.md) | What Flezha is, its pieces, and what it is for |
-| [Up and running](docs/tutorials/echo/first_steps.md) | The echo built by hand: a controller, your own runner and a relay |
+| [Up and running](docs/getting_started/up_and_running.md) | The echo built by hand: a controller, your own runner and a relay |
 | [Tutorials](docs/tutorials/tutorials.md) | Two example applications: a trading desk on a demo exchange, and AI agent sessions |
 | [Documentation index](docs/README.md) | Every topic page, the configuration reference, the plugins and the SDKs |
 | [Errors](docs/errors.md) | Every error code and what to do about it |

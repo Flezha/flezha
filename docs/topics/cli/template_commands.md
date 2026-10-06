@@ -77,7 +77,7 @@ README.md explains each step.
 
 The commands are the README's: build and test, start the runner, then start the
 relay and call it, from another terminal and with a controller running
-([Start the controller](../../tutorials/echo/start_the_controller.md)). `flz` there
+([Start the controller](../../getting_started/up_and_running.md#start-the-controller)). `flz` there
 is the release's `bin/flz`. The call answers `{"page":"home","total":1}`, and
 each call for the same page the next total.
 

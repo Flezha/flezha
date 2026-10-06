@@ -10,7 +10,7 @@
 # build, test, the runner against a controller of its own (`env.sh up`,
 # authorization off, and `env.sh down` after), `flz relay start` and the call.
 # `list` prints the templates and the refusals, `page` runs the commands of
-# docs/getting_started/start_a_project.md from a release folder, `tar` pipes `--tar` into `tar x` and compares the
+# docs/topics/cli/template_commands.md from a release folder, `tar` pipes `--tar` into `tar x` and compares the
 # files with a folder `create` wrote, and `mcp` compares `flezha_new_project`
 # through `flz mcp` with the files `create` wrote; those four reach no
 # controller. The release is env.sh's (FLEZHA_TOOLS_REBUILD=1 rebuilds it from
@@ -127,7 +127,7 @@ list() {
   run "flz template create java taken"
 }
 
-# The page start_a_project.md's commands, from a release folder, as it shows them.
+# The page template_commands.md's commands, from a release folder, as it shows them.
 page_commands() {
   T=$OUT/page.txt
   : >"$T"

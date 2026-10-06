@@ -697,4 +697,4 @@ the same Elixir code either way.
 - [`running_relays.md`](running_relays.md): starting relays from a factory.
 - [`../../glossary.md`](https://github.com/flezha/flezha/blob/main/docs/glossary.md): every term in one place.
 - [`../../sdk/authoring_contract.md`](https://github.com/flezha/flezha/blob/main/docs/sdk/authoring_contract.md): what every SDK guarantees.
-- Up and running: [`write_the_echo_runner.md`](../../tutorials/echo/write_the_echo_runner.md) builds the echo.
+- Up and running: [Write the echo runner](../../getting_started/up_and_running.md#write-the-echo-runner) builds the echo.

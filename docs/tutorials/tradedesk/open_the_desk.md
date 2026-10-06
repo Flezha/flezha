@@ -5,7 +5,7 @@ give the desk a namespace of its own with a key for its runner, and connect the
 runner. [Authorization](../authorization.html) and
 [Namespaces](../namespaces.html) explain both in full.
 
-> Start a controller as in [Start the controller](../start_the_controller.html),
+> Start a controller as in [Start the controller](../up_and_running.html#start-the-controller),
 > from the binaries, but without `FLEZHA_AUTHZ_ENABLED=false`, so authorization
 > is on. Stop the echo's controller first if it still runs. Run the commands
 > below from the directory you started it in.

@@ -646,4 +646,4 @@ reset a whole cluster (run it on each node), or purge a remote backend.
 - [`durability.md`](durability.md): what survives a crash, and the remote tier.
 - [`cli.md`](../cli/cli.md): the whole `flz` command line.
 - [`../advanced/partitioning.md`](../advanced/partitioning.md), [`../advanced/relay_calls.md`](../advanced/relay_calls.md).
-- Up and running: [`run_the_echo.md`](../../tutorials/echo/run_the_echo.md) and [`stop_everything.md`](../../tutorials/echo/stop_everything.md).
+- Getting started: [Run the echo](../../getting_started/up_and_running.md#run-the-echo) and [Stop and clean up](../../getting_started/stop_and_clean_up.md).

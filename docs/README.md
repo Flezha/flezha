@@ -1,14 +1,14 @@
 # Flezha documentation
 
 New to Flezha: start with [What is Flezha](getting_started/what_is_flezha.md), then
-[Up and running](tutorials/echo/first_steps.md). The user documentation comes in four sections,
+[Up and running](getting_started/up_and_running.md). The user documentation comes in four sections,
 in reading order, then a section on how Flezha is built and one for contributors; everything after them is grouped by who reads it.
 
 | Section | What it is |
 | --- | --- |
-| [Getting started](#getting-started) | What Flezha is |
-| [Tutorials](#tutorials) | Up and running, then two example applications, run page by page: what to type and what you should see |
-| [Topics](#topics) | One page per subject, each readable on its own |
+| [Getting started](#getting-started) | What Flezha is, and the echo built by hand |
+| [Tutorials](#tutorials) | Two example applications, run page by page: what to type and what you should see |
+| [Core topics](#core-topics) | One page per subject, each readable on its own |
 | [Deploying](#deploying) | Running controllers and runners: the release, Docker, a build of your own, a cluster, Kubernetes |
 | [Architecture](#architecture) | How Flezha is built: the controller, the kernel, flow and steps, the runner |
 | [Contributing](#contributing) | The rules a contribution follows, the build, the tests and the release |
@@ -36,6 +36,9 @@ reproduces it and the output that command gave.
 | Doc | Covers |
 | --- | --- |
 | [`getting_started/what_is_flezha.md`](getting_started/what_is_flezha.md) | **Start here.** What Flezha is, its pieces, and what it is for |
+| [`getting_started/up_and_running.md`](getting_started/up_and_running.md) | The echo built by hand: how to follow the steps, a controller, your own runner, a relay |
+| [`getting_started/connect_a_plugin.md`](getting_started/connect_a_plugin.md) | A file on each side of the echo, through the file plugins |
+| [`getting_started/stop_and_clean_up.md`](getting_started/stop_and_clean_up.md) | Everything the echo started, stopped in reverse order |
 
 ## Tutorials
 
@@ -45,11 +48,10 @@ type and what you should see; the topic pages say how each piece works.
 | Doc | Covers |
 | --- | --- |
 | [`tutorials.md`](tutorials/tutorials.md) | What each tutorial builds |
-| [`echo/first_steps.md`](tutorials/echo/first_steps.md) | Up and running, the echo: how to follow the steps, a controller, your own runner, a relay, a file on each side |
 | [`tradedesk/tradedesk.md`](tutorials/tradedesk/tradedesk.md) | The tradedesk: an ETL stream and a workflow on a demo exchange, partitions, plugins, crashes |
 | [`agentdesk/agentdesk.md`](tutorials/agentdesk/agentdesk.md) | The agentdesk: sessions behind HTTP, calls, a cluster, Kubernetes |
 
-## Topics
+## Core topics
 
 | Doc | Covers |
 | --- | --- |

@@ -6,14 +6,14 @@ clearing its data.
 
 Each section shows what the group's help prints and, for the verbs used most,
 a command with its answer. Unless a section names another page, the answers
-come from the echo of [Up and running](../../tutorials/echo/run_the_echo.md).
+come from the echo of [Up and running](../../getting_started/up_and_running.md#run-the-echo).
 How `flz` reaches the controller, its options and its exit codes are on the
 [CLI](cli.md) page, and every verb in one list is the
 [command reference](command_reference.md).
 
 ## `flz controller`
 
-Starts and stops the controller, and shows its settings and memory use. Explained in [`deploying_a_controller.md`](../deploying/deploying_a_controller.md), [graceful shutdown](../deploying/deploying_a_controller.md#graceful-shutdown), tutorial [Start the controller](../../tutorials/echo/start_the_controller.md).
+Starts and stops the controller, and shows its settings and memory use. Explained in [`deploying_a_controller.md`](../deploying/deploying_a_controller.md), [graceful shutdown](../deploying/deploying_a_controller.md#graceful-shutdown), [Start the controller](../../getting_started/up_and_running.md#start-the-controller).
 
 ```sh
 $ flz controller help

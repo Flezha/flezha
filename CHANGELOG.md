@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Changed: a shorter getting started, and the larger tutorials on a docs site of their own
+
+Getting started is What is Flezha, then the echo built by hand on three pages: Up and
+running, Connect a plugin, and Stop and clean up. The tradedesk and agentdesk tutorials
+build as a docs site of their own under `tutorials/`, linked from the sidebar. The
+`flz template` page is Template commands under the CLI, local mode is Testing in local
+mode at the end of Core topics, and the Try it page is gone.
+
 ### Added: `flz template`, a new project from the release
 
 `flz template create <language> <dir>` writes a small, complete project from a template the

@@ -102,4 +102,4 @@ refused at boot.
 - [`durability.md`](../basics/durability.md) and [`effectively_once.md`](../advanced/effectively_once.md): what an output plugin can promise
 - [Controller environment variables](../../configuration/environment_variables.md): `FLEZHA_PLUGIN_IDLE_STOP_MS`, `FLEZHA_FILE_PLUGIN_ROOT` and the other plugin settings
 - [`../../errors.md`](../../errors.md): every `plugin.*` code
-- Up and running: [`feed_the_echo_a_file.md`](../../tutorials/echo/feed_the_echo_a_file.md); tutorial: [`watch_the_trades.md`](tutorials/watch_the_trades.html)
+- Getting started: [Connect a plugin](../../getting_started/connect_a_plugin.md); tutorial: [`watch_the_trades.md`](tutorials/watch_the_trades.html)

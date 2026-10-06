@@ -6,14 +6,14 @@ started on a schedule.
 
 Each section shows what the group's help prints and, for the verbs used most,
 a command with its answer. Unless a section names another page, the answers
-come from the echo of [Up and running](../../tutorials/echo/run_the_echo.md).
+come from the echo of [Up and running](../../getting_started/up_and_running.md#run-the-echo).
 How `flz` reaches the controller, its options and its exit codes are on the
 [CLI](cli.md) page, and every verb in one list is the
 [command reference](command_reference.md).
 
 ## `flz relay`
 
-Starts and stops relays, sends them input, and shows what they answer and emit. Explained in [`running_relays.md`](../basics/running_relays.md), [`workflows.md`](../basics/workflows.md), [`partitioning.md`](../advanced/partitioning.md), [`relay_calls.md`](../advanced/relay_calls.md), [`rewinding_a_turn.md`](../advanced/rewinding_a_turn.md), tutorial [Run the echo](../../tutorials/echo/run_the_echo.md).
+Starts and stops relays, sends them input, and shows what they answer and emit. Explained in [`running_relays.md`](../basics/running_relays.md), [`workflows.md`](../basics/workflows.md), [`partitioning.md`](../advanced/partitioning.md), [`relay_calls.md`](../advanced/relay_calls.md), [`rewinding_a_turn.md`](../advanced/rewinding_a_turn.md), [Run the echo](../../getting_started/up_and_running.md#run-the-echo).
 
 ```sh
 $ flz relay help
@@ -136,7 +136,7 @@ EXAMPLES:
     flz relay start order_executor --text '{"symbol":"EUR/USD","quantity":10}' --channel order
 ```
 
-The echo from Up and running, started, listed, sent a message and stopped:
+The echo from the getting-started pages, started, listed, sent a message and stopped:
 
 ```sh
 $ flz relay start echo --id my_echo

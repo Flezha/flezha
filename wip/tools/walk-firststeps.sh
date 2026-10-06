@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Walk the Part 1 guides (docs/guides: controller_deployment, runner_deployment,
-# running_relays, sources_and_sinks, stop_everything) for one SDK's echo
-# example, against the private controller `env.sh up <sdk>` started with
-# authorization off, as Part 1 runs it:
+# Walk the getting-started pages (docs/getting_started: up_and_running,
+# connect_a_plugin, stop_and_clean_up) for one SDK's echo example, against the
+# private controller `env.sh up <sdk>` started with authorization off, as those
+# pages run it:
 #
 #   FLEZHA_AUTHZ_ENABLED=false wip/tools/env.sh up <sdk>
 #   wip/tools/walk-firststeps.sh <sdk> [page...]

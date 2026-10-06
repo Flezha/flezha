@@ -214,8 +214,8 @@ state, a flaky model call is retried and a hopeless one set aside, an action is
 undone by a compensation you declare, and a session waits between messages
 without holding a runner.
 [`durable_agent`](https://github.com/flezha/flezha_python_sdk/tree/main/examples/durable_agent)
-is such a loop in Python. Part 3 builds a whole service around one: an HTTP
-plugin of its own in front, an agent that streams its answers back, and one
+is such a loop in Python. [The agentdesk tutorial](tutorials/agentdesk.html)
+builds a whole service around one: an HTTP plugin of its own in front, an agent that streams its answers back, and one
 session per user.
 
 ### Stateless handlers and the glue between systems
@@ -267,5 +267,4 @@ you can reach from code.
 
 ## Next
 
-[Up and running](../tutorials/echo/first_steps.md) builds a first relay by hand,
-page by page.
+[Up and running](up_and_running.md) builds a first relay by hand.

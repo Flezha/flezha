@@ -4,8 +4,9 @@ Each tutorial runs one example application, page by page, so if you follow
 the steps you have a working toy at the end. It is there to try things on, not
 to deploy. The tutorials do not share their example, and nothing needs to be
 left running from one to the next; each assumes you have done
-[Up and running](../first_steps.html) and the tutorials before it. Their steps
-work as they do there.
+[Up and running](../up_and_running.html), [Connect a plugin](../connect_a_plugin.html),
+[Stop and clean up](../stop_and_clean_up.html) and the tutorials before it. Their
+steps work as they do there.
 
 A tutorial page shows what to do and what you should see. What a piece of
 Flezha is and how it works is on its topic page, which every tutorial links at

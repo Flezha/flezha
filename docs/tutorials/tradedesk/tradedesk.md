@@ -20,7 +20,7 @@ flowchart LR
 
 > #### What you need {: .tip}
 >
-> - What [Up and running](../first_steps.html) needed: a controller
+> - What [Up and running](../up_and_running.html) needed: a controller
 >   release or Docker, and one language's toolchain for the runner.
 > - **Node.js, with npm**, to run the demo exchange.
 > - **git**, to get the example and the demo exchange.

@@ -15,15 +15,9 @@ only the pages a task needs: each link is that page's full Markdown, next to thi
 ## Getting started
 
 - [What is Flezha](what_is_flezha.md): Flezha is a durable, distributed runtime for stateless and stateful data processing.
-
-## Up and running
-
-- [The echo](first_steps.md): These pages build the smallest complete Flezha deployment by hand: a controller, a runner of your own that serves an `echo` relay, and a file on each side of it.
-- [Start the controller](start_the_controller.md): On this page you start one controller and leave it running for the rest of Up and running.
-- [Write the echo runner](write_the_echo_runner.md): On this page you get the echo runner in your language and start it.
-- [Run the echo](run_the_echo.md): On this page you start a relay from the `echo` factory your runner registered, send it a message and watch what comes out.
-- [Feed the echo a file](feed_the_echo_a_file.md): On this page you attach a file to each side of `my_echo`: lines added to one file go in, and their echoes land in another.
-- [Stop everything](stop_everything.md): On this page you stop what these pages started, in reverse order: the plugins, the relay, the runner, then the controller.
+- [Up and running](up_and_running.md): This page and the next two build the smallest complete Flezha deployment by hand: a controller, a runner of your own that serves an `echo` relay, and a file on each side of it.
+- [Connect a plugin](connect_a_plugin.md): On this page you attach a file to each side of `my_echo`: lines added to one file go in, and their echoes land in another.
+- [Stop and clean up](stop_and_clean_up.md): On this page you stop what the last two pages started, in reverse order: the plugins, the relay, the runner, then the controller.
 
 ## Core topics
 
@@ -80,7 +74,7 @@ only the pages a task needs: each link is that page's full Markdown, next to thi
 - [Where a plugin runs](where_plugins_run.md): A relay plugin runs at the edge of the relays bound to it.
 - [Enabling and binding](enabling_and_binding.md): `flz plugin` enables a plugin by name and binds relays to it.
 - [Plugins from your own code](plugins_from_code.md): Enabling, binding, unbinding and disabling are on the SDK's `control()` handle, so an application can attach the plugins its own namespace needs.
-- [Plugin examples](plugin_examples.md): Two setups from the guides: the echo's file plugins from Up and running, and the tradedesk's live feed into a partitioned relay.
+- [Plugin examples](plugin_examples.md): Two setups from the guides: the echo's file plugins from [Connect a plugin](../../getting_started/connect_a_plugin.md), and the tradedesk's live feed into a partitioned relay.
 - [Installing plugins](installing_plugins.md): A plugin that does not ship with the controller comes as a plugin package: a `.fpz` file carrying compiled code, the plugin's own application and every library it needs that the controller release does not ship.
 - [Hooks](hooks.md): A hook is a moment at which the controller calls a plugin.
 - [Writing a plugin](writing_a_plugin.md): A plugin of your own is an ordinary Elixir Mix project: it depends on `flezha` and on the libraries it needs, names its providers in its application environment, and is built into a plugin package (`.fpz`) that a controller loads when it starts.
