@@ -44,7 +44,6 @@ only the pages a task needs: each link is that page's full Markdown, next to thi
 - [Effectively once](effectively_once.md): A message that is lost is a question nobody answers.
 - [Recorded effects](recorded_effects.md): A tasklet that calls something outside its relay (a model, a tool, a payment service) runs that call again whenever the invocation runs again: after a crash, on a replay, when a sleeping instance wakes or a relay moves to another runner.
 - [Testing in local mode](local_mode.md): Local mode runs a relay inside your own process, with no controller, no Docker and no socket.
-- [Feature maturity](maturity.md): This record says which parts of Flezha are not yet settled.
 
 ## The CLI
 
@@ -109,4 +108,5 @@ only the pages a task needs: each link is that page's full Markdown, next to thi
 - [Errors](errors.md): Every failure Flezha reports carries one shape, on every surface: the `flz` CLI, the published consumer API, the SDK administration door, spawn, a runner connect and every SDK.
 - [A controller will not start, or will not stop](controller_will_not_start.md)
 - [A runner cannot connect](runner_cannot_connect.md): `flz runner check` runs exactly the probe a runner runs.
+- [Feature maturity](maturity.md): This record says which parts of Flezha are not yet settled.
 

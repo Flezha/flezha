@@ -356,8 +356,7 @@ defmodule Flezha.MixProject do
           "docs/topics/advanced/streamed_answers.md",
           "docs/topics/advanced/effectively_once.md",
           "docs/topics/advanced/recorded_effects.md",
-          "docs/topics/basics/local_mode.md",
-          "docs/publishing/maturity.md"
+          "docs/topics/basics/local_mode.md"
         ],
         "The CLI": [
           "docs/topics/cli/cli.md",
@@ -382,7 +381,7 @@ defmodule Flezha.MixProject do
         "Plugin catalogue": ~r"docs/plugins/",
         Deploying: ~r"docs/topics/deploying/",
         Architecture: ~r"docs/architecture/",
-        Reference: ~r"docs/(errors|troubleshooting/)",
+        Reference: ~r"docs/(errors|troubleshooting/|publishing/maturity)",
         Contributing: ~r"docs/contributing/"
       ]
     ] ++ docs_look()
