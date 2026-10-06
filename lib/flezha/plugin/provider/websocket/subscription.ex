@@ -250,12 +250,17 @@ defmodule Flezha.Plugin.Provider.Websocket.Subscription do
   def polled?(%__MODULE__{url: url}), do: url != nil
   def polled?(_subscription), do: false
 
-  # Keep only the items this partition owns. The one filter point: everything
-  # downstream — the applied set, the delta frames, the durable
-  # `applied_subscriptions`, the connect-time re-assert — derives from here.
-  defp owned(%__MODULE__{range: nil}, items), do: MapSet.new(items)
+  @doc """
+  Keep only the items this partition owns. The one filter point: everything
+  downstream — the applied set, the delta frames, the durable
+  `applied_subscriptions`, the connect-time re-assert — derives from here,
+  including the persisted set a starting socket resumes from, which after a
+  rescale was committed under another member's range.
+  """
+  @spec owned(t(), [binary()]) :: MapSet.t(binary())
+  def owned(%__MODULE__{range: nil}, items), do: MapSet.new(items)
 
-  defp owned(%__MODULE__{range: range}, items),
+  def owned(%__MODULE__{range: range}, items),
     do: items |> Enum.filter(&Flezha.Partition.owns?(range, &1)) |> MapSet.new()
 
   @doc """

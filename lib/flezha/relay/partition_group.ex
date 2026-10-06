@@ -377,22 +377,24 @@ defmodule Flezha.Relay.PartitionGroup do
               |> Keyword.put(:state_source_node, node())
         }
 
-        {:ok, template, restamp_plugins(member_bindings(namespace, member_id, builder))}
+        declared = for b <- Keyword.get(builder.opts, :bindings, []), do: {b.id, b}
+        bindings = member_bindings(namespace, member_id, declared)
+        {:ok, template, restamp_plugins(Enum.map(bindings, &elem(&1, 1)))}
 
       {:error, reason} ->
         {:error, {:member_unreadable, member_id, reason}}
     end
   end
 
-  # The bindings to mint the new members from: the member's declared entry,
-  # which a bind after the group start rewrites, so a group bound afterwards
-  # (`flz plugin bind <name> --relay_id <group>`) does not rescale into
-  # members with no plugins at all. The builder is the fallback for a member
-  # whose row cannot be read.
-  defp member_bindings(namespace, member_id, builder) do
+  # A member's bindings as `{plugin_id, binding}` pairs, read from its
+  # registry entry, which a bind after the group start rewrites: a group bound
+  # afterwards (`flz plugin bind <name> --relay_id <group>`) neither rescales
+  # into members with no plugins nor loses them to a refused quiesce.
+  # `fallback` answers for a member whose row cannot be read.
+  defp member_bindings(namespace, member_id, fallback) do
     case HubManager.relay_bindings(namespace, member_id) do
-      {:ok, bindings} -> Enum.map(bindings, &elem(&1, 1))
-      {:error, _unreadable} -> Keyword.get(builder.opts, :bindings, [])
+      {:ok, bindings} -> bindings
+      {:error, _unreadable} -> fallback
     end
   end
 
@@ -407,17 +409,39 @@ defmodule Flezha.Relay.PartitionGroup do
 
   # Sources off, every input log fully consumed, no parked entries anywhere.
   # Until all three hold, moving a Cell's files would move it away from
-  # input it has not read yet.
+  # input it has not read yet. A quiesce refusal leaves the group streaming:
+  # parked entries are checked before any source is touched, and a quiesce
+  # that cannot complete binds back what it unbound, which is also what a
+  # re-run reads its plugin set from.
   defp quiesce_group(namespace, members, run, opts) do
-    _ = PluginManager.unbind_all(namespace, Enum.map(members, & &1.id))
+    ids = Enum.map(members, & &1.id)
 
     with :ok <- refuse_on_parked_entries(members) do
+      saved = for id <- ids, do: {id, member_bindings(namespace, id, [])}
+      _ = PluginManager.unbind_all(namespace, ids)
+
       deadline =
         System.monotonic_time(:millisecond) +
           Keyword.get(opts, :quiesce_timeout_ms, Durations.get(:partition_quiesce_timeout_ms))
 
-      await_consumed(members, run, deadline)
+      with {:error, _} = refused <- drained(members, run, deadline) do
+        rebind(namespace, saved)
+        refused
+      end
     end
+  end
+
+  defp rebind(namespace, saved) do
+    with {:error, {:unrebound, relay_ids}} <- PluginManager.rebind_all(namespace, saved) do
+      Logger.error(
+        "[partition_group] a refused rescale could not bind its plugins back to " <>
+          "#{inspect(relay_ids)}; bind them again with `flz plugin bind`"
+      )
+    end
+  end
+
+  defp drained(members, run, deadline) do
+    with :ok <- refuse_on_parked_entries(members), do: await_consumed(members, run, deadline)
   end
 
   defp refuse_on_parked_entries(members) do

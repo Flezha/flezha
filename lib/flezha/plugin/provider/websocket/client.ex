@@ -128,7 +128,8 @@ defmodule Flezha.Plugin.Provider.Websocket.Client do
   # That is what keeps the promise that an unconfigured plugin pays nothing:
   # `handle_in/2`'s ack clause matches on `:inflight`, so its head simply does
   # not match here, and no timer is ever scheduled.
-  defp with_subscription_state(state, opts) do
+  @doc false
+  def with_subscription_state(state, opts) do
     case opts.subscription do
       nil ->
         state
@@ -136,7 +137,7 @@ defmodule Flezha.Plugin.Provider.Websocket.Client do
       subscription ->
         Map.merge(state, %{
           subscription: subscription,
-          applied: MapSet.new(opts.applied_subscriptions),
+          applied: Subscription.owned(subscription, opts.applied_subscriptions),
           # A literal item list is the desired set from the start; a polled
           # one has none until a poll lands.
           desired: Subscription.static_desired(subscription),

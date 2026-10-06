@@ -490,7 +490,39 @@ defmodule FlezhaTest.Relay.PartitionGroupRescaleTest do
       assert length(:ets.tab2list(registry)) == 3
     end
 
-    test "refuses while any member still has parked DLQ entries", %{registry: registry} do
+    # Fails when: a rescale that times out leaves the group running with no
+    # sources and no outputs, and a re-run re-mints members with no plugins,
+    # since it reads them from the bindings this quiesce removed.
+    test "a quiesce that times out binds back every binding it removed" do
+      parent = self()
+      binding = %Plugin{id: "ohlc_ws", provider: nil, namespace: @namespace}
+
+      stub(HubManager, :relay_bindings, fn @namespace, _member ->
+        {:ok, [{binding.id, binding}]}
+      end)
+
+      stub(PluginManager, :rebind_all, fn @namespace, saved ->
+        send(parent, {:rebound, saved}) && :ok
+      end)
+
+      stub(InputLog, :tail, fn class ->
+        if class == "ohlc#p1", do: {:ok, 7, 42}, else: {:ok, -1, -1}
+      end)
+
+      assert {:error, {:quiesce_timeout, "ohlc#p1", :flow, _}} =
+               PartitionGroup.rescale(@namespace, @group, 2, quiesce_timeout_ms: 0)
+
+      assert [saved] = drain(:rebound)
+
+      assert Enum.sort(saved) ==
+               for(m <- ["ohlc#p0", "ohlc#p1", "ohlc#p2"], do: {m, [{binding.id, binding}]})
+    end
+
+    # Fails when: a rescale refused for parked entries has already stripped the
+    # group of its plugins, so the operator who drops the entries and re-runs
+    # it as told gets members with no sources and no outputs.
+    test "refuses while any member still has parked DLQ entries, leaving its plugins bound",
+         %{registry: registry} do
       stub(Dlq.Store, :list, fn class ->
         if class == "ohlc#p2", do: [%{id: "a"}, %{id: "b"}], else: []
       end)
@@ -498,6 +530,7 @@ defmodule FlezhaTest.Relay.PartitionGroupRescaleTest do
       assert {:error, {:parked_entries, ["ohlc#p2 (2)"]}} =
                PartitionGroup.rescale(@namespace, @group, 2)
 
+      assert drain(:sources_off) == []
       assert length(:ets.tab2list(registry)) == 3
     end
   end

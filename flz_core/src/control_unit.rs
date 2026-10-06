@@ -172,20 +172,21 @@ fn reconnect_backoff(attempt: u32) -> Duration {
     ))
 }
 
-/// Record how a control session ended, before the reconnect it asks for is
-/// posted — the coordinator opens the next one off this count.
+/// End a control session: record how it ended, then post the reconnect — the
+/// coordinator opens the next one off this count.
 ///
 /// Only a completed handshake resets the rung, so a controller that restarts
 /// under a healthy fleet is reconnected to at once. The first inbound frame is
 /// not admission: a controller that writes `assign_runner_id` and then fails
 /// the connect, or severs the data streams before the session is whole, would
 /// otherwise be retried as fast as the kernel allows.
-fn note_session_end(completed: bool) {
+fn end_session(otx: &Mutex<Sender<RunnerMessage>>, completed: bool, reason: &'static str) {
     if completed {
         FAILED_SESSIONS.store(0, Ordering::Relaxed);
     } else {
         FAILED_SESSIONS.fetch_add(1, Ordering::Relaxed);
     }
+    let _ = otx.lock().unwrap().send(RunnerMessage::Reconnect(reason));
 }
 
 /// The diagnosis is printed once per retry loop; the per-attempt line is
@@ -321,27 +322,26 @@ fn sock_conn(
     let mut live = ControlLiveness::new();
     let answered = live.connect_answered();
 
+    // Present the self-owned stable identity on every connect (initial and
+    // reconnect): the controller resolves a reconnect from the always-present
+    // stable id + the existing bindings (a binding swap), so there is no
+    // separate reconnect frame and no `itx`-gated behaviour. Written before the
+    // stream is handed back: the controller reads only a connection's first
+    // frame as the handshake, and the caller may write (a queued keepalive)
+    // the moment this returns.
+    if let Err(e) = send_init_msg(namespace, &declared, stream_clone.clone()) {
+        tracing::warn!(
+            target: "flezha::transport",
+            kind = ?e.kind(),
+            "control channel init send failed (peer vanished mid-handshake); reconnecting: {}",
+            e
+        );
+        end_session(&otx, false, "write_error");
+        return (answered, stream_box);
+    }
+
     thread::spawn(move || {
         let _ = stream_clone.set_read_timeout(Some(live.current_deadline()));
-
-        // Present the self-owned stable identity on every connect (initial and
-        // reconnect): the controller resolves a reconnect from the
-        // always-present stable id + the existing bindings (a binding swap), so
-        // there is no separate reconnect frame and no `itx`-gated behaviour.
-        if let Err(e) = send_init_msg(namespace, &declared, stream_clone.clone()) {
-            tracing::warn!(
-                target: "flezha::transport",
-                kind = ?e.kind(),
-                "control channel init send failed (peer vanished mid-handshake); reconnecting: {}",
-                e
-            );
-            note_session_end(false);
-            let _ = otx
-                .lock()
-                .unwrap()
-                .send(RunnerMessage::Reconnect("write_error"));
-            return;
-        }
 
         // Only an initial connect is confirmed, and only once the controller
         // has answered it, or has let the grace pass without a word.
@@ -459,8 +459,7 @@ fn read_loop(
                             e
                         );
                     }
-                    note_session_end(live.handshake_completed());
-                    let _ = otx.lock().unwrap().send(RunnerMessage::Reconnect(reason));
+                    end_session(otx, live.handshake_completed(), reason);
                     return;
                 }
             },
@@ -922,6 +921,33 @@ mod tests {
             !json.contains("previous_runner_id"),
             "the retired previous_runner_id field must be gone, got: {json}"
         );
+    }
+
+    // fails when: a runner that reconnects after a controller crash stays
+    // unregistered forever. The controller reads only the first frame of a
+    // pending connection and needs it to be the handshake; a keepalive tick
+    // queued during the reconnect backoff is written the moment `sock_conn`
+    // returns, so the handshake must already be on the wire by then.
+    #[test]
+    fn the_handshake_is_on_the_wire_before_the_stream_is_handed_back() {
+        let _guard = env_test_guard();
+
+        let (stream, ctrl_end) = stream_pair();
+        let (otx, _orx) = unbounded();
+        let (_answered, stream) = sock_conn(
+            "test_ns".to_string(),
+            Arc::new(RwLock::new(vec!["probe".to_string()])),
+            stream,
+            None,
+            Arc::new(Mutex::new(otx)),
+        );
+        send_keepalive_ping(&stream).unwrap();
+
+        let ctrl: FlezhaStream = FlezhaStream::Unix(ctrl_end);
+        let (first, _message, _meta) = payloader::extract_payload(&ctrl).unwrap();
+        assert_eq!(first, "connect_control_channel");
+        let (second, _message, _meta) = payloader::extract_payload(&ctrl).unwrap();
+        assert_eq!(second, liveness::CONTROL_PING_PAYLOAD_ID);
     }
 
     // The namespace credential rides the connect frame, and only when this

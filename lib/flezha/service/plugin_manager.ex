@@ -479,6 +479,36 @@ defmodule Flezha.Service.PluginManager do
     if undisabled == [], do: :ok, else: {:error, {:undisabled, undisabled}}
   end
 
+  @doc """
+  Bind back what `unbind_all/2` removed, given each relay's bindings as
+  `HubManager.relay_bindings/2` answered them before the unbind: a rescale
+  that cannot complete its quiesce restores its group's plugins this way.
+  Answers `:ok`, or `{:error, {:unrebound, relay_ids}}`.
+  """
+  @spec rebind_all(binary(), [{binary(), [{binary(), Plugin.t()}]}]) ::
+          :ok | {:error, {:unrebound, [binary()]}}
+  def rebind_all(namespace, saved) do
+    outcomes =
+      Parallel.results(saved, &rebind_relay(namespace, &1),
+        timeout: Durations.get(:plugin_disable_fanout_ms)
+      )
+
+    unrebound = for {{relay_id, _}, outcome} <- outcomes, not rebound?(outcome), do: relay_id
+    if unrebound == [], do: :ok, else: {:error, {:unrebound, unrebound}}
+  end
+
+  # A member's binding id carries its partition suffix; the entry is enabled
+  # under the base name.
+  defp rebind_relay(namespace, {relay_id, bindings}) do
+    for {id, binding} <- bindings do
+      with {:ok, entry} <- fetch_entry(namespace, Plugin.base_id(id)),
+           do: bind_one(namespace, relay_id, binding, entry)
+    end
+  end
+
+  defp rebound?({:ok, results}), do: Enum.all?(results, &(&1 in [:ok, :already_bound]))
+  defp rebound?(_failed), do: false
+
   ## Update
 
   @doc """

@@ -235,6 +235,26 @@ defmodule Flezha.Plugin.Provider.WebsocketAppliedSetTest do
       end
     end
 
+    # Fails when: every rescale parks a burst of frames on the members, which
+    # then blocks the next rescale. A re-pointed member resumes the old
+    # member's persisted applied set, and its connect re-asserts it whole.
+    test "a member resuming another range's applied set re-asserts only what it owns" do
+      subscription = subscription(%{range: Enum.at(Flezha.Partition.ranges(3), 1)})
+
+      s =
+        state(%{websocket_established?: false})
+        |> Websocket.Client.with_subscription_state(%{
+          subscription: subscription,
+          applied_subscriptions: @items,
+          source_plugin_id: "ws#p1",
+          source_namespace: "default",
+          source_relay_id: "demo#p1"
+        })
+
+      assert {:reply, [frame], _ns} = Websocket.Client.handle_connect(101, [], s)
+      assert items_of(frame) == ["BTC-USD"]
+    end
+
     test "an unpartitioned plugin still sees the whole list" do
       assert {:reply, [frame], _} = poll(state(), source(@items))
       assert Enum.sort(items_of(frame)) == Enum.sort(@items)
