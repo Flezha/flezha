@@ -275,3 +275,42 @@ test SHALL assert it; its record of console calls known not to resolve SHALL be 
 - **WHEN** `test/flezha/api/consumer_surface_test.exs` runs
 - **THEN** it fails naming any console call that is neither published nor context-free
 
+### Requirement: A caller SHALL be able to read which operations its role grants
+
+`Flezha.Service.Namespace.whoami/1` SHALL answer, beside the principal, namespace and role,
+`operations`: the names of the operations `Flezha.Service.Admin.catalogue/1` answers for the
+same caller context. The answer SHALL NOT change how any call is judged. `flz auth whoami`
+SHALL print the same text as before.
+
+#### Scenario: A viewer's operations
+
+- **WHEN** a caller bound as `viewer` calls `whoami/1` while authorization is enforced
+- **THEN** `operations` lists exactly the names `Admin.catalogue/1` answers for that context
+- **AND** it includes `Relay.list` and excludes `Relay.start`
+
+#### Scenario: An unbound caller under the open posture
+
+- **WHEN** a caller with no role calls `whoami/1` while authorization is open
+- **THEN** `operations` lists every operation that caller reaches
+
+#### Scenario: The CLI text
+
+- **WHEN** an operator runs `flz auth whoami`
+- **THEN** it prints the principal, namespace and role lines and nothing more
+
+### Requirement: A relay class's history retention SHALL be readable
+
+`Flezha.Service.Steps.cells/2` SHALL answer `history_retention_hours`, the write-ahead history
+retention the relay class runs with, resolved as `Flezha.State.PersistenceResolver.retention_hours/1`
+resolves it, so a value set through `Steps.set_retention/3` is read back.
+
+#### Scenario: The default
+
+- **WHEN** no retention was set for a relay class
+- **THEN** `cells/2` answers the configured default
+
+#### Scenario: A value set since boot
+
+- **WHEN** `set_retention/3` set a relay class's retention to 7 hours
+- **THEN** `cells/2` for that class answers `history_retention_hours: 7`
+

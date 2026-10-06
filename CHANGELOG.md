@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Added: a caller can read which operations it holds, and a class's history retention
+
+`Namespace.whoami/1` now answers `operations`, the names of the operations the caller's role
+grants (what `Admin.catalogue/1` answers for the same context), so a console can offer only
+the controls a caller may use; `flz auth whoami` prints the same text. `Steps.cells/2` answers
+`history_retention_hours`, so a retention set through `Steps.set_retention/3` can be read back.
+
 ### Fixed: every relay keeps its liveness counters when another one stops
 
 The liveness counter table belonged to whichever relay or channel registered first, so stopping

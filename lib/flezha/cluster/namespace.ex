@@ -25,6 +25,7 @@ defmodule Flezha.Service.Namespace do
   alias Flezha.AuthZ.Role
   alias Flezha.AuthZ.RoleStore
   alias Flezha.AuthZ.TokenStore
+  alias Flezha.Service.Admin
   alias Flezha.Service.CallerContext
 
   @type caller_context :: CallerContext.t()
@@ -91,10 +92,18 @@ defmodule Flezha.Service.Namespace do
     end
   end
 
-  @doc "The identity the caller's credential resolves to."
+  @doc """
+  The identity the caller's credential resolves to.
+
+  `operations` names the operations its role grants, as
+  `Flezha.Service.Admin.catalogue/1` answers them for the same context, so a
+  surface can offer only what the caller may use. The namespace is still judged
+  at each call.
+  """
   @spec whoami(caller_context()) :: {:ok, map()} | {:error, term()}
   verb whoami(caller_context), verb: :authz_whoami do
-    {:ok, Map.new([:principal, :namespace, :role], &{&1, Map.get(caller_context, &1)})}
+    identity = Map.new([:principal, :namespace, :role], &{&1, Map.get(caller_context, &1)})
+    {:ok, Map.put(identity, :operations, Enum.map(Admin.catalogue(caller_context), & &1.name))}
   end
 
   @doc """

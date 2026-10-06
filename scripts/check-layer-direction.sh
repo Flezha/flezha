@@ -161,7 +161,8 @@ MODULE_LAYERS = {
     # signed S3 requests over the client, naming only it and the knob table
     "Flezha.Http.S3": 0,
     "Flezha.Service.Dlq": 5,
-    "Flezha.Service.Namespace": 5,
+    # `whoami/1` answers which of the whole surface's operations a caller holds
+    "Flezha.Service.Namespace": 6,
     "Flezha.Service.Steps": 5,
 }
 

@@ -188,6 +188,9 @@ defmodule Flezha.Service.Steps do
   @doc """
   One row per Cell of `relay_class` with persisted state: its WAL and
   snapshot sequences, WAL size and the writer's counters.
+
+  `history_retention_hours` is how long the class's write-ahead history is
+  kept, the value `set_retention/3` changes.
   """
   @spec cells(String.t(), caller_context()) :: {:ok, map()} | {:error, term()}
   verb cells(relay_class, caller_context),
@@ -210,7 +213,12 @@ defmodule Flezha.Service.Steps do
         }
       end
 
-    {:ok, %{relay_class: relay_class, cells: rows}}
+    {:ok,
+     %{
+       relay_class: relay_class,
+       history_retention_hours: PersistenceResolver.retention_hours(relay_class),
+       cells: rows
+     }}
   end
 
   @doc """
