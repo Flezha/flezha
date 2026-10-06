@@ -11,6 +11,12 @@ the controls a caller may use; `flz auth whoami` prints the same text. `Steps.ce
 `PluginManager.enabled/2` rows answer `provider_id`, the id a plugin's provider is registered
 under, which `Fleet.provider/2` and an enable take; `provider` stays the provider's name.
 
+### Fixed: a deleted Cell is no longer listed as one with persisted state
+
+`Steps.delete/2` removed a Cell's files and stopped its writer but kept its counters, which
+`Steps.cells/2` and `flz state list` read their rows from, so the deleted Cell stayed listed with
+the counters it had before. Deleting a Cell now drops them too.
+
 ### Fixed: every relay keeps its liveness counters when another one stops
 
 The liveness counter table belonged to whichever relay or channel registered first, so stopping

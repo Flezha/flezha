@@ -331,3 +331,13 @@ package this controller did not load SHALL answer `provider_id: nil`.
 - **WHEN** a plugin's provider module is registered under no id on this controller
 - **THEN** its row answers `provider_id: nil`
 
+### Requirement: A deleted Cell SHALL no longer be listed
+
+After `Flezha.Service.Steps.delete/2` deletes a Cell, `Flezha.Service.Steps.cells/2` SHALL not
+list it, until a writer for that Cell is started again.
+
+#### Scenario: Deleting a Cell
+
+- **WHEN** a Cell with persisted state is deleted
+- **THEN** `cells/2` for its relay class answers no row for it
+

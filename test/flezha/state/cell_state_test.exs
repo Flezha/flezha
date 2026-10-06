@@ -266,7 +266,7 @@ defmodule Flezha.State.DeleteCellTest do
   # async: false: writes Application env; a shared on-disk root; registered singletons.
   use FlezhaTest.StateCase, async: false
 
-  alias Flezha.State.{Paths, Supervisor, TestHelpers, WalWriter}
+  alias Flezha.State.{Metrics, Paths, Supervisor, TestHelpers, WalWriter}
   alias Flezha.State.Snapshot, as: StateSnapshot
 
   setup do
@@ -288,14 +288,16 @@ defmodule Flezha.State.DeleteCellTest do
     assert File.exists?(Paths.wal_path(pid))
     assert Paths.snapshot_paths(pid) != []
     assert File.exists?(Paths.outbox_dedup_path(pid))
+    assert List.keymember?(Metrics.snapshot_all(), pid, 0)
 
     assert {:ok, %{cell_id: ^pid, status: :ok}} = Supervisor.delete_cell(pid)
 
-    # Writer stopped, every file gone.
+    # Writer stopped, every file gone, and no longer listed by its counters.
     assert Supervisor.lookup(pid) == :error
     refute File.exists?(Paths.wal_path(pid))
     assert Paths.snapshot_paths(pid) == []
     refute File.exists?(Paths.outbox_dedup_path(pid))
+    refute List.keymember?(Metrics.snapshot_all(), pid, 0)
   end
 
   test "deleting a never-seen cell is idempotent (returns :ok)", %{cell_id: pid} do

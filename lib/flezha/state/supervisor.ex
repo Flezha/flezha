@@ -14,6 +14,7 @@ defmodule Flezha.State.Supervisor do
   alias Flezha.Process.Cspec
   alias Flezha.State.FsyncBatcher
   alias Flezha.State.InputLog
+  alias Flezha.State.Metrics
   alias Flezha.State.Paths
   alias Flezha.State.WalWriter
   alias Flezha.State.WriterRegistry
@@ -93,6 +94,8 @@ defmodule Flezha.State.Supervisor do
 
     FsyncBatcher.forget(cell_id)
     Paths.delete_files(cell_id)
+    # Its counters are what lists it as a Cell with persisted state.
+    Metrics.drop_cell(cell_id)
 
     # A deleted Cell must stop holding the relay's input-log watermark.
     {relay_class, _, _} = cell_id
