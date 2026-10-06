@@ -150,6 +150,7 @@ defmodule Flezha.MixProject do
   # `scrollbar-color`, so the standard properties are for Firefox alone.
   defp guide_styles(:html) do
     """
+    <link rel="icon" type="image/svg+xml" href="assets/flezha-favicon-badger-adaptive.svg" />
     <style>
       body.dark .sidebar-projectImage img {
         content: url("assets/flezha-badger-white.svg");
