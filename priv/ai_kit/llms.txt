@@ -29,7 +29,6 @@ only the pages a task needs: each link is that page's full Markdown, next to thi
 - [Running relays](running_relays.md): A runner that registered a factory runs nothing yet.
 - [A relay's API](relay_api.md): Every relay has a public API: the entry channels of its factory, each with the format it reads, whether it answers and in which format, and, when you give them, a description and a JSON Schema of its input.
 - [Working with AI assistants](working_with_ai_assistants.md): An AI coding assistant such as Claude Code, Cursor or Codex can build on Flezha with `flz mcp`, an MCP server that ships in every release.
-- [Flezha for AI agents](ai_agents.md): Flezha has no AI framework of its own.
 - [Namespaces](namespaces.md): A namespace is a separate room inside one Flezha deployment.
 - [Authorization](authorization.md): Authorization decides who may do what.
 - [Durability](durability.md): Flezha writes down every change a tasklet makes to its state, and every step a workflow finishes, on the controller's disk as it happens.
