@@ -55,7 +55,7 @@ unreachable (exit 3). `flz runner check` and `flz template` are the exceptions,
 needing neither a controller nor a cookie: the first tests the runner socket
 ([`connecting_a_runner.md`](../deploying/connecting_a_runner.md)), the second
 reads the templates the release carries
-([`start_a_project.md`](../../getting_started/start_a_project.md)).
+([`template_commands.md`](template_commands.md)).
 
 ## Options and help
 
@@ -181,7 +181,7 @@ one line.
 | [`flz observe`](controller_commands.md#flz-observe) | Lists the controller's sources of metrics and events, and streams their signals live. | [`hooks.md`](../plugins/hooks.md#controller-plugins-and-their-hooks) |
 | [`flz reset`](controller_commands.md#flz-reset) | Deletes the controller's data on disk, so its next start is empty. | [`running_relays.md`](../basics/running_relays.md#start-from-a-clean-slate-flz-reset) |
 | [`flz mcp`](../working_with_ai_assistants.md) | Serves Flezha to an AI assistant over MCP; the assistant starts it, not you. | [`working_with_ai_assistants.md`](../working_with_ai_assistants.md) |
-| [`flz template`](../../getting_started/start_a_project.md) | Writes a new project from a template the release carries. | [`start_a_project.md`](../../getting_started/start_a_project.md) |
+| [`flz template`](template_commands.md) | Writes a new project from a template the release carries. | [`template_commands.md`](template_commands.md) |
 
 Which role each verb needs is in
 [`authorization.md`](../basics/authorization.md#which-role-each-verb-needs).

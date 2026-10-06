@@ -55,7 +55,7 @@ on the command line.
 | --- | --- |
 | `flz mcp` | Serves Flezha to an AI assistant over MCP, on stdin and stdout |
 
-## [`flz template`](../../getting_started/start_a_project.md)
+## [`flz template`](template_commands.md)
 
 | Command | What it does |
 | --- | --- |

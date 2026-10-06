@@ -143,7 +143,7 @@ $ docker compose exec controller /flezha/bin/flz relay send my_echo --text 'hell
 To try a relay without a controller or Docker,
 [local mode](docs/topics/basics/local_mode.md) runs it inside your own process.
 To start a project of your own, `flz template create <language> <dir>` writes a small,
-tested one in any of the seven languages ([Start a project](docs/getting_started/start_a_project.md)).
+tested one in any of the seven languages ([Template commands](docs/topics/cli/template_commands.md)).
 [Up and running](docs/tutorials/echo/first_steps.md) builds the echo by hand, and the
 [tutorials](docs/tutorials/tutorials.md) then build two larger example applications step by step.
 

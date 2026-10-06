@@ -37,7 +37,6 @@ reproduces it and the output that command gave.
 | --- | --- |
 | [`getting_started/what_is_flezha.md`](getting_started/what_is_flezha.md) | **Start here.** What Flezha is, its pieces, and what it is for |
 | [`getting_started/try_it.md`](getting_started/try_it.md) | One echo running in Docker |
-| [`getting_started/start_a_project.md`](getting_started/start_a_project.md) | A new project in any of the seven languages, from `flz template create` |
 
 ## Tutorials
 
@@ -73,6 +72,7 @@ type and what you should see; the topic pages say how each piece works.
 | [`topics/basics/authorization.md`](topics/basics/authorization.md) | The admin, tokens, roles, certificates and recovery |
 | [`topics/basics/durability.md`](topics/basics/durability.md) | What survives what, and the durability levels |
 | [`topics/cli/cli.md`](topics/cli/cli.md) | `flz` itself: reaching a controller, output formats, identity |
+| [`topics/cli/template_commands.md`](topics/cli/template_commands.md) | A new project in any of the seven languages, from `flz template create` |
 | [`topics/advanced/partitioning.md`](topics/advanced/partitioning.md) | One logical relay in N partitions: key groups, sources, rescale |
 | [`merged_inputs.md`](topics/advanced/merged_inputs.md) | A tasklet fed by several channels |
 | [`topics/advanced/timers.md`](topics/advanced/timers.md) | Per-cell processing-time and event-time timers |

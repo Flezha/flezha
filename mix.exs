@@ -240,7 +240,6 @@ defmodule Flezha.MixProject do
       extras: [
         "docs/getting_started/what_is_flezha.md",
         "docs/getting_started/try_it.md",
-        "docs/getting_started/start_a_project.md",
         "docs/tutorials/echo/first_steps.md",
         "docs/tutorials/echo/start_the_controller.md",
         "docs/tutorials/echo/write_the_echo_runner.md",
@@ -254,6 +253,7 @@ defmodule Flezha.MixProject do
         "docs/topics/cli/relay_commands.md",
         "docs/topics/cli/plugin_commands.md",
         "docs/topics/cli/access_commands.md",
+        "docs/topics/cli/template_commands.md",
         "docs/topics/cli/command_reference.md",
         "docs/topics/basics/building_blocks.md",
         "docs/topics/basics/configuring_a_relay.md",
@@ -333,8 +333,7 @@ defmodule Flezha.MixProject do
       groups_for_extras: [
         "Getting started": [
           "docs/getting_started/what_is_flezha.md",
-          "docs/getting_started/try_it.md",
-          "docs/getting_started/start_a_project.md"
+          "docs/getting_started/try_it.md"
         ],
         "Up and running": ~r"docs/tutorials/echo/",
         Tutorials: ~r"^tutorials/",
@@ -372,6 +371,7 @@ defmodule Flezha.MixProject do
           "docs/topics/cli/relay_commands.md",
           "docs/topics/cli/plugin_commands.md",
           "docs/topics/cli/access_commands.md",
+          "docs/topics/cli/template_commands.md",
           "docs/topics/cli/command_reference.md"
         ],
         Configuration: [

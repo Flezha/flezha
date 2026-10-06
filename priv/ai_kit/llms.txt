@@ -16,7 +16,6 @@ only the pages a task needs: each link is that page's full Markdown, next to thi
 
 - [What is Flezha](what_is_flezha.md): Flezha is a durable, distributed runtime for stateless and stateful data processing.
 - [Try it](try_it.md): Before you build anything, see Flezha work: a controller, a runner that can run an `echo` relay, and a message that goes in and comes back.
-- [Start a project](start_a_project.md): `flz template create` writes a new Flezha project from a template the release carries: a small, complete project in one of the seven languages, with a relay, a tasklet that keeps state, a test and a README with the commands to build and run it.
 
 ## Up and running
 
@@ -71,6 +70,7 @@ only the pages a task needs: each link is that page's full Markdown, next to thi
 - [Relay commands](relay_commands.md): The groups that work with relays: starting and stopping them, sending them input, reading their state, the inputs they gave up on, and the workflows started on a schedule.
 - [Plugin commands](plugin_commands.md): `flz plugin` installs plugin packages, enables plugins and connects relays to them.
 - [Access commands](access_commands.md): The groups that decide who may do what: namespaces and their quotas, the first admin, tokens, roles, and the audit trail that records each action.
+- [Template commands](template_commands.md): `flz template create` writes a new Flezha project from a template the release carries: a small, complete project in one of the seven languages, with a relay, a tasklet that keeps state, a test and a README with the commands to build and run it.
 - [Command reference](command_reference.md): Every `flz` verb in one line, by group.
 
 ## Configuration

@@ -1,4 +1,4 @@
-# Start a project
+# Template commands
 
 `flz template create` writes a new Flezha project from a template the release
 carries: a small, complete project in one of the seven languages, with a
@@ -20,16 +20,16 @@ files through MCP.
 The `starter` template is one relay, `starter`, that counts visits per page:
 
 - Its entry channel `hit` takes `{"page": "..."}`. It is
-  [described](../topics/basics/relay_api.md), so `flz relay info` shows it and
+  [described](../basics/relay_api.md), so `flz relay info` shows it and
   an AI agent can call it as a tool.
 - The channel is keyed by page, so each page has a
-  [cell](../topics/basics/streams.md#keys-and-cells) of its own.
-- The tasklet `count` keeps the page's total in [state](../topics/basics/state.md),
+  [cell](../basics/streams.md#keys-and-cells) of its own.
+- The tasklet `count` keeps the page's total in [state](../basics/state.md),
   changes it only through a recorded change, and answers the new total on the
   output `counts`.
 - A test runs the tasklet with the SDK's test harness and no controller, and
   checks that replaying the recorded changes rebuilds the state. The Elixir
-  test runs the relay in [local mode](../topics/basics/local_mode.md) instead.
+  test runs the relay in [local mode](../basics/local_mode.md) instead.
 
 Each SDK's repository holds the same project as `examples/starter`, written in
 its current form and tested by its own suite, and the release carries a copy of
@@ -77,7 +77,7 @@ README.md explains each step.
 
 The commands are the README's: build and test, start the runner, then start the
 relay and call it, from another terminal and with a controller running
-([Start the controller](../tutorials/echo/start_the_controller.md)). `flz` there
+([Start the controller](../../tutorials/echo/start_the_controller.md)). `flz` there
 is the release's `bin/flz`. The call answers `{"page":"home","total":1}`, and
 each call for the same page the next total.
 
@@ -115,7 +115,7 @@ overwriting it. `--tar` refuses to write to a terminal: pipe it into `tar x`.
 
 ## With an AI assistant
 
-An assistant connected to [`flz mcp`](../topics/working_with_ai_assistants.md)
+An assistant connected to [`flz mcp`](../working_with_ai_assistants.md)
 has the knowledge tool `flezha_new_project`. Given a language, and an example
 that defaults to `starter`, it answers the same files `flz template create`
 writes, each with its path, content and executable bit, and the README's
