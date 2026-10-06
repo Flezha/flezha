@@ -22,7 +22,12 @@ flowchart LR
     subgraph R["runner (your process)"]
         subgraph O["relay: one instance of a factory"]
             direction LR
-            I(["entry channel"]) --> T1["tasklet"] --> T2["tasklet"] --> S(["output"])
+            I(["entry channel"]) --> T1["tasklet<br/>one cell"]
+            T1 -- "keyed by pair" --> T2
+            subgraph T2["tasklet, one cell per key"]
+                C1["cell EUR/USD"] ~~~ C2["cell GBP/USD"]
+            end
+            T2 --> S(["output"])
         end
     end
     C["controller"] -. "places, restarts, moves" .- R
@@ -44,11 +49,32 @@ a tasklet in a new release does not rename anything: it declares a different
 tasklet. Choose the name once. The class or module that carries it can be
 renamed freely.
 
-A tasklet does its work in **cells**. A cell is one running copy of the
-tasklet with its own state: one cell by default, or one per key when the
-relay keys the tasklet's input. A cell handles its messages one at a time,
-in the order they arrived, and different cells work side by side
+### The cell
+
+**A cell is one running copy of a tasklet, with its own state.** Take a tasklet
+that keeps a running total for each currency pair: it has one cell per pair.
+The EUR/USD cell holds the EUR/USD total, and the GBP/USD cell holds its own.
+
+**How many cells a tasklet gets.** One by default, and then every message goes
+to that one cell. When the relay keys the messages going into the tasklet, by
+currency pair for example, each key gets a cell of its own. A cell is made the
+first time a message with its key arrives, so you never list the keys up front
 ([`streams.md`](streams.md#keys-and-cells)).
+
+**Cells of the same tasklet run in parallel.** Many cells of one tasklet work at
+the same time, side by side on the runner's cores. Inside one cell, messages
+are handled one at a time, in the order they arrived, so each message sees the
+state the one before it left, and a cell's state never needs a lock.
+
+**A cell's state and timers stay with it.** Its state
+([`state.md`](state.md)) and its timers
+([`../advanced/timers.md`](../advanced/timers.md)) belong to that cell alone and
+are saved with it, so after a restart each key carries on where it stopped.
+
+**More than one runner.** Cells spread a tasklet's work over one runner's
+cores. To spread it over several runners, start the relay in partitions: each
+partition holds the cells of its own keys
+([`../advanced/partitioning.md`](../advanced/partitioning.md#partitions-and-cells)).
 
 ### The relay
 
@@ -525,15 +551,96 @@ under the relay's name, so the runner does not change.
 The long form is the one that grows: a second tasklet, or a transform on the
 way, needs it. The echo examples are written long.
 
-| SDK | The echo, written short |
-| --- | --- |
-| Java | a tasklet class annotated `@Relay(id = "echo", input = "in", output = "out")` |
-| Rust | a function annotated `#[flezha_runner::relay(id = "echo", input = "in", output = "out")]`, whose return value is its output; `fn echo_relay` becomes the type `EchoRelay` |
-| Node | `defineRelay({ factoryId: 'echo', input: 'in', output: 'out', codec: 'text', run: ... })` |
-| Python | a function decorated `@flezha.relay(id="echo", input="in", output="out", codec="text")`, whose return value is its output |
-| Ruby | an `Flezha::Relay` class with `factory_id "echo"`, `input "in"`, `output "out"`, `codec :text` and a `run` method |
-| PHP | `#[Relay(factoryId: 'echo', input: 'in', output: 'out', codec: ChannelCodec::Text)]` on a class with a `run` method |
-| Elixir | `use Flezha.SDK.Relay, factory_id: "echo", input: "in", output: "out"` in a module with a `run/3` |
+The echo, written short:
+
+<!-- tabs-open -->
+
+### Java
+
+```java
+@Relay(id = "echo", input = "in", output = "out")
+public class Echo implements Tasklet<String, Void, String> {
+    @Override
+    public void run(String value, Ctx<Void, String> ctx) throws TaskletException {
+        ctx.emit("echo: " + value);
+    }
+}
+```
+
+### Rust
+
+```rust
+#[flezha_runner::relay(id = "echo", input = "in", output = "out")]
+fn echo_relay(value: String) -> String {
+    format!("echo: {value}")
+}
+```
+
+The return value is the output. `fn echo_relay` becomes the type `EchoRelay`,
+which is what the runner registers.
+
+### Node
+
+```javascript
+export const echo = defineRelay({
+  factoryId: 'echo',
+  input: 'in',
+  output: 'out',
+  codec: 'text',
+  run: (value, ctx) => ctx.emit(`echo: ${value}`),
+});
+```
+
+### Python
+
+```python
+@flezha.relay(id="echo", input="in", output="out", codec="text")
+def echo(value: str) -> str:
+    return f"echo: {value}"
+```
+
+The return value is the output.
+
+### Ruby
+
+```ruby
+class Echo < Flezha::Relay
+  factory_id "echo"
+  input "in"
+  output "out"
+  codec :text
+
+  def run(value, ctx) = ctx.emit("echo: #{value}")
+end
+```
+
+### PHP
+
+```php
+#[Relay(factoryId: 'echo', input: 'in', output: 'out', codec: ChannelCodec::Text)]
+final class EchoRelay extends \Flezha\Relay
+{
+    public function run(mixed $input, Ctx $ctx): void
+    {
+        $ctx->emit('echo: ' . $input);
+    }
+}
+```
+
+### Elixir
+
+```elixir
+defmodule Echo do
+  use Flezha.SDK.Relay, factory_id: "echo", input: "in", output: "out"
+
+  def run(input, state, ctx) do
+    emit(ctx, "echo: " <> input)
+    {:ok, state}
+  end
+end
+```
+
+<!-- tabs-close -->
 
 Rules every SDK shares:
 
