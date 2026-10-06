@@ -26,7 +26,9 @@ defmodule Flezha.AuthZ.RoleStore do
   use GenServer
   use Flezha.State.Store
 
-  alias Flezha.AuthZ.{Namespace, Policy, Role}
+  @behaviour Flezha.AuthZ.Replica
+
+  alias Flezha.AuthZ.{Namespace, Policy, Replica, Role}
   alias Flezha.DetsStore
 
   @table :flz_authz_roles
@@ -70,14 +72,17 @@ defmodule Flezha.AuthZ.RoleStore do
     with :ok <- Role.validate(role),
          :ok <- Namespace.validate_name(namespace) do
       bound_by = Keyword.get(opts, :bound_by)
-      GenServer.call(__MODULE__, {:bind, principal, namespace, role, bound_by})
+
+      __MODULE__
+      |> GenServer.call({:bind, principal, namespace, role, bound_by})
+      |> Replica.published(__MODULE__, principal)
     end
   end
 
   @doc "Remove a principal's whole binding, whatever it holds. Idempotent."
   @spec unbind(binary()) :: :ok
   def unbind(principal) when is_binary(principal) do
-    GenServer.call(__MODULE__, {:unbind, principal})
+    Replica.published(GenServer.call(__MODULE__, {:unbind, principal}), __MODULE__, principal)
   end
 
   @doc """
@@ -87,7 +92,9 @@ defmodule Flezha.AuthZ.RoleStore do
   @spec unbind(binary(), Role.t()) :: :ok | {:error, {:unknown_role, atom()}}
   def unbind(principal, role) when is_binary(principal) and is_atom(role) do
     with :ok <- Role.validate(role) do
-      GenServer.call(__MODULE__, {:unbind, principal, role})
+      __MODULE__
+      |> GenServer.call({:unbind, principal, role})
+      |> Replica.published(__MODULE__, principal)
     end
   end
 
@@ -157,18 +164,20 @@ defmodule Flezha.AuthZ.RoleStore do
   end
 
   def handle_call({:unbind, principal}, _from, state) do
-    {:reply, DetsStore.delete(@table, @cache, principal), state}
+    {:reply, Replica.delete(__MODULE__, principal), state}
   end
 
   def handle_call({:unbind, principal, role}, _from, state) do
     {:reply, do_unbind(principal, role), state}
   end
 
+  def handle_call({:replica_accept, rows}, _from, state),
+    do: {:reply, Replica.merge(__MODULE__, rows), state}
+
   ## ----- writes (serialized by the GenServer) -----
 
   # Each write reads DETS rather than the cache, so the set it adds to is the
-  # one on disk. `DetsStore.update/4` is not used: its mapping function cannot
-  # refuse, and a bind must refuse another namespace.
+  # one on disk.
   defp do_bind(principal, namespace, role, bound_by) do
     case stored(principal) do
       {:ok, %{namespace: held_ns}} when held_ns != namespace ->
@@ -197,7 +206,7 @@ defmodule Flezha.AuthZ.RoleStore do
       {:ok, %{roles: roles} = held} ->
         case roles -- [role] do
           ^roles -> :ok
-          [] -> DetsStore.delete(@table, @cache, principal)
+          [] -> Replica.delete(__MODULE__, principal)
           remaining -> write(%{held | roles: remaining})
         end
 
@@ -210,7 +219,7 @@ defmodule Flezha.AuthZ.RoleStore do
     with {:ok, row} <- DetsStore.fetch(@table, principal), do: from_row(row)
   end
 
-  defp write(binding), do: DetsStore.put(@table, @cache, binding.principal, to_row(binding))
+  defp write(binding), do: Replica.put(__MODULE__, binding.principal, to_row(binding))
 
   defp now(), do: System.system_time(:second)
 

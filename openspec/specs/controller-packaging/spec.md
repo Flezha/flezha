@@ -191,7 +191,7 @@ The image inherits the prod image's HEALTHCHECK (control-socket readiness, see t
 2. If `FLEZHA_TESTNET_WS_PORT` is set and `/flezha/testnet/dist/index.js` exists, also background the testnet WS server (no-op in `:latest`; consumed by `:latest-dev` via inheritance).
 3. Wait up to `${FLEZHA_RESTORE_WAIT_TIMEOUT_S:-60}` seconds for the BEAM to bind `${FLEZHA_SOCKET_FILES_PATH}/runner_control_channel.sock` — the same readiness signal the HEALTHCHECK keys on. It SHALL exit 1, naming the cause, if the agent process exits before the socket appears or if the socket has not appeared when the budget elapses.
 4. Install a SIGTERM/SIGINT trap whose behaviour depends on `FLEZHA_GRACEFUL_SHUTDOWN_ENABLED` (default `true`):
-   - **Enabled** (default): the trap SHALL `exec /flezha/bin/flz controller stop --timeout-ms "${FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS:-60000}"`. The CLI's RPC drives `Flezha.Shutdown.Coordinator` inside the BEAM (quiesce → drain via HotSwap → finalise).
+   - **Enabled** (default): the trap SHALL `exec /flezha/bin/flz controller stop --timeout-ms "${FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS:-60000}"`. The CLI's RPC drives `Flezha.Shutdown.Coordinator` inside the BEAM (quiesce → drain via HotSwap → finalise). When `FLEZHA_SHUTDOWN_TOKEN_FILE` names a readable file, the call SHALL present its content as `FLEZHA_TOKEN`, so an enforcing controller accepts the admin verb.
    - **Disabled** (`FLEZHA_GRACEFUL_SHUTDOWN_ENABLED` set to `false`/`0`/`no`/`off` case-insensitive): the trap SHALL `kill -TERM` the agent directly, bypassing the coordinator. This is the kill-switch fall-through, and it matches what the same variable means inside the BEAM (`controller-graceful-shutdown`: `SignalHandler` installs no OS handlers, so kernel's `erl_signal_handler` stays the owner).
 5. `wait` on the agent PID.
 
@@ -222,6 +222,12 @@ The image SHALL declare a HEALTHCHECK that tests for the existence of `${FLEZHA_
 - **GIVEN** a container starting up
 - **WHEN** the BEAM has not yet opened its control socket
 - **THEN** the HEALTHCHECK reports unhealthy; once the socket exists at `${FLEZHA_SOCKET_FILES_PATH}/runner_control_channel.sock`, the healthcheck reports healthy
+
+#### Scenario: An enforcing controller stops gracefully on SIGTERM
+
+- **GIVEN** a container with authorization enforced and claimed, and `FLEZHA_SHUTDOWN_TOKEN_FILE` naming a file that holds an `admin@_system` token
+- **WHEN** the orchestrator sends SIGTERM
+- **THEN** the trap's `flz controller stop` is accepted and the BEAM drains and exits before the grace period, rather than being refused and killed
 
 ### Requirement: docker-compose controller services SHALL declare an explicit stop signal and grace period
 

@@ -11,18 +11,18 @@ defmodule FlezhaTest.Helper.AuthTestHelper do
 
   import ExUnit.Callbacks, only: [on_exit: 1]
 
-  alias Flezha.AuthZ.{AuthState, NamespaceStore, QuotaCounters, RoleStore, TokenStore}
+  alias Flezha.AuthZ.{AuthState, NamespaceStore, QuotaCounters, Replica, RoleStore, TokenStore}
   alias Flezha.Observability.RingBufferSink
   alias Flezha.Observability.TestSinks
   alias FlezhaTest.Helper.NodeTestHelper
 
-  @all_stores [AuthState, RoleStore, NamespaceStore, TokenStore, QuotaCounters]
+  @all_stores [Replica, AuthState, RoleStore, NamespaceStore, TokenStore, QuotaCounters]
 
   @doc """
   Prepare an isolated auth dir, point the app config at it, (re)start the
   requested stores, and register cleanup. Options:
 
-    * `:stores` — modules to start, `:all` (default) for the full five, or
+    * `:stores` — modules to start, `:all` (default) for the full six, or
       `[]` to only prepare dir + config (suites that start stores per test).
     * `:enabled` — value for `:authn_authz, :enabled` (default `true`);
       `:unchanged` leaves the key as configured.

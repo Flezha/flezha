@@ -31,6 +31,8 @@ defmodule Flezha.Config.DurationRows do
     {:cluster_formation_wait_ms, :ms, nil,
      derived: {:headroom, :cluster_formation_timeout_ms, 5_000}},
     {:k8s_discovery_request_ms, :ms, 15_000, []},
+    # One authorization write or snapshot exchanged with another controller.
+    {:authz_replica_call_ms, :ms, 5_000, []},
     {:reconnect_max_backoff_ms, :ms, 30_000, key: true, env: "FLEZHA_RECONNECT_MAX_BACKOFF_MS"},
 
     # ---- control plane: liveness, calls, drains ----------------------------
@@ -196,7 +198,7 @@ defmodule Flezha.Config.DurationRows do
     {:agent_fsync_interval_ms, :ms, 5, key: true},
     {:agent_fsync_max_interval_ms, :ms, 1_000, []},
     {:agent_fsync_min_interval_ms, :ms, 1, []},
-    {:input_silence_timeout_ms, :ms, 0, key: true},
+    {:input_silence_timeout_ms, :ms, 0, key: true, env: "FLEZHA_INPUT_SILENCE_TIMEOUT_MS"},
     {:compact_after_age_ms, :ms, 300_000,
      key: true, env: "FLEZHA_COMPACT_AFTER_AGE_MS", env_default: [test: 0]},
     {:compaction_timeout_ms, :ms, 30_000, key: true},

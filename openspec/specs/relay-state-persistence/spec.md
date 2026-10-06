@@ -1409,9 +1409,12 @@ The Controller's input-silence sweep SHALL be disabled by default, SHALL be name
 
 The sweep observes one thing: a relay whose `last_persisted_seq` advanced at
 some point has received no Change for the whole window. That is silence on the
-input side. Whether it means a dead upstream, a source that reports hourly, or a
-quiet night is precisely what the sweep cannot determine, so it SHALL NOT report
-a conclusion its evidence does not support. The convergence judge already holds
+input side. The relay is silent only when none of its cells that produced
+output has received a Change in the window: a cell that produced once and has
+nothing new to hear, beside cells that keep hearing, does not make its relay
+silent. Whether the silence means a dead upstream, a source that reports hourly,
+or a quiet night is precisely what the sweep cannot determine, so it SHALL NOT
+report a conclusion its evidence does not support. The convergence judge already holds
 this rule for the same observation: a flat marker with no input-side advance is
 idle, and idle is healthy.
 
@@ -1421,7 +1424,8 @@ Change by design; it SHALL also keep skipping a checkpoint-ack class between che
 SHALL NOT skip an instance for its kind.
 
 The knob SHALL be `input_silence_timeout_ms`, defaulting to `0`, which the sweep
-already reads as "do not run". The telemetry event SHALL be
+already reads as "do not run", and settable from the environment as
+`FLEZHA_INPUT_SILENCE_TIMEOUT_MS`. The telemetry event SHALL be
 `[:flezha, :state, :input_silence]`. Both are plain renames of the previous
 `catastrophic_dataflow_*` spellings, with no acceptance of the old names.
 
@@ -1436,6 +1440,18 @@ already reads as "do not run". The telemetry event SHALL be
 - **GIVEN** `input_silence_timeout_ms` set to a positive value
 - **WHEN** a flow relay that produced output earlier receives no input for longer than that value
 - **THEN** `[:flezha, :state, :input_silence]` SHALL be emitted once for that relay class, and one line SHALL be logged at warning level
+
+#### Scenario: A quiet cell beside a live one does not make its relay silent
+
+- **GIVEN** `input_silence_timeout_ms` set to a positive value and a relay with two cells that produced output
+- **WHEN** one cell receives no Change for longer than the window while the other keeps receiving them
+- **THEN** no `input_silence` event SHALL be emitted for the relay, and one SHALL be once the other cell falls silent too
+
+#### Scenario: A container sets it from the environment
+
+- **GIVEN** `FLEZHA_INPUT_SILENCE_TIMEOUT_MS=120000` in the controller's environment
+- **WHEN** the configuration is read
+- **THEN** `input_silence_timeout_ms` SHALL be `120000`
 
 #### Scenario: The message states what was observed
 

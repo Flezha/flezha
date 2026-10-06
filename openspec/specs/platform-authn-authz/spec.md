@@ -212,7 +212,7 @@ The system SHALL store per-namespace quotas in `app_data/auth/namespaces.dets`. 
 
 ### Requirement: Bootstrap flow
 
-On Controller start, the system SHALL detect whether `app_data/auth/roles.dets` contains at least one `admin@_system` binding. If none exists AND `:enabled` is `true` AND `FLEZHA_AUTHZ_ENABLED` is not explicitly set to a false value, the system SHALL: ensure `app_data/auth/` exists with mode `0700`; verify the bootstrap-token-path parent directory mode (abort with `error` on group- or other-writable bits); write a 256-bit random token to `app_data/auth/bootstrap.token` with mode `0600`; emit a single `warn` log line naming the path. `Flezha.AuthZ.Bootstrap.claim/2` SHALL accept that exact token exactly once; on success it SHALL bind the resolved principal (cert SAN > cert DN > `--principal` > freshly-minted admin token) to `admin@_system`, durably flip `:authn_authz, :enabled` to `true`, unlink `bootstrap.token`, and emit a `:bootstrap_completed` event on `:platform_authz`.
+On Controller start, the system SHALL detect whether `app_data/auth/roles.dets` contains at least one `admin@_system` binding. If none exists AND `:enabled` is `true` AND `FLEZHA_AUTHZ_ENABLED` is not explicitly set to a false value, the system SHALL: ensure `app_data/auth/` exists with mode `0700`; verify the bootstrap-token-path parent directory mode (abort with `error` on group- or other-writable bits); write a 256-bit random token to `app_data/auth/bootstrap.token` with mode `0600`; emit a single `warn` log line naming the path. `Flezha.AuthZ.Bootstrap.claim/2` SHALL accept that exact token exactly once; on success it SHALL bind the resolved principal (cert SAN > cert DN > `--principal` > freshly-minted admin token) to `admin@_system`, durably flip `:authn_authz, :enabled` to `true`, unlink `bootstrap.token`, and emit a `:bootstrap_completed` event on `:platform_authz`. The claim is the cluster's: every connected controller SHALL adopt it and unlink its own `bootstrap.token`.
 
 #### Scenario: First boot writes bootstrap token
 - **WHEN** `Flezha.AuthZ.Bootstrap.check_and_write/0` runs and no `admin@_system` binding exists
@@ -224,6 +224,10 @@ On Controller start, the system SHALL detect whether `app_data/auth/roles.dets` 
 
 #### Scenario: Bootstrap claim refused after first success
 - **WHEN** `Bootstrap.claim/2` has already succeeded and a second claim is attempted
+- **THEN** the call SHALL return `{:error, :bootstrap_already_completed}`
+
+#### Scenario: Bootstrap claim refused on another controller of the cluster
+- **WHEN** `Bootstrap.claim/2` has succeeded on one controller and a claim is attempted on another connected controller
 - **THEN** the call SHALL return `{:error, :bootstrap_already_completed}`
 
 #### Scenario: Permissive parent directory aborts bootstrap
@@ -874,4 +878,60 @@ the caller SHALL NOT be judged again: it is the caller's own call coming back.
 
 - **WHEN** a call creates a session under enforced authorization for a runner identity bound to `spawner`
 - **THEN** the audit log SHALL hold one `relay_start` record naming the new instance
+
+### Requirement: Authorization state SHALL be one state per cluster
+
+Tokens, role bindings, namespaces and the bootstrap claim SHALL be one state shared by every
+controller of a cluster. A mutation SHALL be applied on the controller that made it and on every
+connected controller before the mutating call returns, each through that controller's own store,
+with its durable sync. A controller that cannot be reached SHALL NOT fail the mutation; it SHALL
+be reconciled when it next connects.
+
+When two controllers connect, each SHALL merge the other's records before the merge is reported
+complete, by these rules:
+- a record held by one side only SHALL be adopted by the other;
+- a revoked token SHALL stay revoked, whatever the other side holds;
+- otherwise the later write SHALL win, and a delete SHALL be a write;
+- of two bootstrap claims, a later recovery or reset SHALL win over the claim it replaced, and of
+  two first claims the earlier SHALL win; the losing admin SHALL be unbound and its `_system`
+  admin tokens revoked.
+
+A controller that adopts a claim made elsewhere SHALL remove its own `bootstrap.token`. A revoke
+adopted from another controller SHALL close the runner sessions that credential authenticated on
+the adopting controller.
+
+#### Scenario: A token issued on one controller is honoured by another
+
+- **GIVEN** two connected controllers A and B with authorization enforced and claimed
+- **WHEN** a token is issued on A
+- **THEN** B SHALL verify it
+
+#### Scenario: A revoke on one controller is honoured by another
+
+- **WHEN** a token issued on A is revoked on B
+- **THEN** A SHALL refuse it as `authz.token_revoked`
+
+#### Scenario: A controller that joins later honours earlier tokens
+
+- **GIVEN** a token issued on A before controller C was started
+- **WHEN** C connects to A
+- **THEN** C SHALL verify the token
+
+#### Scenario: One claim per cluster
+
+- **GIVEN** A and B connected, each having written its own `bootstrap.token`
+- **WHEN** the bootstrap is claimed on A and then a claim is attempted on B
+- **THEN** B's claim SHALL be refused as `:bootstrap_already_completed`
+
+#### Scenario: A revoke beats an issue whatever their order
+
+- **WHEN** one controller holds a token revoked and another holds it live with a later stamp
+- **THEN** both SHALL hold it revoked after the merge
+
+#### Scenario: Two first claims keep the earlier
+
+- **GIVEN** two controllers that each claimed the bootstrap while apart
+- **WHEN** they connect
+- **THEN** both SHALL hold the earlier claim's admin, and the later claim's principal SHALL hold no
+  binding and no live `_system` admin token
 

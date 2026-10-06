@@ -452,6 +452,41 @@ defmodule Flezha.State.WatchdogTest do
     assert_receive {:input_silence, _, %{relay_class: ^class}}, 1_000
   end
 
+  test "a relay is silent only when none of its cells that produced output hears a Change", %{
+    header: header
+  } do
+    # A config cell that produced once and has nothing new to hear sits beside
+    # cells fed every second: the relay is not silent, and flagging it would
+    # latch the relay and hide the real outage that follows.
+    on_exit(TestHelpers.override_env(:input_silence_timeout_ms, @stall_ms))
+
+    class = "QuietCell" <> uniq()
+    on_exit(fn -> ClassRegistry.delete(class) end)
+    forward_state_event(:input_silence)
+
+    [quiet, live] =
+      for task <- ["config", "ohlc"] do
+        pid = {class, task, "seg" <> uniq()}
+        {:ok, _} = Supervisor.find_or_start(pid)
+        {:ok, w} = Supervisor.lookup(pid)
+        :ok = WalWriter.append(w, 0, header, "z")
+        :ok = WalWriter.append(w, 1, header, "a")
+        w
+      end
+
+    TestHelpers.age_writer(quiet, @stall_ms * 2)
+    :ok = Watchdog.sweep_now()
+    refute_received {:input_silence, _, %{relay_class: ^class}}
+
+    TestHelpers.age_writer(live, @stall_ms * 2)
+    on_exit(override_log_level(:warning))
+
+    ExUnit.CaptureLog.capture_log(fn ->
+      :ok = Watchdog.sweep_now()
+      assert_receive {:input_silence, _, %{relay_class: ^class}}, 1_000
+    end)
+  end
+
   test "a remote-durability RPO breach alarms once and clears when it catches up" do
     forward_state_event(:rpo_exceeded)
 

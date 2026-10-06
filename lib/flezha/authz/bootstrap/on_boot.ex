@@ -22,7 +22,7 @@ defmodule Flezha.AuthZ.Bootstrap.OnBoot do
 
   require Logger
 
-  alias Flezha.AuthZ.{Bootstrap, Config, RoleStore}
+  alias Flezha.AuthZ.{Bootstrap, Config, Replica, RoleStore}
 
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
@@ -30,6 +30,9 @@ defmodule Flezha.AuthZ.Bootstrap.OnBoot do
 
   @impl true
   def init(_opts) do
+    # A claim a connected controller already holds is this one's too.
+    :ok = Replica.sync()
+
     cond do
       not Config.config_enabled?() ->
         # The subsystem is off, however it was turned off; nothing to write.

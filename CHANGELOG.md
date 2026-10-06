@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+### Fixed: a cluster of controllers shares one authorization state
+
+Tokens, role bindings, namespaces and the bootstrap claim were kept per controller, so a token
+issued on one controller was refused by the others and each asked for its own bootstrap claim.
+Every mutation is now written on all connected controllers before the verb returns, and a
+controller that reconnects merges with the others: a revoked token stays revoked, otherwise the
+later write wins, and of two bootstrap claims made apart the earlier one wins. The stamps that
+order writes live in a new `replica.dets` beside the other auth files.
+
+### Fixed: an enforcing controller stops gracefully on SIGTERM
+
+The image entrypoint's SIGTERM trap runs `flz controller stop`, an admin verb, without a token, so
+a controller with authorization enforced refused its own graceful stop and was killed without the
+drain. Set `FLEZHA_SHUTDOWN_TOKEN_FILE` to a file holding an `admin@_system` token and the trap
+presents it.
+
+### Added: `FLEZHA_INPUT_SILENCE_TIMEOUT_MS`, and the sweep judges the relay
+
+The input-silence sweep (`:input_silence_timeout_ms`) can now be turned on from a container's
+environment. It also judged each cell rather than the relay: one cell that produced once and then
+had nothing to hear, such as a configuration cell beside a live feed, flagged the whole relay at
+the first sweep and kept it latched, so a later real outage went unreported. A relay is now silent
+only when none of its cells that produced output has heard a Change in the window.
+
 ### Added: a caller can read which operations it holds, and a class's history retention
 
 `Namespace.whoami/1` now answers `operations`, the names of the operations the caller's role

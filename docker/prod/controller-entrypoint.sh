@@ -120,6 +120,12 @@ on_term() {
       ;;
     *)
       log "SIGTERM received; delegating to flz controller stop --timeout-ms ${GRACEFUL_TIMEOUT_MS}"
+      # `controller stop` is an admin verb: under enforced authorization it
+      # presents the token in FLEZHA_SHUTDOWN_TOKEN_FILE, when one is named.
+      if [ -n "${FLEZHA_SHUTDOWN_TOKEN_FILE:-}" ] && [ -r "$FLEZHA_SHUTDOWN_TOKEN_FILE" ]; then
+        export FLEZHA_TOKEN
+        FLEZHA_TOKEN="$(cat "$FLEZHA_SHUTDOWN_TOKEN_FILE")"
+      fi
       "$FLZ" controller stop --timeout-ms "$GRACEFUL_TIMEOUT_MS" || \
         log "flz controller stop exited non-zero; BEAM will be forcibly terminated"
       if [ -n "$TESTNET_PID" ] && kill -0 "$TESTNET_PID" 2>/dev/null; then

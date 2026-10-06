@@ -357,15 +357,15 @@ defmodule Flezha.State.Watchdog do
         # checkpoint-ack one makes nothing durable for a whole interval
         # between checkpoints: neither silence is a dead feed.
         if not ClassRegistry.ack_checkpoint?(rc) and is_nil(ClassRegistry.parked(rc)) do
-          any_silent? = Enum.any?(list, fn {_pid, s} -> input_silent?(s, now, timeout) end)
+          silent? = input_silent?(list, now, timeout)
           latched? = MapSet.member?(acc.input_silence, rc)
 
           cond do
-            any_silent? and not latched? ->
+            silent? and not latched? ->
               flag_input_silence(rc, timeout)
               %{acc | input_silence: MapSet.put(acc.input_silence, rc)}
 
-            not any_silent? and latched? ->
+            not silent? and latched? ->
               Logger.info("[watchdog] input resumed for relay=#{inspect(rc)}")
               %{acc | input_silence: MapSet.delete(acc.input_silence, rc)}
 
@@ -390,10 +390,15 @@ defmodule Flezha.State.Watchdog do
     end)
   end
 
-  # Produced output before (seq advanced past 0) but no Change frame has arrived
-  # for the whole timeout window.
-  defp input_silent?(status, now, timeout) do
-    status.last_persisted_seq > 0 and now - status.last_change_seen_at >= timeout
+  # The relay produced output before (a cell's seq advanced past 0), and none of
+  # those cells has had a Change for the whole window. A cell that produced once
+  # and has nothing new to hear — a config cell beside a live feed — does not
+  # make its relay silent.
+  defp input_silent?(statuses, now, timeout) do
+    case for({_pid, s} <- statuses, s.last_persisted_seq > 0, do: s) do
+      [] -> false
+      producing -> Enum.all?(producing, &(now - &1.last_change_seen_at >= timeout))
+    end
   end
 
   defp flag_input_silence(rc, timeout) do

@@ -4,11 +4,13 @@ defmodule Flezha.AuthZ.Supervisor do
 
   Children, in start order:
 
-    1. `Flezha.AuthZ.AuthState` — durable `:enabled` flag.
-    2. `Flezha.AuthZ.RoleStore` — principal → {namespace, roles}.
-    3. `Flezha.AuthZ.NamespaceStore` — namespace catalog + quotas.
-    4. `Flezha.AuthZ.TokenStore` — scoped-token registry.
-    5. `Flezha.AuthZ.SourceRegistration` — one-shot worker that
+    1. `Flezha.AuthZ.Replica` — the stamps that make the four stores below
+       one state per cluster; first, because every store write stamps.
+    2. `Flezha.AuthZ.AuthState` — the durable bootstrap claim.
+    3. `Flezha.AuthZ.RoleStore` — principal → {namespace, roles}.
+    4. `Flezha.AuthZ.NamespaceStore` — namespace catalog + quotas.
+    5. `Flezha.AuthZ.TokenStore` — scoped-token registry.
+    6. `Flezha.AuthZ.SourceRegistration` — one-shot worker that
        registers the `:platform_authz` source on the observability
        bus so authz signals participate in fan-out.
 
@@ -25,7 +27,7 @@ defmodule Flezha.AuthZ.Supervisor do
 
   require Logger
 
-  alias Flezha.AuthZ.{AuthState, Config, NamespaceStore, RoleStore, TokenStore}
+  alias Flezha.AuthZ.{AuthState, Config, NamespaceStore, Replica, RoleStore, TokenStore}
 
   def start_link(opts \\ []) do
     Supervisor.start_link(__MODULE__, opts, name: __MODULE__)
@@ -48,6 +50,7 @@ defmodule Flezha.AuthZ.Supervisor do
     # up. Parent-directory mode is checked at `bootstrap.token`
     # write time by `Flezha.AuthZ.Bootstrap.check_and_write/0`.
     children = [
+      Replica,
       AuthState,
       RoleStore,
       NamespaceStore,

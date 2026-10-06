@@ -2,7 +2,7 @@ defmodule Flezha.State.Store do
   @moduledoc """
   What a durable control-plane store is, and how it opens and closes.
 
-  Seven modules keep a DETS file: the five auth stores, the schedule registry
+  Eight modules keep a DETS file: the six auth stores, the schedule registry
   and the plugin catalog. Each one declared the same three facts — which
   subtree it lives in, what its file is called, and what its table is named —
   and then repeated the same `init/1` and the same `terminate/2` around them.

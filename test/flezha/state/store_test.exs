@@ -121,7 +121,7 @@ defmodule FlezhaTest.State.StoreTest do
     # store that drops out of the group fails rather than silently stopping
     # being shipped.
     assert Store.filenames_in(:auth) ==
-             ~w(namespaces.dets quota_counters.dets roles.dets state.dets tokens.dets)
+             ~w(namespaces.dets quota_counters.dets replica.dets roles.dets state.dets tokens.dets)
 
     assert Store.filenames_in(:schedules) == ~w(schedules.dets)
     assert Store.filenames_in(:plugins) == []

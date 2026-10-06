@@ -91,6 +91,11 @@ defmodule Flezha.Config.ParseTest do
     assert config[:healthz_port] == 9571
   end
 
+  test "a container turns the input-silence sweep on from its environment" do
+    config = Environment.runtime_config(%{"FLEZHA_INPUT_SILENCE_TIMEOUT_MS" => "120000"}, :prod)
+    assert config[:input_silence_timeout_ms] == 120_000
+  end
+
   defp expect("error"), do: :error
   defp expect("true"), do: {:ok, true}
   defp expect("false"), do: {:ok, false}

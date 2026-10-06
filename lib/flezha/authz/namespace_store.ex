@@ -13,7 +13,9 @@ defmodule Flezha.AuthZ.NamespaceStore do
   use GenServer
   use Flezha.State.Store
 
-  alias Flezha.AuthZ.{Config, Namespace}
+  @behaviour Flezha.AuthZ.Replica
+
+  alias Flezha.AuthZ.{Config, Namespace, Replica}
   alias Flezha.DetsStore
 
   @table :flz_authz_namespaces
@@ -38,7 +40,7 @@ defmodule Flezha.AuthZ.NamespaceStore do
     with :ok <- Namespace.validate_name(name),
          {:ok, quotas} <- build_full_quotas(name, Keyword.get(opts, :quotas, %{})) do
       by = Keyword.get(opts, :created_by_principal)
-      GenServer.call(__MODULE__, {:create, name, quotas, by})
+      Replica.published(GenServer.call(__MODULE__, {:create, name, quotas, by}), __MODULE__, name)
     end
   end
 
@@ -47,7 +49,7 @@ defmodule Flezha.AuthZ.NamespaceStore do
     if Namespace.system?(name) do
       {:error, :cannot_delete_system_namespace}
     else
-      GenServer.call(__MODULE__, {:delete, name})
+      Replica.published(GenServer.call(__MODULE__, {:delete, name}), __MODULE__, name)
     end
   end
 
@@ -60,7 +62,7 @@ defmodule Flezha.AuthZ.NamespaceStore do
   @spec set_quotas(binary(), map()) :: {:ok, entry()} | {:error, term()}
   def set_quotas(name, overrides) when is_binary(name) and is_map(overrides) do
     with {:ok, quotas} <- build_full_quotas(name, overrides) do
-      GenServer.call(__MODULE__, {:set_quotas, name, quotas})
+      Replica.published(GenServer.call(__MODULE__, {:set_quotas, name, quotas}), __MODULE__, name)
     end
   end
 
@@ -92,9 +94,13 @@ defmodule Flezha.AuthZ.NamespaceStore do
       created_by_principal: by
     }
 
-    case DetsStore.put_new(@table, @cache, name, entry) do
-      :ok -> {:reply, {:ok, entry}, state}
-      {:error, :already_exists} -> {:reply, {:error, {:namespace_exists, name}}, state}
+    case DetsStore.fetch(@table, name) do
+      :error ->
+        :ok = Replica.put(__MODULE__, name, entry)
+        {:reply, {:ok, entry}, state}
+
+      {:ok, _held} ->
+        {:reply, {:error, {:namespace_exists, name}}, state}
     end
   end
 
@@ -104,7 +110,7 @@ defmodule Flezha.AuthZ.NamespaceStore do
   def handle_call({:delete, name}, _from, state) do
     case DetsStore.fetch(@table, name) do
       {:ok, _entry} ->
-        :ok = DetsStore.delete(@table, @cache, name)
+        :ok = Replica.delete(__MODULE__, name)
         {:reply, :ok, state}
 
       :error ->
@@ -113,11 +119,19 @@ defmodule Flezha.AuthZ.NamespaceStore do
   end
 
   def handle_call({:set_quotas, name, quotas}, _from, state) do
-    case DetsStore.update(@table, @cache, name, &%{&1 | quotas: quotas}) do
-      {:ok, updated} -> {:reply, {:ok, updated}, state}
-      {:error, :not_found} -> {:reply, {:error, {:not_found, name}}, state}
+    case DetsStore.fetch(@table, name) do
+      {:ok, entry} ->
+        updated = %{entry | quotas: quotas}
+        :ok = Replica.put(__MODULE__, name, updated)
+        {:reply, {:ok, updated}, state}
+
+      :error ->
+        {:reply, {:error, {:not_found, name}}, state}
     end
   end
+
+  def handle_call({:replica_accept, rows}, _from, state),
+    do: {:reply, Replica.merge(__MODULE__, rows), state}
 
   ## ----- private -----
 

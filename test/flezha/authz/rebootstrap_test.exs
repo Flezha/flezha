@@ -18,6 +18,7 @@ defmodule Flezha.AuthZ.RebootstrapTest do
       {:auth_stores,
        prefix: "flz_rebootstrap",
        stores: [
+         Flezha.AuthZ.Replica,
          Flezha.AuthZ.AuthState,
          Flezha.AuthZ.RoleStore,
          Flezha.AuthZ.NamespaceStore,

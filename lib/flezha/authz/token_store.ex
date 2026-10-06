@@ -29,11 +29,13 @@ defmodule Flezha.AuthZ.TokenStore do
 
   use GenServer
   use Flezha.State.Store
+
+  @behaviour Flezha.AuthZ.Replica
   use Flezha.Process.Timer, keys: [:expiry_check]
 
   require Logger
 
-  alias Flezha.AuthZ.{Namespace, Role}
+  alias Flezha.AuthZ.{Namespace, Replica, Role}
   alias Flezha.Config.Durations
   alias Flezha.DetsStore
   alias Flezha.Identificator
@@ -92,7 +94,10 @@ defmodule Flezha.AuthZ.TokenStore do
         label: Keyword.get(opts, :label)
       }
 
-      with :ok <- GenServer.call(__MODULE__, {:insert, entry.token_hash, entry}) do
+      with :ok <-
+             __MODULE__
+             |> GenServer.call({:insert, entry.token_hash, entry})
+             |> Replica.published(__MODULE__, entry.token_hash) do
         emit_issued(entry)
         {:ok, raw, entry}
       end
@@ -158,7 +163,7 @@ defmodule Flezha.AuthZ.TokenStore do
   @spec revoke(binary(), keyword()) :: {:ok, entry()} | {:error, term()}
   def revoke(id, opts \\ []) when is_binary(id) do
     case Identificator.validate(:token, id) do
-      :ok -> close_authenticated_sessions(GenServer.call(__MODULE__, {:revoke, id, opts}))
+      :ok -> publish_revoke(GenServer.call(__MODULE__, {:revoke, id, opts}))
       {:error, _refusal} -> {:error, {:token_not_found, id}}
     end
   end
@@ -170,7 +175,7 @@ defmodule Flezha.AuthZ.TokenStore do
   @spec revoke_by_token(binary()) :: {:ok, entry()} | {:error, term()}
   def revoke_by_token(token) when is_binary(token) do
     hash = hash_token(token)
-    close_authenticated_sessions(GenServer.call(__MODULE__, {:revoke_by_hash, hash}))
+    publish_revoke(GenServer.call(__MODULE__, {:revoke_by_hash, hash}))
   end
 
   @doc """
@@ -215,6 +220,30 @@ defmodule Flezha.AuthZ.TokenStore do
     :ok
   end
 
+  ## ----- replication -----
+
+  @doc "A revoke wins over a live entry whatever their stamps; otherwise the later write."
+  @impl Flezha.AuthZ.Replica
+  @spec prefer?({term(), Replica.stamp()}, {term(), Replica.stamp()}) :: boolean()
+  def prefer?({local, _} = l, {remote, _} = r) do
+    case {revoked?(local), revoked?(remote)} do
+      {false, true} -> true
+      {true, false} -> false
+      _same -> Replica.later?(l, r)
+    end
+  end
+
+  @doc "A runner credential revoked on another controller closes its sessions here too."
+  @impl Flezha.AuthZ.Replica
+  @spec adopted(binary(), entry(), term()) :: :ok
+  def adopted(_hash, entry, previous) do
+    if revoked?(entry) and not revoked?(previous), do: close_authenticated_sessions({:ok, entry})
+    :ok
+  end
+
+  defp revoked?(%{revoked_at: at}), do: is_integer(at)
+  defp revoked?(_absent), do: false
+
   ## ----- GenServer -----
 
   @impl true
@@ -230,9 +259,12 @@ defmodule Flezha.AuthZ.TokenStore do
   end
 
   def handle_call({:insert, hash, entry}, _from, state) do
-    :ok = DetsStore.put(@table, hash, entry)
+    :ok = Replica.put(__MODULE__, hash, entry)
     {:reply, :ok, state}
   end
+
+  def handle_call({:replica_accept, rows}, _from, state),
+    do: {:reply, Replica.merge(__MODULE__, rows), state}
 
   def handle_call({:revoke, id, opts}, _from, state) do
     matches =
@@ -309,6 +341,11 @@ defmodule Flezha.AuthZ.TokenStore do
 
   defp close_authenticated_sessions(other), do: other
 
+  defp publish_revoke({:ok, entry} = revoked),
+    do: close_authenticated_sessions(Replica.published(revoked, __MODULE__, entry.token_hash))
+
+  defp publish_revoke(refused), do: refused
+
   @spec hash_token(binary()) :: binary()
   defp hash_token(token) when is_binary(token) do
     :crypto.hash(:sha256, token) |> Base.encode16(case: :lower)
@@ -317,7 +354,7 @@ defmodule Flezha.AuthZ.TokenStore do
   # Mark the row revoked, sync, and emit the audit event.
   defp revoke_entry(hash, entry, revoked_by) do
     updated = %{entry | revoked_at: System.system_time(:second)}
-    :ok = DetsStore.put(@table, hash, updated)
+    :ok = Replica.put(__MODULE__, hash, updated)
     emit_revoked(updated, revoked_by)
     {:ok, updated}
   end

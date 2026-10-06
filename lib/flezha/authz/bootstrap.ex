@@ -163,7 +163,7 @@ defmodule Flezha.AuthZ.Bootstrap do
          # to retry with.
          :ok <- RoleStore.unbind(principal),
          :ok <- RoleStore.bind(principal, Namespace.system_name(), :admin, bound_by: principal),
-         :ok <- AuthState.set_enabled() do
+         :ok <- AuthState.set_enabled(principal) do
       _ = File.rm(path)
 
       if recovery do
@@ -183,6 +183,17 @@ defmodule Flezha.AuthZ.Bootstrap do
     end
   end
 
+  @doc """
+  Unbind `principal` and revoke its live `_system` admin tokens, as `actor`.
+  What a cluster does to the admin of a claim that lost to another one.
+  """
+  @spec invalidate_admin(binary(), binary()) :: :ok
+  def invalidate_admin(principal, actor) do
+    :ok = RoleStore.unbind(principal)
+    _ = revoke_admin_tokens(&(&1 == principal), actor)
+    :ok
+  end
+
   # Every `admin@_system` binding dropped and every live `_system` admin token
   # revoked. Shared by the offline marker and the online recovery claim, because
   # "the previous admin no longer authorizes" is one rule and both paths owe it.
@@ -196,15 +207,17 @@ defmodule Flezha.AuthZ.Bootstrap do
         principal
       end
 
-    revoked =
-      for %{token_hash: hash, namespace: ns, role: :admin, revoked_at: nil} <-
-            TokenStore.list(:all),
-          Namespace.system?(ns) do
-        _ = TokenStore.revoke(String.slice(hash, 0, 12), revoked_by_principal: actor)
-        hash
-      end
+    {unbound, revoke_admin_tokens(fn _principal -> true end, actor)}
+  end
 
-    {unbound, revoked}
+  defp revoke_admin_tokens(principal?, actor) do
+    for %{token_hash: hash, namespace: ns, role: :admin, revoked_at: nil, principal: principal} <-
+          TokenStore.list(:all),
+        Namespace.system?(ns),
+        principal?.(principal) do
+      _ = TokenStore.revoke(String.slice(hash, 0, 12), revoked_by_principal: actor)
+      hash
+    end
   end
 
   defp write_bootstrap_token() do

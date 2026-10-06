@@ -33,7 +33,9 @@ On SIGTERM, which `docker stop` and `docker compose stop` send, the script runs
 `flz controller stop --timeout-ms ${FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS}`: the drain
 [Graceful shutdown](deploying_a_controller.md#graceful-shutdown) describes. Docker kills a
 container 10 seconds after SIGTERM unless told otherwise, so give it the paired grace
-period, 75 seconds with the default timeout:
+period, 75 seconds with the default timeout. `controller stop` is an admin verb: with
+authorization enforced, set `FLEZHA_SHUTDOWN_TOKEN_FILE` to a file holding an
+`admin@_system` token, or the stop is refused and the container is killed without the drain:
 
 ```sh
 $ docker stop -t 75 flezha-controller

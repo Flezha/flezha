@@ -16,7 +16,7 @@ defmodule Flezha.DetsStore do
       for the uncached stores.
     * the ETS-read-cache skeleton for the cached stores
       (`init_cached/4`, `cache_lookup/2`, `cache_values/1`, `put/4`,
-      `put_new/4`, `update/4`, `delete/3`): every mutation writes
+      `put_new/4`, `delete/3`): every mutation writes
       DETS first with `:dets.sync/1`, then updates the cache, so a
       crash mid-write loses the cache update but never an unsynced
       mutation. Existence checks read DETS, never the cache.
@@ -160,21 +160,6 @@ defmodule Flezha.DetsStore do
     case fetch(table, key) do
       {:ok, _} -> {:error, :already_exists}
       :error -> put(table, cache, key, value)
-    end
-  end
-
-  @doc "Write-through update of an existing key: `fun` maps the stored value."
-  @spec update(atom(), atom(), term(), (term() -> term())) ::
-          {:ok, term()} | {:error, :not_found}
-  def update(table, cache, key, fun) when is_function(fun, 1) do
-    case fetch(table, key) do
-      {:ok, value} ->
-        updated = fun.(value)
-        :ok = put(table, cache, key, updated)
-        {:ok, updated}
-
-      :error ->
-        {:error, :not_found}
     end
   end
 
