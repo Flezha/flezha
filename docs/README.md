@@ -1,14 +1,19 @@
 # Flezha documentation
 
 New to Flezha: start with [What is Flezha](getting_started/what_is_flezha.md), then
-[Up and running](getting_started/up_and_running.md). The user documentation comes in four sections,
+[Up and running](getting_started/up_and_running.md). The user documentation comes in the sections below,
 in reading order, then a section on how Flezha is built and one for contributors; everything after them is grouped by who reads it.
 
 | Section | What it is |
 | --- | --- |
 | [Getting started](#getting-started) | What Flezha is, and the echo built by hand |
 | [Tutorials](#tutorials) | Two example applications, run page by page: what to type and what you should see |
-| [Core topics](#core-topics) | One page per subject, each readable on its own |
+| [Relays](#relays) | What a relay is, how it is set up, and how to start it and talk to it |
+| [Kinds of relays](#kinds-of-relays) | Streams, workflows and sessions: what you build with relays |
+| [Relay features](#relay-features) | Timers, calls, effects, durability, effectively once, partitions and the rest |
+| [Core topics](#core-topics) | Namespaces, authorization and AI assistants: what applies to a whole deployment |
+| [Plugin guides](#plugin-guides) | Connecting relays to files, HTTP, Kafka, databases and more |
+| [The CLI](#the-cli) | `flz` and every command group |
 | [Deploying](#deploying) | Running controllers and runners: the release, Docker, a build of your own, a cluster, Kubernetes |
 | [Architecture](#architecture) | How Flezha is built: the controller, the kernel, flow and steps, the runner |
 | [Contributing](#contributing) | The rules a contribution follows, the build, the tests and the release |
@@ -51,43 +56,83 @@ type and what you should see; the topic pages say how each piece works.
 | [`tradedesk/tradedesk.md`](tutorials/tradedesk/tradedesk.md) | The tradedesk: an ETL stream and a workflow on a demo exchange, partitions, plugins, crashes |
 | [`agentdesk/agentdesk.md`](tutorials/agentdesk/agentdesk.md) | The agentdesk: sessions behind HTTP, calls, a cluster, Kubernetes |
 
-## Core topics
+## Relays
+
+What a relay is, how it is set up, and how to start it and talk to it.
 
 | Doc | Covers |
 | --- | --- |
 | [`building_blocks.md`](topics/basics/building_blocks.md) | Tasklets, relays and runners, and the seven SDKs on one engine |
+| [`state.md`](topics/basics/state.md) | State per cell, the changes that record it, and its restore |
 | [`configuring_a_relay.md`](topics/basics/configuring_a_relay.md) | The settings tree: how a relay runs, where its work is kept, as an ETL stream and as a workflow |
+| [`running_relays.md`](topics/basics/running_relays.md) | Starting, watching and stopping relays, from `flz` and from code; what a restart brings back |
+| [`relay_api.md`](topics/basics/relay_api.md) | A relay's API: describing its channels, reading it with `flz relay info`, and calling it from `flz`, HTTP, an SDK or an AI agent's tools |
+
+## Kinds of relays
+
+What you build with relays.
+
+| Doc | Covers |
+| --- | --- |
 | [`streams.md`](topics/basics/streams.md) | A graph of tasklets: channels, edges, transforms and keys |
 | [`workflows.md`](topics/basics/workflows.md) | Steps, retries, undo, and one instance per input |
-| [`state.md`](topics/basics/state.md) | State per cell, the changes that record it, and its restore |
-| [`topics/basics/running_relays.md`](topics/basics/running_relays.md) | Starting, watching and stopping relays, from `flz` and from code; what a restart brings back |
-| [`topics/basics/relay_api.md`](topics/basics/relay_api.md) | A relay's API: describing its channels, reading it with `flz relay info`, and calling it from `flz`, HTTP, an SDK or an AI agent's tools |
+| [`sessions.md`](topics/advanced/sessions.md) | A session per user: steps, one pass per message, sleeping when idle |
+| [`rewinding_a_turn.md`](topics/advanced/rewinding_a_turn.md) | Taking iterations back, and a failed turn that fails alone |
+
+## Relay features
+
+What a relay can do beyond its graph, and what Flezha guarantees for it.
+
+| Doc | Covers |
+| --- | --- |
+| [`timers.md`](topics/advanced/timers.md) | Per-cell processing-time and event-time timers |
+| [`merged_inputs.md`](topics/advanced/merged_inputs.md) | A tasklet fed by several channels |
+| [`recorded_effects.md`](topics/advanced/recorded_effects.md) | Keeping an outside call's result so a re-run reads it instead of calling again |
+| [`streamed_answers.md`](topics/advanced/streamed_answers.md) | An answer sent in parts while the turn runs |
+| [`spawning_from_a_tasklet.md`](topics/advanced/spawning_from_a_tasklet.md) | A running tasklet starts or feeds a steps instance |
+| [`relay_calls.md`](topics/advanced/relay_calls.md) | Calling a relay and waiting for its answer |
+| [`sending_from_runner_code.md`](topics/advanced/sending_from_runner_code.md) | Sending to a relay from a runner's own code, through the controller or locally |
+| [`durability.md`](topics/basics/durability.md) | What survives what, and the durability levels |
+| [`effectively_once.md`](topics/advanced/effectively_once.md) | The delivery guarantee, what it requires and what it costs |
+| [`partitioning.md`](topics/advanced/partitioning.md) | One logical relay in N partitions: key groups, sources, rescale |
+| [`local_mode.md`](topics/basics/local_mode.md) | Testing a relay in your own process, with no controller |
+
+## Core topics
+
+What applies to a whole deployment rather than one relay.
+
+| Doc | Covers |
+| --- | --- |
+| [`namespaces.md`](topics/basics/namespaces.md) | Namespaces, joining one from a runner, quotas, and administering one from code |
+| [`authorization.md`](topics/basics/authorization.md) | The admin, tokens, roles, certificates and recovery |
 | [`working_with_ai_assistants.md`](topics/working_with_ai_assistants.md) | `flz mcp`: an AI assistant gets the rules, the current SDK form and the operations |
-| [`topics/plugins/plugins.md`](topics/plugins/plugins.md) | The plugin model: installed, enabled by name, relays bound; the plugins that ship |
+
+## Plugin guides
+
+Connecting relays to the outside; every plugin's own page is under [`plugins/`](#plugins).
+
+| Doc | Covers |
+| --- | --- |
+| [`plugins.md`](topics/plugins/plugins.md) | The plugin model: installed, enabled by name, relays bound; the plugins that ship |
 | [`where_plugins_run.md`](topics/plugins/where_plugins_run.md) | Shared and single copies, partitioned relays, when a copy stops, durability |
 | [`enabling_and_binding.md`](topics/plugins/enabling_and_binding.md) | The `flz plugin` commands, their flags, hooks, updates, seeing what runs |
 | [`plugins_from_code.md`](topics/plugins/plugins_from_code.md) | Enabling and binding plugins from an SDK's `control()` handle |
 | [`plugin_examples.md`](topics/plugins/plugin_examples.md) | The echo's file plugins and the tradedesk's live feed; limits and gotchas |
-| [`topics/basics/namespaces.md`](topics/basics/namespaces.md) | Namespaces, joining one from a runner, quotas, and administering one from code |
-| [`topics/basics/authorization.md`](topics/basics/authorization.md) | The admin, tokens, roles, certificates and recovery |
-| [`topics/basics/durability.md`](topics/basics/durability.md) | What survives what, and the durability levels |
-| [`topics/cli/cli.md`](topics/cli/cli.md) | `flz` itself: reaching a controller, output formats, identity |
-| [`topics/cli/template_commands.md`](topics/cli/template_commands.md) | A new project in any of the seven languages, from `flz template create` |
-| [`topics/advanced/partitioning.md`](topics/advanced/partitioning.md) | One logical relay in N partitions: key groups, sources, rescale |
-| [`merged_inputs.md`](topics/advanced/merged_inputs.md) | A tasklet fed by several channels |
-| [`topics/advanced/timers.md`](topics/advanced/timers.md) | Per-cell processing-time and event-time timers |
-| [`spawning_from_a_tasklet.md`](topics/advanced/spawning_from_a_tasklet.md) | A running tasklet starts or feeds a steps instance |
-| [`topics/advanced/relay_calls.md`](topics/advanced/relay_calls.md) | Calling a relay and waiting for its answer |
-| [`topics/advanced/sending_from_runner_code.md`](topics/advanced/sending_from_runner_code.md) | Sending to a relay from a runner's own code, through the controller or locally |
-| [`topics/advanced/sessions.md`](topics/advanced/sessions.md) | A session per user: steps, one pass per message, sleeping when idle |
-| [`topics/advanced/rewinding_a_turn.md`](topics/advanced/rewinding_a_turn.md) | Taking iterations back, and a failed turn that fails alone |
-| [`topics/advanced/streamed_answers.md`](topics/advanced/streamed_answers.md) | An answer sent in parts while the turn runs |
 | [`installing_plugins.md`](topics/plugins/installing_plugins.md) | Plugin packages: installing, loading at boot, versions, signing |
 | [`hooks.md`](topics/plugins/hooks.md) | Hooks and controller plugins |
 | [`writing_a_plugin.md`](topics/plugins/writing_a_plugin.md) | Writing and packaging a plugin of your own |
-| [`topics/advanced/effectively_once.md`](topics/advanced/effectively_once.md) | The delivery guarantee, what it requires and what it costs |
-| [`topics/advanced/recorded_effects.md`](topics/advanced/recorded_effects.md) | Keeping an outside call's result so a re-run reads it instead of calling again |
-| [`local_mode.md`](topics/basics/local_mode.md) | Testing a relay in your own process, with no controller |
+
+## The CLI
+
+| Doc | Covers |
+| --- | --- |
+| [`cli.md`](topics/cli/cli.md) | `flz` itself: reaching a controller, output formats, identity |
+| [`controller_commands.md`](topics/cli/controller_commands.md) | Starting and stopping the controller, checking that it is up, its runners, and clearing its data |
+| [`relay_commands.md`](topics/cli/relay_commands.md) | Starting and stopping relays, sending them input, reading their state and their dead letters |
+| [`plugin_commands.md`](topics/cli/plugin_commands.md) | Installing plugin packages, enabling plugins and binding relays to them |
+| [`access_commands.md`](topics/cli/access_commands.md) | Namespaces and quotas, the first admin, tokens, roles, and the audit trail |
+| [`template_commands.md`](topics/cli/template_commands.md) | A new project in any of the seven languages, from `flz template create` |
+| [`command_reference.md`](topics/cli/command_reference.md) | Every `flz` verb in one line, by group |
 
 ## Deploying
 
