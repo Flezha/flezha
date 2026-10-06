@@ -87,15 +87,27 @@ fn door_call(name: &str, args: &[Value], opts: &[Opt], token: Option<&str>, json
 /// it carries no token. The child prints its own answer and exits with its
 /// class's code, which `flz` passes through.
 pub(crate) fn eval(module: &str, fun: &str, positional: &[String], read: &Reading) {
+    settle(child(
+        "eval",
+        &eval_expression(module, fun, positional, read),
+        Out::Inherit,
+    ));
+}
+
+/// The expression `eval` runs, for a verb that reads the child's stdout itself.
+pub(crate) fn eval_expression(
+    module: &str,
+    fun: &str,
+    positional: &[String],
+    read: &Reading,
+) -> String {
     let mut parts = positional.to_vec();
     parts.push(keyword_opts_fragment(
         &[],
         None,
         read.output_format() == "json",
     ));
-    let expression = format!("{}.{}({})", module, fun, parts.join(", "));
-
-    settle(child("eval", &expression, Out::Inherit));
+    format!("{}.{}({})", module, fun, parts.join(", "))
 }
 
 /// What `elixir --rpc-eval` says, with exit 1, whenever it could not reach the
@@ -115,6 +127,17 @@ pub(crate) fn run_if_reachable(expression: &str) -> Result<(), ()> {
             Ok(())
         }
     }
+}
+
+/// End the run for a file `flz` could not write.
+pub(crate) fn write_failed(path: impl std::fmt::Display, reason: impl std::fmt::Display) -> ! {
+    fail(FlezhaError::with(
+        "cli.write_failed",
+        [
+            ("path", Value::String(path.to_string())),
+            ("reason", Value::String(reason.to_string())),
+        ],
+    ))
 }
 
 /// End the run for a controller that could not be reached.

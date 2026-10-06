@@ -171,7 +171,9 @@ defmodule Flezha.Mcp.StdioTest do
       call = %{"name" => "relay_list", "arguments" => %{"namespace" => "default"}}
       answer = result(online(rpc("tools/call", call), token: "flzt_not_a_token"))
 
-      assert listed == ~w(flezha_guide flezha_sdk_example flezha_error flezha_docs)
+      assert listed ==
+               ~w(flezha_guide flezha_sdk_example flezha_error flezha_docs flezha_new_project)
+
       assert answer["isError"]
       assert answer["structuredContent"]["error"]["code"] == "authz.token_unknown"
     end

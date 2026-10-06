@@ -37,6 +37,7 @@ reproduces it and the output that command gave.
 | --- | --- |
 | [`getting_started/what_is_flezha.md`](getting_started/what_is_flezha.md) | **Start here.** What Flezha is, its pieces, and what it is for |
 | [`getting_started/try_it.md`](getting_started/try_it.md) | One echo running in Docker |
+| [`getting_started/start_a_project.md`](getting_started/start_a_project.md) | A new project in any of the seven languages, from `flz template create` |
 
 ## Tutorials
 

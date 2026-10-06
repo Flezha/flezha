@@ -243,6 +243,7 @@ defmodule Flezha.MixProject do
       extras: [
         "docs/getting_started/what_is_flezha.md",
         "docs/getting_started/try_it.md",
+        "docs/getting_started/start_a_project.md",
         "docs/tutorials/tutorials.md",
         "docs/tutorials/echo/first_steps.md",
         "docs/tutorials/echo/start_the_controller.md",
@@ -353,6 +354,7 @@ defmodule Flezha.MixProject do
         "Getting started": [
           "docs/getting_started/what_is_flezha.md",
           "docs/getting_started/try_it.md",
+          "docs/getting_started/start_a_project.md",
           "docs/tutorials/tutorials.md"
         ],
         "Tutorial 1: The echo": ~r"docs/tutorials/echo/",

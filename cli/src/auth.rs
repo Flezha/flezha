@@ -107,7 +107,7 @@ fn mint_bootstrap_token() -> String {
 /// credential, and the directory's mode is not enough on its own.
 fn write_owner_only(path: &Path, bytes: &[u8]) {
     if let Err(e) = fs::File::create(path).and_then(|mut f| f.write_all(bytes)) {
-        write_failed(path, e);
+        rpc::write_failed(path.display(), e);
     }
 
     #[cfg(unix)]
@@ -115,17 +115,7 @@ fn write_owner_only(path: &Path, bytes: &[u8]) {
         use std::os::unix::fs::PermissionsExt;
 
         if let Err(e) = fs::set_permissions(path, fs::Permissions::from_mode(0o600)) {
-            write_failed(path, e);
+            rpc::write_failed(path.display(), e);
         }
     }
-}
-
-fn write_failed(path: &Path, e: std::io::Error) -> ! {
-    rpc::fail(FlezhaError::with(
-        "cli.write_failed",
-        [
-            ("path", path.display().to_string().into()),
-            ("reason", e.to_string().into()),
-        ],
-    ))
 }

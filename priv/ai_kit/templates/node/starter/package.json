@@ -1,0 +1,14 @@
+{
+  "name": "flezha-starter",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A relay that counts visits per page, with its test.",
+  "scripts": {
+    "start": "node runner.mjs",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "@flezha/sdk": "0.1.0"
+  }
+}

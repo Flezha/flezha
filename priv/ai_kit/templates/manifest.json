@@ -1,0 +1,276 @@
+{
+  "templates": [
+    {
+      "run": [
+        "mix deps.get",
+        "mix test",
+        "mix run --no-halt",
+        "flz relay start starter --id starter",
+        "flz relay call starter --channel hit --arg page=home"
+      ],
+      "language": "elixir",
+      "files": [
+        {
+          "path": "README.md",
+          "executable": false
+        },
+        {
+          "path": "lib/starter/application.ex",
+          "executable": false
+        },
+        {
+          "path": "lib/starter/count.ex",
+          "executable": false
+        },
+        {
+          "path": "lib/starter/relay.ex",
+          "executable": false
+        },
+        {
+          "path": "mix.exs",
+          "executable": false
+        },
+        {
+          "path": "test/starter_test.exs",
+          "executable": false
+        },
+        {
+          "path": "test/test_helper.exs",
+          "executable": false
+        }
+      ],
+      "summary": "A relay that counts visits per page",
+      "example": "starter",
+      "gitignore": "/_build/\n/deps/\n"
+    },
+    {
+      "run": [
+        "mvn -q package",
+        "java -jar target/starter.jar",
+        "flz relay start starter --id starter",
+        "flz relay call starter --channel hit --arg page=home"
+      ],
+      "language": "java",
+      "files": [
+        {
+          "path": "README.md",
+          "executable": false
+        },
+        {
+          "path": "pom.xml",
+          "executable": false
+        },
+        {
+          "path": "src/main/java/com/flezha/examples/starter/CountHits.java",
+          "executable": false
+        },
+        {
+          "path": "src/main/java/com/flezha/examples/starter/Main.java",
+          "executable": false
+        },
+        {
+          "path": "src/main/java/com/flezha/examples/starter/StarterRelay.java",
+          "executable": false
+        },
+        {
+          "path": "src/test/java/com/flezha/examples/starter/CountHitsTest.java",
+          "executable": false
+        }
+      ],
+      "summary": "A relay that counts visits per page",
+      "example": "starter",
+      "gitignore": "/target/\n"
+    },
+    {
+      "run": [
+        "npm install",
+        "npm test",
+        "node runner.mjs",
+        "flz relay start starter --id starter",
+        "flz relay call starter --channel hit --arg page=home"
+      ],
+      "language": "node",
+      "files": [
+        {
+          "path": "README.md",
+          "executable": false
+        },
+        {
+          "path": "count.mjs",
+          "executable": false
+        },
+        {
+          "path": "count.test.mjs",
+          "executable": false
+        },
+        {
+          "path": "package.json",
+          "executable": false
+        },
+        {
+          "path": "runner.mjs",
+          "executable": false
+        },
+        {
+          "path": "starter_relay.mjs",
+          "executable": false
+        }
+      ],
+      "summary": "A relay that counts visits per page",
+      "example": "starter",
+      "gitignore": "node_modules/\n"
+    },
+    {
+      "run": [
+        "composer install",
+        "vendor/bin/phpunit tests",
+        "php runner.php",
+        "flz relay start starter --id starter",
+        "flz relay call starter --channel hit --arg page=home"
+      ],
+      "language": "php",
+      "files": [
+        {
+          "path": "README.md",
+          "executable": false
+        },
+        {
+          "path": "composer.json",
+          "executable": false
+        },
+        {
+          "path": "runner.php",
+          "executable": false
+        },
+        {
+          "path": "src/CountHits.php",
+          "executable": false
+        },
+        {
+          "path": "src/StarterRelay.php",
+          "executable": false
+        },
+        {
+          "path": "tests/CountHitsTest.php",
+          "executable": false
+        }
+      ],
+      "summary": "A relay that counts visits per page",
+      "example": "starter",
+      "gitignore": "/vendor/\n"
+    },
+    {
+      "run": [
+        "python3 -m venv .venv",
+        ".venv/bin/pip install -r requirements.txt",
+        ".venv/bin/python -m unittest",
+        ".venv/bin/python runner.py",
+        "flz relay start starter --id starter",
+        "flz relay call starter --channel hit --arg page=home"
+      ],
+      "language": "python",
+      "files": [
+        {
+          "path": "README.md",
+          "executable": false
+        },
+        {
+          "path": "count.py",
+          "executable": false
+        },
+        {
+          "path": "requirements.txt",
+          "executable": false
+        },
+        {
+          "path": "runner.py",
+          "executable": false
+        },
+        {
+          "path": "starter_relay.py",
+          "executable": false
+        },
+        {
+          "path": "test_starter.py",
+          "executable": false
+        }
+      ],
+      "summary": "A relay that counts visits per page",
+      "example": "starter",
+      "gitignore": ".venv/\n__pycache__/\n"
+    },
+    {
+      "run": [
+        "bundle install",
+        "bundle exec ruby count_test.rb",
+        "bundle exec ruby runner.rb",
+        "flz relay start starter --id starter",
+        "flz relay call starter --channel hit --arg page=home"
+      ],
+      "language": "ruby",
+      "files": [
+        {
+          "path": "Gemfile",
+          "executable": false
+        },
+        {
+          "path": "README.md",
+          "executable": false
+        },
+        {
+          "path": "count.rb",
+          "executable": false
+        },
+        {
+          "path": "count_test.rb",
+          "executable": false
+        },
+        {
+          "path": "runner.rb",
+          "executable": false
+        },
+        {
+          "path": "starter_relay.rb",
+          "executable": false
+        }
+      ],
+      "summary": "A relay that counts visits per page",
+      "example": "starter",
+      "gitignore": "/vendor/\n/.bundle/\n"
+    },
+    {
+      "run": [
+        "cargo test",
+        "cargo run --release",
+        "flz relay start starter --id starter",
+        "flz relay call starter --channel hit --arg page=home"
+      ],
+      "language": "rust",
+      "files": [
+        {
+          "path": "Cargo.toml",
+          "executable": false
+        },
+        {
+          "path": "README.md",
+          "executable": false
+        },
+        {
+          "path": "src/count.rs",
+          "executable": false
+        },
+        {
+          "path": "src/main.rs",
+          "executable": false
+        },
+        {
+          "path": "src/relay.rs",
+          "executable": false
+        }
+      ],
+      "summary": "A relay that counts visits per page",
+      "example": "starter",
+      "gitignore": "/target/\n/.cargo/\n"
+    }
+  ]
+}

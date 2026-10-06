@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Added: `flz template`, a new project from the release
+
+`flz template create <language> <dir>` writes a small, complete project from a template the
+installed release carries, and `flz template list` prints them; neither needs a controller
+([`docs/getting_started/start_a_project.md`](docs/getting_started/start_a_project.md)). The
+one template, `starter`, is each SDK's new `examples/starter`: a described entry channel `hit`
+keyed by page into a tasklet that counts visits per page in state through a change, a test
+with the SDK's harness (local mode in Elixir), and a README, tested by each SDK's suite.
+`--tar` writes the files as a tar stream, so
+`docker exec <container> flz template create python my-app --tar | tar x` hands them to the
+host. The fifth knowledge tool, `flezha_new_project`, answers the same files over MCP, and the
+assistant rules say to start a new project from it. New codes `template.unknown`,
+`template.dir_not_empty` and `usage.tar_to_terminal`.
+
 ### Added: every relay has a public API
 
 A relay's entry channels are its API, announced by its runner with its factories: each

@@ -56,14 +56,17 @@ callable, whatever the token.
 
 ### Requirement: The knowledge tools SHALL answer from the installed release
 
-Every MCP server of Flezha SHALL list four tools to every caller: `flezha_guide`,
-`flezha_sdk_example`, `flezha_error` and `flezha_docs`. They SHALL read no controller
-state and SHALL be marked read-only. `flezha_guide` SHALL answer the working rules and the
-docs map; `flezha_sdk_example` the echo example of one of elixir, java, node, php, python,
+Every MCP server of Flezha SHALL list five tools to every caller: `flezha_guide`,
+`flezha_sdk_example`, `flezha_error`, `flezha_docs` and `flezha_new_project`. They SHALL read no
+controller state and SHALL be marked read-only. `flezha_guide` SHALL answer the working rules and
+the docs map; `flezha_sdk_example` the echo example of one of elixir, java, node, php, python,
 ruby and rust; `flezha_error` the class, message and hint of an error code from the error
-catalogue; `flezha_docs` one guide page the map lists. An unknown value SHALL answer a
-tool error whose hint names where the valid values are. The server's `instructions` SHALL
-carry the working rules.
+catalogue; `flezha_docs` one guide page the map lists; `flezha_new_project` the files of one
+template the release carries (each with its path, content and executable bit, its `.gitignore`
+included) and the template's run commands, for a language and an example defaulting to
+`starter`. An unknown value SHALL answer a tool error whose hint names where the valid values are.
+The server's `instructions` SHALL carry the working rules, which SHALL tell an assistant to start
+a new project from `flezha_new_project`.
 
 #### Scenario: The SDK example for a language
 
@@ -87,6 +90,18 @@ carry the working rules.
 
 - **WHEN** a client initializes
 - **THEN** the `instructions` SHALL hold the text of `priv/ai_kit/rules.md`
+
+#### Scenario: A new project for a language
+
+- **WHEN** `flezha_new_project` is called with `language: "java"`
+- **THEN** the answer SHALL hold every file `flz template create java` writes, with the same
+  contents, and the starter's run commands
+
+#### Scenario: An unknown template
+
+- **WHEN** `flezha_new_project` is called with `example: "nope"`
+- **THEN** the result SHALL be a tool error coded `template.unknown` whose hint names
+  `flz template list`
 
 ### Requirement: The rules SHALL name no SDK function
 

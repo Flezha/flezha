@@ -2,8 +2,8 @@ defmodule Flezha.Mcp.Knowledge do
   @moduledoc """
   The tools that answer from the installed release rather than from a
   controller, so an assistant has them before any controller runs: the working
-  rules with the docs map, an SDK's echo example, an error code's meaning and
-  one guide page.
+  rules with the docs map, an SDK's echo example, an error code's meaning, one
+  guide page and the files of a new project.
 
   `mix flezha.ai_kit` writes what they read into `priv/ai_kit/`; an error's
   meaning is read from the compiled catalogue. The rules are also the server's
@@ -47,6 +47,17 @@ defmodule Flezha.Mcp.Knowledge do
         "One Flezha guide page as Markdown, by the file name the map in flezha_guide links, " <>
           "for example local_mode.md.",
       args: [page: [type: :string, required: true, doc: "The page's file name"]]
+    },
+    %{
+      name: "Flezha.new_project",
+      doc:
+        "The files of a new Flezha project in one SDK's language, each with its path, its " <>
+          "content and whether it is executable, and the commands that build, test and run " <>
+          "it. Start every new project from it: write its files, then follow its README.",
+      args: [
+        language: [type: :enum, values: @languages, required: true, doc: "The SDK's language"],
+        example: [type: :string, doc: "The template, starter when left out"]
+      ]
     }
   ]
 
@@ -97,6 +108,11 @@ defmodule Flezha.Mcp.Knowledge do
     end
   end
 
+  def call("Flezha.new_project", [language, example]) do
+    with {:ok, template} <- template(language, example || "starter"),
+         do: {:ok, Jason.encode!(template)}
+  end
+
   def call("Flezha.docs", [page]) do
     file = if is_binary(page), do: String.replace_suffix(page, ".md", "") <> ".md"
 
@@ -105,6 +121,45 @@ defmodule Flezha.Mcp.Knowledge do
     if file in pages(),
       do: {:text, read!("docs/" <> file)},
       else: {:error, Error.new("mcp.unknown_page", page: shown(page))}
+  end
+
+  @doc """
+  The templates the release carries, as `mix flezha.ai_kit` listed them: each
+  with its language, example, summary, files and run commands.
+  """
+  @spec templates() :: [map()]
+  def templates, do: Jason.decode!(read!("templates/manifest.json"))["templates"]
+
+  @doc """
+  The files of one template, its `.gitignore` among them, each with its path,
+  content and executable bit, and the commands of its README's "Run it".
+  """
+  @spec template(term(), term()) :: {:ok, map()} | {:error, Error.t()}
+  def template(language, example) do
+    # Matched against the manifest, never joined into a path unseen.
+    case Enum.find(templates(), &(&1["language"] == language and &1["example"] == example)) do
+      nil ->
+        {:error,
+         Error.new("template.unknown", language: shown(language), example: shown(example))}
+
+      found ->
+        dir = Path.join(["templates", language, example])
+
+        files =
+          for file <- found["files"],
+              do: %{
+                path: file["path"],
+                content: read!(Path.join(dir, file["path"])),
+                executable: file["executable"]
+              }
+
+        ignore =
+          if found["gitignore"],
+            do: [%{path: ".gitignore", content: found["gitignore"], executable: false}],
+            else: []
+
+        {:ok, %{files: ignore ++ files, run: found["run"]}}
+    end
   end
 
   defp pages do

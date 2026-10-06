@@ -113,8 +113,8 @@ flezha: http://127.0.0.1:8765/mcp (HTTP) - ✔ Connected
 Each operation is a tool, named after it in snake case: `relay_start`,
 `relay_send`, `dlq_list`, `dlq_replay`. A failed call comes back as a tool error
 carrying the error object, so the model reads its `code` and `hint` and can correct
-itself. Beside them are the four tools that need no controller, `flezha_guide`,
-`flezha_sdk_example`, `flezha_error` and `flezha_docs`. Any other MCP client connects
+itself. Beside them are the five tools that need no controller, `flezha_guide`,
+`flezha_sdk_example`, `flezha_error`, `flezha_docs` and `flezha_new_project`. Any other MCP client connects
 the same way: the URL and the header.
 
 On the controller's own machine an assistant can use `flz mcp` instead, with no plugin

@@ -1,0 +1,28 @@
+{
+    "name": "flezha/starter",
+    "description": "A relay that counts visits per page, with its test.",
+    "type": "project",
+    "license": "Apache-2.0",
+    "require": {
+        "php": ">=8.4",
+        "flezha/sdk": "0.1.0"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "10.5.64"
+    },
+    "autoload": {
+        "psr-4": {
+            "Flezha\\Examples\\Starter\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Flezha\\Examples\\Starter\\Tests\\": "tests/"
+        }
+    },
+    "config": {
+        "allow-plugins": {
+            "flezha/sdk": true
+        }
+    }
+}

@@ -70,7 +70,7 @@ configuration:
 
 ## What the assistant gets
 
-Four tools need no controller and answer from the installed release, so they
+Five tools need no controller and answer from the installed release, so they
 always match the version you run:
 
 | Tool | Answers |
@@ -79,9 +79,11 @@ always match the version you run:
 | `flezha_sdk_example` | The echo example for one language: the current SDK form |
 | `flezha_error` | What an error code means, and the hint for the next step |
 | `flezha_docs` | One guide page, by the name the map gives it |
+| `flezha_new_project` | The files of a new project in one language, and the commands that build, test and run it ([Start a project](../getting_started/start_a_project.md)) |
 
 The rules also go in the server's instructions, which most clients show the
-model before it does anything: read the SDK example before writing SDK code, try
+model before it does anything: start a new project from `flezha_new_project`,
+read the SDK example before writing SDK code, try
 a relay in [local mode](basics/local_mode.md) first, act on an error's
 `code` and `hint`, and call `relay_diagnose` first when a relay misbehaves.
 
@@ -117,7 +119,7 @@ does its job, issued as the HTTP API page shows
 
 Whatever the token, the assistant cannot stop the controller, issue or revoke
 tokens, bind roles or delete a namespace: those are not tools. Once the admin
-is claimed, an assistant with no token gets the four knowledge tools and every
+is claimed, an assistant with no token gets the five knowledge tools and every
 operation is refused with `authz.principal_not_bound`; one whose token does not
 verify gets the token's own error, such as `authz.token_expired`.
 
@@ -127,7 +129,7 @@ verify gets the token's own error, such as `authz.token_expired`.
 controller the assistant's machine cannot reach that way, enable the
 [HTTP API plugin](../plugins/http_api.md) on the controller and connect the
 assistant to its `/mcp` address with a bearer token. It serves the same tools,
-the four knowledge tools included.
+the five knowledge tools included.
 
 ## For a tool that ignores MCP instructions
 

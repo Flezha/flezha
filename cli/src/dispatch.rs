@@ -84,10 +84,11 @@ impl Verb {
     }
 
     /// Refuse a word this row does not declare: an option it does not read, or
-    /// a plain word no positional takes. Six verbs do: two block the caller
-    /// for as long as their options say, one deletes state, two start
-    /// relays, which a misspelled option would start without the setting
-    /// it meant, and `flz mcp`, which a program starts and nobody watches.
+    /// a plain word no positional takes. The verbs that do are those a misread
+    /// word costs more than a refusal: one that blocks the caller for as long
+    /// as its options say, deletes state, starts a relay without the setting
+    /// meant, serves a program nobody watches (`flz mcp`), or writes a folder
+    /// where a tar stream was asked for (`flz template create`).
     pub(crate) const fn strict(mut self) -> Self {
         self.strict = true;
         self

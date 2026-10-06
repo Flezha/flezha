@@ -14,6 +14,7 @@ COMMANDS:
     state          Per-Cell state queries (time-travel, retention, list)
     reset          Clear Controller durable runtime data on disk (controller must be stopped)
     mcp            Serve Flezha to an AI assistant over MCP, on stdin and stdout
+    template       Start a project from a template the release carries (list, create)
     observe        Observability foundation inspection (sources, sinks, tail)
     audit          Durable audit log inspection (list, read, tail, stats, rotate)
     dlq            Dead-letter queue: inspect, replay, or drop parked payloads

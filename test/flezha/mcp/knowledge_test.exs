@@ -4,11 +4,11 @@ defmodule Flezha.Mcp.KnowledgeTest do
   alias Flezha.Mcp
   alias Flezha.Mcp.Knowledge
 
-  test "four tools, every one read-only, the language one listing the languages" do
+  test "five tools, every one read-only, the language one listing the languages" do
     tools = Enum.map(Knowledge.entries(), &Mcp.tool/1)
 
     assert Enum.map(tools, & &1.name) ==
-             ~w(flezha_guide flezha_sdk_example flezha_error flezha_docs)
+             ~w(flezha_guide flezha_sdk_example flezha_error flezha_docs flezha_new_project)
 
     assert Enum.all?(tools, & &1.annotations.readOnlyHint)
     assert Enum.at(tools, 1).inputSchema.properties["language"].enum == Knowledge.languages()
@@ -64,6 +64,31 @@ defmodule Flezha.Mcp.KnowledgeTest do
 
     assert {:error, %{code: "mcp.unknown_code"}} =
              Knowledge.call("Flezha.error", ["no.such_code"])
+  end
+
+  test "a new project holds every file of the SDK's starter, its .gitignore included" do
+    assert {:ok, json} = Knowledge.call("Flezha.new_project", ["python", nil])
+    assert %{"files" => files, "run" => run} = Jason.decode!(json)
+
+    {listed, 0} = System.cmd("git", ~w(-C sdk/python ls-files examples/starter))
+
+    paths =
+      for file <- String.split(listed, "\n", trim: true),
+          do: Path.relative_to(file, "examples/starter")
+
+    assert Enum.sort(Enum.map(files, & &1["path"])) == Enum.sort(paths)
+
+    for %{"path" => path, "content" => content, "executable" => false} <- files,
+        do: assert(content == File.read!(Path.join("sdk/python/examples/starter", path)))
+
+    assert ".venv/bin/python runner.py" in run
+  end
+
+  test "an unknown language or example is refused naming flz template list" do
+    for args <- [["cobol", nil], ["java", "nope"]] do
+      assert {:error, %{code: "template.unknown", hint: "flz template list"}} =
+               Knowledge.call("Flezha.new_project", args)
+    end
   end
 
   # The rules name tools, `flz` and what an error carries, never an SDK's own

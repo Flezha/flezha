@@ -55,6 +55,13 @@ on the command line.
 | --- | --- |
 | `flz mcp` | Serves Flezha to an AI assistant over MCP, on stdin and stdout |
 
+## [`flz template`](../../getting_started/start_a_project.md)
+
+| Command | What it does |
+| --- | --- |
+| `flz template list` | Prints the languages and examples the release carries |
+| `flz template create <language> <dir> [--example <name>] [--tar]` | Writes a template's files into a new folder, or as a tar stream |
+
 ## [`flz relay`](relay_commands.md#flz-relay)
 
 | Command | What it does |

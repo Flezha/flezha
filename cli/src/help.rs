@@ -240,6 +240,7 @@ COMMANDS:
     state          Per-Cell state queries (time-travel, retention, list)
     reset          Clear Controller durable runtime data on disk (controller must be stopped)
     mcp            Serve Flezha to an AI assistant over MCP, on stdin and stdout
+    template       Start a project from a template the release carries (list, create)
     observe        Observability foundation inspection (sources, sinks, tail)
     audit          Durable audit log inspection (list, read, tail, stats, rotate)
     dlq            Dead-letter queue: inspect, replay, or drop parked payloads
@@ -281,11 +282,11 @@ USAGE:
     flz mcp [--token <token>]
 
 An AI assistant starts this command and speaks MCP with it; it is not run by
-hand. Four tools need no controller: flezha_guide, flezha_sdk_example,
-flezha_error and flezha_docs. Once a controller answers, the operations an HTTP
-caller may reach are tools too, called as the token's principal (--token or
-FLEZHA_TOKEN). Stopping the controller, issuing tokens and resetting are never
-offered.
+hand. Five tools need no controller: flezha_guide, flezha_sdk_example,
+flezha_error, flezha_docs and flezha_new_project. Once a controller answers,
+the operations an HTTP caller may reach are tools too, called as the token's
+principal (--token or FLEZHA_TOKEN). Stopping the controller, issuing tokens
+and resetting are never offered.
 
 EXAMPLES:
     claude mcp add flezha -- /path/to/release/bin/flz mcp
@@ -743,6 +744,31 @@ EXAMPLES:
     flz state outbox MarketRelay/OhlcTasklet/M1
     flz state journal etl-job-42
     flz state inbox chat-session-7"#;
+
+pub(crate) const TEMPLATE: Help = r#"flz template - Start a project from a template the release carries
+
+USAGE:
+    flz template <COMMAND>
+
+COMMANDS:
+    list                                Print each language and example the release carries
+    create <language> <dir> [OPTIONS]   Write a template's files into a new folder <dir>
+    help                                Show this help message
+
+CREATE OPTIONS:
+    --example <name>   The template (default: starter)
+    --tar              Write the files as a tar stream on stdout instead of a folder
+
+<dir> must not exist or must be empty, and names the folder only: nothing in
+the files is renamed. With no controller needed, the files come from this
+release, and --tar hands them out of a container to the host.
+
+EXAMPLES:
+    flz template list
+    flz template create java my-app
+    docker exec flezha-controller /flezha/bin/flz template create python my-app --tar | tar x -k
+
+With -k, tar keeps any file already there rather than overwriting it."#;
 
 pub(crate) const TOKEN: Help = r#"flz token - Scoped-token management
 

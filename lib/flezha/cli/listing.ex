@@ -1,7 +1,7 @@
 defmodule Flezha.Service.Cli.Listing do
   @moduledoc """
-  `flz namespace list`, `flz runner list`, `flz relay list` and `flz cluster
-  status`: the text forms of the listings.
+  `flz namespace list`, `flz runner list`, `flz relay list`, `flz cluster
+  status` and `flz template list`: the text forms of the listings.
   """
 
   alias Flezha.Service.Cli.Context
@@ -38,6 +38,19 @@ defmodule Flezha.Service.Cli.Listing do
         {"PARTS", 8, &Context.label_or(&1[:partitions], "-")},
         {"NODE", 22, &Context.label_or(&1.node, "(unplaced)")},
         {"RUNNER", 0, &Context.label_or(&1.runner, "(none)")}
+      ]
+    })
+  end
+
+  @doc "`flz template list`: one row per template the release carries."
+  def templates(rows, _args, _opts) do
+    table(rows, %{
+      empty: "This release carries no templates.",
+      header: "Templates (flz template create <language> <dir> [--example <example>]):",
+      columns: [
+        {"LANGUAGE", 10, & &1["language"]},
+        {"EXAMPLE", 10, & &1["example"]},
+        {"SUMMARY", 0, & &1["summary"]}
       ]
     })
   end
