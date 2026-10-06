@@ -24,5 +24,3 @@ the first mention: the [topics](../building_blocks.html).
   its output formats.
 - [Troubleshooting](../runner_cannot_connect.html): from a symptom
   to its fix.
-- [Local mode](../local_mode.html): run a relay's graph in your
-  own process, with no controller.

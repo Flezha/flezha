@@ -1,12 +1,12 @@
 # Flezha documentation
 
 New to Flezha: start with [What is Flezha](getting_started/what_is_flezha.md), then
-[Try it](getting_started/try_it.md). The user documentation comes in four sections,
+[Up and running](tutorials/echo/first_steps.md). The user documentation comes in four sections,
 in reading order, then a section on how Flezha is built and one for contributors; everything after them is grouped by who reads it.
 
 | Section | What it is |
 | --- | --- |
-| [Getting started](#getting-started) | What Flezha is, and one echo running in Docker |
+| [Getting started](#getting-started) | What Flezha is |
 | [Tutorials](#tutorials) | Up and running, then two example applications, run page by page: what to type and what you should see |
 | [Topics](#topics) | One page per subject, each readable on its own |
 | [Deploying](#deploying) | Running controllers and runners: the release, Docker, a build of your own, a cluster, Kubernetes |
@@ -36,7 +36,6 @@ reproduces it and the output that command gave.
 | Doc | Covers |
 | --- | --- |
 | [`getting_started/what_is_flezha.md`](getting_started/what_is_flezha.md) | **Start here.** What Flezha is, its pieces, and what it is for |
-| [`getting_started/try_it.md`](getting_started/try_it.md) | One echo running in Docker |
 
 ## Tutorials
 
@@ -59,7 +58,6 @@ type and what you should see; the topic pages say how each piece works.
 | [`streams.md`](topics/basics/streams.md) | A graph of tasklets: channels, edges, transforms and keys |
 | [`workflows.md`](topics/basics/workflows.md) | Steps, retries, undo, and one instance per input |
 | [`state.md`](topics/basics/state.md) | State per cell, the changes that record it, and its restore |
-| [`local_mode.md`](topics/basics/local_mode.md) | A relay run in your own process, with no controller |
 | [`topics/basics/running_relays.md`](topics/basics/running_relays.md) | Starting, watching and stopping relays, from `flz` and from code; what a restart brings back |
 | [`topics/basics/relay_api.md`](topics/basics/relay_api.md) | A relay's API: describing its channels, reading it with `flz relay info`, and calling it from `flz`, HTTP, an SDK or an AI agent's tools |
 | [`working_with_ai_assistants.md`](topics/working_with_ai_assistants.md) | `flz mcp`: an AI assistant gets the rules, the current SDK form and the operations |
@@ -87,6 +85,7 @@ type and what you should see; the topic pages say how each piece works.
 | [`writing_a_plugin.md`](topics/plugins/writing_a_plugin.md) | Writing and packaging a plugin of your own |
 | [`topics/advanced/effectively_once.md`](topics/advanced/effectively_once.md) | The delivery guarantee, what it requires and what it costs |
 | [`topics/advanced/recorded_effects.md`](topics/advanced/recorded_effects.md) | Keeping an outside call's result so a re-run reads it instead of calling again |
+| [`local_mode.md`](topics/basics/local_mode.md) | Testing a relay in your own process, with no controller |
 
 ## Deploying
 

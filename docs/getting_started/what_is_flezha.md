@@ -267,4 +267,5 @@ you can reach from code.
 
 ## Next
 
-[`try_it.md`](try_it.md) runs a relay in Docker before you build one.
+[Up and running](../tutorials/echo/first_steps.md) builds a first relay by hand,
+page by page.

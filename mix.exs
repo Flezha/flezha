@@ -239,7 +239,6 @@ defmodule Flezha.MixProject do
       main: "what_is_flezha",
       extras: [
         "docs/getting_started/what_is_flezha.md",
-        "docs/getting_started/try_it.md",
         "docs/tutorials/echo/first_steps.md",
         "docs/tutorials/echo/start_the_controller.md",
         "docs/tutorials/echo/write_the_echo_runner.md",
@@ -260,7 +259,6 @@ defmodule Flezha.MixProject do
         "docs/topics/basics/streams.md",
         "docs/topics/basics/workflows.md",
         "docs/topics/basics/state.md",
-        "docs/topics/basics/local_mode.md",
         "docs/topics/basics/running_relays.md",
         "docs/topics/basics/relay_api.md",
         "docs/topics/working_with_ai_assistants.md",
@@ -279,6 +277,7 @@ defmodule Flezha.MixProject do
         "docs/topics/advanced/streamed_answers.md",
         "docs/topics/advanced/effectively_once.md",
         "docs/topics/advanced/recorded_effects.md",
+        "docs/topics/basics/local_mode.md",
         "docs/errors.md",
         "docs/configuration.md",
         "docs/configuration/environment_variables.md",
@@ -332,8 +331,7 @@ defmodule Flezha.MixProject do
       ],
       groups_for_extras: [
         "Getting started": [
-          "docs/getting_started/what_is_flezha.md",
-          "docs/getting_started/try_it.md"
+          "docs/getting_started/what_is_flezha.md"
         ],
         "Up and running": ~r"docs/tutorials/echo/",
         Tutorials: ~r"^tutorials/",
@@ -343,7 +341,6 @@ defmodule Flezha.MixProject do
           "docs/topics/basics/streams.md",
           "docs/topics/basics/workflows.md",
           "docs/topics/basics/state.md",
-          "docs/topics/basics/local_mode.md",
           "docs/topics/basics/running_relays.md",
           "docs/topics/basics/relay_api.md",
           "docs/topics/working_with_ai_assistants.md",
@@ -362,6 +359,7 @@ defmodule Flezha.MixProject do
           "docs/topics/advanced/streamed_answers.md",
           "docs/topics/advanced/effectively_once.md",
           "docs/topics/advanced/recorded_effects.md",
+          "docs/topics/basics/local_mode.md",
           "docs/publishing/maturity.md"
         ],
         "The CLI": [

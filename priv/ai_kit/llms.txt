@@ -8,14 +8,13 @@ only the pages a task needs: each link is that page's full Markdown, next to thi
 ## Start here
 
 - [What is Flezha](what_is_flezha.md)
-- [Local mode](local_mode.md)
+- [Testing in local mode](local_mode.md)
 - [CLI](cli.md)
 - [Errors](errors.md)
 
 ## Getting started
 
 - [What is Flezha](what_is_flezha.md): Flezha is a durable, distributed runtime for stateless and stateful data processing.
-- [Try it](try_it.md): Before you build anything, see Flezha work: a controller, a runner that can run an `echo` relay, and a message that goes in and comes back.
 
 ## Up and running
 
@@ -33,7 +32,6 @@ only the pages a task needs: each link is that page's full Markdown, next to thi
 - [Streams](streams.md): A stream is a relay that runs in flow, the default run: you start it once, and it handles each message the moment it arrives, for as long as it runs.
 - [Workflows](workflows.md): A workflow is a piece of work made of steps that run in a fixed order: reserve the money, place the order, confirm the fill.
 - [State](state.md): A tasklet can remember things between messages: a running total, a window of recent prices, the id of a reservation it may have to release.
-- [Local mode](local_mode.md): Local mode runs a relay inside your own process, with no controller, no Docker and no socket.
 - [Running relays](running_relays.md): A runner that registered a factory runs nothing yet.
 - [A relay's API](relay_api.md): Every relay has a public API: the entry channels of its factory, each with the format it reads, whether it answers and in which format, and, when you give them, a description and a JSON Schema of its input.
 - [Working with AI assistants](working_with_ai_assistants.md): An AI coding assistant such as Claude Code, Cursor or Codex can build on Flezha with `flz mcp`, an MCP server that ships in every release.
@@ -52,6 +50,7 @@ only the pages a task needs: each link is that page's full Markdown, next to thi
 - [Streamed answers](streamed_answers.md): A model writes its answer a token at a time, and a long answer takes a while.
 - [Effectively once](effectively_once.md): A message that is lost is a question nobody answers.
 - [Recorded effects](recorded_effects.md): A tasklet that calls something outside its relay (a model, a tool, a payment service) runs that call again whenever the invocation runs again: after a crash, on a replay, when a sleeping instance wakes or a relay moves to another runner.
+- [Testing in local mode](local_mode.md): Local mode runs a relay inside your own process, with no controller, no Docker and no socket.
 - [Feature maturity](maturity.md): This record says which parts of Flezha are not yet settled.
 
 ## The CLI

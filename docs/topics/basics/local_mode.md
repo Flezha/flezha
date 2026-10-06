@@ -1,4 +1,4 @@
-# Local mode
+# Testing in local mode
 
 Local mode runs a relay inside your own process, with no controller, no
 Docker and no socket. It takes the relay class you would deploy, runs its
@@ -146,4 +146,3 @@ Flezha::create_runner("default")?.register_factory(WordCount)?.run()?;
 
 - [Building blocks](building_blocks.md): tasklets, relays and runners
 - [Streams](streams.md): edges, transforms and keys
-- [Try it](../../getting_started/try_it.md): the same `echo` with a controller, in Docker
