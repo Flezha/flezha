@@ -6,7 +6,7 @@ to them. What a plugin is, and how its settings and hooks work, is explained in
 
 Each section shows what the group's help prints and, for the verbs used most,
 a command with its answer. Unless a section names another page, the answers
-come from the echo of the [tutorials](../../tutorials/echo/run_the_echo.md).
+come from the echo of [Up and running](../../tutorials/echo/run_the_echo.md).
 How `flz` reaches the controller, its options and its exit codes are on the
 [CLI](cli.md) page, and every verb in one list is the
 [command reference](command_reference.md).

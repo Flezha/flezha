@@ -17,38 +17,15 @@ only the pages a task needs: each link is that page's full Markdown, next to thi
 - [What is Flezha](what_is_flezha.md): Flezha is a durable, distributed runtime for stateless and stateful data processing.
 - [Try it](try_it.md): Before you build anything, see Flezha work: a controller, a runner that can run an `echo` relay, and a message that goes in and comes back.
 - [Start a project](start_a_project.md): `flz template create` writes a new Flezha project from a template the release carries: a small, complete project in one of the seven languages, with a relay, a tasklet that keeps state, a test and a README with the commands to build and run it.
-- [Tutorials](tutorials.md): Each tutorial runs one small example application, page by page, so if you follow the steps you have a working toy at the end.
 
-## Tutorial 1: The echo
+## Up and running
 
-- [The echo](first_steps.md): This tutorial builds the smallest complete Flezha deployment by hand: a controller, a runner of your own that serves an `echo` relay, and a file on each side of it.
-- [Start the controller](start_the_controller.md): On this page you start one controller and leave it running for the rest of the tutorial.
+- [The echo](first_steps.md): These pages build the smallest complete Flezha deployment by hand: a controller, a runner of your own that serves an `echo` relay, and a file on each side of it.
+- [Start the controller](start_the_controller.md): On this page you start one controller and leave it running for the rest of Up and running.
 - [Write the echo runner](write_the_echo_runner.md): On this page you get the echo runner in your language and start it.
 - [Run the echo](run_the_echo.md): On this page you start a relay from the `echo` factory your runner registered, send it a message and watch what comes out.
 - [Feed the echo a file](feed_the_echo_a_file.md): On this page you attach a file to each side of `my_echo`: lines added to one file go in, and their echoes land in another.
-- [Stop everything](stop_everything.md): On this page you stop what this tutorial started, in reverse order: the plugins, the relay, the runner, then the controller.
-
-## Tutorial 2: The tradedesk
-
-- [The tradedesk](tradedesk.md): This tutorial runs `tradedesk`, a toy trader, and uses it to show what a deployment needs beyond the echo: authorization, a namespace of its own, state, partitions, plugins, and recovery from a crash.
-- [Open the desk](open_the_desk.md): On this page you start a controller with authorization on, claim its admin, give the desk a namespace of its own with a key for its runner, and connect the runner.
-- [Watch the trades](watch_the_trades.md): On this page you start the desk's ETL stream, `trade_watcher`, in two partitions, send it trades by hand, read the prices it keeps, and scale it to three partitions while it runs.
-- [Connect the exchange](connect_the_exchange.md): On this page you start the demo exchange, feed its live trades into `trade_watcher` with the WebSocket plugin, and write the buy signals to a file.
-- [Place orders](place_orders.md): On this page you look at the desk's workflow, `order_executor`: you start an order by hand, read the journal of its steps, and make an order fail so that its finished steps are undone.
-- [Crash the desk](crash_the_desk.md): On this page you stop and crash the runner and the controller while the desk works, and see that nothing it kept is lost: the price windows, an order in the middle of its steps, and a message that cannot be read.
-
-## Tutorial 3: The agentdesk
-
-- [The agentdesk](agentdesk.md): This tutorial runs `agentdesk`, a chat in which every conversation is a session of its own, and many run at once.
-- [Start a session](start_a_session.md): On this page you build the runner, start the agentdesk in Docker Compose, talk to two sessions, and watch an idle one sleep and wake on another runner.
-- [Take a turn back](take_a_turn_back.md): On this page you rewind Anna's session to an earlier turn, and send a message that fails without ending the session.
-- [Stream an answer](stream_an_answer.md): On this page you watch Anna's answer arrive token by token while the turn runs.
-- [Add your own plugin](add_your_own_plugin.md): On this page you build the HTTP plugin's package and install it by rebuilding the controller's image.
-- [Serve HTTP](serve_http.md): On this page you start the gateway, a relay that runs in flow behind the HTTP plugin, and stream Anna's answer to an HTTP client.
-- [Call the session](call_the_session.md): On this page you send messages to sessions over HTTP.
-- [Run a cluster](run_a_cluster.md): On this page you add a second controller and its runner, stop them as if their machine went down, and see their sessions carry on on the first.
-- [Kill the runner](kill_the_runner.md): On this page you kill the runner while a message goes through the gateway, and see that its tokens are counted once.
-- [Run on Kubernetes](run_on_kubernetes.md): On this page you run the same images on k3s: one pod holding a controller and its runner, from `k8s/agentdesk.yaml` in the agentdesk folder.
+- [Stop everything](stop_everything.md): On this page you stop what these pages started, in reverse order: the plugins, the relay, the runner, then the controller.
 
 ## Topics
 
@@ -113,7 +90,7 @@ only the pages a task needs: each link is that page's full Markdown, next to thi
 - [Where a plugin runs](where_plugins_run.md): A relay plugin runs at the edge of the relays bound to it.
 - [Enabling and binding](enabling_and_binding.md): `flz plugin` enables a plugin by name and binds relays to it.
 - [Plugins from your own code](plugins_from_code.md): Enabling, binding, unbinding and disabling are on the SDK's `control()` handle, so an application can attach the plugins its own namespace needs.
-- [Plugin examples](plugin_examples.md): Two setups from the tutorials: the echo's file plugins, and the tradedesk's live feed into a partitioned relay.
+- [Plugin examples](plugin_examples.md): Two setups from the guides: the echo's file plugins from Up and running, and the tradedesk's live feed into a partitioned relay.
 - [Installing plugins](installing_plugins.md): A plugin that does not ship with the controller comes as a plugin package: a `.fpz` file carrying compiled code, the plugin's own application and every library it needs that the controller release does not ship.
 - [Hooks](hooks.md): A hook is a moment at which the controller calls a plugin.
 - [Writing a plugin](writing_a_plugin.md): A plugin of your own is an ordinary Elixir Mix project: it depends on `flezha` and on the libraries it needs, names its providers in its application environment, and is built into a plugin package (`.fpz`) that a controller loads when it starts.

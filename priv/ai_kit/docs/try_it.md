@@ -30,8 +30,8 @@ seven languages without the controller or the commands changing.
 [`sdk/python/examples/echo_deployment`](https://github.com/flezha/flezha_python_sdk/tree/main/examples/echo_deployment)
 is the whole deployment.
 
-It is a demo, not a deployment: it makes every choice for you. The first
-tutorial builds the same `echo` by hand, one piece at a time, with a controller
+It is a demo, not a deployment: it makes every choice for you. [Up and
+running](../tutorials/echo/first_steps.md) builds the same `echo` by hand, one piece at a time, with a controller
 of its own, so take this one down first:
 
 ```sh
@@ -46,5 +46,6 @@ the way to try a relay and to test one, not to run it.
 
 ## Next
 
-[Tutorials](../tutorials/tutorials.md) explains how the tutorials work and what
-each one builds.
+[Up and running](../tutorials/echo/first_steps.md) builds the same echo by hand,
+page by page. The [tutorials](tutorials/tutorials.html) then build larger
+examples on it.

@@ -523,4 +523,4 @@ whose record is on local disk but not yet shipped.
 - [`deploying_a_controller.md`](../deploying/deploying_a_controller.md): the variables a deployment sets, graceful shutdown.
 - [`../advanced/effectively_once.md`](../advanced/effectively_once.md), [`../advanced/timers.md`](../advanced/timers.md), [`../advanced/partitioning.md`](../advanced/partitioning.md).
 - [Controller environment variables](../../configuration/environment_variables.md#state-wal-and-durability): the durability settings.
-- Tutorial: [`crash_the_desk.md`](../../tutorials/tradedesk/crash_the_desk.md) crashes the tradedesk on purpose.
+- Tutorial: [`crash_the_desk.md`](tutorials/crash_the_desk.html) crashes the tradedesk on purpose.

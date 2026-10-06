@@ -1,6 +1,6 @@
 # Stop everything
 
-On this page you stop what this tutorial started, in reverse order: the
+On this page you stop what these pages started, in reverse order: the
 plugins, the relay, the runner, then the controller. Do it before the
 tradedesk tutorial, which starts a controller of its own with authorization on.
 
@@ -52,5 +52,5 @@ what comes back after a restart.
 
 ## Next
 
-That is the echo. [The tradedesk](../tradedesk/tradedesk.md) is the next
-tutorial.
+That is the echo. [The tradedesk](tutorials/tradedesk.html) is the next step,
+the first of the [tutorials](tutorials/tutorials.html).

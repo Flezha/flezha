@@ -269,4 +269,4 @@ $ flz relay call anna --namespace agents --text 'Are you still there?'
 - [kubernetes.md](kubernetes.md): controllers on Kubernetes.
 - [effectively_once.md](../advanced/effectively_once.md): what a crash may repeat.
 - [configuration.md](../../configuration/environment_variables.md#cluster-and-nodes).
-- Tutorial: [run_a_cluster.md](../../tutorials/agentdesk/run_a_cluster.md).
+- Tutorial: [run_a_cluster.md](tutorials/run_a_cluster.html).

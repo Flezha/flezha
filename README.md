@@ -144,8 +144,8 @@ To try a relay without a controller or Docker,
 [local mode](docs/topics/basics/local_mode.md) runs it inside your own process.
 To start a project of your own, `flz template create <language> <dir>` writes a small,
 tested one in any of the seven languages ([Start a project](docs/getting_started/start_a_project.md)).
-The [tutorials](docs/tutorials/tutorials.md) then build three example
-applications step by step.
+[Up and running](docs/tutorials/echo/first_steps.md) builds the echo by hand, and the
+[tutorials](docs/tutorials/tutorials.md) then build two larger example applications step by step.
 
 ## Working with AI
 
@@ -179,7 +179,8 @@ Decide which ones, then specify each in OpenSpec. -->
 | Where to go | What you find |
 |---|---|
 | [Getting started](docs/getting_started/what_is_flezha.md) | What Flezha is, and the echo running in Docker |
-| [Tutorials](docs/tutorials/tutorials.md) | Three example applications: an echo, a trading desk on a demo exchange, and AI agent sessions |
+| [Up and running](docs/tutorials/echo/first_steps.md) | The echo built by hand: a controller, your own runner and a relay |
+| [Tutorials](docs/tutorials/tutorials.md) | Two example applications: a trading desk on a demo exchange, and AI agent sessions |
 | [Documentation index](docs/README.md) | Every topic page, the configuration reference, the plugins and the SDKs |
 | [Errors](docs/errors.md) | Every error code and what to do about it |
 

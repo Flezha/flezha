@@ -237,36 +237,18 @@ defmodule Flezha.MixProject do
   defp docs do
     [
       main: "what_is_flezha",
-      logo: "docs/assets/flezha-badger-dark.svg",
-      favicon: "docs/assets/flezha-favicon-badger-32.png",
-      assets: %{"docs/assets" => "assets"},
       extras: [
         "docs/getting_started/what_is_flezha.md",
         "docs/getting_started/try_it.md",
         "docs/getting_started/start_a_project.md",
-        "docs/tutorials/tutorials.md",
         "docs/tutorials/echo/first_steps.md",
         "docs/tutorials/echo/start_the_controller.md",
         "docs/tutorials/echo/write_the_echo_runner.md",
         "docs/tutorials/echo/run_the_echo.md",
         "docs/tutorials/echo/feed_the_echo_a_file.md",
         "docs/tutorials/echo/stop_everything.md",
-        "docs/tutorials/tradedesk/tradedesk.md",
-        "docs/tutorials/tradedesk/open_the_desk.md",
-        "docs/tutorials/tradedesk/watch_the_trades.md",
-        "docs/tutorials/tradedesk/connect_the_exchange.md",
-        "docs/tutorials/tradedesk/place_orders.md",
-        "docs/tutorials/tradedesk/crash_the_desk.md",
-        "docs/tutorials/agentdesk/agentdesk.md",
-        "docs/tutorials/agentdesk/start_a_session.md",
-        "docs/tutorials/agentdesk/take_a_turn_back.md",
-        "docs/tutorials/agentdesk/stream_an_answer.md",
-        "docs/tutorials/agentdesk/add_your_own_plugin.md",
-        "docs/tutorials/agentdesk/serve_http.md",
-        "docs/tutorials/agentdesk/call_the_session.md",
-        "docs/tutorials/agentdesk/run_a_cluster.md",
-        "docs/tutorials/agentdesk/kill_the_runner.md",
-        "docs/tutorials/agentdesk/run_on_kubernetes.md",
+        {"The tradedesk", url: "tutorials/tradedesk.html"},
+        {"The agentdesk", url: "tutorials/agentdesk.html"},
         "docs/topics/cli/cli.md",
         "docs/topics/cli/controller_commands.md",
         "docs/topics/cli/relay_commands.md",
@@ -348,18 +330,14 @@ defmodule Flezha.MixProject do
         "docs/contributing/code_standards.md",
         "docs/contributing/releasing.md"
       ],
-      before_closing_head_tag: &guide_styles/1,
-      before_closing_body_tag: &guide_scripts/1,
       groups_for_extras: [
         "Getting started": [
           "docs/getting_started/what_is_flezha.md",
           "docs/getting_started/try_it.md",
-          "docs/getting_started/start_a_project.md",
-          "docs/tutorials/tutorials.md"
+          "docs/getting_started/start_a_project.md"
         ],
-        "Tutorial 1: The echo": ~r"docs/tutorials/echo/",
-        "Tutorial 2: The tradedesk": ~r"docs/tutorials/tradedesk/",
-        "Tutorial 3: The agentdesk": ~r"docs/tutorials/agentdesk/",
+        "Up and running": ~r"docs/tutorials/echo/",
+        Tutorials: ~r"^tutorials/",
         Topics: [
           "docs/topics/basics/building_blocks.md",
           "docs/topics/basics/configuring_a_relay.md",
@@ -412,7 +390,56 @@ defmodule Flezha.MixProject do
         Reference: ~r"docs/(errors|troubleshooting/)",
         Contributing: ~r"docs/contributing/"
       ]
+    ] ++ docs_look()
+  end
+
+  defp docs_look do
+    [
+      api_reference: false,
+      logo: "docs/assets/flezha-badger-dark.svg",
+      favicon: "docs/assets/flezha-favicon-badger-32.png",
+      assets: %{"docs/assets" => "assets"},
+      before_closing_head_tag: &guide_styles/1,
+      before_closing_body_tag: &guide_scripts/1
     ]
+  end
+
+  # The Tutorials page and the tutorials are a site of their own in `tutorials/`
+  # under the main one, so they stay off its sidebar. ExDoc resolves a `.md`
+  # link only within one site, so links between the two are written as `.html`
+  # links.
+  defp tutorial_docs(output) do
+    [
+      main: "tutorials",
+      output: output,
+      formatters: ["html"],
+      source_url: Mix.Project.config()[:source_url],
+      filter_modules: fn _, _ -> false end,
+      extras: [
+        {"Back to the Flezha docs", url: "../what_is_flezha.html"},
+        "docs/tutorials/tutorials.md",
+        "docs/tutorials/tradedesk/tradedesk.md",
+        "docs/tutorials/tradedesk/open_the_desk.md",
+        "docs/tutorials/tradedesk/watch_the_trades.md",
+        "docs/tutorials/tradedesk/connect_the_exchange.md",
+        "docs/tutorials/tradedesk/place_orders.md",
+        "docs/tutorials/tradedesk/crash_the_desk.md",
+        "docs/tutorials/agentdesk/agentdesk.md",
+        "docs/tutorials/agentdesk/start_a_session.md",
+        "docs/tutorials/agentdesk/take_a_turn_back.md",
+        "docs/tutorials/agentdesk/stream_an_answer.md",
+        "docs/tutorials/agentdesk/add_your_own_plugin.md",
+        "docs/tutorials/agentdesk/serve_http.md",
+        "docs/tutorials/agentdesk/call_the_session.md",
+        "docs/tutorials/agentdesk/run_a_cluster.md",
+        "docs/tutorials/agentdesk/kill_the_runner.md",
+        "docs/tutorials/agentdesk/run_on_kubernetes.md"
+      ],
+      groups_for_extras: [
+        "Tutorial 1: The tradedesk": ~r"docs/tutorials/tradedesk/",
+        "Tutorial 2: The agentdesk": ~r"docs/tutorials/agentdesk/"
+      ]
+    ] ++ docs_look()
   end
 
   # Fence names whose blocks need a lexer other than the one registered for
@@ -441,10 +468,19 @@ defmodule Flezha.MixProject do
     end
   end
 
-  # The map is rewritten where ExDoc wrote `llms.txt`, which `-o` moves and `-f`
-  # can leave unwritten, and `flz mcp`'s copy of it and its pages follows.
-  defp docs_and_assistant_map(args) do
-    case Enum.find(Mix.Task.run("docs", args), &(Path.basename(&1) == "llms.txt")) do
+  # The tutorial site and the map are written where ExDoc wrote `index.html` and
+  # `llms.txt`, which `-o` moves and `-f` can leave unwritten, and `flz mcp`'s
+  # copy of the map and its pages follows.
+  defp docs_tutorials_and_assistant_map(args) do
+    written = Mix.Task.run("docs", args)
+
+    if index = Enum.find(written, &(Path.basename(&1) == "index.html")) do
+      %{name: name, version: version} = Map.new(Mix.Project.config())
+      output = Path.join(Path.dirname(index), "tutorials")
+      ExDoc.generate(name, version, [Mix.Project.compile_path()], tutorial_docs(output))
+    end
+
+    case Enum.find(written, &(Path.basename(&1) == "llms.txt")) do
       nil ->
         :ok
 
@@ -465,8 +501,9 @@ defmodule Flezha.MixProject do
   defp aliases do
     [
       # The docs, with the code block lexers `register_highlighters/1` names,
-      # then the map for AI assistants over ExDoc's `llms.txt` and `priv/ai_kit`.
-      docs: [&register_highlighters/1, &docs_and_assistant_map/1],
+      # then the tutorial site and the map for AI assistants over ExDoc's
+      # `llms.txt` and `priv/ai_kit`.
+      docs: [&register_highlighters/1, &docs_tutorials_and_assistant_map/1],
       # Build the WebSocket testnet bundle that several `mix test` cases
       # reach for over WS (`flezha_test.exs` "websocket plugin connection
       # start", "beam msg forward plugin connection start", "relay flow

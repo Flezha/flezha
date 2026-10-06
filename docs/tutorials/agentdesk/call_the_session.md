@@ -3,8 +3,8 @@
 On this page you send messages to sessions over HTTP. The gateway calls the
 user's session with `call`, which starts the session if it does not run yet,
 and keeps each user's daily token budget in a cell per user, fed by the tokens
-each answer used. [Relay calls](../../topics/advanced/relay_calls.md) explains
-`call`, and [State](../../topics/basics/state.md) the cell per key.
+each answer used. [Relay calls](../relay_calls.html) explains
+`call`, and [State](../state.html) the cell per key.
 
 <!-- tabs-open -->
 

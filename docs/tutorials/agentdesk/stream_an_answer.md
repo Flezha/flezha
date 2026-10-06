@@ -5,7 +5,7 @@ On this page you watch Anna's answer arrive token by token while the turn runs.
 `reply` sends each token as a part, through `ctx.part`, while it works. Parts
 reach whoever listens on the `answer` output at once; the whole answer follows on
 the same output once the turn's step is done, and also answers the caller.
-[Streamed answers](../../topics/advanced/streamed_answers.md) explains parts.
+[Streamed answers](../streamed_answers.html) explains parts.
 
 <!-- tabs-open -->
 

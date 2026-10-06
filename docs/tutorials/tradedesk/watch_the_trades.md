@@ -7,9 +7,9 @@ three partitions while it runs.
 `trade_watcher` reads trade messages, keeps only market trades, keys each one by
 its symbol so every symbol gets a cell with its own window of prices, and emits
 a buy signal when a price is more than 2 % above the window's average.
-[Streams](../../topics/basics/streams.md) explains the graph,
-[State](../../topics/basics/state.md) the window kept per cell, and
-[Configuring a relay](../../topics/basics/configuring_a_relay.md) why it
+[Streams](../streams.html) explains the graph,
+[State](../state.html) the window kept per cell, and
+[Configuring a relay](../configuring_a_relay.html) why it
 runs in flow, the default.
 
 <!-- tabs-open -->
@@ -212,7 +212,7 @@ Relay trade_watcher started with 2 partitions:
 ```
 
 Each partition owns a share of the 256 key groups, and a symbol always lands in
-the same one. [Partitioning](../../topics/advanced/partitioning.md) covers how.
+the same one. [Partitioning](../partitioning.html) covers how.
 
 > Send EUR/USD three trades. The third is more than 2 % above the first two,
 > and `--await` waits three seconds for what comes out.

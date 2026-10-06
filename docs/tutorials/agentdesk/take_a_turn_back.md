@@ -7,8 +7,8 @@ Every turn is one iteration of the session. A rewind undoes the iterations
 after the one you name, last first, through each tasklet's `compensate`;
 `reply` forgets the last message. `on_failure: keep_progress` makes a failed
 turn fail alone, so the session goes on.
-[Rewinding a turn](../../topics/advanced/rewinding_a_turn.md) and
-[Workflows](../../topics/basics/workflows.md) explain both.
+[Rewinding a turn](../rewinding_a_turn.html) and
+[Workflows](../workflows.html) explain both.
 
 <!-- tabs-open -->
 

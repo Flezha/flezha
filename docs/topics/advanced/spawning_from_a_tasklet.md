@@ -270,4 +270,4 @@ A caller that needs at most one instance, or the id on replay, passes its own id
 - [`relay_forward`](../../plugins/relay_forward.md): feeding an existing relay as
   configuration
 - [Errors](../../errors.md)
-- Tutorial: [place orders](../../tutorials/tradedesk/place_orders.md)
+- Tutorial: [place orders](tutorials/place_orders.html)

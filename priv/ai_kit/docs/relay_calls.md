@@ -612,4 +612,4 @@ start-up. A relay call to a sleeping session, from the input reaching the gatewa
 - [Durability](../basics/durability.md), [Authorization](../basics/authorization.md)
 - [HTTP server plugin](../../plugins/http_server.md)
 - [Errors](../../errors.md), [Glossary](https://github.com/flezha/flezha/blob/main/docs/glossary.md): call, answer channel, Response
-- Tutorial: [call the session](../../tutorials/agentdesk/call_the_session.md)
+- Tutorial: [call the session](tutorials/call_the_session.html)

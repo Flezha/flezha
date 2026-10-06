@@ -490,4 +490,4 @@ each phase boundary also logs a `[shutdown] ...` line:
 - [`running_relays.md`](../basics/running_relays.md): what the controller restores at boot, and `flz reset`.
 - [`clustering.md`](clustering.md), [`kubernetes.md`](kubernetes.md).
 - [`../../configuration.md`](../../configuration.md): every variable and application key.
-- Tutorial: [`start_the_controller.md`](../../tutorials/echo/start_the_controller.md).
+- Up and running: [`start_the_controller.md`](../../tutorials/echo/start_the_controller.md).

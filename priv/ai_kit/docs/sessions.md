@@ -265,4 +265,4 @@ $ flz relay call anna --namespace agents --text 'Are you still there?'
 - [workflows.md](../basics/workflows.md), [configuring_a_relay.md](../basics/configuring_a_relay.md),
   [state.md](../basics/state.md), [durability.md](../basics/durability.md).
 - [`relay_commands.md`](../cli/relay_commands.md#flz-relay) for `flz relay start`, `call` and `info`.
-- Tutorial: [start_a_session.md](../../tutorials/agentdesk/start_a_session.md).
+- Tutorial: [start_a_session.md](tutorials/start_a_session.html).

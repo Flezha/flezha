@@ -2,8 +2,8 @@
 
 On this page you build the HTTP plugin's package and install it by rebuilding
 the controller's image. A plugin package (`.fpz`) is loaded when the controller
-boots. [Installing plugins](../../topics/plugins/installing_plugins.md) covers packages,
-and [Writing a plugin](../../topics/plugins/writing_a_plugin.md) how to write your own.
+boots. [Installing plugins](../installing_plugins.html) covers packages,
+and [Writing a plugin](../writing_a_plugin.html) how to write your own.
 
 > From the root of your clone, build the plugin builder image, then package the
 > HTTP plugin in it.

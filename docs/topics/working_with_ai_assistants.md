@@ -35,7 +35,7 @@ flezha: /opt/flezha/bin/flz mcp - ✔ Connected
 `--scope user` makes it available in every project. The path must be absolute,
 because the assistant starts the server from your project's folder.
 
-With authorization off, as in the [tutorials](../tutorials/tutorials.md), that
+With authorization off, as in [Up and running](../tutorials/echo/first_steps.md), that
 is all. With it on, which is a release's default, add it with a token of its own
 ([below](#which-token-to-give-it)) instead, removing the first one if you added
 it:

@@ -797,4 +797,4 @@ its worker pool. `max_duration_ms` costs no thread either.
   [`../advanced/timers.md`](../advanced/timers.md).
 - [Relay settings](../../configuration/relay_settings.md#channel-and-edge-options): edge options, retry included.
 - [`../../resilience/steps_relay.md`](https://github.com/flezha/flezha/blob/main/docs/resilience/steps_relay.md): how the controller and the runner carry it out.
-- Tutorial: [`place_orders.md`](../../tutorials/tradedesk/place_orders.md) builds `order_executor`.
+- Tutorial: [`place_orders.md`](tutorials/place_orders.html) builds `order_executor`.

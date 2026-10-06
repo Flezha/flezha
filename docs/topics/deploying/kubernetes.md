@@ -335,4 +335,4 @@ in short:
 - [clustering.md](clustering.md), [installing_plugins.md](../plugins/installing_plugins.md).
 - [configuration.md](../../configuration/environment_variables.md#cluster-and-nodes): the Kubernetes discovery
   settings.
-- Tutorial: [run_on_kubernetes.md](../../tutorials/agentdesk/run_on_kubernetes.md).
+- Tutorial: [run_on_kubernetes.md](tutorials/run_on_kubernetes.html).

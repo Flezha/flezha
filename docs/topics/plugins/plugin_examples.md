@@ -1,6 +1,6 @@
 # Plugin examples
 
-Two setups from the tutorials: the echo's file plugins, and the tradedesk's live feed
+Two setups from the guides: the echo's file plugins from Up and running, and the tradedesk's live feed
 into a partitioned relay. The commands they use are on
 [Enabling and binding](enabling_and_binding.md).
 

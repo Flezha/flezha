@@ -419,4 +419,4 @@ stated, not checked by a tool.
 - [`../advanced/timers.md`](../advanced/timers.md), [`../advanced/partitioning.md`](../advanced/partitioning.md).
 - [`../../sdk/state_persistence.md`](https://github.com/flezha/flezha/blob/main/docs/sdk/state_persistence.md): how the SDKs carry it out.
 - [`../../sdk/authoring_contract.md`](https://github.com/flezha/flezha/blob/main/docs/sdk/authoring_contract.md): changing a deployed state type.
-- Tutorial: [`watch_the_trades.md`](../../tutorials/tradedesk/watch_the_trades.md) builds `track_prices`.
+- Tutorial: [`watch_the_trades.md`](tutorials/watch_the_trades.html) builds `track_prices`.

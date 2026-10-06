@@ -3,7 +3,7 @@
 On this page you start the gateway, a relay that runs in flow behind the
 HTTP plugin, and stream Anna's answer to an HTTP client. Each request is an
 input on the channel `http`, and the first output the graph sends to an output is
-the answer. [The HTTP server plugin](../../plugins/http_server.md) covers its
+the answer. [The HTTP server plugin](../http_server.html) covers its
 options.
 
 <!-- tabs-open -->

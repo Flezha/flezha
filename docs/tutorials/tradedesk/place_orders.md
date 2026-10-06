@@ -8,8 +8,8 @@ Every order is an instance of its own that runs in steps: reserve the money,
 place the order, then confirm the fill and book the order side by side. Each
 finished step is written down before the next one starts, and a step that
 fails for good undoes the ones before it, last one first.
-[Workflows](../../topics/basics/workflows.md) explains steps, retries and undo,
-and [Configuring a relay](../../topics/basics/configuring_a_relay.md)
+[Workflows](../workflows.html) explains steps, retries and undo,
+and [Configuring a relay](../configuring_a_relay.html)
 the `run` setting that turns steps on.
 
 <!-- tabs-open -->

@@ -292,4 +292,4 @@ leaves, for each kind of relay.
 - [relay_calls.md](relay_calls.md): guarantees of calls.
 - [clustering.md](../deploying/clustering.md): the copy in a durability backend.
 - [errors.md](../../errors.md): the `topology.*` refusals.
-- Tutorial: [call_the_session.md](../../tutorials/agentdesk/call_the_session.md).
+- Tutorial: [call_the_session.md](tutorials/call_the_session.html).

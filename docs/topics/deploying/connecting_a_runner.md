@@ -339,4 +339,4 @@ onto it again.
 - [`kubernetes.md`](kubernetes.md), [`clustering.md`](clustering.md).
 - [Files and sockets](../../configuration/files_and_sockets.md#the-socket-directory-ladder): the socket-directory settings.
 - [`../../troubleshooting/runner_cannot_connect.md`](../../troubleshooting/runner_cannot_connect.md).
-- Tutorial: [`write_the_echo_runner.md`](../../tutorials/echo/write_the_echo_runner.md) starts the echo runner.
+- Up and running: [`write_the_echo_runner.md`](../../tutorials/echo/write_the_echo_runner.md) starts the echo runner.

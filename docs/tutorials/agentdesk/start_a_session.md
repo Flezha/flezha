@@ -6,8 +6,8 @@ to two sessions, and watch an idle one sleep and wake on another runner.
 A session is a relay that runs in steps, one pass per message: `each:
 per_input`. It sleeps after ten seconds without a message and wakes with its
 conversation when the next one arrives.
-[Sessions](../../topics/advanced/sessions.md) explains the shape, and
-[Configuring a relay](../../topics/basics/configuring_a_relay.md) the settings.
+[Sessions](../sessions.html) explains the shape, and
+[Configuring a relay](../configuring_a_relay.html) the settings.
 
 <!-- tabs-open -->
 

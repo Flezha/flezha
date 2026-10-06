@@ -6,7 +6,7 @@ clearing its data.
 
 Each section shows what the group's help prints and, for the verbs used most,
 a command with its answer. Unless a section names another page, the answers
-come from the echo of the [tutorials](../../tutorials/echo/run_the_echo.md).
+come from the echo of [Up and running](../../tutorials/echo/run_the_echo.md).
 How `flz` reaches the controller, its options and its exit codes are on the
 [CLI](cli.md) page, and every verb in one list is the
 [command reference](command_reference.md).
@@ -63,7 +63,7 @@ EXAMPLES:
     flz controller start -m attached_iex
 ```
 
-The controller's settings, as the echo tutorial's controller printed them:
+The controller's settings, as the controller of Up and running printed them:
 
 ```sh
 $ flz controller status
@@ -158,7 +158,7 @@ _system                            normal           0
 
 ## `flz cluster`
 
-Shows the controllers of a cluster, which one leads, and how their relays are doing. Explained in [`clustering.md`](../deploying/clustering.md), tutorial [Run a cluster](../../tutorials/agentdesk/run_a_cluster.md).
+Shows the controllers of a cluster, which one leads, and how their relays are doing. Explained in [`clustering.md`](../deploying/clustering.md), tutorial [Run a cluster](tutorials/run_a_cluster.html).
 
 ```sh
 $ flz cluster help

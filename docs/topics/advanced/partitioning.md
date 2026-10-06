@@ -482,4 +482,4 @@ sub-key, not the pair, or the guard above refuses the first record.
   [`http_poll`](../../plugins/http_poll.md),
   [`relay_forward`](../../plugins/relay_forward.md)
 - [Errors](../../errors.md), [Glossary](https://github.com/flezha/flezha/blob/main/docs/glossary.md): partition, key group, group
-- Tutorial: [watch the trades](../../tutorials/tradedesk/watch_the_trades.md)
+- Tutorial: [watch the trades](tutorials/watch_the_trades.html)

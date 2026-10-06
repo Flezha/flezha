@@ -1,6 +1,6 @@
 # The echo
 
-This tutorial builds the smallest complete Flezha deployment by hand: a
+These pages build the smallest complete Flezha deployment by hand: a
 controller, a runner of your own that serves an `echo` relay, and a file on
 each side of it. A line added to one file comes back as its echo at the end of
 the other.
@@ -14,6 +14,16 @@ flowchart LR
 
 The pages share one running controller, started on the first page and stopped
 on the last.
+
+Each step has a purple box with a pencil, right above the command to run. The
+steps are not optional: to reach the working example at the end, do every one
+of them, in order. The box says what to do and names anything that has to be in
+place first.
+
+A command with no purple box above it is there to read or to check, and the
+page does not need it. The copy button on a command copies the command
+alone, without the `$` prompt. What it prints is shown right below it, and your
+ids, tokens and times will differ.
 
 > #### What you need {: .tip}
 >

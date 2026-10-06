@@ -312,4 +312,4 @@ the package, the provider and the package's own text in `details`. The full cata
 - [`writing_a_plugin.md`](writing_a_plugin.md): building a package of your own
 - [`kubernetes.md`](../deploying/kubernetes.md) and [`clustering.md`](../deploying/clustering.md): several controllers
 - [`../../configuration.md`](../../configuration.md) and [`../../errors.md`](../../errors.md)
-- Tutorial: [`add_your_own_plugin.md`](../../tutorials/agentdesk/add_your_own_plugin.md)
+- Tutorial: [`add_your_own_plugin.md`](tutorials/add_your_own_plugin.html)

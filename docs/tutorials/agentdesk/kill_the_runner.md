@@ -4,7 +4,7 @@ On this page you kill the runner while a message goes through the gateway, and
 see that its tokens are counted once. The sessions run in steps, which keep a
 durable input log and a journal; the gateway runs in flow and declares
 effectively-once delivery, `exactly: effectively_once`, which gives it a
-durable input log too. [Effectively once](../../topics/advanced/effectively_once.md)
+durable input log too. [Effectively once](../effectively_once.html)
 explains the guarantee, what it requires and what it costs.
 
 > Read what Anna has used today.

@@ -3,7 +3,7 @@
 On this page you stop and crash the runner and the controller while the desk
 works, and see that nothing it kept is lost: the price windows, an order in the
 middle of its steps, and a message that cannot be read.
-[Durability](../../topics/basics/durability.md) explains what survives what,
+[Durability](../durability.html) explains what survives what,
 and why.
 
 > Type `/pause` in the demo exchange's terminal, so the prices hold still, then

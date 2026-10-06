@@ -6,7 +6,7 @@ started on a schedule.
 
 Each section shows what the group's help prints and, for the verbs used most,
 a command with its answer. Unless a section names another page, the answers
-come from the echo of the [tutorials](../../tutorials/echo/run_the_echo.md).
+come from the echo of [Up and running](../../tutorials/echo/run_the_echo.md).
 How `flz` reaches the controller, its options and its exit codes are on the
 [CLI](cli.md) page, and every verb in one list is the
 [command reference](command_reference.md).
@@ -136,7 +136,7 @@ EXAMPLES:
     flz relay start order_executor --text '{"symbol":"EUR/USD","quantity":10}' --channel order
 ```
 
-The echo from the tutorials, started, listed, sent a message and stopped:
+The echo from Up and running, started, listed, sent a message and stopped:
 
 ```sh
 $ flz relay start echo --id my_echo

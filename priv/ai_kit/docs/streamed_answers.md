@@ -466,5 +466,5 @@ the few lines that show a growing answer.
   statuses, streams, security and deployment.
 - [installing_plugins.md](../plugins/installing_plugins.md), [plugins.md](../plugins/plugins.md).
 - [`relay_commands.md`](../cli/relay_commands.md#flz-relay) for `flz relay listen`.
-- Tutorials: [stream_an_answer.md](../../tutorials/agentdesk/stream_an_answer.md),
-  [serve_http.md](../../tutorials/agentdesk/serve_http.md).
+- Tutorials: [stream_an_answer.md](tutorials/stream_an_answer.html),
+  [serve_http.md](tutorials/serve_http.html).

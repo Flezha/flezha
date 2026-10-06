@@ -4,7 +4,7 @@ On this page you add a second controller and its runner, stop them as if their
 machine went down, and see their sessions carry on on the first.
 `cluster.yaml` in the agentdesk folder adds the second controller, a runner for
 it, and a PostgreSQL database both keep a copy of their state in.
-[Clustering](../../topics/deploying/clustering.md) explains how controllers form a cluster
+[Clustering](../clustering.html) explains how controllers form a cluster
 and hand work over.
 
 > Give the cluster its two secrets, and tell Docker Compose to read both files, in this shell.

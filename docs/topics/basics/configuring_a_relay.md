@@ -563,6 +563,6 @@ member at its default: `ack: per_input`, no correction window.
 - [Relay settings](../../configuration/relay_settings.md#class-settings): the
   reference tables for class, edge and tasklet settings.
 - [`../../errors.md`](../../errors.md): every refusal code.
-- Tutorials: [`watch_the_trades.md`](../../tutorials/tradedesk/watch_the_trades.md)
-  builds `trade_watcher`, and [`place_orders.md`](../../tutorials/tradedesk/place_orders.md)
+- Tutorials: [`watch_the_trades.md`](tutorials/watch_the_trades.html)
+  builds `trade_watcher`, and [`place_orders.md`](tutorials/place_orders.html)
   builds `order_executor`.

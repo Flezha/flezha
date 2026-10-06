@@ -2,8 +2,8 @@
 
 On this page you start the demo exchange, feed its live trades into
 `trade_watcher` with the WebSocket plugin, and write the buy signals to a file.
-[Plugins](../../topics/plugins/plugins.md) explains how a plugin is enabled and
-bound, and [the WebSocket plugin](../../plugins/websocket_subscription.md) lists
+[Plugins](../plugins.html) explains how a plugin is enabled and
+bound, and [the WebSocket plugin](../websocket_subscription.html) lists
 its options.
 
 > Clone the demo exchange and start it in a terminal of its own. It runs until

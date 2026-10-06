@@ -213,4 +213,4 @@ uses a timer.
 - [Durability](../basics/durability.md): effectively-once and the dead-letter queue
 - [Sessions](sessions.md): a session that ends itself on a timer
 - [Errors](../../errors.md): the `runtime.timer*` codes
-- Tutorial: [place orders](../../tutorials/tradedesk/place_orders.md)
+- Tutorial: [place orders](tutorials/place_orders.html)

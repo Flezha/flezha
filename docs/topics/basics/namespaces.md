@@ -390,4 +390,4 @@ runner disconnecting, and shows in `flz relay list`.
 - [`running_relays.md`](running_relays.md): starting and stopping relays.
 - [`connecting_a_runner.md`](../deploying/connecting_a_runner.md): one runner, one namespace.
 - [`access_commands.md`](../cli/access_commands.md): `flz namespace` and `flz role`.
-- Tutorial: [`open_the_desk.md`](../../tutorials/tradedesk/open_the_desk.md) creates `trading`.
+- Tutorial: [`open_the_desk.md`](tutorials/open_the_desk.html) creates `trading`.

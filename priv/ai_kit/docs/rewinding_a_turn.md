@@ -230,4 +230,4 @@ $ flz relay call anna --namespace agents --text 'Sorry, go on'
 - [workflows.md](../basics/workflows.md): steps, undo and failure modes in general.
 - [durability.md](../basics/durability.md): the dead-letter queue.
 - [errors.md](../../errors.md): `relay.rewind_uncovered`, `call.failed`.
-- Tutorial: [take_a_turn_back.md](../../tutorials/agentdesk/take_a_turn_back.md).
+- Tutorial: [take_a_turn_back.md](tutorials/take_a_turn_back.html).

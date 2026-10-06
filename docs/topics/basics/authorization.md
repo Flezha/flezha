@@ -511,4 +511,4 @@ again with the older `flz`; one holding a single role behaves as before.
 - [`access_commands.md`](../cli/access_commands.md): `flz auth`, `flz token`, `flz role`.
 - [`../../errors.md`](../../errors.md): every `authz.*` code.
 - [Controller environment variables](../../configuration/environment_variables.md#security): every security variable.
-- Tutorial: [`open_the_desk.md`](../../tutorials/tradedesk/open_the_desk.md) claims the admin and gives the runner its key.
+- Tutorial: [`open_the_desk.md`](tutorials/open_the_desk.html) claims the admin and gives the runner its key.

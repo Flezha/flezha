@@ -19,8 +19,9 @@ defmodule Mix.Tasks.Flezha.Llms do
   alias Flezha.AuthZ.Verb
   alias Mix.Tasks.Flezha.Catalogue
 
-  # For people changing Flezha, not using it.
-  @excluded_groups ["Architecture", "Contributing"]
+  # Pages for people changing Flezha, not using it, and the links into the
+  # tutorial site, which ExDoc lists as pages but writes no copy of.
+  @excluded_groups ["Architecture", "Contributing", "Tutorials"]
   @start_here ["what_is_flezha.md", "local_mode.md", "cli.md", "errors.md"]
   @max_bytes 32 * 1024
 

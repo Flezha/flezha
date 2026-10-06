@@ -6,7 +6,7 @@ defmodule Mix.Tasks.Flezha.AiKit do
   release answers an assistant without the source tree:
 
   - `sdk/<language>.md`: every tracked file of that SDK's `examples/echo`, the
-    code the tutorials run, each under its path;
+    code Up and running runs, each under its path;
   - `templates/<language>/<example>/`: a copy of every tracked file of that
     SDK's `examples/<example>` but `.gitignore`, and `templates/manifest.json`:
     each template's files with their executable bit, its `.gitignore` text,
@@ -125,7 +125,7 @@ defmodule Mix.Tasks.Flezha.AiKit do
 
     IO.iodata_to_binary([
       "# The #{language} SDK's echo example\n\n",
-      "Every file of `sdk/#{language}/examples/echo`, the runner the echo tutorial runs. ",
+      "Every file of `sdk/#{language}/examples/echo`, the runner Up and running builds. ",
       "Its dependency file names the SDK package and the version this release pins.\n",
       for file <- files do
         fence = Map.get(@fences, Path.extname(file), "")

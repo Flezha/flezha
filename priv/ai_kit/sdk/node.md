@@ -1,6 +1,6 @@
 # The node SDK's echo example
 
-Every file of `sdk/node/examples/echo`, the runner the echo tutorial runs. Its dependency file names the SDK package and the version this release pins.
+Every file of `sdk/node/examples/echo`, the runner Up and running builds. Its dependency file names the SDK package and the version this release pins.
 
 ## examples/echo/README.md
 

@@ -7,7 +7,7 @@ in reading order, then a section on how Flezha is built and one for contributors
 | Section | What it is |
 | --- | --- |
 | [Getting started](#getting-started) | What Flezha is, and one echo running in Docker |
-| [Tutorials](#tutorials) | Three example applications, run page by page: what to type and what you should see |
+| [Tutorials](#tutorials) | Up and running, then two example applications, run page by page: what to type and what you should see |
 | [Topics](#topics) | One page per subject, each readable on its own |
 | [Deploying](#deploying) | Running controllers and runners: the release, Docker, a build of your own, a cluster, Kubernetes |
 | [Architecture](#architecture) | How Flezha is built: the controller, the kernel, flow and steps, the runner |
@@ -46,8 +46,8 @@ type and what you should see; the topic pages say how each piece works.
 
 | Doc | Covers |
 | --- | --- |
-| [`tutorials.md`](tutorials/tutorials.md) | How to follow a tutorial, and what each one builds |
-| [`echo/first_steps.md`](tutorials/echo/first_steps.md) | The echo: a controller, your own runner, a relay, a file on each side |
+| [`tutorials.md`](tutorials/tutorials.md) | What each tutorial builds |
+| [`echo/first_steps.md`](tutorials/echo/first_steps.md) | Up and running, the echo: how to follow the steps, a controller, your own runner, a relay, a file on each side |
 | [`tradedesk/tradedesk.md`](tutorials/tradedesk/tradedesk.md) | The tradedesk: an ETL stream and a workflow on a demo exchange, partitions, plugins, crashes |
 | [`agentdesk/agentdesk.md`](tutorials/agentdesk/agentdesk.md) | The agentdesk: sessions behind HTTP, calls, a cluster, Kubernetes |
 

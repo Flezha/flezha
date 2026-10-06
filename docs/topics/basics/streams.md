@@ -498,4 +498,4 @@ allowed and wires one edge, not two.
 - [`../advanced/partitioning.md`](../advanced/partitioning.md), [`../advanced/merged_inputs.md`](../advanced/merged_inputs.md),
   [`../advanced/timers.md`](../advanced/timers.md), [`../advanced/effectively_once.md`](../advanced/effectively_once.md).
 - [`../../sdk/stream_transforms.md`](https://github.com/flezha/flezha/blob/main/docs/sdk/stream_transforms.md): where the transform code lives, for contributors.
-- Tutorial: [`watch_the_trades.md`](../../tutorials/tradedesk/watch_the_trades.md) builds `trade_watcher`.
+- Tutorial: [`watch_the_trades.md`](tutorials/watch_the_trades.html) builds `trade_watcher`.

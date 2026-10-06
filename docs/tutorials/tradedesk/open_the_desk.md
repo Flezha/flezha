@@ -2,10 +2,10 @@
 
 On this page you start a controller with authorization on, claim its admin,
 give the desk a namespace of its own with a key for its runner, and connect the
-runner. [Authorization](../../topics/basics/authorization.md) and
-[Namespaces](../../topics/basics/namespaces.md) explain both in full.
+runner. [Authorization](../authorization.html) and
+[Namespaces](../namespaces.html) explain both in full.
 
-> Start a controller as in [Start the controller](../echo/start_the_controller.md),
+> Start a controller as in [Start the controller](../start_the_controller.html),
 > from the binaries, but without `FLEZHA_AUTHZ_ENABLED=false`, so authorization
 > is on. Stop the echo's controller first if it still runs. Run the commands
 > below from the directory you started it in.

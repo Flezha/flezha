@@ -189,5 +189,5 @@ the builder image a package for this image is built in.
   variables a deployment sets, graceful shutdown.
 - [Connecting a runner](connecting_a_runner.md): a runner in a container or on the host.
 - [Clustering](clustering.md), [Kubernetes](kubernetes.md).
-- Tutorial: [Start a session](../../tutorials/agentdesk/start_a_session.md), the agentdesk
+- Tutorial: [Start a session](tutorials/start_a_session.html), the agentdesk
   in Compose.

@@ -27,7 +27,7 @@ it sleep and wake, streams its answers and carries on after a crash.
 | Taking actions back | a turn can be rewound, and a workflow undoes its finished steps | [rewinding_a_turn.md](advanced/rewinding_a_turn.md), [workflows.md](basics/workflows.md) |
 | Several agents together | agents call one another, in a cycle too (a writer and a critic) | [relay_calls.md](advanced/relay_calls.md); example TODO |
 | Agents started by events | Kafka, Postgres change capture and RabbitMQ start an agent | [plugins.md](plugins/plugins.md) |
-| A token budget | a budget per user kept in state | [call_the_session.md](../tutorials/agentdesk/call_the_session.md) |
+| A token budget | a budget per user kept in state | [call_the_session.md](tutorials/call_the_session.html) |
 | Agents on a schedule | timers: "check again tomorrow" | [timers.md](advanced/timers.md) |
 | Scale | thousands of sessions spread over a cluster | [partitioning.md](advanced/partitioning.md) |
 | AI assistants that build on Flezha | `flz mcp` and the assistant kit | [working_with_ai_assistants.md](working_with_ai_assistants.md) |
@@ -36,5 +36,5 @@ it sleep and wake, streams its answers and carries on after a crash.
 
 ## See also
 
-- [The agentdesk tutorial](../tutorials/agentdesk/agentdesk.md): sessions, streaming, taking a
+- [The agentdesk tutorial](tutorials/agentdesk.html): sessions, streaming, taking a
   turn back and a token budget, with a demo model.
