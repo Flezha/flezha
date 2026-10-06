@@ -656,3 +656,41 @@ names what makes an instance this instance, never how its class behaves.
 - **WHEN** `flz relay start --help` is read
 - **THEN** its help SHALL say that how the relay runs is the factory's, announced by its runner, and SHALL list no option that sets it
 
+### Requirement: `flz relay info` SHALL show the relay's API
+
+`flz relay info <id>` SHALL print an `API` section listing each entry channel of the
+relay's factory with its format, whether it answers, its description, its input schema on one
+line, and one example `flz relay call` command, and SHALL say when connected runners announce
+different APIs or a channel's tool name is taken. With `--json` the section SHALL be the entries
+as data.
+
+#### Scenario: Info shows how to call
+
+- **WHEN** `flz relay info orders-eu` is run for an `orders` relay whose `place` channel is
+  described
+- **THEN** the output holds an `API` section naming `place`, `json → answer`, its description, its
+  schema and a line `flz relay call orders-eu --channel place --arg pair=... --arg amount=...`
+
+### Requirement: `flz relay call` SHALL take typed arguments
+
+`flz relay call <id> --channel <ch>` SHALL accept repeated `--arg name=value`, read the
+channel's schema once through the door, coerce each value by its property type (`string`,
+`number`, `integer`, `boolean`) and call `Relay.call_channel`. It SHALL refuse with
+`api.input_invalid`, naming `--text` in its hint, `--arg` on a channel that is not `json`, has no
+schema, or names a property typed `object` or `array`, or a value that does not coerce. A name
+the schema does not declare SHALL be kept as one field of that name, never nested, and is
+refused when the schema forbids additional properties. `--key` SHALL reach the partition member
+it owns, and a partition group's API SHALL be its members' factory's. `--text` SHALL send its
+payload as the value unchanged, also to a relay whose runners announced no API, and a channel
+without an answer SHALL print `accepted`.
+
+#### Scenario: Numbers are numbers
+
+- **WHEN** `flz relay call orders-eu --channel place --arg pair=EUR/USD --arg amount=1000` is run
+- **THEN** the relay receives `{"pair":"EUR/USD","amount":1000}` with `amount` a number
+
+#### Scenario: A value that does not coerce
+
+- **WHEN** `--arg amount=lots` is given for a number property
+- **THEN** the command exits with the class's code and prints `api.input_invalid` naming `amount`
+

@@ -61,6 +61,7 @@ type and what you should see; the topic pages say how each piece works.
 | [`state.md`](topics/basics/state.md) | State per cell, the changes that record it, and its restore |
 | [`local_mode.md`](topics/basics/local_mode.md) | A relay run in your own process, with no controller |
 | [`topics/basics/running_relays.md`](topics/basics/running_relays.md) | Starting, watching and stopping relays, from `flz` and from code; what a restart brings back |
+| [`topics/basics/relay_api.md`](topics/basics/relay_api.md) | A relay's API: describing its channels, reading it with `flz relay info`, and calling it from `flz`, HTTP, an SDK or an AI agent's tools |
 | [`working_with_ai_assistants.md`](topics/working_with_ai_assistants.md) | `flz mcp`: an AI assistant gets the rules, the current SDK form and the operations |
 | [`topics/plugins/plugins.md`](topics/plugins/plugins.md) | The plugin model: installed, enabled by name, relays bound; the plugins that ship |
 | [`where_plugins_run.md`](topics/plugins/where_plugins_run.md) | Shared and single copies, partitioned relays, when a copy stops, durability |

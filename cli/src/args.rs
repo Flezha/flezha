@@ -111,6 +111,8 @@ pub(crate) struct OptSpec {
     pub(crate) short: &'static str,
     pub(crate) kind: Kind,
     pub(crate) required: bool,
+    /// Every value written is kept, in order, rather than the first.
+    repeated: bool,
     /// What the usage line calls the value.
     value: &'static str,
     env: Option<&'static str>,
@@ -123,6 +125,7 @@ impl OptSpec {
             short,
             kind: Kind::Text,
             required: false,
+            repeated: false,
             value,
             env: None,
         }
@@ -174,6 +177,13 @@ impl OptSpec {
 
     pub(crate) const fn required(mut self) -> Self {
         self.required = true;
+        self
+    }
+
+    /// An option that may be written more than once; `Reading::all` reads
+    /// every value.
+    pub(crate) const fn repeated(mut self) -> Self {
+        self.repeated = true;
         self
     }
 
@@ -293,6 +303,10 @@ pub(crate) fn app_data_root(read: &Reading) -> PathBuf {
     )
 }
 
+/// Joins a repeated option's values in its one slot: no word of a command
+/// line can hold it.
+const REPEAT_SEPARATOR: char = '\0';
+
 /// Every option a row declares, in declaration order, with what the caller
 /// wrote for it.
 type Slots = Vec<(&'static str, Option<String>)>;
@@ -337,6 +351,13 @@ impl Reading {
             .unwrap_or_else(|| panic!("{} declares no option '{}'", self.usage, long))
             .1
             .as_deref()
+    }
+
+    /// Every value of a repeated option, in the order written.
+    pub(crate) fn all(&self, long: &str) -> Vec<&str> {
+        self.opt(long)
+            .map(|values| values.split(REPEAT_SEPARATOR).collect())
+            .unwrap_or_default()
     }
 
     /// A declared number. The walk refused an unreadable one, so this parse
@@ -509,13 +530,22 @@ fn scan(
 
     while i < argv.len() {
         if let Some((long, value, width)) = claim(declared, argv, i)? {
-            // First-wins: a repeated flag keeps the value written first.
+            // First-wins: a repeated flag keeps the value written first, unless
+            // its option keeps every one.
+            let repeated = declared
+                .iter()
+                .any(|spec| spec.long == long && spec.repeated);
             let slot = options
                 .iter_mut()
                 .find(|(declared, _)| *declared == long)
                 .expect("a claimed option is a declared one");
-            if slot.1.is_none() {
-                slot.1 = Some(value);
+            match &mut slot.1 {
+                None => slot.1 = Some(value),
+                Some(kept) if repeated => {
+                    kept.push(REPEAT_SEPARATOR);
+                    kept.push_str(&value);
+                }
+                Some(_) => {}
             }
             i += width;
             continue;

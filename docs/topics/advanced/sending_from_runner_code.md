@@ -11,11 +11,12 @@ skips the controller for input you can afford to lose.
 **Contents**
 
 1. [Send through the controller](#send-through-the-controller)
-2. [From a Kafka consumer](#from-a-kafka-consumer)
-3. [The relays bound on this runner](#the-relays-bound-on-this-runner)
-4. [Send locally](#send-locally)
-5. [Refusals](#refusals)
-6. [See also](#see-also)
+2. [Call a channel and wait for its answer](#call-a-channel-and-wait-for-its-answer)
+3. [From a Kafka consumer](#from-a-kafka-consumer)
+4. [The relays bound on this runner](#the-relays-bound-on-this-runner)
+5. [Send locally](#send-locally)
+6. [Refusals](#refusals)
+7. [See also](#see-also)
 
 ## Send through the controller
 
@@ -104,6 +105,67 @@ $answer = $runner->send('orders', '{"pair":"EURUSD","qty":5}', 'in', msgId: 'ord
 Ruby spells it `send_to`, because every Ruby object already has a `send`. The same
 options are on the command line: `flz relay send orders --text x --key EURUSD
 --msg-id orders/0/41`.
+
+## Call a channel and wait for its answer
+
+`runner.call` sits beside `send`: it calls an entry channel of a relay with a
+value, by the relay's API ([`../basics/relay_api.md`](../basics/relay_api.md)),
+and answers what the relay answers. It goes through the controller under the
+same role check as a send.
+
+<!-- tabs-open -->
+
+### Java
+
+```java
+Placed placed = runner.call("orders-eu", "place", new Order("EUR/USD", new BigDecimal("1000")), Placed.class);
+```
+
+### Rust
+
+```rust
+let placed: serde_json::Value =
+    runner.call("orders-eu", "place", &serde_json::json!({"pair": "EUR/USD", "amount": 1000}))?;
+```
+
+### Node
+
+```js
+const placed = await runner.call('orders-eu', 'place', { pair: 'EUR/USD', amount: 1000 });
+```
+
+### Python
+
+```python
+placed = runner.call("orders-eu", "place", {"pair": "EUR/USD", "amount": 1000})
+```
+
+### Ruby
+
+```ruby
+placed = runner.call("orders-eu", "place", { pair: "EUR/USD", amount: 1000 })
+```
+
+### PHP
+
+```php
+$placed = $runner->call('orders-eu', 'place', ['pair' => 'EUR/USD', 'amount' => 1000]);
+```
+
+### Elixir
+
+```elixir
+{:ok, placed} = Flezha.SDK.call(runner, "orders-eu", "place", %{"pair" => "EUR/USD", "amount" => 1000})
+```
+
+<!-- tabs-close -->
+
+The value is encoded as an output with no codec encodes it: bytes as they are,
+a string as UTF-8, anything else as JSON. The answer is decoded by its format:
+JSON into the requested type (Java) or the language's JSON value, text as a
+string, bytes as bytes. A channel that answers nothing answers
+`{"accepted": true}`. The control handle has no `call`: calling is a data call,
+so it sits on the runner.
 
 ## From a Kafka consumer
 

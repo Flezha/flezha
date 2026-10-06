@@ -161,3 +161,24 @@ comment SHALL show `admin()` or a send on the control surface.
   searched for the SDK accessor `admin`
 - **THEN** no hit SHALL remain outside the authorization roles and earlier changelog entries
 
+### Requirement: Every SDK SHALL call a relay's channel by value
+
+Every SDK's runner object SHALL offer, beside its send, a call of a relay's channel with a
+value (`runner.call(id, channel, value, answerType)` in Java, the language's idiom elsewhere),
+carried over the SDK's shared entry as `Relay.call_channel` under the role check its send
+takes. The value SHALL be encoded as an output with no codec encodes it, and the answer decoded by
+its format: JSON into the requested type or the language's JSON value, text as a string, bytes
+as bytes, and `{"accepted": true}` for a send. A refusal SHALL raise the SDK's error type with
+the controller's code. The control surface SHALL not offer this call.
+
+#### Scenario: Java calls with a record
+
+- **WHEN** a Java runner calls `runner.call("orders-eu", "place", new PlaceOrder("EUR/USD", 1000), Answer.class)`
+- **THEN** it receives the answer as an `Answer` record
+
+#### Scenario: Same in every SDK
+
+- **WHEN** a test in each of the seven SDKs calls a JSON channel of a test relay through its
+  runner object
+- **THEN** each receives the same decoded answer
+

@@ -13,7 +13,8 @@ defmodule Flezha.Mcp.StdioTest do
 
   alias Flezha.AuthZ.TokenStore
   alias Flezha.Mcp.Stdio
-  alias FlezhaTest.Helper.AuthTestHelper
+  alias Flezha.Runner.FleetManager
+  alias FlezhaTest.Helper.{AuthTestHelper, FleetStateHelper}
 
   defp rpc(method, params \\ %{}),
     do: Jason.encode!(%{jsonrpc: "2.0", id: 1, method: method, params: params})
@@ -118,6 +119,51 @@ defmodule Flezha.Mcp.StdioTest do
                AuthTestHelper.await_platform_authz_events(:authorization_denied, boundary)
 
       assert signal.metadata.principal == "assistant"
+    end
+
+    test "an app token sees its namespace's described channels as tools, a viewer none" do
+      original = :sys.get_state(FleetManager)
+      on_exit(fn -> :sys.replace_state(FleetManager, fn _ -> original end) end)
+      on_exit(fn -> FleetStateHelper.forget_established("desk", ["orders"]) end)
+      FleetStateHelper.seed("desk", %{"r1" => []})
+
+      place = %{
+        "channel" => "place",
+        "codec" => "json",
+        "schema_json" => ~s({"type":"object","properties":{"pair":{"type":"string"}}}),
+        "description" => "Places an order",
+        "answer_codec" => "json"
+      }
+
+      audit = %{"channel" => "audit", "codec" => "text"}
+      factory = %{"id" => "orders", "sdk_lang" => 1, "run" => "flow", "api" => [place, audit]}
+      GenServer.cast(FleetManager, {:sync_factories, "desk", "r1", [factory]})
+      {:ok, _} = FleetManager.list_factories("desk")
+
+      {:ok, app, _} = TokenStore.issue("agent", "desk", :app, 3600)
+      {:ok, viewer, _} = TokenStore.issue("reader", "desk", :viewer, 3600)
+      listed = tools(online(rpc("tools/list"), token: app))
+
+      assert "orders_place" in listed
+      assert "relay_list" in listed
+      refute "orders_audit" in listed
+      refute "orders_place" in tools(online(rpc("tools/list"), token: viewer))
+
+      call = %{
+        "name" => "orders_place",
+        "arguments" => %{"relay" => "orders-eu", "pair" => "EUR/USD"}
+      }
+
+      answer = result(online(rpc("tools/call", call), token: app))
+
+      assert answer["isError"]
+      assert answer["structuredContent"]["error"]["code"] == "relay.not_found"
+      assert answer["structuredContent"]["error"]["message"] =~ "orders-eu"
+
+      refused = result(online(rpc("tools/call", call), token: viewer))
+
+      assert refused["isError"]
+      assert refused["structuredContent"]["error"]["code"] =~ ~r/^authz\./
     end
 
     test "a token that does not verify refuses every operation with its own error" do

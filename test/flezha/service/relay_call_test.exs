@@ -174,57 +174,66 @@ defmodule Flezha.Service.RelayCallTest do
       assert Verbs.fetch!(:relay_call).action == :"relay.send"
       refute_received {:called, _, _, _, _}
     end
+
+    test "a viewer is refused a channel call, which reads and sends nothing" do
+      assert {:error, %Error{code: "authz.role_insufficient"}} =
+               Relay.call_channel("default", "echo", "in", "x", [payload: "text"], %{
+                 source: :cli,
+                 principal: "eve"
+               })
+
+      refute_received {:called, _, _, _, _}
+      refute_received {:sent, _, _}
+    end
   end
 
   describe "flz relay call" do
+    # A relay whose runners announced no API: `--text` reaches it as a call,
+    # its answer printed as written.
+    setup do
+      stub(HubManager, :relay_spec, fn
+        _namespace, id when id in ["echo", "prices#p0", "prices#p1"] ->
+          {:ok, %{factory_id: "echo", opts: []}}
+
+        namespace, id ->
+          {:error, {:relay_not_found, namespace, id}}
+      end)
+
+      stub(RelayManager, :factory_row, fn _namespace, _factory -> nil end)
+      :ok
+    end
+
+    defp cli_call(relay, payload, opts),
+      do:
+        Cli.call(
+          "Relay.call_channel",
+          Jason.encode!(["default", relay, "", payload, Map.put(opts, :payload, "text")]),
+          []
+        )
+
     test "prints the answer's payload and one newline" do
       assert {_outcome, "echo:hello\n", ""} =
-               CliCapture.run(fn ->
-                 Cli.call(
-                   "Relay.call",
-                   Jason.encode!(["default", "echo", "hello", "", %{deadline_ms: 30_000}]),
-                   []
-                 )
-               end)
+               CliCapture.run(fn -> cli_call("echo", "hello", %{deadline_ms: 30_000}) end)
 
       assert_received {:called, "echo", "hello", %{}, 30_000}
     end
 
     test "a group without a key fails naming its members; a missing relay is not found" do
       {_outcome, out, err} =
-        CliCapture.run(fn ->
-          Cli.call(
-            "Relay.call",
-            Jason.encode!(["default", "prices", "x", "", %{deadline_ms: 100}]),
-            []
-          )
-        end)
+        CliCapture.run(fn -> cli_call("prices", "x", %{deadline_ms: 100}) end)
 
       assert out == ""
       assert err =~ "(call.target_unkeyed)"
       assert err =~ "prices#p0, prices#p1"
 
       {_outcome, _out, err} =
-        CliCapture.run(fn ->
-          Cli.call(
-            "Relay.call",
-            Jason.encode!(["default", "ghost", "x", "", %{deadline_ms: 100}]),
-            []
-          )
-        end)
+        CliCapture.run(fn -> cli_call("ghost", "x", %{deadline_ms: 100}) end)
 
       assert err =~ "(relay.not_found)"
     end
 
     test "a deadline that is not positive is refused before anything is sent" do
-      {_outcome, _out, err} =
-        CliCapture.run(fn ->
-          Cli.call(
-            "Relay.call",
-            Jason.encode!(["default", "echo", "x", "", %{deadline_ms: 0}]),
-            []
-          )
-        end)
+      {_outcome, _out, err} = CliCapture.run(fn -> cli_call("echo", "x", %{deadline_ms: 0}) end)
 
       assert err =~ "(usage.invalid_number)"
       refute_received {:called, _, _, _, _}

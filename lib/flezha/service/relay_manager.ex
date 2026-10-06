@@ -663,17 +663,23 @@ defmodule Flezha.Service.RelayManager do
   here advertises it and of a node the directory names otherwise, so the
   answer is the cluster's.
   """
-  def factory_run(namespace, factory_id) do
-    if FleetManager.runners_for_factory(namespace, factory_id) != [] do
-      FleetManager.factory_run(namespace, factory_id)
-    else
-      case capable_nodes(namespace, factory_id) do
-        [] ->
-          {:error, :no_such_factory}
+  def factory_run(namespace, factory_id),
+    do: on_factory_node(namespace, factory_id, :factory_run, {:error, :no_such_factory})
 
-        [target | _] ->
-          route_call(target, FleetManager, :factory_run, [namespace, factory_id], &{:error, &1})
-      end
+  @doc "`factory_id`'s factory-table row, its API among it, asked as `factory_run/2` is."
+  def factory_row(namespace, factory_id),
+    do: on_factory_node(namespace, factory_id, :factory_row, nil)
+
+  defp on_factory_node(namespace, factory_id, fun, none) do
+    cond do
+      FleetManager.runners_for_factory(namespace, factory_id) != [] ->
+        apply(FleetManager, fun, [namespace, factory_id])
+
+      target = List.first(capable_nodes(namespace, factory_id)) ->
+        route_call(target, FleetManager, fun, [namespace, factory_id], &{:error, &1})
+
+      true ->
+        none
     end
   end
 

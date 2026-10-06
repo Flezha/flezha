@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Added: every relay has a public API
+
+A relay's entry channels are its API, announced by its runner with its factories: each
+channel's format, whether it answers and in which format, and a description and a JSON
+Schema when the channel declares them (`describe`/`schema`, or the `description`/`schema`
+options; Java records, Python types, PHP typed classes and, with the `schemars` feature,
+Rust types are read into a schema) ([`docs/topics/basics/relay_api.md`](docs/topics/basics/relay_api.md)).
+`Relay.api` lists it and `Relay.call_channel` calls a channel by value; `flz relay info <id>`
+shows a relay's API, `flz relay call` takes `--arg name=value`, the HTTP API plugin serves
+`POST /v1/relays/<id>/<channel>`, every SDK's runner gains `call` beside `send`, and each
+described channel is an MCP tool `<factory>_<channel>`, so an AI agent calls a relay as a
+tool. New codes `api.channel_unknown`, `api.input_invalid`, `api.not_advertised` and
+`topology.schema_invalid`.
+
 ### Added: `flz relay diagnose`, what is wrong with a relay and what to do
 
 `Relay.diagnose` reads what the controller already keeps about one relay (the convergence

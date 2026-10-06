@@ -96,11 +96,14 @@ wake takes counts against the deadline.
 ### `flz relay call`
 
 ```text
-flz relay call <relay_id> --text <payload> [--channel <ch>] [--answer-channel <ch>] [--key <k>] [--timeout <ms>] [--namespace <ns>]
+flz relay call <relay_id> (--text <payload> | --arg <name=value>...) [--channel <ch>] [--answer-channel <ch>] [--key <k>] [--timeout <ms>] [--namespace <ns>]
 ```
 
-It prints the answer's payload and a newline on stdout and exits 0. `--channel` names the entry
-channel the input arrives on, and `--answer-channel` the channel whose output answers. `--timeout`
+It prints the answer and a newline on stdout and exits 0. `--channel` names the entry
+channel the input arrives on, and `--answer-channel` the channel whose output answers. `--text`
+sends the payload as written; `--arg` gives one field of a JSON input each, typed by the
+channel's schema in the relay's API ([`../basics/relay_api.md`](../basics/relay_api.md)). The call
+goes through `Relay.call_channel`, so a channel that does not answer prints `accepted`. `--timeout`
 defaults to 30000 and has no short spelling, because `-t` is `--text`. A failure is written on stderr with its code
 and exits by its class (see [the CLI](../cli/cli.md)):
 
@@ -135,6 +138,21 @@ A connected runner reaches it through the administration surface, like every pub
 function. That surface is for application code outside relays: a tasklet never makes a call
 from `run`; one relay calls another from its graph.
 
+### `Relay.call_channel`, HTTP and MCP
+
+```elixir
+Flezha.Service.Relay.call_channel(namespace, relay_id, channel, value, opts, caller_context)
+```
+
+The call by value: it reads the relay's API, encodes `value` by the channel's format (any JSON
+value for `json`, a string for `text`, base64 for the binary formats), calls the relay when
+the channel answers and sends to it otherwise, and answers `%{answer, answer_codec}` or
+`%{accepted: true}`. `opts` carries `deadline_ms` (default 30000), `answer_channel`, `key`, and
+`payload` (`text` or `base64`) to send `value` as the payload itself. It is judged as `call/6`.
+The [HTTP API plugin](../../plugins/http_api.md) serves it as `POST /v1/relays/<id>/<channel>`,
+and the MCP endpoint lists each described channel as a tool an AI agent calls
+([`../basics/relay_api.md`](../basics/relay_api.md#ai-agents-and-tool-calling)).
+
 ### A feeding plugin
 
 ```elixir
@@ -156,7 +174,7 @@ its members; a member named directly (`prices#p0`) is called directly. `flz rela
 
 ### Authorization
 
-A call through `flz relay call` or `Relay.call/6` is judged as `relay.send` in the
+A call through `flz relay call`, `Relay.call/6` or `Relay.call_channel/6` is judged as `relay.send` in the
 relay's namespace and audited like a send, naming the relay, with the error code on a
 failure. A caller allowed to send can so read any output its own input causes on an output, and
 pick which one with the answer channel; outputs of other inputs stay behind `relay.listen`. A refused call delivers no input and keeps its own `authz.*` code (exit 4). A plugin's

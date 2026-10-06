@@ -435,25 +435,29 @@ EXAMPLES:
 pub(crate) const RELAY_CALL: Help = r#"flz relay call - Send one input and print the relay's answer
 
 USAGE:
-    flz relay call <relay_id> --text <payload> [OPTIONS]
+    flz relay call <relay_id> (--text <payload> | --arg <name=value>...) [OPTIONS]
 
 OPTIONS:
-    -t, --text <payload>      The input's payload (required)
-    -c, --channel <ch>        The entry channel the input arrives on
+    -t, --text <payload>      The input's payload, sent as written
+    --arg <name=value>        One field of a JSON input, typed by the channel's schema;
+                              repeat it for each field
+    -c, --channel <ch>        The entry channel to call (default: the first)
     --answer-channel <ch>     The channel whose output answers (default: the first output)
     --key <key>               The key whose member of a partition group takes the input
     --timeout <ms>            How long the relay has to answer (default 30000)
     --namespace <ns>          Namespace the relay runs in (default: default)
 
 OUTPUT:
-    The answer's payload and a newline: the first output the input caused,
-    or its first on the answer channel when one is named. The output also
-    reaches the relay's plugins and listeners. A failure is printed on stderr
-    with its code and exits by its class: call.timeout 7, a denied call 4,
-    relay.not_found 5, call.target_unkeyed 2.
+    The answer and a newline: the first output the input caused, or its first
+    on the answer channel when one is named, as the relay's API reads it. A
+    channel that does not answer prints `accepted`. The output also reaches
+    the relay's plugins and listeners. A failure is printed on stderr with its
+    code and exits by its class: call.timeout 7, a denied call 4,
+    relay.not_found 5, api.input_invalid 2.
 
 EXAMPLES:
     flz relay call echo --text hello
+    flz relay call orders-eu --channel place --arg pair=EUR/USD --arg amount=1000
     flz relay call prices --key EURUSD --text '{"pair":"EURUSD"}'
     flz relay call quoter --text EUR/USD --answer-channel quotes
     flz relay call slow --text x --timeout 100"#;
@@ -469,7 +473,7 @@ COMMANDS:
     stop        Stop a relay
     state       Get relay state
     list        List relays
-    info        Get relay info
+    info        Get relay info, or one relay's API
     diagnose    Say what is wrong with a relay and what to do
     listen      Print the frames a relay emits or ingests
     send        Send a payload to a relay's input stream

@@ -114,6 +114,24 @@ pub fn send(
     call("Relay.send", &send_args(relay, message, channel, &given))
 }
 
+/// Call the entry channel `channel` of `relay` with `payload` as it is,
+/// through the controller's `Relay.call_channel`, answering its JSON:
+/// `{"answer", "answer_codec"}`, or `{"accepted": true}` for a channel that
+/// does not answer.
+pub fn call_channel(relay: &str, channel: &str, payload: &[u8]) -> Result<String, AdminError> {
+    call("Relay.call_channel", &call_channel_args(relay, channel, payload))
+}
+
+fn call_channel_args(relay: &str, channel: &str, payload: &[u8]) -> String {
+    json!([
+        relay,
+        channel,
+        crate::call::base64_encode(payload),
+        {"payload": "base64"}
+    ])
+    .to_string()
+}
+
 /// `Relay.send`'s arguments: the named fields ride only when one is given,
 /// so a send without them is the request it always was.
 fn send_args(relay: &str, message: &str, channel: &str, given: &[(&str, Option<&str>)]) -> String {
@@ -131,6 +149,14 @@ fn send_args(relay: &str, message: &str, channel: &str, given: &[(&str, Option<&
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_channel_call_carries_its_payload_as_base64() {
+        assert_eq!(
+            call_channel_args("orders-eu", "place", br#"{"a":1}"#),
+            r#"["orders-eu","place","eyJhIjoxfQ==",{"payload":"base64"}]"#
+        );
+    }
 
     #[test]
     fn a_send_names_its_fields_only_when_given() {

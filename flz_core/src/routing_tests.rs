@@ -64,6 +64,7 @@ fn entry_less_instance(id: &'static str) -> Arc<RelayInstance> {
         correction: None,
         ack_granularity: Default::default(),
         steps: None,
+        api: Vec::new(),
     };
     RelayInstance::new(Arc::new(topology), Arc::from(id))
 }
@@ -189,6 +190,7 @@ fn parsing_steps(id: &'static str) -> Arc<RelayInstance> {
             on_failure: crate::steps::OnFailure::UndoAll,
             each: crate::steps::Each::Once,
         }),
+        api: Vec::new(),
     };
     RelayInstance::new(Arc::new(topology), Arc::from(id))
 }

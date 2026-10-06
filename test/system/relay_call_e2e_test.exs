@@ -115,7 +115,7 @@ defmodule FlezhaTest.System.RelayCallE2ETest do
   test "a flow relay calls another by name, naming its answer channel", ctx do
     boot(ctx)
     start(ctx.namespace, "call_pricing", :flow, "pricing")
-    orders = start(ctx.namespace, "call_orders", :flow, unique("orders"), ctx.collector)
+    orders = start(ctx.namespace, "call_orders", :flow, unique("ordering"), ctx.collector)
     test = self()
 
     before = fn ->

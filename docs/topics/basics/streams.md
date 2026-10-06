@@ -323,6 +323,17 @@ messages in order. `track_prices` keeps its window in the cell
 fed by a plain `into`, has one cell for every symbol, which is fine for a
 tasklet that keeps nothing.
 
+## Describing an entry channel
+
+An entry channel can say what it is for and what it takes: `describe("...")` in
+Java and Rust, a `description` option in Node, Python, Ruby, PHP and Elixir, and
+for a JSON channel a JSON Schema with `schema(...)` or a `schema` option. Java,
+Python and PHP read the schema from the input type, and Rust with its `schemars`
+feature. Both are part of the relay's API, which `flz relay info <id>` shows and
+an AI agent sees as a tool ([`relay_api.md`](relay_api.md#describe-a-channel)). A
+schema that is not a JSON object with a `type` is refused at registration
+(`topology.schema_invalid`).
+
 ## Outputs
 
 `output(name)` ends a path on a named exit. An output can also sit in the middle of

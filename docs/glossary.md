@@ -153,6 +153,11 @@ owns the mechanism; for concepts, [`architecture/`](https://github.com/flezha/fl
   `hooks:` in a package manifest. `on_interval` needs `interval_ms`; there is no default. A
   plugin with no hooks still feeds its relay through its provider's own worker: hooks decide
   only when the platform calls the plugin.
+- **Relay API**: a factory's entry channels as its runner announces them: each one's format,
+  whether it answers and in which format, and its description and JSON Schema when declared.
+  `flz relay info <id>` shows it, `Relay.call_channel` calls a channel by value, and each
+  described channel is an MCP tool named `<factory>_<channel>`. See
+  [`topics/basics/relay_api.md`](topics/basics/relay_api.md).
 - **Relay-to-relay messaging** — one relay's output delivered into another's input
   stream by the `RelayForward` plugin on the source (same namespace, no self-targeting),
   retried until the target confirms. The guarantee is derived: a source whose Cells record effects

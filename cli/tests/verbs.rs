@@ -73,10 +73,11 @@ const CASES: &[(&[&str], &str)] = &[
         &["relay", "send", "op1", "-n", "prod", "--text", "a\"b\\cä"],
         r#"Flezha.Service.Cli.call("Relay.send", "[\"prod\",\"op1\",\"a\\\"b\\\\cä\",\"\",{}]", [])"#,
     ),
-    // `call`'s deadline defaults and has no short spelling: `-t` is `--text`.
+    // `call`'s deadline defaults and has no short spelling: `-t` is `--text`,
+    // the payload as written.
     (
         &["relay", "call", "echo", "-t", "hello"],
-        r#"Flezha.Service.Cli.call("Relay.call", "[\"default\",\"echo\",\"hello\",\"\",{\"deadline_ms\":30000}]", [])"#,
+        r#"Flezha.Service.Cli.call("Relay.call_channel", "[\"default\",\"echo\",\"\",\"hello\",{\"deadline_ms\":30000,\"payload\":\"text\"}]", [])"#,
     ),
     (
         &[
@@ -90,7 +91,7 @@ const CASES: &[(&[&str], &str)] = &[
             "--text",
             "x",
         ],
-        r#"Flezha.Service.Cli.call("Relay.call", "[\"default\",\"prices\",\"x\",\"\",{\"deadline_ms\":100,\"key\":\"EURUSD\"}]", [])"#,
+        r#"Flezha.Service.Cli.call("Relay.call_channel", "[\"default\",\"prices\",\"\",\"x\",{\"deadline_ms\":100,\"key\":\"EURUSD\",\"payload\":\"text\"}]", [])"#,
     ),
     // The answer channel rides beside the deadline; `--channel` stays the entry.
     (
@@ -103,7 +104,28 @@ const CASES: &[(&[&str], &str)] = &[
             "--answer-channel",
             "quotes",
         ],
-        r#"Flezha.Service.Cli.call("Relay.call", "[\"default\",\"quoter\",\"EUR/USD\",\"\",{\"answer_channel\":\"quotes\",\"deadline_ms\":30000}]", [])"#,
+        r#"Flezha.Service.Cli.call("Relay.call_channel", "[\"default\",\"quoter\",\"\",\"EUR/USD\",{\"answer_channel\":\"quotes\",\"deadline_ms\":30000,\"payload\":\"text\"}]", [])"#,
+    ),
+    // Each `--arg` is one field, still text: the controller types it by the
+    // channel's schema, which `coerce` asks it to read first.
+    (
+        &[
+            "relay",
+            "call",
+            "orders-eu",
+            "--arg",
+            "pair=EUR/USD",
+            "--channel",
+            "place",
+            "--arg",
+            "amount=1000",
+        ],
+        r#"Flezha.Service.Cli.call("Relay.call_channel", "[\"default\",\"orders-eu\",\"place\",{\"amount\":\"1000\",\"pair\":\"EUR/USD\"},{\"deadline_ms\":30000}]", [coerce: true])"#,
+    ),
+    // With a relay id, `info` reads that relay's API.
+    (
+        &["relay", "info", "orders-eu"],
+        r#"Flezha.Service.Cli.call("Relay.api", "[\"default\",\"orders-eu\"]", [])"#,
     ),
     (
         &["relay", "send", "prices", "--key", "EURUSD", "--text", "x"],
@@ -145,4 +167,24 @@ fn an_option_reads_the_same_wherever_it_is_written() {
         CASES.len(),
         wrong.join("\n")
     );
+}
+
+/// `--text` and `--arg` are the two ways to give a call its value: one of
+/// them, never both, and an `--arg` names its field.
+#[test]
+fn a_call_takes_its_value_one_way() {
+    let shim = Shim::new(FLZ_BIN, ECHOING);
+
+    for (argv, code) in [
+        (&["relay", "call", "op", "--text", "x", "--arg", "a=1"][..], "usage.options_conflict"),
+        (&["relay", "call", "op"][..], "usage.option_required"),
+        (&["relay", "call", "op", "--arg", "amount"][..], "api.input_invalid"),
+    ] {
+        let out = shim.run(argv);
+        let err = String::from_utf8_lossy(&out.stderr);
+
+        assert_eq!(out.status.code(), Some(2), "flz {}: {err}", argv.join(" "));
+        assert!(err.contains(code), "flz {}: {err}", argv.join(" "));
+        assert!(out.stdout.is_empty(), "flz {} sent a request", argv.join(" "));
+    }
 }

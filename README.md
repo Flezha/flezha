@@ -89,6 +89,45 @@ out	echo: hello world
 
 The same echo exists in every SDK, under `sdk/<language>/examples/echo`.
 
+## Every relay has an API
+
+The entry channels a relay declares are its public API, with no extra step. Describe a channel
+and say what it takes, here in Java, where a record is read into a JSON Schema:
+
+```java
+public record Order(String pair, BigDecimal amount) {}
+
+c.input(Order.class, "place").describe("Places an order").into(Place.class).output("placed");
+```
+
+`flz relay info` shows the API, with an example call per channel:
+
+```sh
+$ ./bin/flz relay info orders-eu
+```
+
+```output
+API of relay 'orders-eu' (factory 'orders'):
+  place  json → answer json
+    Places an order
+    schema: {"properties":{"amount":{"type":"number"},"pair":{"type":"string"}},"required":["pair","amount"],"type":"object"}
+    MCP tool: orders_place
+    flz relay call orders-eu --channel place --arg pair=... --arg amount=...
+```
+
+An application calls it over HTTP with the [HTTP API plugin](docs/plugins/http_api.md):
+
+```sh
+$ curl -X POST http://127.0.0.1:8765/v1/relays/orders-eu/place \
+    -H "Authorization: Bearer $FLEZHA_TOKEN" -d '{"pair":"EUR/USD","amount":1000}'
+{"amount":1000,"pair":"EUR/USD","status":"placed"}
+```
+
+AI agents can call any relay as a tool (tool calling): every described channel is a tool on
+Flezha's MCP endpoint, so an agent connected with `flz mcp` calls `orders_place` with
+`{"relay": "orders-eu", "pair": "EUR/USD", "amount": 1000}` and gets the same answer as
+structured content. [A relay's API](docs/topics/basics/relay_api.md) covers the seven SDKs.
+
 ## Try it
 
 The echo above runs in Docker, controller included. From the root of the
@@ -116,7 +155,9 @@ runtime for AI services.
   language before any controller runs, and then the controller's operations with a
   token of its own ([`docs/topics/working_with_ai_assistants.md`](docs/topics/working_with_ai_assistants.md)).
   A controller on another machine serves the same over HTTP
-  ([`docs/plugins/http_api.md`](docs/plugins/http_api.md)).
+  ([`docs/plugins/http_api.md`](docs/plugins/http_api.md)). Your relays are tools too:
+  each described entry channel is one an agent can call
+  ([`docs/topics/basics/relay_api.md`](docs/topics/basics/relay_api.md)).
   Every error carries a stable code and a hint for the next step
   ([`docs/errors.md`](docs/errors.md)), every `flz` command can answer in JSON, the
   documentation ships an `llms.txt` map to its pages in Markdown, and local mode tries a

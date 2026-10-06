@@ -110,6 +110,8 @@ defmodule Flezha.Config.DurationRows do
     # What an outside caller waits past its call's deadline, so the callee's
     # own `call.timeout` always reaches it first.
     {:call_grace_ms, :ms, 1_000, key: true},
+    # The deadline of a `Relay.call_channel` whose caller names none.
+    {:call_channel_deadline_ms, :ms, 30_000, []},
     # How long an input log keeps a record carrying a call past the call's
     # deadline, so a request sent again is absorbed and a caller's recovery
     # still finds its `Response`.

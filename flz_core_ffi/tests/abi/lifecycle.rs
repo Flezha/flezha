@@ -132,7 +132,9 @@ pub(crate) fn declares_and_starts(ctx: *mut FlzContext, controller: &Controller)
     let decl = br#"{
         "factory_id": "abi_probe",
         "sdk_lang": 1,"sdk_version":"0.1.0",
-        "channels": [{"name": "in", "kind": "entry", "chains": [[{"link": "into", "tasklet": 0}]]}],
+        "channels": [{"name": "in", "kind": "entry", "codec": "json",
+                      "schema": {"type": "object"}, "description": "Probes the ABI",
+                      "chains": [[{"link": "into", "tasklet": 0}]]}],
         "tasklets": [{"name": "abi_pass"}]
     }"#;
     assert_eq!(
@@ -143,15 +145,24 @@ pub(crate) fn declares_and_starts(ctx: *mut FlzContext, controller: &Controller)
     let ns = CString::new("abi_ns").unwrap();
     assert_eq!(unsafe { flz_core_start(ctx, ns.as_ptr()) }, FLZ_OK);
     assert_eq!(controller.accepted(), 1, "one control connect");
-    // "Connects": the init frame names the declared factory.
-    controller.await_frame("init frame", |captured| {
+    // "Connects": the init frame names the declared factory, and announces
+    // its API from the facts the host declared.
+    let init = controller.await_frame("init frame", |captured| {
         captured
             .iter()
             .find(|(id, m)| {
                 id == "connect_control_channel" && String::from_utf8_lossy(m).contains("abi_probe")
             })
-            .map(|_| ())
+            .map(|(_, m)| String::from_utf8_lossy(m).to_string())
     });
+    for fact in [
+        r#""channel":"in""#,
+        r#""codec":"json""#,
+        r#""description":"Probes the ABI""#,
+        r#""schema_json":"{\"type\":\"object\"}""#,
+    ] {
+        assert!(init.contains(fact), "the init frame announces {fact}: {init}");
+    }
 
     controller.send(
         "ref-add-1",

@@ -95,6 +95,7 @@ struct Channel {
     keyed: bool,
     retry_max: Option<u32>,
     overflow: Option<String>,
+    schema: Option<String>,
 }
 
 /// The record a row's steps describe. The step vocabulary is the fixture
@@ -206,6 +207,10 @@ impl Interpreter {
                 let at = self.channel(head);
                 self.channels[at].overflow = Some(arg.to_string());
             }
+            "schema" => {
+                let at = self.channel(head);
+                self.channels[at].schema = Some(arg.to_string());
+            }
             _ => self.chain(head, rest),
         }
     }
@@ -313,6 +318,9 @@ impl Interpreter {
                 }
                 if let Some(overflow) = &c.overflow {
                     fields.push(format!(r#""overflow":"{overflow}""#));
+                }
+                if let Some(schema) = &c.schema {
+                    fields.push(format!(r#""schema":{schema}"#));
                 }
                 format!("{{{}}}", fields.join(","))
             })

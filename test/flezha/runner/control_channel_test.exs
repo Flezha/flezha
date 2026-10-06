@@ -212,7 +212,7 @@ defmodule FlezhaTest.Runner.ControlChannelUpdateFactoriesTest do
              fn ->
                {:ok, factories} = FleetManager.list_factories(@namespace)
 
-               factories == [
+               Enum.map(factories, &Map.take(&1, [:id, :description, :run])) == [
                  %{id: "alpha", description: "the alpha factory", run: :steps},
                  %{id: "beta", description: nil, run: :flow}
                ]

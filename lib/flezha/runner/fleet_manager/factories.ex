@@ -46,6 +46,10 @@ defmodule Flezha.Runner.FleetManager.Factories do
           establish(namespace, runner_id, factory_id, attribute, value)
         end)
 
+        # The API rides beside the placement attributes, never among them:
+        # it describes the factory and decides no placement.
+        advert = Map.merge(advert, %{api: api(factory["api"]), announced_at: System.os_time()})
+
         Map.put(acc, factory_id, %{
           description: factory["description"] || existing.description,
           adverts: Map.put(existing.adverts, runner_id, advert)
@@ -94,6 +98,51 @@ defmodule Flezha.Runner.FleetManager.Factories do
     |> Map.put_new(:description, nil)
     |> Map.put_new(:adverts, %{})
   end
+
+  @doc """
+  The API the latest advertisement of a factory entry announced, and whether
+  its advertising runners announce different ones.
+  """
+  @spec latest_api(map()) :: %{api: [map()], api_at: integer() | nil, api_disagree: boolean()}
+  def latest_api(info) do
+    adverts = info |> factory_entry() |> Map.fetch!(:adverts) |> Map.values()
+    latest = Enum.max_by(adverts, &Map.get(&1, :announced_at, 0), fn -> %{} end)
+
+    %{
+      api: Map.get(latest, :api, []),
+      api_at: Map.get(latest, :announced_at),
+      api_disagree: adverts |> Enum.map(&Map.get(&1, :api, [])) |> Enum.uniq() |> length() > 1
+    }
+  end
+
+  # The API entries a factory's announcement carries, whether from the connect
+  # frame's JSON or an `UpdateFactories` frame. Absent is none: a runner
+  # older than the relay API announces nothing.
+  defp api(entries) when is_list(entries), do: Enum.map(entries, &api_entry/1)
+  defp api(_absent), do: []
+
+  defp api_entry(entry) do
+    %{
+      channel: entry["channel"],
+      codec: entry["codec"],
+      schema: schema(entry["schema_json"]),
+      description: blank_nil(entry["description"]),
+      answer_codec: blank_nil(entry["answer_codec"]),
+      answer_schema: schema(entry["answer_schema_json"])
+    }
+  end
+
+  defp schema(json) when is_binary(json) and json != "" do
+    case Jason.decode(json) do
+      {:ok, schema} when is_map(schema) -> schema
+      _unreadable -> nil
+    end
+  end
+
+  defp schema(_none), do: nil
+
+  defp blank_nil(value) when value in [nil, ""], do: nil
+  defp blank_nil(value), do: value
 
   # The language a factory entry advertises. Absent / `0` stays `0`: an
   # unspecified language is refused at the placement filter, never guessed.

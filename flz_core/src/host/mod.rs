@@ -20,6 +20,8 @@ mod stamp;
 #[cfg(test)]
 mod activation_tests;
 #[cfg(test)]
+mod api_tests;
+#[cfg(test)]
 mod check_tests;
 #[cfg(test)]
 mod decl_tests;
@@ -36,7 +38,7 @@ pub use commands::{
 };
 pub use decl::{
     HostAckGranularity, HostCall, HostCellModeDecl, HostChannelDecl, HostChannelKind,
-    HostClassDecl, HostClock, HostLink, HostOverflow, HostTaskletDecl,
+    HostClassDecl, HostClock, HostCodec, HostLink, HostOverflow, HostTaskletDecl,
 };
 pub use issue::{render_issues, TopologyIssue};
 pub use prepare::{

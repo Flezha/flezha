@@ -78,6 +78,11 @@ disappears.
 everything that channel delivers. Something outside the code uses both, so
 changing one is a breaking change rather than a rename.
 
+**The entry channels are the relay's API.** Each one's format, its answer and,
+when you give them, a description and a schema are announced by the runner and
+shown by `flz relay info <id>`, so an application, a script or an AI agent can
+call the relay without reading its code ([`relay_api.md`](relay_api.md)).
+
 The graph is checked when the runner registers the relay, so a graph that
 cannot work is refused there rather than failing half way through a run.
 

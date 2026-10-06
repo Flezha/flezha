@@ -2,7 +2,9 @@
 
 The HTTP API plugin lets AI tools and scripts operate a controller from another process or
 machine. It serves the controller's published operations two ways: as MCP tools at
-`POST /mcp`, for Claude Code and other MCP clients, and as plain JSON under `/v1`. Every
+`POST /mcp`, for Claude Code and other MCP clients, and as plain JSON under `/v1`. It also
+serves every relay's API: a channel is called at `POST /v1/relays/<id>/<channel>`, and each
+described channel is an MCP tool an agent calls. Every
 call carries a `flz` token and is made as that token's principal, with exactly what its role
 allows. `FlezhaHttp.ApiProvider` is its provider, under the provider id `http_api`, in the
 `flezha_http` package (`plugins/flezha_http_plugin`).
@@ -22,9 +24,11 @@ allows. `FlezhaHttp.ApiProvider` is its provider, under the provider id `http_ap
 3. [A token for an assistant](#a-token-for-an-assistant)
 4. [Connect Claude Code](#connect-claude-code)
 5. [Plain JSON](#plain-json)
-6. [What is never exposed](#what-is-never-exposed)
-7. [Limits and gotchas](#limits-and-gotchas)
-8. [See also](#see-also)
+6. [Call a relay's channel](#call-a-relay-s-channel)
+7. [Relay tools](#relay-tools)
+8. [What is never exposed](#what-is-never-exposed)
+9. [Limits and gotchas](#limits-and-gotchas)
+10. [See also](#see-also)
 
 ## Enable it
 
@@ -133,6 +137,52 @@ $ curl -s -X POST http://127.0.0.1:8765/v1/call/Relay.list \
 `GET /v1/catalogue` lists the operations the token may call, with their arguments. A
 failure answers the error object with the HTTP status of its class: `404` for
 `dlq.not_found`, `403` for `authz.role_insufficient`.
+
+## Call a relay's channel
+
+`POST /v1/relays/<id>/<channel>` calls one entry channel of a relay in the token's namespace,
+through the relay's API ([`relay_api.md`](../topics/basics/relay_api.md)). The body is the value
+as the channel's format reads it: the JSON value for `json`, UTF-8 text for `text`, raw bytes for
+`bytes`, `msgpack` and `custom`. It is `Relay.call_channel`, judged as `relay.send`:
+
+```sh
+$ curl -s -i -X POST http://127.0.0.1:8765/v1/relays/orders-eu/place \
+  -H "Authorization: Bearer $FLEZHA_TOKEN" -d '{"pair":"EUR/USD","amount":1000}'
+```
+
+```output
+HTTP/1.1 200 OK
+content-type: application/json
+{"amount":1000,"pair":"EUR/USD","status":"placed"}
+```
+
+The answer comes back with the content type of its format (`application/json`,
+`text/plain; charset=utf-8`, or `application/octet-stream` with the raw bytes). A channel that
+does not answer is `202` with `{"accepted": true}`:
+
+```sh
+$ curl -s -i -X POST http://127.0.0.1:8765/v1/relays/orders-eu/audit \
+  -H "Authorization: Bearer $FLEZHA_TOKEN" -d checked
+```
+
+```output
+HTTP/1.1 202 Accepted
+content-type: application/json
+{"accepted":true}
+```
+
+A failure answers the error object with its class's status: `404` for `api.channel_unknown`
+and `relay.not_found`, `400` for `api.input_invalid`.
+
+## Relay tools
+
+`tools/list` holds, after the catalogue and knowledge tools, one tool per described entry
+channel of the factories announced in the token's namespace, named `<factory>_<channel>`
+(`orders_place`). They are listed only for a role that grants `relay.send` there, so a viewer
+sees none, and there is one per factory and channel however many relays run it. Its arguments
+are `relay` and the channel's input; `tools/call` is `Relay.call_channel`, and a JSON answer comes
+back as structured content. [`relay_api.md`](../topics/basics/relay_api.md#ai-agents-and-tool-calling)
+has the rules for names, schemas and answers.
 
 ## What is never exposed
 

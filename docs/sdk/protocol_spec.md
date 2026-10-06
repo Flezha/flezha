@@ -862,7 +862,7 @@ resolved entirely by the re-presented `stable_id` in the handshake (§5). A
 ### UpdateFactories
 
 `UpdateFactories { repeated FactoryDecl factories }` (`FactoryDecl { id,
-description, sdk_lang, kind }`, the same keys as the init frame's entries)
+description, sdk_lang, run, each, on_failure, api }`, the same keys as the init frame's entries)
 travels runner → controller, fire-and-forget, after a
 post-start define/remove on the runner handle, carrying the runner's **full**
 current factory set. Full-set semantics make it idempotent: `FleetManager`
@@ -873,6 +873,19 @@ the runner's `AddRelay` handler and convergence re-places it; a lost frame
 is corrected by the next one or by the reconnect init frame. Dropping a factory
 that still has relays bound to the runner logs a `FleetManager` warning
 naming namespace, runner, factory id and affected relays.
+
+### ApiEntry
+
+`FactoryDecl.api` (field 7) is the factory's API, one `ApiEntry { channel, codec,
+schema_json, description, answer_codec, answer_schema_json }` per entry channel of the class
+that is not a call end's response channel. `codec` is `json`, `text`, `bytes`, `msgpack` or
+`custom`; `schema_json` and `description` are empty when not declared. `answer_codec` is set
+when an output that answers is reachable from the channel along its consumer edges, with that
+output's codec and schema; reachable outputs that disagree give `bytes` and no schema. The init
+frame's factory entries carry the same six keys under `"api"`. `flz_core` builds the entries
+from the host's channel facts (`advertised_for_factory`); the Elixir SDK builds its own. A
+runner that sends none leaves its factory with no API; the controller keeps each runner's latest
+announcement and `Relay.api` reads it.
 
 ### SpawnStepsRequest
 

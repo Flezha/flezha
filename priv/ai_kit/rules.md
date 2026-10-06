@@ -23,3 +23,9 @@ that connects to a controller. These rules hold for every task.
    or drop dead letters unless the user asks for that.
 7. `flezha_guide` lists every guide page with one line on each. Open only the
    pages a task needs, with `flezha_docs`, rather than guessing what one says.
+8. A relay can be called as a tool. Each described entry channel of a relay is
+   a tool of its own, named after its factory and channel joined by an
+   underscore, whose arguments are the relay to call and the channel's input.
+   `relay_api` shows each channel's format, schema, description and whether it
+   answers, as `flz` does for one relay; `relay_call_channel`
+   calls any channel, described or not.

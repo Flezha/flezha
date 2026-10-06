@@ -94,6 +94,14 @@ an assistant could reach is listed, whatever the token, and a call answers
 `controller.unreachable` with the command that starts one; the next call after
 it starts reaches it, with no restart.
 
+Your relays are tools too. Each entry channel that has a description is a tool
+named `<factory>_<channel>`, such as `orders_place`, whose arguments are the
+relay to call and the channel's input, so an agent calls your relays the way it
+calls any tool (tool calling). They are listed for a token whose role may call
+relays in its namespace, one per factory and channel however many relays run
+it; `relay_api` shows every channel, described or not
+([`basics/relay_api.md`](basics/relay_api.md#ai-agents-and-tool-calling)).
+
 `relay_diagnose` is the tool to start from when a relay misbehaves. It answers
 one relay's verdict (`ok`, `warning` or `problem`) and its findings, each with
 a code, a message and a hint, as

@@ -40,9 +40,15 @@ defmodule Flezha.Mcp do
   """
   @type answer :: {100..599, map() | nil, String.t() | nil}
 
-  @doc "The answer to one JSON-RPC message `body`."
-  @spec answer(binary(), headers(), catalogue(), door()) :: answer()
-  def answer(body, headers, catalogue, door) do
+  @doc """
+  The answer to one JSON-RPC message `body`. `namespace` is the one the
+  caller's token is bound to, whose relays' described channels are its relay
+  tools; `""` is the default namespace.
+  """
+  @spec answer(binary(), headers(), catalogue(), door(), String.t()) :: answer()
+  def answer(body, headers, catalogue, door, namespace \\ "") do
+    door = relay_door(door, namespace)
+
     case Jason.decode(body) do
       {:ok, %{"jsonrpc" => "2.0", "method" => method} = message} when is_binary(method) ->
         message(message, headers, catalogue, door)
@@ -195,10 +201,11 @@ defmodule Flezha.Mcp do
   defp request(_era, id, "ping", _params, _catalogue, _door),
     do: reply(200, result(id, %{}))
 
-  defp request(_era, id, "tools/list", _params, catalogue, _door) do
+  defp request(_era, id, "tools/list", _params, catalogue, door) do
     # The list follows the token's role, so a client keeps it per token, and
     # a role changed since is seen within the minute.
-    tools = Enum.map(Knowledge.entries() ++ catalogue.(), &tool/1)
+    entries = catalogue.()
+    tools = Enum.map(Knowledge.entries() ++ entries, &tool/1) ++ relay_tools(entries, door)
     reply(200, result(id, %{tools: tools, ttlMs: 60_000, cacheScope: "private"}))
   end
 
@@ -228,6 +235,43 @@ defmodule Flezha.Mcp do
   def tool_name(name) do
     [module, function] = String.split(name, ".", parts: 2)
     String.replace(Macro.underscore(module) <> "_" <> function, ~r/[^a-z0-9_]/, "")
+  end
+
+  @max_tool_name 64
+
+  @doc """
+  The tool name of each `{factory, channel}` in order: `{:ok, name}`, or
+  `{:taken, name}` when a catalogue or knowledge tool, or an earlier pair,
+  already holds it. A name is both parts in snake case joined by `_`, with
+  every character a model's tool name cannot hold made `_`; past 64 bytes it
+  is cut and ends in a hash of the whole, so it stays the same name.
+  """
+  @spec relay_tool_names([{String.t(), String.t()}]) :: %{
+          {String.t(), String.t()} => {:ok | :taken, String.t()}
+        }
+  def relay_tool_names(pairs) do
+    held = MapSet.new(Knowledge.entries() ++ Flezha.Service.catalogue(), &tool_name(&1.name))
+
+    pairs
+    |> Enum.map_reduce(held, fn {factory, channel} = pair, held ->
+      name = capped(tool_segment(factory) <> "_" <> tool_segment(channel))
+
+      if MapSet.member?(held, name),
+        do: {{pair, {:taken, name}}, held},
+        else: {{pair, {:ok, name}}, MapSet.put(held, name)}
+    end)
+    |> elem(0)
+    |> Map.new()
+  end
+
+  defp tool_segment(text),
+    do: text |> Macro.underscore() |> String.replace(~r/[^a-zA-Z0-9_-]/u, "_")
+
+  defp capped(name) when byte_size(name) <= @max_tool_name, do: name
+
+  defp capped(name) do
+    hash = :sha256 |> :crypto.hash(name) |> Base.encode16(case: :lower) |> binary_part(0, 8)
+    binary_part(name, 0, @max_tool_name - 9) <> "_" <> hash
   end
 
   @doc "The MCP tool `entry` is."
@@ -301,6 +345,9 @@ defmodule Flezha.Mcp do
 
     case {Enum.find(knowledge ++ Flezha.Service.catalogue(), &(tool_name(&1.name) == name)),
           arguments} do
+      {nil, arguments} when is_map(arguments) ->
+        relay_tool_call(id, name, arguments, door)
+
       {nil, _arguments} ->
         reply(200, unknown_tool(id, name))
 
@@ -359,6 +406,144 @@ defmodule Flezha.Mcp do
   end
 
   defp text(json), do: %{type: "text", text: json}
+
+  # ---------- relay tools ----------
+
+  # The door, with the namespace the relay tools act in bound to it.
+  defp relay_door(door, namespace),
+    do: fn
+      :relay_api, [] -> door.("Relay.api", [namespace])
+      :call_channel, args -> door.("Relay.call_channel", [namespace | args])
+      name, args -> door.(name, args)
+    end
+
+  # Listed only to a caller whose role may call relays: the catalogue it
+  # reaches holds `Relay.call_channel` exactly then.
+  defp relay_tools(entries, door) do
+    if Enum.any?(entries, &(&1.name == "Relay.call_channel")),
+      do: listed_relay_tools(door),
+      else: []
+  end
+
+  defp listed_relay_tools(door), do: Enum.map(relay_entries(door), &relay_tool/1)
+
+  # Every described entry channel of the namespace's factories that holds its
+  # tool name, with its factory: one tool per factory and channel, however
+  # many relays run it.
+  defp relay_entries(door) do
+    case door.(:relay_api, []) do
+      {:ok, json} ->
+        described =
+          for factory <- Jason.decode!(json),
+              entry <- factory["channels"],
+              entry["description"] != nil,
+              do: {factory, entry}
+
+        names = relay_tool_names(for {f, e} <- described, do: {f["factory"], e["channel"]})
+
+        for {factory, entry} <- described,
+            {:ok, name} <- [names[{factory["factory"], entry["channel"]}]],
+            do: {factory, Map.put(entry, "tool", name)}
+
+      {:error, _refused} ->
+        []
+    end
+  end
+
+  defp relay_tool({factory, entry}) do
+    tool = %{
+      name: entry["tool"],
+      description:
+        Enum.join(Enum.reject([factory["description"], entry["description"]], &is_nil/1), ": "),
+      inputSchema: relay_input_schema(entry),
+      annotations: %{readOnlyHint: false, destructiveHint: false, openWorldHint: false}
+    }
+
+    case entry["answer_schema"] do
+      nil -> tool
+      %{"type" => "object"} = schema -> Map.put(tool, :outputSchema, schema)
+      schema -> Map.put(tool, :outputSchema, object(%{"result" => schema}, ["result"]))
+    end
+  end
+
+  @relay_argument %{"type" => "string", "description" => "The relay to call."}
+
+  # An object schema without a `relay` property takes `relay` beside its
+  # own properties; any other input rides in one argument of its own.
+  defp relay_input_schema(entry) do
+    case value_argument(entry) do
+      :merged ->
+        schema = entry["schema"]
+        properties = Map.put(Map.get(schema, "properties", %{}), "relay", @relay_argument)
+
+        Map.merge(schema, %{
+          "properties" => properties,
+          "required" => ["relay" | Map.get(schema, "required", [])]
+        })
+
+      {name, schema} ->
+        object(%{"relay" => @relay_argument, name => schema}, ["relay", name])
+    end
+  end
+
+  defp value_argument(%{"schema" => %{"type" => "object"} = schema}) do
+    if Map.has_key?(Map.get(schema, "properties", %{}), "relay"),
+      do: {"input", schema},
+      else: :merged
+  end
+
+  defp value_argument(%{"codec" => "json"} = entry), do: {"input", entry["schema"] || %{}}
+  defp value_argument(%{"codec" => "text"}), do: {"text", %{"type" => "string"}}
+
+  defp value_argument(_binary),
+    do: {"base64", %{"type" => "string", "contentEncoding" => "base64"}}
+
+  defp object(properties, required),
+    do: %{"type" => "object", "properties" => properties, "required" => required}
+
+  defp relay_tool_call(id, name, arguments, door) do
+    case Enum.find(relay_entries(door), fn {_factory, entry} -> entry["tool"] == name end) do
+      nil ->
+        reply(200, unknown_tool(id, name))
+
+      {_factory, entry} ->
+        value =
+          case value_argument(entry) do
+            :merged -> Map.delete(arguments, "relay")
+            {argument, _schema} -> Map.get(arguments, argument)
+          end
+
+        answer = door.(:call_channel, [arguments["relay"], entry["channel"], value, %{}])
+        {200, relay_tool_result(id, answer), "Relay.call_channel"}
+    end
+  end
+
+  # A JSON answer is structured content, text is text, bytes an embedded
+  # blob, and a send `accepted`.
+  defp relay_tool_result(id, {:ok, json}) do
+    case Jason.decode!(json) do
+      %{"accepted" => true} ->
+        result(id, %{content: [text("accepted")], isError: false})
+
+      %{"answer_codec" => "json", "answer" => value} ->
+        structured = if is_map(value), do: value, else: %{"result" => value}
+
+        result(id, %{
+          content: [text(Jason.encode!(value))],
+          structuredContent: structured,
+          isError: false
+        })
+
+      %{"answer_codec" => "text", "answer" => value} ->
+        result(id, %{content: [text(value)], isError: false})
+
+      %{"answer" => blob} ->
+        resource = %{uri: "flezha:answer", mimeType: "application/octet-stream", blob: blob}
+        result(id, %{content: [%{type: "resource", resource: resource}], isError: false})
+    end
+  end
+
+  defp relay_tool_result(id, refused), do: tool_result(id, refused)
 
   # ---------- JSON-RPC ----------
 

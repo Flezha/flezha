@@ -102,9 +102,12 @@ factory and bound the instance to it. `(none)`, with `(unplaced)` under
 always means the factory id is spelled one way in the code and another way on
 the command line.
 
-`flz relay info <id>` shows one relay in detail, including how it runs
+`flz relay info` shows every relay in detail, including how it runs
 (`Run: ...`, `Durable: ...`), its phase (`suspended` while it sleeps,
 `finished` after a workflow ended) and, for a workflow, its result.
+`flz relay info <id>` shows one relay's API: each entry channel with its
+format, whether it answers, its description and schema, and an example call
+([`relay_api.md`](relay_api.md#read-it)).
 
 ## Send a message
 
@@ -129,7 +132,16 @@ function: a `filter` can drop the input and print nothing, a `flatMap` or a
 `keyBy` can turn one input into many lines, and an aggregation may emit
 minutes later, mixed with earlier inputs. For a relay that answers each
 input, `flz relay call` returns that answer
-([`../advanced/relay_calls.md`](../advanced/relay_calls.md)).
+([`../advanced/relay_calls.md`](../advanced/relay_calls.md)), and it can call a
+channel by its fields, typed by the channel's schema:
+
+```sh
+$ flz relay call orders-eu --channel place --arg pair=EUR/USD --arg amount=1000
+```
+
+```output
+{"amount":1000,"pair":"EUR/USD","status":"placed"}
+```
 
 ## Watch it
 

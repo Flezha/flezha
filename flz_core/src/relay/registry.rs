@@ -3,12 +3,13 @@
 //! class's kind is its topology's `steps` field, and a steps instance is
 //! a [`RelayInstance`] that also carries a run.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, LazyLock, RwLock};
 
 use crate::cell::CellSlot;
+use crate::channel::ChannelKind;
 use crate::relay::instance::RelayInstance;
-use crate::relay::topology::RelayTopology;
+use crate::relay::topology::{ChannelApi, RelayTopology};
 
 static CLASS_REGISTRY: LazyLock<RwLock<HashMap<&'static str, Arc<RelayTopology>>>> =
     LazyLock::new(|| RwLock::new(HashMap::new()));
@@ -32,7 +33,7 @@ pub fn class_factory_ids() -> Vec<&'static str> {
 }
 
 /// What a runner advertises for `factory_id`: the class's SDK language, how
-/// it runs and what it is for. An undeclared factory answers
+/// it runs, what it is for and its API. An undeclared factory answers
 /// [`crate::header::SDK_LANG_UNSPECIFIED`] and an empty run, which the
 /// controller refuses to place.
 pub fn advertised_for_factory(factory_id: &str) -> crate::pb::FactoryDecl {
@@ -52,8 +53,90 @@ pub fn advertised_for_factory(factory_id: &str) -> crate::pb::FactoryDecl {
             }
             None => decl.run = "flow".to_string(),
         }
+        decl.api = api_entries(&topology);
     }
     decl
+}
+
+/// One entry per entry channel a caller can address (not the channel a call
+/// end's outcome comes back on), with the answer of the outputs that answer
+/// reachable from it.
+fn api_entries(topology: &RelayTopology) -> Vec<crate::pb::ApiEntry> {
+    let responses: HashSet<&str> = topology
+        .channels
+        .iter()
+        .filter_map(|channel| channel.call.as_ref())
+        .map(|call| &*call.response)
+        .collect();
+    topology
+        .channels
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| c.kind == ChannelKind::Entry && !responses.contains(&*c.name))
+        .map(|(id, channel)| {
+            let facts = api_facts(topology, id);
+            let (answer_codec, answer_schema_json) = answer(topology, id).unwrap_or_default();
+            crate::pb::ApiEntry {
+                channel: channel.name.to_string(),
+                codec: codec_name(facts).to_string(),
+                schema_json: facts.schema_json.clone(),
+                description: facts.description.clone(),
+                answer_codec,
+                answer_schema_json,
+            }
+        })
+        .collect()
+}
+
+/// The format and schema of the outputs that answer reachable from `entry`
+/// along its consumer edges: theirs when they agree, `bytes` with no schema
+/// when they do not, `None` when none is reachable.
+fn answer(topology: &RelayTopology, entry: usize) -> Option<(String, String)> {
+    let mut seen = vec![false; topology.channels.len()];
+    let mut pending = vec![entry];
+    let mut answers = HashSet::new();
+    while let Some(id) = pending.pop() {
+        if std::mem::replace(&mut seen[id], true) {
+            continue;
+        }
+        let channel = &topology.channels[id];
+        if channel.sink {
+            let facts = api_facts(topology, id);
+            answers.insert((codec_name(facts), facts.schema_json.as_str()));
+        }
+        pending.extend(
+            channel
+                .consumer_ids()
+                .filter_map(|tasklet| topology.tasklets.get(tasklet as usize))
+                .filter_map(|tasklet| tasklet.output_channel_id)
+                .map(|out| out as usize),
+        );
+    }
+    match answers.len() {
+        0 => None,
+        1 => answers
+            .into_iter()
+            .next()
+            .map(|(codec, schema)| (codec.to_string(), schema.to_string())),
+        _ => Some(("bytes".to_string(), String::new())),
+    }
+}
+
+fn api_facts(topology: &RelayTopology, channel: usize) -> &ChannelApi {
+    static NONE: ChannelApi = ChannelApi {
+        codec: "",
+        schema_json: String::new(),
+        description: String::new(),
+    };
+    topology.api.get(channel).unwrap_or(&NONE)
+}
+
+fn codec_name(facts: &ChannelApi) -> &'static str {
+    if facts.codec.is_empty() {
+        "json"
+    } else {
+        facts.codec
+    }
 }
 
 pub struct RelayRegistry {

@@ -15,14 +15,14 @@ use flz_transport::service::payloader::MAX_METADATA_FIELD_LEN;
 use super::build::{build_channels, build_host_dag, build_tasklets, resolve_class_facts};
 use super::chains::derive_channels;
 use super::decl::{
-    HostAckGranularity, HostCellModeDecl, HostChannelKind, HostClassDecl, HostClock, HostOverflow,
-    HostTaskletDecl,
+    HostAckGranularity, HostCellModeDecl, HostChannelDecl, HostChannelKind, HostClassDecl,
+    HostClock, HostCodec, HostOverflow, HostTaskletDecl,
 };
 use super::issue::{render_issues, TopologyIssue};
 use crate::error::Error;
 use crate::relay::settings::{self, Durable, Each, Exactly, OnFailure, Run, SettingIssue};
 use crate::relay::topology::{
-    AckGranularity, BeyondWindowPolicy, CheckpointOutputs, RelayTopology,
+    AckGranularity, BeyondWindowPolicy, ChannelApi, CheckpointOutputs, RelayTopology,
 };
 use crate::steps::spec::{graph_order, GraphSeed, StepsSpec, TaskDag};
 use crate::ErrorModel;
@@ -362,6 +362,12 @@ fn refuse_channel(
             });
         }
     }
+    if let Some(reason) = schema_refusal(channel_decl) {
+        issues.push(TopologyIssue::SchemaInvalid {
+            channel: channel.name.clone(),
+            reason: reason.to_string(),
+        });
+    }
     // The consumer end is judged where its link is read (`wire_consumer`); only
     // the producer is a channel fact of its own.
     if let Some(producer) = channel_decl.producer {
@@ -372,6 +378,19 @@ fn refuse_channel(
                 tasklets: decl.tasklets.len(),
             });
         }
+    }
+}
+
+/// Why a channel's declared schema cannot be announced: only a `json` channel
+/// carries one, and it is a JSON object naming its `type`.
+fn schema_refusal(channel_decl: &HostChannelDecl) -> Option<&'static str> {
+    let schema = channel_decl.schema.as_ref()?;
+    if channel_decl.codec.is_some_and(|codec| codec != HostCodec::Json) {
+        Some("only a json channel carries a schema")
+    } else if schema.get("type").is_none() {
+        Some("a schema is a JSON object with a type")
+    } else {
+        None
     }
 }
 
@@ -592,12 +611,26 @@ fn register(derived: Derived) -> Result<(), Error> {
         correction: class.correction,
         ack_granularity: class.ack_granularity,
         steps: None,
+        api: decl.channels.iter().map(channel_api).collect(),
     };
     if let Run::Steps { each, on_failure } = run {
         topology.steps = Some(structured_steps(&topology, each, on_failure)?);
     }
     crate::relay::registry::register_class(class.factory_id, Arc::new(topology));
     Ok(())
+}
+
+/// What a channel announces in its relay's API, as its host declared it.
+fn channel_api(channel_decl: &HostChannelDecl) -> ChannelApi {
+    ChannelApi {
+        codec: channel_decl.codec.map(HostCodec::name).unwrap_or_default(),
+        schema_json: channel_decl
+            .schema
+            .as_ref()
+            .map(serde_json::Value::to_string)
+            .unwrap_or_default(),
+        description: channel_decl.description.clone(),
+    }
 }
 
 /// A durable handoff-chained loop seeds iteration N+1 from iteration N's

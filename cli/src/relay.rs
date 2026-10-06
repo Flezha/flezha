@@ -25,6 +25,8 @@ const MSG_ID: OptSpec = OptSpec::text("--msg-id", "--msg-id", "<id>");
 /// The callee's channel whose output answers a call; `--channel` names the
 /// entry channel.
 const ANSWER_CHANNEL: OptSpec = OptSpec::text("--answer-channel", "--answer-channel", "<ch>");
+/// One field of a call's value, coerced by the channel's schema.
+const ARG: OptSpec = OptSpec::text("--arg", "--arg", "<name=value>").repeated();
 /// `call`'s deadline: no short spelling, since `-t` is `--text`.
 const CALL_TIMEOUT: OptSpec = OptSpec::number("--timeout", "--timeout", "<ms>");
 const CALL_TIMEOUT_DEFAULT_MS: u64 = 30_000;
@@ -62,10 +64,9 @@ pub(crate) const TABLE: Command = Command {
             rpc::scoped_read(read, "Relay.list", Some("relays"))
         })
         .reading(&[NAMESPACE]),
-        Verb::new("info", |read| {
-            rpc::scoped_read(read, "Relay.info", Some("relay information"))
-        })
-        .reading(&[NAMESPACE]),
+        Verb::new("info", handle_info)
+            .taking(&[Positional::optional("<relay_id>")])
+            .reading(&[NAMESPACE]),
         Verb::new("diagnose", |read| {
             rpc::door(
                 "Relay.diagnose",
@@ -87,13 +88,15 @@ pub(crate) const TABLE: Command = Command {
         Verb::new("call", handle_call)
             .taking(RELAY_ID)
             .reading(&[
-                PAYLOAD,
+                TEXT,
+                ARG,
                 CHANNEL,
                 ANSWER_CHANNEL,
                 KEY,
                 CALL_TIMEOUT,
                 NAMESPACE,
             ])
+            .refusing(&[(TEXT.long, ARG.long)])
             .strict()
             .screen(help::RELAY_CALL),
         Verb::new("rewind", handle_rewind)
@@ -244,10 +247,26 @@ fn handle_send(read: &Reading) {
     rpc::door("Relay.send", &input(read, fields), &opts, read);
 }
 
-/// `flz relay call <relay_id> --text <payload> [--channel <ch>]
-/// [--answer-channel <ch>] [--key <k>] [--timeout <ms>]`: send one input and
-/// print the first output it caused (on the answer channel when one
-/// is named); a failure exits by its class.
+/// `flz relay info [<relay_id>]`: every relay of the namespace, or one
+/// relay's API.
+fn handle_info(read: &Reading) {
+    match read.maybe_pos("<relay_id>") {
+        Some(relay_id) => rpc::door(
+            "Relay.api",
+            &[rpc::namespace(read), Value::from(relay_id)],
+            &[],
+            read,
+        ),
+        None => rpc::scoped_read(read, "Relay.info", Some("relay information")),
+    }
+}
+
+/// `flz relay call <relay_id> (--text <payload> | --arg <name=value>...)
+/// [--channel <ch>] [--answer-channel <ch>] [--key <k>] [--timeout <ms>]`:
+/// call one channel by the relay's API and print its answer, or `accepted`
+/// for a channel that does not answer; a failure exits by its class. `--text`
+/// is the payload as written; each `--arg` is one field, which the
+/// controller coerces by the channel's schema.
 fn handle_call(read: &Reading) {
     let deadline_ms = read
         .num::<u64>(CALL_TIMEOUT.long)
@@ -268,11 +287,57 @@ fn handle_call(read: &Reading) {
         fields.insert("answer_channel".into(), Value::from(channel));
     }
 
-    rpc::door("Relay.call", &input(read, fields), &[], read);
+    let (value, opts) = match read.opt(TEXT.long) {
+        Some(payload) => {
+            fields.insert("payload".into(), Value::from("text"));
+            (Value::from(payload), vec![])
+        }
+        None => (named_args(read), vec![("coerce", "true".to_string())]),
+    };
+
+    rpc::door(
+        "Relay.call_channel",
+        &[
+            rpc::namespace(read),
+            relay_id(read),
+            Value::from(read.opt(CHANNEL.long).unwrap_or_default()),
+            value,
+            Value::Object(fields),
+        ],
+        &opts,
+        read,
+    );
 }
 
-/// The arguments `send` and `call` share: where, which relay, the payload
-/// and its channel (`""` is none), then the named fields.
+/// The `--arg` fields as written, each value still text; one `--arg` at
+/// least, and each a `name=value`.
+fn named_args(read: &Reading) -> Value {
+    let written = read.all(ARG.long);
+    if written.is_empty() {
+        rpc::fail(FlezhaError::with(
+            "usage.option_required",
+            [("option", Value::from("--text or --arg"))],
+        ));
+    }
+    let mut fields = Map::new();
+    for arg in written {
+        let Some((name, value)) = arg.split_once('=') else {
+            rpc::fail(FlezhaError::with(
+                "api.input_invalid",
+                [
+                    ("channel", Value::from(read.opt(CHANNEL.long).unwrap_or_default())),
+                    ("expected", Value::from("name=value")),
+                    ("reason", Value::from(format!("--arg {arg} names no value"))),
+                ],
+            ));
+        };
+        fields.insert(name.to_string(), Value::from(value));
+    }
+    Value::Object(fields)
+}
+
+/// The arguments `send` takes: where, which relay, the payload and its
+/// channel (`""` is none), then the named fields.
 fn input(read: &Reading, fields: Map<String, Value>) -> Vec<Value> {
     vec![
         rpc::namespace(read),

@@ -45,8 +45,29 @@ impl Envelope {
     }
 }
 
+const BASE64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+/// Standard padded base64, the alphabet the controller reads.
+pub fn base64_encode(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let acc = chunk
+            .iter()
+            .enumerate()
+            .fold(0u32, |acc, (i, &b)| acc | u32::from(b) << (16 - 8 * i));
+        for i in 0..4 {
+            if i <= chunk.len() {
+                out.push(BASE64[(acc >> (18 - 6 * i) & 63) as usize] as char);
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
+}
+
 /// Standard padded base64, the alphabet the controller writes.
-fn base64_decode(text: &str) -> Result<Vec<u8>, String> {
+pub fn base64_decode(text: &str) -> Result<Vec<u8>, String> {
     let refuse = || format!("a Response field that is not base64: {text:?}");
     let bytes = text.as_bytes();
     if !bytes.len().is_multiple_of(4) {
@@ -116,7 +137,7 @@ mod tests {
     }
 
     #[test]
-    fn base64_of_every_length_reads_back() {
+    fn base64_of_every_length_reads_back_and_round_trips() {
         for (text, bytes) in [
             ("", &b""[..]),
             ("Zg==", b"f"),
@@ -126,6 +147,10 @@ mod tests {
         ] {
             assert_eq!(base64_decode(text).as_deref(), Ok(bytes), "{text}");
         }
+        for bytes in [&b""[..], b"f", b"fo", b"foo", &[0, 255, 16, 128]] {
+            assert_eq!(base64_decode(&base64_encode(bytes)).as_deref(), Ok(bytes));
+        }
+        assert_eq!(base64_encode(&[0, 255, 16, 128]), "AP8QgA==");
         for bad in ["Zg=", "Z===x", "Zm9*", "=Zm9"] {
             assert!(base64_decode(bad).is_err(), "{bad}");
         }

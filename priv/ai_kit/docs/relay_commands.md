@@ -31,7 +31,7 @@ COMMANDS:
     stop        Stop a relay
     state       Get relay state
     list        List relays
-    info        Get relay info
+    info        Get relay info, or one relay's API
     diagnose    Say what is wrong with a relay and what to do
     listen      Print the frames a relay emits or ingests
     send        Send a payload to a relay's input stream
@@ -64,7 +64,7 @@ Each verb's `--help` starts with its usage line:
 flz relay stop <relay_id> [--namespace | -n <namespace>]
 flz relay state <relay_id> [--namespace | -n <namespace>]
 flz relay list [--namespace | -n <namespace>]
-flz relay info [--namespace | -n <namespace>]
+flz relay info [<relay_id>] [--namespace | -n <namespace>]
 flz relay diagnose <relay_id> [--namespace | -n <namespace>]
 flz relay send <relay_id> --text | -t <payload> [--channel | -c <ch>] [--key <key>] [--msg-id <id>] [--await <ms>] [--namespace | -n <namespace>]
 flz relay scale <group> <partitions> [--namespace | -n <namespace>] [--timeout | -t <ms>]
@@ -255,6 +255,48 @@ $ flz relay call echo --text hello
 
 ```output
 hello
+```
+
+`call` goes through the relay's API ([`relay_api.md`](../basics/relay_api.md)).
+`--text` sends the payload as written; `--arg name=value`, repeated, gives one
+field of a JSON input each, typed by the channel's schema. A value that does not
+fit is refused before anything is sent, and a channel that answers nothing
+prints `accepted`:
+
+```sh
+$ flz relay call orders-eu --channel place --arg pair=EUR/USD --arg amount=1000
+```
+
+```output
+{"amount":1000,"pair":"EUR/USD","status":"placed"}
+```
+
+```sh
+$ flz relay call orders-eu --channel place --arg pair=EUR/USD --arg amount=lots
+```
+
+```output
+error: the value for channel 'place' is not a number: amount: "lots" (api.input_invalid)
+hint: pass the payload as it is with --text
+```
+
+`flz relay info <relay_id>` shows that relay's API: each entry channel with its
+format, whether it answers, its description and schema, its MCP tool and an
+example call. With `--json` it is the entries as data:
+
+```sh
+$ flz relay info orders-eu
+```
+
+```output
+API of relay 'orders-eu' (factory 'orders'):
+  place  json → answer json
+    Places an order
+    schema: {"properties":{"amount":{"type":"number"},"pair":{"type":"string"}},"required":["pair","amount"],"type":"object"}
+    MCP tool: orders_place
+    flz relay call orders-eu --channel place --arg pair=... --arg amount=...
+  audit  text, no answer
+    flz relay call orders-eu --channel audit --text <payload>
 ```
 
 ## `flz state`

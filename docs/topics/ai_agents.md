@@ -6,7 +6,7 @@ each with the page that explains it, and it will grow into a guide with examples
 <!-- TODO: turn this page into a guide: one short section per row with a minimal example,
 an event-driven agent example (a Kafka message or a database change starts an agent), and a
 multi-agent example to replace the coding fleet. Update the rows marked "proposed" when
-`record-an-effect-once` and `give-each-relay-a-public-api` land. -->
+`record-an-effect-once` lands. -->
 
 Flezha has no AI framework of its own. An agent's code is ordinary code in your language, and it
 calls whichever model library you choose. Flezha runs that code: it keeps each conversation, lets
@@ -31,7 +31,7 @@ it sleep and wake, streams its answers and carries on after a crash.
 | Agents on a schedule | timers: "check again tomorrow" | [timers.md](advanced/timers.md) |
 | Scale | thousands of sessions spread over a cluster | [partitioning.md](advanced/partitioning.md) |
 | AI assistants that build on Flezha | `flz mcp` and the assistant kit | [working_with_ai_assistants.md](working_with_ai_assistants.md) |
-| Agents that use your services | every relay's API as a tool (proposed) | TODO |
+| Agents that use your services | every relay's API as a tool | [relay_api.md](basics/relay_api.md#ai-agents-and-tool-calling) |
 | A crash does not repeat a model call | `ctx.effect` (proposed) | TODO |
 
 ## See also

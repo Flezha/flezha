@@ -68,6 +68,7 @@ codes! {
     UnusableSdkVersion => "topology.unusable_sdk_version",
     NoTasklets => "topology.no_tasklets",
     EffectivelyOnceWithoutPersistence => "topology.effectively_once_without_persistence",
+    SchemaInvalid => "topology.schema_invalid",
     CheckpointMaxDelayZero => "topology.checkpoint_max_delay_zero",
     ProducerOutOfRange => "topology.producer_out_of_range",
     ConsumerOutOfRange => "topology.consumer_out_of_range",

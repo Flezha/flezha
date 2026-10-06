@@ -45,6 +45,40 @@ pub struct HostChannelDecl {
     pub overflow: HostOverflow,
     #[serde(default)]
     pub keyed: bool,
+    /// The payload format the channel declares, announced in its relay's
+    /// API: an entry's input, an output's answer. Absent is `json`.
+    #[serde(default)]
+    pub codec: Option<HostCodec>,
+    /// The JSON Schema of an entry's input or an output's value, declared or
+    /// derived by the host; only a `json` channel carries one.
+    #[serde(default)]
+    pub schema: Option<serde_json::Value>,
+    /// What an entry channel is for, announced in its relay's API.
+    #[serde(default)]
+    pub description: String,
+}
+
+/// A channel's payload format, as a relay's API names it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HostCodec {
+    Json,
+    Text,
+    Bytes,
+    Msgpack,
+    Custom,
+}
+
+impl HostCodec {
+    pub fn name(self) -> &'static str {
+        match self {
+            HostCodec::Json => "json",
+            HostCodec::Text => "text",
+            HostCodec::Bytes => "bytes",
+            HostCodec::Msgpack => "msgpack",
+            HostCodec::Custom => "custom",
+        }
+    }
 }
 
 /// One link of a fluent chain declared off a channel handle, in the order the

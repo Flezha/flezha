@@ -43,6 +43,7 @@ defmodule Flezha.Service.Cli do
     "AuditLog.tail" => &Audit.tail/3,
     "Controller.stop" => &Controller.stop/3,
     "Observability.tail" => &Observe.tail/3,
+    "Relay.call_channel" => &Relay.call_channel/3,
     "Relay.listen" => &Relay.listen/3,
     "Relay.send" => &Relay.send/3
   }
@@ -81,7 +82,8 @@ defmodule Flezha.Service.Cli do
     "Observability.enable_source" => &Observe.enable/3,
     "Observability.list_sinks" => &Observe.sinks/3,
     "Observability.list_sources" => &Observe.sources/3,
-    "Relay.call" => &Relay.call/3,
+    "Relay.api" => &Info.api/3,
+    "Relay.call_channel" => &Relay.answered/3,
     "Relay.cell_state" => &Relay.cell_state/3,
     "Relay.diagnose" => &Info.diagnose/3,
     "Relay.info" => &Info.info/3,

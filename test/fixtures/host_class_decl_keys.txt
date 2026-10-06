@@ -33,6 +33,9 @@ channel.retry_max
 channel.retry_backoff_ms
 channel.overflow
 channel.keyed
+channel.codec
+channel.schema
+channel.description
 tasklet.name
 tasklet.cell_mode
 tasklet.cell_keys

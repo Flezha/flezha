@@ -90,6 +90,22 @@ pub struct RelayTopology {
     /// `Some` for a class that runs in steps: its DAG and lifecycle facts.
     /// How a class runs is this field and nothing else.
     pub steps: Option<crate::steps::spec::StepsSpec>,
+
+    /// What each channel announces in the relay's API, by channel id; a
+    /// channel past its end announces the defaults. Read only when the
+    /// runner announces its factories.
+    pub api: Vec<ChannelApi>,
+}
+
+/// A channel's API facts as its host declared them: an entry's input, or the
+/// value an output sends.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ChannelApi {
+    /// `json`, `text`, `bytes`, `msgpack` or `custom`; empty is `json`.
+    pub codec: &'static str,
+    /// The JSON Schema, serialised; empty for none.
+    pub schema_json: String,
+    pub description: String,
 }
 
 impl RelayTopology {

@@ -200,6 +200,12 @@ pub enum TopologyIssue {
     ChainedLoopTerminalWithoutHandoff {
         tasklet: String,
     },
+    /// A channel's JSON Schema is not an object with a `type`, or sits on a
+    /// channel whose format is not `json`.
+    SchemaInvalid {
+        channel: String,
+        reason: String,
+    },
 }
 
 impl ErrorModel for TopologyIssue {
@@ -256,6 +262,7 @@ impl TopologyIssue {
             Self::UnusableSdkVersion { .. } => Code::UnusableSdkVersion,
             Self::NoTasklets => Code::NoTasklets,
             Self::EffectivelyOnceWithoutPersistence => Code::EffectivelyOnceWithoutPersistence,
+            Self::SchemaInvalid { .. } => Code::SchemaInvalid,
             Self::CheckpointMaxDelayZero => Code::CheckpointMaxDelayZero,
             Self::ProducerOutOfRange { .. } => Code::ProducerOutOfRange,
             Self::ConsumerOutOfRange { .. } => Code::ConsumerOutOfRange,
@@ -431,6 +438,10 @@ impl TopologyIssue {
             Self::ChainedLoopTerminalWithoutHandoff { tasklet } => {
                 vec![("tasklet", tasklet.clone().into())]
             }
+            Self::SchemaInvalid { channel, reason } => vec![
+                ("channel", channel.clone().into()),
+                ("reason", reason.clone().into()),
+            ],
             Self::CorrectionWindowZero
             | Self::CheckpointEveryZero
             | Self::AtCheckpointWithoutMaxDelay

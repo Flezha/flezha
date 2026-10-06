@@ -827,6 +827,31 @@ pub struct FactoryDecl {
     pub each: ::prost::alloc::string::String,
     #[prost(string, tag = "6")]
     pub on_failure: ::prost::alloc::string::String,
+    /// The factory's API: one entry per entry channel of its class. Empty from
+    /// a runner that announces none, whose factory then has no API.
+    #[prost(message, repeated, tag = "7")]
+    pub api: ::prost::alloc::vec::Vec<ApiEntry>,
+}
+/// One entry channel of a factory's API, as its class declares it.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ApiEntry {
+    #[prost(string, tag = "1")]
+    pub channel: ::prost::alloc::string::String,
+    /// The input's format: json, text, bytes, msgpack or custom.
+    #[prost(string, tag = "2")]
+    pub codec: ::prost::alloc::string::String,
+    /// The JSON Schema of the input; empty for none.
+    #[prost(string, tag = "3")]
+    pub schema_json: ::prost::alloc::string::String,
+    /// Empty for none.
+    #[prost(string, tag = "4")]
+    pub description: ::prost::alloc::string::String,
+    /// The answer's format; empty when no output that answers is reachable
+    /// from the channel.
+    #[prost(string, tag = "5")]
+    pub answer_codec: ::prost::alloc::string::String,
+    #[prost(string, tag = "6")]
+    pub answer_schema_json: ::prost::alloc::string::String,
 }
 /// SDK -> Controller. Ships the runner's FULL current factory set after a
 /// post-start define or remove (sdk-runner-entrypoint-redesign). Full-set

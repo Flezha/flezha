@@ -957,6 +957,28 @@
       ]
     },
     {
+      "name": "Relay.api",
+      "doc": "The factories announced in `namespace`, each with its description and its API: one entry per entry channel, with its format, whether it answers and in which format, its description, its schemas and its MCP tool name.",
+      "action": "relay.list",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "namespace",
+          "type": "string",
+          "required": true,
+          "doc": "The namespace."
+        },
+        {
+          "name": "relay_id",
+          "type": "string",
+          "required": false,
+          "default": "",
+          "doc": "One relay's factory only; every one when empty."
+        }
+      ]
+    },
+    {
       "name": "Relay.call",
       "doc": "Call `relay_id` with `message` and wait for its answer: the first output it caused on a sink, as `{:ok, payload, %{\"channel\" => channel}}`, or a coded error saying why none came.",
       "action": "relay.send",
@@ -993,6 +1015,47 @@
           "type": "keyword",
           "required": true,
           "doc": "`deadline_ms`, `answer_channel` (the channel whose output answers), and `key` for a partition group."
+        }
+      ]
+    },
+    {
+      "name": "Relay.call_channel",
+      "doc": "Call the entry channel `channel` of `relay_id` with `value`, encoded by the relay's API: any JSON value for a `json` channel, a string for `text`, base64 for `bytes`, `msgpack` and `custom`.",
+      "action": "relay.send",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "namespace",
+          "type": "string",
+          "required": true,
+          "doc": "The namespace."
+        },
+        {
+          "name": "relay_id",
+          "type": "string",
+          "required": true,
+          "doc": "The relay's id."
+        },
+        {
+          "name": "channel",
+          "type": "string",
+          "required": false,
+          "default": "",
+          "doc": "The entry channel; the first when empty."
+        },
+        {
+          "name": "value",
+          "type": "any",
+          "required": true,
+          "doc": "The value, as the channel's format reads it."
+        },
+        {
+          "name": "opts",
+          "type": "keyword",
+          "required": false,
+          "default": [],
+          "doc": "`deadline_ms`, `answer_channel`, `key` for a partition group, and `payload` (`text` or `base64`)."
         }
       ]
     },

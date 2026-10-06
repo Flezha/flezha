@@ -33,7 +33,13 @@ defmodule Flezha.Mcp.Stdio do
   end
 
   defp as(message, context),
-    do: serve(message, fn -> Admin.catalogue(context) end, &Admin.call(&1, &2, context, :given))
+    do:
+      serve(
+        message,
+        fn -> Admin.catalogue(context) end,
+        &Admin.call(&1, &2, context, :given),
+        Map.get(context, :namespace) || ""
+      )
 
   @doc """
   Answer `message` with no controller: the operations an assistant could
@@ -49,8 +55,8 @@ defmodule Flezha.Mcp.Stdio do
     end)
   end
 
-  defp serve(message, catalogue, door),
-    do: message |> Flezha.Mcp.answer(nil, catalogue, door) |> print()
+  defp serve(message, catalogue, door, namespace \\ ""),
+    do: message |> Flezha.Mcp.answer(nil, catalogue, door, namespace) |> print()
 
   defp print({_status, nil, _operation}), do: :ok
   defp print({_status, reply, _operation}), do: IO.puts(Jason.encode!(reply))

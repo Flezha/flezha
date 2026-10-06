@@ -62,11 +62,11 @@ on the command line.
 | `flz relay start <factory_id>` | Starts a relay from a factory a runner offers |
 | `flz relay stop <relay_id>` | Stops a relay |
 | `flz relay list` | Lists the relays in a namespace, with their health |
-| `flz relay info` | Shows each relay's details and plugins |
+| `flz relay info [<relay_id>]` | Shows each relay's details and plugins, or one relay's API |
 | `flz relay diagnose <relay_id>` | Says what is wrong with a relay and what to do |
 | `flz relay state <relay_id>` | Prints a relay's state |
 | `flz relay send <relay_id> --text <payload>` | Sends an input |
-| `flz relay call <relay_id> --text <payload>` | Sends an input and prints the relay's answer |
+| `flz relay call <relay_id> (--text <payload> \| --arg <name=value>...)` | Calls one channel by the relay's API and prints its answer |
 | `flz relay listen <relay_id>` | Prints what a relay emits, or with `--input` what it takes in |
 | `flz relay scale <group> <partitions>` | Changes the number of members of a partition group |
 | `flz relay rewind <relay_id> --to-iteration <n>` | Takes a workflow loop back to an earlier iteration |

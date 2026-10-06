@@ -299,7 +299,8 @@ defmodule Flezha.Runner.ControlChannel.Requests do
                                sdk_lang: sdk_lang,
                                run: run,
                                each: each,
-                               on_failure: on_failure
+                               on_failure: on_failure,
+                               api: api
                              } ->
         %{
           "id" => id,
@@ -307,7 +308,8 @@ defmodule Flezha.Runner.ControlChannel.Requests do
           "sdk_lang" => sdk_lang,
           "run" => run,
           "each" => each,
-          "on_failure" => on_failure
+          "on_failure" => on_failure,
+          "api" => Enum.map(api, &api_entry/1)
         }
       end)
 
@@ -486,6 +488,11 @@ defmodule Flezha.Runner.ControlChannel.Requests do
 
   # An unrecognised policy reads as the default: a requester on a newer SDK
   # must never have its payload silently refused by an older controller.
+  # The JSON shape the connect frame carries an API entry in, so both
+  # announcements reach the factory table alike.
+  defp api_entry(%RunnerCommands.ApiEntry{} = entry),
+    do: entry |> Map.from_struct() |> Map.new(fn {key, value} -> {Atom.to_string(key), value} end)
+
   defp if_running("error"), do: :error
   defp if_running(_), do: :deliver
 

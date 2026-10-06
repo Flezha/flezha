@@ -9,7 +9,7 @@ COMMANDS:
     stop        Stop a relay
     state       Get relay state
     list        List relays
-    info        Get relay info
+    info        Get relay info, or one relay's API
     diagnose    Say what is wrong with a relay and what to do
     listen      Print the frames a relay emits or ingests
     send        Send a payload to a relay's input stream

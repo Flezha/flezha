@@ -1,8 +1,8 @@
 defmodule Flezha.Service.Cli.Info do
   @moduledoc """
   `flz relay info` — the text form of the relay report: the partition
-  groups and their coverage, then every live and finished relay — and
-  `flz relay diagnose`, one relay's findings.
+  groups and their coverage, then every live and finished relay, or with a
+  relay id its API, and `flz relay diagnose`, one relay's findings.
   """
 
   alias Flezha.Service.Cli.Context
@@ -18,6 +18,68 @@ defmodule Flezha.Service.Cli.Info do
     Enum.each(report.groups, &print_group(&1, report.key_groups))
     Enum.each(report.relays, &print_relay/1)
   end
+
+  @doc """
+  `flz relay info <relay_id>`: the relay's API, one block per entry channel
+  with its format, whether it answers, its description, its schema on one
+  line, its MCP tool and an example call.
+  """
+  def api(factories, _args, _opts) do
+    names =
+      Flezha.Mcp.relay_tool_names(
+        for f <- factories, e <- f.channels, e.description, do: {f.factory, e.channel}
+      )
+
+    Enum.each(factories, &print_api(&1, names))
+  end
+
+  defp print_api(factory, names) do
+    IO.puts(api_heading(factory))
+
+    if factory.disagree,
+      do: IO.puts("  Connected runners announce different APIs; this is the latest.")
+
+    case factory.channels do
+      [] ->
+        IO.puts("  No API announced: connect a runner of factory '#{factory.factory}'.")
+
+      channels ->
+        Enum.each(channels, fn entry ->
+          tool = names[{factory.factory, entry.channel}]
+          print_channel(entry, tool, Map.get(factory, :relay))
+        end)
+    end
+  end
+
+  defp api_heading(%{relay: relay} = factory),
+    do: "API of relay '#{relay}' (factory '#{factory.factory}'):"
+
+  defp api_heading(factory), do: "API of factory '#{factory.factory}':"
+
+  defp print_channel(entry, tool, relay) do
+    answers = if entry.answer_codec, do: " → answer #{entry.answer_codec}", else: ", no answer"
+    IO.puts("  #{entry.channel}  #{entry.codec}#{answers}")
+    if entry.description, do: IO.puts("    #{entry.description}")
+    if entry.schema, do: IO.puts("    schema: #{Jason.encode!(entry.schema)}")
+    print_tool(tool)
+
+    IO.puts(
+      "    flz relay call #{relay || "<relay_id>"} --channel #{entry.channel} #{example(entry)}"
+    )
+  end
+
+  defp print_tool({:ok, name}), do: IO.puts("    MCP tool: #{name}")
+  defp print_tool({:taken, name}), do: IO.puts("    MCP tool: tool name taken (#{name})")
+  defp print_tool(nil), do: :ok
+
+  # `--arg` per required property of an object schema (every property when
+  # none is required), `--text` otherwise.
+  defp example(%{codec: "json", schema: %{"properties" => %{} = properties} = schema}) do
+    names = Map.get(schema, "required") || properties |> Map.keys() |> Enum.sort()
+    Enum.map_join(names, " ", &"--arg #{&1}=...")
+  end
+
+  defp example(_entry), do: "--text <payload>"
 
   @doc """
   `flz relay diagnose`: one block per finding, its level, code and message,

@@ -84,6 +84,7 @@ commit_block_chain | 1 | mid | inter_task | 0 | 1 | mid
 #   <x>.keyed                  opt x into output identity
 #   <x>.retry_max(<n>)         the channel's attempt ceiling
 #   <x>.on_full(<policy>)      drop_nothing | drop_newest | drop_oldest
+#   <x>.schema(<json>)         the entry channel's declared JSON Schema, as JSON
 #   merge(<task>, <x>, <x>…)   one merge over the listed sources
 #   branch(<x>, <n>)           the branch sugar's arity
 #   <task>.mailbox(<n>)        the tasklet's per-Cell mailbox capacity
@@ -134,6 +135,7 @@ commit_block_chain | 1 | mid | inter_task | 0 | 1 | mid
 #              manifest may lack this one
 #   call       the `call(...)` end. Every SDK carries it, so no manifest may
 #              lack this one
+#   schema     a JSON Schema declared on an entry channel
 #   shorthand_typed_output  a short form on a tasklet whose output the SDK can
 #              see at declaration time. Rust, Java and Python (return hint)
 #              can; Node, Ruby, PHP and Elixir cannot
@@ -178,6 +180,7 @@ topology.duplicate_merge_source    | merge_same_twice | entry(in); entry(other);
 topology.edge_already_wired        | edge_rewired     | entry(in); in.map.into(plain); in.into(plain)                                         | -
 topology.at_checkpoint_without_max_delay | hold_no_delay    | class.run({"flow":{"exactly":{"effectively_once":{"ack":{"checkpoint":{"outputs":"at_checkpoint"}}}}}}); entry(in); in.into(plain) | -
 topology.effectively_once_without_persistence | eo_in_memory | class.run({"flow":{"exactly":"effectively_once"}}); class.durable(false); entry(in); in.into(plain) | -
+topology.schema_invalid           | schema_not_object | entry(in); in.schema("object"); in.into(plain)                                     | schema
 
 # The settings tree's misplaced settings: each is written under a parent that
 # does not carry it, and the answer names the setting and that parent.

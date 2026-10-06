@@ -22,6 +22,7 @@ defmodule Flezha.Service.Relay do
   alias Flezha.AuthZ.Namespace
   alias Flezha.AuthZ.NamespaceStore
   alias Flezha.AuthZ.Scope
+  alias Flezha.Config.Durations
   alias Flezha.Convergence.Verdict
   alias Flezha.Relay.Builder
   alias Flezha.Relay.ClassRegistry
@@ -35,6 +36,7 @@ defmodule Flezha.Service.Relay do
   alias Flezha.Service.Listener
   alias Flezha.Service.Relay.Diagnose
   alias Flezha.Service.Relay.Info
+  alias Flezha.Service.RelayApi
   alias Flezha.Service.RelayManager
   alias Flezha.Service.PluginManager
   alias Flezha.Service.Steps
@@ -295,8 +297,10 @@ defmodule Flezha.Service.Relay do
         doc: "`key`, for a partition group, and `msg_id`, the message's id."
       ]
     ] do
-    namespace = Namespace.or_default(namespace)
+    send_input(Namespace.or_default(namespace), relay_id, message, channel, opts)
+  end
 
+  defp send_input(namespace, relay_id, message, channel, opts) do
     with {:ok, metadata} <-
            put_text(RelayManager.channel_metadata(channel), "flz.msg_id", opts[:msg_id], "msg_id"),
          {:ok, member} <- RelayManager.resolve_member(namespace, relay_id, opts[:key]) do
@@ -331,8 +335,12 @@ defmodule Flezha.Service.Relay do
           "`deadline_ms`, `answer_channel` (the channel whose output answers), and `key` for a partition group."
       ]
     ] do
-    # The answer channel rides the call's metadata to the row
-    # `Flezha.Relay.Calls.admit/5` keeps, where `""` names none.
+    call_input(Namespace.or_default(namespace), relay_id, message, channel, opts)
+  end
+
+  # The answer channel rides the call's metadata to the row
+  # `Flezha.Relay.Calls.admit/5` keeps, where `""` names none.
+  defp call_input(namespace, relay_id, message, channel, opts) do
     with {:ok, deadline_ms} <- deadline(Keyword.get(opts, :deadline_ms)),
          {:ok, metadata} <-
            put_text(
@@ -342,7 +350,7 @@ defmodule Flezha.Service.Relay do
              "answer_channel"
            ) do
       RelayManager.call_relay(
-        Namespace.or_default(namespace),
+        namespace,
         relay_id,
         message,
         metadata,
@@ -351,6 +359,104 @@ defmodule Flezha.Service.Relay do
       )
     end
   end
+
+  @doc """
+  The factories announced in `namespace`, each with its description and its
+  API: one entry per entry channel, with its format, whether it answers and
+  in which format, its description, its schemas and its MCP tool name. With
+  `relay_id`, only that relay's factory.
+  """
+  @spec api(String.t(), String.t(), caller_context()) :: {:ok, [map()]} | {:error, term()}
+  verb api(namespace, relay_id \\ "", caller_context),
+    verb: :relay_info,
+    args: [
+      namespace: @namespace,
+      relay_id: [
+        type: :string,
+        default: "",
+        doc: "One relay's factory only; every one when empty."
+      ]
+    ] do
+    namespace = Namespace.or_default(namespace)
+
+    case relay_id do
+      "" ->
+        {:ok, RelayApi.list(namespace)}
+
+      relay_id ->
+        with {:ok, factory} <- RelayApi.factory_of(namespace, relay_id),
+             do: {:ok, [Map.put(factory, :relay, relay_id)]}
+    end
+  end
+
+  @doc """
+  Call the entry channel `channel` of `relay_id` with `value`, encoded by the
+  relay's API: any JSON value for a `json` channel, a string for `text`, base64
+  for `bytes`, `msgpack` and `custom`. A channel that answers is called and its
+  answer decoded by the answer's format, as `%{answer, answer_codec}`; one that
+  does not is sent to, answering `%{accepted: true}`.
+
+  `opts` carries `deadline_ms` (default 30000), `answer_channel`, `key`, and
+  `payload`: `text` or `base64` when `value` is the payload itself, sent
+  unchanged. A factory with no announced API is `api.not_advertised`, except
+  for a `text` payload (`flz relay call --text`), which calls the relay as
+  `call/6` does, so a runner older than the API still answers it.
+  """
+  @spec call_channel(String.t(), String.t(), String.t(), term(), keyword(), caller_context()) ::
+          {:ok, map()} | {:error, term()}
+  verb call_channel(namespace, relay_id, channel, value, opts \\ [], caller_context),
+    verb: :relay_call,
+    args: [
+      namespace: @namespace,
+      relay_id: @relay_id,
+      channel: [type: :string, default: "", doc: "The entry channel; the first when empty."],
+      value: [type: :any, doc: "The value, as the channel's format reads it."],
+      opts: [
+        type: :keyword,
+        default: [],
+        doc:
+          "`deadline_ms`, `answer_channel`, `key` for a partition group, and `payload` (`text` or `base64`)."
+      ]
+    ] do
+    namespace = Namespace.or_default(namespace)
+
+    opts =
+      Keyword.put_new_lazy(opts, :deadline_ms, fn -> Durations.get(:call_channel_deadline_ms) end)
+
+    payload = opts[:payload]
+
+    with {:ok, factory} <- RelayApi.factory_of(namespace, relay_id) do
+      if factory.channels == [] and payload == "text",
+        do: unannounced_call(namespace, relay_id, channel, value, payload, opts),
+        else: channel_call(namespace, relay_id, factory, channel, value, opts)
+    end
+  end
+
+  defp channel_call(namespace, relay_id, factory, channel, value, opts) do
+    with {:ok, entry} <- RelayApi.entry(factory, namespace, relay_id, channel),
+         {:ok, message} <- RelayApi.encode(entry, value, opts[:payload]) do
+      if entry.answer_codec,
+        do: answered(call_input(namespace, relay_id, message, entry.channel, opts), entry),
+        else: accepted(send_input(namespace, relay_id, message, entry.channel, opts))
+    end
+  end
+
+  # `flz relay call --text` to a relay whose runners announced no API is
+  # called as `call/6` calls it.
+  defp unannounced_call(namespace, relay_id, channel, value, payload, opts) do
+    entry = %{channel: channel, codec: "bytes", answer_codec: nil}
+
+    with {:ok, message} <- RelayApi.encode(entry, value, payload),
+         do: answered(call_input(namespace, relay_id, message, channel, opts), entry)
+  end
+
+  defp answered({:ok, answer, _meta}, entry),
+    do: {:ok, RelayApi.decode(entry.answer_codec, answer)}
+
+  defp answered({:error, _reason} = refused, _entry), do: refused
+
+  defp accepted({:ok, _delivered}), do: {:ok, %{accepted: true}}
+  defp accepted({:error, _reason} = refused), do: refused
 
   defp deadline(deadline_ms) when is_integer(deadline_ms) and deadline_ms > 0,
     do: {:ok, deadline_ms}

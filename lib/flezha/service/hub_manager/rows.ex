@@ -229,16 +229,22 @@ defmodule Flezha.Service.HubManager.Rows do
   @spec relay_bindings(String.t(), String.t()) ::
           {:ok, [{binary(), Plugin.t()}]} | {:error, term()}
   def relay_bindings(namespace, relay_id) do
-    with_live_hub(namespace, {:error, {:hub_down, namespace}}, fn hub_id ->
-      case ProcessRegistry.lookup(hub_id, relay_id) do
-        nil ->
-          {:error, {:relay_not_found, namespace, relay_id}}
+    with {:ok, relay} <- relay_spec(namespace, relay_id),
+         do: {:ok, normalize_plugins(Keyword.get(relay.opts, :bindings, []))}
+  end
 
-        entry ->
-          case cspec_relay(elem(entry, 0)) do
-            %{} = relay -> {:ok, normalize_plugins(Keyword.get(relay.opts, :bindings, []))}
-            nil -> {:error, {:relay_not_found, namespace, relay_id}}
-          end
+  @doc """
+  The relay `relay_id` as its start declared it (its factory id, its
+  options), read from the one registry entry it has.
+  """
+  @spec relay_spec(String.t(), String.t()) :: {:ok, map()} | {:error, term()}
+  def relay_spec(namespace, relay_id) do
+    with_live_hub(namespace, {:error, {:hub_down, namespace}}, fn hub_id ->
+      with entry when entry != nil <- ProcessRegistry.lookup(hub_id, relay_id),
+           %{} = relay <- cspec_relay(elem(entry, 0)) do
+        {:ok, relay}
+      else
+        _none -> {:error, {:relay_not_found, namespace, relay_id}}
       end
     end)
   end

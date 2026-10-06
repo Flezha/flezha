@@ -48,6 +48,25 @@ defmodule Flezha.Runner.FleetManager do
   end
 
   @doc """
+  `list_factories/1` on every node holding active runners in `namespace`: one
+  row per node that advertises a factory.
+  """
+  @spec global_factories(String.t()) :: [map()]
+  def global_factories(namespace), do: across_runner_nodes(namespace, :factory_rows)
+
+  @doc "`factory_id`'s row of this node's `list_factories/1`, or `nil`."
+  @spec factory_row(String.t(), String.t()) :: map() | nil
+  def factory_row(namespace, factory_id),
+    do: namespace |> factory_rows() |> Enum.find(&(&1.id == factory_id))
+
+  @doc false
+  # This node's rows, read over `:erpc` by `global_factories/1`.
+  def factory_rows(namespace) do
+    {:ok, rows} = list_factories(namespace)
+    rows
+  end
+
+  @doc """
   Unified connection handler for all transports.
 
   Called by Transport.Server when a new SDK connects.
@@ -497,6 +516,7 @@ defmodule Flezha.Runner.FleetManager do
           description: info.description,
           run: run_of(state, namespace, factory_id)
         }
+        |> Map.merge(Factories.latest_api(info))
       end)
       |> Enum.sort_by(& &1.id)
 

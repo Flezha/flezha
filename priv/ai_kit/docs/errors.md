@@ -19,6 +19,7 @@ SDK. A program acts on the `code` and the `class`.
 1. [Classes and exit codes](#classes-and-exit-codes)
 2. [Forms](#forms)
 3. [Codes](#codes)
+   1. [api](#api)
    1. [audit](#audit)
    1. [authz](#authz)
    1. [boot](#boot)
@@ -88,6 +89,14 @@ The consumer API answers `{:error, %Flezha.Error{}}` with the same five fields, 
 SDK raises or returns its one error type carrying them.
 
 ## Codes
+
+### api
+
+| Code | Class | Exit | Message | Hint |
+|---|---|---|---|---|
+| `api.channel_unknown` | not_found | 5 | relay '{relay}' has no entry channel '{channel}'; its channels are {channels} | `flz relay info {relay}` |
+| `api.input_invalid` | invalid | 2 | the value for channel '{channel}' is not {expected}: {reason} | `pass the payload as it is with --text` |
+| `api.not_advertised` | unavailable | 7 | no connected runner has announced the API of factory '{factory}' in namespace '{namespace}' | `connect a runner that declares factory '{factory}'` |
 
 ### audit
 
@@ -738,6 +747,7 @@ SDK raises or returns its one error type carrying them.
 | `topology.retry_max_zero` | invalid | 2 | channel '{channel}' declared retry_max 0; at least one attempt is required (fail an input as non-retryable to park it without retries) |  |
 | `topology.schema_floor_above_version` | invalid | 2 | tasklet '{tasklet}' reads back to schema version {floor}, above its own schema version {version} |  |
 | `topology.schema_floor_without_migration` | invalid | 2 | tasklet '{tasklet}' reads back to schema version {floor} but supplies no migration, so the first older record would fail instead of the start |  |
+| `topology.schema_invalid` | invalid | 2 | channel '{channel}' declares a schema that cannot be announced: {reason} | `give a JSON Schema object with a type, for example {"type": "object"}, on a json channel` |
 | `topology.setting_on_short_form` | invalid | 2 | short form '{factory_id}' declares {fields}, which a short form does not carry: its kind is its declaration's, its tasklet is named after its id, and every class-level setting keeps its default |  |
 | `topology.short_form_field_on_full_form` | invalid | 2 | relay '{factory_id}' declares {fields} beside its channels body; a full form wires entry channels, codecs and outputs in channels and declares each tasklet's fields on the tasklet |  |
 | `topology.short_form_name_mismatch` | invalid | 2 | '{class}' declares relay id '{factory_id}' and tasklet name '{name}'; a short form's tasklet is named after its id, so the two must be equal |  |

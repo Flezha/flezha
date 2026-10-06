@@ -181,3 +181,23 @@ the literal; an unspecified run SHALL never place.
 - **WHEN** a runner announces a factory whose run field reads `flow`
 - **THEN** the controller SHALL log the refusal naming the literal and SHALL not place that factory
 
+### Requirement: The factory announcement SHALL carry the factory's API
+
+Every `FactoryDecl` a runner sends, at connect and in `UpdateFactories`, SHALL carry one `ApiEntry`
+per entry channel of the class: the channel, its codec name, its input schema and description when
+declared, and, when an output that answers is reachable from the channel, the answer's codec and schema when known
+(`bytes` with no schema when the reachable outputs disagree). A runner without this
+change SHALL be accepted, and its factories SHALL have no API.
+
+#### Scenario: The announcement lists the entries
+
+- **WHEN** a runner registers a class with entry channels `place` (json, answering) and `audit`
+  (text)
+- **THEN** its `FactoryDecl` carries two `ApiEntry` values, `place` with an `answer_codec` and
+  `audit` without one
+
+#### Scenario: An old runner is still placed
+
+- **WHEN** a runner sends a `FactoryDecl` with no `api` field
+- **THEN** its factory is placed as before and `Relay.api` lists it with no channels
+

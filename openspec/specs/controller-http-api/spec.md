@@ -202,3 +202,40 @@ be logged.
 - **WHEN** the suite drives every route with debug logging on
 - **THEN** no captured log line SHALL contain the token, a header value or a body
 
+### Requirement: A relay's channel SHALL be callable at `POST /v1/relays/<id>/<channel>`
+
+The HTTP API SHALL serve `POST /v1/relays/<id>/<channel>` through the door as
+`Relay.call_channel`, taking the body as the value by the channel's format (a JSON value for
+`json`, UTF-8 text for `text`, raw bytes for `bytes`, `msgpack` and `custom`), and SHALL answer the
+decoded answer with the content type of its format (`application/json`,
+`text/plain; charset=utf-8`, `application/octet-stream`), `202` with `{"accepted": true}` for a
+channel that does not answer, and the error object with its class status on failure.
+
+#### Scenario: A JSON call
+
+- **WHEN** a client posts `{"pair":"EUR/USD","amount":1000}` to `/v1/relays/orders-eu/place`
+  with a token allowed to send in the namespace
+- **THEN** the response is `200`, `application/json`, carrying the relay's answer
+
+#### Scenario: A send answers 202
+
+- **WHEN** a client posts `checked` to `/v1/relays/orders-eu/audit`
+- **THEN** the response is `202` with `{"accepted": true}`
+
+#### Scenario: A wrong channel answers 404
+
+- **WHEN** a client posts to `/v1/relays/orders-eu/plce`
+- **THEN** the response carries `api.channel_unknown` with the status of its class
+
+### Requirement: Relay tools SHALL be listed beside the catalogue tools
+
+`tools/list` on `POST /mcp` SHALL include the relay tools of the `relay-api` capability for
+the token's namespace, after the catalogue and knowledge tools, and `tools/call` on one SHALL go
+through the door as `Relay.call_channel`.
+
+#### Scenario: One list for both
+
+- **WHEN** an `app` role token of namespace `desk` lists tools and factory `orders` describes
+  `place`
+- **THEN** the list holds the catalogue tools, the knowledge tools and `orders_place`
+

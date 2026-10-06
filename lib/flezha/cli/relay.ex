@@ -101,8 +101,105 @@ defmodule Flezha.Service.Cli.Relay do
   def delivered(%{verdict: :suspended, to: to}, _args, _opts),
     do: IO.puts("Journaled for suspended '#{to}' — delivers on wake.")
 
-  @doc "`flz relay call`: the answer's payload, as the relay wrote it."
-  def call([payload, _metadata], _args, _opts), do: IO.puts(payload)
+  @doc """
+  `flz relay call`: the call through `Relay.call_channel`. With `coerce` in
+  the options its value is `--arg` fields still as text, typed here by the
+  channel's schema, which is read through the door first.
+  """
+  def call_channel(args_json, context, opts) do
+    args = if Keyword.get(opts, :coerce), do: typed(args_json, context), else: {:ok, args_json}
+
+    args
+    |> then(fn
+      {:ok, args} -> Admin.run("Relay.call_channel", args, context, :given)
+      refused -> refused
+    end)
+    |> Cli.render("Relay.call_channel", args_json, opts)
+  end
+
+  @doc "`flz relay call`: the answer as its format reads, or `accepted` for a send."
+  def answered(%{accepted: true}, _args, _opts), do: IO.puts("accepted")
+
+  def answered(%{answer_codec: "json", answer: answer}, _args, _opts),
+    do: IO.puts(Jason.encode!(answer))
+
+  def answered(%{answer: answer}, _args, _opts), do: IO.puts(answer)
+
+  defp typed(args_json, context) do
+    [namespace, relay_id, channel, fields, call_opts] = Jason.decode!(args_json)
+
+    with {:ok, [factory]} <- Admin.run("Relay.api", [namespace, relay_id], context, :given),
+         {:ok, entry} <- typed_entry(factory, channel),
+         {:ok, properties} <- properties(entry),
+         {:ok, value} <- coerce_all(entry, properties, fields) do
+      {:ok, [namespace, relay_id, channel, value, call_opts]}
+    else
+      :untyped -> {:ok, [namespace, relay_id, channel, fields, call_opts]}
+      refused -> refused
+    end
+  end
+
+  # The entry `--arg` types the fields by; a channel the API lacks, or a
+  # factory with none, leaves them as written, for the call to refuse.
+  defp typed_entry(%{channels: [first | _]}, ""), do: {:ok, first}
+
+  defp typed_entry(factory, channel) do
+    case Enum.find(factory.channels, &(&1.channel == channel)) do
+      nil -> :untyped
+      entry -> {:ok, entry}
+    end
+  end
+
+  # `--arg` names the properties of a JSON channel's object schema.
+  defp properties(%{codec: "json", schema: %{"properties" => %{} = properties}}),
+    do: {:ok, properties}
+
+  defp properties(entry),
+    do:
+      refuse(
+        entry,
+        "a json channel with an object schema",
+        "--arg needs the channel's properties"
+      )
+
+  defp coerce_all(entry, properties, fields) do
+    Enum.reduce_while(fields, {:ok, %{}}, fn {name, text}, {:ok, value} ->
+      case coerce(get_in(properties, [name, "type"]), text) do
+        {:ok, typed} -> {:cont, {:ok, Map.put(value, name, typed)}}
+        {:expected, expected} -> {:halt, refuse(entry, expected, "#{name}: #{inspect(text)}")}
+      end
+    end)
+  end
+
+  defp coerce(type, text) when type in ["string", nil], do: {:ok, text}
+  defp coerce("boolean", "true"), do: {:ok, true}
+  defp coerce("boolean", "false"), do: {:ok, false}
+  defp coerce("boolean", _text), do: {:expected, "true or false"}
+
+  defp coerce("integer", text) do
+    case Integer.parse(text) do
+      {integer, ""} -> {:ok, integer}
+      _not_whole -> {:expected, "an integer"}
+    end
+  end
+
+  defp coerce("number", text) do
+    case Jason.decode(text) do
+      {:ok, number} when is_number(number) -> {:ok, number}
+      _not_number -> {:expected, "a number"}
+    end
+  end
+
+  defp coerce(type, _text), do: {:expected, "a #{type} property, which --arg cannot write"}
+
+  defp refuse(entry, expected, reason),
+    do:
+      {:error,
+       Flezha.Error.new("api.input_invalid",
+         channel: entry.channel,
+         expected: expected,
+         reason: reason
+       )}
 
   @doc "`flz relay state`."
   def cell_state([json, _change_seq], [namespace, relay_id | _], _opts) do
