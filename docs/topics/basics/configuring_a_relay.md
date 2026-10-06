@@ -124,15 +124,142 @@ lists in full:
 Each SDK spells the tree in its own idiom. Each "one of" is a sum type of its
 language, and each nested setting is a member of its parent only.
 
-| SDK | Where the settings go | A steps class with a sleep interval |
-| --- | --- | --- |
-| Java | methods of `Relay`: `run()`, `durable()`, `maxDuration()`, `description()` | `new Run.Steps(Each.PER_INPUT, OnFailure.KEEP_PROGRESS)`, `new Durable.Local(Duration.ofMinutes(10))` |
-| Rust | `fn settings() -> RelaySettings` | `Run::Steps { each: Each::PerInput, on_failure: OnFailure::KeepProgress }`, `Durable::Local { sleep_after: SleepAfter::After(...) }` |
-| Node | fields of `defineRelay` | `steps: { each: 'per_input', onFailure: 'keep_progress' }`, `durable: { local: { sleepAfter: 10_000 } }`, `maxDurationMs` |
-| Python | keywords of `@flezha.relay` | `run={"steps": {"each": "per_input", "on_failure": "keep_progress"}}`, `durable={"local": {"sleep_after": 10_000}}`, `max_duration_ms` |
-| Ruby | the class body | `run steps: { each: :per_input, on_failure: :keep_progress }`, `durable local: { sleep_after: 10_000 }`, `max_duration_ms` |
-| PHP | arguments of `#[Relay]` | `run: ['steps' => ['each' => 'per_input', 'on_failure' => 'keep_progress']]`, `durable: ['local' => ['sleep_after' => 10_000]]`, `maxDurationMs` |
-| Elixir | options of `use Flezha.SDK.Relay` | `run: {:steps, each: :per_input, on_failure: :keep_progress}`, `durable: {:local, sleep_after: 60_000}`, `max_duration_ms` |
+The same tree in each SDK: a relay that runs in steps, one pass per message,
+keeps a failed pass's progress, sleeps after ten idle seconds, stops after ten
+minutes, and says what it is for.
+
+<!-- tabs-open -->
+
+### Java
+
+The settings are methods of `Relay`:
+
+```java
+public final class OrdersRelay implements Relay {
+    ...
+    @Override
+    public Run run() {
+        return new Run.Steps(Each.PER_INPUT, OnFailure.KEEP_PROGRESS);
+    }
+
+    @Override
+    public Durable durable() {
+        return new Durable.Local(Duration.ofSeconds(10));
+    }
+
+    @Override
+    public Optional<Duration> maxDuration() {
+        return Optional.of(Duration.ofMinutes(10));
+    }
+
+    @Override
+    public String description() {
+        return "one order per message";
+    }
+}
+```
+
+### Rust
+
+The settings are one `RelaySettings` value, from `fn settings()`:
+
+```rust
+impl Relay for OrdersRelay {
+    ...
+    fn settings() -> RelaySettings {
+        RelaySettings {
+            run: Run::Steps { each: Each::PerInput, on_failure: OnFailure::KeepProgress },
+            durable: Durable::Local { sleep_after: SleepAfter::After(Duration::from_secs(10)) },
+            max_duration: Some(Duration::from_secs(600)),
+            description: "one order per message",
+        }
+    }
+}
+```
+
+### Node
+
+The settings are fields of `defineRelay`:
+
+```javascript
+export default defineRelay({
+  factoryId: 'orders',
+  steps: { each: 'per_input', onFailure: 'keep_progress' },
+  durable: { local: { sleepAfter: 10_000 } },
+  maxDurationMs: 600_000,
+  description: 'one order per message',
+  channels: (c) => {
+    ...
+  },
+});
+```
+
+### Python
+
+The settings are keywords of `@flezha.relay`:
+
+```python
+@flezha.relay(
+    "orders",
+    run={"steps": {"each": "per_input", "on_failure": "keep_progress"}},
+    durable={"local": {"sleep_after": 10_000}},
+    max_duration_ms=600_000,
+    description="one order per message",
+)
+def orders(c: flezha.Channels) -> None:
+    ...
+```
+
+### Ruby
+
+The settings are calls in the class body:
+
+```ruby
+class Orders < Flezha::Relay
+  factory_id "orders"
+  run steps: { each: :per_input, on_failure: :keep_progress }
+  durable local: { sleep_after: 10_000 }
+  max_duration_ms 600_000
+  description "one order per message"
+  ...
+end
+```
+
+### PHP
+
+The settings are arguments of `#[Relay]`:
+
+```php
+#[Relay(
+    factoryId: 'orders',
+    run: ['steps' => ['each' => 'per_input', 'on_failure' => 'keep_progress']],
+    durable: ['local' => ['sleep_after' => 10_000]],
+    maxDurationMs: 600_000,
+    description: 'one order per message',
+)]
+final class Orders extends \Flezha\Relay
+{
+    ...
+}
+```
+
+### Elixir
+
+The settings are options of `use Flezha.SDK.Relay`:
+
+```elixir
+defmodule Orders do
+  use Flezha.SDK.Relay,
+    factory_id: "orders",
+    run: {:steps, each: :per_input, on_failure: :keep_progress},
+    durable: {:local, sleep_after: 10_000},
+    max_duration_ms: 600_000,
+    description: "one order per message"
+  ...
+end
+```
+
+<!-- tabs-close -->
 
 A few spellings differ from the tree's names:
 
@@ -499,6 +626,159 @@ public Run run() {
 
 Full file: [`GatewayRelay.java`](https://github.com/flezha/flezha_java_sdk/blob/main/examples/agentdesk/src/main/java/com/flezha/examples/agentdesk/GatewayRelay.java).
 
+### Rust
+
+```rust
+// src/agent.rs: one conversation, one turn per message, asleep when idle.
+impl Relay for AgentRelay {
+    ...
+    fn settings() -> RelaySettings {
+        RelaySettings {
+            run: Run::Steps {
+                each: Each::PerInput,                // one turn per message
+                on_failure: OnFailure::KeepProgress, // a failed turn fails alone
+            },
+            durable: Durable::Local {
+                sleep_after: SleepAfter::After(Duration::from_secs(10)), // an idle session sleeps after 10 s
+            },
+            ..RelaySettings::default()
+        }
+    }
+}
+```
+
+Full file: [`src/agent.rs`](https://github.com/flezha/flezha_rust_sdk/blob/main/examples/agentdesk/src/agent.rs).
+
+```rust
+// src/gateway.rs: the HTTP side, in flow, effectively once.
+fn settings() -> RelaySettings {
+    RelaySettings {
+        // each request and answer on disk before it runs
+        run: Run::Flow {
+            exactly: Exactly::effectively_once(),
+        },
+        ..RelaySettings::default()
+    }
+}
+```
+
+Full file: [`src/gateway.rs`](https://github.com/flezha/flezha_rust_sdk/blob/main/examples/agentdesk/src/gateway.rs).
+
+### Node
+
+```javascript
+// agent_relay.mjs: one conversation, one turn per message, asleep when idle.
+export default defineRelay({
+  factoryId: 'agent',
+  // one turn per message; a failed turn fails alone
+  steps: { each: 'per_input', onFailure: 'keep_progress' },
+  durable: { local: { sleepAfter: 10_000 } }, // an idle session sleeps after 10 s
+  channels: (c) => {
+    ...
+  },
+});
+```
+
+Full file: [`agent_relay.mjs`](https://github.com/flezha/flezha_node_sdk/blob/main/examples/agentdesk/agent_relay.mjs).
+
+```javascript
+// gateway_relay.mjs: the HTTP side, in flow, effectively once.
+export default defineRelay({
+  factoryId: 'gateway',
+  flow: { exactly: 'effectively_once' }, // each request and answer on disk before it runs
+  channels: (c) => {
+    ...
+  },
+});
+```
+
+Full file: [`gateway_relay.mjs`](https://github.com/flezha/flezha_node_sdk/blob/main/examples/agentdesk/gateway_relay.mjs).
+
+### Python
+
+```python
+# agent.py: one conversation, one turn per message, asleep when idle.
+@flezha.relay(
+    "agent",
+    # one turn per message; a failed turn fails alone
+    run={"steps": {"each": "per_input", "on_failure": "keep_progress"}},
+    durable={"local": {"sleep_after": 10_000}},  # an idle session sleeps after 10 s
+)
+def agent(c: flezha.Channels) -> None:
+    ...
+```
+
+Full file: [`agent.py`](https://github.com/flezha/flezha_python_sdk/blob/main/examples/agentdesk/agent.py).
+
+```python
+# gateway.py: the HTTP side, in flow, effectively once.
+# each request and answer on disk before it runs
+@flezha.relay("gateway", run={"flow": {"exactly": "effectively_once"}})
+def gateway(c: flezha.Channels) -> None:
+    ...
+```
+
+Full file: [`gateway.py`](https://github.com/flezha/flezha_python_sdk/blob/main/examples/agentdesk/gateway.py).
+
+### Ruby
+
+```ruby
+# agent_relay.rb: one conversation, one turn per message, asleep when idle.
+class AgentRelay < Flezha::Relay
+  factory_id "agent"
+  run steps: { each: :per_input, on_failure: :keep_progress }   # one turn per message; a failed turn fails alone
+  durable local: { sleep_after: 10_000 }                       # an idle session sleeps after 10 s
+  ...
+end
+```
+
+Full file: [`agent_relay.rb`](https://github.com/flezha/flezha_ruby_sdk/blob/main/examples/agentdesk/agent_relay.rb).
+
+```ruby
+# gateway_relay.rb: the HTTP side, in flow, effectively once.
+class GatewayRelay < Flezha::Relay
+  factory_id "gateway"
+  run flow: { exactly: :effectively_once } # each request and answer on disk before it runs
+  ...
+end
+```
+
+Full file: [`gateway_relay.rb`](https://github.com/flezha/flezha_ruby_sdk/blob/main/examples/agentdesk/gateway_relay.rb).
+
+### PHP
+
+```php
+// src/AgentRelay.php: one conversation, one turn per message, asleep when idle.
+#[Relay(
+    factoryId: 'agent',
+    run: ['steps' => [
+        'each' => 'per_input',                       // one turn per message
+        'on_failure' => 'keep_progress',             // a failed turn fails alone
+    ]],
+    durable: ['local' => ['sleep_after' => 10_000]], // an idle session sleeps after 10 s
+)]
+final class AgentRelay extends \Flezha\Relay
+{
+    ...
+}
+```
+
+Full file: [`src/AgentRelay.php`](https://github.com/flezha/flezha_php_sdk/blob/main/examples/agentdesk/src/AgentRelay.php).
+
+```php
+// src/GatewayRelay.php: the HTTP side, in flow, effectively once.
+#[Relay(
+    factoryId: 'gateway',
+    run: ['flow' => ['exactly' => 'effectively_once']], // each request and answer on disk before it runs
+)]
+final class GatewayRelay extends \Flezha\Relay
+{
+    ...
+}
+```
+
+Full file: [`src/GatewayRelay.php`](https://github.com/flezha/flezha_php_sdk/blob/main/examples/agentdesk/src/GatewayRelay.php).
+
 ### Elixir
 
 ```elixir
@@ -525,8 +805,8 @@ Full file: [`lib/agentdesk/gateway_relay.ex`](https://github.com/flezha/flezha_e
 
 <!-- tabs-close -->
 
-`EffectivelyOnce()` with no arguments, and `:effectively_once` bare, take every
-member at its default: `ack: per_input`, no correction window.
+Effectively once written with no members, as every gateway above writes it,
+takes each member at its default: `ack: per_input`, no correction window.
 
 ## Limits and gotchas
 
