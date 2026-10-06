@@ -634,6 +634,7 @@ defmodule Flezha.Service.PluginManager do
       %{
         name: name,
         provider: provider_name(entry.provider),
+        provider_id: provider_id(entry.provider),
         single: entry.single,
         relays: bound |> bound_to(name) |> relays_of() |> Enum.sort(),
         controllers: Directory.plugin_nodes(namespace, name) |> Enum.sort(),
@@ -642,6 +643,11 @@ defmodule Flezha.Service.PluginManager do
       }
     end
   end
+
+  # The id the provider is registered under, which `Fleet.provider/2` and an
+  # enable take; `nil` for one whose package this controller did not load.
+  defp provider_id(provider),
+    do: Enum.find_value(Providers.all(), fn {id, module} -> module == provider && id end)
 
   # A provider whose package this controller did not load still has a name to
   # show: its module's.

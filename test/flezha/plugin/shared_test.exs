@@ -147,7 +147,7 @@ defmodule FlezhaTest.Plugin.SharedTest do
     assert_receive {:ws_closed, ^socket}, 2_000
     assert copies() == []
 
-    assert %{controllers: []} =
+    assert %{controllers: [], provider_id: "relay_websocket"} =
              Enum.find(PluginManager.plugins(@namespace), &(&1.name == "trades"))
   end
 

@@ -8,6 +8,8 @@
 grants (what `Admin.catalogue/1` answers for the same context), so a console can offer only
 the controls a caller may use; `flz auth whoami` prints the same text. `Steps.cells/2` answers
 `history_retention_hours`, so a retention set through `Steps.set_retention/3` can be read back.
+`PluginManager.enabled/2` rows answer `provider_id`, the id a plugin's provider is registered
+under, which `Fleet.provider/2` and an enable take; `provider` stays the provider's name.
 
 ### Fixed: every relay keeps its liveness counters when another one stops
 

@@ -314,3 +314,20 @@ resolves it, so a value set through `Steps.set_retention/3` is read back.
 - **WHEN** `set_retention/3` set a relay class's retention to 7 hours
 - **THEN** `cells/2` for that class answers `history_retention_hours: 7`
 
+### Requirement: An enabled plugin SHALL name the provider id it was enabled with
+
+Each row `Flezha.Service.PluginManager.enabled/2` answers SHALL carry `provider_id`, the id
+its provider is registered under in `Flezha.Plugin.Providers`, which `Fleet.provider/2` and
+`PluginManager.enable/3` take, beside `provider`, the provider's name. A provider whose
+package this controller did not load SHALL answer `provider_id: nil`.
+
+#### Scenario: A plugin of a first-party provider
+
+- **WHEN** a plugin enabled with the provider `relay_websocket` is listed
+- **THEN** its row answers `provider_id: "relay_websocket"`
+
+#### Scenario: A provider this controller did not load
+
+- **WHEN** a plugin's provider module is registered under no id on this controller
+- **THEN** its row answers `provider_id: nil`
+
