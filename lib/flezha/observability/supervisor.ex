@@ -15,6 +15,7 @@ defmodule Flezha.Observability.Supervisor do
   use Supervisor
 
   alias Flezha.Config
+  alias Flezha.Transport.LivenessCounters
 
   alias Flezha.Observability.{
     Counters,
@@ -37,6 +38,9 @@ defmodule Flezha.Observability.Supervisor do
   @impl true
   def init(_opts) do
     Counters.init()
+    # A named table dies with its owner. Created here, every relay's and
+    # channel's counters outlive the one that happened to register first.
+    LivenessCounters.ensure_table()
 
     children =
       if enabled?() do

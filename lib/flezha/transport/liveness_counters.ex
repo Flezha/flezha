@@ -402,7 +402,13 @@ defmodule Flezha.Transport.LivenessCounters do
 
   # ---------- table lifecycle ----------
 
-  @doc "Create the registry table if absent. Idempotent and race-tolerant."
+  @doc """
+  Create the registry table if absent. Idempotent and race-tolerant.
+
+  The calling process owns a table it creates, so the controller creates it
+  from `Flezha.Observability.Supervisor` at boot; the calls from the register
+  functions only cover a node that runs without that supervisor.
+  """
   @spec ensure_table() :: :ok
   def ensure_table() do
     case :ets.whereis(@table) do

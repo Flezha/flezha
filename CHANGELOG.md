@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Fixed: every relay keeps its liveness counters when another one stops
+
+The liveness counter table belonged to whichever relay or channel registered first, so stopping
+that one deleted every other relay's counters and `Controller.liveness_counters/1` answered only
+relays started afterwards. The table is now created by the observability supervisor at boot.
+
 ### Added: a consumer on another node holds every stream with data alone
 
 The context's `:emit` may now be a pid as well as a function. `Relay.listen/5`,

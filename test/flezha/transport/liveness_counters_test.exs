@@ -45,6 +45,15 @@ defmodule Flezha.Transport.LivenessCountersTest do
     assert row.filtered_nil == 1
   end
 
+  # Owned by a relay or channel, the table and every other relay's counters
+  # would go when that one stopped.
+  test "the table is owned by the observability supervisor, not a registrant" do
+    LivenessCounters.register_relay("op_#{System.unique_integer([:positive])}")
+
+    assert :ets.info(:flezha_liveness_counters, :owner) ==
+             Process.whereis(Flezha.Observability.Supervisor)
+  end
+
   test "nil ref is a no-op (parked/unregistered callers)" do
     assert LivenessCounters.bump_channel(nil, :io_in_received) == :ok
     assert LivenessCounters.set_channel(nil, :last_send_ms, 1) == :ok
