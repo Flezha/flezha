@@ -21,7 +21,7 @@ defmodule Flezha.Observability.AuditLogTest do
 
   alias Flezha.Service.AuditLog, as: AuditSvc
   alias Flezha.Service.Cli
-  alias FlezhaTest.Helper.NodeTestHelper
+  alias FlezhaTest.Helper.{AuthTestHelper, NodeTestHelper}
 
   @moduletag :audit_log
 
@@ -355,6 +355,56 @@ defmodule Flezha.Observability.AuditLogTest do
       end)
 
       assert :sys.get_state(Writer).subscribers == %{}
+    end
+  end
+
+  # ---------- a tail forwarded to a pid ----------
+
+  # The `:erpc` worker a consumer on another node reaches runs the tail and
+  # hands each record to the pid the consumer names.
+  describe "a tail forwarded to a pid" do
+    test "hands each record on and releases the subscription when the pid exits", %{dir: dir} do
+      configure(dir)
+      {:ok, _} = start_audit_supervisor()
+      {sink, tail} = forwarded_tail(%{source: :ui})
+
+      :ok = Writer.write(Codec.encode(Signal.new(%{kind: :event, source: :t, name: :forwarded})))
+      assert_receive {:forwarded, %{"name" => "forwarded"}}, 2_000
+
+      Process.exit(sink, :kill)
+      assert Task.await(tail, 2_000) == {:ok, :caller_down}
+      assert :sys.get_state(Writer).subscribers == %{}
+    end
+
+    test "ends when the writer closes", %{dir: dir} do
+      configure(dir)
+      {:ok, _} = start_audit_supervisor()
+      {_sink, tail} = forwarded_tail(%{source: :ui})
+
+      :ok = Writer.close()
+      assert Task.await(tail, 2_000) == {:ok, :done}
+      assert :sys.get_state(Writer).subscribers == %{}
+    end
+
+    test "drops a record of a namespace the caller may not read", %{dir: dir} do
+      configure(dir)
+      {:ok, _} = start_audit_supervisor()
+      AuthTestHelper.setup_auth_stores(prefix: "flz_audit_tail", claim: true)
+      context = %{source: :ui, principal: "viewer@team-a", namespace: "team-a", role: :viewer}
+      {sink, tail} = forwarded_tail(context)
+
+      for {name, namespace} <- [other: "b", own: "team-a"] do
+        signal =
+          Signal.new(%{kind: :event, source: :t, name: name, metadata: %{namespace: namespace}})
+
+        :ok = Writer.write(Codec.encode(signal))
+      end
+
+      assert_receive {:forwarded, %{"name" => "own"}}, 2_000
+      refute_received {:forwarded, %{"name" => "other"}}
+
+      Process.exit(sink, :kill)
+      assert {:ok, :caller_down} = Task.await(tail, 2_000)
     end
   end
 
@@ -696,6 +746,29 @@ defmodule Flezha.Observability.AuditLogTest do
   end
 
   # ---------- Helpers ----------
+
+  # A tail held by an `:erpc` worker for a sink process that forwards what it
+  # is handed to the test; answers once the worker has subscribed.
+  defp forwarded_tail(context) do
+    test = self()
+    sink = spawn(fn -> forward_to(test) end)
+
+    tail =
+      Task.async(fn ->
+        :erpc.call(node(), AuditSvc, :tail, [[], Map.put(context, :emit, sink)])
+      end)
+
+    assert NodeTestHelper.wait_until(fn -> :sys.get_state(Writer).subscribers != %{} end, 5_000)
+    {sink, tail}
+  end
+
+  defp forward_to(test) do
+    receive do
+      {:flezha_emit, record} -> send(test, {:forwarded, record})
+    end
+
+    forward_to(test)
+  end
 
   defp default_config() do
     [

@@ -3,8 +3,7 @@ defmodule Flezha.Api.ConsumerSurfaceTest do
   `flezha_ui` is this platform's console and reaches the controller by runtime
   name over `:erpc`. Its `mix.exs` does not depend on this project, so no
   compiler sees both sides and a rename here compiles clean in both trees,
-  failing only on a user's machine — which is how six names came to be
-  called that this tree does not answer.
+  failing only on a user's machine.
 
   `docs/api/consumers/flezha_ui.txt` records what the console calls, and this
   test resolves every line of it against this tree's real exports. The break is
@@ -12,10 +11,10 @@ defmodule Flezha.Api.ConsumerSurfaceTest do
 
   Two things keep the gate honest. A vendored manifest is a second source of
   truth, so when `FLEZHA_UI_PATH` names a consumer checkout the manifest is
-  regenerated from it and any difference in the call set fails. And the entries
-  that do not resolve *today* are listed below rather than tolerated: a new
-  break fails the run, and a repaired one fails it too, until the line is
-  removed from the list.
+  regenerated from it and any difference in the call set fails. And an entry
+  that does not resolve is listed below rather than tolerated: a new break fails
+  the run, and a repaired one fails it too, until the line is removed from the
+  list. The console calls only the published surface, so the list is empty.
   """
   use ExUnit.Case, async: true
 
@@ -29,48 +28,15 @@ defmodule Flezha.Api.ConsumerSurfaceTest do
   # because their answers are what one is built from.
   @context_free [{Flezha.AuthZ.TokenStore, :verify, 1}, {Flezha.AuthZ, :enforcement_posture, 0}]
 
-  # What the console calls today and this tree does not answer. Phase 3 of
-  # `publish-a-controller-consumer-api` moves the console onto the published
-  # surface, in the sibling repository, and empties this list. The entries name
-  # what the console calls, in the console's own spelling.
-  #
-  # module-naming-record:begin
-  @unresolved_today %{
-    {Flezha.AuthZ.RoleStore, :list_for_namespace, 1} => :withdrawn,
-    {Flezha.Dlq.Store, :procedures, 1} => :withdrawn,
-    {Flezha.Operative.Kind, :capabilities, 1} => :withdrawn,
-    {Flezha.Operative.Kind, :known?, 1} => :moved,
-    {Flezha.Operative.Lifecycle, :rewind, 2} => :moved,
-    {Flezha.Operative.PartitionGroup, :rescale, 4} => :moved,
-    {Flezha.Service.CliManager, :build_mem_top_snapshot, 0} => :withdrawn,
-    {Flezha.Service.CliManager, :cluster_status_recovery, 2} => :withdrawn,
-    {Flezha.Service.CliManager, :group_partition_rows, 1} => :withdrawn,
-    {Flezha.Service.ConfigManager, :get_provider_info, 0} => :withdrawn,
-    {Flezha.Service.HubManager, :operative_plugins, 1} => :withdrawn,
-    {Flezha.Service.HubManager, :operative_rows, 1} => :withdrawn,
-    {Flezha.Service.Identificator, :hub, 1} => :moved,
-    {Flezha.Service.OperativeManager, :get_entity_state, 3} => :withdrawn,
-    {Flezha.Service.OperativeManager, :get_operative_pid, 2} => :withdrawn,
-    {Flezha.Service.OperativeManager, :get_overwatch_state, 2} => :moved,
-    {Flezha.Service.PluginHelper, :enable_io_listener, 4} => :withdrawn,
-    {Flezha.Service.PluginManager, :get_plugins, 0} => :withdrawn,
-    {Flezha.State.PersistenceResolver, :workflow_completed_retention_hours, 1} => :withdrawn,
-    {Flezha.State.ProcInbox, :last_offset, 1} => :moved,
-    {Flezha.State.ProcInbox, :undelivered, 1} => :moved,
-    {Flezha.State.ProcJournal, :committed_iterations, 1} => :moved,
-    {Flezha.State.ProcJournal, :consumed_offset, 1} => :moved,
-    {Flezha.State.ProcJournal, :read, 1} => :moved,
-    {Flezha.State.Registry, :operative_classes, 0} => :withdrawn,
-    {Flezha, :disable_plugin, 1} => :withdrawn,
-    {Flezha, :list_operatives, 1} => :withdrawn,
-    {Flezha, :start_operative, 2} => :withdrawn,
-    {Flezha, :stop_operative, 2} => :withdrawn
-  }
-
-  # module-naming-record:end
+  # What the console calls today and this tree does not answer. The console
+  # calls only the published surface, so nothing is. A break recorded here is
+  # one the console has not caught up with yet, named in its own spelling.
+  @unresolved_today %{}
 
   setup_all do
-    entries = manifest_entries(@manifest, 80)
+    # Just under the console's distinct calls today: the floor guards against a
+    # truncated manifest, not its size.
+    entries = manifest_entries(@manifest, 65)
 
     published = manifest_entries(@published, 60)
 
@@ -118,13 +84,13 @@ defmodule Flezha.Api.ConsumerSurfaceTest do
     assert [{{Flezha.Moved, :b, 1}, :moved, :privatised}] = report.misclassified
   end
 
-  test "the report names the class and the successor, not just the name", ctx do
-    [{_entry, _verdict} = pair | _] =
-      Enum.filter(ctx.unresolved, fn {{m, f, a, _}, _} ->
-        # module-naming-record:begin
-        {m, f, a} == {Flezha.Service.OperativeManager, :get_overwatch_state, 2}
-        # module-naming-record:end
-      end)
+  test "the report names the class and the successor, not just the name" do
+    # A planted call to a module this tree renamed, since the console makes none.
+    # module-naming-record:begin
+    planted = {Flezha.Service.OperativeManager, :get_overwatch_state, 2, "node_manager.ex:1"}
+    # module-naming-record:end
+
+    [pair] = RpcSurface.unresolved([planted])
 
     line = RpcSurface.explain(pair)
     assert line =~ "MOVED"
@@ -193,19 +159,13 @@ defmodule Flezha.Api.ConsumerSurfaceTest do
       end
     end
 
-    test "the consumer's own manifest is not on it yet, and the gap is phase 3", ctx do
-      published = call_set(ctx.published)
-      consumer = call_set(ctx.entries)
-      on_surface = MapSet.intersection(consumer, published)
+    test "every call the console makes is on the published surface", ctx do
+      allowed = MapSet.union(call_set(ctx.published), MapSet.new(@context_free))
+      off_surface = ctx.entries |> call_set() |> MapSet.difference(allowed)
 
-      # Phase 3 moves the console; when it lands, this is every line it calls.
-      assert MapSet.size(on_surface) < MapSet.size(consumer),
-             "the console is fully on the published surface — remove this test and " <>
-               "assert the manifests are equal instead"
-
-      assert MapSet.size(on_surface) > 0,
-             "not one call the console makes is on the published surface; the two " <>
-               "manifests describe unrelated things"
+      assert MapSet.size(off_surface) == 0,
+             "the console calls names that are not published: " <>
+               Enum.map_join(off_surface, ", ", fn {m, f, a} -> "#{inspect(m)}.#{f}/#{a}" end)
     end
   end
 

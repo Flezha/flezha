@@ -41,7 +41,7 @@
     },
     {
       "name": "AuditLog.tail",
-      "doc": "Subscribe the calling process to every audit record as it is written.",
+      "doc": "Stream every audit record the caller may read as it is written.",
       "action": "audit.read",
       "remote": true,
       "stream": true,
@@ -219,7 +219,7 @@
     },
     {
       "name": "Controller.status",
-      "doc": "The controller's status: its node, its shutdown state and settings, its durability, its state root and the folder file plugins may use.",
+      "doc": "The controller's status: its node and its monotonic clock, its shutdown state and settings, its durability, its state root and the folder file plugins may use.",
       "action": "controller.status",
       "remote": true,
       "stream": false,
@@ -795,7 +795,7 @@
     },
     {
       "name": "Observability.tail",
-      "doc": "Stream live signals for a single source to the caller process.",
+      "doc": "Stream the live signals of `source` that the caller may see.",
       "action": "observability.subscribe",
       "remote": true,
       "stream": true,

@@ -410,3 +410,35 @@ reference rather than left to be inferred.
 - **WHEN** a counter's values are read as an authorization input and persisted per mutation
 - **THEN** it SHALL remain its own module and SHALL NOT be expressed as an instrumentation table
 
+### Requirement: Runner sessions SHALL be published as observability signals
+
+The controller SHALL emit `[:flezha, :runner, :connected]` when a runner session is admitted and
+`[:flezha, :runner, :disconnected]` when one ends, each with measurements `%{count: 1}` and
+metadata `%{namespace:, runner:}`, beside the event bus dispatches of the same two facts. The
+telemetry bridge SHALL lift them onto the `:flezha_runner` source as the events
+`runner_connected` and `runner_disconnected`, so a consumer on another node can follow runner
+sessions through `Observability.tail/2`.
+
+#### Scenario: A runner connects
+
+- **WHEN** a runner session is admitted in namespace `default`
+- **THEN** a `:flezha_runner` signal named `runner_connected` with metadata namespace `default`
+  and the session's runner id reaches the ring buffer
+
+#### Scenario: A runner disconnects
+
+- **WHEN** that session ends
+- **THEN** a `:flezha_runner` signal named `runner_disconnected` naming the same namespace and
+  runner reaches the ring buffer
+
+### Requirement: The controller's status SHALL carry the clock signals are stamped with
+
+`Flezha.Service.Controller.status/1` SHALL answer `monotonic_us`, the node's
+`System.monotonic_time(:microsecond)`, so a consumer on another node can age a signal's `ts`
+against the controller's own clock.
+
+#### Scenario: Ageing a signal
+
+- **WHEN** a consumer reads `status/1` after reading a signal
+- **THEN** `monotonic_us` minus the signal's `ts` is the signal's age in microseconds
+

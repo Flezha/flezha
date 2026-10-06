@@ -419,3 +419,20 @@ before. This SHALL hold for a listener on a relay of either kind.
 - **WHEN** `flz relay listen op --duration-ms 1000` runs against a quiet relay
 - **THEN** it SHALL print nothing and exit 0, as before this option existed
 
+### Requirement: A listener SHALL deliver to a pid on another node
+
+`Flezha.Service.Relay.listen/5` SHALL accept a pid as the caller context's `:emit`, send it
+`{:flezha_emit, :attached}` once the listener is in place and `{:flezha_emit, event}` for each
+listener event, and end with `{:ok, :caller_down}` when that pid exits, detaching the listener
+plugin as on every other way out.
+
+#### Scenario: A remote listener
+
+- **WHEN** a process on another node calls `listen/5` over `:erpc` with its own pid as `:emit`
+- **THEN** it receives `{:flezha_emit, :attached}` and then each frame the relay emits
+
+#### Scenario: The remote listener goes away
+
+- **WHEN** that process exits
+- **THEN** the listen ends and the listener plugin is disabled
+

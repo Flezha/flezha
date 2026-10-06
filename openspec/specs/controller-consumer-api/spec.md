@@ -214,3 +214,64 @@ consumer surface. No fact or effect the CLI offers SHALL be reachable only throu
   outbox, relay listen and replay, plugin update and info, boot status and await,
   controller status, memory top and stop, and cluster status
 
+### Requirement: A consumer on another node SHALL hold a stream operation with data alone
+
+A published stream operation SHALL accept a pid as the caller context's `:emit` — in
+`Relay.listen/5`, `Observability.tail/2`, `AuditLog.tail/2` and `Controller.stop/2` — and SHALL
+then send each event to it as `{:flezha_emit, event}`, so a consumer on another node needs no code of its own
+on the controller. The operation SHALL watch that pid and end when it exits, including when its
+node disconnects, releasing whatever it subscribed. A function as `:emit` SHALL keep working as
+before, watching the caller's group leader. One function, `Flezha.Service.CallerContext.emitter/1`,
+SHALL resolve `:emit` for every operation.
+
+#### Scenario: A remote pid receives a tail
+
+- **WHEN** a process on another node calls `Observability.tail/2` over `:erpc` with its own pid
+  as `:emit` and a signal of that source is emitted
+- **THEN** the pid receives `{:flezha_emit, signal}`
+
+#### Scenario: The subscriber exits
+
+- **WHEN** the pid named as `:emit` exits while a tail or a listen it asked for is running
+- **THEN** the operation ends, answers `{:ok, :caller_down}`, and no subscription or listener
+  plugin it took is left behind
+
+#### Scenario: A window bounds a tail
+
+- **WHEN** a tail's context carries `window_ms`
+- **THEN** the tail ends with `{:ok, :window_closed}` once that window has run out
+
+#### Scenario: A caller without `:emit`
+
+- **WHEN** in-node code calls `Observability.tail/2` or `AuditLog.tail/2` with no `:emit`
+- **THEN** the calling process is subscribed, as before
+
+### Requirement: A forwarded tail SHALL hand on only what the caller may read
+
+A tail that forwards to an `:emit` SHALL drop every signal `Observability.query/2` would not
+answer the same caller, and every audit record `AuditLog.read/2` would not, applying the same
+rule rather than a copy of it, so data a caller may not read never leaves the controller.
+
+#### Scenario: Another namespace's signal
+
+- **WHEN** a caller bound to namespace `a` forwards a tail and a signal whose metadata names
+  namespace `b` is emitted
+- **THEN** the signal is not sent to its `:emit`
+
+#### Scenario: Another namespace's audit record
+
+- **WHEN** a caller bound to namespace `a` forwards the audit tail and a record of namespace `b`
+  is written
+- **THEN** the record is not sent to its `:emit`
+
+### Requirement: Every call the console makes SHALL be on the published surface
+
+Every entry of `docs/api/consumers/flezha_ui.txt` SHALL be a function listed in
+`docs/api/consumers/published.txt` or one of the two context-free reads, and the consumer-surface
+test SHALL assert it; its record of console calls known not to resolve SHALL be empty.
+
+#### Scenario: The record is checked against the surface
+
+- **WHEN** `test/flezha/api/consumer_surface_test.exs` runs
+- **THEN** it fails naming any console call that is neither published nor context-free
+

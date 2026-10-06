@@ -7,6 +7,7 @@ defmodule Flezha.Service.ObservabilityTest do
   alias Flezha.Observability.{PubSubSink, Registry, RingBufferSink, Signal}
   alias Flezha.Observability.TestSinks
   alias Flezha.Service.{Admin, Cli, Observability}
+  alias FlezhaTest.Helper.{AuthTestHelper, NodeTestHelper}
 
   setup do
     src = :"obs_svc_test_src_#{:erlang.unique_integer([:positive])}"
@@ -210,6 +211,57 @@ defmodule Flezha.Service.ObservabilityTest do
     end
   end
 
+  # A consumer on another node reaches the controller through an `:erpc`
+  # worker, whose `self()` dies when the call returns: the tail has to run in
+  # that worker and hand each signal to a pid the consumer names.
+  describe "a tail forwarded to a pid" do
+    test "hands each signal on as {:flezha_emit, signal} and ends when the pid exits",
+         %{src: src} do
+      claim_pubsub_sink()
+      {sink, tail} = forwarded_tail(src, %{source: :ui})
+
+      Bus.emit(Signal.new(%{kind: :event, source: src, name: :forwarded}))
+      assert_receive {:forwarded, %Signal{source: ^src, name: :forwarded}}, 2_000
+
+      Process.exit(sink, :kill)
+      assert Task.await(tail, 2_000) == {:ok, :caller_down}
+      assert subscribers(src) == []
+    end
+
+    test "ends when the context's window runs out", %{src: src} do
+      claim_pubsub_sink()
+
+      assert {:ok, :window_closed} =
+               :erpc.call(node(), Observability, :tail, [
+                 src,
+                 %{source: :ui, emit: self(), window_ms: 50}
+               ])
+
+      assert subscribers(src) == []
+    end
+
+    test "drops a signal of a namespace the caller may not read", %{src: src} do
+      claim_pubsub_sink()
+      AuthTestHelper.setup_auth_stores(prefix: "flz_obs_tail", claim: true)
+      context = %{source: :ui, principal: "viewer@team-a", namespace: "team-a", role: :viewer}
+      {sink, tail} = forwarded_tail(src, context)
+
+      Bus.emit(
+        Signal.new(%{kind: :event, source: src, name: :other, metadata: %{namespace: "b"}})
+      )
+
+      Bus.emit(
+        Signal.new(%{kind: :event, source: src, name: :own, metadata: %{namespace: "team-a"}})
+      )
+
+      assert_receive {:forwarded, %Signal{name: :own}}, 2_000
+      refute_received {:forwarded, %Signal{name: :other}}
+
+      Process.exit(sink, :kill)
+      assert {:ok, :caller_down} = Task.await(tail, 2_000)
+    end
+  end
+
   describe "the CLI renderers" do
     test "observe tail --json renders a metadata key of any shape", %{src: src} do
       # `stringify_keys/1` was a fourth copy of the term->string decision and
@@ -291,6 +343,33 @@ defmodule Flezha.Service.ObservabilityTest do
 
     out |> String.split("\n", trim: true) |> List.first() |> Jason.decode!()
   end
+
+  # A tail held by an `:erpc` worker on behalf of a sink process that forwards
+  # what it is handed to the test; answers once the worker has subscribed.
+  defp forwarded_tail(src, context) do
+    test = self()
+
+    sink = spawn(fn -> forward_to(test) end)
+
+    tail =
+      Task.async(fn ->
+        :erpc.call(node(), Observability, :tail, [src, Map.put(context, :emit, sink)])
+      end)
+
+    assert NodeTestHelper.wait_until(fn -> subscribers(src) != [] end, 2_000)
+    {sink, tail}
+  end
+
+  defp forward_to(test) do
+    receive do
+      {:flezha_emit, signal} -> send(test, {:forwarded, signal})
+    end
+
+    forward_to(test)
+  end
+
+  defp subscribers(src),
+    do: Elixir.Registry.lookup(Flezha.Observability.PubSub, PubSubSink.topic_for(src))
 
   # `config/test.exs` sets `:pubsub_sink_enabled` false and starts no sink, and
   # every subscription gate reads both. The test owns the flag for its own

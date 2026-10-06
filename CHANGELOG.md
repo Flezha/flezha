@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Added: a consumer on another node holds every stream with data alone
+
+The context's `:emit` may now be a pid as well as a function. `Relay.listen/5`,
+`Observability.tail/2`, `AuditLog.tail/2` and `Controller.stop/2` then send it each event as
+`{:flezha_emit, event}` and end when it exits, so a console on another node no longer runs any
+code of its own on the controller. With an `:emit`, the two tails run until the pid exits, the
+context's `window_ms` closes or the audit writer does, release their subscription, and hand on
+only what `Observability.query/2` or `AuditLog.read/2` would show the same caller. Runner
+sessions are published as `runner_connected` and `runner_disconnected` on the `:flezha_runner`
+observability source, and `Controller.status/1` answers `monotonic_us`, the clock signals are
+stamped with ([`docs/api/README.md`](docs/api/README.md)). `Fleet.factories/2` now answers
+`{:ok, list}` and `Fleet.runner_caller_context/2` answers `{:ok, map}`; `Relay.api/3`,
+`Relay.call_channel/6` and `Relay.diagnose/3` are listed on the published surface.
+
 ### Changed: a shorter getting started, and the larger tutorials on a docs site of their own
 
 Getting started is What is Flezha, then the echo built by hand on three pages: Up and

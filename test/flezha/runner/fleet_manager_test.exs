@@ -905,3 +905,58 @@ defmodule FlezhaTest.Runner.FleetManagerServedGroupsTest do
       )
   end
 end
+
+defmodule FlezhaTest.Runner.FleetManagerSessionSignalsTest do
+  @moduledoc """
+  A runner session opening and closing reaches the ring buffer as a
+  `:flezha_runner` signal, which is how a consumer on another node hears it:
+  the event bus that carries the same two facts reaches local processes only.
+  """
+  # async: false: the live controller and its fleet; the shared ring buffer.
+  use ExUnit.Case, async: false
+
+  alias Flezha.Observability.RingBufferSink
+  alias Flezha.Runner.FleetManager
+  alias Flezha.Runner.FleetManager.Session
+  alias FlezhaTest.Helper.NodeTestHelper
+
+  @namespace "session_signals_#{System.unique_integer([:positive])}"
+
+  setup do
+    original = :sys.get_state(FleetManager)
+    on_exit(fn -> :sys.replace_state(FleetManager, fn _ -> original end) end)
+    :ok
+  end
+
+  test "a completed handshake publishes runner_connected, a disconnect runner_disconnected" do
+    since = System.monotonic_time(:microsecond)
+    token = "signal_runner_#{System.unique_integer([:positive])}"
+    connect = %{namespace: @namespace, factories: [], credential: nil, stable_id: nil}
+    pending = %{connect: connect, stream_ref: nil, owed: [:command_sockets_connect], waiters: []}
+
+    :sys.replace_state(FleetManager, fn state ->
+      state
+      |> put_in([:pending_handshakes, token], pending)
+      |> Session.handshake_answered(token, :command_sockets_connect, {:reply, {:ok, ""}})
+    end)
+
+    assert signal(:runner_connected, since).metadata == %{namespace: @namespace, runner: token}
+
+    :ok = GenServer.call(FleetManager, {:runner_disconnected, @namespace, token})
+
+    assert signal(:runner_disconnected, since).metadata == %{namespace: @namespace, runner: token}
+  end
+
+  defp signal(name, since) do
+    find = fn ->
+      :flezha_runner
+      |> RingBufferSink.query(since)
+      |> Enum.find(&(&1.name == name and &1.metadata[:namespace] == @namespace))
+    end
+
+    assert NodeTestHelper.wait_until(fn -> find.() != nil end, 2_000),
+           "no #{name} signal reached the ring buffer"
+
+    find.()
+  end
+end

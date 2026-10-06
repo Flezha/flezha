@@ -10,20 +10,16 @@ defmodule Flezha.Service.Controller do
   surface: it is the remote half of `recovery_per_node/3`'s fan-out, which every
   peer calls by name. `stop_progress/4` is the telemetry handler a stop attaches.
 
-  `stop/2` reports its progress as it goes, to the `:emit` function the
-  caller's context carries, from whichever process the progress happens in:
-  `{:progress, event, measurements, metadata}` for each shutdown phase, then
-  `{:stopped, answer, duration_ms}` once, before the node stops.
+  `stop/2` reports its progress as it goes, to the `:emit` the caller's context
+  carries (a function, or a pid that receives `{:flezha_emit, event}`), from
+  whichever process the progress happens in: `{:progress, event, measurements,
+  metadata}` for each shutdown phase, then `{:stopped, answer, duration_ms}`
+  once, before the node stops.
 
-  The controller's event subscription is deliberately NOT here.
-  `Flezha.Service.EventManager.add_handler/1` is `pg:join(scope, event, self())`
-  and `Blockade.add_handler/2` hard-codes that `self()`, while `pg` refuses a
-  non-local pid — so a subscription taken over `:erpc` would register a process
-  that dies with the call. Publishing one that took a pid would promise
-  something `pg` cannot do for a remote consumer. Until the bus can register a
-  remote process, or the surface grows a monitored local proxy, a consumer that
-  needs controller events still ships code to the controller and compiles it
-  there.
+  The controller's event bus is deliberately NOT here: it registers local
+  processes only. A consumer that needs runner sessions tails the
+  `:flezha_runner` observability source, which carries `runner_connected` and
+  `runner_disconnected`, through `Flezha.Service.Observability.tail/2`.
   """
 
   use Flezha.AuthZ.Verb
@@ -94,8 +90,13 @@ defmodule Flezha.Service.Controller do
   end
 
   @doc """
-  The controller's status: its node, its shutdown state and settings, its
-  durability, its state root and the folder file plugins may use.
+  The controller's status: its node and its monotonic clock, its shutdown
+  state and settings, its durability, its state root and the folder file
+  plugins may use.
+
+  `monotonic_us` is the node's `System.monotonic_time(:microsecond)`, the clock
+  observability signals are stamped with, so a consumer on another node can age
+  a signal against it.
   """
   @spec status(caller_context()) :: {:ok, map()} | {:error, term()}
   verb status(caller_context), verb: :controller_status do
@@ -104,6 +105,7 @@ defmodule Flezha.Service.Controller do
      |> Map.merge(durability_snapshot())
      |> Map.merge(%{
        node: node(),
+       monotonic_us: System.monotonic_time(:microsecond),
        state_root: Paths.state_root(),
        file_plugin_root: Storage.Config.shown_root()
      })}
@@ -231,7 +233,7 @@ defmodule Flezha.Service.Controller do
     verb: :controller_stop,
     stream: true,
     args: [opts: [type: :keyword, default: [], doc: "`timeout_ms`, `force` and `no_wait`."]] do
-    emit = Map.get(caller_context, :emit, fn _event -> :ok end)
+    {emit, _watch} = CallerContext.emitter(caller_context)
     force = Keyword.get(opts, :force) == true
 
     shutdown_opts =

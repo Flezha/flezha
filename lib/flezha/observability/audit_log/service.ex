@@ -11,8 +11,9 @@ defmodule Flezha.Service.AuditLog do
   the subsystem flag off (`:audit_log, :enabled: false`) gives
   `{:error, :audit_log_disabled}`.
 
-  `tail/2` subscribes the calling process: each record arrives as
-  `{:audit_record, ref, record}`, and `{:audit_writer_closed, ref}` ends the
+  `tail/2` hands each record to the context's `:emit`; without one it
+  subscribes the calling process, where each record arrives as
+  `{:audit_record, ref, record}` and `{:audit_writer_closed, ref}` ends the
   stream.
   """
 
@@ -58,13 +59,27 @@ defmodule Flezha.Service.AuditLog do
     with :ok <- check_enabled(), do: read_records(Map.new(params), caller_context)
   end
 
-  @doc "Subscribe the calling process to every audit record as it is written."
-  @spec tail(map() | keyword(), caller_context()) :: {:ok, reference()} | {:error, term()}
+  @doc """
+  Stream every audit record the caller may read as it is written.
+
+  With an `:emit` in the context (a function, or a pid that receives
+  `{:flezha_emit, record}`), each record is handed to it until the watched
+  process exits, `:emit` answers `:done`, the context's `window_ms` runs out
+  or the writer closes, and the subscription is released on the way out; the
+  answer is `{:ok, :caller_down | :done | :window_closed}`. Without one, the
+  calling process is subscribed and answered the subscription's reference.
+  """
+  @spec tail(map() | keyword(), caller_context()) ::
+          {:ok, reference() | atom()} | {:error, term()}
   verb tail(params, caller_context),
     verb: :audit_tail,
     stream: true,
     args: [params: [type: :keyword, default: [], doc: "Unused."]] do
-    with :ok <- check_enabled(), do: Writer.subscribe_tail()
+    with :ok <- check_enabled() do
+      if Map.has_key?(caller_context, :emit),
+        do: forward(caller_context),
+        else: Writer.subscribe_tail()
+    end
   end
 
   @doc "Undo a `tail/2`."
@@ -123,11 +138,40 @@ defmodule Flezha.Service.AuditLog do
 
   # ---------- Internal helpers ----------
 
+  # The tail of a caller that named an `:emit`: this process subscribes and
+  # hands on what `read/2` would show the caller. A closed writer ends it.
+  defp forward(caller_context) do
+    {emit, watch} = CallerContext.emitter(caller_context)
+    {:ok, ref} = Writer.subscribe_tail()
+
+    try do
+      outcome =
+        CallerContext.receive_for(
+          Map.get(caller_context, :window_ms, :infinity),
+          fn
+            {:audit_record, ^ref, record} ->
+              CallerContext.hand_on(filter_by_namespace([record], caller_context), emit)
+
+            {:audit_writer_closed, ^ref} ->
+              :done
+
+            _other ->
+              :continue
+          end,
+          watch
+        )
+
+      {:ok, outcome}
+    after
+      Writer.unsubscribe_tail(ref)
+    end
+  end
+
   defp read_target([params | _]), do: %{file: params |> Map.new() |> Map.get(:file)}
 
-  # Filter JSONL records to the caller's namespace except for
-  # `admin@_system` and internal callers. Records that pre-date the
-  # namespace field (or whose `namespace` is null) are treated as
+  # Filter records to the caller's namespace, for a read and for a forwarded
+  # tail alike, except for `admin@_system` and internal callers. Records that
+  # pre-date the namespace field (or whose `namespace` is null) are treated as
   # `_system` for compatibility.
   defp filter_by_namespace(records, %{role: :admin, namespace: "_system"}), do: records
   defp filter_by_namespace(records, %{source: :internal}), do: records

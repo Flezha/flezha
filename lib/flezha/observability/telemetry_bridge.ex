@@ -166,6 +166,10 @@ defmodule Flezha.Observability.TelemetryBridge do
     # loss, a breach or a death the controller observed. Every one was a
     # `Logger` line and an unexported event until these entries existed.
     [:flezha, :correction, :refused] => {:flezha_correction, :refused, :event},
+    # A runner session opening and closing, for consumers on another node:
+    # the event bus that carries the same two facts reaches local processes only.
+    [:flezha, :runner, :connected] => {:flezha_runner, :runner_connected, :event},
+    [:flezha, :runner, :disconnected] => {:flezha_runner, :runner_disconnected, :event},
     [:flezha, :runner, :factory_language_conflict] =>
       {:flezha_runner, :factory_language_conflict, :event},
     [:flezha, :runner, :factory_run_conflict] => {:flezha_runner, :factory_run_conflict, :event},

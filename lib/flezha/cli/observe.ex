@@ -45,21 +45,22 @@ defmodule Flezha.Service.Cli.Observe do
   def disable(:ok, [source | _], _opts), do: IO.puts("source #{source} disabled")
 
   @doc """
-  `flz observe tail <source>`: subscribe, print each signal as one line (one
-  JSON document under `--json`) until the window closes, then unsubscribe.
+  `flz observe tail <source>`: print each signal as one line (one JSON
+  document under `--json`) until the window closes.
   """
   def tail(args_json, context, opts) do
-    case Admin.run("Observability.tail", args_json, context, :given) do
-      {:ok, _subscribed} ->
-        Context.receive_for(Context.window(opts), &tail_message(&1, Context.format(opts)))
-        Admin.run("Observability.unsubscribe", args_json, context, :given)
+    format = Context.format(opts)
 
-      refused ->
-        Cli.render(refused, "Observability.tail", args_json, opts)
+    context =
+      Map.merge(context, %{emit: &print_signal(&1, format), window_ms: Context.window(opts)})
+
+    case Admin.run("Observability.tail", args_json, context, :given) do
+      {:ok, _outcome} -> :ok
+      refused -> Cli.render(refused, "Observability.tail", args_json, opts)
     end
   end
 
-  defp tail_message({:flezha_signal, signal}, "json") do
+  defp print_signal(signal, "json") do
     %{
       kind: signal.kind,
       source: signal.source,
@@ -70,18 +71,12 @@ defmodule Flezha.Service.Cli.Observe do
     }
     |> Admin.json()
     |> IO.puts()
-
-    :continue
   end
 
-  defp tail_message({:flezha_signal, signal}, _text) do
+  defp print_signal(signal, _text) do
     IO.puts(
       "[#{signal.ts}] #{signal.source}.#{signal.name} kind=#{signal.kind} " <>
         "measurements=#{inspect(signal.measurements)} metadata=#{inspect(signal.metadata)}"
     )
-
-    :continue
   end
-
-  defp tail_message(_message, _format), do: :continue
 end

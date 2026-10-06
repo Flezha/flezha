@@ -16,7 +16,7 @@ defmodule Flezha.Service.ListenerTest do
 
   alias Flezha.Cluster.Directory
   alias Flezha.Relay.PartitionGroup
-  alias Flezha.Service.{HubManager, Listener, PluginManager}
+  alias Flezha.Service.{HubManager, Listener, PluginManager, Relay}
 
   setup :set_mimic_global_until_exit
 
@@ -151,6 +151,28 @@ defmodule Flezha.Service.ListenerTest do
     watched = spawn(fn -> Process.sleep(:infinity) end)
     %{id: id} = listening(watch: watched)
     Process.exit(watched, :kill)
+    assert_receive {:outcome, {:ok, :caller_down}}, 2_000
+    assert_receive {:detached, "ns", "op", ^id}
+  end
+
+  # What a consumer on another node does: `Relay.listen/5` over `:erpc`, with
+  # a pid of its own as `:emit`, so no code of the consumer runs here.
+  test "a pid as :emit receives each event as {:flezha_emit, event}, and its exit detaches" do
+    test = self()
+    sink = spawn(fn -> forward_to(test) end)
+    context = %{source: :internal, emit: sink}
+
+    spawn(fn ->
+      outcome = :erpc.call(node(), Relay, :listen, ["ns", "op", :output, [], context])
+      send(test, {:outcome, outcome})
+    end)
+
+    assert_receive {:attached, id, receiver, _hooks}, 2_000
+    assert_receive {:forwarded, :attached}, 2_000
+    output(receiver, "one")
+    assert_receive {:forwarded, {:output, "one", %{"channel" => "c"}}}, 2_000
+
+    Process.exit(sink, :kill)
     assert_receive {:outcome, {:ok, :caller_down}}, 2_000
     assert_receive {:detached, "ns", "op", ^id}
   end
@@ -294,6 +316,14 @@ defmodule Flezha.Service.ListenerTest do
     after
       10_000 -> flunk("the output never came")
     end
+  end
+
+  defp forward_to(test) do
+    receive do
+      {:flezha_emit, event} -> send(test, {:forwarded, event})
+    end
+
+    forward_to(test)
   end
 
   defp drain(message, count) do

@@ -7,6 +7,9 @@ defmodule Flezha.Service.Observability do
   With the master flag `:observability` → `enabled: false`, every public
   function returns `{:error, :observability_disabled}`.
 
+  `tail/2` hands each signal to the context's `:emit` (see its doc); without
+  one it subscribes the calling process, like `subscribe/2`.
+
   The subscriptions and the two mutations are audited on the
   `:observability_service` source before the effect, under the function's
   name — the seam the audit log consumes. The effects are public so
@@ -59,24 +62,31 @@ defmodule Flezha.Service.Observability do
   end
 
   @doc """
-  Stream live signals for a single source to the caller process.
+  Stream the live signals of `source` that the caller may see.
 
-  Subscribes to the foundation's `PubSubSink` topic for `source` and
-  forwards `{:flezha_signal, signal}` messages to the caller. The
-  caller is responsible for receiving and unsubscribing on shutdown.
+  With an `:emit` in the context (a function, or a pid that receives
+  `{:flezha_emit, signal}`), each signal is handed to it until the watched
+  process exits, `:emit` answers `:done` or the context's `window_ms` runs
+  out, and the subscription is released on the way out; the answer is
+  `{:ok, :caller_down | :done | :window_closed}`. Without one, the calling
+  process is subscribed and receives `{:flezha_signal, signal}` itself, and
+  undoes it with `unsubscribe/2`.
 
-  Returns `{:error, :pubsub_sink_disabled}` if the PubSub sink is
-  not enabled (it cannot stream without the underlying broadcast).
+  Answers `{:error, :pubsub_sink_disabled}` when the PubSub sink is not
+  enabled: there is no broadcast to stream.
   """
-  @spec tail(atom(), caller_context()) :: :ok | {:error, term()}
+  @spec tail(atom(), caller_context()) :: :ok | {:ok, atom()} | {:error, term()}
   verb tail(source, caller_context) when is_atom(source),
     verb: :observability_tail,
     stream: true,
     args: [source: @source] do
     with :ok <- check_enabled(),
          {:ok, _} <- registered(source),
-         :ok <- check_pubsub_sink(),
-         do: Observability.subscribe(source)
+         :ok <- check_pubsub_sink() do
+      if Map.has_key?(caller_context, :emit),
+        do: forward(source, caller_context),
+        else: Observability.subscribe(source)
+    end
   end
 
   # ---------- Reads ----------
@@ -135,6 +145,34 @@ defmodule Flezha.Service.Observability do
 
   # ---------- Internal helpers ----------
 
+  # The tail of a caller that named an `:emit`: this process subscribes, and
+  # hands on what the caller may read, so data a caller may not see never
+  # leaves the controller.
+  defp forward(source, caller_context) do
+    {emit, watch} = CallerContext.emitter(caller_context)
+
+    with :ok <- Observability.subscribe(source) do
+      try do
+        outcome =
+          CallerContext.receive_for(
+            Map.get(caller_context, :window_ms, :infinity),
+            fn
+              {:flezha_signal, signal} ->
+                CallerContext.hand_on(filter_by_namespace([signal], caller_context), emit)
+
+              _other ->
+                :continue
+            end,
+            watch
+          )
+
+        {:ok, outcome}
+      after
+        Observability.unsubscribe(source)
+      end
+    end
+  end
+
   # The registered source `written` names, as an atom or as its text; one the
   # registry does not hold is refused naming the ones it does.
   defp registered(written) do
@@ -156,10 +194,10 @@ defmodule Flezha.Service.Observability do
       else: {:error, :pubsub_sink_disabled}
   end
 
-  # Filter ring-buffer query results to signals visible to the
-  # caller's namespace. `admin@_system` sees everything; every other
-  # caller sees only their own namespace's signals (and signals
-  # whose metadata carries no namespace — pre-change emits).
+  # Filter signals to those visible to the caller's namespace, for a query and
+  # for a forwarded tail alike. `admin@_system` sees everything; every other
+  # caller sees only their own namespace's signals (and signals whose metadata
+  # carries no namespace — pre-change emits).
   defp filter_by_namespace(signals, %{role: :admin, namespace: "_system"}), do: signals
   defp filter_by_namespace(signals, %{source: :internal}), do: signals
 

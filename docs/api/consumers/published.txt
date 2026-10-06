@@ -4,8 +4,7 @@
 # authorizes through it before any effect, and answers data rather than text
 # formatted for a terminal. A consumer of this controller calls these and
 # nothing else; docs/api/consumers/flezha_ui.txt records what one consumer
-# actually calls today, and the gap between the two files is what phase 3 of
-# publish-a-controller-consumer-api closes.
+# actually calls, and every call recorded there is on this list.
 #
 # Hand-maintained, and test/flezha/api/consumer_surface_test.exs holds it to
 # three things: every line resolves against this tree, every line is on `Flezha`
@@ -84,8 +83,11 @@ Flezha.Service.Observability.query/2
 Flezha.Service.Observability.subscribe/2
 Flezha.Service.Observability.tail/2
 Flezha.Service.Observability.unsubscribe/2
+Flezha.Service.Relay.api/3
 Flezha.Service.Relay.call/6
+Flezha.Service.Relay.call_channel/6
 Flezha.Service.Relay.cell_state/4
+Flezha.Service.Relay.diagnose/3
 Flezha.Service.Relay.info/2
 Flezha.Service.Relay.list/2
 Flezha.Service.Relay.list_namespaces/1

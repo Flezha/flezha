@@ -102,6 +102,9 @@ defmodule Flezha.Api.ServiceSurfaceTest do
       {:list, ["default"]},
       {:info, ["default"]},
       {:listen, ["default", "rc", :output, []]},
+      {:api, ["default", "rc"]},
+      {:call_channel, ["default", "rc", "channel", "value", []]},
+      {:diagnose, ["default", "rc"]},
       {:replay, ["default", "path", "0"]}
     ],
     PluginManager => [
@@ -259,6 +262,22 @@ defmodule Flezha.Api.ServiceSurfaceTest do
       assert {:ok, _next} = Schedule.next_fire(cron, "Etc/UTC", DateTime.utc_now(), context)
 
       assert {:error, _reason} = Schedule.parse_cron("not a cron", context)
+    end
+
+    # A consumer on another node ages a signal against the controller's clock,
+    # and reads the two fleet answers as `{:ok, value}` like every other read.
+    test "the status carries the clock, and the fleet reads are wrapped once" do
+      context = %{source: :ui, principal: "console@_system"}
+
+      before = System.monotonic_time(:microsecond)
+      assert {:ok, %{monotonic_us: clock}} = Controller.status(context)
+      assert clock >= before and clock <= System.monotonic_time(:microsecond)
+
+      assert {:ok, factories} = Fleet.factories("default", context)
+      assert is_list(factories)
+
+      assert {:ok, %{principal: "runner@default", namespace: "default"}} =
+               Fleet.runner_caller_context("default", context)
     end
   end
 end

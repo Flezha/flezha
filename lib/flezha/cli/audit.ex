@@ -43,33 +43,21 @@ defmodule Flezha.Service.Cli.Audit do
   def rotate(info, _args, _opts), do: IO.puts("rotated to: #{info.rotated_to}")
 
   @doc """
-  `flz audit tail`: subscribe, print every record as it is written until the
-  window closes or the writer does, then unsubscribe. A closed writer has
-  already dropped the subscription.
+  `flz audit tail`: print every record as it is written until the window
+  closes or the writer does.
   """
   def tail(args_json, context, opts) do
+    format = Context.format(opts)
+    context = Map.merge(context, %{emit: &print(&1, format), window_ms: Context.window(opts)})
+
     case Admin.run("AuditLog.tail", args_json, context, :given) do
-      {:ok, ref} ->
-        if Context.receive_for(Context.window(opts), &tail_message(&1, ref, opts)) ==
-             :window_closed,
-           do: Admin.run("AuditLog.unsubscribe", [ref], context, :given)
-
-      refused ->
-        Cli.render(refused, "AuditLog.tail", args_json, opts)
+      {:ok, _outcome} -> :ok
+      refused -> Cli.render(refused, "AuditLog.tail", args_json, opts)
     end
   end
 
-  defp tail_message({:audit_record, ref, record}, ref, opts) do
-    case Context.format(opts) do
-      "json" -> IO.puts(Jason.encode!(record))
-      _text -> print_record(record)
-    end
-
-    :continue
-  end
-
-  defp tail_message({:audit_writer_closed, ref}, ref, _opts), do: :done
-  defp tail_message(_message, _ref, _opts), do: :continue
+  defp print(record, "json"), do: IO.puts(Jason.encode!(record))
+  defp print(record, _text), do: print_record(record)
 
   defp print_record(r) do
     caller = Map.get(r, "caller") || %{}

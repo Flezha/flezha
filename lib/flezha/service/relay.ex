@@ -473,7 +473,8 @@ defmodule Flezha.Service.Relay do
 
   `:emit` is called with `:attached` once the listener is in place, then with
   each `t:Flezha.Service.Listener.event/0`; answering `:done` ends the listen.
-  `opts` carries `window_ms`.
+  A pid as `:emit` receives each as `{:flezha_emit, event}` and its exit ends
+  the listen (`Flezha.Service.CallerContext.emitter/1`). `opts` carries `window_ms`.
   """
   @spec listen(String.t(), String.t(), atom(), keyword(), caller_context()) ::
           {:ok, atom()} | {:error, term()}
@@ -486,20 +487,18 @@ defmodule Flezha.Service.Relay do
       direction: [type: :enum, values: [:output, :input], default: :output, doc: "What to hear."],
       opts: [type: :keyword, default: [], doc: "`window_ms`."]
     ] do
-    emit = Map.get(caller_context, :emit, fn _event -> :ok end)
+    {emit, watch} = CallerContext.emitter(caller_context)
 
-    # The caller's group leader lives on the caller's node, so its exit is the
-    # one signal that the caller went away.
     Listener.listen(
       Namespace.or_default(namespace),
       relay_id,
       [
         direction: direction,
         window_ms: Keyword.get(opts, :window_ms, :infinity),
-        watch: Process.group_leader(),
+        watch: watch,
         before: fn -> emit.(:attached) end
       ],
-      &if(emit.(&1) == :done, do: :done, else: :continue)
+      &CallerContext.hand_on([&1], emit)
     )
   end
 

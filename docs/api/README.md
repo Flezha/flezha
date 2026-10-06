@@ -49,6 +49,30 @@ catalogue from those declarations; the door resolves an operation's name
 `mix flezha.catalogue` writes the copy `flz` embeds, `cli/catalogue.json`, which
 `flz help --json` prints and `test/flezha/api/catalogue_test.exs` holds to the code.
 
+## Receiving a stream on another node
+
+Four operations stream: `Relay.listen/5`, `Observability.tail/2`, `AuditLog.tail/2` and
+`Controller.stop/2`. Each hands its events to the context's `:emit`. A consumer on another
+node puts a pid of its own there and makes the call with `:erpc.send_request/4`, so the call
+runs in an `:erpc` worker on the controller and nothing of the consumer's runs here:
+
+```elixir
+request = :erpc.send_request(controller, Flezha.Service.Observability, :tail,
+  [:flezha_runner, Map.put(context, :emit, self())])
+# each signal arrives as {:flezha_emit, signal}; the reply arrives when the tail ends
+```
+
+The operation watches that pid and ends when it exits or its node disconnects, releasing its
+subscription or listener, so stopping the receiving process is how a consumer lets go. The two
+tails also end when the context's optional `window_ms` runs out (the audit tail, too, when the
+writer closes), answering `{:ok, :caller_down | :done | :window_closed}`, and they hand on only
+what `query/2` or `read/2` would answer the same caller. A listen sends `:attached` first, then
+each listener event. Runner sessions arrive this way as the `runner_connected` and
+`runner_disconnected` signals of the `:flezha_runner` source, whose metadata names the
+`namespace` and the `runner`. A signal's `ts` is the controller's monotonic clock in
+microseconds; `Controller.status/1` answers the same clock as `monotonic_us`, so a consumer ages
+a signal against it rather than its own clock.
+
 ## Why a consumer's calls are recorded here
 
 A consumer reaches this controller over `:erpc` on a live node. There is no

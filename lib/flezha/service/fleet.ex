@@ -64,7 +64,7 @@ defmodule Flezha.Service.Fleet do
   @doc "The factories declared in `namespace`."
   @spec factories(String.t(), caller_context()) :: {:ok, [term()]} | {:error, term()}
   verb factories(namespace, caller_context), verb: :list_runners, args: [namespace: @namespace] do
-    {:ok, FleetManager.list_factories(namespace)}
+    FleetManager.list_factories(namespace)
   end
 
   @doc "The caller context a runner in `namespace` connects with."
@@ -72,7 +72,7 @@ defmodule Flezha.Service.Fleet do
   verb runner_caller_context(namespace, caller_context),
     verb: :list_runners,
     args: [namespace: @namespace] do
-    FleetManager.runner_caller_context(namespace)
+    {:ok, FleetManager.runner_caller_context(namespace)}
   end
 
   @doc "The nodes holding a hub for `namespace`."

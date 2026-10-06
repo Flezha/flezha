@@ -20,6 +20,12 @@ defmodule Flezha.Runner.FleetManager.Session do
   decides what becomes of the relays it held. The one thing this module
   keeps is the keepalive: the last runner of a namespace nobody else serves is
   held `:inactive` for its window rather than dropped.
+
+  A session's opening and its end are dispatched on the event bus, which the
+  convergence loop and the boot loader consume, and emitted as
+  `[:flezha, :runner, :connected | :disconnected]` telemetry with
+  `%{namespace:, runner:}`, which the telemetry bridge publishes on the
+  `:flezha_runner` observability source for consumers on other nodes.
   """
 
   alias Flezha.AuthZ.Quotas
@@ -359,6 +365,12 @@ defmodule Flezha.Runner.FleetManager.Session do
       %{members: :local}
     )
 
+    :telemetry.execute(
+      [:flezha, :runner, :disconnected],
+      %{count: 1},
+      %{namespace: namespace, runner: runner_id}
+    )
+
     state
   end
 
@@ -637,6 +649,14 @@ defmodule Flezha.Runner.FleetManager.Session do
       :runner_connected_event,
       {namespace, session_token},
       %{members: :local}
+    )
+
+    # The bus above reaches local processes only; this signal is what a
+    # consumer on another node tails (`:flezha_runner` source).
+    :telemetry.execute(
+      [:flezha, :runner, :connected],
+      %{count: 1},
+      %{namespace: namespace, runner: session_token}
     )
 
     Announce.sync(state)
