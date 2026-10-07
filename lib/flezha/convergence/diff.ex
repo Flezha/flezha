@@ -124,7 +124,7 @@ defmodule Flezha.Convergence.Diff do
       misbound_relays: Enum.reverse(misbound),
       parked_relays: Enum.reverse(parked),
       stalled_relays: stalled_refs(declared, verdicts),
-      resync_cells: resync_cells(facts),
+      resync_cells: resync_cells(facts, observed),
       missing_plugins: missing,
       extra_plugins: extra,
       unhealthy_plugins: unhealthy,
@@ -282,12 +282,17 @@ defmodule Flezha.Convergence.Diff do
   end
 
   # A Cell whose durable log stopped agreeing with its runner: a seq gap the
-  # WAL admission declared, or a compaction the Watchdog gave up on. The fact
-  # names the runner to resync against; the loop's table paces the attempts.
-  defp resync_cells(facts) do
-    for {{kind, cell_id}, %{args: %{runner_id: runner_id}}} <- facts,
+  # WAL admission declared, or a compaction the Watchdog gave up on. The resync
+  # goes to the runner the Cell's relay is bound to now, since the one the fact
+  # names may have reconnected since; that one only while the binding is
+  # unknown. The loop's table paces the attempts.
+  defp resync_cells(facts, observed) do
+    bound =
+      for {{_ns, rid}, %{bound_runner: r}} <- observed, is_binary(r), into: %{}, do: {rid, r}
+
+    for {{kind, {relay_id, _, _} = cell_id}, %{args: %{runner_id: runner_id}}} <- facts,
         kind in [:seq_gap, :compaction_gave_up],
-        do: {cell_id, runner_id, kind}
+        do: {cell_id, Map.get(bound, relay_id, runner_id), kind}
   end
 
   # A durable row naming a runner other than the one the relay is bound to:

@@ -73,10 +73,10 @@ impl Controller {
                 let Ok(s) = stream else { break };
                 counter.fetch_add(1, Ordering::SeqCst);
                 let write_half = s.try_clone().expect("clone control stream");
-                *writer_slot.lock().unwrap() = Some(FlezhaStream::Unix(write_half));
+                *writer_slot.lock().unwrap() = Some(FlezhaStream::unix(write_half));
                 let frames = Arc::clone(&frames);
                 let closed = Arc::clone(&closed);
-                thread::spawn(move || capture(FlezhaStream::Unix(s), frames, closed));
+                thread::spawn(move || capture(FlezhaStream::unix(s), frames, closed));
             }
         });
         controller
@@ -451,7 +451,7 @@ impl Scenario {
         secondary
             .set_read_timeout(Some(self.timeout))
             .map_err(|e| format!("the secondary stream would not take a timeout: {e}"))?;
-        let stream = FlezhaStream::Unix(secondary);
+        let stream = FlezhaStream::unix(secondary);
         let deadline = Instant::now() + self.timeout;
         let mut seen = 0;
         let mut other: Vec<String> = Vec::new();

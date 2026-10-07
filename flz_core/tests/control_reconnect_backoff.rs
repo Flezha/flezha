@@ -18,7 +18,7 @@
 
 use std::io::{Read, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::thread;
@@ -29,6 +29,8 @@ use flz_core::control_unit;
 use flz_core::runner::RunnerMessage;
 use flz_transport::service::payloader;
 use flz_transport::utility::socket_dir;
+
+mod common;
 
 /// Sessions the refusal phase drives. Open 1 is immediate; opens 2, 3 and 4
 /// are preceded by rungs 1, 2 and 3 of the `:sdk_reconnect` ladder —
@@ -130,7 +132,7 @@ fn await_reconnect(orx: &Receiver<RunnerMessage>) {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         match orx.recv_deadline(deadline) {
-            Ok(RunnerMessage::Reconnect(_)) => return,
+            Ok(RunnerMessage::ControlLost { .. }) => return,
             Ok(_) => continue,
             Err(e) => panic!("a session the controller closed must post a Reconnect: {e}"),
         }
@@ -186,21 +188,6 @@ fn assert_a_fresh_start_does_not_wait(
     );
 }
 
-/// A socket directory of this process's own, with the runner's environment
-/// pointed at it: the explicit rung of the socket ladder wins outright, so
-/// nothing this test does can reach a real controller's directory.
-fn isolated_socket_dir() -> PathBuf {
-    let mut dir = std::env::temp_dir();
-    dir.push(format!("flezha-kb111-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("socket dir");
-
-    std::env::set_var("FLEZHA_TRANSPORT", "uds");
-    std::env::set_var("FLEZHA_SOCKET_FILES_PATH", &dir);
-    std::env::set_var("FLEZHA_RUNNER_ID_PATH", dir.join("runner_id"));
-    dir
-}
-
 /// Sessions the controller accepts and closes without admitting the runner,
 /// back to back, as the coordinator drives them. Answers what they took.
 fn drive_refused_sessions(
@@ -216,7 +203,7 @@ fn drive_refused_sessions(
 
 #[test]
 fn a_refused_session_backs_the_reconnect_ladder_off() {
-    let dir = isolated_socket_dir();
+    let dir = common::isolated_socket_dir("kb111");
     let (release, released) = unbounded();
     let controller = Controller::refusing(&dir, released);
 

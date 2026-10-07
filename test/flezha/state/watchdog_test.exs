@@ -11,7 +11,10 @@ defmodule Flezha.State.WatchdogTest do
 
   use FlezhaTest.Case, fixtures: [:tmp_app_data, :state_tree, :env], async: false
 
+  use Mimic
+
   import FlezhaTest.Helper.MessageTestHelper, only: [become_loop: 0]
+  import FlezhaTest.Helper.MimicGlobal
 
   import Flezha.State.TestHelpers, only: [uniq: 0]
   import FlezhaTest.Helper.NodeTestHelper, only: [override_log_level: 1, wait_until: 3]
@@ -21,7 +24,7 @@ defmodule Flezha.State.WatchdogTest do
   alias Flezha.State.DurabilityTier
   alias Flezha.State.DurabilityTier.Shipper
   alias Flezha.State.Paths
-  alias Flezha.State.{Supervisor, TestHelpers, WalWriter, Watchdog}
+  alias Flezha.State.{Recovery, Supervisor, TestHelpers, WalWriter, Watchdog}
   alias Flezha.State.WriterRegistry
   alias FlezhaTest.Helper.DurabilityBackendStub
 
@@ -266,6 +269,21 @@ defmodule Flezha.State.WatchdogTest do
     # In-flight guard: the next sweep does not re-enqueue.
     :ok = Watchdog.sweep_now()
     refute_received {:compaction_trigger, _, %{key: ^key}}
+  end
+
+  # Fails as: an idle Cell's compaction keeps going to the runner session that
+  # last wrote it, which reconnected since, and gives up for good.
+  test "a compaction goes to the runner the relay is bound to now", %{header: header} do
+    set_mimic_global_until_exit()
+    Application.put_env(:flezha, :default_compact_after_bytes, 16)
+
+    stub(Recovery, :bound_runners, fn -> {:ok, %{"TestRelay" => "exec-live"}} end)
+
+    {key, _w} = owned_writer("bound_", header, "0123456789abcdef")
+    :ok = Watchdog.sweep_now()
+
+    assert_receive {:compaction_trigger, _meas, %{key: ^key} = meta}, 1_000
+    assert meta.runner == "exec-live"
   end
 
   test "a small-but-old WAL triggers an age compaction", %{header: header} do

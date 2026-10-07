@@ -48,7 +48,7 @@ fn scenario() {
     let controller = Controller::start(&crate::lifecycle::socket_dir());
     crate::lifecycle::declares_and_starts(ctx, &controller);
     let (sock, _peer) = std::os::unix::net::UnixStream::pair().unwrap();
-    let stream = Arc::new(FlezhaStream::Unix(sock));
+    let stream = Arc::new(FlezhaStream::unix(sock));
 
     let act = deliver(ctx, &stream, &[Some(4), Some(5)]);
     the_refusals_name_their_rule(ctx, act.token);

@@ -9,7 +9,6 @@
 //! it is counted as a drop-oldest shed.
 
 use std::collections::VecDeque;
-use std::io::Write;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -195,7 +194,7 @@ fn send_oneshot(frame: &[u8]) -> bool {
         .expect("secondary stream lock poisoned")
         .as_ref()
     {
-        Some(stream) => (&**stream).write_all(frame).is_ok(),
+        Some(stream) => stream.write_frame(frame).is_ok(),
         None => false,
     }
 }
@@ -323,10 +322,7 @@ impl Verdict {
 pub fn write(class: Class, stream: Option<&FlezhaStream>, frame: Vec<u8>) -> Verdict {
     let refusal = match stream {
         Some(stream) if class == Class::Preview => stream.try_write_frame(&frame).err(),
-        Some(stream) => {
-            let mut w: &FlezhaStream = stream;
-            w.write_all(&frame).err()
-        }
+        Some(stream) => stream.write_frame(&frame).err(),
         None => Some(std::io::Error::new(
             std::io::ErrorKind::NotConnected,
             "no stream bound",
@@ -479,7 +475,7 @@ pub(crate) fn reconnect_requested_for_test() -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::io::Read;
+    use std::io::{Read, Write};
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex as StdMutex};
 
@@ -602,6 +598,59 @@ mod tests {
             assert_eq!(ring_len_for_test(), 0, "{class:?} must hold nothing");
         }
         reset_state();
+    }
+
+    /// Fails as: the controller reads a torn header off a data stream several
+    /// threads write, closes it as `frame_too_large`, and the runner reconnects.
+    #[test]
+    fn concurrent_writers_never_tear_a_frame() {
+        let _g = super::test_guard();
+        reset_state();
+
+        const FRAMES: usize = 16;
+        const BODY: usize = 512 * 1024;
+        let (stream, ctrl_end) = crate::test_support::stream_pair();
+        ctrl_end
+            .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+            .unwrap();
+        let reader = std::thread::spawn(move || {
+            for _ in 0..FRAMES * 2 {
+                let (_, body, _) = flz_transport::service::payloader::extract_payload(&ctrl_end)
+                    .expect("a whole frame");
+                assert!(
+                    body.len() == BODY && body.iter().all(|b| *b == body[0]),
+                    "a frame arrived with another writer's bytes inside it"
+                );
+            }
+        });
+        // One writer on a cloned handle: a clone is the same socket, so the same lock.
+        let handles = [
+            Arc::clone(&stream),
+            Arc::new(stream.clone_handle().unwrap()),
+        ];
+        let writers: Vec<_> = [0xAA_u8, 0xBB]
+            .into_iter()
+            .zip(handles)
+            .map(|(fill, stream)| {
+                std::thread::spawn(move || {
+                    for _ in 0..FRAMES {
+                        let frame = flz_transport::service::payloader::build_without_metadata(
+                            "output",
+                            &vec![fill; BODY],
+                        );
+                        write(Class::Output, Some(&stream), frame);
+                    }
+                })
+            })
+            .collect();
+
+        let read = reader.join();
+        writers.into_iter().for_each(|w| w.join().unwrap());
+        reset_state();
+        assert!(
+            read.is_ok(),
+            "the controller's side could not parse the stream"
+        );
     }
 
     #[test]

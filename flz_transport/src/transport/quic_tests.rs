@@ -82,7 +82,7 @@ fn peer_ends_one_stream(case: Case) -> io::Error {
         let (mine, peer) = UnixStream::pair().expect("a socket pair");
         peer.shutdown(Shutdown::Write)
             .expect("the peer ends its half");
-        return extract_payload(&mut FlezhaStream::Unix(mine)).expect_err("the stream has ended");
+        return extract_payload(&mut FlezhaStream::unix(mine)).expect_err("the stream has ended");
     }
 
     let mut c = Client::connected();

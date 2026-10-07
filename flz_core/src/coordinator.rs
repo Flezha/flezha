@@ -362,6 +362,11 @@ impl Coordinator {
                 );
             }
             RunnerMessage::Reconnect(reason) => self.reconnect(reason),
+            RunnerMessage::ControlLost { stream, reason } => {
+                if Arc::ptr_eq(&stream, &self.control_stream) {
+                    self.reconnect(reason);
+                }
+            }
             // A failed keepalive write means the control stream died; the
             // reader loop detects the same and drives reconnect.
             RunnerMessage::SendControlKeepalive => {
@@ -599,7 +604,10 @@ fn handle_reconnect(
     let (answered, new_stream, new_quic) =
         control_unit::open_reconnect(namespace.to_string(), Arc::clone(declared), otx_arc.clone());
 
-    *control_stream = new_stream;
+    // Closed, not just dropped: its reader holds the socket open, and a
+    // controller that keeps a superseded session lingers on it.
+    let retired = std::mem::replace(control_stream, new_stream);
+    let _ = retired.shutdown(std::net::Shutdown::Both);
     runner.set_quic_client(new_quic);
     runner.set_connect_answered(answered);
 

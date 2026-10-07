@@ -309,7 +309,7 @@ fn off_the_tier_every_sink_output_of_a_called_input_carries_the_call() {
     let instance = answering_instance(&id, false);
     let producer = Arc::clone(&instance.cells[0][0]);
     let (stream, controller_end) = stream_pair();
-    let controller_end = flz_transport::transport::FlezhaStream::Unix(controller_end);
+    let controller_end = flz_transport::transport::FlezhaStream::unix(controller_end);
     let mut frames = Vec::new();
     for call in [Some("w:tok"), None] {
         let (work, effect) = answering_work(Arc::clone(&stream), call);
@@ -566,7 +566,7 @@ fn off_the_tier_a_request_carries_the_call_stamps_and_its_key() {
     let instance = calling_instance(&id, false);
     let producer = Arc::clone(&instance.cells[0][0]);
     let (stream, controller_end) = stream_pair();
-    let controller_end = flz_transport::transport::FlezhaStream::Unix(controller_end);
+    let controller_end = flz_transport::transport::FlezhaStream::unix(controller_end);
     let (work, effect) = calling_work(Arc::clone(&stream));
     let before = crate::util::wall_now_ms();
     settle_item(&producer, &work, effect, None);

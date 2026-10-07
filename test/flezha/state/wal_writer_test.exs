@@ -194,6 +194,48 @@ defmodule Flezha.State.WalWriterTest do
     end
   end
 
+  describe "a snapshot ahead of the WAL" do
+    setup do
+      become_loop()
+      :ok
+    end
+
+    # Fails as: a restore ships the snapshot's seq, the runner resumes past it,
+    # and the writer refuses every Change as a gap for good.
+    test "a writer reopened over a newer snapshot resumes from the snapshot's seq",
+         %{cell_id: pid} do
+      {:ok, _} = Supervisor.find_or_start(pid)
+      {:ok, srv} = Supervisor.lookup(pid) |> ok!()
+      header = TestHelpers.stub_header()
+
+      :ok = WalWriter.append(srv, 0, header, "a")
+      {:ok, _} = StateSnapshot.write_snapshot(pid, 50, header, "full-state")
+      # Closed and booted again from disk, as a controller restart leaves it:
+      # nothing yet names its owning runner.
+      TestHelpers.close_and_await(srv, pid)
+      {:ok, _} = Supervisor.find_or_start(pid)
+      {:ok, srv} = Supervisor.lookup(pid) |> ok!()
+
+      assert WalWriter.last_persisted_seq(srv) == 50
+      assert :ok = WalWriter.append(srv, 51, header, "b")
+    end
+
+    test "a snapshot past an open gap closes it and appends resume", %{cell_id: pid} do
+      {:ok, _} = Supervisor.find_or_start(pid)
+      {:ok, srv} = Supervisor.lookup(pid) |> ok!()
+      header = TestHelpers.stub_header()
+
+      assert :ok = WalWriter.append(srv, 0, header, "a", "exec-1")
+      WalWriter.append_async(srv, 7, header, "z", "exec-1")
+      assert_receive {:declare, :seq_gap, ^pid, _}, 1_000
+
+      assert {:ok, _} = StateSnapshot.write_snapshot(pid, 30, header, "full-state")
+      assert_receive {:declare, :seq_gap_closed, ^pid, %{}}, 1_000
+      assert WalWriter.last_persisted_seq(srv) == 30
+      assert :ok = WalWriter.append(srv, 31, header, "b", "exec-1")
+    end
+  end
+
   describe "scan_for_last_valid_seq" do
     test "recovers last seq across a re-open", %{cell_id: pid} do
       {:ok, _} = Supervisor.find_or_start(pid)

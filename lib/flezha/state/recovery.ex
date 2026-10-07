@@ -58,23 +58,33 @@ defmodule Flezha.State.Recovery do
   """
   @spec resolve_runner(tuple()) :: {:ok, binary()} | {:error, term()}
   def resolve_runner({rc, _sh, _pk}) do
-    case HubManager.get_registry("default") do
-      {:ok, registry} ->
-        match =
-          Enum.find_value(registry, fn {_relay_id, entry} ->
-            {cspec, _node_pids, metadata} = normalize_entry(entry)
-            tag = Map.get(metadata, :tag)
+    with {:ok, bound} <- bound_runners() do
+      case Map.fetch(bound, rc) do
+        {:ok, eid} -> {:ok, eid}
+        :error -> {:error, {:no_owning_runner, rc}}
+      end
+    end
+  end
 
-            if is_binary(tag) and relay_class(cspec) == rc, do: tag
-          end)
+  @doc """
+  The runner every relay_class is bound to now, from the ProcessHub registry's
+  tags. A Cell's writer names the runner that last wrote it, which an idle Cell
+  keeps naming after that runner has reconnected; this is the one to ask.
+  """
+  @spec bound_runners() :: {:ok, %{binary() => binary()}} | {:error, term()}
+  def bound_runners() do
+    with {:ok, registry} <- HubManager.get_registry("default") do
+      bound =
+        for {_relay_id, entry} <- registry,
+            {cspec, _node_pids, metadata} = normalize_entry(entry),
+            tag = Map.get(metadata, :tag),
+            is_binary(tag),
+            rc = relay_class(cspec),
+            rc != nil,
+            into: %{},
+            do: {rc, tag}
 
-        case match do
-          nil -> {:error, {:no_owning_runner, rc}}
-          eid -> {:ok, eid}
-        end
-
-      {:error, reason} ->
-        {:error, reason}
+      {:ok, bound}
     end
   end
 

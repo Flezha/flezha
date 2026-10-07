@@ -515,6 +515,28 @@ defmodule Flezha.Convergence.DiffTest do
       assert delta.unbound_relays == []
       assert delta.missing_plugins == []
     end
+
+    # Fails as: after a runner reconnects, a Cell's resync keeps going to the
+    # session that ended (`no_control_channel`), its WAL never advances again,
+    # and the relay stays degraded with `wal_frozen`.
+    test "a Cell is resynced against the runner its relay is bound to now" do
+      gap = {"r", "op", "k"}
+      gave_up = {"unbound", "op", "k"}
+
+      facts = %{
+        {:seq_gap, gap} => %{at: 0, args: %{runner_id: "e_ended"}},
+        {:compaction_gave_up, gave_up} => %{at: 0, args: %{runner_id: "e_named"}}
+      }
+
+      reality = %{relays: %{{:ns, "r"} => %{bound_runner: "e_live", pid: self()}}}
+
+      delta = Diff.compute(%Intent{relays: []}, reality, %{}, facts)
+
+      assert Enum.sort(delta.resync_cells) == [
+               {gap, "e_live", :seq_gap},
+               {gave_up, "e_named", :compaction_gave_up}
+             ]
+    end
   end
 
   describe "Planner.plan/3" do

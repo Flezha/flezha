@@ -26,7 +26,7 @@ pub(crate) fn spin_until(what: &str, done: impl Fn() -> bool) {
 /// A connected pair: the SDK's end as a `FlezhaStream`, the controller's raw.
 pub fn stream_pair() -> (Arc<FlezhaStream>, UnixStream) {
     let (sdk_end, ctrl_end) = UnixStream::pair().expect("UnixStream::pair");
-    (Arc::new(FlezhaStream::Unix(sdk_end)), ctrl_end)
+    (Arc::new(FlezhaStream::unix(sdk_end)), ctrl_end)
 }
 
 /// Push `item` and assert the mailbox is now full.

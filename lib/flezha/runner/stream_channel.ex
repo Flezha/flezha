@@ -98,6 +98,9 @@ defmodule Flezha.Runner.StreamChannel do
     # threshold is stalled — a silent data-plane wedge that raises no
     # `{:flz_closed}` write-error. Primary channels are send-only (the
     # runner never writes them), so the check would flag them forever.
+    # Trapped so a session's shutdown runs `terminate/2`: a handle left in the
+    # persistent_term pins its listener's descriptors for the node's lifetime.
+    Process.flag(:trap_exit, true)
     liveness_ref = LivenessCounters.register_channel(runner_id, name)
     publish_stream(name, nil, liveness_ref)
 

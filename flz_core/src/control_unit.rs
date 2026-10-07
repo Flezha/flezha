@@ -180,13 +180,21 @@ fn reconnect_backoff(attempt: u32) -> Duration {
 /// not admission: a controller that writes `assign_runner_id` and then fails
 /// the connect, or severs the data streams before the session is whole, would
 /// otherwise be retried as fast as the kernel allows.
-fn end_session(otx: &Mutex<Sender<RunnerMessage>>, completed: bool, reason: &'static str) {
+fn end_session(
+    otx: &Mutex<Sender<RunnerMessage>>,
+    stream: &Arc<FlezhaStream>,
+    completed: bool,
+    reason: &'static str,
+) {
     if completed {
         FAILED_SESSIONS.store(0, Ordering::Relaxed);
     } else {
         FAILED_SESSIONS.fetch_add(1, Ordering::Relaxed);
     }
-    let _ = otx.lock().unwrap().send(RunnerMessage::Reconnect(reason));
+    let _ = otx.lock().unwrap().send(RunnerMessage::ControlLost {
+        stream: Arc::clone(stream),
+        reason,
+    });
 }
 
 /// The diagnosis is printed once per retry loop; the per-attempt line is
@@ -245,7 +253,7 @@ fn try_open_uds(
     // opened, and where a reconnect returns to.
     socket_dir::note_connected(&socket_path);
 
-    let stream_box = Arc::new(FlezhaStream::Unix(stream));
+    let stream_box = Arc::new(FlezhaStream::unix(stream));
 
     Ok(sock_conn(namespace, declared, stream_box, itx, otx))
 }
@@ -336,7 +344,7 @@ fn sock_conn(
             "control channel init send failed (peer vanished mid-handshake); reconnecting: {}",
             e
         );
-        end_session(&otx, false, "write_error");
+        end_session(&otx, &stream_box, false, "write_error");
         return (answered, stream_box);
     }
 
@@ -459,7 +467,7 @@ fn read_loop(
                             e
                         );
                     }
-                    end_session(otx, live.handshake_completed(), reason);
+                    end_session(otx, stream, live.handshake_completed(), reason);
                     return;
                 }
             },
@@ -720,7 +728,7 @@ mod tests {
 
         let reconnected = matches!(
             orx.recv_timeout(Duration::from_secs(2)),
-            Ok(RunnerMessage::Reconnect(_))
+            Ok(RunnerMessage::ControlLost { .. })
         );
         assert!(
             reconnected,
@@ -764,7 +772,7 @@ mod tests {
         let waited = started.elapsed();
         ctrl.join().ok();
         let forwarded = std::iter::from_fn(|| orx.recv_timeout(Duration::from_millis(500)).ok())
-            .take_while(|message| !matches!(message, RunnerMessage::Reconnect(_)))
+            .take_while(|message| !matches!(message, RunnerMessage::ControlLost { .. }))
             .collect();
         (answer, waited, forwarded)
     }
@@ -867,7 +875,7 @@ mod tests {
         while std::time::Instant::now() < deadline {
             match orx.recv_timeout(Duration::from_millis(200)) {
                 Ok(RunnerMessage::HandleCommandAction(..)) => saw_command = true,
-                Ok(RunnerMessage::Reconnect(_)) => {
+                Ok(RunnerMessage::ControlLost { .. }) => {
                     reconnected = true;
                     break;
                 }
@@ -909,7 +917,7 @@ mod tests {
             Arc::new(Mutex::new(otx)),
         );
 
-        let ctrl: FlezhaStream = FlezhaStream::Unix(ctrl_end);
+        let ctrl: FlezhaStream = FlezhaStream::unix(ctrl_end);
         let (payload_id, message, _meta) = payloader::extract_payload(&ctrl).unwrap();
         assert_eq!(payload_id, "connect_control_channel");
         let json = String::from_utf8(message).unwrap();
@@ -943,7 +951,7 @@ mod tests {
         );
         send_keepalive_ping(&stream).unwrap();
 
-        let ctrl: FlezhaStream = FlezhaStream::Unix(ctrl_end);
+        let ctrl: FlezhaStream = FlezhaStream::unix(ctrl_end);
         let (first, _message, _meta) = payloader::extract_payload(&ctrl).unwrap();
         assert_eq!(first, "connect_control_channel");
         let (second, _message, _meta) = payloader::extract_payload(&ctrl).unwrap();
@@ -972,7 +980,7 @@ mod tests {
                 None,
                 Arc::new(Mutex::new(otx)),
             );
-            let ctrl: FlezhaStream = FlezhaStream::Unix(ctrl_end);
+            let ctrl: FlezhaStream = FlezhaStream::unix(ctrl_end);
             let (_id, message, _meta) = payloader::extract_payload(&ctrl).unwrap();
             String::from_utf8(message).unwrap()
         };
@@ -1008,7 +1016,7 @@ mod tests {
             Arc::new(Mutex::new(otx)),
         );
 
-        let ctrl: FlezhaStream = FlezhaStream::Unix(ctrl_end);
+        let ctrl: FlezhaStream = FlezhaStream::unix(ctrl_end);
         let (_payload_id, message, _meta) = payloader::extract_payload(&ctrl).unwrap();
         let json = String::from_utf8(message).unwrap();
         assert!(
@@ -1025,7 +1033,7 @@ mod tests {
         let (stream, ctrl_end) = stream_pair();
         send_keepalive_ping(&stream).unwrap();
 
-        let ctrl: FlezhaStream = FlezhaStream::Unix(ctrl_end);
+        let ctrl: FlezhaStream = FlezhaStream::unix(ctrl_end);
         let (payload_id, message, _meta) = payloader::extract_payload(&ctrl).unwrap();
         assert_eq!(payload_id, liveness::CONTROL_PING_PAYLOAD_ID);
         let ping = Ping::decode(message.as_slice()).expect("ping decodes");

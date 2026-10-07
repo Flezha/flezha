@@ -100,6 +100,25 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
     end
   end
 
+  describe "session teardown" do
+    # Fails as: every runner reconnect leaves its streams' handles published,
+    # pinning the listener's descriptors until the controller hits EMFILE.
+    test "a supervisor shutdown unpublishes the channel's stream handle" do
+      name = :stream_channel_teardown_test
+
+      start_supervised!(
+        Supervisor.child_spec({StreamChannel, {"ce_test", name, :secondary}}, id: name)
+      )
+
+      :ok = GenServer.call(name, {:bind, :ref_teardown})
+      assert {:ref_teardown, _} = :persistent_term.get({StreamChannel, name})
+
+      :ok = stop_supervised(name)
+
+      assert :persistent_term.get({StreamChannel, name}, :erased) == :erased
+    end
+  end
+
   describe "rebind contract" do
     test "fresh channel has nil stream_ref", %{pid: pid} do
       assert GenServer.call(pid, :stream_ref_status) == nil

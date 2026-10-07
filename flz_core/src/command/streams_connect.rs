@@ -1,7 +1,6 @@
-use std::io::Write;
 #[cfg(unix)]
 use std::os::unix::net::UnixStream;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::thread;
 
 use flz_transport::service::payloader;
@@ -57,9 +56,8 @@ fn answer(
     }
 }
 
-/// One key's pair as a transport opened it: the primary, the secondary, and
-/// the secondary's handle the runner's table keeps.
-type OpenedPair = (FlezhaStream, FlezhaStream, FlezhaStream);
+/// One key's pair as a transport opened it: the primary and the secondary.
+type OpenedPair = (FlezhaStream, FlezhaStream);
 
 /// The pair set over UDS. Controller→SDK reads on primary, SDK→Controller
 /// writes on secondary: reads and writes on one descriptor cost ~4× in
@@ -70,14 +68,7 @@ fn connect_uds(cmd: &ConnectSocket, runner: &mut RunnerNode) -> Result<(), Strin
     connect_pairs(cmd, runner, "uds", |_key| {
         let primary = connect_unix(&runner_id, "primary")?;
         let secondary = connect_unix(&runner_id, "secondary")?;
-        let stored = secondary
-            .try_clone()
-            .map_err(|e| format!("secondary stream clone failed: {e}"))?;
-        Ok((
-            FlezhaStream::Unix(primary),
-            FlezhaStream::Unix(secondary),
-            FlezhaStream::Unix(stored),
-        ))
+        Ok((FlezhaStream::unix(primary), FlezhaStream::unix(secondary)))
     })
 }
 
@@ -89,12 +80,7 @@ fn connect_quic(cmd: &ConnectSocket, runner: &mut RunnerNode) -> Result<(), Stri
     connect_pairs(cmd, runner, "quic", |key| {
         let primary = open_quic(&client, "primary", protocol::STREAM_TYPE_PRIMARY, key)?;
         let secondary = open_quic(&client, "secondary", protocol::STREAM_TYPE_SECONDARY, key)?;
-        let stored = FlezhaStream::Quic(secondary.clone_handle());
-        Ok((
-            FlezhaStream::Quic(primary),
-            FlezhaStream::Quic(secondary),
-            stored,
-        ))
+        Ok((FlezhaStream::Quic(primary), FlezhaStream::Quic(secondary)))
     })
 }
 
@@ -132,9 +118,12 @@ fn connect_pairs(
     let mut fresh: Vec<(u32, Arc<FlezhaStream>)> = Vec::new();
 
     for key in 0..cmd.sockets_count {
-        let (primary, secondary, stored) = open_pair(key)?;
-        fresh.push((key, Arc::new(stored)));
-        stream_pairs.push((primary, Arc::new(secondary)));
+        let (primary, secondary) = open_pair(key)?;
+        let secondary = Arc::new(secondary);
+        // The runner's table holds the secondary every output already writes
+        // to, so the data heartbeat shares its frame lock.
+        fresh.push((key, Arc::clone(&secondary)));
+        stream_pairs.push((primary, secondary));
     }
 
     runner
@@ -175,15 +164,11 @@ fn install_state_sink(pairs: &[(FlezhaStream, Arc<FlezhaStream>)]) {
         // restored timer ride it when they have no connection of their own.
         state_sink::set_secondary_stream(Some(Arc::clone(secondary)));
         let sink_stream = Arc::clone(secondary);
-        // The Mutex serializes writes from the single flusher thread —
-        // belt-and-braces given that the flusher has only one writer.
-        let writer = Arc::new(Mutex::new(sink_stream));
         let send_fn: SendFrameFn = Arc::new(
             move |payload_id: &str, frame: &[u8]| -> Result<(), SendError> {
                 let payload = payloader::build_without_metadata(payload_id, frame);
-                let stream = writer.lock().map_err(|e| SendError::Other(e.to_string()))?;
-                (&**stream)
-                    .write_all(&payload)
+                sink_stream
+                    .write_frame(&payload)
                     .map_err(|e| SendError::TransportDown(e.to_string()))
             },
         );

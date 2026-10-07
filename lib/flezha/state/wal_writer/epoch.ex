@@ -142,10 +142,10 @@ defmodule Flezha.State.WalWriter.Epoch do
     Admission.open_gap(%{state | awaiting_baseline?: true}, runner_id, :baseline_seed)
   end
 
-  # Baseline established: the pulled snapshot's seq supersedes the shed
-  # deltas, so adopt it and let the runner's next delta append contiguously.
-  def establish_baseline(%{awaiting_baseline?: true, last_persisted_seq: last} = state, seq)
-      when seq > last do
+  # Baseline established: a snapshot ahead of the WAL supersedes what the WAL
+  # lacks (the deltas a cold takeover shed, or those a gap refused), so adopt
+  # its seq and let the runner's next delta append contiguously.
+  def establish_baseline(%{last_persisted_seq: last} = state, seq) when seq > last do
     now = State.now_ms()
     Metrics.put(state.metrics, :wal_seq, seq)
 

@@ -51,7 +51,7 @@ fn c_abi_full_scenario() {
     // The peer half is held for the whole scenario: dropping it would break
     // every routed write.
     let (sock, _peer) = std::os::unix::net::UnixStream::pair().unwrap();
-    let stream = Arc::new(FlezhaStream::Unix(sock));
+    let stream = Arc::new(FlezhaStream::unix(sock));
 
     let act = routes_two_entry_payloads(ctx, &stream);
     let act = abandon_re_hands_the_batch(ctx, act);

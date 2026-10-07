@@ -2,6 +2,50 @@
 
 ## Unreleased
 
+### Fixed: a Cell's WAL no longer freezes behind a newer snapshot
+
+A writer took its seq from the WAL file alone, and adopted a snapshot's seq only while it awaited
+a cold baseline. A compaction that left the WAL empty, followed by a controller restart, or a
+snapshot that landed while a seq gap was open, left the writer behind its own newest snapshot. A
+restore then shipped the snapshot's seq, the runner resumed past it, and every Change was refused
+as a gap: the Cell's state stopped persisting and its relay stayed `degraded` (`wal_frozen`). A
+writer now boots from whichever of the WAL and the newest snapshot reaches further, and any
+snapshot ahead of it is adopted as its baseline, closing an open gap.
+
+### Fixed: a Cell is resynced and compacted against the runner its relay is bound to now
+
+A seq gap or a compaction the Watchdog gave up on was resynced against the runner the fact named
+when it was declared, and the Watchdog sent compactions to the runner that last wrote the Cell.
+After that runner reconnected under a new session, and for an idle Cell whose writer still named
+the old one, every compaction gave up and every resync went to a session that had ended
+(`resync dispatch failed … no_control_channel`), so the Cell never recovered. Both now go to the
+runner the relay is bound to (`Flezha.State.Recovery.bound_runners/0`), and to the named one only
+while that binding is unknown.
+
+### Fixed: a runner no longer drops into a reconnect every idle window
+
+When the runner reconnected for a reason other than its control reader (a data-stream write
+flood, a controller request), the replaced session's reader kept its socket open, and one idle
+window later its timeout ended the session that replaced it, whose reader then did the same to
+the next. The runner reconnected every 45 s for as long as it ran. A reader's end is now honoured
+only for the live session, and the coordinator closes the control stream it replaces.
+
+### Fixed: frames on one data stream can no longer interleave
+
+The flusher's cell-state records, plugin outputs from every poll worker and the data heartbeat
+share a runner's first secondary stream, and nothing serialized them: the kernel may queue a
+large write in pieces, so another writer's frame could land inside it and the controller closed
+the stream as `frame_too_large`. Every frame on a Unix stream is now written whole under a lock
+shared by all handles cloned from it. `FlezhaStream::Unix` holds a `UnixWire`; build one with
+`FlezhaStream::unix(stream)`.
+
+### Fixed: a runner's reconnects no longer exhaust the controller's file descriptors
+
+A stream channel published its stream handle to a persistent term and unpublished it only in
+`terminate/2`, which a supervisor shutdown never ran. Every runner session left 16 handles behind,
+each pinning its listener's wake descriptor, until the controller could open no socket at all
+(`Too many open files`) and refused every runner.
+
 ### Fixed: a cluster of controllers shares one authorization state
 
 Tokens, role bindings, namespaces and the bootstrap claim were kept per controller, so a token

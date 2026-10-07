@@ -35,6 +35,7 @@ defmodule Flezha.State.Watchdog do
     DurabilityTier,
     Paths,
     PersistenceResolver,
+    Recovery,
     WalWriter,
     WriterRegistry
   }
@@ -289,11 +290,17 @@ defmodule Flezha.State.Watchdog do
   # directly so a failed dispatch still backs off until the timeout sweep
   # clears it — is the shared guard that keeps size+age to one enqueue.
   defp sweep_compaction_triggers(state, now) do
+    bound =
+      case Recovery.bound_runners() do
+        {:ok, bound} -> bound
+        {:error, _} -> %{}
+      end
+
     cell_statuses()
     |> Enum.reduce(state, fn {{rc, sh, _pk} = cell_id, status}, acc ->
       with false <- Map.has_key?(acc.compactions, cell_id),
            true <- Backoff.eligible?(acc.backoff, {:compaction, cell_id}, now),
-           runner_id when is_binary(runner_id) <- status.owning_runner,
+           runner_id when is_binary(runner_id) <- Map.get(bound, rc, status.owning_runner),
            trigger when trigger != nil <- compaction_trigger(status, now, rc, sh) do
         flag_compaction_trigger(cell_id, runner_id, status, trigger)
         %{acc | compactions: Map.put(acc.compactions, cell_id, {now, runner_id})}

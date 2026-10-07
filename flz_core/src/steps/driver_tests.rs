@@ -169,7 +169,7 @@ impl Wire {
         let (stream, controller_end) = stream_pair();
         let (tx, frames) = unbounded();
         thread::spawn(move || {
-            let controller_end = FlezhaStream::Unix(controller_end);
+            let controller_end = FlezhaStream::unix(controller_end);
             while let Ok(frame) = payloader::extract_payload(&controller_end) {
                 if tx.send(frame).is_err() {
                     break;

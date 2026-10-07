@@ -404,9 +404,9 @@ defmodule Flezha.State.WalWriter do
   # cut). The cut runs in this loop — under the effectively-once tier every
   # output rides it — so it costs the tail, never the file. A cut with nothing
   # below it (a retention tick on a writer compaction already cut), or with too
-  # little below it to be worth a rewrite yet, answers at once; only a writer
-  # awaiting its baseline still records the seq, which is what establishes the
-  # baseline. The dedup window releases the records in every case.
+  # little below it to be worth a rewrite yet, answers at once; a seq ahead of
+  # the writer is still recorded, since that snapshot is its new baseline. The
+  # dedup window releases the records in every case.
   def handle_call({:truncate_up_to, seq, opts}, _from, state) do
     min_bytes = Keyword.get(opts, :min_bytes, 0)
     state = trim_header_index(state, seq)
@@ -421,11 +421,8 @@ defmodule Flezha.State.WalWriter do
       {:ok, _cut, file, seq_index} ->
         {:reply, :ok, after_prefix_cut(%{state | file_handle: file, seq_index: seq_index}, seq)}
 
-      :none when state.awaiting_baseline? ->
-        {:reply, :ok, Settlement.persist_dedup(Epoch.establish_baseline(state, seq))}
-
       :none ->
-        {:reply, :ok, state}
+        {:reply, :ok, Epoch.establish_baseline(state, seq)}
 
       # The file is gone from under a queued cut (its directory removed), or a
       # record on the way to the floor was refused. Either way nothing was cut

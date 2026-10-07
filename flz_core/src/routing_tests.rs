@@ -22,7 +22,7 @@ const BODY: &[u8] = b"the relay's only output";
 fn dead_stream() -> Arc<FlezhaStream> {
     let (near, far) = UnixStream::pair().expect("a socket pair");
     drop(far);
-    Arc::new(FlezhaStream::Unix(near))
+    Arc::new(FlezhaStream::unix(near))
 }
 
 fn sink_metadata() -> HashMap<String, String> {
@@ -568,7 +568,7 @@ fn a_held_plugin_frame_reaches_the_stream_the_reconnect_wires() {
     let (near, mut far) = UnixStream::pair().expect("a socket pair");
     far.set_read_timeout(Some(Duration::from_secs(2)))
         .expect("a read deadline, so a lost frame fails instead of hanging");
-    state_sink::set_secondary_stream(Some(Arc::new(FlezhaStream::Unix(near))));
+    state_sink::set_secondary_stream(Some(Arc::new(FlezhaStream::unix(near))));
     let sink: SendFrameFn = Arc::new(|_payload_id: &str, _frame: &[u8]| Ok(()));
     state_sink::install_global_sink(sink);
 

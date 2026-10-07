@@ -210,7 +210,7 @@ fn a_full_stream_refuses_a_part_without_waiting() {
     };
     socket.set_nonblocking(true).unwrap();
     for size in [4096, 1] {
-        while (&*socket).write(&vec![0u8; size]).is_ok() {}
+        while (&**socket).write(&vec![0u8; size]).is_ok() {}
     }
     socket.set_nonblocking(false).unwrap();
 

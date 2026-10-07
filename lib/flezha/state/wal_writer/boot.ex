@@ -13,7 +13,18 @@ defmodule Flezha.State.WalWriter.Boot do
   """
 
   alias Flezha.Relay.ClassRegistry
-  alias Flezha.State.{InputLog, Metrics, Outbox, Paths, RecordFrame, SeqIndex, TaskJournal}
+
+  alias Flezha.State.{
+    InputLog,
+    Metrics,
+    Outbox,
+    Paths,
+    RecordFrame,
+    SeqIndex,
+    Snapshot,
+    TaskJournal
+  }
+
   alias Flezha.State.WalWriter.{Admission, Epoch, RemoteGate, Settlement, State}
 
   @doc "The struct a writer starts from, before any disk I/O."
@@ -81,8 +92,11 @@ defmodule Flezha.State.WalWriter.Boot do
     {:ok, file} = :file.open(state.wal_path, [:raw, :read, :write, :binary])
 
     case RecordFrame.scan_for_last_valid_seq(file, state.wal_path) do
-      {:ok, last_seq} -> opened(%{state | file_handle: file}, file, last_seq)
-      {:error, refusal} -> refused(%{state | file_handle: file}, refusal)
+      {:ok, last_seq} ->
+        opened(%{state | file_handle: file}, file, max(last_seq, snapshot_seq(state.cell_id)))
+
+      {:error, refusal} ->
+        refused(%{state | file_handle: file}, refusal)
     end
   end
 
@@ -93,6 +107,16 @@ defmodule Flezha.State.WalWriter.Boot do
   defp refused(state, refusal) do
     Metrics.put(state.metrics, :wal_size_bytes, RecordFrame.file_size(state.wal_path))
     %{state | refusal: refusal}
+  end
+
+  # A compaction can leave the WAL empty with every Change folded into the
+  # newest snapshot; the writer resumes from whichever reaches further, which
+  # is the seq a restore ships and the runner resumes after.
+  defp snapshot_seq(cell_id) do
+    case Snapshot.latest_snapshot(cell_id) do
+      {seq, _path} -> seq
+      nil -> -1
+    end
   end
 
   defp opened(state, file, last_seq) do

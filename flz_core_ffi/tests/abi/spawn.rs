@@ -123,7 +123,7 @@ fn scenario() {
     let controller = Controller::start(&crate::lifecycle::socket_dir());
     crate::lifecycle::declares_and_starts(ctx, &controller);
     let (sock, _peer) = std::os::unix::net::UnixStream::pair().unwrap();
-    let stream = Arc::new(FlezhaStream::Unix(sock));
+    let stream = Arc::new(FlezhaStream::unix(sock));
     let act = crate::lifecycle::routes_two_entry_payloads(ctx, &stream);
 
     a_request_with_unreadable_arguments_is_refused(ctx, act.token);

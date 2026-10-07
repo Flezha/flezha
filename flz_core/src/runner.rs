@@ -1,7 +1,8 @@
 use std::collections::HashMap;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use crossbeam::channel::Sender;
+use flz_transport::transport::FlezhaStream;
 
 /// The coordinator's message channel, installed once by `coordinator::start`.
 static RECONNECT_TRIGGER: OnceLock<Mutex<Sender<RunnerMessage>>> = OnceLock::new();
@@ -82,6 +83,13 @@ pub enum RunnerMessage {
     /// read_error | write_error | keepalive_timeout | controller_requested |
     /// broken_pipe_flood`.
     Reconnect(&'static str),
+    /// A control session's reader ended, for a `Reconnect` reason. Honoured
+    /// only while `stream` is still the live control stream: a session the
+    /// runner already replaced must not end the one that replaced it.
+    ControlLost {
+        stream: Arc<FlezhaStream>,
+        reason: &'static str,
+    },
     /// The keepalive timer's tick: a ping on the current control stream.
     SendControlKeepalive,
     /// The heartbeat timer's tick: a heartbeat on every secondary stream.

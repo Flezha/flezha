@@ -15,14 +15,10 @@ defmodule FlezhaTest.Runner.StreamPoolTest do
       live_name = String.to_atom(base <> "_live")
       nil_name = String.to_atom(base <> "_nil")
 
-      {:ok, live_pid} = StreamChannel.start_link({"ce_test", live_name, :primary})
-      {:ok, nil_pid} = StreamChannel.start_link({"ce_test", nil_name, :primary})
+      live_pid = start_channel({"ce_test", live_name, :primary})
+      nil_pid = start_channel({"ce_test", nil_name, :primary})
 
       :ok = GenServer.call(live_pid, {:bind, :existing_ref})
-
-      on_exit(fn ->
-        for pid <- [live_pid, nil_pid], Process.alive?(pid), do: GenServer.stop(pid)
-      end)
 
       %{live_name: live_name, live_pid: live_pid, nil_name: nil_name, nil_pid: nil_pid}
     end
@@ -67,8 +63,7 @@ defmodule FlezhaTest.Runner.StreamPoolTest do
     test "reach a session's channels and leave them" do
       runner_id = "route_runner_#{System.unique_integer([:positive])}"
       [name | _] = StreamPool.stream_ids(runner_id, :primary)
-      {:ok, channel} = StreamChannel.start_link({runner_id, name, :primary})
-      on_exit(fn -> if Process.alive?(channel), do: GenServer.stop(channel) end)
+      channel = start_channel({runner_id, name, :primary})
 
       assert StreamPool.put_route(runner_id, "routed_op", self()) == :ok
       assert :sys.get_state(channel).relay_mapping["routed_op"] == [self()]
@@ -82,4 +77,7 @@ defmodule FlezhaTest.Runner.StreamPoolTest do
       assert StreamPool.drop_route("no_such_runner", "r1") == :ok
     end
   end
+
+  defp start_channel({_, name, _} = args),
+    do: start_supervised!(Supervisor.child_spec({StreamChannel, args}, id: name))
 end

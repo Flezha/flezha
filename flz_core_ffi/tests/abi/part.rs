@@ -58,7 +58,7 @@ fn scenario() {
         .expect("the class builds an instance");
     let (sock, mut peer) = UnixStream::pair().unwrap();
     peer.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
-    let stream = Arc::new(FlezhaStream::Unix(sock));
+    let stream = Arc::new(FlezhaStream::unix(sock));
     let entry = instance.topology.channel(0).expect("entry channel");
     for payload in [b"alpha".to_vec(), b"beta".to_vec()] {
         let value = entry.wrap_input.as_ref().expect("entry wrapper")(payload).unwrap();
