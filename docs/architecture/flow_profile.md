@@ -11,9 +11,9 @@ own: how a cell recovers, what happens to a message that always fails, how a
 class acknowledges input in batches, how it corrects results that a late
 input made wrong, and how one relay is split across several runners. The
 user's side of the same features is in
-[`../topics/advanced/effectively_once.md`](../topics/advanced/effectively_once.md),
-[`../topics/advanced/partitioning.md`](../topics/advanced/partitioning.md) and
-[`../topics/basics/durability.md`](../topics/basics/durability.md).
+[`../topics/core/effectively_once.md`](../topics/core/effectively_once.md),
+[`../topics/core/partitioning.md`](../topics/core/partitioning.md) and
+[`../topics/core/durability.md`](../topics/core/durability.md).
 
 **Contents**
 
@@ -167,7 +167,7 @@ counts as a success and the entry is removed; if it fails again, it parks
 again with its `generation` raised. Replay is a command you run on purpose,
 because an automatic replay would simply poison the cell again. An entry stored
 without its payload bytes can only be shown or dropped. Some inputs park with no attempt at all; the list is in
-[the dead-letter queue section of `durability.md`](../topics/basics/durability.md#the-dead-letter-queue).
+[the dead-letter queue section of `durability.md`](../topics/core/durability.md#the-dead-letter-queue).
 
 A steps relay answers a lasting failure by undoing its finished steps
 instead ([`steps_profile.md`](steps_profile.md#retry-then-abort)); a
@@ -185,7 +185,7 @@ meant to publish, and a restore would resume past them.
 Such a class sets `ack: checkpoint` under `exactly: effectively_once`. The
 interval closes after `every` inputs, after `max_delay_ms`, or when the
 tasklet calls `ctx.checkpoint()`, whichever comes first
-([`../topics/basics/configuring_a_relay.md`](../topics/basics/configuring_a_relay.md)).
+([`relay_settings.md`](../configuration/relay_settings.md)).
 
 ```mermaid
 sequenceDiagram
@@ -398,7 +398,7 @@ flowchart TB
   only the items its member owns before it subscribes, so the total traffic is
   that of one connection, divided. `http_poll` fills `{{partition_index}}` and
   `{{partition_count}}` into its URL. How plugins attach to a group is in
-  [`../topics/advanced/partitioning.md`](../topics/advanced/partitioning.md#plugins-on-a-partitioned-relay).
+  [`../topics/core/partitioning.md`](../topics/core/partitioning.md#plugins-on-a-partitioned-relay).
 - **A rescale is quiesce, move, restart.** `flz relay scale <group> M`
   stops the group's sources, refuses while any member has dead-letter
   entries, and waits until every member has consumed its input log. It then
@@ -416,7 +416,7 @@ flowchart TB
   replay in-flight inputs from, and a crash can send an output twice.
 - **A hot single key is still bound to one machine.** Per-key order requires
   one cell per key; the answer is to aggregate in two stages
-  ([`../topics/advanced/partitioning.md`](../topics/advanced/partitioning.md#hot-keys-aggregate-in-two-stages)).
+  ([`../topics/core/partitioning.md`](../topics/core/partitioning.md#hot-keys-aggregate-in-two-stages)).
 - **Partitions spread over runners by hashing**, with a fair-share cap, not by
   measured load.
 - **A correction does not remove keys.** A set of output keys that shrinks
@@ -429,7 +429,7 @@ flowchart TB
 - [`overview.md`](overview.md): the roles and the kernel's rules this page builds on.
 - [`kernel.md`](kernel.md): the input log, the effect record, the watermark and the epoch rule in detail.
 - [`steps_profile.md`](steps_profile.md): the other way to run, for comparison.
-- [`../topics/advanced/effectively_once.md`](../topics/advanced/effectively_once.md): turning the tier on, from the user's side.
-- [`../topics/advanced/partitioning.md`](../topics/advanced/partitioning.md): starting, scaling and feeding a partitioned relay.
-- [`../topics/basics/durability.md`](../topics/basics/durability.md): what a crash costs, and the dead-letter queue from the user's side.
+- [`../topics/core/effectively_once.md`](../topics/core/effectively_once.md): turning the tier on, from the user's side.
+- [`../topics/core/partitioning.md`](../topics/core/partitioning.md): starting, scaling and feeding a partitioned relay.
+- [`../topics/core/durability.md`](../topics/core/durability.md): what a crash costs, and the dead-letter queue from the user's side.
 - [Partitioned relays, the full contract](https://github.com/flezha/flezha/blob/main/docs/sdk/partitioned_relays.md): preflight, id budget, quota and coverage checks.

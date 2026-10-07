@@ -318,7 +318,7 @@ that start workflows) reaches only the start and the send below; adding
 | --- | --- | --- |
 | start a relay | `Relay.start` | the spec `flz relay start` takes: `factory_id`, and optionally `id`, `init_values`, `opts`. The run is the factory's, so a written `kind` is refused. Answers `{"id": ..., "outcome": "started" \| "already_running"}` |
 | stop a relay | `Relay.stop` | `relay_id` |
-| send to a relay | `Relay.send`, reached as `runner.send` ([`sending_from_runner_code.md`](../advanced/sending_from_runner_code.md)) | `relay_id`, `message`, `channel` (`""` for none), and optionally `msg_id` and `key` |
+| send to a relay | `Relay.send`, reached as `runner.send` ([`sending_and_calling.md`](sending_and_calling.md#sending-from-runner-code)) | `relay_id`, `message`, `channel` (`""` for none), and optionally `msg_id` and `key` |
 | enable a plugin | `PluginManager.enable` | the plugin's `name`, then `provider`, `opts` and optionally `single`; with `relay_id` and `hooks` it also binds that relay |
 | bind a relay to a plugin | `PluginManager.bind` | `name`, then `relay_id` and optionally `hooks` and `channel` |
 | unbind a relay | `PluginManager.unbind` | `name`, then `relay_id` |
@@ -340,7 +340,7 @@ which is on the runner itself:
 | PHP | `$runner->control()` | `$control->startRelay('order_worker', id: 'orders')` |
 | Elixir | `Flezha.SDK.Control` | `Control.start_relay(runner, "order_worker", id: "orders")` |
 
-[`running_relays.md`](running_relays.md#from-application-code) shows
+[`running_and_testing.md`](running_and_testing.md#from-application-code) shows
 them in the echo runner of each SDK.
 
 The id is optional in each SDK: without one, the controller generates one from
@@ -387,7 +387,7 @@ runner disconnecting, and shows in `flz relay list`.
 ## See also
 
 - [`authorization.md`](authorization.md): tokens, roles and runner credentials.
-- [`running_relays.md`](running_relays.md): starting and stopping relays.
+- [`running_and_testing.md`](running_and_testing.md): starting and stopping relays.
 - [`connecting_a_runner.md`](../deploying/connecting_a_runner.md): one runner, one namespace.
 - [`access_commands.md`](../cli/access_commands.md): `flz namespace` and `flz role`.
 - Tutorial: [`open_the_desk.md`](tutorials/open_the_desk.html) creates `trading`.

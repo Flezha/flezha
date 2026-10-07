@@ -40,7 +40,7 @@ flowchart LR
   from. For a relay at `durable: local` the copy is made in the background, every
   `FLEZHA_DURABILITY_SHIP_INTERVAL_MS` (30000 by default), so it can be a little behind; a
   relay at `durable: remote` waits for it before each acknowledgement.
-  [durability.md](../basics/durability.md) has the levels.
+  [durability.md](../core/durability.md) has the levels.
 
 ## Configure a cluster
 
@@ -265,8 +265,8 @@ $ flz relay call anna --namespace agents --text 'Are you still there?'
 
 - [deploying_a_controller.md](deploying_a_controller.md): settings, graceful
   shutdown and the grace-period pairing.
-- [durability.md](../basics/durability.md): durability levels and backends.
+- [durability.md](../core/durability.md): durability levels and backends.
 - [kubernetes.md](kubernetes.md): controllers on Kubernetes.
-- [effectively_once.md](../advanced/effectively_once.md): what a crash may repeat.
+- [effectively_once.md](../core/effectively_once.md): what a crash may repeat.
 - [configuration.md](../../configuration/environment_variables.md#cluster-and-nodes).
 - Tutorial: [run_a_cluster.md](tutorials/run_a_cluster.html).

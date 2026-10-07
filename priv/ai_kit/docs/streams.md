@@ -13,6 +13,25 @@ is ready. Messages with the same key are handled one at a time, in the order
 they arrived, while different keys are handled side by side, and each key can
 keep state of its own.
 
+**Contents**
+
+1. [How it works](#how-it-works)
+2. [Transforms](#transforms)
+3. [Keys and cells](#keys-and-cells)
+4. [Example: watching trades](#example-watching-trades)
+5. [Describing an entry channel](#describing-an-entry-channel)
+6. [Outputs](#outputs)
+7. [Edge options](#edge-options)
+8. [Merged inputs](#merged-inputs)
+   1. [How to declare one](#how-to-declare-one)
+   2. [What a merge promises](#what-a-merge-promises)
+   3. [When a mapping fails](#when-a-mapping-fails)
+   4. [Merges in a steps relay](#merges-in-a-steps-relay)
+9. [Starting work from a stream](#starting-work-from-a-stream)
+10. [Refusals](#refusals)
+11. [Limits and gotchas](#limits-and-gotchas)
+12. [See also](#see-also)
+
 ## How it works
 
 ```mermaid
@@ -330,7 +349,7 @@ Java and Rust, a `description` option in Node, Python, Ruby, PHP and Elixir, and
 for a JSON channel a JSON Schema with `schema(...)` or a `schema` option. Java,
 Python and PHP read the schema from the input type, and Rust with its `schemars`
 feature. Both are part of the relay's API, which `flz relay info <id>` shows and
-an AI agent sees as a tool ([`relay_api.md`](relay_api.md#describe-a-channel)). A
+an AI agent sees as a tool ([`sending_and_calling.md`](sending_and_calling.md#describe-a-channel)). A
 schema that is not a JSON object with a `type` is refused at registration
 (`topology.schema_invalid`).
 
@@ -366,91 +385,96 @@ A cell's mailbox holds 1024 messages unless the tasklet sets
 [configuration reference](../../configuration/relay_settings.md#channel-and-edge-options) has
 the full table.
 
+## Merged inputs
+
+A tasklet takes one type of input, and `into` connects it to one channel. Some tasklets need
+more than one stream: a stream of data and a stream of settings for it, a join of two computed
+streams, or an enrichment path. A **merge** feeds one tasklet from two or more channels.
+
+You declare the tasklet's input as a type of your own with one case per source (a sum type, a
+sealed interface, a tagged map), and subscribe each source channel to it with a mapping that
+turns the source's value into that type. The tasklet itself does not change: its dispatch, its
+state, its retries and dead letters, and its emits all see the one input type.
+
+A merge is part of the relay's wiring, not a tasklet of its own. Each source channel keeps
+its own edge into the merged tasklet, and the mapping runs on that edge as the value is routed,
+the same place a [transform](#transforms) runs. Live delivery and a replay from disk
+travel the same routing path, and each source's frames are stored per channel unchanged, so a
+replay reproduces the run and a warm restart restores the same state. The controller does not
+see a merge at all.
+
+```mermaid
+flowchart LR
+    R(["readings"]) -->|"to Reading"| D["detector"]
+    C(["config"]) -->|"to Threshold"| D
+```
+
+### How to declare one
+
+Start a merge on the channel builder, add each source with its mapping, optionally key the
+merge, and close it with `into`:
+
+| SDK | Spelling |
+| --- | --- |
+| Rust | `c.merge::<I>().from(source, mapping).from(...).key_by(f).into::<T>()` |
+| Java | `c.merge(I.class).from(source, mapping).from(...).keyBy(f).into(T.class)` |
+| Node | `c.merge().from(source, map).from(...).keyBy(f).into(T)` |
+| Python | `c.merge().from_(source, mapping).from_(...).key_by(f).into(T)` |
+| Ruby | `c.merge.from(source) { mapping }.from(...).key_by { ... }.into(T)` |
+| PHP | `$c->merge()->from($source, $map)->from(...)->keyBy($f)->into(T::class)` |
+| Elixir | `c \|> merge() \|> from(source, mapping) \|> from(...) \|> key_by(f) \|> into(T)` |
+
+A source is a stream handle: an entry channel (`input(...)`) or the output of another tasklet.
+
+### What a merge promises
+
+- **Sources may be entry channels or tasklet outputs, freely mixed**, on a flow relay.
+  Mapping an entry channel directly saves a parsing tasklet for a low-rate control channel; a
+  parsing tasklet is still right for a busy path with state of its own.
+- **Each source keeps its order; nothing is ordered across sources.** There are no windowed
+  joins, buffering or alignment: correlating the sources is the tasklet's state's job.
+- **The key sees the mapped value.** Keying is declared once, on the merge. A `key_by` on a
+  source handle is refused as `topology.transform_after_key_by`, because by the time keying
+  runs that source's value has already become the merged type.
+- **A source may carry its own transforms**, which run before the mapping on the source's own
+  type; transforms on the merge run after, on the merged type.
+- **A mapping must be pure and total.** It runs on live delivery and again on replay, and the
+  two must agree. It returns the merged type, not a result that can fail, so work that can fail
+  belongs in the tasklet, where it has somewhere to fail to.
+- **In Rust, a source's payload must be `Clone`**: the mapping clones the value, where a plain
+  `into` passes it on shared. Java has no such requirement.
+
+### When a mapping fails
+
+A mapping that throws or panics is contained:
+
+| Where the mapping runs | What a failure does |
+| --- | --- |
+| a flow relay, either kind of source | the value climbs the source channel's retry ladder and then goes to the dead-letter queue, as a failing entry parse does. In Java the mapping runs inside an activation, so a throw is that activation's failure. |
+| a steps relay, passing a step's output on | a non-retryable failure of the step that produced the value. That step counts as run, so the rollback undoes the steps recorded as completed, including it, and the instance reports its end with status `error`. It is not retried: a pure mapping would fail the same way again. |
+| a steps relay, resuming after a crash | contained the same way; a producing step the journal already committed is undone even though the resumed pass did not run it again. |
+
+A step still running beside the failing one in the same level is not in the undo plan: the
+abort returns at the first failing edge, as any mid-level abort does.
+
+### Merges in a steps relay
+
+A steps relay merges tasklet outputs and entry channels alike. An entry channel's message
+carries the channel it arrived on, so its mapping is chosen the same way as in a flow
+relay. A merged tasklet fed by an entry channel is a root of that channel's chain: a merge
+of two entry channels runs the merged tasklet once per message, with that message's mapping, in
+the pass the message starts. Where two chains meet, the join waits only for the producers of
+the chain that runs. The mapping is applied both when a step's output is passed on and when a
+resumed instance re-seeds a step from its journal, so a resumed merge sees what the live one
+did.
+
 ## Starting work from a stream
 
-A tasklet in a stream can start another relay. In the tradedesk example,
-`buy_above_average` starts one `order_executor` workflow for each buy, and
-hands it the order as its first message:
-
-<!-- tabs-open -->
-
-### Java
-
-```java
-// BuyAboveAverage.java: buys when a price is far enough above its average.
-ctx.spawnSteps("order_executor", new OrderTicket(move.symbol(), quantity));   // one steps relay per order
-```
-
-Full file: [`BuyAboveAverage.java`](https://github.com/flezha/flezha_java_sdk/blob/main/examples/tradedesk/src/main/java/com/flezha/examples/tradedesk/BuyAboveAverage.java).
-
-### Rust
-
-```rust
-// src/buy_above_average.rs: buys when a price is far enough above its average.
-let order = serde_json::to_vec(&ticket).map_err(|e| TaskletError::Custom(e.to_string()))?;
-let _ = ctx.spawn_steps("order_executor", order); // one steps relay per order
-```
-
-Full file: [`src/buy_above_average.rs`](https://github.com/flezha/flezha_rust_sdk/blob/main/examples/tradedesk/src/buy_above_average.rs).
-
-### Node
-
-```javascript
-// buy_above_average.mjs: buys when a price is far enough above its average.
-const order = { symbol: move.symbol, quantity };
-ctx.spawnSteps('order_executor', order); // one steps relay per order
-```
-
-Full file: [`buy_above_average.mjs`](https://github.com/flezha/flezha_node_sdk/blob/main/examples/tradedesk/buy_above_average.mjs).
-
-### Python
-
-```python
-# buy_above_average.py: buys when a price is far enough above its average.
-order = OrderTicket(symbol=move["symbol"], quantity=quantity)
-ctx.spawn_steps("order_executor", order)  # one steps relay per order
-```
-
-Full file: [`buy_above_average.py`](https://github.com/flezha/flezha_python_sdk/blob/main/examples/tradedesk/buy_above_average.py).
-
-### Ruby
-
-```ruby
-# buy_above_average.rb: buys when a price is far enough above its average.
-order = { symbol: move[:symbol], quantity: quantity }
-ctx.spawn_steps("order_executor", order)               # one steps relay per order
-```
-
-Full file: [`buy_above_average.rb`](https://github.com/flezha/flezha_ruby_sdk/blob/main/examples/tradedesk/buy_above_average.rb).
-
-### PHP
-
-```php
-// src/BuyAboveAverage.php: buys when a price is far enough above its average.
-$order = ['symbol' => $input['symbol'], 'quantity' => $quantity];
-$ctx->spawnSteps('order_executor', $order);        // one steps relay per order
-```
-
-Full file: [`src/BuyAboveAverage.php`](https://github.com/flezha/flezha_php_sdk/blob/main/examples/tradedesk/src/BuyAboveAverage.php).
-
-### Elixir
-
-```elixir
-# lib/tradedesk/buy_above_average.ex: buys when a price is far enough above its average.
-# One steps relay per order.
-spawn_steps(ctx, "order_executor", %{symbol: symbol, quantity: quantity})
-```
-
-Full file: [`lib/tradedesk/buy_above_average.ex`](https://github.com/flezha/flezha_elixir_sdk/blob/main/examples/tradedesk/lib/tradedesk/buy_above_average.ex).
-
-<!-- tabs-close -->
-
-The spawn sends the order as JSON and returns a handle that reports whether
-the order started; the example does not wait on it, since waiting would hold
-the price stream up. A spawn names a factory whose class runs in steps; naming
-one that runs in flow answers `factory_not_steps`. The rules, and the risks of
-a spawn without an id, are in
-[`../advanced/spawning_from_a_tasklet.md`](../advanced/spawning_from_a_tasklet.md).
+A tasklet in a stream can start a workflow with `ctx.spawn_steps`. In the
+tradedesk example, `buy_above_average` starts one `order_executor` workflow
+for each buy, and hands it the order as its first message. The call, its
+permission and its result are in
+[Workflows](workflows.md#starting-one-from-a-tasklet).
 
 ## Refusals
 
@@ -465,7 +489,10 @@ every SDK:
 | `topology.dangling_transform_chain` | a transform chain that no `into` closes |
 | `topology.key_by_on_unkeyable_target` | a `keyBy` edge into a tasklet that declares fixed cell keys |
 | `topology.unkeyed_edge_into_dynamic_tasklet` | an edge without a key into a tasklet that another edge keys |
-| `topology.edge_already_wired` | a consumer edge declared again where either side carries a transform or a key |
+| `topology.edge_already_wired` | a consumer edge declared again where either side carries a transform or a key, or a merge source re-wiring an edge already declared |
+| `topology.merge_too_few_sources` | fewer than two sources: wire a single source with `into` instead |
+| `topology.duplicate_merge_source` | the same channel subscribed twice; only this code is reported, because the count includes every `from` written |
+| mapped type differs from the tasklet's input | a compile error in Rust, a registration error naming both types in Java |
 
 `topology.transform_after_terminal` makes the order of declarations matter
 where a channel carries both an output and a transformed consumer: close the
@@ -490,12 +517,11 @@ allowed and wires one edge, not two.
 
 ## See also
 
-- [`configuring_a_relay.md`](configuring_a_relay.md): the settings tree, and `run: flow`.
+- [`relay_settings.md`](../../configuration/relay_settings.md): the settings tree, and `run: flow`.
 - [`state.md`](state.md): cells and their state.
 - [`workflows.md`](workflows.md): the other run.
 - [`durability.md`](durability.md): what a stream keeps through a crash.
 - [`plugins.md`](../plugins/plugins.md): what feeds an entry channel and what an output delivers to.
-- [`../advanced/partitioning.md`](../advanced/partitioning.md), [`../advanced/merged_inputs.md`](../advanced/merged_inputs.md),
-  [`../advanced/timers.md`](../advanced/timers.md), [`../advanced/effectively_once.md`](../advanced/effectively_once.md).
+- [`partitioning.md`](partitioning.md), [`timers.md`](timers.md), [`effectively_once.md`](effectively_once.md).
 - [`../../sdk/stream_transforms.md`](https://github.com/flezha/flezha/blob/main/docs/sdk/stream_transforms.md): where the transform code lives, for contributors.
 - Tutorial: [`watch_the_trades.md`](tutorials/watch_the_trades.html) builds `trade_watcher`.

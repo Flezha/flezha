@@ -272,7 +272,7 @@ events.addEventListener("ended", () => events.close());
 
 ## See also
 
-- [streamed_answers.md](../topics/advanced/streamed_answers.md): parts and server-sent events
-- [relay_calls.md](../topics/advanced/relay_calls.md): outside calls and how a relay's output answers them
+- [sessions.md](../topics/core/sessions.md#streamed-answers): parts and server-sent events
+- [sending_and_calling.md](../topics/core/sending_and_calling.md#calls): outside calls and how a relay's output answers them
 - [installing_plugins.md](../topics/plugins/installing_plugins.md): installing a plugin package
 - [plugins.md](../topics/plugins/plugins.md): the plugin model

@@ -85,7 +85,7 @@ owns the mechanism; for concepts, [`architecture/`](https://github.com/flezha/fl
 - **Answer channel**: the channel whose output answers a call. A caller may name it
   (`--answer-channel`, `answer_channel` in `Relay.call/6`'s options, or the option of a
   `call(...)` end); without one, the first output the call's input causes answers. The
-  answer still reaches the output's plugins and listeners. See [`topics/advanced/relay_calls.md`](topics/advanced/relay_calls.md).
+  answer still reaches the output's plugins and listeners. See [`sending_and_calling.md`](topics/core/sending_and_calling.md#calls).
 - **Part**: a preview of the output an invocation is producing, sent from inside `run` with
   `ctx.part(value)` (`part(ctx, value)` in Elixir) and delivered at once to the relay's
   listeners, and to nothing else. It carries its channel, a number from `0` within its attempt
@@ -99,33 +99,33 @@ owns the mechanism; for concepts, [`architecture/`](https://github.com/flezha/fl
 - **Call**: one input an outside caller (`flz relay call`, `Flezha.Service.Relay.call/6`
   or a feeding plugin) sends to a relay, waiting up to a deadline for the first output it
   causes (on the answer channel, when the caller names one); or one request a relay's `call(...)` end sends to another
-  relay, whose outcome comes back as a Response. See [`topics/advanced/relay_calls.md`](topics/advanced/relay_calls.md).
+  relay, whose outcome comes back as a Response. See [`sending_and_calling.md`](topics/core/sending_and_calling.md#calls).
 - **Call token**: `flz.reply_to`, the input metadata key the controller mints for each call
   and the runner core carries to every output the input causes. Nothing else can set it, and
-  no tasklet, plugin or listener sees it. See [`topics/advanced/relay_calls.md`](topics/advanced/relay_calls.md).
+  no tasklet, plugin or listener sees it. See [`sending_and_calling.md`](topics/core/sending_and_calling.md#calls).
 - **Response**: the outcome of one relay call as the caller receives it: an ordinary input
   carrying the request, the answer or the error that ended the call (a timeout being
   `call.timeout`), the instance that answered and whether the call started it. See
-  [`topics/advanced/relay_calls.md`](topics/advanced/relay_calls.md).
+  [`sending_and_calling.md`](topics/core/sending_and_calling.md#calls).
 - **Response channel**: the entry channel a `call(...)` end answers, named after the calling
   channel with `.response`; every Response of that end arrives on it, and it may feed any
   tasklet, the calling one included.
 - **Edge transform** — a `map` / `filter` / `flat_map` on a stream handle between two `.into`
   calls; everything before the closing `.into` fuses into one closure on that consumer edge and
-  costs no tasklet, cell, mailbox or hop. See [`topics/basics/streams.md`](topics/basics/streams.md).
+  costs no tasklet, cell, mailbox or hop. See [`topics/core/streams.md`](topics/core/streams.md).
 - **Edge keying (`key_by`)** — the cell key function, declared on the consumer edge rather than
   on the tasklet. A tasklet reached by a keyed edge is dynamic-mode; discard inputs with
   `filter`, never with a keyless return.
 - **Merge** — two or more channels subscribed to one tasklet, each with a pure mapping into its
   sum-type `Input`. Per-source FIFO is kept, nothing is ordered across sources, and mappings run
-  identically on live delivery and replay. See [`topics/advanced/merged_inputs.md`](topics/advanced/merged_inputs.md).
+  identically on live delivery and replay. See [`streams.md`](topics/core/streams.md#merged-inputs).
 - **`route_latest`** — delivers a relay-wide document to each keyed cell on that key's own
   traffic, never as a remembered-set fan-out.
 - **Partition** — one member of a partitioned relay, a flow relay or a `per_input` steps relay: an
   ordinary instance `<id>#pK` with its own Overwatch, registry row, binding, input log, state tree,
   plugins and DLQ identity, and for a steps relay its own journal and pass sheet.
   `flz relay start <factory> --id <id> --partitions N` starts N; `flz relay scale <group> M`
-  rescales. See [`topics/advanced/partitioning.md`](topics/advanced/partitioning.md).
+  rescales. See [`topics/core/partitioning.md`](topics/core/partitioning.md).
 - **Key group** — one of 256 buckets a routing key hashes into, `fnv1a128(key) mod 256`
   (`flz_core/src/util.rs`, identical in every SDK). A partition owns a contiguous range carried on
   `AddRelay`; the SDK **key-group guard** parks the first frame whose key falls outside it.
@@ -137,7 +137,7 @@ owns the mechanism; for concepts, [`architecture/`](https://github.com/flezha/fl
   the deferred-wake list (the BEAM's timer service in the Elixir SDK). `on_timer` receives the
   scheduled timestamp; the pending set is folded
   state, so a crash-resume owes exactly the timers it owed. In a steps relay a firing opens a pass
-  at the tasklet that set it. See [`topics/advanced/timers.md`](topics/advanced/timers.md).
+  at the tasklet that set it. See [`topics/core/timers.md`](topics/core/timers.md).
 - **Plugin** — a `%Flezha.Plugin{}` binding a **provider** module to one or more **hooks** on a
   host such as the Overwatch (`:on_input`, `:on_output`, `:on_message`, ...); its provider is
   first-party or comes from a **plugin package** (`.fpz`, placed by `flz plugin install` and
@@ -157,7 +157,7 @@ owns the mechanism; for concepts, [`architecture/`](https://github.com/flezha/fl
   whether it answers and in which format, and its description and JSON Schema when declared.
   `flz relay info <id>` shows it, `Relay.call_channel` calls a channel by value, and each
   described channel is an MCP tool named `<factory>_<channel>`. See
-  [`topics/basics/relay_api.md`](topics/basics/relay_api.md).
+  [`sending_and_calling.md`](topics/core/sending_and_calling.md#a-relay-s-api).
 - **Relay-to-relay messaging** — one relay's output delivered into another's input
   stream by the `RelayForward` plugin on the source (same namespace, no self-targeting),
   retried until the target confirms. The guarantee is derived: a source whose Cells record effects
@@ -238,7 +238,7 @@ owns the mechanism; for concepts, [`architecture/`](https://github.com/flezha/fl
   `flz dlq list|show|replay|drop`; a steps relay parks only an unreadable message and a
   failed turn of a `per_input` keep-progress loop, and otherwise aborts and compensates. Once an
   input's entry is durable, the relay's listeners see a notice carrying `input.dead_lettered`.
-  See [`topics/basics/durability.md`](topics/basics/durability.md).
+  See [`topics/core/durability.md`](topics/core/durability.md).
 - **Late-input correction**: a declared `correction_ms` under `exactly: effectively_once` lets an event behind the event-time
   high-water mark rewind the cell to a baseline, replay the retained slice in event-time order
   and republish under a bumped epoch. Requires the tier, an event-time clock and keyed plugin
@@ -252,7 +252,7 @@ owns the mechanism; for concepts, [`architecture/`](https://github.com/flezha/fl
   a backend (`FLEZHA_DURABILITY_BACKEND`; `none` is local-only); local files stay authoritative
   unless another controller shipped a newer copy.
   An **artifact** is one immutable shipped blob; the per-reference **manifest** naming a cut's
-  artifacts is written last, so a torn upload is invisible. See [`topics/basics/durability.md`](topics/basics/durability.md).
+  artifacts is written last, so a torn upload is invisible. See [`topics/core/durability.md`](topics/core/durability.md).
 - **Synchronous durability** — a class declaring `durable: remote` has each commit point's
   acknowledgement gated on the remote ship (RPO 0): a steps stage barrier, a flow input, or a
   flow checkpoint under `ack: checkpoint`. An instance is refused its start without a durability
@@ -417,7 +417,7 @@ owns the mechanism; for concepts, [`architecture/`](https://github.com/flezha/fl
   SET of roles in ONE namespace, an action being allowed when any of them grants it;
   a **token** is a scoped credential (`flz token issue|revoke|list`) presented as
   `--token` or `FLEZHA_TOKEN`, carrying one role and judged by that role alone. See
-  [`topics/basics/authorization.md`](topics/basics/authorization.md).
+  [`topics/core/authorization.md`](topics/core/authorization.md).
 - **Transport-bound principal** — identity minted from the authenticated connection, never from a
   caller-supplied value: the verified token for CLI callers, `runner@<namespace>` for runner
   connections (role `runner` until a user binds it, to `spawner` and `stopper` for
@@ -438,4 +438,4 @@ owns the mechanism; for concepts, [`architecture/`](https://github.com/flezha/fl
 - [`sdk/rust_relay_architecture.md`](https://github.com/flezha/flezha/blob/main/docs/sdk/rust_relay_architecture.md) — Relay/Tasklet/Cell authoring.
 - [`sdk/protocol_spec.md`](https://github.com/flezha/flezha/blob/main/docs/sdk/protocol_spec.md) — the wire protocol between Runners and the Controller.
 - [`internals/process_hub.md`](internals/process_hub.md) — ProcessHub picks a node, the node picks a Runner.
-- [`resilience/overview.md`](resilience/overview.md) — what survives what.
+- [`resilience/overview.md`](architecture/overview.md) — what survives what.

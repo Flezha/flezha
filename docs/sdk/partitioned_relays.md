@@ -1,7 +1,7 @@
 # Partitioning: implementation notes
 
 For SDK implementers and contributors. How to use it is on
-[Partitioning](../topics/advanced/partitioning.md).
+[Partitioning](../topics/core/partitioning.md).
 
 ## Key groups
 

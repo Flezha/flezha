@@ -24,8 +24,8 @@ defmodule Mix.Tasks.Flezha.LlmsTest do
   - Getting started
     - [What is Flezha](what_is_flezha.md)
 
-  - Topics
-    - [Local mode](local_mode.md)
+  - Core topics
+    - [Running and testing](running_and_testing.md)
 
   - The CLI
     - [The CLI](cli.md)
@@ -59,8 +59,8 @@ defmodule Mix.Tasks.Flezha.LlmsTest do
 
     It runs many small, independent pieces of work in parallel.
     """,
-    "local_mode.md" => """
-    # Local mode
+    "running_and_testing.md" => """
+    # Running and testing
 
     <!-- A comment
     that spans lines. -->
@@ -132,7 +132,7 @@ defmodule Mix.Tasks.Flezha.LlmsTest do
                "for stateless and stateful data processing.\n"
 
     assert map =~
-             "- [Local mode](local_mode.md): Local mode runs a relay inside your test, " <>
+             "- [Running and testing](running_and_testing.md): Local mode runs a relay inside your test, " <>
                "with no controller.\n"
 
     assert map =~ "- [The CLI](cli.md): `flz` is the command line.\n"
@@ -156,7 +156,7 @@ defmodule Mix.Tasks.Flezha.LlmsTest do
              Enum.join(
                [
                  "- [What is Flezha](what_is_flezha.md)",
-                 "- [Local mode](local_mode.md)",
+                 "- [Running and testing](running_and_testing.md)",
                  "- [The CLI](cli.md)",
                  "- [Errors](errors.md)",
                  "- [Operation catalogue](catalogue.json): every published operation " <>
@@ -179,10 +179,10 @@ defmodule Mix.Tasks.Flezha.LlmsTest do
   test "a start page missing from the guide groups fails, naming it", %{doc: doc} do
     File.write!(
       Path.join(doc, "llms.txt"),
-      String.replace(@exdoc_llms, "  - [Local mode](local_mode.md)\n", "")
+      String.replace(@exdoc_llms, "  - [Running and testing](running_and_testing.md)\n", "")
     )
 
-    assert_raise Mix.Error, ~r/local_mode\.md/, fn -> Llms.render(doc) end
+    assert_raise Mix.Error, ~r/running_and_testing\.md/, fn -> Llms.render(doc) end
   end
 
   test "a page in no group fails, naming it", %{doc: doc} do

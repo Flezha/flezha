@@ -38,7 +38,7 @@ flowchart LR
 **A processing stage of your own.** Where a step needs more than a one-line
 transform, the relay hands the message to a tasklet: typed input and
 output and, when you need them, per-key state that survives a restart
-([`state.md`](state.md)), timers ([`../advanced/timers.md`](../advanced/timers.md))
+([`state.md`](state.md)), timers ([`timers.md`](timers.md))
 and retries.
 
 A tasklet emits its result without saying where the result goes. The relay
@@ -68,13 +68,13 @@ state the one before it left, and a cell's state never needs a lock.
 
 **A cell's state and timers stay with it.** Its state
 ([`state.md`](state.md)) and its timers
-([`../advanced/timers.md`](../advanced/timers.md)) belong to that cell alone and
+([`timers.md`](timers.md)) belong to that cell alone and
 are saved with it, so after a restart each key carries on where it stopped.
 
 **More than one runner.** Cells spread a tasklet's work over one runner's
 cores. To spread it over several runners, start the relay in partitions: each
 partition holds the cells of its own keys
-([`../advanced/partitioning.md`](../advanced/partitioning.md#partitions-and-cells)).
+([`partitioning.md`](partitioning.md#partitions-and-cells)).
 
 ### The relay
 
@@ -90,7 +90,7 @@ messages into. A relay can chain as many tasklets as it needs, the output
 of one feeding the next, and split or join the path between them.
 
 A relay runs in one of two ways, set by its class
-([`configuring_a_relay.md`](configuring_a_relay.md)): in flow, the
+([`relay_settings.md`](../../configuration/relay_settings.md)): in flow, the
 default, it handles messages for as long as it runs, like an ETL stream
 ([`streams.md`](streams.md)); in steps, it runs its tasklets as the steps of a
 job that ends ([`workflows.md`](workflows.md)).
@@ -107,7 +107,7 @@ changing one is a breaking change rather than a rename.
 **The entry channels are the relay's API.** Each one's format, its answer and,
 when you give them, a description and a schema are announced by the runner and
 shown by `flz relay info <id>`, so an application, a script or an AI agent can
-call the relay without reading its code ([`relay_api.md`](relay_api.md)).
+call the relay without reading its code ([`sending_and_calling.md`](sending_and_calling.md#a-relay-s-api)).
 
 The graph is checked when the runner registers the relay, so a graph that
 cannot work is refused there rather than failing half way through a run.
@@ -141,7 +141,7 @@ does what the controller asks.
 
 **Registering a factory on a runner does not start a relay.** It says this
 process can run relays made from that factory. Starting one is a separate
-step ([`running_relays.md`](running_relays.md)). One runner can register
+step ([`running_and_testing.md`](running_and_testing.md)). One runner can register
 many factories, and many runners can register the same one, which is how a
 deployment grows.
 
@@ -794,14 +794,14 @@ the same Elixir code either way.
 - **The full form of a tasklet** (implementing `Tasklet` directly, a change
   written by hand, a clock other than the wall clock, a configuration type,
   `onTimer`) has no page of its own yet; [`state.md`](state.md) and
-  [`../advanced/timers.md`](../advanced/timers.md) cover the parts that exist.
+  [`timers.md`](timers.md) cover the parts that exist.
 
 ## See also
 
-- [`configuring_a_relay.md`](configuring_a_relay.md): the settings tree every relay carries.
+- [`relay_settings.md`](../../configuration/relay_settings.md): the settings tree every relay carries.
 - [`streams.md`](streams.md) and [`workflows.md`](workflows.md): the two ways a relay runs.
 - [`connecting_a_runner.md`](../deploying/connecting_a_runner.md): reaching the controller, running a runner as a service.
-- [`running_relays.md`](running_relays.md): starting relays from a factory.
+- [`running_and_testing.md`](running_and_testing.md): starting relays from a factory.
 - [`../../glossary.md`](https://github.com/flezha/flezha/blob/main/docs/glossary.md): every term in one place.
 - [`../../sdk/authoring_contract.md`](https://github.com/flezha/flezha/blob/main/docs/sdk/authoring_contract.md): what every SDK guarantees.
 - Up and running: [Write the echo runner](../../getting_started/up_and_running.md#write-the-echo-runner) builds the echo.

@@ -1,7 +1,7 @@
 # Stream transforms: implementation notes
 
 For SDK implementers and contributors. How to use it is on
-[Streams](../topics/basics/streams.md).
+[Streams](../topics/core/streams.md).
 
 ## Where the code lives
 

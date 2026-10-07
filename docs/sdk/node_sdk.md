@@ -195,7 +195,7 @@ on the channel that feeds a tasklet (3 attempts from a 50 ms base by default),
 and `retryMax(1)` fails fast.
 
 **A steps tasklet's timers work as a flow tasklet's.** A firing runs as a
-pass of its own ([`../topics/advanced/timers.md`](../topics/advanced/timers.md)); only
+pass of its own ([`../topics/core/timers.md`](../topics/core/timers.md)); only
 inside a `compensate` hook do `timerAfter`, `timerAtEventTime` and
 `cancelTimer` throw an error beginning `runtime.timers_unavailable`.
 
@@ -385,7 +385,7 @@ invocation.
 A call to anything outside the instance goes through
 `await ctx.effect(name, async () => value, { codec })`, which keeps its result so a re-run
 reads it instead of calling again
-([`recorded_effects.md`](../topics/advanced/recorded_effects.md)).
+([`effectively_once.md`](../topics/core/effectively_once.md#recorded-effects)).
 
 ## Channel payloads
 
@@ -415,10 +415,10 @@ is declared, as is a codec given beside a function on one channel, naming the
 relay and the channel.
 
 A called input's first output answers its caller and still reaches the output's plugins:
-[`../topics/advanced/relay_calls.md`](../topics/advanced/relay_calls.md).
+[`sending_and_calling.md`](../topics/core/sending_and_calling.md#calls).
 `.call("pricing", { deadlineMs, answerChannel, codec })` or `.call({ factory: "agent", create: false }, { deadlineMs })`
 ends a chain on a call to another relay and answers a stream of `Response`s:
-[`../topics/advanced/relay_calls.md`](../topics/advanced/relay_calls.md).
+[`sending_and_calling.md`](../topics/core/sending_and_calling.md#calls).
 
 A JSON number is a double, so an integer above 2^53 loses precision on the way
 in and out. A `bigint`, `undefined` or a function has no JSON form and fails
@@ -479,7 +479,7 @@ snapshots, no dead-letter queue. Durability, effectively-once delivery, plugins,
 placement and migration, the dead-letter queue, observability export, authz and
 multi-runner scale need a controller; a declaration asking for one of those is
 refused at startup, naming it. Walk-through:
-[`../topics/basics/local_mode.md`](../topics/basics/local_mode.md).
+[`running_and_testing.md`](../topics/core/running_and_testing.md#local-mode).
 
 ## Testing a tasklet
 

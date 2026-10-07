@@ -15,16 +15,6 @@ Where you change it depends on what the setting is about:
 - **One plugin**: the URL it polls, the topic it writes to. The plugin's options
   when you enable it.
 
-**Contents**
-
-1. [The four layers](#the-four-layers)
-2. [Setting an environment variable](#setting-an-environment-variable)
-3. [Setting application env](#setting-application-env)
-4. [Declaring a relay setting](#declaring-a-relay-setting)
-5. [Setting a plugin option](#setting-a-plugin-option)
-6. [Outside the four layers](#outside-the-four-layers)
-7. [See also](#see-also)
-
 ## The four layers
 
 Each answer above is one of four layers, and the layer decides what a change
@@ -90,79 +80,9 @@ Every key is in [Application env keys](configuration/application_env.md).
 ## Declaring a relay setting
 
 A relay's settings are part of its code: written once in the class, and the
-same wherever it runs. This is `order_executor` from the tradedesk example,
-which runs in steps and undoes every finished step when one fails for good:
-
-<!-- tabs-open -->
-
-### Java
-
-```java
-@Override
-public Run run() {
-    return new Run.Steps(Each.ONCE, OnFailure.UNDO_ALL);
-}
-```
-
-### Rust
-
-```rust
-fn settings() -> RelaySettings {
-    RelaySettings {
-        run: Run::Steps { each: Each::Once, on_failure: OnFailure::UndoAll },
-        ..RelaySettings::default()
-    }
-}
-```
-
-### Node
-
-```javascript
-export default defineRelay({
-  factoryId: 'order_executor',
-  steps: { each: 'once', onFailure: 'undo_all' },
-  ...
-});
-```
-
-### Python
-
-```python
-@flezha.relay("order_executor", run={"steps": {"each": "once", "on_failure": "undo_all"}})
-def order_executor(c: flezha.Channels) -> None:
-    ...
-```
-
-### Ruby
-
-```ruby
-class OrderExecutorRelay < Flezha::Relay
-  factory_id "order_executor"
-  run steps: { each: :once, on_failure: :undo_all }
-  ...
-end
-```
-
-### PHP
-
-```php
-#[Relay(factoryId: 'order_executor', run: ['steps' => ['each' => 'per_input', 'on_failure' => 'undo_all']])]
-final class OrderExecutorRelay extends \Flezha\Relay
-```
-
-### Elixir
-
-```elixir
-use Flezha.SDK.Relay,
-  factory_id: "order_executor",
-  run: {:steps, each: :once, on_failure: :undo_all}
-```
-
-<!-- tabs-close -->
-
-No variable or start option overrides one; a change is a new version of the
-class. Every setting is in [Relay settings](configuration/relay_settings.md),
-and choosing them is taught in [Configuring a relay](topics/basics/configuring_a_relay.md).
+same wherever it runs. No variable or start option overrides one; a change is
+a new version of the class. The settings tree, how each SDK writes it, and the
+edge and tasklet options are in [Relay settings](configuration/relay_settings.md).
 
 ## Setting a plugin option
 
@@ -194,8 +114,8 @@ hold one.
 ## See also
 
 - [`topics/deploying/deploying_a_controller.md`](topics/deploying/deploying_a_controller.md): the variables a deploy cannot omit, and how to run a node
-- [`topics/basics/configuring_a_relay.md`](topics/basics/configuring_a_relay.md): choosing a relay's settings
-- [`topics/basics/durability.md`](topics/basics/durability.md): what the durability knobs mean for correctness
-- [`topics/basics/authorization.md`](topics/basics/authorization.md): the posture behind the authz keys
+- [`relay_settings.md`](configuration/relay_settings.md): choosing a relay's settings
+- [`topics/core/durability.md`](topics/core/durability.md): what the durability knobs mean for correctness
+- [`topics/core/authorization.md`](topics/core/authorization.md): the posture behind the authz keys
 - [`architecture/kernel.md`](https://github.com/flezha/flezha/blob/main/docs/architecture/kernel.md): where the WAL, outbox and fsync knobs sit in the data path
 - [`operations/benchmarking.md`](https://github.com/flezha/flezha/blob/main/docs/operations/benchmarking.md): measuring the effect of a change to any of these

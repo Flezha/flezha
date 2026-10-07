@@ -100,7 +100,7 @@ QUIC deployment proves its namespace with the credential of §5 step 2, exactly 
 UDS does. The runner principal (`runner@<namespace>`, role `runner`) is minted
 controller-side from the namespace the connection PROVED, never from the value
 the frame claimed
-([`../topics/basics/authorization.md`](../topics/basics/authorization.md)). QUIC sends a
+([`../topics/core/authorization.md`](../topics/core/authorization.md)). QUIC sends a
 keep-alive every 5 s, declares the connection dead after
 `FLEZHA_CONTROL_IDLE_TIMEOUT_MS` (default 45 s) of silence — the UDS watchdog's
 window (§5) — and uses an 8 MiB per-stream receive window.
@@ -680,7 +680,7 @@ channel (absent/undecodable ⇒ every default):
 
 `partition_index` / `partition_count` / `key_group_from` / `key_group_to`
 carry one member of a partitioned relay over 256 key groups
-([`../topics/advanced/partitioning.md`](../topics/advanced/partitioning.md)). With
+([`../topics/core/partitioning.md`](../topics/core/partitioning.md)). With
 `partition_count < 2` the instance owns the whole space; otherwise the runner
 checks that each computed Cell key hashes into
 `[key_group_from, key_group_to]` and parks a miss with an error naming the
@@ -923,7 +923,7 @@ start against the `relay_start` row, which records it, and a delivery as
 `relay.send`, recorded only when refused because it happens once per event.
 With authorization enforced, an unbound principal is `runner`, and a start or a
 delivery answers `refused`. See
-[`../topics/advanced/spawning_from_a_tasklet.md`](../topics/advanced/spawning_from_a_tasklet.md).
+[`workflows.md`](../topics/core/workflows.md#starting-one-from-a-tasklet).
 
 ### SpawnStepsResponse
 
@@ -1188,7 +1188,7 @@ The controller stores, truncates and re-ships every `format_id` identically
 and decodes only `format_id = 2`. A **timer-ops record** (`format_id = 3`)
 carries a postcard `Vec<TimerOp>` mutating the Cell's pending-timer set; the
 controller never decodes it — the pending set is SDK-owned state
-([`../topics/advanced/timers.md`](../topics/advanced/timers.md)). On restore the kernel validates the
+([`../topics/core/timers.md`](../topics/core/timers.md)). On restore the kernel validates the
 header for every host it serves — and the Elixir SDK's own fold does the same
 — and refuses a mismatch by name, the language before anything else:
 `RestoreError::LangMismatch` (one SDK reading another's header),
@@ -1872,7 +1872,7 @@ effectively-once tier and for a durable steps relay alike, and `(flz.cell, flz.s
 conforming output deduplicates on (the Kafka producer uses `flz.key` as the
 record key and ships `<cell>/<outbox_seq>/<epoch>` in its
 `flezha.dedup_key` header; the Postgres output guards on `(epoch, seq)`). See
-[`../topics/basics/durability.md`](../topics/basics/durability.md).
+[`../topics/core/durability.md`](../topics/core/durability.md).
 
 ## See also
 

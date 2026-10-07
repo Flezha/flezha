@@ -129,7 +129,7 @@ url: "https://api.example/trades?shard={{partition_index}}&of={{partition_count}
 Partition 1 of 3 polls `…?shard=1&of=3`. Validation runs on the rendered URL, so a
 substitution that lands in the scheme or host is refused at init. A placeholder on a
 plugin with no partition identity is refused, naming the placeholder. See
-[partitioning.md](../topics/advanced/partitioning.md).
+[partitioning.md](../topics/core/partitioning.md).
 
 ## Change detection
 
@@ -231,5 +231,5 @@ plugin's health verdict, not on a failure-rate metric.
 ## See also
 
 - [websocket_subscription.md](websocket_subscription.md): the same fetch semantics used for a subscription source
-- [partitioning.md](../topics/advanced/partitioning.md): the partition identity behind `{{partition_index}}`
+- [partitioning.md](../topics/core/partitioning.md): the partition identity behind `{{partition_index}}`
 - [plugins.md](../topics/plugins/plugins.md): the plugin model, sharing and `--single`

@@ -17,11 +17,11 @@ defmodule Mix.Tasks.Flezha.AiKitTest do
     for language <- Flezha.Mcp.Knowledge.languages(),
         do: assert(File.exists?(Path.join(tmp, "sdk/#{language}.md")))
 
-    File.rm!(Path.join(tmp, "docs/local_mode.md"))
-    assert AiKit.stale(tmp) == ["docs/local_mode.md"]
+    File.rm!(Path.join(tmp, "docs/running_and_testing.md"))
+    assert AiKit.stale(tmp) == ["docs/running_and_testing.md"]
 
     File.write!(Path.join(tmp, "sdk/python.md"), "an older form\n", [:append])
-    assert AiKit.stale(tmp) == ["docs/local_mode.md", "sdk/python.md"]
+    assert AiKit.stale(tmp) == ["docs/running_and_testing.md", "sdk/python.md"]
   end
 
   test "every SDK's starter is copied, and a changed or extra copy is stale", %{tmp: tmp} do

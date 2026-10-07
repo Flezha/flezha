@@ -4,7 +4,7 @@ For SDK implementers and contributors: how a Tasklet's per-Cell state becomes du
 the Rust, Java and Elixir SDKs: the flusher, the restoration fold, compaction, the payload ids
 and the record header. What a relay author writes and configures (state, changes, the
 `durable` setting, the per-tasklet knobs, Kryo registration, the test harnesses) is in
-[`../topics/basics/state.md`](../topics/basics/state.md). The controller's on-disk layout,
+[`../topics/core/state.md`](../topics/core/state.md). The controller's on-disk layout,
 fsync batching, retention and the `flz state` CLI are in
 [`../internals/state_persistence.md`](../internals/state_persistence.md); frame layouts in
 [`protocol_spec.md`](protocol_spec.md#11-per-cell-state-persistence). The Elixir SDK is
@@ -165,7 +165,7 @@ Every SDK ships the smallest `compact_after_bytes` across the class's Tasklets i
 
 ## See also
 
-- [`../topics/basics/state.md`](../topics/basics/state.md): the author's view: state, changes, knobs, harnesses
+- [`../topics/core/state.md`](../topics/core/state.md): the author's view: state, changes, knobs, harnesses
 - [`protocol_spec.md`](protocol_spec.md#11-per-cell-state-persistence) — frame layouts for every payload id and control command
 - [`../internals/state_persistence.md`](../internals/state_persistence.md) — controller WAL, snapshots, retention, compaction triggers, live read
 - [`poll_core.md`](poll_core.md) — the activation model the Java change bytes ride

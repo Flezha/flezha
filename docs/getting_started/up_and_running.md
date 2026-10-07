@@ -131,7 +131,7 @@ boot await: ready
 
 <!-- tabs-close -->
 
-`FLEZHA_AUTHZ_ENABLED=false` turns [authorization](../topics/basics/authorization.md)
+`FLEZHA_AUTHZ_ENABLED=false` turns [authorization](../topics/core/authorization.md)
 off, so no command here needs a token. The tradedesk tutorial turns it on.
 
 ## Write the echo runner
@@ -140,7 +140,7 @@ Here you get the echo runner in your language and start it. A runner is
 a program of your own: it connects to the controller, registers the relay
 factories it can serve, and runs what the controller places on it. The echo has
 the three pieces every runner has: a tasklet, a relay and the runner itself.
-[Building blocks](../topics/basics/building_blocks.md) explains each one, and
+[Building blocks](../topics/core/building_blocks.md) explains each one, and
 [Connecting a runner](../topics/deploying/connecting_a_runner.md) covers how a
 runner finds its controller.
 
@@ -586,7 +586,7 @@ Here you start a relay from the `echo` factory your runner
 registered, send it a message and watch what comes out. A factory is the
 template, the code you wrote; a relay is one running instance of it, with
 a name and state of its own.
-[Running relays](../topics/basics/running_relays.md) covers starting,
+[Running and testing](../topics/core/running_and_testing.md) covers starting,
 watching and stopping relays in full, from `flz` and from your own code.
 
 > From a third terminal, in the `flezha` directory, start a relay from the

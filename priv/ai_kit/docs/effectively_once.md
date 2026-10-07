@@ -10,6 +10,28 @@ The guarantee is not free: every message waits for a disk write before it runs. 
 relay that runs in steps and keeps its work has it without asking, and a relay that
 runs in flow declares it when it needs it.
 
+**Contents**
+
+1. [How it works](#how-it-works)
+2. [Configure it](#configure-it)
+3. [Example](#example)
+   1. [Read the input log and the journal](#read-the-input-log-and-the-journal)
+   2. [Kill the runner in the middle of a message](#kill-the-runner-in-the-middle-of-a-message)
+4. [What the tier does](#what-the-tier-does)
+5. [Late input: correcting the past](#late-input-correcting-the-past)
+6. [What it requires](#what-it-requires)
+7. [What it costs](#what-it-costs)
+8. [Recorded effects](#recorded-effects)
+   1. [Call `ctx.effect`](#call-ctx-effect)
+   2. [Which call gets which result](#which-call-gets-which-result)
+   3. [At least once at the edge](#at-least-once-at-the-edge)
+   4. [One call at a time](#one-call-at-a-time)
+   5. [Where nothing is kept](#where-nothing-is-kept)
+   6. [Refusals of an effect](#refusals-of-an-effect)
+   7. [Limits of an effect](#limits-of-an-effect)
+9. [Limits and gotchas](#limits-and-gotchas)
+10. [See also](#see-also)
+
 ## How it works
 
 The guarantee rests on two records the controller keeps on its disk:
@@ -43,7 +65,7 @@ sequenceDiagram
 
 **Across relays.** What crosses between two relays, such as a call and its answer, is
 effectively once only when both ends keep an input log: the caller for the answer, the callee
-for the message. [relay_calls.md](relay_calls.md) has the table for calls.
+for the message. [sending_and_calling.md](sending_and_calling.md#calls) has the table for calls.
 
 ## Configure it
 
@@ -246,6 +268,95 @@ $ flz state inbox gateway --namespace agents
   offset=4 consumed 265 byte(s) channel=budget.response
 ```
 
+## What the tier does
+
+`exactly: effectively_once` combines at-least-once delivery, a deterministic
+key and an idempotent output plugin into effectively-once delivery. Each plugin-bound
+channel must be `keyed()`, which registration checks. The tier works the same
+in every SDK.
+
+- **Each input is written to the relay's input log before it is forwarded**,
+  stamped `flz.offset`, and forwarded once the log has synced it. A repeat of a
+  `flz.msg_id` the log still holds is absorbed; a message without an id is
+  always appended. The log is trimmed only below the instance's floor, the
+  prefix of inputs every cell has processed durably; a floor that does not move
+  past the size threshold emits `[:flezha, :state, :input_log_frozen_watermark]`.
+- **One atomic record per invocation**: state changes, outputs, the consumed
+  offset, a dead-letter entry and event time are written together, in one
+  sync, never partly and never merged away.
+- **A value handed to the next tasklet is kept in its producer's record**, so
+  a value lost with the consumer's mailbox in a crash is delivered again, and a
+  consumer that already took it drops it.
+- **Outputs reach the output plugins only once their record is on disk**, stamped
+  `flz.cell`, `flz.seq`, `flz.epoch` and `flz.key`: enough for exact dedup.
+  After a restart, every record past the cell's flushed cursor is sent again,
+  in order, under the same identity: never lost, never applied twice at a
+  conforming output plugin.
+- **The cursor moves on the output plugin's confirmation**, not on dispatch: a Kafka
+  produce acknowledged, a Postgres transaction committed, a forward confirmed.
+  A batch whose retries run out is parked in the dead-letter queue, and only
+  then may the cursor pass it. A delivery whose confirmation is lost is sent
+  again after `:outbox_resettle_ms` (60 s); at most `:outbox_inflight_max`
+  (1 000) are in flight per cell. Unconfirmed output shows as
+  `outbox_unconfirmed_ms` in the cell's stall status, and reaches the
+  convergence loop as the `outbox_flat` verdict.
+- **The source slows down rather than the log growing without bound.** Each
+  relay has a source credit window (`:source_credit_window_bytes`, 16 MiB by
+  default); at zero, the source waits (a WebSocket source stops reading).
+- **Classes without the tier pay nothing for it.** Under the tier, a slow or
+  unreachable output plugin backs output up on disk, not in memory.
+
+**Conforming output plugins.** The Postgres output plugin upserts each batch into
+`flezha_records` (keyed by `flz.key`) and advances its progress row in one
+transaction, guarded by `(epoch, seq)`, so repeats and stale epochs do nothing;
+an unreachable database delays the flush (callers wait past `queue_max`,
+10 000), and the schema is yours to create (`auto_create: false` fails health
+naming the missing tables). The Kafka producer uses `flz.key` as the message
+key and carries the identity in the `flezha.dedup_key` header
+([`../../plugins/kafka_producer.md`](../../plugins/kafka_producer.md)).
+**The WebSocket output plugin is not a conforming output plugin**: with `sink_ack_mode: "none"`
+(the default) it is at-most-once past the socket, with `"required"`
+at-least-once; it can carry `flz.cell` and `flz.seq` in the frame for the
+consumer to dedup ([`../../plugins/websocket_subscription.md`](../../plugins/websocket_subscription.md)).
+
+**Checkpoints.** A relay that folds many inputs into one coherent result
+declares `ack: checkpoint` and calls `ctx.checkpoint()` where its state is
+coherent. The consumed offset then moves only at a checkpoint, with the
+interval's changes in one record. Emits still flush as they happen, unless
+`outputs: at_checkpoint` holds them for the checkpoint record, which needs
+`max_delay_ms` so a quiet cell does not hold an output for ever. `every: n`
+closes the interval after `n` inputs. A parked input closes the interval, so a
+replay starts after the poison. Recovery restores the last checkpoint and
+replays the inputs after it. The interval sizes the input log's retention, the
+work after a crash and how often source credit comes back: a relay that
+never checkpoints stops trimming its log and eventually stalls its own source.
+
+## Late input: correcting the past
+
+On the tier, a relay with an event-time clock can declare `correction_ms`.
+An input that arrives late, behind the cell's event-time high-water but inside
+the window, is not run on arrival. Instead the cell is rewound to a baseline
+before it, and the inputs since are replayed in event-time order (ties by
+offset); outputs are re-sent under a bumped epoch, so a keyed output plugin overwrites
+the stale rows. Requests for one cell merge into the one replay that reaches
+furthest back. Prerequisites, each refused at build time when missing: the
+tier, an event-time clock, and keyed plugin channels.
+
+The input log and compaction keep at least the window, so a correction always
+has its inputs and a baseline; a floor raised for it is logged once and
+emitted as `[:flezha, :correction, :retention_derived]`. A crash during a
+correction needs nothing: the correction simply runs again. An input later
+than the window follows `beyond_window`: `process_as_arrival` (the default) or
+`drop`; neither moves the high-water back. A correction overwrites the keys it
+sends again but does not retract keys it no longer sends; treat the output plugin as
+append-with-overwrite. A downstream relay sees corrected outputs as ordinary
+keyed updates.
+
+`flz relay replay <relay/tasklet/key> --from <seq|timestamp>` runs the
+same rewind from a point you choose, such as after deploying a fix. A point
+older than retention is refused with `outside_retention`, naming the earliest
+point available.
+
 ## What it requires
 
 - **An input log on each end** of whatever crosses between relays: a relay that runs
@@ -269,14 +380,191 @@ leaves only once the record behind it is on disk. So each message waits for a di
 would not wait for otherwise, and the input log takes disk space until what it holds is
 consumed. A slow disk makes a slow relay. Steps relays pay the same for their own log.
 A relay that can lose a message or handle one twice, for example one that only shows a
-preview, does not need to pay it. [relay_calls.md](relay_calls.md) says when an answer
+preview, does not need to pay it. [sending_and_calling.md](sending_and_calling.md#calls) says when an answer
 leaves, for each kind of relay.
+
+## Recorded effects
+
+A tasklet that calls something outside its relay (a model, a tool, a payment
+service) runs that call again whenever the invocation runs again: after a
+crash, on a replay, when a sleeping instance wakes or a relay moves to another
+runner. `ctx.effect` runs the call once and keeps its result. When the same
+invocation runs again, it returns the kept result and does not call out.
+
+`ctx.effect(name, fn)` asks the runner for a result kept under this call's
+identity. If there is one, the call returns it and `fn` does not run. If there
+is none, `fn` runs, and its result goes to the controller, which writes it to
+the instance's effect log beside its input log and syncs it. Only then does
+the call return.
+
+A kept result lives exactly as long as the input it belongs to: when the input
+log drops an input below the relay's floor, the results of that input go with
+it. The effect log is shipped to the durability backend with the input log,
+so a controller that replaces a lost disk still serves them. When an instance
+is bound to a runner, the controller sends its kept results first, before
+anything runs again.
+
+The result is encoded the way an output with no codec encodes a value: bytes
+as they are, a string as UTF-8, anything else as JSON. In Rust and Java it is
+the typed value's JSON. Pass a codec to keep a typed result in another form.
+
+### Call `ctx.effect`
+
+<!-- tabs-open -->
+
+### Java
+
+```java
+// Quote.java, in run(): ask the pricing model once per input
+String quote = ctx.effect("model", String.class, () -> pricing.quote(pair));
+ctx.emit(quote);
+```
+
+### Rust
+
+```rust
+// quote.rs, in run(): ask the pricing model once per input
+let quote: String = ctx.effect("model", || pricing.quote(&pair))?;
+ctx.emit(quote)?;
+```
+
+### Node
+
+```js
+// quote.mjs, in run(): ask the pricing model once per input
+const quote = await ctx.effect('model', async () => pricing.quote(pair));
+ctx.emit(quote);
+```
+
+### Python
+
+```python
+# quote.py, in run(): ask the pricing model once per input
+quote = ctx.effect("model", lambda: pricing.quote(pair))
+ctx.emit(quote)
+```
+
+### Ruby
+
+```ruby
+# quote.rb, in run: ask the pricing model once per input
+quote = ctx.effect("model") { pricing.quote(pair) }
+ctx.emit(quote)
+```
+
+### PHP
+
+```php
+// Quote.php, in run(): ask the pricing model once per input
+$quote = $ctx->effect('model', fn () => $this->pricing->quote($pair));
+$ctx->emit($quote);
+```
+
+### Elixir
+
+```elixir
+# quote.ex, in run/3: ask the pricing model once per input
+with {:ok, quote} <- effect(ctx, "model", fn -> Pricing.quote(pair) end) do
+  emit(ctx, quote)
+  {:ok, state}
+end
+```
+
+<!-- tabs-close -->
+
+In Python an `async def` function makes the call awaitable
+(`await ctx.effect("model", ask)`), and in Node the call is always awaited.
+An error `fn` raises reaches the tasklet unchanged, and nothing is kept, so the
+next attempt calls out again.
+
+### Which call gets which result
+
+A result is named by where it came from: the Cell, the input the invocation
+was taking, whether it ran in `run` or in `compensate`, the name, and how many
+calls of that name the invocation made before it. Two consequences:
+
+- Adding a call with another name before an existing one does not move the
+  existing one's result. Name each call after what it reaches (`"model"`,
+  `"search"`), not after its position.
+- Calling one name twice in an invocation keeps two results, and a re-run gets
+  them back in the same order.
+
+A name is a non-empty string of at most 255 bytes.
+
+### At least once at the edge
+
+The result is kept when the controller has it on disk. If the runner dies
+after `fn` returned and before that, the re-run calls `fn` again: no runtime
+can tell whether a call that never answered took effect. Where the outside
+service accepts an idempotency key, pass it `ctx.stable_id()`, which a re-run
+of the same invocation derives again, so the service can drop the repeat.
+
+A result over `FLEZHA_EFFECT_MAX_BYTES` (4 MiB unless set) is refused rather
+than kept. Keep a reference to a large result (a URL, an object key) instead.
+
+### One call at a time
+
+An invocation makes one `ctx.effect` call at a time. A call started while
+another of the same invocation is still running (from `fn` itself, a thread,
+`Promise.all` or `asyncio.gather`) is refused with `effect.nested`. Make the
+calls one after the other, or wrap the concurrent work in one call:
+
+```python
+# both searches run together, and their pair is kept as one result
+pair = ctx.effect("search", lambda: search_both("EURUSD", "GBPUSD"))
+```
+
+### Where nothing is kept
+
+An invocation that took no input-log offset can never run again with the same
+input, so `ctx.effect` just runs `fn` and sends nothing:
+
+- local mode,
+- a flow relay at the default tier that does not sleep, and a relay with
+  `durable: false`,
+- an input sent with `runner.send`'s `local` option
+  ([`sending_and_calling.md`](sending_and_calling.md#sending-from-runner-code)),
+- in a steps relay, a pass a timer fired and the later passes of a chained
+  loop, which take no input of their own: a re-run of one of them calls out
+  again.
+
+The same tasklet code therefore works everywhere, and keeps results where a
+re-run is possible: the [effectively-once tier](effectively_once.md), a relay
+that sleeps, and a durable steps relay's message-fed passes.
+
+### Refusals of an effect
+
+| Code | When |
+| --- | --- |
+| `effect.bad_name` | the name is empty or longer than 255 bytes |
+| `effect.nested` | another call of the invocation is still running, `fn` itself included |
+| `effect.outside_invocation` | the context is used after its invocation returned |
+| `effect.too_large` | the encoded result is over `FLEZHA_EFFECT_MAX_BYTES` |
+| `effect.not_recorded` | the controller did not confirm it kept the result in time |
+
+`effect.not_recorded` fails the attempt so the invocation runs again; the
+others are not retried. [`errors.md`](../../errors.md) has each message.
+
+### Limits of an effect
+
+- **Results do not cross inputs.** A result belongs to one input's
+  invocation. Two inputs that ask the same question call out twice.
+- **The kept result is returned as it reads back.** With no codec, a string
+  that is valid JSON reads back as that JSON value, on the first run and on a
+  re-run alike. Pass a codec when the type matters.
+- **Order matters within a name.** A re-run that calls one name in a
+  different order gets the results in the old order.
+- **Each SDK's test harness checks it, but Elixir's, which has no replay
+  pass.** The harness keeps each result its live pass produced and serves it
+  on the replay pass. A function that runs on
+  the replay pass, or a kept result the replay never asks for, fails the check
+  and names the effect.
 
 ## Limits and gotchas
 
 - **An outside call is covered only through `ctx.effect`.** A tasklet that calls an outside
-  service directly calls it again on a replay. [`recorded_effects.md`](recorded_effects.md)
-  keeps such a call's result, so a re-run reads it instead of calling again.
+  service directly calls it again on a replay; [`ctx.effect`](#recorded-effects) keeps such a
+  call's result, so a re-run reads it instead of calling again.
 - **A default flow relay is at least once.** Declare the tier where a repeat or a loss
   matters.
 - **Memory-only relays cannot have it** (`topology.effectively_once_without_persistence`).
@@ -286,10 +574,11 @@ leaves, for each kind of relay.
 
 ## See also
 
-- [durability.md](../basics/durability.md): the durability levels and what a crash can lose
+- [Durability and delivery](durability.md): the durability levels and what a crash can lose
   at each.
-- [configuring_a_relay.md](../basics/configuring_a_relay.md): the settings tree.
-- [relay_calls.md](relay_calls.md): guarantees of calls.
+- [Relay settings](../../configuration/relay_settings.md): the settings tree.
+- [Sending and calling](sending_and_calling.md#guarantees): guarantees of calls, and local
+  input, which keeps nothing.
 - [clustering.md](../deploying/clustering.md): the copy in a durability backend.
-- [errors.md](../../errors.md): the `topology.*` refusals.
+- [errors.md](../../errors.md): the `topology.*` refusals and the `effect.*` codes.
 - Tutorial: [call_the_session.md](tutorials/call_the_session.html).

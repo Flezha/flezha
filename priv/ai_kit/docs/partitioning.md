@@ -17,7 +17,7 @@ keyed: its entry edge needs a `key_by`.
 ## Partitions and cells
 
 A cell is one copy of a tasklet with its own state, one per key (see
-[state](../basics/state.md)). Partitions work one level up, and the two are easy to mix up:
+[state](state.md)). Partitions work one level up, and the two are easy to mix up:
 
 | | A cell | A partition |
 |---|---|---|
@@ -472,11 +472,11 @@ sub-key, not the pair, or the guard above refuses the first record.
 
 ## See also
 
-- [Configuring a relay](../basics/configuring_a_relay.md): flow and steps, and `key_by`
-- [Streams](../basics/streams.md): keys and cells
-- [State](../basics/state.md): what a moved cell carries
+- [Relay settings](../../configuration/relay_settings.md): flow and steps, and `key_by`
+- [Streams](streams.md): keys and cells
+- [State](state.md): what a moved cell carries
 - [Plugins](../plugins/plugins.md): sharing, and which plugins refuse a group member
-- [Relay calls](relay_calls.md): calling a group by key
+- [Relay calls](sending_and_calling.md#calls): calling a group by key
 - [Clustering](../deploying/clustering.md): several controllers
 - [`websocket_subscription`](../../plugins/websocket_subscription.md),
   [`http_poll`](../../plugins/http_poll.md),

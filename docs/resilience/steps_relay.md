@@ -3,10 +3,10 @@
 The mechanism reference for a relay whose class sets `run: steps`: what the controller and
 the shared runner core do at each tasklet barrier, iteration boundary, park, rewind and crash,
 for contributors to `flz_core/src/steps/` and `lib/flezha/relay/`. What a user configures,
-sees and runs is in [`../topics/basics/workflows.md`](../topics/basics/workflows.md). The
+sees and runs is in [`../topics/core/workflows.md`](../topics/core/workflows.md). The
 concepts (the graph, the journal layout, the barrier, the outbox, loop modes, suspension, rewind)
 are described once in [`../architecture/steps_profile.md`](../architecture/steps_profile.md) and
-not repeated here; [`../topics/basics/durability.md`](../topics/basics/durability.md) says what is lost when.
+not repeated here; [`../topics/core/durability.md`](../topics/core/durability.md) says what is lost when.
 
 ## Structure: a DAG of tasklets, parallel cells
 
@@ -30,7 +30,7 @@ not repeated here; [`../topics/basics/durability.md`](../topics/basics/durabilit
 
 An instance is spawned with `init_values` as its tasklets' initial state, as a flow relay is,
 from the CLI (`flz relay start`), a schedule (`flz schedule`) or a running tasklet
-(`ctx.spawn_steps`, [`../topics/advanced/spawning_from_a_tasklet.md`](../topics/advanced/spawning_from_a_tasklet.md)),
+(`ctx.spawn_steps`, [`workflows.md`](../topics/core/workflows.md#starting-one-from-a-tasklet)),
 takes its input as messages on its entry channels (the first may ride the start:
 `flz relay start --text`, a schedule's stored `--text`, a spawn's payload) and terminates
 on the first of: chain quiescence (every leaf committed); a tasklet's
@@ -115,7 +115,7 @@ releasing the message as an iteration commit releases its input, **before**
 fails leaves the instance bound and logged. The Overwatch and the registry entry stay, and the
 Overwatch **hibernates** (`:hibernate` on both suspension entries, releasing its bind-time heap).
 A flow relay that sleeps takes the same path at iteration `0`
-([`../topics/basics/durability.md`](../topics/basics/durability.md)).
+([`../topics/core/durability.md`](../topics/core/durability.md)).
 
 **Rehydrate = bind.** A new input-log append, the wake deadline, a crash and a migration all go
 through `Lifecycle.complete_init/5`: respawn on any live runner, `AddRelay.task_journal`
@@ -150,7 +150,7 @@ steps relay Cell, since its baseline is a committed iteration across every Cell 
 its effect records carry no consumed offset; `flz relay rewind` is a loop's way back.
 
 A steps tasklet's Cell timers fire as passes of their own
-([`../topics/advanced/timers.md`](../topics/advanced/timers.md)). A served firing leaves its
+([`../topics/core/timers.md`](../topics/core/timers.md)). A served firing leaves its
 Cell's pending set when the stage that ran it commits, and the root's `TaskCommit` names the
 firing, so a resume knows the pass it opened: a crash before that commit fires the restored
 timer again into a fresh pass, and a crash after it drops the restored timer and resumes the
@@ -181,7 +181,7 @@ a flow relay; a steps class declares none of its own.
 
 An exhausted ladder fails the stage where a flow relay would park the item: no commit, nothing
 leaked, compensation, status `error`. Abort-and-compensate is the escape where a flow relay
-would [park the payload](../topics/basics/durability.md), with
+would [park the payload](../topics/core/durability.md), with
 one exception: a failed turn of a keep-progress session.
 
 ## A failed turn of a keep-progress session
@@ -314,7 +314,7 @@ that releases the stage's outputs into its children.
 | append | `Commits` | once every named record is durable, `TaskJournal.append_async/4`, `sync: :batched`: the reply is deferred until the `FsyncBatcher` tick, a prefix cut or a clean close syncs the batch; the worker's request collection is the set of acks owed and it never waits on a writer |
 | identity | journal writer | the 16-byte header `[epoch u32][type u8][task_idx u16][iter u32]` is the dedup key: a re-sent barrier is answered from the existing entry, never journaled twice |
 | ack | written by the channel | `TaskCommitResponse` under the request's `reference_id`; a non-empty `error` (write failure, `{:oversized_handoff, size, max}`, `record_not_durable`) terminates the run |
-| sync remote | a task, before the ack | `durable: remote` (`durable = "remote"` in the declaration) has `DurabilityTier.commit_sync/1` ship the journal suffix to the [remote tier](../topics/basics/durability.md) first — RPO 0, as for a flow class's inputs |
+| sync remote | a task, before the ack | `durable: remote` (`durable = "remote"` in the declaration) has `DurabilityTier.commit_sync/1` ship the journal suffix to the [remote tier](../topics/core/durability.md) first — RPO 0, as for a flow class's inputs |
 | release | after the ack, on the worker | `WalWriter.commit_records/3` for each named range: the Cell's writer releases those records' outputs to the plugin chain and drops a held entry of that Cell below the range (an attempt that never committed) |
 
 Each send arms a deadline of `FLEZHA_STEPS_ACK_TIMEOUT_MS` (default 30 000) on the poll core's
@@ -329,7 +329,7 @@ references. Every released output carries the identity a flow relay's does: `flz
 does not move), `channel`, `flz.key` when the channel is keyed, and the author's metadata. An
 undo output is a newer record of the compensating Cell, so its seq sorts above the forward
 output's. An opted-out class sends its outputs straight to the wire with the same channel, key
-and metadata. Flush contract: [`../topics/basics/durability.md`](../topics/basics/durability.md).
+and metadata. Flush contract: [`../topics/core/durability.md`](../topics/core/durability.md).
 
 **Crash-resume.** Journal state rides `AddRelay.task_journal` on the bind — not a per-Cell
 restore, because a class whose tasklets hold no per-Cell state receives no
@@ -402,9 +402,9 @@ flow relay and the persistence switch; on every SDK runtime, UDS and QUIC.
 
 ## See also
 
-- [`../topics/basics/workflows.md`](../topics/basics/workflows.md): the user's view: settings, undo, retries, sleeping, retention
+- [`../topics/core/workflows.md`](../topics/core/workflows.md): the user's view: settings, undo, retries, sleeping, retention
 - [`../architecture/steps_profile.md`](../architecture/steps_profile.md) — the concepts and the wire table
-- [`../topics/basics/durability.md`](../topics/basics/durability.md) — the scenario matrix, the durable input log and the outbox
+- [`../topics/core/durability.md`](../topics/core/durability.md) — the scenario matrix, the durable input log and the outbox
 - [`../internals/state_persistence.md`](../internals/state_persistence.md) — the WAL substrate, `FsyncBatcher`, retention
 - [`../sdk/protocol_spec.md`](../sdk/protocol_spec.md) — field-level `TaskCommit` / `IterCommit` / `IterPark`
-- [`../topics/basics/durability.md`](../topics/basics/durability.md) — `sync_remote`
+- [`../topics/core/durability.md`](../topics/core/durability.md) — `sync_remote`

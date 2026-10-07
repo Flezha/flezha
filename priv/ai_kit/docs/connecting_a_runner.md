@@ -43,7 +43,7 @@ line is the controllers clustering ([`clustering.md`](clustering.md)).
 It lets a runner cross a machine boundary: `FLEZHA_TRANSPORT=quic` plus
 `FLEZHA_QUIC_ADDRESSES`, a comma separated list of names or addresses, port
 4433 by default. It needs certificates on both ends
-([`authorization.md`](../basics/authorization.md)) and is far less exercised than the
+([`authorization.md`](../core/authorization.md)) and is far less exercised than the
 socket. Prefer the socket.
 
 Each entry of `FLEZHA_QUIC_ADDRESSES` is a name or a literal address with an
@@ -210,7 +210,7 @@ Three things matter when a supervisor runs it:
   open, and so does `stdin_open: true` in a compose file.
 
 Each runner takes the namespace it serves when it starts
-([`namespaces.md`](../basics/namespaces.md)). In the example runners it is the first
+([`namespaces.md`](../core/namespaces.md)). In the example runners it is the first
 argument, `default` when omitted. One way to start each language's echo
 runner, from its example folder:
 
@@ -329,13 +329,13 @@ onto it again.
 - **Different users need a shared group** (`FLEZHA_SOCKET_DIR_GROUP`); the
   directory is not opened wider than `0750`.
 - **A runner that connects runs nothing yet.** Relays are started
-  separately ([`running_relays.md`](../basics/running_relays.md)).
+  separately ([`running_and_testing.md`](../core/running_and_testing.md)).
 
 ## See also
 
-- [`building_blocks.md`](../basics/building_blocks.md): what a runner is, and the code that registers its factories.
+- [`building_blocks.md`](../core/building_blocks.md): what a runner is, and the code that registers its factories.
 - [`deploying_a_controller.md`](deploying_a_controller.md): the controller the runner attaches to.
-- [`namespaces.md`](../basics/namespaces.md): the namespace a runner serves.
+- [`namespaces.md`](../core/namespaces.md): the namespace a runner serves.
 - [`kubernetes.md`](kubernetes.md), [`clustering.md`](clustering.md).
 - [Files and sockets](../../configuration/files_and_sockets.md#the-socket-directory-ladder): the socket-directory settings.
 - [`../../troubleshooting/runner_cannot_connect.md`](../../troubleshooting/runner_cannot_connect.md).

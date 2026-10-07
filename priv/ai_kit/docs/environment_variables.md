@@ -13,18 +13,6 @@ a count that is zero, negative or not a number. Every other type — a duration,
 an address, a member of an enumeration — refuses the boot naming the variable,
 the value and the type.
 
-**Contents**
-
-1. [Transport and TLS](#transport-and-tls)
-2. [Cluster and nodes](#cluster-and-nodes)
-3. [State, WAL and durability](#state-wal-and-durability)
-4. [Runner and relay lifecycle](#runner-and-relay-lifecycle)
-5. [Resilience and convergence](#resilience-and-convergence)
-6. [Observability and audit](#observability-and-audit)
-7. [Security](#security)
-8. [Plugins, DLQ and schedules](#plugins-dlq-and-schedules)
-9. [Build-time and image variables](#build-time-and-image-variables)
-
 ## Transport and TLS
 
 Runners talk to the controller over one of two transports. The default, Unix
@@ -109,8 +97,9 @@ Every variable of the area:
 | `FLEZHA_STATE_DIR` | `app_data/state` (`:test` derives a root per run) | the state root. Like every variable here it fills its key once, at boot, in `config/runtime.exs`; `Flezha.State.Paths.state_root/0` then reads `:state_root` and resolves it to an absolute path. Setting the variable in a live BEAM changes nothing. A relative value still resolves against the directory the controller was started from, which the boot and `flz controller status` both name |
 | `FLEZHA_COMPACT_AFTER_BYTES` | `8388608` | `:default_compact_after_bytes` |
 | `FLEZHA_COMPACT_AFTER_AGE_MS` | `300000` (`0` in test) | `:compact_after_age_ms`; `0` disables the age trigger |
-| `FLEZHA_EFFECT_MAX_BYTES` | `4194304` (4 MiB) | `:effect_max_bytes`, the largest `ctx.effect` result the controller keeps; runners read the same variable ([recorded effects](../topics/advanced/recorded_effects.md)) |
+| `FLEZHA_EFFECT_MAX_BYTES` | `4194304` (4 MiB) | `:effect_max_bytes`, the largest `ctx.effect` result the controller keeps; runners read the same variable ([recorded effects](../topics/core/effectively_once.md#recorded-effects)) |
 | `FLEZHA_INPUT_LOG_HOLD_WINDOW_MS` | `0` | `:input_log_hold_window_ms`, a floor; a declared `correction_ms` raises its own hold above it |
+| `FLEZHA_INPUT_SILENCE_TIMEOUT_MS` | `0` (off) | `:input_silence_timeout_ms`; a flow or awake steps relay that produced output and then receives no Change for this long logs one warning and emits `[:flezha, :state, :input_silence]`. Set it on a controller whose feeds are continuous |
 | `FLEZHA_CREDIT_FLOW_CONTROL` | `true` | `:credit_flow_control_enabled` |
 | `FLEZHA_RETENTION_CHECK_INTERVAL_MS` | `60000` | `:time_travel_retention_check_interval_ms` (not in test) |
 | `FLEZHA_STEPS_RETENTION_HOURS` | `72` | `:default_relay_completed_retention_hours` (not in test); how long the record and state of a finished instance are kept, a completed flow instance's as well as a steps one's |
@@ -243,5 +232,6 @@ skipped as a block.
 |---|---|---|
 | `RUSTLER_SKIP_COMPILATION` | Rustler, via `mix compile` | `true` makes the build pick up a pre-built `priv/native/flz_nif.so` instead of invoking cargo (prod image Stage 2) |
 | `FLEZHA_RESTORE_WAIT_TIMEOUT_S` | `docker/prod/controller-entrypoint.sh` | the image entrypoint's own contract; it bounds the wait for the controller's control socket |
+| `FLEZHA_SHUTDOWN_TOKEN_FILE` | `docker/prod/controller-entrypoint.sh` | a file holding an `admin@_system` token, presented by the SIGTERM trap's `flz controller stop`; without it an enforcing controller refuses the graceful stop and the orchestrator kills the BEAM at its grace period |
 | `FLEZHA_TESTNET_WS_PORT` | `config/runtime.exs` and `docker/prod/controller-entrypoint.sh` | the port the WS testnet daemon binds. `:test` derives it from the run (`4500` outside `:test`); the entrypoint starts the daemon only when it is set explicitly |
 | `FLEZHA_NODE_NAME` | `config/runtime.exs` and `rel/env.sh.eex` | the base of the node name `<name>@<host>`. `:test` derives it from the run (`flezha_test_<pid>`; `flezha` outside `:test`) and starts distribution under it; the release script builds `RELEASE_NODE` from it |

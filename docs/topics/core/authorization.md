@@ -318,7 +318,7 @@ nothing about whether the name exists. Some choices worth stating plainly:
   relay's own input and is not judged again.
 - **A relay's `call` is judged as its runner identity**, which needs
   `spawner` or `app`; a refusal ends the call with a response carrying its
-  `authz.*` code ([`../advanced/relay_calls.md`](../advanced/relay_calls.md)).
+  `authz.*` code ([`sending_and_calling.md`](sending_and_calling.md#calls)).
 - **`flz auth whoami` is a gated read**: while enforced, a call without a token
   is refused, naming the missing credential.
 

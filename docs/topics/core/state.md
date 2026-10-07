@@ -86,7 +86,7 @@ new keys past it are dropped). An idle dynamic cell can be evicted after
   declared with `logical_clock`; it needs a real change type).
 - **Timers are state too.** A timer's registration, cancellation and firing
   are records in the same log, so pending timers come back with the cell
-  ([`../advanced/timers.md`](../advanced/timers.md)).
+  ([`timers.md`](timers.md)).
 
 ## Example: a window of prices
 
@@ -305,7 +305,7 @@ decoding of a state read back from the controller.
 
 ## Where the state is kept
 
-The class's `durable` setting ([`configuring_a_relay.md`](configuring_a_relay.md))
+The class's `durable` setting ([`relay_settings.md`](../../configuration/relay_settings.md))
 decides where a cell's log lives, for a stream and a workflow alike. It is
 fixed on an instance when it starts: a change to the class applies from the
 next stop and start.
@@ -416,7 +416,7 @@ stated, not checked by a tool.
 - [`streams.md`](streams.md#keys-and-cells): keys, and how they make cells.
 - [`workflows.md`](workflows.md): why a step keeps its undo handle in state.
 - [`durability.md`](durability.md): what each `durable` level keeps through a crash.
-- [`../advanced/timers.md`](../advanced/timers.md), [`../advanced/partitioning.md`](../advanced/partitioning.md).
+- [`timers.md`](timers.md), [`partitioning.md`](partitioning.md).
 - [`../../sdk/state_persistence.md`](https://github.com/flezha/flezha/blob/main/docs/sdk/state_persistence.md): how the SDKs carry it out.
 - [`../../sdk/authoring_contract.md`](https://github.com/flezha/flezha/blob/main/docs/sdk/authoring_contract.md): changing a deployed state type.
 - Tutorial: [`watch_the_trades.md`](tutorials/watch_the_trades.html) builds `track_prices`.

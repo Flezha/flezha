@@ -7,7 +7,7 @@ input plugin. It is the output plugin whose destination is another relay rather 
 external endpoint, and the shape to copy for a plugin author who needs an output plugin like it.
 `Flezha.Plugin.Provider.RelayForward` is its provider, under the provider id
 `relay_forward`. The cross-hop delivery guarantee itself is specified in
-[`durability.md`](../topics/basics/durability.md) and is not repeated here.
+[`durability.md`](../topics/core/durability.md) and is not repeated here.
 
 | | |
 | --- | --- |
@@ -231,7 +231,7 @@ shape: never deliver from the worker's own `handle_call`, and pick `restart` del
 
 ## See also
 
-- [`durability.md`](../topics/basics/durability.md): the cross-hop guarantee and what survives a controller restart
-- [`relay_calls.md`](../topics/advanced/relay_calls.md): asking a relay and waiting for its answer
-- [`partitioning.md`](../topics/advanced/partitioning.md): key groups and rescale
+- [`durability.md`](../topics/core/durability.md): the cross-hop guarantee and what survives a controller restart
+- [`sending_and_calling.md`](../topics/core/sending_and_calling.md#calls): asking a relay and waiting for its answer
+- [`partitioning.md`](../topics/core/partitioning.md): key groups and rescale
 - [`plugins.md`](../topics/plugins/plugins.md): the plugin model

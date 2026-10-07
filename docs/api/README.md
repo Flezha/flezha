@@ -26,7 +26,7 @@ the HTTP API ([`docs/plugins/http_api.md`](../plugins/http_api.md)) reach the
 function through one door, `Flezha.Service.Admin`, so one request is judged once,
 by the function's own row. The row names the action the
 policy judges, the rule that resolves its namespace, and the audit it leaves;
-`docs/topics/basics/authorization.md` carries the whole table. A published function
+`docs/topics/core/authorization.md` carries the whole table. A published function
 that took a caller context and bound no row would fail
 `test/flezha/authz/verbs_test.exs`, so there is no ungoverned function on this
 surface: a read the policy calls public (`run_known?/2`, `parse_cron/2`, the

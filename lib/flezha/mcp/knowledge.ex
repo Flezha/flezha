@@ -45,7 +45,7 @@ defmodule Flezha.Mcp.Knowledge do
       name: "Flezha.docs",
       doc:
         "One Flezha guide page as Markdown, by the file name the map in flezha_guide links, " <>
-          "for example local_mode.md.",
+          "for example running_and_testing.md.",
       args: [page: [type: :string, required: true, doc: "The page's file name"]]
     },
     %{

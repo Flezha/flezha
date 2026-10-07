@@ -104,7 +104,7 @@ Stopping flezha controller...
 
 ## `flz boot`
 
-Says whether the controller has finished starting, or waits until it has. Explained in [`deploying_a_controller.md`](../deploying/deploying_a_controller.md#check-that-it-is-up), [after a restart](../basics/running_relays.md#after-a-controller-restart).
+Says whether the controller has finished starting, or waits until it has. Explained in [`deploying_a_controller.md`](../deploying/deploying_a_controller.md#check-that-it-is-up), [after a restart](../core/running_and_testing.md#after-a-controller-restart).
 
 ```sh
 $ flz boot help
@@ -296,7 +296,7 @@ flezha_transport	active	metric	40
 
 ## `flz reset`
 
-Deletes the controller's data on disk, so its next start is empty. Explained in [`running_relays.md`](../basics/running_relays.md#start-from-a-clean-slate-flz-reset).
+Deletes the controller's data on disk, so its next start is empty. Explained in [`running_and_testing.md`](../core/running_and_testing.md#start-from-a-clean-slate-flz-reset).
 
 ```sh
 $ flz reset --help

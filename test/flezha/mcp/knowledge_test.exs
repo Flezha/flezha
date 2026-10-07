@@ -17,7 +17,7 @@ defmodule Flezha.Mcp.KnowledgeTest do
   test "the guide is the rules followed by the map of the guide pages" do
     assert {:text, guide} = Knowledge.call("Flezha.guide", [])
     assert String.starts_with?(guide, Knowledge.rules())
-    assert guide =~ "(local_mode.md)"
+    assert guide =~ "(running_and_testing.md)"
     refute guide =~ "## Published API"
     refute guide =~ "catalogue.json"
   end
@@ -44,9 +44,9 @@ defmodule Flezha.Mcp.KnowledgeTest do
   end
 
   test "a page is served by the name the map links, with or without .md" do
-    assert {:text, page} = Knowledge.call("Flezha.docs", ["local_mode.md"])
-    assert page == File.read!("docs/topics/basics/local_mode.md")
-    assert {:text, ^page} = Knowledge.call("Flezha.docs", ["local_mode"])
+    assert {:text, page} = Knowledge.call("Flezha.docs", ["running_and_testing.md"])
+    assert page == File.read!("docs/topics/core/running_and_testing.md")
+    assert {:text, ^page} = Knowledge.call("Flezha.docs", ["running_and_testing"])
   end
 
   test "an unknown value is refused with a hint that names the way on" do

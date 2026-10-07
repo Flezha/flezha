@@ -1,4 +1,4 @@
-# Durability
+# Durability and delivery
 
 Flezha writes down every change a tasklet makes to its state, and every step a
 workflow finishes, on the controller's disk as it happens. When a runner or the
@@ -17,7 +17,7 @@ few milliseconds of changes that were not yet on the controller's disk.**
 ## Durability levels
 
 How far a relay's work is kept is its class's `durable` setting
-([`configuring_a_relay.md`](configuring_a_relay.md)). A class that runs
+([`relay_settings.md`](../../configuration/relay_settings.md)). A class that runs
 in flow also has a duplicate rule, `exactly`, which says how often a value may
 reach an output plugin:
 
@@ -54,7 +54,7 @@ is no ship, so at `local` the disk is the only copy.
 | every runner killed at once | the last few changes may be lost | at-least-once | the same restore, with no live copy anywhere |
 | a runner runs out of memory, its container or node dies | the last few changes may be lost | at-least-once | as a kill: no drain runs |
 | a controller restarts gracefully, with a live peer | no loss | at-least-once | the new instance syncs the registry from the peer; runners stay connected |
-| the only controller restarts | no loss | at-least-once | the first recovery round replays the relay list from disk; `/healthz` says `recovering` until relays are bound ([`running_relays.md`](running_relays.md#after-a-controller-restart)) |
+| the only controller restarts | no loss | at-least-once | the first recovery round replays the relay list from disk; `/healthz` says `recovering` until relays are bound ([`running_and_testing.md`](running_and_testing.md#after-a-controller-restart)) |
 | the whole cluster starts cold | recovered from the durable registry | none in flight | disk is the only record |
 | a relay moves to a controller with no copy of its log, runner alive | no loss | at-least-once | with the remote tier the copy is fetched; without it, the runner is asked for a full snapshot, which becomes the new baseline |
 | a node rejoins a live cluster | synced from peers; its own copy is kept | none in flight | nothing is missing, so nothing starts |
@@ -135,93 +135,12 @@ it.
 
 ### Effectively once
 
-`exactly: effectively_once` combines at-least-once delivery, a deterministic
-key and an idempotent output plugin into effectively-once delivery. Each plugin-bound
-channel must be `keyed()`, which registration checks. The tier works the same
-in every SDK.
-
-- **Each input is written to the relay's input log before it is forwarded**,
-  stamped `flz.offset`, and forwarded once the log has synced it. A repeat of a
-  `flz.msg_id` the log still holds is absorbed; a message without an id is
-  always appended. The log is trimmed only below the instance's floor, the
-  prefix of inputs every cell has processed durably; a floor that does not move
-  past the size threshold emits `[:flezha, :state, :input_log_frozen_watermark]`.
-- **One atomic record per invocation**: state changes, outputs, the consumed
-  offset, a dead-letter entry and event time are written together, in one
-  sync, never partly and never merged away.
-- **A value handed to the next tasklet is kept in its producer's record**, so
-  a value lost with the consumer's mailbox in a crash is delivered again, and a
-  consumer that already took it drops it.
-- **Outputs reach the output plugins only once their record is on disk**, stamped
-  `flz.cell`, `flz.seq`, `flz.epoch` and `flz.key`: enough for exact dedup.
-  After a restart, every record past the cell's flushed cursor is sent again,
-  in order, under the same identity: never lost, never applied twice at a
-  conforming output plugin.
-- **The cursor moves on the output plugin's confirmation**, not on dispatch: a Kafka
-  produce acknowledged, a Postgres transaction committed, a forward confirmed.
-  A batch whose retries run out is parked in the dead-letter queue, and only
-  then may the cursor pass it. A delivery whose confirmation is lost is sent
-  again after `:outbox_resettle_ms` (60 s); at most `:outbox_inflight_max`
-  (1 000) are in flight per cell. Unconfirmed output shows as
-  `outbox_unconfirmed_ms` in the cell's stall status, and reaches the
-  convergence loop as the `outbox_flat` verdict.
-- **The source slows down rather than the log growing without bound.** Each
-  relay has a source credit window (`:source_credit_window_bytes`, 16 MiB by
-  default); at zero, the source waits (a WebSocket source stops reading).
-- **Classes without the tier pay nothing for it.** Under the tier, a slow or
-  unreachable output plugin backs output up on disk, not in memory.
-
-**Conforming output plugins.** The Postgres output plugin upserts each batch into
-`flezha_records` (keyed by `flz.key`) and advances its progress row in one
-transaction, guarded by `(epoch, seq)`, so repeats and stale epochs do nothing;
-an unreachable database delays the flush (callers wait past `queue_max`,
-10 000), and the schema is yours to create (`auto_create: false` fails health
-naming the missing tables). The Kafka producer uses `flz.key` as the message
-key and carries the identity in the `flezha.dedup_key` header
-([`../../plugins/kafka_producer.md`](../../plugins/kafka_producer.md)).
-**The WebSocket output plugin is not a conforming output plugin**: with `sink_ack_mode: "none"`
-(the default) it is at-most-once past the socket, with `"required"`
-at-least-once; it can carry `flz.cell` and `flz.seq` in the frame for the
-consumer to dedup ([`../../plugins/websocket_subscription.md`](../../plugins/websocket_subscription.md)).
-
-**Checkpoints.** A relay that folds many inputs into one coherent result
-declares `ack: checkpoint` and calls `ctx.checkpoint()` where its state is
-coherent. The consumed offset then moves only at a checkpoint, with the
-interval's changes in one record. Emits still flush as they happen, unless
-`outputs: at_checkpoint` holds them for the checkpoint record, which needs
-`max_delay_ms` so a quiet cell does not hold an output for ever. `every: n`
-closes the interval after `n` inputs. A parked input closes the interval, so a
-replay starts after the poison. Recovery restores the last checkpoint and
-replays the inputs after it. The interval sizes the input log's retention, the
-work after a crash and how often source credit comes back: a relay that
-never checkpoints stops trimming its log and eventually stalls its own source.
-More, with a worked example: [`../advanced/effectively_once.md`](../advanced/effectively_once.md).
-
-### Late input: correcting the past
-
-On the tier, a relay with an event-time clock can declare `correction_ms`.
-An input that arrives late, behind the cell's event-time high-water but inside
-the window, is not run on arrival. Instead the cell is rewound to a baseline
-before it, and the inputs since are replayed in event-time order (ties by
-offset); outputs are re-sent under a bumped epoch, so a keyed output plugin overwrites
-the stale rows. Requests for one cell merge into the one replay that reaches
-furthest back. Prerequisites, each refused at build time when missing: the
-tier, an event-time clock, and keyed plugin channels.
-
-The input log and compaction keep at least the window, so a correction always
-has its inputs and a baseline; a floor raised for it is logged once and
-emitted as `[:flezha, :correction, :retention_derived]`. A crash during a
-correction needs nothing: the correction simply runs again. An input later
-than the window follows `beyond_window`: `process_as_arrival` (the default) or
-`drop`; neither moves the high-water back. A correction overwrites the keys it
-sends again but does not retract keys it no longer sends; treat the output plugin as
-append-with-overwrite. A downstream relay sees corrected outputs as ordinary
-keyed updates.
-
-`flz relay replay <relay/tasklet/key> --from <seq|timestamp>` runs the
-same rewind from a point you choose, such as after deploying a fix. A point
-older than retention is refused with `outside_retention`, naming the earliest
-point available.
+`exactly: effectively_once` writes each input to the relay's input log before
+it runs, and each invocation's state changes, outputs and consumed offset as
+one record. An output leaves only once its record is on disk, stamped so a
+conforming output plugin drops a repeat. A durable workflow has the same
+guarantee without asking. What the tier does, what it costs, and how a late
+input corrects the past are in [Effectively once](effectively_once.md).
 
 ### Workflows: released at the step's commit
 
@@ -291,7 +210,7 @@ log, so pending timers come back with the cell:
 
 Without the tier a firing is at-least-once, like an input; a firing that runs
 out of attempts is parked, and its removal is durable either way, so a poison
-timer parks once ([`../advanced/timers.md`](../advanced/timers.md)).
+timer parks once ([`timers.md`](timers.md)).
 
 ## The dead-letter queue
 
@@ -344,7 +263,7 @@ verbatim. A verb naming a relay is judged in that relay's namespace; one
 naming none reads every namespace and is judged in `_system`. An Elixir entry
 whose tasklet was handed a decoded map rather than bytes can be dropped but not
 replayed. A partition group cannot be rescaled while its dead-letter queue
-holds entries ([`../advanced/partitioning.md`](../advanced/partitioning.md)).
+holds entries ([`partitioning.md`](partitioning.md)).
 
 Retention bounds the queue by age and size, 30 days or 4 GiB, whichever is
 stricter. A retention deletion is real loss, and loud:
@@ -516,11 +435,11 @@ whose record is on local disk but not yet shipped.
 
 ## See also
 
-- [`configuring_a_relay.md`](configuring_a_relay.md): `durable`, `exactly` and `sleep_after`.
+- [`relay_settings.md`](../../configuration/relay_settings.md): `durable`, `exactly` and `sleep_after`.
 - [`state.md`](state.md): how state is recorded and restored.
 - [`workflows.md`](workflows.md): steps, undo and crash-resume.
-- [`running_relays.md`](running_relays.md#after-a-controller-restart): what comes back after a restart.
+- [`running_and_testing.md`](running_and_testing.md#after-a-controller-restart): what comes back after a restart.
 - [`deploying_a_controller.md`](../deploying/deploying_a_controller.md): the variables a deployment sets, graceful shutdown.
-- [`../advanced/effectively_once.md`](../advanced/effectively_once.md), [`../advanced/timers.md`](../advanced/timers.md), [`../advanced/partitioning.md`](../advanced/partitioning.md).
+- [`effectively_once.md`](effectively_once.md), [`timers.md`](timers.md), [`partitioning.md`](partitioning.md).
 - [Controller environment variables](../../configuration/environment_variables.md#state-wal-and-durability): the durability settings.
 - Tutorial: [`crash_the_desk.md`](tutorials/crash_the_desk.html) crashes the tradedesk on purpose.

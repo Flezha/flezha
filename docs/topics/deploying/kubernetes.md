@@ -327,7 +327,7 @@ in short:
   an HTTP port needs a proxy that retries a refused connection
   ([http_server.md](../../plugins/http_server.md#deployment)).
 - **Deleting the namespace deletes the volumes,** and the state in them.
-- **Turn authorization on** outside a local trial ([authorization.md](../basics/authorization.md)).
+- **Turn authorization on** outside a local trial ([authorization.md](../core/authorization.md)).
 
 ## See also
 

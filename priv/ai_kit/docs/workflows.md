@@ -16,6 +16,29 @@ One instance is one piece of work. A hundred orders are a hundred instances
 of the same factory, each with its own state, which do not get in each other's
 way.
 
+**Contents**
+
+1. [How it works](#how-it-works)
+2. [Configure it](#configure-it)
+3. [A step that can be undone](#a-step-that-can-be-undone)
+4. [A step that fails](#a-step-that-fails)
+5. [Undoing: `undo_all` and `keep_progress`](#undoing-undo_all-and-keep_progress)
+6. [Connect the steps](#connect-the-steps)
+7. [One instance per piece of work](#one-instance-per-piece-of-work)
+8. [Starting one from a tasklet](#starting-one-from-a-tasklet)
+   1. [Spawn or deliver](#spawn-or-deliver)
+   2. [Permission to spawn](#permission-to-spawn)
+   3. [Reading the result of a spawn](#reading-the-result-of-a-spawn)
+   4. [Example: one order per buy](#example-one-order-per-buy)
+   5. [Replays and crash re-runs](#replays-and-crash-re-runs)
+   6. [Dangers of a spawn without an id](#dangers-of-a-spawn-without-an-id)
+9. [Crashes and resuming](#crashes-and-resuming)
+10. [Sleeping when idle](#sleeping-when-idle)
+11. [After it ends](#after-it-ends)
+12. [How many instances a runner holds](#how-many-instances-a-runner-holds)
+13. [Limits and gotchas](#limits-and-gotchas)
+14. [See also](#see-also)
+
 ## How it works
 
 ```mermaid
@@ -48,7 +71,7 @@ steps are done when an instance stops half way, and that is where it resumes.
 ## Configure it
 
 The class declares the run and its two members
-([`configuring_a_relay.md`](configuring_a_relay.md)):
+([`relay_settings.md`](../../configuration/relay_settings.md)):
 
 | Setting | Values | Default |
 | --- | --- | --- |
@@ -527,7 +550,7 @@ iteration `N + 1`. The undone messages are not run again. A rewind is refused,
 before anything changes, when `N` is not a committed iteration (the refusal
 names the committed range) and when a step above `N` wrote plugin output and
 declares no `compensate` (the refusal names the channels). A step without a
-`compensate` keeps its state change. [`../advanced/rewinding_a_turn.md`](../advanced/rewinding_a_turn.md)
+`compensate` keeps its state change. [`sessions.md`](sessions.md#rewinding-a-turn)
 walks through it.
 
 **A partitioned loop.** Each member of a partitioned `per_input` workflow
@@ -684,8 +707,7 @@ A workflow's factory is registered on a runner like any other, and an instance
 is started per piece of work: by hand with `flz relay start`, on a schedule
 with `flz schedule add`, or from a running tasklet. In the tradedesk example
 the ETL stream starts one `order_executor` for every buy, handing it the order
-as its first message
-([`../advanced/spawning_from_a_tasklet.md`](../advanced/spawning_from_a_tasklet.md)):
+as its first message ([below](#starting-one-from-a-tasklet)):
 
 ```sh
 $ flz relay start order_executor --text '{"symbol": "EUR/USD", "quantity": 10}' --channel order
@@ -693,7 +715,254 @@ $ flz relay start order_executor --text '{"symbol": "EUR/USD", "quantity": 10}' 
 
 A start without `--id` that is retried after a lost reply starts a second
 instance, which here would be a second order. Pass `--id` when a start may be
-retried ([`running_relays.md`](running_relays.md)).
+retried ([`running_and_testing.md`](running_and_testing.md)).
+
+## Starting one from a tasklet
+
+A running tasklet can start a workflow with one call: `ctx.spawn_steps`. A stream that
+watches prices can start one order workflow per buy; a router can start one triage job per
+ticket, or hand a ticket to the job already working on its subject. The tasklet may belong to a
+flow or a steps relay; what it starts is always a steps relay, in the tasklet's own
+namespace.
+
+The call is spawn-**or**-deliver: given an id that is free, it starts an instance there with the
+payload as its first message; given an id that is taken, it delivers the payload to the running
+instance as one more message. Without an id, it always starts a new instance under a generated
+id.
+
+| | |
+|---|---|
+| Callable from | any tasklet's `run`, in a flow or a steps relay |
+| Starts | a **steps relay** only; flow relays are started and kept running by the controller |
+| Namespace | the requester's, always; a tasklet cannot reach another namespace |
+| Verb | spawn-or-deliver on (namespace, id); with no id, always a spawn under a generated id |
+| Blocking | never: the call returns a handle before the controller decides |
+| Failure | isolated: a refusal never fails `run`, its emits or its journaling |
+| Replay | live processing only; a replayed invocation issues nothing |
+
+The request goes to the controller, which judges and records it the way `flz relay start`
+is, so the instance it starts is an ordinary steps relay: namespace quota (`max_relays`,
+`max_cells_per_relay`), durable input log, sleeping and waking, its end and teardown,
+retention, and a row in `flz relay list`. A delivery is judged as `flz relay send` is,
+and recorded only when refused, because it happens once per event.
+
+The payload is the new instance's first message by construction: it is taken in as the instance
+binds, ahead of anything else in its mailbox, through the same entrance every message takes. It
+names no channel, so it enters the first declared entry channel, is decoded by that channel's
+codec or parser, and runs the chain that channel starts, whichever way the relay loops. Every
+SDK encodes it the way an output with no codec encodes a value, the rule `ctx.complete` uses:
+bytes as they are, a string as UTF-8, anything else as JSON, so a `text` or `json` entry reads
+it. A durable instance whose input log already holds records is a restart, not a spawn, and is
+not given the payload again.
+
+The factory is looked up cluster-wide: a controller with no runner for it routes the request to
+one that has one, so `relay.factory_unknown` means no runner anywhere serves it.
+
+### Spawn or deliver
+
+The factory and the payload come first; the id and the policy are optional:
+
+| SDK | Spawn | With an id and a policy |
+| --- | --- | --- |
+| Rust | `ctx.spawn_steps("triage", bytes)` | `ctx.spawn_steps_with("triage", bytes, SpawnOptions::id(id).if_running(IfRunning::Deliver))` |
+| Java | `ctx.spawnSteps("triage", input)` | `ctx.spawnSteps("triage", input, SpawnOptions.id(id).ifRunning(IfRunning.DELIVER))` |
+| Node | `ctx.spawnSteps('triage', payload)` | `ctx.spawnSteps('triage', payload, { id, ifRunning: 'deliver' })` |
+| Python | `ctx.spawn_steps("triage", payload)` | `ctx.spawn_steps("triage", payload, id=id, if_running="deliver")` |
+| Ruby | `ctx.spawn_steps("triage", payload)` | `ctx.spawn_steps("triage", payload, id: id, if_running: "deliver")` |
+| PHP | `$ctx->spawnSteps('triage', $payload)` | `$ctx->spawnSteps('triage', $payload, id: $id, ifRunning: 'deliver')` |
+| Elixir | `spawn_steps(ctx, "triage", input)` | `spawn_steps(ctx, "triage", input, id: id, if_running: :deliver)` |
+
+Rust and Java build the options only from an id, so a policy without an id cannot be written
+there; the other five SDKs raise an argument error at the call and send nothing.
+
+What the call does:
+
+| The id is | policy `deliver` | policy `error` |
+|---|---|---|
+| not given | spawned under a generated id | (no policy without an id) |
+| free | spawned; the payload is the first message | spawned |
+| taken | delivered; the payload is one more message | refused, `relay.already_running` |
+
+A generated id is the factory id, shortened to fit the 32-byte limit, a `-` and 16 characters of
+time and randomness, such as `triage-k7m2qzxw4pd3fn2a`.
+
+Concurrent requests for one id resolve to **exactly one** spawn, and deliveries for the rest. A
+completed instance's id counts as free again, so a request arriving after the instance finished
+starts a fresh one: make the started relay safe to run twice for the same work.
+
+### Permission to spawn
+
+With authorization on, the runner's connection acts as `runner@<namespace>` and needs a role
+that grants the start. Bind it to `spawner`:
+
+```sh
+$ flz role bind runner@trading spawner trading
+```
+
+```output
+bound runner@trading as spawner@trading
+runner@trading  spawner@trading
+```
+
+`spawner` also lets that connection call `Relay.start` and `Relay.send` on the
+administration surface, and nothing else (see [authorization](authorization.md)).
+
+### Reading the result of a spawn
+
+Every failure resolves the handle, never `run`. Reading the handle is optional; each SDK has a
+read that waits and one that never waits:
+
+| SDK | Waits | Never waits |
+|---|---|---|
+| Rust | `wait()` | `try_result()` |
+| Java | `await()` | `tryResult()` |
+| Node | `await wait()` | `tryResult()` |
+| Python, Ruby | `wait` | `try_result` |
+| PHP | `wait()` | `tryResult()` |
+| Elixir | `Flezha.SDK.Spawn.await/2` | `Flezha.SDK.Spawn.try_result/1` |
+
+A resolved read carries the id the request resolved to (given or generated) and the outcome,
+`spawned` or `delivered`. A failure comes out of the read in the form that SDK reports errors (a
+returned error, a thrown exception, a rejected promise), never out of the spawn call. The read
+that never waits answers that the result is pending until it has arrived.
+
+| Code | Meaning |
+|---|---|
+| `relay.already_running` | the id is taken and the policy is `error` |
+| `relay.factory_unknown` | no connected runner on any controller registers that factory |
+| `relay.factory_not_steps` | the factory's runners announced it as a flow relay; decided before anything is placed |
+| `authz.role_insufficient` and other `authz.*` codes | authorization is on and `runner@<namespace>` holds no role that grants the spawn |
+| `quota.exceeded`, and the controller's other codes | quota used up, controller shutting down, start failed |
+| `spawn.timeout` | no answer within 30 seconds |
+| `spawn.unavailable` | no control plane to ask: the runner is closed or has no controller |
+
+Read a handle inside the invocation that made it, or not at all. A handle nobody read by the end
+of its invocation reports a failure once, as a warning line naming the instance id (empty when
+none was given), the factory and the reason, and a later read answers that it was released. In
+Elixir the answer is a message to the process that made the request, so an answer arriving
+after `run/3` returned is dropped, and the warning is what reaches you.
+
+### Example: one order per buy
+
+In the tradedesk example, `buy_above_average` starts one `order_executor` workflow per buy. The
+order is the workflow's first message. It passes no id, so each buy starts a new instance:
+
+<!-- tabs-open -->
+
+### Java
+
+```java
+// BuyAboveAverage.java: buys when a price is far enough above its average.
+        int quantity = (int) Math.round(percent * UNITS_PER_PERCENT);   // a stronger move buys more
+
+        ctx.spawnSteps("order_executor", new OrderTicket(move.symbol(), quantity));   // one steps relay per order
+```
+
+[Full file](https://github.com/flezha/flezha_java_sdk/blob/main/examples/tradedesk/src/main/java/com/flezha/examples/tradedesk/BuyAboveAverage.java)
+
+### Rust
+
+```rust
+// buy_above_average.rs: buys when a price is far enough above its average.
+        let ticket = OrderTicket {
+            symbol: m.symbol.clone(),
+            quantity,
+        };
+        let order = serde_json::to_vec(&ticket).map_err(|e| TaskletError::Custom(e.to_string()))?;
+        let _ = ctx.spawn_steps("order_executor", order); // one steps relay per order
+```
+
+[Full file](https://github.com/flezha/flezha_rust_sdk/blob/main/examples/tradedesk/src/buy_above_average.rs)
+
+### Node
+
+```js
+// buy_above_average.mjs: buys when a price is far enough above its average.
+    const order = { symbol: move.symbol, quantity };
+    ctx.spawnSteps('order_executor', order); // one steps relay per order
+```
+
+[Full file](https://github.com/flezha/flezha_node_sdk/blob/main/examples/tradedesk/buy_above_average.mjs)
+
+### Python
+
+```python
+# buy_above_average.py: buys when a price is far enough above its average.
+        order = OrderTicket(symbol=move["symbol"], quantity=quantity)
+        ctx.spawn_steps("order_executor", order)  # one steps relay per order
+```
+
+[Full file](https://github.com/flezha/flezha_python_sdk/blob/main/examples/tradedesk/buy_above_average.py)
+
+### Ruby
+
+```ruby
+# buy_above_average.rb: buys when a price is far enough above its average.
+    order = { symbol: move[:symbol], quantity: quantity }
+    ctx.spawn_steps("order_executor", order)               # one steps relay per order
+```
+
+[Full file](https://github.com/flezha/flezha_ruby_sdk/blob/main/examples/tradedesk/buy_above_average.rb)
+
+### PHP
+
+```php
+// BuyAboveAverage.php: buys when a price is far enough above its average.
+        $order = ['symbol' => $input['symbol'], 'quantity' => $quantity];
+        $ctx->spawnSteps('order_executor', $order);        // one steps relay per order
+```
+
+[Full file](https://github.com/flezha/flezha_php_sdk/blob/main/examples/tradedesk/src/BuyAboveAverage.php)
+
+### Elixir
+
+```elixir
+# lib/tradedesk/buy_above_average.ex: buys when a price is far enough above its average.
+      # One steps relay per order.
+      spawn_steps(ctx, "order_executor", %{symbol: symbol, quantity: quantity})
+```
+
+[Full file](https://github.com/flezha/flezha_elixir_sdk/blob/main/examples/tradedesk/lib/tradedesk/buy_above_average.ex)
+
+<!-- tabs-close -->
+
+The order executor reads the order on its entry channel `order`, the first one it declares. The
+runner's connection needs the `spawner` role in `trading` ([above](#permission-to-spawn)).
+
+### Replays and crash re-runs
+
+**A replay issues nothing.** A replayed invocation (a late-input correction re-running a slice of
+history) answers the outcome `skipped_on_replay` without asking the controller, so a replay
+never doubles the instances a run started. Its id is the one the call gave, or empty when it gave
+none: a generated id existed only in the controller's answer to the live run.
+
+**A crash re-run asks again and gets the same answer.** A crash re-run is not a replay: an input
+the runner took but had not durably consumed is sent again and runs live, so its spawn is
+requested again. Each request a tasklet makes carries an identity: the requesting cell, the
+input-log offset it was taking, the call's position in the invocation, the factory and the
+payload. The controller answers a request whose identity it has already resolved with the
+instance the first request resolved to:
+
+- **Without an id**, the generated id is derived from the identity, so the re-run resolves to the
+  instance the first run started (`spawned`, whether it still runs or has completed).
+- **With an id**, a delivery into the running instance carries the identity as its message id,
+  so the instance's input log drops the second delivery and the instance receives the payload
+  once.
+
+A re-run that asks for a different factory or payload at the same position is a new request and
+spawns anew. An invocation that took no input offset (a timer firing, or an input to a relay
+with no durable input log) carries no identity, and neither does a start from the CLI, the
+administration API or a schedule.
+
+### Dangers of a spawn without an id
+
+- **It always starts a new instance.** It can never deliver into a running one, because there is
+  no id to find it by.
+- **Asked again in the same invocation after a lost or timed-out answer, it starts a second
+  instance.** The second request is a later call, so its identity differs from the first's.
+- **Skipped on replay, it answers an empty id.** The id was generated during the live run.
+
+A caller that needs at most one instance, or the id on replay, passes its own id.
 
 ## Crashes and resuming
 
@@ -780,21 +1049,29 @@ its worker pool. `max_duration_ms` costs no thread either.
   ([`deploying_a_controller.md`](../deploying/deploying_a_controller.md#graceful-shutdown)).
 - **A sleeping instance costs a wake to stop**, as the table above says.
 - **A `compensate` hook has no timers**: a rollback is not a place to arm one
-  ([`../advanced/timers.md`](../advanced/timers.md)).
+  ([`timers.md`](timers.md)).
 - **There is no platform retry of a failed instance.** An instance that ends
   `error` stays ended; retries happen per step, before the instance fails.
+- **A faulty tasklet can spawn in a loop.** The namespace quota is the backstop; there is no
+  per-requester rate limit. The telemetry event `[:flezha, :relay, :requested_spawn]`
+  carries `namespace`, `instance_id` (the id the request resolved to), `factory_id` and
+  `outcome` for each request, for rate alerts.
+- **A runner cut off from its controller fails a spawn later**, like any control-plane
+  request (`spawn.timeout` or `spawn.unavailable`).
+- **Spawning with the id of an instance that just completed starts a fresh one** instead of
+  delivering.
+- **A spawn never crosses namespaces**, and has no journal of its own; scheduling is
+  `flz schedule`'s job.
 
 ## See also
 
-- [`configuring_a_relay.md`](configuring_a_relay.md): the settings tree, and `run: steps` in it.
+- [`relay_settings.md`](../../configuration/relay_settings.md): the settings tree, and `run: steps` in it.
 - [`streams.md`](streams.md): the graph builder, and the run a workflow is not.
 - [`state.md`](state.md): a step's state and how it comes back.
 - [`durability.md`](durability.md): what each `durable` level keeps through a crash.
-- [`running_relays.md`](running_relays.md): start, stop, info.
-- [`../advanced/spawning_from_a_tasklet.md`](../advanced/spawning_from_a_tasklet.md),
-  [`../advanced/rewinding_a_turn.md`](../advanced/rewinding_a_turn.md),
-  [`../advanced/sessions.md`](../advanced/sessions.md),
-  [`../advanced/timers.md`](../advanced/timers.md).
+- [`running_and_testing.md`](running_and_testing.md): start, stop, info.
+- [`sessions.md`](sessions.md): a workflow that runs once per message, and rewinding a turn.
+- [`timers.md`](timers.md), [`authorization.md`](authorization.md): the `spawner` role.
 - [Relay settings](../../configuration/relay_settings.md#channel-and-edge-options): edge options, retry included.
 - [`../../resilience/steps_relay.md`](https://github.com/flezha/flezha/blob/main/docs/resilience/steps_relay.md): how the controller and the runner carry it out.
 - Tutorial: [`place_orders.md`](tutorials/place_orders.html) builds `order_executor`.

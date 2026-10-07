@@ -62,11 +62,11 @@ What a relay is, how it is set up, and how to start it and talk to it.
 
 | Doc | Covers |
 | --- | --- |
-| [`building_blocks.md`](topics/basics/building_blocks.md) | Tasklets, relays and runners, and the seven SDKs on one engine |
-| [`state.md`](topics/basics/state.md) | State per cell, the changes that record it, and its restore |
-| [`configuring_a_relay.md`](topics/basics/configuring_a_relay.md) | The settings tree: how a relay runs, where its work is kept, as an ETL stream and as a workflow |
-| [`running_relays.md`](topics/basics/running_relays.md) | Starting, watching and stopping relays, from `flz` and from code; what a restart brings back |
-| [`relay_api.md`](topics/basics/relay_api.md) | A relay's API: describing its channels, reading it with `flz relay info`, and calling it from `flz`, HTTP, an SDK or an AI agent's tools |
+| [`building_blocks.md`](topics/core/building_blocks.md) | Tasklets, relays and runners, and the seven SDKs on one engine |
+| [`state.md`](topics/core/state.md) | State per cell, the changes that record it, and its restore |
+| [`relay_settings.md`](configuration/relay_settings.md) | The settings tree: how a relay runs, where its work is kept, as an ETL stream and as a workflow |
+| [`running_and_testing.md`](topics/core/running_and_testing.md) | Starting, watching and stopping relays, from `flz` and from code; what a restart brings back |
+| [`sending_and_calling.md`](topics/core/sending_and_calling.md#a-relay-s-api) | A relay's API: describing its channels, reading it with `flz relay info`, and calling it from `flz`, HTTP, an SDK or an AI agent's tools |
 
 ## Kinds of relays
 
@@ -74,10 +74,10 @@ What you build with relays.
 
 | Doc | Covers |
 | --- | --- |
-| [`streams.md`](topics/basics/streams.md) | A graph of tasklets: channels, edges, transforms and keys |
-| [`workflows.md`](topics/basics/workflows.md) | Steps, retries, undo, and one instance per input |
-| [`sessions.md`](topics/advanced/sessions.md) | A session per user: steps, one pass per message, sleeping when idle |
-| [`rewinding_a_turn.md`](topics/advanced/rewinding_a_turn.md) | Taking iterations back, and a failed turn that fails alone |
+| [`streams.md`](topics/core/streams.md) | A graph of tasklets: channels, edges, transforms and keys |
+| [`workflows.md`](topics/core/workflows.md) | Steps, retries, undo, and one instance per input |
+| [`sessions.md`](topics/core/sessions.md) | A session per user: steps, one pass per message, sleeping when idle |
+| [`sessions.md`](topics/core/sessions.md#rewinding-a-turn) | Taking iterations back, and a failed turn that fails alone |
 
 ## Relay features
 
@@ -85,17 +85,17 @@ What a relay can do beyond its graph, and what Flezha guarantees for it.
 
 | Doc | Covers |
 | --- | --- |
-| [`timers.md`](topics/advanced/timers.md) | Per-cell processing-time and event-time timers |
-| [`merged_inputs.md`](topics/advanced/merged_inputs.md) | A tasklet fed by several channels |
-| [`recorded_effects.md`](topics/advanced/recorded_effects.md) | Keeping an outside call's result so a re-run reads it instead of calling again |
-| [`streamed_answers.md`](topics/advanced/streamed_answers.md) | An answer sent in parts while the turn runs |
-| [`spawning_from_a_tasklet.md`](topics/advanced/spawning_from_a_tasklet.md) | A running tasklet starts or feeds a steps instance |
-| [`relay_calls.md`](topics/advanced/relay_calls.md) | Calling a relay and waiting for its answer |
-| [`sending_from_runner_code.md`](topics/advanced/sending_from_runner_code.md) | Sending to a relay from a runner's own code, through the controller or locally |
-| [`durability.md`](topics/basics/durability.md) | What survives what, and the durability levels |
-| [`effectively_once.md`](topics/advanced/effectively_once.md) | The delivery guarantee, what it requires and what it costs |
-| [`partitioning.md`](topics/advanced/partitioning.md) | One logical relay in N partitions: key groups, sources, rescale |
-| [`local_mode.md`](topics/basics/local_mode.md) | Testing a relay in your own process, with no controller |
+| [`timers.md`](topics/core/timers.md) | Per-cell processing-time and event-time timers |
+| [`streams.md`](topics/core/streams.md#merged-inputs) | A tasklet fed by several channels |
+| [`effectively_once.md`](topics/core/effectively_once.md#recorded-effects) | Keeping an outside call's result so a re-run reads it instead of calling again |
+| [`sessions.md`](topics/core/sessions.md#streamed-answers) | An answer sent in parts while the turn runs |
+| [`workflows.md`](topics/core/workflows.md#starting-one-from-a-tasklet) | A running tasklet starts or feeds a steps instance |
+| [`sending_and_calling.md`](topics/core/sending_and_calling.md#calls) | Calling a relay and waiting for its answer |
+| [`sending_and_calling.md`](topics/core/sending_and_calling.md#sending-from-runner-code) | Sending to a relay from a runner's own code, through the controller or locally |
+| [`durability.md`](topics/core/durability.md) | What survives what, and the durability levels |
+| [`effectively_once.md`](topics/core/effectively_once.md) | The delivery guarantee, what it requires and what it costs |
+| [`partitioning.md`](topics/core/partitioning.md) | One logical relay in N partitions: key groups, sources, rescale |
+| [`running_and_testing.md`](topics/core/running_and_testing.md#local-mode) | Testing a relay in your own process, with no controller |
 
 ## Core topics
 
@@ -103,9 +103,9 @@ What applies to a whole deployment rather than one relay.
 
 | Doc | Covers |
 | --- | --- |
-| [`namespaces.md`](topics/basics/namespaces.md) | Namespaces, joining one from a runner, quotas, and administering one from code |
-| [`authorization.md`](topics/basics/authorization.md) | The admin, tokens, roles, certificates and recovery |
-| [`working_with_ai_assistants.md`](topics/working_with_ai_assistants.md) | `flz mcp`: an AI assistant gets the rules, the current SDK form and the operations |
+| [`namespaces.md`](topics/core/namespaces.md) | Namespaces, joining one from a runner, quotas, and administering one from code |
+| [`authorization.md`](topics/core/authorization.md) | The admin, tokens, roles, certificates and recovery |
+| [`mcp_server.md`](topics/core/mcp_server.md) | `flz mcp`: an AI assistant gets the rules, the current SDK form and the operations |
 
 ## Plugin guides
 
@@ -220,7 +220,7 @@ Connecting relays to the outside; every plugin's own page is under [`plugins/`](
 
 | Doc | Covers |
 | --- | --- |
-| [`overview.md`](resilience/overview.md) | The map of every self-healing mechanism and the durability guarantee summary |
+| [`overview.md`](architecture/overview.md) | The map of every self-healing mechanism and the durability guarantee summary |
 | [`data_durability.md`](resilience/data_durability.md) | The mechanism of the guarantees: a frame's guarantee class, the effectively-once tier's parts, the input floor |
 | [`steps_relay.md`](resilience/steps_relay.md) | The mechanism of a relay that runs in steps: barriers, the durable loop, crash-resume |
 

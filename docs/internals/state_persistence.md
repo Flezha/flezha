@@ -79,7 +79,7 @@ on the effectively-once tier writes.
 | `Flezha.State.TimeTravel` | Point-in-time query behind `flz state at`. |
 | `Flezha.State.TaskJournal` | Steps relay step journal over the reserved writer: the markers `task_committed`, `iter_committed`, `dead_lettered`, `compensated` and `rewound`, the park of a failed turn (`park_turn_async/4`) and the bind's removal of one that never reached its record (`drop_unrecorded_turns/1`), the committed record ranges per Cell a writer and a bind re-derive (`committed_records/1`), the channels the rewind guard reads (`staged_channels_above/2`), and the reporter of each consumed offset into the input log's watermark (`release_input/2`). It holds no output: the Cells' writers own delivery. |
 | `Flezha.State.WalTransfer` | Destination-pulled copy of one Cell's files between controllers. |
-| `Flezha.State.DurabilityTier` (+ `Shipper`, `Hydrator`, `Manifest`, `Backend`) | Opt-in remote artifact shipping and hydration; `backend: :none` wires nothing. See [`../topics/basics/durability.md`](../topics/basics/durability.md). |
+| `Flezha.State.DurabilityTier` (+ `Shipper`, `Hydrator`, `Manifest`, `Backend`) | Opt-in remote artifact shipping and hydration; `backend: :none` wires nothing. See [`../topics/core/durability.md`](../topics/core/durability.md). |
 
 ## Cross-controller transfer
 
@@ -124,7 +124,7 @@ its journal (`TaskJournal.cut/2` with `seal: true`) at its latest committed iter
 move is atomic per Cell, so re-running `flz relay scale` after a crash moves nothing twice;
 the rescale stamps `state_source_node` on the new members' opts so a member placed elsewhere
 pulls its class tree before its bind reads its resume state
-([`../topics/advanced/partitioning.md`](../topics/advanced/partitioning.md)). All of this is
+([`../topics/core/partitioning.md`](../topics/core/partitioning.md)). All of this is
 one-shot at migration time, not replication: a controller that dies together with its disk takes
 its Relays' state with it unless the remote durability tier is enabled.
 
@@ -575,7 +575,7 @@ because the queue is a subset of the log the controller re-forwards and keeping 
 double-apply it and, in a correction, re-order it behind the replayed slice. Every other class,
 including a plain stateful flow relay (the default), **keeps** its queue:
 `Flezha.Relay.Ingest` forwards those inputs un-journaled
-([`../topics/basics/durability.md`](../topics/basics/durability.md)), so the mailbox is their
+([`../topics/core/durability.md`](../topics/core/durability.md)), so the mailbox is their
 only copy. The rule lives once, in `CellSlot::discard_queued_input_on_restore`
 (`flz_core/src/cell.rs`); discards ship as `restore_discarded_inputs` in `data_heartbeat`
 metadata. The replay buffer, replay flags and any open checkpoint interval are cleared on every
@@ -681,5 +681,5 @@ fragment.
 - [`../sdk/protocol_spec.md`](../sdk/protocol_spec.md) — `CellState` selector fields, `flz.change_seq`, refusal tokens; `CreditWindowInit` / `CreditGrant`.
 - [`runner_identity.md`](runner_identity.md) — the takeover guard the owner-bound realign relies on.
 - [`convergence_loop.md`](convergence_loop.md) — the output-stall remediation ladder.
-- [`../topics/basics/durability.md`](../topics/basics/durability.md) — surviving the loss of the disk.
+- [`../topics/core/durability.md`](../topics/core/durability.md) — surviving the loss of the disk.
 - [`../../test/scripts/state_persistence.sh`](../../test/scripts/state_persistence.sh) — the manual smoke check for this capability's data-plane half.

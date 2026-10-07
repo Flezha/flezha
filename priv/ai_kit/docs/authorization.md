@@ -110,8 +110,15 @@ characters of the id and takes effect on the next call. Each gated verb takes
 `--token <t>` or reads `FLEZHA_TOKEN`. The HTTP API takes the same token as
 `Authorization: Bearer <t>` ([http_api.md](../../plugins/http_api.md)).
 
-A token is checked by the controller that answers it, against that controller's
-own store, so in a cluster it works on the controller it was issued on.
+A cluster shares one authorization state. A token, role binding, namespace or
+bootstrap claim made through any controller is written on every connected
+controller before the verb returns, so a token works on whichever controller
+answers it, and a revoke anywhere is a revoke everywhere. A controller that was
+down or partitioned merges with the others when it reconnects: a revoked token
+stays revoked, otherwise the later write wins, and a delete counts as a write.
+The bootstrap is claimed once per cluster: every other controller removes its own
+`bootstrap.token` when the claim reaches it, and a second claim answers
+`authz.bootstrap_already_completed`.
 
 An option is read wherever it is written: `flz relay stop --token t op1`
 and `flz relay stop op1 --token t` are the same request. Two verbs are
@@ -311,7 +318,7 @@ nothing about whether the name exists. Some choices worth stating plainly:
   relay's own input and is not judged again.
 - **A relay's `call` is judged as its runner identity**, which needs
   `spawner` or `app`; a refusal ends the call with a response carrying its
-  `authz.*` code ([`../advanced/relay_calls.md`](../advanced/relay_calls.md)).
+  `authz.*` code ([`sending_and_calling.md`](sending_and_calling.md#calls)).
 - **`flz auth whoami` is a gated read**: while enforced, a call without a token
   is refused, naming the missing credential.
 
@@ -502,6 +509,11 @@ again with the older `flz`; one holding a single role behaves as before.
   `config :flezha, authn_authz: [enabled: true]`
   ([`deploying_a_controller.md`](../deploying/deploying_a_controller.md)).
 - **A minted cookie is one node's alone.** A cluster sets `RELEASE_COOKIE`.
+- **A container's graceful stop is an admin verb.** The image's SIGTERM trap runs
+  `flz controller stop`; with enforcement on, point `FLEZHA_SHUTDOWN_TOKEN_FILE`
+  at a file holding an `admin@_system` token, or every stop skips the drain.
+- **A partition accepts writes on both sides.** They merge on reconnect by
+  the controllers' clocks, so keep them in sync (NTP).
 
 ## See also
 

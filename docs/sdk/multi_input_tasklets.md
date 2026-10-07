@@ -1,7 +1,7 @@
 # Merged inputs: implementation notes
 
 For SDK implementers and contributors. How to use it is on
-[Merged inputs](../topics/advanced/merged_inputs.md).
+[Merged inputs](../topics/core/streams.md#merged-inputs).
 
 ## Why replay is free
 

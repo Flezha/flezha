@@ -1,7 +1,7 @@
 # Calls: implementation notes
 
 For SDK implementers and contributors. How to use it is on
-[Relay calls](../topics/advanced/relay_calls.md).
+[Relay calls](../topics/core/sending_and_calling.md#calls).
 
 ## The stamps
 

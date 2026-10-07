@@ -5,12 +5,6 @@ Two setups from the guides: the echo's file plugins from
 into a partitioned relay. The commands they use are on
 [Enabling and binding](enabling_and_binding.md).
 
-**Contents**
-
-1. [A file in, a file out](#a-file-in-a-file-out)
-2. [A live feed into a partitioned relay](#a-live-feed-into-a-partitioned-relay)
-3. [Limits and gotchas](#limits-and-gotchas)
-
 ## A file in, a file out
 
 The echo example declares one entry channel and one output plugin, and both ends are open to

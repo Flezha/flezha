@@ -141,7 +141,7 @@ Postgres, Kafka or a file. State kept per key survives a crash, per-key timers
 give you windows and timeouts, merged channels give you joins, and a message can
 be timed by when it happened rather than when it arrived. The input and the
 output are plugins, so moving from a file to a live feed is a command, not a
-rebuild. [Streams](../topics/basics/streams.md) covers how one is built, and
+rebuild. [Streams](../topics/core/streams.md) covers how one is built, and
 the tradedesk tutorial builds one.
 
 ### Workflows and long-running jobs
@@ -151,7 +151,7 @@ finished step is on disk before the next one starts, so a crash in the middle
 resumes at the step it reached instead of starting over. A failed step is
 retried on a ladder you declare, and a step that cannot succeed undoes the ones
 before it. A tasklet can start one workflow per event, and `flz schedule`
-starts one on a timetable. [Workflows](../topics/basics/workflows.md) covers how
+starts one on a timetable. [Workflows](../topics/core/workflows.md) covers how
 one is built, and the tradedesk tutorial builds one.
 
 ### Stateful services, one per user, device or account

@@ -133,7 +133,7 @@ A relay's entry channels are its API, announced by its runner with its factories
 channel's format, whether it answers and in which format, and a description and a JSON
 Schema when the channel declares them (`describe`/`schema`, or the `description`/`schema`
 options; Java records, Python types, PHP typed classes and, with the `schemars` feature,
-Rust types are read into a schema) ([`docs/topics/basics/relay_api.md`](docs/topics/basics/relay_api.md)).
+Rust types are read into a schema) ([`docs/topics/core/sending_and_calling.md`](docs/topics/core/sending_and_calling.md)).
 `Relay.api` lists it and `Relay.call_channel` calls a channel by value; `flz relay info <id>`
 shows a relay's API, `flz relay call` takes `--arg name=value`, the HTTP API plugin serves
 `POST /v1/relays/<id>/<channel>`, every SDK's runner gains `call` beside `send`, and each
@@ -147,7 +147,7 @@ tool. New codes `api.channel_unknown`, `api.input_invalid`, `api.not_advertised`
 loop's verdicts for the relay, its runner and its plugins, the runners that announce its
 factory, its dead letters, its input log, its completion record) and answers a verdict,
 `ok`, `warning` or `problem`, with findings, each a code, a message, details and a hint
-([`docs/topics/basics/running_relays.md`](docs/topics/basics/running_relays.md#diagnose-a-relay)).
+([`docs/topics/core/running_and_testing.md`](docs/topics/core/running_and_testing.md#diagnose-a-relay)).
 It is `flz relay diagnose <id>`, the MCP tool `relay_diagnose` and
 `POST /v1/call/Relay.diagnose`, judged as `relay.list`. Eighteen `diagnose.*` codes join
 the error catalogue, and the assistant rules say to call it first when a relay misbehaves.
@@ -157,7 +157,7 @@ the error catalogue, and the assistant rules say to call it first when a relay m
 A tasklet calls a model, a tool or a service through `ctx.effect(name, fn)` in every SDK
 (`effect/4` in Elixir), and a re-run of the invocation (a crash, a replay, a wake, a move)
 reads the kept result instead of calling again
-([`docs/topics/advanced/recorded_effects.md`](docs/topics/advanced/recorded_effects.md)).
+([`docs/topics/core/effectively_once.md`](docs/topics/core/effectively_once.md)).
 The controller keeps results in `effects.log` beside the input log, as long as their
 input, ships them with it to the durability backend, and sends them to the runner on every
 bind. Where an input has no input-log offset, nothing is kept. New codes `effect.bad_name`,
@@ -169,7 +169,7 @@ their replay pass and name an effect whose function runs there.
 
 Application code on a runner sends to a relay with `runner.send` (`send_to` in Ruby,
 `Flezha.SDK.send/5` in Elixir), through the controller as before
-([`docs/topics/advanced/sending_from_runner_code.md`](docs/topics/advanced/sending_from_runner_code.md)).
+([`docs/topics/core/sending_and_calling.md`](docs/topics/core/sending_and_calling.md)).
 A message id is stamped as `flz.msg_id`, so a relay with an input log absorbs a repeat;
 `flz relay send --msg-id` does the same, and an id that is not text is refused
 (`usage.not_text`). A partition key reaches the member that owns it.
@@ -186,7 +186,7 @@ than factory ids, and Java's `getRelays()` and Rust's `relays()` answer a list o
 ### Added: `flz mcp`, an MCP server for AI assistants
 
 An AI coding assistant adds Flezha with one command, `claude mcp add flezha -- <release>/bin/flz
-mcp` or its client's equivalent ([`docs/topics/working_with_ai_assistants.md`](docs/topics/working_with_ai_assistants.md)).
+mcp` or its client's equivalent ([`docs/topics/core/mcp_server.md`](docs/topics/core/mcp_server.md)).
 Before any controller runs it serves four tools from the installed release: the working rules
 with a map of the guide pages, the current echo example of each SDK, an error code's meaning,
 and one guide page. Once a controller answers, the operations an HTTP caller may reach are

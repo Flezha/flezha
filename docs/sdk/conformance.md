@@ -331,7 +331,7 @@ every fixture id a file drives belongs to a capability that file declares; every
 vocabulary entry no module or test is tagged for fails the gate by name.
 
 It also holds the `control()` surface to one declared set. Every SDK spells
-the same verb names over one shared entry point (see [`namespaces.md`](../topics/basics/namespaces.md#administering-from-application-code)),
+the same verb names over one shared entry point (see [`namespaces.md`](../topics/core/namespaces.md#administering-from-application-code)),
 and nothing else compares them: the gate names the set once and measures each
 SDK's own wrapper against it, and refuses a wrapper that names a verb it will
 not call or a refusal reason of its own. Reachability is the controller's

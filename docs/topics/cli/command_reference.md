@@ -49,7 +49,7 @@ on the command line.
 | --- | --- |
 | `flz reset [--dry-run] [--yes] [--include-...]` | Deletes a stopped controller's data on disk |
 
-## [`flz mcp`](../working_with_ai_assistants.md)
+## [`flz mcp`](../core/mcp_server.md)
 
 | Command | What it does |
 | --- | --- |

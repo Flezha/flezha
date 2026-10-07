@@ -170,4 +170,4 @@ signing, no HTTP/2. Enable a second plugin for a second endpoint.
 
 - [`hook_webhook.md`](hook_webhook.md): hook events to an HTTP endpoint
 - [`plugins.md`](../topics/plugins/plugins.md): the plugin model
-- [`durability.md`](../topics/basics/durability.md): guaranteed outputs and the outbox
+- [`durability.md`](../topics/core/durability.md): guaranteed outputs and the outbox

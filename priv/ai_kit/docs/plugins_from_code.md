@@ -102,7 +102,7 @@ runner = Flezha.SDK.RunnerServer
 
 The `control()` handle also has `unbindPlugin("writer", "my_echo")` and
 `disablePlugin("writer")` (`unbind_plugin` and `disable_plugin` in Rust, Python, Ruby and
-Elixir). [`namespaces.md`](../basics/namespaces.md) covers the whole handle. What it cannot do
+Elixir). [`namespaces.md`](../core/namespaces.md) covers the whole handle. What it cannot do
 is install, upgrade or uninstall a plugin package: those are node-wide acts, so they stay
 with the user. An application may attach and detach the plugins its own namespace already
 has.

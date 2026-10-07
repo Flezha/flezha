@@ -55,7 +55,7 @@ $ flz plugin enable store relay_postgres --relay_id=orders --hook=on_output \
 | Overflow | delay, never loss: an enqueue past `queue_max` parks until a flush frees space |
 | Failure posture | an unreachable database delays the flush; nothing is dropped |
 
-Delivery semantics in general are in [`durability.md`](../topics/basics/durability.md).
+Delivery semantics in general are in [`durability.md`](../topics/core/durability.md).
 
 ## Options in detail
 
@@ -110,4 +110,4 @@ so an output plugin on a relay whose SDK side never binds costs nothing.
 
 - [`postgres_poll.md`](postgres_poll.md) and [`postgres_cdc.md`](postgres_cdc.md): Postgres as an input
 - [`plugins.md`](../topics/plugins/plugins.md): the plugin model
-- [`effectively_once.md`](../topics/advanced/effectively_once.md): writing each output once
+- [`effectively_once.md`](../topics/core/effectively_once.md): writing each output once

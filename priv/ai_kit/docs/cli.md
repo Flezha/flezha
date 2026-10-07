@@ -42,7 +42,7 @@ Three things about it are worth knowing before anything else:
   answers it as JSON. A verb that acts still prints its success in text, so
   for it `--json` changes only how a failure is written.
 - **Identity for a gated verb** rides `--token <t>` or the `FLEZHA_TOKEN`
-  variable of the shell that runs `flz` ([`authorization.md`](../basics/authorization.md)).
+  variable of the shell that runs `flz` ([`authorization.md`](../core/authorization.md)).
 
 ## How it reaches the controller
 
@@ -165,26 +165,26 @@ one line.
 | Group | What it does | Explained in |
 | --- | --- | --- |
 | [`flz controller`](controller_commands.md#flz-controller) | Starts and stops the controller, and shows its settings and memory use. | [`deploying_a_controller.md`](../deploying/deploying_a_controller.md), [graceful shutdown](../deploying/deploying_a_controller.md#graceful-shutdown), [Start the controller](../../getting_started/up_and_running.md#start-the-controller) |
-| [`flz boot`](controller_commands.md#flz-boot) | Says whether the controller has finished starting, or waits until it has. | [`deploying_a_controller.md`](../deploying/deploying_a_controller.md#check-that-it-is-up), [after a restart](../basics/running_relays.md#after-a-controller-restart) |
+| [`flz boot`](controller_commands.md#flz-boot) | Says whether the controller has finished starting, or waits until it has. | [`deploying_a_controller.md`](../deploying/deploying_a_controller.md#check-that-it-is-up), [after a restart](../core/running_and_testing.md#after-a-controller-restart) |
 | [`flz cluster`](controller_commands.md#flz-cluster) | Shows the controllers of a cluster, which one leads, and how their relays are doing. | [`clustering.md`](../deploying/clustering.md), tutorial [Run a cluster](tutorials/run_a_cluster.html) |
 | [`flz runner`](controller_commands.md#flz-runner) | Lists the runners connected to a namespace, and checks that a runner on this machine can reach the controller. | [`connecting_a_runner.md`](../deploying/connecting_a_runner.md), [check that it connected](../deploying/connecting_a_runner.md#check-that-it-connected) |
-| [`flz relay`](relay_commands.md#flz-relay) | Starts and stops relays, sends them input, and shows what they answer and emit. | [`running_relays.md`](../basics/running_relays.md), [`workflows.md`](../basics/workflows.md), [`partitioning.md`](../advanced/partitioning.md), [`relay_calls.md`](../advanced/relay_calls.md), [`rewinding_a_turn.md`](../advanced/rewinding_a_turn.md), [Run the echo](../../getting_started/up_and_running.md#run-the-echo) |
-| [`flz namespace`](access_commands.md#flz-namespace) | Creates and deletes namespaces, the separate areas relays and runners work in, and sets their quotas. | [`namespaces.md`](../basics/namespaces.md) |
+| [`flz relay`](relay_commands.md#flz-relay) | Starts and stops relays, sends them input, and shows what they answer and emit. | [`running_and_testing.md`](../core/running_and_testing.md), [`workflows.md`](../core/workflows.md), [`partitioning.md`](../core/partitioning.md), [`sending_and_calling.md`](../core/sending_and_calling.md#calls), [`sessions.md`](../core/sessions.md#rewinding-a-turn), [Run the echo](../../getting_started/up_and_running.md#run-the-echo) |
+| [`flz namespace`](access_commands.md#flz-namespace) | Creates and deletes namespaces, the separate areas relays and runners work in, and sets their quotas. | [`namespaces.md`](../core/namespaces.md) |
 | [`flz plugin`](plugin_commands.md#flz-plugin) | Installs plugin packages, enables plugins and connects relays to them. | [`plugins.md`](../plugins/plugins.md), [`hooks.md`](../plugins/hooks.md), [`installing_plugins.md`](../plugins/installing_plugins.md), [Connect a plugin](../../getting_started/connect_a_plugin.md) |
-| [`flz state`](relay_commands.md#flz-state) | Reads a relay's stored state, now or at a point in the past, and manages how long it is kept. | [`state.md`](../basics/state.md#reading-a-cell-s-state), [`workflows.md`](../basics/workflows.md), [`durability.md`](../basics/durability.md) |
-| [`flz dlq`](relay_commands.md#flz-dlq) | Lists the inputs a relay gave up on after its retries, and replays or drops them. | [`durability.md`](../basics/durability.md#the-dead-letter-queue) |
-| [`flz schedule`](relay_commands.md#flz-schedule) | Starts a workflow on a cron schedule. | [`workflows.md`](../basics/workflows.md#one-instance-per-piece-of-work), [`configuring_a_relay.md`](../basics/configuring_a_relay.md) |
-| [`flz auth`](access_commands.md#flz-auth) | Claims the first admin token, and shows who a token belongs to. | [`authorization.md`](../basics/authorization.md#claim-the-admin), [a lost admin](../basics/authorization.md#a-lost-admin) |
-| [`flz token`](access_commands.md#flz-token) | Issues, lists and revokes tokens. | [`authorization.md`](../basics/authorization.md#tokens), [runner credentials](../basics/authorization.md#runner-credentials) |
-| [`flz role`](access_commands.md#flz-role) | Gives roles to a principal and takes them away. | [`authorization.md`](../basics/authorization.md#roles) |
-| [`flz audit`](access_commands.md#flz-audit) | Reads the record of who did what. | [`authorization.md`](../basics/authorization.md#the-audit-trail) |
+| [`flz state`](relay_commands.md#flz-state) | Reads a relay's stored state, now or at a point in the past, and manages how long it is kept. | [`state.md`](../core/state.md#reading-a-cell-s-state), [`workflows.md`](../core/workflows.md), [`durability.md`](../core/durability.md) |
+| [`flz dlq`](relay_commands.md#flz-dlq) | Lists the inputs a relay gave up on after its retries, and replays or drops them. | [`durability.md`](../core/durability.md#the-dead-letter-queue) |
+| [`flz schedule`](relay_commands.md#flz-schedule) | Starts a workflow on a cron schedule. | [`workflows.md`](../core/workflows.md#one-instance-per-piece-of-work), [`relay_settings.md`](../../configuration/relay_settings.md) |
+| [`flz auth`](access_commands.md#flz-auth) | Claims the first admin token, and shows who a token belongs to. | [`authorization.md`](../core/authorization.md#claim-the-admin), [a lost admin](../core/authorization.md#a-lost-admin) |
+| [`flz token`](access_commands.md#flz-token) | Issues, lists and revokes tokens. | [`authorization.md`](../core/authorization.md#tokens), [runner credentials](../core/authorization.md#runner-credentials) |
+| [`flz role`](access_commands.md#flz-role) | Gives roles to a principal and takes them away. | [`authorization.md`](../core/authorization.md#roles) |
+| [`flz audit`](access_commands.md#flz-audit) | Reads the record of who did what. | [`authorization.md`](../core/authorization.md#the-audit-trail) |
 | [`flz observe`](controller_commands.md#flz-observe) | Lists the controller's sources of metrics and events, and streams their signals live. | [`hooks.md`](../plugins/hooks.md#controller-plugins-and-their-hooks) |
-| [`flz reset`](controller_commands.md#flz-reset) | Deletes the controller's data on disk, so its next start is empty. | [`running_relays.md`](../basics/running_relays.md#start-from-a-clean-slate-flz-reset) |
-| [`flz mcp`](../working_with_ai_assistants.md) | Serves Flezha to an AI assistant over MCP; the assistant starts it, not you. | [`working_with_ai_assistants.md`](../working_with_ai_assistants.md) |
+| [`flz reset`](controller_commands.md#flz-reset) | Deletes the controller's data on disk, so its next start is empty. | [`running_and_testing.md`](../core/running_and_testing.md#start-from-a-clean-slate-flz-reset) |
+| [`flz mcp`](../core/mcp_server.md) | Serves Flezha to an AI assistant over MCP; the assistant starts it, not you. | [`mcp_server.md`](../core/mcp_server.md) |
 | [`flz template`](template_commands.md) | Writes a new project from a template the release carries. | [`template_commands.md`](template_commands.md) |
 
 Which role each verb needs is in
-[`authorization.md`](../basics/authorization.md#which-role-each-verb-needs).
+[`authorization.md`](../core/authorization.md#which-role-each-verb-needs).
 
 ## Limits and gotchas
 

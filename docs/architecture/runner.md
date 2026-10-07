@@ -324,7 +324,7 @@ Every SDK has local mode. The SDKs on `flz_core` reach it through six entry
 points (`flz_core_local_start`, `flz_core_local_on_sink`,
 `flz_core_local_feed`, `flz_core_local_next_output`,
 `flz_core_local_run_until_idle`, `flz_core_local_stop`). The user's side is in
-[`../topics/basics/local_mode.md`](../topics/basics/local_mode.md).
+[`running_and_testing.md`](../topics/core/running_and_testing.md#local-mode).
 
 ## One change, every SDK
 
@@ -438,7 +438,7 @@ included, defers a capability. See
 - [`overview.md`](overview.md): the roles and the kernel's rules.
 - [`kernel.md`](kernel.md): what the runner sends to the controller, and what the controller does with it.
 - [`flow_profile.md`](flow_profile.md) and [`steps_profile.md`](steps_profile.md): the two ways a relay runs.
-- [`../topics/basics/local_mode.md`](../topics/basics/local_mode.md): running a graph with no controller.
+- [`running_and_testing.md`](../topics/core/running_and_testing.md#local-mode): running a graph with no controller.
 - [Poll core](https://github.com/flezha/flezha/blob/main/docs/sdk/poll_core.md): the poll boundary in full detail.
 - [Conformance](https://github.com/flezha/flezha/blob/main/docs/sdk/conformance.md): how an SDK proves it still works.
 - [Wire protocol](https://github.com/flezha/flezha/blob/main/docs/sdk/protocol_spec.md): the frames between runner and controller.

@@ -1,7 +1,7 @@
 # Timers: implementation notes
 
 For SDK implementers and contributors. How to use it is on
-[Timers](../topics/advanced/timers.md).
+[Timers](../topics/core/timers.md).
 
 ## Durability: timers are folded state
 

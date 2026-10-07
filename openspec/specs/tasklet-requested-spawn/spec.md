@@ -278,7 +278,7 @@ an empty id when the request carried none.
 
 ### Requirement: The dangers of a spawn without an id SHALL be documented
 
-`docs/topics/advanced/spawning_from_a_tasklet.md` and every SDK page that shows the spawn call SHALL state, next
+`docs/topics/core/workflows.md` and every SDK page that shows the spawn call SHALL state, next
 to the call, that a spawn without an id always starts a new instance and can never deliver into a
 running one; that a caller who reissues a spawn without an id after a lost or timed-out answer starts
 a second instance; that a spawn without an id skipped on replay answers an empty id; and that a caller
@@ -286,7 +286,7 @@ who needs at most one instance, or the id on replay, passes its own id.
 
 #### Scenario: The contract page states the dangers
 
-- **WHEN** a reader opens `docs/topics/advanced/spawning_from_a_tasklet.md`
+- **WHEN** a reader opens `docs/topics/core/workflows.md`
 - **THEN** it SHALL state each of the three dangers and that passing an id avoids them
 
 #### Scenario: Every SDK page carries the same warning

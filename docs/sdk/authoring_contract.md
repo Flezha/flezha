@@ -158,7 +158,7 @@ returns its output instead.
 A call to anything outside the instance (a model, a tool, a service) goes
 through the same context: `ctx.effect(name, fn)` in every SDK keeps the call's
 result, so a re-run of the invocation reads it instead of calling again
-([`recorded_effects.md`](../topics/advanced/recorded_effects.md)). `apply_to`
+([`effectively_once.md`](../topics/core/effectively_once.md#recorded-effects)). `apply_to`
 makes no outside call at all.
 
 ### 2.2 One form, completed by what it declares
@@ -617,7 +617,7 @@ Java, a base class in Python, Ruby and PHP, `defineRelay` in Node and a `use`
 macro in Elixir. Its members are `factory_id()`, `channels` (the graph, on the
 same builder in every SDK) and one settings tree: `run` (`flow` or `steps` with
 their members), `durable`, `max_duration_ms` and `description`
-([Relay settings](../configuration/relay_settings.md#class-settings)).
+([Relay settings](../configuration/relay_settings.md#the-settings-tree)).
 
 A relay declares how it runs where it is written, so a runner call that
 names it again says nothing new and can disagree with the declaration. Every

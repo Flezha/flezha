@@ -232,7 +232,7 @@ channel that feeds a tasklet, three attempts from a 50 ms base when neither is
 written, and `retryMax(1)` fails fast.
 
 A steps tasklet registers timers as a flow tasklet does, and a firing
-runs as a pass of its own ([`../topics/advanced/timers.md`](../topics/advanced/timers.md));
+runs as a pass of its own ([`../topics/core/timers.md`](../topics/core/timers.md));
 only inside a `compensate` hook do `timerAfter`, `timerAtEventTime` and
 `cancelTimer` throw naming `runtime.timers_unavailable`.
 
@@ -369,10 +369,10 @@ when the relay is declared, naming the relay and the channel. PHP ships
 no MessagePack library, so the enum has no MessagePack case.
 
 A called input's first output answers its caller and still reaches the output's plugins:
-[`../topics/advanced/relay_calls.md`](../topics/advanced/relay_calls.md). `->call(target: 'pricing', deadlineMs: 500)`
+[`sending_and_calling.md`](../topics/core/sending_and_calling.md#calls). `->call(target: 'pricing', deadlineMs: 500)`
 or `->call(factory: 'agent', deadlineMs: ..., create: false, answerChannel: 'quotes', codec: ...)` ends a chain on a
 call to another relay and answers an edge of readonly `Flezha\Response` values:
-[`../topics/advanced/relay_calls.md`](../topics/advanced/relay_calls.md).
+[`sending_and_calling.md`](../topics/core/sending_and_calling.md#calls).
 
 A JSON integer outside PHP's 64-bit range decodes as a `float`. `NAN`, `INF`, a
 string that is not valid UTF-8 or an object that is not `Codable` has no JSON
@@ -438,7 +438,7 @@ makes the mutate-only-through-changes rule safe. Put it in your suite.
 
 A call to anything outside the instance goes through `$ctx->effect('name', fn () => $value)`,
 which keeps its result so a re-run reads it instead of calling again
-([`recorded_effects.md`](../topics/advanced/recorded_effects.md)). The harness keeps each
+([`effectively_once.md`](../topics/core/effectively_once.md#recorded-effects)). The harness keeps each
 result of a live `feed()` and serves it to a replayed one.
 
 ## One runner per process
@@ -483,7 +483,7 @@ snapshots, no dead-letter queue. Durability, effectively-once delivery, plugins,
 placement and migration, the dead-letter queue, observability export, authz and
 multi-runner scale need a controller; a declaration asking for one of those is
 refused at startup, naming it. Walk-through:
-[`../topics/basics/local_mode.md`](../topics/basics/local_mode.md).
+[`running_and_testing.md`](../topics/core/running_and_testing.md#local-mode).
 
 ## Sizing, as arithmetic
 

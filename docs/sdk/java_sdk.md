@@ -51,7 +51,7 @@ The relay names that class: `.into(TrackPrices.class)`.
   `ctx.emitKeyed(key, value)`, and the rest of the context (`now()`, `stableId()`,
   `cellKey()`, `checkpoint()`, the timer calls, `spawnSteps`, `complete`, and
   `effect(name, type, supplier)`, which keeps an outside call's result so a re-run reads it
-  instead of calling again; [`recorded_effects.md`](../topics/advanced/recorded_effects.md)).
+  instead of calling again; [`effectively_once.md`](../topics/core/effectively_once.md#recorded-effects)).
 - **`ctx.part(value)`** sends a part: a preview of the output the invocation is
   producing, which leaves now instead of when `run` returns. It previews the
   tasklet's own output channel, is encoded as `ctx.emit(value)` would be, and
@@ -311,11 +311,11 @@ edge, an edge's retry ladder, a `.call(...)` end. Java names no entry codec: an
 entry decodes by its declared type, so the short form takes no `codec` element.
 
 A called input's first output answers its caller and still reaches the output's plugins:
-[`../topics/advanced/relay_calls.md`](../topics/advanced/relay_calls.md). `.call(CallTarget.id("pricing"), Answer.class, deadlineMs)`
+[`sending_and_calling.md`](../topics/core/sending_and_calling.md#calls). `.call(CallTarget.id("pricing"), Answer.class, deadlineMs)`
 (or `CallTarget.factory("agent").create(false)` after a `keyBy`, and
 `.answerChannel("quotes")` to name the callee's answering channel) ends a tasklet's
 output chain on a call to another relay and answers an `EntryChannel` of
-`Response<Req, Answer>`: [`../topics/advanced/relay_calls.md`](../topics/advanced/relay_calls.md).
+`Response<Req, Answer>`: [`sending_and_calling.md`](../topics/core/sending_and_calling.md#calls).
 
 `id` must be written: the factory id is an address a user types, and a
 class rename must not move it. The written `id` also names the tasklet, so a
@@ -341,7 +341,7 @@ refused as `topology.retry_max_zero`. A steps class has no `exactly`: a durable
 one already commits stage by stage.
 
 A tasklet of a steps relay registers timers as a flow tasklet does, and a
-firing runs as a pass of its own ([`../topics/advanced/timers.md`](../topics/advanced/timers.md));
+firing runs as a pass of its own ([`../topics/core/timers.md`](../topics/core/timers.md));
 only a `compensate` hook's context carries no timer session, and there every
 timer call throws a `FlezhaException` with the code `runtime.timers_unavailable`.
 A `spawnSteps` naming a flow factory reads `relay.factory_not_steps`. A flow

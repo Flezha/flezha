@@ -9,7 +9,7 @@ its symbol so every symbol gets a cell with its own window of prices, and emits
 a buy signal when a price is more than 2 % above the window's average.
 [Streams](../streams.html) explains the graph,
 [State](../state.html) the window kept per cell, and
-[Configuring a relay](../configuring_a_relay.html) why it
+[Relay settings](../relay_settings.html) why it
 runs in flow, the default.
 
 <!-- tabs-open -->

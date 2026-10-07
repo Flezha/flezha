@@ -22,7 +22,7 @@ defmodule Mix.Tasks.Flezha.Llms do
   # Pages for people changing Flezha, not using it, and the links into the
   # tutorial site, which ExDoc lists as pages but writes no copy of.
   @excluded_groups ["Architecture", "Contributing", "Tutorials"]
-  @start_here ["what_is_flezha.md", "local_mode.md", "cli.md", "errors.md"]
+  @start_here ["what_is_flezha.md", "running_and_testing.md", "cli.md", "errors.md"]
   @max_bytes 32 * 1024
 
   @impl Mix.Task

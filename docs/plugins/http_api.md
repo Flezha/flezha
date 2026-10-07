@@ -17,19 +17,6 @@ allows. `FlezhaHttp.ApiProvider` is its provider, under the provider id `http_ap
 | Runs | one listener on every controller that holds `_system` |
 | MCP | revision `2026-07-28`, and `2025-11-25` for clients that open with `initialize`; tools only, no session |
 
-**Contents**
-
-1. [Enable it](#enable-it)
-2. [Options](#options)
-3. [A token for an assistant](#a-token-for-an-assistant)
-4. [Connect Claude Code](#connect-claude-code)
-5. [Plain JSON](#plain-json)
-6. [Call a relay's channel](#call-a-relay-s-channel)
-7. [Relay tools](#relay-tools)
-8. [What is never exposed](#what-is-never-exposed)
-9. [Limits and gotchas](#limits-and-gotchas)
-10. [See also](#see-also)
-
 ## Enable it
 
 Install the package first ([installing_plugins.md](../topics/plugins/installing_plugins.md)).
@@ -83,7 +70,7 @@ replayed. Set `plain_http` only when TLS ends in front of it, at a proxy on the 
 Give an assistant its own token, in one namespace, with the narrowest role that does its
 job: `viewer` to look, `ops` to start, send and handle dead letters. Never give it an
 `admin@_system` token. The roles and what each allows are on
-[authorization.md](../topics/basics/authorization.md#roles).
+[authorization.md](../topics/core/authorization.md#roles).
 
 ```sh
 $ flz token issue assistant default ops
@@ -118,7 +105,7 @@ itself. Beside them are the five tools that need no controller, `flezha_guide`,
 the same way: the URL and the header.
 
 On the controller's own machine an assistant can use `flz mcp` instead, with no plugin
-to enable ([`working_with_ai_assistants.md`](../topics/working_with_ai_assistants.md)).
+to enable ([`mcp_server.md`](../topics/core/mcp_server.md)).
 
 ## Plain JSON
 
@@ -141,7 +128,7 @@ failure answers the error object with the HTTP status of its class: `404` for
 ## Call a relay's channel
 
 `POST /v1/relays/<id>/<channel>` calls one entry channel of a relay in the token's namespace,
-through the relay's API ([`relay_api.md`](../topics/basics/relay_api.md)). The body is the value
+through the relay's API ([`sending_and_calling.md`](../topics/core/sending_and_calling.md#a-relay-s-api)). The body is the value
 as the channel's format reads it: the JSON value for `json`, UTF-8 text for `text`, raw bytes for
 `bytes`, `msgpack` and `custom`. It is `Relay.call_channel`, judged as `relay.send`:
 
@@ -181,7 +168,7 @@ channel of the factories announced in the token's namespace, named `<factory>_<c
 (`orders_place`). They are listed only for a role that grants `relay.send` there, so a viewer
 sees none, and there is one per factory and channel however many relays run it. Its arguments
 are `relay` and the channel's input; `tools/call` is `Relay.call_channel`, and a JSON answer comes
-back as structured content. [`relay_api.md`](../topics/basics/relay_api.md#ai-agents-and-tool-calling)
+back as structured content. [`sending_and_calling.md`](../topics/core/sending_and_calling.md#ai-agents-and-tool-calling)
 has the rules for names, schemas and answers.
 
 ## What is never exposed
@@ -216,6 +203,6 @@ controller's machine for those ([cli.md](../topics/cli/cli.md)).
 
 ## See also
 
-- [authorization.md](../topics/basics/authorization.md): tokens, roles and the audit trail
+- [authorization.md](../topics/core/authorization.md): tokens, roles and the audit trail
 - [hooks.md](../topics/plugins/hooks.md): controller plugins
 - [http_server.md](http_server.md): a relay behind HTTP, in the same package

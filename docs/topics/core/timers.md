@@ -208,9 +208,9 @@ uses a timer.
 
 ## See also
 
-- [State](../basics/state.md): the change log timers are saved in
-- [Workflows](../basics/workflows.md): steps, passes and `each`
-- [Durability](../basics/durability.md): effectively-once and the dead-letter queue
+- [State](state.md): the change log timers are saved in
+- [Workflows](workflows.md): steps, passes and `each`
+- [Durability](durability.md): effectively-once and the dead-letter queue
 - [Sessions](sessions.md): a session that ends itself on a timer
 - [Errors](../../errors.md): the `runtime.timer*` codes
 - Tutorial: [place orders](tutorials/place_orders.html)

@@ -40,12 +40,12 @@ retired setting, a retired builder call or a retired environment variable.
 
 #### Scenario: The workflow example declares steps in every tab
 
-- **WHEN** the "As a workflow" section of `docs/topics/basics/configuring_a_relay.md` and the Part 2 tutorial page that places orders are read
+- **WHEN** the "As a workflow" section of `docs/configuration/relay_settings.md` and the Part 2 tutorial page that places orders are read
 - **THEN** each of their seven language tabs SHALL declare the order executor's run as steps, with its loop shape and failure mode, in that SDK's settled form, and none SHALL name a retired class or flag
 
 #### Scenario: The durability page shows the ladder once
 
-- **WHEN** `docs/topics/basics/durability.md` is read
+- **WHEN** `docs/topics/core/durability.md` is read
 - **THEN** it SHALL carry one table naming the three durability levels and the flow run's duplicate rule beside them, and SHALL carry no retired persistence, tier or sync setting
 
 #### Scenario: A grep over the guides finds no retired setting
@@ -60,7 +60,7 @@ that runs in steps, one pass per turn, started and driven from the CLI, and SHAL
 reader watch an idle session sleep. It SHALL run the gateway in flow, SHALL have the gateway
 call the user's session, and SHALL keep each user's daily token budget on the gateway in state
 keyed by user, fed by the token count the call's Response carries.
-`docs/topics/advanced/sessions.md` and `docs/topics/advanced/relay_calls.md` SHALL teach
+`docs/topics/core/sessions.md` and `docs/topics/core/sending_and_calling.md` SHALL teach
 the session and `call` with excerpts of the same example.
 
 #### Scenario: The tutorial shows a session sleeping

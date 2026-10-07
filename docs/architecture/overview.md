@@ -95,7 +95,7 @@ flowchart TB
 ```
 
 - **Relay.** Its class's `run` setting says how an instance runs: `flow`,
-  the default, or `steps` ([`../topics/basics/configuring_a_relay.md`](../topics/basics/configuring_a_relay.md)).
+  the default, or `steps` ([`relay_settings.md`](../configuration/relay_settings.md)).
   A relay started with `--partitions N` becomes N ordinary instances,
   `<id>#p0` to `<id>#p{N-1}`, each owning part of the key space
   ([Partitioned relays](flow_profile.md#partitioned-relays)). A steps
@@ -414,7 +414,7 @@ In the default at-least-once mode, an output can leave before its state is on
 disk and can be sent again after a crash; deduplicating downstream is up to
 the user there. The effectively-once tier closes both. What each situation
 costs in practice is in
-[`../topics/basics/durability.md`](../topics/basics/durability.md#what-happens-in-each-situation).
+[`../topics/core/durability.md`](../topics/core/durability.md#what-happens-in-each-situation).
 
 ## Limits and gotchas
 
@@ -432,6 +432,6 @@ costs in practice is in
 - [`flow_profile.md`](flow_profile.md): recovery, the dead-letter queue, checkpoints, correction and partitions for a flow relay.
 - [`steps_profile.md`](steps_profile.md): journals, undo and the durable loop for a steps relay.
 - [`runner.md`](runner.md): inside a runner, and what a new SDK must do.
-- [`../topics/basics/configuring_a_relay.md`](../topics/basics/configuring_a_relay.md): the settings tree these pages refer to.
-- [`../topics/basics/durability.md`](../topics/basics/durability.md): what is kept and what a crash can cost, from the user's side.
+- [`relay_settings.md`](../configuration/relay_settings.md): the settings tree these pages refer to.
+- [`../topics/core/durability.md`](../topics/core/durability.md): what is kept and what a crash can cost, from the user's side.
 - [Wire protocol](https://github.com/flezha/flezha/blob/main/docs/sdk/protocol_spec.md): the frames between runner and controller.

@@ -291,7 +291,7 @@ does: `retry_max` and `retry_backoff_ms` on the channel (3 attempts, 50 ms base
 by default), so `retry_max(1)` is fail-fast.
 
 A steps tasklet registers timers as a flow tasklet does, and a firing
-runs as a pass of its own ([`../topics/advanced/timers.md`](../topics/advanced/timers.md));
+runs as a pass of its own ([`../topics/core/timers.md`](../topics/core/timers.md));
 only inside a `compensate` hook do `ctx.timer_after`, `ctx.timer_at_event_time`
 and `ctx.cancel_timer` raise a `FlezhaError` with the code `runtime.timers_unavailable`. A `ctx.spawn_steps`
 naming a flow factory resolves its handle to a `FlezhaError` with the code `relay.factory_not_steps`.
@@ -352,7 +352,7 @@ only while an invocation runs and only on the thread running it.
 
 A call to anything outside the instance goes through `ctx.effect(name, fn)`,
 which keeps its result so a re-run reads it instead of calling again
-([`recorded_effects.md`](../topics/advanced/recorded_effects.md)).
+([`effectively_once.md`](../topics/core/effectively_once.md#recorded-effects)).
 
 ## Channel payloads
 
@@ -377,10 +377,10 @@ four, or a codec named beside a callable on one channel, is refused when the
 relay is declared, naming the relay and the channel.
 
 A called input's first output answers its caller and still reaches the output's plugins:
-[`../topics/advanced/relay_calls.md`](../topics/advanced/relay_calls.md).
+[`sending_and_calling.md`](../topics/core/sending_and_calling.md#calls).
 `.call("pricing", deadline_ms=500)` or `.call(factory="agent", deadline_ms=..., create=False, answer_channel="quotes", codec=...)`
 ends a chain on a call to another relay and answers an edge of `Response`s:
-[`../topics/advanced/relay_calls.md`](../topics/advanced/relay_calls.md).
+[`sending_and_calling.md`](../topics/core/sending_and_calling.md#calls).
 
 Python's integers survive JSON at any width. A `datetime`, a set, a dataclass,
 `NaN` or an infinity has no JSON form, so sending one to an output that names no
@@ -563,7 +563,7 @@ snapshots, no dead-letter queue. Durability, effectively-once delivery, plugins,
 placement and migration, the dead-letter queue, observability export, authz and
 multi-runner scale need a controller; a declaration asking for one of those is
 refused at startup, naming it. Walk-through:
-[`../topics/basics/local_mode.md`](../topics/basics/local_mode.md).
+[`running_and_testing.md`](../topics/core/running_and_testing.md#local-mode).
 
 ## Testing your handlers
 

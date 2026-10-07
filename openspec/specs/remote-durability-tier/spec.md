@@ -298,7 +298,7 @@ and SHALL never touch an acknowledgement path.
 
 ### Requirement: The loss statement SHALL cover every level and every commit point
 
-`docs/topics/basics/durability.md` SHALL state what a lost controller disk costs in one
+`docs/topics/core/durability.md` SHALL state what a lost controller disk costs in one
 table with the three durability levels as rows and the commit points (input, checkpoint,
 stage) as columns, and `flz controller status` SHALL show the level posture of each
 running class beside the RPO.

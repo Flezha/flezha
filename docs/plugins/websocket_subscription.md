@@ -354,7 +354,7 @@ an opaque boot frame and is never filtered.
 The item string must equal what the relay's `key_by` extracts. That is the
 one convention partitioning rests on, and the SDK turns a violation into a park
 before any state for that key is created: see
-[`partitioning.md`](../topics/advanced/partitioning.md).
+[`partitioning.md`](../topics/core/partitioning.md).
 
 ## Observability
 
@@ -414,7 +414,7 @@ in the source.
   reconcile resumes when the source returns.
 - **The output hop is never effectively-once**, in either mode. See the
   delivery-semantics table above and
-  [`durability.md`](../topics/basics/durability.md).
+  [`durability.md`](../topics/core/durability.md).
 - **The plugin sends; it does not serve.** It ships on the connection it opened
   outbound. Accepting inbound websocket connections and fanning outputs to
   subscribers is a different capability and is not offered.
@@ -426,5 +426,5 @@ in the source.
 ## See also
 
 - [`http_poll.md`](http_poll.md): the other `HttpFetch` consumer
-- [`partitioning.md`](../topics/advanced/partitioning.md): key groups and the `key_by` contract
+- [`partitioning.md`](../topics/core/partitioning.md): key groups and the `key_by` contract
 - [`plugins.md`](../topics/plugins/plugins.md): the plugin model, sharing and `--single`

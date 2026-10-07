@@ -6,30 +6,21 @@ relay, a tasklet that keeps state, a test and a README with the commands to
 build and run it. It needs no controller, and an AI assistant gets the same
 files through MCP.
 
-**Contents**
-
-1. [What the starter is](#what-the-starter-is)
-2. [List the templates](#list-the-templates)
-3. [Create a project](#create-a-project)
-4. [From a release in a container](#from-a-release-in-a-container)
-5. [With an AI assistant](#with-an-ai-assistant)
-6. [Limits](#limits)
-
 ## What the starter is
 
 The `starter` template is one relay, `starter`, that counts visits per page:
 
 - Its entry channel `hit` takes `{"page": "..."}`. It is
-  [described](../basics/relay_api.md), so `flz relay info` shows it and
+  [described](../core/sending_and_calling.md#a-relay-s-api), so `flz relay info` shows it and
   an AI agent can call it as a tool.
 - The channel is keyed by page, so each page has a
-  [cell](../basics/streams.md#keys-and-cells) of its own.
-- The tasklet `count` keeps the page's total in [state](../basics/state.md),
+  [cell](../core/streams.md#keys-and-cells) of its own.
+- The tasklet `count` keeps the page's total in [state](../core/state.md),
   changes it only through a recorded change, and answers the new total on the
   output `counts`.
 - A test runs the tasklet with the SDK's test harness and no controller, and
   checks that replaying the recorded changes rebuilds the state. The Elixir
-  test runs the relay in [local mode](../basics/local_mode.md) instead.
+  test runs the relay in [local mode](../core/running_and_testing.md#local-mode) instead.
 
 Each SDK's repository holds the same project as `examples/starter`, written in
 its current form and tested by its own suite, and the release carries a copy of
@@ -115,7 +106,7 @@ overwriting it. `--tar` refuses to write to a terminal: pipe it into `tar x`.
 
 ## With an AI assistant
 
-An assistant connected to [`flz mcp`](../working_with_ai_assistants.md)
+An assistant connected to [`flz mcp`](../core/mcp_server.md)
 has the knowledge tool `flezha_new_project`. Given a language, and an example
 that defaults to `starter`, it answers the same files `flz template create`
 writes, each with its path, content and executable bit, and the README's

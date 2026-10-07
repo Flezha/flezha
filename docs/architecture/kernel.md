@@ -8,7 +8,7 @@ is flowing. A flow relay and a steps relay use the same machinery; the pages on
 adds on top.
 
 It is written for contributors and for users who want to know what happens behind
-[durability](../topics/basics/durability.md) and [state](../topics/basics/state.md). Each
+[durability](../topics/core/durability.md) and [state](../topics/core/state.md). Each
 section says what happens first, then names the code that does it.
 
 **Contents**
@@ -202,7 +202,7 @@ confirm a batch in one answer. A batch carries the same facts as single answers 
 
 A class can also hold its outputs until a checkpoint closes, with `ack: checkpoint` and
 `outputs: at_checkpoint` under `exactly.effectively_once`
-([configuring a relay](../topics/basics/configuring_a_relay.md)). The interval's
+([configuring a relay](../configuration/relay_settings.md)). The interval's
 outputs then ride inside its checkpoint record, one append per interval, at up to
 `max_delay_ms` of extra output latency. It is off unless declared, because it changes when a
 value becomes visible downstream.
@@ -347,7 +347,7 @@ A backend stores bytes through five operations (`put`, `get`, `list`, `put_if`, 
 knows nothing about WALs. On a fresh node the registry is restored from the backend before the
 process hub opens `registry.dets`, so the restored relays are seen; cell state then comes
 back through the ordinary bind. The shipper is `Flezha.State.DurabilityTier.Shipper`. User
-view: [durability](../topics/basics/durability.md).
+view: [durability](../topics/core/durability.md).
 
 ## Delivery guarantees
 
@@ -748,7 +748,7 @@ and has no setting of its own.
 - [`flow_profile.md`](flow_profile.md): what running in flow adds.
 - [`steps_profile.md`](steps_profile.md): the task journal, undo and the durable loop.
 - [`runner.md`](runner.md): the shared runner core and how each SDK uses it.
-- [`../topics/basics/durability.md`](../topics/basics/durability.md): what is kept and what a crash can cost, from the user's side.
-- [`../topics/advanced/effectively_once.md`](../topics/advanced/effectively_once.md): turning the tier on.
+- [`../topics/core/durability.md`](../topics/core/durability.md): what is kept and what a crash can cost, from the user's side.
+- [`../topics/core/effectively_once.md`](../topics/core/effectively_once.md): turning the tier on.
 - [`../configuration/application_env.md`](../configuration/application_env.md): the settings named on this page.
 - [`state_persistence.md`](https://github.com/flezha/flezha/blob/main/docs/internals/state_persistence.md): file formats and journal layouts.

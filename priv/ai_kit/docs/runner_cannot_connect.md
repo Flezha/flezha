@@ -50,7 +50,7 @@ the path and the limit. That is a controller-side refusal, not something
 **A connect can be refused after it succeeds.** Reaching the socket is not the
 same as being admitted. With authorization enforced the controller also judges
 the namespace the runner claims, and refuses with a reason of its own:
-[`../topics/basics/authorization.md`](../topics/basics/authorization.md).
+[`../topics/core/authorization.md`](../topics/core/authorization.md).
 
 ## See also
 

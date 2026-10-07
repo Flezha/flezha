@@ -13,7 +13,7 @@ How `flz` reaches the controller, its options and its exit codes are on the
 
 ## `flz relay`
 
-Starts and stops relays, sends them input, and shows what they answer and emit. Explained in [`running_relays.md`](../basics/running_relays.md), [`workflows.md`](../basics/workflows.md), [`partitioning.md`](../advanced/partitioning.md), [`relay_calls.md`](../advanced/relay_calls.md), [`rewinding_a_turn.md`](../advanced/rewinding_a_turn.md), [Run the echo](../../getting_started/up_and_running.md#run-the-echo).
+Starts and stops relays, sends them input, and shows what they answer and emit. Explained in [`running_and_testing.md`](../core/running_and_testing.md), [`workflows.md`](../core/workflows.md), [`partitioning.md`](../core/partitioning.md), [`sending_and_calling.md`](../core/sending_and_calling.md#calls), [`sessions.md`](../core/sessions.md#rewinding-a-turn), [Run the echo](../../getting_started/up_and_running.md#run-the-echo).
 
 ```sh
 $ flz relay help
@@ -211,7 +211,7 @@ Relay: my_echo
 
 `diagnose` says what is wrong with one relay and what to do, one block per
 finding, and exits 0 whatever it found
-([`running_relays.md`](../basics/running_relays.md#diagnose-a-relay)):
+([`running_and_testing.md`](../core/running_and_testing.md#diagnose-a-relay)):
 
 ```sh
 $ flz relay diagnose orders-eu
@@ -246,7 +246,7 @@ Relay stopped successfully.
 `call` waits for the answer, the first output the input causes on an output, and
 prints only that, so a script can use it as it is. `--answer-channel <ch>` waits
 for the output on that channel instead
-([`relay_calls.md`](../advanced/relay_calls.md)). An echo relay whose tasklet
+([`sending_and_calling.md`](../core/sending_and_calling.md#calls)). An echo relay whose tasklet
 ends in an output answers with its input:
 
 ```sh
@@ -257,7 +257,7 @@ $ flz relay call echo --text hello
 hello
 ```
 
-`call` goes through the relay's API ([`relay_api.md`](../basics/relay_api.md)).
+`call` goes through the relay's API ([`sending_and_calling.md`](../core/sending_and_calling.md#a-relay-s-api)).
 `--text` sends the payload as written; `--arg name=value`, repeated, gives one
 field of a JSON input each, typed by the channel's schema. A value that does not
 fit is refused before anything is sent, and a channel that answers nothing
@@ -301,7 +301,7 @@ API of relay 'orders-eu' (factory 'orders'):
 
 ## `flz state`
 
-Reads a relay's stored state, now or at a point in the past, and manages how long it is kept. Explained in [`state.md`](../basics/state.md#reading-a-cell-s-state), [`workflows.md`](../basics/workflows.md), [`durability.md`](../basics/durability.md).
+Reads a relay's stored state, now or at a point in the past, and manages how long it is kept. Explained in [`state.md`](../core/state.md#reading-a-cell-s-state), [`workflows.md`](../core/workflows.md), [`durability.md`](../core/durability.md).
 
 ```sh
 $ flz state help
@@ -340,7 +340,7 @@ EXAMPLES:
 ```
 
 A cell's state is read by `<relay>/<tasklet>`, here from
-[`state.md`](../basics/state.md#reading-a-cell-s-state):
+[`state.md`](../core/state.md#reading-a-cell-s-state):
 
 ```sh
 $ flz state get anna/reply --namespace agents
@@ -354,7 +354,7 @@ state get anna/reply:
 
 ## `flz dlq`
 
-Lists the inputs a relay gave up on after its retries, and replays or drops them. Explained in [`durability.md`](../basics/durability.md#the-dead-letter-queue).
+Lists the inputs a relay gave up on after its retries, and replays or drops them. Explained in [`durability.md`](../core/durability.md#the-dead-letter-queue).
 
 ```sh
 $ flz dlq help
@@ -373,7 +373,7 @@ Identity for gated verbs rides `--token <token>` or the FLEZHA_TOKEN env var.
 ```
 
 An input that failed every retry, from
-[`durability.md`](../basics/durability.md#the-dead-letter-queue):
+[`durability.md`](../core/durability.md#the-dead-letter-queue):
 
 ```sh
 $ flz dlq list 'trade_watcher#p1' --namespace trading
@@ -386,7 +386,7 @@ trade_watcher#p1/track_prices/307bcbd6439a080f              EUR/USD         trad
 
 ## `flz schedule`
 
-Starts a workflow on a cron schedule. Explained in [`workflows.md`](../basics/workflows.md#one-instance-per-piece-of-work), [`configuring_a_relay.md`](../basics/configuring_a_relay.md).
+Starts a workflow on a cron schedule. Explained in [`workflows.md`](../core/workflows.md#one-instance-per-piece-of-work), [`relay_settings.md`](../../configuration/relay_settings.md).
 
 ```sh
 $ flz schedule help

@@ -73,7 +73,7 @@ With `my_echo` stopped, nothing runs on the runner, so nothing waits for it.
 A runner that stops while a relay still runs on it does not take the relay
 with it: the controller binds the relay to the next runner that registers its
 factory, and it carries on from the state the controller kept
-([Durability](../topics/basics/durability.md)).
+([Durability](../topics/core/durability.md)).
 
 ## Stop the controller
 
@@ -121,7 +121,7 @@ The stop runs in three phases:
 So nothing is lost; a kill instead costs at most the last few milliseconds,
 recovered on the next start.
 [Deploying a controller](../topics/deploying/deploying_a_controller.md#graceful-shutdown)
-covers shutdown in full, and [Running relays](../topics/basics/running_relays.md)
+covers shutdown in full, and [Running and testing](../topics/core/running_and_testing.md)
 what comes back after a restart.
 
 ## Clean up
@@ -164,7 +164,7 @@ By default `flz reset` clears each relay's saved state and the registry of
 started relays and enabled plugins. Tokens, schedules, installed plugins and
 the rest stay unless an `--include-` flag names them, and it clears nothing
 while a controller is running
-([Start from a clean slate](../topics/basics/running_relays.md#start-from-a-clean-slate-flz-reset)).
+([Start from a clean slate](../topics/core/running_and_testing.md#start-from-a-clean-slate-flz-reset)).
 The files the file plugins wrote are yours, so it leaves them.
 
 ### Docker

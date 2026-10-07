@@ -8,7 +8,7 @@ only the pages a task needs: each link is that page's full Markdown, next to thi
 ## Start here
 
 - [What is Flezha](what_is_flezha.md)
-- [Testing in local mode](local_mode.md)
+- [Running and testing](running_and_testing.md)
 - [CLI](cli.md)
 - [Errors](errors.md)
 
@@ -19,40 +19,22 @@ only the pages a task needs: each link is that page's full Markdown, next to thi
 - [Connect a plugin](connect_a_plugin.md): On this page you attach a file to each side of `my_echo`: lines added to one file go in, and their echoes land in another.
 - [Stop and clean up](stop_and_clean_up.md): On this page you stop what the last two pages started, in reverse order: the plugins, the relay, the runner, then the controller.
 
-## Relays
+## Core topics
 
 - [Building blocks](building_blocks.md): Code that runs on Flezha is made of three pieces: tasklets, relays and runners.
+- [Namespaces](namespaces.md): A namespace is a separate room inside one Flezha deployment.
+- [Authorization](authorization.md): Authorization decides who may do what.
 - [State](state.md): A tasklet can remember things between messages: a running total, a window of recent prices, the id of a reservation it may have to release.
-- [Configuring a relay](configuring_a_relay.md): A relay is configured by one settings tree, declared in its class.
-- [Running relays](running_relays.md): A runner that registered a factory runs nothing yet.
-- [A relay's API](relay_api.md): Every relay has a public API: the entry channels of its factory, each with the format it reads, whether it answers and in which format, and, when you give them, a description and a JSON Schema of its input.
-
-## Kinds of relays
-
+- [Running and testing](running_and_testing.md): A runner that registered a factory runs nothing yet.
 - [Streams](streams.md): A stream is a relay that runs in flow, the default run: you start it once, and it handles each message the moment it arrives, for as long as it runs.
 - [Workflows](workflows.md): A workflow is a piece of work made of steps that run in a fixed order: reserve the money, place the order, confirm the fill.
 - [Sessions](sessions.md): A session is a relay instance that lives for as long as a conversation does: it has a beginning, it takes one message after another, and it remembers what was said.
-- [Rewinding a turn](rewinding_a_turn.md): A conversation sometimes has to go back.
-
-## Relay features
-
+- [Sending and calling](sending_and_calling.md): There are three ways to hand a relay an input.
 - [Timers](timers.md): Some work is triggered by time rather than by input: a session that closes after 30 seconds of quiet, an idle buffer that flushes, a join that gives up waiting, a window that closes.
-- [Merged inputs](merged_inputs.md): A tasklet takes one type of input, and `into` connects it to one channel.
-- [Recorded effects](recorded_effects.md): A tasklet that calls something outside its relay (a model, a tool, a payment service) runs that call again whenever the invocation runs again: after a crash, on a replay, when a sleeping instance wakes or a relay moves to another runner.
-- [Streamed answers](streamed_answers.md): A model writes its answer a token at a time, and a long answer takes a while.
-- [Spawning from a tasklet](spawning_from_a_tasklet.md): A running tasklet can start a steps relay with one call: `ctx.spawn_steps`.
-- [Relay calls](relay_calls.md): A call sends one input to a relay and gets one answer back: the first output that input caused on an output of the relay's graph, or one coded error saying why none came.
-- [Sending from runner code](sending_from_runner_code.md): Application code in a runner process often holds a source of its own: a Kafka consumer, a queue client, a poll loop.
-- [Durability](durability.md): Flezha writes down every change a tasklet makes to its state, and every step a workflow finishes, on the controller's disk as it happens.
+- [Durability and delivery](durability.md): Flezha writes down every change a tasklet makes to its state, and every step a workflow finishes, on the controller's disk as it happens.
 - [Effectively once](effectively_once.md): A message that is lost is a question nobody answers.
 - [Partitioning](partitioning.md): A relay started the usual way is one instance: all of its keys and all of their cells run on one runner, and that runner's machine is the limit.
-- [Testing in local mode](local_mode.md): Local mode runs a relay inside your own process, with no controller, no Docker and no socket.
-
-## Core topics
-
-- [Namespaces](namespaces.md): A namespace is a separate room inside one Flezha deployment.
-- [Authorization](authorization.md): Authorization decides who may do what.
-- [Working with AI assistants](working_with_ai_assistants.md): An AI coding assistant such as Claude Code, Cursor or Codex can build on Flezha with `flz mcp`, an MCP server that ships in every release.
+- [MCP server](mcp_server.md): An AI coding assistant such as Claude Code, Cursor or Codex can build on Flezha with `flz mcp`, an MCP server that ships in every release.
 
 ## The CLI
 
@@ -69,7 +51,7 @@ only the pages a task needs: each link is that page's full Markdown, next to thi
 - [Configuration overview](configuration.md): Flezha starts with no configuration.
 - [Controller environment variables](environment_variables.md): Every variable the controller node reads, grouped by area.
 - [Application env keys](application_env.md): Read via `Flezha.Config.get/1` by row name; `Read in` names the module that reads the key.
-- [Relay settings](relay_settings.md): What a relay declares in its own code.
+- [Relay settings](relay_settings.md): A relay is configured by one settings tree, declared in its class.
 - [Plugin options](plugin_options.md): A plugin's options are its own settings: the URL it polls, the topic it publishes to, the file it writes.
 - [Runner environment variables](runner_environment.md): Read by the runner process, not the controller node, so they are set where the runner runs.
 - [Erlang VM arguments](vm_arguments.md): The VM the node runs in is configured before the application starts, so none of these can be a row of `lib/flezha/config/keys.ex` and `config/runtime.exs` never sees one.

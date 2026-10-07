@@ -11,14 +11,6 @@ A relay declares where data comes in and goes out, and a user decides what is on
 other side. The same relay reads from a file today and from Kafka tomorrow with no
 rebuild, and a plugin can be added, changed or removed while the relay runs.
 
-**Contents**
-
-1. [How it works](#how-it-works)
-2. [Two types](#two-types)
-3. [In this section](#in-this-section)
-4. [The plugins that ship](#the-plugins-that-ship)
-5. [See also](#see-also)
-
 ## How it works
 
 A plugin goes through three steps, each its own act:
@@ -98,8 +90,8 @@ refused at boot.
 
 ## See also
 
-- [`partitioning.md`](../advanced/partitioning.md): partitioned relays and their plugins
-- [`durability.md`](../basics/durability.md) and [`effectively_once.md`](../advanced/effectively_once.md): what an output plugin can promise
+- [`partitioning.md`](../core/partitioning.md): partitioned relays and their plugins
+- [`durability.md`](../core/durability.md) and [`effectively_once.md`](../core/effectively_once.md): what an output plugin can promise
 - [Controller environment variables](../../configuration/environment_variables.md): `FLEZHA_PLUGIN_IDLE_STOP_MS`, `FLEZHA_FILE_PLUGIN_ROOT` and the other plugin settings
 - [`../../errors.md`](../../errors.md): every `plugin.*` code
 - Getting started: [Connect a plugin](../../getting_started/connect_a_plugin.md); tutorial: [`watch_the_trades.md`](tutorials/watch_the_trades.html)

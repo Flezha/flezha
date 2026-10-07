@@ -12,7 +12,7 @@ How `flz` reaches the controller, its options and its exit codes are on the
 
 ## `flz namespace`
 
-Creates and deletes namespaces, the separate areas relays and runners work in, and sets their quotas. Explained in [`namespaces.md`](../basics/namespaces.md).
+Creates and deletes namespaces, the separate areas relays and runners work in, and sets their quotas. Explained in [`namespaces.md`](../core/namespaces.md).
 
 ```sh
 $ flz namespace help
@@ -78,7 +78,7 @@ hint: flz namespace list
 
 ## `flz auth`
 
-Claims the first admin token, and shows who a token belongs to. Explained in [`authorization.md`](../basics/authorization.md#claim-the-admin), [a lost admin](../basics/authorization.md#a-lost-admin).
+Claims the first admin token, and shows who a token belongs to. Explained in [`authorization.md`](../core/authorization.md#claim-the-admin), [a lost admin](../core/authorization.md#a-lost-admin).
 
 ```sh
 $ flz auth help
@@ -108,7 +108,7 @@ Identity for gated verbs rides `--token <token>` or the FLEZHA_TOKEN env var.
 ```
 
 The first admin is claimed with the token the controller wrote at its first
-start, from [`authorization.md`](../basics/authorization.md#claim-the-admin):
+start, from [`authorization.md`](../core/authorization.md#claim-the-admin):
 
 ```sh
 $ flz auth bootstrap "$(cat app_data/auth/bootstrap.token)"
@@ -131,7 +131,7 @@ role:      admin
 
 ## `flz token`
 
-Issues, lists and revokes tokens. Explained in [`authorization.md`](../basics/authorization.md#tokens), [runner credentials](../basics/authorization.md#runner-credentials).
+Issues, lists and revokes tokens. Explained in [`authorization.md`](../core/authorization.md#tokens), [runner credentials](../core/authorization.md#runner-credentials).
 
 ```sh
 $ flz token help
@@ -160,7 +160,7 @@ Identity for these verbs rides `--token <token>` or the FLEZHA_TOKEN env var.
 ```
 
 A runner's credential, from
-[`authorization.md`](../basics/authorization.md#runner-credentials):
+[`authorization.md`](../core/authorization.md#runner-credentials):
 
 ```sh
 $ flz token issue runner@trading trading runner --ttl never
@@ -174,7 +174,7 @@ token (shown once, store it now): flzt_3j5bftycxn43ivwoxbd2peghazjgtnru5bxqgshvf
 
 ## `flz role`
 
-Gives roles to a principal and takes them away. Explained in [`authorization.md`](../basics/authorization.md#roles).
+Gives roles to a principal and takes them away. Explained in [`authorization.md`](../core/authorization.md#roles).
 
 ```sh
 $ flz role help
@@ -198,7 +198,7 @@ when any of them grants it. A bind naming another namespace is refused.
 Identity for these verbs rides `--token <token>` or the FLEZHA_TOKEN env var.
 ```
 
-From [`authorization.md`](../basics/authorization.md#roles):
+From [`authorization.md`](../core/authorization.md#roles):
 
 ```sh
 $ flz role bind alice ops team-orders
@@ -214,7 +214,7 @@ runner@team-orders  spawner,stopper@team-orders
 
 ## `flz audit`
 
-Reads the record of who did what. Explained in [`authorization.md`](../basics/authorization.md#the-audit-trail).
+Reads the record of who did what. Explained in [`authorization.md`](../core/authorization.md#the-audit-trail).
 
 ```sh
 $ flz audit help

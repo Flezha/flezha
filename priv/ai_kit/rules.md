@@ -11,7 +11,7 @@ that connects to a controller. These rules hold for every task.
    releases; never write one from memory or from an older project.
 3. Try a relay in local mode before starting a controller: it runs the
    relay's graph in your own process, with no controller and no socket.
-   The `local_mode.md` page shows how.
+   The `running_and_testing.md` page shows how, under "Local mode".
 4. Every Flezha failure carries a `code` and a `hint`. Read both and follow the
    hint before retrying. Call `flezha_error` for a code you do not know. When
    you use the shell, run `flz` with `--json`.

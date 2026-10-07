@@ -5,15 +5,6 @@ how many copies of it run and where, when a copy stops, and how a plugin follows
 relay's durability. [Plugins](plugins.md) has the model: a plugin is installed,
 enabled by name and bound to relays.
 
-**Contents**
-
-1. [Shared or one per relay](#shared-or-one-per-relay)
-2. [A shared feed](#a-shared-feed)
-3. [Partitioned relays](#partitioned-relays)
-4. [When a copy stops](#when-a-copy-stops)
-5. [A controller without the provider](#a-controller-without-the-provider)
-6. [Plugins follow the relay's durability](#plugins-follow-the-relay-s-durability)
-
 ## Shared or one per relay
 
 A plugin's provider declares whether one running copy can serve several relays:
@@ -53,7 +44,7 @@ its own share of the items, and an HTTP poll can name the member's partition in 
 A source that cannot tell which member a record's key belongs to refuses a group member
 with `plugin.partitioned_host`: the Kafka consumer, the RabbitMQ consumer, Postgres change
 capture, the Postgres poll source and the HTTP server. Bind it to a relay that is not
-partitioned and route from there. [`partitioning.md`](../advanced/partitioning.md) covers
+partitioned and route from there. [`partitioning.md`](../core/partitioning.md) covers
 groups.
 
 ## When a copy stops
@@ -112,5 +103,5 @@ it, and a slow one holds back only its own upstream connection.
 
 On the output plugin side, a delivery-guaranteed output is held in the relay's outbox until the
 output plugin confirms it. What each output plugin honours (written once, at least once, or best effort) is
-the Durability row of its catalogue page. [`durability.md`](../basics/durability.md) has the levels,
-and [`effectively_once.md`](../advanced/effectively_once.md) the tier.
+the Durability row of its catalogue page. [`durability.md`](../core/durability.md) has the levels,
+and [`effectively_once.md`](../core/effectively_once.md) the tier.

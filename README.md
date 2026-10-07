@@ -104,11 +104,11 @@ runtime for AI services.
 - **For AI assistants.** `flz mcp` is an MCP server an assistant adds with one
   command: it gives the assistant the working rules and the current SDK form for its
   language before any controller runs, and then the controller's operations with a
-  token of its own ([`docs/topics/working_with_ai_assistants.md`](docs/topics/working_with_ai_assistants.md)).
+  token of its own ([`docs/topics/core/mcp_server.md`](docs/topics/core/mcp_server.md)).
   A controller on another machine serves the same over HTTP
   ([`docs/plugins/http_api.md`](docs/plugins/http_api.md)). Your relays are tools too:
   each described entry channel is one an agent can call
-  ([`docs/topics/basics/relay_api.md`](docs/topics/basics/relay_api.md)).
+  ([`docs/topics/core/sending_and_calling.md`](docs/topics/core/sending_and_calling.md)).
   Every error carries a stable code and a hint for the next step
   ([`docs/errors.md`](docs/errors.md)), every `flz` command can answer in JSON, the
   documentation ships an `llms.txt` map to its pages in Markdown, and local mode tries a
@@ -169,7 +169,7 @@ either license. [`REUSE.toml`](REUSE.toml) holds the per-path map, and CI checks
 it.
 
 Flezha is provided "AS IS", without warranty of any kind (MPL-2.0 §6-7,
-Apache-2.0 §7-8). Read [Durability](docs/topics/basics/durability.md) before
+Apache-2.0 §7-8). Read [Durability](docs/topics/core/durability.md) before
 trusting it with data. The licenses grant no trademark rights: a fork, derived
 work or hosted service must not use the name "Flezha" or one confusingly similar.
 Third-party components in binary distributions are listed in

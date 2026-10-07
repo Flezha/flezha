@@ -310,6 +310,9 @@ in short:
   namespace has been restored.
 - **Graceful stop.** A `preStop` hook runs `flz controller stop` before Kubernetes sends
   SIGTERM, and `terminationGracePeriodSeconds: 75` pairs with the 60-second shutdown timeout.
+  It is an admin verb: mount an `admin@_system` token from a Secret and present it, for
+  example with `FLEZHA_SHUTDOWN_TOKEN_FILE` pointing at the mounted file, which the image's
+  SIGTERM trap reads too.
 - **Resources and security.** The controller declares CPU and memory requests and limits as
   starting points to size to the workload, runs as uid 1000 with a read-only root filesystem
   and no capabilities, and mounts every path it writes.
@@ -324,7 +327,7 @@ in short:
   an HTTP port needs a proxy that retries a refused connection
   ([http_server.md](../../plugins/http_server.md#deployment)).
 - **Deleting the namespace deletes the volumes,** and the state in them.
-- **Turn authorization on** outside a local trial ([authorization.md](../basics/authorization.md)).
+- **Turn authorization on** outside a local trial ([authorization.md](../core/authorization.md)).
 
 ## See also
 

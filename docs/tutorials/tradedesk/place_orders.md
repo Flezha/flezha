@@ -9,7 +9,7 @@ place the order, then confirm the fill and book the order side by side. Each
 finished step is written down before the next one starts, and a step that
 fails for good undoes the ones before it, last one first.
 [Workflows](../workflows.html) explains steps, retries and undo,
-and [Configuring a relay](../configuring_a_relay.html)
+and [Relay settings](../relay_settings.html)
 the `run` setting that turns steps on.
 
 <!-- tabs-open -->

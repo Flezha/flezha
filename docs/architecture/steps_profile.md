@@ -4,14 +4,14 @@ This page describes what `run: steps` adds to a relay. A class that sets it is a
 relay**: a job with a beginning and an end, such as an ETL run, a payment saga or an AI chat
 session. The rest of its settings tree says how it runs: `each` for the shape of its loop,
 `on_failure` for what a step that fails for good undoes, and `durable` for where its work is
-kept ([configuring a relay](../topics/basics/configuring_a_relay.md)).
+kept ([configuring a relay](../configuration/relay_settings.md)).
 
 A steps relay uses the same tasklets, channels and cells as a flow relay, and the same
 [kernel](kernel.md) underneath. What changes is the schedule: it runs its tasklets in graph
 order, writes its progress to a journal at every step, can undo what it did, and can wait for
 input for hours while holding nothing on a runner. The page is for contributors and for users
 who want the mechanism behind the topic page
-[`workflows.md`](../topics/basics/workflows.md).
+[`workflows.md`](../topics/core/workflows.md).
 
 **Contents**
 
@@ -81,7 +81,7 @@ cells are. A stage entry counts its cells in 16 bits, so one pass of one tasklet
 65 535 cells; a class that keys more than that per pass declares a smaller `max_cells`.
 
 A `per_input` steps relay whose entry edge is keyed can be
-[partitioned](../topics/advanced/partitioning.md) into N instances that each end, undo and
+[partitioned](../topics/core/partitioning.md) into N instances that each end, undo and
 commit on their own. A `once` or `chained` one cannot.
 
 Cells are named `(relay class, tasklet, cell key)`, the same as in a flow relay.
@@ -406,7 +406,7 @@ offer. The rewind is refused, naming the channel, which the check reads from the
 
 The rewind raises only the journal's epoch, which keys the re-run's commits; cell epochs do not
 move ([the epoch rule](kernel.md#the-epoch-rule)). User view:
-[rewinding a turn](../topics/advanced/rewinding_a_turn.md).
+[rewinding a turn](../topics/core/sessions.md#rewinding-a-turn).
 
 ## Messages on the wire
 
@@ -462,7 +462,7 @@ and [`runner.md`](runner.md).
 - [`kernel.md`](kernel.md): the WAL, the effect record, the outbox and the epoch rule this page builds on.
 - [`flow_profile.md`](flow_profile.md): the other way a relay runs.
 - [`overview.md`](overview.md): the controller, the runners and how they connect.
-- [`../topics/basics/workflows.md`](../topics/basics/workflows.md): steps, undo and crash recovery from the user's side.
-- [`../topics/basics/configuring_a_relay.md`](../topics/basics/configuring_a_relay.md): `each`, `on_failure`, `durable` and `sleep_after`.
-- [`../topics/advanced/sessions.md`](../topics/advanced/sessions.md), [`../topics/advanced/rewinding_a_turn.md`](../topics/advanced/rewinding_a_turn.md), [`../topics/advanced/partitioning.md`](../topics/advanced/partitioning.md).
+- [`../topics/core/workflows.md`](../topics/core/workflows.md): steps, undo and crash recovery from the user's side.
+- [`relay_settings.md`](../configuration/relay_settings.md): `each`, `on_failure`, `durable` and `sleep_after`.
+- [`../topics/core/sessions.md`](../topics/core/sessions.md), [`sessions.md`](../topics/core/sessions.md#rewinding-a-turn), [`../topics/core/partitioning.md`](../topics/core/partitioning.md).
 - [`steps_relay.md`](https://github.com/flezha/flezha/blob/main/docs/resilience/steps_relay.md): the mechanism in more depth.

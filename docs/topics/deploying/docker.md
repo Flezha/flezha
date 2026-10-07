@@ -6,17 +6,6 @@ has the commands to pull it, run it and build it. This page covers what the cont
 when it starts and stops, what to mount, and a controller with its runner in one Compose
 file.
 
-**Contents**
-
-1. [What the container runs](#what-the-container-runs)
-2. [What to mount](#what-to-mount)
-3. [A controller and a runner in Compose](#a-controller-and-a-runner-in-compose)
-4. [flz in the container](#flz-in-the-container)
-5. [Tune the VM](#tune-the-vm)
-6. [Plugins](#plugins)
-7. [Limits and gotchas](#limits-and-gotchas)
-8. [See also](#see-also)
-
 ## What the container runs
 
 `tini` is the first process and passes signals on to the entrypoint script. On start the
@@ -183,7 +172,7 @@ the builder image a package for this image is built in.
 - **`docker/prod/docker-compose.yml` is a smoke test,** not a template: it starts Kafka
   beside the controller and turns the durability backend off.
 - **A container is one machine's worth of state.** Without a durability backend, losing
-  the volume loses the state ([Durability](../basics/durability.md)).
+  the volume loses the state ([Durability](../core/durability.md)).
 
 ## See also
 

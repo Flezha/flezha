@@ -31,7 +31,7 @@ producing tasklet's name unless the declaration `named/2` gave it one.
 `feed/3` enters through the same `Flezha.SDK.Relay.Inbox.input/4` a frame
 off a bound data stream enters, so the channel's declared decode and admission
 run as deployed. A worked two-tasklet example is in
-[`../topics/basics/local_mode.md`](../topics/basics/local_mode.md).
+[`running_and_testing.md`](../topics/core/running_and_testing.md#local-mode).
 
 **State is held in memory and nothing is durable** — no write-ahead log, no
 snapshots, no dead-letter queue. Every run says so on stderr and it is not
@@ -40,7 +40,7 @@ migration, the dead-letter queue, observability export, authz and multi-runner
 scale need a controller; a declaration asking for one of those is refused at
 startup, naming it. This SDK expresses local mode in its own core, as it does
 everything else. Local mode ships in every other SDK too. Walk-through:
-[`../topics/basics/local_mode.md`](../topics/basics/local_mode.md).
+[`running_and_testing.md`](../topics/core/running_and_testing.md#local-mode).
 
 ## Choosing a mode
 
@@ -356,7 +356,7 @@ inside `on_timer/4`), `cell_key/1`, and the timer four
 instance, `id:` and `if_running:` optional, with `payload` sent as an output with no codec sends a
 value (bytes as they are, anything else as JSON; a term with no JSON form raises), and answers
 a `Flezha.SDK.Spawn` handle at once that resolves to `{:ok, %{id: id, outcome: outcome}}`; the contract is
-`docs/topics/advanced/spawning_from_a_tasklet.md`. A spawn without `id:` always starts a new
+`docs/topics/core/workflows.md`. A spawn without `id:` always starts a new
 instance, starts a second one when reissued after a lost answer, and answers an empty id when
 skipped on replay; pass `id:` when that matters.
 
@@ -365,18 +365,18 @@ skipped on replay; pass `id:` when that matters.
 `input`/`input_with` → `into`/`into_named` → `keyed` → `output`/`output_with`, with
 `map`/`filter`/`flat_map`/`key_by` as edge transforms (fused into one closure per consumer
 edge), plus `named`, `on_full`, `retry_max`, `retry_backoff_ms`, and `merge/1` with
-`route_latest/4` ([`../topics/advanced/merged_inputs.md`](../topics/advanced/merged_inputs.md)). Fan-out is handle reuse,
+`route_latest/4` ([`streams.md`](../topics/core/streams.md#merged-inputs)). Fan-out is handle reuse,
 or `branch/2`, which calls each arm of a list with the same stream and answers it;
 unnamed mentions of one module unify (fan-in). An output names the channel it terminates:
 `output("input")` makes the frame `channel = "input"`, which is what reaches a forward
 target's `input` entry, and `output/1` leaves the name derived — `named/2`'s name, else the
 tasklet's `name/0`. Naming one channel twice is refused. A called input's first output
 answers its caller and still reaches the output's plugins
-([`../topics/advanced/relay_calls.md`](../topics/advanced/relay_calls.md)). `call(handle, "pricing", deadline_ms: 500)`, or
+([`sending_and_calling.md`](../topics/core/sending_and_calling.md#calls)). `call(handle, "pricing", deadline_ms: 500)`, or
 `call(handle, factory: "agent", deadline_ms: ..., create: false)` after a `key_by/2`, with
 `answer_channel:` to name the callee's answering channel, ends a
 chain on a call to another relay and answers a handle on its Response channel, whose
-values are `%Flezha.SDK.Response{}` ([`../topics/advanced/relay_calls.md`](../topics/advanced/relay_calls.md)). The user's metadata rides the frame. Cell mode is derived: non-empty `cell_keys/0` → static; a keyed edge into a
+values are `%Flezha.SDK.Response{}` ([`sending_and_calling.md`](../topics/core/sending_and_calling.md#calls)). The user's metadata rides the frame. Cell mode is derived: non-empty `cell_keys/0` → static; a keyed edge into a
 keyless tasklet → dynamic; else single. Refusals accumulate into one
 `{:error, %Flezha.SDK.Error{}}` carrying the first issue's code and every issue in
 `details.issues` — e.g. `topology.transform_after_key_by`, `topology.retry_max_zero`,
@@ -460,7 +460,7 @@ and its group); static keys outside the range idle silently; a keyless topology 
 bind (`PartitionsWithoutKeyedTasklet`). Keyless means, as in the other SDKs, that no tasklet an
 entry channel feeds is keyed: a graph whose only keyed tasklet sits behind an inter-task edge is
 refused a partitioned start. The hash is `Flezha.SDK.KeyGroup.group_of/1`, the
-one the controller's range assignment calls ([`../topics/advanced/partitioning.md`](../topics/advanced/partitioning.md)).
+one the controller's range assignment calls ([`../topics/core/partitioning.md`](../topics/core/partitioning.md)).
 
 ## Dynamic cells
 
@@ -495,7 +495,7 @@ scheduled timestamp under every clock, so a chained `timer_after/2` schedules of
 that woke it and a replay registers the same instant.
 
 Timers work in a steps relay's tasklets as in a flow relay's, and a firing runs as a pass of its own
-([`../topics/advanced/timers.md`](../topics/advanced/timers.md)). Only a `compensate` hook runs with
+([`../topics/core/timers.md`](../topics/core/timers.md)). Only a `compensate` hook runs with
 timers unavailable: there each of the four ctx timer calls answers
 `runtime.timers_unavailable` and arms nothing.
 
@@ -758,7 +758,7 @@ carried before.
 
 **`Ctx.effect/4`** (`effect(ctx, name, fun)` in a `use` tasklet) runs an outside call once per
 re-run of the invocation and answers `{:ok, result}`, or an error `run/3` returns as it is
-([`recorded_effects.md`](../topics/advanced/recorded_effects.md)).
+([`effectively_once.md`](../topics/core/effectively_once.md#recorded-effects)).
 
 **The restore and the slot.** A restore discards the open interval, cancels its deadline and
 sets the floor and the event-time high-water from the log. The Relay's slot table carries

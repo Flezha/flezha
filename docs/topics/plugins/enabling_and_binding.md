@@ -5,16 +5,6 @@ commands, their flags and hooks, changing a running plugin and seeing what runs.
 [Plugins](plugins.md) has the model, and [Plugin commands](../cli/plugin_commands.md)
 shows what each command prints.
 
-**Contents**
-
-1. [The commands](#the-commands)
-2. [Three kinds of flags](#three-kinds-of-flags)
-3. [Names, enables and binds](#names-enables-and-binds)
-4. [Hooks](#hooks)
-5. [Change a running plugin](#change-a-running-plugin)
-6. [See what runs](#see-what-runs)
-7. [At a relay's start](#at-a-relay-s-start)
-
 ## The commands
 
 | Command | What it does |
