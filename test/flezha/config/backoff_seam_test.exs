@@ -185,7 +185,9 @@ defmodule Flezha.Config.BackoffSeamTest do
       core = File.read!("flz_core/src/control_unit.rs")
       sdk = File.read!(@sdk_runner_server)
 
-      core_rule? = String.contains?(core, "note_session_end(live.handshake_completed())")
+      core_rule? =
+        String.contains?(core, "end_session(otx, stream, live.handshake_completed(), reason)") and
+          String.contains?(core, "if completed {\n        FAILED_SESSIONS.store(0")
 
       sdk_rule? =
         String.contains?(sdk, "defp complete_handshake(%State{handshake: :answered") and

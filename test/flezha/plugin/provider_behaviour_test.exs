@@ -453,8 +453,9 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
 
   describe "a provider declares whether it feeds the relay" do
     test "the providers whose worker injects declare it, and no other does" do
+      # First-party only: an installed package in the plugin root is not the release's.
       feeding =
-        for {id, module} <- Flezha.Plugin.Providers.all(),
+        for {id, module} <- Flezha.Plugin.Providers.first_party(),
             module.__provider__().feeds,
             do: id
 
