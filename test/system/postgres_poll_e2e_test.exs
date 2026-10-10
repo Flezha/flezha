@@ -129,7 +129,7 @@ defmodule FlezhaTest.System.PostgresPollE2ETest do
     cursor = %{:sys.get_state(reader).committed | at: ["#{@rows}"]}
     :ok = Host.persist_opt(overwatch, source.id, :cursor, cursor)
     Process.exit(reader, :kill)
-    assert :ok = Overwatch.plugin_restart(overwatch, source.id, source)
+    assert {:ok, :running} = Overwatch.plugin_heal(overwatch, :restart_plugin, source.id, source)
 
     assert read_again() == @again, "the reader did not read the rows past the cursor again"
 

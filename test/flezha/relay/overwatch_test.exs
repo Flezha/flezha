@@ -710,10 +710,10 @@ defmodule FlezhaTest.Relay.OverwatchPluginSubscribeTest do
       assert {:error, {:activation_failed, :closed}} = reply
     end
 
-    test "plugin_restart whose activation fails answers an error, not :ok", ctx do
+    test "a restart heal whose activation fails answers an error, not :ok", ctx do
       {:reply, reply, new_state} =
         Overwatch.handle_call(
-          {:plugin_restart, "src", ctx.plugin},
+          {:plugin_heal, :restart_plugin, "src", ctx.plugin},
           {self(), make_ref()},
           ctx.state
         )
@@ -721,10 +721,10 @@ defmodule FlezhaTest.Relay.OverwatchPluginSubscribeTest do
       assert {:error, {:activation_failed, :upstream_down}} = reply
       assert Table.phase(new_state.extensions, "src") == :prepared
 
-      # `Heal.plugin_call/3` matches `{:ok, :ok} -> :ok` and everything else to
-      # `:error`, so this reply is recorded as a FAILED heal with no change to
-      # `Heal` — a remedy cannot hide the fault it failed to fix.
-      refute match?(:ok, reply)
+      # `Heal.plugin_call/3` records anything but `{:ok, :running}` or a binding
+      # not started as a FAILED heal: a remedy cannot hide the fault it failed
+      # to fix.
+      refute match?({:ok, _phase}, reply)
     end
 
     test "bringing up an already-running plugin changes nothing", %{state: state} do
@@ -761,10 +761,10 @@ defmodule FlezhaTest.Relay.OverwatchPluginSubscribeTest do
       refute_received {:activate_called, :first_activation}
     end
 
-    test "the same restart reports :ok once upstream recovers", ctx do
+    test "the same restart reports :running once upstream recovers", ctx do
       {:reply, {:error, _}, state} =
         Overwatch.handle_call(
-          {:plugin_restart, "src", ctx.plugin},
+          {:plugin_heal, :restart_plugin, "src", ctx.plugin},
           {self(), make_ref()},
           ctx.state
         )
@@ -772,9 +772,13 @@ defmodule FlezhaTest.Relay.OverwatchPluginSubscribeTest do
       :persistent_term.put({FlappyProvider, :down}, false)
 
       {:reply, reply, healed} =
-        Overwatch.handle_call({:plugin_restart, "src", ctx.plugin}, {self(), make_ref()}, state)
+        Overwatch.handle_call(
+          {:plugin_heal, :restart_plugin, "src", ctx.plugin},
+          {self(), make_ref()},
+          state
+        )
 
-      assert reply == :ok
+      assert reply == {:ok, :running}
       assert Table.phase(healed.extensions, "src") == :running
       assert Table.running_ids(healed.extensions) == ["src"]
     end

@@ -45,6 +45,14 @@ defmodule Flezha.State.WriterRegistry do
     Elixir.Registry.select(@registry, [{{:"$1", :_, :_}, [], [:"$1"]}])
   end
 
+  @doc "Every registered Cell writer as `{cell_id, pid}`, without the input logs."
+  @spec cell_writers() :: [{{binary(), binary(), binary()}, pid()}]
+  def cell_writers() do
+    Elixir.Registry.select(@registry, [
+      {{{:"$1", :"$2", :"$3"}, :"$4", :_}, [], [{{{{:"$1", :"$2", :"$3"}}, :"$4"}}]}
+    ])
+  end
+
   @doc "The `Registry` child spec, started alongside `Flezha.State.Supervisor`."
   @spec child_spec_for_application() :: Supervisor.child_spec() | {module(), term()}
   def child_spec_for_application(), do: {Elixir.Registry, keys: :unique, name: @registry}

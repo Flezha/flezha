@@ -42,6 +42,16 @@ need the new `runner.drop` action, granted to `ops` and `admin`, and are audited
 `runner.untrackable`. `runner_dropped`, `runner_readmitted` and `runner_drop_refused` are
 emitted on the `:flezha_runner` source.
 
+### Fixed: disabled plugins no longer keep the convergence loop busy
+
+A binding whose plugin was disabled (`flz plugin disable`) keeps its relay running and reports
+`plugin.not_found`, as before, but the convergence loop no longer counts its retry as a repair.
+With twenty or more such bindings the loop used to tick without pause and hold the controller's
+CPU; it now ticks at `FLEZHA_CONVERGENCE_TICK_MS`. Enabling the plugin again still brings every
+binding up at once. A tick's cost also no longer grows with the relay state left on disk: its
+liveness read takes the live writers from memory, and the walk of the state directory resolves
+each namespace and the state root once.
+
 ### Fixed: a Cell's WAL no longer freezes behind a newer snapshot
 
 A writer took its seq from the WAL file alone, and adopted a snapshot's seq only while it awaited

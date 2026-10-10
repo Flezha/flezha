@@ -9,6 +9,7 @@ defmodule Flezha.State.PathsTest do
   use FlezhaTest.Case, fixtures: [:env], async: false
 
   alias Flezha.State.Paths
+  alias Flezha.State.TestHelpers
 
   describe "state_root/0" do
     setup do
@@ -160,6 +161,64 @@ defmodule Flezha.State.PathsTest do
       refute File.dir?(Path.join([base, "team-a", "gone-op"]))
       # Released: another namespace may now claim the name.
       assert :ok = Paths.claim_namespace("gone-op", "team-b")
+    end
+  end
+
+  describe "the state walk" do
+    setup do
+      %{tmp: base} = FlezhaTest.Case.install([:tmp_dir])
+      Paths.ensure_claims_table()
+
+      # Relative to the working directory, so a walk that expands every path
+      # again would ask the file server for the cwd each time.
+      Application.put_env(:flezha, :state_root, Path.relative_to(base, File.cwd!(), force: true))
+      # The one expansion a configured value costs.
+      Paths.state_root()
+
+      seed = fn namespace, class, tasklet, name ->
+        dir = Path.join([base, namespace, class, tasklet])
+        File.mkdir_p!(dir)
+        File.write!(Path.join(dir, name), "bytes")
+      end
+
+      seed.("team-a", "orders-op", "task-0", "k1.wal")
+      seed.("team-a", "orders-op", "task-1", "k2.snap.4")
+      seed.("team-b", "fills-op", "task-0", "k3.outbox.dedup")
+      seed.("team-b", "fills-op", "task-0", "k3.wal")
+      File.write!(Path.join([base, "team-b", "fills-op", "input.log"]), "log")
+      File.mkdir_p!(Path.join([base, "team-b", "empty-op"]))
+
+      %{base: base}
+    end
+
+    test "the walk keeps the namespace it found each class under", %{base: base} do
+      expected = [
+        {"fills-op", "task-0", "k3"},
+        {"orders-op", "task-0", "k1"},
+        {"orders-op", "task-1", "k2"}
+      ]
+
+      {cells, calls} = TestHelpers.file_calls(&Paths.all_cells/0)
+      assert Enum.sort(cells) == expected
+
+      refute Enum.any?(calls, &match?({:get_cwd, _}, &1)),
+             "the walk asked the file server for the cwd: #{inspect(calls)}"
+
+      listed = for {:list_dir, [dir]} <- calls, do: Path.expand(to_string(dir))
+
+      for namespace_dir <- [base, Path.join(base, "team-a"), Path.join(base, "team-b")] do
+        assert Enum.count(listed, &(&1 == namespace_dir)) == 1,
+               "#{namespace_dir} listed #{Enum.count(listed, &(&1 == namespace_dir))} times"
+      end
+
+      assert Enum.sort(Paths.relay_classes()) == ["empty-op", "fills-op", "orders-op"]
+
+      assert Enum.sort(Paths.cells_of("orders-op")) == [
+               {"orders-op", "task-0", "k1"},
+               {"orders-op", "task-1", "k2"}
+             ]
+
+      assert Paths.cells_of("empty-op") == []
     end
   end
 end

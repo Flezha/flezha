@@ -209,6 +209,7 @@ defmodule Flezha.Convergence.RemedySeamTest do
     unbound_relays: %Diff{unbound_relays: [{:ns, "r"}]},
     resync_cells: %Diff{resync_cells: [{{"c", "p", "k"}, "e1", :seq_gap}]},
     missing_plugins: %Diff{missing_plugins: [{{:ns, "r"}, "p1", @plugin}]},
+    not_started_plugins: %Diff{not_started_plugins: [{{:ns, "r"}, "p1", @plugin}]},
     extra_plugins: %Diff{extra_plugins: [{{:ns, "r"}, "p1", nil}]},
     unhealthy_plugins: %Diff{unhealthy_plugins: [{{:ns, "r"}, "p1", @plugin, :owned_pid_dead}]},
     stale_tags: %Diff{stale_tags: [{{:ns, "r"}, "e_old", "e1"}]},
@@ -288,7 +289,7 @@ defmodule Flezha.Convergence.RemedySeamTest do
     {Flezha.Convergence.Heal, :any, []},
     {Flezha.Runner.FleetManager, :evict_runner, []},
     {Flezha.Runner.FleetManager, :reset_control_channel, []},
-    {Flezha.Relay.Overwatch, :plugin_restart, []},
+    {Flezha.Relay.Overwatch, :plugin_heal, []},
     {Flezha.Plugin.Extension.Table, :attempt_restart, ["lib/flezha/relay/plugins.ex"]},
     # A bind publishes its OWN binding, which is not a remedy: those sites run
     # in the Overwatch as it binds, and the third IS the primitive's executor

@@ -71,6 +71,35 @@ defmodule Flezha.Convergence.DiffTest do
                |> Enum.map(&Map.take(&1, [:primitive, :target]))
     end
 
+    test "a binding recorded not started is planned after every repair" do
+      ids = for i <- 1..(Planner.max_ops() + 5), do: "off_#{i}"
+
+      delta =
+        diff(
+          plugin_intent(["src" | ids]),
+          plugin_reality(%{
+            running_plugins: [],
+            subscribed_plugins: ["src", "stray" | ids],
+            not_started_plugins: Map.new(ids, &{&1, {:plugin_not_found, &1}})
+          })
+        )
+
+      assert [{{:ns, "r"}, "src", _plugin}] = delta.missing_plugins
+      assert length(delta.not_started_plugins) == length(ids)
+
+      # The repairs come first; the bindings that cannot start fill what is left.
+      assert [
+               {:start_plugin, "src"},
+               {:stop_plugin, "stray"} | not_started
+             ] =
+               delta
+               |> Planner.plan(Backoff.new(:heal))
+               |> Enum.map(&{&1.primitive, &1.args.plugin_id})
+
+      assert length(not_started) == Planner.max_ops() - 2
+      assert Enum.all?(not_started, &match?({:start_plugin, "off_" <> _}, &1))
+    end
+
     test "a running declared plugin yields no divergence and no op" do
       delta =
         diff(

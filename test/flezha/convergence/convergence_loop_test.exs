@@ -356,6 +356,43 @@ defmodule Flezha.Convergence.LoopTest do
       assert {["btc_feed"], _} = Intent.intent_mismatch(intent_for([]), nil)
     end
 
+    test "a leftover class costs one file check, and a completed one is still dropped", %{
+      root: root
+    } do
+      for i <- 1..20, do: seed_cell(root, "leftover_#{i}", "op", "k1")
+      seed_cell(root, "done_steps", "op", "k1")
+
+      :ok =
+        Completion.write("done_steps", %{
+          namespace: "ns",
+          status: "ok",
+          error: "",
+          result: "",
+          finished_at: 0
+        })
+
+      # Settled directories, so the evidence cache is trusted on the second pass.
+      past = System.os_time(:second) - 10
+      Enum.each([root, Path.join(root, "_system")], &File.touch!(&1, past))
+      {_, cache} = Intent.intent_mismatch(intent_for([]), nil)
+
+      {{mismatch, _cache}, calls} =
+        Flezha.State.TestHelpers.file_calls(fn ->
+          Intent.intent_mismatch(intent_for([]), cache)
+        end)
+
+      assert mismatch == Enum.sort(for i <- 1..20, do: "leftover_#{i}")
+
+      completion_checks =
+        for {_function, [path | _]} <- calls,
+            String.ends_with?(to_string(path), "completion.record"),
+            do: path
+
+      assert length(completion_checks) == 21
+      assert Enum.count(calls, &match?({:list_dir, _}, &1)) == 1, inspect(calls)
+      refute Enum.any?(calls, &match?({:get_cwd, _}, &1))
+    end
+
     test "durable-registry rows without live intent also count as evidence" do
       stub(HubManager, :durable_relay_ids, fn -> MapSet.new(["ghost_relay"]) end)
 

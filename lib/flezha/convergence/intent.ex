@@ -108,14 +108,15 @@ defmodule Flezha.Convergence.Intent do
   def intent_mismatch(%__MODULE__{relays: relays}, cache) do
     live = MapSet.new(relays, & &1.relay_id)
     {dirs, cache} = state_root_dirs(cache)
-    evidence = MapSet.union(MapSet.new(dirs), HubManager.durable_relay_ids())
+    evidence = MapSet.union(MapSet.new(Map.keys(dirs)), HubManager.durable_relay_ids())
 
     # A finished steps relay's state is retained for inspection on purpose
-    # (`Flezha.State.Completion`): intent fulfilled, not intent lost.
+    # (`Flezha.State.Completion`): intent fulfilled, not intent lost. Its record
+    # lives in the class directory, so a class with none on disk holds none.
     mismatch =
       evidence
       |> MapSet.difference(live)
-      |> Enum.reject(&Completion.exists?/1)
+      |> Enum.reject(&(Map.has_key?(dirs, &1) and Completion.exists_in?(dirs[&1])))
       |> Enum.sort()
 
     {mismatch, cache}
@@ -140,8 +141,8 @@ defmodule Flezha.Convergence.Intent do
     )
   end
 
-  # Relay-class listing under the namespaced `<root>/<ns>/<class>` tree,
-  # re-read only when the newest relevant mtime changes — the root's (a
+  # Relay-class directories under the namespaced `<root>/<ns>/<class>` tree,
+  # by class, re-read only when the newest relevant mtime changes: the root's (a
   # namespace added/removed) or any namespace dir's (a class added/removed);
   # deeper writes touch neither. A cache entry younger than 2 s is never
   # trusted — POSIX mtime has 1 s granularity, so a same-second add+remove
@@ -159,12 +160,12 @@ defmodule Flezha.Convergence.Intent do
             {dirs, cache}
 
           _ ->
-            dirs = Paths.relay_classes()
+            dirs = Map.new(Paths.class_dirs())
             {dirs, {mtime, dirs}}
         end
 
       _ ->
-        {[], nil}
+        {%{}, nil}
     end
   end
 

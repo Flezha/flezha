@@ -39,6 +39,7 @@ defmodule Flezha.Convergence.Diff do
           stalled_relays: [relay_ref()],
           resync_cells: [{tuple(), binary(), atom()}],
           missing_plugins: [{relay_ref(), binary(), map()}],
+          not_started_plugins: [{relay_ref(), binary(), map()}],
           extra_plugins: [{relay_ref(), binary(), pid()}],
           unhealthy_plugins: [{relay_ref(), binary(), map(), term()}],
           stale_tags: [{relay_ref(), binary(), binary()}],
@@ -53,6 +54,7 @@ defmodule Flezha.Convergence.Diff do
             stalled_relays: [],
             resync_cells: [],
             missing_plugins: [],
+            not_started_plugins: [],
             extra_plugins: [],
             unhealthy_plugins: [],
             stale_tags: [],
@@ -71,6 +73,7 @@ defmodule Flezha.Convergence.Diff do
     :stalled_relays,
     :resync_cells,
     :missing_plugins,
+    :not_started_plugins,
     :extra_plugins,
     :unhealthy_plugins,
     :stale_tags,
@@ -117,7 +120,7 @@ defmodule Flezha.Convergence.Diff do
     {unbound, misbound, parked} =
       binding_divergence(declared, observed, verdicts, placement, facts)
 
-    {missing, extra, unhealthy} = plugin_divergence(declared, observed)
+    {missing, not_started, extra, unhealthy} = plugin_divergence(declared, observed)
 
     %__MODULE__{
       unbound_relays: Enum.reverse(unbound),
@@ -126,6 +129,7 @@ defmodule Flezha.Convergence.Diff do
       stalled_relays: stalled_refs(declared, verdicts),
       resync_cells: resync_cells(facts, observed),
       missing_plugins: missing,
+      not_started_plugins: not_started,
       extra_plugins: extra,
       unhealthy_plugins: unhealthy,
       stale_tags: stale_tags(declared, observed),
@@ -402,16 +406,21 @@ defmodule Flezha.Convergence.Diff do
   # one; unbound relays are healed by binding first, which replays the full
   # cspec plugin list.
   defp plugin_divergence(declared, observed) do
-    Enum.reduce(declared, {[], [], []}, fn %{namespace: ns, relay_id: rid, plugins: plugins},
-                                           {missing_acc, extra_acc, unhealthy_acc} ->
+    Enum.reduce(declared, {[], [], [], []}, fn %{namespace: ns, relay_id: rid, plugins: plugins},
+                                               {missing_acc, not_started_acc, extra_acc,
+                                                unhealthy_acc} ->
       ref = {ns, rid}
-      {missing, extra, unhealthy} = relay_plugins(ref, plugins, Map.get(observed, ref, %{}))
-      {missing_acc ++ missing, extra_acc ++ extra, unhealthy_acc ++ unhealthy}
+
+      {missing, not_started, extra, unhealthy} =
+        relay_plugins(ref, plugins, Map.get(observed, ref, %{}))
+
+      {missing_acc ++ missing, not_started_acc ++ not_started, extra_acc ++ extra,
+       unhealthy_acc ++ unhealthy}
     end)
   end
 
-  # One relay's plugin divergence: `{missing, extra, unhealthy}`, or three
-  # empty lists when its plugin sets are not diffable this tick.
+  # One relay's plugin divergence: `{missing, not_started, extra, unhealthy}`,
+  # or four empty lists when its plugin sets are not diffable this tick.
   defp relay_plugins(ref, plugins, observed_relay) do
     if plugins_diffable?(observed_relay) do
       # Two sets, deliberately. `running` is the `:running`-phase set — a
@@ -426,10 +435,20 @@ defmodule Flezha.Convergence.Diff do
       down = Map.get(observed_relay, :down_plugins, %{})
       health = Map.get(observed_relay, :plugin_health, %{})
 
-      {missing_plugins(ref, plugins, running, down), extra_plugins(ref, plugins, observed_relay),
+      # A missing binding recorded not started (its plugin is not enabled, its
+      # provider not loaded) waits on something outside the loop: its heal is
+      # unmet until that changes.
+      not_started_ids = Map.get(observed_relay, :not_started_plugins, %{})
+
+      {not_started, missing} =
+        ref
+        |> missing_plugins(plugins, running, down)
+        |> Enum.split_with(fn {_ref, id, _plugin} -> Map.has_key?(not_started_ids, id) end)
+
+      {missing, not_started, extra_plugins(ref, plugins, observed_relay),
        unhealthy_plugins(ref, plugins, running, down, health)}
     else
-      {[], [], []}
+      {[], [], [], []}
     end
   end
 

@@ -139,6 +139,25 @@ defmodule Flezha.State.WatchdogTest do
     refute_received {:resync_called, _cell_id, _opts}
   end
 
+  test "the liveness read walks no directory and answers every live writer", %{header: header} do
+    # Class directories relays left behind cost the tick's liveness read nothing.
+    for i <- 1..200,
+        do: File.mkdir_p!(Path.join([Paths.state_root(), "default", "leftover_#{i}"]))
+
+    {cell_id, _writer} = live_writer("live_", header)
+
+    # A writer whose files are not on disk is a live Cell all the same.
+    {bare_id, _writer} = live_writer("bare_", header)
+    Enum.each(Paths.cell_files(bare_id), &File.rm/1)
+
+    {statuses, calls} = TestHelpers.file_calls(&Watchdog.cell_statuses/0)
+
+    assert calls == [], "the liveness read touched the disk: #{length(calls)} file calls"
+    ids = Enum.map(statuses, &elem(&1, 0))
+    assert cell_id in ids
+    assert bare_id in ids
+  end
+
   test "every completed sweep stamps the sensor freshness mark" do
     ConvergenceSnapshot.observe_sensor(:watchdog, -1, 0)
 

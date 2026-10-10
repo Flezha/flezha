@@ -67,10 +67,19 @@ defmodule Flezha.State.Watchdog do
   @doc """
   Stall/advance evidence (`WalWriter.stall_status/1`) for every Cell with
   a live writer. Stateless read used by the sweeps here and by the
-  convergence Loop's producing-liveness classification at tick cadence.
+  convergence Loop's producing-liveness classification at tick cadence, so it
+  reads the writers from their registry and no directory. A steps journal
+  writes through the same substrate and is no Cell.
   """
   @spec cell_statuses() :: [{Paths.cell_id(), WalWriter.stall_status()}]
-  def cell_statuses(), do: collect_statuses(Paths.all_cells())
+  def cell_statuses() do
+    reserved = Paths.reserved_cell_keys()
+
+    for {{_, _, key} = cell_id, writer} <- WriterRegistry.cell_writers(),
+        key not in reserved,
+        {:ok, status} <- [safe_stall_status(writer)],
+        do: {cell_id, status}
+  end
 
   @doc """
   Record that a `CompactCell` was shipped for `cell_id` so the
@@ -179,12 +188,13 @@ defmodule Flezha.State.Watchdog do
 
   defp sweep(state) do
     now = :erlang.monotonic_time(:millisecond)
+    statuses = cell_statuses()
 
     swept =
       state
-      |> sweep_output_staleness(now)
-      |> sweep_input_silence(now)
-      |> sweep_compaction_triggers(now)
+      |> sweep_output_staleness(now, statuses)
+      |> sweep_input_silence(now, statuses)
+      |> sweep_compaction_triggers(now, statuses)
       |> sweep_compactions(now)
       |> sweep_rpo()
       |> sweep_disk_quotas()
@@ -289,15 +299,14 @@ defmodule Flezha.State.Watchdog do
   # `compact_after_age_ms`). The `compactions` in-flight map — marked here
   # directly so a failed dispatch still backs off until the timeout sweep
   # clears it — is the shared guard that keeps size+age to one enqueue.
-  defp sweep_compaction_triggers(state, now) do
+  defp sweep_compaction_triggers(state, now, statuses) do
     bound =
       case Recovery.bound_runners() do
         {:ok, bound} -> bound
         {:error, _} -> %{}
       end
 
-    cell_statuses()
-    |> Enum.reduce(state, fn {{rc, sh, _pk} = cell_id, status}, acc ->
+    Enum.reduce(statuses, state, fn {{rc, sh, _pk} = cell_id, status}, acc ->
       with false <- Map.has_key?(acc.compactions, cell_id),
            true <- Backoff.eligible?(acc.backoff, {:compaction, cell_id}, now),
            runner_id when is_binary(runner_id) <- Map.get(bound, rc, status.owning_runner),
@@ -351,13 +360,13 @@ defmodule Flezha.State.Watchdog do
   # window defaults to 0 and the sweep does not run unless a user asks
   # for it. The convergence judge holds the same rule for the same observation:
   # a flat marker with no input-side advance is idle, and idle is healthy.
-  defp sweep_input_silence(state, now) do
+  defp sweep_input_silence(state, now, statuses) do
     timeout = Durations.get(:input_silence_timeout_ms)
 
     if timeout <= 0 do
       state
     else
-      cell_statuses()
+      statuses
       |> Enum.group_by(fn {{rc, _sh, _pk}, _status} -> rc end)
       |> Enum.reduce(state, fn {rc, list}, acc ->
         # A sleeping instance receives no Change by design, and a
@@ -386,17 +395,6 @@ defmodule Flezha.State.Watchdog do
     end
   end
 
-  defp collect_statuses(cells) do
-    Enum.flat_map(cells, fn pid ->
-      with {:ok, writer} <- WriterRegistry.lookup(pid),
-           {:ok, status} <- safe_stall_status(writer) do
-        [{pid, status}]
-      else
-        _ -> []
-      end
-    end)
-  end
-
   # The relay produced output before (a cell's seq advanced past 0), and none of
   # those cells has had a Change for the whole window. A cell that produced once
   # and has nothing new to hear — a config cell beside a live feed — does not
@@ -421,16 +419,10 @@ defmodule Flezha.State.Watchdog do
     )
   end
 
-  defp sweep_output_staleness(state, now) do
-    Enum.each(Paths.all_cells(), fn {rc, _sh, _pk} = pid ->
+  defp sweep_output_staleness(state, now, statuses) do
+    Enum.each(statuses, fn {{rc, _sh, _pk} = pid, status} ->
       timeout = PersistenceResolver.output_stall_timeout_ms(rc)
-
-      with true <- timeout > 0,
-           {:ok, writer} <- WriterRegistry.lookup(pid),
-           {:ok, status} <- safe_stall_status(writer),
-           true <- stalled?(status, now, timeout) do
-        flag_output_stall(pid, status, now)
-      end
+      if timeout > 0 and stalled?(status, now, timeout), do: flag_output_stall(pid, status, now)
     end)
 
     state

@@ -383,10 +383,14 @@ defmodule Flezha.Plugin.Extension.Table do
   def subscribed?(%__MODULE__{plugins: plugins}, plugin_id),
     do: Map.has_key?(plugins, plugin_id)
 
-  @doc "The subscribers whose worker crashed, with the exit reason each recorded."
-  @spec down_ids(t()) :: %{binary() => term()}
-  def down_ids(%__MODULE__{entries: entries}) do
-    for {id, %Entry{phase: {:down, reason}}} <- entries, into: %{}, do: {id, reason}
+  @doc """
+  The bindings in the phase `{tag, reason}`, with the reason each recorded:
+  `:down`, a subscriber whose worker crashed, or `:not_started`, a binding that
+  cannot come up here.
+  """
+  @spec phase_reasons(t(), :down | :not_started) :: %{binary() => term()}
+  def phase_reasons(%__MODULE__{entries: entries}, tag) do
+    for {id, %Entry{phase: {^tag, reason}}} <- entries, into: %{}, do: {id, reason}
   end
 
   @doc """

@@ -957,13 +957,6 @@ rebound when its key's rung allows and not at once. No new ladder or knob SHALL 
 - **WHEN** the probe has seen `X` bound and unparked for the stable window
 - **THEN** its park fact SHALL be dropped and its `{:parked, X}` key reset
 
-## Removed Requirements
-
-### Requirement: `Backoff.schedule_ms/0` is part of the public API
-
-**Reason**: The function has zero callers in application code. It was added as a test-convenience export but is not referenced anywhere. Removing it trims the public API surface.
-
-**Migration**: Any test or external code that calls `Backoff.schedule_ms/0` should inline the value `[5_000, 30_000, 60_000, 300_000]` or read the module attribute `@schedule_ms` if needed for compile-time assertions.
 ### Requirement: A declared plugin that is not running is a divergence
 
 `Convergence.Probe` SHALL report a relay's RUNNING plugins as the set whose
@@ -1008,6 +1001,16 @@ and — for `restart_plugin` — converts a plugin the loop HAD detected as unhe
 into one it can no longer detect, because the plugin is now `:prepared` and
 `:prepared` is healthy. The remedy must never be able to hide the fault.
 
+The result SHALL be judged by the binding's phase after the call, read in the same
+call: `:running` is `:ok`; `:prepared` or `{:down, _}` is `:error`; and
+`{:not_started, reason}`, a binding that cannot start until something outside the
+loop changes, such as its plugin not being enabled or its provider not being loaded
+on this controller, is `:unmet`. An `:unmet` plugin heal SHALL neither advance nor
+reset the target's backoff and SHALL NOT count toward the per-tick cap, so any
+number of such bindings never makes the loop re-tick without waiting `tick_ms`.
+A binding the probe sees recorded not started SHALL be planned after every other
+op of the tick, so such bindings take only the plan slots no repair needs.
+
 #### Scenario: a restart whose activation fails is recorded as a failed heal
 - **GIVEN** a declared plugin self-reporting `{:unhealthy, :upstream_down}` whose upstream is still down
 - **WHEN** the Loop plans and executes `restart_plugin`
@@ -1024,6 +1027,30 @@ into one it can no longer detect, because the plugin is now `:prepared` and
 - **GIVEN** a declared plugin that is missing and whose `activate/1` will succeed
 - **WHEN** the Loop executes `start_plugin`
 - **THEN** the primitive SHALL report `:ok` and the plugin SHALL be `:running`
+
+#### Scenario: a binding whose plugin is disabled is an unmet heal
+- **GIVEN** a running relay with a binding whose plugin was disabled, so the binding is `{:not_started, {:plugin_not_found, name}}`
+- **WHEN** the Loop plans and executes `start_plugin` for it
+- **THEN** the primitive SHALL report `:unmet`
+- **AND** the `:heal` key for that target SHALL be neither advanced nor reset
+
+#### Scenario: many disabled bindings do not make the loop spin
+- **GIVEN** more disabled bindings across running relays than `Planner.max_ops()`
+- **WHEN** the Loop ticks
+- **THEN** no tick SHALL re-tick without waiting `tick_ms` on their account
+- **AND** the Loop SHALL receive no more than one scheduled tick per `tick_ms` while nothing else is declared
+
+#### Scenario: disabled bindings never crowd out a repair
+- **GIVEN** more disabled bindings on a running relay than `Planner.max_ops()`, and a declared plugin of the same relay that is missing and an undeclared one that is subscribed
+- **WHEN** the Loop plans a tick
+- **THEN** the plan SHALL start the missing plugin and stop the undeclared one
+- **AND** the disabled bindings' `start_plugin` ops SHALL fill only the slots left
+
+#### Scenario: enabling the plugin again brings the binding up without the loop
+- **GIVEN** a relay with a binding whose plugin is disabled
+- **WHEN** a plugin of that name is enabled again
+- **THEN** the binding SHALL reach `:running` through the enable's own reconvergence
+- **AND** the next `start_plugin` the Loop would plan for it SHALL not be planned, because it is no longer missing
 
 ### Requirement: Every NIF server driver SHALL produce the driver self-report
 
@@ -1052,3 +1079,47 @@ at all carries no `:driver` key rather than a differently-shaped one.
 #### Scenario: A transport with no driver carries no driver key
 - **WHEN** stats are read for the `:native` in-node transport, which runs no driver thread
 - **THEN** the stats map carries no `:driver` key, no driver measurement is emitted for it, and the classifier's driver clauses do not fire on it
+
+### Requirement: A tick's liveness read SHALL NOT walk the state tree
+
+The producing-liveness pass of every tick SHALL learn which Cells have a live writer from the
+writer registry, not by listing directories under the state root: `Watchdog.cell_statuses/0`
+SHALL answer the stall status of every Cell whose writer is registered, read from
+`WriterRegistry`, and SHALL read no directory. The intent-mismatch pass SHALL check a class
+with durable state and no live relay for its completion record in the class directory the
+cached walk found, at the cost of one file check, without re-resolving the class's namespace.
+A tick's file-server work SHALL therefore grow by no more than one file check per relay class
+directory on disk with no live relay, including directories left behind by relays that no
+longer run.
+
+The state walk that the sweeps and the retention pass still make (`Paths.all_cells/0`,
+`relay_classes/0`, `cells_of/1`) SHALL resolve each class's namespace once per walk, from the
+namespace directory it found the class under, and SHALL NOT re-resolve it per class or per
+tasklet. `Paths.state_root/0` SHALL return the absolute root without a file-server call per
+use: a relative configured root SHALL be expanded once per configured value. The walk's
+results SHALL be unchanged.
+
+#### Scenario: leftover class directories do not slow the tick
+- **GIVEN** a controller with 200 empty relay class directories under a namespace and no relay running
+- **WHEN** the Loop ticks
+- **THEN** `Watchdog.cell_statuses/0` SHALL read no directory
+- **AND** the tick SHALL make at most one file-server call per such directory, its completion check, and no cwd call
+
+#### Scenario: the liveness read covers every live writer
+- **GIVEN** relays running with Cells whose writers are registered, one of them before its first file was written
+- **WHEN** `Watchdog.cell_statuses/0` is read
+- **THEN** it SHALL answer a stall status for each of those Cells and for no Cell without a live writer
+
+#### Scenario: the walk keeps the namespace it found
+- **GIVEN** classes under two namespaces with tasklets and Cells on disk
+- **WHEN** `Paths.all_cells/0` runs
+- **THEN** it SHALL answer the same Cell ids as before the change
+- **AND** it SHALL list each namespace directory once and SHALL make no cwd call to the file server
+
+## Removed Requirements
+
+### Requirement: `Backoff.schedule_ms/0` is part of the public API
+
+**Reason**: The function has zero callers in application code. It was added as a test-convenience export but is not referenced anywhere. Removing it trims the public API surface.
+
+**Migration**: Any test or external code that calls `Backoff.schedule_ms/0` should inline the value `[5_000, 30_000, 60_000, 300_000]` or read the module attribute `@schedule_ms` if needed for compile-time assertions.

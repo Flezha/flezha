@@ -86,7 +86,23 @@ defmodule Flezha.State.Paths do
   which directory that turned out to be.
   """
   @spec state_root() :: binary()
-  def state_root(), do: Path.expand(Layout.dir(:state))
+  def state_root() do
+    root = Layout.dir(:state)
+    if Path.type(root) == :absolute, do: Path.expand(root), else: expanded_relative(root)
+  end
+
+  # Expanding a relative root asks the file server for the working directory on
+  # every path built from it. The controller never changes its working directory
+  # after boot, so each configured value is expanded once.
+  defp expanded_relative(root) do
+    key = {__MODULE__, :state_root, root}
+
+    with nil <- :persistent_term.get(key, nil) do
+      expanded = Path.expand(root)
+      :persistent_term.put(key, expanded)
+      expanded
+    end
+  end
 
   # ----- namespace resolution (finish-platform-authn-authz) -----
   #
@@ -552,9 +568,12 @@ defmodule Flezha.State.Paths do
   a walk of every relay on the node.
   """
   @spec cells_of(binary()) :: [cell_id()]
-  def cells_of(relay_class) when is_binary(relay_class) do
-    for tasklet_id <- list_dir(class_dir(relay_class)),
-        cell_key <- cell_keys_under({relay_class, tasklet_id, ""}),
+  def cells_of(relay_class) when is_binary(relay_class),
+    do: cells_in(relay_class, class_dir(relay_class))
+
+  defp cells_in(relay_class, class_dir) do
+    for tasklet_id <- list_dir(class_dir),
+        cell_key <- cell_keys_in(Path.join(class_dir, tasklet_id)),
         uniq: true,
         do: {relay_class, tasklet_id, cell_key}
   end
@@ -607,9 +626,9 @@ defmodule Flezha.State.Paths do
   crash-residue from an atomic-rename steps relay, not a Cell.
   """
   @spec scan_dir(cell_id()) :: scan_result()
-  def scan_dir({_, _, _} = pid) do
-    dir = state_dir(pid)
+  def scan_dir({_, _, _} = pid), do: scan(state_dir(pid))
 
+  defp scan(dir) do
     dir
     |> list_dir()
     |> Enum.reduce(%{wal_files: [], snapshot_files: [], outbox_files: []}, fn name, acc ->
@@ -659,7 +678,7 @@ defmodule Flezha.State.Paths do
   """
   @spec all_cells() :: [cell_id()]
   def all_cells() do
-    Enum.flat_map(relay_classes(), &cells_of/1)
+    Enum.flat_map(class_dirs(), fn {relay_class, dir} -> cells_in(relay_class, dir) end)
   end
 
   @doc """
@@ -683,14 +702,25 @@ defmodule Flezha.State.Paths do
   metadata.
   """
   @spec relay_classes() :: [binary()]
-  def relay_classes() do
-    for namespace <- namespaces(),
-        dir = namespace_dir(namespace),
-        class <- list_dir(dir),
-        File.dir?(Path.join(dir, class)),
-        not String.ends_with?(class, [@set_aside, @discarded]),
-        uniq: true,
-        do: class
+  def relay_classes(), do: Enum.map(class_dirs(), &elem(&1, 0))
+
+  @doc """
+  `relay_classes/0` with the directory each class was found in. A walk that
+  goes on into the classes starts from these, so it never resolves a class's
+  namespace again.
+  """
+  @spec class_dirs() :: [{binary(), binary()}]
+  def class_dirs() do
+    found =
+      for namespace <- namespaces(),
+          dir = namespace_dir(namespace),
+          class <- list_dir(dir),
+          class_dir = Path.join(dir, class),
+          File.dir?(class_dir),
+          not String.ends_with?(class, [@set_aside, @discarded]),
+          do: {class, class_dir}
+
+    Enum.uniq_by(found, &elem(&1, 0))
   end
 
   @doc """
@@ -783,8 +813,8 @@ defmodule Flezha.State.Paths do
     end
   end
 
-  defp cell_keys_under({_, _, _} = pid) do
-    %{wal_files: w, snapshot_files: s, outbox_files: o} = scan_dir(pid)
+  defp cell_keys_in(dir) do
+    %{wal_files: w, snapshot_files: s, outbox_files: o} = scan(dir)
     keys = Enum.map(w, &elem(&1, 0)) ++ Enum.map(s, &elem(&1, 0)) ++ Enum.map(o, &elem(&1, 0))
     Enum.uniq(keys)
   end

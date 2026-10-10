@@ -56,6 +56,7 @@ defmodule Flezha.Convergence.Planner do
     extra_plugins: [:stop_plugin],
     unhealthy_plugins: [:restart_plugin],
     stale_tags: [:publish_binding],
+    not_started_plugins: [:start_plugin],
     stalled_relays: [:resync_runner, :rebind_relay]
   ]
 
@@ -193,13 +194,17 @@ defmodule Flezha.Convergence.Planner do
   # plugin starts, and the row re-publish last. Each group preserves Delta
   # order within it.
   defp ordered_ops(%Diff{} = d, backoff) do
+    # The not-started bindings go last, so they take only the slots no repair
+    # needs: their heal is unmet, which neither moves a key nor counts toward
+    # the cap, so ahead of the rest they would hold those slots every tick.
     eviction_ops(d) ++
       reset_ops(d, backoff) ++
       wedge_ops(d, backoff) ++
       bind_ops(d) ++
       resync_ops(d) ++
       plugin_ops(d) ++
-      publish_ops(d)
+      publish_ops(d) ++
+      start_ops(d.not_started_plugins)
   end
 
   # The tick's classifier verdict, already resolved to the cell that can be
@@ -310,10 +315,7 @@ defmodule Flezha.Convergence.Planner do
   end
 
   defp plugin_ops(%Diff{} = d) do
-    missing =
-      Enum.map(d.missing_plugins, fn {{ns, rid}, plugin_id, plugin} ->
-        op(:start_plugin, ns, rid, %{plugin_id: plugin_id, plugin: plugin})
-      end)
+    missing = start_ops(d.missing_plugins)
 
     extra =
       Enum.map(d.extra_plugins, fn {{ns, rid}, plugin_id, _pid} ->
@@ -326,6 +328,12 @@ defmodule Flezha.Convergence.Planner do
       end)
 
     missing ++ extra ++ unhealthy
+  end
+
+  defp start_ops(bindings) do
+    Enum.map(bindings, fn {{ns, rid}, plugin_id, plugin} ->
+      op(:start_plugin, ns, rid, %{plugin_id: plugin_id, plugin: plugin})
+    end)
   end
 
   defp publish_ops(%Diff{stale_tags: stale}) do

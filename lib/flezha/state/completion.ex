@@ -31,11 +31,16 @@ defmodule Flezha.State.Completion do
         }
 
   @spec path(binary()) :: binary()
-  def path(relay_class),
-    do: Path.join(Paths.class_dir(relay_class), @filename)
+  def path(relay_class), do: record_in(Paths.class_dir(relay_class))
 
   @spec exists?(binary()) :: boolean()
   def exists?(relay_class), do: File.exists?(path(relay_class))
+
+  @doc "`exists?/1` for a class whose directory the caller already found."
+  @spec exists_in?(binary()) :: boolean()
+  def exists_in?(class_dir), do: File.exists?(record_in(class_dir))
+
+  defp record_in(class_dir), do: Path.join(class_dir, @filename)
 
   @doc """
   Atomically write the completion record (`.tmp` → rename, so a reader never
@@ -44,7 +49,7 @@ defmodule Flezha.State.Completion do
   """
   @spec write(binary(), t()) :: :ok
   def write(relay_class, %{} = record) when is_binary(relay_class) do
-    final = Path.join(Paths.class_dir(relay_class), @filename)
+    final = path(relay_class)
     bytes = :erlang.term_to_binary(record)
 
     case Paths.atomic_install(final, &:file.write(&1, bytes), :completion) do

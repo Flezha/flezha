@@ -77,9 +77,7 @@ defmodule Flezha.Convergence.Probe do
   # still has a log to close. `:unknown` on a failed read, never empty: a
   # missing writer clears a fact, and a read that failed proves nothing.
   defp live_writers() do
-    WriterRegistry.registered_ids()
-    |> Enum.filter(&(is_tuple(&1) and tuple_size(&1) == 3))
-    |> MapSet.new()
+    MapSet.new(WriterRegistry.cell_writers(), &elem(&1, 0))
   catch
     :exit, _ -> :unknown
   end
@@ -119,7 +117,8 @@ defmodule Flezha.Convergence.Probe do
           suspended?: Map.get(ow, :suspended, false),
           running_plugins: running_plugins(ow),
           subscribed_plugins: subscribed_plugins(ow),
-          down_plugins: down_plugins(ow),
+          down_plugins: phase_plugins(ow, :down),
+          not_started_plugins: phase_plugins(ow, :not_started),
           plugin_uptimes: plugin_uptimes(ow),
           plugin_health: plugin_health(pid, ow)
         })
@@ -153,6 +152,7 @@ defmodule Flezha.Convergence.Probe do
         running_plugins: [],
         subscribed_plugins: [],
         down_plugins: %{},
+        not_started_plugins: %{},
         plugin_uptimes: %{},
         plugin_health: %{}
       },
@@ -177,9 +177,10 @@ defmodule Flezha.Convergence.Probe do
   # check reads, so an undeclared plugin is torn down in either phase.
   defp subscribed_plugins(ow), do: with_table(ow, [], &Table.subscribed_ids/1)
 
-  # The subscribers whose owned pid crashed, with the reason — a plugin the
-  # loop restarts rather than re-activates.
-  defp down_plugins(ow), do: with_table(ow, %{}, &Table.down_ids/1)
+  # The subscribers whose owned pid crashed, with the reason, which the loop
+  # restarts rather than re-activates; and the bindings that cannot come up
+  # here, whose start waits on something outside the loop.
+  defp phase_plugins(ow, tag), do: with_table(ow, %{}, &Table.phase_reasons(&1, tag))
 
   # How long each running plugin's owned pid has been up: the evidence that
   # resets a restarted plugin's key.

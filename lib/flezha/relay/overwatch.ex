@@ -198,10 +198,17 @@ defmodule Flezha.Relay.Overwatch do
   def plugin_unsubscribe(pid, plugin_id),
     do: plugin_call(pid, {:plugin_unsubscribe, plugin_id})
 
-  @doc "Re-subscribe `plugin_id` on a running Overwatch, replacing its instance."
-  @spec plugin_restart(pid(), binary(), Plugin.t()) :: :ok | {:error, term()}
-  def plugin_restart(pid, plugin_id, %Plugin{} = plugin),
-    do: plugin_call(pid, {:plugin_restart, plugin_id, plugin})
+  @doc """
+  The convergence loop's plugin heal on a running Overwatch: `:start_plugin`
+  brings the binding up as `plugin_subscribe/4` does, `:restart_plugin`
+  replaces its instance. Answers the phase the call left the binding in, read
+  in the same call, which is what the heal is judged by.
+  """
+  @spec plugin_heal(pid(), :start_plugin | :restart_plugin, binary(), Plugin.t()) ::
+          {:ok, Table.phase() | :unknown} | {:error, term()}
+  def plugin_heal(pid, primitive, plugin_id, %Plugin{} = plugin)
+      when primitive in [:start_plugin, :restart_plugin],
+      do: plugin_call(pid, {:plugin_heal, primitive, plugin_id, plugin})
 
   @doc "Apply a changed plugin entry to `plugin_id`'s binding, `:live` or by a `:restart`."
   @spec plugin_update(pid(), binary(), Plugin.t(), :live | :restart, Plugin.t()) ::
@@ -212,6 +219,7 @@ defmodule Flezha.Relay.Overwatch do
   defp plugin_call(pid, request) do
     case SafeCall.bounded(pid, request, Durations.get(:plugin_call_timeout_ms)) do
       {:ok, :ok} -> :ok
+      {:ok, {:ok, _phase} = healed} -> healed
       {:ok, {:error, reason}} -> {:error, reason}
       {:error, _} = err -> err
     end
@@ -438,9 +446,14 @@ defmodule Flezha.Relay.Overwatch do
   end
 
   @impl true
-  def handle_call({:plugin_restart, plugin_id, %Plugin{} = plugin}, _from, state) do
-    case Plugins.restart(state, plugin_id, plugin) do
-      {:ok, state} -> {:reply, :ok, state}
+  def handle_call({:plugin_heal, primitive, plugin_id, %Plugin{} = plugin}, _from, state) do
+    healed =
+      if primitive == :start_plugin,
+        do: Plugins.subscribe(state, plugin_id, plugin),
+        else: Plugins.restart(state, plugin_id, plugin)
+
+    case healed do
+      {:ok, state} -> {:reply, {:ok, Table.phase(state.extensions, plugin_id)}, state}
       {:error, reason, state} -> {:reply, {:error, reason}, state}
     end
   end
@@ -886,7 +899,8 @@ defmodule Flezha.Relay.Overwatch do
     case Table.handle_down(state.extensions, ref, pid, reason) do
       {:ok, table} ->
         for plugin_id <-
-              Map.keys(Table.down_ids(table)) -- Map.keys(Table.down_ids(state.extensions)) do
+              Map.keys(Table.phase_reasons(table, :down)) --
+                Map.keys(Table.phase_reasons(state.extensions, :down)) do
           Facts.declare({:plugin_down, {state.namespace, state.id, plugin_id}, %{reason: reason}})
         end
 

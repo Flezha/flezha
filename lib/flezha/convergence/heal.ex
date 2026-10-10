@@ -70,11 +70,15 @@ defmodule Flezha.Convergence.Heal do
       executor: "State.Recovery.resync_for_overwatch/2 | resync/2",
       evidence: :ok
     },
-    %{name: :start_plugin, executor: "Overwatch.plugin_subscribe/3", evidence: :ok},
+    %{
+      name: :start_plugin,
+      executor: "Overwatch.plugin_heal/4 → Plugins.subscribe/4",
+      evidence: :ok
+    },
     %{name: :stop_plugin, executor: "Overwatch.plugin_unsubscribe/2", evidence: :ok},
     %{
       name: :restart_plugin,
-      executor: "Overwatch.plugin_restart/3 → Extension.Table.attempt_restart/3",
+      executor: "Overwatch.plugin_heal/4 → Plugins.restart/3",
       evidence: :running_stable
     },
     %{name: :evict_runner, executor: "FleetManager.evict_runner/2", evidence: :ok},
@@ -152,11 +156,11 @@ defmodule Flezha.Convergence.Heal do
     end)
   end
 
-  # (re)subscribe a declared-but-missing plugin into the running relay via
-  # the same `{:plugin_subscribe, ...}` path `flz plugin enable` uses (which
-  # activates immediately since the SDK is already up).
+  # (re)subscribe a declared-but-missing plugin into the running relay through
+  # `Plugins.subscribe/4`, the path `flz plugin enable` takes (which activates
+  # immediately since the SDK is already up).
   defp apply_primitive(:start_plugin, %{namespace: ns, target: rid, args: args}) do
-    plugin_call(ns, rid, &Overwatch.plugin_subscribe(&1, args.plugin_id, args.plugin))
+    plugin_call(ns, rid, &Overwatch.plugin_heal(&1, :start_plugin, args.plugin_id, args.plugin))
   end
 
   # Unsubscribe a plugin that is running but not declared in the cspec.
@@ -168,7 +172,7 @@ defmodule Flezha.Convergence.Heal do
   # its subscriber crashed. On failure the plugin keeps its phase and the next
   # eligible rung retries it.
   defp apply_primitive(:restart_plugin, %{namespace: ns, target: rid, args: args}) do
-    plugin_call(ns, rid, &Overwatch.plugin_restart(&1, args.plugin_id, args.plugin))
+    plugin_call(ns, rid, &Overwatch.plugin_heal(&1, :restart_plugin, args.plugin_id, args.plugin))
   end
 
   # Forcibly drop a dead/orphaned runner binding so its relays become
@@ -292,12 +296,16 @@ defmodule Flezha.Convergence.Heal do
   end
 
   # The three plugin primitives differ only in the verb they send; the call and
-  # its bound belong to `Overwatch`. A heal reports `:ok | :error` — the reason
-  # is already logged by the bounded call.
+  # its bound belong to `Overwatch`. A start or restart is judged by the phase it
+  # left the binding in: one that cannot start until its plugin is enabled or its
+  # provider loaded is an unmet precondition, which no rung of the ladder fixes.
+  # The reason of a failure is already logged by the bounded call.
   defp plugin_call(namespace, relay_id, verb) do
     on_relay(namespace, relay_id, fn pid ->
       case verb.(pid) do
         :ok -> :ok
+        {:ok, :running} -> :ok
+        {:ok, {:not_started, _reason}} -> :unmet
         _ -> :error
       end
     end)

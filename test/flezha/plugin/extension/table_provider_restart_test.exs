@@ -120,7 +120,7 @@ defmodule Flezha.Plugin.Extension.TableProviderRestartTest do
     refute Map.has_key?(table.monitors, original_ref)
     assert Map.has_key?(table.plugins, plugin_id)
     assert Table.phase(table, plugin_id) == {:down, {:shutdown, :idle_timeout}}
-    assert Table.down_ids(table) == %{plugin_id => {:shutdown, :idle_timeout}}
+    assert Table.phase_reasons(table, :down) == %{plugin_id => {:shutdown, :idle_timeout}}
     assert Table.running_ids(table) == []
     assert {:messages, []} = Process.info(self(), :messages), "the table armed a timer"
 
@@ -129,7 +129,7 @@ defmodule Flezha.Plugin.Extension.TableProviderRestartTest do
     {:ok, table} = Table.attempt_restart(table, plugin_id, plugin)
     assert Table.phase(table, plugin_id) == :prepared
     assert Table.workers(table, plugin_id) == %{}
-    assert Table.down_ids(table) == %{}
+    assert Table.phase_reasons(table, :down) == %{}
 
     {table, []} = Table.bulk_activate(table)
     {new_pid, new_ref} = worker_ref(table, plugin_id)

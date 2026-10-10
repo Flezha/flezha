@@ -236,6 +236,11 @@ defmodule Flezha.Relay.Plugins do
   def subscribe(%Overwatch{} = state, plugin_id, %Plugin{} = binding, entry \\ :read) do
     case {PluginManager.resolve(state.namespace, binding, entry),
           Table.phase(state.extensions, plugin_id)} do
+      # Already recorded for the same reason: what the loop's heal finds every
+      # tick while the plugin stays disabled, and nothing to rebuild.
+      {{:not_started, reason}, {:not_started, reason}} ->
+        {:ok, state}
+
       {{:not_started, reason}, _phase} ->
         {:ok, not_started(state, plugin_id, binding, reason)}
 
@@ -284,14 +289,22 @@ defmodule Flezha.Relay.Plugins do
   is started afresh and `activate/1` reopens upstream resources.
 
   On a failed restart the plugin is recorded down, so the next tick diffs it as
-  unhealthy and retries it on the loop's table.
+  unhealthy and retries it on the loop's table. A binding recorded not started
+  holds only a stand-in, which a restart would bring up in its place, so it is
+  subscribed again instead, against its plugin's entry.
   """
   @spec restart(Overwatch.t(), term(), Plugin.t()) ::
           {:ok, Overwatch.t()} | {:error, term(), Overwatch.t()}
   def restart(%Overwatch{} = state, plugin_id, %Plugin{} = plugin) do
-    case Table.attempt_restart(state.extensions, plugin_id, plugin) do
-      {:ok, table} -> activated(%Overwatch{state | extensions: table}, plugin_id)
-      {:error, reason, table} -> {:error, reason, %{state | extensions: table}}
+    case Table.phase(state.extensions, plugin_id) do
+      {:not_started, _reason} ->
+        subscribe(state, plugin_id, plugin)
+
+      _phase ->
+        case Table.attempt_restart(state.extensions, plugin_id, plugin) do
+          {:ok, table} -> activated(%Overwatch{state | extensions: table}, plugin_id)
+          {:error, reason, table} -> {:error, reason, %{state | extensions: table}}
+        end
     end
   end
 

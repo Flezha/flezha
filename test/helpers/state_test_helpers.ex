@@ -463,4 +463,54 @@ defmodule Flezha.State.TestHelpers do
       do: :ok,
       else: raise("writer for #{inspect(cell_id)} still registered after close")
   end
+
+  @doc """
+  Run `fun` in a fresh process and answer `{result, calls}`: every call it made
+  into `:file`, in order, as `{function, args}`. What a walk asks the file
+  server, including the `get_cwd` a relative path's expansion costs. The
+  `:file` trace pattern is node-global while `fun` runs, so another process
+  traced for calls at the same time sees `:file` calls too.
+  """
+  @spec file_calls((-> result)) :: {result, [{atom(), list()}]} when result: term()
+  def file_calls(fun) do
+    parent = self()
+
+    {pid, ref} =
+      spawn_monitor(fn ->
+        receive do
+          :go -> send(parent, {:done, self(), fun.()})
+        end
+      end)
+
+    _ = :erlang.trace_pattern({:file, :_, :_}, true, [:global])
+    1 = :erlang.trace(pid, true, [:call, {:tracer, parent}])
+    send(pid, :go)
+
+    result =
+      try do
+        receive do
+          {:done, ^pid, result} -> result
+          {:DOWN, ^ref, :process, ^pid, reason} -> exit(reason)
+        end
+      after
+        :erlang.trace_pattern({:file, :_, :_}, false, [:global])
+      end
+
+    trace_ref = :erlang.trace_delivered(pid)
+
+    receive do
+      {:trace_delivered, ^pid, ^trace_ref} -> :ok
+    end
+
+    {result, traced_file_calls(pid, [])}
+  end
+
+  defp traced_file_calls(pid, acc) do
+    receive do
+      {:trace, ^pid, :call, {:file, function, args}} ->
+        traced_file_calls(pid, [{function, args} | acc])
+    after
+      0 -> Enum.reverse(acc)
+    end
+  end
 end

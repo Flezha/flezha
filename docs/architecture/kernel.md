@@ -612,7 +612,11 @@ over-reacting:
 - a relay must be misbound for **two ticks in a row** before it is moved;
 - a failed read reports `unknown`, not "gone", and the diff skips it;
 - every primitive and target has a cooldown that grows from 2 s through 5, 10, 15, 20, 30, 45,
-  60, 90, 120 and 180 s to 300 s, and stays there.
+  60, 90, 120 and 180 s to 300 s, and stays there;
+- a plugin binding that cannot start until something outside the loop changes (its plugin is
+  disabled, or its provider is not loaded) is planned after every other op, and its start
+  counts as neither a success nor a failure: it leaves the cooldown alone and never makes the
+  loop tick again early. Enabling the plugin brings its bindings up without the loop.
 
 An error inside a tick skips that tick; it does not stop the loop.
 
@@ -629,7 +633,8 @@ precondition, because a cell with no input is **supposed** to be flat:
 
 Each WAL writer keeps two timestamps: `last_change_seen_at` moves on every change frame received,
 even a duplicate or a gap, and `last_advance_at` moves only when the persisted sequence grows.
-Comparing them per cell per tick costs nothing on the hot path.
+Comparing them per cell per tick costs nothing on the hot path. The tick finds the cells from
+the live writers, not from the state directory, so relay state left on disk does not slow it.
 
 Under effectively once two more markers are checked, and a stuck verdict names the deepest one
 that froze, because one cause freezes the shallower markers too:
