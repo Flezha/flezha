@@ -161,12 +161,13 @@ privately, as [SECURITY.md](SECURITY.md) describes.
 | Path | License |
 |---|---|
 | Everything not listed below: the controller (`lib/`), `cli/`, `flz_nif/`, `config/`, `rel/`, `docker/`, `kubernetes/`, `test/`, `docs/`, `scripts/`, `bench/` | [MPL-2.0](LICENSE) |
-| The SDK side: `sdk/`, `flz_core/`, `flz_core_ffi/`, `flz_transport/`, `protobufs/` | [Apache-2.0](LICENSES/Apache-2.0.txt) |
+| The SDK side: `sdk/`, `flz_core/`, `flz_core_ffi/`, `flz_transport/`, `protobufs/`; and the examples, `examples/` | [Apache-2.0](LICENSES/Apache-2.0.txt) |
+| The plugins that ship with Flezha, `plugins/`: each is its own repository with its own license file | Apache-2.0 |
 
-In short: build on the SDKs freely; if you modify and distribute the
-controller's files, publish those modifications. Your own files never inherit
-either license. [`REUSE.toml`](REUSE.toml) holds the per-path map, and CI checks
-it.
+In short: build on the SDKs, the plugins and the examples freely, and copy
+from them into closed code; if you modify and distribute the controller's
+files, publish those modifications. Your own files never inherit either
+license. [`REUSE.toml`](REUSE.toml) holds the per-path map, and CI checks it.
 
 Flezha is provided "AS IS", without warranty of any kind (MPL-2.0 §6-7,
 Apache-2.0 §7-8). Read [Durability](docs/topics/core/durability.md) before
