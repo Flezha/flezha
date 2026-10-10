@@ -226,9 +226,11 @@ listener in the controller. It SHALL attach the listener plugin to the relay, or
 every member when `relay_id` names a partition group, run in the caller's own process,
 hand each event to `handler`, and detach on every way out, including a raise in `handler`.
 Its events SHALL be `{:output, payload, metadata}`, `{:part, payload, metadata}`,
-`{:dead_lettered, error, metadata}` with `error` a `%Flezha.Error{}`, and, for
-`direction: :input`, `{:input, payload, metadata}`. `handler` SHALL answer `:continue` or
-`:done`. Its options SHALL be `direction` (`:output` by default, or `:input`), `window_ms`
+`{:dead_lettered, error, metadata}` with `error` a `%Flezha.Error{}`, for
+`direction: :input`, `{:input, payload, metadata}`, and, for `direction: :calls`,
+`{:call, payload, metadata}`, `{:answered, payload, metadata}`, `{:timed_out, error, metadata}`
+and `{:refused, error, metadata}`. `handler` SHALL answer `:continue` or
+`:done`. Its options SHALL be `direction` (`:output` by default, `:input` or `:calls`), `window_ms`
 (a positive integer, or `:infinity` by default), `before` (a function run once after the
 attach and before the first event, which `send --await` uses to deliver its input) and
 `watch` (a process whose exit ends the listener, which the CLI sets to its caller's group
@@ -260,6 +262,12 @@ events and outcomes, and SHALL hold no attach, detach, heartbeat or receive loop
 - **WHEN** the source of `lib/flezha/cli/` is searched for a plugin enable, a plugin
   disable or a heartbeat reply
 - **THEN** none SHALL be found outside the call to `Flezha.Service.Listener.listen/4`
+
+#### Scenario: A calls listener hooks only the calls
+
+- **WHEN** `listen/4` is called with `direction: :calls`
+- **THEN** the listener plugin SHALL be bound on `on_call` alone, and the relay's outputs and
+  inputs SHALL NOT reach its handler
 
 ### Requirement: A listener SHALL survive its relay sleeping, waking, rebinding and moving
 
@@ -435,4 +443,139 @@ plugin as on every other way out.
 
 - **WHEN** that process exits
 - **THEN** the listen ends and the listener plugin is disabled
+
+### Requirement: A listener SHALL see each call its relay takes and how the call ended
+
+A listener attached with `direction: :calls` SHALL receive, for every call the relay's
+Overwatch takes, whichever surface or relay sent it, one call event and then one outcome event:
+
+- `{:call, request, metadata}`, the request as the call's entry point took it, whose metadata
+  carries `flz.call_id`, `flz.call_source`, `flz.call_at` (the controller's wall clock in
+  milliseconds when the relay took the call) and `flz.call_deadline_ms`, the entry channel as
+  `channel` and a named answer channel as `flz.call_answer_channel` when the call names them,
+  and, for another relay's call, the calling relay's id as `flz.call_caller`;
+- then exactly one of `{:answered, answer, metadata}`, carrying the answer and the channel that
+  produced it as `channel`; `{:timed_out, error, metadata}`, `error` the `call.timeout` the
+  caller is answered with or, for another relay's call, its unanswered row reaching its
+  deadline; or `{:refused, error, metadata}`, `error` the refusal the caller is answered with.
+  Each outcome's metadata SHALL carry `flz.call_id` and `flz.call_duration_ms`.
+
+`flz.call_source` SHALL be the caller context's source (`cli`, `ui`, `sdk`, `http`, `mcp` or
+`internal`) for a call through `Flezha.Service.Relay.call/6` or `call_channel/6`, `plugin` for a
+feeding plugin's call through `Flezha.Plugin.Host.inject/5`, and `relay` for another relay's call.
+Only the controller SHALL write it: a value a caller puts in the call's metadata SHALL be
+replaced, and the input the runner receives SHALL NOT carry it.
+
+`flz.call_id` SHALL be a digest of the call's token, the same on a call's events wherever the
+relay runs, from which the token cannot be recovered; no call event SHALL carry `flz.reply_to`.
+A call refused before it has a row, by the relay's bound on waiting callers or because the relay
+cannot take it, SHALL be announced with an id of its own and its `refused` outcome at once.
+
+For every call event a listener receives, it SHALL receive exactly one outcome with the same id
+while it stays attached and the instance runs, including across the relay moving. It MAY
+receive an outcome whose call event it did not receive, for a call taken before it attached or
+by an earlier run of the instance. A call refused before it reached a relay (`relay.not_found`, `call.target_unkeyed`)
+SHALL produce no event.
+
+A call event and an outcome SHALL be kept by the listener's backlog like an output, never
+truncated and never dropped while the listener goes on. A relay with no listener for calls SHALL
+build no call event. Listening to calls through `Flezha.Service.Relay.listen/5` SHALL be judged
+by the same verb row as listening to outputs.
+
+#### Scenario: A call from the CLI and its answer
+
+- **GIVEN** a calls listener on an echo relay
+- **WHEN** `flz relay call` calls it with `hello`
+- **THEN** the listener SHALL receive a call event with `hello` and `flz.call_source: "cli"`,
+  and then an `answered` event with the echo's answer, its channel and a duration, both under
+  one `flz.call_id` that is not the call's token
+
+#### Scenario: The console, HTTP and MCP name themselves
+
+- **WHEN** the same relay is called through `Relay.call/6` over `:erpc` with a `:ui` context,
+  and through `Flezha.Service.Admin.call/4` with an `:http` and with an `:mcp` context
+- **THEN** each call event SHALL carry `ui`, `http` or `mcp` as its source, and each SHALL be
+  followed by its `answered` event
+
+#### Scenario: A feeding plugin cannot claim another source
+
+- **WHEN** a feeding plugin calls its relay through `Host.inject/5` in `:call` mode with
+  metadata carrying `flz.call_source: "ui"`
+- **THEN** the call event SHALL carry `flz.call_source: "plugin"`, and the input the runner
+  receives SHALL carry no `flz.call_source`
+
+#### Scenario: Another relay's call
+
+- **GIVEN** a calls listener on `pricing`
+- **WHEN** a flow relay `orders` calls `pricing` through a `call(...)` end
+- **THEN** the call event SHALL carry `flz.call_source: "relay"` and `flz.call_caller:
+  "orders"`, and the outcome SHALL be `answered`
+
+#### Scenario: A call that times out
+
+- **WHEN** a call with a deadline of 100 ms reaches a relay whose turn takes 2 000 ms
+- **THEN** the listener SHALL receive the call event and then `{:timed_out, error, _}` with
+  `error.code` `call.timeout`, and no `answered` event for it
+
+#### Scenario: A call refused at admission
+
+- **WHEN** a relay already owes `call_pending_max` answers and is called again
+- **THEN** the listener SHALL receive the call event and `{:refused, error, _}` with
+  `error.code` `call.busy`, under one id
+
+#### Scenario: A call refused after admission
+
+- **WHEN** a called input is filtered out by an `:on_input` hook, or is dead-lettered
+- **THEN** the outcome SHALL be `refused` with `call.absorbed`, or with `call.failed`
+
+#### Scenario: The outcome follows a move
+
+- **GIVEN** a call waiting on a relay with a calls listener attached
+- **WHEN** the relay moves to another controller node and answers there
+- **THEN** the listener SHALL receive `answered` under the id of the call event it received
+  before the move
+
+#### Scenario: Nobody listens
+
+- **WHEN** a relay with no calls listener is called
+- **THEN** no call event SHALL be built and the call SHALL be answered as before
+
+#### Scenario: A viewer may not watch calls
+
+- **WHEN** a caller bound as `viewer` calls `Relay.listen/5` with the direction `calls` while
+  authorization is enforced
+- **THEN** it SHALL be refused `authz.role_insufficient`, and no listener plugin SHALL be
+  enabled
+
+### Requirement: `flz relay listen --calls` SHALL print each call and its outcome
+
+`flz relay listen <relay_id> --calls` SHALL attach a calls listener and print each event on
+one line. In text mode a call SHALL print its entry channel (`-` when none), a tab, its payload,
+a tab, and `call=<id> source=<source>`, followed by ` caller=<relay>` for another relay's call;
+an answer SHALL print its channel, a tab, its payload, a tab, and `call=<id> answered
+ms=<duration>`; a timeout or a refusal SHALL print the entry channel (`-` when none), a tab, the
+error's message, a tab, and `call=<id> error=<code> ms=<duration>`. In JSON mode each event SHALL
+be one object carrying `kind` (`call`, `answered`, `timed_out` or `refused`), `call`, `channel`,
+`payload` when the bytes are valid UTF-8 or `payload_base64` otherwise, or `error` for a timeout
+or a refusal, and `metadata` with the event's whole metadata map. `--calls` SHALL be refused
+beside `--input` with `usage.options_conflict`. The screen `flz relay listen --help` SHALL name
+`--calls`, and its golden capture SHALL hold it.
+
+#### Scenario: Text
+
+- **WHEN** `flz relay listen my_echo --calls` runs and `flz relay call my_echo --text hi` is
+  answered `hi` on `echo`
+- **THEN** it SHALL print a line `-`, `hi`, `call=<id> source=cli` and then a line `echo`, `hi`,
+  `call=<id> answered ms=<n>` with the same id
+
+#### Scenario: JSON
+
+- **WHEN** the same call is listened to with `--calls --json`
+- **THEN** the first line SHALL carry `"kind": "call"` and the second `"kind": "answered"`, both
+  with the same `call`
+
+#### Scenario: Two directions at once
+
+- **WHEN** `flz relay listen my_echo --input --calls` is run
+- **THEN** it SHALL fail with `usage.options_conflict` and send nothing
 

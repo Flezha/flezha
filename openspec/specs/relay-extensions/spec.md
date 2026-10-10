@@ -609,7 +609,7 @@ them and not only on the arm that happens to consult it.
 invoke on a provider (`init_provider/1`, `activate/1`, `health/1`,
 `inspect_state/1`, `terminate_provider/1` and the extension callbacks
 `on_relay_init/2`, `on_input/2`, `on_output/2`, `on_interval/2`,
-`on_message/2`, `on_snapshot/2`, `on_terminate/2`, `on_preview/2`) as optional callbacks whose
+`on_message/2`, `on_snapshot/2`, `on_terminate/2`, `on_preview/2`, `on_call/2`) as optional callbacks whose
 lifecycle members carry a default body a provider may override, and SHALL
 derive at compile time one declaration record per provider naming its option
 rows, the extension callbacks it implements, the lifecycle callbacks it
@@ -1266,7 +1266,7 @@ SHALL declare `false`. The Kafka package's `kafka_producer` SHALL declare `true`
 `use Flezha.Plugin.ProviderBehaviour` SHALL take `type: :relay` (the default) or
 `type: :controller`; no other value SHALL compile. A controller provider SHALL define none of
 the relay hook callbacks (`on_relay_init/2`, `on_input/2`, `on_output/2`,
-`on_interval/2`, `on_message/2`, `on_snapshot/2`, `on_terminate/2`, `on_preview/2`) and a
+`on_interval/2`, `on_message/2`, `on_snapshot/2`, `on_terminate/2`, `on_preview/2`, `on_call/2`) and a
 relay provider none of the controller hook callbacks (`on_relay_started/2`,
 `on_relay_stopped/2`, `on_relay_failed/2`, `on_dead_letter/2`,
 `on_plugin_unhealthy/2`); a module that does SHALL fail to compile naming the callback.
@@ -1286,6 +1286,11 @@ relay provider none of the controller hook callbacks (`on_relay_started/2`,
 
 - **WHEN** a module declares `type: :io_binding`
 - **THEN** it SHALL fail to compile naming the two allowed types
+
+#### Scenario: A controller provider with the calls hook
+
+- **WHEN** a module declaring `type: :controller` defines `on_call/2`
+- **THEN** it SHALL fail to compile with a message naming `on_call/2`
 
 ### Requirement: A source SHALL be told whether its relay's input is durable
 
@@ -1419,4 +1424,30 @@ A Produce attempt that ultimately fails after exhausting `:delivery_timeout_ms` 
 - **AND** no custom configuration is required for the producer to operate correctly under normal cluster conditions including rolling broker restarts and KRaft leader elections
 </content>
 </invoke>
+
+### Requirement: The Overwatch SHALL publish an `on_call` hook that carries a relay's calls
+
+`Flezha.Relay.Overwatch` SHALL declare the catalogue entry
+`{:on_call, :fanout, Flezha.Plugin.Extension.Ctx.IO}`. The hook SHALL carry, for listeners only,
+each call the relay takes and each call's outcome (`relay-io-listener`). No output, input, part
+or dead-letter notice SHALL be dispatched on it, and nothing dispatched on it SHALL be
+dispatched on `on_output`, `on_input` or `on_preview`. Because it is a `:fanout` hook, a
+subscriber SHALL see every event, no subscriber's answer SHALL change what another sees, and a
+raising subscriber SHALL be logged and SHALL NOT stop the others. The Overwatch SHALL build no
+event while no plugin of the relay is subscribed to it. `MonitoredIOForward` SHALL be the one
+first-party provider implementing `on_call/2`, and SHALL send an event as it sends an output.
+
+#### Scenario: An output plugin cannot subscribe to calls
+
+- **WHEN** `flz plugin enable` is asked to attach the Kafka producer with the hook `on_call`
+- **THEN** the enable SHALL be refused naming the missing `on_call` callback, and no plugin
+  row SHALL remain
+
+#### Scenario: A call reaches a calls listener and nothing else
+
+- **GIVEN** a relay with a file output plugin, an output listener and a calls listener
+- **WHEN** it is called and answers
+- **THEN** the calls listener SHALL receive the call and its outcome, the output listener and
+  the file output plugin SHALL receive the answer as an output, and neither SHALL receive a
+  call event
 
