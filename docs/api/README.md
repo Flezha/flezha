@@ -73,7 +73,9 @@ subscription or listener, so stopping the receiving process is how a consumer le
 tails also end when the context's optional `window_ms` runs out (the audit tail, too, when the
 writer closes), answering `{:ok, :caller_down | :done | :window_closed}`, and they hand on only
 what `query/2` or `read/2` would answer the same caller. A listen sends `:attached` first, then
-each listener event. Runner sessions arrive this way as the `runner_connected` and
+each listener event; a listen with the direction `calls` sends `{:call, request, md}` for each
+call the relay takes and then one of `{:answered, answer, md}`, `{:timed_out, error, md}` or
+`{:refused, error, md}`, paired by `md["flz.call_id"]`. Runner sessions arrive this way as the `runner_connected` and
 `runner_disconnected` signals of the `:flezha_runner` source, whose metadata names the
 `namespace` and the `runner`. A signal's `ts` is the controller's monotonic clock in
 microseconds; `Controller.status/1` answers the same clock as `monotonic_us`, so a consumer ages

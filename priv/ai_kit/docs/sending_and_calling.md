@@ -1176,6 +1176,57 @@ that much input: the `input_log_frozen_watermark` signal reports a log that keep
 
 ## Observing calls
 
+### Watching a relay's calls
+
+`flz relay listen <relay_id> --calls` prints every call the relay takes, whoever made it, and
+how each one ended:
+
+```sh
+flz relay listen pricing --calls
+# in      {"pair":"EURUSD"}   call=Qm9vVq1x4vHnWQe2Lk3cZg source=cli
+# quotes  {"price":1.08}      call=Qm9vVq1x4vHnWQe2Lk3cZg answered ms=14
+```
+
+A call prints, separated by tabs, its entry channel (`-` when it names none), its payload and
+`call=<id> source=<source>`, with `caller=<relay>` for another relay's call. Its answer prints
+the answer's channel, the payload and `call=<id> answered ms=<n>`; a timeout or a refusal prints
+the entry channel, the error's message and `call=<id> error=<code> ms=<n>`. With `--json` each
+line is an object with `kind` (`call`, `answered`, `timed_out` or `refused`), `call`,
+`channel`, `payload` (or `payload_base64`, or `error`) and the event's whole `metadata`.
+`--calls` cannot be given beside `--input` (`usage.options_conflict`).
+
+From code, `Relay.listen/5` with the direction `calls` hands the same events to the context's
+`:emit`:
+
+| Event | Payload | Metadata |
+| --- | --- | --- |
+| `{:call, request, md}` | the request, as the entry point took it | `flz.call_id`, `flz.call_source`, `flz.call_caller` (another relay's call), `channel` and `flz.call_answer_channel` when named, `flz.call_at` (the controller's wall clock in ms), `flz.call_deadline_ms` |
+| `{:answered, answer, md}` | the answer | `flz.call_id`, `channel` (the answer's), `flz.call_duration_ms` |
+| `{:timed_out, error, md}` | `%Flezha.Error{}`, `call.timeout` | `flz.call_id`, `channel` (the entry channel), `flz.call_duration_ms` |
+| `{:refused, error, md}` | `%Flezha.Error{}` with the refusal's code | `flz.call_id`, `channel` (the entry channel), `flz.call_duration_ms` |
+
+`flz.call_id` pairs a call with its outcome. It is a digest of the call's token, the same
+wherever the relay runs, and the token cannot be read back from it. For every call event a
+listener receives exactly one outcome while it stays attached and the relay runs, including
+across a move. It may receive an outcome without its call, for a call taken before it attached.
+A relay's call that its delivery retries after the callee could not take it shows one pair per
+attempt, under one id. A call refused at admission (`call.busy`, `call.unavailable` for a parked
+relay, `call.not_accepted`, `relay.factory_mismatch`) is announced with an id of its own and its
+`refused` outcome at once.
+
+`flz.call_source` says who called: `cli`, `ui`, `sdk`, `http` (the HTTP API and MCP over HTTP
+alike), `mcp` (`flz mcp`) or `internal`, as the caller's context says; `plugin` for a feeding
+plugin's call; `relay` for another relay's. Only the controller writes it: a value a caller puts
+in the call's metadata is replaced, and the runner never sees it.
+
+A call refused before it reached a relay (`relay.not_found`, `call.target_unkeyed`, a bad
+deadline, an `api.*` refusal) is not seen: no relay took it. Payloads are not truncated, and a
+listener that falls behind on call events is ended with `listener.overrun`. A relay nobody
+listens to for calls builds no event. Watching calls is judged as listening is, by
+`relay.listen`.
+
+### Counters
+
 The controller emits `[:flezha, :call, :answered]` with the answer's latency,
 `[:flezha, :call, :timeout]`, `[:flezha, :call, :answer_dropped]` with its reason (`unclaimed`,
 an outcome no pending call of the caller takes, or `caller_gone`) and `[:flezha, :call, :refused]` with its code, each naming the

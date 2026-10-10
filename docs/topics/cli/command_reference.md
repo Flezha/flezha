@@ -74,7 +74,7 @@ on the command line.
 | `flz relay state <relay_id>` | Prints a relay's state |
 | `flz relay send <relay_id> --text <payload>` | Sends an input |
 | `flz relay call <relay_id> (--text <payload> \| --arg <name=value>...)` | Calls one channel by the relay's API and prints its answer |
-| `flz relay listen <relay_id>` | Prints what a relay emits, or with `--input` what it takes in |
+| `flz relay listen <relay_id>` | Prints what a relay emits, with `--input` what it takes in, or with `--calls` each call it takes and how it ended |
 | `flz relay scale <group> <partitions>` | Changes the number of members of a partition group |
 | `flz relay rewind <relay_id> --to-iteration <n>` | Takes a workflow loop back to an earlier iteration |
 | `flz relay replay <relay/tasklet/key> --from <seq|time>` | Runs a cell's kept inputs again from a point in the past |

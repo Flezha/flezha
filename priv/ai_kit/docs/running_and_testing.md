@@ -1,4 +1,4 @@
-# Running and testing
+# Running relays
 
 A runner that registered a factory runs nothing yet. A relay is one
 running instance of a factory, with its own id, its own state and its own place

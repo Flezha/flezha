@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Added: a relay's calls can be watched as they happen
+
+`flz relay listen <relay_id> --calls`, and `Relay.listen/5` with the direction `calls`, show
+every call a relay takes, from the CLI, the console, the HTTP API, MCP, a runner, a feeding
+plugin or another relay: a `call` event with the request, who called (`flz.call_source`, and the
+calling relay as `flz.call_caller`), the entry channel, when it was taken and its deadline, then
+exactly one outcome, `answered` with the answer and its channel, `timed_out` or `refused` with
+the error, each with the call's duration. The two are paired by `flz.call_id`, a digest of the
+call's token that stays the same across a move and from which the token cannot be recovered.
+The events are made in the callee's Overwatch and travel on a new listeners-only fanout hook,
+`on_call`; a relay nobody listens to for calls builds nothing. Watching calls is judged by
+`relay.listen`. `--calls` is refused beside `--input` with `usage.options_conflict`.
+
 ### Added: a provider's options are readable as typed rows
 
 `Fleet.provider/2` (`flz plugin help <provider> --json`) answers `options`: one entry per option

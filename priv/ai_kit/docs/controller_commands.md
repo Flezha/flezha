@@ -206,7 +206,7 @@ Cluster status for namespace 'default':
 
 ## `flz runner`
 
-Lists the runners connected to a namespace, and checks that a runner on this machine can reach the controller. Explained in [`connecting_a_runner.md`](../deploying/connecting_a_runner.md), [check that it connected](../deploying/connecting_a_runner.md#check-that-it-connected).
+Lists the runners connected to a namespace, drops a runner process and readmits it, and checks that a runner on this machine can reach the controller. Explained in [`connecting_a_runner.md`](../deploying/connecting_a_runner.md), [check that it connected](../deploying/connecting_a_runner.md#check-that-it-connected).
 
 ```sh
 $ flz runner help
@@ -219,9 +219,12 @@ USAGE:
     flz runner <COMMAND>
 
 COMMANDS:
-    list    List runners
-    check   Report whether a runner on this host can reach a controller
-    help    Show this help message
+    list     List runners
+    check    Report whether a runner on this host can reach a controller
+    drop     Close a runner's session and refuse its process until a different one connects
+    dropped  List the dropped runner processes
+    readmit  Lift a drop, so the dropped process is admitted again
+    help     Show this help message
 
 Use 'flz runner <COMMAND> --help' for more information on a specific command.
 ```
@@ -231,6 +234,9 @@ Each verb's `--help` starts with its usage line:
 ```output
 flz runner list [--namespace | -n <namespace>]
 flz runner check
+flz runner drop <runner_id> [--namespace | -n <namespace>]
+flz runner dropped [--namespace | -n <namespace>]
+flz runner readmit <stable_id> [--namespace | -n <namespace>]
 ```
 
 `check` needs no controller token and no cookie, only the socket directory:
@@ -255,6 +261,21 @@ $ flz runner list
 Fetching runners for namespace 'default'...
 Runners in namespace 'default':
   - default_06355a1b5a63  pid 524527
+```
+
+`drop` closes the runner's session wherever in the cluster it is connected,
+without telling the runner to stop. Its relays are re-placed at once, and
+every controller refuses the same process with `runner.dropped` until a
+different process of the same runner connects or the drop is lifted with
+`readmit`. The drop is recorded against the runner's stable id and the SDK
+incarnation of its process, and it survives a controller restart. A runner
+with no stable identity cannot be recognised when it reconnects, and is
+refused with `runner.untrackable`. Both verbs need an `ops` token.
+
+```sh
+$ flz runner drop default_06355a1b5a63
+$ flz runner dropped
+$ flz runner readmit 6f1c0e3a-runner
 ```
 
 ## `flz observe`

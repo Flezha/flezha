@@ -268,7 +268,8 @@ roles outside that line), and the namespace it is judged in:
 | `flz namespace show` | `authz.namespace_show` | viewer | the namespace named |
 | `flz controller status`, `mem-top` | `controller.status` | viewer | the caller's namespace |
 | `flz controller stop` | `controller.stop` | admin | `_system` |
-| `flz cluster status`, `flz relay list`, `info`, `flz runner list` | `relay.list` | viewer | the namespace named |
+| `flz cluster status`, `flz relay list`, `info`, `flz runner list`, `dropped` | `relay.list` | viewer | the namespace named |
+| `flz runner drop`, `readmit` | `runner.drop` | ops | the namespace named |
 | `flz relay start`, `flz schedule run` | `relay.start` | spawner | the namespace named (a schedule's own) |
 | `flz relay send`, `flz relay call` | `relay.send` | spawner | the namespace named |
 | `flz relay stop` | `relay.stop` | stopper | the namespace named |
@@ -452,7 +453,7 @@ land on `:platform_authz`, with the verified principal: `:authorization_denied`,
 `:rebootstrap_recovery`. Each administration act lands on its service's source
 (`namespace_service`, `dlq_service`, `schedule_service`, `relay_service`,
 `plugin_service`, `state_service`, `controller_service`, `steps_service`,
-`observability_service`, `audit_log`) in one shape: `name` is the verb,
+`fleet_service`, `observability_service`, `audit_log`) in one shape: `name` is the verb,
 `metadata.action` the action it was judged as, `metadata.outcome` (`ok` or
 `error`) for a change and `metadata.error_code` for a failed one, `namespace`
 where it was judged, `metadata.caller_roles` the roles it was judged with, and

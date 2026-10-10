@@ -21,7 +21,7 @@ Each hook has a kind, which decides how its plugins are called:
 | fold | `on_relay_init` | in a chain, each handed what the ones before accumulated |
 | timer | `on_interval` | every `interval_ms`, per plugin |
 | request | `on_message` | the one plugin whose `key` the request names, which answers it |
-| fanout | `on_preview`, `on_snapshot`, `on_terminate`, and the five controller hooks | each plugin on its own, with nothing passed between them |
+| fanout | `on_preview`, `on_call`, `on_snapshot`, `on_terminate`, and the five controller hooks | each plugin on its own, with nothing passed between them |
 
 A hook belongs to a binding for a relay plugin: two relays bound to one plugin can
 be bound on different hooks. A controller plugin's hooks belong to the plugin itself,
@@ -44,6 +44,7 @@ type does not compile. `flz plugin help <provider>` lists the hooks a provider s
 | `on_snapshot` | with each snapshot of the relay's state, or nothing when one failed | |
 | `on_terminate` | when the relay terminates, with the reason | |
 | `on_preview` | with a part or a dead-letter notice, for listeners; no output plugin implements it | |
+| `on_call` | with each call the relay takes and its outcome, for listeners; no output plugin implements it | |
 
 An output reaches `on_output` only when it leaves the relay on an output plugin: a relay
 decides in its code what leaves it, and a plugin can only take what does. An
