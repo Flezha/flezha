@@ -457,7 +457,8 @@ Overwatch takes, whichever surface or relay sent it, one call event and then one
 - then exactly one of `{:answered, answer, metadata}`, carrying the answer and the channel that
   produced it as `channel`; `{:timed_out, error, metadata}`, `error` the `call.timeout` the
   caller is answered with or, for another relay's call, its unanswered row reaching its
-  deadline; or `{:refused, error, metadata}`, `error` the refusal the caller is answered with.
+  deadline; or `{:refused, error, metadata}`, `error` the refusal the caller is answered with
+  or, for another relay's call its callee did not take, the refusal of that delivery attempt.
   Each outcome's metadata SHALL carry `flz.call_id` and `flz.call_duration_ms`.
 
 `flz.call_source` SHALL be the caller context's source (`cli`, `ui`, `sdk`, `http`, `mcp` or
@@ -474,7 +475,9 @@ cannot take it, SHALL be announced with an id of its own and its `refused` outco
 For every call event a listener receives, it SHALL receive exactly one outcome with the same id
 while it stays attached and the instance runs, including across the relay moving. It MAY
 receive an outcome whose call event it did not receive, for a call taken before it attached or
-by an earlier run of the instance. A call refused before it reached a relay (`relay.not_found`, `call.target_unkeyed`)
+by an earlier run of the instance. Another relay's call that its delivery retries after the
+callee could not take it SHALL be announced once per attempt, each attempt with its own
+outcome, under the call's one id. A call refused before it reached a relay (`relay.not_found`, `call.target_unkeyed`)
 SHALL produce no event.
 
 A call event and an outcome SHALL be kept by the listener's backlog like an output, never

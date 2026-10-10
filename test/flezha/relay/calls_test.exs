@@ -816,6 +816,34 @@ defmodule FlezhaTest.Relay.CallsTest do
       assert Enum.sort(ids) == Enum.sort([Calls.call_id(t1), Calls.call_id(t2)])
     end
 
+    test "an ended instance: a relay's call it took and never ran is refused with no row" do
+      test_pid = self()
+      callee = Map.put(@callee, :activity, &send(test_pid, {:message_forward, {&1, &2}}))
+      tail = Calls.relay_token(relay_call(%{}))
+
+      Calls.end_all(%Calls{}, callee, "error", [tail])
+
+      {document, refused} = event("refused")
+      assert error_code(document) == "call.callee_ended"
+
+      assert %{"flz.call_id" => id, "flz.call_duration_ms" => 0} = refused
+      assert id == Calls.call_id(tail)
+      refute Map.has_key?(refused, "channel")
+    end
+
+    test "a restarted callee's answer to a relay's call it keeps no row for is announced",
+         %{inst: inst} do
+      host = start_supervised!({Host, watched(state(inst))})
+      token = Calls.relay_token(relay_call(%{}))
+
+      GenServer.cast(host, {:io_out, "late", %{"flz.reply_to" => token, "channel" => "out"}})
+
+      {"late", answered} = event("answered")
+      assert %{"flz.call_id" => id, "channel" => "out", "flz.call_duration_ms" => 0} = answered
+      assert id == Calls.call_id(token)
+      refute_received {:message_forward, {_, %{"flz.call_event" => "call"}}}
+    end
+
     test "a relay's call: source relay and its caller, announced once, refused or timed out",
          %{inst: inst} do
       host = start_supervised!({Host, watched(state(inst))}, id: :taken)
