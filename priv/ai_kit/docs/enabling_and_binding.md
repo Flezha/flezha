@@ -65,6 +65,10 @@ OPTIONAL PARAMETERS (X-prefixed):
 ...
 ```
 
+With `--json`, `flz plugin help` prints the whole answer: beside the screen, the
+plugin type and the hooks, `options` lists each option the enable takes, with its
+type, whether it is required, its default, its bounds and its allowed values.
+
 ## Names, enables and binds
 
 - A name is unique in its namespace. Enabling a name that is enabled with the same

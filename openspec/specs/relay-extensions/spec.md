@@ -695,8 +695,8 @@ not a declared row.
 
 A provider SHALL declare its options as rows — name, type, default, whether
 required, bounds, whether internal, documentation — from which its struct, its
-strict allow-list, its conversion table, its help screen, its `provider_info/0`
-and its documented option table derive. A worker SHALL receive the converted
+strict allow-list, its conversion table, its help screen, its `provider_info/0`,
+its documented option table and its published option description derive. A worker SHALL receive the converted
 struct and read its fields; no worker SHALL re-read an option from a keyword
 list with a default of its own, and no default SHALL exist outside the rows.
 The "missing required", "below the minimum", "above the maximum" and "invalid
@@ -706,6 +706,17 @@ A test SHALL render every provider's option table from its declaration and
 assert the provider's page under `docs/plugins/` carries it, so a documented
 key that is not a row, a row that is not documented, and a default that differs
 between the two each fail the suite.
+
+A row SHALL be described by one function, `Flezha.Plugin.ProviderBehaviour.Options.describe_row/1`,
+which the documented option table, the published option description
+(`controller-consumer-api`) and the catalogue's description of an operation's arguments all
+read, so a row's type, its required flag and its default are read one way.
+
+A first-party provider's public row SHALL declare the narrowest row type that describes every
+value the row accepts, and no public row of a first-party provider SHALL be typed `:any`.
+`:any` stays available for an internal row and for a provider outside the release. A row whose
+value a prepared plugin holds in another shape SHALL accept that shape again, so preparing the
+plugin from its stored options converts them again.
 
 #### Scenario: A default has one home
 
@@ -733,6 +744,31 @@ between the two each fail the suite.
 - **THEN** the refusal SHALL be `{:error, sentence}` naming the option, in the
   same sentence shape every provider answers, on both the CLI and the
   `init_provider/1` path
+
+#### Scenario: The catalogue reads the same description
+
+- **WHEN** `mix flezha.catalogue` writes `cli/catalogue.json`
+- **THEN** every argument it lists SHALL be the description `describe_row/1` gives that
+  argument's row, with its type and its values written as JSON
+
+#### Scenario: No first-party public row is untyped
+
+- **WHEN** the rows of every provider in `Flezha.Plugin.Providers.all/0`, and of the Kafka and
+  RabbitMQ plugins in their own suites, are read
+- **THEN** no row that is not internal SHALL be typed `:any`, and a test SHALL fail naming
+  each one that is
+
+#### Scenario: Kafka hosts in every spelling
+
+- **WHEN** a Kafka plugin is enabled with `hosts` written `kafka1:9092,kafka2:9093`, as the
+  list `["kafka1:9092", "kafka2:9093"]`, or as `[{"kafka1", 9092}, {"kafka2", 9093}]`
+- **THEN** each SHALL prepare to the same `{host, port}` list, and the options the prepared
+  plugin holds SHALL prepare again to the same list
+
+#### Scenario: A host without a port is refused
+
+- **WHEN** a Kafka plugin is enabled with `hosts` written `kafka1`
+- **THEN** the enable SHALL be refused naming the option `hosts`
 
 ### Requirement: A provider's telemetry names SHALL come from one declared vocabulary
 

@@ -23,11 +23,11 @@ the durability trade-offs, and how broker clients are shared.
 <!-- provider-options:begin -->
 | Option | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
-| `hosts` | any | none | yes | `{host, port}` list, or a comma-separated string |
-| `auth` | any | none | no | SASL configuration, as a `KafkaEx.Auth.Config` or a map |
+| `hosts` | names | none | yes | `host:port` names, comma-separated or as a list |
+| `auth` | map | none | no | SASL configuration, as a `KafkaEx.Auth.Config` or a map |
 | `sasl_password_env` | string | none | no | Environment variable holding the SASL password, preferred over an inline one |
 | `use_ssl` | bool | none | no | TLS to the brokers |
-| `ssl_options` | any | none | no | Erlang `:ssl` options for that connection |
+| `ssl_options` | list | none | no | Erlang `:ssl` options for that connection |
 | `topic` | string | none | yes | Destination topic |
 | `plugin_id` | string | none | no | Plugin id; defaults to a generated one |
 | `channel` | names | none | no | The channel this plugin is attached to: only records naming it are produced. Several names, comma-separated, produce them all |

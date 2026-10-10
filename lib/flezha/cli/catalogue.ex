@@ -14,6 +14,7 @@ defmodule Flezha.Service do
 
   alias Flezha.AuthZ.Verbs
   alias Flezha.Observability.Signal
+  alias Flezha.Plugin.ProviderBehaviour.Options
 
   @modules [
     Flezha.Service.AuditLog,
@@ -88,17 +89,16 @@ defmodule Flezha.Service do
     )
   end
 
-  defp describe_argument({name, row}) do
-    Jason.OrderedObject.new(
-      [name: Atom.to_string(name), type: Atom.to_string(row[:type]), required: row[:required]] ++
-        for(
-          key <- [:default, :values, :min, :max],
-          Keyword.has_key?(row, key),
-          do: {key, Signal.metadata_json(row[key])}
-        ) ++
-        [doc: row[:doc]]
-    )
+  defp describe_argument(arg) do
+    arg |> Options.describe_row() |> Enum.map(&argument_json/1) |> Jason.OrderedObject.new()
   end
+
+  defp argument_json({:type, type}), do: {:type, Atom.to_string(type)}
+
+  defp argument_json({key, value}) when key in [:default, :values, :min, :max],
+    do: {key, Signal.metadata_json(value)}
+
+  defp argument_json(pair), do: pair
 
   # A function with defaulted arguments binds once per arity; it is one
   # operation, described by its longest form.

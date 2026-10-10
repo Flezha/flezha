@@ -30,7 +30,7 @@ confirms, recovery, topology declaration, health, telemetry and limits.
 | `password` | string | none | no | Password, redacted once the plugin is prepared |
 | `password_env` | string | none | no | Environment variable holding the password instead |
 | `ssl` | bool | `false` | no | TLS to the broker, verifying it against the system's CA store |
-| `ssl_options` | any | none | no | Erlang `:ssl` options, passed through |
+| `ssl_options` | list | none | no | Erlang `:ssl` options, passed through |
 | `heartbeat_s` | int | `30` | no | AMQP heartbeat; 0 turns it off |
 | `reconnect_backoff_ms` | int | `500` | no | First wait before connecting again after a loss |
 | `reconnect_max_backoff_ms` | int | `30000` | no | Ceiling for that wait |
@@ -59,7 +59,7 @@ confirms, recovery, topology declaration, health, telemetry and limits.
 | `password` | string | none | no | Password, redacted once the plugin is prepared |
 | `password_env` | string | none | no | Environment variable holding the password instead |
 | `ssl` | bool | `false` | no | TLS to the broker, verifying it against the system's CA store |
-| `ssl_options` | any | none | no | Erlang `:ssl` options, passed through |
+| `ssl_options` | list | none | no | Erlang `:ssl` options, passed through |
 | `heartbeat_s` | int | `30` | no | AMQP heartbeat; 0 turns it off |
 | `reconnect_backoff_ms` | int | `500` | no | First wait before connecting again after a loss |
 | `reconnect_max_backoff_ms` | int | `30000` | no | Ceiling for that wait |

@@ -25,7 +25,7 @@ defmodule Flezha.Plugin.Provider.MonitoredIOForward do
         doc: "The plugin id the heartbeat detaches, with every member a group fanned it out to"
       ],
       relay_id: [type: :string, required: true, doc: "The relay this binding belongs to"],
-      namespace: [type: :any, required: true, doc: "The namespace this binding belongs to"],
+      namespace: [type: :string, required: true, doc: "The namespace this binding belongs to"],
       heartbeat_interval: [
         type: :int,
         default: 5000,

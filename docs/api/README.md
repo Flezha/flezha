@@ -49,6 +49,12 @@ catalogue from those declarations; the door resolves an operation's name
 `mix flezha.catalogue` writes the copy `flz` embeds, `cli/catalogue.json`, which
 `flz help --json` prints and `test/flezha/api/catalogue_test.exs` holds to the code.
 
+A provider's options are described in the same vocabulary: `Fleet.provider/2`
+answers `options`, one entry per option a user can write, read from the provider's
+rows by `Flezha.Plugin.ProviderBehaviour.Options.describe_row/1`, the function that
+also describes an operation's arguments here. A console renders an operation's
+argument and a plugin's option with one form.
+
 ## Receiving a stream on another node
 
 Four operations stream: `Relay.listen/5`, `Observability.tail/2`, `AuditLog.tail/2` and

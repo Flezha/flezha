@@ -21,6 +21,8 @@ defmodule Flezha.Plugin.Providers do
   alias Flezha.Plugin.Provider
   alias Flezha.Plugin.Provider.WorkerSup
   alias Flezha.Plugin.ProviderBehaviour
+  alias Flezha.Plugin.ProviderBehaviour.Decl
+  alias Flezha.Plugin.ProviderBehaviour.Options
 
   @installed_key {__MODULE__, :installed}
 
@@ -83,7 +85,12 @@ defmodule Flezha.Plugin.Providers do
 
   @doc """
   What a caller is shown about one provider: its help text, its plugin type,
-  and the hooks it supports.
+  the hooks it supports, and its public options as
+  `Flezha.Plugin.ProviderBehaviour.Options.describe_row/1` describes them, in
+  declaration order.
+
+  `options` stays plain maps so a remote surface encodes them as JSON like the
+  rest of the answer.
   """
   @spec help(binary()) :: {:ok, map()} | {:error, term()}
   def help(provider_id) do
@@ -93,7 +100,12 @@ defmodule Flezha.Plugin.Providers do
          provider: provider_id,
          help: provider_help(module, provider_id),
          type: plugin_type(module),
-         hooks: module.__provider__().extensions
+         hooks: module.__provider__().extensions,
+         options:
+           Enum.map(
+             Decl.public_options(module.__provider__()),
+             &Map.new(Options.describe_row(&1))
+           )
        }}
     end
   rescue

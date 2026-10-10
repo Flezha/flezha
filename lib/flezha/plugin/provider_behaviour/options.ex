@@ -325,20 +325,49 @@ defmodule Flezha.Plugin.ProviderBehaviour.Options do
     |> IO.iodata_to_binary()
   end
 
-  defp option_row({name, row}) do
+  defp option_row(row) do
+    described = describe_row(row)
+
     [
       "| `",
-      Atom.to_string(name),
+      described[:name],
       "` | ",
-      row |> Keyword.get(:type, :any) |> Atom.to_string(),
+      Atom.to_string(described[:type]),
       " | ",
-      render_default(row[:default]),
+      render_default(described[:default]),
       " | ",
-      if(Keyword.get(row, :required, false), do: "yes", else: "no"),
+      if(described[:required], do: "yes", else: "no"),
       " | ",
-      Keyword.get(row, :doc, ""),
+      described[:doc] || "",
       " |\n"
     ]
+  end
+
+  @doc """
+  One row as the published description of it, in the order it is read: `name`,
+  `type` (`:any` when the row names none), `required`, then each of `default`,
+  `values`, `min`, `max`, `live` and `transient` the row declares, then `doc`.
+
+  The documented table, `Flezha.Service.Fleet.provider/2`'s `options` and the
+  catalogue's operation arguments all read a row through this. A transient row's
+  default is never answered: a transient row is where a resolved credential lives.
+  """
+  @spec describe_row({atom(), keyword()}) :: keyword()
+  def describe_row({name, row}) do
+    transient? = Keyword.get(row, :transient, false)
+
+    [
+      name: Atom.to_string(name),
+      type: Keyword.get(row, :type, :any),
+      required: Keyword.get(row, :required, false)
+    ] ++
+      for(
+        key <- [:default, :values, :min, :max, :live, :transient],
+        Keyword.has_key?(row, key),
+        not (key == :default and transient?),
+        do: {key, row[key]}
+      ) ++
+      [doc: row[:doc]]
   end
 
   defp render_default(nil), do: "none"

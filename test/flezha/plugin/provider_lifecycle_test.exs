@@ -395,7 +395,7 @@ defmodule Flezha.Plugin.ProviderLifecycleTest do
   defp sample(:uri, _row), do: "wss://example.invalid/feed"
   defp sample(:url, _row), do: "https://example.invalid/feed"
   defp sample(:recv_pid, _row), do: self()
-  defp sample(:namespace, _row), do: :default
+  defp sample(:namespace, _row), do: "default"
   defp sample(:hosts, _row), do: [{"localhost", 9092}]
   defp sample(name, row), do: sample_by_type(name, Keyword.get(row, :type, :any))
 

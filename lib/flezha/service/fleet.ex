@@ -171,7 +171,15 @@ defmodule Flezha.Service.Fleet do
      }}
   end
 
-  @doc "One plugin provider's help text, its plugin type and the hooks it supports."
+  @doc """
+  One plugin provider's help text, its plugin type, the hooks it supports and its
+  options as typed rows.
+
+  `options` holds one map per public option, in declaration order: `name`,
+  `type`, `required` and `doc`, and `default`, `values`, `min`, `max`, `live` and
+  `transient` when the option declares them. A transient option never answers
+  its default.
+  """
   @spec provider(String.t(), caller_context()) :: {:ok, map()} | {:error, term()}
   verb provider(provider_id, caller_context),
     verb: :plugin_info,

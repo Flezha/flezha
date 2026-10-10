@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Added: a provider's options are readable as typed rows
+
+`Fleet.provider/2` (`flz plugin help <provider> --json`) answers `options`: one entry per option
+a user can write, in declaration order, with its name, type, whether it is required and its
+documentation, and its default, allowed values, bounds and whether it is live or transient when
+it declares them. A transient option never answers its default. The keys it answered before are
+unchanged, and the text `flz plugin help` prints is the same. The catalogue's argument
+descriptions and the documented option tables are read from the same row description. Five
+first-party options that were typed `any` now say what they take: Kafka `hosts` is `names`
+(`host:port`, comma-separated or as a list; a `{host, port}` list is still accepted), Kafka
+`auth` is `map`, Kafka and RabbitMQ `ssl_options` are `list`, and the listener plugin's
+`namespace` is `string`.
+
 ### Added: an operator can drop a runner process
 
 `Fleet.drop_runner/3` (`flz runner drop <runner_id>`) closes a runner's session, wherever in the

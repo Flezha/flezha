@@ -668,6 +668,18 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
 
       assert drifted == []
     end
+
+    # A console offers a typed field for every row it can read; `:any` leaves it
+    # only a JSON box, so a row a user writes names the type it takes.
+    test "no public row of a provider is typed :any" do
+      untyped =
+        for {id, module} <- Flezha.Plugin.Providers.all(),
+            {name, row} <- ProviderBehaviour.Decl.public_options(module.__provider__()),
+            Keyword.get(row, :type, :any) == :any,
+            do: "#{id}.#{name}"
+
+      assert untyped == [], "public rows typed :any: " <> Enum.join(untyped, ", ")
+    end
   end
 
   describe "the help screen offers what the enable takes" do
@@ -702,6 +714,18 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
       # An empty table, or one without the provider that declares internal rows,
       # would pass every assertion above.
       assert "relay_websocket" in checked
+    end
+
+    test "--json prints the whole answer, the typed options included" do
+      printed =
+        capture_io(fn ->
+          Cli.call("Fleet.provider", Jason.encode!(["relay_http_poll"]), output: "json")
+        end)
+
+      assert %{"provider" => "relay_http_poll", "options" => options} = Jason.decode!(printed)
+
+      assert %{"type" => "string", "required" => true} =
+               Enum.find(options, &(&1["name"] == "url"))
     end
 
     test "every provider's info lists its public options only" do

@@ -341,3 +341,60 @@ list it, until a writer for that Cell is started again.
 - **WHEN** a Cell with persisted state is deleted
 - **THEN** `cells/2` for its relay class answers no row for it
 
+### Requirement: A provider's options SHALL be readable as typed rows
+
+`Flezha.Service.Fleet.provider/2` SHALL answer, beside `provider`, `help`, `type` and `hooks`,
+`options`: one map per row of the provider's declaration that is not internal, in declaration
+order, as `Flezha.Plugin.ProviderBehaviour.Options.describe_row/1` describes it. Each map SHALL
+carry `name`, the option's name as a string; `type`, the row's type, `:any` when the row names
+none; `required`, a boolean; and `doc`. It SHALL carry `default`, `values`, `min`, `max`,
+`live` and `transient` when the row declares them. A transient row's default SHALL NOT be
+answered.
+
+The answer SHALL be data: over `:erpc` a caller receives the declared terms, and through the
+door every remote surface receives its JSON, in which an atom is its name. Every default a
+first-party provider declares SHALL be one JSON carries: `nil`, a boolean, a number, a string,
+an atom, or a list or map of those.
+
+The keys the answer carried before SHALL be unchanged, and `flz plugin help <provider>` SHALL
+print the same text; with `--json` it SHALL print the whole answer, `options` included.
+
+#### Scenario: Every row type
+
+- **GIVEN** a provider whose public rows declare `int` with `min: 1` and `max: 10`, `bool`,
+  `string`, `names`, `enum` with `values: [:none, :gzip]` and `default: :none`, `pid`, `json`,
+  `map`, `list` and `any`, and one row that names no type
+- **WHEN** `Fleet.provider/2` is read for it
+- **THEN** `options` SHALL list those rows in declaration order with those types, the untyped
+  one as `:any`, the `int` row's bounds and the `enum` row's values and default
+
+#### Scenario: An internal row is not answered
+
+- **GIVEN** a provider with a row declared `internal: true`
+- **WHEN** `Fleet.provider/2` is read for it
+- **THEN** `options` SHALL carry no entry of that name
+
+#### Scenario: A transient row keeps its default
+
+- **GIVEN** a public row declared `transient: true, default: "s3cret"`
+- **WHEN** `Fleet.provider/2` is read
+- **THEN** its entry SHALL carry `transient: true` and no `default`
+
+#### Scenario: The JSON form
+
+- **WHEN** `flz plugin help relay_http_poll --json` is run
+- **THEN** the object SHALL carry `options`, whose `url` entry carries `"type": "string"` and
+  `"required": true`, beside `provider`, `help`, `type` and `hooks`
+
+#### Scenario: The text is unchanged
+
+- **WHEN** `flz plugin help relay_websocket` is run
+- **THEN** it SHALL print the screen, the type and the supported hooks, and nothing of the
+  `options` key
+
+#### Scenario: Every first-party default is JSON
+
+- **WHEN** `Fleet.provider/2` is read for every provider in `Flezha.Plugin.Providers.all/0`
+- **THEN** every `default` in every `options` SHALL be `nil`, a boolean, a number, a string, an
+  atom, or a list or map of those
+

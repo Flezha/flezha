@@ -1,8 +1,9 @@
 defmodule Flezha.Service.ConsoleAnswersTest do
   @moduledoc """
-  Two answers a console reads to decide what it offers: the operations
-  `Flezha.Service.Namespace.whoami/1` says the caller's role grants, and the
-  history retention `Flezha.Service.Steps.cells/2` says a relay class runs with.
+  Answers a console reads to decide what it offers: the operations
+  `Flezha.Service.Namespace.whoami/1` says the caller's role grants, the
+  history retention `Flezha.Service.Steps.cells/2` says a relay class runs with,
+  and the typed option rows `Flezha.Service.Fleet.provider/2` answers.
   """
   # async: false: writes Application env; the auth stores are node-global singletons.
   use FlezhaTest.Case,
@@ -13,8 +14,10 @@ defmodule Flezha.Service.ConsoleAnswersTest do
 
   alias Flezha.AuthZ
   alias Flezha.Config
+  alias Flezha.Plugin.Providers
   alias Flezha.Service.Admin
   alias Flezha.Service.Cli
+  alias Flezha.Service.Fleet
   alias Flezha.Service.Namespace
   alias Flezha.Service.Steps
 
@@ -77,6 +80,145 @@ defmodule Flezha.Service.ConsoleAnswersTest do
       assert {:ok, %{history_retention_hours: 7}} = Steps.cells("console_rc", context)
     end
   end
+
+  defmodule OptionProbe do
+    @moduledoc false
+
+    use Flezha.Plugin.ProviderBehaviour,
+      options: [
+        batch: [type: :int, min: 1, max: 10, default: 5, doc: "Batch size"],
+        enabled: [type: :bool, default: true, doc: "On or off"],
+        url: [type: :string, required: true, doc: "Where to go"],
+        topics: [type: :names, default: ["a", "b"], doc: "Topics"],
+        codec: [type: :enum, values: [:none, :gzip], default: :none, doc: "Codec"],
+        owner: [type: :pid, doc: "Owner"],
+        body: [type: :json, doc: "Body"],
+        headers: [type: :map, default: %{}, doc: "Headers"],
+        extra: [type: :list, default: [], live: true, doc: "Extra"],
+        blob: [type: :any, doc: "Blob"],
+        untyped: [doc: "Untyped"],
+        hidden: [type: :string, internal: true, default: "x"],
+        secret: [type: :string, transient: true, default: "s3cret", doc: "Secret"]
+      ]
+
+    @impl true
+    def reconfigure(_old, _new), do: :ok
+  end
+
+  describe "Fleet.provider/2 options" do
+    setup do
+      open()
+      :ok = Providers.add("console_option_probe", OptionProbe)
+      on_exit(&Providers.reset_installed/0)
+      :ok
+    end
+
+    test "answers every public row, typed, in declaration order" do
+      assert {:ok, answer} = Fleet.provider("console_option_probe", %{source: :cli})
+
+      assert answer.options == [
+               %{
+                 name: "batch",
+                 type: :int,
+                 required: false,
+                 default: 5,
+                 min: 1,
+                 max: 10,
+                 doc: "Batch size"
+               },
+               %{name: "enabled", type: :bool, required: false, default: true, doc: "On or off"},
+               %{name: "url", type: :string, required: true, doc: "Where to go"},
+               %{
+                 name: "topics",
+                 type: :names,
+                 required: false,
+                 default: ["a", "b"],
+                 doc: "Topics"
+               },
+               %{
+                 name: "codec",
+                 type: :enum,
+                 required: false,
+                 default: :none,
+                 values: [:none, :gzip],
+                 doc: "Codec"
+               },
+               %{name: "owner", type: :pid, required: false, doc: "Owner"},
+               %{name: "body", type: :json, required: false, doc: "Body"},
+               %{name: "headers", type: :map, required: false, default: %{}, doc: "Headers"},
+               %{
+                 name: "extra",
+                 type: :list,
+                 required: false,
+                 default: [],
+                 live: true,
+                 doc: "Extra"
+               },
+               %{name: "blob", type: :any, required: false, doc: "Blob"},
+               %{name: "untyped", type: :any, required: false, doc: "Untyped"},
+               %{name: "secret", type: :string, required: false, transient: true, doc: "Secret"}
+             ]
+
+      refute Enum.any?(answer.options, &(&1.name == "hidden"))
+    end
+
+    test "keeps the keys it answered before" do
+      assert {:ok, answer} = Fleet.provider("console_option_probe", %{source: :cli})
+
+      assert %{provider: "console_option_probe", type: :relay, hooks: []} = answer
+      assert answer.help == OptionProbe.help("console_option_probe")
+      assert Map.keys(answer) |> Enum.sort() == [:help, :hooks, :options, :provider, :type]
+    end
+
+    test "the door writes atoms as their names and changes nothing else" do
+      assert {:ok, answer} = Fleet.provider("console_option_probe", %{source: :cli})
+
+      assert {:ok, json} =
+               Admin.call(
+                 "Fleet.provider",
+                 Jason.encode!(["console_option_probe"]),
+                 %{source: :cli},
+                 :given
+               )
+
+      decoded = Jason.decode!(json)
+      assert Enum.sort(Map.keys(decoded)) == ["help", "hooks", "options", "provider", "type"]
+      assert length(decoded["options"]) == length(answer.options)
+
+      for {term, written} <- Enum.zip(answer.options, decoded["options"]) do
+        assert Enum.sort(Map.keys(written)) ==
+                 term |> Map.keys() |> Enum.map(&to_string/1) |> Enum.sort()
+
+        assert written["name"] == term.name
+        assert written["type"] == Atom.to_string(term.type)
+      end
+
+      assert %{"type" => "int", "min" => 1, "max" => 10} = Enum.at(decoded["options"], 0)
+
+      assert %{"values" => ["none", "gzip"], "default" => "none"} =
+               Enum.find(decoded["options"], &(&1["name"] == "codec"))
+    end
+
+    test "every provider answers, and every default it declares is JSON" do
+      for {id, _module} <- Providers.all() do
+        assert {:ok, %{options: options}} = Fleet.provider(id, %{source: :cli})
+
+        for option <- options, Map.has_key?(option, :default) do
+          assert json_term?(option.default),
+                 "#{id}.#{option.name} declares a default JSON cannot carry: " <>
+                   inspect(option.default)
+        end
+      end
+    end
+  end
+
+  defp json_term?(value) when is_atom(value) or is_number(value) or is_binary(value), do: true
+  defp json_term?(value) when is_list(value), do: Enum.all?(value, &json_term?/1)
+
+  defp json_term?(%{} = value) when not is_struct(value),
+    do: Enum.all?(value, fn {key, nested} -> json_term?(key) and json_term?(nested) end)
+
+  defp json_term?(_value), do: false
 
   defp open do
     config = Application.get_env(:flezha, :authn_authz, [])

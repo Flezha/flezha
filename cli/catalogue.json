@@ -402,7 +402,7 @@
     },
     {
       "name": "Fleet.provider",
-      "doc": "One plugin provider's help text, its plugin type and the hooks it supports.",
+      "doc": "One plugin provider's help text, its plugin type, the hooks it supports and its options as typed rows.",
       "action": "plugin.info",
       "remote": true,
       "stream": false,

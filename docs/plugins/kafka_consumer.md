@@ -20,11 +20,11 @@ provider id `kafka_consumer`, in the Kafka plugin package beside the producer
 <!-- provider-options:begin -->
 | Option | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
-| `hosts` | any | none | yes | `{host, port}` list, or a comma-separated string |
-| `auth` | any | none | no | SASL configuration, as a `KafkaEx.Auth.Config` or a map |
+| `hosts` | names | none | yes | `host:port` names, comma-separated or as a list |
+| `auth` | map | none | no | SASL configuration, as a `KafkaEx.Auth.Config` or a map |
 | `sasl_password_env` | string | none | no | Environment variable holding the SASL password, preferred over an inline one |
 | `use_ssl` | bool | none | no | TLS to the brokers |
-| `ssl_options` | any | none | no | Erlang `:ssl` options for that connection |
+| `ssl_options` | list | none | no | Erlang `:ssl` options for that connection |
 | `topics` | names | none | yes | The topics to consume, comma-separated |
 | `group_id` | string | none | yes | The consumer group |
 | `channel` | names | none | no | The channel this plugin is attached to: the entry channel every record is injected on, and one name. Required, unless `channel_in` names it |
