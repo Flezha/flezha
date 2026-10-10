@@ -89,6 +89,12 @@ defmodule Flezha.Runner.FleetManager do
              {:runner_connect, stream_ref, connect},
              runner_connect_timeout()
            ) do
+        # A dropped process retries at its reconnect rate for as long as it
+        # lives; its refusal is the operator's intent, counted by telemetry.
+        {:error, {:runner_dropped, _namespace, _stable_id} = reason} ->
+          Logger.debug("Refused dropped runner: #{inspect(reason)}")
+          {:error, reason}
+
         {:error, reason} ->
           Logger.error("Failed to connect runner: #{inspect(reason)}")
           {:error, reason}
@@ -313,9 +319,12 @@ defmodule Flezha.Runner.FleetManager do
   told to stop, so it reconnects, and a standing drop mark refuses it. Answers
   the number of sessions closed, `0` when there is no fleet to reach.
   """
-  @spec drop_matching(binary(), binary()) :: non_neg_integer()
-  def drop_matching(stable_id, incarnation) when is_binary(stable_id) do
-    SafeCall.bounded(__MODULE__, {:drop_matching, stable_id, incarnation}, manager_call_timeout(),
+  @spec drop_matching(binary(), binary(), binary()) :: non_neg_integer()
+  def drop_matching(namespace, stable_id, incarnation) when is_binary(stable_id) do
+    SafeCall.bounded(
+      __MODULE__,
+      {:drop_matching, namespace, stable_id, incarnation},
+      manager_call_timeout(),
       on_error: 0,
       log: false
     )
@@ -464,17 +473,19 @@ defmodule Flezha.Runner.FleetManager do
   end
 
   @impl true
-  def handle_call({:drop_matching, stable_id, incarnation}, _from, state) do
+  def handle_call({:drop_matching, namespace, stable_id, incarnation}, _from, state) do
     {state, pending} =
       Session.end_handshakes(
         state,
-        &(&1.stable_id == stable_id and &1.incarnation == incarnation),
+        &(&1.namespace == namespace and &1.stable_id == stable_id and
+            &1.incarnation == incarnation),
         :dropped
       )
 
     case Map.get(state.stable_sessions, stable_id) do
       {session, _credential, ^incarnation} ->
-        if Roster.runner_active?(state, session) do
+        if Roster.runner_active?(state, session) and
+             match?({:active, _}, get_in(state.runner_namespaces, [namespace, session])) do
           Logger.info("Dropping runner #{session} (stable identity #{stable_id})")
           # Marked before the close, as `disconnect_runner` does, so the close
           # is torn down as one this controller asked for.

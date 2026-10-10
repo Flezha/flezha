@@ -11,7 +11,7 @@ defmodule Flezha.Runner.DropMarks do
   cluster-wide publication revoked tokens use, so a mark survives a restart
   and reaches a controller that joins later. Every controller that holds or
   adopts a mark closes the matching session
-  (`Flezha.Runner.FleetManager.drop_matching/2`), and its connect path refuses
+  (`Flezha.Runner.FleetManager.drop_matching/3`), and its connect path refuses
   that process again.
 
   Placing and lifting a mark emit `[:flezha, :runner, :dropped | :readmitted]`
@@ -53,7 +53,7 @@ defmodule Flezha.Runner.DropMarks do
     key = {namespace, stable_id}
     :ok = __MODULE__ |> GenServer.call({:put, key, mark}) |> Replica.published(__MODULE__, key)
     :telemetry.execute([:flezha, :runner, :dropped], %{count: 1}, signalled(mark))
-    _closed = FleetManager.drop_matching(stable_id, incarnation)
+    _closed = FleetManager.drop_matching(namespace, stable_id, incarnation)
     {:ok, mark}
   end
 
@@ -68,6 +68,29 @@ defmodule Flezha.Runner.DropMarks do
       :telemetry.execute([:flezha, :runner, :readmitted], %{count: 1}, signalled(mark))
       {:ok, mark}
     end
+  end
+
+  @doc """
+  Lift `namespace`'s mark on `stable_id` only while it still refuses
+  `incarnation`, once a different process of that runner has been admitted.
+
+  Compared and lifted in one step, so a mark placed since on the newer process
+  — by an operator, or arriving late from another controller — is kept.
+  """
+  @spec lift_superseded(String.t(), String.t(), String.t()) :: :ok
+  def lift_superseded(namespace, stable_id, incarnation) do
+    key = {namespace, stable_id}
+
+    case GenServer.call(__MODULE__, {:clear_if, key, incarnation}) do
+      {:ok, mark} ->
+        :ok = Replica.published(:ok, __MODULE__, key)
+        :telemetry.execute([:flezha, :runner, :readmitted], %{count: 1}, signalled(mark))
+
+      :kept ->
+        :ok
+    end
+
+    :ok
   end
 
   @doc "`namespace`'s standing marks, oldest first."
@@ -111,8 +134,8 @@ defmodule Flezha.Runner.DropMarks do
   @spec adopted(term(), mark() | :deleted, term()) :: :ok
   def adopted(_key, :deleted, _previous), do: :ok
 
-  def adopted(_key, %{stable_id: stable_id, incarnation: incarnation}, _previous) do
-    _closed = FleetManager.drop_matching(stable_id, incarnation)
+  def adopted({namespace, stable_id}, %{incarnation: incarnation}, _previous) do
+    _closed = FleetManager.drop_matching(namespace, stable_id, incarnation)
     :ok
   end
 
@@ -133,6 +156,20 @@ defmodule Flezha.Runner.DropMarks do
 
         :error ->
           {:error, {:runner_not_found, namespace, stable_id}}
+      end
+
+    {:reply, reply, state}
+  end
+
+  def handle_call({:clear_if, key, incarnation}, _from, state) do
+    reply =
+      case DetsStore.fetch(@table, key) do
+        {:ok, %{incarnation: ^incarnation} = mark} ->
+          :ok = Replica.delete(__MODULE__, key)
+          {:ok, mark}
+
+        _newer_or_gone ->
+          :kept
       end
 
     {:reply, reply, state}

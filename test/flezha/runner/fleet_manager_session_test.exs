@@ -544,8 +544,9 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
 
       assert Map.has_key?(:sys.get_state(FleetManager).pending_handshakes, session)
 
-      assert FleetManager.drop_matching(id, "i2") == 0
-      assert FleetManager.drop_matching(id, "i1") == 1
+      assert FleetManager.drop_matching("other", id, "i1") == 0
+      assert FleetManager.drop_matching(ns, id, "i2") == 0
+      assert FleetManager.drop_matching(ns, id, "i1") == 1
 
       sdk_stream = Flezha.Transport.Stream.stream_id(sdk)
       assert_receive {:flz_closed, ^sdk_stream, _reason}, 5_000
@@ -583,6 +584,19 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
       assert NodeTestHelper.wait_until(fn -> DropMarks.list(ns) == [] end, 5_000)
       assert_receive {:readmitted, %{count: 1}, %{namespace: ^ns, stable_id: ^id}}, 5_000
       assert FleetManager.active_runners(ns) == [second]
+    end
+
+    test "is lifted by a new process only while it still names the old one",
+         %{ns: ns, identity: id} do
+      first = active_stand_in(ns, %{"stable_id" => id, "incarnation" => "i1"})
+      {:ok, _mark} = Fleet.drop_runner(ns, first, @drop_context)
+
+      # A stale lift for an incarnation the mark no longer names keeps it.
+      assert :ok = DropMarks.lift_superseded(ns, id, "i0")
+      assert [%{incarnation: "i1"}] = DropMarks.list(ns)
+
+      assert :ok = DropMarks.lift_superseded(ns, id, "i1")
+      assert DropMarks.list(ns) == []
     end
 
     test "is admitted again once readmitted", %{ns: ns, identity: id} do

@@ -501,7 +501,10 @@ defmodule Flezha.Transport.Server do
         # instead of dangling on a controller that will never ack (e.g. a
         # `:shutting_down` rejection during drain). Emit a counted signal so the
         # reject is observable rather than only logged.
-        Logger.error(
+        # A dropped process is refused at its reconnect rate for as long as it
+        # lives, by the operator's own choice: counted, not raised as an error.
+        Logger.log(
+          if(match?({:runner_dropped, _, _}, reason), do: :debug, else: :error),
           "[Transport.Server] Rejected runner connect (#{inspect(reason)}); closing stream"
         )
 

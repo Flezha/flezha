@@ -216,8 +216,8 @@ defmodule Flezha.Runner.FleetManager.Session do
   A standing mark (`Flezha.Runner.DropMarks`) on the connect's stable identity
   refuses the incarnation it names, on every controller, and the refusal is
   announced as `[:flezha, :runner, :drop_refused]` telemetry. Another
-  incarnation is a different process: it is admitted, and the mark is lifted
-  on every controller.
+  incarnation is a different process: it is admitted, and once it is, the mark
+  is lifted on every controller.
   """
   @spec check_not_dropped(map(), term()) :: :ok | {:error, {:runner_dropped, binary(), binary()}}
   def check_not_dropped(%{namespace: namespace, stable_id: stable_id} = connect, stream_ref)
@@ -240,8 +240,6 @@ defmodule Flezha.Runner.FleetManager.Session do
         {:error, {:runner_dropped, namespace, stable_id}}
 
       _another_process ->
-        # Off the connect: lifting the mark publishes it to every controller.
-        Task.start(fn -> DropMarks.clear(namespace, stable_id) end)
         :ok
     end
   end
@@ -660,6 +658,26 @@ defmodule Flezha.Runner.FleetManager.Session do
     {:runner_connect_failed, reason} -> {:error, reason}
   end
 
+  # A different process of a dropped runner was just admitted, so the mark on
+  # the old one has served its purpose. Off the manager: lifting publishes to
+  # every controller.
+  defp lift_superseded_drop(%{
+         namespace: namespace,
+         stable_id: stable_id,
+         incarnation: connecting
+       })
+       when is_binary(stable_id) do
+    case DropMarks.standing(namespace, stable_id) do
+      %{incarnation: dropped} when dropped != connecting ->
+        Task.start(fn -> DropMarks.lift_superseded(namespace, stable_id, dropped) end)
+
+      _none_or_this_process ->
+        :ok
+    end
+  end
+
+  defp lift_superseded_drop(_connect), do: :ok
+
   defp finish_runner_connect(state, session_token, connect) do
     %{namespace: namespace, factories: factories, credential: credential} = connect
 
@@ -681,6 +699,7 @@ defmodule Flezha.Runner.FleetManager.Session do
     # restarted, and close the old session. A first connect just
     # records the mapping; a degraded runner (no stable id) connects fresh.
     state = resolve_stable_identity(state, session_token, connect)
+    lift_superseded_drop(connect)
 
     # The convergence Loop subscribes to this and runs an immediate tick as a
     # safety net; the binding swap above is the synchronous primary path.
