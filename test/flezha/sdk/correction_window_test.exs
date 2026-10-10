@@ -272,7 +272,12 @@ defmodule Flezha.SDK.CorrectionWindowTest do
 
       replay(op, "100:a", 1)
       pid = cell!(op, @task)
-      assert [{100, %{}}] = :sys.get_state(pid).tier.slice
+
+      # The replayed input reaches the Cell asynchronously.
+      assert FlezhaTest.Helper.NodeTestHelper.wait_until(
+               fn -> match?([{100, %{}}], :sys.get_state(pid).tier.slice) end,
+               2_000
+             )
 
       snap = Record.encode_body(%{order: [300_000]})
       assert {:ok, 0, false} = Cell.restore(pid, Record.header(snap, 1), snap, <<>>, 0)

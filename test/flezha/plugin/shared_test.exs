@@ -436,8 +436,13 @@ defmodule FlezhaTest.Plugin.SharedTest do
     send(copy, :idle_stop)
     bind = Task.async(fn -> PluginManager.bind_plugin(@namespace, "trades", b) end)
 
+    # The join is queued behind the two sent first; other messages may share
+    # the mailbox, so its count proves nothing.
     assert NodeTestHelper.wait_until(
-             fn -> Process.info(copy, :message_queue_len) == {:message_queue_len, 3} end,
+             fn ->
+               {:messages, queued} = Process.info(copy, :messages)
+               Enum.any?(queued, &match?({:"$gen_call", _from, {:join, _target}}, &1))
+             end,
              5_000
            )
 

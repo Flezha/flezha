@@ -17,6 +17,16 @@ defmodule FlezhaTest.Helper.FleetStateHelper do
   @default_kind :flow
 
   @doc """
+  Tell the live `FleetManager` that `runner` closed its control channel, as
+  `ControlChannel` does, and return once it has been handled.
+  """
+  def disconnected(namespace, runner) do
+    GenServer.cast(FleetManager, {:runner_disconnected, namespace, runner})
+    _ = :sys.get_state(FleetManager)
+    :ok
+  end
+
+  @doc """
   Seed `namespace` with `%{runner_id => [factory_id]}`, all `:active`.
 
   Factory ids may be given as `id` (the default language and run),

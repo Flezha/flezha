@@ -277,8 +277,14 @@ defmodule Flezha.State.WalWriter do
   @spec stall_status(GenServer.server()) :: stall_status()
   def stall_status(server), do: call(server, :stall_status)
 
+  # Two closers can race for one writer, a relay's teardown and its move; the
+  # one that finds it gone has closed it all the same.
   @spec close(GenServer.server()) :: :ok
-  def close(server), do: GenServer.stop(server, :normal)
+  def close(server) do
+    GenServer.stop(server, :normal)
+  catch
+    :exit, {:noproc, _stop} -> :ok
+  end
 
   defp via(cell_id) do
     {:via, Elixir.Registry, {WriterRegistry.name(), cell_id}}

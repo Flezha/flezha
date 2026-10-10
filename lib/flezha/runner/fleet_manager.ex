@@ -462,17 +462,6 @@ defmodule Flezha.Runner.FleetManager do
   end
 
   @impl true
-  def handle_call({:runner_disconnected, namespace, runner_id}, _from, state) do
-    # Read before the disconnect clears the mark: a retiring runner is one this
-    # controller asked to leave, so its factories are withdrawn from the
-    # namespace hub without waiting out the grace.
-    retiring? = Marks.runner_retiring?(runner_id)
-    state = Session.handle_runner_disconnect(state, namespace, runner_id)
-
-    {:reply, :ok, Announce.sync(state, immediate_withdrawal: retiring?)}
-  end
-
-  @impl true
   def handle_call({:drop_matching, namespace, stable_id, incarnation}, _from, state) do
     {state, pending} =
       Session.end_handshakes(
@@ -684,12 +673,24 @@ defmodule Flezha.Runner.FleetManager do
     {:reply, :ok, state |> runner_cleanup() |> Announce.sync()}
   end
 
+  @impl true
+  # A cast, not a call: a namespace stop runs inside this server and closes the
+  # runners' sockets, and a channel that waited here for it would only time out.
+  def handle_cast({:runner_disconnected, namespace, runner_id}, state) do
+    # Read before the disconnect clears the mark: a retiring runner is one this
+    # controller asked to leave, so its factories are withdrawn from the
+    # namespace hub without waiting out the grace.
+    retiring? = Marks.runner_retiring?(runner_id)
+    state = Session.handle_runner_disconnect(state, namespace, runner_id)
+
+    {:noreply, Announce.sync(state, immediate_withdrawal: retiring?)}
+  end
+
   # Full-set replacement of one runner's declared factory list, cast from
   # `ControlChannel` on an SDK `UpdateFactories` frame (post-start
   # define/remove). Composes the existing removal + store paths, so redelivery
   # is idempotent and other runners' factory refs are untouched. An empty set
   # is legal: the runner stays connected with zero placeable factories.
-  @impl true
   def handle_cast({:sync_factories, namespace, runner_id, factories}, state) do
     dropped = Factories.dropped_factory_ids(state, namespace, runner_id, factories)
 

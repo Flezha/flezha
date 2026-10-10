@@ -698,5 +698,12 @@ defmodule Flezha.State.WalWriterTest do
       assert wait_until(fn -> Supervisor.live_writers(class) == [] end, 2_000)
       assert File.exists?(Paths.wal_path(cell_id))
     end
+
+    test "a writer another closer already stopped counts as closed", %{cell_id: cell_id} do
+      {:ok, pid} = Supervisor.find_or_start(cell_id)
+      :ok = WalWriter.close(pid)
+
+      assert WalWriter.close(pid) == :ok
+    end
   end
 end

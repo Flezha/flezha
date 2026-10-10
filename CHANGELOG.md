@@ -52,6 +52,13 @@ binding up at once. A tick's cost also no longer grows with the relay state left
 liveness read takes the live writers from memory, and the walk of the state directory resolves
 each namespace and the state root once.
 
+### Fixed: stopping a namespace no longer stalls on its runners' control channels
+
+A runner's control channel that closed while its namespace was being stopped waited five
+seconds for the fleet manager, which was busy stopping that namespace, and then crashed with an
+error in the log. The channel now hands the disconnect over without waiting. Closing a state
+writer that another closer already stopped counts as closed instead of failing.
+
 ### Fixed: a Cell's WAL no longer freezes behind a newer snapshot
 
 A writer took its seq from the WAL file alone, and adopted a snapshot's seq only while it awaited

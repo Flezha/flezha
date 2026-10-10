@@ -30,6 +30,7 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
   alias Flezha.Relay.Overwatch
   alias Flezha.Runner.DropMarks
   alias Flezha.Runner.FleetManager
+  alias FlezhaTest.Helper.FleetStateHelper
   alias Flezha.Runner.FleetManager.Marks
   alias Flezha.Service.Fleet
   alias Flezha.Service.HubManager
@@ -272,7 +273,7 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
       assert NodeTestHelper.wait_until(fn -> not tree_running?(session) end, 5_000)
 
       before = :sys.get_state(FleetManager)
-      assert :ok = GenServer.call(FleetManager, {:runner_disconnected, ns, session})
+      assert :ok = FleetStateHelper.disconnected(ns, session)
       assert :sys.get_state(FleetManager) == before
     end
   end

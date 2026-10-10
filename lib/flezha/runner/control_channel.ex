@@ -395,11 +395,7 @@ defmodule Flezha.Runner.ControlChannel do
       )
     end
 
-    GenServer.call(FleetManager, {
-      :runner_disconnected,
-      state.namespace,
-      state.runner_id
-    })
+    GenServer.cast(FleetManager, {:runner_disconnected, state.namespace, state.runner_id})
 
     {:noreply, state}
   end

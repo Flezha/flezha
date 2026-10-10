@@ -96,7 +96,7 @@ defmodule Flezha.Cluster.DirectoryTest do
       :ok = FleetStateHelper.sync(ns, "r1", ["fa"])
       assert Directory.factory_nodes(ns, "fa") == [node()]
 
-      :ok = GenServer.call(FleetManager, {:runner_disconnected, ns, "r1"})
+      :ok = FleetStateHelper.disconnected(ns, "r1")
 
       assert Directory.factory_nodes(ns, "fa") == []
       assert Directory.runner_nodes(ns) == []

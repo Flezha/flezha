@@ -255,7 +255,13 @@ defmodule Flezha.SDK.EffectivelyOnceTest do
     assert {0, %{consumed_offset: 1}} = effect(f0)
 
     consumer = cell!(op, "held_consumer")
-    assert {:error, :busy} = Cell.read(consumer, 200)
+
+    # The record ships as the push is admitted; the consumer enters `run/3`
+    # just after.
+    assert FlezhaTest.Helper.NodeTestHelper.wait_until(
+             fn -> Cell.read(consumer, 200) == {:error, :busy} end,
+             2_000
+           )
 
     # The consumer's one queue slot is free while it runs, so this push is
     # admitted at once, and its record ships.

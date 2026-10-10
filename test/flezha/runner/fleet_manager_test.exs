@@ -14,6 +14,7 @@ defmodule FlezhaTest.Runner.FleetManagerGhostTest do
   """
 
   alias Flezha.Runner.FleetManager
+  alias FlezhaTest.Helper.FleetStateHelper
   alias Flezha.Runner.FleetManager.Marks
 
   # async: false: the live controller and its fleet; node-global tables.
@@ -68,7 +69,7 @@ defmodule FlezhaTest.Runner.FleetManagerGhostTest do
     assert "ghost_b" in FleetManager.active_runners(@namespace)
 
     # Mirrors ControlChannel.handle_connection_closed/1.
-    :ok = GenServer.call(FleetManager, {:runner_disconnected, @namespace, "ghost_a"})
+    :ok = FleetStateHelper.disconnected(@namespace, "ghost_a")
 
     active = FleetManager.active_runners(@namespace)
     refute "ghost_a" in active, "dead runner must not linger as active"
@@ -107,11 +108,11 @@ defmodule FlezhaTest.Runner.FleetManagerGhostTest do
       end)
 
       :ok =
-        GenServer.call(FleetManager, {:runner_disconnected, @namespace, "round_#{round - 1}"})
+        FleetStateHelper.disconnected(@namespace, "round_#{round - 1}")
     end)
 
     # Drain the final outstanding id; "live_peer" + "round_8" remain.
-    :ok = GenServer.call(FleetManager, {:runner_disconnected, @namespace, "round_8"})
+    :ok = FleetStateHelper.disconnected(@namespace, "round_8")
 
     active = FleetManager.active_runners(@namespace)
     assert "live_peer" in active
@@ -734,6 +735,7 @@ defmodule FlezhaTest.Runner.FleetManagerKeepaliveClockTest do
   use FlezhaTest.Case, fixtures: [:env], async: false
 
   alias Flezha.Runner.FleetManager
+  alias FlezhaTest.Helper.FleetStateHelper
 
   @namespace "keepalive_clock_#{System.unique_integer([:positive])}"
   @keepalive_ms 60_000
@@ -751,7 +753,7 @@ defmodule FlezhaTest.Runner.FleetManagerKeepaliveClockTest do
     # The production writer stamps the row: the last runner of a namespace
     # nobody else serves is held `:inactive` for the keepalive window.
     before_ms = System.monotonic_time(:millisecond)
-    :ok = GenServer.call(FleetManager, {:runner_disconnected, @namespace, "lone_runner"})
+    :ok = FleetStateHelper.disconnected(@namespace, "lone_runner")
     after_ms = System.monotonic_time(:millisecond)
 
     assert {:inactive, stamp} = roster()["lone_runner"]
@@ -890,7 +892,7 @@ defmodule FlezhaTest.Runner.FleetManagerServedGroupsTest do
     assert declared(hub_id, ["alpha", "beta"])
 
     Marks.mark_runner_retiring("r1")
-    :ok = GenServer.call(FleetManager, {:runner_disconnected, ns, "r1"})
+    :ok = FleetStateHelper.disconnected(ns, "r1")
 
     assert declared(hub_id, [])
   end
@@ -917,6 +919,7 @@ defmodule FlezhaTest.Runner.FleetManagerSessionSignalsTest do
 
   alias Flezha.Observability.RingBufferSink
   alias Flezha.Runner.FleetManager
+  alias FlezhaTest.Helper.FleetStateHelper
   alias Flezha.Runner.FleetManager.Session
   alias FlezhaTest.Helper.NodeTestHelper
 
@@ -942,7 +945,7 @@ defmodule FlezhaTest.Runner.FleetManagerSessionSignalsTest do
 
     assert signal(:runner_connected, since).metadata == %{namespace: @namespace, runner: token}
 
-    :ok = GenServer.call(FleetManager, {:runner_disconnected, @namespace, token})
+    :ok = FleetStateHelper.disconnected(@namespace, token)
 
     assert signal(:runner_disconnected, since).metadata == %{namespace: @namespace, runner: token}
   end

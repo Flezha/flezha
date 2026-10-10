@@ -39,7 +39,7 @@ defmodule FlezhaTest.System.RunnerOwnershipE2ETest do
   alias Flezha.Convergence.Loop
   alias Flezha.Convergence.Snapshot, as: ConvergenceSnapshot
   alias Flezha.Relay.Builder
-  alias Flezha.Runner.FleetManager
+  alias FlezhaTest.Helper.FleetStateHelper
   alias Flezha.Runner.StreamPool
   alias Flezha.Service.{EventManager, HubManager, RelayManager}
   alias Flezha.State.{Paths, WalWriter}
@@ -94,7 +94,7 @@ defmodule FlezhaTest.System.RunnerOwnershipE2ETest do
     # The controller judges A dead while the process is alive, and moves the
     # relay to B.
     signal(os_pid(port_a), "-STOP")
-    :ok = GenServer.call(FleetManager, {:runner_disconnected, namespace, runner_a})
+    :ok = FleetStateHelper.disconnected(namespace, runner_a)
 
     assert wait_until(fn -> bound_runner(namespace, id) == runner_b end, 30_000),
            "the relay never moved to the surviving runner"
