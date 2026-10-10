@@ -306,3 +306,67 @@ When the controller refuses a runner's connect, whatever the cause (an unproven 
 - **WHEN** a connect is refused
 - **THEN** the controller SHALL write the `ConnectRefused` frame before it closes the stream, and a runner that reads the stream to its end SHALL find the frame
 
+### Requirement: A dropped runner process SHALL be refused until a different process connects
+
+`Flezha.Service.Fleet.drop_runner(namespace, runner_id, caller_context)` SHALL resolve the
+runner session anywhere in the controller cluster and place a drop mark holding the namespace,
+the runner's stable identity, its SDK incarnation, its OS pid when known, the node, when it was
+dropped and the principal who dropped it. It SHALL then close the session without sending
+`RunnerDisconnect`, as a close of a retiring runner, so its relays are re-placed without the
+reconnect grace.
+
+While the mark stands, every controller SHALL refuse a connect presenting the same stable
+identity and incarnation with `runner.dropped`, whose hint names `flz runner readmit`. A
+connect presenting the same stable identity with another incarnation SHALL be admitted, and
+once it is admitted SHALL lift the mark on every controller, but only while the mark still
+names the process it refused. A drop SHALL close only the matching session in the namespace
+it was made in, and a refused retry SHALL be logged at debug level. Marks SHALL be replicated across the cluster and
+survive a restart the way revoked tokens do. A runner with no stable identity or no
+incarnation SHALL be answered `runner.untrackable` and left connected, and a runner id no node
+holds SHALL be answered `runner.not_found`.
+
+`Fleet.readmit_runner(namespace, stable_id, caller_context)` SHALL lift a mark on every
+controller, and `Fleet.dropped_runners(namespace, caller_context)` SHALL answer the standing
+marks. Dropping and readmitting SHALL be authorized as `runner.drop`, granted to `ops` and
+`admin`, scoped to the namespace argument and audited with the outcome on `fleet_service`;
+listing SHALL be authorized as the other fleet reads. `runner_dropped`, `runner_readmitted`
+and `runner_drop_refused` SHALL be emitted on `:flezha_runner` with the namespace and stable
+id, the refusal also with the pid and the refusing node.
+
+#### Scenario: A connected runner is dropped
+
+- **WHEN** `drop_runner/3` is called for a runner connected to any controller
+- **THEN** it answers `{:ok, mark}` with the stable id, incarnation, pid and node
+- **AND** the session is closed as a retiring runner's and `runner_dropped` is emitted
+
+#### Scenario: The same process retries
+
+- **WHEN** the dropped process reconnects to any controller
+- **THEN** the connect is refused with `runner.dropped` and `runner_drop_refused` is emitted
+
+#### Scenario: A different process of the runner connects
+
+- **WHEN** a connect presents the dropped stable identity with another incarnation
+- **THEN** it is admitted and the mark is lifted on every controller
+
+#### Scenario: A mark outlives a restart and reaches a later controller
+
+- **WHEN** the store reloads, or a controller joins after the drop
+- **THEN** the same process is still refused there
+
+#### Scenario: A runner that cannot be recognised
+
+- **WHEN** the runner presented no stable identity or no incarnation
+- **THEN** `drop_runner/3` answers `runner.untrackable` and the runner stays connected
+
+#### Scenario: A viewer tries to drop
+
+- **WHEN** a caller whose role does not grant `runner.drop` calls `drop_runner/3`
+- **THEN** it is refused as denied and the refusal is audited
+
+#### Scenario: A process is readmitted
+
+- **WHEN** `readmit_runner/3` is called for a marked stable id
+- **THEN** the mark is gone from `dropped_runners/2` and the same process is admitted on its
+  next retry
+

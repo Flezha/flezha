@@ -694,3 +694,25 @@ without an answer SHALL print `accepted`.
 - **WHEN** `--arg amount=lots` is given for a number property
 - **THEN** the command exits with the class's code and prints `api.input_invalid` naming `amount`
 
+### Requirement: `flz runner` SHALL drop, list and readmit runner processes
+
+`flz runner drop <runner_id>`, `flz runner dropped` and `flz runner readmit <stable_id>` SHALL
+call `Fleet.drop_runner`, `Fleet.dropped_runners` and `Fleet.readmit_runner` for the namespace
+`--namespace` names, `default` when none is written, carrying the caller's token like every
+other verb. `flz runner help` SHALL list the three verbs.
+
+#### Scenario: A runner is dropped from the CLI
+
+- **WHEN** `flz runner drop <runner_id> -n <namespace>` is run with an ops token
+- **THEN** it sends `Fleet.drop_runner` with the namespace and the runner id and prints the mark
+
+#### Scenario: The standing drops are listed
+
+- **WHEN** `flz runner dropped -n <namespace>` is run
+- **THEN** it prints one row per mark with its stable id, pid, node, time and principal
+
+#### Scenario: A drop is lifted from the CLI
+
+- **WHEN** `flz runner readmit <stable_id> -n <namespace>` is run with an ops token
+- **THEN** it sends `Fleet.readmit_runner` with the namespace and the stable id
+
