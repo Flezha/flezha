@@ -8,7 +8,7 @@ only the pages a task needs: each link is that page's full Markdown, next to thi
 ## Start here
 
 - [What is Flezha](what_is_flezha.md)
-- [Running and testing](running_and_testing.md)
+- [Running relays](running_and_testing.md)
 - [CLI](cli.md)
 - [Errors](errors.md)
 
@@ -25,7 +25,7 @@ only the pages a task needs: each link is that page's full Markdown, next to thi
 - [Namespaces](namespaces.md): A namespace is a separate room inside one Flezha deployment.
 - [Authorization](authorization.md): Authorization decides who may do what.
 - [State](state.md): A tasklet can remember things between messages: a running total, a window of recent prices, the id of a reservation it may have to release.
-- [Running and testing](running_and_testing.md): A runner that registered a factory runs nothing yet.
+- [Running relays](running_and_testing.md): A runner that registered a factory runs nothing yet.
 - [Streams](streams.md): A stream is a relay that runs in flow, the default run: you start it once, and it handles each message the moment it arrives, for as long as it runs.
 - [Workflows](workflows.md): A workflow is a piece of work made of steps that run in a fixed order: reserve the money, place the order, confirm the fill.
 - [Sessions](sessions.md): A session is a relay instance that lives for as long as a conversation does: it has a beginning, it takes one message after another, and it remembers what was said.
