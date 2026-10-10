@@ -65,7 +65,7 @@ defmodule Flezha.Config.Environment do
   The resources one controller instance owns exclusively, derived from one run
   token so two suites on one checkout cannot meet: a state root, a socket
   directory, a data-plane port, the testnet port, the node's base name, and the
-  hub registry root and dead-letter directory under the state root. `peer` is the index the harness gave a second BEAM on this
+  hub registry root, dead-letter directory and plugin root under the state root. `peer` is the index the harness gave a second BEAM on this
   host, and shifts every one of them.
   """
   @spec per_run(binary() | integer(), pos_integer() | nil) :: %{Keys.name() => term()}
@@ -84,7 +84,8 @@ defmodule Flezha.Config.Environment do
       # joins on an underscore rather than the hyphen a directory takes.
       node_base_name: "flezha_test_" <> scoped(token, peer, "_"),
       process_hub_registry_root: Path.join(state_root, "process_hub"),
-      dlq_dir: Path.join(state_root, "dlq")
+      dlq_dir: Path.join(state_root, "dlq"),
+      plugin_root: Path.join(state_root, "plugins")
     }
   end
 

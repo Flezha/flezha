@@ -245,6 +245,10 @@ defmodule Flezha.State.Watchdog do
     else
       state
     end
+  catch
+    # The quota store restarting is no reason to take this node-wide sensor
+    # down: the pass keeps its last verdict and the next one reads it again.
+    :exit, _reason -> state
   end
 
   defp namespace_disk_limit(namespace) do

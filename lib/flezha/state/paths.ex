@@ -351,9 +351,12 @@ defmodule Flezha.State.Paths do
   dirs.
   """
   @spec input_log_path(binary()) :: binary()
-  def input_log_path(relay_class) when is_binary(relay_class) do
-    Path.join(class_dir(relay_class), "input.log")
-  end
+  def input_log_path(relay_class) when is_binary(relay_class),
+    do: input_log_in(class_dir(relay_class))
+
+  @doc "`input_log_path/1` inside a class directory the caller already found."
+  @spec input_log_in(binary()) :: binary()
+  def input_log_in(class_dir), do: Path.join(class_dir, "input.log")
 
   @doc """
   Path of an instance's effect log beside its input log: the results its

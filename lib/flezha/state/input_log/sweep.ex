@@ -39,7 +39,9 @@ defmodule Flezha.State.InputLog.Sweep do
   @doc "Every state key with an input log on disk (for the retention sweep)."
   @spec all_classes() :: [binary()]
   def all_classes() do
-    Enum.filter(Paths.relay_classes(), &File.regular?(Paths.input_log_path(&1)))
+    for {relay_class, dir} <- Paths.class_dirs(),
+        File.regular?(Paths.input_log_in(dir)),
+        do: relay_class
   end
 
   defp do_sweep(relay_class, pid) do

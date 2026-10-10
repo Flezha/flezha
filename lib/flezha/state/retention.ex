@@ -94,9 +94,9 @@ defmodule Flezha.State.Retention do
   defp sweep_completed() do
     now = System.system_time(:second)
 
-    Enum.each(Paths.relay_classes(), fn relay_class ->
+    Enum.each(Paths.class_dirs(), fn {relay_class, dir} ->
       with {:ok, %{finished_at: finished_at}} when is_integer(finished_at) <-
-             Completion.read(relay_class),
+             Completion.read_in(dir),
            window = PersistenceResolver.completed_retention_hours(relay_class),
            true <- finished_at + window * 3600 < now do
         Paths.delete_class_dir(relay_class)

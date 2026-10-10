@@ -220,5 +220,13 @@ defmodule Flezha.State.PathsTest do
 
       assert Paths.cells_of("empty-op") == []
     end
+
+    test "the input-log sweep finds its classes in the same walk", %{base: base} do
+      {classes, calls} = TestHelpers.file_calls(&Flezha.State.InputLog.Sweep.all_classes/0)
+
+      assert classes == ["fills-op"]
+      assert Enum.count(calls, &match?({:list_dir, [dir]} when dir == base, &1)) == 1
+      refute Enum.any?(calls, &match?({:get_cwd, _}, &1))
+    end
   end
 end

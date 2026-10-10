@@ -66,8 +66,12 @@ defmodule Flezha.State.Completion do
   end
 
   @spec read(binary()) :: {:ok, t()} | :error
-  def read(relay_class) when is_binary(relay_class) do
-    case File.read(path(relay_class)) do
+  def read(relay_class) when is_binary(relay_class), do: read_in(Paths.class_dir(relay_class))
+
+  @doc "`read/1` for a class whose directory the caller already found."
+  @spec read_in(binary()) :: {:ok, t()} | :error
+  def read_in(class_dir) do
+    case File.read(record_in(class_dir)) do
       {:ok, bin} ->
         try do
           {:ok, :erlang.binary_to_term(bin, [:safe])}

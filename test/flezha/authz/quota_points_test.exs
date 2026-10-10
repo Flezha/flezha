@@ -7,7 +7,10 @@ defmodule Flezha.AuthZ.QuotaPointsTest do
   # async: false: writes Application env; a shared on-disk root; the live controller and its fleet.
   use FlezhaTest.Case, fixtures: [:env], async: false
 
+  use Mimic
+
   import ExUnit.CaptureLog
+  import FlezhaTest.Helper.MimicGlobal
 
   alias Flezha.AuthZ
   alias Flezha.AuthZ.{NamespaceStore, QuotaCounters, Quotas, TokenStore}
@@ -16,6 +19,8 @@ defmodule Flezha.AuthZ.QuotaPointsTest do
   alias Flezha.State.PersistenceResolver
   alias Flezha.State.Watchdog
   alias FlezhaTest.Helper.AuthTestHelper
+
+  setup :set_mimic_global_until_exit
 
   setup do
     %{tmp: tmp} =
@@ -177,6 +182,17 @@ defmodule Flezha.AuthZ.QuotaPointsTest do
       after
         :telemetry.detach(handler_id)
       end
+    end
+
+    test "a quota store that exits mid-sweep leaves the Watchdog running", %{
+      state_root: state_root
+    } do
+      File.mkdir_p!(Path.join([state_root, "team-blip", "op", "task"]))
+      watchdog = Process.whereis(Watchdog)
+      stub(Quotas, :refresh_disk_bytes, fn _namespace -> exit(:shutdown) end)
+
+      :ok = Watchdog.sweep_now()
+      assert Process.whereis(Watchdog) == watchdog
     end
   end
 
