@@ -314,19 +314,25 @@ defmodule Flezha.Service.Cli.Relay do
       else: stamps
   end
 
+  defp notice_fields(:dead_lettered, error, _metadata),
+    do: "error=#{error.code} entry=#{error.details["entry"]}"
+
+  defp notice_fields(_timed_out_or_refused, error, metadata),
+    do:
+      "call=#{metadata["flz.call_id"]} error=#{error.code} ms=#{metadata["flz.call_duration_ms"]}"
+
   defp with_call(body, kind, metadata) when kind in @call_kinds,
     do: Map.put(body, :call, metadata["flz.call_id"])
 
   defp with_call(body, _kind, _metadata), do: body
 
   defp print_notice(kind, error, metadata, :text) do
-    fields =
-      if kind == :dead_lettered,
-        do: "error=#{error.code} entry=#{error.details["entry"]}",
-        else:
-          "call=#{metadata["flz.call_id"]} error=#{error.code} ms=#{metadata["flz.call_duration_ms"]}"
-
-    IO.puts(Enum.join([metadata["channel"] || "-", error.message, fields], "\t"))
+    IO.puts(
+      Enum.join(
+        [metadata["channel"] || "-", error.message, notice_fields(kind, error, metadata)],
+        "\t"
+      )
+    )
   end
 
   defp print_notice(kind, error, metadata, :json) do
