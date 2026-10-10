@@ -568,7 +568,7 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
       {:ok, _} = Replica.start_link([])
       {:ok, _} = DropMarks.start_link([])
 
-      assert DropMarks.match?(ns, id, "i1")
+      assert %{incarnation: "i1"} = DropMarks.standing(ns, id)
 
       assert {_sdk, {:error, {:runner_dropped, ^ns, ^id}}} =
                connect(ns, %{"stable_id" => id, "incarnation" => "i1"})

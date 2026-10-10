@@ -107,10 +107,6 @@ defmodule Flezha.Runner.DropMarks do
     end
   end
 
-  @doc "Whether `namespace`'s mark on `stable_id` refuses the process `incarnation` names."
-  @spec match?(String.t(), String.t(), String.t()) :: boolean()
-  def match?(namespace, stable_id, incarnation),
-    do: Kernel.match?(%{incarnation: ^incarnation}, standing(namespace, stable_id))
 
   ## ----- store declaration -----
 
