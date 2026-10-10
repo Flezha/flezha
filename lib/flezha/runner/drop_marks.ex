@@ -60,15 +60,7 @@ defmodule Flezha.Runner.DropMarks do
   @doc "Lift `namespace`'s mark on `stable_id` on every controller, answering it."
   @spec clear(String.t(), String.t()) ::
           {:ok, mark()} | {:error, {:runner_not_found, String.t(), String.t()}}
-  def clear(namespace, stable_id) do
-    key = {namespace, stable_id}
-
-    with {:ok, mark} <-
-           __MODULE__ |> GenServer.call({:clear, key}) |> Replica.published(__MODULE__, key) do
-      :telemetry.execute([:flezha, :runner, :readmitted], %{count: 1}, signalled(mark))
-      {:ok, mark}
-    end
-  end
+  def clear(namespace, stable_id), do: lift(namespace, stable_id, :any)
 
   @doc """
   Lift `namespace`'s mark on `stable_id` only while it still refuses
@@ -79,18 +71,22 @@ defmodule Flezha.Runner.DropMarks do
   """
   @spec lift_superseded(String.t(), String.t(), String.t()) :: :ok
   def lift_superseded(namespace, stable_id, incarnation) do
+    _lifted_or_kept = lift(namespace, stable_id, incarnation)
+    :ok
+  end
+
+  # Deletes the mark, when it names `incarnation` (or any, for `:any`), on every
+  # controller, compared and deleted in one step of the store.
+  defp lift(namespace, stable_id, incarnation) do
     key = {namespace, stable_id}
 
-    case GenServer.call(__MODULE__, {:clear_if, key, incarnation}) do
-      {:ok, mark} ->
-        :ok = Replica.published(:ok, __MODULE__, key)
-        :telemetry.execute([:flezha, :runner, :readmitted], %{count: 1}, signalled(mark))
-
-      :kept ->
-        :ok
+    with {:ok, mark} <-
+           __MODULE__
+           |> GenServer.call({:clear, key, incarnation})
+           |> Replica.published(__MODULE__, key) do
+      :telemetry.execute([:flezha, :runner, :readmitted], %{count: 1}, signalled(mark))
+      {:ok, mark}
     end
-
-    :ok
   end
 
   @doc "`namespace`'s standing marks, oldest first."
@@ -147,29 +143,15 @@ defmodule Flezha.Runner.DropMarks do
     {:reply, :ok, state}
   end
 
-  def handle_call({:clear, {namespace, stable_id} = key}, _from, state) do
+  def handle_call({:clear, {namespace, stable_id} = key, incarnation}, _from, state) do
     reply =
       case DetsStore.fetch(@table, key) do
-        {:ok, mark} ->
+        {:ok, %{incarnation: held} = mark} when incarnation in [:any, held] ->
           :ok = Replica.delete(__MODULE__, key)
           {:ok, mark}
 
-        :error ->
+        _gone_or_newer ->
           {:error, {:runner_not_found, namespace, stable_id}}
-      end
-
-    {:reply, reply, state}
-  end
-
-  def handle_call({:clear_if, key, incarnation}, _from, state) do
-    reply =
-      case DetsStore.fetch(@table, key) do
-        {:ok, %{incarnation: ^incarnation} = mark} ->
-          :ok = Replica.delete(__MODULE__, key)
-          {:ok, mark}
-
-        _newer_or_gone ->
-          :kept
       end
 
     {:reply, reply, state}
