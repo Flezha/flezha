@@ -3582,7 +3582,7 @@
     "too_short", "topic_already_exists", "trusted_keys_empty", "unavailable", "unbound",
     "undisabled", "unexpected_start_result", "unknown_discovery_handler", "unknown_entry_type",
     "unknown_file", "unknown_hub", "unknown_key", "unknown_stream_type", "unknown_topic_or_partition",
-    "unparseable", "unreachable", "unsafe_artifact_name", "unsupported_key_format", "unsupported_pem",
+    "unparseable", "unreachable", "unrebound", "unsafe_artifact_name", "unsupported_key_format", "unsupported_pem",
     "unsupported_pem_entry", "unsupported_spki", "wal_writer_unavailable", "worker_start_failed"
   ]
 }
