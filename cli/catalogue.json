@@ -327,6 +327,42 @@
       ]
     },
     {
+      "name": "Fleet.drop_runner",
+      "doc": "Drop the runner `runner_id` serving `namespace`, wherever in the cluster it is connected.",
+      "action": "runner.drop",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "namespace",
+          "type": "string",
+          "required": true,
+          "doc": "The namespace."
+        },
+        {
+          "name": "runner_id",
+          "type": "string",
+          "required": true,
+          "doc": "The runner's id, as `runners/2` lists it."
+        }
+      ]
+    },
+    {
+      "name": "Fleet.dropped_runners",
+      "doc": "The drop marks standing in `namespace`, oldest first.",
+      "action": "relay.list",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "namespace",
+          "type": "string",
+          "required": true,
+          "doc": "The namespace."
+        }
+      ]
+    },
+    {
       "name": "Fleet.factories",
       "doc": "The factories declared in `namespace`.",
       "action": "relay.list",
@@ -386,6 +422,27 @@
       "remote": true,
       "stream": false,
       "args": []
+    },
+    {
+      "name": "Fleet.readmit_runner",
+      "doc": "Lift the drop mark on the runner `stable_id` in `namespace` on every controller, so the dropped process is admitted on its next retry.",
+      "action": "runner.drop",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "namespace",
+          "type": "string",
+          "required": true,
+          "doc": "The namespace."
+        },
+        {
+          "name": "stable_id",
+          "type": "string",
+          "required": true,
+          "doc": "The dropped runner's stable id."
+        }
+      ]
     },
     {
       "name": "Fleet.runner_caller_context",

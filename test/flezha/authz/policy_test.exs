@@ -21,6 +21,8 @@ defmodule Flezha.AuthZ.PolicyTest do
       assert Policy.grants?(:ops, :"relay.start")
       assert Policy.grants?(:ops, :"plugin.enable")
       assert Policy.grants?(:ops, :"observability.enable_source")
+      assert Policy.grants?(:ops, :"runner.drop")
+      refute Policy.grants?(:viewer, :"runner.drop")
       refute Policy.grants?(:ops, :"plugin.install")
       refute Policy.grants?(:ops, :"authz.token_issue")
     end
@@ -68,7 +70,8 @@ defmodule Flezha.AuthZ.PolicyTest do
             :"relay.scale",
             :"plugin.install",
             :"controller.stop",
-            :"authz.token_issue"
+            :"authz.token_issue",
+            :"runner.drop"
           ] do
         refute Policy.grants?(:app, a)
       end

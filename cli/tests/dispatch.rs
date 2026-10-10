@@ -30,7 +30,10 @@ const COMMANDS: &[(&str, &[&str])] = &[
         "namespace",
         &["list", "create", "delete", "show", "set-quota", "help"],
     ),
-    ("runner", &["list", "check", "help"]),
+    (
+        "runner",
+        &["list", "check", "drop", "dropped", "readmit", "help"],
+    ),
     (
         "plugin",
         &[

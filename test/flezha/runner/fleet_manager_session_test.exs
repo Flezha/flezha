@@ -21,16 +21,22 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
 
   import ExUnit.CaptureLog
 
+  alias Flezha.AuthZ.Replica
   alias Flezha.AuthZ.RunnerProof
+  alias Flezha.Observability.RingBufferSink
+  alias Flezha.Observability.TestSinks
   alias Flezha.Identificator
   alias Flezha.Relay.Builder
   alias Flezha.Relay.Overwatch
+  alias Flezha.Runner.DropMarks
   alias Flezha.Runner.FleetManager
   alias Flezha.Runner.FleetManager.Marks
+  alias Flezha.Service.Fleet
   alias Flezha.Service.HubManager
   alias Flezha.Service.RelayManager
   alias Flezha.State.TestHelpers
   alias Flezha.Transport.Server
+  alias FlezhaTest.Helper.AuthTestHelper
   alias FlezhaTest.Helper.ControlFrameTestHelper
   alias FlezhaTest.Helper.HubRegistryTestHelper
   alias FlezhaTest.Helper.MessageTestHelper
@@ -39,6 +45,7 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
   @namespace "reconnect-binding-test"
   @factory "do_nothing"
   @stale_runner "runner_from_a_previous_boot"
+  @drop_context %{source: :cli}
 
   setup %{tmp: tmp} do
     on_exit(fn -> FleetManager.stop_namespace(@namespace) end)
@@ -441,6 +448,226 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
       second = active_stand_in(ns, %{"stable_id" => id})
 
       assert_receive {:"$gen_cast", {:session_replaced, ^first, ^second, :restarted}}, 5_000
+    end
+  end
+
+  describe "a dropped runner process" do
+    setup do
+      AuthTestHelper.setup_auth_stores(
+        prefix: "flz_runner_drop",
+        stores: [Replica, DropMarks],
+        enabled: false
+      )
+
+      namespace = "drop-#{System.unique_integer([:positive])}"
+      on_exit(fn -> FleetManager.stop_namespace(namespace) end)
+
+      MessageTestHelper.forward_telemetry([:flezha, :transport, :connect_rejected], :rejected)
+
+      for event <- [:dropped, :readmitted, :drop_refused],
+          do: MessageTestHelper.forward_telemetry([:flezha, :runner, event], event)
+
+      %{ns: namespace, identity: "dropped-#{System.unique_integer([:positive])}"}
+    end
+
+    test "is closed as a retiring runner, answered as a mark, and refused when it retries",
+         %{ns: ns, identity: id} do
+      process = %{"stable_id" => id, "incarnation" => "i1"}
+      {sdk, session} = stand_in_runner(ns, &accept/1, process)
+
+      assert NodeTestHelper.wait_until(
+               fn -> session in FleetManager.active_runners(ns) end,
+               5_000
+             )
+
+      restore = NodeTestHelper.override_log_level(:info)
+
+      log =
+        capture_log(fn ->
+          assert {:ok, mark} = Fleet.drop_runner(ns, session, @drop_context)
+
+          assert %{namespace: ^ns, stable_id: ^id, incarnation: "i1", pid: nil, dropped_by: nil} =
+                   mark
+
+          assert mark.node == node()
+          assert is_integer(mark.dropped_at)
+
+          sdk_stream = Flezha.Transport.Stream.stream_id(sdk)
+          assert_receive {:flz_closed, ^sdk_stream, _reason}, 5_000
+
+          assert NodeTestHelper.wait_until(
+                   fn -> session not in FleetManager.active_runners(ns) end,
+                   5_000
+                 )
+        end)
+
+      restore.()
+      assert log =~ "Control socket closed for retiring runner #{session}"
+      assert_received {:dropped, %{count: 1}, %{namespace: ^ns, stable_id: ^id}}
+
+      assert {_sdk, {:error, {:runner_dropped, ^ns, ^id}}} = connect(ns, process)
+
+      assert_received {:drop_refused, %{count: 1},
+                       %{namespace: ^ns, stable_id: ^id, pid: nil, node: refused_on}}
+
+      assert refused_on == node()
+      assert_received {:rejected, %{count: 1}, %{reason: {:runner_dropped, ^ns, ^id}}}
+
+      assert {:ok, [%{stable_id: ^id, incarnation: "i1"}]} =
+               Fleet.dropped_runners(ns, @drop_context)
+    end
+
+    # fails when: the drop tears the session down but leaves the runner's socket
+    # open, so the process never retries and is never refused.
+    test "over a real runner's socket, is refused on its retry and admitted once readmitted",
+         %{ns: ns, tmp: tmp} do
+      env = [{"FLEZHA_RUNNER_ID_PATH", Path.join(tmp, "dropped-runner-id")}]
+      session = NodeTestHelper.start_runner(ns, env: env)
+
+      assert {:ok, %{pid: pid, stable_id: id} = mark} =
+               Fleet.drop_runner(ns, session, @drop_context)
+
+      assert is_integer(pid)
+      assert_receive {:drop_refused, %{count: 1}, %{stable_id: ^id, pid: ^pid}}, 10_000
+      refute session in FleetManager.active_runners(ns)
+
+      {:ok, ^mark} = Fleet.readmit_runner(ns, id, @drop_context)
+
+      assert NodeTestHelper.wait_until(fn -> FleetManager.active_runners(ns) != [] end, 10_000),
+             "the readmitted process never reconnected"
+    end
+
+    test "still in its handshake, is ended by a drop placed on another controller",
+         %{ns: ns, identity: id} do
+      {sdk, session} =
+        stand_in_runner(ns, fn _ -> :silent end, %{"stable_id" => id, "incarnation" => "i1"})
+
+      assert Map.has_key?(:sys.get_state(FleetManager).pending_handshakes, session)
+
+      assert FleetManager.drop_matching(id, "i2") == 0
+      assert FleetManager.drop_matching(id, "i1") == 1
+
+      sdk_stream = Flezha.Transport.Stream.stream_id(sdk)
+      assert_receive {:flz_closed, ^sdk_stream, _reason}, 5_000
+      refute Map.has_key?(:sys.get_state(FleetManager).pending_handshakes, session)
+    end
+
+    test "is refused with a hint naming the readmit", %{ns: ns, identity: id} do
+      error = Flezha.Error.from_reason({:runner_dropped, ns, id}, :"wire.connect")
+
+      assert %Flezha.Error{code: "runner.dropped", class: :denied} = error
+      assert error.hint == "flz runner readmit #{id} --namespace #{ns}"
+    end
+
+    test "is refused again after the store reloads", %{ns: ns, identity: id} do
+      session = active_stand_in(ns, %{"stable_id" => id, "incarnation" => "i1"})
+      {:ok, _mark} = Fleet.drop_runner(ns, session, @drop_context)
+
+      AuthTestHelper.stop_if_running([DropMarks, Replica])
+      {:ok, _} = Replica.start_link([])
+      {:ok, _} = DropMarks.start_link([])
+
+      assert DropMarks.match?(ns, id, "i1")
+
+      assert {_sdk, {:error, {:runner_dropped, ^ns, ^id}}} =
+               connect(ns, %{"stable_id" => id, "incarnation" => "i1"})
+    end
+
+    test "is replaced by a new process of the same runner, which lifts the mark",
+         %{ns: ns, identity: id} do
+      first = active_stand_in(ns, %{"stable_id" => id, "incarnation" => "i1"})
+      {:ok, _mark} = Fleet.drop_runner(ns, first, @drop_context)
+
+      second = active_stand_in(ns, %{"stable_id" => id, "incarnation" => "i2"})
+
+      assert NodeTestHelper.wait_until(fn -> DropMarks.list(ns) == [] end, 5_000)
+      assert_receive {:readmitted, %{count: 1}, %{namespace: ^ns, stable_id: ^id}}, 5_000
+      assert FleetManager.active_runners(ns) == [second]
+    end
+
+    test "is admitted again once readmitted", %{ns: ns, identity: id} do
+      process = %{"stable_id" => id, "incarnation" => "i1"}
+      first = active_stand_in(ns, process)
+      {:ok, _mark} = Fleet.drop_runner(ns, first, @drop_context)
+
+      assert {:ok, %{stable_id: ^id, incarnation: "i1"}} =
+               Fleet.readmit_runner(ns, id, @drop_context)
+
+      assert_received {:readmitted, %{count: 1}, %{namespace: ^ns, stable_id: ^id}}
+      assert {:ok, []} = Fleet.dropped_runners(ns, @drop_context)
+
+      again = active_stand_in(ns, process)
+      assert FleetManager.active_runners(ns) == [again]
+
+      assert {:error, %Flezha.Error{code: "runner.not_found"}} =
+               Fleet.readmit_runner(ns, id, @drop_context)
+    end
+
+    test "cannot be dropped when the runner cannot be recognised again", %{ns: ns, identity: id} do
+      for presented <- [%{"stable_id" => id}, %{"stable_id" => "", "incarnation" => "i1"}] do
+        session = active_stand_in(ns, presented)
+
+        assert {:error, %Flezha.Error{code: "runner.untrackable"}} =
+                 Fleet.drop_runner(ns, session, @drop_context)
+
+        assert session in FleetManager.active_runners(ns)
+      end
+
+      assert DropMarks.list(ns) == []
+    end
+
+    test "cannot be dropped when no node holds the runner", %{ns: ns} do
+      assert {:error, %Flezha.Error{code: "runner.not_found", class: :not_found}} =
+               Fleet.drop_runner(ns, "no_such_runner", @drop_context)
+    end
+  end
+
+  describe "dropping a runner under enforced authorization" do
+    setup do
+      AuthTestHelper.setup_auth_stores(
+        prefix: "flz_runner_drop_authz",
+        claim: true,
+        register_source: true
+      )
+
+      %{ns: "drop-authz-#{System.unique_integer([:positive])}"}
+    end
+
+    test "is refused to a viewer, and the refusal is audited", %{ns: ns} do
+      viewer = %{source: :cli, principal: "viewer-caller", namespace: ns, role: :viewer}
+      boundary = System.monotonic_time(:microsecond)
+
+      assert {:error, %Flezha.Error{class: :denied}} = Fleet.drop_runner(ns, "r", viewer)
+      assert {:error, %Flezha.Error{class: :denied}} = Fleet.readmit_runner(ns, "s", viewer)
+      assert {:ok, []} = Fleet.dropped_runners(ns, viewer)
+
+      TestSinks.settle(RingBufferSink)
+
+      assert [_drop, _readmit] =
+               for(
+                 %{name: :authorization_denied} = denial <-
+                   RingBufferSink.query(:platform_authz, boundary),
+                 denial.metadata.action == :"runner.drop",
+                 do: denial
+               )
+    end
+
+    test "is audited with its outcome for an ops caller", %{ns: ns} do
+      ops = %{source: :cli, principal: "ops-caller", namespace: ns, role: :ops}
+      boundary = System.monotonic_time(:microsecond)
+
+      assert {:error, %Flezha.Error{code: "runner.not_found"}} =
+               Fleet.drop_runner(ns, "no_such_runner", ops)
+
+      TestSinks.settle(RingBufferSink)
+
+      assert [record] = RingBufferSink.query(:fleet_service, boundary)
+      assert record.name == :drop
+      assert record.metadata.action == :"runner.drop"
+      assert record.metadata.principal == "ops-caller"
+      assert record.metadata.runner == "no_such_runner"
+      assert record.metadata.outcome == :error
+      assert record.metadata.error_code == "runner.not_found"
     end
   end
 

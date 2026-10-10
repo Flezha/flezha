@@ -282,11 +282,50 @@ defmodule Flezha.Runner.FleetManager do
   def runner_pids(namespace),
     do: Enum.map(active_runners(namespace), &{&1, ControlChannel.peer_pid(&1)})
 
+  @doc """
+  The active session `runner_id` of `namespace`, wherever in the cluster it is
+  held: its stable identity and incarnation (`nil` where the runner presented
+  none), the process id of the runner on its socket where the transport can
+  say, and the node. `nil` when no node holds it.
+  """
+  @spec find_session(String.t(), binary()) :: map() | nil
+  def find_session(namespace, runner_id),
+    do: namespace |> across_runner_nodes(:session_rows, [runner_id]) |> List.first()
+
+  @doc false
+  # This node's half of `find_session/2`, reached over `:erpc`. The pid is read
+  # from the channel outside this manager, which the channel may be calling.
+  def session_rows(namespace, runner_id) do
+    case GenServer.call(
+           __MODULE__,
+           {:session_identity, namespace, runner_id},
+           manager_call_timeout()
+         ) do
+      nil -> []
+      identity -> [Map.merge(identity, %{pid: ControlChannel.peer_pid(runner_id), node: node()})]
+    end
+  end
+
+  @doc """
+  Close the session, live or in its handshake, of the runner process that
+  `stable_id` and `incarnation` name, as one this controller asked to leave:
+  its relays are re-placed without waiting out the grace. The runner is not
+  told to stop, so it reconnects, and a standing drop mark refuses it. Answers
+  the number of sessions closed, `0` when there is no fleet to reach.
+  """
+  @spec drop_matching(binary(), binary()) :: non_neg_integer()
+  def drop_matching(stable_id, incarnation) when is_binary(stable_id) do
+    SafeCall.bounded(__MODULE__, {:drop_matching, stable_id, incarnation}, manager_call_timeout(),
+      on_error: 0,
+      log: false
+    )
+  end
+
   # Every node holding active runners in `namespace` answers `fun`; an
   # unreachable peer contributes nothing rather than failing the read.
-  defp across_runner_nodes(namespace, fun) do
+  defp across_runner_nodes(namespace, fun, args \\ []) do
     [node() | Directory.runner_nodes(namespace)]
-    |> Parallel.map_nodes(&:erpc.call(&1, __MODULE__, fun, [namespace]),
+    |> Parallel.map_nodes(&:erpc.call(&1, __MODULE__, fun, [namespace | args]),
       timeout: Durations.get(:runner_lookup_ms)
     )
     |> Enum.flat_map(fn
@@ -425,6 +464,57 @@ defmodule Flezha.Runner.FleetManager do
   end
 
   @impl true
+  def handle_call({:drop_matching, stable_id, incarnation}, _from, state) do
+    {state, pending} =
+      Session.end_handshakes(
+        state,
+        &(&1.stable_id == stable_id and &1.incarnation == incarnation),
+        :dropped
+      )
+
+    case Map.get(state.stable_sessions, stable_id) do
+      {session, _credential, ^incarnation} ->
+        if Roster.runner_active?(state, session) do
+          Logger.info("Dropping runner #{session} (stable identity #{stable_id})")
+          # Marked before the close, as `disconnect_runner` does, so the close
+          # is torn down as one this controller asked for.
+          Marks.mark_runner_retiring(session)
+          ControlChannel.close(session)
+          {:reply, pending + 1, state}
+        else
+          {:reply, pending, state}
+        end
+
+      _no_session ->
+        {:reply, pending, state}
+    end
+  end
+
+  @impl true
+  def handle_call({:session_identity, namespace, runner_id}, _from, state) do
+    reply =
+      case get_in(state.runner_namespaces, [namespace, runner_id]) do
+        {:active, _since} ->
+          Enum.find_value(
+            state.stable_sessions,
+            %{stable_id: nil, incarnation: nil},
+            fn
+              {stable_id, {^runner_id, _credential, incarnation}} ->
+                %{stable_id: stable_id, incarnation: incarnation}
+
+              _other ->
+                nil
+            end
+          )
+
+        _absent_or_inactive ->
+          nil
+      end
+
+    {:reply, reply, state}
+  end
+
+  @impl true
   def handle_call({:active_runners, namespace}, _from, state) do
     {:reply, candidates(state, namespace, nil), state}
   end
@@ -533,6 +623,7 @@ defmodule Flezha.Runner.FleetManager do
     # rather than allowed to take the manager (and the transport server linked
     # to it) down.
     with :ok <- Session.check_identity_pin(state, connect),
+         :ok <- Session.check_not_dropped(connect, stream_ref),
          {:ok, namespace, session_token} <- Session.catch_runner_connect(stream_ref, connect) do
       state = Session.await_handshake(state, session_token, stream_ref, connect)
       {:reply, {:ok, {namespace, session_token}}, state}

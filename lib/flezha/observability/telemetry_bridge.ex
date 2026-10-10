@@ -170,6 +170,11 @@ defmodule Flezha.Observability.TelemetryBridge do
     # the event bus that carries the same two facts reaches local processes only.
     [:flezha, :runner, :connected] => {:flezha_runner, :runner_connected, :event},
     [:flezha, :runner, :disconnected] => {:flezha_runner, :runner_disconnected, :event},
+    # A runner process an operator dropped, a drop lifted, and a dropped
+    # process refused again, at the rate the runner's reconnect backoff sets.
+    [:flezha, :runner, :dropped] => {:flezha_runner, :runner_dropped, :event},
+    [:flezha, :runner, :readmitted] => {:flezha_runner, :runner_readmitted, :event},
+    [:flezha, :runner, :drop_refused] => {:flezha_runner, :runner_drop_refused, :event},
     [:flezha, :runner, :factory_language_conflict] =>
       {:flezha_runner, :factory_language_conflict, :event},
     [:flezha, :runner, :factory_run_conflict] => {:flezha_runner, :factory_run_conflict, :event},

@@ -2,10 +2,14 @@ use flz_transport::errors::FlezhaError;
 use flz_transport::transport::config::{get_transport_type, TransportType};
 use flz_transport::utility::socket_dir::Role;
 use flz_transport::utility::socket_probe::diagnose;
+use serde_json::Value;
 
-use crate::args::{Reading, NAMESPACE};
+use crate::args::{Positional, Reading, NAMESPACE};
 use crate::dispatch::{self, Command, Missing, Verb};
 use crate::{help, rpc};
+
+const RUNNER_ID: &[Positional] = &[Positional::required("<runner_id>")];
+const STABLE_ID: &[Positional] = &[Positional::required("<stable_id>")];
 
 pub(crate) const TABLE: Command = Command {
     path: "flz runner",
@@ -13,6 +17,16 @@ pub(crate) const TABLE: Command = Command {
     verbs: &[
         Verb::new("list", handle_list).reading(&[NAMESPACE]),
         Verb::new("check", handle_check),
+        Verb::new("drop", handle_drop)
+            .taking(RUNNER_ID)
+            .reading(&[NAMESPACE]),
+        Verb::new("dropped", |read| {
+            rpc::scoped_read(read, "Fleet.dropped_runners", Some("dropped runners"))
+        })
+        .reading(&[NAMESPACE]),
+        Verb::new("readmit", handle_readmit)
+            .taking(STABLE_ID)
+            .reading(&[NAMESPACE]),
     ],
     help_verbs: dispatch::HELP_VERBS,
     missing: Missing::Refuse,
@@ -21,6 +35,35 @@ pub(crate) const TABLE: Command = Command {
 
 fn handle_list(read: &Reading) {
     rpc::scoped_read(read, "Fleet.runners", Some("runners"));
+}
+
+/// `flz runner drop <runner_id>`: close the runner's session and refuse its
+/// process on every controller until a different one connects; prints the
+/// drop mark.
+fn handle_drop(read: &Reading) {
+    rpc::door(
+        "Fleet.drop_runner",
+        &[
+            rpc::namespace(read),
+            Value::from(read.pos(RUNNER_ID[0].name)),
+        ],
+        &[],
+        read,
+    );
+}
+
+/// `flz runner readmit <stable_id>`: lift a drop mark, so the dropped process
+/// is admitted on its next retry.
+fn handle_readmit(read: &Reading) {
+    rpc::door(
+        "Fleet.readmit_runner",
+        &[
+            rpc::namespace(read),
+            Value::from(read.pos(STABLE_ID[0].name)),
+        ],
+        &[],
+        read,
+    );
 }
 
 /// Where this host's controller is, and why a runner cannot reach it — the

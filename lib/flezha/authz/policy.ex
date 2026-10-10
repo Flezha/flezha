@@ -80,7 +80,8 @@ defmodule Flezha.AuthZ.Policy do
     :"schedule.add",
     :"schedule.remove",
     :"schedule.assert",
-    :"schedule.retract"
+    :"schedule.retract",
+    :"runner.drop"
   ]
 
   # Admin adds everything that touches auth state, plus shutdown, the

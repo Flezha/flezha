@@ -35,6 +35,7 @@ defmodule Flezha.Runner.FleetManager.Session do
   alias Flezha.Convergence.Facts
   alias Flezha.Identificator
   alias Flezha.Process.Cspec
+  alias Flezha.Runner.DropMarks
   alias Flezha.Runner.FleetManager.Announce
   alias Flezha.Runner.FleetManager.Factories
   alias Flezha.Runner.FleetManager.Marks
@@ -208,6 +209,44 @@ defmodule Flezha.Runner.FleetManager.Session do
   end
 
   def check_identity_pin(_state, _connect), do: :ok
+
+  @doc """
+  Refuse a connect from a runner process an operator dropped.
+
+  A standing mark (`Flezha.Runner.DropMarks`) on the connect's stable identity
+  refuses the incarnation it names, on every controller, and the refusal is
+  announced as `[:flezha, :runner, :drop_refused]` telemetry. Another
+  incarnation is a different process: it is admitted, and the mark is lifted
+  on every controller.
+  """
+  @spec check_not_dropped(map(), term()) :: :ok | {:error, {:runner_dropped, binary(), binary()}}
+  def check_not_dropped(%{namespace: namespace, stable_id: stable_id} = connect, stream_ref)
+      when is_binary(stable_id) do
+    connecting = connect.incarnation
+
+    case DropMarks.standing(namespace, stable_id) do
+      nil ->
+        :ok
+
+      %{incarnation: ^connecting = incarnation} ->
+        :telemetry.execute([:flezha, :runner, :drop_refused], %{count: 1}, %{
+          namespace: namespace,
+          stable_id: stable_id,
+          incarnation: incarnation,
+          pid: Flezha.Transport.Stream.peer_pid(stream_ref),
+          node: node()
+        })
+
+        {:error, {:runner_dropped, namespace, stable_id}}
+
+      _another_process ->
+        # Off the connect: lifting the mark publishes it to every controller.
+        Task.start(fn -> DropMarks.clear(namespace, stable_id) end)
+        :ok
+    end
+  end
+
+  def check_not_dropped(_connect, _stream_ref), do: :ok
 
   defp held_elsewhere?(state, stable_id, credential) do
     pinned_live? =

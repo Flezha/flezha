@@ -196,6 +196,19 @@ defmodule Flezha.AuthZ.Verbs do
       target: [:schedule]
     ],
     runner_connect: [action: :"runner.connect", scope: {:argument, 1}],
+    runner_drop: [
+      action: :"runner.drop",
+      scope: {:argument, 1},
+      audit: {:after, :fleet_service},
+      target: [:_, :runner]
+    ],
+    runner_readmit: [
+      action: :"runner.drop",
+      scope: {:argument, 1},
+      audit: {:after, :fleet_service},
+      audit_name: :readmit,
+      target: [:_, :stable_id]
+    ],
     # Plugins: the installed packages are controller-wide, an enabled plugin
     # and its bindings live in its namespace. Binding and changing a plugin
     # are judged as enabling it, unbinding as disabling it.

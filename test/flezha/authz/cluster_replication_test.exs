@@ -2,13 +2,14 @@ defmodule Flezha.AuthZ.ClusterReplicationTest do
   @moduledoc """
   One authorization state per cluster: controllers each running the full
   authorization subtree against their own auth directory honour a credential,
-  a revoke, a binding, a namespace and a bootstrap claim made on another one,
-  including one that connects after the write.
+  a revoke, a binding, a namespace, a bootstrap claim and a runner drop made on
+  another one, including one that connects after the write.
   """
 
   use FlezhaTest.Case, fixtures: [:env], async: false
 
   alias Flezha.AuthZ.{Bootstrap, NamespaceStore, RoleStore, TokenStore}
+  alias Flezha.Runner.DropMarks
   alias FlezhaTest.Helper.NodeTestHelper
 
   @moduletag :multi_node
@@ -81,6 +82,36 @@ defmodule Flezha.AuthZ.ClusterReplicationTest do
              fn -> not File.exists?(Path.join(c_dir, "bootstrap.token")) end,
              5_000
            )
+  end
+
+  test "a runner drop placed on one controller is held by another, and a readmit lifts it everywhere",
+       %{a: a, b: b} do
+    mark = %{
+      namespace: "team-orders",
+      stable_id: "runner-1",
+      incarnation: "process-1",
+      pid: nil,
+      node: a,
+      dropped_at: 1,
+      dropped_by: "ops"
+    }
+
+    {:ok, ^mark} = on(a, DropMarks, :put, [mark])
+
+    assert on(b, DropMarks, :match?, ["team-orders", "runner-1", "process-1"])
+    refute on(b, DropMarks, :match?, ["team-orders", "runner-1", "process-2"])
+
+    {c, _c_dir} = start_controller(:authz_drop_c)
+
+    assert NodeTestHelper.wait_until(
+             fn -> on(c, DropMarks, :match?, ["team-orders", "runner-1", "process-1"]) end,
+             30_000
+           ),
+           "#{c} never adopted the drop placed before it joined"
+
+    {:ok, ^mark} = on(b, DropMarks, :clear, ["team-orders", "runner-1"])
+
+    for node <- [a, c], do: assert(on(node, DropMarks, :list, ["team-orders"]) == [])
   end
 
   # A peer running the whole authorization subtree, enforced, against an auth

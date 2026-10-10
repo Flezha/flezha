@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Added: an operator can drop a runner process
+
+`Fleet.drop_runner/3` (`flz runner drop <runner_id>`) closes a runner's session, wherever in the
+cluster it is connected, without telling the runner to stop: its relays are re-placed at once,
+and every controller refuses the same process with `runner.dropped` until a different process of
+the same runner connects. The drop mark names the runner's stable id and SDK incarnation, keeps
+its process id for display, survives a controller restart and reaches every controller, the way a
+revoked token does. `Fleet.dropped_runners/2` (`flz runner dropped`) lists the standing marks and
+`Fleet.readmit_runner/3` (`flz runner readmit <stable_id>`) lifts one. Dropping and readmitting
+need the new `runner.drop` action, granted to `ops` and `admin`, and are audited on
+`fleet_service`. A runner with no stable identity or incarnation is refused with
+`runner.untrackable`. `runner_dropped`, `runner_readmitted` and `runner_drop_refused` are
+emitted on the `:flezha_runner` source.
+
 ### Fixed: a Cell's WAL no longer freezes behind a newer snapshot
 
 A writer took its seq from the WAL file alone, and adopted a snapshot's seq only while it awaited

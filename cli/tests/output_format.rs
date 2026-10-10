@@ -93,6 +93,15 @@ const CASES: &[(&[&str], Want)] = &[
         &["relay", "list", "--output", "json"],
         Rpc(r#"Flezha.Service.Cli.call("Relay.list", "[\"default\"]", [output: "json"])"#),
     ),
+    // A drop names its runner and namespace; a readmit names the stable id.
+    (
+        &["runner", "drop", "r1", "-n", "ns"],
+        Rpc(r#"Flezha.Service.Cli.call("Fleet.drop_runner", "[\"ns\",\"r1\"]", [])"#),
+    ),
+    (
+        &["runner", "readmit", "s1", "-n", "ns"],
+        Rpc(r#"Flezha.Service.Cli.call("Fleet.readmit_runner", "[\"ns\",\"s1\"]", [])"#),
+    ),
     // `flz relay listen`: output by default, the window always carried.
     (
         &["relay", "listen", "op"],
@@ -938,6 +947,9 @@ const TOKEN_BEARERS: &[&[&str]] = &[
     &["role", "unbind", "p"],
     &["role", "list"],
     &["runner", "list"],
+    &["runner", "drop", "default_0123"],
+    &["runner", "dropped"],
+    &["runner", "readmit", "stable-0123"],
     &[
         "schedule",
         "add",

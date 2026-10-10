@@ -168,6 +168,16 @@ defmodule Flezha.Runner.ControlChannel do
   def peer_pid(runner_id) when is_binary(runner_id),
     do: call_channel(runner_id, :peer_pid, nil, false)
 
+  @doc """
+  Close `runner_id`'s control stream and end its session the way a socket
+  close ends it, without waiting. The runner sees the close and reconnects.
+  A caller that wants the close read as one it asked for marks the runner
+  retiring first.
+  """
+  @spec close(binary()) :: :ok
+  def close(runner_id) when is_binary(runner_id),
+    do: GenServer.cast(Identificator.control_channel(runner_id), :close)
+
   defp call_channel(runner_id, request, on_error, log) do
     case GenServer.whereis(Identificator.control_channel(runner_id)) do
       nil ->
@@ -230,6 +240,11 @@ defmodule Flezha.Runner.ControlChannel do
     end)
 
     {:noreply, %{state | rebinding?: true, rebinds: state.rebinds + 1}}
+  end
+
+  def handle_cast(:close, state) do
+    if state.stream_ref, do: TStream.close(state.stream_ref)
+    handle_connection_closed(%{state | stream_ref: nil}, "closed by the controller")
   end
 
   # Every control frame leaves through this process, on its stream. `:unbound`

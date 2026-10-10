@@ -4,13 +4,15 @@ defmodule Flezha.AuthZ.Supervisor do
 
   Children, in start order:
 
-    1. `Flezha.AuthZ.Replica` — the stamps that make the four stores below
-       one state per cluster; first, because every store write stamps.
+    1. `Flezha.AuthZ.Replica` — the stamps that make the stores below one
+       state per cluster; first, because every store write stamps.
     2. `Flezha.AuthZ.AuthState` — the durable bootstrap claim.
     3. `Flezha.AuthZ.RoleStore` — principal → {namespace, roles}.
     4. `Flezha.AuthZ.NamespaceStore` — namespace catalog + quotas.
     5. `Flezha.AuthZ.TokenStore` — scoped-token registry.
-    6. `Flezha.AuthZ.SourceRegistration` — one-shot worker that
+    6. `Flezha.Runner.DropMarks` — the runner processes refused until a
+       different one connects, replicated the way revoked tokens are.
+    7. `Flezha.AuthZ.SourceRegistration` — one-shot worker that
        registers the `:platform_authz` source on the observability
        bus so authz signals participate in fan-out.
 
@@ -55,6 +57,7 @@ defmodule Flezha.AuthZ.Supervisor do
       RoleStore,
       NamespaceStore,
       TokenStore,
+      Flezha.Runner.DropMarks,
       Flezha.AuthZ.QuotaCounters,
       Flezha.AuthZ.SourceRegistration,
       Flezha.AuthZ.Bootstrap.OnBoot

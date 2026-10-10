@@ -2,7 +2,8 @@ defmodule Flezha.Service.Fleet do
   @moduledoc """
   Published service-API surface for the runner fleet and the cluster's
   directory: which runners a namespace has, which factories, which nodes hold
-  its hub, and what is installed.
+  its hub, and what is installed. It also drops a runner process and lifts the
+  drop (`drop_runner/3`, `readmit_runner/3`).
 
   Every public function takes a `Flezha.Service.CallerContext` as its last
   argument, binds a row of `Flezha.AuthZ.Verbs`, and answers data. A fleet read
@@ -19,10 +20,12 @@ defmodule Flezha.Service.Fleet do
   use Flezha.AuthZ.Verb
 
   @namespace [type: :string, doc: "The namespace."]
+  @runner_id [type: :string, doc: "The runner's id, as `runners/2` lists it."]
 
   alias Flezha.Cluster.Directory
   alias Flezha.Plugin.Installer
   alias Flezha.Plugin.Providers
+  alias Flezha.Runner.DropMarks
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.CallerContext
 
@@ -50,6 +53,71 @@ defmodule Flezha.Service.Fleet do
     verb: :list_runners,
     args: [namespace: @namespace] do
     {:ok, FleetManager.active_runners(namespace)}
+  end
+
+  @doc """
+  Drop the runner `runner_id` serving `namespace`, wherever in the cluster it
+  is connected.
+
+  Places a drop mark on the runner's process and closes its session without
+  telling it to stop: its relays are re-placed at once, and every controller
+  refuses the same process (`runner.dropped`) until a different one of the
+  same runner connects or the mark is lifted with `readmit_runner/3`. Answers
+  the mark: the runner's stable id and incarnation, the process id where the
+  transport can say, the node it was on, and when and by whom it was dropped.
+  A runner that presents no stable identity or incarnation cannot be
+  recognised again and is refused with `runner.untrackable`.
+  """
+  @spec drop_runner(String.t(), String.t(), caller_context()) :: {:ok, map()} | {:error, term()}
+  verb drop_runner(namespace, runner_id, caller_context),
+    verb: :runner_drop,
+    call: call,
+    args: [namespace: @namespace, runner_id: @runner_id] do
+    case FleetManager.find_session(call.namespace, runner_id) do
+      nil ->
+        {:error, {:runner_not_found, call.namespace, runner_id}}
+
+      %{stable_id: stable_id, incarnation: incarnation} = session
+      when is_binary(stable_id) and is_binary(incarnation) ->
+        DropMarks.put(%{
+          namespace: call.namespace,
+          stable_id: stable_id,
+          incarnation: incarnation,
+          pid: session.pid,
+          node: session.node,
+          dropped_at: System.system_time(:second),
+          dropped_by: Map.get(caller_context, :principal)
+        })
+
+      _untrackable ->
+        {:error, {:runner_untrackable, runner_id}}
+    end
+  end
+
+  @doc """
+  Lift the drop mark on the runner `stable_id` in `namespace` on every
+  controller, so the dropped process is admitted on its next retry. Answers
+  the lifted mark.
+  """
+  @spec readmit_runner(String.t(), String.t(), caller_context()) ::
+          {:ok, map()} | {:error, term()}
+  verb readmit_runner(namespace, stable_id, caller_context),
+    verb: :runner_readmit,
+    call: call,
+    args: [
+      namespace: @namespace,
+      stable_id: [type: :string, doc: "The dropped runner's stable id."]
+    ] do
+    DropMarks.clear(call.namespace, stable_id)
+  end
+
+  @doc "The drop marks standing in `namespace`, oldest first."
+  @spec dropped_runners(String.t(), caller_context()) :: {:ok, [map()]} | {:error, term()}
+  verb dropped_runners(namespace, caller_context),
+    verb: :list_runners,
+    call: call,
+    args: [namespace: @namespace] do
+    {:ok, DropMarks.list(call.namespace)}
   end
 
   @doc "The runners of one factory in `namespace`."

@@ -1,7 +1,8 @@
 defmodule Flezha.Service.Cli.Listing do
   @moduledoc """
-  `flz namespace list`, `flz runner list`, `flz relay list`, `flz cluster
-  status` and `flz template list`: the text forms of the listings.
+  `flz namespace list`, `flz runner list`, `flz runner dropped`, `flz relay
+  list`, `flz cluster status` and `flz template list`: the text forms of the
+  listings.
   """
 
   alias Flezha.Service.Cli.Context
@@ -25,6 +26,21 @@ defmodule Flezha.Service.Cli.Listing do
   def runners(rows, [namespace | _], _opts) do
     IO.puts("Runners in namespace '#{namespace}':")
     Enum.each(rows, fn row -> IO.puts("  - #{row.id}#{pid_suffix(row.pid)}") end)
+  end
+
+  @doc "`flz runner dropped`: one row per drop mark standing in the namespace."
+  def dropped_runners(rows, [namespace | _], _opts) do
+    table(rows, %{
+      empty: "No dropped runners in namespace '#{namespace}'.",
+      header: "Dropped runners in namespace '#{namespace}':",
+      columns: [
+        {"STABLE ID", 38, & &1.stable_id},
+        {"PID", 9, &Context.label_or(&1.pid, "-")},
+        {"NODE", 22, &to_string(&1.node)},
+        {"DROPPED AT", 22, &(&1.dropped_at |> DateTime.from_unix!() |> DateTime.to_iso8601())},
+        {"BY", 0, &Context.label_or(&1.dropped_by, "-")}
+      ]
+    })
   end
 
   @doc "`flz relay list`: one row per relay, a partition group as one row."

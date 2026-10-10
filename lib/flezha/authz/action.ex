@@ -46,6 +46,8 @@ defmodule Flezha.AuthZ.Action do
     :"authz.role_list",
     # The one data-plane verb the runner role holds.
     :"runner.connect",
+    # Dropping a runner process from the fleet, and lifting the drop.
+    :"runner.drop",
     # Controller / state surface.
     :"controller.status",
     :"controller.stop",

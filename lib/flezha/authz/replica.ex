@@ -30,10 +30,11 @@ defmodule Flezha.AuthZ.Replica do
   alias Flezha.AuthZ.{AuthState, NamespaceStore, RoleStore, TokenStore}
   alias Flezha.Config.Durations
   alias Flezha.DetsStore
+  alias Flezha.Runner.DropMarks
 
   @table :flz_authz_replica
   @filename "replica.dets"
-  @stores [AuthState, RoleStore, NamespaceStore, TokenStore]
+  @stores [AuthState, RoleStore, NamespaceStore, TokenStore, DropMarks]
 
   @type stamp :: {integer(), node()} | nil
   @type row :: {term(), term() | :deleted, stamp()}

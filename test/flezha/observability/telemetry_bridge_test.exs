@@ -167,6 +167,41 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
     assert shipped.measurements[:count] == 3
   end
 
+  test "a runner drop, its lifting and a refused retry reach :flezha_runner" do
+    sink = :"obs_tbridge_runner_sink_#{:erlang.unique_integer([:positive])}"
+    ref = :counters.new(1, [:atomics])
+
+    {:ok, _pid} =
+      Registry.register_sink(%{
+        name: sink,
+        module: Counting,
+        config: %{counter_ref: ref, parent: self(), sources: [:flezha_runner]}
+      })
+
+    on_exit(fn -> Registry.unregister_sink(sink) end)
+    drain_mailbox()
+
+    for {event, name} <- [
+          dropped: :runner_dropped,
+          readmitted: :runner_readmitted,
+          drop_refused: :runner_drop_refused
+        ] do
+      :telemetry.execute([:flezha, :runner, event], %{count: 1}, %{
+        namespace: "ns",
+        stable_id: "stable-1",
+        pid: 4242,
+        node: node()
+      })
+
+      signal = receive_until(fn s -> s.source == :flezha_runner and s.name == name end, 500)
+
+      assert signal, "#{name} never reached the bus"
+      assert signal.kind == :event
+      assert signal.metadata[:namespace] == "ns"
+      assert signal.metadata[:stable_id] == "stable-1"
+    end
+  end
+
   test "all bridged events have a mapping" do
     # Sanity check — every event in mapping/0 maps to {source, name, kind}.
     Enum.each(TelemetryBridge.mapping(), fn {event, {source, name, kind}} ->

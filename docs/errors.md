@@ -531,18 +531,21 @@ SDK raises or returns its one error type carrying them.
 | `runner.command_failed` | internal | 1 | the runner refused the command without saying why |  |
 | `runner.controller_unreachable` | unreachable | 3 | the runner could not reach a controller: {reason} |  |
 | `runner.data_streams_failed` | unavailable | 7 | the runner could not open its data streams: {reason} |  |
+| `runner.dropped` | denied | 4 | runner '{runner}' was dropped from namespace '{namespace}', and this process is refused until a different one connects | `flz runner readmit {runner} --namespace {namespace}` |
 | `runner.hub_unavailable` | unavailable | 7 | the relay hub of namespace '{namespace}' could not be started for the runner; try again |  |
 | `runner.identity_taken` | conflict | 6 | another live runner already holds identity '{runner}' |  |
 | `runner.namespace_not_entitled` | denied | 4 | the runner asked for namespace '{claimed}', and its credential entitles it only to '{proven}' |  |
 | `runner.namespace_not_proven` | denied | 4 | the runner proved no namespace: it presented no runner credential, or one this controller does not know | `flz token issue runner@<namespace> <namespace> runner --ttl never` |
 | `runner.not_admitted` | unavailable | 7 | the runner's session ended before it was admitted |  |
 | `runner.not_connected` | unavailable | 7 | the runner this request needs is not connected |  |
+| `runner.not_found` | not_found | 5 | namespace '{namespace}' has no runner '{runner}' | `flz runner list --namespace {namespace}` |
 | `runner.quic_addresses_invalid` | invalid | 2 | FLEZHA_QUIC_ADDRESSES cannot be read: {reason} |  |
 | `runner.quic_addresses_unresolved` | unreachable | 3 | no FLEZHA_QUIC_ADDRESSES entry resolved: {reason} |  |
 | `runner.session_unavailable` | unavailable | 7 | the controller could not start the runner's session; try again |  |
 | `runner.socket_dir_refused` | invalid | 2 | the runner could not settle on a controller socket directory: {reason} |  |
 | `runner.system_namespace_refused` | denied | 4 | no runner can connect in the _system namespace |  |
 | `runner.uds_unavailable` | invalid | 2 | the UDS transport is not available on this platform | `FLEZHA_TRANSPORT=quic` |
+| `runner.untrackable` | invalid | 2 | runner '{runner}' presents no stable identity or incarnation, so it could not be recognised when it reconnects; it was left connected | `give the runner a writable FLEZHA_RUNNER_ID_PATH and restart it` |
 
 ### runtime
 
