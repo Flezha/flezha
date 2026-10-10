@@ -127,7 +127,7 @@ defmodule FlezhaTest.Relay.RelayCallsTest do
         assert_receive {:delivery_request, _, ^inst, _}
       end
 
-      caller = Task.async(fn -> Calls.call(host, "outside", %{}, 5_000, inst) end)
+      caller = Task.async(fn -> Calls.call(host, "outside", %{}, 5_000, inst, "cli") end)
       assert_receive {:channel_got, ^inst, {"outside", %{"flz.reply_to" => "w:" <> _}}}
       refute Task.yield(caller, 50)
       Task.shutdown(caller)

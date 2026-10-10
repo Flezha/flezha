@@ -78,16 +78,24 @@ defmodule Flezha.Relay.Plugins do
   end
 
   @doc """
-  Hand a part, or a dead-letter notice, to the `:on_preview` listeners. With no
-  listener nothing is built and no plugin is called. No sink implements the
-  hook, so nothing here reaches one.
+  Hand one frame to the listeners of a listeners-only `:fanout` hook: a part
+  or a dead-letter notice on `:on_preview`, a call or its outcome on
+  `:on_call`. With no listener nothing is built and no plugin is called. No
+  sink implements either hook, so nothing here reaches one.
   """
-  @spec preview(Overwatch.t(), binary(), map()) :: :ok
-  def preview(%Overwatch{} = state, message, metadata) do
-    if Extension.active?(state.extensions, :on_preview),
-      do: run_chain(state, :on_preview, %{message: message, metadata: metadata})
+  @spec preview(Overwatch.t(), :on_preview | :on_call, binary(), map()) :: :ok
+  def preview(%Overwatch{} = state, hook, message, metadata)
+      when hook in [:on_preview, :on_call] do
+    if Extension.active?(state.extensions, hook),
+      do: run_chain(state, hook, %{message: message, metadata: metadata})
 
     :ok
+  end
+
+  @doc "`preview/4` on `hook` as a function of a frame, or `nil` while it has no listener."
+  @spec previewer(Overwatch.t(), :on_preview | :on_call) :: (binary(), map() -> :ok) | nil
+  def previewer(%Overwatch{} = state, hook) do
+    if Extension.active?(state.extensions, hook), do: &preview(state, hook, &1, &2)
   end
 
   @doc """
@@ -115,7 +123,7 @@ defmodule Flezha.Relay.Plugins do
           do: Map.put(metadata, "flz.offset", Integer.to_string(notice.offset)),
           else: metadata
 
-      preview(state, Flezha.Error.render(error, :json), metadata)
+      preview(state, :on_preview, Flezha.Error.render(error, :json), metadata)
     end
 
     :ok

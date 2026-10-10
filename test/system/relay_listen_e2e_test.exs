@@ -26,7 +26,7 @@ defmodule FlezhaTest.System.RelayListenE2ETest do
   alias Flezha.Partition
   alias Flezha.Plugin
   alias Flezha.SDK.KeyGroup
-  alias Flezha.Service.{Cli, RelayManager}
+  alias Flezha.Service.{Admin, Cli, RelayManager}
   alias FlezhaTest.Fixtures.RelayFixture
 
   # The listener, the plugin it enables and what detaches it are controller
@@ -148,6 +148,72 @@ defmodule FlezhaTest.System.RelayListenE2ETest do
     end
   end
 
+  describe "flz relay listen --calls" do
+    test "every surface's call and its answer reach a calls listener, paired by id", %{
+      namespace: ns
+    } do
+      id = start!(ns, "bench_echo")
+      watcher = watch_calls(ns, id)
+
+      capture_io(fn ->
+        Cli.call(
+          "Relay.call_channel",
+          Jason.encode!([
+            ns,
+            id,
+            "",
+            "from-cli",
+            %{"deadline_ms" => 10_000, "payload" => "text"}
+          ]),
+          []
+        )
+      end)
+
+      assert_paired("from-cli", "cli")
+
+      assert {:ok, "from-ui", _} =
+               :erpc.call(node(), Flezha.Service.Relay, :call, [
+                 ns,
+                 id,
+                 "from-ui",
+                 "",
+                 [deadline_ms: 10_000],
+                 %{source: :ui}
+               ])
+
+      assert_paired("from-ui", "ui")
+
+      for source <- [:http, :mcp] do
+        message = "from-#{source}"
+        args = [ns, id, message, "", %{"deadline_ms" => 10_000}]
+
+        assert {:ok, _json} =
+                 Admin.call("Relay.call", args, %{source: source, principal: "e2e"}, :given)
+
+        assert_paired(message, Atom.to_string(source))
+      end
+
+      Process.exit(watcher, :kill)
+      assert wait_until(fn -> listeners(ns, id) == [] end, 30_000)
+    end
+
+    test "flz relay listen --calls prints the call line and the answer line", %{namespace: ns} do
+      id = start!(ns, "bench_echo")
+      listener = listen(ns, id, direction: "calls")
+
+      assert {:ok, "printed", _} =
+               Flezha.Service.Relay.call(ns, id, "printed", "", [deadline_ms: 10_000], %{
+                 source: :ui
+               })
+
+      call = printed_line(listener, &String.starts_with?(&1, "-\tprinted\tcall="))
+      [_, _, "call=" <> rest] = String.split(call, "\t")
+      [call_id, "source=ui"] = String.split(rest, " ")
+      assert printed_line(listener, &(&1 =~ ~r/^echo\tprinted\tcall=#{call_id} answered ms=\d+$/))
+      end_by_exit(ns, listener, [id])
+    end
+  end
+
   describe "flz relay send --await" do
     test "prints the delivery verdict, then what came back", %{namespace: ns} do
       id = start!(ns, "bench_echo")
@@ -240,6 +306,34 @@ defmodule FlezhaTest.System.RelayListenE2ETest do
     end
 
     %{pid: pid, ref: ref, device: device}
+  end
+
+  # A calls listener the way the console holds one: `Relay.listen/5` with a
+  # pid as `:emit`, here the test's own.
+  defp watch_calls(ns, id) do
+    test = self()
+
+    watcher =
+      spawn(fn ->
+        Flezha.Service.Relay.listen(ns, id, :calls, [window_ms: 120_000], %{
+          source: :internal,
+          emit: test
+        })
+      end)
+
+    assert_receive {:flezha_emit, :attached}, 30_000
+    watcher
+  end
+
+  defp assert_paired(message, source) do
+    assert_receive {:flezha_emit, {:call, ^message, %{"flz.call_id" => id} = called}}, 30_000
+    assert called["flz.call_source"] == source
+
+    assert_receive {:flezha_emit, {:answered, ^message, %{"flz.call_id" => ^id} = answered}},
+                   30_000
+
+    assert %{"channel" => "echo", "flz.call_duration_ms" => ms} = answered
+    assert is_integer(ms)
   end
 
   # The third route out: an exit signal to the loop's own process.

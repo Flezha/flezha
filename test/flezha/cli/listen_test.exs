@@ -144,6 +144,48 @@ defmodule Flezha.Service.Cli.ListenTest do
              ]
     end
 
+    test "text prints each call and how it ended" do
+      out = in_caller(fn -> calls_listened([]) end)
+
+      assert String.split(out, "\n", trim: true) == [
+               "in\thello\tcall=id1 source=cli",
+               "-\tturn\tcall=id2 source=relay caller=orders",
+               "out\thi\tcall=id1 answered ms=4",
+               "in\t" <> timeout_message() <> "\tcall=id3 error=call.timeout ms=100",
+               "-\t" <> busy_message() <> "\tcall=id2 error=call.busy ms=0"
+             ]
+    end
+
+    test "json names each call event's kind and call, with an error for an outcome" do
+      out = in_caller(fn -> calls_listened(output: "json") end)
+
+      assert [call, relay_call, answered, timed_out, refused] =
+               out |> String.split("\n", trim: true) |> Enum.map(&Jason.decode!/1)
+
+      assert call == %{
+               "kind" => "call",
+               "call" => "id1",
+               "channel" => "in",
+               "payload" => "hello",
+               "metadata" => %{
+                 "channel" => "in",
+                 "flz.call_id" => "id1",
+                 "flz.call_source" => "cli",
+                 "flz.call_at" => 1_700_000_000_000,
+                 "flz.call_deadline_ms" => 5_000
+               }
+             }
+
+      assert %{"kind" => "call", "call" => "id2", "channel" => nil} = relay_call
+      assert %{"kind" => "answered", "call" => "id1", "payload" => "hi"} = answered
+      assert %{"kind" => "timed_out", "call" => "id3", "error" => error} = timed_out
+      assert %{"code" => "call.timeout"} = error
+      refute Map.has_key?(timed_out, "payload")
+
+      assert %{"kind" => "refused", "call" => "id2", "error" => %{"code" => "call.busy"}} =
+               refused
+    end
+
     test "the forwarder is attached to the chain the direction names, then detached" do
       in_caller(fn ->
         Cli.call(
@@ -324,6 +366,49 @@ defmodule Flezha.Service.Cli.ListenTest do
 
     preview(Flezha.Error.render(error, :json), %{"channel" => channel})
   end
+
+  defp calls_listened(opts) do
+    call_frame("hello", "call", %{
+      "channel" => "in",
+      "flz.call_id" => "id1",
+      "flz.call_source" => "cli",
+      "flz.call_at" => 1_700_000_000_000,
+      "flz.call_deadline_ms" => 5_000
+    })
+
+    call_frame("turn", "call", %{
+      "flz.call_id" => "id2",
+      "flz.call_source" => "relay",
+      "flz.call_caller" => "orders"
+    })
+
+    call_frame("hi", "answered", %{
+      "channel" => "out",
+      "flz.call_id" => "id1",
+      "flz.call_duration_ms" => 4
+    })
+
+    call_frame(Flezha.Error.render(timeout_error(), :json), "timed_out", %{
+      "channel" => "in",
+      "flz.call_id" => "id3",
+      "flz.call_duration_ms" => 100
+    })
+
+    call_frame(Flezha.Error.render(busy_error(), :json), "refused", %{
+      "flz.call_id" => "id2",
+      "flz.call_duration_ms" => 0
+    })
+
+    Cli.call("Relay.listen", Jason.encode!(["ns", "op", "calls", %{window_ms: 50}]), opts)
+  end
+
+  defp timeout_error, do: Flezha.Error.new("call.timeout", relay: "op", deadline_ms: 100)
+  defp busy_error, do: Flezha.Error.new("call.busy", relay: "op", pending_max: 1)
+  defp timeout_message, do: timeout_error().message
+  defp busy_message, do: busy_error().message
+
+  defp call_frame(payload, kind, metadata),
+    do: forward(payload, Map.put(metadata, "flz.call_event", kind))
 
   defp stage(frame), do: Process.put(:frames, Process.get(:frames, []) ++ [frame])
 

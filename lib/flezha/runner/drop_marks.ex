@@ -107,7 +107,6 @@ defmodule Flezha.Runner.DropMarks do
     end
   end
 
-
   ## ----- store declaration -----
 
   @impl Flezha.State.Store

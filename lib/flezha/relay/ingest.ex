@@ -105,13 +105,32 @@ defmodule Flezha.Relay.Ingest do
 
     with nil <- call_refusal(state) || factory_refusal(state, deadline),
          {:ok, token, calls} <- admit(state.calls, callee, from, metadata, deadline) do
+      # A relay's call sent again while its row waits was announced the first time.
+      unless Map.has_key?(state.calls.rows, token),
+        do: Calls.announce(callee, token, message, metadata, deadline)
+
       %{state | calls: calls}
       |> arm_call(token, wait_ms(deadline), {:call_deadline, token})
       |> ingest_call(message, metadata, token, deadline, from)
     else
-      {:error, error} -> {:reply, {:error, error}, state}
-      {code, details} -> {:reply, {:error, Calls.refused(callee, code, details)}, state}
+      {:error, error} ->
+        unadmitted(state, callee, message, metadata, deadline, error)
+
+      {code, details} ->
+        unadmitted(
+          state,
+          callee,
+          message,
+          metadata,
+          deadline,
+          Calls.refused(callee, code, details)
+        )
     end
+  end
+
+  defp unadmitted(state, callee, message, metadata, deadline, error) do
+    Calls.announce(callee, nil, message, metadata, deadline, error)
+    {:reply, {:error, error}, state}
   end
 
   defp admit(calls, callee, from, metadata, deadline_ms) when is_integer(deadline_ms),
@@ -171,10 +190,12 @@ defmodule Flezha.Relay.Ingest do
        when verdict in @taken,
        do: state
 
-  defp forget_unless_taken(%Overwatch{} = state, token, _verdict) do
+  defp forget_unless_taken(%Overwatch{} = state, token, verdict) do
+    {code, details} = refusal(verdict)
+
     %Overwatch{
       state
-      | calls: Calls.forget(state.calls, token),
+      | calls: Calls.forget(state.calls, Overwatch.callee(state), token, code, details),
         timers: Timer.cancel(state.timers, {:call, token})
     }
   end
@@ -542,18 +563,22 @@ defmodule Flezha.Relay.Ingest do
   defp answer_call(state, _token, verdict) when verdict in [:ok, {:ok, :suspended}], do: state
 
   defp answer_call(%Overwatch{} = state, token, verdict) do
-    {code, details} =
-      case verdict do
-        {:ok, :absorbed} -> {"call.absorbed", %{}}
-        {:error, :refused} -> {"call.unavailable", %{reason: "its input log refused the input"}}
-        {:error, :not_ready} -> {"call.unavailable", %{reason: "no runner can take the input"}}
-      end
+    {code, details} = refusal(verdict)
 
     %Overwatch{
       state
       | calls: Calls.refuse(state.calls, Overwatch.callee(state), token, code, details)
     }
   end
+
+  # The refusal a call is answered with for an ingest verdict that ends it.
+  defp refusal({:ok, :absorbed}), do: {"call.absorbed", %{}}
+
+  defp refusal({:error, :refused}),
+    do: {"call.unavailable", %{reason: "its input log refused the input"}}
+
+  defp refusal({:error, :not_ready}),
+    do: {"call.unavailable", %{reason: "no runner can take the input"}}
 
   defp told({:io_in, _from}, _verdict), do: :ok
   defp told(_reply_to, verdict), do: verdict

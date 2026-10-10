@@ -185,6 +185,39 @@ defmodule Flezha.Service.RelayCallTest do
       refute_received {:called, _, _, _, _}
       refute_received {:sent, _, _}
     end
+
+    test "a viewer may not watch calls, and enables nothing; an app caller is attached" do
+      test_pid = self()
+
+      stub(Flezha.Service.PluginManager, :enable_plugin, fn id, plugin ->
+        send(test_pid, {:enabled, id, plugin.hooks})
+        {:ok, "plugin enabled"}
+      end)
+
+      stub(Flezha.Service.PluginManager, :detach, fn _ns, _relay, _id -> :ok end)
+      stub(Flezha.Cluster.Directory, :hub_nodes, fn _ns -> [node()] end)
+      stub(HubManager, :declared_relays, fn _ns -> [] end)
+      stub(HubManager, :relay_bindings, fn _ns, _relay -> {:ok, []} end)
+
+      assert {:error, %Error{code: "authz.role_insufficient"}} =
+               Relay.listen("default", "echo", :calls, [window_ms: 100], %{
+                 source: :cli,
+                 principal: "eve"
+               })
+
+      refute_received {:enabled, _, _}
+
+      :ok = RoleStore.bind("ada", "default", :app)
+
+      assert {:ok, :window_closed} =
+               Relay.listen("default", "echo", :calls, [window_ms: 100], %{
+                 source: :cli,
+                 principal: "ada",
+                 emit: fn _event -> :ok end
+               })
+
+      assert_received {:enabled, _, [{:on_call, []}]}
+    end
   end
 
   describe "flz relay call" do

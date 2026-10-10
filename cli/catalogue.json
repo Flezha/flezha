@@ -1244,7 +1244,8 @@
           "default": "output",
           "values": [
             "output",
-            "input"
+            "input",
+            "calls"
           ],
           "doc": "What to hear."
         },

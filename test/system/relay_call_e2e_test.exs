@@ -118,6 +118,19 @@ defmodule FlezhaTest.System.RelayCallE2ETest do
     orders = start(ctx.namespace, "call_orders", :flow, unique("ordering"), ctx.collector)
     test = self()
 
+    # A calls listener on the callee sees each call with its caller and source.
+    calls =
+      spawn(fn ->
+        Listener.listen(
+          ctx.namespace,
+          "pricing",
+          [direction: :calls, window_ms: 60_000, before: fn -> send(test, :watching) && :ok end],
+          &(send(test, {:calls, &1}) && :continue)
+        )
+      end)
+
+    assert_receive :watching, 30_000
+
     before = fn ->
       send_in(ctx.namespace, orders, "o1")
       send_in(ctx.namespace, orders, "o2")
@@ -147,6 +160,18 @@ defmodule FlezhaTest.System.RelayCallE2ETest do
              "o1=ok:price:o1@pricing/false",
              "o2=ok:price:o2@pricing/false"
            ]
+
+    for request <- ["o1", "o2"] do
+      assert_receive {:calls, {:call, ^request, %{"flz.call_id" => id} = called}}, 30_000
+
+      assert %{"flz.call_source" => "relay", "flz.call_answer_channel" => "quotes"} = called
+      assert called["flz.call_caller"] == orders
+
+      assert_receive {:calls, {:answered, "price:" <> ^request, answered}}, 30_000
+      assert %{"flz.call_id" => ^id, "channel" => "quotes"} = answered
+    end
+
+    Process.exit(calls, :kill)
   end
 
   test "a gateway creates a session, reaches it again, and outlives its failed turn", ctx do

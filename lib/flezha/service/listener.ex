@@ -28,14 +28,18 @@ defmodule Flezha.Service.Listener do
   alias Flezha.Service.PluginManager
 
   @type event ::
-          {:output | :input | :part, binary(), map()}
-          | {:dead_lettered, Flezha.Error.t(), map()}
+          {:output | :input | :part | :call | :answered, binary(), map()}
+          | {:dead_lettered | :timed_out | :refused, Flezha.Error.t(), map()}
           | :idle
   @type outcome ::
           {:ok, :window_closed | :done | :caller_down | :relay_ended}
           | {:error, Flezha.Error.t()}
 
-  @hooks [output: [{:on_output, []}, {:on_preview, []}], input: [{:on_input, []}]]
+  @hooks [
+    output: [{:on_output, []}, {:on_preview, []}],
+    input: [{:on_input, []}],
+    calls: [{:on_call, []}]
+  ]
 
   @doc """
   Listen to `relay_id` in `namespace` from the calling process until
@@ -47,7 +51,10 @@ defmodule Flezha.Service.Listener do
   the calling process, and a raise from it detaches and propagates. Options:
 
     * `direction` - `:output` (outputs, parts and dead-letter notices, the
-      default) or `:input` (the inputs the relay ingests).
+      default), `:input` (the inputs the relay ingests) or `:calls` (each
+      call the relay takes, `{:call, request, metadata}`, then how it ended:
+      `{:answered, answer, metadata}`, `{:timed_out, error, metadata}` or
+      `{:refused, error, metadata}`, paired by `flz.call_id`).
     * `window_ms` - a positive integer, or `:infinity` (the default).
     * `idle_ms` - a positive integer, or `:infinity` (the default): after that
       long with no event handed over, `handler` is called with `:idle`.
@@ -61,7 +68,7 @@ defmodule Flezha.Service.Listener do
     direction = Keyword.get(opts, :direction, :output)
 
     Keyword.has_key?(@hooks, direction) ||
-      raise ArgumentError, "direction must be :output or :input"
+      raise ArgumentError, "direction must be :output, :input or :calls"
 
     target = %{
       namespace: namespace,

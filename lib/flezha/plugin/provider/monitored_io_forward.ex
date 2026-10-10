@@ -39,6 +39,8 @@ defmodule Flezha.Plugin.Provider.MonitoredIOForward do
   def on_input(%Ctx.IO{} = ctx, opts), do: forward(ctx, opts)
   @impl true
   def on_output(%Ctx.IO{} = ctx, opts), do: forward(ctx, opts)
+  @impl true
+  def on_call(%Ctx.IO{} = ctx, opts), do: forward(ctx, opts)
 
   # A part or a notice never suspends the Overwatch on a busy distribution
   # link: it is dropped instead, which a preview allows and an output does not.

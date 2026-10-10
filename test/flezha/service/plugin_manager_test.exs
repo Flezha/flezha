@@ -236,6 +236,31 @@ defmodule Flezha.Service.PluginManagerTest do
     end
   end
 
+  # The `relay-extensions` scenario "An output plugin cannot subscribe to calls".
+  test "every first-party relay provider but the listener's is refused on on_call" do
+    catalog = Flezha.Relay.Overwatch.__extensions_catalog__()
+
+    for {id, provider} <- Flezha.Plugin.Providers.first_party(),
+        provider.plugin_type() == :relay,
+        provider != Flezha.Plugin.Provider.MonitoredIOForward do
+      plugin = %Plugin{id: id, provider: provider, hooks: [{:on_call, []}]}
+
+      ExUnit.CaptureLog.capture_log(fn ->
+        assert {:error, {^id, {:missing_callback, :on_call}}} =
+                 Table.bulk_subscribe(Table.new(catalog), [{id, plugin}])
+      end)
+    end
+
+    listener = %Plugin{
+      id: "l",
+      provider: Flezha.Plugin.Provider.MonitoredIOForward,
+      opts: %{recv_pid: self(), plugin_id: "l", relay_id: "r", namespace: "default"},
+      hooks: [{:on_call, []}]
+    }
+
+    assert {:ok, _table} = Table.bulk_subscribe(Table.new(catalog), [{"l", listener}])
+  end
+
   describe "a CLI bind refuses a plain option it does not read" do
     # Fails when: a word the bind never reads is dropped, so the relay is
     # bound with less than the user wrote and the command reports success.

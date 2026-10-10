@@ -63,6 +63,10 @@ const CASES: &[(&[&str], &str)] = &[
         &["relay", "listen", "op1", "--token", "t", "--input"],
         r#"Flezha.Service.Cli.call("Relay.listen", "[\"default\",\"op1\",\"input\",{\"window_ms\":30000}]", [token: "t"])"#,
     ),
+    (
+        &["relay", "listen", "op1", "--calls"],
+        r#"Flezha.Service.Cli.call("Relay.listen", "[\"default\",\"op1\",\"calls\",{\"window_ms\":30000}]", [])"#,
+    ),
     // A value carrying a quote, a backslash and a non-ASCII letter survives
     // whichever side of the positionals it was written on.
     (
@@ -177,6 +181,7 @@ fn a_call_takes_its_value_one_way() {
 
     for (argv, code) in [
         (&["relay", "call", "op", "--text", "x", "--arg", "a=1"][..], "usage.options_conflict"),
+        (&["relay", "listen", "op1", "--input", "--calls"][..], "usage.options_conflict"),
         (&["relay", "call", "op"][..], "usage.option_required"),
         (&["relay", "call", "op", "--arg", "amount"][..], "api.input_invalid"),
     ] {

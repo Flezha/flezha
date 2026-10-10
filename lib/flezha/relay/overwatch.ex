@@ -57,6 +57,7 @@ defmodule Flezha.Relay.Overwatch do
       {:on_input, :transform, Flezha.Plugin.Extension.Ctx.IO},
       {:on_output, :transform, Flezha.Plugin.Extension.Ctx.IO},
       {:on_preview, :fanout, Flezha.Plugin.Extension.Ctx.IO},
+      {:on_call, :fanout, Flezha.Plugin.Extension.Ctx.IO},
       {:on_interval, :timer, Flezha.Plugin.Extension.Ctx.Tick},
       {:on_message, :request, Flezha.Plugin.Extension.Ctx.Msg},
       {:on_snapshot, :fanout, Flezha.Plugin.Extension.Ctx.Snapshot},
@@ -165,9 +166,18 @@ defmodule Flezha.Relay.Overwatch do
   def deliver(%__MODULE__{} = state, payload),
     do: StreamChannel.io_in(state.channel, state.id, payload)
 
-  @doc "Who this relay's call table answers for."
+  @doc """
+  Who this relay's call table answers for, and the `on_call` listeners its
+  calls are announced to: `activity` is `nil` while there are none, so nothing
+  is built for them.
+  """
   @spec callee(t()) :: Calls.callee()
-  def callee(%__MODULE__{} = state), do: %{namespace: state.namespace, relay_id: state.id}
+  def callee(%__MODULE__{} = state),
+    do: %{
+      namespace: state.namespace,
+      relay_id: state.id,
+      activity: Plugins.previewer(state, :on_call)
+    }
 
   # Every plugin verb is one bounded call into a running Overwatch. The bound
   # belongs here rather than to each caller: an Overwatch busy folding an entry
@@ -592,7 +602,7 @@ defmodule Flezha.Relay.Overwatch do
   # waits for nothing, and nothing but `:on_preview` sees it.
   @impl true
   def handle_cast({:io_part, message, metadata}, state) do
-    Plugins.preview(state, message, metadata)
+    Plugins.preview(state, :on_preview, message, metadata)
     {:noreply, state}
   end
 

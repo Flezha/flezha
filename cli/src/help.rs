@@ -408,6 +408,7 @@ USAGE:
 
 OPTIONS:
     --input                   Listen to what the relay ingests, not what it emits
+    --calls                   Print the calls the relay takes and how each ended
     --duration-ms <N>         Stop after N milliseconds (default 30000)
     --output <text|json>      Output format (default: text)
     --json                    The same as --output json
@@ -424,6 +425,14 @@ OUTPUT:
     for bytes that are not text, error for a dead-lettered input) and the
     frame's whole metadata map.
 
+    With --calls a call prints its entry channel, its payload and call=<id>
+    source=<source> (cli, ui, sdk, http, mcp, internal, plugin or relay, with
+    caller=<relay> for another relay's call); its answer prints the answer's
+    channel, the payload and call=<id> answered ms=<n>; a timeout or a refusal
+    prints the entry channel, the error's message and call=<id> error=<code>
+    ms=<n>. With --json the kinds are call, answered, timed_out and refused,
+    and each object carries the call's id as call.
+
     The listener is detached when the window closes, on Ctrl-C, when the
     caller goes away and when the relay ends. A partition group is
     listened to by its group id.
@@ -431,6 +440,7 @@ OUTPUT:
 EXAMPLES:
     flz relay listen my_echo --duration-ms 10000
     flz relay listen my_echo --input
+    flz relay listen pricing --calls
     flz relay listen ohlc --json"#;
 
 pub(crate) const RELAY_CALL: Help = r#"flz relay call - Send one input and print the relay's answer

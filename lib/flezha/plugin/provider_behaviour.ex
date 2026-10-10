@@ -217,6 +217,8 @@ defmodule Flezha.Plugin.ProviderBehaviour do
   @callback on_terminate(ctx :: struct(), opts :: map()) :: term()
   @doc "A part or a dead-letter notice, for listeners only: no sink implements it."
   @callback on_preview(ctx :: struct(), opts :: map()) :: term()
+  @doc "A call the relay took, or how one ended, for listeners only: no sink implements it."
+  @callback on_call(ctx :: struct(), opts :: map()) :: term()
 
   @doc """
   Controller hooks: something happened in the plugin's namespace. Each takes the
@@ -253,7 +255,8 @@ defmodule Flezha.Plugin.ProviderBehaviour do
     :on_message,
     :on_snapshot,
     :on_terminate,
-    :on_preview
+    :on_preview,
+    :on_call
   ]
 
   @controller_callbacks [
@@ -279,6 +282,7 @@ defmodule Flezha.Plugin.ProviderBehaviour do
     on_snapshot: 2,
     on_terminate: 2,
     on_preview: 2,
+    on_call: 2,
     on_relay_started: 2,
     on_relay_stopped: 2,
     on_relay_failed: 2,

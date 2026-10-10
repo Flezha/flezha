@@ -242,8 +242,8 @@ defmodule Flezha.Service.Cli.Relay do
 
   @doc """
   `flz relay listen`: every frame the relay emits (with its parts and
-  dead-letter notices), or ingests, until the window closes, the caller goes
-  away or the relay ends.
+  dead-letter notices), or ingests, or each call it takes and how that call
+  ended, until the window closes, the caller goes away or the relay ends.
   """
   def listen(args_json, context, opts) do
     format = frame_format(opts)
@@ -265,22 +265,21 @@ defmodule Flezha.Service.Cli.Relay do
 
   defp frame_format(opts), do: if(Context.format(opts) == "json", do: :json, else: :text)
 
-  defp print({:dead_lettered, error, metadata}, format), do: print_notice(error, metadata, format)
+  defp print({kind, %Flezha.Error{} = error, metadata}, format),
+    do: print_notice(kind, error, metadata, format)
+
   defp print({kind, payload, metadata}, format), do: print_frame(kind, payload, metadata, format)
   defp print(:idle, _format), do: :ok
 
   @stamps [{"flz.cell", "cell"}, {"flz.seq", "seq"}, {"flz.key", "key"}]
+  @call_kinds [:call, :answered, :timed_out, :refused]
 
   defp print_frame(kind, payload, metadata, :text) do
-    stamps =
-      for {key, label} <- @stamps, Map.has_key?(metadata, key), do: "#{label}=#{metadata[key]}"
-
-    stamps =
-      if kind == :part,
-        do: ["part=#{metadata["flz.part"]} attempt=#{metadata["flz.part_attempt"]}" | stamps],
-        else: stamps
-
-    stamped = if stamps == [], do: [], else: [Enum.join(stamps, " ")]
+    stamped =
+      case stamps(kind, metadata) do
+        [] -> []
+        stamps -> [Enum.join(stamps, " ")]
+      end
 
     IO.puts(Enum.intersperse([metadata["channel"] || "-", payload | stamped], "\t"))
   end
@@ -293,18 +292,47 @@ defmodule Flezha.Service.Cli.Relay do
 
     body
     |> Map.merge(%{kind: kind, channel: metadata["channel"], metadata: metadata})
+    |> with_call(kind, metadata)
     |> Admin.json()
     |> IO.puts()
   end
 
-  defp print_notice(error, metadata, :text) do
-    fields = "error=#{error.code} entry=#{error.details["entry"]}"
+  defp stamps(:call, metadata) do
+    callers = for caller <- List.wrap(metadata["flz.call_caller"]), do: "caller=#{caller}"
+    ["call=#{metadata["flz.call_id"]}", "source=#{metadata["flz.call_source"]}" | callers]
+  end
+
+  defp stamps(:answered, metadata),
+    do: ["call=#{metadata["flz.call_id"]}", "answered", "ms=#{metadata["flz.call_duration_ms"]}"]
+
+  defp stamps(kind, metadata) do
+    stamps =
+      for {key, label} <- @stamps, Map.has_key?(metadata, key), do: "#{label}=#{metadata[key]}"
+
+    if kind == :part,
+      do: ["part=#{metadata["flz.part"]} attempt=#{metadata["flz.part_attempt"]}" | stamps],
+      else: stamps
+  end
+
+  defp with_call(body, kind, metadata) when kind in @call_kinds,
+    do: Map.put(body, :call, metadata["flz.call_id"])
+
+  defp with_call(body, _kind, _metadata), do: body
+
+  defp print_notice(kind, error, metadata, :text) do
+    fields =
+      if kind == :dead_lettered,
+        do: "error=#{error.code} entry=#{error.details["entry"]}",
+        else:
+          "call=#{metadata["flz.call_id"]} error=#{error.code} ms=#{metadata["flz.call_duration_ms"]}"
+
     IO.puts(Enum.join([metadata["channel"] || "-", error.message, fields], "\t"))
   end
 
-  defp print_notice(error, metadata, :json) do
+  defp print_notice(kind, error, metadata, :json) do
     # The error renders as its own JSON object; the rest by the door's rule.
-    %{kind: :dead_lettered, channel: metadata["channel"], metadata: metadata}
+    %{kind: kind, channel: metadata["channel"], metadata: metadata}
+    |> with_call(kind, metadata)
     |> Admin.json()
     |> Jason.decode!()
     |> Map.put("error", error)

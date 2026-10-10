@@ -59,6 +59,11 @@ defmodule Flezha.Service.ListenerTest do
   defp output(receiver, payload),
     do: send(receiver, {:message_forward, {payload, %{"channel" => "c"}}})
 
+  defp call_frame(receiver, payload, kind, metadata) do
+    metadata = Map.merge(metadata, %{"flz.call_event" => kind, "flz.call_id" => "id1"})
+    send(receiver, {:message_forward, {payload, metadata}})
+  end
+
   defp part(receiver, payload, n),
     do: send(receiver, {:preview_forward, {payload, %{"channel" => "c", "flz.part" => "#{n}"}}})
 
@@ -83,6 +88,34 @@ defmodule Flezha.Service.ListenerTest do
     assert_receive {:outcome, {:ok, :window_closed}}, 2_000
     assert %{hooks: [{:on_input, []}]} = listening(window_ms: 1, direction: :input)
     assert_receive {:outcome, {:ok, :window_closed}}, 2_000
+  end
+
+  test "a calls listener hooks the calls alone" do
+    assert %{hooks: [{:on_call, []}]} = listening(window_ms: 1, direction: :calls)
+    assert_receive {:outcome, {:ok, :window_closed}}, 2_000
+
+    assert_raise ArgumentError, ~r/:calls/, fn ->
+      Listener.listen("ns", "op", [direction: :sideways], & &1)
+    end
+  end
+
+  test "a call frame and each outcome arrive as their events" do
+    %{pid: pid, receiver: receiver} = listening(direction: :calls)
+    call_frame(receiver, "hello", "call", %{"flz.call_source" => "cli"})
+    call_frame(receiver, "hi", "answered", %{"flz.call_duration_ms" => 3})
+
+    for {code, kind} <- [{"call.timeout", "timed_out"}, {"call.busy", "refused"}] do
+      document = Flezha.Error.render(Flezha.Error.new(code, relay: "op", deadline_ms: 1), :json)
+      call_frame(receiver, document, kind, %{})
+    end
+
+    assert_receive {:event, ^pid, {:call, "hello", %{"flz.call_source" => "cli"} = called}}, 2_000
+    refute Map.has_key?(called, "flz.call_event")
+    assert_receive {:event, ^pid, {:answered, "hi", %{"flz.call_duration_ms" => 3}}}, 2_000
+    assert_receive {:event, ^pid, {:timed_out, %Flezha.Error{code: "call.timeout"}, _}}, 2_000
+    assert_receive {:event, ^pid, {:refused, %Flezha.Error{code: "call.busy"}, md}}, 2_000
+    assert md == %{"flz.call_id" => "id1"}
+    Process.exit(pid, :kill)
   end
 
   test "a part, a notice and an input are told apart" do
@@ -177,6 +210,24 @@ defmodule Flezha.Service.ListenerTest do
     assert_receive {:detached, "ns", "op", ^id}
   end
 
+  test "a calls listen over :erpc hands a pid each call as {:flezha_emit, event}" do
+    test = self()
+    sink = spawn(fn -> forward_to(test) end)
+    context = %{source: :internal, emit: sink}
+
+    spawn(fn ->
+      outcome = :erpc.call(node(), Relay, :listen, ["ns", "op", :calls, [], context])
+      send(test, {:outcome, outcome})
+    end)
+
+    assert_receive {:attached, _id, receiver, [{:on_call, []}]}, 2_000
+    assert_receive {:forwarded, :attached}, 2_000
+    call_frame(receiver, "hello", "call", %{})
+    assert_receive {:forwarded, {:call, "hello", %{"flz.call_id" => "id1"}}}, 2_000
+    Process.exit(sink, :kill)
+    assert_receive {:outcome, {:ok, :caller_down}}, 2_000
+  end
+
   describe "a steps backlog" do
     setup do
       Application.put_env(:flezha, :listener_pending_frames, 8)
@@ -201,6 +252,19 @@ defmodule Flezha.Service.ListenerTest do
       assert :sys.get_state(receiver).backlog.frames <= 8
       refute_received {:outcome, _}
       Process.exit(pid, :kill)
+    end
+
+    test "a reader that falls behind on call events is ended with listener.overrun" do
+      slow = fn _event ->
+        Process.sleep(200)
+        :continue
+      end
+
+      %{receiver: receiver, id: id} = listening([direction: :calls], slow)
+      for n <- 1..100, do: call_frame(receiver, "c#{n}", "call", %{})
+
+      assert_receive {:outcome, {:error, %Flezha.Error{code: "listener.overrun"}}}, 5_000
+      assert_receive {:detached, "ns", "op", ^id}
     end
 
     test "a reader that falls behind on outputs is ended with listener.overrun" do

@@ -99,10 +99,10 @@ defmodule FlezhaTest.Handover do
     started = System.monotonic_time(:millisecond)
 
     answered =
-      Task.async(fn -> Flezha.Relay.Calls.call(source, "x", %{}, 40_000, relay_id) end)
+      Task.async(fn -> Flezha.Relay.Calls.call(source, "x", %{}, 40_000, relay_id, "cli") end)
 
     timed =
-      Task.async(fn -> Flezha.Relay.Calls.call(source, "y", %{}, 15_000, relay_id) end)
+      Task.async(fn -> Flezha.Relay.Calls.call(source, "y", %{}, 15_000, relay_id, "cli") end)
 
     assert NodeTestHelper.wait_until(
              fn -> map_size(:sys.get_state(source).calls.rows) == 2 end,

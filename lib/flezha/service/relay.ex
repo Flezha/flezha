@@ -335,12 +335,13 @@ defmodule Flezha.Service.Relay do
           "`deadline_ms`, `answer_channel` (the channel whose output answers), and `key` for a partition group."
       ]
     ] do
-    call_input(Namespace.or_default(namespace), relay_id, message, channel, opts)
+    call_input(Namespace.or_default(namespace), relay_id, message, channel, opts, caller_context)
   end
 
   # The answer channel rides the call's metadata to the row
-  # `Flezha.Relay.Calls.admit/5` keeps, where `""` names none.
-  defp call_input(namespace, relay_id, message, channel, opts) do
+  # `Flezha.Relay.Calls.admit/5` keeps, where `""` names none; the caller's
+  # source names it to the relay's calls listeners.
+  defp call_input(namespace, relay_id, message, channel, opts, caller_context) do
     with {:ok, deadline_ms} <- deadline(Keyword.get(opts, :deadline_ms)),
          {:ok, metadata} <-
            put_text(
@@ -355,7 +356,8 @@ defmodule Flezha.Service.Relay do
         message,
         metadata,
         deadline_ms,
-        Keyword.get(opts, :key)
+        Keyword.get(opts, :key),
+        Atom.to_string(caller_context.source)
       )
     end
   end
@@ -427,27 +429,35 @@ defmodule Flezha.Service.Relay do
 
     with {:ok, factory} <- RelayApi.factory_of(namespace, relay_id) do
       if factory.channels == [] and payload == "text",
-        do: unannounced_call(namespace, relay_id, channel, value, payload, opts),
-        else: channel_call(namespace, relay_id, factory, channel, value, opts)
+        do: unannounced_call(namespace, relay_id, channel, value, opts, caller_context),
+        else: channel_call(namespace, relay_id, factory, channel, value, opts, caller_context)
     end
   end
 
-  defp channel_call(namespace, relay_id, factory, channel, value, opts) do
+  defp channel_call(namespace, relay_id, factory, channel, value, opts, caller_context) do
     with {:ok, entry} <- RelayApi.entry(factory, namespace, relay_id, channel),
          {:ok, message} <- RelayApi.encode(entry, value, opts[:payload]) do
       if entry.answer_codec,
-        do: answered(call_input(namespace, relay_id, message, entry.channel, opts), entry),
+        do:
+          answered(
+            call_input(namespace, relay_id, message, entry.channel, opts, caller_context),
+            entry
+          ),
         else: accepted(send_input(namespace, relay_id, message, entry.channel, opts))
     end
   end
 
   # `flz relay call --text` to a relay whose runners announced no API is
   # called as `call/6` calls it.
-  defp unannounced_call(namespace, relay_id, channel, value, payload, opts) do
+  defp unannounced_call(namespace, relay_id, channel, value, opts, caller_context) do
     entry = %{channel: channel, codec: "bytes", answer_codec: nil}
 
-    with {:ok, message} <- RelayApi.encode(entry, value, payload),
-         do: answered(call_input(namespace, relay_id, message, channel, opts), entry)
+    with {:ok, message} <- RelayApi.encode(entry, value, opts[:payload]),
+         do:
+           answered(
+             call_input(namespace, relay_id, message, channel, opts, caller_context),
+             entry
+           )
   end
 
   defp answered({:ok, answer, _meta}, entry),
@@ -469,7 +479,11 @@ defmodule Flezha.Service.Relay do
   @doc """
   Hand every frame `relay_id` emits (with its parts and dead-letter
   notices), or ingests when `direction` is `input`, to the context's `:emit`,
-  until the window closes, the caller goes away or the relay ends.
+  until the window closes, the caller goes away or the relay ends. With
+  `direction` `calls` it hands each call the relay takes, `{:call, request,
+  metadata}`, and then how that call ended: `{:answered, answer, metadata}`,
+  `{:timed_out, error, metadata}` or `{:refused, error, metadata}`, each
+  carrying the call's `flz.call_id`.
 
   `:emit` is called with `:attached` once the listener is in place, then with
   each `t:Flezha.Service.Listener.event/0`; answering `:done` ends the listen.
@@ -484,7 +498,12 @@ defmodule Flezha.Service.Relay do
     args: [
       namespace: @namespace,
       relay_id: @relay_id,
-      direction: [type: :enum, values: [:output, :input], default: :output, doc: "What to hear."],
+      direction: [
+        type: :enum,
+        values: [:output, :input, :calls],
+        default: :output,
+        doc: "What to hear."
+      ],
       opts: [type: :keyword, default: [], doc: "`window_ms`."]
     ] do
     {emit, watch} = CallerContext.emitter(caller_context)

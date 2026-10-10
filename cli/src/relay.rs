@@ -19,6 +19,7 @@ pub(crate) const CHANNEL: OptSpec = OptSpec::text("--channel", "-c", "<ch>");
 const TO_ITERATION: OptSpec = OptSpec::number("--to-iteration", "--to-iteration", "<N>").required();
 const FROM: OptSpec = OptSpec::text("--from", "-f", "<seq|timestamp>").required();
 const INPUT: OptSpec = OptSpec::switch("--input", "--input");
+const CALLS: OptSpec = OptSpec::switch("--calls", "--calls");
 const AWAIT: OptSpec = OptSpec::number("--await", "--await", "<ms>");
 const KEY: OptSpec = OptSpec::text("--key", "--key", "<key>");
 const MSG_ID: OptSpec = OptSpec::text("--msg-id", "--msg-id", "<id>");
@@ -79,7 +80,8 @@ pub(crate) const TABLE: Command = Command {
         .reading(&[NAMESPACE]),
         Verb::new("listen", handle_listen)
             .taking(RELAY_ID)
-            .reading(&[INPUT, DURATION_MS, NAMESPACE])
+            .reading(&[INPUT, CALLS, DURATION_MS, NAMESPACE])
+            .refusing(&[(INPUT.long, CALLS.long)])
             .strict()
             .screen(help::RELAY_LISTEN),
         Verb::new("send", handle_send)
@@ -404,12 +406,15 @@ fn handle_state(read: &Reading) {
     );
 }
 
-/// `flz relay listen <relay_id> [--input]`: print every frame the
-/// relay emits, or ingests, until the window closes. Prints nothing of its
-/// own, so what reaches stdout is the frames alone.
+/// `flz relay listen <relay_id> [--input | --calls]`: print every frame the
+/// relay emits, or ingests, or each call it takes and how it ended, until the
+/// window closes. Prints nothing of its own, so what reaches stdout is the
+/// frames alone.
 fn handle_listen(read: &Reading) {
     let direction = if read.switch(INPUT.long) {
         "input"
+    } else if read.switch(CALLS.long) {
+        "calls"
     } else {
         "output"
     };

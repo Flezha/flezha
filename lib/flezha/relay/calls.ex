@@ -31,6 +31,7 @@ defmodule Flezha.Relay.Calls do
 
   @reply_to "flz.reply_to"
   @answer_channel "flz.call_answer_channel"
+  @source "flz.call_source"
 
   defstruct rows: %{}, out: %{}
 
@@ -74,8 +75,16 @@ defmodule Flezha.Relay.Calls do
           created: boolean()
         }
 
-  @typedoc "Who the table answers for: named on every error and telemetry event."
-  @type callee :: %{namespace: binary(), relay_id: binary()}
+  @typedoc """
+  Who the table answers for, named on every error and telemetry event, and
+  the function that hands one call event to its `on_call` listeners, `nil`
+  while there are none (`Flezha.Relay.Overwatch.callee/1`).
+  """
+  @type callee :: %{
+          required(:namespace) => binary(),
+          required(:relay_id) => binary(),
+          optional(:activity) => (binary(), map() -> :ok) | nil
+        }
 
   # ---------------------------------------------------------------
   # The caller's side
@@ -86,6 +95,8 @@ defmodule Flezha.Relay.Calls do
   wait is the deadline plus `call_grace_ms`, so the Overwatch's own
   `call.timeout` always arrives first; an Overwatch that goes away answers
   `call.unavailable` at once. `relay` names the callee in that error.
+  `source` says who calls (`cli`, `ui`, `plugin`, ...) and is written as
+  `flz.call_source` over whatever `metadata` carries there.
 
   The wait follows its call through a handover: the departing Overwatch says
   the call is moving (`depart/1`) and the arriving one says where it now
@@ -93,10 +104,12 @@ defmodule Flezha.Relay.Calls do
   second. A plain `GenServer.call` would take the departing process's exit for
   a crash.
   """
-  @spec call(pid(), binary(), map(), pos_integer(), binary()) ::
+  @spec call(pid(), binary(), map(), pos_integer(), binary(), binary()) ::
           {:ok, binary(), map()} | {:error, Error.t()}
-  def call(overwatch, message, metadata, deadline_ms, relay)
-      when is_pid(overwatch) and is_integer(deadline_ms) and deadline_ms > 0 do
+  def call(overwatch, message, metadata, deadline_ms, relay, source)
+      when is_pid(overwatch) and is_integer(deadline_ms) and deadline_ms > 0 and
+             is_binary(source) do
+    metadata = Map.put(metadata, @source, source)
     tag = Process.alias()
     until = now_ms() + deadline_ms + Durations.get(:call_grace_ms)
     monitor = Process.monitor(overwatch)
@@ -167,11 +180,12 @@ defmodule Flezha.Relay.Calls do
 
   @doc """
   `metadata` carrying `token` as its one `flz.reply_to`, whatever the caller
-  put there, and without the answer channel its row keeps.
+  put there, and without the answer channel its row keeps or the source its
+  call event named.
   """
   @spec entry_metadata(map(), token()) :: map()
   def entry_metadata(metadata, token),
-    do: metadata |> Map.delete(@answer_channel) |> Map.put(@reply_to, token)
+    do: metadata |> Map.drop([@answer_channel, @source]) |> Map.put(@reply_to, token)
 
   @doc "`metadata` without a `flz.reply_to`: what every other entry point admits."
   @spec strip(map()) :: map()
@@ -313,9 +327,16 @@ defmodule Flezha.Relay.Calls do
 
   def caller_of(_token), do: :error
 
-  @doc "Drop the row `token` names, answering nobody: its call was never taken."
-  @spec forget(t(), token()) :: t()
-  def forget(%__MODULE__{} = calls, token), do: %{calls | rows: Map.delete(calls.rows, token)}
+  @doc """
+  Drop the row `token` names, answering nobody: its call was never taken, for
+  the refusal `code` its listeners are told.
+  """
+  @spec forget(t(), callee(), token(), binary(), map()) :: t()
+  def forget(%__MODULE__{} = calls, callee, token, code, details) do
+    row = Map.get(calls.rows, token)
+    outcome(callee, :refused, token, row, row && row.channel, {code, details})
+    %{calls | rows: Map.delete(calls.rows, token)}
+  end
 
   @doc """
   One output, before any plugin sees it: `:output` when it carries neither a
@@ -352,12 +373,14 @@ defmodule Flezha.Relay.Calls do
         case {Map.get(calls.rows, token), caller} do
           {%{answered?: false} = row, _caller} ->
             emit(:answered, %{duration_us: duration_us(row)}, callee, %{})
+            outcome(callee, :answered, token, row, metadata["channel"], message)
             row = Map.merge(row, %{answered?: true, sent_as: sent_as(metadata)})
             %{calls | rows: Map.put(calls.rows, token, row)}
 
           # A callee restarted since it took the call keeps no row: the one it
           # leaves now makes every later output of the call an ordinary one.
           {nil, {:relay, call}} ->
+            outcome(callee, :answered, token, nil, metadata["channel"], message)
             row = Map.merge(relay_row(call), %{answered?: true, sent_as: sent_as(metadata)})
             %{calls | rows: Map.put(calls.rows, token, row)}
 
@@ -415,22 +438,30 @@ defmodule Flezha.Relay.Calls do
 
   @doc """
   A row's deadline passed: a caller still waiting is answered `call.timeout`;
-  an answered row is retired. The input stays accepted either way.
+  an answered row is retired. The input stays accepted either way. A relay
+  caller times out on its own clock, so its unanswered row is retired
+  answering nobody; its listeners are told it timed out all the same.
   """
   @spec expire(t(), callee(), token()) :: t()
   def expire(%__MODULE__{} = calls, callee, token) do
     case Map.pop(calls.rows, token) do
-      # A relay caller times out on its own clock.
-      {%{from: nil}, rows} ->
+      {%{answered?: false, from: nil} = row, rows} ->
+        outcome(
+          callee,
+          :timed_out,
+          token,
+          row,
+          row.channel,
+          {"call.timeout", %{deadline_ms: row.deadline_ms}}
+        )
+
         %{calls | rows: rows}
 
       {%{answered?: false} = row, rows} ->
         emit(:timeout, %{count: 1}, callee, %{})
-
-        error =
-          Error.new("call.timeout", %{relay: callee.relay_id, deadline_ms: row.deadline_ms})
-
+        error = error(callee, "call.timeout", %{deadline_ms: row.deadline_ms})
         GenServer.reply(row.from, {:error, error})
+        outcome(callee, :timed_out, token, row, row.channel, error)
         %{calls | rows: rows}
 
       {_answered_or_gone, rows} ->
@@ -451,7 +482,7 @@ defmodule Flezha.Relay.Calls do
 
       caller ->
         reply(callee, caller, {:error, refused(callee, code, details)}, %{})
-        forget(calls, token)
+        forget(calls, callee, token, code, details)
     end
   end
 
@@ -690,8 +721,96 @@ defmodule Flezha.Relay.Calls do
   @spec refused(callee(), binary(), map()) :: Error.t()
   def refused(callee, code, details) do
     emit(:refused, %{count: 1}, callee, %{code: code})
-    Error.new(code, Map.put(details, :relay, callee.relay_id))
+    error(callee, code, details)
   end
+
+  defp error(callee, code, details),
+    do: Error.new(code, Map.put(details, :relay, callee.relay_id))
+
+  # ---------------------------------------------------------------
+  # Call events, for the `on_call` listeners
+  # ---------------------------------------------------------------
+
+  @doc """
+  The id a call's events carry: a digest of its token, from which the token
+  cannot be recovered.
+  """
+  @spec call_id(token()) :: binary()
+  def call_id(token), do: digest([token])
+
+  @doc """
+  Announce a call the relay takes, `message` as its entry point took it:
+  `deadline` is an outside call's deadline in ms, or a relay's call. With a
+  `refusal` the call has no row: it is announced under an id of its own,
+  together with its `refused` outcome. Nothing is built while nobody listens.
+  """
+  @spec announce(callee(), token() | nil, binary(), map(), pos_integer() | map(), Error.t() | nil) ::
+          :ok
+  def announce(callee, token, message, metadata, deadline, refusal \\ nil)
+
+  def announce(%{activity: activity} = callee, token, message, metadata, deadline, refusal)
+      when activity != nil do
+    token = token || mint()
+
+    called =
+      %{
+        "flz.call_id" => call_id(token),
+        "flz.call_at" => System.system_time(:millisecond),
+        "channel" => metadata["channel"]
+      }
+      |> Map.merge(called_by(metadata, deadline))
+      |> named()
+
+    activity.(message, Map.put(called, "flz.call_event", "call"))
+
+    if refusal,
+      do: outcome(callee, :refused, token, nil, metadata["channel"], refusal)
+
+    :ok
+  end
+
+  def announce(_callee, _token, _message, _metadata, _deadline, _refusal), do: :ok
+
+  defp called_by(metadata, deadline_ms) when is_integer(deadline_ms),
+    do: %{
+      @source => metadata[@source],
+      @answer_channel => answer_channel(metadata),
+      "flz.call_deadline_ms" => deadline_ms
+    }
+
+  defp called_by(_metadata, call),
+    do: %{
+      @source => "relay",
+      "flz.call_caller" => call.caller,
+      @answer_channel => Map.get(call, :answer_channel),
+      "flz.call_deadline_ms" => max(call.deadline_at - System.system_time(:millisecond), 0)
+    }
+
+  # How the call `token` names ended, to its listeners: `answer` for an
+  # answer, an error, or an error's code and details, built only for them.
+  defp outcome(%{activity: activity} = callee, kind, token, row, channel, answer)
+       when activity != nil do
+    ended =
+      named(%{
+        "flz.call_event" => Atom.to_string(kind),
+        "flz.call_id" => call_id(token),
+        "flz.call_duration_ms" => if(row, do: now_ms() - row.started_ms, else: 0),
+        "channel" => channel
+      })
+
+    activity.(event_payload(callee, answer), ended)
+  end
+
+  defp outcome(_callee, _kind, _token, _row, _channel, _answer), do: :ok
+
+  # A channel or a source the call does not name is left out.
+  defp named(metadata), do: Map.reject(metadata, fn {_key, value} -> value in [nil, ""] end)
+
+  defp event_payload(_callee, answer) when is_binary(answer), do: answer
+  defp event_payload(_callee, %Error{} = error), do: Error.render(error, :json)
+
+  defp event_payload(callee, {code, details}),
+    do: event_payload(callee, error(callee, code, details))
 
   # Every caller still waiting is answered `reply.()`, built (and an error
   # counted) once per caller.

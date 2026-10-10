@@ -8,8 +8,9 @@ defmodule Flezha.Service.Listener.Receiver do
 
   The backlog stays inside `listener_pending_bytes` and
   `listener_pending_frames`: a frame that would pass either drops held parts,
-  oldest first; a part that still does not fit is dropped; an output or a
-  notice that still does not fit ends the listener with `listener.overrun`.
+  oldest first; a part that still does not fit is dropped; an output, a
+  notice, a call or a call's outcome that still does not fit ends the listener
+  with `listener.overrun`.
 
   When its plugin is released (a move, a restart, a teardown or a disable all
   look alike from here) it asks the registry which it was, once per
@@ -72,6 +73,9 @@ defmodule Flezha.Service.Listener.Receiver do
     {:noreply, %{state | released: false, reading: nil}}
   end
 
+  def handle_info({:message_forward, {payload, metadata}}, %{direction: :calls} = state),
+    do: {:noreply, hold(state, call_event(payload, metadata))}
+
   def handle_info({:message_forward, {payload, metadata}}, state),
     do: {:noreply, hold(state, {state.direction, payload, metadata})}
 
@@ -98,14 +102,24 @@ defmodule Flezha.Service.Listener.Receiver do
   # A part carries its number; anything else on the preview hook is a notice.
   defp preview(payload, %{"flz.part" => _} = metadata), do: {:part, payload, metadata}
 
-  defp preview(payload, metadata) do
-    error =
-      case Flezha.SDK.Error.from_document(payload) do
-        %{code: code, details: details} -> Flezha.Error.new(code, details)
-        nil -> Flezha.Error.new("internal.uncatalogued", reason: "an unreadable notice")
-      end
+  defp preview(payload, metadata), do: {:dead_lettered, error_of(payload), metadata}
 
-    {:dead_lettered, error, metadata}
+  # A call frame names its kind; an outcome that is not an answer carries an
+  # error document.
+  defp call_event(payload, metadata) do
+    case Map.pop(metadata, "flz.call_event") do
+      {"call", metadata} -> {:call, payload, metadata}
+      {"answered", metadata} -> {:answered, payload, metadata}
+      {"timed_out", metadata} -> {:timed_out, error_of(payload), metadata}
+      {"refused", metadata} -> {:refused, error_of(payload), metadata}
+    end
+  end
+
+  defp error_of(document) do
+    case Flezha.SDK.Error.from_document(document) do
+      %{code: code, details: details} -> Flezha.Error.new(code, details)
+      nil -> Flezha.Error.new("internal.uncatalogued", reason: "an unreadable error document")
+    end
   end
 
   defp hold(%{ended: true} = state, _event), do: state

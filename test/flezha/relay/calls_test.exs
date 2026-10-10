@@ -12,7 +12,7 @@ defmodule FlezhaTest.Relay.CallsTest do
   import FlezhaTest.Helper.MimicGlobal
 
   alias Flezha.Error
-  alias Flezha.Relay.{Builder, Calls, ClassRegistry, Handover, Migration, Plugins}
+  alias Flezha.Relay.{Builder, Calls, ClassRegistry, Handover, Migration, Overwatch, Plugins}
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Plugin.Host, as: PluginHost
   alias Flezha.State.{Completion, InputLog, TestHelpers, WriterRegistry}
@@ -258,7 +258,7 @@ defmodule FlezhaTest.Relay.CallsTest do
     end
 
     defp call(host, message, metadata \\ %{}, deadline_ms \\ 5_000) do
-      Task.async(fn -> Calls.call(host, message, metadata, deadline_ms, "callee") end)
+      Task.async(fn -> Calls.call(host, message, metadata, deadline_ms, "callee", "cli") end)
     end
 
     # The token the call's input reached the stream with.
@@ -566,8 +566,8 @@ defmodule FlezhaTest.Relay.CallsTest do
     test "a handover carries a waiting caller to the new node, whose answer reaches it",
          %{inst: inst} do
       {:ok, source} = start_supervised({Host, bare(inst)}, id: :source)
-      caller = Task.async(fn -> Calls.call(source, "hello", %{}, 5_000, inst) end)
-      short = Task.async(fn -> Calls.call(source, "slow", %{}, 300, inst) end)
+      caller = Task.async(fn -> Calls.call(source, "hello", %{}, 5_000, inst, "cli") end)
+      short = Task.async(fn -> Calls.call(source, "slow", %{}, 300, inst, "cli") end)
 
       assert NodeTestHelper.wait_until(
                fn -> map_size(:sys.get_state(source).calls.rows) == 2 end,
@@ -612,5 +612,306 @@ defmodule FlezhaTest.Relay.CallsTest do
         assert details["status"] == "error"
       end
     end
+  end
+
+  # `relay-io-listener`: the calls a relay takes and how each ended, as the
+  # `on_call` hook hands them to the test standing in for its listener.
+  describe "the on_call listeners" do
+    setup :set_mimic_global_until_exit
+
+    setup do
+      test_pid = self()
+
+      stub(Flezha.Runner.StreamChannel, :io_in, fn
+        :fake_channel, id, payload ->
+          send(test_pid, {:channel_got, id, payload})
+          :ok
+
+        channel, id, payload ->
+          Mimic.call_original(Flezha.Runner.StreamChannel, :io_in, [channel, id, payload])
+      end)
+
+      %{inst: "watched_#{System.unique_integer([:positive])}"}
+    end
+
+    defp calls_listener(inst) do
+      Flezha.Plugin.new(
+        id: "calls",
+        provider: Flezha.Plugin.Provider.MonitoredIOForward,
+        opts: %{recv_pid: self(), plugin_id: "calls", relay_id: inst, namespace: "default"},
+        namespace: "default",
+        relay_id: inst,
+        hooks: [{:on_call, []}]
+      )
+    end
+
+    # `state` with a calls listener sending to the test, and `others` beside it.
+    defp watched(state, others \\ []) do
+      {:ok, table} =
+        Table.bulk_subscribe(state.extensions, [{"calls", calls_listener(state.id)} | others])
+
+      %{state | extensions: table}
+    end
+
+    defp event(kind) do
+      assert_receive {:message_forward, {payload, %{"flz.call_event" => ^kind} = metadata}}, 2_000
+      {payload, metadata}
+    end
+
+    defp error_code(document), do: Flezha.SDK.Error.from_document(document).code
+
+    defp relay_call(overrides) do
+      Map.merge(
+        %{
+          caller: "orders",
+          call: "c1",
+          deadline_at: System.system_time(:millisecond) + 5_000,
+          created: false,
+          factory: nil
+        },
+        overrides
+      )
+    end
+
+    # Also the `relay-extensions` scenario "A call reaches a calls listener and
+    # nothing else": the sink and the output listener see the answer alone.
+    test "an answered call: one call event, then answered, under an id that is not the token",
+         %{inst: inst} do
+      test_pid = self()
+      outputs = spawn_link(fn -> tag_outputs(test_pid) end)
+
+      output_listener =
+        Flezha.Plugin.new(
+          id: "out",
+          provider: Flezha.Plugin.Provider.MonitoredIOForward,
+          opts: %{recv_pid: outputs, plugin_id: "out", relay_id: inst, namespace: "default"},
+          namespace: "default",
+          relay_id: inst,
+          hooks: [{:on_output, []}, {:on_preview, []}]
+        )
+
+      sink =
+        Flezha.Plugin.new(
+          id: "sink",
+          provider: Flezha.Plugin.Provider.BeamMsgForward,
+          opts: %{recv_pid: self()},
+          namespace: "default",
+          relay_id: inst,
+          hooks: [{:on_output, []}]
+        )
+
+      state = watched(state(inst), [{"out", output_listener}, {"sink", sink}])
+      host = start_supervised!({Host, state})
+      started = System.system_time(:millisecond)
+      caller = call(host, "hello", %{"channel" => "in", "flz.call_source" => "forged"})
+      token = called_token(inst)
+
+      {"hello", called} = event("call")
+
+      assert %{
+               "flz.call_id" => id,
+               "flz.call_source" => "cli",
+               "channel" => "in",
+               "flz.call_deadline_ms" => 5_000,
+               "flz.call_at" => at
+             } = called
+
+      assert at in started..System.system_time(:millisecond)
+      assert id != token and not String.contains?(id, token)
+      assert id == Calls.call_id(token)
+      refute Map.has_key?(called, "flz.reply_to")
+      refute Map.has_key?(called, "flz.call_answer_channel")
+
+      GenServer.cast(host, {:io_out, "hi", %{"flz.reply_to" => token, "channel" => "out"}})
+      assert {:ok, "hi", _} = Task.await(caller)
+
+      {"hi", answered} = event("answered")
+      assert %{"flz.call_id" => ^id, "channel" => "out", "flz.call_duration_ms" => ms} = answered
+      assert is_integer(ms) and ms >= 0
+
+      assert_receive {:output_listener, {"hi", %{"channel" => "out"}}}, 2_000
+      assert_receive {:message_forward, "hi"}, 2_000
+      refute_receive {:output_listener, _}, 100
+      refute_received {:message_forward, {_, %{"flz.call_event" => _}}}
+    end
+
+    test "a call past its deadline: timed_out with call.timeout, and no answer", %{inst: inst} do
+      host = start_supervised!({Host, watched(state(inst))})
+      caller = call(host, "slow", %{}, 100)
+      _token = called_token(inst)
+
+      {"slow", %{"flz.call_id" => id}} = event("call")
+      assert {:error, %Error{code: "call.timeout"}} = Task.await(caller)
+      {document, timed_out} = event("timed_out")
+      assert error_code(document) == "call.timeout"
+      assert %{"flz.call_id" => ^id, "flz.call_duration_ms" => ms} = timed_out
+      assert ms >= 90
+      refute_received {:message_forward, {_, %{"flz.call_event" => "answered"}}}
+    end
+
+    test "a busy relay refuses at admission: the call and its refusal together",
+         %{inst: inst} do
+      on_exit(TestHelpers.override_env(:call_pending_max, 1))
+      host = start_supervised!({Host, watched(state(inst))})
+      waiting = call(host, "first")
+      _token = called_token(inst)
+      {"first", %{"flz.call_id" => first}} = event("call")
+
+      assert {:error, %Error{code: "call.busy"}} = Task.await(call(host, "second", %{}, 5_000))
+      {"second", %{"flz.call_id" => second, "flz.call_source" => "cli"}} = event("call")
+      {document, %{"flz.call_id" => ^second, "flz.call_duration_ms" => 0}} = event("refused")
+      assert error_code(document) == "call.busy"
+      assert second != first
+      Task.shutdown(waiting, :brutal_kill)
+    end
+
+    test "refused after admission: absorbed, untaken and dead-lettered inputs", %{inst: inst} do
+      filter =
+        Flezha.Plugin.new(
+          id: "filter",
+          provider: Flezha.Plugin.Provider.Filter,
+          opts: %{regex_pattern: "drop-me", inverted: true},
+          namespace: "default",
+          relay_id: inst,
+          hooks: [{:on_input, []}]
+        )
+
+      filtered = start_supervised!({Host, watched(state(inst), [{"filter", filter}])}, id: :f)
+      assert {:error, %Error{code: "call.absorbed"}} = Task.await(call(filtered, "drop-me"))
+      {"drop-me", %{"flz.call_id" => id}} = event("call")
+      {document, %{"flz.call_id" => ^id}} = event("refused")
+      assert error_code(document) == "call.absorbed"
+
+      unbound = start_supervised!({Host, watched(state(inst, channel: nil))}, id: :u)
+      assert {:error, %Error{code: "call.unavailable"}} = Task.await(call(unbound, "x"))
+      {"x", _called} = event("call")
+      {document, _refused} = event("refused")
+      assert error_code(document) == "call.unavailable"
+
+      host = start_supervised!({Host, watched(state(inst))}, id: :d)
+      caller = call(host, "poison", %{"channel" => "in"})
+      token = called_token(inst)
+      {"poison", %{"flz.call_id" => id}} = event("call")
+      GenServer.cast(host, {:dead_lettered, notice(token, "#{inst}/t/1")})
+      assert {:error, %Error{code: "call.failed"}} = Task.await(caller)
+      {document, %{"flz.call_id" => ^id, "channel" => "in"}} = event("refused")
+      assert error_code(document) == "call.failed"
+    end
+
+    test "an ended instance: each waiting call refused call.callee_ended" do
+      test_pid = self()
+      callee = Map.put(@callee, :activity, &send(test_pid, {:message_forward, {&1, &2}}))
+      {t1, calls} = admit(%Calls{}, from())
+      {t2, calls} = admit(calls, from())
+
+      Calls.end_all(calls, callee, "error")
+
+      ids =
+        for _ <- 1..2 do
+          {document, %{"flz.call_id" => id, "channel" => "in"}} = event("refused")
+          assert error_code(document) == "call.callee_ended"
+          id
+        end
+
+      assert Enum.sort(ids) == Enum.sort([Calls.call_id(t1), Calls.call_id(t2)])
+    end
+
+    test "a relay's call: source relay and its caller, announced once, refused or timed out",
+         %{inst: inst} do
+      host = start_supervised!({Host, watched(state(inst))}, id: :taken)
+      call = relay_call(%{answer_channel: "quotes"})
+      assert :ok = GenServer.call(host, {:call, "turn", %{"channel" => "in"}, call})
+
+      {"turn", called} = event("call")
+
+      assert %{
+               "flz.call_source" => "relay",
+               "flz.call_caller" => "orders",
+               "flz.call_answer_channel" => "quotes",
+               "channel" => "in",
+               "flz.call_deadline_ms" => left
+             } = called
+
+      assert left in 4_000..5_000
+
+      # Sent again while its row waits: the same row, not announced again.
+      GenServer.call(host, {:call, "turn", %{"channel" => "in"}, call})
+      refute_receive {:message_forward, {_, %{"flz.call_event" => "call"}}}, 100
+
+      unbound = start_supervised!({Host, watched(state(inst, channel: nil))}, id: :untaken)
+      assert {:error, :not_ready} = GenServer.call(unbound, {:call, "x", %{}, relay_call(%{})})
+      {"x", %{"flz.call_id" => id}} = event("call")
+      {document, %{"flz.call_id" => ^id}} = event("refused")
+      assert error_code(document) == "call.unavailable"
+
+      soon = relay_call(%{call: "c2", deadline_at: System.system_time(:millisecond) + 150})
+      assert :ok = GenServer.call(host, {:call, "late", %{}, soon})
+      {"late", %{"flz.call_id" => id}} = event("call")
+      {document, %{"flz.call_id" => ^id}} = event("timed_out")
+      assert error_code(document) == "call.timeout"
+    end
+
+    test "a feeding plugin's call is announced as plugin, and the runner never sees it",
+         %{inst: inst} do
+      host = start_supervised!({Host, watched(state(inst))})
+
+      worker =
+        Task.async(fn ->
+          PluginHost.inject(host, "envelope", %{"flz.call_source" => "ui"}, :call, 5_000)
+        end)
+
+      assert_receive {:channel_got, ^inst, {"envelope", input}}, 2_000
+      refute Map.has_key?(input, "flz.call_source")
+      {"envelope", %{"flz.call_source" => "plugin"}} = event("call")
+      GenServer.cast(host, {:io_out, "ok", %{"flz.reply_to" => input["flz.reply_to"]}})
+      assert {:ok, "ok", _} = Task.await(worker)
+    end
+
+    test "a handover: the outcome comes from the arriving process under the call's id",
+         %{inst: inst} do
+      builder = %Builder{id: inst, factory_id: "chat", run: :steps, opts: []}
+      bare = state(inst, runner_id: nil, builder: builder)
+      {:ok, source} = start_supervised({Host, watched(bare)}, id: :source)
+      caller = Task.async(fn -> Calls.call(source, "hello", %{}, 5_000, inst, "ui") end)
+      token = called_token(inst)
+      {"hello", %{"flz.call_id" => id, "flz.call_source" => "ui"}} = event("call")
+
+      handover = :sys.get_state(source) |> Handover.prepare()
+      send(source, :calls_handed_over)
+      {:ok, target} = start_supervised({Host, {:absorb, bare, handover}}, id: :target)
+      :ok = stop_supervised(:source)
+      # The arriving relay binds its listener again from its declared entry.
+      listener = calls_listener(inst)
+
+      :sys.replace_state(target, fn state ->
+        {:ok, table} = Table.bulk_subscribe(state.extensions, [{"calls", listener}])
+        %{state | extensions: table}
+      end)
+
+      GenServer.cast(target, {:io_out, "moved", %{"flz.reply_to" => token}})
+      assert {:ok, "moved", _} = Task.await(caller)
+      {"moved", %{"flz.call_id" => ^id}} = event("answered")
+    end
+
+    test "with no on_call subscriber nothing is built", %{inst: inst} do
+      assert %{activity: nil} = Overwatch.callee(state(inst))
+      assert %{activity: activity} = Overwatch.callee(watched(state(inst)))
+      assert is_function(activity, 2)
+
+      host = start_supervised!({Host, state(inst)})
+      caller = call(host, "hello", %{}, 100)
+      _token = called_token(inst)
+      assert {:error, %Error{code: "call.timeout"}} = Task.await(caller)
+      refute_received {:message_forward, _}
+    end
+  end
+
+  defp tag_outputs(test_pid) do
+    receive do
+      {:message_forward, frame} -> send(test_pid, {:output_listener, frame})
+      _other -> :ok
+    end
+
+    tag_outputs(test_pid)
   end
 end

@@ -508,14 +508,22 @@ defmodule Flezha.Service.RelayManager do
   Call `relay_id` (a partition group's member by `key`) with one input and
   wait for its answer: the first output it caused (on the channel
   `metadata` names under `flz.call_answer_channel`, when it names one), or a
-  coded error saying why none came by `deadline_ms`.
+  coded error saying why none came by `deadline_ms`. `source` names the
+  caller's surface to the relay's calls listeners.
   """
-  @spec call_relay(String.t(), String.t(), binary(), map(), pos_integer(), String.t() | nil) ::
-          {:ok, binary(), map()} | {:error, term()}
-  def call_relay(namespace, relay_id, message, metadata, deadline_ms, key) do
+  @spec call_relay(
+          String.t(),
+          String.t(),
+          binary(),
+          map(),
+          pos_integer(),
+          String.t() | nil,
+          String.t()
+        ) :: {:ok, binary(), map()} | {:error, term()}
+  def call_relay(namespace, relay_id, message, metadata, deadline_ms, key, source) do
     with {:ok, member} <- resolve_member(namespace, relay_id, key),
          {:ok, pid} <- get_relay_pid(namespace, member),
-         do: Calls.call(pid, message, metadata, deadline_ms, member)
+         do: Calls.call(pid, message, metadata, deadline_ms, member, source)
   end
 
   # The ingest path answers for itself; a caller is told which relay.

@@ -229,6 +229,18 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
       assert Exception.message(error) =~ "on_output/2"
     end
 
+    test "a controller provider defining the calls hook does not compile, naming it" do
+      source = """
+      defmodule Flezha.ProviderBehaviourTest.ControllerCalls#{System.unique_integer([:positive])} do
+        use Flezha.Plugin.ProviderBehaviour, type: :controller
+        def on_call(ctx, _opts), do: {:ok, ctx}
+      end
+      """
+
+      error = assert_raise CompileError, fn -> Code.compile_string(source) end
+      assert Exception.message(error) =~ "on_call/2"
+    end
+
     test "a relay provider defining a controller hook does not compile, naming it" do
       source = """
       defmodule Flezha.ProviderBehaviourTest.RelayDeadLetter#{System.unique_integer([:positive])} do
