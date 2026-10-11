@@ -352,7 +352,8 @@ defmodule Flezha.Plugin.Provider.Websocket do
   Health verdict reusing the two-tier watchdog's canonical timestamps — no new
   liveness state. Healthy means the connection process is alive and within its
   `idle_timeout_ms` (connection liveness) and, when `resubscribe_after_ms` is
-  configured, within its data window (data liveness). The in-process watchdog
+  configured, within its data window (data liveness), which stays parked while
+  a subscription source has nothing applied. The in-process watchdog
   (idle reconnect / resubscribe) remains the fast path; this contract only lets
   the reconciler escalate after it has repeatedly failed.
 

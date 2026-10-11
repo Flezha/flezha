@@ -353,6 +353,7 @@ defmodule Flezha.Plugin.Provider.Websocket.Client do
   @impl Fresh
   def handle_info(:idle_check, state) do
     now = :erlang.monotonic_time(:millisecond)
+    state = park_data_window(state, now)
 
     cond do
       # While Fresh is reconnecting there is no socket to police and
@@ -499,6 +500,14 @@ defmodule Flezha.Plugin.Provider.Websocket.Client do
     Process.exit(self(), {:shutdown, :idle_timeout})
     {:ok, state}
   end
+
+  # A subscription source with nothing applied has asked for no data, so its
+  # silence is not a stall: the data window stays parked until items apply.
+  defp park_data_window(%{subscription: _, applied: applied} = state, now) do
+    if MapSet.size(applied) == 0, do: %{state | last_data_frame_at: now}, else: state
+  end
+
+  defp park_data_window(state, _now), do: state
 
   defp resubscribe_stale_data(state, now, data_silence_ms) do
     # Rate-limit guard advances even when the send is skipped, so a

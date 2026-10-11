@@ -68,6 +68,39 @@ defmodule Flezha.Plugin.Provider.WebsocketAppliedSetTest do
       assert ns.next_req_id == 1
     end
 
+    test "an empty applied set keeps the data window parked, so health never reads data_idle" do
+      now = :erlang.monotonic_time(:millisecond)
+
+      s =
+        state(
+          applied: MapSet.new(),
+          resubscribe_after_ms: 1_000,
+          last_data_frame_at: now - 10_000,
+          last_resubscribe_at: now - 10_000
+        )
+
+      assert {:ok, ns} = Websocket.Client.handle_info(:idle_check, s)
+      assert {_frame_age, data_age} = probe(ns)
+      assert data_age < 1_000
+    end
+
+    test "a non-empty applied set still reports its data silence" do
+      now = :erlang.monotonic_time(:millisecond)
+
+      s =
+        state(
+          applied: MapSet.new(["a"]),
+          resubscribe_after_ms: 1_000,
+          websocket_established?: false,
+          last_data_frame_at: now - 10_000,
+          last_resubscribe_at: now - 10_000
+        )
+
+      assert {:ok, ns} = Websocket.Client.handle_info(:idle_check, s)
+      assert {_frame_age, data_age} = probe(ns)
+      assert data_age >= 10_000
+    end
+
     test "an empty applied set asserts nothing on connect" do
       s = state(applied: MapSet.new(), websocket_established?: false)
       assert {:ok, ns} = Websocket.Client.handle_connect(101, [], s)
@@ -169,6 +202,14 @@ defmodule Flezha.Plugin.Provider.WebsocketAppliedSetTest do
       assert report.last_error == :nxdomain
       assert report.connected
     end
+  end
+
+  # The liveness probe's `{frame_age, data_age}` answer for state `s`.
+  defp probe(s) do
+    ref = make_ref()
+    {:ok, _} = Websocket.Client.handle_info({:liveness_probe, self(), ref}, s)
+    assert_receive {^ref, ages}
+    ages
   end
 
   # A socket process holding `s` that answers one probe.
