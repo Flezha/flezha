@@ -11,7 +11,7 @@ defmodule Flezha.State.WalWriterTest do
 
   import ExUnit.CaptureLog
 
-  alias Flezha.State.{Metrics, Paths, RecordFrame, Supervisor, TestHelpers, WalWriter}
+  alias Flezha.State.{Metrics, Paths, RecordFrame, SeqIndex, Supervisor, TestHelpers, WalWriter}
   alias Flezha.State.Snapshot, as: StateSnapshot
   alias Flezha.State.WalWriter.State, as: WriterState
 
@@ -445,6 +445,34 @@ defmodule Flezha.State.WalWriterTest do
       assert {:ok, 4, _, "x4", c1} = RecordFrame.decode_record(dev, 0)
       assert {:ok, 5, _, "x5", _} = RecordFrame.decode_record(dev, c1)
       :file.close(dev)
+    end
+
+    # fails when: an index whose positions drifted from the file makes a
+    # compaction cut mid-record, and the Cell's next restore is refused.
+    test "a stale index never cuts mid-record", %{cell_id: pid} do
+      {:ok, srv} = Supervisor.find_or_start(pid)
+      header = TestHelpers.stub_header()
+      for n <- 0..299, do: :ok = WalWriter.append(srv, n, header, "x" <> Integer.to_string(n))
+      TestHelpers.close_and_await(srv, pid)
+
+      path = Paths.wal_path(pid)
+      offsets = TestHelpers.record_offsets(path)
+      ends = tl(offsets) ++ [RecordFrame.file_size(path)]
+
+      # Every sample one byte past its record.
+      stale =
+        offsets
+        |> Enum.zip(ends)
+        |> Enum.with_index()
+        |> Enum.reduce(SeqIndex.new(1), fn {{from, to}, seq}, index ->
+          SeqIndex.note(index, seq, to - from)
+        end)
+
+      {:ok, device} = :file.open(path, [:raw, :read, :write, :binary])
+      assert {:ok, _cut, file, _index} = RecordFrame.cut_below(path, device, stale, 261)
+      :file.close(file)
+
+      assert TestHelpers.record_seqs(path) == {:ok, Enum.to_list(261..299)}
     end
   end
 

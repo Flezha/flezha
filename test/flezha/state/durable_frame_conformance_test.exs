@@ -16,7 +16,7 @@ defmodule Flezha.State.DurableFrameConformanceTest do
 
   alias Flezha.SDK.Record, as: SdkRecord
   alias Flezha.SDK.RecordFrame, as: Frame
-  alias Flezha.State.RecordFrame
+  alias Flezha.State.{RecordFrame, TestHelpers}
 
   @fixture Path.join([__DIR__, "..", "..", "fixtures", "durable_frame.txt"])
   @external_resource @fixture
@@ -90,17 +90,13 @@ defmodule Flezha.State.DurableFrameConformanceTest do
         path = Path.join(tmp, "#{name}.log")
         File.write!(path, bytes(hex))
 
-        result =
-          capture_result(fn ->
-            RecordFrame.fold_path(path, [], fn {seq, _h, _b}, acc -> {:cont, [seq | acc]} end)
-          end)
+        result = capture_result(fn -> TestHelpers.record_seqs(path) end)
 
         # A device log MAY have a torn tail, so its answer to a crc failure with
         # a record behind it is the same refusal and no other row differs.
         case verdict do
           "ok" ->
-            assert {:ok, folded} = result, "row #{name}"
-            assert Enum.reverse(folded) == seqs(seqs), "row #{name}"
+            assert result == {:ok, seqs(seqs)}, "row #{name}"
 
           reason ->
             assert {:error, {refused, _last_seq, _offset}} = result, "row #{name}"

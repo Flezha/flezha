@@ -258,10 +258,17 @@ defmodule Flezha.State.RecordFrame do
   @spec position_of(SeqIndex.t(), :file.io_device(), Path.t(), non_neg_integer()) ::
           {:ok, non_neg_integer()} | {:error, Frame.refusal()}
   def position_of(index, device, path, floor) do
-    result = seek(device, path, SeqIndex.sample_at(index, floor), -1, floor)
+    {sample_seq, start} = SeqIndex.sample_at(index, floor)
+    start = if start > 0 and not record_at?(device, start, sample_seq), do: 0, else: start
+    result = seek(device, path, start, -1, floor)
     {:ok, _} = :file.position(device, :eof)
     result
   end
+
+  # A sample is trusted only while the record at its position still carries its
+  # seq: from a stale one a seek would cut mid-record or past the end.
+  defp record_at?(device, position, seq),
+    do: match?({:ok, ^seq, _header, _body, _consumed}, decode_record(device, position))
 
   defp seek(device, path, position, last_seq, floor) do
     case decode_record(device, position) do

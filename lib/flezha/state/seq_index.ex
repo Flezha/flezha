@@ -35,18 +35,16 @@ defmodule Flezha.State.SeqIndex do
   end
 
   @doc """
-  The file position of the newest sample at or below `floor` — where a scan for
+  The newest sample at or below `floor` as `{seq, position}` — where a scan for
   the first record with seq >= `floor` starts, at most one span away from it.
+  `{0, 0}` when there is none.
   """
-  @spec sample_at(t(), non_neg_integer()) :: non_neg_integer()
+  @spec sample_at(t(), non_neg_integer()) :: {non_neg_integer(), non_neg_integer()}
   def sample_at(%__MODULE__{samples: samples}, floor) do
-    {_seq, start} =
-      samples
-      |> :queue.to_list()
-      |> Enum.take_while(fn {seq, _} -> seq <= floor end)
-      |> List.last({0, 0})
-
-    start
+    samples
+    |> :queue.to_list()
+    |> Enum.take_while(fn {seq, _} -> seq <= floor end)
+    |> List.last({0, 0})
   end
 
   @doc """

@@ -13,7 +13,7 @@ defmodule Flezha.State.WalWriter.Epoch do
 
   alias Flezha.Runner.FleetManager.Marks
   alias Flezha.SDK.Wire
-  alias Flezha.State.{InputLog, Metrics, Paths, RecordFrame}
+  alias Flezha.State.{InputLog, Metrics, Paths, RecordFrame, SeqIndex}
   alias Flezha.State.WalWriter.{Admission, RemoteGate, Settlement, State}
 
   # Only a frame from a *different* session than the epoch owner consults the
@@ -84,7 +84,8 @@ defmodule Flezha.State.WalWriter.Epoch do
         pending_bytes: 0,
         pending_since_us: nil,
         oldest_unsnapshotted_at: nil,
-        header_index: nil
+        header_index: nil,
+        seq_index: SeqIndex.new()
     }
 
     # A realign discards the whole lineage, so nothing in the new one has been

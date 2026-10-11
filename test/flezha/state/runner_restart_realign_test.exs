@@ -34,7 +34,7 @@ defmodule Flezha.State.RunnerRestartRealignTest do
   alias Flezha.Runner.FleetManager.Marks
   alias Flezha.Runner.StreamChannel
   alias Flezha.SDK.Wire
-  alias Flezha.State.{Metrics, Snapshot, Supervisor, TestHelpers, WalWriter}
+  alias Flezha.State.{Metrics, Paths, RecordFrame, Snapshot, Supervisor, TestHelpers, WalWriter}
   alias Flezha.Transport.LivenessCounters
 
   setup do
@@ -90,6 +90,25 @@ defmodule Flezha.State.RunnerRestartRealignTest do
 
     # The regression was healed by realignment — not mistaken for a forward gap.
     refute_received {:seq_gap, _, _}
+  end
+
+  # fails when: a compaction after a realign cuts the WAL mid-record, so the
+  # next restore refuses the whole Cell with crc_mismatch at offset 0.
+  test "a compaction after a realign keeps the WAL walkable from its first byte", ctx do
+    old = start_channel("exec_old")
+    feed(old, ctx, 0..299)
+
+    new = start_channel("exec_new")
+    feed(new, ctx, 0..299)
+    assert_receive {:wal_realign, %{from_seq: 299, to_seq: 0}, _meta}, 1_000
+
+    # The index tracks the emptied file, not the discarded lineage.
+    path = Paths.wal_path(ctx.cell_id)
+    assert :sys.get_state(ctx.writer).seq_index.end == RecordFrame.file_size(path)
+
+    assert :ok = WalWriter.truncate_up_to(ctx.writer, 260)
+
+    assert TestHelpers.record_seqs(path) == {:ok, Enum.to_list(261..299)}
   end
 
   test "a same-runner duplicate is still deduped (no spurious realign)", ctx do

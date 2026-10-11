@@ -321,6 +321,9 @@ guard, and emitting `[:flezha, :state, :compaction_trigger]` with `trigger: :siz
    close, `File.rename/2` to `<key>.snap.{seq}`, then `WalWriter.truncate_up_to/2` drops
    `seq <= snapshot_seq` (boundary via `SeqIndex`, tail copied as bytes by `cut_below`/`cut_above`,
    never record by record). The next append, at `snapshot_seq + 1`, is past the new baseline.
+   A sample is trusted only while the record at its position still carries its seq; otherwise
+   the boundary is found from byte 0, so an index that drifted from its file can never cut
+   mid-record. Anything that empties or rewrites the WAL resets the index with it.
 
 The rename is atomic; a `.tmp` left by a crash is filtered by `scan_dir/1`; a crash between rename
 and truncate is safe because folding already-folded records is idempotent.

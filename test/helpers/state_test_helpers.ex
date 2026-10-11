@@ -355,6 +355,19 @@ defmodule Flezha.State.TestHelpers do
   end
 
   @doc """
+  The seqs of the record log at `path` in file order, walked as the controller
+  walks it, or the walk's refusal.
+  """
+  @spec record_seqs(Path.t()) :: {:ok, [non_neg_integer()]} | {:error, RecordFrame.refusal()}
+  def record_seqs(path) do
+    with {:ok, seqs} <-
+           Flezha.State.RecordFrame.fold_path(path, [], fn {seq, _h, _b}, acc ->
+             {:cont, [seq | acc]}
+           end),
+         do: {:ok, Enum.reverse(seqs)}
+  end
+
+  @doc """
   Flip one bit in the body of the record starting at `offset` in the record log
   at `path`.
 
