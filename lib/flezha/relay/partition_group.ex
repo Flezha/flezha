@@ -16,7 +16,6 @@ defmodule Flezha.Relay.PartitionGroup do
 
   require Logger
 
-  alias Flezha.AuthZ.Quotas
   alias Flezha.Config.Durations
   alias Flezha.Dlq
   alias Flezha.Identificator
@@ -27,6 +26,7 @@ defmodule Flezha.Relay.PartitionGroup do
   alias Flezha.SDK.KeyGroup
   alias Flezha.Service.HubManager
   alias Flezha.Service.RelayManager
+  alias Flezha.Service.RelayManager.Admission
   alias Flezha.Service.PluginManager
   alias Flezha.Service.Validator
   alias Flezha.Shutdown
@@ -146,13 +146,8 @@ defmodule Flezha.Relay.PartitionGroup do
   # between here and member k — which the rollback below handles loudly.
   defp check_group_quota(_namespace, needed) when needed <= 0, do: :ok
 
-  defp check_group_quota(namespace, needed) do
-    case Quotas.check_allocation(namespace, :max_relays, needed) do
-      :ok -> :ok
-      {:error, :namespace_unknown} -> :ok
-      {:error, _} = err -> err
-    end
-  end
+  defp check_group_quota(namespace, needed),
+    do: Admission.check_relay_quota(namespace, needed)
 
   # Only the missing members start, after two preflights: the survivors must
   # declare exactly the identity the request recomputes, and the group-level

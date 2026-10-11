@@ -9,6 +9,7 @@ defmodule Flezha.Service.RelayManager.Admission do
   alias Flezha.Identificator
   alias Flezha.Relay.PartitionGroup
   alias Flezha.Runner.FleetManager
+  alias Flezha.Service.HubManager
   alias Flezha.Service.Validator
   alias Flezha.Shutdown
   alias Flezha.State.Paths
@@ -117,9 +118,15 @@ defmodule Flezha.Service.RelayManager.Admission do
     end
   end
 
-  def check_relay_quota(namespace) do
-    check_quota(namespace, :max_relays, 1)
+  @doc "Whether `namespace` has room for `needed` more relays, counted from the cluster's live relays."
+  def check_relay_quota(namespace, needed \\ 1) do
+    if Flezha.AuthZ.enabled?(),
+      do: _ = Quotas.refresh_relays(namespace, fn -> live_relays(namespace) end)
+
+    check_quota(namespace, :max_relays, needed)
   end
+
+  defp live_relays(namespace), do: length(HubManager.get_all_relays(namespace))
 
   # A namespace over its disk quota refuses NEW allocation — running
   # relays and their in-flight durable writes are never interrupted

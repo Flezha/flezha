@@ -15,6 +15,8 @@ defmodule Flezha.AuthZ.QuotaPointsTest do
   alias Flezha.AuthZ
   alias Flezha.AuthZ.{NamespaceStore, QuotaCounters, Quotas, TokenStore}
   alias Flezha.Runner.FleetManager
+  alias Flezha.Service.HubManager
+  alias Flezha.Service.RelayManager.Admission
   alias Flezha.State.Paths
   alias Flezha.State.PersistenceResolver
   alias Flezha.State.Watchdog
@@ -63,6 +65,27 @@ defmodule Flezha.AuthZ.QuotaPointsTest do
       :ok = QuotaCounters.set("team-roomy", :runners, 3)
 
       assert :ok = Quotas.check_allocation("team-roomy", :max_runners)
+    end
+  end
+
+  describe "max_relays" do
+    # fails when: a namespace whose relays all completed stays locked out with
+    # quota_exceeded max_relays, because each stop released its slot on the node
+    # hosting the hub child rather than the node that counted the start.
+    test "releases that landed on another node's counter do not lock the namespace out" do
+      {:ok, _} = NamespaceStore.create("team-relays", quotas: %{max_relays: 100})
+      :ok = QuotaCounters.incr("team-relays", :relays, 101)
+      _ = :sys.get_state(QuotaCounters)
+
+      assert :ok = Admission.check_relay_quota("team-relays")
+    end
+
+    test "live relays at the limit still refuse a start" do
+      {:ok, _} = NamespaceStore.create("team-full", quotas: %{max_relays: 2})
+      stub(HubManager, :get_all_relays, fn "team-full" -> [{"a", self()}, {"b", self()}] end)
+
+      assert {:error, {:quota_exceeded, :max_relays, %{current: 2, limit: 2}}} =
+               Admission.check_relay_quota("team-full")
     end
   end
 

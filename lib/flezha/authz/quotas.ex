@@ -34,6 +34,9 @@ defmodule Flezha.AuthZ.Quotas do
   # How long a disk-bytes snapshot stands before the next caller rebuilds it.
   @disk_bytes_window_seconds 30
 
+  # How long a relay count stands before the next start re-derives it.
+  @relays_window_seconds 5
+
   @type kind ::
           :max_relays
           | :max_cells_per_relay
@@ -119,11 +122,8 @@ defmodule Flezha.AuthZ.Quotas do
   one uptime).
   """
   @spec rebuild_disk_bytes(binary()) :: non_neg_integer()
-  def rebuild_disk_bytes(namespace) when is_binary(namespace) do
-    bytes = compute_disk_bytes(namespace)
-    :ok = QuotaCounters.set(namespace, :disk_bytes, bytes)
-    bytes
-  end
+  def rebuild_disk_bytes(namespace) when is_binary(namespace),
+    do: store(namespace, :disk_bytes, compute_disk_bytes(namespace))
 
   @doc """
   Snapshot the disk-bytes counter for `namespace` from the on-disk
@@ -138,14 +138,38 @@ defmodule Flezha.AuthZ.Quotas do
   window lapses, which is the staleness the window already allows.
   """
   @spec refresh_disk_bytes(binary()) :: non_neg_integer()
-  def refresh_disk_bytes(namespace) when is_binary(namespace) do
-    case QuotaCounters.claim_refresh(namespace, :disk_bytes, @disk_bytes_window_seconds) do
-      :claimed -> rebuild_disk_bytes(namespace)
-      :fresh -> QuotaCounters.get(namespace, :disk_bytes)
+  def refresh_disk_bytes(namespace) when is_binary(namespace),
+    do:
+      refresh(namespace, :disk_bytes, @disk_bytes_window_seconds, fn ->
+        compute_disk_bytes(namespace)
+      end)
+
+  @doc """
+  Re-derive the relay counter for `namespace` from `count_live`, the cluster's
+  live relay count, at most once per window. The counter alone drifts: a start
+  counts on the node that admitted it, while the stop releases on whichever node
+  hosts the relay's hub child, and a release on a counter already at 0 is lost.
+  """
+  @spec refresh_relays(binary(), (-> non_neg_integer())) :: non_neg_integer()
+  def refresh_relays(namespace, count_live)
+      when is_binary(namespace) and is_function(count_live, 0),
+      do: refresh(namespace, :relays, @relays_window_seconds, count_live)
+
+  ## ----- private -----
+
+  # One claim per counter per window: the claimant stores `truth`, every other
+  # caller reads what the last claimant stored.
+  defp refresh(namespace, counter, window_seconds, truth) do
+    case QuotaCounters.claim_refresh(namespace, counter, window_seconds) do
+      :claimed -> store(namespace, counter, truth.())
+      :fresh -> QuotaCounters.get(namespace, counter)
     end
   end
 
-  ## ----- private -----
+  defp store(namespace, counter, value) do
+    :ok = QuotaCounters.set(namespace, counter, value)
+    value
+  end
 
   # Map quota fields → counter kinds. Naming kept distinct so the
   # quota field reads natural in the namespace catalog while the
