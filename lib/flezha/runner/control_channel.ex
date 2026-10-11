@@ -322,8 +322,12 @@ defmodule Flezha.Runner.ControlChannel do
     {:noreply, state}
   end
 
-  # NIF transport: connection closed
+  # NIF transport: a send-buffer watermark crossing. No control sender waits on
+  # the gate, so there is nothing to hold or wake.
   @impl true
+  def handle_info({:flz_send_gate, _stream_id, _raised?}, state), do: {:noreply, state}
+
+  # NIF transport: connection closed
   def handle_info({:flz_closed, _stream_id, reason}, state) do
     handle_connection_closed(state, reason)
   end

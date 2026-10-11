@@ -14,6 +14,22 @@ defmodule Flezha.Runner.ControlChannelSendControlTest do
 
   alias Flezha.Runner.ControlChannel
 
+  # fails when: every send-buffer watermark crossing on a control stream logs
+  # "Unexpected message at control channel", thousands of times a day.
+  test "send-gate watermark reports are absorbed without a warning" do
+    on_exit(FlezhaTest.Helper.NodeTestHelper.override_log_level(:warning))
+
+    log =
+      ExUnit.CaptureLog.capture_log([level: :warning], fn ->
+        for raised? <- [true, false] do
+          assert {:noreply, :state} =
+                   ControlChannel.handle_info({:flz_send_gate, 7, raised?}, :state)
+        end
+      end)
+
+    refute log =~ "Unexpected message"
+  end
+
   test "send_control surfaces a transport error when no stream is bound" do
     write_fun = fn _ref, _payload_id, _message, _metadata -> :ok end
 
