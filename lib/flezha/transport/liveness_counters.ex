@@ -307,11 +307,15 @@ defmodule Flezha.Transport.LivenessCounters do
     defaults: [kind: :count, scope: :relay],
     slots: [
       [name: :io_in_received, surface: [{:metric, :relay_io_in_received}]],
-      [name: :forwarded, surface: [{:metric, :relay_forwarded}]],
       [name: :filtered_nil, surface: [{:metric, :relay_filtered_nil}]],
-      # The payload bytes behind `io_in_received` and `forwarded`, so a
+      # The payload bytes behind `io_in_received` and `filtered_nil`, so a
       # relay's traffic reads in bytes as well as messages.
       [name: :bytes_in, surface: [{:metric, :relay_bytes_in}]],
+      [name: :bytes_filtered, surface: [{:metric, :relay_bytes_filtered}]],
+      # Every message received is either filtered or forwarded, so these two
+      # are never written: `snapshot_all/0` fills them in from the four above,
+      # which keeps a forwarded message at two writes on the hot path.
+      [name: :forwarded, surface: [{:metric, :relay_forwarded}]],
       [name: :bytes_forwarded, surface: [{:metric, :relay_bytes_forwarded}]],
       # Ingress casts a parked relay dropped; the confirming entry point
       # refuses instead, so this counts only what a cast-based source lost.
@@ -394,6 +398,14 @@ defmodule Flezha.Transport.LivenessCounters do
 
   defp reduce(:channels, slot, a, b), do: channel_reduce(slot, a, b)
   defp reduce(:relays, slot, a, b), do: relay_reduce(slot, a, b)
+
+  defp derive_relay(row) do
+    %{
+      row
+      | forwarded: row.io_in_received - row.filtered_nil,
+        bytes_forwarded: row.bytes_in - row.bytes_filtered
+    }
+  end
 
   @doc """
   Whether the ~1 Hz driver poll + stall classifier should run. The counters
@@ -544,7 +556,7 @@ defmodule Flezha.Transport.LivenessCounters do
                   {[channel_snapshot(ref, %{runner_id: runner_id, name: name}) | chans], rels}
 
                 {:relay, relay_id} ->
-                  {chans, [relay_snapshot(ref, %{relay_id: relay_id}) | rels]}
+                  {chans, [ref |> relay_snapshot(%{relay_id: relay_id}) |> derive_relay() | rels]}
 
                 # Driver server refs are polled via `driver_refs/0`, not here.
                 {:driver, _runner_id, _type} ->

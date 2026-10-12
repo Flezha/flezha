@@ -35,26 +35,25 @@ defmodule Flezha.Transport.LivenessCountersTest do
     ref = LivenessCounters.register_relay(relay)
 
     LivenessCounters.bump_relay(ref, :io_in_received)
-    LivenessCounters.bump_relay(ref, :forwarded)
     LivenessCounters.bump_relay(ref, :filtered_nil)
     LivenessCounters.bump_relay(ref, :io_in_received)
 
     row = find_relay(relay)
     assert row.io_in_received == 2
-    assert row.forwarded == 1
     assert row.filtered_nil == 1
+    assert row.forwarded == 1, "what was received and not filtered was forwarded"
   end
 
-  test "a relay's byte counters add the amounts given" do
+  test "a relay's byte counters add the amounts given, forwarded bytes being the rest" do
     relay = "relay_#{System.unique_integer([:positive])}"
     ref = LivenessCounters.register_relay(relay)
 
     LivenessCounters.add_relay(ref, :bytes_in, 5)
     LivenessCounters.add_relay(ref, :bytes_in, 7)
-    LivenessCounters.add_relay(ref, :bytes_forwarded, 5)
+    LivenessCounters.add_relay(ref, :bytes_filtered, 7)
 
     row = find_relay(relay)
-    assert {row.bytes_in, row.bytes_forwarded} == {12, 5}
+    assert {row.bytes_in, row.bytes_filtered, row.bytes_forwarded} == {12, 7, 5}
     assert LivenessCounters.add_relay(nil, :bytes_in, 3) == :ok
   end
 
@@ -70,7 +69,7 @@ defmodule Flezha.Transport.LivenessCountersTest do
   test "nil ref is a no-op (parked/unregistered callers)" do
     assert LivenessCounters.bump_channel(nil, :io_in_received) == :ok
     assert LivenessCounters.set_channel(nil, :last_send_ms, 1) == :ok
-    assert LivenessCounters.bump_relay(nil, :forwarded) == :ok
+    assert LivenessCounters.bump_relay(nil, :filtered_nil) == :ok
   end
 
   test "snapshot prunes entries whose owner has died" do

@@ -610,17 +610,20 @@ defmodule Flezha.Relay.Ingest do
       else: {:error, :not_ready}
   end
 
-  # Liveness bookkeeping for one ingress message: always an io_in, then either
-  # filtered (on_input returned nil) or forwarded to the channel, each with the
-  # payload bytes it carries. A binary's size is read, not measured, so the
-  # bytes cost two counter adds.
+  # Liveness bookkeeping for one ingress message: always an io_in with its
+  # payload bytes, and a message on_input filtered (returned nil) as filtered
+  # with the same bytes. What was forwarded is the difference, worked out when
+  # the counters are read, so a forwarded message costs two counter writes. A
+  # binary's size is read, not measured.
   defp record_io(ref, message, payload) do
+    size = bytes(message)
     LivenessCounters.bump_relay(ref, :io_in_received)
-    LivenessCounters.add_relay(ref, :bytes_in, bytes(message))
-    LivenessCounters.bump_relay(ref, if(is_nil(payload), do: :filtered_nil, else: :forwarded))
+    LivenessCounters.add_relay(ref, :bytes_in, size)
 
-    with {forwarded, _metadata} <- payload,
-         do: LivenessCounters.add_relay(ref, :bytes_forwarded, bytes(forwarded))
+    if is_nil(payload) do
+      LivenessCounters.bump_relay(ref, :filtered_nil)
+      LivenessCounters.add_relay(ref, :bytes_filtered, size)
+    end
   end
 
   defp bytes(binary) when is_binary(binary), do: byte_size(binary)
