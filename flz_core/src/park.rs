@@ -11,6 +11,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 use crate::flusher::build_cell_frame;
+use crate::routing::EntryView;
 use crate::state_sink::{self, PARK_PAYLOAD_PAYLOAD_ID};
 
 /// Retry attempts, process-wide; rides the heartbeat.
@@ -78,9 +79,11 @@ pub fn extract_payload_bytes<T: std::any::Any>(input: &T) -> Option<Vec<u8>> {
     }
 }
 
-/// Ship a park and block until it is acked durable, re-sending forever; a
-/// transport-less run logs and drops.
-pub fn park_blocking(cell_identity: &[u8], body: &ParkBody) {
+/// Ship a park and block until it is acked durable, re-sending until then; a
+/// transport-less run logs and drops. The controller acks a park only from the
+/// runner its relay is bound to, so the wait ends unacked once `relay` has
+/// left this one: the input is its new owner's.
+fn park_blocking(cell_identity: &[u8], body: &ParkBody, relay: &dyn EntryView) {
     if !state_sink::sink_installed() {
         eprintln!(
             "[flezha] DLQ park impossible without a controller transport; dropping poison \
@@ -96,7 +99,7 @@ pub fn park_blocking(cell_identity: &[u8], body: &ParkBody) {
     let frame = build_cell_frame(cell_identity, seq, &[0u8; 16], &body_bytes);
 
     let mut resends: u64 = 0;
-    loop {
+    while !relay.removed() {
         state_sink::send(PARK_PAYLOAD_PAYLOAD_ID, frame.clone());
         let deadline = std::time::Instant::now() + ACK_RESEND_INTERVAL;
         loop {
@@ -105,7 +108,7 @@ pub fn park_blocking(cell_identity: &[u8], body: &ParkBody) {
             }
             let guard = ACKED.lock().expect("park ack registry poisoned");
             let remaining = deadline.saturating_duration_since(std::time::Instant::now());
-            if remaining.is_zero() {
+            if remaining.is_zero() || relay.removed() {
                 break;
             }
             let (_guard, _timeout) = ACKED_CV
@@ -123,15 +126,33 @@ pub fn park_blocking(cell_identity: &[u8], body: &ParkBody) {
             );
         }
     }
+    tracing::warn!(
+        target: "flezha::dlq",
+        park_id = %body.park_id,
+        channel = %body.entry.channel,
+        "dead-letter park dropped unacked: its relay left this runner"
+    );
 }
 
-/// Mint, build and ship one tier-off park, blocking for its ack.
+/// Wake every park waiting on an ack to look again at its relay. A waiter
+/// looks under the registry lock and sleeps without releasing it in between,
+/// so this wake cannot fall between the two.
+pub(crate) fn wake_waiters() {
+    let _guard = ACKED
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    ACKED_CV.notify_all();
+}
+
+/// Mint, build and ship one tier-off park, blocking for its ack: a Cell's
+/// poison input, or a payload a retry ladder could not deliver.
 pub fn park_tier_off(
     cell_identity: &[u8],
     cell_label: &str,
     origin_offset: Option<u64>,
     reply_to: Option<&Arc<str>>,
     entry: crate::flusher::DlqEntryBody,
+    relay: &dyn EntryView,
 ) {
     let body = ParkBody {
         park_id: mint_park_id(cell_label),
@@ -139,12 +160,60 @@ pub fn park_tier_off(
         entry,
         reply_to: reply_to.map(|token| token.to_string()),
     };
-    park_blocking(cell_identity, &body);
+    park_blocking(cell_identity, &body, relay);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Fails when: a park whose relay left the runner re-sends forever and
+    /// holds its Cell's worker, because the controller acks a park only from
+    /// the runner the relay is bound to.
+    #[test]
+    fn a_park_stops_waiting_once_its_relay_leaves_the_runner() {
+        let _guard = state_sink::test_guard();
+        state_sink::reset_for_test();
+        let sends = Arc::new(AtomicU64::new(0));
+        let sent = Arc::clone(&sends);
+        state_sink::install_global_sink(Arc::new(move |payload_id: &str, _frame: &[u8]| {
+            if payload_id == PARK_PAYLOAD_PAYLOAD_ID {
+                sent.fetch_add(1, Ordering::SeqCst);
+            }
+            Ok(())
+        }));
+        let relay = crate::test_support::host_class::instance("moved", &["in"], &[], &[]);
+        let parking = Arc::clone(&relay);
+        let entry = crate::flusher::DlqEntryBody {
+            channel: "input".to_string(),
+            error: "poison".to_string(),
+            attempts: 3,
+            payload: None,
+        };
+        let parked = std::thread::spawn(move || {
+            park_tier_off(b"moved", "moved/tasklet/key", None, None, entry, &*parking);
+        });
+        while sends.load(Ordering::SeqCst) == 0 {
+            std::thread::yield_now();
+        }
+
+        relay.shutdown_background_threads();
+        let woken = std::time::Instant::now();
+        while !parked.is_finished() && woken.elapsed() < ACK_RESEND_INTERVAL / 2 {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+
+        assert!(
+            parked.is_finished(),
+            "the park still waits on a relay that is gone"
+        );
+        assert_eq!(
+            sends.load(Ordering::SeqCst),
+            1,
+            "a gone relay's park is not re-sent"
+        );
+        state_sink::reset_for_test();
+    }
 
     #[test]
     fn ack_registry_round_trips_and_consumes_once() {

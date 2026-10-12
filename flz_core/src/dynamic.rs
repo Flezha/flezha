@@ -44,6 +44,7 @@ pub struct DynamicCellRegistry {
     instance_id: Arc<str>,
     keeps_state: bool,
     prefix: Option<Arc<crate::prefix::PrefixLedger>>,
+    relay_stopped: Arc<AtomicBool>,
 }
 
 impl DynamicCellRegistry {
@@ -56,6 +57,7 @@ impl DynamicCellRegistry {
         instance_id: Arc<str>,
         keeps_state: bool,
         prefix: Option<Arc<crate::prefix::PrefixLedger>>,
+        relay_stopped: Arc<AtomicBool>,
     ) -> Self {
         Self {
             cells: DashMap::new(),
@@ -68,6 +70,7 @@ impl DynamicCellRegistry {
             instance_id,
             keeps_state,
             prefix,
+            relay_stopped,
         }
     }
 
@@ -190,6 +193,7 @@ impl DynamicCellRegistry {
             cell_index: 0,
             keeps_state: self.keeps_state,
             prefix: self.prefix.clone(),
+            relay_stopped: Arc::clone(&self.relay_stopped),
         })
     }
 }

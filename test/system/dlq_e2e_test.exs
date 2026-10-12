@@ -199,6 +199,36 @@ defmodule FlezhaTest.System.DlqE2ETest do
     assert {:ok, _meta, "kp:poison"} = Store.get(entry_ref(entry))
   end
 
+  # fails when: inputs queued for a relay that was stopped or moved off its
+  # runner run there anyway, every emit fails on the gone relay, and each is
+  # parked as poison — on a moved relay a park the controller never acks, so
+  # the runner re-sends it forever.
+  @tag capability: :pool_wedge
+  test "work queued for a relay that left its runner is dropped, not parked" do
+    namespace = unique("dlq_gone")
+    relay_id = unique("slow")
+    id_path = unique_id_path()
+
+    on_exit(fn -> cleanup(namespace, relay_id, id_path) end)
+
+    {_port, _exec} = boot_runner(namespace, id_path)
+
+    builder = %Builder{id: relay_id, factory_id: "wedge_probe", init_values: %{}, opts: []}
+    assert {:ok, _info} = RelayManager.start_relay(namespace, builder)
+
+    # "slow" holds the Cell for two seconds; the two behind it are still
+    # queued when the relay stops.
+    for input <- ["slow", "x1", "x2"] do
+      assert :ok =
+               RelayManager.send_io_confirming(relay_id, namespace, input, %{"input_type" => "2"})
+    end
+
+    assert :ok = RelayManager.stop_relay(namespace, relay_id)
+
+    refute wait_until(fn -> Store.list(relay_id) != [] end, 6_000),
+           "a stopped relay's queued input was parked: #{inspect(Store.list(relay_id))}"
+  end
+
   # --- helpers ----------------------------------------------------------------
 
   defp entry_ref(entry),

@@ -161,6 +161,9 @@ pub struct CellSlot {
     /// The relay INSTANCE id — what a schema address names.
     pub instance_id: Arc<str>,
     pub instance: Weak<crate::relay::instance::RelayInstance>,
+    /// Set once the relay stops on this runner; read without touching the
+    /// instance, so the drain pays one load for it.
+    pub relay_stopped: Arc<AtomicBool>,
     pub topology: Arc<crate::relay::topology::RelayTopology>,
     /// Whoever is owed this mailbox's next free slot under `DropNothing`,
     /// served one per successful pop.
@@ -542,6 +545,7 @@ pub fn assemble_slot(
         cell_key: parts.cell_key,
         instance_id: args.instance_id,
         instance: args.instance,
+        relay_stopped: args.relay_stopped,
         topology: args.topology,
         waiters: Waiters::new(),
         drain_active: AtomicBool::new(false),

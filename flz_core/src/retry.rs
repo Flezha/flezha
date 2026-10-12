@@ -181,7 +181,7 @@ pub(crate) fn run_entrance_ladder<V: EntryView>(
     let parked = run_retry_park_ladder(
         label,
         target,
-        instance.instance_id(),
+        instance,
         consumed_offset,
         call,
         payload,
@@ -202,7 +202,7 @@ pub(crate) fn run_entrance_ladder<V: EntryView>(
 pub(crate) fn run_retry_park_ladder(
     label: &str,
     target: ParkTarget<'_>,
-    instance_id: &str,
+    instance: &dyn EntryView,
     consumed_offset: Option<u64>,
     call: Option<&Arc<str>>,
     payload: Option<Vec<u8>>,
@@ -216,7 +216,7 @@ pub(crate) fn run_retry_park_ladder(
     park_exhausted(
         label,
         target,
-        instance_id,
+        instance,
         consumed_offset,
         call,
         payload,
@@ -257,7 +257,7 @@ pub(crate) fn climb_ladder(
 pub(crate) fn park_exhausted(
     label: &str,
     target: ParkTarget<'_>,
-    instance_id: &str,
+    instance: &dyn EntryView,
     consumed_offset: Option<u64>,
     call: Option<&Arc<str>>,
     payload: Option<Vec<u8>>,
@@ -275,22 +275,20 @@ pub(crate) fn park_exhausted(
         "[flezha] {} parking payload to DLQ after {} attempt(s): {}",
         label, attempts, error
     );
-    let identity = crate::flusher::encode_cell_identity(instance_id, tasklet_id, cell_suffix);
-    let body = crate::park::ParkBody {
-        park_id: crate::park::mint_park_id(&format!(
-            "{}/{}/{}",
-            instance_id, tasklet_id, cell_suffix
-        )),
-        origin_offset: consumed_offset,
-        entry: crate::flusher::DlqEntryBody {
+    let instance_id: &str = instance.instance_id();
+    crate::park::park_tier_off(
+        &crate::flusher::encode_cell_identity(instance_id, tasklet_id, cell_suffix),
+        &format!("{instance_id}/{tasklet_id}/{cell_suffix}"),
+        consumed_offset,
+        call,
+        crate::flusher::DlqEntryBody {
             channel: channel.to_string(),
             error,
             attempts,
             payload,
         },
-        reply_to: call.map(|token| token.to_string()),
-    };
-    crate::park::park_blocking(&identity, &body);
+        instance,
+    );
 }
 
 /// The ladder for an edge whose transform or key unwound, so the failure is
@@ -390,7 +388,7 @@ fn run_edge_ladder(ladder: EdgeLadder) {
     run_retry_park_ladder(
         &format!("channel `{}` edge into `{}`", channel.name, tasklet),
         ParkTarget::edge(channel),
-        &ladder.instance.instance_id,
+        &*ladder.instance,
         ladder.consumed_offset,
         ladder.call.as_ref(),
         None,
@@ -445,7 +443,7 @@ mod tests {
                     backoff_base_ms: 1,
                 },
             },
-            "op-1",
+            &*crate::test_support::host_class::instance("op-1", &["in"], &[], &[]),
             Some(9),
             Some(&Arc::from("w:tok")),
             Some(b"poison".to_vec()),

@@ -104,7 +104,8 @@ pub struct RelayInstance {
     pub cell_key_to_idx: Vec<HashMap<&'static str, usize>>,
     /// By `TaskletId`: `Some` for dynamic mode only.
     pub dynamic_registries: Vec<Option<Arc<DynamicCellRegistry>>>,
-    /// Stop flag and handles of the reapers.
+    /// Set once the instance stops on this runner: its reapers end, its Cells
+    /// run nothing more and its parks stop waiting on the controller.
     background_stop: Arc<AtomicBool>,
     background_handles: Mutex<Vec<JoinHandle<()>>>,
     /// The host prepare crossing's staging; a typed class never touches it.
@@ -158,6 +159,7 @@ impl RelayInstance {
             crate::flusher::CellFlusher::instance().watch_prefix(prefix);
         }
         Arc::new_cyclic(|weak: &Weak<RelayInstance>| {
+            let background_stop = Arc::new(AtomicBool::new(false));
             let topology_is_steps = topology.steps.is_some();
             let tasklet_count = topology.tasklets.len();
             let mut cells: Vec<Vec<Arc<CellSlot>>> = Vec::with_capacity(tasklet_count);
@@ -175,13 +177,13 @@ impl RelayInstance {
                     tasklet_desc,
                     keeps_state,
                     &prefix,
+                    &background_stop,
                 );
                 cells.push(slots);
                 cell_key_to_idx.push(key_map);
                 dynamic_registries.push(registry);
             }
 
-            let background_stop = Arc::new(AtomicBool::new(false));
             let background_handles =
                 spawn_reapers(&topology, &dynamic_registries, &background_stop);
 
@@ -287,9 +289,15 @@ impl RelayInstance {
         }
     }
 
+    /// The instance stopped on this runner: removed from its registry, or
+    /// dropped.
+    pub fn removed(&self) -> bool {
+        self.background_stop.load(Ordering::Acquire)
+    }
+
     fn signal_background_stop(&self) {
-        self.background_stop
-            .store(true, std::sync::atomic::Ordering::Release);
+        self.background_stop.store(true, Ordering::Release);
+        crate::park::wake_waiters();
     }
 }
 
@@ -328,6 +336,7 @@ fn build_tasklet_cells(
     tasklet_desc: &crate::relay::topology::TaskletDescriptor,
     keeps_state: bool,
     prefix: &Option<Arc<crate::prefix::PrefixLedger>>,
+    relay_stopped: &Arc<AtomicBool>,
 ) -> TaskletCells {
     let build = |cell_key: Option<&str>, cell_index: usize| {
         (tasklet_desc.build_cell)(BuildCellArgs {
@@ -339,6 +348,7 @@ fn build_tasklet_cells(
             cell_index,
             keeps_state,
             prefix: prefix.clone(),
+            relay_stopped: Arc::clone(relay_stopped),
         })
     };
     if tasklet_desc.mode == CellMode::Dynamic {
@@ -350,6 +360,7 @@ fn build_tasklet_cells(
             Arc::clone(instance_id),
             keeps_state,
             prefix.clone(),
+            Arc::clone(relay_stopped),
         );
         return (Vec::new(), HashMap::new(), Some(Arc::new(registry)));
     }

@@ -331,4 +331,6 @@ pub struct BuildCellArgs<'a> {
     pub keeps_state: bool,
     /// The instance's processed prefix, `None` for a steps relay.
     pub prefix: Option<Arc<crate::prefix::PrefixLedger>>,
+    /// The instance's stop flag ([`crate::relay::instance::RelayInstance::removed`]).
+    pub relay_stopped: Arc<std::sync::atomic::AtomicBool>,
 }

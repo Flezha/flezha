@@ -2516,7 +2516,7 @@ impl Run<'_> {
                 crate::retry::park_exhausted(
                     &format!("{label} `{}`", descriptor.name),
                     target,
-                    &held.instance_id,
+                    &*held,
                     offset,
                     call.as_ref(),
                     payload,

@@ -31,6 +31,9 @@ pub trait EntryView: Send + Sync + 'static {
     fn instance_id(&self) -> &Arc<str>;
     fn ladders(&self) -> &AtomicUsize;
 
+    /// The instance stopped on this runner, so a park for it waits no more.
+    fn removed(&self) -> bool;
+
     /// The entrance parked a message instead of delivering it, durably;
     /// `offset` is the one the controller stamped on it.
     fn entry_parked(&self, _offset: Option<u64>) {}
@@ -47,6 +50,10 @@ impl EntryView for RelayInstance {
 
     fn ladders(&self) -> &AtomicUsize {
         &self.ladders
+    }
+
+    fn removed(&self) -> bool {
+        RelayInstance::removed(self)
     }
 
     /// A steps relay counts the message consumed without a pass, so its park

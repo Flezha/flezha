@@ -39,6 +39,12 @@ pub(super) fn event_time_due_pending(slot: &Arc<CellSlot>) -> bool {
 /// One batch: the re-handed head of line, then what an earlier round left,
 /// then the mailbox.
 pub(super) fn assemble_batch(slot: &Arc<CellSlot>) -> Vec<ItemAttempt> {
+    // Work queued for a relay that left this runner is its new owner's: run
+    // here, every emit would fail and park against a relay that is gone.
+    if slot.relay_stopped.load(Ordering::Acquire) {
+        drop_queued(slot);
+        return Vec::new();
+    }
     // A flow relay's Cell pays one field read here; only a steps relay Cell looks further.
     if slot.topology.steps.is_some() && crate::steps::pass_dead(slot) {
         consume_dead_pass(slot);
@@ -110,13 +116,20 @@ fn keep_admitted_firings(slot: &Arc<CellSlot>, items: &mut Vec<ItemAttempt>, fro
 /// A failed or cancelled steps relay pass: what its Cell still has queued would
 /// only be undone, so it is consumed unrun and the stage owes it no longer.
 fn consume_dead_pass(slot: &Arc<CellSlot>) {
+    let dropped = drop_queued(slot);
+    crate::steps::items_dropped(slot, dropped);
+}
+
+/// Consume everything the Cell has queued, unrun, serving a producer held on
+/// each freed mailbox slot; how many items went.
+fn drop_queued(slot: &Arc<CellSlot>) -> usize {
     let mut dropped = slot.pending_retry.lock_recover().drain(..).count()
         + slot.deferred_live.lock_recover().drain(..).count();
     while slot.mailbox.pop().is_some() {
         slot.waiters.serve_one();
         dropped += 1;
     }
-    crate::steps::items_dropped(slot, dropped);
+    dropped
 }
 
 /// Live items an earlier round deferred behind a draining slice: older than

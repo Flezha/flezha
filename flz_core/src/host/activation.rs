@@ -392,7 +392,8 @@ pub(super) fn settle_item(
     commit_timers(slot, &timers, &stream);
     crate::timer::arm_interval_deadline(slot);
     ship_plugin_outputs(slot, &stream, plugin_outputs);
-    if let Some(entry) = tier_off_dlq {
+    // A Cell whose relay is gone parks nothing: its input is the new owner's.
+    if let Some((entry, relay)) = tier_off_dlq.and_then(|e| Some((e, slot.instance.upgrade()?))) {
         // Tier-off park: ship the park frame and hold this cell until the
         // controller acks the DLQ append as durable — park-then-advance.
         crate::park::park_tier_off(
@@ -401,6 +402,7 @@ pub(super) fn settle_item(
             consumed_offset,
             call,
             entry,
+            &*relay,
         );
     }
 }
