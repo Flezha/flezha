@@ -464,17 +464,13 @@ end
 ```elixir
 # lib/echo/relay.ex: the relay
 defmodule Echo.Relay do
-  # the name `flz relay start` takes
   use Flezha.SDK.Relay, factory_id: "echo"
 
   @impl true
   def channels(c) do
     c
-    # messages arrive on the entry channel "in"
     |> input("in")
-    # each one runs through the echo tasklet
     |> into(Echo.Tasklet)
-    # the result leaves on "out", for a plugin to pick up
     |> output("out")
   end
 end
