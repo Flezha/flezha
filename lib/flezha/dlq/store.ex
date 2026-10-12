@@ -20,6 +20,10 @@ defmodule Flezha.Dlq.Store do
   audit-log precedent); deleting an entry by retention is genuine loss of
   already-parked data, so each deletion logs loudly and emits
   `[:flezha, :dlq, :retention_dropped]`.
+
+  A tasklet directory whose last entry is resolved is removed with it when no
+  durability backend is configured; with one, the retention sweep removes it
+  once the tier has shipped the emptied set.
   """
 
   use GenServer
@@ -419,6 +423,7 @@ defmodule Flezha.Dlq.Store do
 
     total = Enum.sum(Enum.map(fresh, &entry_bytes/1))
     shrink_to_cap(fresh, total, max_bytes)
+    release_empty(tasklets())
   end
 
   defp shrink_to_cap(_entries, total, cap) when total <= cap, do: :ok
@@ -546,11 +551,33 @@ defmodule Flezha.Dlq.Store do
         :ok = rewrite_entries(rc, sh, fn e -> if e["id"] == id, do: nil, else: e end)
         File.rm(blob_path(rc, sh, id))
         dir_changed(rc, sh)
+
+        # With a backend, the ship just announced has not landed yet; the next
+        # retention sweep releases the set instead.
+        unless DurabilityTier.enabled?(), do: release_empty([{rc, sh}])
         :ok
 
       {:error, :not_found} ->
         :ok
     end
+  end
+
+  # An emptied set's directory is what keeps it in the durability tier's
+  # backstop sweep, so it goes only once the tier has nothing left to ship for
+  # it. A restart before the empty set landed would otherwise leave the remote
+  # entry naming resolved records, and the relay's next bind would hydrate them.
+  defp release_empty(sets) do
+    sets
+    |> Enum.filter(fn {rc, sh} -> load_entries(rc, sh) == [] end)
+    |> Enum.map(fn {rc, sh} -> {:dlq, {safe(rc), safe(sh)}} end)
+    |> DurabilityTier.caught_up()
+    |> Enum.each(fn {:dlq, {rc, sh}} ->
+      # Only the empty index is removed: `rmdir` keeps a directory that still
+      # holds anything else, and a class directory that still holds a tasklet.
+      _ = File.rm(entries_path(rc, sh))
+      _ = File.rmdir(task_dir(rc, sh))
+      _ = File.rmdir(Path.dirname(task_dir(rc, sh)))
+    end)
   end
 
   defp dir_bytes(rc, sh) do

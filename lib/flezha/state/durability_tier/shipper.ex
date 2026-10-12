@@ -102,6 +102,20 @@ defmodule Flezha.State.DurabilityTier.Shipper do
   def sweep_now(), do: call(:sweep_now)
 
   @doc """
+  Which of `refs` have every change announced for them landed remotely, or
+  belong to a lineage another writer holds. Asked of this process rather than
+  read from the status table: a ship already running when a change was
+  announced can land before the announcement is even dequeued.
+  """
+  @spec caught_up([Manifest.ref()]) :: [Manifest.ref()]
+  def caught_up(refs) do
+    case call({:caught_up, refs}) do
+      {:ok, landed} -> landed
+      {:error, _} -> []
+    end
+  end
+
+  @doc """
   Per-reference shipping state, straight out of ETS. Readable from any process
   and while the shipper is busy — which is what makes it safe for `/healthz`.
   """
@@ -173,6 +187,21 @@ defmodule Flezha.State.DurabilityTier.Shipper do
   end
 
   def handle_call(:gc, _from, state), do: {:reply, collect_orphans(state), state}
+
+  # Every enqueue marks its reference pending, so one that is not pending has
+  # nothing announced left to ship — once something has landed for it at all.
+  def handle_call({:caught_up, refs}, _from, state) do
+    landed =
+      Enum.filter(refs, fn ref ->
+        case status_of(ref) do
+          %{superseded_by: holder} when holder != nil -> true
+          %{pending_since_ms: nil, last_shipped_ms: at} -> at != nil
+          _pending -> false
+        end
+      end)
+
+    {:reply, {:ok, landed}, state}
+  end
 
   # Sweep AND drain, so the caller has a real barrier: the queue is empty when
   # this returns. The async `:drain` messages the sweep queued then find nothing

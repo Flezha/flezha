@@ -122,7 +122,8 @@ defmodule Flezha.State.DurabilityTier.Artifact do
 
   Deliberately not filtered by `has_local_state?/1`: an emptied set has to stay
   in the sweep so its remote entry stops naming a blob whose entries the user
-  has since resolved.
+  has since resolved. `Flezha.Dlq.Store` removes its directory only once that
+  has landed.
   """
   @spec dlq_refs(binary()) :: [ref()]
   def dlq_refs(relay_class) when is_binary(relay_class),

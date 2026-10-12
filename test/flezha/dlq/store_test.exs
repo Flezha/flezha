@@ -140,6 +140,34 @@ defmodule Flezha.Dlq.StoreTest do
     refute File.exists?(Path.join([dir, "MarketRelay", "ohlc", id <> ".bin"]))
   end
 
+  test "a tasklet's directory goes with its last entry, and its class's with the last tasklet",
+       %{store: store, dir: dir} do
+    assert {:ok, first} = Store.append(store, entry(%{park_id: "a", payload: "aaaa"}))
+    assert {:ok, second} = Store.append(store, entry(%{park_id: "b", payload: "bbbb"}))
+    assert {:ok, other} = Store.append(store, entry(%{tasklet_id: "fills", park_id: "c"}))
+
+    assert :ok = Store.drop(store, first)
+    assert File.dir?(Path.join([dir, "MarketRelay", "ohlc"]))
+
+    assert :ok = Store.drop(store, second)
+    refute File.exists?(Path.join([dir, "MarketRelay", "ohlc"]))
+    assert Store.tasklets() == [{"MarketRelay", "fills"}]
+
+    assert :ok = Store.drop(store, other)
+    refute File.exists?(Path.join(dir, "MarketRelay"))
+    assert Store.stats(store) == []
+  end
+
+  test "the retention sweep removes an emptied set left on disk", %{store: store, dir: dir} do
+    task_dir = Path.join([dir, "MarketRelay", "ohlc"])
+    File.mkdir_p!(task_dir)
+    File.write!(Path.join(task_dir, "entries.jsonl"), "")
+    assert [%{entries: 0}] = Store.stats(store)
+
+    assert :ok = Store.sweep(store)
+    refute File.exists?(Path.join(dir, "MarketRelay"))
+  end
+
   test "append_async runs the durable callback with the entry ref", %{store: store} do
     parent = self()
     :ok = Store.append_async(store, entry(), fn ref -> send(parent, {:durable, ref}) end)

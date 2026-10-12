@@ -749,6 +749,28 @@ defmodule Flezha.State.DurabilityTierTest do
              "the artifact is the whole directory, so a drop must reach the backend too"
     end
 
+    test "an emptied set leaves the disk only once the tier has shipped it empty", ctx do
+      {:ok, entry_ref} = Dlq.Store.append(ctx.dlq, park(ctx, "poison-bytes"))
+      assert :ok = Shipper.sweep_now()
+      ref = {:dlq, {ctx.class, "task"}}
+      task_dir = Dlq.Store.task_dir(ctx.class, "task")
+
+      # The remote entry still names the record, and the empty directory is what
+      # keeps the set in the backstop sweep until that changes.
+      Stub.set_down(true)
+      :ok = Dlq.Store.drop(ctx.dlq, entry_ref)
+      :ok = Dlq.Store.sweep(ctx.dlq)
+      assert File.dir?(task_dir)
+
+      Stub.set_down(false)
+      assert :ok = Shipper.ship_now(ref)
+      :ok = Dlq.Store.sweep(ctx.dlq)
+      refute File.exists?(task_dir)
+
+      assert :ok = DurabilityTier.hydrate_relay(ctx.class)
+      assert Dlq.Store.list(ctx.dlq, ctx.class) == []
+    end
+
     test "schedule definitions ride the same replica shape", ctx do
       dir = Path.join(ctx.base, "schedules")
       on_exit(TestHelpers.override_env(:schedules, dir: dir, application_managed: false))

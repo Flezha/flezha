@@ -321,6 +321,15 @@ defmodule Flezha.State.DurabilityTier do
   def ship(ref), do: if(enabled?(), do: Shipper.enqueue(ref), else: :ok)
 
   @doc """
+  Which of `refs` have nothing left to ship: every change announced for them
+  has landed, or another writer holds the lineage. All of them when no backend
+  is configured, since there is then no remote copy to fall behind.
+  """
+  @spec caught_up([Artifact.ref()]) :: [Artifact.ref()]
+  def caught_up([]), do: []
+  def caught_up(refs), do: if(enabled?(), do: Shipper.caught_up(refs), else: refs)
+
+  @doc """
   Every shippable reference stored under one on-disk STATE KEY: the durable
   references `Paths.durable_refs/1` names (its Cells, a steps relay's journal,
   its input log) that hold local state, and its dead-letter trees.
