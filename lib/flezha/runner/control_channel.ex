@@ -24,6 +24,7 @@ defmodule Flezha.Runner.ControlChannel do
   alias Flezha.Runner.ControlChannel.Requests
   alias Flezha.Runner.FleetManager
   alias Flezha.Runner.FleetManager.Marks
+  alias Flezha.Runner.StreamChannel.Gate
   alias Flezha.SDK.SafeCall
   alias Flezha.Transport.LivenessCounters
   alias Flezha.Transport.Stream, as: TStream
@@ -85,13 +86,22 @@ defmodule Flezha.Runner.ControlChannel do
         # channel while a `ControlUnit` is still blocked here, and an exiting
         # unit loses every waiter in its `response_refs`. Same two clauses
         # `ControlUnit.ping_runner/2` uses one layer up, named for this layer.
-        case SafeCall.bounded(control_channel, {:send_control, bin}, timeout_ms,
-               on_error: %{
-                 timeout: {:error, :timeout},
-                 other: &{:error, {:control_channel_exit, &1}}
-               }
-             ) do
+        #
+        # A full send buffer holds the caller until it drains, as a data
+        # stream's sender is held: a refused frame was never sent, and a
+        # restore that never reaches the runner leaves its Cell empty there.
+        write = fn ->
+          SafeCall.bounded(control_channel, {:send_control, bin}, timeout_ms,
+            on_error: %{
+              timeout: {:error, :timeout},
+              other: &{:error, {:control_channel_exit, &1}}
+            }
+          )
+        end
+
+        case Gate.send_held(control_channel, write) do
           :ok -> {:ok, ref}
+          :closed -> {:error, :no_connection_available}
           {:error, reason} -> {:error, reason}
         end
     end
@@ -140,6 +150,8 @@ defmodule Flezha.Runner.ControlChannel do
        last_seen: System.monotonic_time(:millisecond),
        rebinding?: false,
        rebinds: 0,
+       send_gate_raised?: false,
+       waiters: %{send_gate: MapSet.new()},
        timers: Flezha.Process.Timer.new()
      }
      |> bump_last_seen()
@@ -201,16 +213,22 @@ defmodule Flezha.Runner.ControlChannel do
   def handle_call(:peer_pid, _from, state),
     do: {:reply, TStream.peer_pid(state.stream_ref), state}
 
+  # A refusal is recorded in the same turn as the write, and a drain clears it
+  # in this process too, so a sender that asks to wait after its refusal can
+  # never miss the drain that answers it.
   @impl true
   def handle_call({:send_control, bin}, _from, state) do
-    res =
-      case write_control(state, bin) do
-        :unbound -> {:error, :no_connection_available}
-        result -> result
-      end
-
-    {:reply, res, state}
+    case write_control(state, bin) do
+      :unbound -> {:reply, {:error, :no_connection_available}, state}
+      {:error, :send_buffer_full} = full -> {:reply, full, %{state | send_gate_raised?: true}}
+      result -> {:reply, result, state}
+    end
   end
+
+  def handle_call({:await_send_gate, pid}, _from, %{send_gate_raised?: true} = state),
+    do: {:reply, :held, Gate.record_waiter(state, :send_gate, pid)}
+
+  def handle_call({:await_send_gate, _pid}, _from, state), do: {:reply, :open, state}
 
   @impl true
   def handle_call({:handle_frame, _frame}, _from, state) do
@@ -322,10 +340,14 @@ defmodule Flezha.Runner.ControlChannel do
     {:noreply, state}
   end
 
-  # NIF transport: a send-buffer watermark crossing. No control sender waits on
-  # the gate, so there is nothing to hold or wake.
+  # NIF transport: a send-buffer watermark crossing. A drain wakes the senders
+  # held on the gate.
   @impl true
-  def handle_info({:flz_send_gate, _stream_id, _raised?}, state), do: {:noreply, state}
+  def handle_info({:flz_send_gate, _stream_id, true}, state),
+    do: {:noreply, %{state | send_gate_raised?: true}}
+
+  def handle_info({:flz_send_gate, _stream_id, false}, state),
+    do: {:noreply, wake_gate_waiters(%{state | send_gate_raised?: false}, :open)}
 
   # NIF transport: connection closed
   def handle_info({:flz_closed, _stream_id, reason}, state) do
@@ -401,7 +423,12 @@ defmodule Flezha.Runner.ControlChannel do
 
     GenServer.cast(FleetManager, {:runner_disconnected, state.namespace, state.runner_id})
 
-    {:noreply, state}
+    {:noreply, wake_gate_waiters(state, :closed)}
+  end
+
+  defp wake_gate_waiters(state, result) do
+    message = {:send_gate, Identificator.control_channel(state.runner_id), result}
+    Gate.wake_waiters(state, :send_gate, message)
   end
 
   # The watchdog's own `last_seen` and the shared counter are stamped together:

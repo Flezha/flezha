@@ -218,6 +218,16 @@ defmodule FlezhaTest.Relay.RestoreRefusalTest do
       end
     end
 
+    # fails when: a restore the control stream never carried lets the bind go
+    # on, and the runner folds new inputs onto an empty Cell.
+    test "a restore that was never sent stops the bind" do
+      stub(Flezha.State.Commands, :await_restore_init_state, fn _r, _e ->
+        {:error, :send_buffer_full}
+      end)
+
+      assert Replay.await_restore("runner_1", cell("unsent")) == {:error, :send_buffer_full}
+    end
+
     test "a successful restore is plain :ok" do
       stub(Flezha.State.Commands, :await_restore_init_state, fn _runner, _cell ->
         {:ok, <<>>}

@@ -66,7 +66,22 @@ defmodule Flezha.Runner.StreamChannel do
     case :persistent_term.get({__MODULE__, channel}, nil) do
       {stream_ref, liveness_ref} when stream_ref != nil ->
         bump_send(liveness_ref)
-        Gate.send_held(channel, stream_ref, liveness_ref, relay_id, message, metadata)
+
+        write = fn ->
+          with {:error, :send_buffer_full} = full <-
+                 TStream.send_frame(stream_ref, relay_id, message, metadata) do
+            LivenessCounters.bump_channel(liveness_ref, :send_gate_held)
+            full
+          end
+        end
+
+        # A stream closed under the held sender, or a driver thread that is
+        # gone: the frame IS lost, and is counted as an unbound stream's is.
+        case Gate.send_held(channel, write) do
+          :ok -> :ok
+          {:error, :send_buffer_full} = full -> full
+          _closed_or_gone -> Gate.undeliverable({nil, liveness_ref}, relay_id)
+        end
 
       published ->
         if published, do: LivenessCounters.bump_channel(elem(published, 1), :io_in_received)

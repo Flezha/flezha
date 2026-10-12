@@ -14,20 +14,37 @@ defmodule Flezha.Runner.ControlChannelSendControlTest do
 
   alias Flezha.Runner.ControlChannel
 
-  # fails when: every send-buffer watermark crossing on a control stream logs
+  # fails when: a control frame offered to a full send buffer is answered
+  # `send_buffer_full` instead of held, so a bind's restore never reaches the
+  # runner and its Cell is bound on empty state; or a watermark crossing logs
   # "Unexpected message at control channel", thousands of times a day.
-  test "send-gate watermark reports are absorbed without a warning" do
+  test "a frame refused at a full send buffer is written once the buffer drains" do
     on_exit(FlezhaTest.Helper.NodeTestHelper.override_log_level(:warning))
+    test_pid = self()
+    writes = :counters.new(1, [])
+
+    write_fun = fn _ref, _payload_id, _message, _metadata ->
+      :counters.add(writes, 1, 1)
+      send(test_pid, :written)
+      if :counters.get(writes, 1) == 1, do: {:error, :send_buffer_full}, else: :ok
+    end
+
+    {:ok, pid} = ControlChannel.start_link({"ns_gate", "exec_gate", :stream, write_fun})
+    command = {:ping, %RunnerCommands.Ping{nonce: "n1"}}
 
     log =
       ExUnit.CaptureLog.capture_log([level: :warning], fn ->
-        for raised? <- [true, false] do
-          assert {:noreply, :state} =
-                   ControlChannel.handle_info({:flz_send_gate, 7, raised?}, :state)
-        end
+        sender = Task.async(fn -> ControlChannel.send_control("exec_gate", command) end)
+        assert_receive :written
+        refute Task.yield(sender, 200), "the refused frame must be held, not answered"
+
+        send(pid, {:flz_send_gate, 7, false})
+        assert {:ok, _ref} = Task.await(sender)
+        assert :counters.get(writes, 1) == 2
       end)
 
     refute log =~ "Unexpected message"
+    GenServer.stop(pid)
   end
 
   test "send_control surfaces a transport error when no stream is bound" do

@@ -49,7 +49,8 @@ defmodule FlezhaTest.Runner.ControlChannelLivenessTest do
       stream_ref: :fake_ref,
       write_fun: fn _ref, _payload_id, _message, _metadata -> :ok end,
       control_unit: nil,
-      last_seen: last_seen
+      last_seen: last_seen,
+      waiters: %{send_gate: MapSet.new()}
     }
   end
 

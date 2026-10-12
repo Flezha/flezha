@@ -41,16 +41,8 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
   identity.
   """
   def stale_cursor_and_crash_writers(relay_id, cell_id) do
-    case Flezha.State.Supervisor.lookup(cell_id) do
-      {:ok, pid} -> Process.exit(pid, :kill)
-      :error -> :ok
-    end
-
-    case Flezha.State.Supervisor.lookup({relay_id, :input_log}) do
-      {:ok, pid} -> Process.exit(pid, :kill)
-      :error -> :ok
-    end
-
+    crash_writer(cell_id)
+    crash_writer({relay_id, :input_log})
     dedup = Outbox.read(cell_id)
     :ok = Outbox.write(cell_id, %{dedup | outbox_flushed_seq: -1})
   end
@@ -217,8 +209,18 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
     :ok
   end
 
-  def sigkill(os_pid) do
-    {_, 0} = System.cmd("kill", ["-KILL", Integer.to_string(os_pid)], stderr_to_stdout: true)
+  def sigkill(os_pid), do: signal(os_pid, "-KILL")
+
+  def signal(os_pid, sig) do
+    {_, 0} = System.cmd("kill", [sig, Integer.to_string(os_pid)], stderr_to_stdout: true)
+  end
+
+  @doc "Kill a durable writer outright, as a controller crash does; it boots again from disk."
+  def crash_writer(id) do
+    case Flezha.State.Supervisor.lookup(id) do
+      {:ok, pid} -> Process.exit(pid, :kill)
+      :error -> :ok
+    end
   end
 
   @doc """

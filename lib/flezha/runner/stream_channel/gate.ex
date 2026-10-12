@@ -1,11 +1,12 @@
 defmodule Flezha.Runner.StreamChannel.Gate do
   @moduledoc """
-  The channel's send gate and its one-shot bind-waiter set.
+  The send gate a data or control channel holds its senders on, and a data
+  channel's one-shot bind-waiter set.
 
   A frame offered while the transport's write buffer is over its high mark is
-  held, not discarded: `send_held/3` parks the caller until the driver lowers
-  the gate or the hold budget runs out, and only then reports the frame
-  undeliverable.
+  held, not discarded: `send_held/2` parks the caller until the channel reports
+  the buffer drained or the hold budget runs out, and only then answers the
+  frame unsent.
 
   The bind waiters are one-shot by construction — a waiter registered before
   the stream is bound is woken exactly once, by the turn that publishes the
@@ -16,28 +17,23 @@ defmodule Flezha.Runner.StreamChannel.Gate do
   alias Flezha.SDK.SafeCall
   alias Flezha.Transport.LivenessCounters
 
-  # The send, and the hold the send gate asks for. `send_frame/4` answers
-  # `{:error, :send_buffer_full}` from one relaxed atomic load, on a crossing
-  # this caller already pays — the answer is a congestion signal, not a loss,
-  # so the frame is offered again once the buffer has drained. Any other error
-  # is a driver that is gone: the frame IS lost, and it is reported through the
-  # same counter and event an unbound stream uses rather than a second one.
-  def send_held(channel, stream_ref, liveness_ref, relay_id, message, metadata) do
-    case Flezha.Transport.Stream.send_frame(stream_ref, relay_id, message, metadata) do
-      :ok ->
-        :ok
-
-      {:error, :send_buffer_full} ->
-        LivenessCounters.bump_channel(liveness_ref, :send_gate_held)
-
+  # Offer a frame through `write` and hold the caller while `channel`'s send
+  # buffer is full. `{:error, :send_buffer_full}` from a send is a congestion
+  # signal, not a loss, so the frame is offered again once the buffer has
+  # drained; it is answered back only when the hold runs out. `:closed` is a
+  # stream that went away under the held sender. Every other answer is the
+  # write's own.
+  def send_held(channel, write) do
+    case write.() do
+      {:error, :send_buffer_full} = full ->
         case await_send_gate(channel, send_gate_hold_ms()) do
-          :open -> send_held(channel, stream_ref, liveness_ref, relay_id, message, metadata)
-          :closed -> undeliverable({nil, liveness_ref}, relay_id)
-          :timeout -> {:error, :send_buffer_full}
+          :open -> send_held(channel, write)
+          :closed -> :closed
+          :timeout -> full
         end
 
-      {:error, _driver_gone} ->
-        undeliverable({nil, liveness_ref}, relay_id)
+      answer ->
+        answer
     end
   end
 

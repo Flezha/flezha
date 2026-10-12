@@ -275,6 +275,11 @@ defmodule Flezha.Relay.Replay do
       {:ok, _raw} ->
         :ok
 
+      # Never written, with the runner live and draining nothing: it holds none
+      # of this Cell, so the bind stops here as it does on a refusal.
+      {:error, :send_buffer_full} = unsent ->
+        unsent
+
       # The round trip never completed — a timeout, a dead control unit, a
       # runner shutting down. That is not a verdict on the state, and the
       # rebind path already owns a runner that stopped answering. Parking here
