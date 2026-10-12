@@ -5,7 +5,7 @@ defmodule Flezha.MixProject do
     [
       app: :flezha,
       name: "Flezha",
-      version: "0.1.0",
+      version: "0.1.1",
       elixir: "~> 1.17",
       description: "Distributed stateful relays — durable flow and steps compute",
       source_url: "https://github.com/flezha/flezha",
