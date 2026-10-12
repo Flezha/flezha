@@ -309,6 +309,10 @@ defmodule Flezha.Transport.LivenessCounters do
       [name: :io_in_received, surface: [{:metric, :relay_io_in_received}]],
       [name: :forwarded, surface: [{:metric, :relay_forwarded}]],
       [name: :filtered_nil, surface: [{:metric, :relay_filtered_nil}]],
+      # The payload bytes behind `io_in_received` and `forwarded`, so a
+      # relay's traffic reads in bytes as well as messages.
+      [name: :bytes_in, surface: [{:metric, :relay_bytes_in}]],
+      [name: :bytes_forwarded, surface: [{:metric, :relay_bytes_forwarded}]],
       # Ingress casts a parked relay dropped; the confirming entry point
       # refuses instead, so this counts only what a cast-based source lost.
       [name: :parked_drops, surface: [{:metric, :relay_parked_drops}]],
@@ -511,6 +515,11 @@ defmodule Flezha.Transport.LivenessCounters do
   @spec bump_relay(:counters.counters_ref() | nil, atom()) :: :ok
   def bump_relay(nil, _slot), do: :ok
   def bump_relay(ref, slot), do: relay_bump(ref, slot)
+
+  @doc "Add `amount` to a relay counter slot, such as the bytes behind one message."
+  @spec add_relay(:counters.counters_ref() | nil, atom(), non_neg_integer()) :: :ok
+  def add_relay(nil, _slot, _amount), do: :ok
+  def add_relay(ref, slot, amount), do: relay_add(ref, slot, amount)
 
   # ---------- read side ----------
 

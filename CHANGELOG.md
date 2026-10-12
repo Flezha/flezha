@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Added: a relay's traffic in bytes
+
+Each relay now counts the payload bytes it takes in and forwards beside the messages, as the
+liveness counters `bytes_in` and `bytes_forwarded` and the relay metrics `relay_bytes_in` and
+`relay_bytes_forwarded`. A payload's size is read from the binary, not measured, so counting
+costs two counter adds per message. The console shows a relay's rate as messages and bytes a
+second.
+
 ### Added: a relay's calls can be watched as they happen
 
 `flz relay listen <relay_id> --calls`, and `Relay.listen/5` with the direction `calls`, show

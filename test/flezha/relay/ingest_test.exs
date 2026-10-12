@@ -507,6 +507,23 @@ defmodule FlezhaTest.Relay.IngestTest do
     end
   end
 
+  test "an ingested message counts its bytes in, and forwarded unless it is filtered" do
+    inst = instance_id()
+    ref = LivenessCounters.register_relay(inst)
+    state = state(inst, channel: fake_channel(:ok), liveness_ref: ref) |> with_filter("drop-me")
+
+    assert {:reply, :ok, state} = Overwatch.handle_call({:ingest, "hello", %{}}, self(), state)
+
+    assert {:reply, {:ok, :absorbed}, _state} =
+             Overwatch.handle_call({:ingest, "drop-me now", %{}}, self(), state)
+
+    row = Enum.find(LivenessCounters.snapshot_all().relays, &(&1.relay_id == inst))
+
+    assert {row.io_in_received, row.forwarded, row.filtered_nil} == {2, 1, 1}
+    assert row.bytes_in == byte_size("hello") + byte_size("drop-me now")
+    assert row.bytes_forwarded == byte_size("hello")
+  end
+
   test "the existing cast keeps its silent drop for a parked relay" do
     state = state(instance_id(), init_error: :sdk_start_failed, channel: fake_channel(:ok))
 

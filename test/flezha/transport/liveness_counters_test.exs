@@ -45,6 +45,19 @@ defmodule Flezha.Transport.LivenessCountersTest do
     assert row.filtered_nil == 1
   end
 
+  test "a relay's byte counters add the amounts given" do
+    relay = "relay_#{System.unique_integer([:positive])}"
+    ref = LivenessCounters.register_relay(relay)
+
+    LivenessCounters.add_relay(ref, :bytes_in, 5)
+    LivenessCounters.add_relay(ref, :bytes_in, 7)
+    LivenessCounters.add_relay(ref, :bytes_forwarded, 5)
+
+    row = find_relay(relay)
+    assert {row.bytes_in, row.bytes_forwarded} == {12, 5}
+    assert LivenessCounters.add_relay(nil, :bytes_in, 3) == :ok
+  end
+
   # Owned by a relay or channel, the table and every other relay's counters
   # would go when that one stopped.
   test "the table is owned by the observability supervisor, not a registrant" do
