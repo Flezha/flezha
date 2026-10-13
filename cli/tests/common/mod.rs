@@ -35,7 +35,11 @@ impl Shim {
     fn beside(flz_bin: &str, script: Option<&str>) -> Self {
         let tmp = TempDir::new().expect("tempdir");
         let flz = tmp.path().join("flz");
-        fs::copy(flz_bin, &flz).expect("copy the flz under test");
+        // A link opens no write handle, so a test thread forking meanwhile
+        // cannot hold one across this binary's exec (`Text file busy`).
+        fs::hard_link(flz_bin, &flz)
+            .or_else(|_| fs::copy(flz_bin, &flz).map(drop))
+            .expect("place the flz under test");
         let flzvm = tmp.path().join("flzvm");
         if let Some(script) = script {
             fs::write(&flzvm, script).expect("write shim");
