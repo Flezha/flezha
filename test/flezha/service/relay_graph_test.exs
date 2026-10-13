@@ -206,10 +206,11 @@ defmodule Flezha.Service.RelayGraphTest do
     test "a node that could not be asked is an error, not an unannounced graph",
          %{namespace: ns} do
       stub(Flezha.Service.RelayManager, :factory_graph, fn _ns, _factory ->
-        {:error, {:routed_call_failed, :timeout}}
+        {:error, {:routed_call_failed, :"peer@127.0.0.1", :exit, :timeout}}
       end)
 
-      assert {:error, %Error{}} = Relay.graph(ns, "market-eu", @context)
+      assert {:error, %Error{code: "controller.peer_unreachable"}} =
+               Relay.graph(ns, "market-eu", @context)
     end
 
     test "a malformed graph stores only what reads as text, and still prints",
