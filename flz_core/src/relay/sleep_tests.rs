@@ -222,8 +222,10 @@ fn recent_activity_re_arms_the_deadline_from_the_last_input() {
     );
 
     assert!(park_of(&rx, "sleep-rearm-1", Duration::from_secs(5)).is_some());
+    // The activity stamp is whole milliseconds, so the deadline may land up
+    // to one before the exact bound.
     assert!(
-        started.elapsed() >= window + window / 2,
+        started.elapsed() + Duration::from_millis(1) >= window + window / 2,
         "slept {:?} after the bind, inside the window of the last activity",
         started.elapsed()
     );
