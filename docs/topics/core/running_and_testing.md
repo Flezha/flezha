@@ -131,6 +131,8 @@ format, whether it answers, its description and schema, and an example call
 `flz relay graph <id>` prints what the relay is made of: each tasklet with the
 channels it reads and writes, and which channels end at a plugin output or a
 call ([`relay_commands.md`](../cli/relay_commands.md#flz-relay)).
+`flz relay activity <id>` asks its runner what each tasklet is doing: its live
+Cells, the items queued, and the items admitted, blocked and dropped so far.
 
 ## Send a message
 

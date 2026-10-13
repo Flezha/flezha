@@ -107,6 +107,21 @@ pub struct CellCounters {
     pub drops_oldest_total: AtomicU64,
 }
 
+impl CellCounters {
+    /// Add `other`'s totals into these: an evicted Cell's into its tasklet's
+    /// retired totals, and each Cell's into an activity read's sum.
+    pub(crate) fn add(&self, other: &CellCounters) {
+        for (into, from) in [
+            (&self.pushes_total, &other.pushes_total),
+            (&self.pushes_blocked_total, &other.pushes_blocked_total),
+            (&self.drops_newest_total, &other.drops_newest_total),
+            (&self.drops_oldest_total, &other.drops_oldest_total),
+        ] {
+            into.fetch_add(from.load(Ordering::Relaxed), Ordering::Relaxed);
+        }
+    }
+}
+
 /// Payloads dispatched, process-wide; rides every `data_heartbeat` so the
 /// controller can tell a wedged dispatch from a healthy runner.
 pub static DISPATCHES_COMPLETED: AtomicU64 = AtomicU64::new(0);

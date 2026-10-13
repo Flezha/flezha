@@ -46,6 +46,9 @@ defmodule Flezha.Service.Relay do
 
   @namespace [type: :string, doc: "The namespace."]
   @relay_id [type: :string, doc: "The relay's id."]
+  @activity_figures [:tasklet, :cells, :queued, :queued_max, :admitted_total, :blocked_total] ++
+                      [:dropped_newest_total, :dropped_oldest_total, :dropped_capped_total] ++
+                      [:cells_created_total, :cells_evicted_total]
   @message [type: :string, doc: "The input's payload."]
   @channel [type: :string, default: "", doc: "The input channel; none when empty."]
 
@@ -197,6 +200,34 @@ defmodule Flezha.Service.Relay do
       ]
     ] do
     RelayManager.get_cell_state(Namespace.or_default(namespace), relay_id, selector(cell))
+  end
+
+  @doc """
+  What each tasklet of `relay_id` is doing, as the runner hosting it counts
+  them: its live Cells, the items queued in total and in the deepest Cell, and
+  the totals of items admitted, blocked waits and items dropped. A figure the
+  runner does not keep is `nil`, never zero. Totals rise for the life of one
+  instance; a different `instance_seq` or `runner` means they started again.
+  `queued` is approximate while items arrive. A partition group is read one
+  member at a time.
+  """
+  @spec activity(String.t(), String.t(), caller_context()) :: {:ok, map()} | {:error, term()}
+  verb activity(namespace, relay_id, caller_context),
+    verb: :relay_info,
+    args: [namespace: @namespace, relay_id: @relay_id] do
+    with {:ok, raw, runner} <-
+           RelayManager.get_tasklet_activity(Namespace.or_default(namespace), relay_id) do
+      answer = RunnerCommands.TaskletActivityResponse.decode!(raw)
+
+      {:ok,
+       %{
+         relay: relay_id,
+         runner: runner,
+         read_at_ms: answer.read_at_ms,
+         instance_seq: answer.instance_seq,
+         tasklets: Enum.map(answer.rows, &Map.take(&1, @activity_figures))
+       }}
+    end
   end
 
   @doc "One relay's Overwatch state."

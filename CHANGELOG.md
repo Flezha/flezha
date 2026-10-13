@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Added: what each tasklet of a relay is doing
+
+`Relay.activity/3` (`flz relay activity <relay_id>`, also over HTTP and MCP), bound to
+`relay_info`, asks the runner hosting a relay for one row per tasklet: its live Cells, the items
+queued in total and in the deepest Cell, and the totals of items admitted, blocked waits, and
+items dropped as newest, as oldest and at the Cell cap, with a dynamic tasklet's Cells created
+and evicted. The reply carries the runner, its read time and the instance's sequence number, so
+a caller can tell a new instance from a falling total. It rides a new control command,
+`TaskletActivity` (variant 43). `flz_core` adds up counters its Cells already keep, walking them
+off the control reader, and keeps an evicted Cell's totals in its tasklet's; nothing is added per
+message. The Elixir SDK reports Cells and queues only, leaving every total absent. The
+controller keeps nothing between calls. A runner that does not answer, or predates the read, is
+`activity.no_answer`.
+
 ### Added: a relay's graph
 
 A runner now announces each factory's graph with its API: every channel of the class with its

@@ -323,14 +323,8 @@ defmodule Flezha.Service.RelayManager do
     end
   end
 
-  defp wake_to_stop(namespace, relay_id) do
-    with_relay_pid(namespace, relay_id, fn pid ->
-      case SafeCall.bounded(pid, {:wake, then: :stop}, overwatch_call_timeout_ms()) do
-        {:ok, reply} -> reply
-        {:error, _} = unreachable -> unreachable
-      end
-    end)
-  end
+  defp wake_to_stop(namespace, relay_id),
+    do: ask_overwatch(namespace, relay_id, {:wake, then: :stop})
 
   @doc """
   Hard teardown: the `:relay` walk of the shutdown plan — flush the runner's
@@ -795,13 +789,33 @@ defmodule Flezha.Service.RelayManager do
   @spec get_cell_state(binary(), binary(), map()) ::
           {:ok, binary(), non_neg_integer() | nil} | {:error, term()}
   def get_cell_state(namespace, relay_id, selector) when is_map(selector) do
+    ask_overwatch(namespace, relay_id, {:get_cell_state, selector})
+  end
+
+  @doc """
+  The encoded `TaskletActivityResponse` of the runner hosting `relay_id`, with
+  that runner's id. A runner that does not answer, whose control unit is gone,
+  or that answers without knowing the read, is
+  `{:activity_no_answer, relay_id, runner_id}`; its own refusal passes through.
+  """
+  @spec get_tasklet_activity(binary(), binary()) ::
+          {:ok, binary(), binary()} | {:error, term()}
+  def get_tasklet_activity(namespace, relay_id) do
+    case ask_overwatch(namespace, relay_id, :get_tasklet_activity) do
+      {:error, _} = refused -> refused
+      {{:ok, raw}, runner} when raw != "" -> {:ok, raw, runner}
+      {{:error, %Flezha.Error{} = refusal}, _runner} -> {:error, refusal}
+      {_unanswered, runner} -> {:error, {:activity_no_answer, relay_id, runner}}
+    end
+  end
+
+  # The relay Overwatch's own reply, or `{:error, reason}` when it is not
+  # found or does not answer in time.
+  defp ask_overwatch(namespace, relay_id, request) do
     with_relay_pid(namespace, relay_id, fn pid ->
-      # Unwrap one level: the relay's own reply is already
-      # `{:ok, json, seq} | {:error, reason}`, so collapse `SafeCall`'s outer
-      # `{:ok, _}`; a bounded timeout/noproc stays `{:error, reason}`.
-      case SafeCall.bounded(pid, {:get_cell_state, selector}, overwatch_call_timeout_ms()) do
+      case SafeCall.bounded(pid, request, overwatch_call_timeout_ms()) do
         {:ok, reply} -> reply
-        {:error, _} = err -> err
+        {:error, _} = unreachable -> unreachable
       end
     end)
   end

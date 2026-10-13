@@ -406,6 +406,7 @@ message Error {
 | 37 | `AdminResponse` | C → R | none |
 | 38 | `RelayExited` | R → C | none |
 | 39 | `ConnectRefused` | C → R | none; the controller closes the stream after it |
+| 43 | `TaskletActivity` | C → R | `CommandResponse` (`raw_data` = `TaskletActivityResponse`) |
 
 Tags 15, 17 and 25 are message types that only ever ride as a
 `CommandResponse.raw_data`, never as a `CommandRequest`.
@@ -793,6 +794,43 @@ compaction, snapshot or WAL truncation.
 
 The operations surface is `flz state get`
 ([`../internals/state_persistence.md`](../internals/state_persistence.md)).
+
+### TaskletActivity
+
+| Field | Value |
+|-------|-------|
+| Message | `TaskletActivity { relay_id }` |
+| Behaviour | One row per tasklet of the instance, summed over its Cells from figures the data path already keeps |
+| Reply | `raw_data` = `TaskletActivityResponse { rows, read_at_ms, instance_seq }` |
+| Errors | `runtime.relay_not_found` naming the relay |
+
+Each `TaskletActivityRow` carries the tasklet's name and live `cells`, then
+`queued` (in total) and `queued_max` (in the deepest Cell), and the totals
+`admitted_total`, `blocked_total`, `dropped_newest_total` and
+`dropped_oldest_total`. A dynamic tasklet adds `dropped_capped_total`,
+`cells_created_total` and `cells_evicted_total`. Every figure but `tasklet` and
+`cells` is `optional`: a runtime that does not keep one leaves it absent, never
+zero. The Elixir SDK keeps no per-Cell totals, so it answers `cells`, `queued`
+and `queued_max` only, and leaves `queued` absent for a tasklet with a Cell
+that did not answer in time.
+
+**Totals.** Totals rise for the life of one instance, an evicted Cell's
+included. `admitted_total` counts mailbox items, timer firings and interval
+closes included; `blocked_total` counts wait rounds, not blocked pushes.
+`queued` is approximate while items arrive and leaves out items held outside
+the mailbox.
+
+**Instance.** `read_at_ms` is the runner's monotonic clock at the read.
+`instance_seq` names the instance that answered: a rebind, a migration, a wake
+or a runner restart builds a new one, and every total starts again from zero.
+A caller computing rates restarts them when `instance_seq` or the runner
+changes.
+
+**Cost.** The read adds nothing to the per-message path. A `flz_core` runner
+resolves the relay on the control reader and walks its Cells on a thread of
+its own, so a relay with many live Cells does not hold up the credit grants
+behind it. An older runner that cannot decode the command drops it without a
+reply.
 
 ### CellApplyState
 

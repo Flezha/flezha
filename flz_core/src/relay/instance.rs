@@ -227,20 +227,31 @@ impl RelayInstance {
             .collect()
     }
 
+    /// A dynamic tasklet's registry; `None` for every other mode.
+    pub fn dynamic_registry(&self, tasklet_id: TaskletId) -> Option<&Arc<DynamicCellRegistry>> {
+        self.dynamic_registries
+            .get(tasklet_id as usize)
+            .and_then(Option::as_ref)
+    }
+
     /// Every Cell one tasklet holds right now: its declared ones, or the
     /// keyed ones its registry minted.
     pub fn slots_of(&self, tasklet_id: TaskletId) -> Vec<Arc<CellSlot>> {
-        match self.dynamic_registries.get(tasklet_id as usize) {
-            Some(Some(registry)) => registry
-                .cells
-                .iter()
-                .map(|e| Arc::clone(e.value()))
-                .collect(),
-            _ => self
+        let mut slots = Vec::new();
+        self.for_each_slot(tasklet_id, |slot| slots.push(Arc::clone(slot)));
+        slots
+    }
+
+    /// [`Self::slots_of`] without taking a reference to any Cell.
+    pub fn for_each_slot(&self, tasklet_id: TaskletId, mut visit: impl FnMut(&Arc<CellSlot>)) {
+        match self.dynamic_registry(tasklet_id) {
+            Some(registry) => registry.cells.iter().for_each(|e| visit(e.value())),
+            None => self
                 .cells
                 .get(tasklet_id as usize)
-                .cloned()
-                .unwrap_or_default(),
+                .into_iter()
+                .flatten()
+                .for_each(visit),
         }
     }
 

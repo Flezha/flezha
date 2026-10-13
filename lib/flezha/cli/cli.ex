@@ -83,6 +83,7 @@ defmodule Flezha.Service.Cli do
     "Observability.enable_source" => &Observe.enable/3,
     "Observability.list_sinks" => &Observe.sinks/3,
     "Observability.list_sources" => &Observe.sources/3,
+    "Relay.activity" => &Info.activity/3,
     "Relay.api" => &Info.api/3,
     "Relay.call_channel" => &Relay.answered/3,
     "Relay.cell_state" => &Relay.cell_state/3,

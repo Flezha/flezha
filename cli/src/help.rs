@@ -487,6 +487,7 @@ COMMANDS:
     info        Get relay info, or one relay's API
     diagnose    Say what is wrong with a relay and what to do
     graph       Print a relay's tasklets and the channels between them
+    activity    Print what each of a relay's tasklets is doing
     listen      Print the frames a relay emits or ingests
     send        Send a payload to a relay's input stream
     call        Send one input and print the relay's answer
@@ -504,6 +505,7 @@ EXAMPLES:
     flz relay call echo --text hello
     flz relay diagnose orders-eu
     flz relay graph orders-eu
+    flz relay activity orders-eu
     flz relay listen my_echo --duration-ms 10000
     flz relay rewind chat-1 --to-iteration 3
     flz relay replay candles/aggregate/BTC --from 1720000000000

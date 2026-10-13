@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use dashmap::DashMap;
 
-use crate::cell::CellSlot;
+use crate::cell::{CellCounters, CellSlot};
 use crate::channel::{BuildCellArgs, TaskletId};
 use crate::flusher::CellFlusher;
 use crate::relay::instance::RelayInstance;
@@ -35,6 +35,9 @@ pub struct DynamicCellCounters {
 pub struct DynamicCellRegistry {
     pub cells: DashMap<String, Arc<CellSlot>>,
     pub counters: DynamicCellCounters,
+    /// The totals of every Cell evicted so far, so a tasklet's totals never
+    /// fall when one goes.
+    pub retired: CellCounters,
     /// Evicted keys, newest last, capped at [`EVICTED_TRACE_CAP`].
     evicted: Mutex<VecDeque<String>>,
     tasklet_id: TaskletId,
@@ -62,6 +65,7 @@ impl DynamicCellRegistry {
         Self {
             cells: DashMap::new(),
             counters: DynamicCellCounters::default(),
+            retired: CellCounters::default(),
             evicted: Mutex::new(VecDeque::new()),
             tasklet_id,
             max_cells,
@@ -140,6 +144,9 @@ impl DynamicCellRegistry {
             slot.release_drained();
             return;
         }
+        // Folded first, so an activity read between the removal and here
+        // misses the Cell for as short a time as it can.
+        self.retired.add(slot.counters());
         if let Some(id) = slot.flusher_entry_id {
             CellFlusher::instance().deregister(id);
         }

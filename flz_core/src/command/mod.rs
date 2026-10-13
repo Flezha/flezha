@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::net::Shutdown;
+use std::sync::Arc;
 
 use flz_transport::service::payloader;
 use flz_transport::transport::FlezhaStream;
@@ -28,6 +29,7 @@ mod runner_assign;
 mod runner_disconnect;
 mod steps_stop;
 mod streams_connect;
+mod tasklet_activity;
 
 /// One command's answer: the `CommandResponse` bytes under the handler's own
 /// payload id (the frame is stamped with the REQUEST's).
@@ -56,8 +58,18 @@ pub trait CommandAction {
     }
 }
 
+/// A read too slow for the control reader: what it needs is taken from the
+/// runner there, and the answer is built and written on a worker thread, so
+/// the credit grants queued behind it are not held up.
+pub trait OffReaderAction {
+    fn prepare(&self, runner: &mut RunnerNode) -> Result<OffReaderBuild, crate::Error>;
+}
+
+pub type OffReaderBuild = Box<dyn FnOnce() -> Vec<u8> + Send>;
+
 pub enum CommandActionType {
     Regular(Box<dyn CommandAction>),
+    OffReader(Box<dyn OffReaderAction>),
     RunnerDisconnect(Box<dyn CommandAction>),
     /// The controller's reply to an SDK-initiated request: wake the waiter
     /// under its `reference_id`; no `CommandResponse` is written.
@@ -135,6 +147,7 @@ fn classify(command: Option<Command>) -> Result<CommandActionType, CommandDecode
         Some(Command::CreditGrant(c)) => regular(c),
         Some(Command::ParkPayloadAck(c)) => regular(c),
         Some(Command::EffectResults(c)) => regular(c),
+        Some(Command::TaskletActivity(c)) => CommandActionType::OffReader(Box::new(c)),
         Some(Command::RunnerShutdownNotification(_))
         | Some(Command::RestoreInitStateResponse(_))
         | Some(Command::CompactCellResponse(_))
@@ -183,7 +196,7 @@ fn ack_result(outcome: String, error: Option<crate::pb::Error>) -> crate::shutdo
 
 pub fn handle_command(
     runner: &mut RunnerNode,
-    stream: &FlezhaStream,
+    stream: &Arc<FlezhaStream>,
     payload_id: &str,
     message: &[u8],
 ) {
@@ -198,20 +211,47 @@ pub fn handle_command(
     };
 
     match handler_type {
-        CommandActionType::Regular(handler) => {
-            let written = command::exec_control(runner, handler, payload_id, message, reference_id)
-                .and_then(|reply| write_reply(stream, reply));
-            if let Err(e) = written {
-                eprintln!("[flezha] Failed to write command response: {}", e);
+        CommandActionType::Regular(handler) => respond_with(
+            stream,
+            command::exec_control(runner, handler, payload_id, message, reference_id),
+        ),
+
+        CommandActionType::OffReader(action) => match action.prepare(runner) {
+            Ok(build) => {
+                let (stream, payload_id) = (Arc::clone(stream), payload_id.to_string());
+                let spawned = std::thread::Builder::new()
+                    .name("flezha-off-reader".into())
+                    .spawn(move || {
+                        let frame = encode_response(
+                            &payload_id,
+                            reference_id,
+                            build(),
+                            &[],
+                            HashMap::new(),
+                        );
+                        respond_with(&stream, frame);
+                    });
+                if let Err(e) = spawned {
+                    eprintln!("[flezha] Failed to start an off-reader answer: {}", e);
+                }
             }
-        }
+            Err(refusal) => respond_with(
+                stream,
+                encode_response(
+                    payload_id,
+                    reference_id,
+                    Vec::new(),
+                    &[refusal],
+                    HashMap::new(),
+                ),
+            ),
+        },
 
         CommandActionType::RunnerDisconnect(handler) => {
-            let written = command::exec_control(runner, handler, payload_id, message, reference_id)
-                .and_then(|reply| write_reply(stream, reply));
-            if let Err(e) = written {
-                eprintln!("[flezha] Failed to write disconnect response: {}", e);
-            }
+            respond_with(
+                stream,
+                command::exec_control(runner, handler, payload_id, message, reference_id),
+            );
             finish_disconnect(stream);
         }
 
@@ -260,6 +300,13 @@ fn decode_frame(payload_id: &str, message: &[u8]) -> Option<(CommandActionType, 
 /// After the disconnect ack is written: a terminal disconnect ships its
 /// state first (the notifications ride this channel), then only the write
 /// half closes so the ack lands before the peer sees the close.
+/// Write an encoded reply, logging a frame that could not be built or written.
+fn respond_with(stream: &FlezhaStream, frame: std::io::Result<Vec<u8>>) {
+    if let Err(e) = frame.and_then(|reply| write_reply(stream, reply)) {
+        eprintln!("[flezha] Failed to write command response: {}", e);
+    }
+}
+
 /// A command reply on the control stream. The class refuses it rather than
 /// holding it: a reply re-driven after its waiter timed out is a stale answer,
 /// and the reconnect re-issues the request it belonged to.
@@ -286,28 +333,35 @@ fn exec_control(
     reference_id: String,
 ) -> std::io::Result<Vec<u8>> {
     let mut errors: Vec<crate::Error> = vec![];
-    let mut status = String::from("success");
-
     let message_str = std::str::from_utf8(message).unwrap_or("");
     let (reply, metadata) = handler.reply(runner, message_str, &mut errors);
+    encode_response(payload_id, reference_id, reply.bytes, &errors, metadata)
+}
 
-    if !errors.is_empty() {
-        status = "error".to_string();
-    }
-
-    let command_response: CommandResponse = CommandResponse {
+/// A `CommandResponse` frame under the request's payload id: `error` when any
+/// refusal was answered, `success` otherwise.
+fn encode_response(
+    payload_id: &str,
+    reference_id: String,
+    raw_data: Vec<u8>,
+    errors: &[crate::Error],
+    metadata: HashMap<String, String>,
+) -> std::io::Result<Vec<u8>> {
+    let status = if errors.is_empty() {
+        "success"
+    } else {
+        "error"
+    };
+    let command_response = CommandResponse {
         reference_id,
-        status,
+        status: status.to_string(),
         errors: errors
             .iter()
             .map(|error| crate::pb::Error::from(&error.to_error()))
             .collect(),
-        raw_data: reply.bytes,
+        raw_data,
     };
-
-    let command_response_bytes = command_response.encode_to_vec();
-
-    payloader::build_from_binary(payload_id, &command_response_bytes, metadata)
+    payloader::build_from_binary(payload_id, &command_response.encode_to_vec(), metadata)
 }
 
 #[cfg(test)]

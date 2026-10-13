@@ -476,7 +476,30 @@ defmodule Flezha.Relay.Overwatch do
   @impl true
   def handle_call({:get_cell_state, selector}, from, %__MODULE__{} = state)
       when is_map(selector) do
-    read_cell_state(state, from, selector)
+    if PersistenceResolver.keeps_state?(relay_class(state)) do
+      command = %RunnerCommands.CellState{
+        relay_id: state.id,
+        tasklet: Map.get(selector, :tasklet) || "",
+        cell_key: Map.get(selector, :cell_key) || ""
+      }
+
+      read_runner(state, from, {:cell_state, command}, [metadata: true], fn result, _runner ->
+        with_change_seq(result)
+      end)
+    else
+      {:reply, {:error, {:persistence_off, state.id}}, state}
+    end
+  end
+
+  # Each tasklet's live Cells, queues and totals, as the hosting runner counts
+  # them, answered with that runner's id; a relay that keeps no state has
+  # activity all the same.
+  @impl true
+  def handle_call(:get_tasklet_activity, from, %__MODULE__{} = state) do
+    command = %RunnerCommands.TaskletActivity{relay_id: state.id}
+
+    opts = [timeout: Durations.get(:tasklet_activity_read_ms)]
+    read_runner(state, from, {:tasklet_activity, command}, opts, &{&1, &2})
   end
 
   @impl true
@@ -913,21 +936,20 @@ defmodule Flezha.Relay.Overwatch do
   end
 
   # ---------------------------------------------------------------
-  # Live Cell read
+  # Live runner read
   # ---------------------------------------------------------------
 
-  # One `CellState` round-trip, off the GenServer loop so a slow reply cannot
-  # back up the mailbox; `from` is answered when it completes.
+  # One runner round-trip, off the GenServer loop so a slow reply cannot back
+  # up the mailbox; `from` is answered with `shape.(result, runner_id)` when it
+  # completes. A relay that is not resident is refused without asking any
+  # runner.
   #
   # A Cell that is not held in memory is refused, never served from the
   # durable store: the controller cannot decode the SDK's WAL bytes, and a
   # fallback would mean binding a runner and restoring a Cell as a side
   # effect of a read. `flz state at` is the durable-read path.
-  defp read_cell_state(%__MODULE__{} = state, from, selector) do
+  defp read_runner(%__MODULE__{} = state, from, {kind, _} = command, opts, shape) do
     cond do
-      not PersistenceResolver.keeps_state?(relay_class(state)) ->
-        {:reply, {:error, {:persistence_off, state.id}}, state}
-
       state.suspended ->
         {:reply, {:error, {:not_resident, :suspended, state.id}}, state}
 
@@ -935,30 +957,19 @@ defmodule Flezha.Relay.Overwatch do
         {:reply, {:error, {:not_resident, :unbound, state.id}}, state}
 
       true ->
-        relay_id = state.id
-        runner_id = state.runner_id
+        {relay_id, runner_id} = {state.id, state.runner_id}
 
-        command = %RunnerCommands.CellState{
-          relay_id: relay_id,
-          tasklet: Map.get(selector, :tasklet) || "",
-          cell_key: Map.get(selector, :cell_key) || ""
-        }
+        spawn(fn ->
+          result =
+            with_task_span(kind, relay_id, fn ->
+              ControlUnit.send_control_await(runner_id, command, opts)
+            end)
 
-        spawn(fn -> reply_cell_state(from, runner_id, relay_id, command) end)
+          GenServer.reply(from, shape.(result, runner_id))
+        end)
 
         {:noreply, state}
     end
-  end
-
-  # Off-process: the read is a runner round-trip and the Overwatch must keep
-  # serving its own input while it is in flight.
-  defp reply_cell_state(from, runner_id, relay_id, command) do
-    result =
-      with_task_span(:cell_state, relay_id, fn ->
-        ControlUnit.send_control_await(runner_id, {:cell_state, command}, metadata: true)
-      end)
-
-    GenServer.reply(from, with_change_seq(result))
   end
 
   # `{:ok, json, metadata}` (a metadata-carrying reply) becomes

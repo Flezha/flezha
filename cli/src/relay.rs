@@ -68,26 +68,15 @@ pub(crate) const TABLE: Command = Command {
         Verb::new("info", handle_info)
             .taking(&[Positional::optional("<relay_id>")])
             .reading(&[NAMESPACE]),
-        Verb::new("diagnose", |read| {
-            rpc::door(
-                "Relay.diagnose",
-                &[rpc::namespace(read), relay_id(read)],
-                &[],
-                read,
-            )
-        })
-        .taking(RELAY_ID)
-        .reading(&[NAMESPACE]),
-        Verb::new("graph", |read| {
-            rpc::door(
-                "Relay.graph",
-                &[rpc::namespace(read), relay_id(read)],
-                &[],
-                read,
-            )
-        })
-        .taking(RELAY_ID)
-        .reading(&[NAMESPACE]),
+        Verb::new("diagnose", |read| relay_door("Relay.diagnose", read))
+            .taking(RELAY_ID)
+            .reading(&[NAMESPACE]),
+        Verb::new("graph", |read| relay_door("Relay.graph", read))
+            .taking(RELAY_ID)
+            .reading(&[NAMESPACE]),
+        Verb::new("activity", |read| relay_door("Relay.activity", read))
+            .taking(RELAY_ID)
+            .reading(&[NAMESPACE]),
         Verb::new("listen", handle_listen)
             .taking(RELAY_ID)
             .reading(&[INPUT, CALLS, DURATION_MS, NAMESPACE])
@@ -232,12 +221,7 @@ fn handle_scale(read: &Reading) {
 
 fn handle_stop(read: &Reading) {
     rpc::progress_line(read, "Stopping relay...");
-    rpc::door(
-        "Relay.stop",
-        &[rpc::namespace(read), relay_id(read)],
-        &[],
-        read,
-    );
+    relay_door("Relay.stop", read);
     rpc::progress_line(read, "Relay stopped successfully.");
 }
 
@@ -374,6 +358,11 @@ fn key_fields(read: &Reading) -> Map<String, Value> {
 
 fn relay_id(read: &Reading) -> Value {
     Value::from(read.pos(RELAY_ID[0].name))
+}
+
+/// A function taking the namespace and the one relay the verb names.
+fn relay_door(function: &str, read: &Reading) {
+    rpc::door(function, &[rpc::namespace(read), relay_id(read)], &[], read);
 }
 
 /// `flz relay rewind <instance> --to-iteration N` — take a steps loop back

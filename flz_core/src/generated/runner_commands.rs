@@ -5,7 +5,7 @@ pub struct CommandRequest {
     pub reference_id: ::prost::alloc::string::String,
     #[prost(
         oneof = "command_request::Command",
-        tags = "2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42"
+        tags = "2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43"
     )]
     pub command: ::core::option::Option<command_request::Command>,
 }
@@ -95,6 +95,8 @@ pub mod command_request {
         EffectResultAck(super::EffectResultAck),
         #[prost(message, tag = "42")]
         EffectResults(super::EffectResults),
+        #[prost(message, tag = "43")]
+        TaskletActivity(super::TaskletActivity),
     }
 }
 /// A failure in the error model's one shape (docs/errors.md): a stable `code`
@@ -1069,4 +1071,55 @@ pub struct RelayExited {
     pub relay_id: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
     pub reason: ::prost::alloc::string::String,
+}
+/// Controller -> SDK: what each tasklet of relay instance `relay_id` is doing,
+/// read on request from figures the data path already keeps. Answered with an
+/// encoded TaskletActivityResponse as the CommandResponse raw_data; a relay the
+/// runner does not host is refused as `runtime.relay_not_found`.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct TaskletActivity {
+    #[prost(string, tag = "1")]
+    pub relay_id: ::prost::alloc::string::String,
+}
+/// `read_at_ms` is the runner's monotonic clock at the read. `instance_seq`
+/// names the instance that answered: a rebind, migration, wake or runner
+/// restart builds a new one, and every total starts again from zero.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct TaskletActivityResponse {
+    #[prost(message, repeated, tag = "1")]
+    pub rows: ::prost::alloc::vec::Vec<TaskletActivityRow>,
+    #[prost(uint64, tag = "2")]
+    pub read_at_ms: u64,
+    #[prost(uint64, tag = "3")]
+    pub instance_seq: u64,
+}
+/// One tasklet's figures, summed over its Cells. A figure the runtime does not
+/// keep is absent, never zero. `queued` is approximate under contention.
+/// `admitted_total` counts mailbox items, timer firings and interval closes
+/// included; `blocked_total` counts wait rounds, not blocked pushes. The
+/// capped, created and evicted totals are kept by dynamic tasklets only.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct TaskletActivityRow {
+    #[prost(string, tag = "1")]
+    pub tasklet: ::prost::alloc::string::String,
+    #[prost(uint64, tag = "2")]
+    pub cells: u64,
+    #[prost(uint64, optional, tag = "3")]
+    pub queued: ::core::option::Option<u64>,
+    #[prost(uint64, optional, tag = "4")]
+    pub queued_max: ::core::option::Option<u64>,
+    #[prost(uint64, optional, tag = "5")]
+    pub admitted_total: ::core::option::Option<u64>,
+    #[prost(uint64, optional, tag = "6")]
+    pub blocked_total: ::core::option::Option<u64>,
+    #[prost(uint64, optional, tag = "7")]
+    pub dropped_newest_total: ::core::option::Option<u64>,
+    #[prost(uint64, optional, tag = "8")]
+    pub dropped_oldest_total: ::core::option::Option<u64>,
+    #[prost(uint64, optional, tag = "9")]
+    pub dropped_capped_total: ::core::option::Option<u64>,
+    #[prost(uint64, optional, tag = "10")]
+    pub cells_created_total: ::core::option::Option<u64>,
+    #[prost(uint64, optional, tag = "11")]
+    pub cells_evicted_total: ::core::option::Option<u64>,
 }

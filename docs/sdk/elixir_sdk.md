@@ -848,7 +848,9 @@ local run, `sdk_cell_call_ms` for a Cell. A call whose duration grows with your 
 one derived from the controller bound that awaits it: `sdk_cell_restore_ms` inside
 `restore_await_timeout_ms`, `sdk_cell_snapshot_ms` inside `compaction_timeout_ms`,
 `sdk_cell_apply_ms` inside `control_unit_reply_timeout_ms`. The SDK never reports a failure
-while the controller is still waiting for the answer.
+while the controller is still waiting for the answer. A relay's activity read asks every Cell at
+once and waits `sdk_activity_read_ms` for them all, inside `tasklet_activity_read_ms`; a
+tasklet with a Cell that has not answered by then reports its queue as absent.
 
 Three calls wait with no bound, because there the wait is the protocol and the caller is one
 of the runner's own processes, never one of yours: `Flezha.SDK.Cell.enqueue_block/2` under

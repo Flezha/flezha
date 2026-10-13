@@ -2,11 +2,25 @@ defmodule Flezha.Service.Cli.Info do
   @moduledoc """
   `flz relay info` — the text form of the relay report: the partition
   groups and their coverage, then every live and finished relay, or with a
-  relay id its API; `flz relay graph`, one relay's tasklets and channels; and
+  relay id its API; `flz relay graph`, one relay's tasklets and channels;
+  `flz relay activity`, what each of its tasklets is doing; and
   `flz relay diagnose`, one relay's findings.
   """
 
   alias Flezha.Service.Cli.Context
+
+  @activity_columns [
+    cells: "CELLS",
+    queued: "QUEUED",
+    queued_max: "MAX",
+    admitted_total: "ADMITTED",
+    blocked_total: "BLOCKED",
+    dropped_newest_total: "DROP_NEW",
+    dropped_oldest_total: "DROP_OLD",
+    dropped_capped_total: "CAPPED",
+    cells_created_total: "CREATED",
+    cells_evicted_total: "EVICTED"
+  ]
 
   @doc "`flz relay info`."
   def info(%{relays: [], groups: []} = report, _args, _opts),
@@ -128,6 +142,30 @@ defmodule Flezha.Service.Cli.Info do
 
   defp overflow(%{overflow: policy}) when policy in [nil, "drop_nothing"], do: ""
   defp overflow(%{overflow: policy}), do: " (#{policy})"
+
+  @doc """
+  `flz relay activity`: the runner and instance that answered, then one line
+  per tasklet; `-` marks a figure the runner does not keep.
+  """
+  def activity(read, _args, _opts) do
+    IO.puts(
+      "Activity of relay '#{read.relay}' on runner '#{read.runner}', instance #{read.instance_seq}:"
+    )
+
+    width = Enum.reduce(read.tasklets, 7, &max(String.length(&1.tasklet), &2))
+
+    line = fn name, figures ->
+      "  " <>
+        String.pad_trailing(name, width) <> Enum.map_join(figures, &String.pad_leading(&1, 10))
+    end
+
+    IO.puts(line.("TASKLET", Keyword.values(@activity_columns)))
+
+    for tasklet <- read.tasklets do
+      figures = for {key, _} <- @activity_columns, do: Context.label_or(tasklet[key], "-")
+      IO.puts(line.(tasklet.tasklet, figures))
+    end
+  end
 
   @doc """
   `flz relay diagnose`: one block per finding, its level, code and message,

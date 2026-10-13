@@ -1014,6 +1014,27 @@
       ]
     },
     {
+      "name": "Relay.activity",
+      "doc": "What each tasklet of `relay_id` is doing, as the runner hosting it counts them: its live Cells, the items queued in total and in the deepest Cell, and the totals of items admitted, blocked waits and items dropped.",
+      "action": "relay.list",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "namespace",
+          "type": "string",
+          "required": true,
+          "doc": "The namespace."
+        },
+        {
+          "name": "relay_id",
+          "type": "string",
+          "required": true,
+          "doc": "The relay's id."
+        }
+      ]
+    },
+    {
       "name": "Relay.api",
       "doc": "The factories announced in `namespace`, each with its description and its API: one entry per entry channel, with its format, whether it answers and in which format, its description, its schemas and its MCP tool name.",
       "action": "relay.list",

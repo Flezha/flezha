@@ -19,6 +19,7 @@ SDK. A program acts on the `code` and the `class`.
 1. [Classes and exit codes](#classes-and-exit-codes)
 2. [Forms](#forms)
 3. [Codes](#codes)
+   1. [activity](#activity)
    1. [api](#api)
    1. [audit](#audit)
    1. [authz](#authz)
@@ -90,6 +91,12 @@ The consumer API answers `{:error, %Flezha.Error{}}` with the same five fields, 
 SDK raises or returns its one error type carrying them.
 
 ## Codes
+
+### activity
+
+| Code | Class | Exit | Message | Hint |
+|---|---|---|---|---|
+| `activity.no_answer` | unavailable | 7 | runner '{runner}' did not answer the activity read of relay '{relay}'; it may predate the read, or be busy |  |
 
 ### api
 

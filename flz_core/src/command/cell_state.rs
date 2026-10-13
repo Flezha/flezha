@@ -12,6 +12,7 @@ use serde_json::{Map, Value};
 
 use super::{CommandAction, Reply};
 use crate::cell::CellSlot;
+use crate::channel::TaskletId;
 use crate::dynamic::DynamicCellRegistry;
 use crate::error::{Code, Error};
 use crate::pb::CellState;
@@ -213,7 +214,7 @@ enum Keyset<'a> {
 
 impl<'a> Keyset<'a> {
     fn of(instance: &'a Arc<RelayInstance>, tasklet_id: usize) -> Option<Self> {
-        if let Some(Some(registry)) = instance.dynamic_registries.get(tasklet_id) {
+        if let Some(registry) = instance.dynamic_registry(tasklet_id as TaskletId) {
             return Some(Keyset::Dynamic(registry));
         }
         let tasklet_desc = instance.topology.tasklets.get(tasklet_id)?;

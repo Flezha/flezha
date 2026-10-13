@@ -122,6 +122,10 @@ defmodule Flezha.Config.DurationRows do
     # before it stops.
     {:call_worker_idle_ms, :ms, 30_000, key: true},
     {:overwatch_call_timeout_ms, :ms, 5_000, key: true},
+    # A relay's activity read waits on its runner inside the caller's own
+    # wait on the Overwatch, so the caller sees the runner's silence named.
+    {:tasklet_activity_read_ms, :ms, nil,
+     derived: {:headroom, :overwatch_call_timeout_ms, -1_000}},
     {:overwatch_ping_timeout_ms, :ms, 2_000, key: true, env: "FLEZHA_OVERWATCH_PING_TIMEOUT_MS"},
     {:overwatch_task_warn_ms, :ms, 2_000, key: true},
     {:overwatch_runner_wait_ms, :ms, 30_000, key: true},
@@ -294,6 +298,8 @@ defmodule Flezha.Config.DurationRows do
      derived: {:headroom, :restore_await_timeout_ms, -5_000}, runtimes: [:elixir_sdk]},
     {:sdk_cell_snapshot_ms, :ms, nil,
      derived: {:headroom, :compaction_timeout_ms, -5_000}, runtimes: [:elixir_sdk]},
+    {:sdk_activity_read_ms, :ms, nil,
+     derived: {:headroom, :tasklet_activity_read_ms, -1_000}, runtimes: [:elixir_sdk]},
     {:sdk_cell_apply_ms, :ms, nil,
      derived: {:headroom, :control_unit_reply_timeout_ms, -1_000}, runtimes: [:elixir_sdk]},
     {:sdk_idle_probe_ms, :ms, 50, runtimes: [:elixir_sdk]},
