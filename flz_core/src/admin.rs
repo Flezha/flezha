@@ -119,7 +119,10 @@ pub fn send(
 /// `{"answer", "answer_codec"}`, or `{"accepted": true}` for a channel that
 /// does not answer.
 pub fn call_channel(relay: &str, channel: &str, payload: &[u8]) -> Result<String, AdminError> {
-    call("Relay.call_channel", &call_channel_args(relay, channel, payload))
+    call(
+        "Relay.call_channel",
+        &call_channel_args(relay, channel, payload),
+    )
 }
 
 fn call_channel_args(relay: &str, channel: &str, payload: &[u8]) -> String {

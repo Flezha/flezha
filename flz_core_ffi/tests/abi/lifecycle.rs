@@ -161,7 +161,10 @@ pub(crate) fn declares_and_starts(ctx: *mut FlzContext, controller: &Controller)
         r#""description":"Probes the ABI""#,
         r#""schema_json":"{\"type\":\"object\"}""#,
     ] {
-        assert!(init.contains(fact), "the init frame announces {fact}: {init}");
+        assert!(
+            init.contains(fact),
+            "the init frame announces {fact}: {init}"
+        );
     }
 
     controller.send(

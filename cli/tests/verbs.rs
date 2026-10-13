@@ -180,16 +180,29 @@ fn a_call_takes_its_value_one_way() {
     let shim = Shim::new(FLZ_BIN, ECHOING);
 
     for (argv, code) in [
-        (&["relay", "call", "op", "--text", "x", "--arg", "a=1"][..], "usage.options_conflict"),
-        (&["relay", "listen", "op1", "--input", "--calls"][..], "usage.options_conflict"),
+        (
+            &["relay", "call", "op", "--text", "x", "--arg", "a=1"][..],
+            "usage.options_conflict",
+        ),
+        (
+            &["relay", "listen", "op1", "--input", "--calls"][..],
+            "usage.options_conflict",
+        ),
         (&["relay", "call", "op"][..], "usage.option_required"),
-        (&["relay", "call", "op", "--arg", "amount"][..], "api.input_invalid"),
+        (
+            &["relay", "call", "op", "--arg", "amount"][..],
+            "api.input_invalid",
+        ),
     ] {
         let out = shim.run(argv);
         let err = String::from_utf8_lossy(&out.stderr);
 
         assert_eq!(out.status.code(), Some(2), "flz {}: {err}", argv.join(" "));
         assert!(err.contains(code), "flz {}: {err}", argv.join(" "));
-        assert!(out.stdout.is_empty(), "flz {} sent a request", argv.join(" "));
+        assert!(
+            out.stdout.is_empty(),
+            "flz {} sent a request",
+            argv.join(" ")
+        );
     }
 }

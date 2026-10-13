@@ -385,7 +385,10 @@ fn refuse_channel(
 /// carries one, and it is a JSON object naming its `type`.
 fn schema_refusal(channel_decl: &HostChannelDecl) -> Option<&'static str> {
     let schema = channel_decl.schema.as_ref()?;
-    if channel_decl.codec.is_some_and(|codec| codec != HostCodec::Json) {
+    if channel_decl
+        .codec
+        .is_some_and(|codec| codec != HostCodec::Json)
+    {
         Some("only a json channel carries a schema")
     } else if schema.get("type").is_none() {
         Some("a schema is a JSON object with a type")
