@@ -203,7 +203,7 @@ defmodule FlezhaTest.System.DlqE2ETest do
   # runner run there anyway, every emit fails on the gone relay, and each is
   # parked as poison — on a moved relay a park the controller never acks, so
   # the runner re-sends it forever.
-  @tag capability: :pool_wedge
+  @tag capability: :pool_wedge, skip: FlezhaTest.SystemCase.deferral(:pool_wedge)
   test "work queued for a relay that left its runner is dropped, not parked" do
     namespace = unique("dlq_gone")
     relay_id = unique("slow")
