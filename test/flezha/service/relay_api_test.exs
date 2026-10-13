@@ -86,11 +86,6 @@ defmodule Flezha.Service.RelayApiTest do
       %{namespace: namespace}
     end
 
-    defp announce(namespace, runner, factory) do
-      GenServer.cast(FleetManager, {:sync_factories, namespace, runner, [factory]})
-      {:ok, _} = FleetManager.list_factories(namespace)
-    end
-
     defp orders_factory(api) do
       %{"id" => "orders", "description" => "Demo orders", "sdk_lang" => 1, "run" => "flow"}
       |> then(&if api, do: Map.put(&1, "api", Enum.map(api, fn e -> announced(e) end)), else: &1)
@@ -98,7 +93,7 @@ defmodule Flezha.Service.RelayApiTest do
 
     test "the API is known as soon as a runner announces it, before any instance runs",
          %{namespace: ns} do
-      announce(ns, "r1", orders_factory(orders()))
+      FleetStateHelper.announce(ns, "r1", [orders_factory(orders())])
 
       assert [%{factory: "orders", description: "Demo orders", disagree: false} = factory] =
                RelayApi.list(ns)
@@ -111,19 +106,19 @@ defmodule Flezha.Service.RelayApiTest do
 
     test "the latest announcement wins and a disagreement is recorded; both runners still place",
          %{namespace: ns} do
-      announce(ns, "r1", orders_factory(orders()))
-      announce(ns, "r2", orders_factory([hd(orders())]))
+      FleetStateHelper.announce(ns, "r1", [orders_factory(orders())])
+      FleetStateHelper.announce(ns, "r2", [orders_factory([hd(orders())])])
 
       assert [%{channels: [%{channel: "place"}], disagree: true}] = RelayApi.list(ns)
       assert Enum.sort(FleetManager.runners_for_factory(ns, "orders")) == ["r1", "r2"]
 
-      announce(ns, "r2", orders_factory(orders()))
+      FleetStateHelper.announce(ns, "r2", [orders_factory(orders())])
       assert [%{channels: [_, _, _], disagree: false}] = RelayApi.list(ns)
     end
 
     test "a runner that announces no API is placed, and its factory lists no channels",
          %{namespace: ns} do
-      announce(ns, "r1", orders_factory(nil))
+      FleetStateHelper.announce(ns, "r1", [orders_factory(nil)])
 
       assert [%{factory: "orders", channels: []}] = RelayApi.list(ns)
       assert FleetManager.runners_for_factory(ns, "orders") == ["r1"]

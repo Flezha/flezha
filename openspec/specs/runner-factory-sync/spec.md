@@ -201,3 +201,35 @@ change SHALL be accepted, and its factories SHALL have no API.
 - **WHEN** a runner sends a `FactoryDecl` with no `api` field
 - **THEN** its factory is placed as before and `Relay.api` lists it with no channels
 
+### Requirement: The factory announcement SHALL carry the class's graph
+
+Every factory a runner announces SHALL carry a `graph`, in the connect init frame's `factories`
+list and in each `FactoryDecl` of `UpdateFactories`, built from the registered class's topology: by
+`flz_core` for a class registered on it, and by the Elixir SDK from its own topology.
+The graph SHALL list every channel of the class with its kind (`entry`, `inter_tasklet` or
+`plugin_bound`), the tasklet that produces it (none for an entry), the tasklets that consume it, its
+plugin end (`none`, `output` or `call`), the target of a `call` end, and its overflow policy. It SHALL
+list every tasklet with its name, its cell mode (`single`, `static` or `dynamic`), its declared cell
+keys and its mailbox capacity. Tasklets and channels SHALL be named as the class names them. The
+graph SHALL be built only when the factory is announced. A runner without this change SHALL be
+accepted, and its factories SHALL have no graph.
+
+#### Scenario: The announcement lists tasklets and channels
+
+- **WHEN** a runner registers a class with entry `trades_in` consumed by tasklets `ohlc` and `trades`, and `ohlc` producing `ohlc_out`, consumed by tasklet `atr` and ending at a plugin output
+- **THEN** its announced graph lists channel `trades_in` as an entry with consumers `ohlc` and `trades`, channel `ohlc_out` as produced by `ohlc` with consumer `atr` and plugin end `output`, and tasklets `ohlc`, `trades` and `atr` with their cell modes
+
+#### Scenario: A call end names its target
+
+- **WHEN** a class has a channel whose end is a `call(...)` to factory `pricing`
+- **THEN** that channel's plugin end is `call` and its call target is `factory:pricing`
+
+#### Scenario: Every runtime announces the fixture's graph
+
+- **WHEN** each runtime registers the classes of `test/fixtures/reference_topologies.txt`
+- **THEN** each announced graph lists the channels, kinds, producers, consumers and plugin ends the fixture records
+
+#### Scenario: An old runner is still placed
+
+- **WHEN** a runner announces a factory with no `graph`
+- **THEN** its factory is placed as before and reads as having no announced graph

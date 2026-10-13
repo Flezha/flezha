@@ -2,7 +2,8 @@ defmodule Flezha.Service.Cli.Info do
   @moduledoc """
   `flz relay info` — the text form of the relay report: the partition
   groups and their coverage, then every live and finished relay, or with a
-  relay id its API, and `flz relay diagnose`, one relay's findings.
+  relay id its API; `flz relay graph`, one relay's tasklets and channels; and
+  `flz relay diagnose`, one relay's findings.
   """
 
   alias Flezha.Service.Cli.Context
@@ -80,6 +81,53 @@ defmodule Flezha.Service.Cli.Info do
   end
 
   defp example(_entry), do: "--text <payload>"
+
+  @doc """
+  `flz relay graph <relay_id>`: the relay's entry channels, then each tasklet
+  with its cell mode and the channels it consumes and produces, a channel that
+  ends at a plugin output or a call marked so.
+  """
+  def graph(%{graph: nil} = read, _args, _opts) do
+    IO.puts(graph_heading(read))
+
+    IO.puts(
+      "  No graph announced: connect a runner of factory '#{read.factory}' that announces one."
+    )
+  end
+
+  def graph(%{graph: graph} = read, _args, _opts) do
+    IO.puts(graph_heading(read))
+
+    if read.disagree,
+      do: IO.puts("  Connected runners announce different graphs; this is the latest.")
+
+    entries = for %{kind: "entry"} = channel <- graph.channels, do: channel_label(channel)
+    IO.puts("  entry: #{Enum.join(entries, ", ")}")
+    Enum.each(graph.tasklets, &print_tasklet(&1, graph.channels))
+  end
+
+  defp graph_heading(read), do: "Graph of relay '#{read.relay}' (factory '#{read.factory}'):"
+
+  defp print_tasklet(tasklet, channels) do
+    keys = if tasklet.cell_keys == [], do: "", else: " #{Enum.join(tasklet.cell_keys, ", ")}"
+    IO.puts("  #{tasklet.name}  #{tasklet.mode}#{keys}, mailbox #{tasklet.mailbox_capacity}")
+    inputs = for channel <- channels, tasklet.name in channel.consumers, do: channel.name
+    outputs = for %{producer: producer} = c <- channels, producer == tasklet.name, do: c
+    IO.puts("    in:  #{Enum.join(inputs, ", ")}")
+
+    IO.puts(
+      "    out: #{if outputs == [], do: "-", else: Enum.map_join(outputs, ", ", &channel_label/1)}"
+    )
+  end
+
+  defp channel_label(channel), do: channel.name <> plugin_end(channel) <> overflow(channel)
+
+  defp plugin_end(%{plugin_end: "output"}), do: " → output"
+  defp plugin_end(%{plugin_end: "call", call_target: target}), do: " → call #{target}"
+  defp plugin_end(_none), do: ""
+
+  defp overflow(%{overflow: policy}) when policy in [nil, "drop_nothing"], do: ""
+  defp overflow(%{overflow: policy}), do: " (#{policy})"
 
   @doc """
   `flz relay diagnose`: one block per finding, its level, code and message,

@@ -21,7 +21,11 @@ defmodule FlezhaTest.System.TopologyRefusalE2ETest do
      what the controller decodes from every runtime — the smoke tier's snapshot
      tests generalised from one runtime per run to all of them.
 
-  Plus the boot drill: a runner started under `FLEZHA_REFUSAL_FIXTURE=<row>`
+  Plus the announced graph: each runtime's runner is started and the graph the
+  controller keeps for the two reference classes is compared to the fixture's
+  seven-column lines.
+
+  And the boot drill: a runner started under `FLEZHA_REFUSAL_FIXTURE=<row>`
   registers only that row's topology and must die with the row's refusal name in
   its stderr. A runner that refuses at boot never connects, so the assertion
   reads the app's exit status and stderr rather than a control frame.
@@ -41,6 +45,7 @@ defmodule FlezhaTest.System.TopologyRefusalE2ETest do
 
   import FlezhaTest.Helper.TierE2EHarness, only: [stop_namespace: 1, unique: 1]
 
+  alias Flezha.Runner.FleetManager
   alias Flezha.Service.PortPilot
   alias FlezhaTest.Helper.DeclarationSnapshot
   alias FlezhaTest.Helper.NodeTestHelper
@@ -55,6 +60,9 @@ defmodule FlezhaTest.System.TopologyRefusalE2ETest do
   @moduletag skip: @interop_skip
 
   @fixture "test/fixtures/reference_topologies.txt"
+
+  # A graph's channel kind as the record spells it.
+  @record_kinds %{"inter_tasklet" => "inter_task", "plugin_bound" => "plugin"}
 
   # How a row's refusal may be answered: driven at run time, or cited to the
   # compile-fail test that pins the message where the runtime's compiler
@@ -216,6 +224,35 @@ defmodule FlezhaTest.System.TopologyRefusalE2ETest do
     end
   end
 
+  # The two reference classes, by the factory id every test app registers
+  # them under and the topology id the fixture pins them as. Each test is tagged
+  # with its class's capability, so an SDK that defers it skips the test.
+  describe "the announced graph" do
+    setup :own_namespace
+
+    for runtime <- PortPilot.runtimes() do
+      @runtime runtime
+      @selected_only runtime != NodeTestHelper.runtime() and @interop_skip
+
+      @tag capability: :graph_builder,
+           skip: @selected_only || FlezhaTest.SystemCase.deferral(:graph_builder, runtime)
+      test "#{runtime} announces the fixture's graph for hybrid_channel", ctx do
+        assert_announced_graph(ctx.namespace, @runtime, "hybrid_channel", "hybrid_channel")
+      end
+
+      @tag capability: :steps,
+           skip: @selected_only || FlezhaTest.SystemCase.deferral(:steps, runtime)
+      test "#{runtime} announces the fixture's graph for tier_commit_block_steps", ctx do
+        assert_announced_graph(
+          ctx.namespace,
+          @runtime,
+          "tier_commit_block_steps",
+          "commit_block_chain"
+        )
+      end
+    end
+  end
+
   # `dup_key_by` is refused by the core's check. `dup_node` is refused by the
   # four veneer builders themselves, and a Node graph built at module scope
   # raises it while the module loads. `shorthand_duplicate_id` is a runtime
@@ -327,6 +364,38 @@ defmodule FlezhaTest.System.TopologyRefusalE2ETest do
         |> blank_if_empty(),
         blank(channel["sink"])
       ]
+    end
+  end
+
+  defp assert_announced_graph(namespace, runtime, factory, topology) do
+    NodeTestHelper.start_runner(namespace, runtime: runtime)
+
+    assert %{graph: %{} = graph} = FleetManager.factory_graph(namespace, factory),
+           "#{runtime} announced no graph for #{factory}"
+
+    assert graph |> fixture_channels() |> normalise() ==
+             ReferenceTopologies.derived_lines(topology),
+           """
+           #{runtime} announced a graph for #{factory} that differs from \
+           #{@fixture}'s #{topology} rows. Every runtime announces one graph \
+           for one class.
+           """
+  end
+
+  # An announced graph in a report's channel shape: tasklets by their index,
+  # the kind as the record spells it, the sink as the channel an output ends.
+  defp fixture_channels(graph) do
+    index = graph.tasklets |> Enum.map(& &1.name) |> Enum.with_index() |> Map.new()
+
+    for {channel, i} <- Enum.with_index(graph.channels) do
+      %{
+        "index" => i,
+        "name" => channel.name,
+        "kind" => Map.get(@record_kinds, channel.kind, channel.kind),
+        "producer" => index[channel.producer],
+        "consumers" => Enum.map(channel.consumers, &index[&1]),
+        "sink" => if(channel.plugin_end == "output", do: channel.name)
+      }
     end
   end
 

@@ -139,6 +139,16 @@ pub enum OverflowPolicy {
     DropOldest,
 }
 
+impl OverflowPolicy {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            OverflowPolicy::DropNothing => "drop_nothing",
+            OverflowPolicy::DropNewest => "drop_newest",
+            OverflowPolicy::DropOldest => "drop_oldest",
+        }
+    }
+}
+
 /// Retry-then-park policy for a failing invocation: after `max_attempts`, or
 /// at once on a non-retryable error, the payload parks and the cell
 /// advances.

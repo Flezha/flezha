@@ -59,6 +59,15 @@ defmodule Flezha.Runner.FleetManager do
   def factory_row(namespace, factory_id),
     do: namespace |> factory_rows() |> Enum.find(&(&1.id == factory_id))
 
+  @doc """
+  The graph `factory_id`'s latest advertisement on this node announced, and
+  whether its runners disagree; no graph when no runner here advertises it.
+  """
+  @spec factory_graph(String.t(), String.t()) :: %{graph: map() | nil, disagree: boolean()}
+  def factory_graph(namespace, factory_id),
+    do:
+      GenServer.call(__MODULE__, {:factory_graph, namespace, factory_id}, manager_call_timeout())
+
   @doc false
   # This node's rows, read over `:erpc` by `global_factories/1`.
   def factory_rows(namespace) do
@@ -611,6 +620,12 @@ defmodule Flezha.Runner.FleetManager do
       |> Enum.sort_by(& &1.id)
 
     {:reply, {:ok, factories}, state}
+  end
+
+  @impl true
+  def handle_call({:factory_graph, namespace, factory_id}, _from, state) do
+    info = get_in(state.namespace_factories, [namespace, factory_id])
+    {:reply, Factories.latest_graph(info), state}
   end
 
   @impl true

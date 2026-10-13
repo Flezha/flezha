@@ -33,6 +33,7 @@ COMMANDS:
     list        List relays
     info        Get relay info, or one relay's API
     diagnose    Say what is wrong with a relay and what to do
+    graph       Print a relay's tasklets and the channels between them
     listen      Print the frames a relay emits or ingests
     send        Send a payload to a relay's input stream
     call        Send one input and print the relay's answer
@@ -49,6 +50,7 @@ EXAMPLES:
     flz relay send orders --text x --msg-id orders/0/41
     flz relay call echo --text hello
     flz relay diagnose orders-eu
+    flz relay graph orders-eu
     flz relay listen my_echo --duration-ms 10000
     flz relay rewind chat-1 --to-iteration 3
     flz relay replay candles/aggregate/BTC --from 1720000000000
@@ -66,6 +68,7 @@ flz relay state <relay_id> [--namespace | -n <namespace>]
 flz relay list [--namespace | -n <namespace>]
 flz relay info [<relay_id>] [--namespace | -n <namespace>]
 flz relay diagnose <relay_id> [--namespace | -n <namespace>]
+flz relay graph <relay_id> [--namespace | -n <namespace>]
 flz relay send <relay_id> --text | -t <payload> [--channel | -c <ch>] [--key <key>] [--msg-id <id>] [--await <ms>] [--namespace | -n <namespace>]
 flz relay scale <group> <partitions> [--namespace | -n <namespace>] [--timeout | -t <ms>]
 flz relay rewind <relay_id> --to-iteration <N> [--namespace | -n <namespace>]
@@ -298,6 +301,32 @@ API of relay 'orders-eu' (factory 'orders'):
   audit  text, no answer
     flz relay call orders-eu --channel audit --text <payload>
 ```
+
+`flz relay graph <relay_id>` prints what a relay is made of, as its runners
+announce it: the entry channels, then each tasklet with its cell mode, its
+mailbox and the channels it reads (`in`) and writes (`out`). A channel that ends
+at a plugin output is marked `→ output`, one that ends in a call `→ call` with
+its target, and one that sheds when full names its policy. With `--json` it is
+the channels and tasklets as data. The trade watcher of the
+[tradedesk](tutorials/tradedesk.html):
+
+```sh
+$ flz relay graph trade_watcher --namespace trading
+```
+
+```output
+Graph of relay 'trade_watcher' (factory 'trade_watcher'):
+  entry: trades
+  track_prices  dynamic, mailbox 1024
+    in:  trades
+    out: track_prices
+  buy_above_average  single, mailbox 1024
+    in:  track_prices
+    out: signals → output
+```
+
+A factory whose runners announce no graph, because they run an older SDK, says
+so instead.
 
 ## `flz state`
 

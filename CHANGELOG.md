@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Added: a relay's graph
+
+A runner now announces each factory's graph with its API: every channel of the class with its
+kind, the tasklet that produces it, the tasklets that consume it, whether it ends at a plugin
+output or a call (and the call's target), and its overflow policy; and every tasklet with its
+cell mode, cell keys and mailbox capacity. It rides `FactoryDecl.graph` in `UpdateFactories` and
+a `graph` key in the connect frame, built when the factory is announced and never per message,
+by `flz_core` for the Rust, Java, Python, Node, Ruby and PHP SDKs and by the Elixir SDK for its
+own classes. The controller keeps it beside the API, out of the factory rows a call reads.
+`Relay.graph/3` (`flz relay graph <relay_id>`, also over HTTP and MCP) answers one relay's,
+bound to `relay_info`; a partition member and its group both read their factory's. A factory
+whose runners announced none answers no graph with the reason `not_announced`, and its runners
+are still placed. When a factory's runners announce different graphs, the read says so and
+serves the latest.
+
 ### Added: a relay's traffic in bytes
 
 Each relay now counts the payload bytes it takes in, filters and forwards beside the messages,

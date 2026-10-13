@@ -65,7 +65,10 @@ struct FactoryInfo {
     on_failure: String,
     /// The factory's API, as `FactoryDecl.api` carries it.
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    api: Vec<serde_json::Value>,
+    api: Vec<crate::pb::ApiEntry>,
+    /// The class's graph, as `FactoryDecl.graph` carries it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    graph: Option<crate::pb::RelayGraph>,
 }
 
 #[derive(Serialize)]
@@ -561,17 +564,6 @@ fn classify_reconnect_reason(e: &io::Error, acked: bool) -> &'static str {
     }
 }
 
-fn api_entry_json(entry: &crate::pb::ApiEntry) -> serde_json::Value {
-    serde_json::json!({
-        "channel": entry.channel,
-        "codec": entry.codec,
-        "schema_json": entry.schema_json,
-        "description": entry.description,
-        "answer_codec": entry.answer_codec,
-        "answer_schema_json": entry.answer_schema_json,
-    })
-}
-
 /// The connect init frame, with the factory set read at write time so every
 /// reconnect resyncs it.
 fn send_init_msg(
@@ -591,7 +583,8 @@ fn send_init_msg(
                 run: decl.run,
                 each: decl.each,
                 on_failure: decl.on_failure,
-                api: decl.api.iter().map(api_entry_json).collect(),
+                api: decl.api,
+                graph: decl.graph,
             }
         })
         .collect();

@@ -71,6 +71,7 @@ on the command line.
 | `flz relay list` | Lists the relays in a namespace, with their health |
 | `flz relay info [<relay_id>]` | Shows each relay's details and plugins, or one relay's API |
 | `flz relay diagnose <relay_id>` | Says what is wrong with a relay and what to do |
+| `flz relay graph <relay_id>` | Prints a relay's tasklets with the channels they consume and produce |
 | `flz relay state <relay_id>` | Prints a relay's state |
 | `flz relay send <relay_id> --text <payload>` | Sends an input |
 | `flz relay call <relay_id> (--text <payload> \| --arg <name=value>...)` | Calls one channel by the relay's API and prints its answer |

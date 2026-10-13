@@ -392,6 +392,28 @@ defmodule Flezha.Service.Relay do
   end
 
   @doc """
+  The graph of `relay_id`'s factory as its runners announce it: every channel
+  with its kind, producer, consumers, plugin end, call target and overflow,
+  and every tasklet with its cell mode, cell keys and mailbox capacity. A
+  factory whose runners announced none answers `graph: nil` with the reason
+  `not_announced`; `disagree` is true when its runners announce different
+  graphs, the latest served.
+  """
+  @spec graph(String.t(), String.t(), caller_context()) :: {:ok, map()} | {:error, term()}
+  verb graph(namespace, relay_id, caller_context),
+    verb: :relay_info,
+    args: [namespace: @namespace, relay_id: @relay_id] do
+    namespace = Namespace.or_default(namespace)
+
+    # A node that could not be asked answers its error, never "not announced".
+    with {:ok, %{factory: factory}} <- RelayApi.factory_of(namespace, relay_id),
+         %{graph: graph} = read <- RelayManager.factory_graph(namespace, factory) do
+      reason = if graph, do: nil, else: "not_announced"
+      {:ok, Map.merge(read, %{relay: relay_id, factory: factory, reason: reason})}
+    end
+  end
+
+  @doc """
   Call the entry channel `channel` of `relay_id` with `value`, encoded by the
   relay's API: any JSON value for a `json` channel, a string for `text`, base64
   for `bytes`, `msgpack` and `custom`. A channel that answers is called and its

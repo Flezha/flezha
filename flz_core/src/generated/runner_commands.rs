@@ -831,8 +831,58 @@ pub struct FactoryDecl {
     /// a runner that announces none, whose factory then has no API.
     #[prost(message, repeated, tag = "7")]
     pub api: ::prost::alloc::vec::Vec<ApiEntry>,
+    /// The class's static data flow, built when the factory is announced.
+    /// Absent from a runner that announces none.
+    #[prost(message, optional, tag = "8")]
+    pub graph: ::core::option::Option<RelayGraph>,
+}
+/// A class's tasklets and the channels between them, referenced by name.
+#[derive(serde::Serialize)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct RelayGraph {
+    #[prost(message, repeated, tag = "1")]
+    pub channels: ::prost::alloc::vec::Vec<GraphChannel>,
+    #[prost(message, repeated, tag = "2")]
+    pub tasklets: ::prost::alloc::vec::Vec<GraphTasklet>,
+}
+#[derive(serde::Serialize)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct GraphChannel {
+    #[prost(string, tag = "1")]
+    pub name: ::prost::alloc::string::String,
+    /// "entry", "inter_tasklet" or "plugin_bound".
+    #[prost(string, tag = "2")]
+    pub kind: ::prost::alloc::string::String,
+    /// Empty for an entry channel.
+    #[prost(string, tag = "3")]
+    pub producer: ::prost::alloc::string::String,
+    #[prost(string, repeated, tag = "4")]
+    pub consumers: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// "none", "output" or "call".
+    #[prost(string, tag = "5")]
+    pub plugin_end: ::prost::alloc::string::String,
+    /// For a "call" end: "id:<relay>" or "factory:<id>"; empty otherwise.
+    #[prost(string, tag = "6")]
+    pub call_target: ::prost::alloc::string::String,
+    /// "drop_nothing", "drop_newest" or "drop_oldest".
+    #[prost(string, tag = "7")]
+    pub overflow: ::prost::alloc::string::String,
+}
+#[derive(serde::Serialize)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct GraphTasklet {
+    #[prost(string, tag = "1")]
+    pub name: ::prost::alloc::string::String,
+    /// "single", "static" or "dynamic".
+    #[prost(string, tag = "2")]
+    pub mode: ::prost::alloc::string::String,
+    #[prost(string, repeated, tag = "3")]
+    pub cell_keys: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(uint32, tag = "4")]
+    pub mailbox_capacity: u32,
 }
 /// One entry channel of a factory's API, as its class declares it.
+#[derive(serde::Serialize)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ApiEntry {
     #[prost(string, tag = "1")]

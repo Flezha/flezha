@@ -33,7 +33,7 @@ pub fn class_factory_ids() -> Vec<&'static str> {
 }
 
 /// What a runner advertises for `factory_id`: the class's SDK language, how
-/// it runs, what it is for and its API. An undeclared factory answers
+/// it runs, what it is for, its API and its graph. An undeclared factory answers
 /// [`crate::header::SDK_LANG_UNSPECIFIED`] and an empty run, which the
 /// controller refuses to place.
 pub fn advertised_for_factory(factory_id: &str) -> crate::pb::FactoryDecl {
@@ -54,8 +54,59 @@ pub fn advertised_for_factory(factory_id: &str) -> crate::pb::FactoryDecl {
             None => decl.run = "flow".to_string(),
         }
         decl.api = api_entries(&topology);
+        decl.graph = Some(graph(&topology));
     }
     decl
+}
+
+/// The class's tasklets and channels by name. The plugin end is read from
+/// `sink` and `call`, which every builder sets; a host-built class leaves
+/// `plugin_sink` unset.
+fn graph(topology: &RelayTopology) -> crate::pb::RelayGraph {
+    let tasklet_name = |id: crate::channel::TaskletId| {
+        topology
+            .tasklets
+            .get(id as usize)
+            .map(|tasklet| tasklet.name.to_string())
+            .unwrap_or_default()
+    };
+    let channels = topology
+        .channels
+        .iter()
+        .map(|channel| crate::pb::GraphChannel {
+            name: channel.name.to_string(),
+            kind: channel.kind.as_str().to_string(),
+            producer: channel.producer.map(tasklet_name).unwrap_or_default(),
+            consumers: channel.consumer_ids().map(tasklet_name).collect(),
+            plugin_end: match (&channel.call, channel.sink) {
+                (Some(_), _) => "call",
+                (None, true) => "output",
+                (None, false) => "none",
+            }
+            .to_string(),
+            call_target: channel
+                .call
+                .as_ref()
+                .map(|call| call.target.to_string())
+                .unwrap_or_default(),
+            overflow: channel.overflow_policy.as_str().to_string(),
+        })
+        .collect();
+    let tasklets = topology
+        .tasklets
+        .iter()
+        .map(|tasklet| crate::pb::GraphTasklet {
+            name: tasklet.name.to_string(),
+            mode: tasklet.mode.as_str().to_string(),
+            cell_keys: tasklet
+                .cell_keys
+                .iter()
+                .map(|key| key.to_string())
+                .collect(),
+            mailbox_capacity: u32::try_from(tasklet.mailbox_capacity).unwrap_or(u32::MAX),
+        })
+        .collect();
+    crate::pb::RelayGraph { channels, tasklets }
 }
 
 /// One entry per entry channel a caller can address (not the channel a call

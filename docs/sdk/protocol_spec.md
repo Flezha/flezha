@@ -474,6 +474,8 @@ One frame, payload id `connect_control_channel`, empty metadata, JSON message:
   (`factories` adds an optional `description`, the class's `sdk_lang` and its
   `kind`, `"flow"` or `"steps"`), read at write time so a reconnect
   resyncs post-start defines/removes: the init frame is the resync of record.
+  An entry may also carry `api` and `graph`, as `FactoryDecl` does (see
+  [ApiEntry](#apientry) and [RelayGraph](#relaygraph)).
   The controller establishes each factory's language and kind from the first
   announcement and places only on a runner announcing both as established; an
   entry with no kind never places. A start names only the factory, so the kind
@@ -862,7 +864,7 @@ resolved entirely by the re-presented `stable_id` in the handshake (§5). A
 ### UpdateFactories
 
 `UpdateFactories { repeated FactoryDecl factories }` (`FactoryDecl { id,
-description, sdk_lang, run, each, on_failure, api }`, the same keys as the init frame's entries)
+description, sdk_lang, run, each, on_failure, api, graph }`, the same keys as the init frame's entries)
 travels runner → controller, fire-and-forget, after a
 post-start define/remove on the runner handle, carrying the runner's **full**
 current factory set. Full-set semantics make it idempotent: `FleetManager`
@@ -886,6 +888,24 @@ frame's factory entries carry the same six keys under `"api"`. `flz_core` builds
 from the host's channel facts (`advertised_for_factory`); the Elixir SDK builds its own. A
 runner that sends none leaves its factory with no API; the controller keeps each runner's latest
 announcement and `Relay.api` reads it.
+
+### RelayGraph
+
+`FactoryDecl.graph` (field 8) is the class's static data flow, `RelayGraph { channels,
+tasklets }`, built when the factory is announced and never per message. Each `GraphChannel
+{ name, kind, producer, consumers, plugin_end, call_target, overflow }` names a channel of the
+class: `kind` is `entry`, `inter_tasklet` or `plugin_bound`; `producer` is the producing
+tasklet's name, empty for an entry; `consumers` are the consuming tasklets' names; `plugin_end`
+is `call` for a `call(...)` end, `output` for a plugin output, otherwise `none`; `call_target`
+is a call end's `id:<relay>` or `factory:<id>`, empty otherwise; `overflow` is `drop_nothing`,
+`drop_newest` or `drop_oldest` (the Elixir SDK sheds per consuming tasklet's mailbox, so its
+channel announces the first policy its consumers declare). Each `GraphTasklet { name, mode, cell_keys, mailbox_capacity }`
+names a tasklet in declaration order, with `mode` `single`, `static` or `dynamic`. The init
+frame's factory entries carry the same structure as a `"graph"` object with these keys, omitted
+when there is none. `flz_core` builds it from the class's topology (`advertised_for_factory`);
+the Elixir SDK builds its own. A runner that sends none leaves its factory with no graph, and
+it is still placed. The controller keeps each runner's latest announcement beside its API, out
+of the factory rows a call reads, and `Relay.graph` reads it.
 
 ### SpawnStepsRequest
 

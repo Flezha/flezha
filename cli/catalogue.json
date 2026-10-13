@@ -1166,6 +1166,27 @@
       ]
     },
     {
+      "name": "Relay.graph",
+      "doc": "The graph of `relay_id`'s factory as its runners announce it: every channel with its kind, producer, consumers, plugin end, call target and overflow, and every tasklet with its cell mode, cell keys and mailbox capacity.",
+      "action": "relay.list",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "namespace",
+          "type": "string",
+          "required": true,
+          "doc": "The namespace."
+        },
+        {
+          "name": "relay_id",
+          "type": "string",
+          "required": true,
+          "doc": "The relay's id."
+        }
+      ]
+    },
+    {
       "name": "Relay.info",
       "doc": "Every relay in `namespace` as its Overwatch reports it, every finished one still inside its retention window, and every partition group with its key-group coverage.",
       "action": "relay.list",

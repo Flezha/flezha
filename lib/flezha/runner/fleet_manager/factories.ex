@@ -46,9 +46,14 @@ defmodule Flezha.Runner.FleetManager.Factories do
           establish(namespace, runner_id, factory_id, attribute, value)
         end)
 
-        # The API rides beside the placement attributes, never among them:
-        # it describes the factory and decides no placement.
-        advert = Map.merge(advert, %{api: api(factory["api"]), announced_at: System.os_time()})
+        # The API and the graph ride beside the placement attributes, never
+        # among them: they describe the factory and decide no placement.
+        advert =
+          Map.merge(advert, %{
+            api: api(factory["api"]),
+            graph: graph(factory["graph"]),
+            announced_at: System.os_time()
+          })
 
         Map.put(acc, factory_id, %{
           description: factory["description"] || existing.description,
@@ -105,14 +110,28 @@ defmodule Flezha.Runner.FleetManager.Factories do
   """
   @spec latest_api(map()) :: %{api: [map()], api_at: integer() | nil, api_disagree: boolean()}
   def latest_api(info) do
+    {api, at, disagree} = latest(info, :api, [])
+    %{api: api, api_at: at, api_disagree: disagree}
+  end
+
+  @doc """
+  The graph the latest advertisement of a factory entry announced (`nil` when
+  it announced none), and whether its advertising runners announce different
+  ones. Read on its own, so no factory row carries it.
+  """
+  @spec latest_graph(map() | nil) :: %{graph: map() | nil, disagree: boolean()}
+  def latest_graph(info) do
+    {graph, _at, disagree} = latest(info, :graph, nil)
+    %{graph: graph, disagree: disagree}
+  end
+
+  # `key` of the newest advertisement, when it was announced, and whether the
+  # advertisements disagree on it.
+  defp latest(info, key, none) do
     adverts = info |> factory_entry() |> Map.fetch!(:adverts) |> Map.values()
     latest = Enum.max_by(adverts, &Map.get(&1, :announced_at, 0), fn -> %{} end)
-
-    %{
-      api: Map.get(latest, :api, []),
-      api_at: Map.get(latest, :announced_at),
-      api_disagree: adverts |> Enum.map(&Map.get(&1, :api, [])) |> Enum.uniq() |> length() > 1
-    }
+    disagree = adverts |> Enum.map(&Map.get(&1, key, none)) |> Enum.uniq() |> length() > 1
+    {Map.get(latest, key, none), Map.get(latest, :announced_at), disagree}
   end
 
   # The API entries a factory's announcement carries, whether from the connect
@@ -131,6 +150,49 @@ defmodule Flezha.Runner.FleetManager.Factories do
       answer_schema: schema(entry["answer_schema_json"])
     }
   end
+
+  # The graph a factory's announcement carries, in either form. Absent is
+  # `nil`: a runner older than the graph announces none.
+  defp graph(%{"channels" => channels, "tasklets" => tasklets})
+       when is_list(channels) and is_list(tasklets) do
+    %{
+      channels: for(%{"name" => name} = c when is_binary(name) <- channels, do: graph_channel(c)),
+      tasklets: for(%{"name" => name} = t when is_binary(name) <- tasklets, do: graph_tasklet(t))
+    }
+  end
+
+  defp graph(_absent), do: nil
+
+  # A runner's frame is read as text and lists of text, so a malformed one
+  # stores nothing a reader of the graph would trip over.
+  defp graph_channel(channel) do
+    %{
+      name: channel["name"],
+      kind: text(channel["kind"]),
+      producer: blank_nil(text(channel["producer"])),
+      consumers: texts(channel["consumers"]),
+      plugin_end: text(channel["plugin_end"]),
+      call_target: blank_nil(text(channel["call_target"])),
+      overflow: text(channel["overflow"])
+    }
+  end
+
+  defp graph_tasklet(tasklet) do
+    capacity = tasklet["mailbox_capacity"]
+
+    %{
+      name: tasklet["name"],
+      mode: text(tasklet["mode"]),
+      cell_keys: texts(tasklet["cell_keys"]),
+      mailbox_capacity: if(is_integer(capacity), do: capacity)
+    }
+  end
+
+  defp text(value) when is_binary(value), do: value
+  defp text(_other), do: nil
+
+  defp texts(values) when is_list(values), do: Enum.filter(values, &is_binary/1)
+  defp texts(_other), do: []
 
   defp schema(json) when is_binary(json) and json != "" do
     case Jason.decode(json) do

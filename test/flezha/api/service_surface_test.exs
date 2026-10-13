@@ -108,6 +108,7 @@ defmodule Flezha.Api.ServiceSurfaceTest do
       {:api, ["default", "rc"]},
       {:call_channel, ["default", "rc", "channel", "value", []]},
       {:diagnose, ["default", "rc"]},
+      {:graph, ["default", "rc"]},
       {:replay, ["default", "path", "0"]}
     ],
     PluginManager => [

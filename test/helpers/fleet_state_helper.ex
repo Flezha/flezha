@@ -52,10 +52,18 @@ defmodule FlezhaTest.Helper.FleetStateHelper do
   end
 
   @doc """
-  Deliver a `sync_factories` cast for `runner`, then a same-sender call so an
-  assertion following this runs after the cast is handled.
+  Deliver a `sync_factories` cast of the factory entries `runner` announces, as
+  a connect frame carries them, then a same-sender call so an assertion
+  following this runs after the cast is handled.
+  """
+  def announce(namespace, runner, factories) do
+    GenServer.cast(FleetManager, {:sync_factories, namespace, runner, factories})
+    {:ok, _} = FleetManager.list_factories(namespace)
+    :ok
+  end
 
-  Factory ids take the same shapes `seed/2` accepts.
+  @doc """
+  `announce/3` of bare factory ids, which take the same shapes `seed/2` accepts.
   """
   def sync(namespace, runner, factory_ids) do
     factories =
@@ -64,9 +72,7 @@ defmodule FlezhaTest.Helper.FleetStateHelper do
         %{"id" => id, "description" => nil, "sdk_lang" => lang, "run" => to_string(kind)}
       end)
 
-    GenServer.cast(FleetManager, {:sync_factories, namespace, runner, factories})
-    {:ok, _} = FleetManager.list_factories(namespace)
-    :ok
+    announce(namespace, runner, factories)
   end
 
   @doc """

@@ -20,6 +20,16 @@ pub enum CellMode {
     Dynamic,
 }
 
+impl CellMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            CellMode::Single => "single",
+            CellMode::Static => "static",
+            CellMode::Dynamic => "dynamic",
+        }
+    }
+}
+
 /// One Tasklet's registration-time facts; channel ids pre-resolved so the
 /// hot path looks no name up.
 pub struct TaskletDescriptor {

@@ -1,6 +1,6 @@
-//! A class's API as its runner announces it: the entries `advertised_for_factory`
-//! builds from the host's channel facts and the topology, and the schema a
-//! registration refuses.
+//! A class's API and graph as its runner announces them: what
+//! `advertised_for_factory` builds from the host's channel facts and the
+//! topology, and the schema a registration refuses.
 
 use flz_transport::errors::ErrorModel;
 
@@ -114,7 +114,10 @@ fn a_schema_that_is_not_an_object_with_a_type_refuses_the_class() {
     for (name, facts) in [
         ("api_schema_string", r#""codec":"json","schema":"object""#),
         ("api_schema_untyped", r#""schema":{"properties":{}}"#),
-        ("api_schema_on_text", r#""codec":"text","schema":{"type":"string"}"#),
+        (
+            "api_schema_on_text",
+            r#""codec":"text","schema":{"type":"string"}"#,
+        ),
     ] {
         let id = factory(name);
         let json = format!(
@@ -134,4 +137,118 @@ fn a_schema_that_is_not_an_object_with_a_type_refuses_the_class() {
             "{name}: nothing is registered for a refused class"
         );
     }
+}
+
+/// The channel rows of an announced graph: name, kind, producer, consumers,
+/// plugin end, call target and overflow.
+fn graph_rows(id: &str) -> Vec<[String; 7]> {
+    let graph = advertised_for_factory(id)
+        .graph
+        .expect("a registered class has a graph");
+    graph
+        .channels
+        .into_iter()
+        .map(|c| {
+            [
+                c.name,
+                c.kind,
+                c.producer,
+                c.consumers.join(","),
+                c.plugin_end,
+                c.call_target,
+                c.overflow,
+            ]
+        })
+        .collect()
+}
+
+#[test]
+fn a_host_class_announces_every_channel_with_its_ends() {
+    let id = factory("graph_host");
+    register(
+        &id,
+        r#"{"name":"trades_in","kind":"entry","overflow":"drop_newest",
+            "chains":[[{"link":"into","tasklet":0}],[{"link":"key"},{"link":"into","tasklet":1}]]},
+           {"name":"ohlc_out","kind":"inter_task","producer":0,
+            "chains":[[{"link":"sink","name":"ohlc_out"}],[{"link":"into","tasklet":2}]]},
+           {"name":"trades_out","kind":"inter_task","producer":1,
+            "chains":[[{"link":"into","tasklet":2}]]},
+           {"name":"ask","kind":"plugin","producer":2,
+            "chains":[[{"link":"call","factory":"pricing","deadline_ms":500,"response":"ask.response"}]]},
+           {"name":"ask.response","kind":"entry","chains":[[{"link":"into","tasklet":3}]]}"#,
+        r#"{"name":"ohlc","cell_mode":"static","cell_keys":["a","b"],"cells_for_overridden":true},
+           {"name":"trades","cell_mode":"dynamic"},
+           {"name":"atr","mailbox_capacity":64},
+           {"name":"read"}"#,
+    );
+
+    let row = |cols: [&str; 7]| cols.map(str::to_string);
+    assert_eq!(
+        graph_rows(&id),
+        [
+            row([
+                "trades_in",
+                "entry",
+                "",
+                "ohlc,trades",
+                "none",
+                "",
+                "drop_newest"
+            ]),
+            row([
+                "ohlc_out",
+                "inter_tasklet",
+                "ohlc",
+                "atr",
+                "output",
+                "",
+                "drop_nothing"
+            ]),
+            row([
+                "trades_out",
+                "inter_tasklet",
+                "trades",
+                "atr",
+                "none",
+                "",
+                "drop_nothing"
+            ]),
+            row([
+                "ask",
+                "plugin_bound",
+                "atr",
+                "",
+                "call",
+                "factory:pricing",
+                "drop_nothing"
+            ]),
+            row([
+                "ask.response",
+                "entry",
+                "",
+                "read",
+                "none",
+                "",
+                "drop_nothing"
+            ]),
+        ]
+    );
+
+    let tasklets: Vec<_> = advertised_for_factory(&id)
+        .graph
+        .expect("graph")
+        .tasklets
+        .into_iter()
+        .map(|t| (t.name, t.mode, t.cell_keys.join(","), t.mailbox_capacity))
+        .collect();
+    let capacity = tasklets[0].3;
+    assert_eq!(
+        tasklets,
+        [
+            ("ohlc".into(), "static".into(), "a,b".into(), capacity),
+            ("trades".into(), "dynamic".into(), "".into(), capacity),
+            ("atr".into(), "single".into(), "".into(), 64),
+            ("read".into(), "single".into(), "".into(), capacity),
+        ]
+    );
 }

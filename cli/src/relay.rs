@@ -78,6 +78,16 @@ pub(crate) const TABLE: Command = Command {
         })
         .taking(RELAY_ID)
         .reading(&[NAMESPACE]),
+        Verb::new("graph", |read| {
+            rpc::door(
+                "Relay.graph",
+                &[rpc::namespace(read), relay_id(read)],
+                &[],
+                read,
+            )
+        })
+        .taking(RELAY_ID)
+        .reading(&[NAMESPACE]),
         Verb::new("listen", handle_listen)
             .taking(RELAY_ID)
             .reading(&[INPUT, CALLS, DURATION_MS, NAMESPACE])
@@ -327,7 +337,10 @@ fn named_args(read: &Reading) -> Value {
             rpc::fail(FlezhaError::with(
                 "api.input_invalid",
                 [
-                    ("channel", Value::from(read.opt(CHANNEL.long).unwrap_or_default())),
+                    (
+                        "channel",
+                        Value::from(read.opt(CHANNEL.long).unwrap_or_default()),
+                    ),
                     ("expected", Value::from("name=value")),
                     ("reason", Value::from(format!("--arg {arg} names no value"))),
                 ],

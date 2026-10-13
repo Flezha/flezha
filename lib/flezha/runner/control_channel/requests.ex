@@ -300,7 +300,8 @@ defmodule Flezha.Runner.ControlChannel.Requests do
                                run: run,
                                each: each,
                                on_failure: on_failure,
-                               api: api
+                               api: api,
+                               graph: graph
                              } ->
         %{
           "id" => id,
@@ -309,7 +310,8 @@ defmodule Flezha.Runner.ControlChannel.Requests do
           "run" => run,
           "each" => each,
           "on_failure" => on_failure,
-          "api" => Enum.map(api, &api_entry/1)
+          "api" => Enum.map(api, &string_keyed/1),
+          "graph" => graph(graph)
         }
       end)
 
@@ -486,13 +488,22 @@ defmodule Flezha.Runner.ControlChannel.Requests do
     :ok
   end
 
+  # The JSON shape the connect frame carries an API entry and a graph in, so
+  # both announcements reach the factory table alike.
+  defp graph(nil), do: nil
+
+  defp graph(%RunnerCommands.RelayGraph{channels: channels, tasklets: tasklets}),
+    do: %{
+      "channels" => Enum.map(channels, &string_keyed/1),
+      "tasklets" => Enum.map(tasklets, &string_keyed/1)
+    }
+
+  defp string_keyed(message),
+    do:
+      message |> Map.from_struct() |> Map.new(fn {key, value} -> {Atom.to_string(key), value} end)
+
   # An unrecognised policy reads as the default: a requester on a newer SDK
   # must never have its payload silently refused by an older controller.
-  # The JSON shape the connect frame carries an API entry in, so both
-  # announcements reach the factory table alike.
-  defp api_entry(%RunnerCommands.ApiEntry{} = entry),
-    do: entry |> Map.from_struct() |> Map.new(fn {key, value} -> {Atom.to_string(key), value} end)
-
   defp if_running("error"), do: :error
   defp if_running(_), do: :deliver
 

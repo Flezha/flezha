@@ -87,6 +87,7 @@ defmodule Flezha.Service.Cli do
     "Relay.call_channel" => &Relay.answered/3,
     "Relay.cell_state" => &Relay.cell_state/3,
     "Relay.diagnose" => &Info.diagnose/3,
+    "Relay.graph" => &Info.graph/3,
     "Relay.info" => &Info.info/3,
     "Relay.list" => &Listing.relays/3,
     "Relay.list_namespaces" => &Listing.namespaces/3,

@@ -91,6 +91,7 @@ Flezha.Service.Relay.call/6
 Flezha.Service.Relay.call_channel/6
 Flezha.Service.Relay.cell_state/4
 Flezha.Service.Relay.diagnose/3
+Flezha.Service.Relay.graph/3
 Flezha.Service.Relay.info/2
 Flezha.Service.Relay.list/2
 Flezha.Service.Relay.list_namespaces/1

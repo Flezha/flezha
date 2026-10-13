@@ -678,6 +678,10 @@ defmodule Flezha.Service.RelayManager do
   def factory_row(namespace, factory_id),
     do: on_factory_node(namespace, factory_id, :factory_row, nil)
 
+  @doc "`factory_id`'s announced graph, asked as `factory_row/2` is."
+  def factory_graph(namespace, factory_id),
+    do: on_factory_node(namespace, factory_id, :factory_graph, %{graph: nil, disagree: false})
+
   defp on_factory_node(namespace, factory_id, fun, none) do
     cond do
       FleetManager.runners_for_factory(namespace, factory_id) != [] ->
