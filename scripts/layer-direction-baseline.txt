@@ -45,7 +45,7 @@ lib/flezha/relay/overwatch.ex -> Flezha.Service.HubManager
 lib/flezha/relay/overwatch.ex -> Flezha.State.Outbox
 lib/flezha/relay/overwatch.ex -> Flezha.State.Paths
 lib/flezha/relay/overwatch.ex -> Flezha.State.PersistenceResolver
-lib/flezha/relay/partition_group.ex -> Flezha.AuthZ.Quotas
+lib/flezha/relay/partition_group.ex -> Flezha.Service.RelayManager.Admission
 lib/flezha/relay/partition_group.ex -> Flezha.Dlq
 lib/flezha/relay/partition_group.ex -> Flezha.Plugin.SpecDecoder
 lib/flezha/relay/partition_group.ex -> Flezha.Service.HubManager
