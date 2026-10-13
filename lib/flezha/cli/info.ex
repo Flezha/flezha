@@ -152,7 +152,8 @@ defmodule Flezha.Service.Cli.Info do
       "Activity of relay '#{read.relay}' on runner '#{read.runner}', instance #{read.instance_seq}:"
     )
 
-    width = Enum.reduce(read.tasklets, 7, &max(String.length(&1.tasklet), &2))
+    width =
+      Enum.reduce(read.tasklets, String.length("TASKLET"), &max(String.length(&1.tasklet), &2))
 
     line = fn name, figures ->
       "  " <>
