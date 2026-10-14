@@ -465,12 +465,13 @@ fn read_loop(
                     }
                 }
                 let _ = stream.set_read_timeout(Some(live.current_deadline()));
-                otx.lock()
-                    .unwrap()
-                    .send(RunnerMessage::HandleCommandAction(
-                        payload_id, message, metadata,
-                    ))
-                    .unwrap();
+                // A runner abandoned meanwhile has no one left to hand it to.
+                let handed = otx.lock().unwrap_or_else(|e| e.into_inner()).send(
+                    RunnerMessage::HandleCommandAction(payload_id, message, metadata),
+                );
+                if handed.is_err() {
+                    return;
+                }
             }
             Err(e) => match live.classify_error(&e) {
                 ReadAction::Retry => continue,
