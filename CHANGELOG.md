@@ -27,7 +27,9 @@ runner embedded in a process with someone else's environment reads its own. A st
 controller refuses, or does not confirm in time, leaves no runner behind and is answered at
 the call. `flz_core_shutdown` now also ends the session once the state is shipped, and
 `flz_core_pending_timers` reads the pending timers of the Cell an activation runs, which a
-host keeping its own copy reads once after a restore.
+host keeping its own copy reads once after a restore. The Java SDK reads it on a session's
+first timer call: its cancel of a timer registered in an earlier invocation used to record
+nothing, so the timer still fired.
 
 ### Added: a tasklet's Cells, and a relay's outputs per channel
 
