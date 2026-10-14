@@ -398,3 +398,12 @@ print the same text; with `--json` it SHALL print the whole answer, `options` in
 - **THEN** every `default` in every `options` SHALL be `nil`, a boolean, a number, a string, an
   atom, or a list or map of those
 
+### Requirement: The provider listing SHALL say which providers feed a relay
+
+`Flezha.Service.Fleet.providers/1` SHALL list, for each provider, `feeds`: `true` when the provider's declaration says it injects records into a relay's entry channel, `false` otherwise. `Flezha.Plugin.Providers.help/1` SHALL carry the same flag. The flag SHALL be read from the provider's declaration, never inferred from its id.
+
+#### Scenario: A source provider is marked
+
+- **WHEN** a caller holding `plugin_list` lists the providers
+- **THEN** `relay_websocket`, `relay_http_poll` and `relay_postgres_poll` carry `feeds: true` and `relay_stdout` carries `feeds: false`
+

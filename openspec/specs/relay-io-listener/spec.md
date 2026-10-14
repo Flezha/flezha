@@ -229,8 +229,10 @@ Its events SHALL be `{:output, payload, metadata}`, `{:part, payload, metadata}`
 `{:dead_lettered, error, metadata}` with `error` a `%Flezha.Error{}`, for
 `direction: :input`, `{:input, payload, metadata}`, and, for `direction: :calls`,
 `{:call, payload, metadata}`, `{:answered, payload, metadata}`, `{:timed_out, error, metadata}`
-and `{:refused, error, metadata}`. `handler` SHALL answer `:continue` or
-`:done`. Its options SHALL be `direction` (`:output` by default, `:input` or `:calls`), `window_ms`
+and `{:refused, error, metadata}`, and, for `direction: :tally`, `{:tally, totals, metadata}`.
+`handler` SHALL answer `:continue` or
+`:done`. Its options SHALL be `direction` (`:output` by default, `:input`, `:calls` or `:tally`),
+`channels` and `tally_ms` for a tally, `window_ms`
 (a positive integer, or `:infinity` by default), `before` (a function run once after the
 attach and before the first event, which `send --await` uses to deliver its input) and
 `watch` (a process whose exit ends the listener, which the CLI sets to its caller's group
@@ -581,4 +583,42 @@ beside `--input` with `usage.options_conflict`. The screen `flz relay listen --h
 
 - **WHEN** `flz relay listen my_echo --input --calls` is run
 - **THEN** it SHALL fail with `usage.options_conflict` and send nothing
+
+### Requirement: A tally listener SHALL count a relay's outputs per channel without a message per record
+
+`Flezha.Service.Listener.listen/4` SHALL accept `direction: :tally`. The listener SHALL bind its plugin on `on_output` only, at the head of the chain, in a count-only mode:
+- **Per output:** each output frame that reaches it SHALL add one to a counter for its `channel` metadata. The counter SHALL be held on the node of the relay's Overwatch, and an unnamed or unknown channel SHALL count under one other slot. Nothing SHALL be sent per frame.
+- **Reports:** about once per `tally_ms` (default 1000), the plugin's heartbeat worker SHALL report the member's totals and an epoch to the listener. The epoch SHALL change whenever the plugin is prepared again.
+- **Events:** the handler SHALL receive `{:tally, totals, %{read_at_ms:, epochs:}}`, with `totals` a map from channel name to count, summed over the members of a partition group.
+- **Channels:** the channel names SHALL be the relay's announced output channels unless the `channels` option names them. An empty set SHALL be refused as `listener.no_channels`.
+- **Bounds:** a tally listener SHALL obey every bound of a listener: its window, its caller watch, its group fan-out, and leaving nothing behind on every way out.
+
+A relay with no tally listener SHALL pay nothing beyond the hook check every unbound relay already pays.
+
+`Flezha.Service.Relay.listen/5` SHALL accept `tally` as a direction. `flz relay listen <relay_id> --tally` SHALL print one line per report with each channel's total and its rate since the previous report.
+
+#### Scenario: Outputs are counted per channel
+
+- **WHEN** a tally listener is attached to `testnet_showcase` and the relay emits 10 frames on `alerts` and 3 on `orders`
+- **THEN** a later tally event reports `alerts` 10 higher and `orders` 3 higher than the first
+
+#### Scenario: No message per record
+
+- **WHEN** a tally listener is attached and the relay emits 1,000 frames within one report interval
+- **THEN** the listener receives one report for that interval, not 1,000 messages
+
+#### Scenario: The watcher leaves
+
+- **WHEN** the process that started a tally listener exits
+- **THEN** within the heartbeat interval the plugin is disabled on every member, and `flz relay info` lists no listener plugin
+
+#### Scenario: The count restarts
+
+- **WHEN** the tally's plugin is prepared again while a tally listener is attached, because the relay's Overwatch restarted or the relay moved or woke
+- **THEN** the next report carries a new epoch and totals that start again from zero, and no report carries the old count
+
+#### Scenario: Unwatched relays pay nothing new
+
+- **WHEN** no tally listener is attached to a relay
+- **THEN** its `on_output` path runs exactly the code it ran before this change
 

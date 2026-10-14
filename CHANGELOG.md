@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+### Added: a tasklet's Cells, and a relay's outputs per channel
+
+`Relay.activity/4` takes `cells_of` and `limit` (`flz relay activity <relay_id> --cells
+<tasklet> [--limit N]`): beside the per-tasklet rows it answers that tasklet's Cells, the most
+recently admitting first (50 by default, at most 500), each with its key, queue, totals and last
+admission time, and the tasklet's Cell count. The runner picks them on the walk the activity read
+already makes, from counters each Cell already keeps; `TaskletActivity` gains `cells_of` and
+`limit`, and its response an optional `cells`. A runner that keeps no per-Cell counters, the
+Elixir SDK among them, answers no Cells (`cells: nil`). An undeclared tasklet is
+`state.tasklet_not_found`.
+
+`Relay.listen/5` takes the direction `tally` (`flz relay listen <relay_id> --tally`). It binds
+the listener's plugin first on `on_output` in a counting mode: each output adds one to a counter
+for its channel on the relay's own node, and the plugin's heartbeat worker reports the totals
+about once a second (`tally_ms`). The handler gets `{:tally, totals, %{read_at_ms:, epochs:}}`,
+summed over a partition group's members; an epoch changes when a member's count restarts. The
+channels are the relay's announced outputs unless `channels` names them; none is
+`listener.no_channels`. A relay nobody tallies runs exactly the code it ran before.
+
+`Fleet.providers/1` and `Fleet.provider/2` answer `feeds`, whether a provider's declaration says
+it injects records into a relay. The Rust reference test app registers `showcase`, a relay whose
+announced graph has every shape the console's relay graph draws.
+
 ### Added: what each tasklet of a relay is doing
 
 `Relay.activity/3` (`flz relay activity <relay_id>`, also over HTTP and MCP), bound to

@@ -53,6 +53,7 @@ EXAMPLES:
     flz relay diagnose orders-eu
     flz relay graph orders-eu
     flz relay activity orders-eu
+    flz relay activity orders-eu --cells book --limit 10
     flz relay listen my_echo --duration-ms 10000
     flz relay rewind chat-1 --to-iteration 3
     flz relay replay candles/aggregate/BTC --from 1720000000000
@@ -71,7 +72,7 @@ flz relay list [--namespace | -n <namespace>]
 flz relay info [<relay_id>] [--namespace | -n <namespace>]
 flz relay diagnose <relay_id> [--namespace | -n <namespace>]
 flz relay graph <relay_id> [--namespace | -n <namespace>]
-flz relay activity <relay_id> [--namespace | -n <namespace>]
+flz relay activity <relay_id> [--cells <tasklet>] [--limit <count>] [--namespace | -n <namespace>]
 flz relay send <relay_id> --text | -t <payload> [--channel | -c <ch>] [--key <key>] [--msg-id <id>] [--await <ms>] [--namespace | -n <namespace>]
 flz relay scale <group> <partitions> [--namespace | -n <namespace>] [--timeout | -t <ms>]
 flz relay rewind <relay_id> --to-iteration <N> [--namespace | -n <namespace>]
@@ -358,6 +359,51 @@ A runner that does not answer in time, or runs an SDK too old to know the read,
 is reported as `activity.no_answer`, naming it. The read costs the relay
 nothing per message: the runner adds up counters its mailboxes already keep,
 only when asked.
+
+`--cells <tasklet>` adds one line per Cell of that tasklet, the most recently
+admitting first: its key (`-` for an unkeyed Cell), its queue and totals, and
+how long ago it last admitted an item (`AGE_MS`). The heading says how many
+Cells the tasklet holds; `--limit` caps the lines (50 by default, at most 500).
+The runner picks them on the same walk, so asking costs nothing extra on the
+record path. A tasklet the relay does not declare is refused as
+`state.tasklet_not_found`, and a runner that keeps no per-Cell counters, such as
+the Elixir SDK, prints `Runner '<runner>' does not report Cells.` instead. A
+static tasklet with four Cells, `a` to `d`:
+
+```sh
+$ flz relay activity testnet_chain --cells static_entry_tasklet
+```
+
+```output
+Activity of relay 'testnet_chain' on runner 'default_44ea1af675ae', instance 3:
+  TASKLET                       CELLS    QUEUED       MAX  ADMITTED   BLOCKED  DROP_NEW  DROP_OLD    CAPPED   CREATED   EVICTED
+  static_entry_tasklet              4         0         0        64         0         0         0         -         -         -
+  static_downstream_tasklet         1         0         0        64         0         0         0         -         -         -
+Cells of tasklet 'static_entry_tasklet', 4 of 4, most recent first:
+  KEY    QUEUED  ADMITTED   BLOCKED  DROP_NEW  DROP_OLD    AGE_MS
+  d           0        55         0         0         0      3565
+  c           0         5         0         0         0    223017
+  b           0         1         0         0         0    225947
+  a           0         3         0         0         0    226517
+```
+
+`flz relay listen <relay_id> --tally` prints, about once a second, how many
+frames have left the relay on each output channel and the rate since the line
+before; the first line, and the first after the relay's counts restarted, has
+no rate yet (`-`). A partition group's members are summed into one line. The counting happens on the relay's own node and sends nothing per
+frame; the plugin that does it is bound only while the listen runs, so a relay
+nobody tallies pays nothing. A relay with five output channels:
+
+```sh
+$ flz relay listen testnet_showcase --tally
+```
+
+```output
+alerts=0 (-)	audit=1 (-)	orders=2 (-)	prices=2 (-)	volumes=3 (-)
+alerts=1 (1.0/s)	audit=1 (0.0/s)	orders=5 (3.0/s)	prices=5 (3.0/s)	volumes=3 (0.0/s)
+alerts=1 (0.0/s)	audit=1 (0.0/s)	orders=5 (0.0/s)	prices=5 (0.0/s)	volumes=3 (0.0/s)
+alerts=1 (0.0/s)	audit=1 (0.0/s)	orders=8 (3.0/s)	prices=8 (3.0/s)	volumes=6 (3.0/s)
+```
 
 ## `flz state`
 

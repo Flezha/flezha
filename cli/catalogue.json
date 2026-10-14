@@ -402,7 +402,7 @@
     },
     {
       "name": "Fleet.provider",
-      "doc": "One plugin provider's help text, its plugin type, the hooks it supports and its options as typed rows.",
+      "doc": "One plugin provider's help text, its plugin type, whether it feeds a relay (`feeds`), the hooks it supports and its options as typed rows.",
       "action": "plugin.info",
       "remote": true,
       "stream": false,
@@ -417,7 +417,7 @@
     },
     {
       "name": "Fleet.providers",
-      "doc": "Every plugin provider this controller can enable, with its module and type, and how many plugin packages it refused at boot.",
+      "doc": "Every plugin provider this controller can enable, with its module, its type and `feeds` (whether it injects records into a relay, as its declaration says), and how many plugin packages it refused at boot.",
       "action": "plugin.list",
       "remote": true,
       "stream": false,
@@ -1031,6 +1031,13 @@
           "type": "string",
           "required": true,
           "doc": "The relay's id."
+        },
+        {
+          "name": "opts",
+          "type": "keyword",
+          "required": false,
+          "default": [],
+          "doc": "`cells_of`, a tasklet whose Cells to answer as well, and `limit` (default 50)."
         }
       ]
     },
@@ -1287,7 +1294,8 @@
           "values": [
             "output",
             "input",
-            "calls"
+            "calls",
+            "tally"
           ],
           "doc": "What to hear."
         },
@@ -1296,7 +1304,7 @@
           "type": "keyword",
           "required": false,
           "default": [],
-          "doc": "`window_ms`."
+          "doc": "`window_ms`; for a tally, `tally_ms` and `channels`."
         }
       ]
     },

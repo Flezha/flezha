@@ -799,10 +799,10 @@ The operations surface is `flz state get`
 
 | Field | Value |
 |-------|-------|
-| Message | `TaskletActivity { relay_id }` |
-| Behaviour | One row per tasklet of the instance, summed over its Cells from figures the data path already keeps |
-| Reply | `raw_data` = `TaskletActivityResponse { rows, read_at_ms, instance_seq }` |
-| Errors | `runtime.relay_not_found` naming the relay |
+| Message | `TaskletActivity { relay_id, cells_of?, limit? }` |
+| Behaviour | One row per tasklet of the instance, summed over its Cells from figures the data path already keeps; with `cells_of`, that tasklet's Cells as well |
+| Reply | `raw_data` = `TaskletActivityResponse { rows, read_at_ms, instance_seq, cells? }` |
+| Errors | `runtime.relay_not_found` naming the relay; `state.tasklet_not_found` naming a `cells_of` the class does not declare |
 
 Each `TaskletActivityRow` carries the tasklet's name and live `cells`, then
 `queued` (in total) and `queued_max` (in the deepest Cell), and the totals
@@ -826,11 +826,25 @@ or a runner restart builds a new one, and every total starts again from zero.
 A caller computing rates restarts them when `instance_seq` or the runner
 changes.
 
+**Cells.** `cells_of` names one tasklet whose Cells are answered too, as
+`cells = TaskletCells { tasklet, cells_total, rows }`. `rows` holds at most
+`limit` Cells (default 50, clamped to 500), the most recently admitting first,
+and `cells_total` counts every live Cell of the tasklet. Each
+`CellActivityRow` carries the Cell's `key` (absent for an unkeyed Cell), its
+`queued` items, its `admitted_total`, `blocked_total`, `dropped_newest_total`
+and `dropped_oldest_total`, and `last_admitted_ms` on the clock of
+`read_at_ms`; a Cell that has admitted nothing yet carries the time it was
+created. A runtime that keeps no per-Cell counters leaves `cells` absent, never
+empty, so absent also means "this runner does not report Cells". The Elixir
+SDK answers that way, after refusing a `cells_of` its relay does not declare.
+
 **Cost.** The read adds nothing to the per-message path. A `flz_core` runner
-resolves the relay on the control reader and walks its Cells on a thread of
-its own, so a relay with many live Cells does not hold up the credit grants
-behind it. An older runner that cannot decode the command drops it without a
-reply.
+resolves the relay, and the tasklet `cells_of` names, on the control reader
+and walks its Cells on a thread of its own, so a relay with many live Cells
+does not hold up the credit grants behind it. The Cells of `cells_of` are
+picked during that same walk, keeping the newest `limit` in a bounded heap.
+An older runner that cannot decode the command drops it without a reply, and
+one that predates `cells_of` answers without `cells`.
 
 ### CellApplyState
 

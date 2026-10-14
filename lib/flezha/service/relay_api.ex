@@ -70,6 +70,18 @@ defmodule Flezha.Service.RelayApi do
     end
   end
 
+  @doc """
+  The graph of the relay `relay_id`'s factory as its runners announce it,
+  `%{factory:, graph:, disagree:}` with `graph: nil` when none was announced;
+  read as `factory_of/2` finds the factory.
+  """
+  @spec graph_of(String.t(), String.t()) :: {:ok, map()} | {:error, term()}
+  def graph_of(namespace, relay_id) do
+    with {:ok, %{factory: factory}} <- factory_of(namespace, relay_id),
+         %{graph: _} = read <- RelayManager.factory_graph(namespace, factory),
+         do: {:ok, Map.put(read, :factory, factory)}
+  end
+
   defp declared(namespace, relay_id) do
     case HubManager.relay_spec(namespace, relay_id) do
       {:ok, relay} ->

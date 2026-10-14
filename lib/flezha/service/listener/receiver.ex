@@ -7,10 +7,15 @@ defmodule Flezha.Service.Listener.Receiver do
   its backlog here rather than in its mailbox.
 
   The backlog stays inside `listener_pending_bytes` and
-  `listener_pending_frames`: a frame that would pass either drops held parts,
-  oldest first; a part that still does not fit is dropped; an output, a
-  notice, a call or a call's outcome that still does not fit ends the listener
-  with `listener.overrun`.
+  `listener_pending_frames`: a frame that would pass either drops held parts
+  and tallies, oldest first; a part or tally that still does not fit is
+  dropped; an output, a notice, a call or a call's outcome that still does not
+  fit ends the listener with `listener.overrun`. A tally can be dropped because
+  each one carries whole totals: the next says everything an older one did.
+
+  For a tally it keeps each member's latest report and hands on their sum at
+  most once per `tally_ms`, so the members of a group, each reporting on its
+  own clock, make one event per interval rather than one each.
 
   When its plugin is released (a move, a restart, a teardown or a disable all
   look alike from here) it asks the registry which it was, once per
@@ -23,7 +28,7 @@ defmodule Flezha.Service.Listener.Receiver do
   """
 
   use GenServer
-  use Flezha.Process.Timer, keys: [:release_check]
+  use Flezha.Process.Timer, keys: [:release_check, :tally]
 
   alias Flezha.Config
   alias Flezha.Config.Durations
@@ -63,7 +68,9 @@ defmodule Flezha.Service.Listener.Receiver do
        asked: false,
        ended: false,
        released: false,
-       reading: nil
+       reading: nil,
+       tallies: %{},
+       tally_handed_at: nil
      })}
   end
 
@@ -81,6 +88,16 @@ defmodule Flezha.Service.Listener.Receiver do
 
   def handle_info({:preview_forward, {payload, metadata}}, state),
     do: {:noreply, hold(state, preview(payload, metadata))}
+
+  def handle_info({:tally_report, member, epoch, totals}, state) do
+    tallies = Map.put(state.tallies, member, {epoch, totals})
+    {:noreply, tally_due(%{state | tallies: tallies})}
+  end
+
+  def handle_info(:tally_due, state) do
+    state = %{timer_fired(state, :tally) | tally_handed_at: now()}
+    {:noreply, hold(state, tally(state.tallies))}
+  end
 
   def handle_info({:next, _caller}, state), do: {:noreply, hand(%{state | asked: true})}
 
@@ -115,6 +132,29 @@ defmodule Flezha.Service.Listener.Receiver do
     end
   end
 
+  # The next tally is handed on one interval after the last, or at once.
+  defp tally_due(state) do
+    if timer_armed?(state, :tally) do
+      state
+    else
+      wait = if state.tally_handed_at, do: state.tally_handed_at + state.tally_ms - now(), else: 0
+      arm_timer(state, :tally, max(wait, 0), :tally_due)
+    end
+  end
+
+  defp now, do: System.monotonic_time(:millisecond)
+
+  # Every member's latest totals summed, with the epoch each was counted under.
+  defp tally(tallies) do
+    {totals, epochs} =
+      Enum.reduce(tallies, {%{}, %{}}, fn {member, {epoch, counted}}, {totals, epochs} ->
+        {Map.merge(totals, counted, fn _channel, a, b -> a + b end),
+         Map.put(epochs, member, epoch)}
+      end)
+
+    {:tally, totals, %{read_at_ms: now(), epochs: epochs}}
+  end
+
   defp error_of(document) do
     case Flezha.SDK.Error.from_document(document) do
       %{code: code, details: details} -> Flezha.Error.new(code, details)
@@ -124,21 +164,21 @@ defmodule Flezha.Service.Listener.Receiver do
 
   defp hold(%{ended: true} = state, _event), do: state
 
-  defp hold(state, {kind, payload, _metadata} = event) do
+  defp hold(state, {_kind, payload, _metadata} = event) do
     size = if is_binary(payload), do: byte_size(payload), else: 0
-    {backlog, _dropped} = Backlog.make_room(state.backlog, size, &part?/1)
+    {backlog, _dropped} = Backlog.make_room(state.backlog, size, &droppable?/1)
     state = %{state | backlog: backlog}
 
     cond do
       Backlog.fits?(backlog, size) -> hand(%{state | backlog: Backlog.push(backlog, event, size)})
-      kind == :part -> state
+      droppable?(event) -> state
       true -> overrun(state)
     end
   end
 
-  # Held parts go oldest first to make room.
-  defp part?({kind, _payload, _metadata}), do: kind == :part
-  defp part?(_end), do: false
+  # Held parts and tallies go oldest first to make room.
+  defp droppable?({kind, _payload, _metadata}), do: kind in [:part, :tally]
+  defp droppable?(_end), do: false
 
   defp overrun(state) do
     error =

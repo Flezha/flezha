@@ -20,6 +20,9 @@ const TO_ITERATION: OptSpec = OptSpec::number("--to-iteration", "--to-iteration"
 const FROM: OptSpec = OptSpec::text("--from", "-f", "<seq|timestamp>").required();
 const INPUT: OptSpec = OptSpec::switch("--input", "--input");
 const CALLS: OptSpec = OptSpec::switch("--calls", "--calls");
+const TALLY: OptSpec = OptSpec::switch("--tally", "--tally");
+const CELLS: OptSpec = OptSpec::text("--cells", "--cells", "<tasklet>");
+const LIMIT: OptSpec = OptSpec::number("--limit", "--limit", "<count>");
 const AWAIT: OptSpec = OptSpec::number("--await", "--await", "<ms>");
 const KEY: OptSpec = OptSpec::text("--key", "--key", "<key>");
 const MSG_ID: OptSpec = OptSpec::text("--msg-id", "--msg-id", "<id>");
@@ -74,13 +77,17 @@ pub(crate) const TABLE: Command = Command {
         Verb::new("graph", |read| relay_door("Relay.graph", read))
             .taking(RELAY_ID)
             .reading(&[NAMESPACE]),
-        Verb::new("activity", |read| relay_door("Relay.activity", read))
+        Verb::new("activity", handle_activity)
             .taking(RELAY_ID)
-            .reading(&[NAMESPACE]),
+            .reading(&[CELLS, LIMIT, NAMESPACE]),
         Verb::new("listen", handle_listen)
             .taking(RELAY_ID)
-            .reading(&[INPUT, CALLS, DURATION_MS, NAMESPACE])
-            .refusing(&[(INPUT.long, CALLS.long)])
+            .reading(&[INPUT, CALLS, TALLY, DURATION_MS, NAMESPACE])
+            .refusing(&[
+                (INPUT.long, CALLS.long),
+                (INPUT.long, TALLY.long),
+                (CALLS.long, TALLY.long),
+            ])
             .strict()
             .screen(help::RELAY_LISTEN),
         Verb::new("send", handle_send)
@@ -408,18 +415,33 @@ fn handle_state(read: &Reading) {
     );
 }
 
-/// `flz relay listen <relay_id> [--input | --calls]`: print every frame the
-/// relay emits, or ingests, or each call it takes and how it ended, until the
-/// window closes. Prints nothing of its own, so what reaches stdout is the
-/// frames alone.
+/// `flz relay activity <relay_id> [--cells <tasklet> [--limit N]]`: one line
+/// per tasklet, then one per Cell of the tasklet `--cells` names.
+fn handle_activity(read: &Reading) {
+    let mut opts = serde_json::Map::new();
+    if let Some(tasklet) = read.opt(CELLS.long) {
+        opts.insert("cells_of".into(), Value::from(tasklet));
+    }
+    if let Some(limit) = read.num::<u32>(LIMIT.long) {
+        opts.insert("limit".into(), Value::from(limit));
+    }
+    rpc::door(
+        "Relay.activity",
+        &[rpc::namespace(read), relay_id(read), Value::Object(opts)],
+        &[],
+        read,
+    );
+}
+
+/// `flz relay listen <relay_id> [--input | --calls | --tally]`: print every
+/// frame the relay emits, or ingests, or each call it takes and how it ended,
+/// or its output counts per channel, until the window closes. Prints nothing
+/// of its own, so what reaches stdout is the frames alone.
 fn handle_listen(read: &Reading) {
-    let direction = if read.switch(INPUT.long) {
-        "input"
-    } else if read.switch(CALLS.long) {
-        "calls"
-    } else {
-        "output"
-    };
+    let direction = [(INPUT, "input"), (CALLS, "calls"), (TALLY, "tally")]
+        .into_iter()
+        .find(|(spec, _)| read.switch(spec.long))
+        .map_or("output", |(_, direction)| direction);
     let window_ms = rpc::window_ms(read);
 
     rpc::door(

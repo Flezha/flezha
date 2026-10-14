@@ -86,7 +86,7 @@ Flezha.Service.Observability.query/2
 Flezha.Service.Observability.subscribe/2
 Flezha.Service.Observability.tail/2
 Flezha.Service.Observability.unsubscribe/2
-Flezha.Service.Relay.activity/3
+Flezha.Service.Relay.activity/4
 Flezha.Service.Relay.api/3
 Flezha.Service.Relay.call/6
 Flezha.Service.Relay.call_channel/6

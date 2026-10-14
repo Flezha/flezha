@@ -409,6 +409,7 @@ USAGE:
 OPTIONS:
     --input                   Listen to what the relay ingests, not what it emits
     --calls                   Print the calls the relay takes and how each ended
+    --tally                   Print how many frames left on each output channel
     --duration-ms <N>         Stop after N milliseconds (default 30000)
     --output <text|json>      Output format (default: text)
     --json                    The same as --output json
@@ -433,6 +434,15 @@ OUTPUT:
     ms=<n>. With --json the kinds are call, answered, timed_out and refused,
     and each object carries the call's id as call.
 
+    With --tally one line arrives about once a second, a field per output
+    channel: <channel>=<total> and the frames per second since the line before,
+    or - on the first line and after the relay moved and its counts restarted.
+    (other), shown once it is not zero, counts frames on a channel the relay
+    does not declare as an output.
+    The tally binds ahead of the relay's other output plugins, so a frame one
+    of them skips is still counted; parts are not. With --json each line is
+    one object of kind tally carrying totals, rates, read_at_ms and epochs.
+
     The listener is detached when the window closes, on Ctrl-C, when the
     caller goes away and when the relay ends. A partition group is
     listened to by its group id.
@@ -441,6 +451,7 @@ EXAMPLES:
     flz relay listen my_echo --duration-ms 10000
     flz relay listen my_echo --input
     flz relay listen pricing --calls
+    flz relay listen pricing --tally
     flz relay listen ohlc --json"#;
 
 pub(crate) const RELAY_CALL: Help = r#"flz relay call - Send one input and print the relay's answer
@@ -506,6 +517,7 @@ EXAMPLES:
     flz relay diagnose orders-eu
     flz relay graph orders-eu
     flz relay activity orders-eu
+    flz relay activity orders-eu --cells book --limit 10
     flz relay listen my_echo --duration-ms 10000
     flz relay rewind chat-1 --to-iteration 3
     flz relay replay candles/aggregate/BTC --from 1720000000000

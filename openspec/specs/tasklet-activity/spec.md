@@ -2,7 +2,6 @@
 
 ## Purpose
 The per-tasklet activity a runner reports on request, and how a caller reads it.
-
 ## Requirements
 ### Requirement: A runner SHALL report a relay's activity per tasklet on request
 
@@ -68,8 +67,8 @@ Cell, on the eviction path.
 
 ### Requirement: A relay's activity SHALL be readable through the published surface
 
-The controller SHALL expose `Flezha.Service.Relay.activity/3`, taking a namespace, a relay id and a
-caller context, bound to the `relay_info` verb. It SHALL reach the runner hosting the relay through the
+The controller SHALL expose `Flezha.Service.Relay.activity/4`, taking a namespace, a relay id, options
+(`cells_of` and `limit`, both optional) and a caller context, bound to the `relay_info` verb. It SHALL reach the runner hosting the relay through the
 relay's Overwatch, off the Overwatch's process, and answer the rows with the read time, the instance
 sequence number and the runner id. It SHALL keep nothing between calls and do no work when nobody
 calls it. An unbound or suspended relay SHALL be answered with that reason without asking a runner. A
@@ -102,4 +101,59 @@ per tasklet.
 
 - **WHEN** an activity read waits on a slow runner
 - **THEN** the relay's Overwatch keeps handling its other requests
+
+### Requirement: A runner SHALL answer one tasklet's Cells on request
+
+A `TaskletActivity` request MAY name one tasklet in `cells_of`, with an optional `limit` (default 50, clamped to 500). The runner SHALL then also answer that tasklet's Cells:
+- **Ordering:** at most `limit` rows, ordered by most recent admission first.
+- **Each row:** the Cell's key (absent for an unkeyed Cell), its queued items, its admitted, blocked, dropped-newest and dropped-oldest totals, and its last admission time on the same monotonic clock as `read_at_ms`.
+- **Count:** the tasklet's total number of live Cells.
+
+The rows SHALL be built on the same walk that builds the per-tasklet rows. They SHALL come only from figures the data path already maintains, and SHALL add no work per admitted or dispatched item.
+
+A tasklet the instance does not declare SHALL be refused by name. A runtime that keeps no per-Cell counters SHALL leave the Cell answer absent, never empty.
+
+#### Scenario: A static tasklet's Cells are listed
+
+- **WHEN** tasklet `static_entry_tasklet` with keys `a`, `b`, `c` and `d` has admitted 3, 0, 5 and 1 inputs and its Cells are requested
+- **THEN** the answer holds four rows keyed `a` to `d` with those admitted totals, ordered by most recent admission, and a Cell count of 4
+
+#### Scenario: A large dynamic tasklet is capped
+
+- **WHEN** a dynamic tasklet holds 50,000 live Cells and its Cells are requested with no limit
+- **THEN** the answer holds the 50 most recently admitted Cells and a Cell count of 50,000
+
+#### Scenario: A backlog is visible per Cell
+
+- **WHEN** one Cell of tasklet `book` holds 40 queued items
+- **THEN** that Cell's row reports `queued` 40
+
+#### Scenario: An unknown tasklet is refused
+
+- **WHEN** `cells_of` names a tasklet the relay's class does not declare
+- **THEN** the runner refuses the request naming the tasklet
+
+#### Scenario: The Elixir SDK leaves Cells absent
+
+- **WHEN** an Elixir SDK runner answers a request naming `cells_of`
+- **THEN** the answer carries the per-tasklet rows and no Cell answer
+
+#### Scenario: No Cell request, no Cell answer
+
+- **WHEN** a request names no `cells_of`
+- **THEN** the answer carries no Cell answer, and the walk does no per-Cell selection
+
+### Requirement: A tasklet's Cells SHALL be readable through the published surface
+
+`Flezha.Service.Relay.activity/4` SHALL accept `cells_of` and `limit` options and pass them to the runner. It SHALL answer the Cell rows and the Cell count beside the per-tasklet rows, or no Cell answer when the runner gives none. `flz relay activity <relay_id> --cells <tasklet> [--limit N]` SHALL print one line per Cell after the per-tasklet lines.
+
+#### Scenario: Reading a tasklet's Cells
+
+- **WHEN** a caller holding `relay_info` reads the activity of bound relay `testnet_chain` with `cells_of: "static_entry_tasklet"`
+- **THEN** the answer holds the per-tasklet rows and the four Cells of `static_entry_tasklet`
+
+#### Scenario: An older runner
+
+- **WHEN** the hosting runner predates the field
+- **THEN** the answer holds the per-tasklet rows and no Cell answer, not an error
 

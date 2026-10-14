@@ -31,6 +31,7 @@ EXAMPLES:
     flz relay diagnose orders-eu
     flz relay graph orders-eu
     flz relay activity orders-eu
+    flz relay activity orders-eu --cells book --limit 10
     flz relay listen my_echo --duration-ms 10000
     flz relay rewind chat-1 --to-iteration 3
     flz relay replay candles/aggregate/BTC --from 1720000000000

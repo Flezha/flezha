@@ -186,6 +186,54 @@ defmodule Flezha.Service.Cli.ListenTest do
                refused
     end
 
+    test "a tally prints one line per report, its rates since the line before" do
+      reports = [
+        {"op", 1, %{"a" => 10, "b" => 0, "" => 0}},
+        {"op", 1, %{"a" => 30, "b" => 5, "" => 2}},
+        {"op", 2, %{"a" => 1, "b" => 0, "" => 0}}
+      ]
+
+      stub(PluginManager, :enable_plugin, fn _id, plugin ->
+        spawn(fn ->
+          for {member, epoch, totals} <- reports do
+            send(plugin.opts.recv_pid, {:tally_report, member, epoch, totals})
+            Process.sleep(150)
+          end
+        end)
+
+        {:ok, "plugin enabled"}
+      end)
+
+      args =
+        Jason.encode!([
+          "ns",
+          "op",
+          "tally",
+          %{window_ms: 700, tally_ms: 100, channels: ["a", "b"]}
+        ])
+
+      out = in_caller(fn -> Cli.call("Relay.listen", args, []) end)
+      assert [first, second, restarted] = String.split(out, "\n", trim: true)
+
+      assert first == "a=10 (-)\tb=0 (-)", "no rate before a second report, no empty (other)"
+      assert [other, a, b] = String.split(second, "\t")
+      assert other =~ ~r"^\(other\)=2 \(\d+\.\d/s\)$"
+      assert a =~ ~r"^a=30 \(\d+\.\d/s\)$"
+      assert b =~ ~r"^b=5 \(\d+\.\d/s\)$"
+      assert restarted == "a=1 (-)\tb=0 (-)", "a new epoch starts the rates again"
+
+      json = in_caller(fn -> Cli.call("Relay.listen", args, output: "json") end)
+      assert [line | _] = json |> String.split("\n", trim: true) |> Enum.map(&Jason.decode!/1)
+
+      assert %{
+               "kind" => "tally",
+               "totals" => %{"a" => 10},
+               "rates" => %{},
+               "epochs" => %{"op" => 1}
+             } =
+               line
+    end
+
     test "the forwarder is attached to the chain the direction names, then detached" do
       in_caller(fn ->
         Cli.call(

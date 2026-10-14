@@ -23,13 +23,16 @@ defmodule Flezha.Service.Listener do
   alias Flezha.Identificator
   alias Flezha.Plugin
   alias Flezha.Plugin.Provider.MonitoredIOForward
+  alias Flezha.Plugin.ProviderBehaviour.Options
   alias Flezha.Service.HubManager
   alias Flezha.Service.Listener.Receiver
   alias Flezha.Service.PluginManager
+  alias Flezha.Service.RelayApi
 
   @type event ::
           {:output | :input | :part | :call | :answered, binary(), map()}
           | {:dead_lettered | :timed_out | :refused, Flezha.Error.t(), map()}
+          | {:tally, %{String.t() => non_neg_integer()}, map()}
           | :idle
   @type outcome ::
           {:ok, :window_closed | :done | :caller_down | :relay_ended}
@@ -38,7 +41,9 @@ defmodule Flezha.Service.Listener do
   @hooks [
     output: [{:on_output, []}, {:on_preview, []}],
     input: [{:on_input, []}],
-    calls: [{:on_call, []}]
+    calls: [{:on_call, []}],
+    # First in the chain, so no other output plugin's skip hides a frame.
+    tally: [{:on_output, [position: 0]}]
   ]
 
   @doc """
@@ -54,7 +59,14 @@ defmodule Flezha.Service.Listener do
       default), `:input` (the inputs the relay ingests) or `:calls` (each
       call the relay takes, `{:call, request, metadata}`, then how it ended:
       `{:answered, answer, metadata}`, `{:timed_out, error, metadata}` or
-      `{:refused, error, metadata}`, paired by `flz.call_id`).
+      `{:refused, error, metadata}`, paired by `flz.call_id`) or `:tally`
+      (about once per `tally_ms`, default 1000, `{:tally, totals, %{read_at_ms:,
+      epochs:}}`: the output frames counted per channel since the plugin was
+      last prepared, summed over a group's members, with each member's
+      epoch, which changes when its count restarts; a channel the count does
+      not name is counted under `""`).
+    * `channels` - the channels a tally names; the relay's announced output
+      channels when absent. None is refused as `listener.no_channels`.
     * `window_ms` - a positive integer, or `:infinity` (the default).
     * `idle_ms` - a positive integer, or `:infinity` (the default): after that
       long with no event handed over, `handler` is called with `:idle`.
@@ -68,7 +80,7 @@ defmodule Flezha.Service.Listener do
     direction = Keyword.get(opts, :direction, :output)
 
     Keyword.has_key?(@hooks, direction) ||
-      raise ArgumentError, "direction must be :output, :input or :calls"
+      raise ArgumentError, "direction must be :output, :input, :calls or :tally"
 
     target = %{
       namespace: namespace,
@@ -82,10 +94,51 @@ defmodule Flezha.Service.Listener do
     # A target neither registered nor declared is refused on one read, with
     # nothing to detach: the enable and the detach would each wait out a hub
     # that has not settled before saying so.
-    if attachment(namespace, relay_id, target.plugin_id) == :relay_ended,
-      do: refused({:relay_not_found, namespace, relay_id}),
-      else: attached(target, opts, handler)
+    with :ok <- registered(namespace, relay_id, target.plugin_id),
+         {:ok, plugin_opts} <- plugin_opts(target, opts),
+         do: attached(Map.put(target, :plugin_opts, plugin_opts), opts, handler)
   end
+
+  defp registered(namespace, relay_id, plugin_id) do
+    if attachment(namespace, relay_id, plugin_id) == :relay_ended,
+      do: refused({:relay_not_found, namespace, relay_id}),
+      else: :ok
+  end
+
+  # The plugin options a direction adds: a tally's channels and interval, the
+  # interval also the receiver's.
+  defp plugin_opts(%{direction: :tally} = t, opts) do
+    with {:ok, channels} <- tally_channels(t.namespace, t.relay_id, opts) do
+      tally_ms = Keyword.get(opts, :tally_ms, Options.defaults(MonitoredIOForward).tally_ms)
+      {:ok, %{mode: "tally", channels: channels, tally_ms: tally_ms}}
+    end
+  end
+
+  defp plugin_opts(_target, _opts), do: {:ok, %{}}
+
+  defp tally_channels(namespace, relay_id, opts) do
+    case Keyword.fetch(opts, :channels) do
+      {:ok, channels} -> some_channels(relay_id, channels)
+      :error -> announced_outputs(namespace, relay_id)
+    end
+  end
+
+  # A call end is not an output: what it emits goes to the callee.
+  defp announced_outputs(namespace, relay_id) do
+    case RelayApi.graph_of(namespace, relay_id) do
+      {:ok, %{graph: graph}} ->
+        channels = if graph, do: graph.channels, else: []
+        some_channels(relay_id, for(%{plugin_end: "output", name: n} <- channels, do: n))
+
+      {:error, reason} ->
+        refused(reason)
+    end
+  end
+
+  defp some_channels(relay_id, channels) when channels in [[], ""],
+    do: {:error, Flezha.Error.new("listener.no_channels", relay: relay_id)}
+
+  defp some_channels(_relay_id, channels), do: {:ok, channels}
 
   defp attached(
          %{namespace: namespace, relay_id: relay_id, plugin_id: plugin_id} = t,
@@ -99,11 +152,12 @@ defmodule Flezha.Service.Listener do
         namespace: namespace,
         relay_id: relay_id,
         plugin_id: plugin_id,
-        direction: t.direction
+        direction: t.direction,
+        tally_ms: t.plugin_opts[:tally_ms]
       })
 
     try do
-      with :ok <- attach(namespace, relay_id, plugin_id, t.direction, receiver),
+      with :ok <- attach(t, receiver),
            :ok <- Keyword.get(opts, :before, fn -> :ok end).() do
         loop(%{
           receiver: receiver,
@@ -119,19 +173,20 @@ defmodule Flezha.Service.Listener do
     end
   end
 
-  defp attach(namespace, relay_id, plugin_id, direction, receiver) do
+  defp attach(%{namespace: namespace, relay_id: relay_id, plugin_id: plugin_id} = t, receiver) do
     plugin = %Plugin{
       id: plugin_id,
       provider: MonitoredIOForward,
       namespace: namespace,
       relay_id: relay_id,
-      opts: %{
-        recv_pid: receiver,
-        plugin_id: plugin_id,
-        relay_id: relay_id,
-        namespace: namespace
-      },
-      hooks: Keyword.fetch!(@hooks, direction)
+      opts:
+        Map.merge(t.plugin_opts, %{
+          recv_pid: receiver,
+          plugin_id: plugin_id,
+          relay_id: relay_id,
+          namespace: namespace
+        }),
+      hooks: Keyword.fetch!(@hooks, t.direction)
     }
 
     case PluginManager.enable_plugin(plugin_id, plugin) do

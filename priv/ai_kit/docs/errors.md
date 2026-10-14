@@ -295,6 +295,7 @@ SDK raises or returns its one error type carrying them.
 | Code | Class | Exit | Message | Hint |
 |---|---|---|---|---|
 | `listener.detached` | conflict | 6 | the listener on relay '{relay}' was disabled by another caller |  |
+| `listener.no_channels` | invalid | 2 | relay '{relay}' has no output channel a tally could count | `flz relay graph {relay} shows whether the relay announces its graph, and which channels end at an output` |
 | `listener.overrun` | unavailable | 7 | the listener on relay '{relay}' fell more than {bytes} bytes or {frames} frames behind and was ended | `flz relay listen {relay} again, or raise FLEZHA_LISTENER_PENDING_BYTES` |
 
 ### mcp

@@ -159,8 +159,9 @@ defmodule Flezha.Service.Fleet do
   end
 
   @doc """
-  Every plugin provider this controller can enable, with its module and type,
-  and how many plugin packages it refused at boot.
+  Every plugin provider this controller can enable, with its module, its type
+  and `feeds` (whether it injects records into a relay, as its declaration
+  says), and how many plugin packages it refused at boot.
   """
   @spec providers(caller_context()) :: {:ok, map()} | {:error, term()}
   verb providers(caller_context), verb: :plugin_list do
@@ -172,8 +173,8 @@ defmodule Flezha.Service.Fleet do
   end
 
   @doc """
-  One plugin provider's help text, its plugin type, the hooks it supports and its
-  options as typed rows.
+  One plugin provider's help text, its plugin type, whether it feeds a relay
+  (`feeds`), the hooks it supports and its options as typed rows.
 
   `options` holds one map per public option, in declaration order: `name`,
   `type`, `required` and `doc`, and `default`, `values`, `min`, `max`, `live` and

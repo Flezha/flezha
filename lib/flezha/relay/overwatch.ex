@@ -492,11 +492,11 @@ defmodule Flezha.Relay.Overwatch do
   end
 
   # Each tasklet's live Cells, queues and totals, as the hosting runner counts
-  # them, answered with that runner's id; a relay that keeps no state has
-  # activity all the same.
+  # them, and the Cells of the tasklet `read` names, answered with that runner's
+  # id; a relay that keeps no state has activity all the same.
   @impl true
-  def handle_call(:get_tasklet_activity, from, %__MODULE__{} = state) do
-    command = %RunnerCommands.TaskletActivity{relay_id: state.id}
+  def handle_call({:get_tasklet_activity, read}, from, %__MODULE__{} = state) do
+    command = struct(%RunnerCommands.TaskletActivity{relay_id: state.id}, read)
 
     opts = [timeout: Durations.get(:tasklet_activity_read_ms)]
     read_runner(state, from, {:tasklet_activity, command}, opts, &{&1, &2})

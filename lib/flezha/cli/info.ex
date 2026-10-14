@@ -22,6 +22,15 @@ defmodule Flezha.Service.Cli.Info do
     cells_evicted_total: "EVICTED"
   ]
 
+  @cell_columns [
+    queued: "QUEUED",
+    admitted_total: "ADMITTED",
+    blocked_total: "BLOCKED",
+    dropped_newest_total: "DROP_NEW",
+    dropped_oldest_total: "DROP_OLD",
+    age_ms: "AGE_MS"
+  ]
+
   @doc "`flz relay info`."
   def info(%{relays: [], groups: []} = report, _args, _opts),
     do: IO.puts("No relays found for namespace '#{report.namespace}'.")
@@ -145,27 +154,47 @@ defmodule Flezha.Service.Cli.Info do
 
   @doc """
   `flz relay activity`: the runner and instance that answered, then one line
-  per tasklet; `-` marks a figure the runner does not keep.
+  per tasklet; `-` marks a figure the runner does not keep. With `--cells`,
+  one line per Cell of that tasklet after them, `-` for an unkeyed Cell, and
+  how long ago each last admitted an item.
   """
-  def activity(read, _args, _opts) do
+  def activity(read, args, _opts) do
     IO.puts(
       "Activity of relay '#{read.relay}' on runner '#{read.runner}', instance #{read.instance_seq}:"
     )
 
-    width =
-      Enum.reduce(read.tasklets, String.length("TASKLET"), &max(String.length(&1.tasklet), &2))
+    table("TASKLET", @activity_columns, for(t <- read.tasklets, do: {t.tasklet, t}))
+    activity_cells(read, args)
+  end
+
+  defp activity_cells(%{cells: %{rows: rows} = cells, read_at_ms: read_at}, _args) do
+    IO.puts(
+      "Cells of tasklet '#{cells.tasklet}', #{length(rows)} of #{cells.cells_total}, most recent first:"
+    )
+
+    ages = for cell <- rows, do: Map.put(cell, :age_ms, max(read_at - cell.last_admitted_ms, 0))
+    table("KEY", @cell_columns, for(cell <- ages, do: {cell.key || "-", cell}))
+  end
+
+  defp activity_cells(%{runner: runner}, [_namespace, _relay_id, %{"cells_of" => _}]),
+    do: IO.puts("Runner '#{runner}' does not report Cells.")
+
+  defp activity_cells(_read, _args), do: :ok
+
+  # A heading, then one line per named row, the name column as wide as the
+  # widest name or the heading.
+  defp table(heading, columns, rows) do
+    width = Enum.reduce(rows, String.length(heading), &max(String.length(elem(&1, 0)), &2))
 
     line = fn name, figures ->
       "  " <>
         String.pad_trailing(name, width) <> Enum.map_join(figures, &String.pad_leading(&1, 10))
     end
 
-    IO.puts(line.("TASKLET", Keyword.values(@activity_columns)))
+    IO.puts(line.(heading, Keyword.values(columns)))
 
-    for tasklet <- read.tasklets do
-      figures = for {key, _} <- @activity_columns, do: Context.label_or(tasklet[key], "-")
-      IO.puts(line.(tasklet.tasklet, figures))
-    end
+    for {name, row} <- rows,
+        do: IO.puts(line.(name, for({key, _} <- columns, do: Context.label_or(row[key], "-"))))
   end
 
   @doc """

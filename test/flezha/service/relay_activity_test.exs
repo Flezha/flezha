@@ -56,6 +56,59 @@ defmodule Flezha.Service.RelayActivityTest do
              },
              %{tasklet: "trades", cells: 2, dropped_capped_total: 3}
            ] = read.tasklets
+
+    assert read.cells == nil, "no Cells asked for, none answered"
+  end
+
+  test "a tasklet's Cells are asked for and answered beside the rows", ctx do
+    serve(ctx, bound(ctx.relay))
+    me = self()
+
+    expect(ControlUnit, :send_control_await, fn "r1", {:tasklet_activity, command}, _opts ->
+      send(me, {:asked, command.cells_of, command.limit})
+      {:ok, answer(cells())}
+    end)
+
+    opts = [cells_of: "trades", limit: 10]
+    assert {:ok, read} = Relay.activity(ctx.namespace, ctx.relay, opts, @context)
+    assert_received {:asked, "trades", 10}
+
+    assert %{
+             tasklet: "trades",
+             cells_total: 2,
+             rows: [
+               %{key: "BTC", queued: 3, admitted_total: 7, last_admitted_ms: 1200},
+               %{key: nil, queued: 0, dropped_oldest_total: 1, last_admitted_ms: 900}
+             ]
+           } = read.cells
+  end
+
+  test "a runner that answers no Cells reads as nil, an undeclared tasklet as its refusal",
+       ctx do
+    serve(ctx, bound(ctx.relay))
+    stub(ControlUnit, :send_control_await, fn _, _, _ -> {:ok, answer()} end)
+
+    assert {:ok, %{cells: nil, tasklets: [_, _]}} =
+             Relay.activity(ctx.namespace, ctx.relay, [cells_of: "trades"], @context)
+
+    refusal = Error.new("state.tasklet_not_found", relay: ctx.relay, tasklet: "nope")
+    stub(ControlUnit, :send_control_await, fn _, _, _ -> {:error, refusal} end)
+
+    assert {:error, ^refusal} =
+             Relay.activity(ctx.namespace, ctx.relay, [cells_of: "nope"], @context)
+  end
+
+  test "a Cell read the runner could not carry is refused before asking", ctx do
+    serve(ctx, bound(ctx.relay))
+    stub(ControlUnit, :send_control_await, fn _, _, _ -> flunk("a runner was asked") end)
+
+    assert {:error, %Error{code: "usage.not_text"}} =
+             Relay.activity(ctx.namespace, ctx.relay, [cells_of: 5], @context)
+
+    for limit <- [-1, 0x1_0000_0000, "10"] do
+      assert {:error, %Error{code: "usage.invalid_number"}} =
+               Relay.activity(ctx.namespace, ctx.relay, [cells_of: "t", limit: limit], @context)
+    end
   end
 
   test "a relay that keeps no state is answered as any bound relay", ctx do
@@ -133,12 +186,15 @@ defmodule Flezha.Service.RelayActivityTest do
     end)
 
     ref = make_ref()
-    assert {:noreply, ^state} = Overwatch.handle_call(:get_tasklet_activity, {me, ref}, state)
+
+    assert {:noreply, ^state} =
+             Overwatch.handle_call({:get_tasklet_activity, %{}}, {me, ref}, state)
+
     assert_receive {:waiting, reader}
 
     # A second read is taken while the first is still in flight.
     assert {:noreply, ^state} =
-             Overwatch.handle_call(:get_tasklet_activity, {me, make_ref()}, state)
+             Overwatch.handle_call({:get_tasklet_activity, %{}}, {me, make_ref()}, state)
 
     assert_receive {:waiting, _second}
 
@@ -160,6 +216,25 @@ defmodule Flezha.Service.RelayActivityTest do
     assert String.split(columns) |> hd() == "TASKLET"
     assert String.split(ohlc) == ~w(ohlc 1 4 4 100 0 0 2 - - -)
     assert String.split(trades) == ~w(trades 2 0 0 9 1 0 0 3 5 3)
+  end
+
+  test "flz relay activity --cells adds one line per Cell, or says the runner has none", ctx do
+    serve(ctx, bound(ctx.relay))
+    stub(ControlUnit, :send_control_await, fn _, _, _ -> {:ok, answer(cells())} end)
+    args = Jason.encode!([ctx.namespace, ctx.relay, %{cells_of: "trades"}])
+
+    {_, out, _} = CliCapture.run(fn -> Cli.call("Relay.activity", args, []) end)
+    assert [_, _, _, _, heading, columns, btc, unkeyed] = String.split(out, "\n", trim: true)
+    assert heading == "Cells of tasklet 'trades', 2 of 2, most recent first:"
+    assert String.split(columns) == ~w(KEY QUEUED ADMITTED BLOCKED DROP_NEW DROP_OLD AGE_MS)
+    assert String.split(btc) == ~w(BTC 3 7 0 0 0 34)
+    assert String.split(unkeyed) == ~w(- 0 2 0 0 1 334)
+
+    stub(ControlUnit, :send_control_await, fn _, _, _ -> {:ok, answer()} end)
+    {_, out, _} = CliCapture.run(fn -> Cli.call("Relay.activity", args, []) end)
+
+    assert out |> String.split("\n", trim: true) |> List.last() ==
+             "Runner 'r1' does not report Cells."
   end
 
   describe "under enforcement" do
@@ -212,8 +287,30 @@ defmodule Flezha.Service.RelayActivityTest do
     end
   end
 
-  defp answer do
+  defp cells do
+    %RunnerCommands.TaskletCells{
+      tasklet: "trades",
+      cells_total: 2,
+      rows: [
+        %RunnerCommands.CellActivityRow{
+          key: "BTC",
+          queued: 3,
+          admitted_total: 7,
+          last_admitted_ms: 1200
+        },
+        %RunnerCommands.CellActivityRow{
+          queued: 0,
+          admitted_total: 2,
+          dropped_oldest_total: 1,
+          last_admitted_ms: 900
+        }
+      ]
+    }
+  end
+
+  defp answer(cells \\ nil) do
     response = %RunnerCommands.TaskletActivityResponse{
+      cells: cells,
       read_at_ms: 1234,
       instance_seq: 7,
       rows: [

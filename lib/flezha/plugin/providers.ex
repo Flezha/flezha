@@ -75,17 +75,25 @@ defmodule Flezha.Plugin.Providers do
          do: {:error, Installer.unavailable(provider_id) || {:unknown_provider, provider_id}}
   end
 
-  @doc "Every provider row, by id: its module and the plugin type it declares."
+  @doc """
+  Every provider row, by id: its module, the plugin type it declares, and
+  `feeds`, whether its declaration says it injects records into a relay.
+  """
   @spec describe_all() :: [map()]
   def describe_all do
     for {provider_id, module} <- Enum.sort(all()) do
-      %{id: provider_id, module: inspect(module), type: plugin_type(module)}
+      %{
+        id: provider_id,
+        module: inspect(module),
+        type: plugin_type(module),
+        feeds: module.__provider__().feeds
+      }
     end
   end
 
   @doc """
   What a caller is shown about one provider: its help text, its plugin type,
-  the hooks it supports, and its public options as
+  whether it feeds a relay, the hooks it supports, and its public options as
   `Flezha.Plugin.ProviderBehaviour.Options.describe_row/1` describes them, in
   declaration order.
 
@@ -100,6 +108,7 @@ defmodule Flezha.Plugin.Providers do
          provider: provider_id,
          help: provider_help(module, provider_id),
          type: plugin_type(module),
+         feeds: module.__provider__().feeds,
          hooks: module.__provider__().extensions,
          options:
            Enum.map(

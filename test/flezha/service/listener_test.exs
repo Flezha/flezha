@@ -16,7 +16,7 @@ defmodule Flezha.Service.ListenerTest do
 
   alias Flezha.Cluster.Directory
   alias Flezha.Relay.PartitionGroup
-  alias Flezha.Service.{HubManager, Listener, PluginManager, Relay}
+  alias Flezha.Service.{HubManager, Listener, PluginManager, Relay, RelayApi}
 
   setup :set_mimic_global_until_exit
 
@@ -116,6 +116,88 @@ defmodule Flezha.Service.ListenerTest do
     assert_receive {:event, ^pid, {:refused, %Flezha.Error{code: "call.busy"}, md}}, 2_000
     assert md == %{"flz.call_id" => "id1"}
     Process.exit(pid, :kill)
+  end
+
+  describe "a tally" do
+    setup do
+      test = self()
+
+      stub(PluginManager, :enable_plugin, fn id, plugin ->
+        send(test, {:tally_opts, plugin.opts})
+        send(test, {:attached, id, plugin.opts.recv_pid, plugin.hooks})
+        {:ok, "plugin enabled"}
+      end)
+
+      stub(RelayApi, :graph_of, fn "ns", "op" ->
+        {:ok, %{graph: %{channels: [out("prices"), out("ticks", ""), out("quote", "call")]}}}
+      end)
+
+      :ok
+    end
+
+    test "hooks the output chain first and counts the announced output channels" do
+      %{hooks: hooks} = listening(window_ms: 1, direction: :tally, tally_ms: 250)
+      assert hooks == [{:on_output, [position: 0]}]
+      assert_receive {:tally_opts, %{mode: "tally", channels: ["prices"], tally_ms: 250}}
+      assert_receive {:outcome, {:ok, :window_closed}}, 2_000
+    end
+
+    test "named channels replace the announced ones, and none is refused" do
+      listening(window_ms: 1, direction: :tally, channels: ["a", "b"])
+      assert_receive {:tally_opts, %{channels: ["a", "b"]}}
+      assert_receive {:outcome, {:ok, :window_closed}}, 2_000
+
+      stub(RelayApi, :graph_of, fn _ns, _op -> {:ok, %{graph: nil}} end)
+
+      for opts <- [[], [channels: []]] do
+        assert {:error, %Flezha.Error{code: "listener.no_channels", details: %{"relay" => "op"}}} =
+                 Listener.listen("ns", "op", [direction: :tally] ++ opts, & &1)
+      end
+
+      refute_received {:attached, _, _, _}
+    end
+
+    test "a group's member reports are summed, each with the epoch it counts in" do
+      %{pid: pid, receiver: receiver} = listening(direction: :tally, tally_ms: 100)
+      send(receiver, {:tally_report, "op#p0", 1, %{"prices" => 2, "" => 0}})
+      assert_receive {:event, ^pid, {:tally, %{"prices" => 2}, %{epochs: %{"op#p0" => 1}}}}
+
+      # Within the interval: held back, then handed on once with both members.
+      send(receiver, {:tally_report, "op#p1", 7, %{"prices" => 3, "" => 1}})
+      send(receiver, {:tally_report, "op#p0", 1, %{"prices" => 4, "" => 0}})
+      assert_receive {:event, ^pid, {:tally, totals, %{epochs: epochs, read_at_ms: at}}}, 2_000
+      refute_received {:event, ^pid, _}
+      assert totals == %{"prices" => 7, "" => 1}
+      assert epochs == %{"op#p0" => 1, "op#p1" => 7}
+      assert is_integer(at)
+      Process.exit(pid, :kill)
+    end
+
+    test "every way out detaches it" do
+      %{id: id} = listening(window_ms: 1, direction: :tally)
+      assert_receive {:outcome, {:ok, :window_closed}}, 2_000
+      assert_receive {:detached, "ns", "op", ^id}
+
+      watched = spawn(fn -> Process.sleep(:infinity) end)
+      %{id: id} = listening(direction: :tally, watch: watched)
+      Process.exit(watched, :kill)
+      assert_receive {:outcome, {:ok, :caller_down}}, 2_000
+      assert_receive {:detached, "ns", "op", ^id}
+
+      %{receiver: receiver, id: id} = listening([direction: :tally], fn _ -> :done end)
+      send(receiver, {:tally_report, "op", 1, %{"prices" => 1}})
+      assert_receive {:outcome, {:ok, :done}}, 2_000
+      assert_receive {:detached, "ns", "op", ^id}
+    end
+  end
+
+  defp out(name, plugin_end \\ "output"), do: %{name: name, plugin_end: plugin_end}
+
+  # Lets a stalled reader take one event at a time until it holds `wanted`.
+  defp newest_tally(pid, wanted) do
+    send(pid, :next)
+    assert_receive {:event, ^pid, {:tally, %{"a" => n}, _}}, 2_000
+    if n == wanted, do: n, else: newest_tally(pid, wanted)
   end
 
   test "a part, a notice and an input are told apart" do
@@ -251,6 +333,32 @@ defmodule Flezha.Service.ListenerTest do
       assert numbers == Enum.sort(numbers)
       assert :sys.get_state(receiver).backlog.frames <= 8
       refute_received {:outcome, _}
+      Process.exit(pid, :kill)
+    end
+
+    test "a stalled reader of a tally loses older totals, never the listener" do
+      test = self()
+
+      stalled = fn event ->
+        send(test, {:event, self(), event})
+
+        receive do
+          :next -> :continue
+        end
+      end
+
+      stub(RelayApi, :graph_of, fn _ns, _op -> {:ok, %{graph: %{channels: [out("a")]}}} end)
+      %{pid: pid, receiver: receiver} = listening([direction: :tally], stalled)
+
+      # Each report handed on at once, as its interval's tick would.
+      for n <- 1..100 do
+        send(receiver, {:tally_report, "op", 1, %{"a" => n}})
+        send(receiver, :tally_due)
+      end
+
+      assert :sys.get_state(receiver).backlog.frames <= 8
+      refute_received {:outcome, _}
+      assert newest_tally(pid, 100) == 100
       Process.exit(pid, :kill)
     end
 

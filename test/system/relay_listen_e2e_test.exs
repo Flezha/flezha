@@ -20,7 +20,7 @@ defmodule FlezhaTest.System.RelayListenE2ETest do
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
 
   import FlezhaTest.Helper.TierE2EHarness,
-    only: [boot_runner: 3, stop_namespace: 1, unique_id_path: 1]
+    only: [boot_runner: 3, force_fresh_rebind: 2, stop_namespace: 1, unique_id_path: 1]
 
   alias Flezha.Relay.{Builder, PartitionGroup}
   alias Flezha.Partition
@@ -145,6 +145,72 @@ defmodule FlezhaTest.System.RelayListenE2ETest do
 
       assert_receive {:DOWN, ^ref, :process, ^pid, :normal}, 30_000
       assert listeners(ns, id) == []
+    end
+  end
+
+  describe "flz relay listen --tally" do
+    test "counts each output channel of a live relay, and leaves nothing behind", %{
+      namespace: ns
+    } do
+      id = start!(ns, "bench_echo")
+      listener = listen(ns, id, direction: "tally")
+
+      for n <- 1..3, do: deliver!(ns, id, "t#{n}")
+
+      assert printed_line(listener, &(&1 =~ ~r/^echo=3 \(/))
+      end_by_exit(ns, listener, [id])
+    end
+
+    @tag capability: :partitioned, skip: FlezhaTest.SystemCase.deferral(:partitioned)
+    test "a group's counts are summed over its members, and every member is released", %{
+      namespace: ns
+    } do
+      {group, members} = start_group!(ns)
+      owners = Map.new(["SOL-USD", "BTC-USD"], &{&1, owner(group, &1)})
+      assert owners |> Map.values() |> Enum.sort() == Enum.sort(members)
+      listener = listen(ns, group, direction: "tally", on: members)
+
+      for {key, member} <- owners, do: deliver!(ns, member, "#{key}:tallied")
+
+      assert printed_line(listener, &(&1 =~ ~r/(^|\t)[^=\t]+=2 \(/))
+      end_by_exit(ns, listener, members)
+    end
+
+    test "an Overwatch restart counts again from zero under a new epoch", %{namespace: ns} do
+      id = start!(ns, "bench_echo")
+      test = self()
+
+      spawn(fn ->
+        Flezha.Service.Relay.listen(ns, id, :tally, [window_ms: 120_000, tally_ms: 200], %{
+          source: :internal,
+          emit: test
+        })
+      end)
+
+      assert_receive {:flezha_emit, :attached}, 30_000
+      deliver!(ns, id, "before")
+      {_, first} = tally_until(fn totals, _epochs -> totals["echo"] == 1 end)
+
+      capture_log(fn -> force_fresh_rebind(ns, id) end)
+      assert wait_until(fn -> listeners(ns, id) != [] and bound?(ns, id) end, 30_000)
+      deliver!(ns, id, "after")
+
+      # A count that went on would read 2 here.
+      {_, restarted} =
+        tally_until(fn totals, epochs -> epochs != first and totals["echo"] == 1 end)
+
+      # The worker counting for the killed Overwatch reports no more.
+      for _ <- 1..3, do: assert({_, ^restarted} = tally_until(fn _, _ -> true end))
+    end
+  end
+
+  # The first tally within 30 s that `match` takes, as its totals and epochs.
+  defp tally_until(match, deadline \\ System.monotonic_time(:millisecond) + 30_000) do
+    receive do
+      {:flezha_emit, {:tally, totals, %{epochs: epochs}}} ->
+        if match.(totals, epochs), do: {totals, epochs}, else: tally_until(match, deadline)
+    after
+      max(deadline - System.monotonic_time(:millisecond), 0) -> flunk("no tally matched")
     end
   end
 

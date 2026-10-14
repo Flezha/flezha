@@ -82,6 +82,7 @@ System.at_exit(fn _status -> Enum.each(run_dirs, &File.rm_rf/1) end)
 # the console stays focused on actual ExUnit assertions.
 :ok = :logger.set_module_level(ProcessHub.Service.LoggerService, :none)
 
+Mimic.copy(Flezha.Service.RelayApi)
 Mimic.copy(Flezha.Service.RelayManager)
 Mimic.copy(Flezha.Service.RelayManager.Placement)
 Mimic.copy(Flezha.Service.RelayManager.Teardown)

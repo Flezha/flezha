@@ -132,7 +132,9 @@ format, whether it answers, its description and schema, and an example call
 channels it reads and writes, and which channels end at a plugin output or a
 call ([`relay_commands.md`](../cli/relay_commands.md#flz-relay)).
 `flz relay activity <id>` asks its runner what each tasklet is doing: its live
-Cells, the items queued, and the items admitted, blocked and dropped so far.
+Cells, the items queued, and the items admitted, blocked and dropped so far;
+`--cells <tasklet>` adds that tasklet's most recently active Cells, one line each.
+`flz relay listen <id> --tally` counts what leaves on each output channel.
 
 ## Send a message
 

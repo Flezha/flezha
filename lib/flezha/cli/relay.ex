@@ -240,10 +240,15 @@ defmodule Flezha.Service.Cli.Relay do
     )
   end
 
+  # The report before, for a rate: `emit` runs in this process, one event at a
+  # time, and a closure keeps nothing between calls.
+  @last_tally {__MODULE__, :last_tally}
+
   @doc """
   `flz relay listen`: every frame the relay emits (with its parts and
   dead-letter notices), or ingests, or each call it takes and how that call
-  ended, until the window closes, the caller goes away or the relay ends.
+  ended, or its output counts per channel, until the window closes, the
+  caller goes away or the relay ends.
   """
   def listen(args_json, context, opts) do
     format = frame_format(opts)
@@ -256,6 +261,8 @@ defmodule Flezha.Service.Cli.Relay do
     "Relay.listen"
     |> Admin.run(args_json, Map.put(context, :emit, emit), :given)
     |> heard(args_json, opts)
+  after
+    Process.delete(@last_tally)
   end
 
   defp heard({:ok, _outcome}, _args_json, _opts), do: :ok
@@ -267,6 +274,8 @@ defmodule Flezha.Service.Cli.Relay do
 
   defp print({kind, %Flezha.Error{} = error, metadata}, format),
     do: print_notice(kind, error, metadata, format)
+
+  defp print({:tally, totals, metadata}, format), do: print_tally(totals, metadata, format)
 
   defp print({kind, payload, metadata}, format), do: print_frame(kind, payload, metadata, format)
   defp print(:idle, _format), do: :ok
@@ -296,6 +305,45 @@ defmodule Flezha.Service.Cli.Relay do
     |> Admin.json()
     |> IO.puts()
   end
+
+  defp print_tally(totals, %{read_at_ms: at, epochs: epochs}, format) do
+    rates = rates(Process.put(@last_tally, {totals, at, epochs}), totals, at, epochs)
+    print_tally(totals, rates, %{read_at_ms: at, epochs: epochs}, format)
+  end
+
+  defp print_tally(totals, rates, _read, :text) do
+    totals
+    |> Enum.reject(fn {channel, total} -> channel == "" and total == 0 end)
+    |> Enum.sort()
+    |> Enum.map_join("\t", fn {channel, total} ->
+      "#{if channel == "", do: "(other)", else: channel}=#{total} (#{rate(rates[channel])})"
+    end)
+    |> IO.puts()
+  end
+
+  defp print_tally(totals, rates, read, :json) do
+    %{kind: :tally, totals: totals, rates: rates}
+    |> Map.merge(read)
+    |> Admin.json()
+    |> IO.puts()
+  end
+
+  # Per second since the report before, while every member counts on in the
+  # epoch it counted in then and no total fell; none on the first report and
+  # after a restart.
+  defp rates({before, before_at, epochs}, totals, at, epochs) when at > before_at do
+    if Enum.all?(totals, fn {ch, total} -> total >= Map.get(before, ch, 0) end),
+      do:
+        Map.new(totals, fn {ch, total} ->
+          {ch, (total - Map.get(before, ch, 0)) * 1000 / (at - before_at)}
+        end),
+      else: %{}
+  end
+
+  defp rates(_before, _totals, _at, _epochs), do: %{}
+
+  defp rate(nil), do: "-"
+  defp rate(per_second), do: "#{:erlang.float_to_binary(per_second / 1, decimals: 1)}/s"
 
   defp stamps(:call, metadata) do
     callers = for caller <- List.wrap(metadata["flz.call_caller"]), do: "caller=#{caller}"

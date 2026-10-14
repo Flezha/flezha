@@ -794,14 +794,15 @@ defmodule Flezha.Service.RelayManager do
 
   @doc """
   The encoded `TaskletActivityResponse` of the runner hosting `relay_id`, with
-  that runner's id. A runner that does not answer, whose control unit is gone,
-  or that answers without knowing the read, is
-  `{:activity_no_answer, relay_id, runner_id}`; its own refusal passes through.
+  that runner's id; `read` may carry `cells_of` and `limit`. A runner that does
+  not answer, whose control unit is gone, or that answers without knowing the
+  read, is `{:activity_no_answer, relay_id, runner_id}`; its own refusal passes
+  through.
   """
-  @spec get_tasklet_activity(binary(), binary()) ::
+  @spec get_tasklet_activity(binary(), binary(), map()) ::
           {:ok, binary(), binary()} | {:error, term()}
-  def get_tasklet_activity(namespace, relay_id) do
-    case ask_overwatch(namespace, relay_id, :get_tasklet_activity) do
+  def get_tasklet_activity(namespace, relay_id, read) do
+    case ask_overwatch(namespace, relay_id, {:get_tasklet_activity, read}) do
       {:error, _} = refused -> refused
       {{:ok, raw}, runner} when raw != "" -> {:ok, raw, runner}
       {{:error, %Flezha.Error{} = refusal}, _runner} -> {:error, refusal}

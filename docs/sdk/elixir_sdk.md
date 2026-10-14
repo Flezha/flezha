@@ -850,7 +850,9 @@ one derived from the controller bound that awaits it: `sdk_cell_restore_ms` insi
 `sdk_cell_apply_ms` inside `control_unit_reply_timeout_ms`. The SDK never reports a failure
 while the controller is still waiting for the answer. A relay's activity read asks every Cell at
 once and waits `sdk_activity_read_ms` for them all, inside `tasklet_activity_read_ms`; a
-tasklet with a Cell that has not answered by then reports its queue as absent.
+tasklet with a Cell that has not answered by then reports its queue as absent. A read that
+also asks for one tasklet's Cells (`cells_of`) is answered without them, because this runtime
+keeps no per-Cell counters; a tasklet the relay does not declare is refused by name.
 
 Three calls wait with no bound, because there the wait is the protocol and the caller is one
 of the runner's own processes, never one of yours: `Flezha.SDK.Cell.enqueue_block/2` under

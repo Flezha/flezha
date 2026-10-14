@@ -2,7 +2,6 @@
 
 ## Purpose
 How the controller keeps the graph a factory's runners announce, and how a caller reads one relay's graph.
-
 ## Requirements
 ### Requirement: The controller SHALL keep each factory's announced graph
 
@@ -58,3 +57,27 @@ each channel's plugin end.
 
 - **WHEN** an operator runs `flz relay graph demo#p0`
 - **THEN** the CLI prints each tasklet with its input and output channels, and marks the channels that end at a plugin output or a call
+
+### Requirement: The reference test app SHALL announce a graph with every shape the graph describes
+
+The Rust reference test app SHALL register a `showcase` factory whose announced graph holds:
+- two entry channels whose tasklets merge into one (a fan-in);
+- one channel read by four tasklets (a fan-out);
+- a straight run of four single-input, single-output tasklets;
+- a channel both read by a tasklet and bound to plugins (a hybrid);
+- a call end with its answer entry channel;
+- tasklets in single, static and dynamic Cell modes;
+- five output channels.
+
+It SHALL run on the testnet generator's trade and quote messages without stalling on a malformed one.
+
+#### Scenario: The showcase graph is announced
+
+- **WHEN** the dev runner connects and `Relay.graph/3` is read for a relay bound to `showcase`
+- **THEN** the graph holds the entry channels `trades`, `quotes` and the call's answer channel, the call end `quote`, and the output channels `prices`, `volumes`, `alerts`, `orders` and `audit`
+
+#### Scenario: Records reach every output
+
+- **WHEN** a `showcase` relay receives trade and quote messages for a minute
+- **THEN** each of its five output channels has emitted at least one frame
+

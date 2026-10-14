@@ -49,6 +49,8 @@ defmodule Flezha.Service.Relay do
   @activity_figures [:tasklet, :cells, :queued, :queued_max, :admitted_total, :blocked_total] ++
                       [:dropped_newest_total, :dropped_oldest_total, :dropped_capped_total] ++
                       [:cells_created_total, :cells_evicted_total]
+  @cell_figures [:key, :queued, :admitted_total, :blocked_total, :dropped_newest_total] ++
+                  [:dropped_oldest_total, :last_admitted_ms]
   @message [type: :string, doc: "The input's payload."]
   @channel [type: :string, default: "", doc: "The input channel; none when empty."]
 
@@ -210,13 +212,30 @@ defmodule Flezha.Service.Relay do
   instance; a different `instance_seq` or `runner` means they started again.
   `queued` is approximate while items arrive. A partition group is read one
   member at a time.
+
+  `opts` carries `cells_of`, a tasklet whose Cells are answered as well under
+  `cells`, and `limit`, at most how many (default 50, at most 500): the most
+  recently admitting first, each with its key, queue, totals and
+  `last_admitted_ms` on the clock of `read_at_ms`, beside the tasklet's
+  `cells_total`. `cells` is `nil` when none were asked for, or when the runner
+  keeps no per-Cell figures.
   """
-  @spec activity(String.t(), String.t(), caller_context()) :: {:ok, map()} | {:error, term()}
-  verb activity(namespace, relay_id, caller_context),
+  @spec activity(String.t(), String.t(), keyword(), caller_context()) ::
+          {:ok, map()} | {:error, term()}
+  verb activity(namespace, relay_id, opts \\ [], caller_context),
     verb: :relay_info,
-    args: [namespace: @namespace, relay_id: @relay_id] do
-    with {:ok, raw, runner} <-
-           RelayManager.get_tasklet_activity(Namespace.or_default(namespace), relay_id) do
+    args: [
+      namespace: @namespace,
+      relay_id: @relay_id,
+      opts: [
+        type: :keyword,
+        default: [],
+        doc: "`cells_of`, a tasklet whose Cells to answer as well, and `limit` (default 50)."
+      ]
+    ] do
+    with {:ok, read} <- cells_read(opts),
+         {:ok, raw, runner} <-
+           RelayManager.get_tasklet_activity(Namespace.or_default(namespace), relay_id, read) do
       answer = RunnerCommands.TaskletActivityResponse.decode!(raw)
 
       {:ok,
@@ -225,10 +244,32 @@ defmodule Flezha.Service.Relay do
          runner: runner,
          read_at_ms: answer.read_at_ms,
          instance_seq: answer.instance_seq,
-         tasklets: Enum.map(answer.rows, &Map.take(&1, @activity_figures))
+         tasklets: Enum.map(answer.rows, &Map.take(&1, @activity_figures)),
+         cells: cells(answer.cells)
        }}
     end
   end
+
+  # The Cell read the runner is asked for: `cells_of` as text, `limit` as a
+  # count its wire field can carry.
+  defp cells_read(opts) do
+    with {:ok, read} <- put_text(%{}, :cells_of, Keyword.get(opts, :cells_of), "cells_of") do
+      case Keyword.get(opts, :limit) do
+        nil -> {:ok, read}
+        n when n in 0..0xFFFF_FFFF -> {:ok, Map.put(read, :limit, n)}
+        written -> invalid_number("limit", written)
+      end
+    end
+  end
+
+  defp cells(nil), do: nil
+
+  defp cells(%{tasklet: tasklet, cells_total: total, rows: rows}),
+    do: %{
+      tasklet: tasklet,
+      cells_total: total,
+      rows: Enum.map(rows, &Map.take(&1, @cell_figures))
+    }
 
   @doc "One relay's Overwatch state."
   @spec overwatch_state(String.t(), String.t(), caller_context()) ::
@@ -434,13 +475,11 @@ defmodule Flezha.Service.Relay do
   verb graph(namespace, relay_id, caller_context),
     verb: :relay_info,
     args: [namespace: @namespace, relay_id: @relay_id] do
-    namespace = Namespace.or_default(namespace)
-
     # A node that could not be asked answers its error, never "not announced".
-    with {:ok, %{factory: factory}} <- RelayApi.factory_of(namespace, relay_id),
-         %{graph: graph} = read <- RelayManager.factory_graph(namespace, factory) do
+    with {:ok, %{graph: graph} = read} <-
+           RelayApi.graph_of(Namespace.or_default(namespace), relay_id) do
       reason = if graph, do: nil, else: "not_announced"
-      {:ok, Map.merge(read, %{relay: relay_id, factory: factory, reason: reason})}
+      {:ok, Map.merge(read, %{relay: relay_id, reason: reason})}
     end
   end
 
@@ -524,10 +563,11 @@ defmodule Flezha.Service.Relay do
   defp deadline(deadline_ms) when is_integer(deadline_ms) and deadline_ms > 0,
     do: {:ok, deadline_ms}
 
-  defp deadline(written),
+  defp deadline(written), do: invalid_number("deadline_ms", written)
+
+  defp invalid_number(option, written),
     do:
-      {:error,
-       Flezha.Error.new("usage.invalid_number", option: "deadline_ms", value: inspect(written))}
+      {:error, Flezha.Error.new("usage.invalid_number", option: option, value: inspect(written))}
 
   @doc """
   Hand every frame `relay_id` emits (with its parts and dead-letter
@@ -536,7 +576,10 @@ defmodule Flezha.Service.Relay do
   `direction` `calls` it hands each call the relay takes, `{:call, request,
   metadata}`, and then how that call ended: `{:answered, answer, metadata}`,
   `{:timed_out, error, metadata}` or `{:refused, error, metadata}`, each
-  carrying the call's `flz.call_id`.
+  carrying the call's `flz.call_id`. With `direction` `tally` it hands, about
+  once per `tally_ms`, `{:tally, totals, %{read_at_ms:, epochs:}}`: how many
+  frames have left on each output channel, counted on the relay's node with
+  nothing sent per frame.
 
   `:emit` is called with `:attached` once the listener is in place, then with
   each `t:Flezha.Service.Listener.event/0`; answering `:done` ends the listen.
@@ -553,23 +596,28 @@ defmodule Flezha.Service.Relay do
       relay_id: @relay_id,
       direction: [
         type: :enum,
-        values: [:output, :input, :calls],
+        values: [:output, :input, :calls, :tally],
         default: :output,
         doc: "What to hear."
       ],
-      opts: [type: :keyword, default: [], doc: "`window_ms`."]
+      opts: [
+        type: :keyword,
+        default: [],
+        doc: "`window_ms`; for a tally, `tally_ms` and `channels`."
+      ]
     ] do
     {emit, watch} = CallerContext.emitter(caller_context)
 
     Listener.listen(
       Namespace.or_default(namespace),
       relay_id,
-      [
-        direction: direction,
-        window_ms: Keyword.get(opts, :window_ms, :infinity),
-        watch: watch,
-        before: fn -> emit.(:attached) end
-      ],
+      Keyword.take(opts, [:tally_ms, :channels]) ++
+        [
+          direction: direction,
+          window_ms: Keyword.get(opts, :window_ms, :infinity),
+          watch: watch,
+          before: fn -> emit.(:attached) end
+        ],
       &CallerContext.hand_on([&1], emit)
     )
   end

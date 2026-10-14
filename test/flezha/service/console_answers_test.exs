@@ -3,7 +3,8 @@ defmodule Flezha.Service.ConsoleAnswersTest do
   Answers a console reads to decide what it offers: the operations
   `Flezha.Service.Namespace.whoami/1` says the caller's role grants, the
   history retention `Flezha.Service.Steps.cells/2` says a relay class runs with,
-  and the typed option rows `Flezha.Service.Fleet.provider/2` answers.
+  the typed option rows `Flezha.Service.Fleet.provider/2` answers, and which
+  providers feed a relay.
   """
   # async: false: writes Application env; the auth stores are node-global singletons.
   use FlezhaTest.Case,
@@ -167,7 +168,15 @@ defmodule Flezha.Service.ConsoleAnswersTest do
 
       assert %{provider: "console_option_probe", type: :relay, hooks: []} = answer
       assert answer.help == OptionProbe.help("console_option_probe")
-      assert Map.keys(answer) |> Enum.sort() == [:help, :hooks, :options, :provider, :type]
+
+      assert Map.keys(answer) |> Enum.sort() == [
+               :feeds,
+               :help,
+               :hooks,
+               :options,
+               :provider,
+               :type
+             ]
     end
 
     test "the door writes atoms as their names and changes nothing else" do
@@ -182,7 +191,16 @@ defmodule Flezha.Service.ConsoleAnswersTest do
                )
 
       decoded = Jason.decode!(json)
-      assert Enum.sort(Map.keys(decoded)) == ["help", "hooks", "options", "provider", "type"]
+
+      assert Enum.sort(Map.keys(decoded)) == [
+               "feeds",
+               "help",
+               "hooks",
+               "options",
+               "provider",
+               "type"
+             ]
+
       assert length(decoded["options"]) == length(answer.options)
 
       for {term, written} <- Enum.zip(answer.options, decoded["options"]) do
@@ -208,6 +226,21 @@ defmodule Flezha.Service.ConsoleAnswersTest do
                  "#{id}.#{option.name} declares a default JSON cannot carry: " <>
                    inspect(option.default)
         end
+      end
+    end
+
+    test "the listing and a provider's help say which providers feed a relay" do
+      assert {:ok, %{providers: providers}} = Fleet.providers(%{source: :cli})
+      feeds = Map.new(providers, &{&1.id, &1.feeds})
+
+      for {id, fed} <- [
+            {"relay_websocket", true},
+            {"relay_http_poll", true},
+            {"relay_postgres_poll", true},
+            {"relay_stdout", false}
+          ] do
+        assert feeds[id] == fed, "#{id} lists feeds: #{inspect(feeds[id])}"
+        assert {:ok, %{feeds: ^fed}} = Fleet.provider(id, %{source: :cli})
       end
     end
   end

@@ -1075,11 +1075,18 @@ pub struct RelayExited {
 /// Controller -> SDK: what each tasklet of relay instance `relay_id` is doing,
 /// read on request from figures the data path already keeps. Answered with an
 /// encoded TaskletActivityResponse as the CommandResponse raw_data; a relay the
-/// runner does not host is refused as `runtime.relay_not_found`.
+/// runner does not host is refused as `runtime.relay_not_found`. `cells_of`
+/// also asks for that tasklet's Cells, at most `limit` of them (default 50,
+/// clamped to 500); a tasklet the class does not declare is refused as
+/// `state.tasklet_not_found`.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct TaskletActivity {
     #[prost(string, tag = "1")]
     pub relay_id: ::prost::alloc::string::String,
+    #[prost(string, optional, tag = "2")]
+    pub cells_of: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(uint32, optional, tag = "3")]
+    pub limit: ::core::option::Option<u32>,
 }
 /// `read_at_ms` is the runner's monotonic clock at the read. `instance_seq`
 /// names the instance that answered: a rebind, migration, wake or runner
@@ -1092,6 +1099,39 @@ pub struct TaskletActivityResponse {
     pub read_at_ms: u64,
     #[prost(uint64, tag = "3")]
     pub instance_seq: u64,
+    #[prost(message, optional, tag = "4")]
+    pub cells: ::core::option::Option<TaskletCells>,
+}
+/// The Cells of the tasklet `cells_of` named, most recently admitted first.
+/// Absent, never empty, from a runtime that keeps no per-Cell counters.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct TaskletCells {
+    #[prost(string, tag = "1")]
+    pub tasklet: ::prost::alloc::string::String,
+    #[prost(uint64, tag = "2")]
+    pub cells_total: u64,
+    #[prost(message, repeated, tag = "3")]
+    pub rows: ::prost::alloc::vec::Vec<CellActivityRow>,
+}
+/// One Cell's figures. `key` is absent for an unkeyed Cell; `last_admitted_ms`
+/// is on the clock of `read_at_ms`, and a Cell that has admitted nothing yet
+/// carries the time it was created.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct CellActivityRow {
+    #[prost(string, optional, tag = "1")]
+    pub key: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(uint64, tag = "2")]
+    pub queued: u64,
+    #[prost(uint64, tag = "3")]
+    pub admitted_total: u64,
+    #[prost(uint64, tag = "4")]
+    pub blocked_total: u64,
+    #[prost(uint64, tag = "5")]
+    pub dropped_newest_total: u64,
+    #[prost(uint64, tag = "6")]
+    pub dropped_oldest_total: u64,
+    #[prost(uint64, tag = "7")]
+    pub last_admitted_ms: u64,
 }
 /// One tasklet's figures, summed over its Cells. A figure the runtime does not
 /// keep is absent, never zero. `queued` is approximate under contention.
