@@ -379,6 +379,19 @@ pub fn part(ctx: CtxPtr, token: u64, item: u32, payload: &[u8]) -> Result<(), Re
     })
 }
 
+/// The pending timers of the Cell `token` runs, as registrations.
+pub fn pending_timers(ctx: CtxPtr, token: u64) -> Result<Vec<schema::TimerOp>, Refusal> {
+    let (status, ops) = with_buffer(
+        &[FLZ_OK],
+        |out, out_len| unsafe { crate::flz_core_pending_timers(ctx.get(), token, out, out_len) },
+        |bytes| postcard::from_bytes::<Vec<schema::TimerOp>>(bytes),
+    );
+    match (status, ops) {
+        (FLZ_OK, Some(Ok(ops))) => Ok(ops),
+        _ => Err(core(ctx)),
+    }
+}
+
 /// What a begun `ctx.effect` does next.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EffectStart {

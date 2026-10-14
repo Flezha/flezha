@@ -476,9 +476,9 @@ Inside `on_timer/4`, `now/1` is the scheduled timestamp under every clock, so a 
 A Tasklet registers a deadline from `run/3` or from a firing and handles it in
 `on_timer(fired_at, kind, state, ctx)`, which answers what `run/3` answers. Pending timers
 are one set per kind, bounded by `max_timers_per_cell/0`: a duplicate registration is a
-no-op, a cancel of nothing answers `false`. The core restores pending timers and fires them,
-but hands the host none of them back, so after a restart or a move a cancel of a timer
-registered before it answers `false` and the cap counts only registrations made since. An invocation's registrations and cancellations
+no-op, a cancel of nothing answers `false`. After a restart or a move the SDK reads the
+pending set the core restored before the Cell's first invocation, so a cancel and the cap see
+every timer registered before it. An invocation's registrations and cancellations
 commit only when it completes. A firing on a Tasklet that exports no `on_timer/4` parks
 non-retryably naming the tasklet and the callback. Only a `compensate` hook runs with
 timers unavailable: there each of the four ctx timer calls answers

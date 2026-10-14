@@ -368,8 +368,12 @@ fn declares_the_effectively_once_class(ctx: *mut FlzContext, controller: &Contro
     controller.await_success("AddRelay eff response", "ref-add-eff");
 }
 
+/// A processing-time timer far past any test run, so it is restored and never fires.
+const RESTORED_TIMER_AT: u64 = 4_102_444_800_000;
+
 /// On-disk WAL records: seq 1 a plain (host-codec) change, seq 2 an effect
-/// record whose consumed offset seeds the floor. The class runs at
+/// record whose consumed offset seeds the floor and whose timer op the
+/// restore keeps pending. The class runs at
 /// schema_version 2 reading down to 1, so the snapshot (stamped 1) crosses
 /// tagged for migration while these records (stamped 2) cross to be decoded —
 /// both arms of the decision, in one restore.
@@ -380,7 +384,10 @@ fn change_log() -> Vec<u8> {
         consumed_offset: Some(7),
         dlq: None,
         event_time: 1_234,
-        timers: vec![],
+        timers: vec![schema::TimerOp::register(
+            schema::TimerKind::ProcessingTime,
+            RESTORED_TIMER_AT,
+        )],
         edges: vec![],
     })
     .unwrap();
@@ -524,6 +531,7 @@ fn the_restored_floor_skips_applied_inputs(ctx: *mut FlzContext, stream: &Arc<Fl
         }
         other => panic!("expected one input, got {other:?}"),
     }
+    the_restored_timers_are_read_from_the_core(ctx, act.token);
     abi_complete(
         ctx,
         &schema::ActivationResult {
@@ -531,6 +539,35 @@ fn the_restored_floor_skips_applied_inputs(ctx: *mut FlzContext, stream: &Arc<Fl
             outcome: schema::ActivationOutcome::Work(vec![ok_effect(Some(8), vec![])]),
         },
     );
+}
+
+/// A restore hands the host its state and not its timers; the first activation
+/// after it reads the pending set the core rebuilt, and only an outstanding
+/// work activation can.
+fn the_restored_timers_are_read_from_the_core(ctx: *mut FlzContext, token: u64) {
+    let read = |token| {
+        let mut buf: *mut u8 = std::ptr::null_mut();
+        let mut len = 0usize;
+        let status = unsafe { flz_core_pending_timers(ctx, token, &mut buf, &mut len) };
+        let ops = (status == FLZ_OK).then(|| {
+            let bytes = unsafe { std::slice::from_raw_parts(buf, len) }.to_vec();
+            unsafe { flz_core_buf_free(buf, len) };
+            postcard::from_bytes::<Vec<schema::TimerOp>>(&bytes).unwrap()
+        });
+        (status, ops)
+    };
+    assert_eq!(
+        read(token),
+        (
+            FLZ_OK,
+            Some(vec![schema::TimerOp::register(
+                schema::TimerKind::ProcessingTime,
+                RESTORED_TIMER_AT
+            )])
+        )
+    );
+    assert_eq!(read(u64::MAX).0, FLZ_ERR);
+    assert_eq!(last_document(ctx).code, "runtime.unknown_activation_token");
 }
 
 /// CellState becomes a LiveStateRead activation; the host's JSON answer

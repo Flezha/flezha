@@ -25,7 +25,9 @@ session, and a later start in the node, the restart after a crash included, is r
 A host can now hand the core its connection settings at start (`flz_core_start_with`), so a
 runner embedded in a process with someone else's environment reads its own. A start the
 controller refuses, or does not confirm in time, leaves no runner behind and is answered at
-the call. `flz_core_shutdown` now also ends the session once the state is shipped.
+the call. `flz_core_shutdown` now also ends the session once the state is shipped, and
+`flz_core_pending_timers` reads the pending timers of the Cell an activation runs, which a
+host keeping its own copy reads once after a restore.
 
 ### Added: a tasklet's Cells, and a relay's outputs per channel
 

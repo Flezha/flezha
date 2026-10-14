@@ -996,6 +996,46 @@ pub unsafe extern "C" fn flz_core_part(
     }
 }
 
+/// The pending timers of the Cell an outstanding work activation runs, as the
+/// core keeps them. A restore hands a host its state and not its timers, so a
+/// host that keeps its own copy reads them here once after one. On [`FLZ_OK`],
+/// `*buf_out`/`*len_out` hold the postcard `Vec<TimerOp>`, each a
+/// registration; free with [`flz_core_buf_free`].
+///
+/// # Safety
+/// `ctx` must be live; `buf_out`/`len_out` must be valid writable pointers.
+#[no_mangle]
+pub unsafe extern "C" fn flz_core_pending_timers(
+    ctx: *mut FlzContext,
+    token: u64,
+    buf_out: *mut *mut u8,
+    len_out: *mut usize,
+) -> i32 {
+    let Some(ctx) = ctx.as_ref() else {
+        return FLZ_ERR;
+    };
+    let ops = match ctx.outstanding.get(&token).as_deref() {
+        Some(Outstanding {
+            activation:
+                EngineActivation {
+                    payload: flz_core::poll_core::EnginePayload::Work { slot, .. },
+                    ..
+                },
+            ..
+        }) => {
+            use flz_core::util::LockRecover;
+            slot.timers.lock_recover().as_register_ops()
+        }
+        _ => return ctx.fail(Error::UnknownToken(token)),
+    };
+    hand_out(
+        postcard::to_stdvec(&ops).expect("timer ops encode"),
+        buf_out,
+        len_out,
+    );
+    FLZ_OK
+}
+
 /// Read a spawn handle, waiting up to `timeout_ms` for the controller's answer;
 /// a timeout of 0 never waits. [`FLZ_OK`]: `out` holds
 /// `{"id","outcome"}`, the id the request resolved to and one of `spawned`,

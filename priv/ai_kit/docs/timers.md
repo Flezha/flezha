@@ -198,10 +198,10 @@ uses a timer.
   alone; the timers are still on disk, so a later restore rebuilds them.
 - **A `compensate` hook has no timers.** Every SDK answers a timer call there with
   `runtime.timers_unavailable`.
-- **In the Java, Node, Python, Ruby, PHP and Elixir SDKs, a steps tasklet fed by another tasklet has no
+- **In the Java, Node, Python, Ruby and PHP SDKs, a steps tasklet fed by another tasklet has no
   event time.** Their output is passed on without an event time, so such a tasklet reads wall
   time under an event-time clock and its event-time timers never come due. A tasklet fed by the
-  entry channel is not affected, nor is any tasklet in Rust.
+  entry channel is not affected, nor is any tasklet in Rust or Elixir.
 - **A firing can run late**: during a restore backlog, or while every worker thread is inside
   user code. `fired_at` still reports the scheduled time.
 
