@@ -59,9 +59,7 @@ requirement.** Both the UDS and the QUIC driver produce a `DriverStats`, so for
 a controller on either transport the counter is emitted with the rest of the
 driver's statistics and the liveness verdict that names it can fire. Each keeps
 its own per-stream send buffer and its own send gate, so the counter is a real
-per-stream refusal count on both rather than an aggregate. The `:native`
-in-node transport runs no driver and no send buffer of this kind, so it is the
-one transport outside this requirement's reporting half.
+per-stream refusal count on both rather than an aggregate.
 
 #### Scenario: Congestion increments nothing
 

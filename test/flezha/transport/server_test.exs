@@ -24,9 +24,6 @@ defmodule Flezha.Transport.ServerTest do
 
   alias Flezha.Config
   alias Flezha.Runner.FleetManager
-  alias Flezha.SDK.Codec
-  alias Flezha.Socket.Support
-  alias Flezha.SDK.Native, as: Client
   alias Flezha.Transport.Native
   alias Flezha.Transport.Server
   alias FlezhaTest.Helper.ControlFrameTestHelper
@@ -165,7 +162,7 @@ defmodule Flezha.Transport.ServerTest do
       # A runner played by this process, dialling the controller's own socket:
       # its connect frame and an admin request go out back to back, as an SDK's
       # start and first admin call do.
-      {:ok, runner} = Client.client_connect_uds(Support.control_socket_path(), self())
+      runner = ControlFrameTestHelper.dial()
 
       connect =
         Jason.encode!(%{
@@ -176,13 +173,13 @@ defmodule Flezha.Transport.ServerTest do
         })
 
       request =
-        Codec.encode_request(
+        ControlFrameTestHelper.encode_request(
           "admin-during-connect",
-          Codec.admin_request_command("Relay.list_relays", "[]")
+          {:admin_request, %RunnerCommands.AdminRequest{verb: "Relay.list_relays", args: "[]"}}
         )
 
-      :ok = Client.send_frame(runner, "connect_control_channel", connect, %{})
-      :ok = Client.send_frame(runner, "control_command", request, %{})
+      :ok = ControlFrameTestHelper.send_frame(runner, "connect_control_channel", connect)
+      :ok = ControlFrameTestHelper.send_frame(runner, "control_command", request)
 
       assert_receive {:connecting, server}, 5_000
       on_exit(fn -> send(server, :release) end)
@@ -197,7 +194,7 @@ defmodule Flezha.Transport.ServerTest do
       assert {:admin_response, %{error: nil}} =
                ControlFrameTestHelper.await_answering_handshake(runner, "admin-during-connect")
 
-      Client.close(runner)
+      :gen_tcp.close(runner)
     end
   end
 

@@ -80,19 +80,3 @@ Every verb in a runner credential's lifecycle SHALL bind a row of the user-verb 
 - **THEN** the raw value SHALL be returned exactly once and SHALL NOT be
   retrievable afterwards
 
-### Requirement: An in-node runner proves its namespace by co-residence
-
-A runner connected over the in-node transport SHALL be admitted to the namespace its frame names without presenting a credential, because it is code inside the controller's own release: it holds the distribution cookie and every file the credential lives in, and the in-node connect SHALL refuse a handle owned by another BEAM. This is the transport reading of the `:internal` caller source, and like that source it SHALL NOT extend to `_system`.
-
-#### Scenario: An in-node runner needs no credential
-
-- **WHEN** an in-BEAM SDK runner connects over the in-node transport naming
-  `team-orders` while enforcement is on
-- **THEN** the connection SHALL be admitted, and no credential SHALL have been
-  required
-
-#### Scenario: An in-node runner is still refused `_system`
-
-- **WHEN** an in-BEAM SDK runner's connect frame names `_system`
-- **THEN** the connection SHALL be refused
-

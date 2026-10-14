@@ -16,11 +16,9 @@ The core **never calls into host code and never owns a host thread** (the FFI
 log callback is the one permitted exception). The Rust SDK is the first host —
 its typed layer spawns poll workers and consumes the engine as a crate, which
 is the dogfood rule that keeps the boundary from eroding; the Java SDK is the
-second, over the C ABI. **The Elixir SDK is not a poll host**: it re-expresses
-dispatch, overflow, the retry→park ladder and the partition guard in Elixir
-and inherits nothing from `flz_core`
-([`../architecture/runner.md` → "One change, every SDK"](../architecture/runner.md#one-change-every-sdk),
-[`elixir_sdk.md`](elixir_sdk.md)). This document covers the boundary contract,
+second, over the C ABI. The Elixir SDK polls from threads its Rustler library
+owns and hands each activation to a BEAM process, so no wait holds a BEAM
+scheduler ([`elixir_sdk.md`](elixir_sdk.md#the-runtime-underneath)). This document covers the boundary contract,
 the C ABI and where the code lives; the system-level picture is
 [`../architecture/runner.md`](../architecture/runner.md).
 
@@ -242,7 +240,8 @@ this seam may never do.
 
 **Make the answer structural, not a discipline.** An RAII guard in Rust
 (`relay::dispatcher::Handout`, whose `Drop` abandons), a `finally` in Java
-(`PollHost.runActivation`), an `after` in Elixir — so a panic, an exception, an
+(`PollHost.runActivation`), in Elixir a pool that fails the activation of a worker
+that exits — so a panic, an exception, an
 early return or a `?` cannot skip it. A contract a reviewer has to notice is
 not a contract: the discipline version of this rule produced two live leak
 paths before it was replaced.

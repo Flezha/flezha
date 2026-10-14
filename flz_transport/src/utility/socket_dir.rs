@@ -11,7 +11,7 @@ use std::{env, fmt, fs};
 
 use ring::digest::{digest, SHA256};
 
-use crate::env::env_dir;
+use crate::env::{connect_dir, env_dir};
 use crate::utility::last_good::LastGood;
 use crate::utility::socket_probe::{probe, Reach};
 
@@ -144,7 +144,7 @@ pub fn resolve_socket_dir(role: Role, explicit: Option<&str>) -> Result<SocketDi
         .map(str::trim)
         .filter(|v| !v.is_empty())
         .map(PathBuf::from)
-        .or_else(|| env_dir(SOCKET_DIR_VAR));
+        .or_else(|| connect_dir(SOCKET_DIR_VAR));
 
     resolve_from(candidates_from(explicit, env_dir(XDG_RUNTIME_VAR)), role)
 }

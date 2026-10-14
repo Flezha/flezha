@@ -2,6 +2,7 @@
 //! it wakes the pollers, and a stopping runner opens no new control
 //! connection. On its own because it is the one phase that ends the runner.
 
+use std::ffi::CString;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -9,7 +10,7 @@ use flz_core::schema;
 use flz_core_ffi::fake_controller::shutdown_notification;
 use flz_core_ffi::*;
 
-use crate::harness::{abi_complete_mapped, abi_poll, Controller, Demanded};
+use crate::harness::{abi_complete_mapped, abi_poll, last_document, Controller, Demanded};
 
 /// `flz_core_shutdown` ships every live Cell's state as a
 /// `RunnerShutdownNotification` before the core reports shutting down: the
@@ -68,6 +69,19 @@ pub(crate) fn shutdown_ships_state_then_wakes_the_poller(
         );
         thread::yield_now();
     }
+
+    // Shut down for the life of the process: a later start, a local run's
+    // included, is refused by name rather than handed a dead core.
+    let again = flz_core_context_new(flz_core::SCHEMA_VERSION);
+    let name = CString::new("after_shutdown").unwrap();
+    assert_eq!(unsafe { flz_core_start(again, name.as_ptr()) }, FLZ_ERR);
+    assert_eq!(last_document(again).code, "runtime.core_shut_down");
+    assert_eq!(
+        unsafe { flz_core_local_start(again, name.as_ptr(), name.as_ptr()) },
+        FLZ_ERR
+    );
+    assert_eq!(last_document(again).code, "runtime.core_shut_down");
+    unsafe { flz_core_context_free(again) };
 }
 
 /// The host during a shutdown: answer every migration serialize with a

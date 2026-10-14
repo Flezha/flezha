@@ -128,6 +128,9 @@ codes! {
     RunnerAlreadyRunning => "runtime.runner_already_running",
     NoLocalRun => "runtime.no_local_run",
     ConnectUnconfirmed => "runtime.connect_unconfirmed",
+    InvalidConnectSetting => "runtime.invalid_connect_setting",
+    CoreShutDown => "runtime.core_shut_down",
+    CoreInUse => "runtime.core_in_use",
     SchemaMismatch => "runtime.schema_mismatch",
 
     CellKeyWithoutTasklet => "state.cell_key_without_tasklet",

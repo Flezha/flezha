@@ -46,7 +46,7 @@ defmodule Flezha.Transport.LivenessCounters do
   """
 
   alias Flezha.Config
-  alias Flezha.SDK.CounterTable
+  alias Flezha.Observability.CounterTable
 
   @table :flezha_liveness_counters
 
@@ -87,7 +87,7 @@ defmodule Flezha.Transport.LivenessCounters do
   # the slot itself is a gauge the runner writes whole. The mis-typing is filed
   # rather than corrected here, because changing the key renames a live series —
   # stating it on the row is what makes it a decision instead of an accident.
-  use Flezha.SDK.CounterTable,
+  use Flezha.Observability.CounterTable,
     table: :channel,
     defaults: [scope: :channel],
     slots: [
@@ -302,7 +302,7 @@ defmodule Flezha.Transport.LivenessCounters do
       [name: :send_gate_held, kind: :count, surface: [{:metric, :send_gate_held}]]
     ]
 
-  use Flezha.SDK.CounterTable,
+  use Flezha.Observability.CounterTable,
     table: :relay,
     defaults: [kind: :count, scope: :relay],
     slots: [

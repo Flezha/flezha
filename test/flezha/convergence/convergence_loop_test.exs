@@ -12,7 +12,7 @@ defmodule Flezha.Convergence.LoopTest do
 
   import FlezhaTest.Helper.MimicGlobal
 
-  alias Flezha.SDK.Wire
+  alias Flezha.State.Wire
   alias FlezhaTest.Helper.ConvergenceFixtures
 
   alias Flezha.Convergence.{Diff, Intent}

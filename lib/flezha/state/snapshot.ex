@@ -17,10 +17,10 @@ defmodule Flezha.State.Snapshot do
        own `cell.wal.rewriting` -> rename sequence.
   """
 
-  alias Flezha.SDK.RecordFrame
+  alias Flezha.State.Frame
   alias Flezha.State.{Metrics, Paths, WalWriter, WriterRegistry}
 
-  @header_size RecordFrame.header_size()
+  @header_size Frame.header_size()
 
   @doc """
   Persist a snapshot for `cell_id`. Truncates the WAL up to `seq`
@@ -36,7 +36,7 @@ defmodule Flezha.State.Snapshot do
     else
       final_path = Paths.snapshot_path(cell_id, seq)
 
-      crc = RecordFrame.crc32(header, snapshot_bytes)
+      crc = Frame.crc32(header, snapshot_bytes)
       bytes = <<header::binary, snapshot_bytes::binary, crc::32-big>>
 
       with :ok <- Paths.atomic_install(final_path, &:file.write(&1, bytes), :snapshot) do
@@ -66,7 +66,7 @@ defmodule Flezha.State.Snapshot do
         <<header::binary-size(@header_size), bytes::binary-size(^payload_size), crc::32-big>> =
           body
 
-        if RecordFrame.crc32(header, bytes) == crc do
+        if Frame.crc32(header, bytes) == crc do
           {:ok, header, bytes}
         else
           {:error, :crc_mismatch}

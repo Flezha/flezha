@@ -7,7 +7,7 @@ defmodule Flezha.Partition do
   contiguous range of them. This module is the controller's half of that
   contract: the hash, the range split, and the coverage check the CLI renders.
 
-  The hash is `Flezha.SDK.KeyGroup.group_of/1`, the Elixir SDK's FNV-1a-128, so
+  The hash is `Flezha.Relay.KeyGroup.group_of/1`, the Elixir SDK's FNV-1a-128, so
   the range a member is assigned here and the keys its runner admits are
   computed by one function.
 
@@ -17,7 +17,7 @@ defmodule Flezha.Partition do
   change.
   """
 
-  alias Flezha.SDK.KeyGroup
+  alias Flezha.Relay.KeyGroup
 
   @key_groups KeyGroup.key_groups()
 

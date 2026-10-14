@@ -171,20 +171,17 @@ attached to it: [`kubernetes.md`](kubernetes.md).
 
 ### Elixir application
 
-**A runner in the same node as the controller uses no socket at all.** The
-Elixir SDK's in-node mode is a function call:
+An Elixir runner is a child of your application's supervision tree:
 
 ```elixir
-children = [{Flezha.SDK, namespace: "default", relays: [MyRelay], transport: :native}]
+children = [{Flezha.SDK, namespace: "default", relays: [MyRelay], transport: :uds}]
 ```
 
-`:native` is the default, and it is deliberately not taken from the
-environment: a controller sets `FLEZHA_TRANSPORT` for its own server, and a
-runner that followed it would dial its own node over a socket. A connect from
-another BEAM node is refused.
-
-A runner that is its own node is an ordinary standalone runner, written with
-`transport: :uds`, and the **Binaries** tab applies to it unchanged.
+It connects over UDS (the default) or QUIC wherever it runs, the controller's
+own BEAM included, and the **Binaries** tab applies to it unchanged. A runner
+in the controller's BEAM finds the controller's socket when both resolve the
+same socket directory, and presents a runner credential like any other
+([`elixir_sdk.md`](https://github.com/flezha/flezha/blob/main/docs/sdk/elixir_sdk.md#where-a-runner-runs)).
 
 <!-- tabs-close -->
 
@@ -282,8 +279,8 @@ $ mix deps.get && mix run --no-halt
 
 The namespace follows `--`: `mix run --no-halt -- my_app`. A standalone
 Elixir runner is your own application, so it starts the way your application
-starts. An in-node runner has nothing to start: `Flezha.SDK` is a child in
-your application's supervision tree, in the same node as the controller.
+starts. A runner in the controller's own BEAM starts with that application:
+`Flezha.SDK` is a child in its supervision tree.
 
 <!-- tabs-close -->
 

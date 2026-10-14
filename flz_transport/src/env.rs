@@ -20,14 +20,54 @@
 
 use std::path::PathBuf;
 use std::str::FromStr;
+use std::sync::RwLock;
 use std::time::Duration;
+
+/// The connection settings a host may hand to the core instead of the
+/// environment, each beside the variable it stands in for. A host whose
+/// runtime keeps its own copy of the environment (the BEAM does) cannot reach
+/// the core through `setenv` once its threads run.
+pub const CONNECT_SETTINGS: &[(&str, &str)] = &[
+    ("socket_files_path", "FLEZHA_SOCKET_FILES_PATH"),
+    ("transport", "FLEZHA_TRANSPORT"),
+    ("quic_addresses", "FLEZHA_QUIC_ADDRESSES"),
+    ("ca_cert_path", "FLEZHA_CA_CERT_PATH"),
+    ("quic_client_cert", "FLEZHA_QUIC_CLIENT_CERT"),
+    ("quic_client_key", "FLEZHA_QUIC_CLIENT_KEY"),
+    ("namespace_secret", "FLEZHA_NAMESPACE_SECRET"),
+];
+
+/// The settings the host handed over, keyed by variable name.
+static HANDED_OVER: RwLock<Vec<(&'static str, String)>> = RwLock::new(Vec::new());
+
+/// Replace the handed-over settings: `(variable, value)` pairs, each variable
+/// one of [`CONNECT_SETTINGS`].
+pub fn hand_over_connect_settings(settings: Vec<(&'static str, String)>) {
+    *HANDED_OVER.write().unwrap_or_else(|e| e.into_inner()) = settings;
+}
+
+/// A connection setting: the value the host handed over, else the variable.
+/// Read at connect time only, never per message.
+pub fn connect_raw(key: &str) -> Option<String> {
+    HANDED_OVER
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .iter()
+        .find(|(var, _)| *var == key)
+        .and_then(|(_, value)| set(value))
+        .or_else(|| env_raw(key))
+}
 
 /// The variable's value, trimmed, or `None` when it is unset or empty.
 pub fn env_raw(key: &str) -> Option<String> {
-    std::env::var(key)
-        .ok()
-        .map(|v| v.trim().to_string())
+    std::env::var(key).ok().as_deref().and_then(set)
+}
+
+/// A value trimmed, or `None` when nothing is left: an empty setting is unset.
+fn set(value: &str) -> Option<String> {
+    Some(value.trim())
         .filter(|v| !v.is_empty())
+        .map(str::to_string)
 }
 
 /// The variable's value, or `default` when it is unset or empty.
@@ -63,8 +103,16 @@ pub fn env_ms(key: &str, default_ms: u64) -> Duration {
 
 /// A directory, with its trailing slashes cut; an empty value is no directory.
 pub fn env_dir(key: &str) -> Option<PathBuf> {
-    env_raw(key)
-        .map(|value| value.trim_end_matches('/').to_string())
+    as_dir(env_raw(key))
+}
+
+/// A connection setting read as a directory, by the [`env_dir`] rule.
+pub fn connect_dir(key: &str) -> Option<PathBuf> {
+    as_dir(connect_raw(key))
+}
+
+fn as_dir(raw: Option<String>) -> Option<PathBuf> {
+    raw.map(|value| value.trim_end_matches('/').to_string())
         .filter(|trimmed| !trimmed.is_empty())
         .map(PathBuf::from)
 }

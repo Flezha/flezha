@@ -8,7 +8,7 @@ defmodule Flezha.Service.Steps.Journal do
   """
 
   alias Flezha.Relay.ClassRegistry
-  alias Flezha.SDK.Wire
+  alias Flezha.State.Wire
   alias Flezha.State.Outbox
   alias Flezha.State.TaskJournal
 

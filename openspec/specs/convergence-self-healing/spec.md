@@ -198,7 +198,7 @@ On each tick the convergence snapshot SHALL compare the live intended set agains
 
 The `/healthz` HTTP endpoint MUST derive `bound_relays`, `producing_relays`, `unknown_relays`, recovery state, the intent-mismatch list, the current data-plane fabric verdict, and sensor freshness from a single `Convergence.Snapshot.current/0` reader, and the per-relay and per-plugin words it folds MUST be the verdict records that snapshot carries. It MUST NOT compute these from independent paths, and it MUST NOT judge: the fold from records to one endpoint word is one ordered table owned by the verdict record module, and the endpoint renders its result. `producing_relays` MUST be the count of relay records whose state is `healthy` — an IDLE relay counts as producing, a STUCK relay does not — and `bound_relays` the count of records that are neither `unbound`, `failed` nor `unknown` and not suspended, so a dead binding is never counted as bound. It returns `200 healthy` (every relay record `healthy`, `suspended` or `unknown`; the body carries `unknown_relays`), `200 degraded` (any relay record `degraded` or `parked`, any relay `unbound` or `failed` past the unmet-intent grace, any plugin record `degraded`, non-empty intent mismatch, `sensor_stale`, or an RPO breach — the body's reason joins the records' reasons, e.g. `dead_runner+parked+plugin_unhealthy`), `200 recovering`/`restoring_registry` (planned recovery, a gapped tick, a relay `unbound` or `failed` inside the unmet-intent grace, or a pending restore — kubelet MUST NOT restart), or `503 unhealthy` ONLY on an authoritative dead-loop (`tick_stale`), `recovery_failed`, or a persistent controller-fabric data-plane wedge (a `driver` record `degraded` with a wedged layer — `driver_loop_frozen` or `nif_queue_backing_up` — sustained for `FLEZHA_FABRIC_503_POLLS` consecutive classifier polls — default 3, `0` disables the fabric 503 — reason `data_plane_fabric_wedged` naming the layer). BEAM-remediable verdicts MUST NOT produce `503` — they are healed by the convergence pipeline and surface as `degraded`. An `unknown` record MUST NOT degrade the endpoint: an uncertain probe never escalates. An empty intended set MUST NOT short-circuit to `200 healthy` while durable evidence of intent exists.
 
-The fabric arm of that guarantee needs a NIF driver to judge, and **the scope MUST be stated wherever the guarantee is**. Both server drivers, UDS and QUIC, produce the self-report the fabric verdicts are computed from, so a controller on either transport is covered and its `/healthz` is evidence about the data plane. The `:native` in-node transport runs no driver thread and produces none, so on a native-only controller no driver measurement is emitted and `driver_loop_frozen` and `nif_queue_backing_up` cannot be minted; its `200` is evidence about the convergence loop, the relay population and the plugin set alone. The endpoint's own documentation and the classifier's driver clauses MUST carry that limitation so a user does not read a green probe as a data-plane guarantee it cannot give.
+The fabric arm of that guarantee needs a NIF driver to judge, and **the scope MUST be stated wherever the guarantee is**. Both server drivers, UDS and QUIC, produce the self-report the fabric verdicts are computed from, so a controller on either transport is covered and its `/healthz` is evidence about the data plane. The endpoint's own documentation and the classifier's driver clauses MUST state which transports carry a driver.
 
 #### Scenario: healthz reflects reality even when bound and producing diverge
 
@@ -250,7 +250,7 @@ The fabric arm of that guarantee needs a NIF driver to judge, and **the scope MU
 - **GIVEN** a controller whose transport is QUIC, whose driver produces the self-report and whose loop heartbeat has stopped advancing past the freeze threshold
 - **WHEN** the data-plane classifier runs and `/healthz` is queried
 - **THEN** driver measurements are emitted for it, `driver_loop_frozen` is minted naming the QUIC transport, and the endpoint moves toward the fabric `503` on the same sustained-poll rule a UDS controller follows
-- **AND** the `/healthz` endpoint documentation and the classifier's driver clauses state which transports carry a driver, so the limit that remains — a native-only controller — is not left to inference
+- **AND** the `/healthz` endpoint documentation and the classifier's driver clauses state which transports carry a driver
 
 #### Scenario: a parked relay is degraded at once
 
@@ -818,9 +818,7 @@ so a session that is alive over a data plane that is dead is two fields of one r
 ### Requirement: Every retry ladder is one declared row of the backoff table
 
 Every wait-before-retry in the controller SHALL be one row of
-`Flezha.Config.Backoff`'s ladder table, and every one in the Elixir SDK one of the
-four `Flezha.SDK.Knob` declares with the same arithmetic, jitter rule and events,
-held to the core's constants by the backoff seam test — rungs or a geometric base and cap, a jitter
+`Flezha.Config.Backoff`'s ladder table — rungs or a geometric base and cap, a jitter
 flag, a reset rule (`:on_success`, or `{:stable_for, duration}` where success means an
 owned process stayed up) and a give-up bound — and every site SHALL obtain its delay
 from that row through `Backoff.delay/3`, `Backoff.wait/3` or the `%Backoff{}` struct,
@@ -1075,10 +1073,6 @@ at all carries no `:driver` key rather than a differently-shaped one.
 #### Scenario: A driver's per-stream line reports what it actually did
 - **WHEN** a stream on either server driver is offered frames and its peer takes some of them
 - **THEN** every offered frame is counted either as written or as refused at the ceiling, a write the peer accepted stamps `last_write_ms`, and the reported `write_buffer_len` is the depth of that stream's own send buffer
-
-#### Scenario: A transport with no driver carries no driver key
-- **WHEN** stats are read for the `:native` in-node transport, which runs no driver thread
-- **THEN** the stats map carries no `:driver` key, no driver measurement is emitted for it, and the classifier's driver clauses do not fire on it
 
 ### Requirement: A tick's liveness read SHALL NOT walk the state tree
 

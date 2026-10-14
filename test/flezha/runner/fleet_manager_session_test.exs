@@ -171,14 +171,13 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
     test "a refused socket connect ends the session instead of admitting it", %{ns: ns} do
       {sdk, session} = stand_in_runner(ns, &refuse_the_connect/1)
 
-      assert_receive {:flz_closed, _, _},
+      assert_receive {:tcp_closed, ^sdk},
                      5_000,
                      "the refused session was left standing: " <>
                        inspect(FleetManager.active_runners(ns))
 
       refute session in FleetManager.active_runners(ns)
       refute tree_running?(session)
-      Flezha.Transport.Stream.close(sdk)
     end
 
     test "an accepted socket connect completes the handshake", %{ns: ns} do
@@ -194,17 +193,17 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
       # forgotten with the session.
       assert Marks.identity_of(session) == identity
 
-      Flezha.Transport.Stream.close(sdk)
+      :gen_tcp.close(sdk)
       assert NodeTestHelper.wait_until(fn -> Marks.identity_of(session) == session end, 5_000)
     end
 
     test "a handshake with no answer by its bound ends the session", %{ns: ns} do
-      {_sdk, session} = stand_in_runner(ns, fn _ -> :silent end)
+      {sdk, session} = stand_in_runner(ns, fn _ -> :silent end)
 
       # The bound's own timer, delivered now rather than waited for.
       send(FleetManager, {:handshake_timeout, session})
 
-      assert_receive {:flz_closed, _, _}, 5_000
+      assert_receive {:tcp_closed, ^sdk}, 5_000
       refute session in FleetManager.active_runners(ns)
     end
 
@@ -212,20 +211,20 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
          %{ns: ns} do
       {sdk, {:ok, session}} = connect(ns, %{})
       answer_next_frame(sdk, &accept/1)
-      connect_socket = next_frame()
+      connect_socket = ControlFrameTestHelper.next_command(sdk)
 
       request =
-        Flezha.SDK.Codec.encode_request(
+        ControlFrameTestHelper.encode_request(
           "admin-during-handshake",
-          Flezha.SDK.Codec.admin_request_command("Relay.list_relays", "[]")
+          {:admin_request, %RunnerCommands.AdminRequest{verb: "Relay.list_relays", args: "[]"}}
         )
 
-      :ok = Flezha.Transport.Stream.send_frame(sdk, "control_command", request, %{})
+      :ok = ControlFrameTestHelper.send_frame(sdk, "control_command", request)
 
       assert NodeTestHelper.wait_until(fn -> waiting_on?(session) end, 5_000),
              "the request was judged before the session was admitted"
 
-      refute_received {:flz_data, _, "control_command", _, _}
+      refute ControlFrameTestHelper.frame_waiting?(sdk)
 
       answer_frame(sdk, connect_socket, &accept/1)
 
@@ -233,7 +232,7 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
                ControlFrameTestHelper.await_answering_handshake(sdk, "admin-during-handshake")
 
       assert session in FleetManager.active_runners(ns)
-      Flezha.Transport.Stream.close(sdk)
+      :gen_tcp.close(sdk)
     end
 
     test "no node-wide call waits on a runner that has not answered", %{ns: ns} do
@@ -255,7 +254,7 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
         %{state | runner_namespaces: Map.delete(state.runner_namespaces, ns)}
       end)
 
-      Flezha.Transport.Stream.close(sdk)
+      :gen_tcp.close(sdk)
 
       assert NodeTestHelper.wait_until(fn -> not tree_running?(session) end, 5_000),
              "the runner's tree outlived its session because the roster had no key for #{ns}"
@@ -269,7 +268,7 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
                5_000
              )
 
-      Flezha.Transport.Stream.close(sdk)
+      :gen_tcp.close(sdk)
       assert NodeTestHelper.wait_until(fn -> not tree_running?(session) end, 5_000)
 
       before = :sys.get_state(FleetManager)
@@ -475,6 +474,8 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
          %{ns: ns, identity: id} do
       process = %{"stable_id" => id, "incarnation" => "i1"}
       {sdk, session} = stand_in_runner(ns, &accept/1, process)
+      # The stand-in dials from this OS process, which the socket names.
+      os_pid = String.to_integer(System.pid())
 
       assert NodeTestHelper.wait_until(
                fn -> session in FleetManager.active_runners(ns) end,
@@ -487,14 +488,13 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
         capture_log(fn ->
           assert {:ok, mark} = Fleet.drop_runner(ns, session, @drop_context)
 
-          assert %{namespace: ^ns, stable_id: ^id, incarnation: "i1", pid: nil, dropped_by: nil} =
-                   mark
+          assert %{namespace: ^ns, stable_id: ^id, incarnation: "i1", pid: ^os_pid} = mark
+          assert mark.dropped_by == nil
 
           assert mark.node == node()
           assert is_integer(mark.dropped_at)
 
-          sdk_stream = Flezha.Transport.Stream.stream_id(sdk)
-          assert_receive {:flz_closed, ^sdk_stream, _reason}, 5_000
+          assert_receive {:tcp_closed, ^sdk}, 5_000
 
           assert NodeTestHelper.wait_until(
                    fn -> session not in FleetManager.active_runners(ns) end,
@@ -509,7 +509,7 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
       assert {_sdk, {:error, {:runner_dropped, ^ns, ^id}}} = connect(ns, process)
 
       assert_received {:drop_refused, %{count: 1},
-                       %{namespace: ^ns, stable_id: ^id, pid: nil, node: refused_on}}
+                       %{namespace: ^ns, stable_id: ^id, pid: ^os_pid, node: refused_on}}
 
       assert refused_on == node()
       assert_received {:rejected, %{count: 1}, %{reason: {:runner_dropped, ^ns, ^id}}}
@@ -549,8 +549,7 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
       assert FleetManager.drop_matching(ns, id, "i2") == 0
       assert FleetManager.drop_matching(ns, id, "i1") == 1
 
-      sdk_stream = Flezha.Transport.Stream.stream_id(sdk)
-      assert_receive {:flz_closed, ^sdk_stream, _reason}, 5_000
+      assert_receive {:tcp_closed, ^sdk}, 5_000
       refute Map.has_key?(:sys.get_state(FleetManager).pending_handshakes, session)
     end
 
@@ -718,10 +717,9 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
     end)
   end
 
-  # A runner played by this process on a real in-node stream: it connects the
-  # way the in-node SDK does, with `extra` merged into its handshake payload,
-  # then answers each handshake frame as `answer` says. `:silent` answers
-  # nothing.
+  # A runner played by this process on the controller's UDS control socket,
+  # with `extra` merged into its handshake payload, answering each handshake
+  # frame as `answer` says. `:silent` answers nothing.
   defp stand_in_runner(namespace, answer, extra \\ %{}) do
     {sdk, {:ok, session}} = connect(namespace, extra)
 
@@ -730,18 +728,12 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
     {sdk, session}
   end
 
-  defp answer_next_frame(sdk, answer), do: answer_frame(sdk, next_frame(), answer)
+  defp answer_next_frame(sdk, answer),
+    do: answer_frame(sdk, ControlFrameTestHelper.next_command(sdk), answer)
 
-  defp next_frame do
-    assert_receive {:flz_data, _, "control_command", bin, _}, 5_000
-    {:ok, %{reference_id: ref, command: {kind, _}}} = Flezha.SDK.Codec.decode_command(bin)
-    {ref, kind}
-  end
-
-  defp answer_frame(sdk, {ref, kind}, answer) do
+  defp answer_frame(sdk, {ref, kind, _command}, answer) do
     with {status, errors} <- answer.(kind) do
-      response = Flezha.SDK.Codec.encode_response(ref, status, errors)
-      Flezha.Transport.Stream.send_frame(sdk, "control_command", response, %{})
+      ControlFrameTestHelper.answer(sdk, ref, status, errors)
     end
   end
 
@@ -752,13 +744,8 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
     )
   end
 
-  # Open an in-node stream and connect over it, answering the connect's result.
+  # Connect over the control socket, answering the connect's result.
   defp connect(namespace, extra) do
-    Flezha.Transport.Server.ensure_started(:native)
-    {sdk, controller_side} = Flezha.SDK.LocalStream.open()
-    :ok = Flezha.Transport.Stream.controlling_process(sdk, self())
-    :ok = Flezha.Transport.Stream.set_active(sdk)
-
     payload =
       Map.merge(
         %{
@@ -770,7 +757,7 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
         extra
       )
 
-    {sdk, Flezha.Transport.Server.connect(payload, controller_side)}
+    ControlFrameTestHelper.open_runner(payload)
   end
 
   defp accept(_kind), do: {"success", []}

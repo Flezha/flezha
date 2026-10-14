@@ -26,7 +26,7 @@ defmodule Flezha.Runner.ControlChannel.Requests do
   alias Flezha.Runner.FleetManager.Session
   alias Flezha.Runner.StreamChannel.Records
   alias Flezha.Runner.StreamPool
-  alias Flezha.SDK.Wire
+  alias Flezha.State.Wire
   alias Flezha.Service.Admin
   alias Flezha.Service.HubManager
   alias Flezha.Service.RelayManager

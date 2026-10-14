@@ -87,7 +87,7 @@ $control->bindPlugin('writer', 'my_echo', hooks: [['on_output', new stdClass()]]
 ```elixir
 # application.ex: the echo application's plugin calls
 alias Flezha.SDK.Control
-runner = Flezha.SDK.RunnerServer
+runner = Flezha.SDK.Runner
 {:ok, _} =
   Control.enable_plugin(runner, "writer", "relay_file_output",
     opts: %{"path" => "echo-out.txt"}

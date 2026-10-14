@@ -66,7 +66,7 @@ defmodule FlezhaTest.System.StepsCrashResumeE2ETest do
   alias Flezha.State.Completion
   alias Flezha.Service.Cli
   alias Flezha.State.Paths
-  alias Flezha.SDK.Wire
+  alias Flezha.State.Wire
   alias Flezha.State.Outbox
   alias Flezha.State.TaskJournal
   alias Flezha.State.WalWriter
@@ -742,7 +742,7 @@ defmodule FlezhaTest.System.StepsCrashResumeE2ETest do
     |> Path.wildcard()
     |> Enum.flat_map(fn path ->
       {:ok, records} =
-        Flezha.SDK.RecordFrame.fold_bytes(File.read!(path), {:log, "effect_records"}, [], fn
+        Flezha.State.Frame.fold_bytes(File.read!(path), {:log, "effect_records"}, [], fn
           {seq, header, body, _raw}, acc ->
             case Wire.decode_effect_record(header, body) do
               nil -> {:cont, acc}

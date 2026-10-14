@@ -113,6 +113,11 @@ pub enum RunnerMessage {
     RemoveFactory {
         factory_id: String,
     },
+    /// The host gave up on the start that spawned this coordinator, refused
+    /// or unconfirmed: it must not reconnect behind the host's back, where a
+    /// host that starts again in the same process would meet it as a second
+    /// runner.
+    Abandon,
 }
 
 impl RunnerMessage {

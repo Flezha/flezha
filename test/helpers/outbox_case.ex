@@ -21,8 +21,8 @@ defmodule FlezhaTest.OutboxCase do
 
   alias Flezha.Dlq.Store, as: DlqStore
   alias Flezha.Relay.ClassRegistry
-  alias Flezha.SDK.RecordFrame
-  alias Flezha.SDK.Wire
+  alias Flezha.State.Frame
+  alias Flezha.State.Wire
   alias Flezha.State.{InputLog, Outbox, Supervisor, TestHelpers, WalWriter}
 
   using do
@@ -49,7 +49,7 @@ defmodule FlezhaTest.OutboxCase do
 
       alias Flezha.Dlq.Store, as: DlqStore
       alias Flezha.Relay.ClassRegistry
-      alias Flezha.SDK.{RecordFrame, Wire}
+      alias Flezha.State.{Frame, Wire}
       alias Flezha.Service.Cli
 
       alias Flezha.State.{
@@ -91,10 +91,10 @@ defmodule FlezhaTest.OutboxCase do
 
   # Header byte 9 is the format id: 2 marks an effect record.
   def effect_header(),
-    do: RecordFrame.encode_header(1, 1, 1, RecordFrame.format_id(:effect_record), <<>>)
+    do: Frame.encode_header(1, 1, 1, Frame.format_id(:effect_record), <<>>)
 
   def plain_header(),
-    do: RecordFrame.encode_header(1, 1, 1, RecordFrame.format_id(:postcard), <<>>)
+    do: Frame.encode_header(1, 1, 1, Frame.format_id(:postcard), <<>>)
 
   def effect_body(outputs, offset, dlq \\ nil) do
     Wire.encode_effect_body(%{

@@ -26,9 +26,6 @@ owns the mechanism; for concepts, [`architecture/`](https://github.com/flezha/fl
 - **Cluster directory** — the `:pg`-backed map of which nodes hold runners for which factories and
   which node hosts each namespace hub (`Flezha.Cluster.Directory`), read locally on every node.
   A request landing on the wrong node is forwarded once, so every node is a valid entry point.
-- **Native transport** — the in-node `:native` mode of the Elixir SDK: pid-backed
-  `Flezha.SDK.LocalStream` handles and `{:flz_data, ...}` messages instead of a socket. A
-  standalone Elixir runner speaks the binary protocol over UDS/QUIC. See [`sdk/elixir_sdk.md`](https://github.com/flezha/flezha/blob/main/docs/sdk/elixir_sdk.md).
 - **Source adapter / output adapter** — where input comes from and where output goes. Both are
   plugins at the edge (a websocket, an HTTP endpoint, Kafka, Postgres), never core components.
 
@@ -319,8 +316,7 @@ owns the mechanism; for concepts, [`architecture/`](https://github.com/flezha/fl
   `poll() → Activation` / `complete(ActivationResult)`: transport, per-cell ordering, effect
   records, the retry→park ladder, timers, credit, routing and steps runs. Rust consumes
   it as a crate; Java, Node, Ruby and Python through compiled veneers over the C ABI
-  (`flz_core_ffi`); PHP through that same ABI directly, with `ext-ffi` and no veneer of its own. The Elixir SDK is
-  its own core and inherits nothing from it. See [`sdk/poll_core.md`](https://github.com/flezha/flezha/blob/main/docs/sdk/poll_core.md).
+  (`flz_core_ffi`), Elixir through a Rustler library over the same veneer; PHP through that same ABI directly, with `ext-ffi` and no veneer of its own. See [`sdk/poll_core.md`](https://github.com/flezha/flezha/blob/main/docs/sdk/poll_core.md).
 - **Host class** — a relay class declared through the C ABI as data
   (`flz_core_declare_class`, JSON, unknown fields refused); its user code runs host-side and is
   reached only through activations. Java, Node, Ruby, PHP and Python classes are host classes; typed

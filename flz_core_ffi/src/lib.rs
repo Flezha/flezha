@@ -148,6 +148,9 @@ pub struct FlzContext {
     /// The spawn handles of every outstanding activation, by number.
     spawns: DashMap<u64, Arc<Mutex<SpawnHandle>>>,
     last_spawn: AtomicU64,
+    /// The started runner's message channel, which `flz_core_shutdown` ends
+    /// the session through.
+    session: Mutex<Option<crossbeam::channel::Sender<RunnerMessage>>>,
 }
 
 /// Where a registered sink's releases go: the host takes them back through
@@ -276,6 +279,7 @@ pub extern "C" fn flz_core_context_new(shim_schema_version: u32) -> *mut FlzCont
         local_outputs: Mutex::new(None),
         spawns: DashMap::new(),
         last_spawn: AtomicU64::new(0),
+        session: Mutex::new(None),
     }))
 }
 
@@ -446,10 +450,83 @@ pub unsafe extern "C" fn flz_core_start(ctx: *mut FlzContext, namespace: *const 
     let Ok(namespace) = CStr::from_ptr(namespace).to_str() else {
         return ctx.fail(Error::Utf8("namespace"));
     };
+    start_runner(ctx, namespace, None)
+}
+
+/// [`flz_core_start`], with the connection settings handed over as a JSON
+/// object instead of read from the environment: `socket_files_path`,
+/// `transport`, `quic_addresses`, `ca_cert_path`, `quic_client_cert`,
+/// `quic_client_key` and `namespace_secret`, each a string standing in for
+/// its `FLEZHA_*` variable. A key left out resolves as `flz_core_start`
+/// resolves it. An unknown key or a value that is not a string is refused
+/// before anything connects. The process environment is never written.
+///
+/// # Safety
+/// `ctx` must be live; `namespace` must be a NUL-terminated string;
+/// `settings`/`settings_len` must describe a readable buffer.
+#[no_mangle]
+pub unsafe extern "C" fn flz_core_start_with(
+    ctx: *mut FlzContext,
+    namespace: *const c_char,
+    settings: *const u8,
+    settings_len: usize,
+) -> i32 {
+    let Some(ctx) = ctx.as_mut() else {
+        return FLZ_ERR;
+    };
+    let Ok(namespace) = CStr::from_ptr(namespace).to_str() else {
+        return ctx.fail(Error::Utf8("namespace"));
+    };
+    let settings = if settings.is_null() {
+        &[][..]
+    } else {
+        std::slice::from_raw_parts(settings, settings_len)
+    };
+    match connect_settings(settings) {
+        Ok(handed_over) => start_runner(ctx, namespace, Some(handed_over)),
+        Err(refusal) => ctx.fail(refusal),
+    }
+}
+
+/// The settings document as `(variable, value)` pairs.
+fn connect_settings(bytes: &[u8]) -> Result<Vec<(&'static str, String)>, Error> {
+    let refused = |setting: &str, reason| Error::ConnectSetting {
+        setting: setting.to_string(),
+        reason,
+    };
+    let document: serde_json::Map<String, serde_json::Value> = serde_json::from_slice(bytes)
+        .map_err(|_| refused("", "the settings are not a JSON object"))?;
+    document
+        .into_iter()
+        .map(|(key, value)| {
+            let var = flz_transport::env::CONNECT_SETTINGS
+                .iter()
+                .find(|(name, _)| *name == key)
+                .map(|(_, var)| *var)
+                .ok_or_else(|| refused(&key, "not a connection setting"))?;
+            match value {
+                serde_json::Value::String(value) => Ok((var, value)),
+                _ => Err(refused(&key, "its value is not a string")),
+            }
+        })
+        .collect()
+}
+
+fn start_runner(
+    ctx: &mut FlzContext,
+    namespace: &str,
+    handed_over: Option<Vec<(&'static str, String)>>,
+) -> i32 {
+    if flz_core::poll_core::global().is_shut_down() {
+        return ctx.fail(Error::ShutDown);
+    }
     if ctx.started.swap(true, Ordering::AcqRel) {
         return ctx.fail(Error::AlreadyStarted);
     }
+    // A plain start clears what an earlier start in this process handed over.
+    flz_transport::env::hand_over_connect_settings(handed_over.unwrap_or_default());
     let (otx, orx) = crossbeam::channel::unbounded::<RunnerMessage>();
+    let abandon = otx.clone();
     let (confirm_tx, confirm_rx) = crossbeam::channel::unbounded::<ClientResponseMessage>();
     let bridge = flz_core::shutdown::ShutdownBridge::new();
     flz_core::shutdown::register_bridge(Arc::clone(&bridge));
@@ -460,13 +537,21 @@ pub unsafe extern "C" fn flz_core_start(ctx: *mut FlzContext, namespace: *const 
         confirm_tx,
         bridge,
     );
-    match confirm_rx.recv_timeout(Duration::from_secs(error::CONNECT_CONFIRM_SECS)) {
+    let refused = match confirm_rx.recv_timeout(Duration::from_secs(error::CONNECT_CONFIRM_SECS)) {
         Ok(ClientResponseMessage::ConnectRefused(refusal)) => {
-            ctx.fail(flz_core::Error::Connect(refusal).into())
+            flz_core::Error::Connect(refusal).into()
         }
-        Ok(_) => FLZ_OK,
-        Err(_) => ctx.fail(Error::ConnectUnconfirmed),
-    }
+        Ok(_) => {
+            *ctx.session.lock().unwrap_or_else(|p| p.into_inner()) = Some(abandon);
+            return FLZ_OK;
+        }
+        Err(_) => Error::ConnectUnconfirmed,
+    };
+    // A failed start leaves no runner behind: the host may start again in
+    // this process.
+    flz_core::control_unit::abandon_starts();
+    let _ = abandon.send(RunnerMessage::Abandon);
+    ctx.fail(refused)
 }
 
 /// Block for up to `timeout_ms` for one activation. On
@@ -609,12 +694,18 @@ pub unsafe extern "C" fn flz_core_abandon(ctx: *mut FlzContext, token: u64) -> i
 /// `ctx` must be live.
 #[no_mangle]
 pub unsafe extern "C" fn flz_core_shutdown(ctx: *mut FlzContext) {
-    if ctx.is_null() {
+    let Some(ctx) = ctx.as_ref() else {
         return;
-    }
-    let sequence = || {
+    };
+    // The session ends once its state is shipped, so a host whose process
+    // outlives the runner leaves no connection behind.
+    let session = ctx.session.lock().unwrap_or_else(|p| p.into_inner()).take();
+    let sequence = move || {
         flz_core::shutdown::run_active_graceful_shutdown();
         flz_core::poll_core::global().shutdown();
+        if let Some(session) = session {
+            let _ = session.send(RunnerMessage::Abandon);
+        }
     };
     if std::thread::Builder::new()
         .name("flz-shutdown".into())

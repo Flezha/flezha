@@ -23,7 +23,7 @@ defmodule Flezha.Relay.PartitionGroup do
   alias Flezha.Partition
   alias Flezha.Plugin
   alias Flezha.Plugin.SpecDecoder
-  alias Flezha.SDK.KeyGroup
+  alias Flezha.Relay.KeyGroup
   alias Flezha.Service.HubManager
   alias Flezha.Service.RelayManager
   alias Flezha.Service.RelayManager.Admission

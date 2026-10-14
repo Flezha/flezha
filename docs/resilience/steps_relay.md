@@ -105,7 +105,7 @@ so a consumed message is never re-delivered. The appends debit the source credit
 class never sleeps unless it says so) and `false` for never; a
 class kept in memory has nothing to sleep on. An instance of any loop shape whose class sleeps
 and whose inbox stays empty past its class's `sleep_after` (announced as `sleep_after_ms`; read
-in the shared core, so every host SDK agrees, and by the Elixir SDK's own driver) at a committed
+in the shared core, so every host SDK agrees) at a committed
 boundary, with every Cell drained, asks to sleep without a completion and ships `IterPark`,
 naming the last message it parked to the dead-letter queue unread. The controller writes the
 instance's park record (`ClassRegistry.put_parked/2`, an ETS entry and a durable sidecar in the

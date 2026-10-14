@@ -378,8 +378,8 @@ flowchart TB
   therefore moves whole slices of key groups instead of moving almost every
   key, and an uneven split later would need no format change. The hash has
   two implementations, kept equal by one fixture set: `flz_core`
-  (`flz_core/src/relay/instance.rs`), used by the six SDKs on it, and the
-  Elixir SDK's `Flezha.SDK.KeyGroup`, which the controller uses too.
+  (`flz_core/src/relay/instance.rs`), used by every SDK, and the
+  controller's `Flezha.Relay.KeyGroup`.
 - **The routing rule is checked, not trusted.** The item a source subscribes
   with, and the `flz.key` a forward routes on, must equal what `key_by`
   returns. The runner checks every computed cell key against its member's

@@ -26,6 +26,7 @@ use crate::{
 /// concurrency is bound to one thread keeps every one of these off it.
 pub const BLOCKING_ENTRY_POINTS: &[&str] = &[
     "flz_core_start",
+    "flz_core_start_with",
     "flz_core_poll",
     "flz_core_wait_starvation",
     "flz_core_complete",
@@ -273,6 +274,19 @@ pub fn check_class(ctx: CtxPtr, json: &[u8]) -> Result<Vec<u8>, Refusal> {
 pub fn start(ctx: CtxPtr, namespace: &CStr) -> Result<(), Refusal> {
     verdict(ctx, unsafe {
         crate::flz_core_start(ctx.get(), namespace.as_ptr())
+    })
+}
+
+/// [`start`] with the connection settings handed over as a JSON object
+/// rather than read from the environment.
+pub fn start_with(ctx: CtxPtr, namespace: &CStr, settings: &[u8]) -> Result<(), Refusal> {
+    verdict(ctx, unsafe {
+        crate::flz_core_start_with(
+            ctx.get(),
+            namespace.as_ptr(),
+            settings.as_ptr(),
+            settings.len(),
+        )
     })
 }
 

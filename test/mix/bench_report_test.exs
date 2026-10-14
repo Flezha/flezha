@@ -285,8 +285,7 @@ defmodule Mix.Tasks.Bench.ReportTest do
 
     test "names each selecting variable and its current value" do
       assert Report.dispatch_note(:rust) =~ "FLEZHA_WORKER_POOL_SIZE=default"
-      # A topology with no selector says only its model.
-      assert Report.dispatch_note(:elixir) == "process-per-cell"
+      assert Report.dispatch_note(:elixir) =~ "thread-pool, FLEZHA_WORKER_POOL_MAX=default"
     end
   end
 

@@ -12,7 +12,7 @@ defmodule Flezha.Service.Relay.Info do
   alias Flezha.Relay.ClassRegistry
   alias Flezha.Partition
   alias Flezha.Plugin.Extension.Table.Health, as: TableHealth
-  alias Flezha.SDK.KeyGroup
+  alias Flezha.Relay.KeyGroup
   alias Flezha.Service.HubManager
   alias Flezha.Service.RelayManager
   alias Flezha.State.Completion

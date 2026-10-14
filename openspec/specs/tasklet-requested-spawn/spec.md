@@ -8,8 +8,8 @@ The tasklet-requested-spawn capability lets a running tasklet ask the cluster fo
 
 Every SDK SHALL expose a context call that takes a steps relay `factory_id` and a `payload` first,
 and an optional `id` and an optional `if_running` as named arguments in the form its language
-has, usable from inside any tasklet: Rust, Java, Node, Python, Ruby and PHP through the shared
-core, and Elixir in its own core. The call shapes SHALL be:
+has, usable from inside any tasklet: Rust, Java, Node, Python, Ruby, PHP and Elixir through the
+shared core. The call shapes SHALL be:
 
 - Rust: `ctx.spawn_steps(factory_id, payload)` and
   `ctx.spawn_steps_with(factory_id, payload, SpawnOptions::id(id).if_running(IfRunning::Error))`

@@ -44,17 +44,11 @@ defmodule FlezhaTest.SdkConformance.TopologyCheckTest do
     "sdk/elixir/lib"
   ]
 
-  # The seam and the one re-expression of it. The Elixir SDK is its own core and
-  # inherits nothing from `flz_core` (docs/architecture/runner.md, "One change,
-  # every SDK"), so it re-expresses the check against the same fixture; that is a
-  # second seam, not a bypass of this one.
+  # The seam: every SDK, the Elixir one included, submits to it.
   @seam_files [
     "flz_core/src/host/register.rs",
     "flz_core/src/host/chains.rs",
-    "flz_core/src/host/issue.rs",
-    "sdk/elixir/lib/flezha/sdk/topology.ex",
-    "sdk/elixir/lib/flezha/sdk/channels.ex",
-    "sdk/elixir/lib/flezha/sdk/steps/spec.ex"
+    "flz_core/src/host/issue.rs"
   ]
 
   # Sites that carry a verdict `flz_core` already reached without deciding

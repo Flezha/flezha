@@ -252,8 +252,8 @@ everything down so the next start is empty, go in reverse order:
 
 1. Disable the plugins: `flz plugin disable <name>` ([`plugins.md`](../plugins/plugins.md)).
 2. Stop the relays: `flz relay stop <id>`.
-3. Stop the runners: SIGTERM, or Ctrl-C in a terminal. An in-node Elixir
-   runner stops with the controller.
+3. Stop the runners: SIGTERM, or Ctrl-C in a terminal. An Elixir runner in
+   the controller's own BEAM stops with the controller.
 4. Stop the controller: `flz controller stop`, `docker stop`, or, embedded in
    an Elixir application, with the application.
 
@@ -369,7 +369,7 @@ processed once `awaitTermination()` starts serving.
 ```elixir
 # lib/echo/application.ex: the runner's control and send calls
 alias Flezha.SDK.Control
-runner = Flezha.SDK.RunnerServer
+runner = Flezha.SDK.Runner
 {:ok, %{id: "my_echo"}} = Control.start_relay(runner, "echo", id: "my_echo")
 {:ok, _} = Flezha.SDK.send(runner, "my_echo", "hello world", "in", msg_id: "hello-1")
 ```
@@ -521,10 +521,9 @@ And in Elixir:
 :ok = Flezha.SDK.Local.stop(run)
 ```
 
-The Elixir SDK runs local mode in its own core rather than the shared Rust
-kernel. Both are held to one recorded expectation,
-`test/fixtures/local_mode_word_count.txt`, which every SDK's local-mode suite
-reads.
+Every SDK runs local mode on the same core and is held to one recorded
+expectation, `test/fixtures/local_mode_word_count.txt`, which every SDK's
+local-mode suite reads.
 
 ### What you run is what you deploy
 

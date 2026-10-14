@@ -5,7 +5,7 @@ defmodule Flezha.State.RestoreTest do
   import ExUnit.CaptureLog
 
   alias Flezha.Relay.Replay
-  alias Flezha.SDK.RecordFrame, as: Frame
+  alias Flezha.State.Frame
   alias Flezha.State.{Paths, RecordFrame, Restore, Snapshot, Supervisor, TestHelpers, WalWriter}
 
   setup do
@@ -199,7 +199,7 @@ defmodule Flezha.State.TimeTravelTest do
   # async: false: writes Application env; a shared on-disk root; node-global tables.
   use FlezhaTest.StateCase, async: false
 
-  alias Flezha.SDK.RecordFrame, as: Frame
+  alias Flezha.State.Frame
   alias Flezha.Relay.ClassRegistry
   alias Flezha.State.{RecordFrame, Snapshot, Supervisor, TestHelpers, TimeTravel, WalWriter}
 

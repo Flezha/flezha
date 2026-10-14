@@ -24,7 +24,7 @@ defmodule Flezha.Plugin.Provider.RelayForward do
   alias Flezha.Plugin.Provider.RelayForward.ForwardWorker
   alias Flezha.Plugin.Provider.WorkerSup
   alias Flezha.Plugin.ProviderBehaviour
-  alias Flezha.SDK.KeyGroup
+  alias Flezha.Relay.KeyGroup
   alias Flezha.Service.HubManager
   alias Flezha.Service.RelayManager
   alias Flezha.State.Outbox

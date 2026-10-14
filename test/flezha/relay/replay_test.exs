@@ -357,7 +357,7 @@ defmodule FlezhaTest.Relay.BindReforwardTest do
 
   The precondition every case here needs is "the relay's data stream is not
   bound yet". It is forced, never raced: a real `StreamChannel` starts with a
-  nil `stream_ref` and stays there until this test binds a `LocalStream` to it,
+  nil `stream_ref` and stays there until this test binds a stream to it,
   so the unbound window is as wide as the test wants and the bind happens on the
   product's own `{:bind, ref}` path.
   """
@@ -373,7 +373,7 @@ defmodule FlezhaTest.Relay.BindReforwardTest do
   alias Flezha.State.InputLog
   alias Flezha.State.TaskJournal
   alias Flezha.State.TestHelpers
-  alias Flezha.SDK.LocalStream
+  alias FlezhaTest.Helper.StreamPair
   alias FlezhaTest.Helper.NodeTestHelper
 
   setup do
@@ -574,7 +574,8 @@ defmodule FlezhaTest.Relay.BindReforwardTest do
                1_000
              )
 
-      {_sdk, controller} = LocalStream.open()
+      {controller, close} = StreamPair.open()
+      on_exit(close)
       :ok = GenServer.call(ctx.channel, {:bind, controller})
 
       assert_receive {:gate, :ok}
@@ -592,15 +593,13 @@ defmodule FlezhaTest.Relay.BindReforwardTest do
 
   # --- helpers ---
 
-  # Bind a live native stream to the channel through the product's own atomic
-  # bind call, with this process owning the SDK side so every forwarded frame
+  # Bind a live stream to the channel through the product's own atomic bind
+  # call, with this process reading the runner's side so every forwarded frame
   # lands in the test's mailbox.
   defp bind_stream(%{channel: channel}) do
-    {sdk, controller} = LocalStream.open()
-    :ok = LocalStream.controlling_process(sdk, self())
-    :ok = LocalStream.set_active(sdk)
+    {controller, close} = StreamPair.open()
     :ok = GenServer.call(channel, {:bind, controller})
-    on_exit(fn -> LocalStream.close(controller) end)
+    on_exit(close)
     :ok
   end
 

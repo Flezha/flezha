@@ -39,7 +39,7 @@ defmodule Flezha.State.InputLog do
   alias Flezha.Config.Durations
   alias Flezha.Relay.ClassRegistry
   alias Flezha.Process.Cspec
-  alias Flezha.SDK.RecordFrame, as: Frame
+  alias Flezha.State.Frame
   alias Flezha.SDK.SafeCall
 
   alias Flezha.State.{

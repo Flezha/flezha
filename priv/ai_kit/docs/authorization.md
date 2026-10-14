@@ -143,8 +143,7 @@ A runner does not just name the namespace it works in; it proves it:
 | --- | --- |
 | QUIC, client certificate carrying a SPIFFE `/ns/<name>` entry | the certificate |
 | QUIC, certificate without `/ns/` (the pair the controller generates) | the presented credential |
-| socket (UDS) | the presented credential |
-| in-node (the Elixir SDK inside the controller) | running in the controller's own node |
+| socket (UDS), the Elixir SDK in the controller's own BEAM included | the presented credential |
 
 The connect still names a namespace, because a runner entitled to several has
 to say which it wants. A namespace the credential does not entitle is refused,

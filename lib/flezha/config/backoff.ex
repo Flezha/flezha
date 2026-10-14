@@ -1,8 +1,7 @@
 defmodule Flezha.Config.Backoff do
   @moduledoc """
-  Every wait-before-retry in the controller, as one table of declared ladders.
-  The arithmetic, the jitter and the announcements are `Flezha.SDK.Knob`'s, which
-  the Elixir SDK's own four ladders wait by too.
+  Every wait-before-retry in the controller, as one table of declared ladders,
+  and the one arithmetic every ladder waits by.
 
   A row is a key and the schedule that key waits: rungs (a list, indexed by the
   attempt and held at the last) or a geometric `base`/`cap` (`base · 2^(n−1)`),
@@ -24,12 +23,14 @@ defmodule Flezha.Config.Backoff do
   `[:flezha, :backoff, :reset]` naming the ladder, the target and the attempt,
   so a ladder's behaviour is observable without reading its site.
 
-  **One jitter rule.** `Flezha.SDK.Knob.jitter/2` is uniform in `[d/2, 3d/2)` and the cap is
+  **One jitter rule.** `jitter/2` is uniform in `[d/2, 3d/2)` and the cap is
   applied after it, so no row's wait exceeds its cap.
   """
 
   alias Flezha.Config.Durations
-  alias Flezha.SDK.Knob
+
+  @wait_event [:flezha, :backoff, :wait]
+  @reset_event [:flezha, :backoff, :reset]
 
   # The convergence loop's rungs. Dense early because the common fault is a
   # runner restart measured in seconds, and a coarse first step punishes that
@@ -145,7 +146,29 @@ defmodule Flezha.Config.Backoff do
     row = ladder(ladder)
     resolved = %{row | base: bound(opts[:base] || row.base), cap: bound(opts[:cap] || row.cap)}
 
-    Knob.delay(resolved, attempt, Keyword.take(opts, [:rand]))
+    plain = rung(resolved, attempt)
+    if resolved[:jitter], do: min(jitter(plain, opts[:rand]), cap(resolved)), else: plain
+  end
+
+  # `rungs` indexed by the attempt and held at the last, or a geometric `base`
+  # growing by `factor` (2 unless the row says), the exponent held at
+  # `exponent_cap` when the row names one, and capped at `cap` always.
+  defp rung(%{rungs: rungs}, attempt) when is_list(rungs),
+    do: Enum.at(rungs, attempt - 1) || List.last(rungs)
+
+  defp rung(row, attempt) do
+    exponent = if row[:exponent_cap], do: min(attempt - 1, row.exponent_cap), else: attempt - 1
+    factor = row[:factor] || 2
+    min(round(row.base * Float.pow(factor / 1, exponent / 1)), cap(row))
+  end
+
+  defp cap(row), do: row[:cap] || List.last(row.rungs)
+
+  @doc "Uniform in `[value/2, value · 3/2)`, the one jitter rule every ladder spreads by."
+  @spec jitter(non_neg_integer(), (pos_integer() -> pos_integer()) | nil) :: non_neg_integer()
+  def jitter(value, rand \\ nil) do
+    rand = rand || (&:rand.uniform/1)
+    div(value, 2) + rand.(max(value, 1))
   end
 
   @doc """
@@ -153,8 +176,16 @@ defmodule Flezha.Config.Backoff do
   a timer rather than sleeping. Answers the delay so it reads as one call.
   """
   @spec arm(ladder(), pos_integer(), term(), keyword()) :: non_neg_integer()
-  def arm(ladder, attempt, target, opts \\ []),
-    do: Knob.announce(ladder, attempt, target, delay(ladder, attempt, opts))
+  def arm(ladder, attempt, target, opts \\ []) do
+    delay = delay(ladder, attempt, opts)
+
+    :telemetry.execute(@wait_event, %{delay_ms: delay, attempt: attempt}, %{
+      ladder: ladder,
+      target: target
+    })
+
+    delay
+  end
 
   @doc """
   `arm/4` and the sleep — the one spelling of "wait before trying again" for a
@@ -184,7 +215,10 @@ defmodule Flezha.Config.Backoff do
   the reset is visible on telemetry rather than only in its state.
   """
   @spec reset(ladder(), term()) :: 0
-  defdelegate reset(ladder, target), to: Knob
+  def reset(ladder, target) do
+    :telemetry.execute(@reset_event, %{attempt: 0}, %{ladder: ladder, target: target})
+    0
+  end
 
   @doc """
   Keep only the ops whose `{primitive, target}` key is past its cooldown

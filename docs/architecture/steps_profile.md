@@ -439,10 +439,7 @@ channel bringing an acknowledgement or a stop, the data channel bringing a messa
 reaching a deadline all advance it. The core owns the journal exchange, the stage's record
 ranges, the undo plan, the loop, sleeping and rewind. The SDK supplies the tasklet bodies and the
 threads that run them: Rust runs an item on a pool worker, Java on a virtual thread. Neither owns
-the chain's position, so those six SDKs share one resume and undo behaviour.
-
-The Elixir SDK does not use `flz_core`. It has its own steps driver in Elixir
-(`sdk/elixir/lib/flezha/sdk/steps/driver.ex`), speaking the same messages to the controller.
+the chain's position, so every SDK shares one resume and undo behaviour.
 Details of the split: [`poll_core.md`](https://github.com/flezha/flezha/blob/main/docs/sdk/poll_core.md)
 and [`runner.md`](runner.md).
 

@@ -7,7 +7,7 @@
 #      sdk/java/flezha-sdk-native/src/main/resources/native/<sdk-dir>/libflz_core_ffi.<ext>
 #   1a. flz-fake-controller (feature "fake-controller") for all 5 platforms ->
 #      dist/tools/<sdk-dir>/flz-fake-controller
-#   1f. the Elixir SDK's socket client (flz_sdk_nif) for all 5 platforms, packed
+#   1f. the Elixir SDK's native library (flz_core_beam) for all 5 platforms, packed
 #      as rustler_precompiled downloads it, with the checksum file the package
 #      carries -> dist/elixir-nifs/
 #   1b. The contract set (test/fixtures/contract.txt) as one archive, staged
@@ -164,7 +164,7 @@ wheel_tiers() {
     echo "cp${v//[.t]/}-cp${v//[.t]/}t|--interpreter python${v}"
   done
 }
-# The Elixir SDK's socket client archives, and the checksum file the package
+# The Elixir SDK's native library archives, and the checksum file the package
 # carries beside them.
 ELIXIR_NIFS_OUT="${REPO_ROOT}/dist/elixir-nifs"
 ELIXIR_NIF_CHECKSUMS="checksum-Elixir.Flezha.SDK.Native.exs"
@@ -460,7 +460,7 @@ for t in "${ALL_TRIPLES[@]}"; do
 done
 
 # ---------------------------------------------------------------------------
-# 4f. The Elixir SDK's socket client, one per triple.
+# 4f. The Elixir SDK's native library, one per triple.
 #
 #     Each archive holds the library under the archive's own name, which is
 #     what `rustler_precompiled` extracts and loads, and the checksum file is
@@ -472,10 +472,10 @@ rm -rf "${ELIXIR_NIFS_OUT}"
 mkdir -p "${ELIXIR_NIFS_OUT}"
 elixir_checksums=()
 for t in "${ALL_TRIPLES[@]}"; do
-  step "building flz_sdk_nif for ${t}"
-  cargo_for_triple "${t}" -p flz_sdk_nif
+  step "building flz_core_beam for ${t}"
+  cargo_for_triple "${t}" -p flz_core_beam
   nif="$(elixir_nif_name "${t}" "${RELEASE_VERSION}")"
-  stage_built "${t}" "${TRIPLE_TO_PREFIX[${t}]}flz_sdk_nif.${TRIPLE_TO_EXT[${t}]}" \
+  stage_built "${t}" "${TRIPLE_TO_PREFIX[${t}]}flz_core_beam.${TRIPLE_TO_EXT[${t}]}" \
               "${ELIXIR_NIFS_OUT}/${nif}"
   tar -czf "${ELIXIR_NIFS_OUT}/${nif}.tar.gz" -C "${ELIXIR_NIFS_OUT}" "${nif}"
   rm "${ELIXIR_NIFS_OUT}/${nif}"

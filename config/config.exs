@@ -11,9 +11,9 @@ config :flezha,
   pre_hooks: [],
   post_hooks: []
 
-# The Elixir SDK in this VM runs in-node and dials no socket, so its socket
-# client is neither downloaded nor compiled. `config/test.exs` builds it: the
-# controller's own transport tests dial through it.
+# The controller runs no Elixir SDK runner in its own VM, so the SDK's native
+# library is neither downloaded nor compiled. `config/test.exs` builds it: a
+# test starts a runner in the controller's own BEAM.
 config :flezha_sdk, socket_nif: false
 
 config :logger,

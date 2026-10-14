@@ -25,7 +25,7 @@ defmodule FlezhaTest.System.ListenerSurvivalDrillTest do
   alias Flezha.Relay.{Builder, PartitionGroup}
   alias Flezha.Partition
   alias Flezha.Plugin.Extension.Table
-  alias Flezha.SDK.KeyGroup
+  alias Flezha.Relay.KeyGroup
   alias Flezha.Service.{Cli, HubManager, Listener, RelayManager, PluginManager}
   alias FlezhaTest.Fixtures.RelayFixture
   alias FlezhaTest.Helper.{FleetStateHelper, NodeTestHelper, TierE2EHarness}

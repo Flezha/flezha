@@ -39,7 +39,7 @@ defmodule Flezha.Relay.Overwatch do
 
   # Reply-frame metadata key carrying the `change_seq` a single selected Cell
   # was serialized at (stamped by both SDKs' `CellState` handler). Spelled
-  # here rather than read from `Flezha.SDK.Wire`, which owns the wire's other
+  # here rather than read from `Flezha.State.Wire`, which owns the wire's other
   # `flz.` keys: `relay` ranks below `state`, so naming it would be a new
   # upward reference `scripts/check-layer-direction.sh` refuses.
   @change_seq_meta_key "flz.change_seq"

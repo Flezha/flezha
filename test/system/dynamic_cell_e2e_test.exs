@@ -118,7 +118,7 @@ defmodule FlezhaTest.System.DynamicCellE2ETest do
                cell_key: "never-seen"
              })
 
-    assert refusal =~ "cell_not_found"
+    assert %Flezha.Error{code: "state.cell_not_found"} = refusal
   end
 
   # The Java arm asserts against LIVE Cell state rather than the WAL: the

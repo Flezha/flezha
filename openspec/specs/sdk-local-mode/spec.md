@@ -182,9 +182,8 @@ which is the one place the word is correct.
 
 The capability SHALL ship in every SDK this repository publishes — Rust, Java,
 Elixir, Node, Python, Ruby and PHP — and the behaviour observed through each
-SHALL be equivalent for an equivalent declaration. The Elixir SDK SHALL express
-the capability in its own core, which inherits nothing from the shared Rust
-kernel; the remaining SDKs reach one implementation through `flz_core`.
+SHALL be equivalent for an equivalent declaration. Every SDK reaches one
+implementation through `flz_core`.
 
 No SDK is deferred once this change lands, so no documentation may name one as
 deferred.

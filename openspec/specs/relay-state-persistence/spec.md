@@ -338,7 +338,7 @@ Every WAL record and snapshot file SHALL carry a 16-byte header preceding the pa
 
 The agent SHALL stamp the header at write time using the SDK-supplied values (the SDK ships the header pre-stamped in the wire frame; the agent writes it verbatim). The agent SHALL treat an unknown `sdk_lang` or `format_id` as opaque — it stores and re-ships such records unchanged and SHALL NOT reject them, so allocating a new SDK's value requires no agent change. The agent SHALL, however, **read** byte 0 to resolve a factory's established language for the placement guard; that read is a routing decision, not a validation of the body.
 
-The SDK SHALL verify the header at read time on **every** restore path — the typed path, the host path and an SDK that is its own core alike — before any body reaches a codec. A record whose `sdk_lang` is not the reading SDK's own value SHALL be refused with a language-mismatch error naming both values; the SDK SHALL NOT attempt to decode it, and SHALL NOT fall back to a partial or empty state. The agent SHALL NOT verify the header except for the leading WAL record-framing crc32 over `header + change_bytes`.
+The SDK SHALL verify the header at read time on **every** restore path — the typed path and the host path alike — before any body reaches a codec. A record whose `sdk_lang` is not the reading SDK's own value SHALL be refused with a language-mismatch error naming both values; the SDK SHALL NOT attempt to decode it, and SHALL NOT fall back to a partial or empty state. The agent SHALL NOT verify the header except for the leading WAL record-framing crc32 over `header + change_bytes`.
 
 **The language is resolved before the format.** A record from another SDK is neither a format question nor a schema one, so the language gate SHALL be applied first and its refusal SHALL name both languages. Reading the format byte first makes a record written by an SDK with a different codec report as a malformed header, naming neither.
 
@@ -409,7 +409,7 @@ The SDK SHALL verify the header at read time on **every** restore path — the t
 #### Scenario: An Elixir record is self-describing and the Elixir SDK refuses every other language
 
 - **WHEN** an Elixir Cell writes a change record and later restores it, and separately is sent a record stamped with any other SDK's `sdk_lang`
-- **THEN** the written header SHALL carry `sdk_lang = 3` and `format_id = 7`, the Elixir restore SHALL decode it, and the foreign record SHALL be refused by the SDK's own fold with the language-mismatch wording naming both languages before its format byte is read
+- **THEN** the written header SHALL carry `sdk_lang = 3` and `format_id = 7`, the Elixir restore SHALL decode it, and the foreign record SHALL be refused by the core's host restore fold with the language-mismatch wording naming both languages before its format byte is read
 
 #### Scenario: A record names the SDK that wrote it, not the kernel it linked
 
@@ -1311,18 +1311,18 @@ A refusal SHALL leave the bytes on disk untouched and SHALL leave the relay unbo
 
 #### Scenario: Every runtime answers a corrupt record the same way
 
-- **WHEN** the Controller's reader, the Elixir SDK's restore fold and the kernel's change-log fold are each given the same corrupt record
-- **THEN** all three SHALL refuse by name, and none SHALL return a partial result as success
+- **WHEN** the Controller's reader and the kernel's change-log fold are each given the same corrupt record
+- **THEN** both SHALL refuse by name, and none SHALL return a partial result as success
 
 ### Requirement: The durable record frame SHALL have exactly one reader and one writer
 
-Every read and every write of the durable record framing `[seq: u64 BE][len: u32 BE][header: 16 B][change_bytes][crc32: u32 BE]` SHALL go through `Flezha.SDK.RecordFrame`, the Elixir SDK's frame module, on disk and over a binary alike; `Flezha.State.RecordFrame` walks a record log on a device through it.
+Every read and every write of the durable record framing `[seq: u64 BE][len: u32 BE][header: 16 B][change_bytes][crc32: u32 BE]` in the Controller SHALL go through `Flezha.State.Frame`, the Controller's frame module, on disk and over a binary alike; `Flezha.State.RecordFrame` walks a record log on a device through it.
 
-A module that holds framed records SHALL NOT decompose the framing itself, SHALL NOT compute the framing crc32 itself, and SHALL NOT restate the header's byte length. This applies to the Controller's restore path and to the Elixir SDK, which reads the same framing from bytes the Controller ships rather than from a file.
+A module that holds framed records SHALL NOT decompose the framing itself, SHALL NOT compute the framing crc32 itself, and SHALL NOT restate the header's byte length. This applies to the Controller's restore path.
 
 The crc32 over `header <> change_bytes` SHALL be written and verified in one expression. Two spellings of the same value — `crc32(header <> body)` and `crc32(crc32(header), body)` — are the same crc computed twice, and only one of them SHALL remain.
 
-The kernel's reader (`flz_core::restore::fold_change_log`) is the second runtime and SHALL NOT share code with the Elixir seam. The two SHALL share a byte fixture instead: golden record bytes, stored once, read by both runtimes' tests, so that a framing change on either side fails on both.
+The kernel's reader (`flz_core::restore::fold_change_log`) is the second runtime and SHALL NOT share code with the Controller's seam. The two SHALL share a byte fixture instead: golden record bytes, stored once, read by both runtimes' tests, so that a framing change on either side fails on both.
 
 #### Scenario: One walk, and the documentation that says so is true
 
@@ -1337,7 +1337,7 @@ The kernel's reader (`flz_core::restore::fold_change_log`) is the second runtime
 
 #### Scenario: Both runtimes agree on the bytes
 
-- **WHEN** the shared frame fixture is encoded by the Elixir seam
+- **WHEN** the shared frame fixture is encoded by the Controller's seam
 - **THEN** the kernel's reader SHALL fold those exact bytes to the same records, and a change to either encoder SHALL fail the other runtime's test
 
 #### Scenario: A second frame reader cannot be added quietly

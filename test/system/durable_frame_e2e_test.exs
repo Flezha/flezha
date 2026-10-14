@@ -30,7 +30,7 @@ defmodule FlezhaTest.System.DurableFrameE2ETest do
 
   alias Flezha.Relay.Builder
   alias Flezha.Runner.FleetManager
-  alias Flezha.SDK.RecordFrame, as: Frame
+  alias Flezha.State.Frame
   alias Flezha.Service.RelayManager
   alias Flezha.State.Paths
   alias Flezha.State.RecordFrame

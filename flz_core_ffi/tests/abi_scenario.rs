@@ -26,6 +26,8 @@ mod harness;
 mod lifecycle;
 #[path = "abi/part.rs"]
 mod part;
+#[path = "abi/settings.rs"]
+mod settings;
 #[path = "abi/shape.rs"]
 mod shape;
 #[path = "abi/shutdown.rs"]

@@ -764,6 +764,11 @@ impl PollCore {
         Some(result)
     }
 
+    /// Shut down for the life of the process: nothing resets it.
+    pub fn is_shut_down(&self) -> bool {
+        self.shutting_down.load(Ordering::Acquire)
+    }
+
     #[cfg_attr(not(test), allow(dead_code))]
     pub fn shutdown(&self) {
         self.shutting_down.store(true, Ordering::Release);

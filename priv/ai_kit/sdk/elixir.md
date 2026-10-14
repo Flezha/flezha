@@ -68,7 +68,7 @@ end
 
 A copy of this folder outside the checkout names the package's absolute path
 instead. With no release to download it from, the first compile builds the
-package's socket client with a Rust toolchain, so it takes a few minutes.
+package's native library with a Rust toolchain, so it takes a few minutes.
 
 ## Where to go next
 
@@ -99,8 +99,6 @@ defmodule Echo.Application do
 
     children = [
       # connects to the controller and serves these relays
-      # `:uds` because this node is not the controller's. The default, `:native`,
-      # is for code running inside the controller's own node.
       {Flezha.SDK, namespace: namespace, relays: [Echo.Relay], transport: :uds}
     ]
 
@@ -113,7 +111,7 @@ defmodule Echo.Application do
     # terminal:
     #
     # alias Flezha.SDK.Control
-    # runner = Flezha.SDK.RunnerServer
+    # runner = Flezha.SDK.Runner
     # {:ok, %{id: "my_echo"}} = Control.start_relay(runner, "echo", id: "my_echo")
     #
     # {:ok, _} =

@@ -20,23 +20,6 @@ The late input is already in the input log at its arrival offset, because inputs
 are journaled before they are forwarded; the slice therefore contains it by
 construction and no separate splice SHALL be performed.
 
-The Elixir SDK re-expresses this in its own core. Its Cell already tracks the
-event-time high-water and restores it from its effect records, so the
-classification is a decision taken in the one function that extracts the event
-time, before it advances the high-water; a correctable input is withheld and one
-`correction_request` frame — seq zero, a zero record header, a body of the target
-event time alone — leaves on the Cell's own state stream. A run with no state
-stream dispatches the input as an arrival instead, as the reference does when no
-output plugin is installed. A marked member is buffered when the Cell pops it, and the
-end-of-slice broadcast is placed on that Cell's queue behind the members rather
-than executed on arrival, so the close can never overtake a member it was meant to
-include; the flush sorts by extracted event time with the input-log offset as the
-tie-break and re-queues the ordered members at the head. Each re-queued member is
-dispatched individually, so an event-time timer the slice makes due fires between
-the members that straddle it without a batch-splitting rule of its own. A restore
-discards a buffered slice, because the controller re-forwards it from the rewound
-watermark.
-
 #### Scenario: Late trade corrects a candle
 
 - **WHEN** a Cell building 1m candles has high-water 14:06:00 and receives a
@@ -58,21 +41,10 @@ watermark.
   are dispatched as members of the sorted slice, and those journaled above it are
   dispatched in arrival order after the slice
 
-#### Scenario: An Elixir Cell folds the replayed slice in event-time order
-
-- **WHEN** an Elixir class declaring a correction window has folded event times 100 and 300, an input at event time 200 arrives, and the controller replays the marked slice and closes it with the end-of-slice broadcast
-- **THEN** the input at 200 is not dispatched on arrival, exactly one `correction_request` carrying target 200 is sent, the replayed members are held until the broadcast, and the fold order after the slice is 100, 200, 300 — while an input journaled above the slice and enqueued behind the broadcast folds after all three
-
 ### Requirement: Beyond-window late inputs follow the declared policy
 
 Late inputs older than the correction window SHALL follow the relay's
 declared policy: `process_as_arrival` (default) or `drop`.
-
-In the Elixir SDK the two arms differ in one more way that is not optional: a
-beyond-window input under `process_as_arrival` is dispatched but does **not**
-advance the event-time high-water, and under `drop` it does neither. An old
-straggler that dragged the high-water backwards would make every following
-on-time input look late and start a correction storm.
 
 #### Scenario: Default policy processes as arrival
 
@@ -84,11 +56,6 @@ on-time input look late and start a correction storm.
 
 - **WHEN** the relay declares `drop` and a beyond-window input arrives
 - **THEN** the input is not processed
-
-#### Scenario: An Elixir beyond-window arrival does not move the high-water
-
-- **WHEN** an Elixir Cell with high-water 1 000 000 and a 600 000 ms window receives an input at event time 1 000 under the default policy, and then an input at event time 1 000 001
-- **THEN** the straggler is dispatched as an arrival, the high-water is still 1 000 000 when the next input is classified, and that next input is on time; under a declared `drop` policy the straggler is not dispatched and the high-water is likewise unmoved
 
 ### Requirement: Corrected outputs republish under a bumped epoch
 

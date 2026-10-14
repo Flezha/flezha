@@ -31,6 +31,9 @@ pub unsafe extern "C" fn flz_core_local_start(
     relay_id: *const c_char,
 ) -> i32 {
     let ctx = &*ctx;
+    if flz_core::poll_core::global().is_shut_down() {
+        return ctx.fail(Error::ShutDown);
+    }
     let (Ok(factory_id), Ok(relay_id)) = (
         CStr::from_ptr(factory_id).to_str(),
         CStr::from_ptr(relay_id).to_str(),

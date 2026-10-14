@@ -40,7 +40,7 @@ Every variable of the area:
 
 | Variable | Default | Sets / notes |
 |---|---|---|
-| `FLEZHA_TRANSPORT` | `uds` | `:transport`. `uds`, `quic` ([experimental: quic](../publishing/maturity.md#quic)) or `native` (the in-node Elixir SDK transport, never chosen implicitly); any other value is refused at boot |
+| `FLEZHA_TRANSPORT` | `uds` | `:transport`. `uds` or `quic` ([experimental: quic](../publishing/maturity.md#quic)); any other value is refused at boot |
 | `FLEZHA_TRANSPORTS` | the value of `FLEZHA_TRANSPORT` (`uds,quic` in test) | `:transports`, comma list validated against the same three names; `quic` is [experimental: quic](../publishing/maturity.md#quic) |
 | `FLEZHA_TRANSPORT_AUTH` | `true` (required) | `:transport_auth_required`; `off`/`false`/`0`/`no` disables peer authentication and is warned on every boot |
 | `FLEZHA_QUIC_LISTEN_ADDRESS` | `0.0.0.0:4433` (`:test` derives the port from the run) | `:quic_listen_address`, the address the controller listens on (a runner's dial list is `FLEZHA_QUIC_ADDRESSES`, in [Runner environment variables](runner_environment.md)); [experimental: quic](../publishing/maturity.md#quic) |

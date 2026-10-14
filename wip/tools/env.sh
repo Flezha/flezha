@@ -64,8 +64,8 @@ build_release() {
 # build script of their own.
 native_library() {
   case "$1" in
-    elixir) [ -f "$ROOT/sdk/elixir/priv/native/flz_sdk_nif.so" ] ||
-      echo "env.sh: no sdk/elixir/priv/native/flz_sdk_nif.so yet; the desk's first mix compile builds it" ;;
+    elixir) [ -f "$ROOT/sdk/elixir/priv/native/flz_core_beam.so" ] ||
+      echo "env.sh: no sdk/elixir/priv/native/flz_core_beam.so yet; the desk's first mix compile builds it" ;;
     java | rust) ;;
     *) [ -x "$ROOT/scripts/build-$1-sdk.sh" ] || fail "no SDK named $1"
       [ "${FLEZHA_TOOLS_REBUILD:-0}" = 1 ] && "$ROOT/scripts/build-$1-sdk.sh" ;;

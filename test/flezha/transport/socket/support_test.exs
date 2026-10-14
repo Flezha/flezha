@@ -52,8 +52,8 @@ defmodule Flezha.Socket.SupportTest do
   end
 
   test "the controller and the runner's own side compose one name" do
-    # `Flezha.SDK.Transport.connect_sockets/5` dials exactly this expression,
-    # with the directory its own ladder walk reached.
+    # A runner's `flz_core` dials exactly this expression, with the directory
+    # its own ladder walk reached.
     for type <- ["primary", "secondary"] do
       assert Support.stream_socket_path(@long_id, type) ==
                elem(Native.stream_socket_path(Support.socket_dir(), @long_id, type), 1)

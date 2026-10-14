@@ -278,8 +278,12 @@ pub fn start(
     shutdown_bridge: Arc<ShutdownBridge>,
 ) -> JoinHandle<()> {
     thread::spawn(move || {
-        let (mut coordinator, _timers) =
-            Coordinator::connect(namespace, declared, otx, ctx, shutdown_bridge);
+        // None: the host stopped waiting before any controller answered.
+        let Some((mut coordinator, _timers)) =
+            Coordinator::connect(namespace, declared, otx, ctx, shutdown_bridge)
+        else {
+            return;
+        };
         // A closed channel means every sender is gone — the owning
         // FlezhaRunner dropped. Exit cleanly so a later runner can start.
         while let Ok(message) = orx.recv() {
@@ -315,7 +319,7 @@ impl Coordinator {
         otx: Sender<RunnerMessage>,
         ctx: Sender<ClientResponseMessage>,
         shutdown_bridge: Arc<ShutdownBridge>,
-    ) -> (Self, [JoinHandle<()>; 2]) {
+    ) -> Option<(Self, [JoinHandle<()>; 2])> {
         let mut runner = RunnerNode::new(namespace.clone());
         install_snapshot_fn(&shutdown_bridge, Arc::clone(&runner.relay_registry));
 
@@ -330,7 +334,7 @@ impl Coordinator {
             Arc::clone(&declared),
             ctx_arc.clone(),
             otx_arc.clone(),
-        );
+        )?;
         runner.set_quic_client(quic_client);
         runner.set_connect_answered(answered);
         shutdown_bridge.set_control_stream(Some(Arc::clone(&control_stream)));
@@ -348,7 +352,7 @@ impl Coordinator {
             ctx_arc,
             shutdown_bridge,
         };
-        (coordinator, timers)
+        Some((coordinator, timers))
     }
 
     fn handle_message(&mut self, message: RunnerMessage) {
@@ -386,6 +390,7 @@ impl Coordinator {
                 command,
             } => self.write_control_request(reference_id, *command),
             RunnerMessage::RemoveFactory { factory_id } => self.remove_factory(&factory_id),
+            RunnerMessage::Abandon => self.abandon(),
         }
     }
 
@@ -396,6 +401,13 @@ impl Coordinator {
             .lock()
             .unwrap()
             .send(ClientResponseMessage::RemoveFactoryResult(result));
+    }
+
+    /// Stop for good: every later reconnect is a no-op, and the session this
+    /// coordinator holds is closed.
+    fn abandon(&mut self) {
+        self.runner.set_status(RunnerStatus::Stopped);
+        let _ = self.control_stream.shutdown(std::net::Shutdown::Both);
     }
 
     /// A no-op on a stopped runner; otherwise re-open the control stream.

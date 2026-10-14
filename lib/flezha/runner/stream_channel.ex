@@ -298,7 +298,7 @@ defmodule Flezha.Runner.StreamChannel do
   # Unified NIF transport message — complete parsed frame.
   #
   # Two reserved payload-ids carry persistence-bound data (see
-  # `Flezha.SDK.Wire`). All other payload-ids are relay outputs
+  # `Flezha.State.Wire`). All other payload-ids are relay outputs
   # routed via the per-relay mapping.
   #
   # Fenced (superseded-session) channel: refuse every durable-write forward

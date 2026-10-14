@@ -17,8 +17,7 @@ next bound stream. A plugin or steps relay emit is `output`: held already framed
 output's channel and identity stamps survive the replay. A control frame is refused to its
 caller and never held, because the reconnect re-issues the request it belonged to, and the data
 heartbeat is held by nothing at all — it reports a moment that has passed. The seam is
-`flz_core::state_sink::write` for every runtime built on the shared core and
-`Flezha.SDK.Hold.write/3` for the Elixir SDK, which is its own core; a payload id no class table
+`flz_core::state_sink::write`, shared by every SDK; a payload id no class table
 names is refused at the call rather than given a default. See
 [`../sdk/protocol_spec.md`](../sdk/protocol_spec.md) §7.
 

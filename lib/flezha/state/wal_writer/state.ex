@@ -12,7 +12,7 @@ defmodule Flezha.State.WalWriter.State do
   and credit; the effectively-once outbox; and the two per-file indexes.
   """
 
-  alias Flezha.SDK.RecordFrame
+  alias Flezha.State.Frame
   alias Flezha.State.{Paths, SeqIndex}
 
   defstruct [
@@ -124,7 +124,7 @@ defmodule Flezha.State.WalWriter.State do
           sync_waiters: [{GenServer.from(), term()}],
           durable_waiters: [{GenServer.from(), non_neg_integer()}],
           header_index: %{optional(binary()) => non_neg_integer()} | nil,
-          refusal: RecordFrame.refusal() | nil
+          refusal: Frame.refusal() | nil
         }
 
   @type limits :: %{

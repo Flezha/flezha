@@ -147,7 +147,7 @@ The Controller SHALL retain a disconnected Runner's peer entry (including its as
 
 ### Requirement: SDK SHALL ship final state to the agent on graceful shutdown so reconnect-resume is loss-free
 
-When an SDK that carries `state_persistence` shuts down gracefully (SIGTERM, `Drop` of the SDK handle, explicit `disconnect()` call — or, for an erased host over `flz_core_ffi`, the host's own stop path calling `flz_core_shutdown`; or, for the Elixir SDK, the RunnerServer's `terminate/2` reached by the BEAM's `init:stop`, `Flezha.SDK.close/1` or `RunnerDisconnect`), it SHALL serialize each local relay's state via the same per-driver serializer used for `MigrationSerialization`, and emit `RunnerShutdownNotification{relay_id, serialized_state}` on the control channel for each relay, before the core reports shutting down to the host's pollers — an erased host's loops keep answering `migration_serialize` until then. The agent's `ControlChannel` SHALL forward each notification to the corresponding `Overwatch` GenServer (looked up via `Identificator.overwatch(relay_id)`) only when the relay's ownership record names the sending session's stable identity or records no owner on this node; that Overwatch SHALL replace `state.snapshot` with the supplied binary atomically. A notification naming a relay bound to another runner's identity SHALL be refused as `runner-identity-and-session` prescribes and SHALL NOT touch the snapshot. The agent SHALL respond with `RunnerShutdownAck{relay_id}` once the snapshot is enqueued, and SHALL respond with it for a refused notification too.
+When an SDK that carries `state_persistence` shuts down gracefully (SIGTERM, `Drop` of the SDK handle, explicit `disconnect()` call — or, for an erased host over `flz_core_ffi`, the host's own stop path calling `flz_core_shutdown`), it SHALL serialize each local relay's state via the same per-driver serializer used for `MigrationSerialization`, and emit `RunnerShutdownNotification{relay_id, serialized_state}` on the control channel for each relay, before the core reports shutting down to the host's pollers — an erased host's loops keep answering `migration_serialize` until then. The agent's `ControlChannel` SHALL forward each notification to the corresponding `Overwatch` GenServer (looked up via `Identificator.overwatch(relay_id)`) only when the relay's ownership record names the sending session's stable identity or records no owner on this node; that Overwatch SHALL replace `state.snapshot` with the supplied binary atomically. A notification naming a relay bound to another runner's identity SHALL be refused as `runner-identity-and-session` prescribes and SHALL NOT touch the snapshot. The agent SHALL respond with `RunnerShutdownAck{relay_id}` once the snapshot is enqueued, and SHALL respond with it for a refused notification too.
 
 The SDK SHALL wait at most 2 s per relay for the ack (with parallelism across relays) and SHALL exit regardless of ack receipt after the timeout. The SDK MUST NOT block the container's shutdown grace period if the agent has crashed or become unresponsive.
 
@@ -162,16 +162,10 @@ The SDK SHALL wait at most 2 s per relay for the ack (with parallelism across re
 - **AND** when a new runner subsequently reconnects and is assigned `p1` via the AddRelay reissue path (delivered by `heal-connections-on-restart`), the state delivered via `maybe_apply_initial_state` SHALL be `S_now` (not `S_old`)
 
 #### Scenario: An erased host's own stop path ships the notification
-- **GIVEN** a Node, Python, Ruby or PHP runner running relay `p1`, whose runtime owns SIGTERM and stops the runner through the SDK's stop path
+- **GIVEN** a Node, Python, Ruby, PHP or Elixir runner running relay `p1`, whose runtime owns SIGTERM and stops the runner through the SDK's stop path
 - **WHEN** the runner receives SIGTERM
 - **THEN** `flz_core_shutdown` SHALL serialize `p1`'s state through the host's still-polling loops and emit `RunnerShutdownNotification{relay_id: "p1", ...}` before the poll reports shutting down
-- **AND** `state_freshness_e2e_test.exs` under `FLEZHA_E2E_RUNTIME=node` and `python` SHALL see `Overwatch.state.snapshot` populated within its window
-
-#### Scenario: The Elixir runner's supervisor shutdown ships the notification
-- **GIVEN** an Elixir runner running relay `p1`, booted runner-only so the BEAM's default `sigterm` handling is `init:stop`
-- **WHEN** the runner receives SIGTERM
-- **THEN** the application stop reaches the RunnerServer's `terminate/2`, which SHALL serialize `p1` through its live Cells and emit `RunnerShutdownNotification{relay_id: "p1", ...}` before the control connection is closed
-- **AND** `state_freshness_e2e_test.exs` under `FLEZHA_E2E_RUNTIME=elixir` SHALL see `Overwatch.state.snapshot` populated within its window
+- **AND** `state_freshness_e2e_test.exs` under `FLEZHA_E2E_RUNTIME=node`, `python` and `elixir` SHALL see `Overwatch.state.snapshot` populated within its window
 
 #### Scenario: A stopping runner does not re-register
 - **GIVEN** an erased host whose stop path has called `flz_core_shutdown` and whose notification the agent has acknowledged
@@ -364,18 +358,12 @@ silently skipped when `FLEZHA_TRANSPORT=quic`.
 Both SDKs SHALL use a single shared reconnect backoff schedule with full jitter so that a
 controller restart dropping many runners does not produce a synchronized reconnect
 storm. Attempts SHALL remain unbounded (the runner must keep trying until a live
-controller is found). The Elixir SDK, which inherits nothing from `flz_core`, SHALL
-carry the same schedule as the `:sdk_reconnect` row of the backoff table, base 100 ms,
-exponent capped at 8, delay capped at 30 s, and a test SHALL pin those three numbers,
-and the `:sdk_retry` row (`base · 2^(n−1)` capped at 5 s), to the constants `flz_core`
-compiles, so the two runtimes cannot drift apart silently.
+controller is found). `flz_core` SHALL carry the schedule for every SDK: base 100 ms,
+exponent capped at 8, delay capped at 30 s.
 
-The jitter is where the two runtimes are NOT one value, and the difference is stated
-rather than pinned: `flz_core` spreads `[d/2, d]` and takes `100 ms · 2^n` for its
-attempt `n`, the Elixir SDK spreads `[d/2, 3d/2)` capped again and takes
-`100 ms · 2^(n−1)`, so its first wait is one rung lower. Both satisfy the anti-thunder
-property this requirement exists for; neither band is the other's, and a document or a
-scenario SHALL NOT describe one runtime's spread as the other's.
+The jitter is `flz_core`'s for every SDK: it spreads `[d/2, d]` and takes
+`100 ms · 2^n` for its attempt `n`, which satisfies the anti-thunder property this
+requirement exists for.
 
 The rung SHALL be a property of the control channel rather than of one call into the
 connect loop, so a reconnect starts where the last one left off instead of at rung zero.
@@ -398,11 +386,6 @@ read the completed handshake, so that neither rule can be changed by editing the
 - **GIVEN** N runners whose controller restarts simultaneously
 - **WHEN** they all enter their reconnect loops
 - **THEN** their attempts SHALL be spread by jitter rather than firing in lockstep
-
-#### Scenario: The Elixir SDK's reconnect ladder equals the core's
-- **WHEN** the cross-runtime pin test reads `flz_core`'s reconnect and retry constants and the Elixir SDK's two rows
-- **THEN** base, exponent cap and delay cap SHALL be equal, and a change to either side alone SHALL fail the test naming both files
-- **AND** the jitter band SHALL NOT be asserted equal, because it is not
 
 #### Scenario: A refused session climbs the ladder
 - **GIVEN** a controller that accepts the socket and closes it without admitting the runner
@@ -673,8 +656,6 @@ the line SHALL also name the listen address.
 
 The per-Cell serialize a graceful shutdown runs SHALL wait at most 5 s for the Cell's handout exclusivity; a Cell still inside an activation at that bound SHALL be omitted from the `RunnerShutdownNotification`, with a log line naming the Cell and the bound, and the notification SHALL still carry every other Cell's state. The bound applies to every path that runs the ship — SIGTERM, `Drop` of the runner handle, the host's own stop entry, and the controller-ordered terminal disconnect — and to a live state read of the same Cell, so that no command interaction can hold the runner's control thread for the life of the process. A controller-ordered terminal disconnect SHALL therefore end the process with the non-zero terminal status whatever the host's loops are doing: the exit is the core's, from its own thread.
 
-An SDK that is its own core (the Elixir SDK) SHALL bound the same wait by its own means — its application shutdown ends a wedged Cell process — and exit with the same status.
-
 #### Scenario: A terminal disconnect ordered to a wedged runner ends it
 - **GIVEN** a runner one of whose Cells is inside an activation that never returns
 - **WHEN** the controller orders a terminal disconnect
@@ -798,9 +779,9 @@ whole reason reconnect-resume is loss-free; a runner that prints the failure and
 exits leaves the agent holding a snapshot as stale as the last periodic one,
 which is the outcome the shutdown ship exists to prevent.
 
-This SHALL hold in every runtime: the shared core's ship path and the Elixir
-SDK's own SHALL answer a refused write the same way, and neither SHALL make the
-loss visible only as a line a user has to be reading at the time.
+This SHALL hold in every runtime: the shared core's ship path SHALL answer a
+refused write this way, and SHALL NOT make the loss visible only as a line a
+user has to be reading at the time.
 
 #### Scenario: The control channel is refused while the runner is shutting down
 
@@ -871,9 +852,7 @@ admitted with no data plane. Ending the session is what makes the failure self-c
 the controller reclaims the runner's relays and places them somewhere that works.
 
 The decision SHALL NOT be held inside a node-wide process. `FleetManager` serves every
-namespace on the node, and the in-node (`:native`) transport runs the connect from inside
-the runner's own `init/1`, so a blocking wait there cannot be answered by the runner it is
-waiting for. The outcome SHALL therefore be resolved without any node-wide call blocking on
+namespace on the node. The outcome SHALL therefore be resolved without any node-wide call blocking on
 an untrusted peer.
 
 #### Scenario: A refused socket connect fails the handshake
@@ -888,7 +867,7 @@ an untrusted peer.
 
 #### Scenario: No node-wide process waits on the peer
 - **WHEN** a runner is slow to answer or never answers `ConnectSocket`
-- **THEN** `FleetManager` SHALL continue to serve other namespaces throughout, and an in-node runner SHALL complete its own `init/1` rather than deadlocking against the wait
+- **THEN** `FleetManager` SHALL continue to serve other namespaces throughout
 
 ### Requirement: A data-socket connect that cannot be completed SHALL be refused, never panicked
 

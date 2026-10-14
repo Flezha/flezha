@@ -109,9 +109,6 @@ defmodule Flezha.Convergence.Probe.Table do
         [:flezha, :hub, :unavailable]
       ]
     },
-    # Declaration-only: the hold is the runner's own fact and reaches the
-    # controller as nothing else, so the entry exists to give the event a sink.
-    %{id: :sdk_hold, kind: :relay, facts: nil, events: [[:flezha, :sdk, :parked]]},
     # The judge's own entry. Every state transition executes it, and the
     # derived bridge half maps it from here rather than from a bridge edit.
     %{id: :verdict, kind: :any, facts: nil, events: [[:flezha, :health, :verdict]]}

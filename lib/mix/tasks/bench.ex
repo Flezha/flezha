@@ -132,7 +132,6 @@ defmodule Mix.Tasks.Bench do
       "mix bench",
       [
         {"runtime", "#{runtime} (#{Report.dispatch_note(runtime)})"},
-        {"runner", runner_mode()},
         {"toolchain", Report.toolchain(runtime)},
         {"transport", to_string(Config.get(:transport))},
         {"shape", to_string(shape)},
@@ -240,14 +239,6 @@ defmodule Mix.Tasks.Bench do
     )
 
     ratio
-  end
-
-  # `:native` is the in-process Elixir SDK: there is no runner process to
-  # spawn, and the distinction is a property of the transport, not of the SDK.
-  defp runner_mode() do
-    if Config.get(:transport) == :native,
-      do: "embedded (in-process)",
-      else: "spawned"
   end
 
   defp durability_backend(), do: to_string(Config.get(:durability_backend))

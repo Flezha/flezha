@@ -4,7 +4,7 @@ defmodule Flezha.Runner.RunnerSupervisor do
   commit barrier, and the two pre-spawned data-stream pools.
 
   The transport decides only whether per-stream UDS acceptors are started —
-  `:quic` and `:native` bind data streams through `Transport.Server` instead.
+  `:quic` binds data streams through `Transport.Server` instead.
 
   Invariant: an unknown transport atom raises here rather than silently
   starting acceptors, because a runner brought up with no listener looks
@@ -81,12 +81,12 @@ defmodule Flezha.Runner.RunnerSupervisor do
     ]
   end
 
-  defp acceptor_children(_runner_id, transport) when transport in [:quic, :native], do: []
+  defp acceptor_children(_runner_id, :quic), do: []
 
   defp acceptor_children(_runner_id, other) do
     raise ArgumentError,
           "RunnerSupervisor: unknown transport #{inspect(other)} " <>
-            "(expected :uds, :quic or :native)"
+            "(expected :uds or :quic)"
   end
 
   @doc """

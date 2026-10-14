@@ -706,10 +706,9 @@ id in its details (Rust: `FlezhaError::DuplicateFactoryId`; Elixir:
   that declares a correction window, whose answer may not depend on arrival
   timing. Both facts are frozen at registration, so the contradiction is
   decidable before any data moves, which is where an author can still see it.
-  Shedding stays fully available to a class that promises neither. Refused in
-  every SDK's builder — `topology.dropping_policy_under_effectively_once` names the channel
-  and the policy in the Elixir SDK, which is its own core — and again in
-  `flz_core`'s declaration validation for the six hosts on it, so a
+  Shedding stays fully available to a class that promises neither. Refused by
+  `flz_core`'s declaration validation for every SDK —
+  `topology.dropping_policy_under_effectively_once` names the channel and the policy — so a
   hand-written host declaration cannot slip past.
 
 ### 5.3 A misplaced setting is refused by name

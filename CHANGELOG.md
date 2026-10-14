@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+### Changed: the Elixir SDK runs on the shared core (breaking)
+
+The Elixir SDK now runs on `flz_core`, the runtime every other SDK uses, through a Rustler
+library over `flz_core_ffi` (`flz_core_beam`, replacing `flz_sdk_nif`). Its own runtime is gone,
+so a fix to the core now reaches Elixir too, and an Elixir runner answers activity totals and a
+tasklet's Cells like the others. Tasklets run in a pool of BEAM processes fed by threads the
+library owns (`FLEZHA_WORKER_POOL_SIZE`, `FLEZHA_WORKER_POOL_MAX`). Records an Elixir runner
+wrote before restore unchanged, so no drain is needed.
+
+Three breaking changes. `transport: :native` is removed: a runner connects over UDS (now the
+default) or QUIC wherever it runs, the controller's own BEAM included, and `FLEZHA_TRANSPORT`
+takes `uds` or `quic` only. A runner in the controller's BEAM no longer proves its namespace by
+running there: it presents a runner credential like any other, through the new
+`namespace_secret:` option or `FLEZHA_NAMESPACE_SECRET`. `named/2` names the channel only; the
+tasklet keeps its own name.
+
+A runner runs once per BEAM, as in every SDK: `close/1` ships each relay's state and ends the
+session, and a later start in the node, the restart after a crash included, is refused as
+`runtime.core_shut_down`. One runner or one local run is live at a time (`runtime.core_in_use`).
+
+A host can now hand the core its connection settings at start (`flz_core_start_with`), so a
+runner embedded in a process with someone else's environment reads its own. A start the
+controller refuses, or does not confirm in time, leaves no runner behind and is answered at
+the call. `flz_core_shutdown` now also ends the session once the state is shipped.
+
 ### Added: a tasklet's Cells, and a relay's outputs per channel
 
 `Relay.activity/4` takes `cells_of` and `limit` (`flz relay activity <relay_id> --cells

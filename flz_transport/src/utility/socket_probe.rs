@@ -160,8 +160,8 @@ pub fn diagnose(role: Role, explicit: Option<&str>) -> Result<Diagnosis, SocketD
 /// Why this process cannot reach a controller, as one line, for whichever
 /// transport it dials: the socket directory's situation and its fix for UDS,
 /// the candidate list for QUIC. The single implementation behind the runner's
-/// pre-retry diagnosis, `flz runner check` and the Elixir SDK's — a second
-/// rendering per host is a second thing to keep true.
+/// pre-retry diagnosis and `flz runner check` — a second rendering per host
+/// is a second thing to keep true.
 pub fn connect_diagnosis(
     transport: TransportType,
     socket_dir: Option<&str>,

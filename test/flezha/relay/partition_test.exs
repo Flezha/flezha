@@ -1,12 +1,24 @@
 defmodule Flezha.PartitionTest do
   @moduledoc """
   How the controller splits the key-group space among a group's members and
-  reports its coverage. The hash itself is `Flezha.SDK.KeyGroup`'s, held to the
-  cross-language vectors in that package's own suite.
+  reports its coverage, and the hash that puts a key in a group.
   """
   use ExUnit.Case, async: true
 
   alias Flezha.Partition
+  alias Flezha.Relay.KeyGroup
+
+  describe "KeyGroup.group_of/1" do
+    # The same vectors `flz_core`'s `key_group_matches_the_cross_language_fixture`
+    # asserts: a runner refuses a key the controller routed to it if the two disagree.
+    test "reproduces the cross-language key-group fixture" do
+      assert KeyGroup.group_of("BTC-USD") == 129
+      assert KeyGroup.group_of("ETH-USD") == 213
+      assert KeyGroup.group_of("SOL-USD") == 60
+      assert KeyGroup.group_of("") == 141
+      assert KeyGroup.group_of("a") == 100
+    end
+  end
 
   describe "ranges/1" do
     test "an even split covers 0..255 with no gap and no overlap" do

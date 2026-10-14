@@ -167,13 +167,9 @@ Cell per key.
 
 ### Elixir runtime
 
-The `elixir` runtime runs all three shapes over all three transports, which
-isolates two axes:
-
-- **elixir × native vs elixir × uds** — a same-runtime transport measurement
-  (in-node message passing vs the socket stack).
-- **elixir × uds vs rust × uds** — a same-transport runtime measurement (BEAM
-  dispatch vs the Rust engine).
+The `elixir` runtime runs all three shapes over UDS and QUIC. Against
+`rust × uds` it is a same-transport, same-core measurement of what the BEAM
+host costs: the native-library hop and the worker pool.
 
 No CI job benches the elixir runtime. Use `-n 100 -m 10000` after
 pre-building the standalone app; small runs are setup-dominated.

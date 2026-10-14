@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Once, OnceLock};
 use std::{fmt, io};
 
-use crate::env::{env_parse_positive, env_raw, env_string};
+use crate::env::{connect_raw, env_parse_positive, env_raw};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TransportType {
@@ -61,7 +61,7 @@ break. See docs/publishing/maturity.md#quic";
 static QUIC_NOTICES: AtomicU64 = AtomicU64::new(0);
 
 pub fn get_transport_type() -> TransportType {
-    transport_type(env_raw("FLEZHA_TRANSPORT").as_deref())
+    transport_type(connect_raw("FLEZHA_TRANSPORT").as_deref())
 }
 
 /// Consulted on every connection attempt, so the notice is guarded: once it
@@ -228,7 +228,7 @@ pub fn quic_addresses() -> Result<Vec<QuicEntry>, QuicListError> {
 /// The candidate list, with the caller's own view of the list variable — see
 /// `socket_dir::resolve_socket_dir` for why a host supplies one.
 pub fn quic_addresses_with(list: Option<&str>) -> Result<Vec<QuicEntry>, QuicListError> {
-    let from_env = env_raw(QUIC_ADDRESSES_VAR);
+    let from_env = connect_raw(QUIC_ADDRESSES_VAR);
     let list = list
         .map(str::trim)
         .filter(|v| !v.is_empty())
@@ -263,7 +263,7 @@ fn parse_quic_addresses(
 }
 
 pub fn ca_cert_path() -> String {
-    env_string("FLEZHA_CA_CERT_PATH", "app_data/certs/ca.pem")
+    connect_raw("FLEZHA_CA_CERT_PATH").unwrap_or_else(|| "app_data/certs/ca.pem".to_string())
 }
 
 /// Client certificate presented to a QUIC server that requires peer
@@ -271,11 +271,12 @@ pub fn ca_cert_path() -> String {
 /// runner sharing `app_data/` authenticates out of the box; remote runners
 /// point these at user-provisioned certs.
 pub fn quic_client_cert_path() -> String {
-    env_string("FLEZHA_QUIC_CLIENT_CERT", "app_data/certs/client.pem")
+    connect_raw("FLEZHA_QUIC_CLIENT_CERT")
+        .unwrap_or_else(|| "app_data/certs/client.pem".to_string())
 }
 
 pub fn quic_client_key_path() -> String {
-    env_string("FLEZHA_QUIC_CLIENT_KEY", "app_data/certs/client.key")
+    connect_raw("FLEZHA_QUIC_CLIENT_KEY").unwrap_or_else(|| "app_data/certs/client.key".to_string())
 }
 
 #[cfg(test)]

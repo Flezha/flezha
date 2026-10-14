@@ -3,7 +3,7 @@ defmodule Flezha.Transport.Native do
   Rustler NIF module wrapping the `flz_nif` crate.
 
   Provides the controller's UDS and QUIC servers. A runner's client side is the
-  Elixir SDK's own NIF, `Flezha.SDK.Native`.
+  Elixir SDK's own native library, `flz_core`.
   The NIF handles transport I/O and binary frame parsing in Rust,
   delivering complete `{:flz_data, stream_id, payload_id, message, metadata}`
   tuples to Elixir processes.

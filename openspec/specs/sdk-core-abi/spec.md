@@ -502,3 +502,55 @@ frame it receives, so each veneer's tests can assert what a part carried.
 - **THEN** each SHALL find `flz_core_part` in its declaration and in its exports, and the
   crate's own test SHALL find it in `test/fixtures/abi_surface.txt`
 
+### Requirement: A host may hand the connection settings to the core
+
+`flz_core_ffi` SHALL expose a start entry that takes, beside the namespace, a JSON settings document whose keys mirror the runner's connection environment: the socket directory, the transport, the QUIC addresses, the CA certificate path, the client certificate and key paths, and the namespace secret. A key present in the document SHALL take the place of the environment variable of the same meaning. A key absent from it SHALL resolve exactly as `flz_core_start` resolves it, from the environment and then the shared socket-directory ladder. An unknown key, or a value of the wrong type, SHALL be refused through the one error document before any connection is attempted. The entry SHALL NOT write the process environment. It SHALL be listed in the ABI surface fixture and wrapped once in `veneer`. `flz_core_start` SHALL keep its behaviour, so a host that never calls the new entry is unchanged.
+
+#### Scenario: An explicit socket directory wins over the environment
+
+- **WHEN** `FLEZHA_SOCKET_FILES_PATH` names directory A in the process environment and a host starts the runner with a settings document naming directory B
+- **THEN** the runner SHALL dial the controller socket in B, and the process environment SHALL still name A
+
+#### Scenario: An absent key falls back as before
+
+- **WHEN** a host starts the runner with a settings document that names only the transport
+- **THEN** the socket directory SHALL be resolved from the environment and the ladder, exactly as `flz_core_start` resolves it
+
+#### Scenario: An unknown key is refused before connecting
+
+- **WHEN** a settings document carries a key the entry does not define
+- **THEN** the start SHALL fail with an error document naming the key, and no connection SHALL have been attempted
+
+### Requirement: A failed start leaves no runner behind
+
+A start that the controller refuses, or that is not confirmed in time, SHALL end the runner it began: the core SHALL NOT reconnect behind the host that was told the start failed. A host MAY start again in the same process, with a new context, and SHALL meet no earlier runner of its own there.
+
+#### Scenario: A refused start dials once
+
+- **WHEN** the controller answers a starting runner's connect with a refusal
+- **THEN** the start SHALL fail with the controller's error, and the runner SHALL NOT dial the controller again
+
+#### Scenario: A host starts again after a refusal
+
+- **WHEN** an Elixir runner in the controller's node is refused for want of a credential, and is then started again with one
+- **THEN** the second start SHALL connect, serve its relays and answer their activity, and the namespace SHALL list that runner alone
+
+#### Scenario: An unconfirmed start stops dialling
+
+- **WHEN** a starting runner finds no controller to reach and the start answers `runtime.connect_unconfirmed`
+- **THEN** its connect SHALL stop retrying, so no runner of that start completes a handshake later
+
+### Requirement: A shut-down core ends its session and starts nothing again
+
+`flz_core_shutdown` SHALL end the runner's session once each relay's state is shipped, so a host whose process outlives the runner leaves no connection behind. The core SHALL stay shut down for the life of the process: a later start, a local run's included, SHALL be refused as `runtime.core_shut_down` rather than handed a core that serves nothing.
+
+#### Scenario: A start after shutdown is refused by name
+
+- **WHEN** a host shuts the core down and then starts a runner, or a local run, on a new context in the same process
+- **THEN** both SHALL be refused with `runtime.core_shut_down`
+
+#### Scenario: A closed embedded runner leaves the namespace
+
+- **WHEN** an Elixir runner in the controller's node is closed
+- **THEN** the controller SHALL list no runner for its namespace once the session has ended
+

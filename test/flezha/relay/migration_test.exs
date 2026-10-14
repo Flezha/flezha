@@ -455,7 +455,7 @@ defmodule FlezhaTest.Relay.OverwatchSuspensionTest do
     edge = %{channel: 0, consumer: 1, origin: 1, payload: "kept"}
 
     body =
-      Flezha.SDK.Wire.encode_effect_body(%{
+      Flezha.State.Wire.encode_effect_body(%{
         changes: [],
         outputs: [],
         consumed_offset: 1,
@@ -493,7 +493,7 @@ defmodule FlezhaTest.Relay.OverwatchSuspensionTest do
     ]
 
     body =
-      Flezha.SDK.Wire.encode_effect_body(%{
+      Flezha.State.Wire.encode_effect_body(%{
         changes: [],
         outputs: [],
         consumed_offset: 1,

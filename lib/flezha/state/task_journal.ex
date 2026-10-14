@@ -27,7 +27,7 @@ defmodule Flezha.State.TaskJournal do
 
   alias Flezha.Dlq.{Entry, Store}
   alias Flezha.Relay.ClassRegistry
-  alias Flezha.SDK.Wire
+  alias Flezha.State.Wire
 
   alias Flezha.State.{
     InputLog,

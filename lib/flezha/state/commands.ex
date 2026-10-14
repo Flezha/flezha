@@ -25,7 +25,7 @@ defmodule Flezha.State.Commands do
   alias Flezha.State.TaskJournal
   alias Flezha.State.Restore
   alias Flezha.State.Watchdog
-  alias Flezha.SDK.Wire
+  alias Flezha.State.Wire
   require Logger
 
   # Bound on the CompactCellResponse round-trip. Generous because the SDK

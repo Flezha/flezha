@@ -393,10 +393,8 @@ An SDK whose transport is not the shared `flz_transport` is the one case that
 cannot honour this contract, and it says so **in its own manifest** rather than
 through a standing exemption: it lists `connect_discovery` under `deferred`, the
 gate fails naming that manifest and the required set, and the same change removes
-the capability from the required set. Both halves land in one reviewed diff. The
-live example is the Elixir SDK's in-node `:native` mode
-(`docs/sdk/elixir_sdk.md`), which passes BEAM messages inside the controller's own
-node and walks no socket ladder; it does not arise here because
+the capability from the required set. Both halves land in one reviewed diff. It does not arise
+today: every SDK connects through `flz_transport`, and
 `test/apps/elixir_runner/conformance.json` declares `transports: ["uds", "quic"]`,
 so the conformance app runs the standalone binary protocol like the other six.
 
@@ -570,8 +568,7 @@ is done. A builder records the links its author declared — a `transform`, a
 `key`, a `named`, an `output`, an `into`, a `merge`, a `branch` — and submits the
 record; the core answers with the derived declaration or with a list of named
 refusals. The C ABI entry is `flz_core_check_class`, read-only beside
-`flz_core_declare_class`; the Elixir SDK is its own core and re-expresses the
-same check against the same fixture.
+`flz_core_declare_class`, and every SDK, Elixir included, submits to it.
 
 `test/fixtures/reference_topologies.txt` carries one row per refusal: the code,
 a topology id, the authoring steps in a language-neutral spelling, and the
@@ -623,7 +620,7 @@ never crosses languages.
 ### `sdk_version`
 
 Bytes 1:5 of the same header name the *writing* SDK's own released version, not
-the kernel's: six SDKs release on their own cadences over a core that may not
+the kernel's: seven SDKs release on their own cadences over a core that may not
 move, and "which SDK build wrote this record" is the question a migration asks.
 
 Declare it as the version string your package metadata already spells — the core

@@ -61,9 +61,9 @@ on the effectively-once tier writes.
 
 | Module | Role |
 |---|---|
-| `Flezha.State.RecordFrame` | The on-disk record frame every durable log shares, walked on a device: `decode_record/2`, `fold_records/3`, `fold_path/3`, `scan_for_last_valid_seq/1`, and the `cut_below/5` / `cut_above/4` byte-range rewrites. The frame itself, `encode_record/3` and the byte decoder are the Elixir SDK's `Flezha.SDK.RecordFrame`. Names only `SeqIndex`; holds no handle and no process. |
+| `Flezha.State.RecordFrame` | The on-disk record frame every durable log shares, walked on a device: `decode_record/2`, `fold_records/3`, `fold_path/3`, `scan_for_last_valid_seq/1`, and the `cut_below/5` / `cut_above/4` byte-range rewrites. The frame itself, `encode_record/3` and the byte decoder are `Flezha.State.Frame`. Names only `SeqIndex`; holds no handle and no process. |
 | `Flezha.State.Paths` | Path resolution, namespace claims, enumeration; no GenServer, I/O limited to `File.ls/1` and `atomic_install/2`. |
-| `Flezha.SDK.Wire` | The Elixir SDK's codec, which the controller imports, for the `cell_state_change` / `cell_effect_record` / `cell_state_snapshot` / `delete_cell_state` / `park_payload` / compensation payload-ids and the postcard `EffectRecordBody`. The `flz.cell` / `flz.seq` / `flz.key` output stamps are `Flezha.State.Outbox`'s. |
+| `Flezha.State.Wire` | The codec for the `cell_state_change` / `cell_effect_record` / `cell_state_snapshot` / `delete_cell_state` / `park_payload` / compensation payload-ids and the postcard `EffectRecordBody`. The `flz.cell` / `flz.seq` / `flz.key` output stamps are `Flezha.State.Outbox`'s. |
 | `Flezha.State.Metrics` | Per-Cell `:counters` (`persisted_changes_total`, `wal_size_bytes`, `snapshot_seq`, `wal_shed_total`, `stale_writer_refused_total`, `fsync_total`, ...) in an ETS table. |
 | `Flezha.State.Supervisor` | `DynamicSupervisor` for per-Cell `WalWriter`s plus the `WriterRegistry` process registry: `find_or_start/1`, `delete_cell/1`, `registered_ids/0`. Creates the claims, watermark and `ClassRegistry` tables so they outlive any one process. |
 | `Flezha.State.WalWriter` | One GenServer per Cell: WAL handle, seq accounting, dedup, credit attribution, outbox cursors, realign and baseline logic. |

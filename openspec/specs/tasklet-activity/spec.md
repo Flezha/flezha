@@ -39,16 +39,6 @@ dispatched item. A request naming a relay the runner does not host SHALL be refu
 - **WHEN** a relay is rebound between two reads
 - **THEN** the second answer carries a different instance sequence number
 
-#### Scenario: The Elixir SDK leaves totals absent
-
-- **WHEN** an Elixir SDK runner answers the request and every Cell answers within the read's deadline
-- **THEN** each row carries `cells`, `queued` and `queued_max`, and every total is absent
-
-#### Scenario: A busy Elixir Cell costs only its own tasklet
-
-- **WHEN** a Cell of one tasklet does not answer within the read's deadline
-- **THEN** that tasklet's `queued` and `queued_max` are absent, and every other tasklet's are reported
-
 #### Scenario: An unknown relay is refused
 
 - **WHEN** the request names a relay the runner does not host
@@ -132,11 +122,6 @@ A tasklet the instance does not declare SHALL be refused by name. A runtime that
 
 - **WHEN** `cells_of` names a tasklet the relay's class does not declare
 - **THEN** the runner refuses the request naming the tasklet
-
-#### Scenario: The Elixir SDK leaves Cells absent
-
-- **WHEN** an Elixir SDK runner answers a request naming `cells_of`
-- **THEN** the answer carries the per-tasklet rows and no Cell answer
 
 #### Scenario: No Cell request, no Cell answer
 

@@ -16,7 +16,7 @@ defmodule Flezha.State.WalWriter do
   use Flezha.Process.Timer, keys: [:outbox_retry, :remote_retry]
 
   alias Flezha.Config.Durations
-  alias Flezha.SDK.RecordFrame, as: Frame
+  alias Flezha.State.Frame
   alias Flezha.SDK.SafeCall
   alias Flezha.State.{FsyncBatcher, Metrics, RecordFrame, SeqIndex, WriterRegistry}
   alias Flezha.State.WalWriter.{Admission, Boot, Epoch, RemoteGate, Settlement, State}

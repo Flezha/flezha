@@ -11,17 +11,13 @@ defmodule Flezha.State.DurableDeclarationTest do
 
   alias Flezha.State.Durable
 
-  # The record frame lives in the Elixir SDK's frame module, and the device walk
-  # over it here reads a record's length before its frame. `wire.ex` is the
-  # third file allowed to carry the shape because it frames a DIFFERENT thing:
-  # the wire envelope carries a cell id and crcs the body alone.
-  @sdk_frame "sdk/elixir/lib/flezha/sdk/record_frame.ex"
-  @frame_allowed [
-    @sdk_frame,
-    "lib/flezha/state/record_frame.ex",
-    "sdk/elixir/lib/flezha/sdk/wire.ex"
-  ]
-  @frame_roots ["lib/flezha/state", "sdk/elixir/lib"]
+  # The record frame lives in the frame module, and the device walk over it
+  # here reads a record's length before its frame. `wire.ex` is the third file
+  # allowed to carry the shape because it frames a DIFFERENT thing: the wire
+  # envelope carries a cell id and crcs the body alone.
+  @frame "lib/flezha/state/frame.ex"
+  @frame_allowed [@frame, "lib/flezha/state/record_frame.ex", "lib/flezha/state/wire.ex"]
+  @frame_roots ["lib/flezha/state"]
 
   # An in-progress suffix is spelled in the declaration and nowhere else.
   @suffix_allowed ["lib/flezha/state/durable.ex"]
@@ -104,7 +100,7 @@ defmodule Flezha.State.DurableDeclarationTest do
     test "the header size is restated nowhere" do
       offenders =
         for path <- sources(@frame_roots),
-            path != @sdk_frame,
+            path != @frame,
             File.read!(path) =~ ~r/@header_size\s+\d/,
             do: path
 

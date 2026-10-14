@@ -7,9 +7,8 @@ and the record header. What a relay author writes and configures (state, changes
 [`../topics/core/state.md`](../topics/core/state.md). The controller's on-disk layout,
 fsync batching, retention and the `flz state` CLI are in
 [`../internals/state_persistence.md`](../internals/state_persistence.md); frame layouts in
-[`protocol_spec.md`](protocol_spec.md#11-per-cell-state-persistence). The Elixir SDK is
-its own core and carries the same rules re-expressed in Elixir
-([`elixir_sdk.md`](elixir_sdk.md#persistence)); the FFI veneers carry them through the core.
+[`protocol_spec.md`](protocol_spec.md#11-per-cell-state-persistence). The Elixir SDK and the
+other FFI veneers carry them through the core ([`elixir_sdk.md`](elixir_sdk.md#persistence)).
 
 ## Shared concepts
 
@@ -38,10 +37,8 @@ Rust pushes typed Changes into the buffer directly; Java has no flusher of its o
 Kryo-encoded change bytes ride the activation result into the core, so a long invocation (a
 GC pause included) delays its records: the durability bound is a guideline, not a hard cap.
 With `durable: false` the drain still runs (buffer emptied, seq advanced) but nothing is sent.
-The Elixir SDK has no flusher: its Cell process ships each dispatch's records itself, at
-the end of the dispatch and before the dispatch's outputs, and advances the seq silently when
-the class keeps nothing (`durable: false`). Under the effectively-once tier it ships one effect record in
-their place, carrying the outputs rather than preceding them.
+The Elixir SDK works as Java does: its ETF-encoded change bytes ride the activation result
+into the core.
 
 ### How `durable` reaches the controller
 
@@ -68,14 +65,9 @@ discards any open checkpoint interval, half-filled replay slice and queued input
 controller re-forwards them from the durable input log), restores the consumed-offset floor
 and event-time high-water from the effect records, and re-arms processing-time timers.
 
-The Elixir SDK folds in its own core (`Flezha.SDK.Record.fold/6`), in the Cell's mailbox
-order: the on-disk framing's CRC over header and body, the language before the format before
-the schema with the core's refusal wordings, then `apply_change/2` per record; one walk with
-an arm per format, so an effect record is unwrapped in place — its enclosed change bodies
-fold under the enclosing record's version decision, its timer ops join the pending set, and
-its consumed offset and event time become the Cell's floor and high-water — while a
-snapshot header carrying that format is malformed. A refused fold leaves the Cell as it
-was and the controller parks the relay.
+The Elixir SDK folds through the core like every SDK on it: the core walks and verifies the
+records, and hands each snapshot and change body to the SDK, which decodes it from the External
+Term Format, migrates it when its version asks, and applies it with `apply_change/2`.
 Rust folds in-process with postcard and verifies each record's header (`sdk_lang`,
 `schema_version`, `format_id`) and trailing CRC32, failing loud with
 `RestoreError::{LangMismatch, SchemaTooOld, SchemaFromTheFuture, HeaderInvalid,
@@ -90,9 +82,7 @@ deletes its files.
 
 ### Compaction (`CompactCell`)
 
-Compaction is controller-driven and real on all three SDKs (the Elixir Cell has nothing
-pending when it answers — its records ship at dispatch end — so its snapshot is the state at
-`change_seq - 1`, framed behind the records on the same stream). On `CompactCell { cell_id }` the
+Compaction is controller-driven and real on all three SDKs. On `CompactCell { cell_id }` the
 core, under the Cell's exclusivity gate, drains the pending flush buffer first
 (`flush_one`) so in-memory state equals the shipped WAL, then reads
 `snapshot_seq = change_seq - 1` — the highest seq the snapshot already folds. The controller
@@ -100,7 +90,7 @@ truncates records with `seq > snapshot_seq` and seeds its baseline there, so sta
 `change_seq` (the next seq to assign) would dedup-drop the next real record. The
 pending-timer set is re-stated as a fresh timer-ops record after the seq is read, landing at
 `snapshot_seq + 1` where truncation keeps it. `State` is serialised with the change codec —
-postcard (Rust, in-process) or Kryo (Java, via a `SnapshotRequest` activation), never the
+postcard (Rust, in-process), Kryo (Java) or ETF (Elixir), the latter two via a `SnapshotRequest` activation, never the
 JSON migration serializer, or restore cannot decode it — shipped as a
 `cell_state_snapshot` data frame, and acknowledged with
 `CompactCellResponse { cell_id, snapshot_seq, snapshot_bytes_size }`. A `cell_id`
@@ -122,7 +112,7 @@ and give-up are the controller's.
 | control, controller → SDK | `CellMailboxStatus` | legacy `full` / `open` back-pressure (pre-credit sessions) |
 
 Every durable record carries a 16-byte big-endian header stamped by the core's
-`HeaderTemplate` — by `Flezha.SDK.Record.header/2` in the Elixir SDK; effect records and
+`HeaderTemplate`; effect records and
 timer-ops records use `format_id` 2 and 3 on the SDKs that write them, and every SDK's
 restore rejects any `sdk_lang` but its own before it reads the format byte:
 
@@ -154,14 +144,11 @@ Every SDK ships the smallest `compact_after_bytes` across the class's Tasklets i
   the reference case for the direct-write detection.
 - **Elixir.** The `state` block generates `state_from_json/1`, which turns a JSON object read
   back from the controller into the state term, and each `defchange` generates an
-  `apply_change/2` clause and its recorder, journaling through `Flezha.SDK.Ctx.apply/3`. Under
-  `run: {:flow, exactly: :effectively_once}` the Cell ships one `cell_effect_record` per
-  effectful invocation or per closed interval in place of change records, and
-  `Flezha.SDK.Ctx.checkpoint/1` closes an interval from inside `run/3`. The record, the fold, the
-  slot, the commands and the shutdown are in [`elixir_sdk.md`](elixir_sdk.md#persistence), the
-  tier in [`elixir_sdk.md`](elixir_sdk.md#effectively-once-tier); the tests are
-  `test/flezha/sdk/persistence_test.exs` and `commands_test.exs` over the fixtures in
-  `test/helpers/sdk_persistence_fixtures.ex`.
+  `apply_change/2` clause and its recorder, journaling through `Flezha.SDK.Ctx.apply/3`. The change terms ride
+  the activation result as ETF (`format_id` 7), and `Flezha.SDK.Ctx.checkpoint/1` closes an
+  effectively-once interval from inside `run/3`. The tests are `sdk/elixir/test/flezha/sdk/dispatch_test.exs`
+  (the activation kinds a restore and a compaction use) and the cross-SDK end-to-end suites
+  run with `FLEZHA_E2E_RUNTIME=elixir`.
 
 ## See also
 

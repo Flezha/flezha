@@ -24,7 +24,7 @@ defmodule FlezhaTest.System.PartitionedRelaysE2ETest do
   alias Flezha.Relay.PartitionGroup
   alias Flezha.Partition
   alias Flezha.Runner.FleetManager
-  alias Flezha.SDK.KeyGroup
+  alias Flezha.Relay.KeyGroup
   alias Flezha.Service.Cli
   alias Flezha.Service.RelayManager
   alias Flezha.Service.PluginManager

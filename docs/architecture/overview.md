@@ -44,9 +44,9 @@ the chapter take one part each:
 - **Runner**: a process you run, written with one of the seven SDKs (Rust,
   Java, Node, Python, Ruby, PHP, Elixir). It runs your code. A runner always
   dials the controller, never the other way round. It holds state in memory
-  only, so it can be replaced at any time: the controller has the copy. Six
-  of the SDKs share one Rust kernel, `flz_core`, for transport, ordering,
-  durability, retries and timers; the Elixir SDK has its own. See
+  only, so it can be replaced at any time: the controller has the copy. Every
+  SDK shares one Rust kernel, `flz_core`, for transport, ordering,
+  durability, retries and timers. See
   [`runner.md`](runner.md).
 - **Relay**: what you start and stop. A **factory** is the class a runner
   registers; an **instance** is one running copy of it.
@@ -353,9 +353,9 @@ strings, read in one place, `Flezha.Relay.ClassRegistry.decode_declarations/1`:
 `exactly`, `ack`, `correction_ms`, `compact_after_bytes`, `compensable_tasks`,
 `leaf_tasks` and `keyed`. A missing key takes its default. `keyed` is sent
 only when it is false: such a class cannot be partitioned, and the controller
-uses that to refuse a partitioned start. The six SDKs on `flz_core` build this
+uses that to refuse a partitioned start. Every SDK builds this
 map in the core, so a Java class and a Rust class with the same settings send
-the same map; the Elixir SDK builds it itself. Wire detail:
+the same map. Wire detail:
 [`protocol_spec.md`](https://github.com/flezha/flezha/blob/main/docs/sdk/protocol_spec.md).
 
 ## What is on disk

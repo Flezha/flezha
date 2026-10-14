@@ -37,7 +37,7 @@ defmodule Flezha.Runner.StreamChannel.Records do
   alias Flezha.State.Snapshot, as: StateSnapshot
   alias Flezha.State.WalWriter
   alias Flezha.State.Watchdog
-  alias Flezha.SDK.Wire
+  alias Flezha.State.Wire
   alias Flezha.Transport.LivenessCounters
 
   require Logger

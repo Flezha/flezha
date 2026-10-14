@@ -2,20 +2,20 @@ defmodule FlezhaTest.System.BackoffTableDrillTest do
   @moduledoc """
   Every ladder row driven through the site that walks it, read off telemetry.
 
-  The row set is the controller's `Backoff.ladders/0` and the Elixir SDK's
-  `Knob.ladders/0`, so a new ladder is covered with no test edit: a row this module neither drives nor accounts for fails `every row is
-  accounted for` by name.
+  The row set is the controller's `Backoff.ladders/0`, so a new ladder is
+  covered with no test edit: a row this module neither drives nor accounts for
+  fails `every row is accounted for` by name.
 
   A driven row induces the failure at the edge where its site meets the outside
   world — a socket that answers `429`, an endpoint that answers `503`, a
-  refusing backend, an unanswered hub call, a tasklet that returns an error —
+  refusing backend, an unanswered hub call —
   and asserts the delays announced on `[:flezha, :backoff, :wait]` are the
   row's, that the attempts ascend, and that a success announces
   `[:flezha, :backoff, :reset]`.
 
   An accounted row is one whose wait is a single fixed cadence armed inside a
-  private path (a port restart, a hub retry, an outbox retry, a park resend, a
-  broker-replace throttle): the value is one number, `backoff_seam_test.exs`
+  private path (a port restart, a hub retry, an outbox retry, a broker-replace
+  throttle): the value is one number, `backoff_seam_test.exs`
   proves no site holds an arithmetic of its own, and the suite named beside the
   row drives the behaviour that arms it. Each says which.
 
@@ -33,13 +33,9 @@ defmodule FlezhaTest.System.BackoffTableDrillTest do
   alias Flezha.Observability.Export.OtlpClient
   alias Flezha.Plugin.Extension.Ctx
   alias Flezha.Plugin.Provider.Websocket
-  alias Flezha.SDK.Channels
-  alias Flezha.SDK.Knob
-  alias Flezha.SDK.Relay.Inbox
   alias Flezha.Service.RelayManager.Init
   alias Flezha.State.Watchdog
   alias FlezhaTest.Helper.ProviderPrepare
-  alias FlezhaTest.Helper.SdkRelayHarness
   alias FlezhaTest.Helper.WebsocketServer
 
   setup :set_mimic_global_until_exit
@@ -50,7 +46,6 @@ defmodule FlezhaTest.System.BackoffTableDrillTest do
   # names the suite that drives the behaviour arming it; the value itself is
   # the row's, and no site may hold a second one (backoff_seam_test.exs).
   @accounted %{
-    park_resend: "test/flezha/sdk/effectively_once_test.exs — a park is resent until acked",
     hub_retry: "test/flezha/schedule/hub_test.exs — the schedule hub retries its start",
     port_restart: "no suite drives the crash-loop path",
     postgres_flush:
@@ -61,11 +56,7 @@ defmodule FlezhaTest.System.BackoffTableDrillTest do
       "test/flezha/plugin/provider/relay_forward_test.exs — an unconfirmed delivery retries",
     durability_ship: "test/flezha/state/durability_tier_test.exs — a refused ship retries",
     schedule_spawn:
-      "test/flezha/schedule/job_test.exs — a failed spawn retries until the next slot",
-    cell_wake_retry:
-      "test/flezha/sdk/cell_timers_test.exs — a due timer that finds no room comes back",
-    sdk_reconnect:
-      "test/flezha/sdk/transport_modes_test.exs — a dropped runner reconnects; the row is pinned to flz_core by backoff_seam_test.exs"
+      "test/flezha/schedule/job_test.exs — a failed spawn retries until the next slot"
   }
 
   describe "the table is the test's row set" do
@@ -74,7 +65,7 @@ defmodule FlezhaTest.System.BackoffTableDrillTest do
       accounted = MapSet.new(Map.keys(@accounted))
 
       unaccounted =
-        for key <- Map.keys(Backoff.ladders()) ++ Map.keys(Knob.ladders()),
+        for key <- Map.keys(Backoff.ladders()),
             not MapSet.member?(driven, key),
             not MapSet.member?(accounted, key),
             do: key
@@ -109,7 +100,6 @@ defmodule FlezhaTest.System.BackoffTableDrillTest do
           :otlp_post,
           :no_response,
           :cluster_reconnect,
-          :sdk_retry,
           :ws_reconnect,
           :ws_sink_ack
         ] do
@@ -176,7 +166,6 @@ defmodule FlezhaTest.System.BackoffTableDrillTest do
       # A peer that never answers Node.connect/1.
       cluster_reconnect: {&cluster_reconnect_device/0, 3, []},
       # A tasklet that returns an error for every input.
-      sdk_retry: {&sdk_retry_device/0, 3, [base: 50]},
       # A socket that answers every upgrade with 429.
       ws_reconnect: {&ws_reconnect_device/0, 3, []},
       # A socket whose peer takes every frame and acknowledges none.
@@ -245,45 +234,6 @@ defmodule FlezhaTest.System.BackoffTableDrillTest do
   defp cluster_reconnect_device() do
     node = :"never_answers_#{System.unique_integer([:positive])}@127.0.0.1"
     send(Process.whereis(Flezha.Cluster.Orchestrator), {:nodedown, node})
-    :ok
-  end
-
-  defmodule FailingTasklet do
-    @moduledoc false
-    use Flezha.SDK.Tasklet, name: "backoff_drill_tasklet"
-    @impl true
-    def init_state(_), do: %{}
-
-    defchange noop(s) do
-      s
-    end
-
-    @impl true
-    def state_from_json(json), do: json
-
-    # Every input fails, so the ladder walks to its retry_max and parks.
-    @impl true
-    def run(_input, _state, _ctx), do: {:error, "backoff drill: always fails"}
-  end
-
-  defmodule FailingRelay do
-    @moduledoc false
-    @behaviour Flezha.SDK.Relay
-    def factory_id, do: "backoff_drill"
-
-    def channels(c) do
-      c
-      |> Channels.input("in")
-      |> Channels.retry_backoff_ms(50)
-      |> Channels.retry_max(4)
-      |> Channels.into(FailingTasklet)
-      |> Channels.output()
-    end
-  end
-
-  defp sdk_retry_device() do
-    %{op: op} = SdkRelayHarness.start_relay(FailingRelay)
-    Inbox.input(op, "in", "payload", %{})
     :ok
   end
 
@@ -362,12 +312,9 @@ defmodule FlezhaTest.System.BackoffTableDrillTest do
   # jittered floor, and the band is what the one jitter rule allows above it.
   # `knobs` are the caller's `base`/`cap` where the row's bound is a per-plugin
   # setting, so the band is the one that site actually walks.
-  # The table a ladder is declared in: the controller's, or the Elixir SDK's own.
-  defp table(ladder), do: if(Map.has_key?(Knob.ladders(), ladder), do: Knob, else: Backoff)
-
   defp assert_in_band(ladder, attempt, delay, knobs) do
-    row = table(ladder).ladder(ladder)
-    floor = table(ladder).delay(ladder, attempt, Keyword.put(knobs, :rand, fn _ -> 1 end))
+    row = Backoff.ladder(ladder)
+    floor = Backoff.delay(ladder, attempt, Keyword.put(knobs, :rand, fn _ -> 1 end))
 
     if row.jitter do
       cap =
@@ -396,7 +343,7 @@ defmodule FlezhaTest.System.BackoffTableDrillTest do
       1
     end
 
-    _ = table(ladder).delay(ladder, attempt, Keyword.put(knobs, :rand, rand))
+    _ = Backoff.delay(ladder, attempt, Keyword.put(knobs, :rand, rand))
 
     receive do
       {:unjittered, max} -> max

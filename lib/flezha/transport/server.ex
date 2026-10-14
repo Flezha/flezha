@@ -36,15 +36,12 @@ defmodule Flezha.Transport.Server do
   alias Flezha.SDK.SafeCall
   alias Flezha.Socket.Support, as: SocketSupport
   alias Flezha.Transport.CertGenerator
-  alias Flezha.SDK.LocalStream
   alias Flezha.Transport.Native
   alias Flezha.Transport.Stream, as: TStream
 
   require Logger
 
   use GenServer
-
-  @behaviour Flezha.SDK.Connect
 
   # Stream type constants (match flz_transport protocol.rs)
   @stream_type_primary 1
@@ -61,50 +58,12 @@ defmodule Flezha.Transport.Server do
 
   def name(:uds), do: :"#{__MODULE__}.Uds"
   def name(:quic), do: :"#{__MODULE__}.Quic"
-  def name(:native), do: :"#{__MODULE__}.Native"
 
-  @doc """
-  Native (in-node) runner connect. The in-BEAM SDK passes its handshake payload
-  as a term (no JSON, no frame) plus the controller-side handle of its control
-  stream, and this dispatches through the same `FleetManager.connect_handler/4`
-  seam the UDS/QUIC `connect_control_channel` path reaches. Rejects a handle
-  owned by another BEAM node (the native transport is same-node only). Returns
-  `{:ok, runner_id}` or `{:error, reason}`; a rejected connect is counted and the
-  handle closed, exactly as the socket path. The `:native` transport server is
-  started first, so the runner appears among the active transports.
-  """
-  @impl Flezha.SDK.Connect
-  @spec connect(map(), LocalStream.t()) :: {:ok, term()} | {:error, term()}
-  def connect(init_payload, %LocalStream{pid: pid} = handle) when is_map(init_payload) do
-    _ = ensure_started(:native)
-
-    if node(pid) != node() do
-      {:error, :remote_node_rejected}
-    else
-      namespace = Map.get(init_payload, "namespace")
-
-      case FleetManager.connect_handler(handle, namespace, init_payload, :native) do
-        {:ok, runner_id} ->
-          {:ok, runner_id}
-
-        {:error, reason} = err ->
-          emit_connect_rejected(reason, :authorization, :native)
-          safe_close(handle)
-          err
-      end
-    end
-  end
-
-  @doc """
-  Bind a data stream (QUIC or native) to the first rebindable channel in the
-  runner's pool, transfer its ownership to that channel and activate it; close it
-  when the pool is full. `stream_type` is the wire constant (1 primary / 2
-  secondary). Returns `{:ok, type, name}` | `{:error, reason}`.
-  """
-  @impl Flezha.SDK.Connect
-  @spec bind_data_stream(term(), non_neg_integer(), TStream.handle()) ::
-          {:ok, :primary | :secondary, term()} | {:error, term()}
-  def bind_data_stream(runner_id, stream_type, handle) do
+  # Bind a QUIC data stream to the first rebindable channel in the runner's
+  # pool, transfer its ownership to that channel and activate it; close it when
+  # the pool is full. `stream_type` is the wire constant (1 primary / 2
+  # secondary).
+  defp bind_data_stream(runner_id, stream_type, handle) do
     case stream_role(stream_type) do
       nil ->
         {:error, :unknown_stream_type}
@@ -121,42 +80,6 @@ defmodule Flezha.Transport.Server do
           nil ->
             TStream.close(handle)
             {:error, :no_channel}
-        end
-    end
-  end
-
-  @doc """
-  Ensure the `:native` transport server is running (idempotent), so an in-node
-  SDK runner appears in `list_active_transports/0` and answers `get_stats/1` even
-  when `:native` is not in the `:transports` config list.
-  """
-  @spec ensure_started(:native) :: {:ok, pid()} | {:error, term()}
-  def ensure_started(:native) do
-    case Process.whereis(name(:native)) do
-      pid when is_pid(pid) ->
-        {:ok, pid}
-
-      _ ->
-        spec =
-          Supervisor.child_spec({__MODULE__, [transport: :native]}, id: {__MODULE__, :native})
-
-        case Supervisor.start_child(Flezha.Supervisor, spec) do
-          {:ok, pid} ->
-            {:ok, pid}
-
-          {:error, {:already_started, pid}} ->
-            {:ok, pid}
-
-          # A terminated spec is still present — restart it in place.
-          {:error, :already_present} ->
-            case Supervisor.restart_child(Flezha.Supervisor, {__MODULE__, :native}) do
-              {:ok, pid} -> {:ok, pid}
-              {:error, :running} -> {:ok, Process.whereis(name(:native))}
-              other -> other
-            end
-
-          {:error, reason} ->
-            {:error, reason}
         end
     end
   end
@@ -181,8 +104,8 @@ defmodule Flezha.Transport.Server do
   and `:status` (`:up | :down`). Returns `{:error, :not_running}` if
   the server is not alive.
   """
-  @spec get_stats(:uds | :quic | :native) :: {:ok, map()} | {:error, :not_running}
-  def get_stats(transport) when transport in [:uds, :quic, :native] do
+  @spec get_stats(:uds | :quic) :: {:ok, map()} | {:error, :not_running}
+  def get_stats(transport) when transport in [:uds, :quic] do
     case Process.whereis(name(transport)) do
       pid when is_pid(pid) ->
         SafeCall.bounded(pid, :get_stats, 1_000, on_error: {:error, :not_running})
@@ -229,10 +152,8 @@ defmodule Flezha.Transport.Server do
   end
 
   # Merge the NIF driver self-report when available. Both server drivers return
-  # the same map; the `:native` transport has no driver and no server ref. A
-  # NIF/decode failure must not break the stats call, so tolerate it.
-  defp put_driver_stats(stats, nil), do: stats
-
+  # the same map. A NIF/decode failure must not break the stats call, so
+  # tolerate it.
   defp put_driver_stats(stats, server_ref) do
     case Native.driver_stats(server_ref) do
       driver when is_map(driver) -> Map.put(stats, :driver, driver)
@@ -251,14 +172,6 @@ defmodule Flezha.Transport.Server do
     Process.flag(:trap_exit, true)
     warn_if_transport_auth_disabled()
     listen(transport)
-  end
-
-  # Native (in-node) transport: no NIF server, no listener, no peer to
-  # authenticate. Streams are pid-backed `Flezha.SDK.LocalStream` handles
-  # bound directly by the in-node SDK through `bind_data_stream/3`.
-  def init(:native) do
-    Logger.info("[Transport.Server] native (in-node) transport ready")
-    {:ok, %{server_ref: nil, transport: :native, pending_streams: %{}}}
   end
 
   # Secure default posture: peer authentication is required unless the

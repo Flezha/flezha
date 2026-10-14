@@ -22,7 +22,7 @@ defmodule FlezhaTest.Helper.StepsResumeHarness do
   alias Flezha.State.Completion
   alias Flezha.State.Paths
   alias Flezha.State.TaskJournal
-  alias Flezha.SDK.RecordFrame
+  alias Flezha.State.Frame
   alias FlezhaTest.Fixtures.RelayFixture
   alias FlezhaTest.Helper.NodeTestHelper
 
@@ -264,7 +264,7 @@ defmodule FlezhaTest.Helper.StepsResumeHarness do
   """
   def wal_seqs(bytes, acc) do
     {:ok, seqs} =
-      RecordFrame.fold_bytes(bytes, {:log, "wal_seqs"}, acc, fn {seq, _h, _b, _raw}, acc ->
+      Frame.fold_bytes(bytes, {:log, "wal_seqs"}, acc, fn {seq, _h, _b, _raw}, acc ->
         {:cont, [seq | acc]}
       end)
 

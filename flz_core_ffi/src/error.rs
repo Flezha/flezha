@@ -26,6 +26,14 @@ pub enum Error {
     /// A local-mode call on a context that holds no local run.
     NoLocalRun,
     ConnectUnconfirmed,
+    /// A start after this process's core was shut down.
+    ShutDown,
+    /// A connection setting the host handed over that the core does not
+    /// define, or one whose value is not a string.
+    ConnectSetting {
+        setting: String,
+        reason: &'static str,
+    },
     /// An administration call's refusal: the controller's own for a policy
     /// refusal, or the kernel's for a call that reached nothing.
     Admin(flz_core::admin::AdminError),
@@ -64,6 +72,11 @@ impl ErrorModel for Error {
             Error::ConnectUnconfirmed => {
                 Code::ConnectUnconfirmed.with([("seconds", CONNECT_CONFIRM_SECS.into())])
             }
+            Error::ShutDown => Code::CoreShutDown.with([]),
+            Error::ConnectSetting { setting, reason } => Code::InvalidConnectSetting.with([
+                ("setting", setting.as_str().into()),
+                ("reason", (*reason).into()),
+            ]),
             Error::Admin(error) => error.to_error(),
             Error::Effect(error) => error.clone(),
             Error::SchemaMismatch { shim, core } => {
@@ -124,6 +137,14 @@ mod tests {
             (Error::AlreadyStarted, "runtime.runner_already_running"),
             (Error::NoLocalRun, "runtime.no_local_run"),
             (Error::ConnectUnconfirmed, "runtime.connect_unconfirmed"),
+            (Error::ShutDown, "runtime.core_shut_down"),
+            (
+                Error::ConnectSetting {
+                    setting: "socket_dir".into(),
+                    reason: "unknown",
+                },
+                "runtime.invalid_connect_setting",
+            ),
             (
                 Error::from(flz_core::admin::AdminError::Refused(refused)),
                 "authz.role_insufficient",

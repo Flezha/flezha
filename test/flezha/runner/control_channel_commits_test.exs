@@ -20,7 +20,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
   alias Flezha.Relay.ClassRegistry
   alias Flezha.Runner.{ControlChannel, ControlUnit}
   alias Flezha.Runner.ControlChannel.Commits
-  alias Flezha.SDK.Wire
+  alias Flezha.State.Wire
   alias Flezha.State.DurabilityTier.Manifest
   alias Flezha.State.{InputLog, Paths, TaskJournal, TestHelpers}
   alias Flezha.State.InputLog.Sweep
@@ -30,7 +30,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
 
   import Flezha.State.TestHelpers, only: [next_output: 1, refute_dispatched: 1]
 
-  alias Flezha.SDK.RecordFrame
+  alias Flezha.State.Frame
 
   alias FlezhaTest.Helper.DurabilityBackendStub, as: Stub
 
@@ -198,7 +198,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
   end
 
   defp effect_header(),
-    do: RecordFrame.encode_header(1, 1, 1, RecordFrame.format_id(:effect_record), <<>>)
+    do: Frame.encode_header(1, 1, 1, Frame.format_id(:effect_record), <<>>)
 
   defp effect_body(payload, opts) do
     Wire.encode_effect_body(%{

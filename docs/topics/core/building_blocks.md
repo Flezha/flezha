@@ -766,19 +766,13 @@ throughput they imply.
 
 ### Elixir
 
-**The one SDK with a core of its own.** Dispatch, cells and state are Elixir,
-sharing no code with `flz_core` and re-expressing the same rules. Concurrency
-is therefore the BEAM's: lightweight processes on the VM's schedulers,
-preempted across every core, with a cell's work ordered through its own
-mailbox (`mailbox_capacity`, 1024 by default).
-
-It is also the only SDK that runs two ways. **In-node**
-(`transport: :native`, the default) it runs inside the controller's own BEAM
-and the transport is a function call rather than a socket, so a connect from
-another BEAM node is refused. **Standalone** (`:uds` or `:quic`) it is its own
-node speaking the binary protocol, and there it reaches the wire through
-`flz_nif`, the same Rust NIF the controller uses. The core above that seam is
-the same Elixir code either way.
+**On the shared core.** Cells, mailboxes, state and the wire are
+`flz_core`'s, reached through a native library the package carries. Your
+tasklets run in a pool of BEAM processes: each waits on a thread of that
+library for the core's next activation, so no wait holds a BEAM scheduler, and
+the pool grows when every worker is busy (`FLEZHA_WORKER_POOL_SIZE`,
+`FLEZHA_WORKER_POOL_MAX`). The runner connects over UDS or QUIC wherever it
+runs, the controller's own BEAM included.
 
 <!-- tabs-close -->
 

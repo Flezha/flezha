@@ -174,8 +174,9 @@ start, so poll it. From outside, with `healthz_enabled: true`,
 `curl localhost:9569/healthz` answers the health JSON. `flz` cannot reach this
 controller: the CLI runs the `flzvm` script, which only exists in a release.
 
-A runner in the same node uses no socket: the Elixir SDK's in-node mode is a
-function call ([`connecting_a_runner.md`](connecting_a_runner.md)).
+An Elixir runner can run in the same BEAM; it connects over the
+controller's socket like any other runner
+([`connecting_a_runner.md`](connecting_a_runner.md)).
 
 <!-- tabs-close -->
 

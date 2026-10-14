@@ -201,12 +201,7 @@ defmodule Flezha.Observability.TelemetryBridge do
     # outcome.
     [:flezha, :state, :record_frame, :repaired] =>
       {:flezha_state, :record_frame_repaired, :event},
-    [:flezha, :state, :wal_rewind] => {:flezha_state, :wal_rewind, :event},
-    # The two Elixir SDK facts no counter mirrors. `[:flezha, :sdk, :parked]`
-    # is bridged by the detector table from the same module, so "an SDK event
-    # cannot reach this bridge" is not true of any of them.
-    [:flezha, :sdk, :retry] => {:flezha_sdk, :retry, :event},
-    [:flezha, :sdk, :dynamic] => {:flezha_sdk, :dynamic, :event}
+    [:flezha, :state, :wal_rewind] => {:flezha_state, :wal_rewind, :event}
   }
 
   # Every `[:flezha, …]` event name the tree writes that reaches no exporter,
@@ -219,16 +214,6 @@ defmodule Flezha.Observability.TelemetryBridge do
     commit_path: [
       [:flezha, :state, :iter_commit],
       [:flezha, :state, :task_commit]
-    ],
-    # The same fact is already a counted slot that IS exported, so a
-    # per-occurrence signal would be a second, weaker account of it.
-    # `[:flezha, :sdk, :mailbox]` is `hb_drops_newest`/`hb_drops_oldest` and
-    # says so at its own emit site; `[:flezha, :sdk, :timers]` is
-    # `hb_timers_armed`/`hb_timers_fired`. Both in
-    # `Flezha.Transport.LivenessCounters`.
-    counted_elsewhere: [
-      [:flezha, :sdk, :mailbox],
-      [:flezha, :sdk, :timers]
     ],
     # The convergence Loop attaches to this itself: it is a control input, and
     # the Loop must not read what an exporter publishes.

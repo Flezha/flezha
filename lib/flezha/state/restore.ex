@@ -15,7 +15,7 @@ defmodule Flezha.State.Restore do
   """
 
   alias Flezha.Relay.ClassRegistry
-  alias Flezha.SDK.RecordFrame
+  alias Flezha.State.Frame
   alias Flezha.State.{Paths, Snapshot}
 
   @type payload :: %{
@@ -85,7 +85,7 @@ defmodule Flezha.State.Restore do
   def sdk_lang(cell_id) do
     with {_seq, path} <- Snapshot.latest_snapshot(cell_id),
          {:ok, header, _bytes} <- Snapshot.read_snapshot(path),
-         {:ok, %{sdk_lang: lang}} <- RecordFrame.decode_header(header) do
+         {:ok, %{sdk_lang: lang}} <- Frame.decode_header(header) do
       lang
     else
       _ -> first_wal_lang(cell_id)
@@ -110,8 +110,8 @@ defmodule Flezha.State.Restore do
   # seam cuts both, so neither layout is restated here.
   defp first_wal_lang(cell_id) do
     with {:ok, data} <- :file.read_file(Paths.wal_path(cell_id)),
-         {:ok, _seq, header, _body, _raw, _consumed} <- RecordFrame.decode_bytes(data),
-         {:ok, %{sdk_lang: lang}} <- RecordFrame.decode_header(header) do
+         {:ok, _seq, header, _body, _raw, _consumed} <- Frame.decode_bytes(data),
+         {:ok, %{sdk_lang: lang}} <- Frame.decode_header(header) do
       lang
     else
       _ -> nil
@@ -127,14 +127,14 @@ defmodule Flezha.State.Restore do
     case :file.read_file(path) do
       {:ok, data} ->
         data
-        |> RecordFrame.fold_bytes(
+        |> Frame.fold_bytes(
           {:log, path},
           {[], snapshot_seq},
           &tail_record(&1, &2, snapshot_seq)
         )
         |> case do
           {:ok, {acc, term_seq}} -> {:ok, {change_log(acc), term_seq}}
-          {:error, refusal} -> {:error, RecordFrame.refusal_message(path, refusal)}
+          {:error, refusal} -> {:error, Frame.refusal_message(path, refusal)}
         end
 
       {:error, _} ->

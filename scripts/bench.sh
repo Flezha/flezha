@@ -119,13 +119,9 @@ done
 if [[ ! " ${RUNTIMES[*]} " == *" $RUNTIME "* ]]; then
     echo "Error: --runtime must be one of: ${RUNTIMES[*]} — got '$RUNTIME'"; exit 1
 fi
-case "$TRANSPORT" in uds|quic|native) ;; *)
-    echo "Error: --transport must be 'uds', 'quic' or 'native', got '$TRANSPORT'"; exit 1 ;;
+case "$TRANSPORT" in uds|quic) ;; *)
+    echo "Error: --transport must be 'uds' or 'quic', got '$TRANSPORT'"; exit 1 ;;
 esac
-# The native transport is the in-process Elixir SDK; rust/java cannot use it.
-if [[ "$TRANSPORT" == "native" && "$RUNTIME" != "elixir" ]]; then
-    echo "Error: --transport native requires --runtime elixir (it is the in-process SDK)"; exit 1
-fi
 if [[ -n "$SHAPE" ]]; then
     case "$SHAPE" in regression|cell|dynamic) ;; *)
         echo "Error: --shape must be 'regression', 'cell', or 'dynamic', got '$SHAPE'"; exit 1 ;;

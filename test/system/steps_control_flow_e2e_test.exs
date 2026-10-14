@@ -29,7 +29,7 @@ defmodule FlezhaTest.System.StepsControlFlowE2ETest do
   alias Flezha.Dlq.Store, as: DlqStore
   alias Flezha.Relay.ClassRegistry
   alias Flezha.Runner.FleetManager
-  alias Flezha.SDK.Wire
+  alias Flezha.State.Wire
   alias Flezha.Service.Cli
   alias Flezha.Service.RelayManager
   alias Flezha.State.Completion

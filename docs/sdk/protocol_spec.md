@@ -5,11 +5,9 @@ framing, the protobuf command set, the connection lifecycle, the data-plane
 frames and the per-Cell persistence frames. Relay authors do not need it
 — their surface is [`authoring_contract.md`](authoring_contract.md).
 
-The protocol has two implementations: the shared Rust kernel `flz_core`
-(linked by the Rust SDK as a crate and by the Java SDK through the
-`flz_core_ffi` C ABI and the `FlzCore` JNI binding) and the Elixir SDK
-(`Flezha.SDK`, the `sdk/elixir` package), its own core that inherits nothing from
-`flz_core`. The host-facing Activation contract inside a `flz_core` runner is a
+The runner side of the protocol has one implementation, the shared Rust
+kernel `flz_core`, linked by the Rust SDK as a crate and by every other SDK
+through the `flz_core_ffi` C ABI. The host-facing Activation contract inside a `flz_core` runner is a
 separate boundary: [`poll_core.md`](poll_core.md).
 
 ## Table of Contents
@@ -113,15 +111,6 @@ window (§5) — and uses an 8 MiB per-stream receive window.
   2-byte prefix: byte 0 is the stream type (`0x01` primary, `0x02`
   secondary), byte 1 the stream index. The NIF driver consumes the prefix; the
   framing layer never sees it.
-
-### Native (in-node Elixir SDK)
-
-An Elixir SDK hosted inside the controller's own BEAM node speaks `native`:
-streams are `Flezha.SDK.LocalStream` processes and frames are delivered
-as `{:flz_data, id, payload_id, message, metadata}` terms — no framing, no
-syscalls. Same-node only, opt-in. A standalone Elixir runner uses the binary
-protocol over UDS/QUIC and is indistinguishable from a Rust runner. See
-[`elixir_sdk.md`](elixir_sdk.md).
 
 ## 3. Binary Framing Protocol
 
@@ -341,8 +330,7 @@ Control-plane commands are Protocol Buffers v3 (`proto3`, package
 `runner_commands`). The authoritative definition is
 `protobufs/runner_commands.proto`; the generated Rust module is
 `flz_core/src/generated/runner_commands.rs` (and a twin in `flz_transport`),
-the controller's Elixir decoder is `Flezha.Runner.CommandsProto` and the Elixir
-SDK's `Flezha.SDK.Proto` (both Protox).
+and the controller's Elixir decoder is `Flezha.Runner.CommandsProto` (Protox).
 
 ### Envelope
 
@@ -937,7 +925,7 @@ that is not a call end's response channel. `codec` is `json`, `text`, `bytes`, `
 when an output that answers is reachable from the channel along its consumer edges, with that
 output's codec and schema; reachable outputs that disagree give `bytes` and no schema. The init
 frame's factory entries carry the same six keys under `"api"`. `flz_core` builds the entries
-from the host's channel facts (`advertised_for_factory`); the Elixir SDK builds its own. A
+from the host's channel facts (`advertised_for_factory`). A
 runner that sends none leaves its factory with no API; the controller keeps each runner's latest
 announcement and `Relay.api` reads it.
 
@@ -950,12 +938,11 @@ class: `kind` is `entry`, `inter_tasklet` or `plugin_bound`; `producer` is the p
 tasklet's name, empty for an entry; `consumers` are the consuming tasklets' names; `plugin_end`
 is `call` for a `call(...)` end, `output` for a plugin output, otherwise `none`; `call_target`
 is a call end's `id:<relay>` or `factory:<id>`, empty otherwise; `overflow` is `drop_nothing`,
-`drop_newest` or `drop_oldest` (the Elixir SDK sheds per consuming tasklet's mailbox, so its
-channel announces the first policy its consumers declare). Each `GraphTasklet { name, mode, cell_keys, mailbox_capacity }`
+`drop_newest` or `drop_oldest`. Each `GraphTasklet { name, mode, cell_keys, mailbox_capacity }`
 names a tasklet in declaration order, with `mode` `single`, `static` or `dynamic`. The init
 frame's factory entries carry the same structure as a `"graph"` object with these keys, omitted
-when there is none. `flz_core` builds it from the class's topology (`advertised_for_factory`);
-the Elixir SDK builds its own. A runner that sends none leaves its factory with no graph, and
+when there is none. `flz_core` builds it from the class's topology (`advertised_for_factory`).
+A runner that sends none leaves its factory with no graph, and
 it is still placed. The controller keeps each runner's latest announcement beside its API, out
 of the factory rows a call reads, and `Relay.graph` reads it.
 
@@ -1029,8 +1016,8 @@ call. Unbound, that is `runner`, and every administration verb is refused. An
 operation the catalogue marks as not `remote`, or as streaming, is refused as
 `control.unknown_function`: a request gets one reply, so a stream has nowhere to go.
 
-The hosts that share `flz_core` reach it through one verb-keyed C ABI entry,
-`flz_core_admin_call`; the Elixir SDK re-expresses the same frame over its own core. A runner's send rides the same frame: `flz_core_send_message` makes the
+Every host reaches it through one verb-keyed C ABI entry,
+`flz_core_admin_call`. A runner's send rides the same frame: `flz_core_send_message` makes the
 `Relay.send` request, or, local, hands the message to a relay bound on
 that runner and sends no frame at all.
 
@@ -1114,9 +1101,8 @@ overflow, counted as a drop-oldest shed) and are replayed once a stream is back
 replayed byte for byte. `FLEZHA_BROKEN_PIPE_RECONNECT_THRESHOLD` (10) write failures
 inside `FLEZHA_BROKEN_PIPE_WINDOW_MS` (5000) request a control reconnect with
 reason `broken_pipe_flood`, re-armed after `FLEZHA_RECONNECT_REQUEST_RETRY_MS`
-(30000) if unanswered. The entry points are `flz_core::state_sink::write` for
-every runtime built on the shared core and `Flezha.SDK.Hold.write/3` for the
-Elixir SDK, which is its own core.
+(30000) if unanswered. The entry point is `flz_core::state_sink::write`, shared by
+every SDK.
 
 **Non-blocking I/O.** Primary sockets are non-blocking and polled through an
 event mechanism (the `flz_core` reader uses `mio`;
@@ -1224,7 +1210,7 @@ layout, WAL writer and `flz state` CLI are in
 ### Data-stream payload-id `cell_state_change`
 
 Runner → controller. One Change record for the per-Cell WAL. Frame layout
-(decoded by `Flezha.SDK.Wire.decode_frame/1`):
+(decoded by `Flezha.State.Wire.decode_frame/1`):
 
 ```text
 [cell_id_len: u16 BE]
@@ -1261,8 +1247,7 @@ and decodes only `format_id = 2`. A **timer-ops record** (`format_id = 3`)
 carries a postcard `Vec<TimerOp>` mutating the Cell's pending-timer set; the
 controller never decodes it — the pending set is SDK-owned state
 ([`../topics/core/timers.md`](../topics/core/timers.md)). On restore the kernel validates the
-header for every host it serves — and the Elixir SDK's own fold does the same
-— and refuses a mismatch by name, the language before anything else:
+header for every host it serves and refuses a mismatch by name, the language before anything else:
 `RestoreError::LangMismatch` (one SDK reading another's header),
 `SchemaFromTheFuture` / `SchemaTooOld`, `CrcMismatch`, `HeaderInvalid`.
 
@@ -1281,7 +1266,7 @@ ONE fsync so state, outputs and progress can never tear apart. A steps relay
 Cell's record carries no consumed offset (the iteration's `IterCommit` does)
 and no dead-letter park, and is sent as the item settles, ahead of the stage's
 `TaskCommit`, never on the flush linger. Decoded by
-`Flezha.SDK.Wire.decode_effect_body/1`:
+`Flezha.State.Wire.decode_effect_body/1`:
 
 ```text
 EffectRecordBody {
@@ -1365,7 +1350,7 @@ budget (`max_attempts` default 3, exponential backoff ±50 % jitter capped at
 the Cell until the controller acks the park as durable (`ParkPayloadAck`),
 re-sending every 2 s — park-then-advance, never a drop. Same outer frame as
 `cell_state_change` with a zero header; `body` is the postcard `ParkBody`
-(`Flezha.SDK.Wire.decode_park_body/1`):
+(`Flezha.State.Wire.decode_park_body/1`):
 
 ```text
 ParkBody {

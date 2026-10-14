@@ -40,11 +40,6 @@ The practical test is not "is this code duplicated" but "if the rule changed,
 how many places would have to agree". If the answer is more than one, the job
 has scattered and the seam is what the change should restore.
 
-The one standing exception is the Elixir SDK, which is its own core and inherits
-nothing from `flz_core`. It re-expresses a shared check against the same
-fixture rather than calling it, which is a second seam and not a bypass of the
-first. See `docs/architecture/runner.md`, "One change, every SDK".
-
 ## Writing a check
 
 Four rules about the checks themselves. Each was learned by shipping the

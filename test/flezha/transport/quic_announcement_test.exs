@@ -16,8 +16,8 @@ defmodule Flezha.Transport.QuicAnnouncementTest do
   alias FlezhaTest.Helper.NodeTestHelper
 
   @controller "[Transport.Server] the QUIC transport is experimental"
-  @rust_runner "[flezha] the QUIC transport is experimental"
-  @elixir_runner "[Flezha.SDK] the QUIC transport is experimental"
+  # Every runner on `flz_core` says it the same way, the Elixir one included.
+  @runner "[flezha] the QUIC transport is experimental"
 
   setup do
     ns = "quic_notice_#{System.unique_integer([:positive])}"
@@ -72,16 +72,15 @@ defmodule Flezha.Transport.QuicAnnouncementTest do
       assert log =~ "docs/publishing/maturity.md#quic"
 
       for port <- ports do
-        out = NodeTestHelper.read_port(port, &String.contains?(&1, @rust_runner))
-        assert out =~ "#{@rust_runner}: its settings and behaviour may change drastically"
+        out = NodeTestHelper.read_port(port, &String.contains?(&1, @runner))
+        assert out =~ "#{@runner}: its settings and behaviour may change drastically"
       end
     end
 
-    test "a UDS or in-node listener announces nothing", %{ns: ns} do
+    test "a UDS listener announces nothing", %{ns: ns} do
       {_, log} =
         with_log(fn ->
           restart_listener(:uds)
-          {:ok, _} = Server.ensure_started(:native)
           start_runner(ns, transport: :uds, runtime: :rust)
         end)
 
@@ -100,8 +99,7 @@ defmodule Flezha.Transport.QuicAnnouncementTest do
       EventManager.rem_handler(:runner_connected_event)
 
       out = stop_and_read(port)
-      assert out =~ "[Flezha.SDK] connection lost"
-      assert NodeTestHelper.occurrences(out, @elixir_runner) == 1
+      assert NodeTestHelper.occurrences(out, @runner) == 1
     end
 
     test "an Elixir runner over UDS announces nothing", %{ns: ns} do

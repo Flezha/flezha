@@ -12,7 +12,7 @@ defmodule FlezhaTest.State.CompensationMarkersTest do
   import Mimic
 
   alias Flezha.Runner.{ControlChannel, StreamChannel}
-  alias Flezha.SDK.Wire
+  alias Flezha.State.Wire
   alias Flezha.State.{Commands, Paths, TestHelpers}
   alias FlezhaTest.Helper.NodeTestHelper
 

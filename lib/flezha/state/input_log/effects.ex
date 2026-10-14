@@ -10,7 +10,7 @@ defmodule Flezha.State.InputLog.Effects do
   data and the file.
   """
 
-  alias Flezha.SDK.RecordFrame, as: Frame
+  alias Flezha.State.Frame
   alias Flezha.State.{Paths, RecordFrame}
 
   defstruct [:path, :file, results: %{}, seq: 0]

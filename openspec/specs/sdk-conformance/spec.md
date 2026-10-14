@@ -25,7 +25,7 @@ Each SDK's test app directory `test/apps/<sdk>_runner/` SHALL contain `conforman
 
 `pool_wedge` becomes required because a host that cannot be wedged on demand cannot prove it recovers: the fixture is what exercises the abandon path, the worker replacement and the classifier's verdict on that SDK rather than on Rust alone.
 
-`state_persistence` joins the required set the same way: the record stream, the restore fold, the compaction snapshot, the live read and the credit window live once in the shared core for six SDKs and are re-expressed in the Elixir SDK's own core against the kernel's rules, so the last deferrer carries it and the gate's inverse direction promotes it. `keyed_channels`, `dynamic_cell` and `schema_evolution` join it the same way: the identity stamps, the idle reaper with its cap and trace, and the per-Tasklet schema declaration with its migrations live once in the shared core for six SDKs and are re-expressed in the Elixir SDK's own core, so the last deferrer carries them and the gate's inverse direction promotes them. `cell_timers` joins the same way: the pending set, its ops as records in the Cell's own log, the two firing paths and the clock kinds live once in the shared core for six SDKs and are re-expressed in the Elixir SDK's own core. `effectively_once` joins the same way: the staged interval, the effect record, the checkpoint close, the tier-on park and the deterministic-effects contract live once in the shared core for six SDKs and are re-expressed in the Elixir SDK's own core. `correction_window` joins the same way, and it is the smallest of the five because the controller half is SDK-blind and already complete: the lateness classification against the Cell's event-time high-water, the correction request, the replay-slice buffer and its event-time ordering live once in the shared core for six SDKs and are re-expressed in the Elixir SDK's own core, so the last deferrer carries it and the gate's inverse direction promotes it.
+`state_persistence` joins the required set the same way: the record stream, the restore fold, the compaction snapshot, the live read and the credit window live once in the shared core for seven SDKs, so the last deferrer carries it and the gate's inverse direction promotes it. `keyed_channels`, `dynamic_cell` and `schema_evolution` join it the same way: the identity stamps, the idle reaper with its cap and trace, and the per-Tasklet schema declaration with its migrations live once in the shared core for seven SDKs, so the last deferrer carries them and the gate's inverse direction promotes them. `cell_timers` joins the same way: the pending set, its ops as records in the Cell's own log, the two firing paths and the clock kinds live once in the shared core for seven SDKs. `effectively_once` joins the same way: the staged interval, the effect record, the checkpoint close, the tier-on park and the deterministic-effects contract live once in the shared core for seven SDKs. `correction_window` joins the same way, and it is the smallest of the five because the controller half is SDK-blind and already complete: the lateness classification against the Cell's event-time high-water, the correction request, the replay-slice buffer and its event-time ordering live once in the shared core for seven SDKs, so the last deferrer carries it and the gate's inverse direction promotes it.
 
 The required set SHALL be a declaration a person writes, never a value computed from the manifests, and the gate SHALL enforce the two directions separately because their remedies differ: a manifest that defers a required capability SHALL fail naming that manifest and the required set, and a capability no manifest defers that is absent from the required set SHALL fail naming the capability and the declaration it belongs in. A capability therefore cannot leave the required set as a side effect of a manifest edit — an SDK that genuinely cannot carry one defers it by name and removes it from the required set in the same change, and both halves are read by a reviewer.
 
@@ -370,9 +370,7 @@ those that exist and every one a future SDK adds — accounts for it under `fixt
 `deferred`, and the existing rollout gate makes an omission a red pull request rather than a
 backlog item. It SHALL be in the required set for as long as no manifest defers it, by the general rule above. The
 freedom the required set once reserved for it survives as a deferral rather than as a standing exemption: an
-SDK whose transport is not the shared `flz_transport` — the live case is the Elixir SDK's in-node `:native`
-mode, which passes BEAM messages inside the controller's own node and walks no socket ladder, and which its
-conformance app does not exercise because that manifest declares `transports: ["uds", "quic"]` — SHALL defer
+SDK whose transport is not the shared `flz_transport` SHALL defer
 `connect_discovery` by name in its own manifest, and the same change SHALL remove it from the required set.
 The gate then names the SDK and the line to edit, and the required set carries no hole for a case no manifest
 has.
@@ -514,8 +512,7 @@ refused or counted and never held; a durable record is held in a bounded ring,
 drop-oldest counted, and replayed in write order on the next bound stream; a
 plugin or steps output is held already framed so its channel and identity
 stamps survive the replay — with the shared core carrying them for the Rust,
-Java, Node, Python, Ruby and PHP SDKs and the Elixir SDK carrying its own,
-because it inherits nothing from `flz_core`.
+Java, Node, Python, Ruby, PHP and Elixir SDKs.
 
 A conformance scenario SHALL prove this on the real wire for every runtime the
 manifest does not defer: the stream is severed mid-burst, the runner rebinds,
@@ -550,8 +547,7 @@ on top of the core that already owns them. For every host built on `flz_core`
 the detector and the signal handler SHALL be the core's, reached through the
 ABI, and a host SHALL NOT install its own signal trap beside the core's unless
 its runtime gives it no choice — the Java SDK's JVM shutdown hook is such a
-case and is named as one. The Elixir SDK, which is its own core, SHALL keep its
-own terminal-exit path.
+case and is named as one.
 
 A conformance scenario SHALL prove the exit per runtime: the runner ships its
 final state, exits with the declared status, and opens no new control
@@ -581,12 +577,11 @@ connection on the way out.
 
 The data heartbeat's metadata keys SHALL be one contract, and the static drift gate SHALL compare every producer of that contract against it on every default-suite run.
 
-There are two producers: `flz_core`'s heartbeat builder, which serves the Rust,
-Java, node, python, ruby and php runtimes through one function, and the Elixir
-SDK, whose core is separate and inherits nothing from `flz_core`. The gate
-SHALL read the key set from each producer's own sources and compare both with
-the controller's mirror, so that a key one producer carries and another omits is
-a build failure rather than a silent gap on one runtime.
+There is one producer: `flz_core`'s heartbeat builder, which serves the Rust,
+Java, node, python, ruby, php and Elixir runtimes through one function. The gate
+SHALL read the key set from the producer's own sources and compare it with
+the controller's mirror, so that a key the producer carries and the mirror omits is
+a build failure rather than a silent gap.
 
 A key that a producer omits SHALL NOT be substituted with a literal zero. A
 reader cannot tell an absent key from a genuinely zero one, so an omission is
@@ -596,12 +591,6 @@ The gate SHALL read the shared core's builder by a scrape that tolerates the
 formatter's line wrapping. A scrape anchored to the opening parenthesis and the
 string on one line reads fewer keys than the builder writes, and would pass with
 the gap intact.
-
-#### Scenario: A key one producer omits fails the gate
-
-- **GIVEN** the key set the shared core's heartbeat builds
-- **WHEN** the Elixir SDK's heartbeat builds a strictly smaller set
-- **THEN** the gate SHALL fail and name the missing keys
 
 #### Scenario: A key with no slot fails the gate
 

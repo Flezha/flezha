@@ -419,7 +419,7 @@ defmodule Flezha.State.WalWriterOutboxTest do
     ClassRegistry.put_overwatch(rc, self(), nil)
 
     body = effect_body([], 9, %{channel: "in", error: "e", attempts: 1, payload: "p"})
-    effect = RecordFrame.encode_record(0, effect_header(), body)
+    effect = Frame.encode_record(0, effect_header(), body)
     wal_path = Paths.wal_path(cell_id)
     File.mkdir_p!(Path.dirname(wal_path))
 
@@ -453,9 +453,9 @@ defmodule Flezha.State.WalWriterOutboxTest do
     ClassRegistry.put_overwatch(rc, self(), nil)
 
     # Build the on-disk bytes of record 0 (plain) + record 1 (effect).
-    plain = RecordFrame.encode_record(0, plain_header(), "base")
+    plain = Frame.encode_record(0, plain_header(), "base")
     body = effect_body([output("k", "torn?")], 9)
-    effect = RecordFrame.encode_record(1, effect_header(), body)
+    effect = Frame.encode_record(1, effect_header(), body)
 
     wal_path = Paths.wal_path(cell_id)
     File.mkdir_p!(Path.dirname(wal_path))

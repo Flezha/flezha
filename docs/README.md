@@ -173,7 +173,7 @@ Connecting relays to the outside; every plugin's own page is under [`plugins/`](
 | [`naming_conventions.md`](sdk/naming_conventions.md) | The numbered naming rules every SDK surface follows |
 | [`rust_relay_architecture.md`](sdk/rust_relay_architecture.md) | The Rust SDK's dispatch pipeline: channels, tasklets, cells, mailboxes, backpressure, plugin egress |
 | [`state_persistence.md`](sdk/state_persistence.md) | For SDK implementers: how per-cell state becomes durable in the SDKs |
-| [`elixir_sdk.md`](sdk/elixir_sdk.md) | The Elixir SDK: in-node native mode and the standalone runner |
+| [`elixir_sdk.md`](sdk/elixir_sdk.md) | The Elixir SDK on the shared core, wherever its runner runs |
 | [`java_sdk.md`](sdk/java_sdk.md) | The Java SDK: scope, how its artifacts are built, how it is tested |
 | [`node_sdk.md`](sdk/node_sdk.md) | The Node SDK (`@flezha/sdk`): supported versions, dispatch configuration, what must never block the event loop |
 | [`python_sdk.md`](sdk/python_sdk.md) | The Python SDK (`flezha` on PyPI): supported versions, encoding, concurrency, startup order |

@@ -629,8 +629,6 @@ When `cell_idle_ttl()` returns `Some(ttl)`, the SDK SHALL run one reaper thread 
 
 The reaper SHALL sweep on a cadence derived as `min(ttl / 4, 30s)`, overridable globally via the `FLEZHA_REAP_INTERVAL_MS` environment variable for testing.
 
-The Elixir SDK carries the same rule in its own core under its own spelling: `idle_ttl_seconds/0`, a positive whole number of seconds (default `nil`), one `:reap` tick per Relay process at the same cadence, and the Relay's routing serialisation as the drain gate: while the sweep runs no push can be routed, a Cell mid-dispatch or holding queued or deferred work is skipped until the next sweep, and an idle one evicts synchronously so its `delete_cell_state` precedes any successor's first record on the same stream.
-
 #### Scenario: No eviction by default
 - **WHEN** a dynamic-mode Tasklet does not override `cell_idle_ttl()` (it returns `None`)
 - **THEN** no reaper thread SHALL be spawned and its Cells SHALL never be evicted by idle TTL
@@ -672,8 +670,6 @@ When a dynamic-mode Cell has been evicted and a subsequent input arrives for the
 Each dynamic-mode Tasklet SHALL declare a maximum cell count via `fn max_cells() -> usize` (default `100_000`). When the per-Tasklet cell count reaches this cap, the runtime SHALL drop new-key inputs without allocating a Cell and SHALL increment `inputs_dropped_capped_total`. Inputs whose edge key function resolves to a key with an existing Cell SHALL NOT be affected by the cap; they SHALL be processed normally.
 
 The cap is soft: enforcement is best-effort against concurrent inserts. The runtime SHALL NOT propagate an over-cap rejection back to the agent; the input is silently dropped and the counter is incremented.
-
-The Elixir SDK's `max_cells/0` (default `100_000`) SHALL bind the same way at the point a dynamic key would mint a Cell, counting the drop through its `[:flezha, :sdk, :dynamic]` telemetry; a restore that would materialise a key past the cap SHALL be refused rather than minted.
 
 #### Scenario: Cap reached drops new-key inputs
 - **WHEN** a dynamic-mode Tasklet with `max_cells = 5` already owns 5 Cells and an input arrives whose edge key function returns a 6th unseen key

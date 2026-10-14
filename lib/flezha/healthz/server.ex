@@ -37,10 +37,7 @@ defmodule Flezha.Healthz.Server do
 
         The fabric clause needs a NIF driver to judge. The UDS and the QUIC
         server driver both produce the self-report, so a controller on either
-        transport is covered. The `:native` in-node transport runs no driver,
-        so `data_plane_fabric_wedged` cannot be minted on a native-only
-        controller and a `200` there is evidence about the loop, the
-        relays and the plugins — not about the data plane.
+        transport is covered.
 
     * `GET /readyz` — the readiness verdict of `Flezha.Boot.Readiness`, a
       different question with a different answer: health says whether the

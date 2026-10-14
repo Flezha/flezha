@@ -42,5 +42,6 @@ flz_core_shutdown
 flz_core_spawn_request
 flz_core_spawn_result
 flz_core_start
+flz_core_start_with
 flz_core_wait_starvation
 flz_core_watch_stdin_eof

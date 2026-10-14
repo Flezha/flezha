@@ -21,8 +21,8 @@ defmodule Flezha.State.DurabilityTier.Artifact do
 
   alias Flezha.Dlq
   alias Flezha.Layout.Table, as: Layout
-  alias Flezha.SDK.RecordFrame, as: Frame
-  alias Flezha.SDK.Wire
+  alias Flezha.State.Frame
+  alias Flezha.State.Wire
   alias Flezha.State.DurabilityTier.Manifest
   alias Flezha.State.Store
   alias Flezha.State.{Outbox, Paths, RecordFrame, Restore}

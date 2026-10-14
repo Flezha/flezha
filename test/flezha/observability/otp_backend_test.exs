@@ -225,7 +225,7 @@ defmodule Flezha.Observability.OtpBackendTest do
         assert signal, "#{name} is declared a metric of this source and reached no signal"
         assert signal.metadata[:scope] == :data_plane
 
-        key = Flezha.SDK.CounterTable.measurement(row)
+        key = Flezha.Observability.CounterTable.measurement(row)
 
         assert is_integer(signal.measurements[key]),
                "#{name} was emitted under #{inspect(Map.keys(signal.measurements))}, " <>

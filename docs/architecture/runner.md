@@ -9,11 +9,9 @@ A runner has **two layers**. Transport, ordering, durability, retries,
 timers, credit, routing and a steps relay's progress live in one Rust
 kernel, `flz_core`. The SDK for each language brings the surface you write
 your code against and the threads that run it. Between them sits one poll
-loop. Six SDKs (Rust, Java, Node, Python, Ruby, PHP) share `flz_core`; the
-Elixir SDK has its own core, written in Elixir. What the
+loop. All seven SDKs share `flz_core`. What the
 [kernel](kernel.md), [flow](flow_profile.md) and [steps](steps_profile.md)
-pages describe works the same in every SDK because, for the six, it sits
-below that loop.
+pages describe works the same in every SDK because it sits below that loop.
 
 **Contents**
 
@@ -328,19 +326,15 @@ points (`flz_core_local_start`, `flz_core_local_on_sink`,
 
 ## One change, every SDK
 
-The kernel has six hosts today. The Rust SDK uses it as a crate. Java, Node,
-Ruby and Python load `flz_core_ffi` built with a thin binding layer of its own
-for each (JNI, N-API, magnus, PyO3), each a one-to-one layer over the C entry
-points. The PHP SDK calls the C ABI directly through `ext-ffi`, with no
+The kernel has seven hosts today. The Rust SDK uses it as a crate. Java, Node,
+Ruby, Python and Elixir load `flz_core_ffi` built with a thin binding layer of
+its own for each (JNI, N-API, magnus, PyO3, Rustler), each a one-to-one layer
+over the C entry points. The PHP SDK calls the C ABI directly through `ext-ffi`, with no
 compiled layer of its own, because PHP has no stable binary interface across
 minor versions.
 
-**The Elixir SDK is the exception.** It does not poll the core
-([Elixir SDK](https://github.com/flezha/flezha/blob/main/docs/sdk/elixir_sdk.md)):
-it expresses dispatch, overflow, retries and parking, and the partition check
-again in Elixir, and takes nothing from `flz_core`. So a change below the
-boundary reaches the six hosts at once and reaches Elixir only when someone
-writes it there; a change above the boundary reaches no SDK by itself.
+So a change below the boundary reaches every SDK at once; a change above the
+boundary reaches no SDK by itself.
 
 The rules every SDK follows:
 
@@ -352,8 +346,7 @@ The rules every SDK follows:
   author declared to `flz_core::host::register::check`
   (`flz_core/src/host/register.rs`), which holds the refusals and the
   derivation rules. A new refusal is one variant and one fixture row, not an
-  edit to seven builders; the Elixir SDK checks the same rules against the same
-  fixtures, and the same conformance run measures it.
+  edit to seven builders.
 - **A host that brings its own workers replaces them.** A worker that leaves
   for any reason other than shutdown is replaced without user action. Every
   activation a host takes is answered exactly once (complete, fail or
@@ -361,11 +354,10 @@ The rules every SDK follows:
   unanswered activation keeps its cell reserved for the life of the process.
   A host with a worker set also runs a **starvation supervisor**: one thread
   parked in `wait_starvation` that starts one more worker per observation, up
-  to a declared ceiling. Rust, Java, Node, Ruby, Python and the PHP SDK's
-  `SwooleExecutor` have one. The PHP SDK's default `SyncExecutor` runs one
+  to a declared ceiling. Rust, Java, Node, Ruby, Python, Elixir and the PHP
+  SDK's `SwooleExecutor` have one. The PHP SDK's default `SyncExecutor` runs one
   loop per process, so its unit of replacement is the process, which the
-  orchestrator already restarts. The Elixir SDK runs one BEAM process per cell
-  and has no worker set to starve. Every host reports `inflight` and
+  orchestrator already restarts. Every host reports `inflight` and
   `inflight_oldest_ms` in its data heartbeat, the only signal that shows one
   stuck cell while the runner keeps completing other work, and every overflow
   outcome (`blocked_parks`, `drops_newest`, `drops_oldest`, `pending_pushes`,
@@ -428,8 +420,6 @@ included, defers a capability. See
 - **A fixed worker count with no starvation supervisor is a defect**: with
   every worker held by user code, such a host processes nothing and reports
   nothing.
-- **The Elixir SDK takes nothing from `flz_core`.** A kernel change reaches it
-  only when it is written again in Elixir.
 - **A relay runs only on runners of its factory's language**, because
   state bodies are encoded per SDK.
 

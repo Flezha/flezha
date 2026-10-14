@@ -34,15 +34,15 @@ state; skipping it would rebuild a pending set the live run never had.
 
 | Piece | Rust | Java | Elixir |
 | --- | --- | --- | --- |
-| Pending set, `TimerOp`, `TimerPolicy`, `TimerSession`, `TimerCounters`, arming (`apply_ops` / `rearm_restored`) | `flz_core/src/timer.rs` (re-exported by `sdk/rust/src/cell/timer.rs`, which adds `timer_policy_for::<S>()`) | `flezha-sdk-runtime/.../state/{TimerOp,PendingTimers,TimerPolicy,TimerSession}.java`, `.../cell/TimerCounters.java` | `lib/flezha/sdk/timers.ex` (the set and the session); arming in `lib/flezha/sdk/cell.ex` (`arm`, `disarm`, `rearm`) |
-| Both triggers: event-time due generation at batch assembly, processing-time on the deferred-wake list | `flz_core/src/poll_core/` | shared core | `cell.ex` — `admit/2` at admission, `handle_info({:timer_due, _})` off the BEAM's timer service |
+| Pending set, `TimerOp`, `TimerPolicy`, `TimerSession`, `TimerCounters`, arming (`apply_ops` / `rearm_restored`) | `flz_core/src/timer.rs` (re-exported by `sdk/rust/src/cell/timer.rs`, which adds `timer_policy_for::<S>()`) | `flezha-sdk-runtime/.../state/{TimerOp,PendingTimers,TimerPolicy,TimerSession}.java`, `.../cell/TimerCounters.java` | shared core; `lib/flezha/sdk/timers.ex` is the invocation's session |
+| Both triggers: event-time due generation at batch assembly, processing-time on the deferred-wake list | `flz_core/src/poll_core/` | shared core | shared core |
 | The surface and the hook | `sdk/rust/src/tasklet/{ctx,mod}.rs` | `flezha-sdk-api/.../tasklet/{Ctx,Tasklet}.java`, `.../state/TimerKind.java` | `lib/flezha/sdk/{ctx,tasklet}.ex` |
-| The invocation (`invoke_once`) and the restore fold | `sdk/rust/src/relay/dispatcher.rs`, `sdk/rust/src/cell/restore.rs` | `flezha-sdk-runtime/.../core/ActivationDispatcher.java` (`RestoreFold`) | `cell.ex` (`dispatch/2`, `call/3`), `lib/flezha/sdk/record.ex` (the fold), `lib/flezha/sdk/cell/records.ex` (the record, the restatement, the slot) |
-| Record formats (`FORMAT_ID_TIMER_OPS`, `EffectRecordBody.timers`) | `flz_core/src/{header,schema}.rs` | shared core | `Flezha.SDK.Wire.encode_timer_ops/1` — the same bytes |
-| Controller: `Flezha.SDK.Wire` decodes the effect record's `timers` field; nothing else changes | `sdk/elixir/lib/flezha/sdk/wire.ex` | — | — |
+| The invocation (`invoke_once`) and the restore fold | `sdk/rust/src/relay/dispatcher.rs`, `sdk/rust/src/cell/restore.rs` | `flezha-sdk-runtime/.../core/ActivationDispatcher.java` (`RestoreFold`) | `lib/flezha/sdk/dispatch.ex` |
+| Record formats (`FORMAT_ID_TIMER_OPS`, `EffectRecordBody.timers`) | `flz_core/src/{header,schema}.rs` | shared core | shared core |
+| Controller: `Flezha.State.Wire` decodes the effect record's `timers` field; nothing else changes | `lib/flezha/state/wire.ex` | — | — |
 
 Tests: `sdk/rust/tests/timer_{durability,firing,lifecycle,surface}.rs`, Java `ActivationDispatcherTest`,
-Elixir `sdk/elixir/test/flezha/sdk/timers_test.exs` and `test/flezha/sdk/cell_timers_test.exs`,
+Elixir `sdk/elixir/test/flezha/sdk/timers_test.exs`,
 and `test/system/cell_timers_e2e_test.exs`, which drives a session-timeout
 fixture on every runtime, including a re-seat from disk that proves the
 pending timer survived it. `test/system/steps_timers_e2e_test.exs` drives

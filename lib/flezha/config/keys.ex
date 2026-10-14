@@ -155,11 +155,10 @@ defmodule Flezha.Config.Keys do
     {:k8s_selector, :string, "app=flezha", key: true, env: "FLEZHA_K8S_SELECTOR"},
 
     # ---- transports ---------------------------------------------------------
-    # "native" is the in-node BEAM SDK transport; accepted here, never a default.
-    {:transport, {:enum, [:uds, :quic, :native]}, :uds,
+    {:transport, {:enum, [:uds, :quic]}, :uds,
      key: true, env: "FLEZHA_TRANSPORT", runtimes: [:controller, :elixir_sdk, :rust, :cli]},
     # Both UDS and QUIC in `:test` so every scenario runs under `mix test`.
-    {:transports, {:list, {:enum, [:uds, :quic, :native]}}, nil,
+    {:transports, {:list, {:enum, [:uds, :quic]}}, nil,
      key: true,
      env: "FLEZHA_TRANSPORTS",
      env_default: [test: [:uds, :quic]],
@@ -527,14 +526,15 @@ defmodule Flezha.Config.Keys do
      runtimes: [:elixir_sdk, :rust, :java, :node, :python, :ruby, :php],
      env: "FLEZHA_WORKER_POOL_SIZE"},
     {:worker_pool_max, :positive_int, nil,
-     runtimes: [:rust, :java, :node, :python, :ruby, :php], env: "FLEZHA_WORKER_POOL_MAX"},
+     runtimes: [:elixir_sdk, :rust, :java, :node, :python, :ruby, :php],
+     env: "FLEZHA_WORKER_POOL_MAX"},
     {:node_workers, :positive_int, nil, runtimes: [:node], env: "FLEZHA_NODE_WORKERS"},
     # The cadence at which a keyed host sweeps idle cells. The default is
     # the caller's: a quarter of the cell TTL, so a shorter-lived cell is
     # swept sooner without a second row.
-    {:reap_interval_ms, :ms, nil, runtimes: [:elixir_sdk, :rust], env: "FLEZHA_REAP_INTERVAL_MS"},
+    {:reap_interval_ms, :ms, nil, runtimes: [:rust], env: "FLEZHA_REAP_INTERVAL_MS"},
     {:runner_id_path, :path, "/var/lib/flezha-runner/id",
-     runtimes: [:elixir_sdk, :rust], env: "FLEZHA_RUNNER_ID_PATH"},
+     runtimes: [:rust], env: "FLEZHA_RUNNER_ID_PATH"},
     # The credential a runner proves its namespace with, presented on the
     # control channel at connect. Read by every SDK, because the namespace a
     # runner claims is checked against what its own credential entitles; a
@@ -544,11 +544,10 @@ defmodule Flezha.Config.Keys do
      env: "FLEZHA_NAMESPACE_SECRET"},
     {:token, :string, nil, runtimes: [:cli], env: "FLEZHA_TOKEN"},
     {:reconnect_ring_capacity, :positive_int, 1_024,
-     runtimes: [:elixir_sdk, :rust], env: "FLEZHA_RECONNECT_RING_CAPACITY"},
-    {:max_frame_bytes, :int, 67_108_864,
-     runtimes: [:elixir_sdk, :rust], env: "FLEZHA_MAX_FRAME_BYTES"},
+     runtimes: [:rust], env: "FLEZHA_RECONNECT_RING_CAPACITY"},
+    {:max_frame_bytes, :int, 67_108_864, runtimes: [:rust], env: "FLEZHA_MAX_FRAME_BYTES"},
     {:effect_max_bytes, :int, 4_194_304,
-     key: true, runtimes: [:controller, :elixir_sdk, :rust], env: "FLEZHA_EFFECT_MAX_BYTES"},
+     key: true, runtimes: [:controller, :rust], env: "FLEZHA_EFFECT_MAX_BYTES"},
     {:max_write_buffer_bytes, :int, 8_388_608,
      runtimes: [:rust], env: "FLEZHA_MAX_WRITE_BUFFER_BYTES"},
     {:send_gate_high_water, :int, nil, runtimes: [:rust], env: "FLEZHA_SEND_GATE_HIGH_WATER"},
@@ -565,12 +564,11 @@ defmodule Flezha.Config.Keys do
     {:flush_linger_ms, :ms, 5, runtimes: [:rust], env: "FLEZHA_FLUSH_LINGER_MS"},
     {:drop_nothing_nonparking, :bool, false,
      runtimes: [:rust], env: "FLEZHA_DROP_NOTHING_NONPARKING"},
-    {:broken_pipe_window_ms, :ms, 5_000,
-     runtimes: [:elixir_sdk, :rust], env: "FLEZHA_BROKEN_PIPE_WINDOW_MS"},
+    {:broken_pipe_window_ms, :ms, 5_000, runtimes: [:rust], env: "FLEZHA_BROKEN_PIPE_WINDOW_MS"},
     {:broken_pipe_reconnect_threshold, :positive_int, 10,
-     runtimes: [:elixir_sdk, :rust], env: "FLEZHA_BROKEN_PIPE_RECONNECT_THRESHOLD"},
+     runtimes: [:rust], env: "FLEZHA_BROKEN_PIPE_RECONNECT_THRESHOLD"},
     {:reconnect_request_retry_ms, :ms, 30_000,
-     runtimes: [:elixir_sdk, :rust], env: "FLEZHA_RECONNECT_REQUEST_RETRY_MS"},
+     runtimes: [:rust], env: "FLEZHA_RECONNECT_REQUEST_RETRY_MS"},
     {:credit_park_interval_ms, :ms, 50, runtimes: [:rust], env: "FLEZHA_CREDIT_PARK_INTERVAL_MS"},
     {:recovery_window_ms, :ms, nil, runtimes: [:rust], env: "FLEZHA_RECOVERY_WINDOW_MS"},
     {:control_ack_timeout_ms, :ms, 10_000,
@@ -594,9 +592,9 @@ defmodule Flezha.Config.Keys do
     {:quic_cert_dir, :path, nil, runtimes: [:harness], env: "FLEZHA_QUIC_CERT_DIR"},
     {:quic_address, :address, nil, runtimes: [:harness, :rust], env: "FLEZHA_QUIC_ADDRESS"},
     {:quic_client_cert, :path, "app_data/certs/client.pem",
-     runtimes: [:harness, :rust], env: "FLEZHA_QUIC_CLIENT_CERT"},
+     runtimes: [:harness, :elixir_sdk, :rust], env: "FLEZHA_QUIC_CLIENT_CERT"},
     {:quic_client_key, :path, "app_data/certs/client.key",
-     runtimes: [:harness, :rust], env: "FLEZHA_QUIC_CLIENT_KEY"},
+     runtimes: [:harness, :elixir_sdk, :rust], env: "FLEZHA_QUIC_CLIENT_KEY"},
     {:control_socket, :path, nil, runtimes: [:harness], env: "FLEZHA_CONTROL_SOCKET"},
     {:testnet_config, :path, nil, runtimes: [:harness], env: "FLEZHA_TESTNET_CONFIG"},
     {:testnet_enabled_env, :bool, nil, env: "FLEZHA_TESTNET_ENABLED", runtimes: [:harness]},

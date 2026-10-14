@@ -21,7 +21,7 @@ defmodule Flezha.State.Outbox do
 
   alias Flezha.Dlq.Entry, as: DlqEntry
   alias Flezha.Dlq.Store, as: DlqStore
-  alias Flezha.SDK.Wire
+  alias Flezha.State.Wire
   alias Flezha.State.{Paths, WriterRegistry}
 
   @type t :: %{

@@ -11,7 +11,7 @@ defmodule FlezhaTest.State.TaskJournalTest do
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
 
   alias Flezha.Relay.ClassRegistry
-  alias Flezha.SDK.Wire
+  alias Flezha.State.Wire
   alias Flezha.Service.Cli
   alias Flezha.State.{Commands, Outbox, Paths, TaskJournal, TestHelpers, WalWriter}
   alias Flezha.State.TaskJournal.Codec

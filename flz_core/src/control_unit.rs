@@ -46,6 +46,16 @@ static LAST_GOOD_QUIC: LastGood<SocketAddr> = LastGood::new();
 /// controller.
 static FAILED_SESSIONS: AtomicU32 = AtomicU32::new(0);
 
+/// Bumped when a host stops waiting for a start: a starting connect that
+/// began under an older value stops retrying.
+static STARTS: AtomicU32 = AtomicU32::new(0);
+
+/// End every start still retrying its first connect, because the host that
+/// asked for it stopped waiting.
+pub fn abandon_starts() {
+    STARTS.fetch_add(1, Ordering::AcqRel);
+}
+
 type ControlConn = (ConnectAnswered, Arc<FlezhaStream>, Option<Arc<QuicClient>>);
 
 #[derive(Serialize)]
@@ -96,13 +106,15 @@ pub fn open(
     declared: Arc<RwLock<Vec<String>>>,
     itx: Arc<Mutex<Sender<ClientResponseMessage>>>,
     otx: Arc<Mutex<Sender<RunnerMessage>>>,
-) -> ControlConn {
+) -> Option<ControlConn> {
     // A starting runner is owed no wait for the refusals of the one before it.
-    // The count belongs to the runner, as the Elixir SDK's does by living in
-    // its state; without this a host refused on one namespace waits 12.8 s or
-    // more on its next start, past the 10 s the C ABI allows the handshake.
+    // The count belongs to the runner; without this a host refused on one
+    // namespace waits 12.8 s or more on its next start, past the 10 s the C ABI
+    // allows the handshake.
     FAILED_SESSIONS.store(0, Ordering::Relaxed);
-    open_with_retry(namespace, declared, Some(itx), otx)
+    let started_as = STARTS.load(Ordering::Acquire);
+    let abandoned = move || STARTS.load(Ordering::Acquire) != started_as;
+    open_with_retry(namespace, declared, Some(itx), otx, &abandoned)
 }
 
 /// A reconnect sends no startup confirmation.
@@ -111,7 +123,7 @@ pub fn open_reconnect(
     declared: Arc<RwLock<Vec<String>>>,
     otx: Arc<Mutex<Sender<RunnerMessage>>>,
 ) -> ControlConn {
-    open_with_retry(namespace, declared, None, otx)
+    open_with_retry(namespace, declared, None, otx, &|| false).expect("a reconnect never gives up")
 }
 
 fn open_with_retry(
@@ -119,7 +131,8 @@ fn open_with_retry(
     declared: Arc<RwLock<Vec<String>>>,
     itx: Option<Arc<Mutex<Sender<ClientResponseMessage>>>>,
     otx: Arc<Mutex<Sender<RunnerMessage>>>,
-) -> ControlConn {
+    abandoned: &dyn Fn() -> bool,
+) -> Option<ControlConn> {
     // The rung this channel is already on. A first connect, and a reconnect
     // after a session the controller admitted, both read zero and wait for
     // nothing.
@@ -136,6 +149,9 @@ fn open_with_retry(
             );
             thread::sleep(backoff);
         }
+        if abandoned() {
+            return None;
+        }
 
         match try_open(
             namespace.clone(),
@@ -145,7 +161,7 @@ fn open_with_retry(
         ) {
             // A socket that connects is not yet a runner the controller
             // admitted: the read loop reports that once the handshake is whole.
-            Ok(result) => return result,
+            Ok(result) => return Some(result),
             Err(e) => {
                 attempt += 1;
                 FAILED_SESSIONS.store(attempt, Ordering::Relaxed);
@@ -164,10 +180,7 @@ fn open_with_retry(
 /// The wait before an attempt: jitter on the exponential backoff so a
 /// controller restart that drops a whole fleet does not produce a synchronized
 /// reconnect storm. Every SDK over this crate shares `liveness::jittered`,
-/// which spreads `[d/2, d]`. The `:sdk_reconnect` row of
-/// `Flezha.Config.Backoff` pins the base, the exponent cap and the delay cap
-/// to this literal and nothing more: the Elixir SDK spreads `[d/2, 3d/2)` and
-/// indexes its first wait one rung lower. Neither band is the other's.
+/// which spreads `[d/2, d]`.
 fn reconnect_backoff(attempt: u32) -> Duration {
     liveness::jittered(std::cmp::min(
         Duration::from_millis(100 * 2u64.pow(attempt.min(8))),
@@ -379,11 +392,13 @@ struct PendingStart(Arc<Mutex<Option<StartConfirm>>>);
 type StartConfirm = Arc<Mutex<Sender<ClientResponseMessage>>>;
 
 impl PendingStart {
-    fn answer(&self, message: ClientResponseMessage) {
+    /// Whether a starting caller was still waiting for this answer.
+    fn answer(&self, message: ClientResponseMessage) -> bool {
         let taken = self.0.lock().unwrap_or_else(|p| p.into_inner()).take();
-        if let Some(itx) = taken {
+        if let Some(itx) = &taken {
             let _ = itx.lock().unwrap_or_else(|p| p.into_inner()).send(message);
         }
+        taken.is_some()
     }
 
     fn confirm_after(&self, grace: Duration) {
@@ -424,15 +439,18 @@ fn read_loop(
         match payloader::extract_payload(&**stream) {
             Ok((payload_id, message, metadata)) => {
                 let admitted = live.handshake_completed();
-                // Once per refused attempt, and never forwarded: the controller
-                // closes the stream next, and that read error drives the
-                // reconnect as any failed session's does.
+                // Once per refused attempt, and never forwarded. A refused
+                // start is reported to its host, which owns the retry, so its
+                // session ends here; on a reconnect the controller closes the
+                // stream next, and that read error drives the next attempt.
                 if let Some(refusal) = (!admitted).then(|| connect_refusal(&message)).flatten() {
                     eprintln!(
                         "[flezha] the controller refused the connect: {}",
                         refusal.text()
                     );
-                    start.answer(ClientResponseMessage::ConnectRefused(refusal));
+                    if start.answer(ClientResponseMessage::ConnectRefused(refusal)) {
+                        return;
+                    }
                     continue;
                 }
                 start.answer(ClientResponseMessage::RunnerIdConfirmation);
@@ -598,7 +616,7 @@ fn send_init_msg(
         factories,
         stable_id,
         incarnation: crate::persistent_id::incarnation(),
-        namespace_secret: flz_transport::env::env_raw("FLEZHA_NAMESPACE_SECRET"),
+        namespace_secret: flz_transport::env::connect_raw("FLEZHA_NAMESPACE_SECRET"),
     };
 
     let control_message = serde_json::to_string(&control_init_message).unwrap();

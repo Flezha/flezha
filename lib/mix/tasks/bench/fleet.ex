@@ -13,7 +13,6 @@ defmodule Mix.Tasks.Bench.Fleet do
   `bench` profile) — the same line the e2e harness renders for its `test` profile.
   """
 
-  alias ElixirRunner.BenchFactories
   alias Flezha.AuthZ
   alias Flezha.AuthZ.NamespaceStore
   alias Flezha.AuthZ.TokenStore
@@ -87,29 +86,11 @@ defmodule Mix.Tasks.Bench.Fleet do
   process — how `--pool-sizes` threads `FLEZHA_WORKER_POOL_SIZE` through.
   """
   def setup(namespace, count, extra_env) do
-    runtime = runtime()
-    transport = Config.get(:transport)
-
     ensure_namespace(namespace)
-
-    if runtime in [:rust, :java] and transport == :native do
-      raise "runtime=#{runtime} cannot run the :native transport (that mode is the " <>
-              "in-process Elixir SDK). Use --runtime elixir, or -t uds|quic."
-    end
-
-    cond do
-      runtime == :elixir and transport == :native ->
-        # In-process SDK: ONE runner (the runner slot is process-wide). This is
-        # the same-runtime uds-vs-native transport measurement.
-        IO.puts("Starting the in-process Elixir SDK runner (native transport)...")
-        start_native_sdk(namespace)
-
-      true ->
-        IO.puts("Setting up test environment with compute engines...")
-        runner_ids = start_runners(namespace, count, extra_env ++ runner_credential(namespace))
-        IO.puts("Started #{length(runner_ids)} compute engines for performance testing")
-        Process.put(:bench_runners, runner_ids)
-    end
+    IO.puts("Setting up test environment with compute engines...")
+    runner_ids = start_runners(namespace, count, extra_env ++ runner_credential(namespace))
+    IO.puts("Started #{length(runner_ids)} compute engines for performance testing")
+    Process.put(:bench_runners, runner_ids)
   end
 
   # The bench runs under `MIX_ENV=prod`, where `authz_enabled` defaults to true,
@@ -222,43 +203,6 @@ defmodule Mix.Tasks.Bench.Fleet do
   @spec runtime() :: atom()
   def runtime(), do: Process.get(:bench_runtime, :rust)
 
-  # Start the Elixir SDK in-process, advertising the bench factory trio, and
-  # block until it connects over the native transport.
-  defp start_native_sdk(namespace) do
-    handle =
-      Enum.reduce(
-        BenchFactories.all(),
-        Flezha.SDK.create_runner(namespace, transport: :native),
-        fn m, acc ->
-          Flezha.SDK.register_factory(acc, m)
-        end
-      )
-      |> Flezha.SDK.start()
-
-    case handle do
-      %Flezha.SDK{} = h ->
-        Process.put(:bench_native_sdk, h)
-        wait_for_connect(namespace)
-
-      other ->
-        raise "in-process Elixir SDK failed to start: #{inspect(other)}"
-    end
-  end
-
-  defp wait_for_connect(namespace, tries \\ 300) do
-    cond do
-      tries <= 0 ->
-        raise "in-process Elixir SDK never connected"
-
-      FleetManager.active_runners(namespace) != [] ->
-        :ok
-
-      true ->
-        Process.sleep(50)
-        wait_for_connect(namespace, tries - 1)
-    end
-  end
-
   @doc """
   Load every module of the controller and the libraries its start path runs
   through. A release boots with its code loaded; under `mix` the VM loads
@@ -297,15 +241,9 @@ defmodule Mix.Tasks.Bench.Fleet do
         :ok
     end
 
-    case Process.get(:bench_native_sdk) do
-      %Flezha.SDK{} = h -> Flezha.SDK.close(h)
-      _ -> :ok
-    end
-
     FleetManager.stop_namespace(namespace)
     Process.delete(:bench_runners)
     Process.delete(:bench_ports)
-    Process.delete(:bench_native_sdk)
 
     IO.puts("Test environment cleanup completed")
   end

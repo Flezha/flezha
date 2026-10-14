@@ -12,7 +12,7 @@ defmodule FlezhaTest.Runner.ControlChannelEffectsTest do
 
   alias Flezha.Relay.ClassRegistry
   alias Flezha.Runner.ControlChannel
-  alias Flezha.SDK.Wire
+  alias Flezha.State.Wire
   alias Flezha.State.DurabilityTier.Manifest
   alias Flezha.State.{InputLog, TestHelpers}
   alias FlezhaTest.Helper.ControlFrameTestHelper, as: ControlFrame

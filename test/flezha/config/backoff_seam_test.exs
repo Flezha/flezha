@@ -18,11 +18,9 @@ defmodule Flezha.Config.BackoffSeamTest do
 
   alias Flezha.Config.Backoff
   alias Flezha.Config.Durations
-  alias Flezha.SDK.Knob
   alias FlezhaTest.Helper.SourceWalk
 
   @ladder_seam "lib/flezha/config/backoff.ex"
-  @sdk_runner_server "sdk/elixir/lib/flezha/sdk/runner_server.ex"
   @duration_seam "lib/flezha/config/durations.ex"
 
   # The two shapes of the seam, as Erlang regular expressions: every spelling
@@ -145,28 +143,14 @@ defmodule Flezha.Config.BackoffSeamTest do
     end
   end
 
-  describe "the Elixir SDK's rows equal the constants the core compiles" do
-    test "reconnect, retry, keepalive, heartbeat and the commit ack are one value per runtime" do
-      channel = File.read!("flz_core/src/channel.rs")
-      control_unit = File.read!("flz_core/src/control_unit.rs")
+  describe "the runner-side rows equal the constants the core compiles" do
+    test "keepalive, heartbeat, the commit ack and the spawn reply are one value per runtime" do
       commit = File.read!("flz_core/src/steps/commit.rs")
       liveness = File.read!("flz_transport/src/transport/liveness.rs")
       shutdown = File.read!("flz_core/src/shutdown.rs")
-      sleep = File.read!("flz_core/src/relay/sleep.rs")
 
-      retry = Knob.ladder(:sdk_retry)
-      reconnect = Knob.ladder(:sdk_reconnect)
-
-      assert retry.cap == rust_const(channel, "RETRY_BACKOFF_MAX_MS")
-      assert reconnect.cap == 30_000
-
-      assert String.contains?(control_unit, "100 * 2u64.pow(attempt.min(8))"),
-             "flz_core's reconnect ladder moved; the :sdk_reconnect row is pinned to it"
-
-      assert reconnect.base == 100
-      assert reconnect.exponent_cap == 8
-
-      assert Durations.default(:sdk_commit_ack_ms) == rust_const(commit, "ACK_TIMEOUT_DEFAULT_MS")
+      assert Durations.default(:sdk_commit_ack_ms) ==
+               rust_const(commit, "ACK_TIMEOUT_DEFAULT_MS")
 
       assert Durations.default(:control_keepalive_ms) ==
                rust_const(liveness, "DEFAULT_KEEPALIVE_MS")
@@ -178,25 +162,6 @@ defmodule Flezha.Config.BackoffSeamTest do
                rust_const(liveness, "DEFAULT_IDLE_TIMEOUT_MS")
 
       assert Durations.default(:sdk_spawn_reply_ms) == rust_const(shutdown, "REPLY_TIMEOUT")
-      assert Durations.default(:sdk_owed_inbox_wait_ms) == rust_const(sleep, "OWED_INBOX_WAIT")
-    end
-
-    test "both runtimes reset the reconnect ladder on a completed handshake, and only there" do
-      core = File.read!("flz_core/src/control_unit.rs")
-      sdk = File.read!(@sdk_runner_server)
-
-      core_rule? =
-        String.contains?(core, "end_session(otx, stream, live.handshake_completed(), reason)") and
-          String.contains?(core, "if completed {\n        FAILED_SESSIONS.store(0")
-
-      sdk_rule? =
-        String.contains?(sdk, "defp complete_handshake(%State{handshake: :answered") and
-          length(String.split(sdk, "Knob.reset(:sdk_reconnect")) == 2
-
-      assert core_rule? and sdk_rule?,
-             "the ladder's reset rule moved in one runtime alone: " <>
-               "flz_core/src/control_unit.rs resets on the completed handshake: #{core_rule?}; " <>
-               "#{@sdk_runner_server} does, and nowhere else: #{sdk_rule?}"
     end
   end
 
@@ -225,8 +190,8 @@ defmodule Flezha.Config.BackoffSeamTest do
     end
 
     test "jitter is uniform in [d/2, 3d/2) and then capped" do
-      assert Knob.jitter(1_000, fn _ -> 1 end) == 501
-      assert Knob.jitter(1_000, fn max -> max end) == 1_500
+      assert Backoff.jitter(1_000, fn _ -> 1 end) == 501
+      assert Backoff.jitter(1_000, fn max -> max end) == 1_500
 
       for {key, row} <- Backoff.ladders(), row.jitter, cap = cap_of(row) do
         for attempt <- 1..10 do

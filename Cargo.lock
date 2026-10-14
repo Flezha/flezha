@@ -499,6 +499,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "flz_core_beam"
+version = "0.1.0"
+dependencies = [
+ "crossbeam",
+ "flz_core",
+ "flz_core_ffi",
+ "rustler",
+]
+
+[[package]]
 name = "flz_core_ffi"
 version = "0.1.0"
 dependencies = [
@@ -537,15 +547,6 @@ dependencies = [
  "rustler",
  "rustls",
  "rustls-pemfile",
-]
-
-[[package]]
-name = "flz_sdk_nif"
-version = "0.1.0"
-dependencies = [
- "crossbeam",
- "flz_transport",
- "rustler",
 ]
 
 [[package]]

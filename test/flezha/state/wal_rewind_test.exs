@@ -14,7 +14,7 @@ defmodule Flezha.State.WalRewindTest do
   use FlezhaTest.Case, fixtures: [:tmp_app_data, :state_tree], async: false
 
   alias Flezha.Relay.ClassRegistry
-  alias Flezha.SDK.Wire
+  alias Flezha.State.Wire
 
   alias Flezha.State.{InputLog, Paths, RecordFrame, Supervisor, WalWriter}
 

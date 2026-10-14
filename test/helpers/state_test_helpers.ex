@@ -9,7 +9,7 @@ defmodule Flezha.State.TestHelpers do
   that must not be reachable from a release.
   """
 
-  alias Flezha.SDK.RecordFrame
+  alias Flezha.State.Frame
   alias Flezha.State.{FsyncBatcher, Outbox, Paths, Supervisor, WalWriter}
   alias FlezhaTest.Helper.NodeTestHelper
 
@@ -317,7 +317,7 @@ defmodule Flezha.State.TestHelpers do
   @doc """
   Build a 16-byte WAL header. The controller treats the header as opaque
   bytes; tests only need a stable shape to round-trip records through
-  `RecordFrame.encode_record/3` and back.
+  `Frame.encode_record/3` and back.
   """
   @spec stub_header() :: binary()
   def stub_header() do
@@ -330,7 +330,7 @@ defmodule Flezha.State.TestHelpers do
   """
   @spec build_wal_record(non_neg_integer(), binary()) :: binary()
   def build_wal_record(seq, change_bytes) do
-    RecordFrame.encode_record(seq, stub_header(), change_bytes)
+    Frame.encode_record(seq, stub_header(), change_bytes)
   end
 
   @doc """
@@ -347,7 +347,7 @@ defmodule Flezha.State.TestHelpers do
 
       offset ->
         {:ok, _seq, _header, _body, _raw, consumed} =
-          RecordFrame.decode_bytes(binary_part(data, offset, byte_size(data) - offset))
+          Frame.decode_bytes(binary_part(data, offset, byte_size(data) - offset))
 
         {offset, offset + consumed}
     end)
@@ -358,7 +358,7 @@ defmodule Flezha.State.TestHelpers do
   The seqs of the record log at `path` in file order, walked as the controller
   walks it, or the walk's refusal.
   """
-  @spec record_seqs(Path.t()) :: {:ok, [non_neg_integer()]} | {:error, RecordFrame.refusal()}
+  @spec record_seqs(Path.t()) :: {:ok, [non_neg_integer()]} | {:error, Frame.refusal()}
   def record_seqs(path) do
     with {:ok, seqs} <-
            Flezha.State.RecordFrame.fold_path(path, [], fn {seq, _h, _b}, acc ->
@@ -377,7 +377,7 @@ defmodule Flezha.State.TestHelpers do
   """
   @spec corrupt_record_body(Path.t(), non_neg_integer()) :: :ok
   def corrupt_record_body(path, offset) do
-    at = offset + 12 + RecordFrame.header_size()
+    at = offset + 12 + Frame.header_size()
     <<prefix::binary-size(^at), byte, rest::binary>> = File.read!(path)
     File.write!(path, <<prefix::binary, Bitwise.bxor(byte, 1), rest::binary>>)
   end
@@ -392,7 +392,7 @@ defmodule Flezha.State.TestHelpers do
   @spec write_wal_of_lang(Paths.cell_id(), byte()) :: :ok
   def write_wal_of_lang(cell_id, sdk_lang) do
     body = "state-bytes"
-    header = RecordFrame.encode_header(sdk_lang, 0, 1, RecordFrame.format_id(:postcard), body)
+    header = Frame.encode_header(sdk_lang, 0, 1, Frame.format_id(:postcard), body)
     path = Paths.wal_path(cell_id)
 
     File.mkdir_p!(Path.dirname(path))
@@ -404,7 +404,7 @@ defmodule Flezha.State.TestHelpers do
   """
   @spec build_wal_record(non_neg_integer(), binary(), binary()) :: binary()
   def build_wal_record(seq, header, change_bytes) do
-    RecordFrame.encode_record(seq, header, change_bytes)
+    Frame.encode_record(seq, header, change_bytes)
   end
 
   @doc """

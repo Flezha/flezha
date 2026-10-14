@@ -12,7 +12,7 @@ defmodule Flezha.State.WalWriter.Epoch do
   """
 
   alias Flezha.Runner.FleetManager.Marks
-  alias Flezha.SDK.Wire
+  alias Flezha.State.Wire
   alias Flezha.State.{InputLog, Metrics, Paths, RecordFrame, SeqIndex}
   alias Flezha.State.WalWriter.{Admission, RemoteGate, Settlement, State}
 

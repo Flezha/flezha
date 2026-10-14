@@ -41,10 +41,6 @@ defmodule Flezha.Application do
   end
 
   defp start_controller() do
-    # An Elixir SDK runner in this VM reaches the controller through the
-    # in-node transport, which the SDK finds registered here.
-    :ok = Flezha.SDK.Connect.register(Flezha.Transport.Server)
-
     # Before any state path is opened: a second controller over this state root
     # is two unsynchronised writers on one cell WAL tree, and the claim is
     # what makes that a refusal rather than corruption.

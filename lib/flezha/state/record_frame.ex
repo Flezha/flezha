@@ -4,7 +4,7 @@ defmodule Flezha.State.RecordFrame do
   the two byte-range cuts over it.
 
   The frame itself, its one decoder and the proof a walk stops or refuses by
-  are `Flezha.SDK.RecordFrame`'s; every walk here reads a device through them.
+  are `Flezha.State.Frame`'s; every walk here reads a device through them.
   A torn tail, the append protocol's own crash, is repaired; a crc failure with
   complete records behind it is refused by name with the bytes left on disk.
   Records the controller acknowledged as durable are never deleted to make a
@@ -19,7 +19,7 @@ defmodule Flezha.State.RecordFrame do
   process.
   """
 
-  alias Flezha.SDK.RecordFrame, as: Frame
+  alias Flezha.State.Frame
   alias Flezha.State.Durable
   alias Flezha.State.SeqIndex
 

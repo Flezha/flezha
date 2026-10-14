@@ -6,7 +6,7 @@ defmodule Flezha.State.WalWriterTest do
 
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
 
-  alias Flezha.SDK.RecordFrame, as: Frame
+  alias Flezha.State.Frame
   alias FlezhaTest.Helper.NodeTestHelper
 
   import ExUnit.CaptureLog

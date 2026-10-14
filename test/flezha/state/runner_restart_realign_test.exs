@@ -33,7 +33,7 @@ defmodule Flezha.State.RunnerRestartRealignTest do
   alias Flezha.Relay.ClassRegistry
   alias Flezha.Runner.FleetManager.Marks
   alias Flezha.Runner.StreamChannel
-  alias Flezha.SDK.Wire
+  alias Flezha.State.Wire
   alias Flezha.State.{Metrics, Paths, RecordFrame, Snapshot, Supervisor, TestHelpers, WalWriter}
   alias Flezha.Transport.LivenessCounters
 

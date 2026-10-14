@@ -568,6 +568,8 @@ SDK raises or returns its one error type carrying them.
 | `runtime.command_crashed` | internal | 1 | the runner failed while answering the command: {reason} |  |
 | `runtime.completion_too_many_effects` | invalid | 2 | the completion carries more effects than the activation had items |  |
 | `runtime.connect_unconfirmed` | unreachable | 3 | the controller connect was not confirmed within {seconds}s |  |
+| `runtime.core_in_use` | conflict | 6 | another runner or local run is live in this process: its core serves one at a time |  |
+| `runtime.core_shut_down` | unavailable | 7 | this process's core was shut down: a runner or a local run starts once per process |  |
 | `runtime.edge_closure_panicked` | internal | 1 | the edge {closure} panicked: {reason} |  |
 | `runtime.event_time_timer_without_event_time_clock` | invalid | 2 | tasklet '{tasklet}' declared clock '{clock}'; an event-time timer needs an event-time clock |  |
 | `runtime.executor_unavailable` | unavailable | 7 | the {executor} executor cannot run here: {reason} |  |
@@ -582,8 +584,9 @@ SDK raises or returns its one error type carrying them.
 | `runtime.host_timeout` | unavailable | 7 | the host did not complete the {activation} activation within {seconds}s |  |
 | `runtime.host_wrong_outcome` | internal | 1 | the host answered the {command} activation with an outcome of another kind |  |
 | `runtime.identity_too_long` | invalid | 2 | the {part} '{value}' is longer than {limit} bytes |  |
+| `runtime.invalid_connect_setting` | invalid | 2 | connection setting '{setting}' is refused: {reason} |  |
 | `runtime.invalid_if_running` | invalid | 2 | if_running must be deliver or error, not '{value}' |  |
-| `runtime.invalid_transport` | invalid | 2 | '{transport}' is not a transport; use native, uds or quic |  |
+| `runtime.invalid_transport` | invalid | 2 | '{transport}' is not a transport; use uds or quic |  |
 | `runtime.key_not_allowed_on_non_keyed_channel` | invalid | 2 | channel '{channel}' is not keyed, so an emit on it cannot carry a key |  |
 | `runtime.key_outside_partition` | invalid | 2 | key '{key}' hashes to key group {group}, which partition {partition} of {partitions} does not own (it owns groups {from} to {to}); the routing item's key must equal the key_by result |  |
 | `runtime.key_required_on_keyed_channel` | invalid | 2 | channel '{channel}' is keyed and this tasklet is single-cell, so there is no Cell key to emit under; emit with a key |  |
@@ -654,6 +657,7 @@ SDK raises or returns its one error type carrying them.
 
 | Code | Class | Exit | Message | Hint |
 |---|---|---|---|---|
+| `spawn.outside_invocation` | invalid | 2 | spawn_steps of factory '{factory}' was called outside the invocation it belongs to: from another process, or after it returned |  |
 | `spawn.timeout` | unavailable | 7 | no spawn result arrived within {seconds}s |  |
 | `spawn.unavailable` | unavailable | 7 | there is no control plane to request a spawn on: the runner is closed or has no controller |  |
 

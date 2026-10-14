@@ -110,8 +110,8 @@ header of a cell WAL record:
 A reader walks the file from the start. A torn tail, the partial record a crash leaves in the
 middle of a write, is cut off. A CRC failure with complete records after it is refused by name,
 and the bytes stay on disk: records the controller has acknowledged are never deleted to make a
-file parse. The frame and its decoder are `Flezha.SDK.RecordFrame`
-(`sdk/elixir/lib/flezha/sdk/record_frame.ex`); the walks over a file on disk are
+file parse. The frame and its decoder are `Flezha.State.Frame`
+(`lib/flezha/state/frame.ex`); the walks over a file on disk are
 `Flezha.State.RecordFrame`.
 
 The other two files use the header differently:
@@ -376,9 +376,8 @@ reaches a plugin to be keyed: an unkeyed output gives an output plugin nothing t
 runner refuses the relay at registration
 (`topology.unkeyed_channel_under_effectively_once`).
 
-The guarantee does not depend on the language. Rust, Java, Node, Python, Ruby and PHP runners
-all build the effect record in the shared runner core, `flz_core`; the Elixir SDK builds the
-same record in Elixir. What a language supplies is its own change bytes and the context calls
+The guarantee does not depend on the language. Every runner builds the effect record in the
+shared runner core, `flz_core`. What a language supplies is its own change bytes and the context calls
 determinism needs (see [`poll_core.md`](https://github.com/flezha/flezha/blob/main/docs/sdk/poll_core.md)).
 
 ## Determinism

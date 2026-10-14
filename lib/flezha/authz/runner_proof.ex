@@ -14,15 +14,9 @@ defmodule Flezha.AuthZ.RunnerProof do
       QUIC, cert carrying /ns/<name>  ->  the certificate's namespace
       QUIC, cert carrying no /ns/     ->  falls back to the secret, as UDS does
       UDS                             ->  the namespace of the presented secret
-      native (in-node)                ->  co-residence, and the frame is taken
 
-  The native row is the in-BEAM SDK, whose runner is code inside the
-  controller's own release: it holds the distribution cookie and the whole node
-  with it, `Flezha.Transport.Server.connect/2` refuses a handle owned by another
-  BEAM, and asking such a peer for a secret proves nothing it could not have
-  read off the disk the secret lives on. It is the transport reading of the
-  `:internal` caller source, and like that source it does not extend to
-  `_system`.
+  A runner in the controller's own BEAM is no exception: it connects over UDS
+  and presents a credential like any other.
 
   The certificate reading is `Flezha.AuthN.Cert.namespace_from_peer/1`, which
   answers `_system` for a certificate with no SPIFFE `/ns/` cell — and
@@ -47,7 +41,7 @@ defmodule Flezha.AuthZ.RunnerProof do
   @secret_key "namespace_secret"
 
   @typedoc "The transport a connect arrived on."
-  @type transport :: :uds | :quic | :native
+  @type transport :: :uds | :quic
 
   @typedoc """
   The namespace the connection may act in, and the credential that entitled it
@@ -79,19 +73,13 @@ defmodule Flezha.AuthZ.RunnerProof do
   end
 
   defp resolve(handle, claimed, init_payload, transport) do
-    if enforced?(transport) do
+    if AuthZ.enabled?() do
       with {:ok, proof} <- proven_namespace(handle, init_payload, transport),
            do: agree(claimed, proof)
     else
       {:ok, %{namespace: claimed, credential: nil}}
     end
   end
-
-  # Two ways a connect is not asked for a credential: the posture is not
-  # enforcing at all, or the peer is in this BEAM and its co-residence is the
-  # proof.
-  defp enforced?(:native), do: false
-  defp enforced?(_socket_transport), do: AuthZ.enabled?()
 
   # The certificate first, the secret second, and only QUIC is asked for a
   # certificate — a UDS peer completed no handshake, so there is nothing to

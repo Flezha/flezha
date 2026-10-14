@@ -176,11 +176,9 @@ invocation as any raise does.
 The part call SHALL be spelled `ctx.part(value)` in Rust, Java, Node, Python and Ruby,
 `$ctx->part($value)` in PHP and `part(ctx, value)` in Elixir, where a `use Flezha.SDK.Tasklet`
 module imports it as it imports `emit/2`. Its documentation SHALL sit beside the emit's in
-each SDK's reference. The six SDKs hosted on `flz_core` SHALL reach the part through the
-core (the Rust SDK through its crate API, the other five through `flz_core_part`), and
-SHALL NOT re-express the numbering, the stamps or the drop rules. The Elixir SDK SHALL
-implement the same numbering, stamps and drop rules in its own core, and a shared fixture
-SHALL pin the frame both produce for the same invocation.
+each SDK's reference. The seven SDKs hosted on `flz_core` SHALL reach the part through the
+core (the Rust SDK through its crate API, the other six through `flz_core_part`), and
+SHALL NOT re-express the numbering, the stamps or the drop rules.
 
 #### Scenario: One fixture, seven SDKs
 

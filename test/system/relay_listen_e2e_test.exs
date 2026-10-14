@@ -25,7 +25,7 @@ defmodule FlezhaTest.System.RelayListenE2ETest do
   alias Flezha.Relay.{Builder, PartitionGroup}
   alias Flezha.Partition
   alias Flezha.Plugin
-  alias Flezha.SDK.KeyGroup
+  alias Flezha.Relay.KeyGroup
   alias Flezha.Service.{Admin, Cli, RelayManager}
   alias FlezhaTest.Fixtures.RelayFixture
 

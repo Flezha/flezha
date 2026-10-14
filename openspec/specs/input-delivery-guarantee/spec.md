@@ -103,8 +103,7 @@ relay declares no ENTRY channel of that name. A name the relay declares as a cha
 another kind — a output plugin, an inter-tasklet channel — is not an entry channel and SHALL be
 parked the same way, because channel names are one namespace across every kind. The frame SHALL NOT
 be discarded, and it SHALL NOT be delivered to a different channel. Every SDK SHALL answer the same
-way: the six hosted on `flz_core` through the core's one resolution, and the Elixir SDK, which is
-its own core, by re-expressing it.
+way: all seven are hosted on `flz_core` and answer through the core's one resolution.
 
 The park SHALL record the requested name in the entry's channel field and nowhere else. A name off
 the wire SHALL NOT reach the identity the dead-letter store keys its row by, because the store makes
@@ -126,12 +125,6 @@ condition, rather than reporting an unresolved name against an empty set.
 - **GIVEN** a relay declaring one entry channel `prices`
 - **WHEN** a frame arrives whose metadata carries `channel = "not_prices"`
 - **THEN** the frame SHALL be parked in the dead-letter store with its payload bytes, and SHALL NOT reach any tasklet
-
-#### Scenario: The Elixir SDK stops rerouting an unresolved name
-
-- **GIVEN** an Elixir relay declaring entry channels `prices` and `config`
-- **WHEN** a frame arrives whose metadata carries `channel = "quotes"`
-- **THEN** the frame SHALL be parked, and neither `prices` nor `config` SHALL receive it
 
 #### Scenario: A frame with no channel still reaches the first entry channel
 

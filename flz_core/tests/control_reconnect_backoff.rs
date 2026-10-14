@@ -175,7 +175,8 @@ fn assert_a_fresh_start_does_not_wait(
         declared(),
         Arc::new(Mutex::new(itx)),
         otx.clone(),
-    );
+    )
+    .expect("a start nobody abandoned connects");
     let waited = started.elapsed();
     await_reconnect(orx);
     drop(conn);
@@ -274,5 +275,40 @@ fn a_refused_session_backs_the_reconnect_ladder_off() {
     );
 
     drop(controller);
+    an_abandoned_start_stops_retrying(&otx);
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// With no controller to reach, a starting connect retries until the host
+/// that asked for it stops waiting, and then gives up.
+fn an_abandoned_start_stops_retrying(otx: &Arc<Mutex<Sender<RunnerMessage>>>) {
+    let (itx, _irx) = unbounded();
+    let otx = otx.clone();
+    let starting = thread::spawn(move || {
+        control_unit::open(
+            "kb111_ns".to_string(),
+            declared(),
+            Arc::new(Mutex::new(itx)),
+            otx,
+        )
+    });
+    thread::sleep(Duration::from_millis(300));
+    assert!(
+        !starting.is_finished(),
+        "a start with no controller gave up by itself"
+    );
+
+    control_unit::abandon_starts();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while !starting.is_finished() {
+        assert!(
+            Instant::now() < deadline,
+            "an abandoned start kept retrying"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert!(
+        starting.join().unwrap().is_none(),
+        "an abandoned start connected"
+    );
 }

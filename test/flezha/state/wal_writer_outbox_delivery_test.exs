@@ -43,8 +43,8 @@ defmodule Flezha.State.WalWriterOutboxDeliveryTest do
 
     # Two output-bearing records land durably, but the flush cursor never advances
     # (crash before flush): the re-drive owes both.
-    plain = RecordFrame.encode_record(0, effect_header(), effect_body([output("k", "a")], 1))
-    second = RecordFrame.encode_record(1, effect_header(), effect_body([output("k", "b")], 2))
+    plain = Frame.encode_record(0, effect_header(), effect_body([output("k", "a")], 1))
+    second = Frame.encode_record(1, effect_header(), effect_body([output("k", "b")], 2))
 
     wal_path = Paths.wal_path(cell_id)
     File.mkdir_p!(Path.dirname(wal_path))

@@ -329,7 +329,7 @@ defmodule FlezhaTest.SdkConformance.GateTest do
         java:
           {"sdk/java/flezha-sdk-runtime/src/main/java/com/flezha/sdk/runtime/core/HostClassDeclaration.java",
            ~r/SDK_LANG_JAVA = (\d+);/},
-        elixir: {"sdk/elixir/lib/flezha/sdk/codec.ex", ~r/@sdk_lang (\d+)/},
+        elixir: {"sdk/elixir/lib/flezha/sdk/declaration.ex", ~r/@sdk_lang (\d+)/},
         node: {"sdk/node/src/graph.ts", ~r/SDK_LANG_NODE = (\d+)/},
         ruby: {"sdk/ruby/lib/flezha/graph.rb", ~r/SDK_LANG_RUBY = (\d+)/},
         php: {"sdk/php/src/Graph/HostClassDecl.php", ~r/SDK_LANG_PHP = (\d+);/},
@@ -857,33 +857,6 @@ defmodule FlezhaTest.SdkConformance.GateTest do
             "they reach no operations surface"
         )
       end
-    end
-
-    test "the Elixir SDK's heartbeat carries exactly the keys the controller mirrors" do
-      # The Elixir SDK is its own core and declares its own key set: `flz_core`'s
-      # says nothing about what it sends. A key the controller holds a slot for
-      # and this runtime omits is an operations surface that is correct for six
-      # SDKs and blank for the seventh; a key it sends and nothing mirrors is
-      # paid for on the wire and read by no one.
-      declared = MapSet.new(Flezha.SDK.Counters.heartbeat_keys())
-      sent = Flezha.SDK.RunnerServer.heartbeat_metadata(Flezha.SDK.Counters.new())
-      mirrored = MapSet.new(Flezha.Runner.StreamChannel.heartbeat_keys())
-      missing = MapSet.difference(mirrored, declared)
-      unmirrored = MapSet.difference(declared, mirrored)
-
-      if MapSet.size(missing) + MapSet.size(unmirrored) > 0 do
-        fail(
-          "the Elixir SDK's data heartbeat omits #{Enum.join(Enum.sort(missing), ", ")} and " <>
-            "sends #{Enum.join(Enum.sort(unmirrored), ", ")}, which the controller does not mirror"
-        )
-      end
-
-      assert MapSet.new(Map.keys(sent)) == declared
-
-      # A runtime that discarded nothing reports zero rather than omitting the
-      # key: "nothing was discarded" and "nothing was measured" are different
-      # answers, and only the first is honest about a runtime that was asked.
-      assert sent["restore_discarded_inputs"] == "0"
     end
   end
 

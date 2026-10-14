@@ -18,8 +18,8 @@ defmodule Flezha.State.TimeTravel do
   point that is kept.
   """
 
-  alias Flezha.SDK.RecordFrame, as: Frame
-  alias Flezha.SDK.Wire
+  alias Flezha.State.Frame
+  alias Flezha.State.Wire
   alias Flezha.State.{Paths, RecordFrame, Snapshot}
 
   @type target :: {:seq, non_neg_integer()} | {:timestamp, integer()}

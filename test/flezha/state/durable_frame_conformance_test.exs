@@ -6,16 +6,15 @@ defmodule Flezha.State.DurableFrameConformanceTest do
 
   Every reader of the framing is folded over the same golden log here: the
   encoder that writes it, the byte walk, the device walk, the single-record
-  decode and the Elixir SDK's restore. A reader that decomposes the frame its
-  own way answers differently on one of these rows, which is the point of
-  keeping the bytes in a file rather than in each test.
+  decode. A reader that decomposes the frame its own way answers differently on
+  one of these rows, which is the point of keeping the bytes in a file rather
+  than in each test.
   """
   use ExUnit.Case, async: true
 
   import ExUnit.CaptureLog
 
-  alias Flezha.SDK.Record, as: SdkRecord
-  alias Flezha.SDK.RecordFrame, as: Frame
+  alias Flezha.State.Frame
   alias Flezha.State.{RecordFrame, TestHelpers}
 
   @fixture Path.join([__DIR__, "..", "..", "fixtures", "durable_frame.txt"])
@@ -122,37 +121,6 @@ defmodule Flezha.State.DurableFrameConformanceTest do
         :file.close(device)
       end
     end
-
-    test "the Elixir SDK folds the same frame and refuses on the language, not the framing" do
-      # The fixture's records are stamped `rust`, so a correct frame walk gets
-      # as far as the language gate. That is the assertion: the SDK reached the
-      # gate, which means it decomposed the frame the same way.
-      hex = Enum.find_value(rows("frame"), fn [n, hex | _] -> n == "one_record" && hex end)
-
-      assert {:error, reason} =
-               SdkRecord.fold(__MODULE__.NoTask, nil, <<>>, <<>>, bytes(hex), 0)
-
-      assert reason =~ "sdk_lang mismatch"
-      assert reason =~ "written by rust (1)"
-    end
-
-    test "the Elixir SDK refuses a corrupt frame before it reads the language" do
-      hex =
-        Enum.find_value(rows("frame"), fn [n, hex | _] ->
-          n == "crc_bit_flip_with_a_record_behind_it" && hex
-        end)
-
-      log =
-        capture_log(fn ->
-          assert {:error, reason} =
-                   SdkRecord.fold(__MODULE__.NoTask, nil, <<>>, <<>>, bytes(hex), 0)
-
-          assert reason =~ "durable record refused (crc_mismatch)"
-          refute reason =~ "sdk_lang"
-        end)
-
-      assert log =~ "durable record refused (crc_mismatch)"
-    end
   end
 
   describe "the header table both runtimes hold" do
@@ -196,46 +164,6 @@ defmodule Flezha.State.DurableFrameConformanceTest do
     end
   end
 
-  describe "the schema decision both cores make" do
-    test "every listed case reaches the fixture's verdict" do
-      body = <<1, 2, 3>>
-
-      Enum.each(rows("schema"), fn [stamped, running, floor, verdict] ->
-        stamped = String.to_integer(stamped)
-        running = String.to_integer(running)
-        floor = String.to_integer(floor)
-
-        header =
-          Frame.encode_header(
-            Flezha.SDK.Codec.sdk_lang(),
-            @sdk_version,
-            stamped,
-            Frame.format_id(:etf),
-            body
-          )
-
-        result = SdkRecord.resolve(header, {running, floor})
-
-        case verdict do
-          "decode" ->
-            assert {:ok, :decode} = result
-
-          "from_future" ->
-            assert {:error, reason} = result
-            assert reason =~ "is above the running tasklet's #{running}"
-
-          "too_old:" <> named ->
-            assert {:error, reason} = result
-            assert reason =~ "is below the readable floor #{named} "
-
-          "migrate:" <> from ->
-            assert {:ok, {:migrate, ^stamped}} = result
-            assert String.to_integer(from) == stamped
-        end
-      end)
-    end
-  end
-
   # A fold that refuses logs at `error`; the verdict is what is under test, not
   # the line, so it is captured wherever the row is a refusal.
   defp capture_result(fun) do
@@ -248,13 +176,5 @@ defmodule Flezha.State.DurableFrameConformanceTest do
     after
       0 -> flunk("the fold did not answer")
     end
-  end
-
-  defmodule NoTask do
-    @moduledoc false
-    def init_state(_key), do: %{}
-    def apply_change(state, _change), do: state
-    def schema_version, do: 1
-    def min_readable_schema_version, do: 1
   end
 end
