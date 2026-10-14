@@ -340,7 +340,7 @@ dynamic tasklet also counts the Cells it created and evicted. The totals rise
 for the life of one instance, so the difference between two reads is the
 traffic in between; the instance number in the heading changes when the relay
 is rebound, moved or woken, and its totals start again. `-` marks a figure the
-runner does not keep: the Elixir SDK reports Cells and queues only. A partition
+runner does not keep. A partition
 group is read one member at a time. The trade watcher's second member, after
 twenty trades for one symbol:
 
@@ -366,8 +366,7 @@ how long ago it last admitted an item (`AGE_MS`). The heading says how many
 Cells the tasklet holds; `--limit` caps the lines (50 by default, at most 500).
 The runner picks them on the same walk, so asking costs nothing extra on the
 record path. A tasklet the relay does not declare is refused as
-`state.tasklet_not_found`, and a runner that keeps no per-Cell counters, such as
-the Elixir SDK, prints `Runner '<runner>' does not report Cells.` instead. A
+`state.tasklet_not_found`, and a runner that keeps no per-Cell counters prints `Runner '<runner>' does not report Cells.` instead. A
 static tasklet with four Cells, `a` to `d`:
 
 ```sh

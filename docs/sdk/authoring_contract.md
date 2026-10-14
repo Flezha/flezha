@@ -651,9 +651,9 @@ at all: it does not implement `Relay`, so it is a compile error.
 
 **The runner announces the run it read.** Every factory entry a runner ships,
 in its connect frame and in each `UpdateFactories`, carries `run`, exactly
-`"flow"` or `"steps"`, with `each` and `on_failure` for a steps class: Rust and
-Elixir fill it from the registered class, and the shared core fills it for
-Java, Node, Python, Ruby and PHP from the class declaration. The controller
+`"flow"` or `"steps"`, with `each` and `on_failure` for a steps class: Rust
+fills it from the registered class, and the shared core fills it for Java,
+Node, Python, Ruby, PHP and Elixir from the class declaration. The controller
 establishes a factory's run from the first announcement, as it establishes its
 language, and a runner announcing the other run, or none, is never a placement
 candidate for it. So a start names only the factory: `flz relay start` and

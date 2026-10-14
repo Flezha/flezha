@@ -385,7 +385,7 @@ retired name. The one file allowed to name a retired variable is the one that
 refuses it.
 
 `connect_discovery` is in the required set, because every SDK carries it — Rust,
-Java, Node, Ruby, PHP and Python through `flz_core`, Elixir through `flz_nif` —
+Java, Node, Ruby, PHP, Python and Elixir through `flz_core` —
 and `test/system/connect_discovery_e2e_test.exs` drives it under whichever
 runtime the run selects.
 

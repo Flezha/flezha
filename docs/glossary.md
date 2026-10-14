@@ -131,7 +131,7 @@ owns the mechanism; for concepts, [`architecture/`](https://github.com/flezha/fl
   from the members. A steps relay group has no end, result or rollback of its own; each member has.
 - **Timer (per-cell)** — a deadline a tasklet registers on its own cell. An **event-time**
   timer fires when the cell's event-time high-water crosses it, a **processing-time** timer from
-  the deferred-wake list (the BEAM's timer service in the Elixir SDK). `on_timer` receives the
+  the deferred-wake list. `on_timer` receives the
   scheduled timestamp; the pending set is folded
   state, so a crash-resume owes exactly the timers it owed. In a steps relay a firing opens a pass
   at the tasklet that set it. See [`topics/core/timers.md`](topics/core/timers.md).

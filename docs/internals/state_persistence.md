@@ -149,7 +149,7 @@ the writer stays alive and refuses to serve, and one error line and one telemetr
 (`[:flezha, :state, :record_frame, :refused]`) name the file, the last seq that verified and the
 byte offset. `Flezha.State.RecordFrame` is the one walk every reader uses and gives the same answer:
 `fold_records/4` over an open device, `fold_bytes/4` over bytes already in memory — a restore
-reading a whole WAL, or the Elixir SDK folding a change log the Controller shipped — and one
+reading a whole WAL — and one
 `decode_bytes/1` beneath both, so a record read from a device and the same record read from
 bytes decode identically. The two differ in one stated thing: a device log may have a torn tail
 an append left, and a payload shipped whole has none, so a crc failure in a payload is refused
@@ -182,10 +182,6 @@ backend ask `Durable.in_progress?/1` rather than listing suffixes, so a new dura
 be surfaced as a phantom Cell by a scanner nobody edited. A `.claim` sidecar is not
 in-progress and is excluded by name where it lives: it is the durability tier's fencing counter
 and it outlives every write.
-
-The Elixir SDK's runner-id file is the one whole-file install outside the ceremony, and the
-reason is packaging rather than durability: the SDK is a package of its own that depends on
-no controller module, `Flezha.State.Paths` included.
 
 ## Reserved-log record formats
 

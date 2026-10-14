@@ -68,8 +68,6 @@ is no ship, so at `local` the disk is the only copy.
 | a workflow kept in memory (`durable: false`) is killed | everything: it re-runs from the top | at-least-once | no log; messages waiting in memory are lost |
 | a failed turn of a `keep_progress` session (durable) | no loss: the turn's message is parked | the turn's outputs stay out; its undos run | the message is parked before the iteration is recorded as dead-lettered; a crash parks it at most once |
 | a workflow killed in the middle of an undo (durable) | the undo resumes | none | done undos are skipped, the rest run |
-| an Elixir relay process dies outside a clean stop | as its class keeps it after a rebind | as its class keeps it | the controller rebinds it, restoring its cells before re-forwarding its input log |
-| an Elixir cell dies with unfinished input | no loss of input that has an offset | at-least-once, or once on the tier | the relay ends and is rebound; every input the cell held runs again. An instance that dies on every bind is retried on its backoff |
 | a poison message, failing every attempt | no loss | the cell continues | it is parked in the dead-letter queue before the cell moves on ([below](#the-dead-letter-queue)) |
 
 ### Why output can get ahead of state
@@ -260,9 +258,7 @@ payload            {"channel": "trade", "data": [{"symbol": "EUR/USD", "price": 
 
 The four verbs need the `ops` role, since an entry holds the failed record
 verbatim. A verb naming a relay is judged in that relay's namespace; one
-naming none reads every namespace and is judged in `_system`. An Elixir entry
-whose tasklet was handed a decoded map rather than bytes can be dropped but not
-replayed. A partition group cannot be rescaled while its dead-letter queue
+naming none reads every namespace and is judged in `_system`. A partition group cannot be rescaled while its dead-letter queue
 holds entries ([`partitioning.md`](partitioning.md)).
 
 Retention bounds the queue by age and size, 30 days or 4 GiB, whichever is
@@ -338,8 +334,6 @@ has no `compensate`:
 [undo] cancelled ord-be4f7a593756acada0924d10da8d31c6
 [undo] released res-935e21608cc9ea9844b537d8c0c97517
 ```
-
-The Elixir SDK logs the attempts at the `debug` level.
 
 ## Surviving the loss of a disk: the remote tier
 

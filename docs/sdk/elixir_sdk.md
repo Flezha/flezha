@@ -365,7 +365,7 @@ inside `on_timer/4`), `cell_key/1`, and the timer four
 `cancel_processing_time_timer/2`, `cancel_event_time_timer/2` — the registrations answering
 `{:ok, at}`, the absolute timestamp a cancel takes, or
 `runtime.event_time_timer_without_event_time_clock` /
-`runtime.timer_cap_exceeded`; inside a steps relay's tasklet all four answer
+`runtime.timer_cap_exceeded`; inside a `compensate/3` hook all four answer
 `runtime.timers_unavailable` (see [Timers and clocks](#timers-and-clocks)).
 `spawn_steps(ctx, factory_id, payload, opts)` requests spawn-or-deliver of a steps relay
 instance, `id:` and `if_running:` optional, with `payload` sent as an output with no codec sends a

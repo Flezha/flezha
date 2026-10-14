@@ -253,8 +253,7 @@ past `:io_stream_liveness_threshold_ms` (default 30 s) is flagged as a stall.
 Because the mirror and the exporter are both derived from those rows, a key
 added to the layout arrives with its slot and its surface already in place, and
 a key with no row cannot be mirrored at all — the cross-SDK gate compares the
-declared set against `flz_core`'s builder and the Elixir SDK's map on every
-default-suite run.
+declared set against `flz_core`'s builder on every default-suite run.
 
 ### Per-Cell mailbox is bounded; on full, the channel's `OverflowPolicy` applies
 
@@ -535,8 +534,7 @@ and closes the control stream, and the runner counts it as a failed attempt.
 installs no stream and leaves the runner's stream map as it found it. A
 partly installed set would be worse than none: its secondaries answer the
 data heartbeat, so the runner reports a live data plane while the primaries
-beside them have no reader and every input on them is lost. The Elixir SDK
-answers the same way, through `establish_sockets/2`.
+beside them have no reader and every input on them is lost.
 
 ### Step 9: steady state
 
@@ -751,8 +749,8 @@ un-parks any relay: `AddRelay` with the resume state, the persisted Cells
 restored, then the input log re-forwarded above the confirmed floor. A park
 this report caused counts as repaired only once the rebound instance has stayed
 bound for the stable window, so one that dies on every bind is retried on its
-backoff rung. Only the Elixir runtime sends this frame; the `flz_core`
-runtimes decode it as a notification they never act on.
+backoff rung. No runner sends this frame today: the `flz_core` runtime, every
+SDK's, decodes it as a notification it never acts on.
 
 ### CellState
 
@@ -798,9 +796,7 @@ Each `TaskletActivityRow` carries the tasklet's name and live `cells`, then
 `dropped_oldest_total`. A dynamic tasklet adds `dropped_capped_total`,
 `cells_created_total` and `cells_evicted_total`. Every figure but `tasklet` and
 `cells` is `optional`: a runtime that does not keep one leaves it absent, never
-zero. The Elixir SDK keeps no per-Cell totals, so it answers `cells`, `queued`
-and `queued_max` only, and leaves `queued` absent for a tasklet with a Cell
-that did not answer in time.
+zero.
 
 **Totals.** Totals rise for the life of one instance, an evicted Cell's
 included. `admitted_total` counts mailbox items, timer firings and interval
@@ -823,8 +819,7 @@ and `cells_total` counts every live Cell of the tasklet. Each
 and `dropped_oldest_total`, and `last_admitted_ms` on the clock of
 `read_at_ms`; a Cell that has admitted nothing yet carries the time it was
 created. A runtime that keeps no per-Cell counters leaves `cells` absent, never
-empty, so absent also means "this runner does not report Cells". The Elixir
-SDK answers that way, after refusing a `cells_of` its relay does not declare.
+empty, so absent also means "this runner does not report Cells".
 
 **Cost.** The read adds nothing to the per-message path. A `flz_core` runner
 resolves the relay, and the tasklet `cells_of` names, on the control reader
@@ -1458,8 +1453,7 @@ framing, back to back:
 ```
 
 One frame, one crc, two runtimes. `Flezha.State.RecordFrame` is the only module
-on the controller side that cuts this framing or computes that crc — the Elixir
-SDK folds a shipped change log through the same one — and
+on the controller side that cuts this framing or computes that crc, and
 `flz_core::restore::fold_change_log` is the kernel's own reader for every host
 it serves. The two share no code and are held together by bytes instead:
 `test/fixtures/durable_frame.txt` carries golden records, headers, the

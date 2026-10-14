@@ -152,11 +152,10 @@ its own. How it reaches the controller and how to run it as a service is
 
 ## Seven SDKs, one engine
 
-The SDKs share one engine rather than reimplementing it seven times. Six sit on
-one kernel written in Rust, `flz_core`: Rust uses it directly, Java through
-JNI, and Node, Python, Ruby and PHP through a C ABI. Elixir writes its own
-kernel and binds only the transport, through a Rust NIF, which is also what
-lets it run inside the controller's own node.
+The SDKs share one engine rather than reimplementing it seven times. All seven
+sit on one kernel written in Rust, `flz_core`: Rust uses it directly, Java
+through JNI, Elixir through a Rustler NIF, and Node, Python, Ruby and PHP
+through a C ABI.
 
 The kernel owns **what runs and when**. It picks the next activation, holds
 per-cell ordering and exclusivity, runs the retry ladder and durability, and

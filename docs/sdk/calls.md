@@ -6,8 +6,7 @@ For SDK implementers and contributors. How to use it is on
 ## The stamps
 
 The runner core stamps `flz.reply_to` on every output whose input carried a call's token,
-and on no other output: an output of an input nobody called carries no such key at all. The
-Elixir SDK stamps the same in its own routing. A call end's request carries the target
+and on no other output: an output of an input nobody called carries no such key at all. A call end's request carries the target
 (`flz.call`), the Response channel (`flz.call_response`), the deadline (`flz.deadline_at`), the
 callee's entry channel (`flz.call_channel`) and answer channel (`flz.call_answer_channel`) when
 the end names them, `flz.call_create` when it may not create its callee, and its key. A host

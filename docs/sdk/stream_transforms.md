@@ -12,7 +12,7 @@ For SDK implementers and contributors. How to use it is on
 | `ConsumerEdge`, `EdgeTransformFn`, `EdgeYield`, `transform_value`, `key_of` | `flz_core/src/channel.rs` | `flezha-sdk-runtime/.../relay/{ConsumerEdge,EdgeYield}.java` |
 | Routing seam and ladder (`route_to_consumers`, `deliver_edge`, `run_retry_park_ladder`) | `flz_core/src/routing.rs` | `flezha-sdk-runtime/.../core/{EmitContext,CellRouting,EdgeTransforms}.java` |
 | Steps relay containment (`extend_mapped`) and refusals | `flz_core/src/steps/{driver,spec}.rs` | shared core |
-| Elixir SDK | `sdk/elixir/lib/flezha/sdk/{channels,topology}.ex` | — |
+| Elixir SDK: the builder records the links, the host runs the closures | `sdk/elixir/lib/flezha/sdk/{channels,declaration,dispatch}.ex` | — |
 
 Tests: `sdk/rust/tests/stream_transforms.rs` (asserts fusion by counting
 traversals), `sdk/rust/tests/ui/tasklet_cell_key_removed.rs`, Java

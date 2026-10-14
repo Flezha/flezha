@@ -338,19 +338,9 @@ away, so the undo comes about ten seconds after the booking:
 
 ### Elixir
 
-The tries are logged at the `debug` level:
-
-```output
-[book] EUR/USD 500 as ord-e015c2df9402f4625d9cef4def51f243
-
-20:04:04.357 [debug] [Flezha.SDK] order_too_big/node/single attempt 1/3 failed: the exchange fills at most 100 a time, and this is 500; retrying
-
-20:04:14.417 [debug] [Flezha.SDK] order_too_big/node/single attempt 2/3 failed: the exchange fills at most 100 a time, and this is 500; retrying
-[undo] cancelled ord-e015c2df9402f4625d9cef4def51f243
-
-20:04:24.547 [debug] [Flezha.SDK] order_too_big compensating task 1
-[undo] released res-e0d09a3a6a33661df98dd0a4768bb45a
-```
+The runner prints the same lines as the Java runner: the booking, a
+`[flezha] tasklet confirm_fill attempt N/3 failed (retrying in … ms): …` line
+for each try that fails, then the two undo lines in reverse order.
 
 <!-- tabs-close -->
 

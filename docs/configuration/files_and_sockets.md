@@ -44,9 +44,10 @@ it either.
 ## The socket-directory ladder
 
 Where the UDS control and data sockets live is one question with one answer,
-resolved by `flz_transport` and shared by every SDK — Rust, Java and Node reach
-it through `flz_core`, Elixir through `flz_nif`, and the controller through the
-same NIF. The candidates, in order:
+resolved by `flz_transport` and shared by every SDK, each through `flz_core`,
+and by the controller through its NIF. A host can also hand the core its
+socket directory at start, which is how an Elixir runner passes on its own
+setting. The candidates, in order:
 
 | # | Candidate | When |
 |---|---|---|
