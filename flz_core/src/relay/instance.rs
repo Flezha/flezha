@@ -339,6 +339,7 @@ type TaskletCells = (
 );
 
 /// One tasklet's Cells by mode: `(slots, key → index, dynamic registry)`.
+#[allow(clippy::too_many_arguments)]
 fn build_tasklet_cells(
     topology: &Arc<RelayTopology>,
     weak: &Weak<RelayInstance>,

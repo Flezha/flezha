@@ -153,7 +153,8 @@ fn await_frame(orx: &Receiver<RunnerMessage>) {
 /// `connect(2)`.
 fn one_session(otx: &Arc<Mutex<Sender<RunnerMessage>>>, orx: &Receiver<RunnerMessage>) -> Duration {
     let started = Instant::now();
-    let conn = control_unit::open_reconnect("kb111_ns".to_string(), declared(), otx.clone());
+    let conn = control_unit::open_reconnect("kb111_ns".to_string(), declared(), otx.clone())
+        .expect("a live core reconnects");
     let opened = started.elapsed();
     await_reconnect(orx);
     drop(conn);
@@ -239,7 +240,8 @@ fn a_refused_session_backs_the_reconnect_ladder_off() {
     // A controller that writes its first frame and closes has not admitted
     // the runner: the rung climbs past the fresh start's zero.
     controller.write_next_session(1);
-    let conn = control_unit::open_reconnect("kb111_ns".to_string(), declared(), otx.clone());
+    let conn = control_unit::open_reconnect("kb111_ns".to_string(), declared(), otx.clone())
+        .expect("a live core reconnects");
     release.send(()).unwrap();
     await_frame(&orx);
     await_reconnect(&orx);
@@ -257,7 +259,8 @@ fn a_refused_session_backs_the_reconnect_ladder_off() {
     // `ConnectSocket` and the controller carries on with a further frame.
     controller.write_next_session(2);
     let (answered, stream, quic) =
-        control_unit::open_reconnect("kb111_ns".to_string(), declared(), otx.clone());
+        control_unit::open_reconnect("kb111_ns".to_string(), declared(), otx.clone())
+            .expect("a live core reconnects");
     release.send(()).unwrap();
     await_frame(&orx);
     answered.note();

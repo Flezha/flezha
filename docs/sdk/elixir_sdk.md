@@ -95,8 +95,8 @@ children = [{Flezha.SDK, namespace: "my_namespace", relays: [MyRelay]}]
   runner again; so does a connect no controller confirmed in time
   (`runtime.connect_unconfirmed`). `run/1` = `start/1` + `await_termination/1`.
 - A runner runs **once per BEAM**, because `flz_core` is process-wide. `close/1` ships each
-  relay's state and ends the session; a later start in the node is refused as
-  `runtime.core_shut_down`. So is the restart after a runner crash: the failure reaches the
+  relay's state and ends the session; a later start in the node, a local run's included, is
+  refused as `runtime.core_shut_down`. So is the restart after a runner crash: the failure reaches the
   node, which is the unit to restart, and the controller moves the relays meanwhile. One
   runner or one local run is live in a BEAM at a time; a second is refused as
   `runtime.core_in_use`.

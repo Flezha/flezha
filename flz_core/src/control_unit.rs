@@ -117,13 +117,16 @@ pub fn open(
     open_with_retry(namespace, declared, Some(itx), otx, &abandoned)
 }
 
-/// A reconnect sends no startup confirmation.
+/// A reconnect sends no startup confirmation, and gives up only once the core
+/// is shut down: a closing runner has nothing to reconnect for.
 pub fn open_reconnect(
     namespace: String,
     declared: Arc<RwLock<Vec<String>>>,
     otx: Arc<Mutex<Sender<RunnerMessage>>>,
-) -> ControlConn {
-    open_with_retry(namespace, declared, None, otx, &|| false).expect("a reconnect never gives up")
+) -> Option<ControlConn> {
+    open_with_retry(namespace, declared, None, otx, &|| {
+        crate::poll_core::global().is_shut_down()
+    })
 }
 
 fn open_with_retry(

@@ -569,7 +569,7 @@ SDK raises or returns its one error type carrying them.
 | `runtime.completion_too_many_effects` | invalid | 2 | the completion carries more effects than the activation had items |  |
 | `runtime.connect_unconfirmed` | unreachable | 3 | the controller connect was not confirmed within {seconds}s |  |
 | `runtime.core_in_use` | conflict | 6 | another runner or local run is live in this process: its core serves one at a time |  |
-| `runtime.core_shut_down` | unavailable | 7 | this process's core was shut down: a runner or a local run starts once per process |  |
+| `runtime.core_shut_down` | unavailable | 7 | this process's core was shut down: no runner or local run starts on it again in this process |  |
 | `runtime.edge_closure_panicked` | internal | 1 | the edge {closure} panicked: {reason} |  |
 | `runtime.event_time_timer_without_event_time_clock` | invalid | 2 | tasklet '{tasklet}' declared clock '{clock}'; an event-time timer needs an event-time clock |  |
 | `runtime.executor_unavailable` | unavailable | 7 | the {executor} executor cannot run here: {reason} |  |

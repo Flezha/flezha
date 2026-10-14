@@ -287,7 +287,11 @@ pub fn start(
         // A closed channel means every sender is gone — the owning
         // FlezhaRunner dropped. Exit cleanly so a later runner can start.
         while let Ok(message) = orx.recv() {
+            let abandoned = matches!(message, RunnerMessage::Abandon);
             coordinator.handle_message(message);
+            if abandoned {
+                return;
+            }
         }
     })
 }
@@ -613,8 +617,11 @@ fn handle_reconnect(
 
     runner.set_status(RunnerStatus::Stopped);
 
-    let (answered, new_stream, new_quic) =
-        control_unit::open_reconnect(namespace.to_string(), Arc::clone(declared), otx_arc.clone());
+    let Some((answered, new_stream, new_quic)) =
+        control_unit::open_reconnect(namespace.to_string(), Arc::clone(declared), otx_arc.clone())
+    else {
+        return;
+    };
 
     // Closed, not just dropped: its reader holds the socket open, and a
     // controller that keeps a superseded session lingers on it.

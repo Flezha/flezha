@@ -338,9 +338,13 @@ away, so the undo comes about ten seconds after the booking:
 
 ### Elixir
 
-The runner prints the same lines as the Java runner: the booking, a
-`[flezha] tasklet confirm_fill attempt N/3 failed (retrying in … ms): …` line
-for each try that fails, then the two undo lines in reverse order.
+```output
+[book] EUR/USD 136 as ord-e015c2df9402f4625d9cef4def51f243
+[flezha] tasklet confirm_fill attempt 1/3 failed (retrying in 62 ms): the exchange fills at most 100 a time, and this is 136
+[flezha] tasklet confirm_fill attempt 2/3 failed (retrying in 100 ms): the exchange fills at most 100 a time, and this is 136
+[undo] cancelled ord-e015c2df9402f4625d9cef4def51f243
+[undo] released res-e0d09a3a6a33661df98dd0a4768bb45a
+```
 
 <!-- tabs-close -->
 
