@@ -182,6 +182,8 @@ own BEAM included, and the **Binaries** tab applies to it unchanged. A runner
 in the controller's BEAM finds the controller's socket when both resolve the
 same socket directory, and presents a runner credential like any other
 ([`elixir_sdk.md`](https://github.com/flezha/flezha/blob/main/docs/sdk/elixir_sdk.md#where-a-runner-runs)).
+A runner runs once per BEAM: one that stops or crashes is not started again in
+that node, so the node is what a supervisor restarts, as with any other runner.
 
 <!-- tabs-close -->
 
