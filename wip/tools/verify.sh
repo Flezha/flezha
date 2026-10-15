@@ -3,10 +3,11 @@
 #
 #   wip/tools/verify.sh [test_file ...]
 #
-# Runs the OpenSpec validation, the naming gate group and a warnings-as-errors
-# compile, then `mix test` over the named test files when any are given. Each
-# gate prints PASS or FAIL and its name; the full output of each lands in a
-# log under the directory printed first. Exits non-zero when any gate failed.
+# Runs the OpenSpec validation, the naming gate group, a warnings-as-errors
+# compile and the AI kit freshness tests, then `mix test` over the named test
+# files when any are given. Each gate prints PASS or FAIL and its name; the
+# full output of each lands in a log under the directory printed first. Exits
+# non-zero when any gate failed.
 set -uo pipefail
 
 ROOT=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
@@ -29,6 +30,8 @@ gate() { # name, command...
 gate openspec openspec validate --specs --strict
 gate naming python3 scripts/naming_gate.py --run @naming
 gate compile mix compile --warnings-as-errors
+# A docs page edited without `mix docs` leaves its AI kit copy stale.
+gate ai-kit mix test test/mix/tasks/flezha_ai_kit_test.exs test/flezha/mcp/knowledge_test.exs
 [ $# -gt 0 ] && gate tests mix test "$@"
 
 exit $failed
