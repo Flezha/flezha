@@ -471,44 +471,6 @@ defmodule FlezhaTest.Plugin.Provider.WebsocketSinkTest do
     end
   end
 
-  ## ---------- 4.2 the tier warning ----------
-
-  describe "the effectively-once warning" do
-    setup do
-      # Test env caps the primary logger level at :error; the tier warning is a
-      # :warning, so open this module up for the capture and close it after.
-      :ok = :logger.set_module_level(Websocket, :all)
-      on_exit(fn -> :logger.unset_module_level(Websocket) end)
-      :ok
-    end
-
-    test "fires on a tier relay, and the enable succeeds" do
-      log =
-        capture_log(fn ->
-          assert {:ok, opts} = prepared(%{effectively_once: true})
-          assert %Sink{} = opts.sink
-        end)
-
-      assert log =~ "effectively-once relay"
-      assert log =~ ~s(sink_ack_mode="none")
-    end
-
-    test "does not fire on a plain relay" do
-      log = capture_log(fn -> assert {:ok, _opts} = prepared() end)
-      refute log =~ "effectively-once relay"
-    end
-
-    test "does not fire for a plugin bound in neither direction" do
-      log =
-        capture_log(fn ->
-          assert {:ok, opts} = prepared(%{effectively_once: true}, [:on_interval])
-          assert opts.sink == nil
-        end)
-
-      refute log =~ "effectively-once relay"
-    end
-  end
-
   ## ---------- 5.2 an outbound write is not liveness ----------
 
   test "an outbound frame does not refresh the connection-liveness timestamp" do

@@ -198,7 +198,6 @@ defmodule Flezha.Plugin.Provider.Websocket do
          {:ok, subscription} <- Subscription.from_opts(opts),
          {:ok, sink} <- Sink.from_opts(opts) do
       plugin_id = opts.plugin_id || opts[:source_plugin_id] || opts.uri
-      warn_best_effort_hop(opts, sink, plugin_id)
 
       Logger.info(
         "[Plugin.Provider.Websocket] init_provider prepared uri=#{inspect(opts.uri)} " <>
@@ -234,24 +233,22 @@ defmodule Flezha.Plugin.Provider.Websocket do
 
   defp one_channel_writer(_opts), do: :ok
 
-  # Warn, never refuse. A durable sink alongside a live websocket view is the
-  # standard topology, and refusing it would push users into a worse one.
-  # Refusing would also claim more than this change can honour: the relay's
-  # internal guarantee is untouched and only the websocket hop is best-effort.
-  defp warn_best_effort_hop(opts, %Sink{} = sink, plugin_id) do
-    if opts[:effectively_once] do
-      Logger.warning(
-        "[Plugin.Provider.Websocket] plugin_id=#{inspect(plugin_id)} ships output from an " <>
-          "effectively-once relay with sink_ack_mode=#{inspect(sink.ack_mode)}; the " <>
-          "relay's internal guarantee is unchanged, its websocket output hop is not " <>
-          "effectively-once"
-      )
-    end
-
-    :ok
+  # The relay's tier arrives only in the activation env, so the warning is
+  # raised here rather than at `init_provider/1`. Warn, never refuse: a durable
+  # sink alongside a live websocket view is the standard topology, and the
+  # relay's internal guarantee is untouched; only the websocket hop is
+  # best-effort.
+  @impl true
+  def activate(%{effectively_once: true, sink: %Sink{} = sink} = opts) do
+    Logger.warning(
+      "[Plugin.Provider.Websocket] plugin_id=#{inspect(opts.plugin_id)} ships output from an " <>
+        "effectively-once relay with sink_ack_mode=#{inspect(sink.ack_mode)}; the " <>
+        "relay's internal guarantee is unchanged, its websocket output hop is not " <>
+        "effectively-once"
+    )
   end
 
-  defp warn_best_effort_hop(_opts, _sink, _plugin_id), do: :ok
+  def activate(_opts), do: :ok
 
   @doc """
   Ship one dispatched payload upstream on the socket this plugin already holds.

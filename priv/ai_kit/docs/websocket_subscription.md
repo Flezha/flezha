@@ -284,8 +284,8 @@ delta. Put `{{cell}}` and `{{seq}}` in the same template and a consumer that
 tracks the last sequence it has applied per cell discards what it already
 has. That is the only place the dedup can work.
 
-An enable on an **effectively-once** relay warns, naming the plugin and the
-mode, and proceeds. The relay's internal guarantee is unchanged; its
+On an **effectively-once** relay the plugin warns when the relay brings it up,
+naming the plugin and the mode, and proceeds. The relay's internal guarantee is unchanged; its
 websocket output hop is not effectively-once. A durable output plugin alongside a live
 websocket view is the standard topology, so this is a warning and not a refusal.
 

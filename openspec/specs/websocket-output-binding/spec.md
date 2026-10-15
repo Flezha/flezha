@@ -150,25 +150,25 @@ and no key to overwrite.
 - **THEN** the frame SHALL carry the output's `flz.cell` and `flz.seq` stamps
 - **AND** the published documentation SHALL state that the consumer deduplicates on them
 
-### Requirement: A websocket output plugin on an effectively-once relay SHALL warn at enable time
+### Requirement: A websocket output plugin on an effectively-once relay SHALL warn when its relay brings it up
 
-A websocket output binding enabled on an effectively-once relay SHALL warn and SHALL
+A websocket output binding brought up on an effectively-once relay SHALL warn and SHALL
 NOT be refused. The warning SHALL name the plugin and the acknowledgement mode, and SHALL
 state that the relay's internal guarantee is unchanged while its websocket output hop
 is not effectively-once.
 
-The provider SHALL read the tier from the host-injected `:effectively_once` opt rather than
-from any state of its own.
+The provider SHALL read the tier from the `:effectively_once` fact the relay hands it at
+activation rather than from any state of its own.
 
-#### Scenario: Enabling on a tier relay warns and proceeds
+#### Scenario: Bringing up on a tier relay warns and proceeds
 - **GIVEN** a relay running with effectively-once delivery
-- **WHEN** a websocket plugin with an `on_output` hook is enabled on it
+- **WHEN** the relay brings up a websocket plugin with an `on_output` hook
 - **THEN** a warning naming the plugin and the acknowledgement mode SHALL be emitted
-- **AND** the plugin SHALL be enabled
+- **AND** the plugin SHALL reach running
 
-#### Scenario: Enabling on a plain relay is silent
+#### Scenario: Bringing up on a plain relay is silent
 - **GIVEN** a relay not running with effectively-once delivery
-- **WHEN** the same plugin is enabled
+- **WHEN** the relay brings up the same plugin
 - **THEN** no such warning SHALL be emitted
 
 ### Requirement: The outbound handoff SHALL NOT block the socket process on the relay
