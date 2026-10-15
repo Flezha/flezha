@@ -5,8 +5,8 @@
 //! sending thread and never drops — a bounded wait re-checked every
 //! [`PARK_INTERVAL_VAR`] milliseconds (50 by default), counted on
 //! [`CREDIT_PARKED`] so a parked runner reads as parked, not wedged — while
-//! `arm`/`grant` run on the coordinator and never block. A frame larger than
-//! the whole window is sent once it is fully replenished.
+//! `arm`/`grant` run where control frames are read and never block. A frame
+//! larger than the whole window is sent once it is fully replenished.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Condvar, Mutex, OnceLock};
@@ -124,7 +124,7 @@ impl CreditWindow {
     }
 
     /// Debit `frame_len`, parking until enough credit is available. Never
-    /// from the coordinator thread.
+    /// from the thread that reads control frames: it applies the grants.
     pub fn acquire(&self, frame_len: usize) {
         let need = frame_len as i64;
         let mut st = self.state.lock().expect("credit window mutex poisoned");
@@ -311,7 +311,7 @@ mod tests {
     /// The credit hold and the transport's send gate must never nest: the
     /// window's mutex is held across `acquire`'s whole body, and `arm`/`grant`
     /// are documented as never blocking, so a wait for a send buffer taken
-    /// inside that body would stall the coordinator.
+    /// inside that body would stall the control frame reader.
     ///
     /// The lost-wake fallback is read from the environment, so the test reads
     /// the same environment: run bare it proves the default, run with

@@ -158,3 +158,166 @@ fn a_local_send_is_refused_for_what_this_runner_cannot_take() {
         "an unbound relay is no longer listed"
     );
 }
+
+/// A controller's end of a control session: requests written as the
+/// controller frames them, answers read with a deadline as the hang guard.
+struct ControllerEnd(std::os::unix::net::UnixStream);
+
+const DEADLINE: std::time::Duration = std::time::Duration::from_secs(10);
+
+impl ControllerEnd {
+    fn request(&mut self, reference_id: &str, command: Command) {
+        use std::io::Write;
+        let frame = framed_request(reference_id.to_string(), command);
+        self.0.write_all(&frame).expect("the request is written");
+    }
+
+    /// The answer to `reference_id`, skipping every other frame.
+    fn answer(&mut self, reference_id: &str) -> crate::pb::CommandResponse {
+        loop {
+            let (_, frame, _) = payloader::extract_payload(&self.0)
+                .unwrap_or_else(|e| panic!("no answer to {reference_id}: {e}"));
+            match crate::pb::CommandResponse::decode(frame.as_slice()) {
+                Ok(response) if response.reference_id == reference_id => return response,
+                _ => continue,
+            }
+        }
+    }
+}
+
+/// `node` behind a control session read and coordinated as in production;
+/// the controller's end, past the handshake.
+fn coordinated(node: RunnerNode) -> ControllerEnd {
+    let (sdk_end, ctrl_end) = crate::test_support::stream_pair();
+    ctrl_end
+        .set_read_timeout(Some(DEADLINE))
+        .expect("a deadline");
+    let declared = Arc::new(RwLock::new(Vec::new()));
+    let (otx, orx) = crossbeam::channel::unbounded();
+    let otx_arc = Arc::new(Mutex::new(otx));
+    let (_, control_stream) = control_unit::sock_conn(
+        "test-ns".to_string(),
+        Arc::clone(&declared),
+        sdk_end,
+        None,
+        Arc::clone(&otx_arc),
+    );
+    let (ctx, _) = crossbeam::channel::unbounded();
+    let mut coordinator = Coordinator {
+        runner: node,
+        control_stream,
+        namespace: "test-ns".to_string(),
+        declared,
+        otx_arc,
+        ctx_arc: Arc::new(Mutex::new(ctx)),
+        shutdown_bridge: ShutdownBridge::new(),
+    };
+    thread::spawn(move || {
+        while let Ok(message) = orx.recv() {
+            coordinator.handle_message(message);
+        }
+    });
+    payloader::extract_payload(&ctrl_end).expect("the handshake");
+    ControllerEnd(ctrl_end)
+}
+
+/// A bound host Cell that keeps state, with its wire identity.
+fn bound_cell(node: &mut RunnerNode) -> (Vec<u8>, Arc<crate::cell::CellSlot>) {
+    let factory = format!("credit_compact_{}", std::process::id());
+    crate::test_support::host_class::instance_of(&factory, &["in"], &[], &[1], false);
+    let id = format!("{factory}-1");
+    let errors = crate::test_support::host_class::bind(node, &factory, &id, "", 0);
+    assert!(errors.is_empty(), "{errors:?}");
+    let cell_id = crate::flusher::encode_cell_identity(&id, "p0", "");
+    let (_, slot) = node.find_cell(&cell_id).expect("the Cell is live");
+    (cell_id, slot)
+}
+
+/// A sender holding `slot`'s buffer as `flush_one`'s caller does, parked in
+/// the credit acquire every drained frame makes; signals once it is freed.
+fn parked_under_buffer(slot: &Arc<crate::cell::CellSlot>) -> std::sync::mpsc::Receiver<()> {
+    let (locked_tx, locked) = std::sync::mpsc::channel();
+    let (freed_tx, freed) = std::sync::mpsc::channel();
+    let holder = Arc::clone(slot);
+    thread::spawn(move || {
+        let _buffer = crate::util::LockRecover::lock_recover(&*holder.flush_buffer);
+        locked_tx.send(()).expect("the test waits");
+        crate::credit::global().acquire(1);
+        freed_tx.send(()).expect("the test waits");
+    });
+    locked.recv_timeout(DEADLINE).expect("the buffer is held");
+    freed
+}
+
+/// The host a snapshot crossing reaches: answers `slot`'s request with a
+/// one-byte state.
+fn host_answering_snapshot(slot: &Arc<crate::cell::CellSlot>) {
+    let slot = Arc::clone(slot);
+    thread::spawn(move || {
+        let core = crate::poll_core::global();
+        crate::test_support::spin_until("the snapshot request", || {
+            let Some(act) = core.take_snapshot_request(&slot) else {
+                return false;
+            };
+            let token = act.token;
+            let outcome = crate::schema::ActivationOutcome::Snapshot { state: vec![b's'] };
+            let result = crate::schema::ActivationResult { token, outcome };
+            crate::host::apply_result(core, act, result).expect("answered");
+            true
+        });
+    });
+}
+
+/// A coordinator command can wait on a Cell's buffer lock whose holder is
+/// parked on credit, and only a grant frees that holder: the grant must not
+/// queue behind the command, or the runner's control channel wedges.
+#[test]
+fn a_grant_frees_the_sender_a_compaction_waits_behind() {
+    const WINDOW: u64 = 4096;
+    if crate::test_support::passes_alone(
+        "coordinator::tests::a_grant_frees_the_sender_a_compaction_waits_behind",
+    )
+    .is_some()
+    {
+        return;
+    }
+    let _sink = crate::state_sink::test_guard();
+    crate::state_sink::install_global_sink(Arc::new(|_: &str, _: &[u8]| Ok(())));
+    let mut node = RunnerNode::new("test-ns".to_string());
+    let (cell_id, slot) = bound_cell(&mut node);
+    let mut controller = coordinated(node);
+    let session = "kb550".to_string();
+    let init = crate::pb::CreditWindowInit {
+        stream_id: session.clone(),
+        window_bytes: WINDOW,
+        low_watermark_bytes: WINDOW / 2,
+    };
+    controller.request("ref-init", Command::CreditWindowInit(init));
+    assert_eq!(controller.answer("ref-init").status, "success");
+    crate::credit::global().acquire(WINDOW as usize);
+    let freed = parked_under_buffer(&slot);
+    host_answering_snapshot(&slot);
+
+    let compact = crate::pb::CompactCell {
+        cell_id: cell_id.clone(),
+    };
+    controller.request("ref-compact", Command::CompactCell(compact));
+    let grant = crate::pb::CreditGrant {
+        stream_id: session,
+        bytes: WINDOW,
+    };
+    controller.request("ref-grant", Command::CreditGrant(grant));
+
+    freed
+        .recv_timeout(DEADLINE)
+        .expect("the grant reaches the sender parked under the Cell's buffer");
+    let compacted = controller.answer("ref-compact");
+    assert_eq!(compacted.status, "success", "{:?}", compacted.errors);
+    let response = crate::pb::CompactCellResponse::decode(compacted.raw_data.as_slice())
+        .expect("a CompactCellResponse");
+    assert_eq!(
+        (response.cell_id, response.snapshot_bytes_size),
+        (cell_id, 1)
+    );
+    crate::credit::global().disarm();
+}

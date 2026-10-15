@@ -1,7 +1,9 @@
 //! The coordinator: one thread per runner that owns the control stream and
 //! every control-plane write — command replies, keepalives, heartbeats,
 //! steps completions and SDK-initiated requests — so those writes never
-//! interleave. Data-plane traffic bypasses it entirely: stream readers push
+//! interleave. A credit command is answered where control frames are read
+//! instead (`command::answer_credit`), so a blocked command never holds back a
+//! grant. Data-plane traffic bypasses it entirely: stream readers push
 //! straight into the targeted relay's cell mailboxes.
 
 use std::collections::HashMap;

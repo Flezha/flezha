@@ -31,6 +31,8 @@ mod steps_stop;
 mod streams_connect;
 mod tasklet_activity;
 
+pub(crate) use credit::answer_credit;
+
 /// One command's answer: the `CommandResponse` bytes under the handler's own
 /// payload id (the frame is stamped with the REQUEST's).
 pub struct Reply {
@@ -60,7 +62,7 @@ pub trait CommandAction {
 
 /// A read too slow for the control reader: what it needs is taken from the
 /// runner there, and the answer is built and written on a worker thread, so
-/// the credit grants queued behind it are not held up.
+/// the commands queued behind it are not held up.
 pub trait OffReaderAction {
     fn prepare(&self, runner: &mut RunnerNode) -> Result<OffReaderBuild, crate::Error>;
 }
@@ -151,8 +153,6 @@ fn classify(command: Option<Command>) -> Result<CommandActionType, CommandDecode
         Some(Command::CellMailboxStatus(c)) => regular(c),
         Some(Command::Ping(c)) => regular(c),
         Some(Command::StepsStop(c)) => regular(c),
-        Some(Command::CreditWindowInit(c)) => regular(c),
-        Some(Command::CreditGrant(c)) => regular(c),
         Some(Command::ParkPayloadAck(c)) => regular(c),
         Some(Command::EffectResults(c)) => regular(c),
         Some(Command::TaskletActivity(c)) => CommandActionType::OffReader(Box::new(c)),
@@ -173,7 +173,10 @@ fn classify(command: Option<Command>) -> Result<CommandActionType, CommandDecode
         | Some(Command::EffectResult(_))
         // The control reader answers a refusal itself, before the handshake
         // it ends; one arriving later has no session to refuse.
-        | Some(Command::ConnectRefused(_)) => CommandActionType::NotificationIgnore,
+        | Some(Command::ConnectRefused(_))
+        // Answered where control frames are read (`answer_credit`).
+        | Some(Command::CreditWindowInit(_))
+        | Some(Command::CreditGrant(_)) => CommandActionType::NotificationIgnore,
         Some(Command::RunnerShutdownAck(_)) => CommandActionType::AckSignal(Ok(String::new())),
         Some(Command::SpawnStepsResponse(reply)) => CommandActionType::AckSignal(ack_result(
             crate::spawn::encode_ack(&reply.outcome, &reply.instance_id),
@@ -505,9 +508,10 @@ mod tests {
         assert_eq!(reply("", Some(&quota), ""), Err(quota));
     }
 
-    /// Every command runs on the coordinator thread, which owns the control
-    /// stream, so a panic in one ends the session without a word to the
-    /// controller. The production half of this directory refuses instead.
+    /// Every command runs on the coordinator thread or, for credit, the
+    /// thread that reads control frames; a panic in either ends the session
+    /// without a word to the controller. The production half of this
+    /// directory refuses instead.
     /// One directory, not the crate: `flz_core/src` holds more.
     #[test]
     fn no_command_can_panic_the_thread_that_runs_it() {

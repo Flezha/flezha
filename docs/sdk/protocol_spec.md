@@ -828,7 +828,7 @@ empty, so absent also means "this runner does not report Cells".
 **Cost.** The read adds nothing to the per-message path. A `flz_core` runner
 resolves the relay, and the tasklet `cells_of` names, on the control reader
 and walks its Cells on a thread of its own, so a relay with many live Cells
-does not hold up the credit grants behind it. The Cells of `cells_of` are
+does not hold up the commands behind it. The Cells of `cells_of` are
 picked during that same walk, keeping the newest `limit` in a bounded heap.
 An older runner that cannot decode the command drops it without a reply, and
 one that predates `cells_of` answers without `cells`.
@@ -1584,7 +1584,10 @@ only when appended bytes become durable: on WAL fsync the controller sends one
 batched grant when the un-fsynced buffer falls below `low_watermark_bytes` —
 never per record, and a stalled fsync mints nothing. Credit never crosses
 sessions: a reconnect re-runs `CreditWindowInit` with a fresh `stream_id`, and
-a grant for another `stream_id` is discarded. A frame arriving on an exhausted
+a grant for another `stream_id` is discarded. The runner applies
+`CreditWindowInit` and `CreditGrant` as it reads them, ahead of any command
+still running or queued, since a command can wait on a Cell whose sender is
+parked on the credit that grant returns. A frame arriving on an exhausted
 ledger is a protocol violation: the controller sheds it
 (`credit_overrun_total`) and the seq-gap resync repairs the gap.
 

@@ -333,7 +333,7 @@ fn connect_diagnosis() -> String {
     socket_probe::connect_diagnosis(get_transport_type(), None, None)
 }
 
-fn sock_conn(
+pub(crate) fn sock_conn(
     namespace: String,
     declared: Arc<RwLock<Vec<String>>>,
     stream_box: Arc<FlezhaStream>,
@@ -465,6 +465,9 @@ fn read_loop(
                     }
                 }
                 let _ = stream.set_read_timeout(Some(live.current_deadline()));
+                if crate::command::answer_credit(stream, &payload_id, &message) {
+                    continue;
+                }
                 // A runner abandoned meanwhile has no one left to hand it to.
                 let handed = otx.lock().unwrap_or_else(|e| e.into_inner()).send(
                     RunnerMessage::HandleCommandAction(payload_id, message, metadata),

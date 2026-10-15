@@ -97,6 +97,20 @@ pub(crate) fn run_alone(test: &str) -> Option<std::process::Output> {
     Some(child)
 }
 
+/// [`run_alone`] for the test at path `test`, asserting it passed there:
+/// `None` inside the child, the child's stderr in the parent.
+#[cfg(test)]
+pub(crate) fn passes_alone(test: &str) -> Option<String> {
+    let out = run_alone(test)?;
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert!(
+        out.status.success() && stdout.contains("1 passed"),
+        "{test} failed in its own process:\n{stdout}\n{stderr}"
+    );
+    Some(stderr)
+}
+
 /// The identity and `ParkBody` inside a frame `build_cell_frame` wrote:
 /// `[id_len(2)][identity][seq(8)][header(16)][body_len(4)][body][crc(4)]`. The
 /// identity is read back with the flusher's own inverse, so a capture cannot

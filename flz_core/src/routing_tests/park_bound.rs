@@ -3,7 +3,7 @@
 //! never by a thread per frame, and never lost.
 
 use super::*;
-use crate::test_support::{capture_unacked_parks, run_alone, CapturedPark};
+use crate::test_support::{capture_unacked_parks, passes_alone, CapturedPark};
 
 /// Live threads of this process whose kernel name starts with `prefix`
 /// (the kernel keeps 15 bytes: `flezha-unresolv`).
@@ -34,18 +34,10 @@ fn ack_all(parks: &Parks, instance: &RelayInstance) {
     crate::test_support::spin_until("the parks to finish", || !instance.ladders_running());
 }
 
-/// [`run_alone`] for the test `name` of this module: `None` inside the
+/// [`passes_alone`] for the test `name` of this module: `None` inside the
 /// child, its stderr in the parent once it passed.
 fn in_own_process(name: &str) -> Option<String> {
-    let test = format!("routing::tests::park_bound::{name}");
-    let out = run_alone(&test)?;
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
-    assert!(
-        out.status.success() && stdout.contains("1 passed"),
-        "{test} failed in its own process:\n{stdout}\n{stderr}"
-    );
-    Some(stderr)
+    passes_alone(&format!("routing::tests::park_bound::{name}"))
 }
 
 /// Fails when: a source with one misspelled channel name, at rate, holds one
