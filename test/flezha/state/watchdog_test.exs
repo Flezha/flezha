@@ -541,24 +541,30 @@ defmodule Flezha.State.WatchdogTest do
 
     ref = shippable_ref("rpo")
     DurabilityBackendStub.set_down(true)
-    assert {:error, :backend_down} = Shipper.ship_now(ref)
 
     # A second reference, breached through the same production path and never
     # cleared. It stands in for the entry another module leaves in the ledger,
     # which is what an unpinned read of it picks up.
     foreign = shippable_ref("rpo_foreign")
-    assert {:error, :backend_down} = Shipper.ship_now(foreign)
 
-    # Pinned to THIS reference, for the reason the `assert_receive` below is:
+    # Pinned to one reference, for the reason the `assert_receive` below is:
     # `breaches/0` folds node-global shipper state, so an unpinned read takes
     # whatever another module left in the ledger -- which is what `foreign` is.
-    breached? = fn -> Enum.any?(DurabilityTier.breaches(), &(&1.ref == ref)) end
+    breached? = fn r -> Enum.any?(DurabilityTier.breaches(), &(&1.ref == r)) end
 
-    # The breach is a millisecond past the failed ship.
-    assert wait_until(breached?, 1_000, 1)
+    # Both breaches are a millisecond past their failed ship, and both must be
+    # breached before the captured sweep: one it has not seen yet is flagged by
+    # the next sweep, outside the capture. The capture also spans the window,
+    # where the Watchdog's own timer may sweep first.
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        assert {:error, :backend_down} = Shipper.ship_now(ref)
+        assert {:error, :backend_down} = Shipper.ship_now(foreign)
+        assert wait_until(fn -> breached?.(ref) and breached?.(foreign) end, 1_000, 1)
+        :ok = Watchdog.sweep_now()
+      end)
 
-    assert ExUnit.CaptureLog.capture_log(fn -> :ok = Watchdog.sweep_now() end) =~
-             "RPO exceeded"
+    for r <- [ref, foreign], do: assert(log =~ "RPO exceeded for #{inspect(r)}")
 
     # Pinned to THIS reference: the RPO sweep is node-global, so an unpinned
     # receive takes whatever reference another module left pending.
@@ -574,11 +580,11 @@ defmodule Flezha.State.WatchdogTest do
     DurabilityBackendStub.set_down(false)
     assert :ok = Shipper.ship_now(ref)
     :ok = Watchdog.sweep_now()
-    refute breached?.()
+    refute breached?.(ref)
 
     # ...while the ledger is not empty, which is what makes the pin above an
     # assertion about this reference rather than about the node.
-    assert Enum.any?(DurabilityTier.breaches(), &(&1.ref == foreign))
+    assert breached?.(foreign)
   end
 
   # A reference with a WAL on disk, ready to be shipped.
