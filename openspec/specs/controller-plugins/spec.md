@@ -92,8 +92,9 @@ line a person can read), and:
 - `on_relay_stopped`, after a deliberate stop or a completion, and not for a partition
   rescale: `relay`, `reason` (`stopped` or `completed`);
 - `on_relay_failed`, when the relay's health reads parked or failed (its runner is
-  lost), once until it reads healthy, degraded or suspended again or is stopped, so neither
-  a park retry nor an unknown or unbound read between two failed ones repeats it:
+  lost), once until it reads healthy, degraded or suspended again, is stopped from its own
+  controller or is placed on another controller, so neither a park retry nor an unknown or
+  unbound read between two failed ones repeats it:
   `relay`, `error` (the error code of the park's reason);
 - `on_dead_letter`, when an input is newly dead-lettered: `relay`, `entry` (the DLQ id),
   `channel`, `error`; never the input itself;
@@ -120,6 +121,13 @@ A hook event SHALL be delivered to a plugin at most once per occurrence.
 - **GIVEN** a controller plugin in `n` taking `on_relay_failed`
 - **WHEN** a relay in `n` parks, and its park is retried on later ticks
 - **THEN** the plugin SHALL receive one event naming the relay and the park's error code
+
+#### Scenario: A failed relay placed on another controller and parked here again
+
+- **GIVEN** a controller plugin in `n` taking `on_relay_failed`, told that a relay parked
+  on this controller
+- **WHEN** the relay is placed on another controller and later parks on this one again
+- **THEN** the plugin SHALL receive a second event for the second park
 
 #### Scenario: A dead-lettered input carries no data
 

@@ -98,7 +98,7 @@ and only there, through five hooks:
 | --- | --- | --- |
 | `on_relay_started` | a deliberate start (by a user, a schedule, a tasklet or the admin SDK) has declared the relay and it runs; not a restart, a move, a wake or a partition rescale | `relay`, `factory` |
 | `on_relay_stopped` | a deliberate stop or a completion; not a partition rescale | `relay`, `reason` (`stopped` or `completed`) |
-| `on_relay_failed` | the relay's health reads parked, or failed because its runner is lost; once, until it reads healthy, degraded or suspended again or is stopped, so a park retried on later ticks is not repeated | `relay`, `error` (the error code of the park's reason) |
+| `on_relay_failed` | the relay's health reads parked, or failed because its runner is lost; once, until it reads healthy, degraded or suspended again, is stopped from its own controller or is placed on another controller, so a park retried on later ticks is not repeated | `relay`, `error` (the error code of the park's reason) |
 | `on_dead_letter` | an input is newly dead-lettered | `relay`, `entry` (the DLQ id), `channel`, `error` |
 | `on_plugin_unhealthy` | a plugin bound to a relay turns from healthy to unhealthy | `plugin`, `relay`, `error` |
 

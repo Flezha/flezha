@@ -420,6 +420,39 @@ defmodule FlezhaTest.Plugin.ControllerPluginTest do
       refute_receive {:hook, %{hook: :on_relay_failed}, _}, 300
     end
 
+    test "a relay failed here, then placed on another controller and parked here again, is announced again" do
+      {:ok, _} = notify(["on_relay_failed"])
+      subject = {:relay, {@namespace, "moved_op"}}
+      here = {:parked, {:plugin_prepare_failed, "p", :boom}}
+
+      read = fn {state, node, reason} ->
+        Verdict.new(subject, state, reason: reason, facts: %{node: node})
+      end
+
+      # Parked here, rebound, parked on the other controller (its own failure,
+      # which this one does not announce), rebound, and parked here again.
+      Enum.reduce(
+        [
+          {:parked, node(), here},
+          {:unbound, nil, nil},
+          {:parked, :other@host, {:parked, :elsewhere}},
+          {:unbound, nil, nil},
+          {:parked, node(), here}
+        ],
+        %{},
+        fn read_as, previous ->
+          current = %{subject => read.(read_as)}
+          Verdict.emit_transitions(previous, current)
+          current
+        end
+      )
+
+      for _ <- 1..2 do
+        assert_receive {:hook, %{hook: :on_relay_failed, relay: "moved_op"} = event, _}, 2_000
+        assert event.error == "plugin.prepare_failed"
+      end
+    end
+
     test "a rescale tells nothing: its members are the group it moves" do
       group = "rescaled_grp"
 

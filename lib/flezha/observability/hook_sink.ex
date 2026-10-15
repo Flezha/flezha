@@ -21,7 +21,7 @@ defmodule Flezha.Observability.HookSink do
   (`[:flezha, :health, :verdict]`), which already fire once per health change:
   every controller judges every relay, so this sink takes only those of
   subjects on its own node, and it announces a relay's failure once, until
-  the relay reads recovered or stops.
+  the relay reads recovered, stops here or is judged on another controller.
 
   A copy listens by joining its hooks' directory groups
   (`Flezha.Cluster.Directory.hook_group/3`): a copy without `single` hears its
@@ -110,9 +110,10 @@ defmodule Flezha.Observability.HookSink do
     end
   end
 
-  # A relay's failure is announced once, until it reads recovered or is
-  # stopped: the reads between, unknown or unbound while it is rebound, are
-  # neither. `failed` holds the relays announced and not recovered since.
+  # A relay's failure is announced once, until it reads recovered, is stopped
+  # here or is judged on another controller: the reads between, unknown or
+  # unbound (no node) while it is rebound, are none of these. `failed` holds
+  # the relays announced and not recovered since.
   defp read(%Signal{name: :verdict, metadata: %{node: node} = transition}, state)
        when node == node(),
        do:
@@ -122,13 +123,15 @@ defmodule Flezha.Observability.HookSink do
            state
          )
 
+  defp read(%Signal{name: :verdict, metadata: %{kind: :relay, id: id, node: node}}, state)
+       when not is_nil(node),
+       do: {nil, forget(state, id)}
+
   defp read(%Signal{source: :flezha_relay, name: :relay_started, metadata: f}, state),
     do: {event(:on_relay_started, f), state}
 
   defp read(%Signal{source: :flezha_relay, name: :relay_stopped, metadata: f}, state),
-    do:
-      {event(:on_relay_stopped, f),
-       %{state | failed: MapSet.delete(state.failed, {f.namespace, f.relay})}}
+    do: {event(:on_relay_stopped, f), forget(state, {f.namespace, f.relay})}
 
   # The DLQ store names the relay's class; its namespace is read here, where
   # a copy listens, and not on every park.
@@ -157,7 +160,7 @@ defmodule Flezha.Observability.HookSink do
   end
 
   defp turned(:relay_recovered, %{id: id}, state),
-    do: {nil, %{state | failed: MapSet.delete(state.failed, id)}}
+    do: {nil, forget(state, id)}
 
   defp turned(:plugin_unhealthy, %{id: {namespace, relay, plugin}} = transition, state) do
     event =
@@ -172,6 +175,8 @@ defmodule Flezha.Observability.HookSink do
   end
 
   defp turned(nil, _transition, state), do: {nil, state}
+
+  defp forget(state, id), do: %{state | failed: MapSet.delete(state.failed, id)}
 
   # The judge wraps what it read; the code is the cause's.
   defp cause({:parked, reason}), do: reason
