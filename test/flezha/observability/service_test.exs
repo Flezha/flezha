@@ -2,6 +2,8 @@ defmodule Flezha.Service.ObservabilityTest do
   # async: false: writes Application env; the observability registry.
   use ExUnit.Case, async: false
 
+  import FlezhaTest.Case, only: [refute_minted: 2]
+
   alias Flezha.Observability.AuditLog.Codec
   alias Flezha.Observability.Bus
   alias Flezha.Observability.{PubSubSink, Registry, RingBufferSink, Signal}
@@ -189,25 +191,17 @@ defmodule Flezha.Service.ObservabilityTest do
     end
 
     test "a source naming no atom is refused, and none is minted" do
-      refuse = fn ->
-        Admin.call(
-          "Observability.tail",
-          ~s(["obs_door_never_an_atom_7f3a"]),
-          %{source: :cli},
-          :given
-        )
-      end
-
-      # The first refusal loads what refusing needs; a word it had minted would
-      # be served the second time.
-      assert {:error, %Flezha.Error{code: "control.unknown_parameter"}} = refuse.()
-      before = :erlang.system_info(:atom_count)
-
       assert {:error, %Flezha.Error{code: "control.unknown_parameter", details: details}} =
-               refuse.()
+               refute_minted(["obs_door_never_an_atom_7f3a"], fn ->
+                 Admin.call(
+                   "Observability.tail",
+                   ~s(["obs_door_never_an_atom_7f3a"]),
+                   %{source: :cli},
+                   :given
+                 )
+               end)
 
       assert details["parameter"] == "obs_door_never_an_atom_7f3a"
-      assert :erlang.system_info(:atom_count) == before
     end
   end
 

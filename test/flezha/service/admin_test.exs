@@ -14,6 +14,8 @@ defmodule Flezha.Service.AdminTest do
 
   use Mimic
 
+  import FlezhaTest.Case, only: [refute_minted: 2]
+
   alias Flezha.AuthZ
   alias Flezha.AuthZ.Policy
   alias Flezha.AuthZ.RoleStore
@@ -278,13 +280,17 @@ defmodule Flezha.Service.AdminTest do
     end
 
     test "a name nothing declares is refused without minting an atom" do
-      before = :erlang.system_info(:atom_count)
+      names = [
+        "no_such_function_7d2b",
+        "Elixir.Flezha.Service.NoSuchModule7d2b",
+        "malformed_7d2b"
+      ]
 
-      assert {:error, _} = door("Relay.no_such_function", "[]")
-      assert {:error, _} = door("NoSuchModule.anything", "[]")
-      assert {:error, _} = door("malformed", "[]")
-
-      assert :erlang.system_info(:atom_count) == before
+      refute_minted(names, fn ->
+        assert {:error, _} = door("Relay.no_such_function_7d2b", "[]")
+        assert {:error, _} = door("NoSuchModule7d2b.anything", "[]")
+        assert {:error, _} = door("malformed_7d2b", "[]")
+      end)
     end
 
     # Fails when: a runner reaches a stream, whose task and listener stay
@@ -297,14 +303,10 @@ defmodule Flezha.Service.AdminTest do
 
     # Fails when: an option key a runner writes is minted, one atom per request.
     test "a plugin option key naming no atom is not minted" do
-      update = fn ->
-        door("PluginManager.update", ~s(["p_none", {"opts": {"opt_never_7c1e": 1}}]))
-      end
-
-      assert {:error, _} = update.()
-      before = :erlang.system_info(:atom_count)
-      assert {:error, _} = update.()
-      assert :erlang.system_info(:atom_count) == before
+      refute_minted(["opt_never_7c1e"], fn ->
+        assert {:error, _} =
+                 door("PluginManager.update", ~s(["p_none", {"opts": {"opt_never_7c1e": 1}}]))
+      end)
     end
 
     # Fails when: `null` reaches the body as `nil` instead of the declared default.

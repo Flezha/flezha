@@ -151,6 +151,25 @@ defmodule FlezhaTest.Case do
     |> Map.reject(fn {key, _value} -> String.starts_with?(Atom.to_string(key), "__") end)
   end
 
+  @doc """
+  Run `fun` and assert that no atom is spelled by any of `texts`, before or
+  after it; returns what `fun` returned.
+
+  The words are found only in the calling test's own strings, so one that is an
+  atom afterwards was minted by `fun`. Comparing the VM-wide atom count instead
+  fails on any atom another process or a first module load mints meanwhile.
+  """
+  @spec refute_minted([String.t()], (-> result)) :: result when result: term()
+  def refute_minted(texts, fun) do
+    Enum.each(texts, &refute_atom/1)
+    result = fun.()
+    Enum.each(texts, &refute_atom/1)
+    result
+  end
+
+  defp refute_atom(text),
+    do: ExUnit.Assertions.assert_raise(ArgumentError, fn -> String.to_existing_atom(text) end)
+
   defp normalise({name, opts}) when is_atom(name) and is_list(opts), do: {name, opts}
   defp normalise(name) when is_atom(name), do: {name, []}
 

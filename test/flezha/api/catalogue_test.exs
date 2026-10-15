@@ -7,6 +7,8 @@ defmodule Flezha.Api.CatalogueTest do
   """
   use ExUnit.Case, async: false
 
+  import FlezhaTest.Case, only: [refute_minted: 2]
+
   @doc false
   # Every `{module, function, declared, positional}` whose declared arguments
   # do not number the arguments it takes before its context.
@@ -97,10 +99,12 @@ defmodule Flezha.Api.CatalogueTest do
     end
 
     test "resolves a name without minting an atom" do
-      before = :erlang.system_info(:atom_count)
-      assert :error = Flezha.Service.lookup("Dlq.no_such_operation_anywhere")
-      assert :error = Flezha.Service.lookup("NoSuchModuleAnywhere.list")
-      assert :erlang.system_info(:atom_count) == before
+      names = ["no_such_operation_anywhere", "Elixir.Flezha.Service.NoSuchModuleAnywhere"]
+
+      refute_minted(names, fn ->
+        assert :error = Flezha.Service.lookup("Dlq.no_such_operation_anywhere")
+        assert :error = Flezha.Service.lookup("NoSuchModuleAnywhere.list")
+      end)
 
       assert {:ok, %{module: Flezha.Service.Dlq, function: :list}} =
                Flezha.Service.lookup("Dlq.list")
