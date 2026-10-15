@@ -134,7 +134,7 @@ defmodule Flezha.Runner.ControlUnit do
       nil ->
         # An atom, like the ping path's: a caller has to tell "the runner never
         # answered" from "the SDK answered with an error", and only the latter
-        # is a binary joined from the reply's `errors`.
+        # is a `%Flezha.Error{}` built from the reply's `errors`.
         {:error, :no_control_unit}
 
       _pid ->

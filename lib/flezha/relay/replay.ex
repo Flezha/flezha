@@ -271,7 +271,7 @@ defmodule Flezha.Relay.Replay do
   """
   @spec await_restore(binary(), Paths.cell_id()) :: :ok | {:error, term()}
   def await_restore(runner_id, cell_id) do
-    case Commands.await_restore_init_state(runner_id, cell_id) do
+    case runner_id |> Commands.await_restore_init_state(cell_id) |> sdk_verdict() do
       {:ok, _raw} ->
         :ok
 
@@ -292,8 +292,8 @@ defmodule Flezha.Relay.Replay do
 
         :ok
 
-      # The SDK answered and refused: the reason is its own error text, joined
-      # from the reply's `errors`.
+      # Refused, by the SDK or by the controller's own read of the records:
+      # the reason is the refusal's text.
       {:error, reason} ->
         Logger.error(
           "[Overwatch] restore REFUSED cell=#{inspect(cell_id)} runner=#{runner_id}: " <>
@@ -310,6 +310,10 @@ defmodule Flezha.Relay.Replay do
         {:error, reason}
     end
   end
+
+  # The SDK's refusal arrives as the runner's error; its text is the verdict.
+  defp sdk_verdict({:error, %Flezha.Error{message: text}}), do: {:error, text}
+  defp sdk_verdict(answer), do: answer
 
   defp restore_concurrency,
     do: Config.get(:bind_restore_concurrency)

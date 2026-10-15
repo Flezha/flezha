@@ -144,6 +144,10 @@ defmodule FlezhaTest.Relay.RestoreRefusalTest do
   # carries it back: the diagnostic is what they test, not noise they emit.
   @refusal "sdk_lang mismatch: this SDK is rust (1), the record was written by java (2)"
 
+  # The SDK's refusal as the control unit hands it over: the runner's error,
+  # whose text is the verdict the relay parks on.
+  defp sdk_refusal, do: Flezha.Error.new("state.restore_failed", reason: @refusal)
+
   defp cell(base) do
     {"#{base}_#{System.unique_integer([:positive])}", "p0", "k"}
   end
@@ -187,7 +191,7 @@ defmodule FlezhaTest.Relay.RestoreRefusalTest do
       id = cell("refused")
 
       stub(Flezha.State.Commands, :await_restore_init_state, fn _runner, _cell ->
-        {:error, @refusal}
+        {:error, sdk_refusal()}
       end)
 
       :telemetry.attach(
@@ -203,8 +207,9 @@ defmodule FlezhaTest.Relay.RestoreRefusalTest do
 
       {result, log} = with_log(fn -> Replay.await_restore("runner_1", id) end)
 
-      assert result == {:error, @refusal}
-      assert_receive {:refused, %{count: 1}, %{cell: ^id, runner: "runner_1", reason: @refusal}}
+      verdict = sdk_refusal().message
+      assert result == {:error, verdict}
+      assert_receive {:refused, %{count: 1}, %{cell: ^id, runner: "runner_1", reason: ^verdict}}
       assert_refusal_logged(log, id)
     end
 
@@ -245,7 +250,7 @@ defmodule FlezhaTest.Relay.RestoreRefusalTest do
       stub(Flezha.State.Supervisor, :find_or_start, fn _cell -> {:ok, self()} end)
 
       stub(Flezha.State.Commands, :await_restore_init_state, fn _runner, _cell ->
-        {:error, @refusal}
+        {:error, sdk_refusal()}
       end)
 
       # Re-forwarding the input tail onto a Cell whose baseline never landed
@@ -256,7 +261,7 @@ defmodule FlezhaTest.Relay.RestoreRefusalTest do
 
       {result, log} = with_log(fn -> Replay.restore_cells_awaited(tier_state(id)) end)
 
-      assert result == {:error, @refusal}
+      assert result == {:error, sdk_refusal().message}
       assert_refusal_logged(log, id)
     end
 
