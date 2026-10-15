@@ -104,7 +104,12 @@ read again. These defaults hold for every campaign.
   is wrong in some window, a rule every SDK must share) goes to `DECISIONS.md` at
   once, and the next item starts.
 - **Every item ends with `/cx-refine`** over its own diff, run by the worker
-  before it reports.
+  before it reports. **A bigger change (below) gets at least three passes in a
+  row**, each a fresh `/cx-refine` over the whole item diff, so a pass also
+  reviews what the previous pass restructured. Past three it continues while
+  the last pass still accepted a structural candidate, five at most. Every
+  pass updates the docs and specs its own edits made false. The report
+  shows one line per pass; too few passes sends the item back to the coder.
 - **A critic only for a bigger change**: more than a few dozen production lines,
   a new module or public surface, or concurrency, authorization or durability
   logic changed beyond a few lines. A small or low-risk change gets the refine

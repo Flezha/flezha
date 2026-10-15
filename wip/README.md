@@ -60,7 +60,11 @@ of the findings reviews kept raising (stale documentation, a documented command
 nobody ran, an absence nothing tests, a test that could pass without testing
 anything, uncaptured log noise, a changed shared function, a hot path without
 numbers), and runs a refine pass over its own diff: reuse instead of a new
-layer, shared cores, less code, no behaviour change.
+layer, shared cores, less code, no behaviour change. A bigger change (as
+defined for the critic below) gets at least three refine passes in a row, each
+over the whole diff, because the first pass's restructuring is itself new code
+nobody has refined yet. Every pass brings the documentation and specs in line
+with what it renamed, moved or removed.
 
 **A critic only for a bigger change.** When a change is more than a few dozen
 production lines, adds a module or public surface, or changes concurrency,

@@ -41,7 +41,16 @@ exists.
    run that section's tests once. A red: fix every failure from inspection in
    one batch, rerun only the failing tests. A full suite runs once, at the end.
 7. **Run `/cx-refine` over your own diff** before you report, and apply what it
-   finds that keeps behaviour unchanged.
+   finds that keeps behaviour unchanged. **A bigger change runs it at least
+   three times in a row**: more than a few dozen production lines
+   (`git diff --numstat`), a new module or public surface, or concurrency,
+   authorization or durability logic changed beyond a few lines. Each pass
+   covers the whole item diff, including what the previous pass changed, and
+   runs only the tests covering what it touched. Every pass updates the
+   documentation its own edits made false: grep each symbol it renamed, moved,
+   merged or deleted across `docs/`, `openspec/specs/`, SDK examples and doc
+   comments, as in step 5. After the third, run another
+   only while the last pass accepted a structural candidate, five at most.
 
 **Rules that will fail your work if broken:** no behaviour change beyond the
 item; no new third party dependency; nothing that costs throughput, latency or
@@ -92,5 +101,6 @@ fall into. No board edits, except appending a found issue to
 
 **Do not commit, do not stage, do not archive.** Stop and report, in at most 400
 words: the screen verdict, the red and green output, the fix with file and
-line, what the refine pass changed, production and test lines from
+line, one line per refine pass (candidates accepted and rejected, what
+changed, docs updated), production and test lines from
 `git diff --numstat`, and the checklist.

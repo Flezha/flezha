@@ -55,9 +55,11 @@ Per item: only the tests the change affects. The full suite: once every <5 to
   under `wip/repro/<row-id>/` (`wip/briefs/reproduce.md`), except while the row
   in flight measures performance.
 - Every item ends with `/cx-refine` over its diff, run by the coder before it
-  reports.
-- The critic reads the code as soon as the code is done, while the coder writes
-  the docs; the docs get a short second look.
+  reports; a bigger change (the critic's threshold below) gets at least three
+  passes in a row, more while a pass still accepts a structural candidate, five
+  at most. Every pass updates the docs and specs its own edits made false.
+- The critic reads the code as soon as the last refine pass is done, while the
+  coder writes the docs; the docs get a short second look.
 - Critic: only for a bigger change (more than a few dozen production lines, a new
   module or public surface, or concurrency, authorization or durability logic
   beyond a few lines). A fresh agent, never a fork, diff only, a word limit. The
