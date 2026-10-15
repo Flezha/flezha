@@ -109,16 +109,23 @@ defmodule FlezhaTest.System.SdkAdminE2ETest do
         drill(
           @ns,
           [
-            call("Relay.start", [%{id: "app_read_target", factory_id: "do_nothing"}]),
-            call("Relay.cell_state", ["app_read_target", "default"]),
+            call("Relay.start", [%{id: "app_read_target", factory_id: "static_cell"}]),
+            call("Relay.cell_state", ["app_read_target", "static_entry_tasklet/b"]),
+            call("Relay.cell_state", ["app_read_target", "b"]),
             call("PluginManager.list", [])
           ],
           secrets
         )
 
-      assert [_start, state, plugins] = answers(port, 3)
-      assert {"Relay.cell_state", verdict, _} = state
-      assert verdict in ["ok", "err"]
+      assert [_start, one_cell, bare_key, plugins] = answers(port, 4)
+
+      # The argument is the controller's `<tasklet>[/<cell_key>]` selector: a
+      # tasklet and a key read that one Cell, and a key alone names a tasklet.
+      assert {"Relay.cell_state", "ok", state} = one_cell
+      assert [cells, _seq] = Jason.decode!(state)
+      assert Jason.decode!(cells) == %{"static_entry_tasklet" => %{"b" => %{"seen" => []}}}
+      assert {"Relay.cell_state", "err", reason} = bare_key
+      assert reason =~ "state.tasklet_not_found: "
       assert {"PluginManager.list", "ok", _} = plugins
 
       # The start's record names the connection, not a token, and is the shape
@@ -131,7 +138,7 @@ defmodule FlezhaTest.System.SdkAdminE2ETest do
       assert record.metadata.caller_source == :sdk
       assert record.metadata.relay == "app_read_target"
 
-      # And the two reads wrote nothing: their rows declare no audit.
+      # And the reads wrote nothing: their rows declare no audit.
       refute TestSinks.receive_signal(fn _signal -> true end, 500)
     end
 

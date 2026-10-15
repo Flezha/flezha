@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Changed: every SDK's `cell_state` takes the controller's selector (breaking)
+
+The argument of each SDK's `cell_state` (`cellState` in Java, Node and PHP) is now `cell`, the
+`<tasklet>[/<cell_key>]` selector the controller reads, and it is optional: absent, the read
+covers every Cell of the relay. Before, it was a required `cell_key`, and a bare Cell key was
+refused as `state.tasklet_not_found`. Rust takes `Option<&str>`.
+
 ### Changed: an Elixir entry channel decodes by its codec (breaking)
 
 `input/3` in the Elixir SDK now hands the key and the tasklet the payload decoded by the codec it
