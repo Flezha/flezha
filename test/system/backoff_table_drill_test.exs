@@ -32,10 +32,13 @@ defmodule FlezhaTest.System.BackoffTableDrillTest do
   alias Flezha.Config.Durations
   alias Flezha.Observability.Export.OtlpClient
   alias Flezha.Plugin.Extension.Ctx
+  alias Flezha.Plugin.Provider.HookWebhook
+  alias Flezha.Plugin.Provider.HttpPush
   alias Flezha.Plugin.Provider.Websocket
   alias Flezha.Service.RelayManager.Init
   alias Flezha.State.Watchdog
   alias FlezhaTest.Helper.ProviderPrepare
+  alias FlezhaTest.Helper.WebhookServer
   alias FlezhaTest.Helper.WebsocketServer
 
   setup :set_mimic_global_until_exit
@@ -98,6 +101,8 @@ defmodule FlezhaTest.System.BackoffTableDrillTest do
           :heal,
           :compaction,
           :otlp_post,
+          :hook_webhook_post,
+          :http_push,
           :no_response,
           :cluster_reconnect,
           :ws_reconnect,
@@ -161,6 +166,11 @@ defmodule FlezhaTest.System.BackoffTableDrillTest do
       compaction: {&compaction_device/0, 3, []},
       # A real endpoint that answers 503 on every post.
       otlp_post: {&otlp_device/0, 4, []},
+      # A receiver that answers 503 to every event a controller hook posts.
+      hook_webhook_post: {&hook_webhook_device/0, 2, []},
+      # A receiver that answers 503 to every output, under the plugin's own
+      # `retry_backoff_ms`/`retry_max_backoff_ms`, which bound the row.
+      http_push: {&http_push_device/0, 3, [base: 100, cap: 1_000]},
       # A hub whose start never answers: the retry the init path walks.
       no_response: {&no_response_device/0, 3, []},
       # A peer that never answers Node.connect/1.
@@ -215,6 +225,41 @@ defmodule FlezhaTest.System.BackoffTableDrillTest do
     if pid = Process.whereis(OtlpClient), do: Supervisor.stop(pid)
     {:ok, _} = OtlpClient.start_link([])
     OtlpClient.post(:logs, "{}")
+  end
+
+  # `call/2` holds its caller until the event is sent or given up, so the hook
+  # runs off the test process; the worker stops with the test, mid-ladder.
+  defp hook_webhook_device() do
+    server = WebhookServer.start([503])
+
+    {:ok, opts, worker} =
+      ProviderPrepare.prepare_and_activate(HookWebhook, %{
+        url: "http://127.0.0.1:#{server.port}/hook",
+        source_plugin_id: "hook_drill_#{System.unique_integer([:positive])}",
+        retries: 5
+      })
+
+    ProviderPrepare.stop_on_exit(HookWebhook, worker)
+    spawn(fn -> HookWebhook.on_dead_letter(%{relay: "drill"}, opts) end)
+    :ok
+  end
+
+  defp http_push_device() do
+    server = WebhookServer.start([503])
+
+    {:ok, opts, worker} =
+      ProviderPrepare.prepare_and_activate(HttpPush, %{
+        url: "http://127.0.0.1:#{server.port}/push",
+        source_plugin_id: "push_drill_#{System.unique_integer([:positive])}",
+        subscribed_extensions: [:on_output],
+        retries: 10,
+        retry_backoff_ms: 100,
+        retry_max_backoff_ms: 1_000
+      })
+
+    ProviderPrepare.stop_on_exit(HttpPush, worker)
+    {:ok, _ctx} = HttpPush.on_output(%Ctx.IO{message: "drill", metadata: %{}}, opts)
+    :ok
   end
 
   defp no_response_device() do
