@@ -96,7 +96,7 @@ signal to watch.
 
 When `:target_relay_id` names a partition group, `init_provider/1`
 resolves the member set and their key-group ranges and keeps **one worker per
-member**, keyed `{plugin_id, member}`. Each message routes by `group(flz.key)`
+member**, keyed `{{namespace, plugin_id}, member}`. Each message routes by `group(flz.key)`
 to the member whose range owns it, so repeated outputs for one key always take
 the same member. Per-member workers rather than one router: a worker is one
 queue with one in-flight slot, so a shared one would head-of-line-block every
@@ -133,7 +133,7 @@ rescale itself has already succeeded.
 
 ## Nothing ever blocks one Overwatch on another
 
-The callback enqueues into a long-lived per-`{plugin_id, target}` worker and
+The callback enqueues into a long-lived per-`{{namespace, plugin_id}, member}` worker and
 returns. The worker performs the confirming delivery in a short-lived monitored
 process, never in its own `handle_call`, so it always services an enqueue
 promptly. Were delivery inline, two relays forwarding to each other would

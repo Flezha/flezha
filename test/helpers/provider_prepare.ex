@@ -18,13 +18,15 @@ defmodule FlezhaTest.Helper.ProviderPrepare do
   alias Flezha.Plugin.ProviderBehaviour.Options, as: ProviderOptions
 
   @doc """
-  Prepare `opts` for `provider`: normalise through the declaration, then run
-  `init_provider/1`. Answers what the table would store, or the refusal.
+  Prepare `opts` for `provider`: normalise through the declaration, run
+  `init_provider/1`, then key it. Answers what the table would store, or the
+  refusal.
   """
   @spec prepare(module(), map()) :: {:ok, map()} | {:error, term()}
   def prepare(provider, opts) do
     with {:ok, normalised} <- ProviderOptions.normalise_opts(provider, with_host_identity(opts)),
-         do: provider.init_provider(normalised)
+         {:ok, prepared} <- provider.init_provider(normalised),
+         do: {:ok, WorkerSup.keyed(prepared)}
   end
 
   # What `Table.with_host_identity/3` merges: the caller stands in for the host
@@ -90,9 +92,10 @@ defmodule FlezhaTest.Helper.ProviderPrepare do
   def refute_ingest(), do: refute_received({:"$gen_call", _from, {:ingest, _, _}})
 
   @doc """
-  Stand in for `provider`'s worker under `plugin_id`, registered where the real
-  one registers: it answers every `{:sink_frame, message, metadata}` ask `:ok`
-  and forwards it to the calling test as `{:shipped, message, metadata}`.
+  Stand in for `provider`'s worker of the plugin `prepare/2` readies under
+  `plugin_id`, registered under that plugin's worker key. It answers every
+  `{:sink_frame, message, metadata}` ask `:ok` and forwards it to the calling
+  test as `{:shipped, message, metadata}`.
 
   A negative assertion needs this as much as a positive one. With no worker
   registered at all a provider refuses the ask, so "nothing was shipped" would
@@ -101,10 +104,11 @@ defmodule FlezhaTest.Helper.ProviderPrepare do
   @spec stub_sink_worker(module(), binary()) :: pid()
   def stub_sink_worker(provider, plugin_id) do
     test = self()
+    key = WorkerSup.key(with_host_identity(%{plugin_id: plugin_id}))
 
     worker =
       spawn_link(fn ->
-        Registry.register(WorkerSup.registry_name(WorkerSup.family(provider)), plugin_id, nil)
+        Registry.register(WorkerSup.registry_name(WorkerSup.family(provider)), key, nil)
         send(test, {:registered, plugin_id})
         answer_asks(test)
       end)

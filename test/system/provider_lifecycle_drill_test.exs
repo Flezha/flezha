@@ -277,7 +277,7 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
 
       # The map the socket process is started with, from the options the live
       # table holds: this is what every injection of that socket carries.
-      assert [{^plugin_id, %{targets: [%{channel: ^entry}]}}] =
+      assert [{{_namespace, ^plugin_id}, %{targets: [%{channel: ^entry}]}}] =
                Provider.Websocket.worker_specs(stored)
 
       assert {:ok, _printed} =
@@ -511,15 +511,15 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
     table
   end
 
-  # A key is the plugin id, or a tuple naming it: `{plugin_id, member}` or
-  # `{namespace, plugin_id}`.
-  defp keys_for(family, plugin_id) do
-    Enum.filter(WorkerSup.keys(family), fn
-      ^plugin_id -> true
-      key when is_tuple(key) -> plugin_id in Tuple.to_list(key)
-      _ -> false
-    end)
-  end
+  # A key is the plugin id, or a tuple naming it at any depth:
+  # `{namespace, plugin_id}`, or that with a member.
+  defp keys_for(family, plugin_id),
+    do: Enum.filter(WorkerSup.keys(family), &names?(&1, plugin_id))
+
+  defp names?(key, plugin_id) when is_tuple(key),
+    do: Enum.any?(Tuple.to_list(key), &names?(&1, plugin_id))
+
+  defp names?(key, plugin_id), do: key == plugin_id
 
   # The CLI carries every option as a string, which is the path a user
   # actually uses and the one the declaration converts.

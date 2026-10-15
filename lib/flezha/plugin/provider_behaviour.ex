@@ -165,10 +165,9 @@ defmodule Flezha.Plugin.ProviderBehaviour do
   `{registry_key, worker_opts}` — one for a provider with one worker, one per
   target for a provider that fans out.
 
-  Default: one worker keyed by `:plugin_id`, started with the provider's own
-  opts. A provider whose worker takes a narrower shape, or which needs more than
-  one, declares them here — and nowhere else, because this is the only place
-  that names what the table starts.
+  Default: one worker keyed `WorkerSup.key/1`, started with the provider's own
+  opts. A provider whose worker takes a narrower shape, or needs more than one,
+  declares them here and nowhere else: this alone names what the table starts.
   """
   @callback worker_specs(opts :: map()) :: [worker_spec()]
 
@@ -700,6 +699,7 @@ defmodule Flezha.Plugin.ProviderBehaviour do
     :source_namespace,
     :source_relay_id,
     :source_plugin_id,
+    :worker_key,
     :effectively_once,
     # Whether the relay journals its input (`Replay.floor_reporter/1`), which
     # decides how often a source moves its upstream position.
@@ -731,14 +731,14 @@ defmodule Flezha.Plugin.ProviderBehaviour do
 
   @doc """
   The options the HOST injects into a provider's opts, never settable by
-  config: the identity `Extension.Table.with_host_identity/2` merges, the
-  relay facts `bulk_activate/2` merges, the tracked pid `health/1` injects,
-  and the partition identity `Plugin.for_partition/3` merges into a group
-  member's plugins.
-
-  They live in one list because every provider that calls `reject_unknown/3`
-  must allow all of them — a key added to the host side and missed in one
-  provider's private copy turns that provider's every enable into a refusal.
+  config: the identity `Extension.Table.with_host_identity/2` merges and the
+  worker key (`WorkerSup.keyed/1`) the table stores, the relay facts
+  `bulk_activate/2` merges, the tracked pid `health/1` injects, and the
+  partition identity `Plugin.for_partition/3` merges into a group member's
+  plugins. They live in one list because every provider that calls
+  `reject_unknown/3` must allow all of them — a key added to the host side and
+  missed in one provider's private copy turns that provider's every enable into
+  a refusal.
   """
   @spec host_opts() :: [atom()]
   def host_opts(), do: @host_opts

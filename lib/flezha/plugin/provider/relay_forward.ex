@@ -3,10 +3,10 @@ defmodule Flezha.Plugin.Provider.RelayForward do
   Relay-to-relay delivery (a relay plugin): the sink whose destination
   is another relay in the same namespace rather than an external endpoint.
 
-  The callback enqueues and returns; a per-`{plugin_id, target}` worker does
-  the confirming delivery and retries until the target confirms. Nothing ever
-  blocks one Overwatch on another, so a cycle of relays feeding each other
-  is safe by construction.
+  The callback enqueues and returns; a per-`{{namespace, plugin_id}, member}`
+  worker does the confirming delivery and retries until the target confirms.
+  Nothing ever blocks one Overwatch on another, so a cycle of relays feeding
+  each other is safe by construction.
 
   The delivery guarantee is DERIVED, never configured: a source with a
   transactional outbox already stamps identity, which the forward carries as
@@ -70,7 +70,7 @@ defmodule Flezha.Plugin.Provider.RelayForward do
   end
 
   @doc """
-  One worker per target member, keyed `{plugin_id, member_id}`. Per-member
+  One worker per target member, keyed `{WorkerSup.key/1, member_id}`. Per-member
   workers rather than one router because a worker is one queue with one
   in-flight slot: a shared one would head-of-line-block every partition behind
   the slowest, and per-key ordering only needs per-member FIFO.
@@ -78,7 +78,7 @@ defmodule Flezha.Plugin.Provider.RelayForward do
   @impl true
   def worker_specs(opts) do
     for %{id: member_id} <- opts.routes do
-      {key(opts.plugin_id, member_id),
+      {key(WorkerSup.key(opts), member_id),
        %{
          plugin_id: opts.plugin_id,
          source_namespace: opts.source_namespace,
@@ -94,21 +94,20 @@ defmodule Flezha.Plugin.Provider.RelayForward do
 
   # A re-run of `init_provider/1` re-reads the target's member set, which is how
   # a rescaled target stops being routed by yesterday's ranges. Members that
-  # survive keep their worker — `ensure_worker/1` is keyed `{plugin_id, member}`
-  # — and therefore keep everything queued in it. A member that is GONE would
-  # otherwise leave a worker retrying forever against a relay that no
-  # longer exists, so its payloads are taken back and re-routed to whoever owns
-  # their key now.
+  # survive keep their worker, which is keyed by its member, and therefore keep
+  # everything queued in it. A member that is GONE would otherwise leave a
+  # worker retrying forever against a relay that no longer exists, so its
+  # payloads are taken back and re-routed to whoever owns their key now.
   #
   # Synchronous on purpose: no emit can be routed while `init_provider/1` runs,
   # so a re-homed payload lands ahead of anything emitted after the re-resolve
   # and per-key order survives the rescale.
   defp rehome_vanished_members(opts, previous, current) do
-    plugin_id = Map.fetch!(opts, :plugin_id)
+    opts = WorkerSup.keyed(opts)
     surviving = MapSet.new(current, & &1.id)
 
     for %{id: member_id} <- previous, not MapSet.member?(surviving, member_id) do
-      payloads = take_over(plugin_id, member_id)
+      payloads = take_over(opts.worker_key, member_id)
 
       if payloads != [] do
         Logger.info(
@@ -127,7 +126,7 @@ defmodule Flezha.Plugin.Provider.RelayForward do
   defp rehome_payload({message, metadata}, current, opts) do
     case route(current, metadata) do
       {:ok, %{id: member_id}} ->
-        ForwardWorker.absorb(worker(opts.plugin_id, member_id), {message, metadata})
+        ForwardWorker.absorb(worker(opts.worker_key, member_id), {message, metadata})
 
       {:unroutable, why} ->
         park_unroutable(opts, message, metadata, why)
@@ -137,8 +136,8 @@ defmodule Flezha.Plugin.Provider.RelayForward do
   # Take what a worker still owes. The table stops the worker itself, because a
   # key the declaration does not name is one it drops at the next activation;
   # a worker that could not be reached, or is already dead, owes nothing.
-  defp take_over(plugin_id, member_id) do
-    ForwardWorker.drain(worker(plugin_id, member_id))
+  defp take_over(plugin_key, member_id) do
+    ForwardWorker.drain(worker(plugin_key, member_id))
   catch
     :exit, _ -> []
   end
@@ -156,7 +155,7 @@ defmodule Flezha.Plugin.Provider.RelayForward do
         # unroutable payload takes no hold, it parks below, which is a durable
         # outcome the outbox cursor may advance past.
         metadata = hold(metadata, opts.plugin_id)
-        :ok = ForwardWorker.enqueue(worker(opts.plugin_id, member_id), message, metadata)
+        :ok = ForwardWorker.enqueue(worker(opts.worker_key, member_id), message, metadata)
 
       {:unroutable, why} ->
         park_unroutable(opts, message, metadata, why)
@@ -262,7 +261,7 @@ defmodule Flezha.Plugin.Provider.RelayForward do
   end
 
   defp member_verdict(opts, member_id) do
-    opts[:workers][key(opts.plugin_id, member_id)]
+    opts[:workers][key(opts.worker_key, member_id)]
     |> ProviderBehaviour.pid_health([absent: :no_worker, dead: :worker_dead], fn _pid ->
       :healthy
     end)
@@ -297,9 +296,9 @@ defmodule Flezha.Plugin.Provider.RelayForward do
 
   # The key one member's worker is registered under, named once and read by both
   # the declaration and the dispatch path.
-  defp key(plugin_id, member_id), do: {plugin_id, member_id}
+  defp key(plugin_key, member_id), do: {plugin_key, member_id}
 
-  defp worker(plugin_id, member_id), do: WorkerSup.worker(__MODULE__, key(plugin_id, member_id))
+  defp worker(plugin_key, member_id), do: WorkerSup.worker(__MODULE__, key(plugin_key, member_id))
 
   # `{member_id, range}` per target member. An ordinary relay — including a
   # target that is not started yet — is one member owning the whole space, which

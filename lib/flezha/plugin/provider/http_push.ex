@@ -146,7 +146,7 @@ defmodule Flezha.Plugin.Provider.HttpPush do
   @impl true
   def worker_specs(opts) do
     [
-      {key(opts),
+      {WorkerSup.key(opts),
        opts
        |> Map.take([
          :url,
@@ -179,7 +179,7 @@ defmodule Flezha.Plugin.Provider.HttpPush do
 
   defp send_payload(%Ctx.IO{message: message, metadata: metadata} = ctx, opts) do
     if ProviderBehaviour.in_channel?(metadata, opts.filter_channel),
-      do: HttpSend.push(@registry, key(opts), message, metadata)
+      do: HttpSend.push(@registry, opts.worker_key, message, metadata)
 
     {:ok, ctx}
   end
@@ -191,7 +191,7 @@ defmodule Flezha.Plugin.Provider.HttpPush do
   @impl true
   def health(opts) do
     ProviderBehaviour.pid_health(
-      WorkerSup.worker_pid(__MODULE__, key(opts)),
+      WorkerSup.worker_pid(__MODULE__, opts.worker_key),
       [absent: :not_running, dead: :worker_dead],
       fn pid ->
         case HttpSend.stats(pid) do
@@ -201,6 +201,4 @@ defmodule Flezha.Plugin.Provider.HttpPush do
       end
     )
   end
-
-  defp key(opts), do: {opts[:source_namespace], opts[:source_plugin_id]}
 end

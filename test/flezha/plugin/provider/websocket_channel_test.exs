@@ -194,7 +194,7 @@ defmodule FlezhaTest.Plugin.Provider.WebsocketChannelTest do
     test "a map that was never normalised still answers a worker spec" do
       raw = %{uri: @uri, plugin_id: "ws_raw", channel: "prices"}
 
-      assert [{"ws_raw", worker_opts}] = Websocket.worker_specs(raw)
+      assert [{{nil, "ws_raw"}, worker_opts}] = Websocket.worker_specs(raw)
 
       # Nothing resolved the channel, so nothing names one: the metadata is the
       # bag as written, which here is the row default nobody filled in.

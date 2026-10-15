@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Fixed: one plugin name in two namespaces runs two workers
+
+A built-in provider's worker was registered under the plugin's id alone, so a plugin of one name
+enabled in two namespaces on one controller was handed the other namespace's worker (an
+`http_poll` polled only the first namespace's endpoint), and a disable in either namespace
+stopped it for both. Every built-in provider now keys its workers by the plugin's namespace and
+id.
+
 ### Security: mint 1.10.2 and decimal 3.1.2
 
 The controller now ships `mint` 1.10.2 and `decimal` 3.1.2, the patch releases that fix the

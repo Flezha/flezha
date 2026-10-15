@@ -233,14 +233,14 @@ defmodule FlezhaTest.Plugin.SharedTest do
     :ok = PluginManager.bind_plugin(@namespace, "trades", a)
     :ok = PluginManager.bind_plugin(@namespace, "trades", b)
     assert_receive {:ws_frame, ~s({"op":"sub","items":["a","b"],"id":1})}, 5_000
-    socket_process = WorkerSup.worker_pid(Websocket, "trades")
+    socket_process = WorkerSup.worker_pid(Websocket, {@namespace, "trades"})
 
     assert {:ok, %{applied: :live}} =
              PluginManager.update_plugin(@namespace, "trades", %{subscription_items: ["a", "c"]})
 
     assert_receive {:ws_frame, ~s({"op":"sub","items":["c"],"id":2})}, 5_000
     assert_receive {:ws_frame, ~s({"op":"unsub","items":["b"],"id":3})}, 5_000
-    assert WorkerSup.worker_pid(Websocket, "trades") == socket_process
+    assert WorkerSup.worker_pid(Websocket, {@namespace, "trades"}) == socket_process
 
     WebsocketServer.broadcast(server, "after-update")
     assert_receive {:ingested, ^a, "after-update"}, 5_000
@@ -325,7 +325,7 @@ defmodule FlezhaTest.Plugin.SharedTest do
     assert_receive {:ws_open, _}, 5_000
 
     assert {_status, %{inner_state: %{sink: %Websocket.Sink{}}}} =
-             :sys.get_state(WorkerSup.worker_pid(Websocket, "trades"))
+             :sys.get_state(WorkerSup.worker_pid(Websocket, {@namespace, "trades"}))
   end
 
   test "a single plugin started again after an update runs the updated options",
@@ -427,7 +427,7 @@ defmodule FlezhaTest.Plugin.SharedTest do
     [copy] = copies()
     {:ok, ow_a} = HubManager.get_pid(@namespace, a)
     # Its socket has read its relays from the copy, which it does on connect.
-    _ = :sys.get_state(WorkerSup.worker_pid(Websocket, "trades"))
+    _ = :sys.get_state(WorkerSup.worker_pid(Websocket, {@namespace, "trades"}))
 
     # The copy takes, in this order: its last relay leaving, its idle stop,
     # and a new relay's join.

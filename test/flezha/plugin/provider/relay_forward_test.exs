@@ -83,7 +83,7 @@ defmodule FlezhaTest.Plugin.Provider.RelayForwardTest do
 
   defp start_worker(target, plugin_id \\ @plugin_id) do
     opts = %{
-      name: WorkerSup.worker(RelayForward, {plugin_id, target}),
+      name: WorkerSup.worker(RelayForward, {{@ns, plugin_id}, target}),
       plugin_id: plugin_id,
       source_namespace: @ns,
       source_relay_id: "source",
@@ -101,7 +101,11 @@ defmodule FlezhaTest.Plugin.Provider.RelayForwardTest do
     ctx = %Ctx.IO{relay_id: "source", namespace: @ns, message: "tick", metadata: metadata}
 
     assert {:ok, ^ctx} =
-             RelayForward.on_output(ctx, %{plugin_id: plugin_id, routes: [%{id: inst}]})
+             RelayForward.on_output(ctx, %{
+               plugin_id: plugin_id,
+               worker_key: {@ns, plugin_id},
+               routes: [%{id: inst}]
+             })
   end
 
   defp stamps do

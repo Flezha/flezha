@@ -102,7 +102,7 @@ escalates.
 ## Lifecycle
 
 The output plugin worker is this provider's declared worker: the extension table starts it
-at activation, under the provider's own family, keyed by `plugin_id`, with
+at activation, under the provider's own family, keyed by namespace and `plugin_id`, with
 `restart: :permanent`. A `:prepared` plugin holds no connection and no process,
 so an output plugin on a relay whose SDK side never binds costs nothing.
 

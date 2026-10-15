@@ -303,7 +303,7 @@ defmodule Flezha.Plugin.Provider.File do
     defp write(%Ctx.IO{message: msg, metadata: md} = ctx, opts) do
       if ProviderBehaviour.in_channel?(md, opts[:filter_channel]) do
         Outbox.hold(md)
-        :ok = WriteWorker.enqueue(WorkerSup.worker(__MODULE__, opts.plugin_id), msg, md)
+        :ok = WriteWorker.enqueue(WorkerSup.worker(__MODULE__, opts.worker_key), msg, md)
       end
 
       {:ok, ctx}

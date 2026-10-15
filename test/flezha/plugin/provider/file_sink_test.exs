@@ -401,7 +401,7 @@ defmodule Flezha.Plugin.Provider.FileSinkTest do
         capture_log([level: :warning], fn ->
           send(sink, :roll)
           assert_receive {:DOWN, ^ref, :process, ^sink, {:progress_ahead, 7}}, 5_000
-          assert wait_until(fn -> WorkerSup.worker_pid(Sink, opts.plugin_id) == nil end, 2_000)
+          assert wait_until(fn -> WorkerSup.worker_pid(Sink, opts.worker_key) == nil end, 2_000)
         end)
 
       assert log =~ "progress names part 7"
@@ -553,7 +553,7 @@ defmodule Flezha.Plugin.Provider.FileSinkTest do
 
       assert wait_until(
                fn ->
-                 WorkerSup.worker_pid(Sink, opts.plugin_id) == nil and
+                 WorkerSup.worker_pid(Sink, opts.worker_key) == nil and
                    not Enum.any?(
                      DynamicSupervisor.which_children(supervisor),
                      &match?({_, ^sink, _, _}, &1)

@@ -58,7 +58,7 @@ defmodule FlezhaTest.Plugin.Provider.PostgresSinkTest do
   defp start_provider(extra \\ %{}) do
     opts = base_opts(extra)
     {:ok, opts, pid} = ProviderPrepare.prepare_and_activate(Postgres, opts)
-    on_exit(fn -> WorkerSup.stop_worker(WorkerSup.family(Postgres), opts.plugin_id) end)
+    on_exit(fn -> WorkerSup.stop_worker(WorkerSup.family(Postgres), opts.worker_key) end)
     {opts, pid}
   end
 

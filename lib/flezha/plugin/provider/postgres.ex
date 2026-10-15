@@ -73,7 +73,7 @@ defmodule Flezha.Plugin.Provider.Postgres do
   @impl true
   def worker_specs(opts) do
     [
-      {key(opts),
+      {WorkerSup.key(opts),
        %{
          plugin_id: opts.plugin_id,
          conn_opts: Connection.conn_opts(opts, pool_size: opts.pool_size),
@@ -139,9 +139,5 @@ defmodule Flezha.Plugin.Provider.Postgres do
   defp stalled?(%{last_commit_age_ms: nil}, _threshold), do: true
   defp stalled?(%{last_commit_age_ms: age}, threshold), do: age > threshold
 
-  # The key this provider's one worker is registered under, named once and read
-  # by both the declaration and the dispatch path.
-  defp key(opts), do: Map.fetch!(opts, :plugin_id)
-
-  defp worker(opts), do: WorkerSup.worker(__MODULE__, key(opts))
+  defp worker(opts), do: WorkerSup.worker(__MODULE__, opts.worker_key)
 end

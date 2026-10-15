@@ -52,7 +52,7 @@ defmodule FlezhaTest.Plugin.Provider.MonitoredIOForwardTest do
     assert %{module: MonitoredIOForward, restart: :temporary} =
              MonitoredIOForward.__provider__().worker
 
-    assert [{"mio-test", _worker_opts}] = MonitoredIOForward.worker_specs(prepared)
+    assert [{{nil, "mio-test"}, _worker_opts}] = MonitoredIOForward.worker_specs(prepared)
   end
 
   test "each member of a partition group holds a heartbeat of its own" do
@@ -66,7 +66,7 @@ defmodule FlezhaTest.Plugin.Provider.MonitoredIOForwardTest do
         key
       end
 
-    assert keys == ["mio-test#p0", "mio-test#p1"]
+    assert keys == [{{nil, "mio-test"}, 0}, {{nil, "mio-test"}, 1}]
   end
 
   describe "tally mode" do
@@ -115,7 +115,7 @@ defmodule FlezhaTest.Plugin.Provider.MonitoredIOForwardTest do
     test "a tally's worker is keyed by its epoch, and goes with the Overwatch counting" do
       overwatch = spawn(fn -> Process.sleep(:infinity) end)
       prepared = tally(overwatcher_pid: overwatch)
-      assert [{{"mio-test", epoch}, _opts}] = MonitoredIOForward.worker_specs(prepared)
+      assert [{{{nil, "mio-test"}, epoch}, _opts}] = MonitoredIOForward.worker_specs(prepared)
       assert epoch == prepared.tally.epoch
 
       worker = start_worker(prepared)

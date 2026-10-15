@@ -7,7 +7,7 @@ defmodule Flezha.Plugin.Provider.WorkerSup do
   A family is named after the provider module (`family/1`), so each provider's
   workers get their own Registry and DynamicSupervisor and a crash-looping
   worker exhausts only its own family's restart budget. What a provider supplies
-  is its keys and the opts each worker takes — `worker_specs/1` — and the
+  is its keys (`key/1`) and the opts each worker takes — `worker_specs/1` — and the
   restart value its declaration names; `Flezha.Plugin.Extension.Table` does the
   starting and the stopping, so no provider wraps this with a supervisor of its
   own.
@@ -65,6 +65,26 @@ defmodule Flezha.Plugin.Provider.WorkerSup do
   @doc "The registered name a worker of `family` takes under `key`."
   @spec via(module(), term()) :: {:via, module(), {atom(), term()}}
   def via(family, key), do: {:via, Registry, {registry_name(family), key}}
+
+  @doc """
+  The key a plugin's worker is registered under: the plugin's namespace with its
+  `:plugin_id`, or the name it was enabled under when it settled none, so one
+  name enabled in two namespaces is two workers. A provider that runs one worker
+  per member keys each `{key, member}`.
+  """
+  @spec key(map()) :: {term(), term()}
+  def key(opts),
+    do:
+      {Map.get(opts, :source_namespace),
+       Map.get(opts, :plugin_id) || Map.get(opts, :source_plugin_id)}
+
+  @doc """
+  `opts` holding its `key/1` as `:worker_key`, which the table stores once a
+  plugin is prepared, so a dispatch path reads the key rather than building it
+  per message.
+  """
+  @spec keyed(map()) :: map()
+  def keyed(opts), do: Map.put(opts, :worker_key, key(opts))
 
   @doc """
   The worker `provider` registered under `key`, addressed by name.

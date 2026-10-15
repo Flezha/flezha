@@ -234,7 +234,8 @@ defmodule FlezhaTest.Plugin.SharedInjectionTest do
     other = other_relay(plugin, %{}, :ok)
 
     # The socket has taken both retargets, while it could not connect.
-    {:disconnected, _data} = :sys.get_state(WorkerSup.worker_pid(Websocket, "late_feed"))
+    {:disconnected, _data} =
+      :sys.get_state(WorkerSup.worker_pid(Websocket, {@namespace, "late_feed"}))
 
     server = WebsocketServer.start(port)
     assert_receive {:ws_open, _}, 10_000

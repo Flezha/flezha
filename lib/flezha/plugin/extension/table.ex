@@ -36,6 +36,7 @@ defmodule Flezha.Plugin.Extension.Table do
   alias Flezha.Plugin.Installer
   alias Flezha.Plugin.Installer.Loader
   alias Flezha.Plugin.Provider.NotStarted
+  alias Flezha.Plugin.Provider.WorkerSup
   alias Flezha.Plugin.ProviderBehaviour
   alias Flezha.Plugin.ProviderBehaviour.Options, as: ProviderOptions
 
@@ -230,9 +231,9 @@ defmodule Flezha.Plugin.Extension.Table do
 
       # Under a worker key of its own, beside the shared copy's.
       Workers.own_source?(table, provider) ->
-        key = "#{plugin_id}@#{plugin.relay_id}"
-        table = put_plugin_opt(table, plugin_id, :plugin_id, key)
-        start_and_activate(table, plugin_id, provider, Map.put(opts, :plugin_id, key))
+        own = WorkerSup.keyed(Map.put(opts, :plugin_id, "#{plugin_id}@#{plugin.relay_id}"))
+        table = put_plugin_opts(table, plugin_id, Map.take(own, [:plugin_id, :worker_key]))
+        start_and_activate(table, plugin_id, provider, own)
 
       true ->
         start_and_activate(table, plugin_id, provider, opts)
@@ -502,11 +503,7 @@ defmodule Flezha.Plugin.Extension.Table do
          {:ok, new} <- ProviderOptions.normalise_opts(provider, plugin.opts),
          :ok <- reconfigure_owned(table, plugin_id, provider, old, new) do
       live = Map.take(new, ProviderBehaviour.Decl.live_options(decl(provider)))
-
-      {:ok,
-       Enum.reduce(live, table, fn {key, value}, acc ->
-         put_plugin_opt(acc, plugin_id, key, value)
-       end)}
+      {:ok, put_plugin_opts(table, plugin_id, live)}
     end
   end
 
@@ -646,13 +643,16 @@ defmodule Flezha.Plugin.Extension.Table do
   disabled mid-flight has nothing to write to.
   """
   @spec put_plugin_opt(t(), binary(), atom(), term()) :: t()
-  def put_plugin_opt(%__MODULE__{} = table, plugin_id, key, value) do
+  def put_plugin_opt(table, plugin_id, key, value),
+    do: put_plugin_opts(table, plugin_id, %{key => value})
+
+  defp put_plugin_opts(%__MODULE__{} = table, plugin_id, new) do
     case Map.get(table.plugins, plugin_id) do
       nil ->
         table
 
       %Plugin{} = plugin ->
-        opts = Map.put(plugin.opts || %{}, key, value)
+        opts = Map.merge(plugin.opts || %{}, new)
 
         %{
           Subscription.put_provider_opts(table, plugin_id, opts)
@@ -702,7 +702,7 @@ defmodule Flezha.Plugin.Extension.Table do
   end
 
   defp settle_init(%Plugin{} = plugin, {:ok, new_opts}) when is_map(new_opts),
-    do: {:ok, %Plugin{plugin | opts: new_opts}}
+    do: {:ok, %Plugin{plugin | opts: WorkerSup.keyed(new_opts)}}
 
   defp settle_init(%Plugin{provider: provider}, {:error, reason}),
     do: {:error, Loader.refusal(:provider_refused, provider, reason)}
@@ -712,15 +712,11 @@ defmodule Flezha.Plugin.Extension.Table do
 
   defp settle_init(_plugin, other), do: {:error, {:invalid_init_provider_return, other}}
 
-  # The host relay's own identity, merged last so stored opts cannot spoof
-  # it, the same rule `bulk_activate/2` applies to `activation_env`. A provider
-  # whose destination is another relay needs it to refuse a self-target or a
-  # cross-namespace target at enable time; a provider that persists its own
-  # committed state needs `:source_plugin_id` to name the cspec row to write.
-  #
-  # `:subscribed_extensions` is the canonicalised list of callbacks this plugin
-  # was enabled for. A provider that allocates only for the directions it is
-  # bound in reads it here rather than inferring one from a configured option.
+  # The host relay's own identity, merged last so stored opts cannot spoof it, as
+  # `bulk_activate/2` merges `activation_env`. A provider reads it to refuse a
+  # self- or cross-namespace target, to name its cspec row (`:source_plugin_id`)
+  # and to allocate only for the callbacks it was enabled for; a worker key is
+  # named from it, a teardown's raw manifest options included.
   defp with_host_identity(table, opts, %Plugin{} = plugin) do
     Map.merge(opts, %{
       source_namespace: plugin.namespace,
@@ -753,7 +749,8 @@ defmodule Flezha.Plugin.Extension.Table do
 
       true ->
         terminate_provider(table, plugin_id, plugin)
-        Workers.stop_all(table, plugin_id, provider, plugin.opts, invoker(plugin_id, provider))
+        opts = with_host_identity(table, plugin.opts || %{}, plugin)
+        Workers.stop_all(table, plugin_id, provider, opts, invoker(plugin_id, provider))
     end
   end
 

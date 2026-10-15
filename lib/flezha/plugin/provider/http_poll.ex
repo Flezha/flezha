@@ -104,12 +104,6 @@ defmodule Flezha.Plugin.Provider.HttpPoll do
     end
   end
 
-  # One worker, keyed by the plugin id `init_provider/1` settled. What it reads
-  # is narrowed where its state is built (`PollWorker.init/1`), so the list of
-  # fields it takes lives there and not in a second copy here.
-  @impl true
-  def worker_specs(opts), do: [{Map.fetch!(opts, :plugin_id), opts}]
-
   @doc """
   Teardown is the host's: it kills the pid `activate/1` returned, on both
   unsubscribe and full teardown. This callback exists so the provider can be

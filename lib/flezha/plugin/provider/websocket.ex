@@ -268,7 +268,7 @@ defmodule Flezha.Plugin.Provider.Websocket do
 
   defp ship(%Ctx.IO{message: msg, metadata: md} = ctx, opts) do
     with true <- ProviderBehaviour.in_channel?(md, opts.filter_channel),
-         pid when is_pid(pid) <- WorkerSup.worker_pid(__MODULE__, opts.plugin_id) do
+         pid when is_pid(pid) <- WorkerSup.worker_pid(__MODULE__, opts.worker_key) do
       # Take ownership of a delivery-guaranteed output before handing it over:
       # the socket answers the hold at handoff or on the upstream's ack, by
       # `sink_ack_mode`. A plain output holds nothing and this is a no-op.
@@ -306,7 +306,7 @@ defmodule Flezha.Plugin.Provider.Websocket do
   @impl true
   def reconfigure(old, new) do
     with {:ok, %Subscription{items: items}} <- Subscription.from_opts(Map.merge(old, new)),
-         pid when is_pid(pid) <- WorkerSup.worker_pid(__MODULE__, old.plugin_id) do
+         pid when is_pid(pid) <- WorkerSup.worker_pid(__MODULE__, old.worker_key) do
       send(pid, {:subscription_items, items})
       :ok
     else
@@ -319,7 +319,7 @@ defmodule Flezha.Plugin.Provider.Websocket do
   @impl true
   def worker_specs(opts) do
     [
-      {Map.fetch!(opts, :plugin_id),
+      {WorkerSup.key(opts),
        opts
        |> Map.take([
          :uri,

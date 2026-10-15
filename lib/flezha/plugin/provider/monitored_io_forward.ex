@@ -15,8 +15,8 @@ defmodule Flezha.Plugin.Provider.MonitoredIOForward do
   `:tally_ms`.
   """
 
-  alias Flezha.Partition
   alias Flezha.Plugin.Extension.Ctx
+  alias Flezha.Plugin.Provider.WorkerSup
   alias Flezha.Plugin.ProviderBehaviour
   alias Flezha.Process.Watch
   alias Flezha.Service.PluginManager
@@ -118,10 +118,8 @@ defmodule Flezha.Plugin.Provider.MonitoredIOForward do
   def worker_specs(%{tally: %{epoch: epoch}} = opts), do: [{{member_key(opts), epoch}, opts}]
   def worker_specs(opts), do: [{member_key(opts), opts}]
 
-  defp member_key(%{plugin_id: plugin_id, partition_index: index}),
-    do: Partition.member_id(plugin_id, index)
-
-  defp member_key(%{plugin_id: plugin_id}), do: plugin_id
+  defp member_key(%{partition_index: index} = opts), do: {WorkerSup.key(opts), index}
+  defp member_key(opts), do: WorkerSup.key(opts)
 
   defp forward(%Ctx.IO{message: msg, metadata: md} = ctx, %{recv_pid: recv_pid}) do
     case Process.send(recv_pid, {:message_forward, {msg, md}}, []) do

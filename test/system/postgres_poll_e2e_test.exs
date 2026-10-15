@@ -109,13 +109,13 @@ defmodule FlezhaTest.System.PostgresPollE2ETest do
 
     # --- the runner stalled, the cursor moved back, the reader brought up again --
     _ = drain_outputs([])
-    _ = await_reader(source.id, ["#{@rows}"])
+    _ = await_reader({namespace, source.id}, ["#{@rows}"])
     os_pid = os_pid(port)
     {_, 0} = System.cmd("kill", ["-STOP", "#{os_pid}"])
     on_exit(fn -> System.cmd("kill", ["-CONT", "#{os_pid}"]) end)
 
     insert(db, table, @rows + 1, @rows + @again)
-    reader = await_reader(source.id, ["#{@rows + @again}"])
+    reader = await_reader({namespace, source.id}, ["#{@rows + @again}"])
 
     Telemetry.capture(
       [
@@ -162,10 +162,10 @@ defmodule FlezhaTest.System.PostgresPollE2ETest do
   end
 
   # The live reader, once it has committed `at`.
-  defp await_reader(plugin_id, at) do
+  defp await_reader(key, at) do
     assert wait_until(
              fn ->
-               case WorkerSup.worker_pid(PostgresPoll, plugin_id) do
+               case WorkerSup.worker_pid(PostgresPoll, key) do
                  pid when is_pid(pid) -> :sys.get_state(pid).committed.at == at
                  nil -> false
                end
@@ -174,7 +174,7 @@ defmodule FlezhaTest.System.PostgresPollE2ETest do
            ),
            "the reader never committed #{inspect(at)}"
 
-    WorkerSup.worker_pid(PostgresPoll, plugin_id)
+    WorkerSup.worker_pid(PostgresPoll, key)
   end
 
   # Every row the brought-up reader handed over until it caught up.

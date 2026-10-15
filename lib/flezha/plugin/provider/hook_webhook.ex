@@ -52,7 +52,7 @@ defmodule Flezha.Plugin.Provider.HookWebhook do
   @impl true
   def worker_specs(opts) do
     [
-      {key(opts),
+      {WorkerSup.key(opts),
        Map.merge(opts, %{
          provider: :hook_webhook,
          content_type: "application/json",
@@ -65,8 +65,6 @@ defmodule Flezha.Plugin.Provider.HookWebhook do
   for hook <- ProviderBehaviour.controller_callbacks() do
     @impl true
     def unquote(hook)(event, opts),
-      do: HttpSend.call(WorkerSup.worker(__MODULE__, key(opts)), Jason.encode!(event))
+      do: HttpSend.call(WorkerSup.worker(__MODULE__, opts.worker_key), Jason.encode!(event))
   end
-
-  defp key(opts), do: {opts[:source_namespace], opts[:source_plugin_id]}
 end

@@ -137,7 +137,7 @@ defmodule Flezha.Plugin.ProviderBehaviour.Declaration do
       def activate(_opts), do: :ok
 
       @impl unquote(contract)
-      def worker_specs(opts), do: [{Map.get(opts, :plugin_id), opts}]
+      def worker_specs(opts), do: [{Flezha.Plugin.Provider.WorkerSup.key(opts), opts}]
 
       @impl unquote(contract)
       def health(opts), do: unquote(contract).default_health(opts)
