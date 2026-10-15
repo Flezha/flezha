@@ -80,11 +80,11 @@ pub fn extract_payload_bytes<T: std::any::Any>(input: &T) -> Option<Vec<u8>> {
 }
 
 /// Ship a park and block until it is acked durable, re-sending until then; a
-/// transport-less run logs and drops. The controller acks a park only from the
-/// runner its relay is bound to, so the wait ends unacked once `relay` has
-/// left this one: the input is its new owner's.
+/// run with no controller, local mode included, logs and drops. The controller
+/// acks a park only from the runner its relay is bound to, so the wait ends
+/// unacked once `relay` has left this one: the input is its new owner's.
 fn park_blocking(cell_identity: &[u8], body: &ParkBody, relay: &dyn EntryView) {
-    if !state_sink::sink_installed() {
+    if !state_sink::controller_attached() {
         eprintln!(
             "[flezha] DLQ park impossible without a controller transport; dropping poison \
              payload on channel `{}` after {} attempts: {}",

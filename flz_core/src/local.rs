@@ -139,10 +139,7 @@ impl LocalRun {
         let stream = Arc::new(FlezhaStream::Local(Arc::new(move |frame: &[u8]| {
             frames.deliver(frame)
         })));
-        // Durability is removed by supplying a different sink, never by
-        // branching: the change log, the fold and the effect path all still
-        // run, and their frames are discarded at the outbound edge.
-        crate::state_sink::install_global_sink(Arc::new(|_payload_id: &str, _frame: &[u8]| Ok(())));
+        crate::state_sink::install_discarding_sink();
         let registry = Arc::new(RelayRegistry::new());
         registry.register(Arc::clone(&instance));
         NOTICES_EMITTED.fetch_add(1, Ordering::Relaxed);

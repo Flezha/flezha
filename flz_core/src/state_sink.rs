@@ -76,6 +76,8 @@ impl Pending {
 
 struct SinkState {
     sink: Option<SendFrameFn>,
+    /// The sink discards every frame, so nothing behind it answers one.
+    discards: bool,
     /// Frames held while no sink was installed or a write failed; drop-oldest.
     ring: VecDeque<Pending>,
     /// Frames the ring dropped since the last install — a real loss, reported
@@ -92,6 +94,7 @@ impl SinkState {
     const fn new() -> Self {
         SinkState {
             sink: None,
+            discards: false,
             ring: VecDeque::new(),
             evicted_since_install: 0,
             broken_pipe_at: VecDeque::new(),
@@ -215,13 +218,11 @@ fn reconnect_retry_ms() -> u64 {
     crate::util::env_parse(ENV_RECONNECT_RETRY_MS, DEFAULT_RECONNECT_RETRY_MS)
 }
 
-/// Whether a sink was ever installed — `false` only in transport-less runs.
-pub fn sink_installed() -> bool {
-    STATE
-        .lock()
-        .expect("state_sink lock poisoned")
-        .sink
-        .is_some()
+/// Whether a controller is behind the sink to answer a park or a correction:
+/// `false` in a transport-less run and behind [`install_discarding_sink`].
+pub fn controller_attached() -> bool {
+    let st = STATE.lock().expect("state_sink lock poisoned");
+    st.sink.is_some() && !st.discards
 }
 
 /// [`Class::Durable`] for a writer with no stream in hand: ship one frame
@@ -380,8 +381,20 @@ fn drive_reconnect_if(should_reconnect: bool) {
 
 /// Install or replace the sink, then replay the ring through it.
 pub fn install_global_sink(send_fn: SendFrameFn) {
+    install(send_fn, false);
+}
+
+/// Install a sink that discards every frame, for a run with no controller:
+/// durability is removed by the sink, never by branching, so the change log,
+/// the fold and the effect path all still run and cost what they cost.
+pub fn install_discarding_sink() {
+    install(Arc::new(|_payload_id: &str, _frame: &[u8]| Ok(())), true);
+}
+
+fn install(send_fn: SendFrameFn, discards: bool) {
     let mut st = STATE.lock().expect("state_sink lock poisoned");
     st.sink = Some(send_fn.clone());
+    st.discards = discards;
     st.broken_pipe_at.clear();
     st.reconnect_requested_at = None;
     if st.evicted_since_install > 0 {
@@ -449,6 +462,7 @@ pub fn test_guard() -> std::sync::MutexGuard<'static, ()> {
 pub(crate) fn reset_for_test() {
     let mut st = STATE.lock().unwrap_or_else(|p| p.into_inner());
     st.sink = None;
+    st.discards = false;
     st.ring.clear();
     st.evicted_since_install = 0;
     st.broken_pipe_at.clear();

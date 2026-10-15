@@ -44,10 +44,10 @@ pub fn classify(event_time: u64, high_water: i64, window_ms: u64) -> Lateness {
 }
 
 /// Ship a correction request, fire-and-forget: the controller coalesces
-/// duplicates and a lost one is re-raised on re-delivery. `false` in a
-/// transport-less run, where the caller dispatches the input as an arrival.
+/// duplicates and a lost one is re-raised on re-delivery. `false` with no
+/// controller to ask, where the caller dispatches the input as an arrival.
 pub fn request(cell_identity: &[u8], target_event_time: u64) -> bool {
-    if !state_sink::sink_installed() {
+    if !state_sink::controller_attached() {
         return false;
     }
     let body = CorrectionRequestBody { target_event_time };
