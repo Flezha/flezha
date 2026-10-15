@@ -202,6 +202,24 @@ defmodule Flezha.State.WalWriterOutboxDeliveryTest do
     assert %{outbox_flushed_seq: 0} = WalWriter.outbox_status(pid)
   end
 
+  test "a resettle tick with no Overwatch for the class keeps the entry owed", %{
+    rc: rc,
+    cell_id: cell_id
+  } do
+    on_exit(TestHelpers.override_env(:outbox_resettle_ms, 0))
+
+    pid = armed_writer(rc, cell_id)
+    append_effect(pid, 0, [output("k", "owed")], 1)
+    assert {"owed", _md, _} = next_output()
+
+    ClassRegistry.delete(rc)
+    assert {:error, _} = Flezha.Relay.Lookup.overwatch(rc)
+
+    # The status call queues behind the tick, so it answers only once the tick ran.
+    send(pid, :outbox_retry)
+    assert %{awaiting: 1} = WalWriter.outbox_status(pid)
+  end
+
   test "a held call is re-dispatched until its caller answers it; any other hold waits", %{
     rc: rc,
     cell_id: cell_id

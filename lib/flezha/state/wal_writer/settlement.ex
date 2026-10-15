@@ -513,7 +513,7 @@ defmodule Flezha.State.WalWriter.Settlement do
   # Nothing to re-dispatch to: the entry stays owed with its tally untouched, so
   # the next tick tries again instead of restarting the clock against a chain
   # that cannot run.
-  defp resettle_entry(:error, state, chunks, _key, _tally), do: {state, chunks}
+  defp resettle_entry({:error, _reason}, state, chunks, _key, _tally), do: {state, chunks}
 
   defp complete_entry(state, key) do
     %{state | outbox_awaiting: Map.delete(state.outbox_awaiting, key)}
