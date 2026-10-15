@@ -35,6 +35,7 @@ defmodule Flezha.Service.PluginManager do
   alias Flezha.Process.Cspec
   alias Flezha.Service.CallerContext
   alias Flezha.Service.HubManager
+  alias Flezha.Service.RelayApi
   alias Flezha.Service.RelayManager
   alias Flezha.Service.RelayManager.Init
   alias Flezha.Service.RelayManager.Teardown
@@ -239,12 +240,14 @@ defmodule Flezha.Service.PluginManager do
     do: Code.ensure_loaded?(provider) and provider.__provider__().shareable
 
   # The binding with its hooks canonical and its plugin's provider, or the
-  # refusal its plugin's entry gives it.
+  # refusal its plugin's entry or its relay's announced channels give it.
   defp checked_binding(%Plugin{id: name, namespace: namespace} = binding, targets) do
     with {:ok, entry} <- fetch_entry(namespace, name),
          binding = %Plugin{binding | provider: entry.provider},
          {:ok, binding} <- Table.canonicalise(Overwatch.__extensions_catalog__(), binding),
          :ok <- refuse_binding(entry, binding, targets),
+         channel = Plugin.entry_channel(binding, entry),
+         :ok <- RelayApi.refuse_unknown_entry(namespace, binding.relay_id, channel),
          do: {:ok, binding}
   end
 
@@ -269,12 +272,7 @@ defmodule Flezha.Service.PluginManager do
       [] ->
         binding = %Plugin{plugin | namespace: namespace}
 
-        on_hub_node(
-          namespace,
-          :checked_start_binding,
-          [binding],
-          {:plugin_not_found, plugin.id}
-        )
+        on_hub_node(namespace, :checked_start_binding, [binding], {:plugin_not_found, plugin.id})
 
       unread ->
         {:error, {:unread_plugin_options, Enum.map(unread, &"opts.#{&1}")}}

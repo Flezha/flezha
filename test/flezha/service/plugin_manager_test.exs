@@ -21,6 +21,7 @@ defmodule Flezha.Service.PluginManagerTest do
   alias Flezha.Relay.PartitionGroup
   alias Flezha.Plugin
   alias Flezha.Plugin.Extension.Table
+  alias Flezha.Plugin.Provider.File.Source
   alias Flezha.Service.HubManager
   alias Flezha.Service.Listener
   alias Flezha.Service.RelayManager
@@ -371,6 +372,72 @@ defmodule Flezha.Service.PluginManagerTest do
 
       assert [] = read_bindings(store)
     end
+  end
+
+  describe "a feeding plugin's channel is one its relay announces" do
+    setup do
+      Mimic.stub(HubManager, :plugin_entry, fn @namespace, name ->
+        {:ok,
+         %Plugin{
+           id: name,
+           provider: Source,
+           namespace: @namespace,
+           opts: %{path: "in.log", channel: "orders"}
+         }}
+      end)
+
+      announce(["orders"])
+    end
+
+    # Fails when: a channel the relay does not declare binds, and the mistake
+    # shows only once its frames park in the dead-letter store.
+    test "a binding's channel the factory does not announce is refused", %{store: store} do
+      assert {:error, %Flezha.Error{code: "api.channel_unknown"} = error} =
+               PluginManager.bind_plugin(@namespace, "tail", @relay_id, channel: "nope")
+
+      assert error.details["channels"] == "orders"
+      assert error.message =~ "nope"
+      assert [] = read_bindings(store)
+    end
+
+    test "the plugin's own channel is checked when the binding names none" do
+      Mimic.stub(HubManager, :plugin_entry, fn @namespace, name ->
+        {:ok,
+         %Plugin{
+           id: name,
+           provider: Source,
+           namespace: @namespace,
+           opts: %{path: "in.log", channel_in: "nope"}
+         }}
+      end)
+
+      assert {:error, %Flezha.Error{code: "api.channel_unknown"}} =
+               PluginManager.bind_plugin(@namespace, "tail", @relay_id)
+    end
+
+    test "an announced channel binds", %{store: store} do
+      assert :ok = PluginManager.bind_plugin(@namespace, "tail", @relay_id, channel: "orders")
+      assert [{"tail", _binding}] = read_bindings(store)
+    end
+
+    test "a relay whose runners announced no channels binds any name" do
+      announce([])
+      assert :ok = PluginManager.bind_plugin(@namespace, "tail", @relay_id, channel: "nope")
+    end
+  end
+
+  # The relay's factory row as its runners announce it.
+  defp announce(channels) do
+    Mimic.stub(HubManager, :relay_spec, fn @namespace, @relay_id ->
+      {:ok, %{id: @relay_id, factory_id: "do_nothing"}}
+    end)
+
+    Mimic.stub(RelayManager, :factory_row, fn @namespace, "do_nothing" ->
+      api = for c <- channels, do: %{channel: c, codec: "json", answer_codec: nil}
+      %{id: "do_nothing", description: nil, api: api, api_at: 1, api_disagree: false}
+    end)
+
+    :ok
   end
 
   describe "a partition group binds every member" do

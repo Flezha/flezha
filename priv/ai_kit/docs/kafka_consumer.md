@@ -214,8 +214,9 @@ producer's worker can answer a stats call up to 5 s late, and loses nothing.
 - **A broker that holds a connection open without answering** while a group starts keeps the
   member from answering its probe until the request's 5 s run out; the probe then reads as
   uncertain, which counts as healthy.
-- **`channel` is not validated at attach.** As for every source, channel names are an SDK-side
-  fact the controller never sees.
+- **`channel` is checked at bind.** As for every source, a name the relay's runners did not
+  announce as an entry channel is refused with `api.channel_unknown`; a relay started with
+  `--plugins`, or whose runners announced no channels, is not checked.
 
 ## See also
 

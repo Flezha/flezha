@@ -5,8 +5,8 @@ defmodule Flezha.Service.RelayApi do
   `Flezha.Service.Relay.api/3` and `Flezha.Service.Relay.call_channel/6` publish
   it, so the CLI, HTTP and MCP serve it with no code of their own.
 
-  The API describes and never gates: it is read at the call boundary and
-  nothing on the delivery path consults it.
+  The API is read at the call and bind boundaries, where a channel it does
+  not name is refused; nothing on the delivery path consults it.
   """
 
   alias Flezha.Relay.PartitionGroup
@@ -121,6 +121,23 @@ defmodule Flezha.Service.RelayApi do
       entry ->
         {:ok, entry}
     end
+  end
+
+  @doc """
+  Refuse `channel` as an entry channel of the relay `relay_id` the way
+  `entry/4` does, when the relay's runners announced channels and it is none
+  of them. A `nil` channel, a relay not declared yet and one whose runners
+  announced no API are not checked.
+  """
+  @spec refuse_unknown_entry(String.t(), String.t(), String.t() | nil) ::
+          :ok | {:error, Flezha.Error.t()}
+  def refuse_unknown_entry(_namespace, _relay_id, nil), do: :ok
+
+  def refuse_unknown_entry(namespace, relay_id, channel) do
+    with {:ok, %{channels: [_ | _]} = factory} <- factory_of(namespace, relay_id),
+         {:error, _} = unknown <- entry(factory, namespace, relay_id, channel),
+         do: unknown,
+         else: (_announced_or_unchecked -> :ok)
   end
 
   @doc """

@@ -81,7 +81,9 @@ type, whether it is required, its default, its bounds and its allowed values.
   is refused with `plugin.not_bindable`.
 - `--channel` on a bind names the entry channel that relay's records arrive on, when it
   is not the one the plugin was enabled with: one plugin can feed `trades` on one relay
-  and `ticks` on another.
+  and `ticks` on another. A source's entry channel, the bind's or the plugin's own, that
+  the relay's runners did not announce is refused with `api.channel_unknown`; a relay
+  whose runners announced no channels is not checked.
 - Options belong to the enable and the update; a bind that carries `--X` settings is
   refused.
 

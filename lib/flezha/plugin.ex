@@ -297,6 +297,19 @@ defmodule Flezha.Plugin do
   end
 
   @doc """
+  The entry channel `binding` laid over its plugin `entry` injects on, or
+  `nil` for a plugin that feeds nothing, names no channel, or whose provider
+  this node did not load.
+  """
+  @spec entry_channel(t(), t()) :: String.t() | nil
+  def entry_channel(%__MODULE__{} = binding, %__MODULE__{provider: provider} = entry) do
+    with true <- Code.ensure_loaded?(provider),
+         {:ok, opts} <- Options.normalise_opts(provider, resolve(binding, entry).opts),
+         do: opts[:entry_channel],
+         else: (_none -> nil)
+  end
+
+  @doc """
   `opts` (a plugin's options, or a worker state holding them) without its
   request headers and with its URL cut to the scheme, host and port, for a log
   or a crash report: the headers, path and query are where a token goes.

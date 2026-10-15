@@ -232,8 +232,9 @@ would cost more than the read.
 - **Polling.** A new row is seen within one `interval_ms` once the reader has caught up.
 - **A partitioned relay is refused.** Bind the source to a relay that is not
   partitioned and route from there.
-- **`channel` is not validated at attach.** As for every source, channel names are an SDK-side
-  fact the controller never sees.
+- **`channel` is checked at bind.** As for every source, a name the relay's runners did not
+  announce as an entry channel is refused with `api.channel_unknown`; a relay started with
+  `--plugins`, or whose runners announced no channels, is not checked.
 
 ## See also
 

@@ -217,11 +217,11 @@ plugin's health verdict, not on a failure-rate metric.
 
 - **`GET` only.** No POST, streaming, webhooks, or auth beyond static headers.
 - **No per-item diffing.** A changed byte anywhere re-injects the whole body.
-- **`channel` is not validated at attach.** Channel names are an SDK-side topology fact
-  that never reaches the controller (`AddRelayResponse.metadata` carries capability
-  facts only), and attach happens before the relay binds. An undeclared name surfaces
-  on the runner as a dead-letter park under that name, exactly as a mistyped
-  `flz relay send --channel` does: `flz dlq list` shows the frames and
+- **`channel` is checked at bind.** Binding it to a relay whose runners announced their
+  entry channels refuses a name that is none of them, with `api.channel_unknown`. A relay
+  started with `--plugins`, or whose runners announced no channels, is not checked: an
+  undeclared name surfaces on the runner as a dead-letter park under that name, exactly
+  as a mistyped `flz relay send --channel` does: `flz dlq list` shows the frames and
   `flz dlq replay` re-injects them once a channel of that name exists.
 - **HTTPS is verified** against the system CA store; a host with no usable store fails the
   poll rather than dropping to an unverified connection.
