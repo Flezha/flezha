@@ -135,15 +135,20 @@ defmodule Flezha.Config.Backoff do
   def new(ladder) when is_map_key(@ladders, ladder), do: %__MODULE__{ladder: ladder}
 
   @doc """
-  The wait before `attempt` (1-based) of `ladder`.
+  The wait before `attempt` (1-based) of `ladder`: a row this table declares,
+  by its key, or a row of the same shape that a plugin package keeps beside its
+  own options and names with `:name`, so it waits and announces as the table's
+  rows do without being one of them.
 
   `opts` may carry `:base` and `:cap` — the caller's own knob for a row whose
   bound is a per-plugin setting — and `:rand`, the one determinism seam a test
   injects in place of `:rand.uniform/1`.
   """
-  @spec delay(ladder(), pos_integer(), keyword()) :: non_neg_integer()
-  def delay(ladder, attempt \\ 1, opts \\ []) do
-    row = ladder(ladder)
+  @spec delay(ladder() | map(), pos_integer(), keyword()) :: non_neg_integer()
+  def delay(ladder, attempt \\ 1, opts \\ [])
+  def delay(ladder, attempt, opts) when is_atom(ladder), do: delay(ladder(ladder), attempt, opts)
+
+  def delay(%{} = row, attempt, opts) do
     resolved = %{row | base: bound(opts[:base] || row.base), cap: bound(opts[:cap] || row.cap)}
 
     plain = rung(resolved, attempt)
@@ -175,24 +180,27 @@ defmodule Flezha.Config.Backoff do
   The wait before `attempt` against `target`, announced — for a site that arms
   a timer rather than sleeping. Answers the delay so it reads as one call.
   """
-  @spec arm(ladder(), pos_integer(), term(), keyword()) :: non_neg_integer()
+  @spec arm(ladder() | map(), pos_integer(), term(), keyword()) :: non_neg_integer()
   def arm(ladder, attempt, target, opts \\ []) do
     delay = delay(ladder, attempt, opts)
 
     :telemetry.execute(@wait_event, %{delay_ms: delay, attempt: attempt}, %{
-      ladder: ladder,
+      ladder: name(ladder),
       target: target
     })
 
     delay
   end
 
+  defp name(%{name: name}), do: name
+  defp name(ladder) when is_atom(ladder), do: ladder
+
   @doc """
   `arm/4` and the sleep — the one spelling of "wait before trying again" for a
   site that retries in place. The site holds no timer, no arithmetic and no
   literal either way.
   """
-  @spec wait(ladder(), pos_integer(), term(), keyword()) :: :ok
+  @spec wait(ladder() | map(), pos_integer(), term(), keyword()) :: :ok
   def wait(ladder, attempt, target, opts \\ []) do
     ladder |> arm(attempt, target, opts) |> Process.sleep()
   end
