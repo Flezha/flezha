@@ -12,6 +12,8 @@
 
 mod assembly;
 mod starvation;
+#[cfg(test)]
+mod test_hooks;
 mod wake;
 
 use std::collections::VecDeque;
@@ -78,17 +80,24 @@ pub enum EnginePayload {
     },
     /// A batched prepare crossing for one entry channel, bound to no cell.
     Prepare(crate::host::PrepareCrossing),
+    /// A relay left this runner: bound to no live Cell; its answer releases
+    /// a start of the same id. An evicted Cell's leave is a [`Self::Command`].
+    Leave {
+        target: crate::schema::CellRef,
+        factory: &'static str,
+        reply: CommandReply,
+    },
 }
 
 impl EngineActivation {
     /// The wire identity of the Cell this activation runs on; empty for a
-    /// prepare crossing, which is bound to none.
+    /// prepare crossing or a leave, which are bound to none.
     pub fn cell_identity(&self) -> &[u8] {
         match &self.payload {
             EnginePayload::Work { slot, .. } | EnginePayload::Command { slot, .. } => {
                 &slot.cell_identity
             }
-            EnginePayload::Prepare(_) => &[],
+            EnginePayload::Prepare(_) | EnginePayload::Leave { .. } => &[],
         }
     }
 
@@ -311,13 +320,6 @@ impl PollCore {
         let polled = self.poll_until(Instant::now() + timeout);
         self.pollers_inside.fetch_sub(1, Ordering::Release);
         polled
-    }
-
-    /// What a poll pass does first, without handing out work: for a test
-    /// that must not drain Cells other tests hold.
-    #[cfg(test)]
-    pub(crate) fn promote_due_wakes(&self) {
-        self.promote_due();
     }
 
     fn poll_until(&self, deadline: Instant) -> Polled {
@@ -652,7 +654,7 @@ impl PollCore {
         kind: crate::schema::ActivationKind,
         wait: Duration,
     ) -> Result<crate::schema::ActivationOutcome, Error> {
-        let describe = command_kind_name(&kind);
+        let describe = kind.as_str();
         if self.shutting_down.load(Ordering::Acquire) {
             return Err(Error::HostCrossing(
                 Code::RunnerShuttingDown.with([("activation", describe.into())]),
@@ -779,17 +781,3 @@ impl PollCore {
 
 /// How long a command thread waits for the host's answer.
 pub(crate) const HOST_COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
-
-fn command_kind_name(kind: &crate::schema::ActivationKind) -> &'static str {
-    use crate::schema::ActivationKind;
-    match kind {
-        ActivationKind::Work(_) => "work",
-        ActivationKind::RestoreFold(_) => "restore_fold",
-        ActivationKind::SnapshotRequest => "snapshot_request",
-        ActivationKind::LiveStateRead => "live_state_read",
-        ActivationKind::ApplyState { .. } => "apply_state",
-        ActivationKind::MigrationSerialize => "migration_serialize",
-        ActivationKind::KeyRequest(_) => "key_request",
-        ActivationKind::CompensateRun { .. } => "compensate_run",
-    }
-}

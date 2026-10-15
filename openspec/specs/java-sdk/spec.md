@@ -153,7 +153,9 @@ kinds (`RestoreFold`, `SnapshotRequest`, `LiveStateRead`, `ApplyState`,
 `MigrationSerialize`), subject to per-cell exclusivity; every other
 command (including `Ping`, credit frames, acks, `AssignRunnerId`,
 `ConnectSocket`, `RemRelay`, `StepsStop`) SHALL be answered by the
-core without surfacing to Java. Class capability declarations
+core without surfacing to Java, except that a relay leaving the runner
+and an evicted Cell SHALL reach Java as a `Leave` activation, on which
+Java drops the instances it holds for them. Class capability declarations
 (`effectively_once`, `ack_granularity`, `correction_window_ms`,
 `beyond_window_policy`, `compensable_tasks`, `leaf_tasks`,
 `compact_after_bytes`) SHALL ride the declaration the Java layer registers;

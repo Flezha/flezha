@@ -92,7 +92,7 @@ Two properties matter to anyone writing an SDK:
 
 ## What crosses the boundary
 
-An **activation** always targets exactly one cell. The types are listed in
+An **activation** targets one cell, or for a relay-wide leave one relay. The types are listed in
 `ActivationKind` (`flz_core/src/schema.rs`):
 
 | Activation | What the SDK does with it |
@@ -104,6 +104,7 @@ An **activation** always targets exactly one cell. The types are listed in
 | `ApplyState`, `MigrationSerialize` | install a state, or serialize one for a move |
 | `KeyRequest` | compute keys (and event times) for entry payloads bound for a keyed edge, in one batch |
 | `CompensateRun` | run a steps relay's undo over the outputs a cell recorded |
+| `Leave` | drop what it holds for a cell that was evicted, or with `whole_relay` for every cell of a relay that stopped, finished or moved away, so a cell started again under the same name begins at `init_state`; nothing waits on the answer |
 
 A stage of a steps relay arrives as ordinary `Work`. Control commands the
 SDK need not see, such as a `Ping`, never produce an activation.

@@ -137,11 +137,11 @@ Two notes owed to whoever writes the next SDK:
 ## Activation / ActivationResult
 
 The boundary contract lives in `flz_core::schema` and is postcard-encoded;
-field order IS the wire contract and `SCHEMA_VERSION` (currently 2) gates it.
+field order IS the wire contract and `SCHEMA_VERSION` (currently 4) gates it.
 Every kind is pinned by hex byte fixtures (`schema.rs` `fixture_tests`) that
 each shim must reproduce byte-identically.
 
-An **Activation** targets exactly one cell and carries one `ActivationKind`:
+An **Activation** targets one cell (a relay-wide `Leave`, one relay) and carries one `ActivationKind`:
 
 | Kind                                                                 | What the host does |
 | -------------------------------------------------------------------- | ------------------ |
@@ -149,6 +149,7 @@ An **Activation** targets exactly one cell and carries one `ActivationKind`:
 | `RestoreFold`, `SnapshotRequest`, `LiveStateRead`, `ApplyState`, `MigrationSerialize` | The five host-participating command kinds, under the same per-cell exclusivity. No other controller command produces an activation (pinned: a `Ping` generates none). |
 | `KeyRequest`                                                         | Batched keying for unkeyed entry payloads bound for a keyed edge, answered before anything reaches a cell mailbox. |
 | `CompensateRun`                                                      | An undo step of a steps chain. |
+| `Leave { whole_relay }`                                              | The target cell was evicted, or with `whole_relay` the relay stopped, finished or moved away: the host drops what it holds for it, so a cell started again under the same name begins at `init_state`. An eviction, made only once everything the cell settled has shipped, crosses it under the cell's gate and waits for the answer before the key is removed, so a cell minted again under the key is never handed work first; a stop sends it once no activation handed out for the relay is still running, and an `AddRelay` for the same id is handled only after the host answered it. Answered `StateApplied`. |
 
 An **ActivationResult** (`ActivationOutcome::Work(Vec<ItemEffect>)`) carries,
 per processed item, the effect record the flusher consumes exactly as it

@@ -463,6 +463,10 @@ fn assert_kind_maps(h: &Map<String, Value>, kind: &schema::ActivationKind) {
                 .collect();
             assert_eq!(mapped, *outputs);
         }
+        schema::ActivationKind::Leave { whole_relay } => {
+            assert_eq!(text(h, "kind"), "leave");
+            assert_eq!(at(h, "whole_relay").as_bool(), Some(*whole_relay));
+        }
     }
 }
 

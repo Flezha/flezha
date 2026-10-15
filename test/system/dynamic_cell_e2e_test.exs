@@ -64,27 +64,21 @@ defmodule FlezhaTest.System.DynamicCellE2ETest do
     run_live_read_case()
   end
 
+  test "a relay id started again after a stop starts its Cells from init_state" do
+    run_restarted_id_case()
+  end
+
+  test "a Cell evicted idle starts again from init_state" do
+    run_evicted_cell_case()
+  end
+
   # `flz state get`'s round-trip against a real runner: a lazily-created Cell
   # is readable by name, the reply carries the seq it was serialized at, and the
   # selector really narrows — the other live key is not serialized. No TTL is
   # armed here, so nothing races the read.
   defp run_live_read_case do
-    # Own namespace: placement is HRW over every runner active in the
-    # namespace, so a peer case's runner must not be a candidate.
     namespace = "dyn_live_read"
-
-    {port, ce_id} = NodeTestHelper.start_runner_port(namespace)
-
-    on_exit(fn ->
-      NodeTestHelper.ensure_port_dead(port)
-
-      try do
-        RelayManager.stop_all_relays(namespace)
-        FleetManager.stop_namespace(namespace)
-      catch
-        _, _ -> :ok
-      end
-    end)
+    ce_id = own_runner(namespace)
 
     relay_id = "dyn_read_e2e_#{System.unique_integer([:positive])}"
     key = "k#{System.unique_integer([:positive])}"
@@ -119,6 +113,75 @@ defmodule FlezhaTest.System.DynamicCellE2ETest do
              })
 
     assert %Flezha.Error{code: "state.cell_not_found"} = refusal
+  end
+
+  # A runner of its own in `namespace`: placement is HRW over every runner
+  # active in a namespace, so a peer case's runner must not be a candidate.
+  defp own_runner(namespace, opts \\ []) do
+    {port, ce_id} = NodeTestHelper.start_runner_port(namespace, opts)
+
+    on_exit(fn ->
+      NodeTestHelper.ensure_port_dead(port)
+
+      try do
+        RelayManager.stop_all_relays(namespace)
+        FleetManager.stop_namespace(namespace)
+      catch
+        _, _ -> :ok
+      end
+    end)
+
+    ce_id
+  end
+
+  defp run_restarted_id_case do
+    namespace = "dyn_restart_id"
+    own_runner(namespace)
+
+    relay_id = "dyn_restart_e2e_#{System.unique_integer([:positive])}"
+    key = "k#{System.unique_integer([:positive])}"
+    builder = %Builder{id: relay_id, factory_id: @factory, init_values: %{}, opts: []}
+
+    assert {:ok, _} = RelayManager.start_relay(namespace, builder)
+    RelayManager.send_io(relay_id, namespace, "#{key}:first", %{"input_type" => "2"})
+    assert wait_until(fn -> cell_keys(namespace, relay_id) == [key] end, 15_000)
+
+    assert :ok = RelayManager.stop_relay(namespace, relay_id)
+    assert {:ok, _} = RelayManager.start_relay(namespace, builder)
+    RelayManager.send_io(relay_id, namespace, "#{key}:second", %{"input_type" => "2"})
+    assert wait_until(fn -> cell_keys(namespace, relay_id) == [key] end, 15_000)
+
+    assert seen(namespace, relay_id, key) == ["#{key}:second"],
+           "the new instance was served the stopped instance's in-memory state"
+  end
+
+  defp run_evicted_cell_case do
+    namespace = "dyn_evict_reset"
+
+    own_runner(namespace, env: [{"DYN_TEST_TTL_MS", "2000"}])
+
+    relay_id = "dyn_evict_e2e_#{System.unique_integer([:positive])}"
+    key = "k#{System.unique_integer([:positive])}"
+    builder = %Builder{id: relay_id, factory_id: @factory, init_values: %{}, opts: []}
+
+    assert {:ok, _} = RelayManager.start_relay(namespace, builder)
+    RelayManager.send_io(relay_id, namespace, "#{key}:first", %{"input_type" => "2"})
+    assert wait_until(fn -> cell_keys(namespace, relay_id) == [key] end, 15_000)
+    # A 2 s TTL leaves time to read the re-minted Cell before it goes again.
+    assert wait_until(fn -> cell_keys(namespace, relay_id) in [nil, []] end, 15_000)
+
+    RelayManager.send_io(relay_id, namespace, "#{key}:second", %{"input_type" => "2"})
+    assert wait_until(fn -> seen(namespace, relay_id, key) != nil end, 15_000)
+
+    assert seen(namespace, relay_id, key) == ["#{key}:second"],
+           "the re-minted Cell was served the evicted Cell's in-memory state"
+  end
+
+  defp seen(namespace, relay_id, key) do
+    case RelayManager.get_cell_state(namespace, relay_id, %{tasklet: @tasklet, cell_key: key}) do
+      {:ok, json, _seq} -> get_in(Payloader.json_to_map(json), [@tasklet, key, "seen"])
+      _ -> nil
+    end
   end
 
   # The Java arm asserts against LIVE Cell state rather than the WAL: the

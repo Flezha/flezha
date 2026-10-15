@@ -90,6 +90,10 @@ pub trait FlushableBuffer: Send + Any {
     /// accumulation included, for a restore.
     fn discard_unshipped(&mut self);
 
+    /// Nothing [`Self::discard_unshipped`] would drop: nothing flushable, no
+    /// checkpoint interval open, no hold kept.
+    fn nothing_unshipped(&self) -> bool;
+
     /// Keep a settled input's hold on its instance's processed prefix until
     /// the record it settled into is written.
     fn keep_hold(&mut self, hold: Arc<crate::prefix::Hold>);

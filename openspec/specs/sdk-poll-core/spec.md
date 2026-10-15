@@ -111,6 +111,39 @@ commands SHALL be handled entirely inside the core and SHALL NOT surface to the 
 - **WHEN** the controller sends `Ping`
 - **THEN** the core SHALL answer without any activation being generated
 
+### Requirement: A Cell or a relay leaving the runner is told to the host
+
+The core SHALL hand the host a `Leave` activation when a host-run relay leaves the
+runner (stopped, finished or migrated away), with `whole_relay` set and the relay as
+its target, once no activation handed out for that relay is still running; and when
+it evicts an idle host-run Cell, with the Cell as its target, under the Cell's gate
+and before the Cell's key is removed, waiting for the host's answer. The host SHALL
+drop the state it holds for the target, or for every Cell of the relay, and SHALL
+answer `StateApplied`. An `AddRelay` for an id whose relay's leave the host has not
+answered SHALL be handled, and answered, only after it has. A host-run Cell whose
+records or processed-prefix holds have not all shipped SHALL NOT be evicted until they
+have. A typed relay's state lives in the core's Cells and SHALL NOT produce a `Leave`.
+
+#### Scenario: A relay id started again begins at init_state
+- **WHEN** a host-run relay is stopped and an instance is started again under the same id
+- **THEN** the host SHALL have received a `Leave` with `whole_relay` for that id, and the new instance's Cells SHALL begin at `init_state`
+
+#### Scenario: A start waits for its predecessor's leave
+- **WHEN** an `AddRelay` arrives for an id whose stopped relay's leave the host has not answered
+- **THEN** the core SHALL hand the host nothing of the new instance, and SHALL answer the `AddRelay`, only after the host answered that leave
+
+#### Scenario: A stop waits out the relay's running work
+- **WHEN** a host-run relay is stopped while an activation handed out for it is still running
+- **THEN** the `Leave` SHALL be handed out only after that activation is answered, so no write it makes outlives the leave
+
+#### Scenario: A Cell evicted idle begins again at init_state
+- **WHEN** the reaper evicts an idle dynamic Cell of a host-run relay and an input for its key arrives later
+- **THEN** the host SHALL have answered a `Leave` for that Cell before any Cell minted for the key is handed work, and that Cell SHALL begin at `init_state`
+
+#### Scenario: An eviction waits for the Cell's records to ship
+- **WHEN** an idle host-run Cell still keeps a hold on its relay's processed prefix whose record has not shipped
+- **THEN** the reaper SHALL skip the Cell, send no `Leave` for it, and keep the hold
+
 ### Requirement: Edge transforms and keys evaluate producer-side
 
 For a **stream** activation, consumer-edge transform chains and `key_by` SHALL be

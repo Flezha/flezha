@@ -17,6 +17,7 @@ use crate::flusher::CellFlusher;
 use crate::relay::instance::RelayInstance;
 use crate::relay::topology::RelayTopology;
 use crate::state_sink;
+use crate::util::LockRecover;
 
 const ENV_REAP_INTERVAL_MS: &str = "FLEZHA_REAP_INTERVAL_MS";
 const MAX_SWEEP_INTERVAL: Duration = Duration::from_secs(30);
@@ -136,11 +137,26 @@ impl DynamicCellRegistry {
     }
 
     /// Drop one candidate whose gate this sweep holds; a push that landed
-    /// after the idle check re-inserts it instead. Its timers go with it.
+    /// after the idle check re-inserts it instead. Its timers go with it. A
+    /// host-run Cell's state is dropped by the host first, while the key still
+    /// names this slot, so a Cell minted again under the key never meets it.
     fn evict(&self, key: String, slot: Arc<CellSlot>) {
+        let host = slot.dispatcher.host_facts().is_some();
+        if host && !host_left(&slot) {
+            slot.release_drained();
+            return;
+        }
         self.cells.remove(&key);
         if !slot.mailbox.is_empty() {
             self.cells.insert(key, Arc::clone(&slot));
+            if host {
+                // The host already dropped the state, so the Cell starts again
+                // in place and its timers go too; its gates held, nothing
+                // was settled since the check above.
+                *slot.timers.lock_recover() = Default::default();
+                drop_timers_and_durable_state(&slot);
+                slot.drain_active.store(false, Ordering::Release);
+            }
             slot.release_drained();
             return;
         }
@@ -150,17 +166,11 @@ impl DynamicCellRegistry {
         if let Some(id) = slot.flusher_entry_id {
             CellFlusher::instance().deregister(id);
         }
-        crate::poll_core::global().discard_cell_timers(&slot.cell_identity);
-        if slot.keeps_state {
-            // The delete is a durable frame: the class holds it for the next
-            // bound stream, behind this Cell's own records, so an eviction
-            // in a reconnect window cannot leave the controller holding state
-            // for a Cell that no longer exists. The body is the bare
-            // identity the controller's `decode_cell_id` reads.
-            state_sink::send(
-                state_sink::DELETE_CELL_STATE_PAYLOAD_ID,
-                slot.cell_identity.to_vec(),
-            );
+        drop_timers_and_durable_state(&slot);
+        if host {
+            // A command that found the slot before its removal runs on it
+            // rather than waiting for ever.
+            slot.drain_active.store(false, Ordering::Release);
         }
         self.counters
             .cells_evicted_total
@@ -234,6 +244,37 @@ fn reap_interval(idle_ttl: Duration) -> Duration {
     match crate::util::env_parse_positive(ENV_REAP_INTERVAL_MS, 0) {
         0 => computed,
         ms => Duration::from_millis(ms as u64),
+    }
+}
+
+/// Take a host-run Cell's drain gate and tell the host it left; `false`, the
+/// gate as found, when a command holds the Cell (a live read, say) or
+/// something it settled has not shipped: the Cell may yet start again in
+/// place, and its holds last until their records ship.
+fn host_left(slot: &Arc<CellSlot>) -> bool {
+    if slot.drain_active.swap(true, Ordering::AcqRel) {
+        return false;
+    }
+    if !slot.flush_buffer.lock_recover().nothing_unshipped() {
+        slot.drain_active.store(false, Ordering::Release);
+        return false;
+    }
+    crate::host::cell_left_locked(slot);
+    true
+}
+
+/// A Cell's pending timer wakes and, where it persists, its durable state.
+/// The delete is a durable frame: the class holds it for the next bound
+/// stream, behind this Cell's own records, so a reconnect window cannot leave
+/// the controller holding state the Cell no longer has. The body is the bare
+/// identity the controller's `decode_cell_id` reads.
+fn drop_timers_and_durable_state(slot: &CellSlot) {
+    crate::poll_core::global().discard_cell_timers(&slot.cell_identity);
+    if slot.keeps_state {
+        state_sink::send(
+            state_sink::DELETE_CELL_STATE_PAYLOAD_ID,
+            slot.cell_identity.to_vec(),
+        );
     }
 }
 

@@ -70,6 +70,11 @@ pub type OffReaderBuild = Box<dyn FnOnce() -> Vec<u8> + Send>;
 pub enum CommandActionType {
     Regular(Box<dyn CommandAction>),
     OffReader(Box<dyn OffReaderAction>),
+    /// A start of an id whose stopped predecessor's leave the host has not
+    /// answered: handled once it has, so nothing of the new instance reaches
+    /// the host first. The controller sends the relay nothing before the
+    /// start's answer.
+    AfterLeave(Arc<crate::host::PendingLeave>),
     RunnerDisconnect(Box<dyn CommandAction>),
     /// The controller's reply to an SDK-initiated request: wake the waiter
     /// under its `reference_id`; no `CommandResponse` is written.
@@ -130,7 +135,10 @@ fn classify(command: Option<Command>) -> Result<CommandActionType, CommandDecode
     Ok(match command {
         Some(Command::AssignRunnerId(c)) => regular(c),
         Some(Command::ConnectSocket(c)) => regular(c),
-        Some(Command::AddRelay(c)) => regular(c),
+        Some(Command::AddRelay(c)) => match crate::host::pending_leave(&c.relay_id) {
+            Some(pending) => CommandActionType::AfterLeave(pending),
+            None => regular(c),
+        },
         Some(Command::RemRelay(c)) => regular(c),
         Some(Command::MigrationSerialization(c)) => regular(c),
         Some(Command::MigrationDeserialization(c)) => regular(c),
@@ -246,6 +254,16 @@ pub fn handle_command(
                 ),
             ),
         },
+
+        CommandActionType::AfterLeave(pending) => {
+            if pending
+                .hold((payload_id.to_string(), message.to_vec()))
+                .is_some()
+            {
+                // Answered since it was classified: run it now.
+                handle_command(runner, stream, payload_id, message);
+            }
+        }
 
         CommandActionType::RunnerDisconnect(handler) => {
             respond_with(

@@ -35,7 +35,7 @@ fn saturate_slot(slot: &Arc<CellSlot>) {
 
 /// One input at `offset`, and the completion that emits one edge value to
 /// each consumer in `consumers`.
-fn work_and_effect(offset: u64, consumers: &[u32]) -> (ItemAttempt, schema::ItemEffect) {
+pub(super) fn work_and_effect(offset: u64, consumers: &[u32]) -> (ItemAttempt, schema::ItemEffect) {
     let work = ItemAttempt {
         item: CellItem::Input(CellPayload {
             value: Arc::new(HostPayload {

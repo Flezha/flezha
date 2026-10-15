@@ -5,7 +5,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Negotiated at context creation; a mismatch refuses to start.
-pub const SCHEMA_VERSION: u32 = 3;
+pub const SCHEMA_VERSION: u32 = 4;
 
 pub use crate::channel::{ChannelId, TaskletId};
 
@@ -51,6 +51,13 @@ pub enum ActivationKind {
     /// effect carries any undo outputs.
     CompensateRun {
         outputs: Vec<Vec<u8>>,
+    },
+    /// The target Cell left this runner, or with `whole_relay` every Cell of
+    /// the target's relay did: the host drops what it holds for them, so a
+    /// Cell started again under the same name begins at `init_state`. The
+    /// host answers `StateApplied`; nothing waits on it.
+    Leave {
+        whole_relay: bool,
     },
 }
 
@@ -211,6 +218,22 @@ pub struct TimerOp {
     pub kind: TimerKind,
     pub scheduled_at: u64,
     pub register: bool,
+}
+
+impl ActivationKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ActivationKind::Work(_) => "work",
+            ActivationKind::RestoreFold(_) => "restore_fold",
+            ActivationKind::SnapshotRequest => "snapshot_request",
+            ActivationKind::LiveStateRead => "live_state_read",
+            ActivationKind::ApplyState { .. } => "apply_state",
+            ActivationKind::MigrationSerialize => "migration_serialize",
+            ActivationKind::KeyRequest(_) => "key_request",
+            ActivationKind::CompensateRun { .. } => "compensate_run",
+            ActivationKind::Leave { .. } => "leave",
+        }
+    }
 }
 
 impl TimerOp {
@@ -472,6 +495,7 @@ mod fixture_tests {
                 },
                 "0701010a000166",
             ),
+            (ActivationKind::Leave { whole_relay: true }, "0801000166"),
         ];
         for (kind, expected) in kinds {
             let act = Activation {

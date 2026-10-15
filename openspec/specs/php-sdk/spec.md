@@ -122,7 +122,7 @@ A declaration the core refuses SHALL surface the core's error naming the offendi
 - **THEN** `registerFactory()` SHALL raise an error naming the offending field, before the runner starts
 
 ### Requirement: The five command activation kinds
-The PHP SDK SHALL handle every command activation kind the core hands out: `RestoreFold`, `SnapshotRequest`, `LiveStateRead`, `ApplyState` and `MigrationSerialize`.
+The PHP SDK SHALL handle every command activation kind the core hands out: `RestoreFold`, `SnapshotRequest`, `LiveStateRead`, `ApplyState` and `MigrationSerialize`, and the `Leave` that tells it a Cell or a relay left.
 
 #### Scenario: A restore fold rebuilds state before inputs flow
 - **WHEN** a cell with a persisted change log is bound and the core hands out a `RestoreFold`
@@ -139,6 +139,10 @@ The PHP SDK SHALL handle every command activation kind the core hands out: `Rest
 #### Scenario: A migration serializes and applies
 - **WHEN** a relay hot-swap migrates a PHP-hosted cell
 - **THEN** `MigrationSerialize` on the source and `ApplyState` on the destination SHALL round-trip the State
+
+#### Scenario: A leave drops the held State
+- **WHEN** the core hands out a `Leave` for a cell, or with `whole_relay` for a relay
+- **THEN** the SDK SHALL drop the State it holds for that cell, or for every cell of that relay, and a cell started again under the same name SHALL begin at `initState`
 
 ### Requirement: Cell modes and the prepare crossing
 The PHP SDK SHALL support single, static-keyed and dynamic cell modes, and SHALL answer the core's batched `KeyRequest` prepare crossing with routing keys and extracted event times for the payloads it is given.

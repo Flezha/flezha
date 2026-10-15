@@ -38,7 +38,9 @@ logic on the controller's behalf over two layers:
 
 Of the command surface, only five interactions reach host code in a `flz_core`
 runner (as `RestoreFold`, `SnapshotRequest`, `LiveStateRead`, `ApplyState`,
-`MigrationSerialize` activations); the kernel answers everything else.
+`MigrationSerialize` activations); the kernel answers everything else. A relay
+leaving the runner and an evicted Cell reach it too, as a `Leave` activation
+that nothing waits on, so the host drops the state it holds for them.
 
 ## 2. Transport Layer
 

@@ -12,7 +12,9 @@ mod cell;
 mod chains;
 mod commands;
 mod decl;
+mod handout;
 mod issue;
+mod leave;
 mod prepare;
 mod register;
 mod stamp;
@@ -25,11 +27,13 @@ mod api_tests;
 mod check_tests;
 #[cfg(test)]
 mod decl_tests;
+#[cfg(test)]
+mod leave_tests;
 
 #[cfg(feature = "bench-internals")]
 pub(crate) use activation::empty_effect;
 pub(crate) use activation::settle_steps_undo;
-pub use activation::{abandon_activation, apply_result, to_schema};
+pub use activation::{abandon_activation, apply_result};
 pub use build::call_end;
 pub use cell::{cell_ref_of, BytesBuffer, HostPayload, HostTaskletFacts};
 pub use commands::{
@@ -40,7 +44,9 @@ pub use decl::{
     HostAckGranularity, HostCall, HostCellModeDecl, HostChannelDecl, HostChannelKind,
     HostClassDecl, HostClock, HostCodec, HostLink, HostOverflow, HostTaskletDecl,
 };
+pub use handout::to_schema;
 pub use issue::{render_issues, TopologyIssue};
+pub use leave::{cell_left_locked, pending_leave, relay_left, PendingLeave};
 pub use prepare::{
     deferred_end_replay_slice, prepare_wants, stage_prepare, HostPrepareState, PrepareCrossing,
     StagedEntry,

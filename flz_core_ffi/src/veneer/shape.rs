@@ -54,6 +54,7 @@ pub const CHANGES: Key = Key::flat("changes");
 pub const STATE_JSON: Key = Key::of("state_json", "stateJson");
 pub const KEY_REQUEST: Key = Key::of("key_request", "keyRequest");
 pub const OUTPUTS: Key = Key::flat("outputs");
+pub const WHOLE_RELAY: Key = Key::of("whole_relay", "wholeRelay");
 pub const CHANNEL: Key = Key::flat("channel");
 pub const PAYLOAD: Key = Key::flat("payload");
 pub const METADATA: Key = Key::flat("metadata");
@@ -111,6 +112,7 @@ pub mod record {
         STATE_JSON,
         super::KEY_REQUEST,
         OUTPUTS,
+        WHOLE_RELAY,
     ];
     pub const WORK_ITEM: &[Key] = &[
         KIND,
@@ -176,6 +178,7 @@ pub mod word {
     pub const MIGRATION_SERIALIZE: &str = "migration_serialize";
     pub const KEY_REQUEST: &str = "key_request";
     pub const COMPENSATE_RUN: &str = "compensate_run";
+    pub const LEAVE: &str = "leave";
 
     pub const EDGE: &str = "edge";
     pub const PLUGIN: &str = "plugin";
@@ -335,6 +338,11 @@ fn kind_out<S: Sink>(
             set_word(s, out, KIND, word::COMPENSATE_RUN)?;
             let list = byte_list(s, outputs)?;
             s.set(out, OUTPUTS, list)?;
+        }
+        K::Leave { whole_relay } => {
+            set_word(s, out, KIND, word::LEAVE)?;
+            let whole_relay = s.bool(whole_relay)?;
+            s.set(out, WHOLE_RELAY, whole_relay)?;
         }
     }
     Ok(())

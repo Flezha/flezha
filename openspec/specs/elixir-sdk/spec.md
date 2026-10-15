@@ -471,7 +471,8 @@ The Elixir SDK SHALL run every relay through `flz_core` by way of `flz_core_ffi:
 - `live_state_read` and `migration_serialize` with the state as JSON;
 - `apply_state` through `state_from_json/1`;
 - `key_request` with each payload's keys and event time;
-- `compensate_run` through `compensate/3`.
+- `compensate_run` through `compensate/3`;
+- `leave` by dropping what it holds for the Cell, or with `whole_relay` for every Cell of the relay.
 
 A Cell's live state and its pending timer set SHALL be held by the host, keyed by relay, tasklet and Cell key. State snapshots and change bodies SHALL be Erlang External Term Format (format id `7`), and a payload between two tasklets SHALL be ETF.
 
