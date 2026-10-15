@@ -42,7 +42,7 @@ the durability trade-offs, and how broker clients are shared.
 | `retry_max_backoff_ms` | int | `5000` | no | Ceiling for that delay |
 | `delivery_timeout_ms` | int | `30000` | no | Total budget for one batch before it is parked |
 | `linger_ms` | int | `10` | no | How long a batch waits to fill |
-| `max_batch_bytes` | int | `1048576` | no | Largest batch produced |
+| `max_batch_bytes` | int | `1048576` | no | Largest record batch produced, in encoded bytes |
 | `queue_max` | int | `10000` | no | Records held before the policy applies |
 | `queue_overflow` | enum | `:drop_nothing` | no | What a full queue does: block, drop the oldest, or drop the newest |
 | `queue_block_timeout_ms` | int | `5000` | no | How long an enqueue parks on a full queue before it is refused |

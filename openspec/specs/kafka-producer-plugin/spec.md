@@ -136,6 +136,12 @@ When either condition is exceeded and a slot of the in-flight window is free, th
 - **WHEN** accumulated messages reach 1 MiB after 50 ms
 - **THEN** the batch SHALL flush at 50 ms without waiting the remaining 950 ms
 
+#### Scenario: A full batch fits the broker's default message size
+- **GIVEN** a producer at the default `:max_batch_bytes` with 6 000 records of 200 bytes queued
+- **WHEN** the first batch is cut
+- **THEN** the record batch as encoded, its framing and headers counted, SHALL NOT exceed 1 048 576 bytes, inside the broker's default `message.max.bytes` of 1 048 588
+- **AND** one more record SHALL NOT have fitted
+
 #### Scenario: linger_ms = 0 sends without waiting
 - **GIVEN** a producer with `:linger_ms = 0` and a free window slot
 - **WHEN** a single message arrives
