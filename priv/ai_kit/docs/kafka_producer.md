@@ -281,7 +281,8 @@ entry is re-driven.
 `on_input/2` / `on_output/2` take ownership of a delivery-guaranteed record
 (`Flezha.State.Outbox.hold/1`) before handing it to the worker. An acked batch confirms
 every guaranteed record it carried in one report per owning writer
-(`Outbox.confirm_many/1`); a batch that exhausts its budget parks each of them through the
+(`Outbox.confirm_many/1`); a batch that exhausts its budget, or a record still held when a
+client swap is retried past `delivery_timeout_ms`, parks each of them through the
 dead-letter store under its own `(cell, seq, epoch)` identity (`Outbox.park/4`, one per
 record because a park carries the payload), so the cursor advances past a recorded,
 replayable loss rather than a silent one. Records without the `flz.ack` token settle nothing.

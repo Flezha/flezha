@@ -253,7 +253,7 @@ On receiving `{:kafka_worker_dead, registry_ref, reason}` whose `registry_ref` m
 4. On successful swap, set `state.worker_pid = new_pid`, `state.registry_ref = new_ref`, and in every lane `producer_id = nil`, `producer_epoch = nil`, `sequence = 0` and an empty in-flight window, and re-enter `handle_continue(:maybe_init_producer_id, state)` so the next batch acquires a fresh idempotent producer-id against the new worker.
 5. Emit exactly one `[:flezha, :plugin, :kafka, :worker_swapped]` telemetry event per worker with measurements `%{queue_depth, in_flight_records: prior_in_flight_size, queue_bytes}` summed over its lanes — `prior_in_flight_size` counting the records of every batch that was in a window — and metadata `%{plugin_id, topic, partition, reason, producer_id_before, producer_id_after, old_worker_pid, new_worker_pid}`, where `partition` is the fixed partition or `nil` and the producer ids are a fixed-partition lane's or `nil`.
 
-`state.blocked` callers SHALL remain blocked across the swap. Their existing `:block_timeout` timers continue to fire normally; a swap is not a `:queue_full` condition.
+`state.blocked` callers SHALL remain blocked across a swap that succeeds. Their existing `:block_timeout` timers continue to fire normally; a swap is not a `:queue_full` condition.
 
 The producer-id rotation introduced by step 4 SHALL be bounded by the existing `kafka-producer-plugin` "Producer-id rotation on worker restart" requirement — i.e. the in-flight window (now back at the head of the queue) may produce up to its record count in duplicate writes against the broker, exactly as on supervisor-driven restart.
 
@@ -477,7 +477,9 @@ resulting drop SHALL emit an alarm-grade event, not only the `dropped_total`
 counter. On permanent failure of a batch carrying guaranteed records, the
 producer SHALL surface the failure to the outbox confirmation seam (so the batch
 parks through the dead-letter path) instead of dropping the records with only
-`:produce, :failed` telemetry. Plain (non-guaranteed) chains share the
+`:produce, :failed` telemetry. A client swap retried past `:delivery_timeout_ms`
+SHALL fail every record the worker holds, in flight, queued or blocked, and park
+each guaranteed one the same way. Plain (non-guaranteed) chains share the
 `:drop_nothing` default; the alarm-grade drop event and the outbox park path remain specific to
 guaranteed records.
 
@@ -499,6 +501,14 @@ guaranteed records.
 - **WHEN** a guaranteed batch exhausts its retry budget with a permanent error
 - **THEN** the records are handed to the outbox's park path with their range,
   and are not dropped from the queue as if delivered
+
+#### Scenario: Swap exhaustion parks every held guaranteed record
+
+- **GIVEN** a producer holding three guaranteed records, one queued and two blocked
+- **WHEN** its client dies and the swap is refused past `:delivery_timeout_ms`
+- **THEN** each record is parked to the dead-letter store with
+  `{:worker_swap_exhausted, reason}` and its outbox hold is answered
+- **AND** no record is left in the queue, the window or `blocked`
 
 ### Requirement: Every documented producer option is implemented
 
