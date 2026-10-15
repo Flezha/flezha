@@ -106,7 +106,7 @@ fn template(read: &Reading) -> Template {
         }
         false
     };
-    rpc::settle(rpc::child("eval", &request, Out::Filter(&mut keep)));
+    rpc::settle(rpc::child("eval", &request, Out::Filter(&mut keep), None));
 
     let template = answer.unwrap_or_else(|| {
         rpc::fail(FlezhaError::with(

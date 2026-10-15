@@ -9,7 +9,9 @@ What an AI assistant gets from Flezha over MCP: `flz mcp`, a stdio server that a
 open. It SHALL answer `initialize`, `ping`, `tools/list` and `tools/call` whether or not a
 controller runs, and SHALL write nothing but protocol messages to stdout. It SHALL serve
 through the same MCP core as the HTTP API's `POST /mcp`, so that a tool, its schema and its
-error mapping are the same on both.
+error mapping are the same on both. It SHALL answer `ping` while a call runs, SHALL kill a
+cancelled call's child and send that call no answer, and SHALL leave no child running when
+SIGINT or SIGTERM stops it.
 
 #### Scenario: Started with no controller
 
@@ -29,6 +31,21 @@ error mapping are the same on both.
 - **WHEN** an argument of a message carries `#{...}`
 - **THEN** it SHALL reach the operation as that text, and nothing in it SHALL run on the
   controller
+
+#### Scenario: A ping while a call hangs
+
+- **WHEN** a `tools/call` hangs on its controller and the client sends `ping`
+- **THEN** the `ping` SHALL be answered without waiting for the call
+
+#### Scenario: A cancelled call
+
+- **WHEN** the client sends `notifications/cancelled` for a running `tools/call`
+- **THEN** the call's child SHALL be killed and the call SHALL get no answer
+
+#### Scenario: Stopped by its client
+
+- **WHEN** `flz mcp` receives SIGTERM while a call's child runs
+- **THEN** the child SHALL be killed and reaped before `flz mcp` exits
 
 #### Scenario: A controller started later is found
 

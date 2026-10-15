@@ -14,7 +14,7 @@
 //! user can read.
 
 use std::io::{BufRead, BufReader, Write};
-use std::process::{exit, ChildStderr, Command, ExitStatus, Stdio};
+use std::process::{exit, Child, ChildStderr, Command, ExitStatus, Stdio};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 use std::{env, io, thread};
@@ -143,6 +143,7 @@ pub(crate) fn eval(module: &str, fun: &str, positional: &[String], read: &Readin
         "eval",
         &eval_request(module, fun, positional, read),
         Out::Inherit,
+        None,
     ));
 }
 
@@ -214,14 +215,24 @@ pub(crate) enum Out<'a> {
 }
 
 pub(crate) fn call(request: &Request, out: Out) -> io::Result<Answer> {
-    child("rpc", request, out)
+    child("rpc", request, out, None)
 }
+
+/// What ends a child before it exits: asked while the child runs, and once it
+/// says so the child is killed and reaped.
+pub(crate) type Stop<'a> = &'a (dyn Fn() -> bool + Sync);
 
 /// `call`, with the `flzvm` command named: `rpc` evaluates on the controller,
 /// `eval` in a VM of its own. The request's token is the child's whole stdin;
 /// it gets no other, so nothing it reads can be a line meant for `flz` itself.
-pub(crate) fn child(command: &str, request: &Request, out: Out) -> io::Result<Answer> {
-    let mut child = flzvm()
+pub(crate) fn child(
+    command: &str,
+    request: &Request,
+    out: Out,
+    stop: Option<Stop>,
+) -> io::Result<Answer> {
+    let mut spawn = flzvm();
+    spawn
         .arg(command)
         .arg(&request.expression)
         .stdin(Stdio::piped())
@@ -229,8 +240,19 @@ pub(crate) fn child(command: &str, request: &Request, out: Out) -> io::Result<An
             Out::Inherit => Stdio::inherit(),
             Out::Filter(_) => Stdio::piped(),
         })
-        .stderr(Stdio::piped())
-        .spawn()?;
+        .stderr(Stdio::piped());
+    // A `flz` killed outright (SIGKILL, the OOM killer) takes the child with
+    // it. The signal fires when the spawning thread exits, and every caller
+    // waits for its child on that thread.
+    #[cfg(target_os = "linux")]
+    // SAFETY: `prctl` is async-signal-safe and touches no memory of the parent.
+    unsafe {
+        std::os::unix::process::CommandExt::pre_exec(&mut spawn, || {
+            libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL);
+            Ok(())
+        });
+    }
+    let mut child = spawn.spawn()?;
 
     // Closed once written. A child that exits before reading closes the pipe;
     // its own status and stderr say why, so the failed write adds nothing.
@@ -241,21 +263,45 @@ pub(crate) fn child(command: &str, request: &Request, out: Out) -> io::Result<An
     let stderr = child.stderr.take().expect("stderr is piped");
     let forwarder = thread::spawn(move || forward_stderr(stderr));
 
-    if let (Some(piped), Out::Filter(keep)) = (child.stdout.take(), out) {
-        for line in BufReader::new(piped).lines().map_while(Result::ok) {
-            if keep(&line) {
-                println!("{}", line);
+    // The child is waited for beside the read, so a stop is heard while its
+    // stdout is still open; killing it closes that stdout and ends the read.
+    let piped = child.stdout.take();
+    let status = thread::scope(|scope| {
+        let waiter = scope.spawn(|| wait(&mut child, stop));
+        if let (Some(piped), Out::Filter(keep)) = (piped, out) {
+            for line in BufReader::new(piped).lines().map_while(Result::ok) {
+                if keep(&line) {
+                    println!("{}", line);
+                }
             }
         }
-    }
-
-    let status = child.wait()?;
+        waiter.join().expect("the waiter does not panic")
+    })?;
     let unreachable = forwarder.join().unwrap_or(false);
 
     Ok(Answer {
         status,
         unreachable,
     })
+}
+
+/// Wait for `child`, killing and reaping it once `stop` says so; with nothing
+/// to stop for, a plain wait.
+fn wait(child: &mut Child, stop: Option<Stop>) -> io::Result<ExitStatus> {
+    let Some(stop) = stop else {
+        return child.wait();
+    };
+
+    loop {
+        if let Some(status) = child.try_wait()? {
+            return Ok(status);
+        }
+        if stop() {
+            let _ = child.kill();
+            return child.wait();
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
 }
 
 // The child's stderr, passed through line by line as it arrives so a streaming
@@ -477,31 +523,16 @@ pub(crate) fn controller_is_up(probe_timeout_ms: u64) -> bool {
         Err(_) => return false,
     };
 
-    let timeout = Duration::from_millis(probe_timeout_ms);
-    let started = Instant::now();
-
-    loop {
-        match child.try_wait() {
-            Ok(Some(status)) => {
-                if !status.success() {
-                    return false;
-                }
-                let mut out = String::new();
-                if let Some(mut stdout) = child.stdout.take() {
-                    let _ = std::io::Read::read_to_string(&mut stdout, &mut out);
-                }
-                return !out.trim().is_empty();
+    let deadline = Instant::now() + Duration::from_millis(probe_timeout_ms);
+    match wait(&mut child, Some(&|| Instant::now() >= deadline)) {
+        Ok(status) if status.success() => {
+            let mut out = String::new();
+            if let Some(mut stdout) = child.stdout.take() {
+                let _ = std::io::Read::read_to_string(&mut stdout, &mut out);
             }
-            Ok(None) => {
-                if started.elapsed() >= timeout {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return false;
-                }
-                std::thread::sleep(Duration::from_millis(25));
-            }
-            Err(_) => return false,
+            !out.trim().is_empty()
         }
+        _ => false,
     }
 }
 

@@ -4,15 +4,18 @@
 
 mod common;
 
-use std::io::Write;
-use std::process::{Output, Stdio};
+use std::io::{BufRead, BufReader, Write};
+use std::path::Path;
+use std::process::{Child, Command, Output, Stdio};
+use std::sync::mpsc;
+use std::time::{Duration, Instant};
 
 use common::Shim;
 use serde_json::Value;
 
 const FLZ_BIN: &str = env!("CARGO_BIN_EXE_flz");
 
-const REQUEST: &str = r#"{"jsonrpc":"2.0","id":7,"method":"ping"}"#;
+const REQUEST: &str = r#"{"jsonrpc":"2.0","id":7,"method":"tools/list"}"#;
 const NOTIFICATION: &str = r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#;
 
 /// A controller that cannot be reached, and a VM of its own that logs a line
@@ -104,7 +107,7 @@ fn a_bad_line_does_not_end_the_session() {
     stdin
         .write_all(b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"\xff\"}\n")
         .expect("write");
-    writeln!(stdin, r#"{{"jsonrpc":"2.0","id":2,"method":"ping"}}"#).expect("write");
+    writeln!(stdin, r#"{{"jsonrpc":"2.0","id":2,"method":"tools/list"}}"#).expect("write");
     drop(stdin);
 
     let out = child
@@ -130,4 +133,141 @@ fn a_request_past_the_argument_limit_is_refused_without_a_child() {
     assert_eq!(answered[0]["id"], "big");
     assert_eq!(answered[0]["error"]["code"], -32_600);
     assert!(!String::from_utf8_lossy(&out.stderr).contains("it broke"));
+}
+
+/// A controller that hangs on a `tools/call`, recording the hung pid beside
+/// itself, and answers anything else at once.
+const HANGS_ON_CALL: &str = "#!/bin/sh
+case \"$2\" in
+*tools/call*) echo $$ > \"$(dirname \"$0\")/hung.pid\"; exec sleep 30 ;;
+*) echo '{\"jsonrpc\":\"2.0\",\"id\":3,\"result\":{}}' ;;
+esac
+";
+
+const CALL: &str = r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"relay_list","arguments":{}}}"#;
+const PING: &str = r#"{"jsonrpc":"2.0","id":3,"method":"ping"}"#;
+const CANCEL: &str =
+    r#"{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":2}}"#;
+
+fn spawn_mcp(shim: &Shim) -> Child {
+    shim.cmd()
+        .arg("mcp")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("flz mcp runs")
+}
+
+/// Whether `check` holds within five seconds: a guard against a hang, not a
+/// measure of how long anything takes.
+fn within_five_seconds(check: impl Fn() -> bool) -> bool {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !check() {
+        if Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    true
+}
+
+/// The pid of the child the `tools/call` hangs in, once it has started.
+fn hung_pid(shim: &Shim) -> String {
+    let file = shim.flzvm_path().with_file_name("hung.pid");
+    let read = || std::fs::read_to_string(&file).unwrap_or_default();
+    assert!(
+        within_five_seconds(|| read().ends_with('\n')),
+        "the call reached the child"
+    );
+    read().trim().to_string()
+}
+
+fn alive(pid: &str) -> bool {
+    Path::new(&format!("/proc/{pid}")).exists()
+}
+
+fn kill(signal: &str, pid: &str) {
+    let _ = Command::new("kill")
+        .args([signal, pid])
+        .stderr(Stdio::null())
+        .status();
+}
+
+#[test]
+fn a_ping_is_answered_while_a_call_hangs() {
+    let shim = Shim::new(FLZ_BIN, HANGS_ON_CALL);
+    let mut mcp = spawn_mcp(&shim);
+    let mut stdin = mcp.stdin.take().expect("stdin");
+    writeln!(stdin, "{}", CALL).expect("write");
+    let pid = hung_pid(&shim);
+    writeln!(stdin, "{}", PING).expect("write");
+
+    let stdout = mcp.stdout.take().expect("stdout");
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+            let _ = tx.send(line);
+        }
+    });
+
+    let reply = rx.recv_timeout(Duration::from_secs(5));
+    kill("-TERM", &mcp.id().to_string());
+    let _ = mcp.wait();
+    kill("-KILL", &pid);
+    let reply = reply.expect("the ping is answered while the call hangs");
+    assert!(reply.contains(r#""id":3"#), "{reply}");
+}
+
+/// SIGTERM is how an MCP client stops a server that does not exit when its
+/// input closes; the child it was waiting on goes with it.
+#[test]
+fn a_terminated_flz_mcp_leaves_no_child_behind() {
+    let shim = Shim::new(FLZ_BIN, HANGS_ON_CALL);
+    let mut mcp = spawn_mcp(&shim);
+    writeln!(mcp.stdin.as_mut().expect("stdin"), "{}", CALL).expect("write");
+    let pid = hung_pid(&shim);
+
+    kill("-TERM", &mcp.id().to_string());
+    let _ = mcp.wait();
+
+    let left = alive(&pid);
+    kill("-KILL", &pid);
+    assert!(!left, "the flzvm child {pid} outlived flz mcp");
+}
+
+/// A cancelled call's child is killed, and the call is never answered: MCP
+/// has a receiver send nothing for a request it was told to cancel.
+#[test]
+fn a_cancelled_call_is_killed_and_never_answered() {
+    let shim = Shim::new(FLZ_BIN, HANGS_ON_CALL);
+    let mut mcp = spawn_mcp(&shim);
+    let mut stdin = mcp.stdin.take().expect("stdin");
+    writeln!(stdin, "{}", CALL).expect("write");
+    let pid = hung_pid(&shim);
+    writeln!(stdin, "{}", CANCEL).expect("write");
+
+    let killed = within_five_seconds(|| !alive(&pid));
+    kill("-KILL", &pid);
+    drop(stdin);
+    let out = mcp.wait_with_output().expect("flz mcp ends with its input");
+    assert!(killed, "the cancelled call's child {pid} still runs");
+    assert!(replies(&out).is_empty(), "{:?}", replies(&out));
+}
+
+/// A `flz mcp` killed outright, with no chance to stop its child, still takes
+/// that child with it.
+#[test]
+fn a_killed_flz_mcp_leaves_no_child_behind() {
+    let shim = Shim::new(FLZ_BIN, HANGS_ON_CALL);
+    let mut mcp = spawn_mcp(&shim);
+    writeln!(mcp.stdin.as_mut().expect("stdin"), "{}", CALL).expect("write");
+    let pid = hung_pid(&shim);
+
+    let _ = mcp.kill();
+    let _ = mcp.wait();
+
+    let gone = within_five_seconds(|| !alive(&pid));
+    kill("-KILL", &pid);
+    assert!(gone, "the flzvm child {pid} outlived a killed flz mcp");
 }

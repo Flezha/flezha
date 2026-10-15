@@ -138,7 +138,10 @@ for this project's language before writing SDK code.
 ## Limits
 
 - **Each message starts a short VM.** A call takes about a quarter of a second
-  with a controller, and about twice that without one.
+  with a controller, and about twice that without one. Messages are answered
+  one at a time, except a `ping`, which is always answered by a VM of its own
+  without the controller, even while a call runs, and a cancellation, which
+  stops the cancelled call's VM.
 - **No streaming operations.** `flz relay listen` and `flz observe tail` are
   not tools, as over HTTP.
 - **A message up to about 120 KiB.** A larger one is refused before it is sent.
