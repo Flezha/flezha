@@ -481,7 +481,7 @@ An input that failed every retry, from
 [`durability.md`](../core/durability.md#the-dead-letter-queue):
 
 ```sh
-$ flz dlq list 'trade_watcher#p1' --namespace trading
+$ flz dlq list 'trade_watcher#p1'
 ```
 
 ```output

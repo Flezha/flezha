@@ -117,7 +117,7 @@ plugins() {
   sleep 20
   step info "flz relay info trade_watcher --namespace $NS"
   step state "flz state get trade_watcher/track_prices --namespace $NS"
-  step dlq-list "flz dlq list 'trade_watcher#p1' --namespace $NS"
+  step dlq-list "flz dlq list 'trade_watcher#p1'"
   step enable-signals "flz plugin enable signals relay_file_output --relay_id=trade_watcher --namespace $NS --hook=on_output --Xpath=signals.txt --Xchannel_out=signals"
   until_ok 120 "[ \$(wc -l <$FLEZHA_CTL_DIR/app_data/files/signals.txt) -ge 4 ]"
   step signals "cd $FLEZHA_CTL_DIR && head -4 app_data/files/signals.txt"
@@ -180,14 +180,14 @@ durability-undo() {
   local mark
   mark=$(runner_log_mark)
   step send-poison "flz relay send 'trade_watcher#p1' --namespace $NS --channel trades --text '{\"channel\": \"trade\", \"data\": [{\"symbol\": \"EUR/USD\", \"price\": \"one euro\", \"ord_type\": \"market\"}]}'"
-  until_ok 30 "flz dlq list 'trade_watcher#p1' --namespace $NS | grep -q '^trade_watcher'"
+  until_ok 30 "flz dlq list 'trade_watcher#p1' | grep -q '^trade_watcher'"
   runner_log_since "$mark" poison
-  step dlq-list "flz dlq list 'trade_watcher#p1' --namespace $NS"
+  step dlq-list "flz dlq list 'trade_watcher#p1'"
   local entry
   entry=$(grep -o "^trade_watcher#p1/[^ ]*" "$OUT/$page/$(printf '%02d' $((n - 1)))-dlq-list.txt" | head -1)
-  step dlq-show "flz dlq show '$entry' --namespace $NS"
-  step dlq-drop "flz dlq drop '$entry' --namespace $NS"
-  step dlq-list-empty "flz dlq list 'trade_watcher#p1' --namespace $NS"
+  step dlq-show "flz dlq show '$entry'"
+  step dlq-drop "flz dlq drop '$entry'"
+  step dlq-list-empty "flz dlq list 'trade_watcher#p1'"
 
   mark=$(runner_log_mark)
   echo /resume >"$RUN/exchange.in"

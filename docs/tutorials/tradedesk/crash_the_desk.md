@@ -105,7 +105,7 @@ $ ./bin/flz relay send 'trade_watcher#p1' --namespace trading --channel trades -
 ```
 
 ```sh
-$ ./bin/flz dlq list 'trade_watcher#p1' --namespace trading
+$ ./bin/flz dlq list 'trade_watcher#p1'
 ```
 
 <!-- tabs-open -->
@@ -186,7 +186,7 @@ dropped but not replayed.
 > {: .step}
 
 ```sh
-$ ./bin/flz dlq drop '<entry>' --namespace trading
+$ ./bin/flz dlq drop '<entry>'
 ```
 
 ```output

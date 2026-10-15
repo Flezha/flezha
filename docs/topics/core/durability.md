@@ -230,7 +230,7 @@ Java and Rust the typed `Trade` cannot be decoded, so the entry channel refuses
 it (cell `_entry`); in the other SDKs `track_prices` refuses the price itself:
 
 ```sh
-$ flz dlq list 'trade_watcher#p1' --namespace trading
+$ flz dlq list 'trade_watcher#p1'
 ```
 
 ```output
@@ -239,7 +239,7 @@ trade_watcher#p1/track_prices/307bcbd6439a080f              EUR/USD         trad
 ```
 
 ```sh
-$ flz dlq show '<entry>' --namespace trading
+$ flz dlq show '<entry>'
 ```
 
 ```output
