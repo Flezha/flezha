@@ -331,7 +331,8 @@ retired `clock/0`, `event_time_of/1` or `cell_idle_ttl_ms/0` as
 
 `run/3` returns `{:ok, new_state} | {:error, reason} | {:error, {:non_retryable, reason}}`;
 emits flush only on `{:ok, _}`. Optional `Tasklet` callbacks: `cell_keys/0` (static
-keyset), `cells_for/1`, `mailbox_capacity/0` (1024; env `FLEZHA_MAILBOX_CAPACITY`, range
+keyset, which needs `cells_for/1` naming the keys an input routes to, or the class is
+refused as `topology.cells_for_missing`), `mailbox_capacity/0` (1024; env `FLEZHA_MAILBOX_CAPACITY`, range
 `1..1_048_576`), `max_cells/0` (100_000 — the cap on a dynamic node's live Cells: at it
 a new key's input is dropped and counted, an existing key's is served),
 `idle_ttl_seconds/0` (nil — a dynamic Cell idle past that many whole seconds is evicted, and its key starts again from `init_state/1`), the persistence

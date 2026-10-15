@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Changed: an Elixir keyset needs its `cells_for/1` (breaking)
+
+An Elixir tasklet declaring `cell_keys` and no `cells_for/1` is now refused as
+`topology.cells_for_missing`, as in every other SDK, instead of routing each input to every
+key. Write `def cells_for(_), do: cell_keys()` to keep that routing. A `cells_for/1` on a
+tasklet with no keys is no longer refused, as in every other SDK.
+
 ### Changed: the Elixir SDK runs on the shared core (breaking)
 
 The Elixir SDK now runs on `flz_core`, the runtime every other SDK uses, through a Rustler
