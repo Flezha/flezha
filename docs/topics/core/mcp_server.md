@@ -88,7 +88,7 @@ it starts reaches it, with no restart.
 
 Your relays are tools too. Each entry channel that has a description is a tool
 named `<factory>_<channel>`, such as `orders_place`, whose arguments are the
-relay to call and the channel's input, so an agent calls your relays the way it
+relay to call, its key when the relay is a partition group, and the channel's input, so an agent calls your relays the way it
 calls any tool (tool calling). They are listed for a token whose role may call
 relays in its namespace, one per factory and channel however many relays run
 it; `relay_api` shows every channel, described or not

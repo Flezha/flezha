@@ -209,7 +209,9 @@ The HTTP API SHALL serve `POST /v1/relays/<id>/<channel>` through the door as
 `json`, UTF-8 text for `text`, raw bytes for `bytes`, `msgpack` and `custom`), and SHALL answer the
 decoded answer with the content type of its format (`application/json`,
 `text/plain; charset=utf-8`, `application/octet-stream`), `202` with `{"accepted": true}` for a
-channel that does not answer, and the error object with its class status on failure.
+channel that does not answer, and the error object with its class status on failure. An optional
+`key` query parameter SHALL be passed as the call's `key`, so a partition group is answered by the
+member owning the key; a group called without one is refused `call.target_unkeyed`.
 
 #### Scenario: A JSON call
 
@@ -226,6 +228,12 @@ channel that does not answer, and the error object with its class status on fail
 
 - **WHEN** a client posts to `/v1/relays/orders-eu/plce`
 - **THEN** the response carries `api.channel_unknown` with the status of its class
+
+#### Scenario: A partition group is called by key
+
+- **WHEN** a client posts `x` to `/v1/relays/prices/in?key=EURUSD` and `prices` is a partition group
+- **THEN** the member owning `EURUSD` answers, and the same post without `?key=` is refused
+  `call.target_unkeyed`
 
 ### Requirement: Relay tools SHALL be listed beside the catalogue tools
 

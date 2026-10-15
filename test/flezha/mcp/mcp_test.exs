@@ -104,9 +104,18 @@ defmodule Flezha.McpRelayToolsTest do
       channel("note", "text"),
       channel("blob", "bytes", %{"answer_codec" => "bytes"}),
       channel("raw", "json"),
+      channel("keyed", "json", %{"schema" => owning("key")}),
+      channel("routed", "json", %{"schema" => owning("relay")}),
       channel("Place", "json", %{"description" => "Shadows place"})
     ]
   end
+
+  defp owning(name),
+    do: %{
+      "type" => "object",
+      "properties" => %{name => %{"type" => "integer"}},
+      "required" => [name]
+    }
 
   # A door that answers `Relay.api` with the `orders` factory, reports every
   # call to the test and answers `Relay.call_channel` with `answer`.
@@ -224,6 +233,53 @@ defmodule Flezha.McpRelayToolsTest do
 
     sent = call("orders_note", %{"relay" => "r", "text" => "hi"}, ~s({"accepted":true}))
     assert [%{type: "text", text: "accepted"}] = sent.content
+  end
+
+  test "every relay tool takes an optional key, passed as the call's key" do
+    tools = tools(catalogue(["Relay.call_channel"]))
+
+    for name <- ~w(orders_place orders_note orders_blob orders_raw) do
+      assert tools[name].inputSchema["properties"]["key"]["type"] == "string"
+      refute "key" in tools[name].inputSchema["required"]
+    end
+
+    call(
+      "orders_place",
+      %{"relay" => "g", "key" => "EURUSD", "pair" => "EUR/USD"},
+      ~s({"accepted":true})
+    )
+
+    assert_received {:door, "Relay.call_channel",
+                     ["desk", "g", "place", %{"pair" => "EUR/USD"}, %{"key" => "EURUSD"}]}
+
+    call(
+      "orders_note",
+      %{"relay" => "g", "key" => "EURUSD", "text" => "hi"},
+      ~s({"accepted":true})
+    )
+
+    assert_received {:door, "Relay.call_channel",
+                     ["desk", "g", "note", "hi", %{"key" => "EURUSD"}]}
+  end
+
+  test "an object input with its own relay or key property rides under input" do
+    tools = tools(catalogue(["Relay.call_channel"]))
+
+    for {name, own} <- [{"orders_keyed", "key"}, {"orders_routed", "relay"}] do
+      schema = tools[name].inputSchema
+      assert schema["required"] == ["relay", "input"]
+      assert schema["properties"]["input"] == owning(own)
+      assert schema["properties"]["key"]["type"] == "string"
+    end
+
+    call(
+      "orders_keyed",
+      %{"relay" => "g", "key" => "EURUSD", "input" => %{"key" => 7}},
+      ~s({"accepted":true})
+    )
+
+    assert_received {:door, "Relay.call_channel",
+                     ["desk", "g", "keyed", %{"key" => 7}, %{"key" => "EURUSD"}]}
   end
 
   test "a refused call is a tool error carrying the error object" do

@@ -130,7 +130,9 @@ failure answers the error object with the HTTP status of its class: `404` for
 `POST /v1/relays/<id>/<channel>` calls one entry channel of a relay in the token's namespace,
 through the relay's API ([`sending_and_calling.md`](../topics/core/sending_and_calling.md#a-relay-s-api)). The body is the value
 as the channel's format reads it: the JSON value for `json`, UTF-8 text for `text`, raw bytes for
-`bytes`, `msgpack` and `custom`. It is `Relay.call_channel`, judged as `relay.send`:
+`bytes`, `msgpack` and `custom`. A [partition group](../topics/core/partitioning.md) is called
+by key, `?key=<key>` (`/v1/relays/prices/in?key=EURUSD`), and refused `call.target_unkeyed`
+without one. It is `Relay.call_channel`, judged as `relay.send`:
 
 ```sh
 $ curl -s -i -X POST http://127.0.0.1:8765/v1/relays/orders-eu/place \
@@ -167,7 +169,7 @@ and `relay.not_found`, `400` for `api.input_invalid`.
 channel of the factories announced in the token's namespace, named `<factory>_<channel>`
 (`orders_place`). They are listed only for a role that grants `relay.send` there, so a viewer
 sees none, and there is one per factory and channel however many relays run it. Its arguments
-are `relay` and the channel's input; `tools/call` is `Relay.call_channel`, and a JSON answer comes
+are `relay`, `key` for a partition group, and the channel's input; `tools/call` is `Relay.call_channel`, and a JSON answer comes
 back as structured content. [`sending_and_calling.md`](../topics/core/sending_and_calling.md#ai-agents-and-tool-calling)
 has the rules for names, schemas and answers.
 

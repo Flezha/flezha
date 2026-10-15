@@ -466,15 +466,24 @@ defmodule Flezha.Mcp do
     end
   end
 
-  @relay_argument %{"type" => "string", "description" => "The relay to call."}
+  # The arguments every relay tool takes beside the channel's input.
+  @relay_arguments %{
+    "relay" => %{"type" => "string", "description" => "The relay to call."},
+    "key" => %{
+      "type" => "string",
+      "description" =>
+        "The key whose partition answers; needed when `relay` names a partition group."
+    }
+  }
 
-  # An object schema without a `relay` property takes `relay` beside its
-  # own properties; any other input rides in one argument of its own.
+  # An object schema with neither a `relay` nor a `key` property takes them
+  # beside its own properties; any other input rides in one argument of its
+  # own.
   defp relay_input_schema(entry) do
     case value_argument(entry) do
       :merged ->
         schema = entry["schema"]
-        properties = Map.put(Map.get(schema, "properties", %{}), "relay", @relay_argument)
+        properties = Map.merge(Map.get(schema, "properties", %{}), @relay_arguments)
 
         Map.merge(schema, %{
           "properties" => properties,
@@ -482,12 +491,14 @@ defmodule Flezha.Mcp do
         })
 
       {name, schema} ->
-        object(%{"relay" => @relay_argument, name => schema}, ["relay", name])
+        object(Map.put(@relay_arguments, name, schema), ["relay", name])
     end
   end
 
   defp value_argument(%{"schema" => %{"type" => "object"} = schema}) do
-    if Map.has_key?(Map.get(schema, "properties", %{}), "relay"),
+    properties = Map.get(schema, "properties", %{})
+
+    if Enum.any?(Map.keys(@relay_arguments), &Map.has_key?(properties, &1)),
       do: {"input", schema},
       else: :merged
   end
@@ -507,15 +518,22 @@ defmodule Flezha.Mcp do
         reply(200, unknown_tool(id, name))
 
       {_factory, entry} ->
-        value =
-          case value_argument(entry) do
-            :merged -> Map.delete(arguments, "relay")
-            {argument, _schema} -> Map.get(arguments, argument)
-          end
-
-        answer = door.(:call_channel, [arguments["relay"], entry["channel"], value, %{}])
+        answer = door.(:call_channel, call_channel_args(entry, arguments))
         {200, relay_tool_result(id, answer), "Relay.call_channel"}
     end
+  end
+
+  # A relay tool's arguments read back the way `relay_input_schema/1` laid
+  # them out: the relay, the channel's value and a text key as the call's.
+  defp call_channel_args(entry, arguments) do
+    value =
+      case value_argument(entry) do
+        :merged -> Map.drop(arguments, Map.keys(@relay_arguments))
+        {argument, _schema} -> Map.get(arguments, argument)
+      end
+
+    opts = if is_binary(arguments["key"]), do: %{"key" => arguments["key"]}, else: %{}
+    [arguments["relay"], entry["channel"], value, opts]
   end
 
   # A JSON answer is structured content, text is text, bytes an embedded

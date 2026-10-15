@@ -192,7 +192,8 @@ Delivered to 'trade_watcher#p1'.
 
 - `flz relay send <group> --key <key>` and `flz relay call <group> --key <key>` reach the
   member whose range owns the key. Without a key, both are refused, naming the members (for a
-  call, `call.target_unkeyed`). The quotes around `trade_watcher#p1` keep some shells from
+  call, `call.target_unkeyed`). Over HTTP the key is `?key=<key>` on
+  `POST /v1/relays/<group>/<channel>`, and an MCP relay tool takes it as its `key` argument. The quotes around `trade_watcher#p1` keep some shells from
   reading the `#` as a comment.
 - `flz state get <group>/<tasklet>/<key>` reads from the member that owns the key. Leaving the
   key off reads every key, from every member, merged:

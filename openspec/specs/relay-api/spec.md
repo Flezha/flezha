@@ -147,10 +147,13 @@ The MCP endpoint and `flz mcp` SHALL list, for a token bound to a namespace whos
 `<factory>_<channel>` with each part in snake case and every character outside
 `[a-zA-Z0-9_-]` made `_`, at most 64 bytes (a longer name cut and ended with a short hash of the
 whole), described by the factory's and the
-channel's descriptions, with an input schema of `relay` (required) merged into an object
-schema's properties, or `relay` with `input`, `text` or `base64` otherwise, and an output schema
+channel's descriptions, with an input schema of `relay` (required) and `key` (optional, needed
+when `relay` names a partition group) merged into an object schema's properties, or `relay` and
+`key` with `input`, `text` or `base64` otherwise (`input` also for an object schema with its own
+`relay` or `key` property), and an output schema
 when the answer's schema is known. A tool name equal to a catalogue or knowledge tool, or to an
-earlier factory's channel's, SHALL NOT be listed. A tool call SHALL be `Relay.call_channel`, a JSON answer returned as structured content,
+earlier factory's channel's, SHALL NOT be listed. A tool call SHALL be `Relay.call_channel` with
+the `key` argument as its key, a JSON answer returned as structured content,
 text as text, bytes as an embedded resource, a send as `accepted`, and a failure as a tool error
 carrying the error object. There SHALL be one tool per factory and channel, whatever the number of
 instances.
@@ -158,9 +161,21 @@ instances.
 #### Scenario: An agent sees and calls a tool
 
 - **WHEN** factory `orders` describes `place` and an MCP client of the namespace lists tools
-- **THEN** `orders_place` is listed with `relay`, `pair` and `amount` arguments, and calling it
+- **THEN** `orders_place` is listed with `relay`, `key`, `pair` and `amount` arguments, and calling it
   with `{"relay":"orders-eu","pair":"EUR/USD","amount":1000}` returns the answer as structured
   content
+
+#### Scenario: A partition group is called through its key
+
+- **WHEN** `prices` is a partition group and an MCP client calls `prices_in` with
+  `{"relay":"prices","key":"EURUSD","text":"x"}`
+- **THEN** the member owning `EURUSD` answers, and the same call without `key` is a tool error
+  carrying `call.target_unkeyed`
+
+#### Scenario: An input with its own key rides under input
+
+- **WHEN** a described channel's object schema has a `key` property
+- **THEN** its tool takes `relay`, `key` and `input`, the channel's value under `input`
 
 #### Scenario: Undescribed channels are not tools
 

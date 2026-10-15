@@ -732,8 +732,9 @@ is bounded the same way, and a relay it cannot reach answers `call.unavailable`.
 
 ### A partition group
 
-A [partition group](partitioning.md) is called by key: `--key EURUSD` on the CLI, or
-`key: "EURUSD"` in `opts`, reaches the member whose key-group range owns the key, the way
+A [partition group](partitioning.md) is called by key: `--key EURUSD` on the CLI,
+`key: "EURUSD"` in `opts`, `?key=EURUSD` on the HTTP route, or `"key": "EURUSD"` among an MCP
+relay tool's arguments, reaches the member whose key-group range owns the key, the way
 `flz state get` finds it. A group called with no key is refused as `call.target_unkeyed`, naming
 its members; a member named directly (`prices#p0`) is called directly. `flz relay send` takes
 `--key` the same way.
@@ -755,8 +756,10 @@ on the controller's MCP endpoint (`flz mcp`, and `POST /mcp` of the HTTP API plu
 character a tool name cannot hold made `_`, and a name past 64 bytes cut and ended with a short
 hash of the whole:
 
-- its arguments are `relay` and the fields of the channel's schema (or `input`, `text` or
-  `base64` for a channel without an object schema)
+- its arguments are `relay`, `key` (needed only when `relay` names a
+  [partition group](partitioning.md)) and the fields of the channel's schema (or `input`, `text`
+  or `base64` for a channel without an object schema, and `input` for one whose schema has its
+  own `relay` or `key`)
 - its output schema is the answer's schema, when the SDK knows it
 - a call is `Relay.call_channel`: a JSON answer comes back as structured content, text as text,
   bytes as a blob, a send as `accepted`
