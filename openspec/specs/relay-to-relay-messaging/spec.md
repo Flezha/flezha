@@ -181,10 +181,13 @@ carries poison input, not a temporarily unreachable peer.
 
 The system SHALL deliver each emitted payload to the target effectively once when the source
 relay has a transactional outbox — an effectively-once flow relay or a durable
-steps relay — without introducing any new identity scheme, dedup store, or wire-format
-change. The guarantee SHALL be composed from the existing identity stamps the sender's outbox
-already applies (`flz.seq`, `flz.key`, `flz.epoch`), the worker's retry-until-confirmed, and the
-target's existing duplicate absorption in `journal_input/2`.
+steps relay — without introducing any new dedup store or wire-format change. The guarantee
+SHALL be composed from the output identity the sender's outbox already stamps (`flz.cell`,
+`flz.seq`, `flz.epoch`), which the plugin carries as the payload's `flz.msg_id`
+(`<plugin id>/<flz.cell>/<flz.seq>/<flz.epoch>`) unless the payload already has one, the
+worker's retry-until-confirmed, and the target input log's existing absorption of a repeated
+`flz.msg_id`. The plugin id in the message id keeps two plugins that forward one output to
+one target two deliveries.
 
 The delivery guarantee SHALL NOT be configurable on the plugin. A source relay without a
 transactional outbox SHALL receive retry-until-confirmed delivery without a de-duplication
@@ -195,6 +198,13 @@ guarantee, and this asymmetry SHALL be documented.
   the target has already durably journaled it, and the retry carries the same identity stamps
 - **THEN** the target SHALL absorb the retry as a duplicate, the worker SHALL observe
   `{:ok, :absorbed}`, and the target SHALL have journaled the payload exactly once
+- **AND** `test/flezha/plugin/provider/relay_forward_test.exs` SHALL drive this against an
+  effectively-once target and a durable steps target
+
+#### Scenario: Two plugins forwarding one output stay two deliveries
+- **WHEN** two relay-forward plugins forward the same effectively-once output to one target
+- **THEN** each delivery SHALL carry a message id naming its own plugin and the target SHALL
+  journal both
 
 #### Scenario: Identity stamps survive the hop
 - **WHEN** an effectively-once source relay emits a payload through the relay-forward

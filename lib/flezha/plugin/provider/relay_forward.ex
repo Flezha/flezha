@@ -9,9 +9,10 @@ defmodule Flezha.Plugin.Provider.RelayForward do
   is safe by construction.
 
   The delivery guarantee is DERIVED, never configured: a source with a
-  transactional outbox already stamps identity and a durable receiver already
-  absorbs duplicates, so retry-until-confirmed across the two is
-  effectively-once. Without an outbox it is at-least-once.
+  transactional outbox already stamps identity, which the forward carries as
+  the `flz.msg_id` a durable receiver absorbs duplicates by, so
+  retry-until-confirmed across the two is effectively-once. Without an outbox
+  it is at-least-once.
 
   Required opt `:target_relay_id`; rest: `docs/plugins/relay_forward.md`.
   """
@@ -154,7 +155,7 @@ defmodule Flezha.Plugin.Provider.RelayForward do
         # the worker answers the hold when the target confirms the ingest. An
         # unroutable payload takes no hold, it parks below, which is a durable
         # outcome the outbox cursor may advance past.
-        Outbox.hold(metadata)
+        metadata = hold(metadata, opts.plugin_id)
         :ok = ForwardWorker.enqueue(worker(opts.plugin_id, member_id), message, metadata)
 
       {:unroutable, why} ->
@@ -162,6 +163,23 @@ defmodule Flezha.Plugin.Provider.RelayForward do
     end
 
     {:ok, ctx}
+  end
+
+  # A guaranteed output's identity becomes the message id the target's input
+  # log absorbs a retried delivery by. The plugin id keeps two forwards of one
+  # output to one target two deliveries; an id the sender set wins. An output
+  # no cursor waits on takes no hold and leaves as it came.
+  defp hold(metadata, plugin_id) do
+    if Outbox.guaranteed?(metadata) do
+      Outbox.hold(metadata)
+
+      case Outbox.dedup_key(metadata) do
+        nil -> metadata
+        key -> Map.put_new(metadata, "flz.msg_id", plugin_id <> "/" <> key)
+      end
+    else
+      metadata
+    end
   end
 
   # One member: everything goes there, keyed or not — today's behaviour.

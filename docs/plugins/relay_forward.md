@@ -65,7 +65,10 @@ Flezha.Service.PluginManager.enable_plugin(
 ```
 
 The identity stamps (`flz.seq`, `flz.key`, `flz.epoch`) cross the hop
-unmodified; the plugin never rewrites metadata. A delivery-guaranteed output is
+unmodified. An effectively-once output also leaves with a `flz.msg_id` built from
+them, `<plugin id>/<flz.cell>/<flz.seq>/<flz.epoch>`, unless it already carries
+one, so the target's input log absorbs a retried delivery instead of journaling
+it twice; an output off the tier is sent as it is. A delivery-guaranteed output is
 taken under an outbox hold when it is enqueued and confirmed when the target's
 ingest confirms, which is what lets the source's outbox cursor wait on the hop.
 
