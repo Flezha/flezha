@@ -27,7 +27,7 @@ defmodule FlezhaTest.Relay.RelayCallsTest do
   alias Flezha.Error
   alias Flezha.Relay.{Calls, Migration, Overwatch}
   alias Flezha.Plugin.Host, as: PluginHost
-  alias Flezha.State.{InputLog, TestHelpers}
+  alias Flezha.State.{InputLog, Outbox, TestHelpers}
   alias FlezhaTest.Helper.CallHarness
   alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.Helper.OverwatchHost, as: Host
@@ -49,17 +49,20 @@ defmodule FlezhaTest.Relay.RelayCallsTest do
 
       assert_receive {:delivery_request, "default", ^inst, %{id: id} = request}
       assert %{target: "factory:agent", key: "anna-42", request: "anna-42:hello"} = request
-      assert_receive {:"$gen_cast", {:outbox_settled_many, [{4, 1}]}}
+      assert_receive {:"$gen_cast", {:outbox_settled_many, [{4, held}]}}
+      assert held == Outbox.delivery_hold()
+      refute_received {:"$gen_cast", {:outbox_delivery_hold, _}}
 
       # A re-dispatch of the same output re-takes its hold and sends nothing.
       dispatch(host, "anna-42:hello", metadata)
-      assert_receive {:"$gen_cast", {:outbox_settled_many, [{4, 1}]}}
+      assert_receive {:"$gen_cast", {:outbox_settled_many, [{4, held}]}}
+      assert held == Outbox.delivery_hold()
       refute_received {:delivery_request, _, _, _}
-      refute_received {:"$gen_cast", {:outbox_confirmed, _}}
+      refute_received {:"$gen_cast", {:outbox_delivery_confirmed, _}}
 
       assert :ok = GenServer.call(host, {:call_answer, id, ok_outcome("hi", true)})
       assert InputLog.msg_offset(inst, "r:" <> id) != nil, "confirmed only once durable"
-      assert_receive {:"$gen_cast", {:outbox_confirmed, {:cursor, 4}}}
+      assert_receive {:"$gen_cast", {:outbox_delivery_confirmed, {:cursor, 4}}}
 
       {fields, stamps} = response(inst)
       assert stamps["flz.msg_id"] == "r:" <> id
@@ -404,7 +407,9 @@ defmodule FlezhaTest.Relay.RelayCallsTest do
       assert_receive {:delivery_answer, _, ^inst, %{call: "c1"}, %{result: {:ok, "answer"}}, _}
       assert_receive {:sink_got, "answer", sunk}
       refute Map.has_key?(sunk, "flz.reply_to")
-      assert_receive {:"$gen_cast", {:outbox_settled_many, [{4, 2}]}}
+      assert_receive {:"$gen_cast", {:outbox_settled_many, [{4, held}]}}
+      assert held == Outbox.delivery_hold() + 1
+      refute_received {:"$gen_cast", {:outbox_delivery_hold, _}}
     end
 
     test "a stopped callee leaves its relay callers to its next run only if it journals them",

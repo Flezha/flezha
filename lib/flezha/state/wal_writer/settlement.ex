@@ -28,6 +28,7 @@ defmodule Flezha.State.WalWriter.Settlement do
   alias Flezha.State.WalWriter.State
 
   @reserved_cell_keys Paths.reserved_cell_keys()
+  @delivery_hold Outbox.delivery_hold()
 
   # ---------- The outbox (fsync- and commit-gated flush) ----------
 
@@ -383,6 +384,35 @@ defmodule Flezha.State.WalWriter.Settlement do
 
   def confirmed(state, key), do: tally(state, key, &%{&1 | confirms: &1.confirms + 1})
 
+  @doc """
+  A relay's call or answer took a hold outside a dispatcher run, or its
+  delivery answered one. Either weighs `Outbox.delivery_hold/0`, as a delivery
+  hold inside a run does.
+  """
+  def delivery(state, key, :held),
+    do: tally(state, key, &%{&1 | holds: &1.holds + @delivery_hold})
+
+  def delivery(state, key, :confirmed), do: tally(state, key, &delivered/1)
+
+  # A confirmation no delivery hold still waits on (a superseded dispatch's,
+  # whose re-dispatch was answered too) is dropped: its weight would answer the
+  # sinks' holds. Until the run settles its holds are not in, so the entry's
+  # call and answer outputs bound them.
+  defp delivered(tally) do
+    if delivery_owed?(tally),
+      do: %{tally | confirms: tally.confirms + @delivery_hold},
+      else: tally
+  end
+
+  defp delivery_owed?(%{pending: pending, confirms: confirms, entry: entry}) when pending > 0,
+    do: div(confirms, @delivery_hold) < Enum.count(entry.outputs, &delivery_output?(&1.metadata))
+
+  defp delivery_owed?(tally), do: deliveries(tally) > 0
+
+  # Delivery holds still unanswered, read off the two weighted counts.
+  defp deliveries(%{holds: holds, confirms: confirms}),
+    do: div(holds, @delivery_hold) - div(confirms, @delivery_hold)
+
   def tally(state, key, fun) do
     case Map.fetch(state.outbox_awaiting, key) do
       # A report for an entry that is gone (a resettle superseded it) changes
@@ -432,7 +462,7 @@ defmodule Flezha.State.WalWriter.Settlement do
   def redrive_calls(state),
     do:
       resettle(state, fn tally ->
-        unanswered?(tally) and carries?(tally.entry, &call_output?/1)
+        unanswered?(tally) and Enum.any?(tally.entry.outputs, &call_output?(&1.metadata))
       end)
 
   defp resettle(state, due?) do
@@ -451,18 +481,15 @@ defmodule Flezha.State.WalWriter.Settlement do
     {length(chunks), state}
   end
 
-  # A chain run that never reported, or a relay's call or answer still
-  # held: the caller's Overwatch keeps a call in memory and the delivery keeps
-  # an answer, so either one lost to a restart comes back only from this
-  # re-dispatch, and a live one re-takes its hold and changes nothing.
+  # A chain run that never reported, or a delivery hold of a relay's call or
+  # answer still open: the caller's Overwatch keeps a call in memory and the
+  # delivery keeps an answer, so either one lost to a restart comes back only
+  # from this re-dispatch, and a live one re-takes its hold and changes nothing.
+  # A sink's hold waits for its sink.
   defp unanswered?(%{pending: pending}) when pending > 0, do: true
+  defp unanswered?(tally), do: deliveries(tally) > 0
 
-  defp unanswered?(%{holds: holds, confirms: confirms, entry: entry}) when holds > confirms,
-    do: carries?(entry, &(call_output?(&1) or answer_output?(&1)))
-
-  defp unanswered?(_tally), do: false
-
-  defp carries?(entry, kind?), do: Enum.any?(entry.outputs, &kind?.(&1.metadata))
+  defp delivery_output?(metadata), do: call_output?(metadata) or answer_output?(metadata)
 
   defp call_output?(metadata), do: List.keymember?(metadata, "flz.call", 0)
 

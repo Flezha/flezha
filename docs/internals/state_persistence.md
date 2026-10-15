@@ -634,7 +634,7 @@ instance metadata → SDK declaration → global default.
 | `:credit_window_bytes` | `%{}` (default `wal_high_watermark_bytes`, capped by `max_mailbox_bytes_total`) | Per-class state-stream window. |
 | `:credit_low_watermark_bytes` | `window / 2` | Grant trigger. |
 | `:outbox_inflight_max` | `1_000` | Effect records inside the plugin chain unconfirmed, per Cell of either kind, before the flush waits. |
-| `:outbox_resettle_ms` | `60_000` | Re-dispatch an entry whose chain run never reported back. |
+| `:outbox_resettle_ms` | `60_000` | Re-dispatch an entry whose chain run never reported back, or whose relay call or answer its delivery still holds. |
 | `:sdk_commit_ack_ms` | `30_000` (`FLEZHA_STEPS_ACK_TIMEOUT_MS`) | The commit worker's deadline for the effect records a steps relay barrier names to become durable; past it the barrier fails with `record_not_durable`. The runner's barrier re-send reads the same variable. |
 | `:record_log_cut_after_bytes` | `64 * 1024` | Released bytes before the journal or an input log rewrites to cut its prefix. |
 | `:default_compact_after_bytes` | `8 * 1024 * 1024` (`FLEZHA_COMPACT_AFTER_BYTES`) | Size trigger; `:compact_after_bytes` map overrides per class. |

@@ -32,6 +32,7 @@ defmodule Flezha.Service.Calls.Router do
   alias Flezha.Service.HubManager
   alias Flezha.Service.RelayManager
   alias Flezha.Service.RelayManager.Spawn
+  alias Flezha.State.Outbox
 
   def start_link(_opts), do: GenServer.start_link(__MODULE__, nil, name: CallDelivery.name())
 
@@ -137,12 +138,24 @@ defmodule Flezha.Service.Calls.Router do
     namespace
     |> worker_opts(callee, caller)
     |> Map.merge(%{
-      deliver: fn {call, outcome}, _metadata ->
-        deliver_answer(namespace, caller, call.call, outcome)
+      confirm: false,
+      deliver: fn {call, outcome}, metadata ->
+        namespace |> deliver_answer(caller, call.call, outcome) |> answered(metadata)
       end,
       expires_at: fn {call, _outcome}, _metadata -> call.deadline_at + margin end,
-      on_expire: fn {_call, _outcome}, _metadata -> caller_gone(namespace, callee, caller) end
+      on_expire: fn {_call, _outcome}, metadata ->
+        answered(caller_gone(namespace, callee, caller), metadata)
+      end
     })
+  end
+
+  # The answer's hold is a delivery hold, answered once the caller took the
+  # answer or is gone; a verdict the worker retries answers nothing.
+  defp answered({:error, _reason} = verdict, _metadata), do: verdict
+
+  defp answered(verdict, metadata) do
+    Outbox.confirm_delivery(metadata)
+    verdict
   end
 
   defp deliver_request(namespace, caller, request) do

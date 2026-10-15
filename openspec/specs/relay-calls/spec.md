@@ -407,7 +407,10 @@ SHALL dispatch their held calls again at once, and the answer SHALL be taken whe
 retries. The callee SHALL hold its answer in its own outbox until the caller's Overwatch has taken
 it, and SHALL keep retrying it until then, until the call's deadline plus the margin has passed,
 or until the caller is no longer declared in its namespace. An answer whose delivery was lost
-while held SHALL be dispatched again by the callee's outbox and handed to the delivery again.
+while held SHALL be dispatched again by the callee's outbox and handed to the delivery again. An
+output plugin's hold SHALL NOT make the outbox dispatch a call or an answer again: an entry whose
+call or answer delivery has answered its hold, or whose output answered no caller, SHALL wait for
+its output plugins like any other entry.
 
 #### Scenario: The callee dies mid-turn
 
@@ -423,6 +426,11 @@ while held SHALL be dispatched again by the callee's outbox and handed to the de
 
 - **WHEN** a durable gateway's Overwatch restarts alone after its call was sent, and the session's answer reaches it before the gateway's outbox dispatches the call again
 - **THEN** the gateway's Cells SHALL dispatch the held call again at once, the answer's delivery SHALL retry, and the gateway SHALL receive exactly one `Response` carrying the answer
+
+#### Scenario: An output plugin's hold does not send an answer again
+
+- **WHEN** a durable callee's answer, also held by an output plugin bound to the callee, reached its relay caller and the output plugin has not confirmed it past `outbox_resettle_ms`
+- **THEN** the callee's outbox SHALL NOT dispatch the answer again, and the caller SHALL be handed the answer once
 
 #### Scenario: The caller dies after its Response was appended
 

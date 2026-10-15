@@ -295,9 +295,10 @@ in every SDK.
 - **The cursor moves on the output plugin's confirmation**, not on dispatch: a Kafka
   produce acknowledged, a Postgres transaction committed, a forward confirmed.
   A batch whose retries run out is parked in the dead-letter queue, and only
-  then may the cursor pass it. A delivery whose confirmation is lost is sent
-  again after `:outbox_resettle_ms` (60 s); at most `:outbox_inflight_max`
-  (1 000) are in flight per cell. Unconfirmed output shows as
+  then may the cursor pass it. Output whose plugin chain never reported back,
+  and a relay call or answer its delivery still holds, are sent again after
+  `:outbox_resettle_ms` (60 s); at most `:outbox_inflight_max` (1 000) are in
+  flight per cell. Unconfirmed output shows as
   `outbox_unconfirmed_ms` in the cell's stall status, and reaches the
   convergence loop as the `outbox_flat` verdict.
 - **The source slows down rather than the log growing without bound.** Each

@@ -870,12 +870,12 @@ defmodule Flezha.Relay.Overwatch do
         %{state | calls: calls}
 
       {:held, calls, output} ->
-        Outbox.hold(metadata)
+        Outbox.hold_delivery(metadata)
         Plugins.transform_io(state, :on_output, message, output)
         Ingest.retire_at_deadline(%{state | calls: calls}, metadata["flz.reply_to"])
 
       :call ->
-        Outbox.hold(metadata)
+        Outbox.hold_delivery(metadata)
         Ingest.request(state, message, metadata, Outbox.guaranteed?(metadata))
     end
   end
@@ -883,7 +883,7 @@ defmodule Flezha.Relay.Overwatch do
   @doc "Answer the outbox hold a call took on `metadata`; `nil` holds nothing."
   @spec confirm_hold(map() | nil) :: :ok
   def confirm_hold(nil), do: :ok
-  def confirm_hold(metadata), do: Outbox.confirm(metadata)
+  def confirm_hold(metadata), do: Outbox.confirm_delivery(metadata)
 
   # Deliver what arrived while a migrate task was binding, in arrival order;
   # a migrate spawned meanwhile holds them again.

@@ -17,6 +17,8 @@ defmodule Flezha.State.Outbox do
   An entry completes when every output has settled and every hold has answered.
   """
 
+  import Bitwise, only: [<<<: 2]
+
   require Logger
 
   alias Flezha.Dlq.Entry, as: DlqEntry
@@ -72,6 +74,7 @@ defmodule Flezha.State.Outbox do
   @ack_key "flz.ack"
   # The chain run in progress in this process: `{token, holds_taken_so_far}`.
   @run_key {__MODULE__, :run}
+  @delivery_hold 1 <<< 32
 
   @typedoc """
   What one confirmation completes on the owning writer: the entry of the
@@ -214,6 +217,42 @@ defmodule Flezha.State.Outbox do
   @doc "One hold's write is durable at the sink."
   @spec confirm(map()) :: :ok
   def confirm(metadata), do: notify(metadata, :outbox_confirmed)
+
+  @doc """
+  Take the hold a relay's call or its answer keeps until its delivery answers
+  it with `confirm_delivery/1`. An entry with a delivery hold outstanding is
+  dispatched again at the resettle tick, while one only a sink holds waits.
+  Inside a run it rides the run's one count, weighted by `delivery_hold/0`,
+  so it costs no report of its own.
+  """
+  @spec hold_delivery(map()) :: :ok
+  def hold_delivery(metadata) do
+    # `hold/1`'s shape with its own weight: `hold/1` is every sink's per-output
+    # call, so it does not take the weight as an argument.
+    case {ack(metadata), Process.get(@run_key)} do
+      {nil, _} ->
+        :ok
+
+      {token, {token, holds}} ->
+        Process.put(@run_key, {token, holds + @delivery_hold})
+        :ok
+
+      _ ->
+        notify(metadata, :outbox_delivery_hold)
+    end
+  end
+
+  @doc """
+  The weight of one delivery hold and its confirmation: above any number of
+  sink holds, so one count carries both kinds and the run's one batched report
+  stays as it is.
+  """
+  @spec delivery_hold() :: pos_integer()
+  def delivery_hold(), do: @delivery_hold
+
+  @doc "A delivery hold is answered: the caller took the call or its answer, or gave it up."
+  @spec confirm_delivery(map()) :: :ok
+  def confirm_delivery(metadata), do: notify(metadata, :outbox_delivery_confirmed)
 
   @doc """
   A whole batch's writes are durable at the sink: one report per owning writer

@@ -556,6 +556,12 @@ defmodule Flezha.State.WalWriter do
   def handle_cast({:outbox_confirmed_many, keys}, state),
     do: {:noreply, Enum.reduce(keys, state, &Settlement.confirmed(&2, &1))}
 
+  def handle_cast({:outbox_delivery_hold, key}, state),
+    do: {:noreply, Settlement.delivery(state, key, :held)}
+
+  def handle_cast({:outbox_delivery_confirmed, key}, state),
+    do: {:noreply, Settlement.delivery(state, key, :confirmed)}
+
   defp do_append_async(seq, header, change_bytes, runner_id, state, credit_opts) do
     case handle_call({:append, seq, header, change_bytes, runner_id}, nil, state) do
       {:reply, {:error, {:gap, expected: expected, got: got}}, new_state} ->

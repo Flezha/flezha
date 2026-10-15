@@ -52,7 +52,7 @@ defmodule FlezhaTest.Relay.CallsRecoveryTest do
     {:ok, _offset} = InputLog.append(inst, "earlier", %{"flz.msg_id" => "r:" <> id})
 
     dispatch(host, "o1", metadata)
-    assert_receive {:"$gen_cast", {:outbox_confirmed, {:cursor, 4}}}
+    assert_receive {:"$gen_cast", {:outbox_delivery_confirmed, {:cursor, 4}}}
     refute_received {:delivery_request, _, _, _}
     refute_receive {:channel_got, _, _}, 100
   end
@@ -61,7 +61,7 @@ defmodule FlezhaTest.Relay.CallsRecoveryTest do
     {host, id, metadata} = redrive(inst, now() + 30_000)
     dispatch(host, "o1", metadata)
     assert_receive {:delivery_request, _, ^inst, %{id: ^id}}
-    refute_received {:"$gen_cast", {:outbox_confirmed, _}}
+    refute_received {:"$gen_cast", {:outbox_delivery_confirmed, _}}
     assert %{} = Calls.pending(:sys.get_state(host).calls, id)
   end
 
@@ -69,7 +69,7 @@ defmodule FlezhaTest.Relay.CallsRecoveryTest do
     {host, id, metadata} = redrive(inst, now() - 1_000)
     dispatch(host, "o1", metadata)
     {%{"call" => ^id, "error" => %{"code" => "call.timeout"}}, _} = response(inst)
-    assert_receive {:"$gen_cast", {:outbox_confirmed, {:cursor, 4}}}
+    assert_receive {:"$gen_cast", {:outbox_delivery_confirmed, {:cursor, 4}}}
     refute_received {:delivery_request, _, _, _}
   end
 
@@ -77,7 +77,7 @@ defmodule FlezhaTest.Relay.CallsRecoveryTest do
     on_exit(TestHelpers.override_env(:call_retention_margin_ms, 1_000))
     {host, _id, metadata} = redrive(inst, now() - 5_000)
     dispatch(host, "o1", metadata)
-    assert_receive {:"$gen_cast", {:outbox_confirmed, {:cursor, 4}}}
+    assert_receive {:"$gen_cast", {:outbox_delivery_confirmed, {:cursor, 4}}}
     assert_receive {:call_event, :recovered_unanswered, %{relay_id: ^inst}}
     refute_receive {:channel_got, _, _}, 100
   end

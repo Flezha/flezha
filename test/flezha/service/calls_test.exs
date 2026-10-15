@@ -239,10 +239,36 @@ defmodule FlezhaTest.Service.CallsTest do
       end)
 
       answer_to_gateway("c3", %{"flz.ack" => Outbox.token(cell, {:cursor, 4})})
-      assert_receive {:"$gen_cast", {:outbox_confirmed, {:cursor, 4}}}, 1_000
+      assert_receive {:"$gen_cast", {:outbox_delivery_confirmed, {:cursor, 4}}}, 1_000
 
       assert_receive {:answer_dropped,
                       %{reason: "caller_gone", caller: "gateway", relay_id: "agent-c3"}}
+    end
+
+    test "an answer past its deadline and the margin is dropped undelivered, its hold answered" do
+      cell = {"agent", "account", "k"}
+      observe_answer(cell)
+      test_pid = self()
+
+      stub(RelayManager, :get_relay_pid, fn @ns, "gateway" ->
+        send(test_pid, :delivery_tried)
+        {:ok, test_pid}
+      end)
+
+      CallDelivery.answer(
+        @ns,
+        "agent-c5",
+        call("c5", %{deadline_at: 0}),
+        %{result: {:ok, "hi"}, target: "agent-c5", created: false},
+        %{"flz.ack" => Outbox.token(cell, {:cursor, 6})}
+      )
+
+      assert_receive {:"$gen_cast", {:outbox_delivery_confirmed, {:cursor, 6}}}, 1_000
+
+      assert_receive {:answer_dropped,
+                      %{reason: "caller_gone", caller: "gateway", relay_id: "agent-c5"}}
+
+      refute_received :delivery_tried
     end
 
     test "an answer to an absent caller whose hub cannot be read is retried, not dropped" do
@@ -264,7 +290,7 @@ defmodule FlezhaTest.Service.CallsTest do
       assert_receive {:"$gen_call", from, {:call_answer, "c4", _outcome}}, 2_000
       assert :counters.get(tries, 1) == 2
       GenServer.reply(from, :ok)
-      assert_receive {:"$gen_cast", {:outbox_confirmed, {:cursor, 5}}}, 1_000
+      assert_receive {:"$gen_cast", {:outbox_delivery_confirmed, {:cursor, 5}}}, 1_000
       refute_received {:answer_dropped, _metadata}
     end
   end

@@ -217,10 +217,9 @@ defmodule Flezha.State.WalWriterOutboxDeliveryTest do
     assert {"call", call_md, _} = next_output()
     assert {"sink", sink_md, _} = next_output()
 
-    for md <- [call_md, sink_md] do
-      :ok = Outbox.hold(md)
-      settle(md)
-    end
+    :ok = Outbox.hold_delivery(call_md)
+    :ok = Outbox.hold(sink_md)
+    Enum.each([call_md, sink_md], &settle/1)
 
     # A restarted Overwatch holds no row for the call, so the resettle hands
     # the call back with identical identity; the sink's hold is its own.
@@ -230,9 +229,9 @@ defmodule Flezha.State.WalWriterOutboxDeliveryTest do
     assert again["flz.seq"] == call_md["flz.seq"]
     refute_dispatched(0)
 
-    :ok = Outbox.hold(again)
+    :ok = Outbox.hold_delivery(again)
     settle(again)
-    :ok = Outbox.confirm(again)
+    :ok = Outbox.confirm_delivery(again)
     :ok = WalWriter.fsync(pid)
     assert %{outbox_flushed_seq: 0} = WalWriter.outbox_status(pid)
   end
@@ -248,7 +247,7 @@ defmodule Flezha.State.WalWriterOutboxDeliveryTest do
     answer = [{"flz.reply_to", "o:gateway:c1:0:1:"}]
     append_effect(pid, 0, [output("k", "answer", answer)], 1)
     assert {"answer", md, _} = next_output()
-    :ok = Outbox.hold(md)
+    :ok = Outbox.hold_delivery(md)
     settle(md)
 
     # The delivery that held it went down with its router: the answer goes again.
@@ -256,6 +255,87 @@ defmodule Flezha.State.WalWriterOutboxDeliveryTest do
     :ok = WalWriter.fsync(pid)
     assert {"answer", again, _} = next_output()
     assert again["flz.seq"] == md["flz.seq"]
+  end
+
+  test "an answer whose delivery confirmed is not re-dispatched while only a sink holds it", %{
+    rc: rc,
+    cell_id: cell_id
+  } do
+    on_exit(TestHelpers.override_env(:outbox_resettle_ms, 0))
+
+    pid = armed_writer(rc, cell_id)
+    answer = [{"flz.reply_to", "o:gateway:c1:0:1:"}]
+    append_effect(pid, 0, [output("k", "answer", answer)], 1)
+    assert {"answer", md, _} = output = next_output()
+
+    # In one dispatcher run the Overwatch holds the answer for its delivery
+    # and a sink in the `:on_output` chain holds the same output.
+    run_batch([output], fn _payload, metadata ->
+      :ok = Outbox.hold_delivery(metadata)
+      :ok = Outbox.hold(metadata)
+    end)
+
+    # The delivery took the answer to its caller; the sink has not answered.
+    :ok = Outbox.confirm_delivery(md)
+    :ok = WalWriter.fsync(pid)
+    assert %{awaiting: 1, outbox_flushed_seq: -1} = WalWriter.outbox_status(pid)
+
+    send(pid, :outbox_retry)
+    :ok = WalWriter.fsync(pid)
+    refute_dispatched(0)
+
+    # The sink's confirmation is the last one the entry waits on.
+    :ok = Outbox.confirm(md)
+    :ok = WalWriter.fsync(pid)
+    assert %{awaiting: 0, outbox_flushed_seq: 0} = WalWriter.outbox_status(pid)
+  end
+
+  test "a second confirmation of one answer's delivery does not answer a sink's hold", %{
+    rc: rc,
+    cell_id: cell_id
+  } do
+    pid = armed_writer(rc, cell_id)
+    answer = [{"flz.reply_to", "o:gateway:c1:0:1:"}]
+    append_effect(pid, 0, [output("k", "answer", answer)], 1)
+    assert {"answer", md, _} = output = next_output()
+
+    # A superseded dispatch's delivery and the live one both confirm, before
+    # and after the run settles; the sink's hold is still open.
+    :ok = Outbox.confirm_delivery(md)
+    :ok = Outbox.confirm_delivery(md)
+
+    run_batch([output], fn _payload, metadata ->
+      :ok = Outbox.hold_delivery(metadata)
+      :ok = Outbox.hold(metadata)
+    end)
+
+    :ok = Outbox.confirm_delivery(md)
+    :ok = WalWriter.fsync(pid)
+    assert %{awaiting: 1, outbox_flushed_seq: -1} = WalWriter.outbox_status(pid)
+
+    :ok = Outbox.confirm(md)
+    :ok = WalWriter.fsync(pid)
+    assert %{awaiting: 0, outbox_flushed_seq: 0} = WalWriter.outbox_status(pid)
+  end
+
+  test "a later output of a relay-called input is not re-dispatched while a sink holds it", %{
+    rc: rc,
+    cell_id: cell_id
+  } do
+    on_exit(TestHelpers.override_env(:outbox_resettle_ms, 0))
+
+    pid = armed_writer(rc, cell_id)
+    token = [{"flz.reply_to", "o:gateway:c1:0:1:"}]
+    append_effect(pid, 0, [output("k", "to-sink", token)], 1)
+    assert {"to-sink", md, _} = next_output()
+
+    # The call was answered by an earlier output: no delivery holds this one.
+    :ok = Outbox.hold(md)
+    settle(md)
+
+    send(pid, :outbox_retry)
+    :ok = WalWriter.fsync(pid)
+    refute_dispatched(0)
   end
 
   test "asked for its held calls, a writer re-dispatches them at once and nothing else", %{
@@ -268,10 +348,9 @@ defmodule Flezha.State.WalWriterOutboxDeliveryTest do
     assert {"call", call_md, _} = next_output()
     assert {"sink", sink_md, _} = next_output()
 
-    for md <- [call_md, sink_md] do
-      :ok = Outbox.hold(md)
-      settle(md)
-    end
+    :ok = Outbox.hold_delivery(call_md)
+    :ok = Outbox.hold(sink_md)
+    Enum.each([call_md, sink_md], &settle/1)
 
     assert WalWriter.redrive_calls(pid) == 1
     assert {"call", again, _} = next_output()
