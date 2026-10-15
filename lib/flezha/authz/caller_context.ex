@@ -80,7 +80,9 @@ defmodule Flezha.Service.CallerContext do
   (a positive integer or `:infinity`) elapses, `handler` answers `:done`, or
   `watch` exits. The one receive loop behind every streaming operation: the
   caller says what a message means, never when the stream ends. Answers
-  `:done`, `:window_closed` or `:caller_down`.
+  `:done`, `:window_closed` or `:caller_down`. A window that has closed still
+  hands on one message already queued, as `receive ... after 0` does, so a fed
+  mailbox cannot keep it open.
   """
   @spec receive_for(integer() | :infinity, (term() -> :continue | :done), pid() | nil) ::
           :done | :window_closed | :caller_down
@@ -95,23 +97,20 @@ defmodule Flezha.Service.CallerContext do
   end
 
   defp receive_until(deadline, handler, monitor) do
-    case remaining(deadline) do
-      0 ->
-        :window_closed
+    remaining = remaining(deadline)
 
-      remaining ->
-        receive do
-          {:DOWN, ^monitor, :process, _pid, _reason} ->
-            :caller_down
+    receive do
+      {:DOWN, ^monitor, :process, _pid, _reason} ->
+        :caller_down
 
-          message ->
-            case handler.(message) do
-              :continue -> receive_until(deadline, handler, monitor)
-              :done -> :done
-            end
-        after
-          remaining -> :window_closed
+      message ->
+        case handler.(message) do
+          :continue when remaining == 0 -> :window_closed
+          :continue -> receive_until(deadline, handler, monitor)
+          :done -> :done
         end
+    after
+      remaining -> :window_closed
     end
   end
 
