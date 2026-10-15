@@ -156,12 +156,16 @@ gate --in "$P" sdk-python-pyright-well-typed env PYTHONPATH=src .venv/bin/pyrigh
 smoke sdk-python-smoke "$P" .venv/bin/python test_app/runner.py smoke
 
 # Ruby: sdk/ruby/scripts/ci.sh and the workflow's format job.
+# Under the Ruby its CI runs (3.3/3.4): the gemspec pins minitest 5.x, which
+# refuses Ruby 4, and the native library links the Ruby that builds it.
+export RBENV_VERSION=3.4.10
 R=$ROOT/sdk/ruby
 gate --in "$R" --stderr-ok sdk-ruby-gems bash -c 'ruby -e '\''Gem::Specification.load("flezha.gemspec").dependencies.each { |d| puts "#{d.name}\t#{d.requirement}" }'\'' | while IFS=$'\''\t'\'' read -r n r; do gem install --conservative --no-document "$n" -v "$r" || exit 1; done'
 gate --stderr-ok sdk-ruby-build scripts/build-ruby-sdk.sh
 gate --in "$R" sdk-ruby-test rake test
 gate --in "$R" sdk-ruby-rubocop rubocop
 smoke sdk-ruby-smoke "$R" ruby test_app/runner.rb smoke
+unset RBENV_VERSION
 
 # PHP: sdk/php/scripts/ci.sh and the workflow's format job.
 H=$ROOT/sdk/php

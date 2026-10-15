@@ -900,7 +900,7 @@ order is the workflow's first message. It passes no id, so each buy starts a new
 ```ruby
 # buy_above_average.rb: buys when a price is far enough above its average.
     order = { symbol: move[:symbol], quantity: quantity }
-    ctx.spawn_steps("order_executor", order)               # one steps relay per order
+    ctx.spawn_steps("order_executor", order) # one steps relay per order
 ```
 
 [Full file](https://github.com/flezha/flezha_ruby_sdk/blob/main/examples/tradedesk/buy_above_average.rb)
