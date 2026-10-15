@@ -7,8 +7,10 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
 
   use Flezha.Constant
 
+  alias Flezha.Cluster.GroupedHashing
   alias Flezha.Config
   alias Flezha.Config.Environment
+  alias Flezha.Identificator
   alias Flezha.Runner.FleetManager
   alias Flezha.Runner.StreamChannel
   alias Flezha.Service.EventManager
@@ -182,6 +184,21 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
       tolerate(fn -> :erpc.call(peer_node, :application, :stop, [:flezha]) end)
       tolerate(fn -> :peer.stop(peer_pid) end)
     end
+  end
+
+  @doc """
+  Wait until `node` serves `factory_id` in `namespace` as this node's table
+  has it, or flunk. A relay is hashed over the controllers in that table, and a
+  peer joins the hub before its runner's factories reach it, so a placement
+  probe started on hub membership alone can place every candidate here.
+  """
+  def await_serving(node, namespace, factory_id) do
+    hub_id = Identificator.hub(namespace)
+
+    wait_until(fn -> node in GroupedHashing.group_nodes(hub_id, factory_id) end, 30_000) ||
+      ExUnit.Assertions.flunk(
+        "#{inspect(node)} never served #{factory_id} in the #{namespace} hub"
+      )
   end
 
   # A peer BEAM is linked to the test process, so by the time a teardown runs

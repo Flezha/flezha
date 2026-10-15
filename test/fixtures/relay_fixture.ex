@@ -8,6 +8,7 @@ defmodule FlezhaTest.Fixtures.RelayFixture do
   alias Flezha.Identificator
   alias Flezha.Service.RelayManager
   alias Flezha.Service.PluginManager
+  alias FlezhaTest.Helper.NodeTestHelper
   alias ProcessHub.Constant.Hook
 
   use Flezha.Constant
@@ -50,6 +51,25 @@ defmodule FlezhaTest.Fixtures.RelayFixture do
     )
 
     result
+  end
+
+  @doc """
+  Start a relay of `factory_id` placed on `node` and answer its id. The hash
+  ring places by id, so candidate ids `<prefix>_1..` are probed once `node`
+  serves the factory, and each one placed elsewhere is stopped again. Options:
+  `:namespace`, and `:attempts` (20) before the probe flunks.
+  """
+  def start_on(node, prefix, factory_id, opts \\ []) do
+    namespace = Keyword.get(opts, :namespace, @default_namespace)
+    attempts = Keyword.get(opts, :attempts, 20)
+    NodeTestHelper.await_serving(node, namespace, factory_id)
+
+    Enum.find_value(1..attempts, fn i ->
+      id = "#{prefix}_#{i}"
+      {:ok, %{node: placed}} = id |> get(factory_id) |> start(namespace)
+      if placed == node, do: id, else: stop(id, namespace) && nil
+    end) ||
+      ExUnit.Assertions.flunk("no relay landed on #{inspect(node)} in #{attempts} attempts")
   end
 
   def stop(relay_id, namespace \\ @default_namespace) do

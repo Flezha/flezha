@@ -65,13 +65,7 @@ defmodule FlezhaTest.Plugin.SharedMultinodeTest do
   # A relay the hub placed on `node`, whose every ingested record reaches
   # the test as `{:ingested, id, record}`.
   defp relay_on(node, prefix) do
-    id =
-      Enum.find_value(1..30, fn i ->
-        id = "#{prefix}_#{i}"
-        {:ok, %{node: placed}} = id |> RelayFixture.get(@factory) |> RelayFixture.start()
-
-        if placed == node, do: id, else: RelayFixture.stop(id) && nil
-      end) || flunk("no relay landed on #{inspect(node)}")
+    id = RelayFixture.start_on(node, prefix, @factory, attempts: 30)
 
     test = self()
     collector = spawn_link(fn -> collect(test, id) end)

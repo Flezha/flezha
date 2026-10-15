@@ -68,13 +68,7 @@ defmodule FlezhaTest.Plugin.ControllerPluginMultinodeTest do
 
   # A relay the hub placed on `node`: the class whose dead letter names
   # its namespace there.
-  defp relay_on(node, prefix) do
-    Enum.find_value(1..30, fn i ->
-      id = "#{prefix}_#{i}"
-      {:ok, %{node: placed}} = id |> RelayFixture.get(@factory) |> RelayFixture.start()
-      if placed == node, do: id, else: RelayFixture.stop(id) && nil
-    end) || flunk("no relay landed on #{inspect(node)}")
-  end
+  defp relay_on(node, prefix), do: RelayFixture.start_on(node, prefix, @factory, attempts: 30)
 
   defp dead_letter_on(node, relay) do
     entry =

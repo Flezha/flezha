@@ -232,31 +232,12 @@ defmodule FlezhaTest.Handover do
     )
   end
 
-  # The consistent-hash ring decides placement by id, so probe candidate ids
-  # until one lands on the peer; the rejects are stopped again. Placement can
-  # only reach the peer after it has joined the hub cluster, hence the wait.
   defp start_relay_on_peer(peer_node, prefix, namespace \\ @default_namespace) do
-    NodeTestHelper.wait_until(
-      fn -> peer_node in HubManager.get_hub_nodes(namespace, false) end,
-      10_000
-    ) || flunk("peer #{inspect(peer_node)} never joined the hub cluster")
+    id =
+      RelayFixture.start_on(peer_node, prefix, @test_store_input_factory, namespace: namespace)
 
-    Enum.reduce_while(1..20, nil, fn i, _acc ->
-      id = "#{prefix}_#{i}"
-
-      {:ok, %{node: pnode}} =
-        id
-        |> RelayFixture.get(@test_store_input_factory)
-        |> RelayFixture.start(namespace)
-        |> RelayFixture.attach_output_msg(namespace)
-
-      if pnode == peer_node do
-        {:halt, id}
-      else
-        RelayFixture.stop(id, namespace)
-        {:cont, nil}
-      end
-    end) || flunk("no relay landed on #{inspect(peer_node)} in 20 attempts")
+    RelayFixture.attach_output_msg({:ok, %{relay_id: id}}, namespace)
+    id
   end
 
   @tag :runner_disconnect
@@ -740,10 +721,7 @@ defmodule FlezhaTest.Handover do
   end
 
   defp start_steps_on_peer(peer, factory_id, collector) do
-    NodeTestHelper.wait_until(
-      fn -> peer in HubManager.get_hub_nodes(@temp_namespace, false) end,
-      10_000
-    ) || flunk("peer #{inspect(peer)} never joined the hub cluster")
+    NodeTestHelper.await_serving(peer, @temp_namespace, factory_id)
 
     Enum.find_value(1..20, fn i ->
       id = "#{factory_id}_#{System.unique_integer([:positive])}_#{i}"
@@ -761,9 +739,9 @@ defmodule FlezhaTest.Handover do
         ]
       }
 
-      {:ok, _info} = RelayManager.start_relay(@temp_namespace, builder)
+      {:ok, %{node: placed}} = RelayManager.start_relay(@temp_namespace, builder)
 
-      if overwatch_node(id) == peer,
+      if placed == peer,
         do: id,
         else: RelayManager.request_stop(@temp_namespace, id) && nil
     end) || flunk("no steps relay landed on #{inspect(peer)} in 20 attempts")
