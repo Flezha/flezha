@@ -102,6 +102,7 @@ defmodule FlezhaTest.System.SdkAdminE2ETest do
       assert "app_started" not in ids
     end
 
+    @tag capability: :graph_builder, skip: FlezhaTest.SystemCase.deferral(:graph_builder)
     test "a start is recorded naming the requester, and a read is not", %{secrets: secrets} do
       watch_relay_records()
 

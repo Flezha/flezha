@@ -325,7 +325,7 @@ that start workflows) reaches only the start and the send below; adding
 | disable a plugin | `PluginManager.disable` | `name` |
 | list relays | `Relay.list_relays` | none |
 | list plugins | `PluginManager.list` | none; the plugins enabled in the namespace |
-| read cell state | `Relay.cell_state` | `relay_id`, `cell_key` |
+| read cell state | `Relay.cell_state` | `relay_id`, and optionally `cell`: `<tasklet>` for its Cells or `<tasklet>/<cell_key>` for one; absent, every Cell of the relay |
 
 Each SDK spells these as methods on its `control()` handle, except the send,
 which is on the runner itself:
