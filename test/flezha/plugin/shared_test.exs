@@ -280,7 +280,7 @@ defmodule FlezhaTest.Plugin.SharedTest do
     assert {:ok, _} = PluginManager.disable_plugin(@namespace, "trades")
 
     assert_receive {:ws_closed, ^socket}, 2_000
-    assert copies() == []
+    assert NodeTestHelper.wait_until(fn -> copies() == [] end, 5_000)
 
     for op <- [a, b] do
       assert Table.phase(table(op), "trades") == {:not_started, {:plugin_not_found, "trades"}}
