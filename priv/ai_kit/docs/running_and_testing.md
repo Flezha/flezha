@@ -412,7 +412,7 @@ Local mode is not a deployment. These need a controller:
 | Effectively-once delivery | An output rides its effect record and is released once that record is durable |
 | Plugins: Kafka, Postgres, HTTP, WebSocket | Plugins run on the controller |
 | Placement, migration, rescale, partitioning | A member's key-group range arrives with `AddRelay` |
-| The dead-letter queue | A park is durable, and the controller acknowledges it |
+| The dead-letter queue | A park is durable, and the controller acknowledges it; a local run logs a payload that would park and drops it |
 | Observability export, authorization, several runners | Controller surfaces |
 
 Everything else runs as it does deployed: the entry channel's decode and parse
