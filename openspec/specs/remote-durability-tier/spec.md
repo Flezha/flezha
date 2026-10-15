@@ -134,6 +134,10 @@ Taking over a reference's lineage SHALL require that the controller has adopted 
 - **WHEN** a relay migrates to another controller, which adopts it and ships, while the source controller still holds every local file
 - **THEN** the source controller's backstop sweep does not reclaim the lineage, and the manifest continues to name the adopting controller
 
+#### Scenario: A controller the relay moves back to ships again
+- **WHEN** a relay moves back to a controller that shipped its lineage before the relay moved away, and the other controller has since claimed it
+- **THEN** the returning controller adopts the relay, takes the lineage over with one claim and ships it again, rather than reading itself as superseded
+
 #### Scenario: A restart extends rather than bids
 - **WHEN** a controller restarts and ships a reference it already owned
 - **THEN** it extends its own lineage without consuming a claim, and is never refused against itself

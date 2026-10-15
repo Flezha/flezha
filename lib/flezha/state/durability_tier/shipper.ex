@@ -164,13 +164,21 @@ defmodule Flezha.State.DurabilityTier.Shipper do
   # that lineage remotely. Without this gate a node that merely still has the
   # files — every source of a migration, since the copy is never deleted —
   # would bid its way back in on its next sweep and fence the real owner.
+  #
+  # The cached entries go too: one this node wrote before the relay ran
+  # elsewhere still names it owner, and would make it extend a claim another
+  # writer has since moved past.
   def handle_cast({:adopt, state_key}, state) do
     refs = DurabilityTier.refs_of_state_key(state_key)
     Enum.each(refs, &clear_supersession/1)
 
-    {:noreply,
-     refs
-     |> Enum.reduce(%{state | adopted: MapSet.put(state.adopted, state_key)}, &push(&2, &1))}
+    state = %{
+      state
+      | adopted: MapSet.put(state.adopted, state_key),
+        manifests: Map.drop(state.manifests, refs)
+    }
+
+    {:noreply, Enum.reduce(refs, state, &push(&2, &1))}
   end
 
   @impl true

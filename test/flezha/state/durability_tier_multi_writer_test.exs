@@ -399,6 +399,44 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
       assert owner == this_writer()
     end
 
+    # fails when: a node that stayed up while its relay ran elsewhere keeps the
+    # entry it cached naming itself owner, so after the relay moves back its
+    # ship bids `{:extend, old}`, the backend answers `claim_held`, and the node
+    # records itself superseded while it is the one running the relay.
+    test "a node the relay moves back to ships again past the entry it cached", ctx do
+      ref = {:cell, ctx.cell_id}
+      ship_stale_here_newer_on_peer(ctx, ref)
+      assert %{owner: @peer_writer, claim: 2} = Stub.stored_manifest(ref)
+
+      # The relay moves back: the bind adopts the newer copy, then the lineage.
+      assert :ok = Adoption.adopt_newest(ctx.class, nil)
+      GenServer.cast(Shipper, {:adopt, ctx.class})
+      TestHelpers.append_wal(ctx.cell_id, 6..7)
+
+      assert :ok = Shipper.ship_now(ref)
+      assert %{owner: owner, claim: 3} = Stub.stored_manifest(ref)
+      assert owner == this_writer()
+      assert %{superseded_by: nil} = status_of(ref)
+    end
+
+    # fails when: a claim refused to a node that once adopted the relay is
+    # re-bid instead of recorded as lost. Nothing withdraws an adoption when the
+    # relay moves on, so that node would fence the writer that runs it now.
+    test "a node the relay moved away from stays superseded though it once adopted", ctx do
+      ref = {:cell, ctx.cell_id}
+
+      TestHelpers.write_wal(ctx.cell_id, 0..3)
+      {:ok, _} = start_supervised(Shipper)
+      GenServer.cast(Shipper, {:adopt, ctx.class})
+      assert :ok = Shipper.ship_now(ref)
+
+      peer_adopts_and_ships(ctx, ref)
+
+      TestHelpers.append_wal(ctx.cell_id, 4..5)
+      assert {:error, {:superseded, @peer_writer}} = Shipper.ship_now(ref)
+      assert %{owner: @peer_writer, claim: 2} = Stub.stored_manifest(ref)
+    end
+
     # fails when: hydration skips every reference with local files, so the node
     # a relay returns to binds from the copy it was left holding and loses
     # the turns taken elsewhere.
