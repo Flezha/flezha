@@ -388,9 +388,7 @@ codec fails the emit naming the channel; `codec="msgpack"` or an encoder carries
 it.
 
 A value passed between two tasklets of one relay never crosses a channel
-codec: it stays MessagePack. An Elixir entry declared with no decoder hands its
-tasklet the binary instead, since an Elixir string is its binary, so the same
-bytes on an undeclared entry are a `dict` here and a string there.
+codec: it stays MessagePack.
 
 ## Encoding
 

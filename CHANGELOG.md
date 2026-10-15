@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Changed: an Elixir entry channel decodes by its codec (breaking)
+
+`input/3` in the Elixir SDK now hands the key and the tasklet the payload decoded by the codec it
+announces, as every other SDK does: JSON, the default, arrives as the decoded value, `codec: :text`
+as a UTF-8 string, and `:bytes` as the bytes. Before, every codec handed over the raw bytes, so a
+relay that decoded JSON itself (`map(&Jason.decode!/1)`) should drop that step, and one that
+reads text should write `codec: :text`. `:msgpack` still hands over the bytes, since the SDK has
+no MessagePack decoder. The short form takes `codec:` too, and `input_with/4` announces a
+`description:`.
+
 ### Changed: an Elixir keyset needs its `cells_for/1` (breaking)
 
 An Elixir tasklet declaring `cell_keys` and no `cells_for/1` is now refused as

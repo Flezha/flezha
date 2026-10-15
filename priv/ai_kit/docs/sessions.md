@@ -186,7 +186,7 @@ defmodule Agentdesk.AgentRelay do
   @impl true
   def channels(c) do
     c
-    |> input("turn")
+    |> input("turn", codec: :text)
     |> into(Reply)
     # to whoever called, and whoever listens
     |> output("answer")

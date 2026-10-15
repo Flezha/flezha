@@ -506,7 +506,7 @@ defmodule Echo.Relay do
 
   @impl true
   def channels(c) do
-    c |> input("in") |> into(Echo.Tasklet) |> output("out")
+    c |> input("in", codec: :text) |> into(Echo.Tasklet) |> output("out")
   end
 end
 ```
@@ -630,7 +630,7 @@ final class EchoRelay extends \Flezha\Relay
 
 ```elixir
 defmodule Echo do
-  use Flezha.SDK.Relay, factory_id: "echo", input: "in", output: "out"
+  use Flezha.SDK.Relay, factory_id: "echo", input: "in", output: "out", codec: :text
 
   def run(input, state, ctx) do
     emit(ctx, "echo: " <> input)

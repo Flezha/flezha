@@ -433,7 +433,7 @@ member asks the exchange for those pairs only.
 ```elixir
 # lib/tradedesk/trade_watcher.ex: the desk's stream, keyed by currency pair.
     c
-    |> input_with("trades", &Jason.decode/1)
+    |> input("trades")
     |> filter(&(&1["channel"] == "trade"))
     |> flat_map(& &1["data"])
     |> filter(&(&1["ord_type"] == "market"))

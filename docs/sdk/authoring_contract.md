@@ -505,7 +505,7 @@ is an address a user types and a rename must not move it.
 | Node | `defineRelay({ factoryId: 'echo', output: 'out', input: 'in', codec: 'text', run: (s, ctx) => ctx.emit(s) })` | `defineRelay({ ..., steps: {} })` |
 | Ruby | `class Echo < Flezha::Relay; factory_id "echo"; output "out"; input "in"; codec :text; def run(s, ctx) = ctx.emit(s); end` | `run :steps` in the class body |
 | PHP | `#[Relay(factoryId: 'echo', output: 'out', input: 'in', codec: ChannelCodec::Text)] final class Echo extends \Flezha\Relay { public function run(mixed $s, Ctx $ctx): void }` | `#[Relay(..., run: 'steps')]` |
-| Elixir | `use Flezha.SDK.Relay, factory_id: "echo", output: "out", input: "in"` with `run/3` | `use Flezha.SDK.Relay, ..., run: :steps` |
+| Elixir | `use Flezha.SDK.Relay, factory_id: "echo", output: "out", input: "in", codec: :text` with `run/3` | `use Flezha.SDK.Relay, ..., run: :steps` |
 
 **`output` is optional.** With an `output`, the generated relay declares an
 entry channel, the tasklet, and a plugin output of that name. With no `output`,
@@ -516,7 +516,7 @@ tasklet: the relay that only keeps state is one declaration. `input` and
 
 **The generated relay is the hand-written one, nothing more.** One entry
 channel named by `input` (or `input` when none is written) and decoded by
-`codec` where one is written (Python, Node, Ruby, PHP); the tasklet; the output
+`codec` where one is written (Python, Node, Ruby, PHP, Elixir); the tasklet; the output
 when one is written; a factory id equal to the identity; and the class
 settings it writes, as the full form takes them. A flow short form is a default
 stream. A steps short form is a `once` steps relay unless it declares another

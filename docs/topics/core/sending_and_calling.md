@@ -1007,14 +1007,14 @@ listeners read too. Both channels reach the same `reply` tasklet, with the same 
 ```elixir
 # lib/agentdesk/agent_relay.ex: one conversation, answering whoever called.
     c
-    |> input("turn")
+    |> input("turn", codec: :text)
     |> into(Reply)
     # to whoever called, and whoever listens
     |> output("answer")
 
     # from the gateway
     c
-    |> input_with("message", &Jason.decode/1)
+    |> input("message")
     |> map(& &1["text"])
     |> into(Reply)
 ```

@@ -328,9 +328,7 @@ or a `String` that is not valid UTF-8, cannot be sent as JSON and fails the emit
 naming the channel.
 
 A value passed between two tasklets of one relay never crosses a channel
-codec: it stays MessagePack. An Elixir entry declared with no decoder hands its
-tasklet the binary instead, since an Elixir string is its binary, so the same
-bytes on an undeclared entry are a `Hash` here and a string there.
+codec: it stays MessagePack.
 
 ### State and Change
 

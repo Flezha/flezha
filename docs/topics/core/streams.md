@@ -291,7 +291,7 @@ Each message arrives as the array its JSON decodes to. The confirmation has no
 @impl true
 def channels(c) do
   c
-  |> input_with("trades", &Jason.decode/1)
+  |> input("trades")
   |> filter(&(&1["channel"] == "trade"))
   |> flat_map(& &1["data"])
   |> filter(&(&1["ord_type"] == "market"))
@@ -304,10 +304,9 @@ end
 
 Full file: [`lib/tradedesk/trade_watcher.ex`](https://github.com/flezha/flezha_elixir_sdk/blob/main/examples/tradedesk/lib/tradedesk/trade_watcher.ex).
 
-The entry channel hands on the bytes each message arrives as, so
-`input_with/3` names a parser, `Jason.decode/1`, and each transform is a
-function over the map it decodes to. `use Flezha.SDK.Relay` imports the
-builder, so the pipe needs no module prefix.
+The entry channel reads JSON, its default codec, so each transform is a
+function over the map a message decodes to. `use Flezha.SDK.Relay` imports
+the builder, so the pipe needs no module prefix.
 
 <!-- tabs-close -->
 

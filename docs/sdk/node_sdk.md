@@ -425,9 +425,7 @@ in and out. A `bigint`, `undefined` or a function has no JSON form and fails
 the emit naming the channel; `'msgpack'` carries a `bigint` at any width.
 
 A value passed between two tasklets of one relay never crosses a channel
-codec: it stays MessagePack. An Elixir entry declared with no decoder hands its
-tasklet the binary instead, since an Elixir string is its binary, so the same
-bytes on an undeclared entry are an object here and a string there.
+codec: it stays MessagePack.
 
 ## Durable state
 

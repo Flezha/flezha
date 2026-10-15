@@ -74,7 +74,7 @@ $c->input('in', codec: ChannelCodec::Text)
 
 ```elixir
 # relay.ex: the echo relay's channels
-c |> input("in") |> into(Echo.Tasklet) |> output("out")
+c |> input("in", codec: :text) |> into(Echo.Tasklet) |> output("out")
 ```
 
 [Full file](https://github.com/flezha/flezha_elixir_sdk/blob/main/examples/echo/lib/echo/relay.ex)

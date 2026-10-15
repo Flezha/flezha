@@ -268,8 +268,8 @@ end
 
 Anything more is the full form: a second tasklet, a fan-out, a merge, a keyed
 edge, an edge's retry ladder.
-Elixir names no entry codec — binaries pass through and `input_with/3` takes a
-parser — so the short form takes no `codec` option.
+`codec:` names the entry channel's codec as `input/3`'s does, JSON when
+absent.
 
 The refusals are `CompileError`s. `run/3` beside `channels/1` begins
 `topology.short_form_with_topology`, and writing neither names both. A
@@ -318,7 +318,7 @@ defmodule HandWrittenRelay do
 
   @impl true
   def channels(c) do
-    c |> Channels.input("in") |> Channels.into(HandWritten) |> Channels.output("out")
+    c |> Channels.input("in", codec: :text) |> Channels.into(HandWritten) |> Channels.output("out")
   end
 end
 ```

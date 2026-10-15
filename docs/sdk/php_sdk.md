@@ -380,9 +380,7 @@ form, and sending one to an output that names no codec fails the emit naming the
 channel.
 
 A value passed between two tasklets of one relay never crosses a channel
-codec: it stays JSON. An Elixir entry declared with no decoder hands its
-tasklet the binary instead, so the same bytes on an undeclared entry are an
-array here and a string there.
+codec: it stays JSON.
 
 ### State and Change
 

@@ -46,7 +46,7 @@ TODO: this page is not yet written for PHP.
 # lib/agentdesk/agent_relay.ex: reply's output answers the caller and the listeners
     c
     # entry 1: `flz relay call`
-    |> input("turn")
+    |> input("turn", codec: :text)
     |> into(Reply)
     # to whoever called, and whoever listens
     |> output("answer")
