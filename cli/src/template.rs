@@ -95,7 +95,7 @@ fn holds_files(dir: &Path) -> bool {
 fn template(read: &Reading) -> Template {
     let example = read.opt(EXAMPLE.long).unwrap_or("starter");
     let args = format!("[{}, {}]", text(read.pos("<language>")), text(example));
-    let expression = rpc::eval_expression(LOCAL, "eval", &[text("create"), args], read);
+    let request = rpc::eval_request(LOCAL, "eval", &[text("create"), args], read);
 
     let mut answer = None;
     let mut keep = |line: &str| {
@@ -106,7 +106,7 @@ fn template(read: &Reading) -> Template {
         }
         false
     };
-    rpc::settle(rpc::child("eval", &expression, Out::Filter(&mut keep)));
+    rpc::settle(rpc::child("eval", &request, Out::Filter(&mut keep)));
 
     let template = answer.unwrap_or_else(|| {
         rpc::fail(FlezhaError::with(

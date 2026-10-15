@@ -780,12 +780,12 @@ const CASES: &[(&[&str], Want)] = &[
     (
         &["relay", "scale", "g", "2", "--token", "t"],
         Rpc(
-            r#"Flezha.Service.Cli.call("Steps.rescale", "[\"default\",\"g\",2,{}]", [token: "t"])"#,
+            r#"Flezha.Service.Cli.call("Steps.rescale", "[\"default\",\"g\",2,{}]", [token: IO.read(:eof)])"#,
         ),
     ),
     (
         &["audit", "stats", "--token", "t"],
-        Rpc(r#"Flezha.Service.Cli.call("AuditLog.stats", "[]", [token: "t"])"#),
+        Rpc(r#"Flezha.Service.Cli.call("AuditLog.stats", "[]", [token: IO.read(:eof)])"#),
     ),
     // `flz schedule` — `add`'s flags travel as one keyword list in which an
     // absent flag is absent, `--plugins` stays the text the caller wrote
@@ -796,7 +796,7 @@ const CASES: &[(&[&str], Want)] = &[
     ),
     (
         &["schedule", "run", "digest", "--token", "t"],
-        Rpc(r#"Flezha.Service.Cli.call("Schedule.run", "[\"digest\"]", [token: "t"])"#),
+        Rpc(r#"Flezha.Service.Cli.call("Schedule.run", "[\"digest\"]", [token: IO.read(:eof)])"#),
     ),
     // A quote escaped inside the JSON stays escaped inside the Elixir literal.
     (
@@ -890,7 +890,7 @@ const CASES: &[(&[&str], Want)] = &[
             "t",
         ],
         Rpc(
-            r#"Flezha.Service.Cli.call("Schedule.add", "[{\"cron\":\"0 8 * * *\",\"factory_id\":\"f\",\"init_values\":{\"a\":1},\"name\":\"digest\",\"namespace\":\"prod\",\"plugins\":\"[{\\\"hooks\\\":[\\\"on_output\\\"],\\\"name\\\":\\\"p\\\",\\\"provider\\\":\\\"x\\\"}]\",\"timezone\":\"Etc/UTC\"}]", [token: "t"])"#,
+            r#"Flezha.Service.Cli.call("Schedule.add", "[{\"cron\":\"0 8 * * *\",\"factory_id\":\"f\",\"init_values\":{\"a\":1},\"name\":\"digest\",\"namespace\":\"prod\",\"plugins\":\"[{\\\"hooks\\\":[\\\"on_output\\\"],\\\"name\\\":\\\"p\\\",\\\"provider\\\":\\\"x\\\"}]\",\"timezone\":\"Etc/UTC\"}]", [token: IO.read(:eof)])"#,
         ),
     ),
 ];
@@ -1092,8 +1092,8 @@ fn the_same_invocation_answers_the_same_way_every_run(cli: &Shim) -> Vec<String>
     Vec::new()
 }
 
-/// Every builder appends the credential to the options list its request ends
-/// with; a verb that dropped it, or carried it anywhere else, fails by name.
+/// Every builder ends its options list with the stdin read of the credential;
+/// a verb that dropped it, or carried it anywhere else, fails by name.
 fn every_request_ends_with_the_token_it_was_given(cli: &Shim) -> Vec<String> {
     let mut wrong = Vec::new();
 
@@ -1104,9 +1104,9 @@ fn every_request_ends_with_the_token_it_was_given(cli: &Shim) -> Vec<String> {
         let stdout = String::from_utf8_lossy(&out.stdout).to_string();
 
         match rpc_expression(&stdout) {
-            Some(expr) if expr.ends_with("token: \"t\"])") => {}
+            Some(expr) if expr.ends_with("token: IO.read(:eof)])") => {}
             reached => wrong.push(format!(
-                "flz {}\n     got  {}\n     want a request ending with `token: \"t\"])`",
+                "flz {}\n     got  {}\n     want a request ending with `token: IO.read(:eof)])`",
                 with_token.join(" "),
                 reached.unwrap_or("<no RPC>")
             )),

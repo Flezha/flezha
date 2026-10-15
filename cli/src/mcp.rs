@@ -13,14 +13,14 @@ use flz_transport::utility::socket_dir;
 use serde_json::{json, Value};
 
 use crate::args::Reading;
-use crate::rpc::{self, text, Out};
+use crate::rpc::{self, text, Out, Request};
 
 /// The longest request passed on. It rides one argument of the child's
 /// command line, which Linux caps at 128 KiB.
 const MAX_EXPRESSION: usize = 120 * 1024;
 
 pub(crate) fn serve(read: &Reading) {
-    let opts = rpc::keyword_opts_fragment(&[], read.token(), false);
+    let token = read.token();
     let socket = socket_dir::control_socket_path().unwrap_or_default();
 
     // Bytes, not `lines()`: one line that is not UTF-8 must not end the
@@ -28,16 +28,22 @@ pub(crate) fn serve(read: &Reading) {
     for bytes in io::stdin().lock().split(b'\n').map_while(Result::ok) {
         let line = String::from_utf8_lossy(&bytes);
         if !line.trim().is_empty() {
-            answer(&line, &opts, &socket);
+            answer(&line, token, &socket);
         }
     }
 }
 
-fn answer(line: &str, opts: &str, socket: &str) {
-    let online = format!("Flezha.Mcp.Stdio.answer({}, {})", text(line), opts);
-    let offline = format!("Flezha.Mcp.Stdio.offline({}, {})", text(line), text(socket));
+fn answer(line: &str, token: Option<&str>, socket: &str) {
+    let online = rpc::request(&[], token, false, |list| {
+        format!("Flezha.Mcp.Stdio.answer({}, {})", text(line), list)
+    });
+    let offline = Request::bare(format!(
+        "Flezha.Mcp.Stdio.offline({}, {})",
+        text(line),
+        text(socket)
+    ));
 
-    if online.len().max(offline.len()) > MAX_EXPRESSION {
+    if online.expression().len().max(offline.expression().len()) > MAX_EXPRESSION {
         return refuse(line, -32_600, "Request too large");
     }
 

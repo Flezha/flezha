@@ -9,7 +9,9 @@
 //! it decides itself: its command line, a controller it cannot reach, and an
 //! `flzvm` it cannot start. Every request ends with one options list, and the
 //! caller's token and output format join that list here and nowhere else: no
-//! verb can be gated on the controller and token-less on the wire.
+//! verb can be gated on the controller and token-less on the wire. The token
+//! itself travels on the child's stdin, never its command line, which any local
+//! user can read.
 
 use std::io::{BufRead, BufReader, Write};
 use std::process::{exit, ChildStderr, Command, ExitStatus, Stdio};
@@ -56,11 +58,16 @@ const DOOR: &str = "Flezha.Service.Cli.call";
 /// caller's token and format appended to `opts`. Returns only when the child
 /// succeeded, so the caller's next line is its success path.
 pub(crate) fn door(name: &str, args: &[Value], opts: &[Opt], read: &Reading) {
-    settle(call(&door_expression(name, args, opts, read), Out::Inherit));
+    settle(call(&door_request(name, args, opts, read), Out::Inherit));
 }
 
 /// The request `door` sends, for the calls that do not go through `door`.
-pub(crate) fn door_expression(name: &str, args: &[Value], opts: &[Opt], read: &Reading) -> String {
+pub(crate) fn door_request<'a>(
+    name: &str,
+    args: &[Value],
+    opts: &[Opt],
+    read: &'a Reading,
+) -> Request<'a> {
     door_call(
         name,
         args,
@@ -72,14 +79,59 @@ pub(crate) fn door_expression(name: &str, args: &[Value], opts: &[Opt], read: &R
 
 /// `serde_json` keeps an object's keys sorted, so one invocation builds one
 /// request, byte for byte.
-fn door_call(name: &str, args: &[Value], opts: &[Opt], token: Option<&str>, json: bool) -> String {
-    format!(
-        "{}({}, {}, {})",
-        DOOR,
-        text(name),
-        text(&Value::Array(args.to_vec()).to_string()),
-        keyword_opts_fragment(opts, token, json)
-    )
+fn door_call<'a>(
+    name: &str,
+    args: &[Value],
+    opts: &[Opt],
+    token: Option<&'a str>,
+    json: bool,
+) -> Request<'a> {
+    request(opts, token, json, |list| {
+        format!(
+            "{}({}, {}, {})",
+            DOOR,
+            text(name),
+            text(&Value::Array(args.to_vec()).to_string()),
+            list
+        )
+    })
+}
+
+/// One request for a `flzvm` child: its expression, and the token that
+/// expression's options list reads from the child's stdin. Only `request`
+/// builds one with a token, so an expression that reads a token never goes
+/// without it. No `Debug`: it holds the token.
+pub(crate) struct Request<'a> {
+    expression: String,
+    token: Option<&'a str>,
+}
+
+impl Request<'_> {
+    /// An expression with no options list, so no token to read.
+    pub(crate) fn bare(expression: String) -> Request<'static> {
+        Request {
+            expression,
+            token: None,
+        }
+    }
+
+    pub(crate) fn expression(&self) -> &str {
+        &self.expression
+    }
+}
+
+/// The request `build` makes of the options list `keyword_opts_fragment`
+/// renders, holding the token that list reads.
+pub(crate) fn request<'a>(
+    opts: &[Opt],
+    token: Option<&'a str>,
+    json: bool,
+    build: impl FnOnce(&str) -> String,
+) -> Request<'a> {
+    Request {
+        expression: build(&keyword_opts_fragment(opts, token.is_some(), json)),
+        token,
+    }
 }
 
 /// Run `module.fun` in a VM of its own (`flzvm eval`), for a verb that reaches
@@ -89,25 +141,23 @@ fn door_call(name: &str, args: &[Value], opts: &[Opt], token: Option<&str>, json
 pub(crate) fn eval(module: &str, fun: &str, positional: &[String], read: &Reading) {
     settle(child(
         "eval",
-        &eval_expression(module, fun, positional, read),
+        &eval_request(module, fun, positional, read),
         Out::Inherit,
     ));
 }
 
-/// The expression `eval` runs, for a verb that reads the child's stdout itself.
-pub(crate) fn eval_expression(
+/// The request `eval` runs, for a verb that reads the child's stdout itself.
+pub(crate) fn eval_request(
     module: &str,
     fun: &str,
     positional: &[String],
     read: &Reading,
-) -> String {
-    let mut parts = positional.to_vec();
-    parts.push(keyword_opts_fragment(
-        &[],
-        None,
-        read.output_format() == "json",
-    ));
-    format!("{}.{}({})", module, fun, parts.join(", "))
+) -> Request<'static> {
+    request(&[], None, read.output_format() == "json", |list| {
+        let mut parts = positional.to_vec();
+        parts.push(list.to_string());
+        format!("{}.{}({})", module, fun, parts.join(", "))
+    })
 }
 
 /// What `elixir --rpc-eval` says, with exit 1, whenever it could not reach the
@@ -119,8 +169,8 @@ const NOCONNECTION: &str = "--rpc-eval : RPC failed with reason :noconnection";
 /// `run`, for a verb whose job is to wait for the node: when the node could
 /// not be reached at all, nothing is printed or exited, so the verb can ask
 /// again.
-pub(crate) fn run_if_reachable(expression: &str) -> Result<(), ()> {
-    match call(expression, Out::Inherit) {
+pub(crate) fn run_if_reachable(request: &Request) -> Result<(), ()> {
+    match call(request, Out::Inherit) {
         Ok(answer) if answer.unreachable => Err(()),
         answer => {
             settle(answer);
@@ -163,22 +213,30 @@ pub(crate) enum Out<'a> {
     Filter(&'a mut dyn FnMut(&str) -> bool),
 }
 
-pub(crate) fn call(expression: &str, out: Out) -> io::Result<Answer> {
-    child("rpc", expression, out)
+pub(crate) fn call(request: &Request, out: Out) -> io::Result<Answer> {
+    child("rpc", request, out)
 }
 
 /// `call`, with the `flzvm` command named: `rpc` evaluates on the controller,
-/// `eval` in a VM of its own.
-pub(crate) fn child(command: &str, expression: &str, out: Out) -> io::Result<Answer> {
+/// `eval` in a VM of its own. The request's token is the child's whole stdin;
+/// it gets no other, so nothing it reads can be a line meant for `flz` itself.
+pub(crate) fn child(command: &str, request: &Request, out: Out) -> io::Result<Answer> {
     let mut child = flzvm()
         .arg(command)
-        .arg(expression)
+        .arg(&request.expression)
+        .stdin(Stdio::piped())
         .stdout(match out {
             Out::Inherit => Stdio::inherit(),
             Out::Filter(_) => Stdio::piped(),
         })
         .stderr(Stdio::piped())
         .spawn()?;
+
+    // Closed once written. A child that exits before reading closes the pipe;
+    // its own status and stderr say why, so the failed write adds nothing.
+    if let Some(mut stdin) = child.stdin.take() {
+        let _ = stdin.write_all(request.token.unwrap_or_default().as_bytes());
+    }
 
     let stderr = child.stderr.take().expect("stderr is piped");
     let forwarder = thread::spawn(move || forward_stderr(stderr));
@@ -368,10 +426,10 @@ pub(crate) fn text(value: &str) -> String {
 
 /// The options list every request ends with: `opts` in the order given, then
 /// `output: "json"` when the caller asked for JSON, then the caller's identity
-/// token when there is one — `[]` when it carries none of them. The token is
-/// the walk's answer: the `--token` flag wherever it was written, else the
-/// environment variable its declaration names.
-pub(crate) fn keyword_opts_fragment(opts: &[Opt], token: Option<&str>, json: bool) -> String {
+/// token when the caller has one — `[]` when it carries none of them. The
+/// token's value never enters the list: the list reads it from the stdin
+/// `child` hands it on.
+fn keyword_opts_fragment(opts: &[Opt], token: bool, json: bool) -> String {
     let mut entries: Vec<String> = opts
         .iter()
         .map(|(key, value)| format!("{}: {}", key, value))
@@ -380,8 +438,10 @@ pub(crate) fn keyword_opts_fragment(opts: &[Opt], token: Option<&str>, json: boo
     if json {
         entries.push(format!("output: {}", text("json")));
     }
-    if let Some(token) = token {
-        entries.push(format!("token: {}", text(token)));
+    // `child` writes the token and closes stdin, so the read ends exactly at
+    // the token's last byte.
+    if token {
+        entries.push("token: IO.read(:eof)".to_string());
     }
 
     format!("[{}]", entries.join(", "))
@@ -408,7 +468,7 @@ pub(crate) fn controller_is_up(probe_timeout_ms: u64) -> bool {
 
     let mut child = match flzvm()
         .arg("rpc")
-        .arg(door_call("Controller.boot_status", &[], &[], None, false))
+        .arg(&door_call("Controller.boot_status", &[], &[], None, false).expression)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
         .spawn()
@@ -449,16 +509,17 @@ pub(crate) fn controller_is_up(probe_timeout_ms: u64) -> bool {
 mod tests {
     use super::*;
 
-    /// A token with a quote must not break out of the Elixir keyword literal,
-    /// and a call with nothing else still ends with the list.
+    /// The token closes the options list as code that reads it from stdin, so
+    /// its value is never on the child's command line; a call with nothing
+    /// else still ends with the list.
     #[test]
-    fn the_token_closes_the_options_list_and_is_escaped() {
+    fn the_token_closes_the_options_list_and_is_read_from_stdin() {
         assert_eq!(
-            door_call("Dlq.list", &[], &[], Some("abc\"def"), false),
-            r#"Flezha.Service.Cli.call("Dlq.list", "[]", [token: "abc\"def"])"#
+            door_call("Dlq.list", &[], &[], Some("abc\"def"), false).expression,
+            r#"Flezha.Service.Cli.call("Dlq.list", "[]", [token: IO.read(:eof)])"#
         );
         assert_eq!(
-            door_call("Dlq.list", &[Value::Null], &[], None, false),
+            door_call("Dlq.list", &[Value::Null], &[], None, false).expression,
             r#"Flezha.Service.Cli.call("Dlq.list", "[null]", [])"#
         );
     }
@@ -490,8 +551,8 @@ mod tests {
             serde_json::json!({ "name": "d", "init_values": { "a": "x\"y" }, "cron": "0 8 * * *" });
         let opts = [("duration_ms", "500".to_string())];
         assert_eq!(
-            door_call("Schedule.add", &[fields], &opts, Some("t"), true),
-            r#"Flezha.Service.Cli.call("Schedule.add", "[{\"cron\":\"0 8 * * *\",\"init_values\":{\"a\":\"x\\\"y\"},\"name\":\"d\"}]", [duration_ms: 500, output: "json", token: "t"])"#
+            door_call("Schedule.add", &[fields], &opts, Some("t"), true).expression,
+            r#"Flezha.Service.Cli.call("Schedule.add", "[{\"cron\":\"0 8 * * *\",\"init_values\":{\"a\":\"x\\\"y\"},\"name\":\"d\"}]", [duration_ms: 500, output: "json", token: IO.read(:eof)])"#
         );
     }
 

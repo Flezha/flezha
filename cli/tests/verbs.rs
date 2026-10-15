@@ -27,11 +27,11 @@ const CASES: &[(&[&str], &str)] = &[
     // entirely; every verb below is the same invocation written both ways.
     (
         &["relay", "stop", "--token", "t", "op1"],
-        r#"Flezha.Service.Cli.call("Relay.stop", "[\"default\",\"op1\"]", [token: "t"])"#,
+        r#"Flezha.Service.Cli.call("Relay.stop", "[\"default\",\"op1\"]", [token: IO.read(:eof)])"#,
     ),
     (
         &["relay", "stop", "op1", "--token", "t"],
-        r#"Flezha.Service.Cli.call("Relay.stop", "[\"default\",\"op1\"]", [token: "t"])"#,
+        r#"Flezha.Service.Cli.call("Relay.stop", "[\"default\",\"op1\"]", [token: IO.read(:eof)])"#,
     ),
     (
         &["relay", "stop", "-n", "prod", "op1"],
@@ -57,11 +57,11 @@ const CASES: &[(&[&str], &str)] = &[
     // A switch and the credential read the same on either side of the relay.
     (
         &["relay", "listen", "--input", "--token", "t", "op1"],
-        r#"Flezha.Service.Cli.call("Relay.listen", "[\"default\",\"op1\",\"input\",{\"window_ms\":30000}]", [token: "t"])"#,
+        r#"Flezha.Service.Cli.call("Relay.listen", "[\"default\",\"op1\",\"input\",{\"window_ms\":30000}]", [token: IO.read(:eof)])"#,
     ),
     (
         &["relay", "listen", "op1", "--token", "t", "--input"],
-        r#"Flezha.Service.Cli.call("Relay.listen", "[\"default\",\"op1\",\"input\",{\"window_ms\":30000}]", [token: "t"])"#,
+        r#"Flezha.Service.Cli.call("Relay.listen", "[\"default\",\"op1\",\"input\",{\"window_ms\":30000}]", [token: IO.read(:eof)])"#,
     ),
     (
         &["relay", "listen", "op1", "--calls"],

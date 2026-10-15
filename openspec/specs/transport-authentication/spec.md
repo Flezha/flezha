@@ -118,14 +118,18 @@ SHALL refuse to start distribution rather than proceed without one, and SHALL sa
 The `flz` CLI SHALL accept a token (`--token` flag or `FLEZHA_TOKEN` environment
 variable) and pass it through to the controller in one place: the trailing options
 list every verb's request ends with, appended once by the one function that issues
-every RPC. No verb SHALL carry the credential another way, and no verb that issues a
-request SHALL omit it, so that a verb cannot be gated on the controller and token-less on
-the wire. The verbs that run in a VM of their own and reach no controller
-(`flz plugin install`, `flz plugin uninstall`, `flz plugin sync`) issue no request and
-carry no token; write access to the plugin root is their gate. The controller SHALL
-resolve the token via the token registry into the `caller_context` principal at one
-place. While authorization is enforced, a gated verb invoked without a resolvable
-principal SHALL be refused with a message naming the token requirement;
+every RPC. That entry SHALL read the token from the child's stdin, where `child` in
+`cli/src/rpc.rs` writes it with the request that reads it, so the token never appears
+on a child's command line, which any local user can read. A child `flz mcp` starts
+SHALL get that stdin and no other, empty when there is no token, so it never reads a
+protocol line. No verb SHALL carry the credential another way, and no verb that issues
+a request SHALL omit it, so that a verb cannot be gated on the controller and
+token-less on the wire. The verbs that run in a VM of their own and reach no
+controller (`flz plugin install`, `flz plugin uninstall`, `flz plugin sync`) issue no
+request and carry no token; write access to the plugin root is their gate. The
+controller SHALL resolve the token via the token registry into the `caller_context`
+principal at one place. While authorization is enforced, a gated verb invoked without
+a resolvable principal SHALL be refused with a message naming the token requirement;
 `flz auth bootstrap` SHALL remain callable without a prior token.
 
 #### Scenario: Token resolves to the CLI principal
@@ -146,8 +150,22 @@ principal SHALL be refused with a message naming the token requirement;
 
 - **WHEN** each verb `flz` builds a request for is invoked with `--token <t>` against a
   shim that echoes the request
-- **THEN** every echoed request SHALL end with an options list carrying `token: "<t>"`,
-  and a verb whose request does not SHALL fail the CLI's own test
+- **THEN** every echoed request SHALL end with an options list carrying
+  `token: IO.read(:eof)`, and a verb whose request does not SHALL fail the CLI's own test
+
+#### Scenario: The token never rides a child's command line
+
+- **WHEN** a gated verb, or `flz mcp` answering a line, runs with `FLEZHA_TOKEN` set
+  against a shim that records its arguments and its stdin
+- **THEN** the token SHALL NOT appear in the shim's arguments and SHALL be the whole of
+  its stdin
+
+#### Scenario: A child of `flz mcp` cannot read a protocol line
+
+- **WHEN** `flz mcp` without a token answers a line with a child that reads its stdin,
+  and the client writes the next line while that child runs
+- **THEN** the child SHALL read nothing, and the next line SHALL be answered by the
+  server
 
 #### Scenario: A verb that carries a JSON document still carries the token beside it
 

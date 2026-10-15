@@ -77,13 +77,13 @@ const STOP_MARKER: &str = "flz-controller-stop-result: ";
 fn handle_stop(read: &Reading) {
     // Built before the announcement: a refusal here means no shutdown starts,
     // and a line saying one has is the wrong thing to print above it.
-    let expression = rpc::door_expression("Controller.stop", &[stop_opts(read)], &[], read);
+    let request = rpc::door_request("Controller.stop", &[stop_opts(read)], &[], read);
 
     eprintln!("Stopping flezha controller...");
 
     let mut marker: Option<String> = None;
     let answer = rpc::call(
-        &expression,
+        &request,
         Out::Filter(&mut |line| match line.strip_prefix(STOP_MARKER) {
             Some(outcome) => {
                 marker = Some(outcome.trim().to_string());

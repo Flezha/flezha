@@ -52,7 +52,7 @@ fn handle_await(read: &Reading) {
 
     // Still unreachable when the budget runs out is `controller.unreachable`,
     // whose message names what a failed connect cannot tell apart.
-    while rpc::run_if_reachable(&rpc::door_expression(
+    while rpc::run_if_reachable(&rpc::door_request(
         "Controller.boot_await",
         &[Value::from(budget_ms)],
         &[],
