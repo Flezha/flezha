@@ -150,7 +150,7 @@ An untagged ExUnit module SHALL run under plain `mix test` — on every pull req
 - **THEN** `mix test` fails in the gate naming `keyed_channels`
 
 #### Scenario: A documented runtime list fails the PR
-- **WHEN** `mix bench.roundtrip`'s `@moduledoc` advertises `--runtime rust|java|elixir` while `--runtime` accepts every runtime with a manifest
+- **WHEN** `mix bench`'s `@moduledoc` advertises `--runtime rust|java|elixir` while `--runtime` accepts every runtime with a manifest
 - **THEN** `mix test` fails in the gate naming the task, the runtimes the line lists and the set the manifests hold
 
 ### Requirement: Rolling out a new SDK is enforced by the gate, not remembered

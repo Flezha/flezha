@@ -122,7 +122,7 @@ be refused.
 
 #### Scenario: The benches are unchanged
 
-- **WHEN** `mix bench.roundtrip` and `mix bench.steps` run once before the change and once after, on the same machine and message counts
+- **WHEN** `mix bench` and `mix bench.steps` run once before the change and once after, on the same machine and message counts
 - **THEN** each reported throughput and p99 SHALL be equal within the harness's stated noise, and the dev note SHALL record both runs
 
 #### Scenario: A flow relay completes from inside

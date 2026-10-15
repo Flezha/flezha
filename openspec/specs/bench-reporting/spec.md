@@ -7,7 +7,7 @@ report that is the machine contract CI reads.
 ## Requirements
 ### Requirement: Every bench run opens with a header that situates its numbers
 
-Every bench task (`mix bench`, `mix bench.roundtrip`, `mix bench.steps`) SHALL print, before any measurement, a header composed of three blocks rendered by one shared module:
+Every bench task (`mix bench`, `mix bench.steps`) SHALL print, before any measurement, a header composed of three blocks rendered by one shared module:
 
 * **run** — the SDK runtime and its dispatch model (from the manifest's `dispatch` key, with the current value of each env var it names), the transport, whether the runner is embedded or spawned (derived from the transport, not declared), the workload shape, the durability backend, the dimensions (relays, messages per relay, warmup), and `MIX_ENV`.
 * **system** — CPU model and logical core count, total memory, 1-minute load average, CPU governor, OTP release, Elixir version, the launched runtime's own toolchain version, and the git SHA with a dirty flag.

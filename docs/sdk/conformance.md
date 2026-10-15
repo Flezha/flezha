@@ -540,7 +540,7 @@ What the gate enforces, in the order it checks — a pull request adding
    compare. Those rows are data, not clauses: nothing else about admitting a
    runtime touches the harness.
 10. No bench task's help text enumerates the runtimes. `mix bench` and
-    `mix bench.roundtrip` resolve `--runtime` against the manifests, so a new
+    `mix bench.steps` resolve `--runtime` against the manifests, so a new
     SDK joins them by existing; the gate fails a list that reappears in docs.
 11. The app answers `--conformance-report <path>` by driving every row of
     `test/fixtures/reference_topologies.txt` through its own builder, and the

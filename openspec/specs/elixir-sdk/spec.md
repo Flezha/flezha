@@ -175,7 +175,7 @@ The bounded call SHALL be the package's own `Flezha.SDK.SafeCall`, which the con
 - **THEN** `Flezha.SDK.SafeCall` SHALL resolve inside it, and no SDK file but `Flezha.SDK.Call` SHALL call it
 
 ### Requirement: Bench harness covers the elixir runtime on all three transports
-`mix bench --runtime elixir` SHALL run the `regression`, `cell`, and `dynamic` shapes over `uds` and `quic`, spawning the `test/apps/elixir_runner` app via the same fleet mechanism as every other runtime, registering factories `do_nothing`, `cell_stress`, and `dynamic_cell` with the rust_runner topologies, producing the same `Throughput: <n> messages/second` output measured by the unchanged controller-side code. The transport SHALL be selected exactly as for every runtime — `scripts/bench.sh -t uds|quic` exporting `FLEZHA_TRANSPORT` — with no new `mix bench` flag, and no transport SHALL be offered that only one runtime can use. `mix bench.roundtrip --runtime elixir` SHALL run the `identity` and `keyed` workloads at durability `off` through the same fleet mechanism, registering `bench_echo` and `bench_keyed_nopersist` as twins of the rust_runner fixtures (same factory ids, output names, output bytes and key function), over `uds` and `quic`, at durability `state` registering `bench_keyed`, the persistent twin, at durability `on` registering `tier_store` and at durability `checkpoint` registering `bench_checkpoint`, read in `channels/1` as the reference reads them; a round-trip run combining a `--runtime` with a durability posture whose capability that runtime's manifest defers SHALL be refused at the task with an error naming that capability, before any runner starts.
+`mix bench --runtime elixir` SHALL run the `regression`, `cell`, and `dynamic` shapes over `uds` and `quic`, spawning the `test/apps/elixir_runner` app via the same fleet mechanism as every other runtime, registering factories `do_nothing`, `cell_stress`, and `dynamic_cell` with the rust_runner topologies, producing the same `Throughput: <n> messages/second` output measured by the unchanged controller-side code. The transport SHALL be selected exactly as for every runtime — `scripts/bench.sh -t uds|quic` exporting `FLEZHA_TRANSPORT` — with no new `mix bench` flag, and no transport SHALL be offered that only one runtime can use. The app SHALL also register the round-trip fixtures `bench_echo` and `bench_keyed_nopersist` as twins of the rust_runner fixtures (same factory ids, output names, output bytes and key function), `bench_keyed` as the persistent twin, `tier_store` and `bench_checkpoint`, read in `channels/1` as the reference reads them.
 
 #### Scenario: Comparable bench run
 - **WHEN** `mix bench --runtime elixir -n 100 -m 1000` runs with the uds transport configured
@@ -185,17 +185,9 @@ The bounded call SHALL be the package's own `Flezha.SDK.SafeCall`, which the con
 - **WHEN** `scripts/bench.sh -t native` runs
 - **THEN** it exits with an error naming the transports it accepts
 
-#### Scenario: Round-trip tier-off run on the elixir runtime
-- **WHEN** `mix bench.roundtrip --runtime elixir --workload keyed --durability off` runs with the uds transport configured
-- **THEN** the elixir runner serves `bench_keyed_nopersist`, every record is received exactly once, and the report carries the same throughput and latency columns the rust runtime produces
-
-#### Scenario: Round-trip tiered durability refused by name
-- **WHEN** `mix bench.roundtrip --runtime <sdk> --durability on` runs for an SDK whose manifest lists `effectively_once` under `deferred`
-- **THEN** the task exits before starting a runner with an error naming the deferred `effectively_once` capability and that SDK's guide
-
-#### Scenario: Round-trip tiered runs on the elixir runtime
-- **WHEN** `mix bench.roundtrip --runtime elixir --workload keyed --durability on` and then `--durability checkpoint` run with the uds transport configured
-- **THEN** the elixir runner serves `tier_store` and then `bench_checkpoint`, every record is received exactly once with zero duplicates, and the report carries the same columns the rust runtime produces for the same cases
+#### Scenario: The elixir runner lists every round-trip fixture the reference lists
+- **WHEN** the static drift gate runs under plain `mix test`
+- **THEN** the Elixir manifest lists `bench_echo`, `bench_keyed_nopersist`, `bench_keyed`, `tier_store` and `bench_checkpoint` under the same capabilities as the Rust manifest, and a manifest missing one of them fails the gate naming `elixir`, the capability and the fixture
 
 ### Requirement: The Elixir SDK owns a language byte and advertises it
 

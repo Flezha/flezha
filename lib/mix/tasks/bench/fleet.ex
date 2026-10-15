@@ -2,7 +2,7 @@ defmodule Mix.Tasks.Bench.Fleet do
   @moduledoc """
   Runner-fleet lifecycle shared by the bench tasks.
 
-  `mix bench` and `mix bench.roundtrip` both need the same three things: spawn
+  `mix bench` and `mix bench.steps` both need the same three things: spawn
   N SDK runner processes into a scratch namespace, wait for each to hand-shake,
   and tear the namespace down afterwards. This module owns that; the tasks own
   the workload.

@@ -351,15 +351,11 @@ The harness's `EmitRecord` SHALL expose the emit's key (empty for an emit carryi
 - **THEN** the harness ctx SHALL throw `FlezhaException` with the code `runtime.reserved_metadata_key`, matching the runtime's behaviour
 
 ### Requirement: The reference Java runner carries the round-trip bench fixtures
-The reference Java test app SHALL register the round-trip bench fixtures `bench_echo`, `bench_keyed_nopersist`, `bench_keyed`, `tier_store` and `bench_checkpoint` as twins of the `test/apps/rust_runner` fixtures of the same ids — same output channel names, same output bytes, same key function, same overflow declaration — and SHALL read the same `FLEZHA_BENCH_CHECKPOINT_EVERY`, `FLEZHA_BENCH_CHECKPOINT_OUTPUTS` and `FLEZHA_BENCH_CHECKPOINT_DELAY_MS` environment as the Rust fixtures, so `mix bench.roundtrip --runtime java` selects a factory by id with no per-runtime branch. `bench_checkpoint` SHALL declare `Ack.Checkpoint` with `every` n, and `outputs` at the checkpoint with its `maxDelayMs` only when `FLEZHA_BENCH_CHECKPOINT_OUTPUTS=at_checkpoint`.
+The reference Java test app SHALL register the round-trip bench fixtures `bench_echo`, `bench_keyed_nopersist`, `bench_keyed`, `tier_store` and `bench_checkpoint` as twins of the `test/apps/rust_runner` fixtures of the same ids — same output channel names, same output bytes, same key function, same overflow declaration — and SHALL read the same `FLEZHA_BENCH_CHECKPOINT_EVERY`, `FLEZHA_BENCH_CHECKPOINT_OUTPUTS` and `FLEZHA_BENCH_CHECKPOINT_DELAY_MS` environment as the Rust fixtures. `bench_checkpoint` SHALL declare `Ack.Checkpoint` with `every` n, and `outputs` at the checkpoint with its `maxDelayMs` only when `FLEZHA_BENCH_CHECKPOINT_OUTPUTS=at_checkpoint`.
 
-#### Scenario: Every round-trip tier runs on the Java runtime
-- **WHEN** `mix bench.roundtrip --runtime java` runs the identity and keyed workloads at durabilities `off`, `state`, `on` and `checkpoint`
-- **THEN** each run selects the Java fixture of the same id the Rust run selects, receives every record exactly once, and reports the same columns
-
-#### Scenario: The held-outputs declaration reaches the kernel from Java
-- **WHEN** `mix bench.roundtrip --runtime java --durability checkpoint --checkpoint-outputs at_checkpoint --checkpoint-delay-ms 2000` runs
-- **THEN** the first output arrives roughly two seconds after the first input, as it does for the Rust runtime
+#### Scenario: The Java runner lists every round-trip fixture the reference lists
+- **WHEN** the static drift gate runs under plain `mix test`
+- **THEN** the Java manifest lists `bench_echo`, `bench_keyed_nopersist`, `bench_keyed`, `tier_store` and `bench_checkpoint` under the same capabilities as the Rust manifest, and a manifest missing one of them fails the gate naming `java`, the capability and the fixture
 
 ### Requirement: A cross-SDK end-to-end proof enumerates every runtime that carries the capability
 A `:system` end-to-end test that proves a capability carried by more than one SDK SHALL enumerate every runtime that carries it (`for runtime <- [:rust, :java]` today), launching each through the shared e2e fleet mechanism; a runtime that does not carry the capability SHALL be absent from the enumeration by a named deferral in that SDK's spec, never by omission.
