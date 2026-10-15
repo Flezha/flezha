@@ -1,12 +1,13 @@
 defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
   @moduledoc """
   Every provider, through the real enable and the real disable, on a live
-  relay bound to a live runner.
+  relay bound to a live runner, or, for a controller plugin, which no relay
+  hosts, on the copy its enable starts.
 
   The table is `Flezha.Plugin.Providers.all()`, so a provider added to the
   system is driven here by name or fails the drill. Each row names its upstream:
-  a TCP origin for the poller, a websocket
-  fixture for the socket, a second relay for the forward, the test process
+  a TCP origin for the poller and the two HTTP
+  senders, a database for the Postgres pair, a websocket fixture for the socket, a second relay for the forward, the test process
   for the two message forwards, nothing for the transforms. A test asserts every
   row HAS a fixture, so a new provider cannot escape the drill by being absent
   from a list.
@@ -38,6 +39,7 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
   import FlezhaTest.Helper.TierE2EHarness,
     only: [boot_runner: 3, stop_namespace: 1, unique_id_path: 1]
 
+  alias Flezha.Cluster.Directory
   alias Flezha.Relay.Overwatch
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Plugin.Provider
@@ -70,12 +72,27 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
          }},
       Provider.HttpPoll =>
         {:tcp_origin, %{url: ctx.origin_url, channel: "drill", interval_ms: 60_000}},
+      Provider.HttpPush => {:tcp_origin, %{url: ctx.origin_url, channel: "drill"}},
+      Provider.HookWebhook => {:tcp_origin, %{url: ctx.origin_url}},
       Provider.File.Source => {:file, %{path: "drill_source.ndjson", channel: "drill"}},
       Provider.File.Sink => {:file, %{path: "drill_sink.ndjson"}},
       Provider.Websocket => {:websocket, %{uri: ctx.ws_uri, idle_timeout_ms: 0}},
       Provider.RelayForward => {:second_relay, %{target_relay_id: ctx.target_id}},
       Provider.Postgres =>
         {:database, %{database: "flezha_test", username: "postgres", auto_create: true}},
+      # Port 1 answers nothing: the reader runs and its reads fail, which is a
+      # verdict, not a lifecycle fault.
+      Provider.PostgresPoll =>
+        {:database,
+         %{
+           database: "flezha_test",
+           username: "postgres",
+           hostname: "127.0.0.1",
+           port: 1,
+           table: "drill",
+           id_column: "id",
+           channel: "drill"
+         }},
       # The example plugin package, loaded in setup: a package's row is driven
       # like a first-party one.
       FlezhaExamplePlugin.Stamp => {:none, %{path: ctx.stamp_path}}
@@ -184,7 +201,6 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
              PluginManager.enable(
                plugin_id,
                [
-                 id: plugin_id,
                  provider: Provider.Filter,
                  namespace: ctx.namespace,
                  relay_id: ctx.relay_id,
@@ -288,24 +304,24 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
     plugin_id = "drill-#{id}-#{System.unique_integer([:positive])}"
     extension = hd(provider.__provider__().extensions)
 
-    # The CLI's fields: the provider's own options as text, the extensions it
-    # subscribes to, and the scope.
-    fields = %{
-      "provider" => id,
-      "opts" => opts |> with_plugin_id(provider, plugin_id) |> cli_opts(),
-      "hooks" => [
-        %{"name" => Atom.to_string(extension), "opts" => subscription_opts(extension)}
-      ],
-      "namespace" => ctx.namespace,
-      "relay_id" => ctx.relay_id
-    }
+    # The CLI's fields: the options as text, the extensions it takes, the scope.
+    fields =
+      %{
+        "provider" => id,
+        "opts" => opts |> with_plugin_id(provider, plugin_id) |> cli_opts(),
+        "hooks" => [
+          %{"name" => Atom.to_string(extension), "opts" => subscription_opts(extension)}
+        ],
+        "namespace" => ctx.namespace
+      }
+      |> with_relay(provider, ctx)
 
     # The verb prints and answers `:ok`; a refusal exits `{:shutdown, 1}`, which is
     # what makes an unasserted return safe to ignore here.
     assert :ok = Cli.call("PluginManager.enable", Jason.encode!([plugin_id, fields]), []),
            "provider `#{id}` refused a real enable"
 
-    table = plugin_table(ctx)
+    table = host_table(ctx, provider, plugin_id)
     assert Table.subscribed?(table, plugin_id), "provider `#{id}` is not on the table"
 
     assert Table.running?(table, plugin_id),
@@ -314,7 +330,7 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
     assert_health(id, fixture, Table.health(table)[plugin_id])
 
     assert_worker_shape(id, provider, plugin_id, table)
-    assert_info_block(ctx, plugin_id)
+    assert_info_block(ctx, provider, plugin_id)
 
     assert_declared_restart(id, provider, plugin_id)
     assert_stamped(provider, plugin_id, opts)
@@ -332,7 +348,7 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
              "provider `#{id}` left a #{worker.restart} worker registered after disable"
     end
 
-    refute Table.running?(plugin_table(ctx), plugin_id)
+    assert_host_gone(ctx, provider, plugin_id)
   end
 
   # The declared restart value, driven, in OTP's own terms: a killed
@@ -423,14 +439,45 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
   end
 
   # `flz relay info` in process: the namespace's block names the enabled
-  # plugin, which is the surface a user reads a plugin's own state on.
-  defp assert_info_block(ctx, plugin_id) do
-    output =
-      ExUnit.CaptureIO.capture_io(fn ->
-        Cli.call("Relay.info", Jason.encode!([ctx.namespace]), [])
-      end)
+  # plugin, which is the surface a user reads a plugin's own state on. A
+  # controller plugin is on no relay's block, and `flz plugin list` names it.
+  defp assert_info_block(ctx, provider, plugin_id) do
+    verb = if controller?(provider), do: "PluginManager.enabled", else: "Relay.info"
 
-    assert output =~ plugin_id, "flz relay info does not name the enabled plugin"
+    output =
+      ExUnit.CaptureIO.capture_io(fn -> Cli.call(verb, Jason.encode!([ctx.namespace]), []) end)
+
+    assert output =~ plugin_id, "#{verb} does not name the enabled plugin"
+  end
+
+  defp controller?(provider), do: provider.__provider__().type == :controller
+
+  # A controller plugin binds no relay.
+  defp with_relay(fields, provider, ctx) do
+    if controller?(provider), do: fields, else: Map.put(fields, "relay_id", ctx.relay_id)
+  end
+
+  # The table the plugin lives on: the relay's, or the controller plugin's
+  # own copy's, which its home places once the enable answers.
+  defp host_table(ctx, provider, plugin_id) do
+    if controller?(provider) do
+      assert wait_until(fn -> Directory.plugin_hosts(ctx.namespace, plugin_id) != [] end, 5_000),
+             "controller plugin #{plugin_id} has no copy"
+
+      [copy] = Directory.plugin_hosts(ctx.namespace, plugin_id)
+      :sys.get_state(copy).table
+    else
+      plugin_table(ctx)
+    end
+  end
+
+  defp assert_host_gone(ctx, provider, plugin_id) do
+    if controller?(provider) do
+      assert wait_until(fn -> Directory.plugin_hosts(ctx.namespace, plugin_id) == [] end, 5_000),
+             "controller plugin #{plugin_id} kept a copy after disable"
+    else
+      refute Table.running?(plugin_table(ctx), plugin_id)
+    end
   end
 
   defp disable(plugin_id, ctx),
@@ -464,10 +511,12 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
     table
   end
 
+  # A key is the plugin id, or a tuple naming it: `{plugin_id, member}` or
+  # `{namespace, plugin_id}`.
   defp keys_for(family, plugin_id) do
     Enum.filter(WorkerSup.keys(family), fn
       ^plugin_id -> true
-      key when is_tuple(key) -> elem(key, 0) == plugin_id
+      key when is_tuple(key) -> plugin_id in Tuple.to_list(key)
       _ -> false
     end)
   end
