@@ -50,17 +50,27 @@ defmodule Flezha.Relay.Migration do
   written under the instance's own key, so it is rediscovered as suspended
   whenever it is next started, unless another namespace owns its state.
 
-  Called by `ControlChannel` on the runner's `IterPark`.
+  Called by `ControlChannel` on the runner's `IterPark`, with the Overwatch the
+  frame was admitted against as `bound` (see `overwatch/3`).
   """
-  @spec suspend(binary(), binary(), non_neg_integer(), ClassRegistry.park()) :: :ok
-  def suspend(namespace, relay_id, iter, park) do
-    case HubManager.get_pid(namespace, relay_id) do
+  @spec suspend(binary(), binary(), non_neg_integer(), ClassRegistry.park(), pid() | nil) :: :ok
+  def suspend(namespace, relay_id, iter, park, bound) do
+    case overwatch(namespace, relay_id, bound) do
       {:ok, pid} when is_pid(pid) -> GenServer.cast(pid, {:suspend, iter, park})
       _ -> _ = ClassRegistry.put_parked(relay_id, park, namespace)
     end
 
     :ok
   end
+
+  @doc """
+  The Overwatch a runner's frame about `relay_id` goes to: `bound`, the one the
+  frame was admitted against (`Flezha.Runner.StreamChannel.Records.admit_to/3`),
+  else the hub's.
+  """
+  @spec overwatch(binary(), binary(), pid() | nil) :: {:ok, pid()} | {:error, term()}
+  def overwatch(_namespace, _relay_id, bound) when is_pid(bound), do: {:ok, bound}
+  def overwatch(namespace, relay_id, nil), do: HubManager.get_pid(namespace, relay_id)
 
   @doc """
   Rewind a steps loop to the committed boundary of iteration `to_iter`: journal
@@ -489,11 +499,12 @@ defmodule Flezha.Relay.Migration do
   `reason`: tell its Overwatch, which `park_exited/3` decides for. With no
   Overwatch on this node there is nothing to rebind.
 
-  Called by `ControlChannel` on the runner's `RelayExited`.
+  Called by `ControlChannel` on the runner's `RelayExited`, with the Overwatch
+  the frame was admitted against as `bound` (see `overwatch/3`).
   """
-  @spec relay_exited(binary(), binary(), binary(), binary()) :: :ok
-  def relay_exited(namespace, relay_id, runner_id, reason) do
-    case HubManager.get_pid(namespace, relay_id) do
+  @spec relay_exited(binary(), binary(), binary(), binary(), pid() | nil) :: :ok
+  def relay_exited(namespace, relay_id, runner_id, reason, bound) do
+    case overwatch(namespace, relay_id, bound) do
       {:ok, pid} when is_pid(pid) -> GenServer.cast(pid, {:relay_exited, runner_id, reason})
       _ -> :ok
     end

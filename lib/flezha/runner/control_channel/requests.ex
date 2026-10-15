@@ -9,8 +9,9 @@ defmodule Flezha.Runner.ControlChannel.Requests do
   A relay request is judged first by the relay's ownership record
   (`Flezha.Runner.StreamChannel.Records.admit/3`), so a runner acts only on the
   relays bound to its stable identity, and a refused request does nothing
-  to the relay. A runner or namespace request is judged as the identity
-  the connection proved.
+  to the relay. An admitted request goes to the Overwatch the record names
+  (`admit_to/3`), not to a fresh hub lookup. A runner or namespace request is
+  judged as the identity the connection proved.
 
   Every function runs in the control channel's process and takes its state.
   The channel stays the one writer of control frames: a request that owes an
@@ -28,7 +29,6 @@ defmodule Flezha.Runner.ControlChannel.Requests do
   alias Flezha.Runner.StreamPool
   alias Flezha.State.Wire
   alias Flezha.Service.Admin
-  alias Flezha.Service.HubManager
   alias Flezha.Service.RelayManager
   alias Flezha.State.{Completion, TaskJournal}
 
@@ -52,8 +52,8 @@ defmodule Flezha.Runner.ControlChannel.Requests do
   def runner_shutdown(state, %RunnerCommands.RunnerShutdownNotification{} = notif) do
     %{relay_id: relay_id, serialized_state: serialized_state} = notif
 
-    if Records.admit(state, relay_id, :runner_shutdown_notification) do
-      case HubManager.get_pid(state.namespace, relay_id) do
+    with {:ok, bound} <- Records.admit_to(state, relay_id, :runner_shutdown_notification) do
+      case Migration.overwatch(state.namespace, relay_id, bound) do
         {:ok, pid} when is_pid(pid) ->
           GenServer.cast(pid, {:apply_external_snapshot, serialized_state})
 
@@ -215,11 +215,13 @@ defmodule Flezha.Runner.ControlChannel.Requests do
   """
   @spec iter_park(map(), RunnerCommands.IterPark.t()) :: :ok
   def iter_park(state, %RunnerCommands.IterPark{} = park) do
-    if Records.admit(state, park.relay_id, :iter_park), do: park_instance(state, park)
+    with {:ok, bound} <- Records.admit_to(state, park.relay_id, :iter_park),
+         do: park_instance(state, park, bound)
+
     :ok
   end
 
-  defp park_instance(state, park) do
+  defp park_instance(state, park, bound) do
     %RunnerCommands.IterPark{
       relay_id: relay_id,
       iter: iter,
@@ -243,7 +245,7 @@ defmodule Flezha.Runner.ControlChannel.Requests do
       # the log whether input is still owed: a message the run parked unread
       # is consumed, not owed, and the journal keeps that across a restart.
       with :ok <- TaskJournal.release_unread(relay_id, consumed_offset),
-           do: Migration.suspend(namespace, relay_id, iter, park)
+           do: Migration.suspend(namespace, relay_id, iter, park, bound)
     end)
   end
 
@@ -261,10 +263,10 @@ defmodule Flezha.Runner.ControlChannel.Requests do
     %RunnerCommands.RelayExited{relay_id: relay_id, reason: reason} = exited
     %{namespace: namespace, runner_id: runner_id} = state
 
-    if Records.admit(state, relay_id, :relay_exited) do
+    with {:ok, bound} <- Records.admit_to(state, relay_id, :relay_exited) do
       Task.start(fn ->
         StreamPool.flush_channels(runner_id)
-        Migration.relay_exited(namespace, relay_id, runner_id, reason)
+        Migration.relay_exited(namespace, relay_id, runner_id, reason, bound)
       end)
     end
 

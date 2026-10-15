@@ -78,7 +78,6 @@ lib/flezha/runner/control_channel/commits.ex -> Flezha.State.DurabilityTier
 lib/flezha/runner/control_channel/commits.ex -> Flezha.State.TaskJournal
 lib/flezha/runner/control_channel/requests.ex -> Flezha.Relay.Migration
 lib/flezha/runner/control_channel/requests.ex -> Flezha.Service.Admin
-lib/flezha/runner/control_channel/requests.ex -> Flezha.Service.HubManager
 lib/flezha/runner/control_channel/requests.ex -> Flezha.Service.RelayManager
 lib/flezha/runner/control_channel/requests.ex -> Flezha.State.Completion
 lib/flezha/runner/control_channel/requests.ex -> Flezha.State.TaskJournal

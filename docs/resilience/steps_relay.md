@@ -110,9 +110,9 @@ boundary, with every Cell drained, asks to sleep without a completion and ships 
 naming the last message it parked to the dead-letter queue unread. The controller writes the
 instance's park record (`ClassRegistry.put_parked/2`, an ETS entry and a durable sidecar in the
 class directory, never a journal entry) and reports that offset into the input log's watermark,
-releasing the message as an iteration commit releases its input, **before**
-`Migration.suspend/3` evicts the instance (`RemRelay`, runner tag `nil`); a park whose record
-fails leaves the instance bound and logged. The Overwatch and the registry entry stay, and the
+releasing the message as an iteration commit releases its input, **before** the Overwatch the
+ownership record names evicts the instance (`Migration.suspend/5`, `RemRelay`, runner tag
+`nil`); a park whose record fails leaves the instance bound and logged. The Overwatch and the registry entry stay, and the
 Overwatch **hibernates** (`:hibernate` on both suspension entries, releasing its bind-time heap).
 A flow relay that sleeps takes the same path at iteration `0`
 ([`../topics/core/durability.md`](../topics/core/durability.md)).

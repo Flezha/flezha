@@ -173,6 +173,56 @@ defmodule FlezhaTest.Runner.ControlChannelBindingTest do
            "a park was journaled at #{Paths.journal_path(foreign)}"
   end
 
+  # KB-632: during a hub merge's hand-over the hub still lists the source
+  # node's departing Overwatch, so a frame from the bound runner goes to the
+  # Overwatch its ownership record names, the one it was admitted against.
+  test "KB-632: the owner's IterPark reaches the Overwatch its ownership record names, " <>
+         "not a departing copy the hub still lists",
+       ctx do
+    %{relay_id: op, runner_a: runner_a} = ctx
+    hub_lists_a_departing_copy(op)
+
+    write_frame(
+      start_channel(runner_a),
+      {:iter_park, %RunnerCommands.IterPark{relay_id: op, iter: 0, wake_deadline_ms: 0}}
+    )
+
+    assert_receive {:suspend_cast, suspended, 0, _}, 1_000
+    assert suspended == op, "the park went to #{inspect(suspended)}, not the bound Overwatch"
+    refute_received {:rem_relay, _, _}
+  end
+
+  test "KB-632: the owner's exit report reaches the Overwatch its ownership record names",
+       ctx do
+    %{relay_id: op, runner_a: runner_a} = ctx
+    hub_lists_a_departing_copy(op)
+    StreamPool |> stub(:flush_channels, fn _runner_id -> :ok end)
+
+    write_frame(
+      start_channel(runner_a),
+      {:relay_exited, %RunnerCommands.RelayExited{relay_id: op, reason: ":killed"}}
+    )
+
+    assert_receive {:exited_cast, told, ^runner_a, ":killed"}, 1_000
+    assert told == op, "the exit report went to #{inspect(told)}, not the bound Overwatch"
+  end
+
+  test "KB-632: the owner's shutdown snapshot reaches the Overwatch its ownership record names",
+       ctx do
+    %{relay_id: op, runner_a: runner_a} = ctx
+    hub_lists_a_departing_copy(op)
+
+    write_frame(
+      start_channel(runner_a),
+      {:runner_shutdown_notification,
+       %RunnerCommands.RunnerShutdownNotification{relay_id: op, serialized_state: "final-from-a"}}
+    )
+
+    # The ack is written after the channel's cast, so the read below queues behind it.
+    assert_receive {:written, ^runner_a, _ref, _ack}, 1_000
+    assert GenServer.call(ctx.overwatch, :snapshot) == "final-from-a"
+  end
+
   test "KB-211: runner B's shutdown notification leaves A's relay's snapshot alone", ctx do
     %{relay_id: op, runner_b: runner_b} = ctx
 
@@ -287,6 +337,22 @@ defmodule FlezhaTest.Runner.ControlChannelBindingTest do
                     "the frame was cast to the relay's Overwatch as its own output"
 
     assert_received {:rem_relay, ^runner_b, ^op}
+  end
+
+  defp hub_lists_a_departing_copy(relay_id) do
+    {:ok, departing} =
+      BoundOverwatch.start_link(
+        %Overwatch{id: "departing", namespace: @ns, runner_id: "on-the-source-node"},
+        self()
+      )
+
+    on_exit(fn -> NodeTestHelper.ensure_stopped(departing, :normal, 1_000) end)
+
+    HubManager
+    |> stub(:get_pid, fn
+      @ns, ^relay_id -> {:ok, departing}
+      ns, id -> {:error, {:relay_not_found, ns, id}}
+    end)
   end
 
   defp journaled?(instance_id), do: match?({:ok, [_ | _]}, TaskJournal.read(instance_id))

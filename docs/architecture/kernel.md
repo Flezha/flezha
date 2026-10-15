@@ -567,7 +567,10 @@ refuses an output, a cell write, a processed-prefix marker or a control frame
 `TaskCommit`, `IterCommit`) when the relay's record names another identity as its owner. A
 refusal acts on nothing. It is counted on the channel, reported once per session and relay
 as `[:flezha, :runner, :foreign_frame_refused]`, and answered with `RemRelay`, so a runner
-that was evicted while still alive is told to stop the first time it speaks.
+that was evicted while still alive is told to stop the first time it speaks. An admitted
+control frame goes to the Overwatch the record names (`Records.admit_to/3`), not to a fresh
+hub lookup, which during a hub merge's hand-over can still name the source node's departing
+Overwatch.
 
 The identity check cannot tell an old session of the **same** identity from the new one. Two
 fences cover that:

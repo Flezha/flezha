@@ -205,7 +205,7 @@ defmodule FlezhaTest.System.HealthVerdictDrillTest do
   # it a fault and `/healthz` stays healthy.
   defp row_suspended(ctx) do
     id = start_relay(ctx, "suspended")
-    :ok = Migration.suspend(ctx.namespace, id, 0, %{wake_deadline_ms: nil})
+    :ok = Migration.suspend(ctx.namespace, id, 0, %{wake_deadline_ms: nil}, nil)
     assert_surfaces(ctx, id, :suspended, "healthy")
   end
 
