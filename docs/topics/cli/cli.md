@@ -103,7 +103,12 @@ Use 'flz relay <COMMAND> --help' for more information on a specific command.
 Identity for gated verbs rides `--token <token>` or the FLEZHA_TOKEN env var.
 ```
 
-`flz <group> <verb> --help` starts with the verb's usage line:
+`flz <group> <verb> --help`, `-h` and `flz <group> help <verb>` print the
+verb's usage line, its line from the group's help and the options its row
+declares, plus the ones every verb takes. Settings a verb takes as
+`X<key>=<value>` or `--<key> <value>` appear only in its usage line.
+A verb with a help page of its own, such as `flz relay start`, prints that
+page instead:
 
 ```sh
 $ flz relay stop --help
@@ -111,6 +116,15 @@ $ flz relay stop --help
 
 ```output
 Usage: flz relay stop <relay_id> [--namespace | -n <namespace>]
+
+    stop        Stop a relay
+
+OPTIONS:
+    --namespace | -n <namespace>
+    --token <token>
+    --help | -h
+    --output | -o text|json
+    --json
 ```
 
 An option can go before or after the other arguments: `flz relay stop

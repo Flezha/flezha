@@ -180,3 +180,42 @@ fn a_command_line_refusal_honours_json() {
     assert_eq!(doc["error"]["class"], "invalid");
     assert_eq!(doc["error"]["details"]["option"], "--nope");
 }
+
+/// fails when: a verb's `--help` prints its command's whole screen rather
+/// than what describes the verb, or `-h` and `help <verb>` answer otherwise.
+/// `flz plugin help <word>` names a provider, so plugin is not asked that.
+#[test]
+fn a_verbs_help_describes_the_verb_not_its_command() {
+    let mut wrong: Vec<String> = Vec::new();
+
+    for (command, verbs) in COMMANDS {
+        for verb in verbs.iter().filter(|verb| **verb != "help") {
+            let out = flz(&[command, verb, "--help"]);
+            let text = String::from_utf8_lossy(&out.stdout).to_string();
+            let first = text.lines().next().unwrap_or_default();
+
+            if !out.status.success() || !first.contains(&format!("flz {} {}", command, verb)) {
+                wrong.push(format!("flz {} {} --help began {:?}", command, verb, first));
+            }
+            if text.contains("COMMANDS:") {
+                wrong.push(format!(
+                    "flz {} {} --help prints its command's screen",
+                    command, verb
+                ));
+            }
+
+            let mut spellings = vec![vec![*command, verb, "-h"]];
+            if *command != "plugin" {
+                spellings.push(vec![*command, "help", verb]);
+            }
+            for argv in spellings {
+                let other = flz(&argv);
+                if !other.status.success() || String::from_utf8_lossy(&other.stdout) != text {
+                    wrong.push(format!("flz {} differs from --help", argv.join(" ")));
+                }
+            }
+        }
+    }
+
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}

@@ -40,8 +40,8 @@ pub(crate) struct Verb {
     pub(crate) open: Open,
     /// Pairs of options this verb refuses to be given together.
     pub(crate) conflicts: &'static [(&'static str, &'static str)],
-    /// The screen this verb's own `--help` prints; `None` prints the
-    /// command's.
+    /// The screen this verb's own `--help` prints; `None` prints one rendered
+    /// from this row and the verb's row in its command's screen.
     pub(crate) help: Option<Help>,
 }
 
@@ -166,20 +166,60 @@ fn leaf(cmd: &'static Command, verb: &'static Verb, handler: fn(&Reading), argv:
     let reading = args::or_refuse(args::read(cmd.path, verb, argv));
 
     if reading.help_asked() {
-        // A verb with no screen of its own is taught by its command's, which
-        // describes the family rather than this verb's grammar — so the row's
-        // own usage line goes first. It is rendered, so it cannot drift from
-        // what the verb reads.
-        return match verb.help {
-            Some(own) => help::render(own),
-            None => {
-                println!("{}\n", args::usage_line(cmd.path, verb));
-                help::render(cmd.help)
-            }
-        };
+        return help::render(&verb_help(cmd, verb));
     }
 
     handler(&reading)
+}
+
+/// What a verb's `--help` prints: its own screen, or else its usage line, the
+/// row its command's screen gives it and every option it reads, each taken
+/// from the row or the screen so that neither can drift from what it prints.
+fn verb_help(cmd: &Command, verb: &Verb) -> String {
+    if let Some(own) = verb.help {
+        return own.to_string();
+    }
+
+    let mut out = args::usage_line(cmd.path, verb);
+    if let Some(row) = screen_row(cmd.help, cmd.path, verb.name) {
+        out.push_str("\n\n");
+        out.push_str(&row);
+    }
+    out.push_str("\n\nOPTIONS:");
+    for spec in verb.options.iter().chain(args::UNIVERSAL) {
+        out.push_str("\n    ");
+        out.push_str(&spec.spelling());
+    }
+    out
+}
+
+/// The row a command's screen gives one verb in its list of verbs, with the
+/// lines that continue it. A list's rows share its first line's indent, and a
+/// row may spell the command's path before the verb, as `flz dlq`'s do.
+fn screen_row(screen: &str, path: &str, name: &str) -> Option<String> {
+    let block: Vec<&str> = screen
+        .lines()
+        .skip_while(|l| !matches!(l.trim_end(), "COMMANDS:" | "SUBCOMMANDS:" | "Usage:"))
+        .skip(1)
+        .take_while(|l| !l.trim().is_empty())
+        .collect();
+    let indent = |l: &str| l.len() - l.trim_start().len();
+    let row_indent = indent(block.first()?);
+    let names = |l: &str| {
+        let l = l.trim_start();
+        let words = l.strip_prefix(path).filter(|rest| rest.starts_with(' '));
+        words.unwrap_or(l).split_whitespace().next() == Some(name)
+    };
+
+    let start = block
+        .iter()
+        .position(|l| indent(l) == row_indent && names(l))?;
+    let continued = block[start + 1..]
+        .iter()
+        .take_while(|l| indent(l) > row_indent);
+    let lines = std::iter::once(&block[start]).chain(continued);
+    let lines: Vec<String> = lines.map(|l| format!("    {}", &l[row_indent..])).collect();
+    Some(lines.join("\n"))
 }
 
 pub(crate) fn run(cmd: &'static Command, args: &[String]) {
@@ -203,7 +243,14 @@ pub(crate) fn run(cmd: &'static Command, args: &[String]) {
     }
 
     if HELP_VERBS.contains(&word.as_str()) {
-        return help::render(cmd.help);
+        // `flz relay help stop` asks what `--help` on `stop` answers.
+        let named = args
+            .get(1)
+            .and_then(|name| cmd.verbs.iter().find(|v| v.name == name.as_str()));
+        return match named {
+            Some(verb) if matches!(verb.body, Body::Run(_)) => help::render(&verb_help(cmd, verb)),
+            _ => help::render(cmd.help),
+        };
     }
 
     if cmd.unknown_prints_help {
@@ -631,12 +678,7 @@ mod tests {
         for cmd in commands() {
             for verb in cmd.verbs {
                 let Body::Run(_) = &verb.body else { continue };
-                // What `flz <verb> --help` actually prints: the verb's own
-                // screen, or its rendered usage line above the command's.
-                let taught = match verb.help {
-                    Some(own) => format!("{}\n{}", own, cmd.help),
-                    None => format!("{}\n{}", crate::args::usage_line(cmd.path, verb), cmd.help),
-                };
+                let taught = format!("{}\n{}", verb_help(cmd, verb), cmd.help);
 
                 for spec in verb.options {
                     if !taught.contains(spec.long) {
@@ -655,6 +697,31 @@ mod tests {
             untaught.len(),
             untaught.join("\n")
         );
+    }
+
+    /// fails when: a verb with no screen of its own is helped with its
+    /// command's whole screen, or its command's list of verbs gives it no row
+    /// for its help to carry.
+    #[test]
+    fn a_verbs_help_is_its_usage_line_and_its_row() {
+        let mut wrong: Vec<String> = Vec::new();
+
+        for cmd in commands() {
+            for verb in cmd.verbs.iter().filter(|verb| verb.help.is_none()) {
+                let Body::Run(_) = &verb.body else { continue };
+                let text = verb_help(cmd, verb);
+                let row = screen_row(cmd.help, cmd.path, verb.name);
+
+                if !text.starts_with(&crate::args::usage_line(cmd.path, verb))
+                    || text.contains("COMMANDS:")
+                    || !row.is_some_and(|row| text.contains(&row))
+                {
+                    wrong.push(format!("{} {}:\n{}", cmd.path, verb.name, text));
+                }
+            }
+        }
+
+        assert!(wrong.is_empty(), "{}", wrong.join("\n\n"));
     }
 
     /// fails when: a verb's usage line stops naming what the verb reads — the

@@ -9,7 +9,7 @@
 /// One help screen, without its trailing newline.
 pub(crate) type Help = &'static str;
 
-pub(crate) fn render(help: Help) {
+pub(crate) fn render(help: &str) {
     println!("{}", help);
 }
 

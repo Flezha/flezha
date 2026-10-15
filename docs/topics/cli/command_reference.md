@@ -1,8 +1,8 @@
 # Command reference
 
 Every `flz` verb in one line, by group. A group's name leads to its help and
-examples. `flz <group> help` and `flz <group> <verb> --help` print the same
-on the command line.
+examples. `flz <group> help` prints the same on the command line, and
+`flz <group> <verb> --help` prints one verb's usage line and options.
 
 ## [`flz controller`](controller_commands.md#flz-controller)
 
