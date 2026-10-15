@@ -34,7 +34,7 @@ the durability trade-offs, and how broker clients are shared.
 | `channel_out` | names | none | no | Produce only records whose metadata channel matches; the explicit spelling. Several names, comma-separated, produce them all |
 | `partition` | int | none | no | A fixed destination partition for every record; unset, `partitioner` chooses |
 | `partitioner` | enum | `:murmur2` | no | Without `partition`: `murmur2` sends a keyed record where Kafka's Java client would and an unkeyed one to the sticky partition; `sticky` sends every record to the sticky partition, which moves after each batch |
-| `compression` | enum | `:none` | no | Batch compression; `snappy`, `lz4` and `zstd` are refused, the client library encodes them only with native code |
+| `compression` | enum | `:none` | no | Batch compression; `zstd` needs Kafka 2.1 or later; `snappy` and `lz4` are refused, the client library encodes them only with native code |
 | `headers` | json | `%{}` | no | Static record headers, a JSON object of strings; names starting `flz.` and `flezha.dedup_key` are refused |
 | `required_acks` | int | `-1` | no | Broker acks; -1 is acks=all |
 | `retries` | int | `5` | no | Attempts per batch before parking it |
@@ -179,10 +179,11 @@ Then comes `flezha.dedup_key` as above, then every entry of the `headers` option
 (`--Xheaders='{"source":"flezha"}'`). A `headers` name starting with `flz.`, or
 `flezha.dedup_key`, is refused at enable with `plugin.headers_invalid`.
 
-`compression: gzip` compresses each record batch; `none` is the default. `snappy`, `lz4` and
-`zstd` are refused at enable with `plugin.option_invalid`: the client library encodes the
-first two only with native libraries, which a package cannot carry, and zstd only with a
-native library or through a call OTP's own `zstd` module refuses.
+`compression: gzip` or `compression: zstd` compresses each record batch; `none` is the
+default. A zstd batch is encoded by OTP's own `zstd` module and sent as a Produce v7 request,
+which a broker accepts from Kafka 2.1. `snappy` and `lz4` are refused at enable with
+`plugin.option_invalid`: the client library encodes them only with native libraries, which a
+package cannot carry.
 
 **The exactness contract.** The client has no transactional producer, so the plugin does
 not claim broker-side exactly-once. A controller restart re-drives unflushed outputs with
