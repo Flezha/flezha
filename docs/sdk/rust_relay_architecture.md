@@ -729,8 +729,8 @@ Persistence rides the `Change` trait: `ctx.change(change)` is a `Vec::push`
 on the hot path; serialization, coalescing and the wire send happen on one
 per-process flusher thread on a 5 ms linger (`FLEZHA_FLUSH_LINGER_MS`).
 A tasklet that leaves `Change` at `NoChange` opts out. The class's `durable`
-(default `Durable::Local`) is frozen at instance start and announced to the controller, which a user can override
-per class with `:relay_persistence`. Trait surface, wire format,
+(default `Durable::Local`) is frozen at instance start and announced to the controller,
+which no controller setting overrides. Trait surface, wire format,
 `TaskletTestHarness` (`replay_equals`, `replay_emits_equal`) and the Java
 port: [`state_persistence.md`](state_persistence.md).
 

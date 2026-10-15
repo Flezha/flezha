@@ -284,20 +284,16 @@ A (re)started batcher SHALL seed its dirty set with every registered writer: wit
 ### Requirement: Per-Relay persistence toggle resolution at relay startup
 
 The controller SHALL resolve a per-Relay-class boolean `keeps_state` for an
-instance of either run using the following ordered rule:
-
-1. If the controller's runtime config defines `relay_persistence.<RelayClass>` for this
-   Relay class, use that value.
-2. Otherwise, use the class's own `durable` as the runner announced it in the `AddRelay`
-   response metadata (`durable`, `"memory"` when the class opts out), recorded by
-   the class registry with the class's other declarations so a process-less read at boot or in
-   a sweep resolves it too.
-3. Otherwise, use the built-in default of `true`.
+instance of either run from the class's own `durable` as the runner announced it in the
+`AddRelay` response metadata (`durable`, `"memory"` when the class opts out), recorded by the
+class registry with the class's other declarations so a process-less read at boot or in a sweep
+resolves it too; a class that announced nothing resolves `true`. No controller configuration
+SHALL override it.
 
 The run SHALL NOT enter the resolution: a flow and a steps relay are resolved by the same rule
 from the same declaration. The resolved value SHALL be bound to the Relay instance for its
-entire lifetime. Subsequent changes to the runner-side config or to the SDK's class setting (via
-SDK redeploy) SHALL NOT affect already-running instances.
+entire lifetime. Subsequent changes to the SDK's class setting (via SDK redeploy) SHALL NOT
+affect already-running instances.
 
 When `keeps_state = false`, the controller SHALL NOT allocate WAL or snapshot files for
 any of that Relay's Cells, SHALL ignore (drop with a counter increment) any incoming
@@ -305,9 +301,9 @@ any of that Relay's Cells, SHALL ignore (drop with a counter increment) any inco
 `RestoreInitState` on reconnect, and SHALL refuse a live Cell-state read as
 the code `state.persistence_off`.
 
-#### Scenario: Default-on with no override
+#### Scenario: Default-on
 
-- **WHEN** a runner does not configure `relay_persistence.MarketRelay` AND `MarketRelay`'s `AddRelay` response announces `durable = "local"`
+- **WHEN** `MarketRelay`'s `AddRelay` response announces `durable = "local"`
 - **THEN** the controller SHALL resolve `keeps_state = true` for `MarketRelay`
 
 #### Scenario: The class's opt-out reaches the controller
@@ -315,15 +311,10 @@ the code `state.persistence_off`.
 - **WHEN** a class of either run declares `durable: false` in its SDK and an instance of it is added
 - **THEN** the `AddRelay` response SHALL carry `durable = "memory"`, the controller SHALL resolve `keeps_state = false` for the class, no restore SHALL be shipped on its next bind, and its live Cell-state read SHALL be refused with the code `state.persistence_off`
 
-#### Scenario: Runner override takes precedence
+#### Scenario: A leftover config map does not switch a class's state off
 
-- **WHEN** `MarketRelay`'s `AddRelay` response announces `durable = "local"` AND the runner sets `relay_persistence.MarketRelay = false`
-- **THEN** the controller SHALL resolve `keeps_state = false` for `MarketRelay`
-
-#### Scenario: Mid-life config change does not affect running instance
-
-- **WHEN** a Relay instance is running with resolved `keeps_state = true` AND the runner subsequently runs `flz config set relay_persistence.MarketRelay false`
-- **THEN** the running instance SHALL continue with `keeps_state = true`; the new value SHALL take effect only after the SDK pod hosting the instance is restarted (the new instance's `AddRelay` re-runs the resolution)
+- **WHEN** `MarketRelay` declares `effectively_once` and announces `durable = "local"` AND the controller's application env still carries `relay_persistence: %{"MarketRelay" => false}` from an older release
+- **THEN** the controller SHALL resolve `keeps_state = true` for `MarketRelay` and SHALL restore its persisted Cells on bind
 
 ### Requirement: 16-byte version header on persisted blobs
 

@@ -24,20 +24,6 @@ defmodule Flezha.State.PersistenceResolver do
 
   require Logger
 
-  @doc """
-  Whether `relay_class` keeps durable per-Cell state (WAL, snapshots,
-  bind-time restore, live Cell reads), whichever way it runs: the user's
-  `:relay_persistence` override, then the class's own `durable` as the
-  runner announced it (`ClassRegistry.persistent?/1`, kept unless `false`).
-  """
-  @spec keeps_state?(binary(), map()) :: boolean()
-  def keeps_state?(relay_class, metadata \\ %{}) when is_binary(relay_class) do
-    resolve(:relay_persistence, :keeps_state, relay_class, metadata,
-      valid: &is_boolean/1,
-      default: fn -> ClassRegistry.persistent?(relay_class) end
-    )
-  end
-
   @spec retention_hours(binary(), map()) :: non_neg_integer()
   def retention_hours(relay_class, metadata \\ %{}) when is_binary(relay_class) do
     resolve(:time_travel_retention_hours, :time_travel_retention_hours, relay_class, metadata,

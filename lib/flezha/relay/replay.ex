@@ -17,6 +17,7 @@ defmodule Flezha.Relay.Replay do
   alias Flezha.Config
 
   alias Flezha.Config.Durations
+  alias Flezha.Relay.ClassRegistry
   alias Flezha.Relay.Lookup
   alias Flezha.Relay.Overwatch
   alias Flezha.Process.Timer
@@ -26,7 +27,6 @@ defmodule Flezha.Relay.Replay do
   alias Flezha.State.DurabilityTier
   alias Flezha.State.InputLog
   alias Flezha.State.Paths
-  alias Flezha.State.PersistenceResolver
   alias Flezha.State.TaskJournal
   alias Flezha.State.Restore
   alias Flezha.State.WalWriter
@@ -321,7 +321,7 @@ defmodule Flezha.Relay.Replay do
   # Persisted, restorable Cells of this class, empty when its persistence is
   # off.
   defp restorable_cells(relay_class) do
-    if PersistenceResolver.keeps_state?(relay_class) do
+    if ClassRegistry.persistent?(relay_class) do
       # Remote hydration runs first, and in this one place: a controller
       # adopting a relay whose disk is gone then finds its Cells,
       # task-journal and input log on disk by the time this walks

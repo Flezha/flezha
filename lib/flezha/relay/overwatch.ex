@@ -34,7 +34,6 @@ defmodule Flezha.Relay.Overwatch do
   alias Flezha.Service.HubManager
   alias Flezha.State.Outbox
   alias Flezha.State.Paths
-  alias Flezha.State.PersistenceResolver
   alias Flezha.Transport.LivenessCounters
 
   # Reply-frame metadata key carrying the `change_seq` a single selected Cell
@@ -458,7 +457,7 @@ defmodule Flezha.Relay.Overwatch do
   @impl true
   def handle_call({:get_cell_state, selector}, from, %__MODULE__{} = state)
       when is_map(selector) do
-    if PersistenceResolver.keeps_state?(relay_class(state)) do
+    if ClassRegistry.persistent?(relay_class(state)) do
       command = %RunnerCommands.CellState{
         relay_id: state.id,
         tasklet: Map.get(selector, :tasklet) || "",

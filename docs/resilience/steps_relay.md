@@ -294,8 +294,7 @@ and hooks are idempotent.
 
 A class is durable by default and opts out with `durable: false`, the setting a flow class
 carries too; the runner announces it (`durable = "memory"` in the `AddRelay` response) and
-the controller resolves it in `PersistenceResolver.keeps_state?/1` (user override
-available). Kept in memory, the
+the controller records it in `ClassRegistry.persistent?/1`, with no override. Kept in memory, the
 per-Cell flush drains and discards (no WAL, snapshot, journal or handshake); a crash re-runs
 from the top, a live Cell read answers `{:error, :persistence_off}`, and the class cannot sleep.
 

@@ -230,9 +230,8 @@ defmodule Flezha.Relay.ClassRegistry do
 
   @doc """
   Record `relay_class`'s persistence switch. Durable because the bind-time
-  restore and the live read resolve it through
-  `Flezha.State.PersistenceResolver.keeps_state?/1`, possibly while the
-  instance is unbound; the sidecar exists only while persistence is off.
+  restore and the live read resolve it through `persistent?/1`, possibly while
+  the instance is unbound; the sidecar exists only while persistence is off.
   """
   @spec put_persistent(binary(), boolean()) :: :ok
   def put_persistent(relay_class, persistent?)

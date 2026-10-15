@@ -30,7 +30,6 @@ lib/flezha/relay/migration.ex -> Flezha.Plugin.Extension.Table
 lib/flezha/relay/migration.ex -> Flezha.Service.HubManager
 lib/flezha/relay/migration.ex -> Flezha.Service.RelayManager
 lib/flezha/relay/migration.ex -> Flezha.Shutdown.Step
-lib/flezha/relay/migration.ex -> Flezha.State.PersistenceResolver
 lib/flezha/relay/migration.ex -> Flezha.State.TaskJournal
 lib/flezha/relay/overwatch.ex -> Flezha.Convergence.Facts
 lib/flezha/relay/overwatch.ex -> Flezha.Plugin.Extension.Ctx.IO
@@ -44,7 +43,6 @@ lib/flezha/relay/overwatch.ex -> Flezha.Plugin.Host
 lib/flezha/relay/overwatch.ex -> Flezha.Service.HubManager
 lib/flezha/relay/overwatch.ex -> Flezha.State.Outbox
 lib/flezha/relay/overwatch.ex -> Flezha.State.Paths
-lib/flezha/relay/overwatch.ex -> Flezha.State.PersistenceResolver
 lib/flezha/relay/partition_group.ex -> Flezha.Service.RelayManager.Admission
 lib/flezha/relay/partition_group.ex -> Flezha.Dlq
 lib/flezha/relay/partition_group.ex -> Flezha.Plugin.SpecDecoder
@@ -62,7 +60,6 @@ lib/flezha/relay/replay.ex -> Flezha.State.Commands
 lib/flezha/relay/replay.ex -> Flezha.State.DurabilityTier
 lib/flezha/relay/replay.ex -> Flezha.State.InputLog
 lib/flezha/relay/replay.ex -> Flezha.State.Paths
-lib/flezha/relay/replay.ex -> Flezha.State.PersistenceResolver
 lib/flezha/relay/replay.ex -> Flezha.State.TaskJournal
 lib/flezha/relay/replay.ex -> Flezha.State.Restore
 lib/flezha/relay/replay.ex -> Flezha.State.Supervisor

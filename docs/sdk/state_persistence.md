@@ -45,8 +45,8 @@ into the core.
 The runner announces the class's `durable` setting (`durable` = `memory`, `local` or `remote`
 in the `AddRelay` response, with `sleep_after_ms` when the class sleeps), so the controller
 reads the same value: a class kept in memory keeps no WAL or snapshot, is given no restore on a
-rebind, and answers a live Cell read with `{:error, :persistence_off}`. The controller's
-`:relay_persistence` (`%{class => bool}`) overrides the announced setting per class.
+rebind, and answers a live Cell read with `{:error, :persistence_off}`. No controller setting
+overrides it.
 
 ### Restoration flow (warm restart)
 

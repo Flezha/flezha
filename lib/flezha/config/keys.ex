@@ -314,7 +314,6 @@ defmodule Flezha.Config.Keys do
     {:record_log_cut_after_bytes, :int, 65_536, key: true},
     # Per-relay-class user overrides: a map from class to value, read
     # ahead of the SDK's own declaration and of the global default below it.
-    {:relay_persistence, :term, %{}, key: true},
     {:output_stall_timeout_overrides, :term, %{}, key: :output_stall_timeout_ms},
     {:default_time_travel_retention_hours, :int, 6, key: true},
     {:credit_window_bytes, :term, %{}, key: true},

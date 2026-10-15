@@ -1,41 +1,13 @@
 defmodule Flezha.State.PersistenceResolverTest do
   @moduledoc """
-  The persistence switch resolved for either kind from the user override and
-  the class's own declaration, and the finished-job retention window resolver.
+  The per-class resolvers: compaction thresholds, the remote switch and the
+  finished-job retention window.
   """
   # async: false: writes Application env.
   use FlezhaTest.Case, fixtures: [:env, :tmp_app_data], async: false
 
   alias Flezha.Relay.ClassRegistry
   alias Flezha.State.PersistenceResolver
-
-  describe "keeps_state?/2" do
-    test "a class that declares nothing is durable" do
-      assert PersistenceResolver.keeps_state?("pe_default")
-    end
-
-    test "the class's declaration decides, for a stream and a steps alike" do
-      for {class, kind} <- [{"pe_off_flow", :flow}, {"pe_off_steps", :steps}] do
-        :ok = ClassRegistry.put(class, kind)
-        :ok = ClassRegistry.put_persistent(class, false)
-        refute PersistenceResolver.keeps_state?(class)
-        :ok = ClassRegistry.put_persistent(class, true)
-      end
-    end
-
-    test "the user override wins over the declaration, both ways" do
-      :ok = ClassRegistry.put_persistent("pe_declared_off", false)
-
-      Application.put_env(:flezha, :relay_persistence, %{
-        "pe_declared_off" => true,
-        "pe_forced_off" => false
-      })
-
-      assert PersistenceResolver.keeps_state?("pe_declared_off")
-      refute PersistenceResolver.keeps_state?("pe_forced_off")
-      :ok = ClassRegistry.put_persistent("pe_declared_off", true)
-    end
-  end
 
   describe "compact_after_bytes/2" do
     test "defaults to 8 MiB" do

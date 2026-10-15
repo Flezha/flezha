@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Changed: `:relay_persistence` is gone; a class's `durable` alone decides its state (breaking)
+
+The controller's `:relay_persistence` map (`%{class => bool}`) could switch a class's state off
+behind its own `durable` setting, even for an `effectively_once` class the SDK refuses to run
+without state: its Cells were then not restored and the state was lost on restart. The key is
+removed. Whether a class keeps its work is the `durable` it declares and its runner announces;
+a class that should keep no state declares `durable: false`. A leftover entry is ignored.
+
 ### Fixed: a Kafka producer no longer holds every output while its broker is down
 
 Under the default `drop_nothing`, a record that found its partition's queue full waited in a

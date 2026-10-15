@@ -242,7 +242,7 @@ defmodule FlezhaTest.Relay.OverwatchCellStateGateTest do
   @moduledoc """
   `:get_cell_state` is gated on the class's persistence switch, for either
   kind: a class that persists proceeds to query the runner; one whose switch is
-  off, declared by the class or forced by the user, is refused as
+  off, as the class declares it, is refused as
   `{:error, :persistence_off}` and never contacts the runner (the handler
   replies synchronously instead of spawning the send).
   """
@@ -293,14 +293,6 @@ defmodule FlezhaTest.Relay.OverwatchCellStateGateTest do
 
       :ok = ClassRegistry.put_persistent(id, true)
     end
-  end
-
-  test "a user opt-out is refused the same way" do
-    Application.put_env(:flezha, :relay_persistence, %{"opted_out" => false})
-    state = state_for(:flow, "opted_out")
-
-    assert {:reply, {:error, {:persistence_off, "opted_out"}}, ^state} =
-             Overwatch.handle_call({:get_cell_state, %{}}, {self(), make_ref()}, state)
   end
 end
 
@@ -435,6 +427,7 @@ defmodule FlezhaTest.Relay.OverwatchResumeCountTest do
   # async: false: writes Application env; a shared on-disk root.
   use FlezhaTest.Case, fixtures: [:tmp_app_data, :env], async: false
 
+  alias Flezha.Relay.ClassRegistry
   alias Flezha.Relay.Replay
   alias Flezha.State.{Paths, TestHelpers}
 
@@ -459,11 +452,23 @@ defmodule FlezhaTest.Relay.OverwatchResumeCountTest do
     assert Replay.resume_cell_count("unseeded_class") == 0
   end
 
-  test "an opted-out class counts zero even with WAL on disk" do
-    Application.put_env(:flezha, :relay_persistence, %{"optout_class" => false})
+  test "a class that declares persistence off counts zero even with WAL on disk" do
+    :ok = ClassRegistry.put_persistent("optout_class", false)
+    on_exit(fn -> ClassRegistry.delete("optout_class") end)
     seed_cell("optout_class", "task", "s")
 
     assert Replay.resume_cell_count("optout_class") == 0
+  end
+
+  # The class's own `durable` is the only switch: a leftover config map naming
+  # an effectively-once class cannot turn its restore off.
+  test "a :relay_persistence entry leaves an effectively-once class's Cells restorable" do
+    :ok = ClassRegistry.put_effectively_once("eo_class", true)
+    on_exit(fn -> ClassRegistry.delete("eo_class") end)
+    Application.put_env(:flezha, :relay_persistence, %{"eo_class" => false})
+    seed_cell("eo_class", "task", "k1")
+
+    assert Replay.resume_cell_count("eo_class") == 1
   end
 end
 

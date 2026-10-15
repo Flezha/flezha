@@ -646,7 +646,6 @@ instance metadata → SDK declaration → global default.
 | `:time_travel_retention_hours` / `:default_time_travel_retention_hours` | `%{}` / `6` | Snapshot history kept; `0` keeps only the latest. |
 | `:relay_completed_retention_hours` / `:default_relay_completed_retention_hours` | `%{}` / `72` (`FLEZHA_STEPS_RETENTION_HOURS`) | Finished steps relay data kept before the sweeper reclaims it. |
 | `:input_log_hold_window_ms` | `0` (`FLEZHA_INPUT_LOG_HOLD_WINDOW_MS`) | Floor on how long a consumed input stays in `input.log`; a declared correction window raises it. |
-| `:relay_persistence` | `%{}` (default: the class's announced `durable`) | Per-class persistence on/off, overriding what a class announces. |
 
 ## Smoke check (manual)
 

@@ -58,7 +58,7 @@ retry is a row of `lib/flezha/config/backoff.ex`, announced on
 | `:default_time_travel_retention_hours` | `6` | `lib/flezha/state/persistence_resolver.ex` |
 | `:default_relay_completed_retention_hours` | `72` | `lib/flezha/state/persistence_resolver.ex` |
 | `:default_output_stall_timeout_ms` | `60_000` | `lib/flezha/state/persistence_resolver.ex` |
-| `:relay_persistence` / `:time_travel_retention_hours` / `:relay_completed_retention_hours` / `:compact_after_bytes` / `:compact_after_age_ms` / `:output_stall_timeout_ms` / `:credit_window_bytes` | `%{}` | `lib/flezha/state/persistence_resolver.ex`: per-class user overrides, `%{"RelayClass" => value}`, winning over the SDK declaration and the instance metadata; `:relay_persistence` overrides whether a class keeps its work on disk. `durable: remote` is the class's own and has no override |
+| `:time_travel_retention_hours` / `:relay_completed_retention_hours` / `:compact_after_bytes` / `:compact_after_age_ms` / `:output_stall_timeout_ms` / `:credit_window_bytes` | `%{}` | `lib/flezha/state/persistence_resolver.ex`: per-class user overrides, `%{"RelayClass" => value}`, winning over the SDK declaration and the instance metadata. Whether a class keeps its work (`durable`) is the class's own and has no override |
 | `:wal_high_watermark_bytes` | `16 * 1024 * 1024` | `lib/flezha/state/persistence_resolver.ex` — the one Cell-scale payload bound |
 | `:wal_low_watermark_bytes` | half the high watermark (derived) | `lib/flezha/state/wal_writer.ex` |
 | `:wal_hard_watermark_bytes` | 4 × the high watermark (derived) | `lib/flezha/state/wal_writer.ex` |

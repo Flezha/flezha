@@ -30,7 +30,6 @@ defmodule Flezha.Relay.Migration do
   alias Flezha.Service.HubManager
   alias Flezha.Service.RelayManager
   alias Flezha.Shutdown
-  alias Flezha.State.PersistenceResolver
   alias Flezha.State.TaskJournal
   alias ProcessHub.Service.Migration, as: HubMigration
 
@@ -317,7 +316,7 @@ defmodule Flezha.Relay.Migration do
   @spec durable_steps?(Overwatch.t(), map()) :: boolean()
   def durable_steps?(%Overwatch{} = state, relay) do
     Builder.journals?(state.builder) and
-      PersistenceResolver.keeps_state?(Keyword.get(relay.opts, :relay_class, relay.id))
+      ClassRegistry.persistent?(Keyword.get(relay.opts, :relay_class, relay.id))
   end
 
   @doc """
