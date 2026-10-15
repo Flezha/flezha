@@ -60,8 +60,8 @@ fn code_of(variant: &str) -> String {
     code
 }
 
-/// The codes the fixture lists as `unrowed`: raised from a record's raw shape,
-/// or by registration after it, which no builder writes and no row states.
+/// The codes the fixture lists as `unrowed`: raised from a record's raw shape
+/// no builder writes, or from a steps shape no row states yet.
 fn unrowed() -> Vec<String> {
     std::fs::read_to_string(FIXTURE)
         .expect("the fixture")
@@ -489,8 +489,8 @@ fn a_misplaced_setting_names_itself_and_its_parent() {
     assert_eq!(accepted.durable, crate::relay::settings::Durable::local());
 }
 
-/// Every variant a builder can reach is produced by some row; the `unrowed` codes are
-/// the ones only a raw record or registration reaches.
+/// Every variant a builder can reach is produced by some row, except the
+/// `unrowed` codes the fixture exempts.
 #[test]
 fn the_table_reaches_every_variant_the_vocabulary_carries() {
     let vocabulary = std::fs::read_to_string("src/host/issue.rs").expect("the vocabulary");

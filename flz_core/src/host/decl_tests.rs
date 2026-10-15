@@ -600,6 +600,7 @@ mod journal_codec_tests {
     use super::factory;
     use crate::channel::ChannelKind;
     use crate::host::build::build_channels;
+    use crate::host::issue::render_issues;
     use crate::host::register::check_class_json;
 
     fn channels(json: &str) -> Vec<(ChannelKind, bool)> {
@@ -611,22 +612,33 @@ mod journal_codec_tests {
             .collect()
     }
 
-    fn chained_loop(terminal_links: &str) -> String {
+    /// A steps class whose entry channel `in` feeds tasklet `p0`, with
+    /// `channels` declared after it and tasklets `p0` to `p<tasklets - 1>`.
+    fn steps_class(id: &str, each: &str, channels: &str, tasklets: usize) -> String {
+        let names: Vec<_> = (0..tasklets)
+            .map(|t| format!(r#"{{"name":"p{t}"}}"#))
+            .collect();
         format!(
             r#"{{"factory_id":"{}","sdk_lang":1,"sdk_version":"0.1.0",
-                 "run":{{"steps":{{"each":"chained"}}}},
+                 "run":{{"steps":{{"each":"{each}"}}}},
                  "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","tasklet":0}}]]}},
-                             {{"name":"out","kind":"inter_task","producer":0,
-                               "chains":[{terminal_links}]}}],
-                 "tasklets":[{{"name":"p0"}}]}}"#,
-            factory("chained_terminal")
+                             {channels}],
+                 "tasklets":[{}]}}"#,
+            factory(id),
+            names.join(",")
         )
     }
 
-    /// The refusal every host reaches. Java, Node, Python, Ruby and PHP all
-    /// register through `declare_class`, so this is the site that covers them;
-    /// the typed Rust SDK refuses the same shape in its own vocabulary because
-    /// it never passes through here.
+    fn chained_loop(terminal_links: &str) -> String {
+        let out = format!(
+            r#"{{"name":"out","kind":"inter_task","producer":0,"chains":[{terminal_links}]}}"#
+        );
+        steps_class("chained_terminal", "chained", &out, 1)
+    }
+
+    /// The refusal every host reaches: `check` raises it, so a builder's
+    /// validation and `declare_class` both answer it, the typed Rust SDK's
+    /// builder included.
     #[test]
     fn a_durable_chained_loop_whose_terminal_only_sinks_is_refused() {
         let err = super::decl(&chained_loop(r#"[{"link":"sink","name":"s"}]"#))
@@ -638,19 +650,63 @@ mod journal_codec_tests {
         );
     }
 
+    /// A builder validates through `check_class` before it declares, so the
+    /// steps shapes only a built DAG used to reveal are refused there too,
+    /// under the code `declare_class` answers.
+    #[test]
+    fn check_class_refuses_the_steps_shapes_declare_class_refuses() {
+        let branching = steps_class(
+            "branching_chained",
+            "chained",
+            r#"{"name":"mid","kind":"inter_task","producer":0,
+                "chains":[[{"link":"into","tasklet":1}],[{"link":"into","tasklet":2}]]},
+               {"name":"a","kind":"inter_task","producer":1,"chains":[[]]},
+               {"name":"b","kind":"inter_task","producer":2,"chains":[[]]}"#,
+            3,
+        );
+        let two_outputs = steps_class(
+            "two_outputs",
+            "once",
+            r#"{"name":"a","kind":"inter_task","producer":0,"chains":[[]]},
+               {"name":"b","kind":"inter_task","producer":0,"chains":[[]]}"#,
+            1,
+        );
+        let answered: Vec<_> = [
+            (
+                chained_loop(r#"[{"link":"sink","name":"s"}]"#),
+                "topology.chained_loop_terminal_without_handoff",
+            ),
+            (branching, "topology.branching_chained_loop"),
+            (two_outputs, "topology.multiple_output_channels"),
+        ]
+        .into_iter()
+        .map(|(json, code)| {
+            let checked = check_class_json(json.as_bytes())
+                .map(|_| ())
+                .map_err(|issues| render_issues(&issues).code.to_string());
+            let declared = super::decl(&json).map_err(|e| e.code.to_string());
+            (code, checked, declared)
+        })
+        .collect();
+        let refused = |code: &str| Err(code.to_string());
+        let wanted: Vec<_> = answered
+            .iter()
+            .map(|&(code, ..)| (code, refused(code), refused(code)))
+            .collect();
+        assert_eq!(answered, wanted, "(code, check_class, declare_class)");
+    }
+
     /// The same class with a consumer behind the terminal channel keeps the
     /// channel inter-tasklet, so the journal carries it and it registers.
     #[test]
     fn a_durable_chained_loop_with_an_inter_task_terminal_registers() {
-        let ok = format!(
-            r#"{{"factory_id":"{}","sdk_lang":1,"sdk_version":"0.1.0",
-                 "run":{{"steps":{{"each":"chained"}}}},
-                 "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","tasklet":0}}]]}},
-                             {{"name":"out","kind":"inter_task","producer":0,
-                               "chains":[[{{"link":"sink","name":"s"}}],[{{"link":"into","tasklet":1}}]]}},
-                             {{"name":"tail","kind":"inter_task","producer":1,"chains":[[]]}}],
-                 "tasklets":[{{"name":"p0"}},{{"name":"p1"}}]}}"#,
-            factory("chained_ok")
+        let ok = steps_class(
+            "chained_ok",
+            "chained",
+            r#"{"name":"out","kind":"inter_task","producer":0,
+                "chains":[[{"link":"sink","name":"s"}],[{"link":"into","tasklet":1}]]},
+               {"name":"tail","kind":"inter_task","producer":1,"chains":[[]]}"#,
+            2,
         );
         super::decl(&ok).expect("an inter-tasklet terminal carries the handoff");
     }

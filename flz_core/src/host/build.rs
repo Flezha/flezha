@@ -297,15 +297,13 @@ fn host_facts(
     }
 }
 
-/// Kahn toposort from every entry channel's consumers, refusing what the
-/// typed builder refuses: no entry channel, several outputs, cycles,
-/// disconnected tasklets.
+/// Kahn toposort from every entry channel's consumers. `check` judged the
+/// shape first, so what this refuses it refused already.
 pub(super) fn build_host_dag(topology: &RelayTopology) -> Result<TaskDag, Error> {
     let entries = topology.entry_consumers();
     if entries.is_empty() {
         return Err(Error::Declaration(TopologyIssue::NoEntryChannel.to_error()));
     }
-    refuse_several_outputs(topology)?;
     let n = topology.tasklets.len();
     let roots: Vec<TaskletId> = entries
         .iter()
@@ -346,24 +344,4 @@ fn inter_task_edges(topology: &RelayTopology) -> Vec<(TaskletId, TaskletId)> {
         }
     }
     edges
-}
-
-/// No tasklet producing two channels: a stage has one output a child reads.
-fn refuse_several_outputs(topology: &RelayTopology) -> Result<(), Error> {
-    for (task_id, _) in topology.tasklets.iter().enumerate() {
-        let produced = topology
-            .channels
-            .iter()
-            .filter(|c| c.producer == Some(task_id as u32))
-            .count();
-        if produced > 1 {
-            return Err(Error::Declaration(
-                TopologyIssue::MultipleOutputChannels {
-                    tasklet: topology.tasklets[task_id].name.to_string(),
-                }
-                .to_error(),
-            ));
-        }
-    }
-    Ok(())
 }

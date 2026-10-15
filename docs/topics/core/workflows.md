@@ -89,7 +89,7 @@ What a loop reads:
   instance with no message waits.
 - A `chained` instance reads its first message, then its own carry. A `chained`
   class whose last tasklet hands nothing on is refused at registration
-  (`LoopTerminalWithoutHandoff`): a crash would restart it empty and read that
+  (`topology.chained_loop_terminal_without_handoff`): a crash would restart it empty and read that
   as finished.
 
 A message sent while a pass runs is not dropped: it waits in the instance's

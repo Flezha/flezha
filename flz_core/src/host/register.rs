@@ -19,12 +19,13 @@ use super::decl::{
     HostClock, HostCodec, HostOverflow, HostTaskletDecl,
 };
 use super::issue::{render_issues, TopologyIssue};
+use crate::channel::{ChannelId, TaskletId};
 use crate::error::Error;
-use crate::relay::settings::{self, Durable, Each, Exactly, OnFailure, Run, SettingIssue};
+use crate::relay::settings::{self, Durable, Each, Exactly, Run, SettingIssue};
 use crate::relay::topology::{
     AckGranularity, BeyondWindowPolicy, ChannelApi, CheckpointOutputs, RelayTopology,
 };
-use crate::steps::spec::{graph_order, GraphSeed, StepsSpec, TaskDag};
+use crate::steps::spec::{graph_order, GraphOrder, GraphSeed, StepsSpec, TaskDag};
 use crate::ErrorModel;
 
 /// Hard upper bound on a per-Cell mailbox: ~1M items is past sanity for any
@@ -143,7 +144,7 @@ pub fn check(decl: HostClassDecl) -> Result<Derived, Vec<TopologyIssue>> {
         }
     }
     refuse_edge_keying(&decl, &channels, &mut issues);
-    refuse_graph_shape(&decl, &channels, &mut issues);
+    refuse_graph_shape(&decl, &run, &durable, &channels, &mut issues);
 
     if issues.is_empty() {
         Ok(Derived {
@@ -553,8 +554,11 @@ fn refuse_edge_keying(
 
 /// The shared graph-shape rule (`sdk-graph-authoring`): one or more entry
 /// channels feed the graph, every node reachable from some entry, no cycles.
+/// A steps class's own shape is judged over the same walk.
 fn refuse_graph_shape(
     decl: &HostClassDecl,
+    run: &Run,
+    durable: &Durable,
     channels: &[DerivedChannel],
     issues: &mut Vec<TopologyIssue>,
 ) {
@@ -566,10 +570,14 @@ fn refuse_graph_shape(
         .filter_map(|c| c.producer.map(|p| (p, c)))
         .flat_map(|(p, c)| c.consumers.iter().map(move |e| (p, e.tasklet)))
         .collect();
-    let roots: Vec<_> = channels
+    let entries: Vec<(ChannelId, Vec<TaskletId>)> = channels
         .iter()
         .filter(|c| c.kind == HostChannelKind::Entry)
-        .flat_map(|c| c.consumers.iter().map(|e| e.tasklet))
+        .map(|c| (c.index, c.consumers.iter().map(|e| e.tasklet).collect()))
+        .collect();
+    let roots: Vec<_> = entries
+        .iter()
+        .flat_map(|(_, c)| c.iter().copied())
         .collect();
     let shape = graph_order(
         decl.tasklets.len(),
@@ -585,8 +593,64 @@ fn refuse_graph_shape(
         issues.push(TopologyIssue::UnreachableTasklet {
             tasklet: decl.tasklets[node as usize].name.clone(),
         });
+    } else if let Run::Steps { each, .. } = run {
+        issues.extend(steps_shape_issue(
+            decl, *each, durable, channels, shape, entries,
+        ));
     }
 }
+
+/// What a steps class's DAG must answer beyond the graph rule, judged over
+/// the walk that rule took: one output per stage, and for a handoff-chained
+/// loop one terminal per chain that releases a handoff.
+///
+/// A durable chained loop seeds iteration N+1 from iteration N's terminal
+/// handoff, and only an inter-tasklet channel carries one: the journal codec
+/// rides that kind and no other (`build::build_channel`). A terminal that owns
+/// no output channel, or one whose only wiring is a plugin sink, would ship an
+/// empty handoff at the iteration commit, and `resume::seed_for_mode` reads an
+/// empty seed as convergence: the loop stops and the run reports completed,
+/// truncated and silent.
+fn steps_shape_issue(
+    decl: &HostClassDecl,
+    each: Each,
+    durable: &Durable,
+    channels: &[DerivedChannel],
+    walk: GraphOrder,
+    entries: Vec<(ChannelId, Vec<TaskletId>)>,
+) -> Option<TopologyIssue> {
+    let outputs = |task: TaskletId| channels.iter().filter(move |c| c.producer == Some(task));
+    let name = |task: TaskletId| decl.tasklets[task as usize].name.clone();
+    if let Some(task) = (0..decl.tasklets.len() as TaskletId).find(|&t| outputs(t).count() > 1) {
+        return Some(TopologyIssue::MultipleOutputChannels {
+            tasklet: name(task),
+        });
+    }
+    if each != Each::Chained {
+        return None;
+    }
+    let dag = TaskDag::from_walk(walk, entries);
+    if let Some((channel, branching)) = dag.branching_chain() {
+        return Some(TopologyIssue::BranchingChainedLoop {
+            channel: channels[channel as usize].name.clone(),
+            leaves: branching.leaves(&dag).count(),
+        });
+    }
+    if !durable.keeps() {
+        return None;
+    }
+    let hands_off = |task| {
+        outputs(task)
+            .next()
+            .is_some_and(|c| c.kind == HostChannelKind::InterTask)
+    };
+    dag.terminal_without_handoff(hands_off).map(|task| {
+        TopologyIssue::ChainedLoopTerminalWithoutHandoff {
+            tasklet: name(task),
+        }
+    })
+}
+
 /// Build the checked declaration's topology and register it.
 fn register(derived: Derived) -> Result<(), Error> {
     let Derived {
@@ -617,7 +681,11 @@ fn register(derived: Derived) -> Result<(), Error> {
         api: decl.channels.iter().map(channel_api).collect(),
     };
     if let Run::Steps { each, on_failure } = run {
-        topology.steps = Some(structured_steps(&topology, each, on_failure)?);
+        topology.steps = Some(StepsSpec {
+            dag: build_host_dag(&topology)?,
+            on_failure,
+            each,
+        });
     }
     crate::relay::registry::register_class(class.factory_id, Arc::new(topology));
     Ok(())
@@ -634,65 +702,4 @@ fn channel_api(channel_decl: &HostChannelDecl) -> ChannelApi {
             .unwrap_or_default(),
         description: channel_decl.description.clone(),
     }
-}
-
-/// A durable handoff-chained loop seeds iteration N+1 from iteration N's
-/// terminal handoff, and only an inter-tasklet channel carries one: the
-/// journal codec rides that kind and no other (`build::build_channel`). A
-/// terminal that owns no output channel, or one whose only wiring is a plugin
-/// sink, would therefore ship an empty handoff at the iteration commit, and
-/// `resume::seed_for_mode` reads an empty seed as convergence — the loop stops
-/// and the run reports completed, truncated and silent.
-///
-/// It lives here rather than in each SDK because this is the one registration
-/// every host reaches: Java, Node, Python, Ruby and PHP all declare through
-/// `declare_class`. The typed Rust SDK refuses the same shape in its own
-/// vocabulary, because it never passes through here.
-fn refuse_loop_terminal_without_handoff(
-    topology: &RelayTopology,
-    each: Each,
-    dag: &TaskDag,
-) -> Result<(), Error> {
-    if !topology.durable.keeps() || each != Each::Chained {
-        return Ok(());
-    }
-    match dag.terminal_without_handoff(topology) {
-        Some(terminal) => Err(Error::Declaration(
-            TopologyIssue::ChainedLoopTerminalWithoutHandoff {
-                tasklet: terminal.name.to_string(),
-            }
-            .to_error(),
-        )),
-        None => Ok(()),
-    }
-}
-
-/// A structured chain: its DAG from the topology, a chained loop decided
-/// against it.
-fn structured_steps(
-    topology: &RelayTopology,
-    each: Each,
-    on_failure: OnFailure,
-) -> Result<StepsSpec, Error> {
-    let dag = build_host_dag(topology)?;
-    if each == Each::Chained {
-        if let Some((channel_id, branching)) = dag.branching_chain() {
-            return Err(Error::Declaration(
-                TopologyIssue::BranchingChainedLoop {
-                    channel: topology
-                        .channel(channel_id)
-                        .map(|c| c.name.to_string())
-                        .unwrap_or_default(),
-                    leaves: branching.leaves(&dag).count(),
-                }
-                .to_error(),
-            ));
-        }
-    }
-    refuse_loop_terminal_without_handoff(topology, each, &dag)?;
-    Ok(StepsSpec {
-        dag,
-        on_failure,
-        each,
-    })
 }

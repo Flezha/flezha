@@ -234,8 +234,8 @@ call_factory_by_key | 0 | in | entry | - | 0 | -
 call_factory_by_key | 1 | ask | plugin | 0 | - | -
 call_factory_by_key | 2 | ask.response | entry | - | 0 | -
 
-# The variants `check` raises from a record's raw shape, or registration raises
-# after it, which no builder writes and so no row states: `unrowed | <code>`.
+# The variants no row states, `unrowed | <code>`: `check` raises them from a
+# record's raw shape no builder writes, or from a steps shape no row states yet.
 unrowed | topology.unknown_sdk_lang
 unrowed | topology.unusable_sdk_version
 unrowed | topology.no_tasklets

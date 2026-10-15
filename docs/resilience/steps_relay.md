@@ -67,7 +67,7 @@ before the loop's next carry-fed pass.
 
 Loop modes are declared with `each()` / `each()`. Registration refuses a class that
 declares no tasklet (`topology.no_tasklets`) and a durable `Chained` loop whose terminal tasklet
-releases no inter-tasklet channel (`LoopTerminalWithoutHandoff`). Two shapes fail that: a
+releases no inter-tasklet channel (`topology.chained_loop_terminal_without_handoff`). Two shapes fail that: a
 terminal nothing consumes and that names no output plugin owns no output channel at all, and one whose only
 wiring is a output plugin gets no journal codec, because the runtime attaches one to inter-tasklet
 channels and nothing else. Either way a crash would re-seed empty, read as converged.

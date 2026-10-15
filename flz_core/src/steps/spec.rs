@@ -7,8 +7,7 @@ use flz_transport::errors::{ErrorModel, FlezhaError};
 use serde_json::{Map, Value};
 
 use super::{Each, OnFailure};
-use crate::channel::{ChannelId, ChannelKind, TaskletId};
-use crate::relay::topology::{RelayTopology, TaskletDescriptor};
+use crate::channel::{ChannelId, TaskletId};
 use crate::Code;
 
 /// The tasklet DAG in Kahn order from the entry channels' consumers, so
@@ -166,23 +165,17 @@ impl TaskDag {
             .map(|(channel_id, chain)| (*channel_id, chain))
     }
 
-    /// The first chain's terminal whose output is not an inter-tasklet
-    /// channel, so it releases nothing a handoff-chained loop's journal
-    /// carries into the next iteration.
-    pub fn terminal_without_handoff<'t>(
+    /// The first chain's terminal that `hands_off` says releases nothing a
+    /// handoff-chained loop's journal carries into the next iteration.
+    pub fn terminal_without_handoff(
         &self,
-        topology: &'t RelayTopology,
-    ) -> Option<&'t TaskletDescriptor> {
+        hands_off: impl Fn(TaskletId) -> bool,
+    ) -> Option<TaskletId> {
         self.entries
             .iter()
             .filter_map(|(_, chain)| chain.single_leaf(self))
-            .filter_map(|leaf| topology.tasklet(self.order[leaf]))
-            .find(|terminal| {
-                !terminal
-                    .output_channel_id
-                    .and_then(|id| topology.channel(id))
-                    .is_some_and(|channel| channel.kind == ChannelKind::InterTasklet)
-            })
+            .map(|leaf| self.order[leaf])
+            .find(|&terminal| !hands_off(terminal))
     }
 }
 
@@ -300,8 +293,7 @@ pub fn graph_order(
 }
 
 /// What a steps class declares beyond its topology, carried on it as
-/// [`RelayTopology::steps`]: the one fact a class registry reads the
-/// kind from.
+/// `RelayTopology::steps`: the one fact a class registry reads the kind from.
 #[derive(Debug)]
 pub struct StepsSpec {
     pub dag: TaskDag,
@@ -324,25 +316,12 @@ pub enum BuildStepsError {
         factory_id: &'static str,
         tasklet: String,
     },
-    MultipleOutputChannels {
-        factory_id: &'static str,
-        tasklet: String,
-    },
-    BranchingChainedLoop {
-        factory_id: &'static str,
-        channel: String,
-        leaves: usize,
-    },
     Disconnected {
         factory_id: &'static str,
         tasklet: String,
     },
     NoTasklets {
         factory_id: &'static str,
-    },
-    LoopTerminalWithoutHandoff {
-        factory_id: &'static str,
-        tasklet: String,
     },
 }
 
@@ -368,34 +347,10 @@ impl BuildStepsError {
                 factory_id,
                 tasklet: t,
             } => (factory_id, Code::Cycle, tasklet(t)),
-            Self::MultipleOutputChannels {
-                factory_id,
-                tasklet: t,
-            } => (factory_id, Code::MultipleOutputChannels, tasklet(t)),
             Self::Disconnected {
                 factory_id,
                 tasklet: t,
             } => (factory_id, Code::UnreachableTasklet, tasklet(t)),
-            Self::LoopTerminalWithoutHandoff {
-                factory_id,
-                tasklet: t,
-            } => (
-                factory_id,
-                Code::ChainedLoopTerminalWithoutHandoff,
-                tasklet(t),
-            ),
-            Self::BranchingChainedLoop {
-                factory_id,
-                channel,
-                leaves,
-            } => (
-                factory_id,
-                Code::BranchingChainedLoop,
-                vec![
-                    ("channel", channel.as_str().into()),
-                    ("leaves", (*leaves).into()),
-                ],
-            ),
         };
         let mut details: Map<String, Value> = pairs
             .into_iter()

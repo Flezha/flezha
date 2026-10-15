@@ -89,19 +89,18 @@ fn an_unread_response_is_refused_by_its_call_alone() {
 
 #[test]
 fn a_steps_call_registers_only_in_a_per_input_loop() {
-    for (mode, refused) in [("once", true), ("chained", true), ("per_input", false)] {
+    const OUTSIDE: &str = "topology.call_outside_per_input_loop";
+    // A call is plugin-bound, so a chained loop's terminal hands nothing off.
+    const NO_HANDOFF: &str = "topology.chained_loop_terminal_without_handoff";
+    for (mode, refusals) in [
+        ("once", &[OUTSIDE][..]),
+        ("chained", &[OUTSIDE, NO_HANDOFF][..]),
+        ("per_input", &[][..]),
+    ] {
         let decl = record(&format!(
             r#"class.run({{"steps":{{"each":"{mode}"}}}}); entry(in); in.into(plain); plain.named(ask); plain.call(pricing)"#
         ));
-        match check(decl) {
-            Ok(_) => assert!(!refused, "{mode:?} must refuse a call"),
-            Err(issues) => {
-                assert!(refused, "{mode:?} must register: {issues:?}");
-                assert_eq!(
-                    codes(&issues),
-                    vec!["topology.call_outside_per_input_loop".to_string()]
-                );
-            }
-        }
+        let verdict = check(decl).map_or_else(|issues| codes(&issues), |_| Vec::new());
+        assert_eq!(verdict, refusals, "{mode}");
     }
 }

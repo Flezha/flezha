@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Fixed: validating a steps class refuses what declaring it refuses
+
+A builder's `validate()` (the core's `flz_core_check_class`) accepted a steps class that
+`flz_core_declare_class` then refused: a tasklet producing two channels
+(`topology.multiple_output_channels`), a `chained` loop over a chain that branches
+(`topology.branching_chained_loop`), and a durable `chained` loop whose last tasklet hands
+nothing on (`topology.chained_loop_terminal_without_handoff`). The check now refuses all three
+with the same codes, beside every other refusal the record earns.
+
 ### Fixed: a controller no longer binds a relay another controller hosts to its own runner
 
 Each controller's convergence loop judged every relay in the cluster against its own runners, so
