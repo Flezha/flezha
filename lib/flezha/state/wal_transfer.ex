@@ -78,8 +78,8 @@ defmodule Flezha.State.WalTransfer do
   journal pulled without its log seeds the instance's floor in an empty
   offset space. Returns the number of references whose files landed; `0`
   means the source held nothing and a cold start is correct. A per-reference
-  failure is logged via telemetry and skipped — one unreadable Cell must not
-  cost the relay the rest.
+  failure is logged via telemetry and the pull goes on with the rest;
+  `Flezha.State.Adoption` keeps the copy only when it landed whole.
   """
   @spec pull_relay(node(), binary(), keyword()) :: non_neg_integer()
   def pull_relay(source_node, relay_class, opts \\ [])

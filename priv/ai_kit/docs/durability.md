@@ -363,7 +363,10 @@ half-finished upload is invisible to recovery. A controller that starts on an
 empty disk fetches the copy and carries on from it. When a relay moves back
 to a controller that kept an older copy, the newer copy (by owner epoch, then
 highest sequence number; a tie goes to the incoming one) replaces it whole; a
-replacement that does not land whole leaves the local copy as it was.
+replacement that does not land whole leaves the local copy as it was. On a
+controller that held nothing, that means the relay binds empty while the node it
+moved from keeps its copy, and nothing retries the move by itself: the state
+comes back only with a new move or a hydration from the backend.
 
 **At `local`**, shipping is in the background and never delays an
 acknowledgement; a failing backend delays nothing. What degrades is the

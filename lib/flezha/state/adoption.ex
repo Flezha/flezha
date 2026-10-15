@@ -5,10 +5,11 @@ defmodule Flezha.State.Adoption do
   shipped to the durability backend, compared by the writer epoch and top seq
   each reference carries (`Artifact.copy_supersedes?/2`).
 
-  A local copy the newer one replaces is set aside with one rename
-  (`Paths.set_aside/1`), so the pull (`WalTransfer.pull_relay/3`) or the
-  hydration (`DurabilityTier.hydrate_relay/1`) runs as on a node that holds
-  nothing. Once every reference of the newer copy has landed, what only the old
+  A local copy the newer one replaces, an empty one on a node that held
+  nothing, is set aside with one rename (`Paths.set_aside/1`), so the pull
+  (`WalTransfer.pull_relay/3`) or the hydration
+  (`DurabilityTier.hydrate_relay/1`) runs as on a node that holds nothing.
+  Once every reference of the newer copy has landed, what only the old
   copy held (a reference the newer one lacks, a class-level sidecar) is copied
   back and the old copy is removed; otherwise the old copy comes back whole.
   The landing is recorded with the files to copy back (`Paths.mark_landed/2`)
@@ -72,12 +73,12 @@ defmodule Flezha.State.Adoption do
   defp fetch(relay_class, nil), do: DurabilityTier.hydrate_relay(relay_class)
   defp fetch(relay_class, source), do: WalTransfer.pull_relay(source, relay_class)
 
-  # A node holding no reference fetches over what it has, as it always did.
-  defp set_aside(_relay_class, ours, _theirs) when ours == %{}, do: []
-
+  # A node that held nothing sets aside an empty copy, so a newer one that
+  # does not land whole is removed with it and the node stays cold.
   defp set_aside(relay_class, ours, theirs) do
     live = Paths.class_dir(relay_class)
     only_here = Map.keys(ours) -- Map.keys(theirs)
+    File.mkdir_p!(live)
 
     kept =
       for(ref <- only_here, path <- Paths.durable_files(ref), File.exists?(path), do: path) ++
@@ -109,11 +110,9 @@ defmodule Flezha.State.Adoption do
   end
 
   defp settle(relay_class, _kept, false) do
-    if File.exists?(Paths.set_aside_dir(relay_class)) do
-      Logger.warning(
-        "[state] #{relay_class}: a newer copy did not land whole; the local copy stays"
-      )
-    end
+    Logger.warning(
+      "[state] #{relay_class}: a newer copy did not land whole; the local copy stays"
+    )
 
     Paths.restore_set_aside(relay_class)
   end

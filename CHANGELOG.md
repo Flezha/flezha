@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Fixed: a relay moved to a node that held nothing no longer keeps half of the copy it pulled
+
+When the node a relay moved from stopped answering part-way through the pull, the node it moved
+to kept the files that had arrived, so a steps instance could bind its Cells without its journal
+and end at once as "resumed compensation after crash". A copy that does not arrive whole is now
+removed again, leaving that node as it was before the move, the same as a node that kept an older
+copy already gets its own copy back. The same holds for a copy fetched from the durability
+backend.
+
 ### Fixed: a stopped Cell writer no longer lets a `durable: remote` input be confirmed unshipped
 
 A Cell's writer that stopped while a ship was in flight let go of the records it held, so the

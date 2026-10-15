@@ -334,10 +334,7 @@ defmodule FlezhaTest.State.WalTransferTest do
       File.write!(Paths.input_log_path(class), TestHelpers.wal_records(0..3, "stale"))
       stale = {File.read!(Paths.wal_path(cell_id)), File.read!(Paths.input_log_path(class))}
       # The source's log is judged newer and then does not come over.
-      stub(WalTransfer, :pull_relay, fn source, _class ->
-        {:ok, _} = WalTransfer.pull_cell(source, {:cell, cell_id})
-        1
-      end)
+      pull_only(cell_id)
 
       on_exit(NodeTestHelper.override_log_level(:warning))
 
@@ -349,6 +346,32 @@ defmodule FlezhaTest.State.WalTransferTest do
                stale
 
       refute File.exists?(Paths.set_aside_dir(class))
+    end
+
+    # fails when: a node that held nothing keeps the part of a moving relay's
+    # copy that landed, so a steps instance whose source stopped answering
+    # after its Cells binds them without its journal and reads their
+    # compensation intents as an undo in flight.
+    test "a node that held nothing stays cold when the newer copy does not land whole" do
+      {class, cell_id} = class_and_cell("cold")
+      with_source_copy(cell_id, 0..5)
+      :ok = TaskJournal.append_iter_committed(class, 0, 0, [])
+      FsyncBatcher.flush_now()
+      peer = move_root_to_peer(:waltransfer13)
+      refute File.exists?(Paths.wal_path(cell_id))
+      # The Cells come before the journal (`Paths.durable_refs/1`); the source
+      # stops answering in between.
+      pull_only(cell_id)
+
+      on_exit(NodeTestHelper.override_log_level(:warning))
+
+      log = capture_log(fn -> assert :ok = Adoption.adopt_newest(class, peer) end)
+
+      refute File.exists?(Paths.journal_path(class))
+      refute File.exists?(Paths.wal_path(cell_id))
+      refute File.exists?(Paths.class_dir(class))
+      refute File.exists?(Paths.set_aside_dir(class))
+      assert log =~ "did not land whole"
     end
 
     # fails when: a tie keeps the local copy, so two histories of equal length
@@ -372,6 +395,14 @@ defmodule FlezhaTest.State.WalTransferTest do
   defp with_source_copy(cell_id, seqs) do
     TestHelpers.write_wal(cell_id, seqs, "source")
     File.read!(Paths.wal_path(cell_id))
+  end
+
+  # Of the source's copy only `cell_id` comes over.
+  defp pull_only(cell_id) do
+    stub(WalTransfer, :pull_relay, fn source, _class ->
+      {:ok, _} = WalTransfer.pull_cell(source, {:cell, cell_id})
+      1
+    end)
   end
 
   # The peer keeps the root this node was on, so it is the source; this node

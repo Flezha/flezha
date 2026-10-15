@@ -95,10 +95,10 @@ the instance's input log (`{:input_log, class}`), because a journal without its 
 the floor in an empty offset space. `Flezha.State.Adoption` runs it once, as the relay arrives
 and before any of its writers opens, and only when the source's copy is newer than this node's
 (`Artifact.freshness/1`: the WAL-owner epoch, then the highest seq; a tie goes to the source).
-A local copy it replaces is first renamed aside whole, so the pull lands as on a node that holds
-nothing; once every reference has landed, what only the old copy held (a reference the source
+A local copy it replaces, an empty one on a node that held nothing, is first renamed aside whole,
+so the pull lands as on a node that holds nothing; once every reference has landed, what only the old copy held (a reference the source
 lacks, a class-level sidecar) is copied back and the old copy is removed, and otherwise the old
-copy comes back. The landing is recorded atomically, with the files to copy back, before any is
+copy comes back, so a node that held nothing keeps none of a copy that did not land whole. The landing is recorded atomically, with the files to copy back, before any is
 copied, so at the next arrival a set-aside copy recorded as landed has its copy-back finished,
 and an unrecorded one (a crash before the newer copy landed) comes back. Writers still open on the class are closed before the bind opens its
 own, nothing is replaced while another relay bound on the node owns the class, and a source

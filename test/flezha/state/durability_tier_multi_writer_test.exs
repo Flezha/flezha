@@ -498,6 +498,24 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
       refute File.exists?(Paths.set_aside_dir(ctx.class))
     end
 
+    # fails when: a node that held nothing keeps the part of a newer lineage
+    # that hydrated, so it binds Cells without the rest of their instance.
+    test "a node that held nothing stays cold when the newer lineage does not hydrate whole",
+         ctx do
+      other = {ctx.class, "task", "k2"}
+      peer_adopts_and_ships(ctx, {:cell, ctx.cell_id}, [other])
+      Stub.delete(newest_range_blob({:cell, other}), [])
+      on_exit(NodeTestHelper.override_log_level(:warning))
+
+      log = capture_log(fn -> assert :ok = Adoption.adopt_newest(ctx.class, nil) end)
+
+      refute File.exists?(Paths.wal_path(ctx.cell_id))
+      refute File.exists?(Paths.class_dir(ctx.class))
+      refute File.exists?(Paths.set_aside_dir(ctx.class))
+      assert log =~ "which the backend does not hold"
+      assert log =~ "did not land whole"
+    end
+
     test "a bid is a compare-and-set, so simultaneous claimants cannot both win", _ctx do
       # Below the shipper, because the race it closes cannot be staged through
       # one mailbox: two nodes that read the same counter both bid the same
@@ -573,14 +591,16 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
 
   # The relay migrates: the peer adopts it and ships. The adopt is a cast and
   # the ship a call on the same mailbox, so both are served inside the window
-  # where the peer's own state root is in place.
-  defp peer_adopts_and_ships(ctx, ref) do
+  # where the peer's own state root is in place. `more_cells` are written and
+  # shipped beside `ctx.cell_id`.
+  defp peer_adopts_and_ships(ctx, ref, more_cells \\ []) do
     peer = start_peer_node(ctx.peer_base)
 
     with_root(ctx.peer_base, fn ->
-      TestHelpers.write_wal(ctx.cell_id, 0..5)
+      Enum.each([ctx.cell_id | more_cells], &TestHelpers.write_wal(&1, 0..5))
       GenServer.cast(peer, {:adopt, ctx.class})
       assert :ok = GenServer.call(peer, {:ship_now, ref})
+      Enum.each(more_cells, &assert(:ok = GenServer.call(peer, {:ship_now, {:cell, &1}})))
     end)
 
     peer

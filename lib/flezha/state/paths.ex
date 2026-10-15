@@ -498,7 +498,8 @@ defmodule Flezha.State.Paths do
   @doc """
   Put a set-aside copy back in place of whatever an interrupted or failed
   adoption left in the class directory, and finish removing a discarded one;
-  a no-op when neither exists.
+  a no-op when neither exists. An empty copy put back leaves no class
+  directory, as on the node that held nothing before the adoption.
   """
   @spec restore_set_aside(binary()) :: :ok
   def restore_set_aside(relay_class) do
@@ -508,6 +509,7 @@ defmodule Flezha.State.Paths do
     if File.exists?(aside) do
       {:ok, _} = File.rm_rf(class_dir(relay_class))
       File.rename!(aside, class_dir(relay_class))
+      _ = File.rmdir(class_dir(relay_class))
     end
 
     :ok
@@ -535,12 +537,8 @@ defmodule Flezha.State.Paths do
   """
   @spec mark_landed(binary(), [binary()]) :: :ok | {:error, term()}
   def mark_landed(relay_class, kept) do
-    if File.exists?(set_aside_dir(relay_class)) do
-      bytes = :erlang.term_to_binary(kept)
-      atomic_install(class_dir(relay_class) <> @landed, &:file.write(&1, bytes), :landed_mark)
-    else
-      :ok
-    end
+    bytes = :erlang.term_to_binary(kept)
+    atomic_install(class_dir(relay_class) <> @landed, &:file.write(&1, bytes), :landed_mark)
   end
 
   @doc "The paths `mark_landed/2` recorded, or `:none` when no landing is recorded."
