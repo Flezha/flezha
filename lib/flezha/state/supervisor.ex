@@ -17,6 +17,7 @@ defmodule Flezha.State.Supervisor do
   alias Flezha.State.Metrics
   alias Flezha.State.Paths
   alias Flezha.State.WalWriter
+  alias Flezha.State.WalWriter.RemoteGate
   alias Flezha.State.WriterRegistry
 
   def child_spec(_arg) do
@@ -29,21 +30,22 @@ defmodule Flezha.State.Supervisor do
 
   @impl true
   def init(_) do
-    # The class→namespace claims, input-log watermark and class registry
-    # tables live with the state subsystem: a named table dies with its owner,
-    # and every one of these is read by the data plane, so no process that can
-    # crash and restart (a sweeper, a writer) may own them. Path resolution
-    # degrades to the on-disk layout when the claims table is absent (unit
-    # tests that use `Flezha.State.Paths` without this supervisor).
+    # The class→namespace claims, input-log watermark, class registry and
+    # owed-credit tables live with the state subsystem: a named table dies with
+    # its owner, and every one of these is read by the data plane, so no
+    # process that can crash and restart (a sweeper, a writer) may own them.
+    # Path resolution degrades to the on-disk layout when the claims table is
+    # absent (unit tests that use `Flezha.State.Paths` without this supervisor).
     Paths.ensure_claims_table()
     InputLog.ensure_watermark_table()
     ClassRegistry.ensure_table()
+    RemoteGate.new_owed_table()
     # Every per-Cell writer and input log on the node hangs here, and they
     # fail independently — a bad payload, a disk fault, a killed run. The
     # DynamicSupervisor default (3 restarts in 5 s) is a budget for ONE
     # supervised subsystem, not for a fleet: four unrelated writers crashing in
     # the same five seconds would take this supervisor down, and with it every
-    # other relay's writer AND the three ETS tables owned above, which the
+    # other relay's writer AND the four ETS tables owned above, which the
     # data plane reads. The intensity is therefore sized for independent
     # children; a genuine restart storm still trips it, just not a burst.
     DynamicSupervisor.init([strategy: :one_for_one] ++ Cspec.intensity())
@@ -92,6 +94,7 @@ defmodule Flezha.State.Supervisor do
       :error -> :ok
     end
 
+    RemoteGate.release_owed(cell_id)
     FsyncBatcher.forget(cell_id)
     Paths.delete_files(cell_id)
     # Its counters are what lists it as a Cell with persisted state.
@@ -126,7 +129,7 @@ defmodule Flezha.State.Supervisor do
       :error -> :ok
     end
 
-    :ok
+    RemoteGate.ship_owed(relay_class)
   end
 
   @doc "Synchronously flush every dirty writer and input log on this node."

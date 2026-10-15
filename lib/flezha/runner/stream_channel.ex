@@ -486,7 +486,7 @@ defmodule Flezha.Runner.StreamChannel do
 
   # Bytes a writer will never drain here (its gate let go of records the
   # backend may not hold): the window is freed, and markers waiting on them
-  # stay waiting.
+  # drop unconfirmed.
   def handle_info({:credit_released, session, bytes, cell_id}, state) do
     state = Records.confirm_prefix(state, &Prefix.released(&1, cell_id, bytes))
     {:noreply, drain_credit(state, session, bytes)}

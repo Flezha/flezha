@@ -13,6 +13,7 @@ defmodule Flezha.State.RemoteFlowCommitTest do
 
   import ExUnit.CaptureIO
 
+  alias Flezha.Runner.StreamChannel.Prefix
   alias Flezha.Service.Cli
   alias Flezha.State.DurabilityTier
   alias Flezha.State.DurabilityTier.{Manifest, Shipper}
@@ -162,17 +163,66 @@ defmodule Flezha.State.RemoteFlowCommitTest do
   end
 
   describe "the credit a held batch owes its stream" do
-    test "a writer that goes frees the window without draining its unshipped records", ctx do
+    test "a writer that goes and stays gone keeps the marker waiting until its Cell is deleted",
+         ctx do
+      Stub.hold_manifests(self())
+      {[], prefix} = Prefix.fenced(Prefix.new())
+      pid = armed_writer(ctx.rc, ctx.cell_id)
+
+      prefix = Prefix.received(prefix, ctx.cell_id, 10)
+      append_credited(pid, 0, 10)
+      _shipper = held({:cell, ctx.cell_id})
+
+      # Record 0 stays on this disk alone: the stream still counts it owed.
+      close_writer(pid, ctx.cell_id)
+      assert {[], prefix} = stream(prefix)
+      assert {[], prefix} = Prefix.marker(prefix, ctx.rc, 0)
+
+      # Deleting the Cell takes record 0 off the disk: its credit is released,
+      # and the marker that covered it drops unconfirmed.
+      {:ok, _} = Supervisor.delete_cell(ctx.cell_id)
+      assert {[], prefix} = stream(prefix)
+      assert {[{_, 1, 1}], _} = Prefix.marker(prefix, ctx.rc, 1)
+    end
+
+    test "a relay that leaves drains what its writers left owed once one ship lands", ctx do
       Stub.hold_manifests(self())
       pid = armed_writer(ctx.rc, ctx.cell_id)
 
       append_credited(pid, 0, 10)
+      first = held({:cell, ctx.cell_id})
+
+      :ok = Supervisor.close_writers(ctx.rc)
+      refute_received {:credit_released, _, _, _}
+
+      Stub.release_manifest(first)
+      assert_receive {:credit_drained, "s", 10, _}, 5_000
+    end
+
+    test "a relay that leaves while the backend refuses releases what it left owed", ctx do
+      Stub.set_down(true)
+      pid = armed_writer(ctx.rc, ctx.cell_id)
+
+      append_credited(pid, 0, 10)
+      assert wait_until(fn -> failures({:cell, ctx.cell_id}) > 0 end, 5_000)
+
+      :ok = Supervisor.close_writers(ctx.rc)
+      assert_receive {:credit_released, "s", 10, _}, 5_000
+      refute_received {:credit_drained, _, _, _}
+    end
+
+    test "a realign releases what the discarded lineage held", ctx do
+      Stub.hold_manifests(self())
+      pid = armed_writer(ctx.rc, ctx.cell_id)
+
+      :ok = WalWriter.append_async(pid, 0, effect_header(), effect_body([], 0), "r1", credit(10))
+      :ok = WalWriter.fsync(pid)
       _shipper = held({:cell, ctx.cell_id})
 
-      close_writer(pid, ctx.cell_id)
+      # A restarted runner's diverged seq discards record 0's lineage.
+      :ok = WalWriter.append_async(pid, 5, effect_header(), effect_body([], 5), "r2", credit(6))
+      _ = WalWriter.last_persisted_seq(pid)
 
-      # A drain is what confirms the stream's processed-prefix markers; a
-      # record the backend never got must not reach that count.
       assert_received {:credit_released, "s", 10, _}
       refute_received {:credit_drained, _, _, _}
     end
@@ -213,6 +263,36 @@ defmodule Flezha.State.RemoteFlowCommitTest do
       # message depends on how the fsyncs batched them.
       Stub.release_manifest(shipper)
       assert drained_bytes(17) == 17
+    end
+
+    test "a marker after a writer restart waits for the boot ship of what it left owed", ctx do
+      Stub.hold_manifests(self())
+      ref = {:cell, ctx.cell_id}
+      {[], prefix} = Prefix.fenced(Prefix.new())
+      pid = armed_writer(ctx.rc, ctx.cell_id)
+
+      # Input 0's record is fsynced here; its ship is mid-write.
+      prefix = Prefix.received(prefix, ctx.cell_id, 10)
+      append_credited(pid, 0, 10)
+      first = held(ref)
+      assert {[], prefix} = Prefix.marker(prefix, ctx.rc, 0)
+
+      close_writer(pid, ctx.cell_id)
+      assert {[], prefix} = stream(prefix)
+
+      # Restarted under the same stream, the writer ships record 0 at boot.
+      restarted = start_writer(ctx.cell_id)
+      _ = WalWriter.last_persisted_seq(restarted)
+      refute Manifest.key(ref) in Stub.keys()
+
+      # The runner's next marker covers input 0, still on this disk alone.
+      assert {[], prefix} = Prefix.marker(prefix, ctx.rc, 1)
+      assert {[], prefix} = stream(prefix)
+
+      # The ship that was mid-write lands, so the boot ship, queued behind it,
+      # finds record 0 shipped: its drain confirms both markers.
+      Stub.release_manifest(first)
+      assert {[{_, 1, 1}], _} = stream(prefix, 5_000)
     end
   end
 
@@ -261,6 +341,21 @@ defmodule Flezha.State.RemoteFlowCommitTest do
   end
 
   defp credit(bytes), do: %{channel: self(), session: "s", wire_size: bytes}
+
+  # The test process is the writer's stream channel: the credit messages the
+  # writer sent are stepped into the channel's `Prefix`, as the channel steps
+  # them. `wait` bounds the wait for the first one.
+  defp stream(prefix, wait \\ 0) do
+    receive do
+      {tag, "s", bytes, cell_id} when tag in [:credit_drained, :credit_released] ->
+        step = if tag == :credit_drained, do: &Prefix.drained/3, else: &Prefix.released/3
+        {confirmed, prefix} = step.(prefix, cell_id, bytes)
+        {more, prefix} = stream(prefix)
+        {confirmed ++ more, prefix}
+    after
+      wait -> {[], prefix}
+    end
+  end
 
   defp drained_bytes(want, got \\ 0)
   defp drained_bytes(want, got) when got >= want, do: got

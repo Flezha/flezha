@@ -160,8 +160,9 @@ defmodule Flezha.State.WalWriter.Boot do
         outbox_last_seq: redrive_last_seq(redrive, dedup.outbox_flushed_seq)
     }
 
+    # What a closed writer left owed rides this writer's first acknowledgement.
     case state.commit_unit do
-      :record -> RemoteGate.synced(state)
+      :record -> RemoteGate.synced(%{state | credit_pending: RemoteGate.take_owed(state.cell_id)})
       :stage -> Settlement.seed_commits(state, TaskJournal.committed_records(rc), :hold)
     end
   end

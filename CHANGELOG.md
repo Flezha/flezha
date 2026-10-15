@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Fixed: a stopped Cell writer no longer lets a `durable: remote` input be confirmed unshipped
+
+A Cell's writer that stopped while a ship was in flight let go of the records it held, so the
+runner's next processed-prefix marker on the same stream could confirm an input whose record was
+still on local disk alone, and a disk loss then lost an acknowledged input. Those records now
+stay owed: the next writer of the Cell takes them over and its first ship confirms them. A relay
+that leaves the node ships them once and confirms them when that ship lands; deleting the Cell
+releases them, since its records leave the disk.
+
 ### Fixed: a runner busy in a handler or waiting out a retry is no longer restarted as wedged
 
 The controller judged a runner's worker pool wedged when a frame was sent between two of its

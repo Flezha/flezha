@@ -29,6 +29,11 @@ defmodule Flezha.State.WalWriter.RemoteGate do
   alias Flezha.State.{DurabilityTier, Paths}
   alias Flezha.State.WalWriter.{Admission, Settlement}
 
+  # The credit of records a closed writer left on disk unshipped, one row per
+  # held batch under its Cell id, owned by `Flezha.State.Supervisor` so it
+  # outlives every writer.
+  @owed :flezha_remote_gate_owed
+
   # `held`: synced batches not yet acknowledged, `{seq, credit}` oldest first.
   # `shipping`: `nil`, `{:to, seq}` while a ship covering `seq` is in flight,
   # or `:cooling` while a failed one waits for its retry. `generation` names
@@ -102,25 +107,38 @@ defmodule Flezha.State.WalWriter.RemoteGate do
   end
 
   @doc """
-  The writer is going, or its lineage was cut: a realign keeps nothing, a
-  rewind keeps the records through its boundary. Held batches through
-  `keep_through` stay held behind a fresh ship; every other held or pending
-  drain is released, freeing the stream's window without counting toward its
-  markers, since the backend may never hold those records. The ship in flight
-  is forgotten. Without the gate this is the plain credit flush.
+  The writer's lineage was cut, or it is going without its pending records
+  synced: a realign keeps nothing, a rewind keeps the records through its
+  boundary. Held batches through `keep_through` stay held behind a fresh ship;
+  every other held or pending drain is released, freeing the stream's window
+  without counting toward its markers, since the backend may never hold those
+  records. The ship in flight is forgotten. Without the gate this is the plain
+  credit flush.
   """
   def reset(state, keep_through \\ -1)
   def reset(%{remote: nil} = state, _keep_through), do: Admission.flush_credit_pending(state)
 
-  def reset(%{remote: gate} = state, keep_through) do
+  def reset(state, keep_through),
+    do: let_go(state, keep_through, &Admission.drain_credit(&1, &2, :credit_released))
+
+  @doc """
+  The writer is going with every record it took synced on this disk: what it
+  holds for them is not released but kept owed under the Cell, for the next
+  writer's boot ship to drain (`take_owed/1`), so no marker confirms a record
+  before the backend holds it. The gate lets go as `reset/2` does.
+  """
+  def close(%{remote: nil} = state), do: reset(state)
+  def close(state), do: let_go(state, -1, &:ets.insert(@owed, {&1, &2}))
+
+  # Hand each held or pending drain after `keep_through` to `dispose`, keep
+  # the rest held behind a fresh ship, and forget the ship in flight.
+  defp let_go(%{remote: gate} = state, keep_through, dispose) do
     state = if state.credit_pending == %{}, do: state, else: hold(state)
 
     {kept, gone} =
       state.remote.held |> :queue.to_list() |> Enum.split_with(&(elem(&1, 0) <= keep_through))
 
-    Enum.each(gone, fn {_seq, credit} ->
-      Admission.drain_credit(state.cell_id, credit, :credit_released)
-    end)
+    for {_seq, credit} <- gone, credit != %{}, do: dispose.(state.cell_id, credit)
 
     fresh = %__MODULE__{
       checkpoint?: gate.checkpoint?,
@@ -137,6 +155,42 @@ defmodule Flezha.State.WalWriter.RemoteGate do
       ship(state)
     end
   end
+
+  @doc "The credit a closed writer of `cell_id` left owed, taken: a booting writer drains it."
+  def take_owed(cell_id) do
+    @owed
+    |> :ets.take(cell_id)
+    |> Enum.reduce(%{}, fn {_, credit}, acc -> Map.merge(acc, credit, fn _, a, b -> a + b end) end)
+  end
+
+  @doc "The Cell's records left the disk: the credit owed for them is released."
+  def release_owed(cell_id),
+    do: Admission.drain_credit(cell_id, take_owed(cell_id), :credit_released)
+
+  @doc """
+  `relay_class` left this node, so no writer of its Cells boots here to drain
+  what they left owed: one ship each, off the caller, drains it once the
+  backend holds the records, or releases it when that ship fails.
+  """
+  def ship_owed(relay_class) do
+    for cell_id <- :ets.select(@owed, [{{{relay_class, :_, :_}, :_}, [], [{:element, 1, :"$_"}]}]),
+        owed = take_owed(cell_id),
+        owed != %{} do
+      Task.start(fn ->
+        tag =
+          if DurabilityTier.commit_sync(cell_id) == :ok,
+            do: :credit_drained,
+            else: :credit_released
+
+        Admission.drain_credit(cell_id, owed, tag)
+      end)
+    end
+
+    :ok
+  end
+
+  @doc "Create the owed-credit table; its owner must outlive every writer."
+  def new_owed_table(), do: :ets.new(@owed, [:duplicate_bag, :public, :named_table])
 
   @doc """
   The outbox's durable cursor once a reopen or a rewind makes `seq` durable

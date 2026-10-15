@@ -598,11 +598,12 @@ defmodule Flezha.State.WalWriter do
 
   # A clean close syncs what it holds and answers the batched appends it owes;
   # a crash answers nobody, so a waiter fails instead of reading as durable.
+  # Records synced here stay owed to their streams until a ship covers them.
   @impl true
   def terminate(reason, %{file_handle: file} = state) when not is_nil(file) do
     synced = :file.datasync(file)
     _ = :file.close(file)
-    _ = RemoteGate.reset(state)
+    _ = if synced == :ok, do: RemoteGate.close(state), else: RemoteGate.reset(state)
     _ = Settlement.persist_dedup(state)
 
     if synced == :ok and clean_exit?(reason), do: reply_synced(state)
