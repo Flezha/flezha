@@ -6,7 +6,7 @@ use flz_transport::errors::FlezhaError;
 use serde_json::Value;
 
 use crate::args::{app_data_root, Positional, Reading, APP_DATA_ROOT};
-use crate::dispatch::{self, Command, Missing, Verb};
+use crate::dispatch::{Command, Missing, Verb};
 use crate::help;
 use crate::rpc::{self, controller_is_up, DEFAULT_PROBE_TIMEOUT_MS};
 
@@ -18,7 +18,6 @@ pub(crate) const TABLE: Command = Command {
         Verb::new("whoami", |read| rpc::bare(read, "Namespace.whoami")),
         Verb::new("rebootstrap", handle_rebootstrap).reading(&[APP_DATA_ROOT]),
     ],
-    help_verbs: dispatch::HELP_VERBS,
     missing: Missing::Screen,
     unknown_prints_help: false,
 };

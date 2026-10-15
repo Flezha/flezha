@@ -1,7 +1,7 @@
 use serde_json::{Map, Value};
 
 use crate::args::{OptSpec, Positional, Reading, INIT_VALUES, NAMESPACE};
-use crate::dispatch::{self, Command, Missing, Verb};
+use crate::dispatch::{Command, Missing, Verb};
 use crate::relay::{first_message, json_object, plugins_json_or_refuse, CHANNEL, TEXT};
 use crate::{help, rpc};
 
@@ -39,7 +39,6 @@ pub(crate) const TABLE: Command = Command {
         })
         .taking(NAME),
     ],
-    help_verbs: dispatch::HELP_VERBS,
     missing: Missing::Screen,
     unknown_prints_help: false,
 };

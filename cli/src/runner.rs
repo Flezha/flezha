@@ -5,7 +5,7 @@ use flz_transport::utility::socket_probe::diagnose;
 use serde_json::Value;
 
 use crate::args::{Positional, Reading, NAMESPACE};
-use crate::dispatch::{self, Command, Missing, Verb};
+use crate::dispatch::{Command, Missing, Verb};
 use crate::{help, rpc};
 
 const RUNNER_ID: &[Positional] = &[Positional::required("<runner_id>")];
@@ -28,7 +28,6 @@ pub(crate) const TABLE: Command = Command {
             .taking(STABLE_ID)
             .reading(&[NAMESPACE]),
     ],
-    help_verbs: dispatch::HELP_VERBS,
     missing: Missing::Refuse,
     unknown_prints_help: false,
 };

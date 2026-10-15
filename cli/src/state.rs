@@ -1,7 +1,7 @@
 use serde_json::Value;
 
 use crate::args::{Positional, Reading};
-use crate::dispatch::{self, Command, Missing, Verb};
+use crate::dispatch::{Command, Missing, Verb};
 use crate::{args, help, rpc};
 
 /// The Cell-scoped write verbs all name the same slot.
@@ -40,7 +40,6 @@ pub(crate) const TABLE: Command = Command {
         Verb::new("inbox", |read| scoped_verb(read, "Steps.inbox"))
             .taking(&[Positional::required("<relay/instance>")]),
     ],
-    help_verbs: dispatch::HELP_VERBS,
     missing: Missing::Refuse,
     unknown_prints_help: false,
 };

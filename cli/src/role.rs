@@ -1,7 +1,7 @@
 use serde_json::Value;
 
 use crate::args::{Positional, Reading};
-use crate::dispatch::{self, Command, Missing, Verb};
+use crate::dispatch::{Command, Missing, Verb};
 use crate::{help, rpc};
 
 /// The enumeration, spelled once: both verbs read the same label, so a role
@@ -23,7 +23,6 @@ pub(crate) const TABLE: Command = Command {
         ]),
         Verb::new("list", |read| rpc::bare(read, "Namespace.list_roles")),
     ],
-    help_verbs: dispatch::HELP_VERBS,
     missing: Missing::Screen,
     unknown_prints_help: false,
 };

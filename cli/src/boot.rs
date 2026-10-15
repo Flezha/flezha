@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 use serde_json::Value;
 
 use crate::args::{OptSpec, Reading};
-use crate::dispatch::{self, Command, Missing, Verb};
+use crate::dispatch::{Command, Missing, Verb};
 use crate::{help, rpc};
 
 /// The wait, in seconds. `boot await` is one of the two verbs that refuse a
@@ -22,7 +22,6 @@ pub(crate) const TABLE: Command = Command {
             .reading(&[TIMEOUT])
             .strict(),
     ],
-    help_verbs: dispatch::HELP_VERBS,
     missing: Missing::Refuse,
     unknown_prints_help: false,
 };

@@ -1,7 +1,7 @@
 use serde_json::{Map, Value};
 
 use crate::args::{OptSpec, Positional, Reading, DURATION_MS};
-use crate::dispatch::{self, Command, Missing, Verb};
+use crate::dispatch::{Command, Missing, Verb};
 use crate::{help, rpc};
 
 /// The five filters `audit read` narrows a file with. Their long spelling is
@@ -27,7 +27,6 @@ pub(crate) const TABLE: Command = Command {
         Verb::new("stats", |read| rpc::bare(read, "AuditLog.stats")).screen(help::AUDIT_STATS),
         Verb::new("rotate", |read| rpc::bare(read, "AuditLog.rotate")).screen(help::AUDIT_ROTATE),
     ],
-    help_verbs: dispatch::HELP_VERBS,
     missing: Missing::Screen,
     unknown_prints_help: false,
 };

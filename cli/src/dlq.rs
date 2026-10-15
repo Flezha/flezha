@@ -1,7 +1,7 @@
 use serde_json::Value;
 
 use crate::args::{Positional, Reading};
-use crate::dispatch::{self, Command, Missing, Verb};
+use crate::dispatch::{Command, Missing, Verb};
 use crate::{help, rpc};
 
 const ENTRY_REF: &[Positional] = &[Positional::required("<relay/tasklet/entry-id>")];
@@ -29,7 +29,6 @@ pub(crate) const TABLE: Command = Command {
         .taking(ENTRY_REF)
         .strict(),
     ],
-    help_verbs: dispatch::HELP_VERBS,
     missing: Missing::Refuse,
     unknown_prints_help: false,
 };

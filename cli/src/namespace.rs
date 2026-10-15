@@ -1,7 +1,7 @@
 use serde_json::{json, Value};
 
 use crate::args::{Positional, Reading};
-use crate::dispatch::{self, Command, Missing, Verb};
+use crate::dispatch::{Command, Missing, Verb};
 use crate::settings::{extract_x_flags, flags_object};
 use crate::{help, rpc};
 
@@ -23,7 +23,6 @@ pub(crate) const TABLE: Command = Command {
         .taking(NAME),
         Verb::new("set-quota", handle_set_quota).taking(NAME).open(),
     ],
-    help_verbs: dispatch::HELP_VERBS,
     missing: Missing::Refuse,
     unknown_prints_help: false,
 };

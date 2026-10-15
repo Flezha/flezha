@@ -142,19 +142,20 @@ fn every_command_refuses_a_missing_subcommand() {
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
 
-/// `help`, `--help` and `-h` are one screen — except on `flz plugin`, whose
-/// `help` is a verb of its own that asks a provider for its documentation.
+/// `help`, `--help` and `-h` are one screen on every command. On `flz plugin`
+/// `help` is a verb of its own, which prints the same screen until it is given
+/// a provider id.
 #[test]
-fn the_help_spellings_agree_wherever_they_are_accepted() {
+fn the_help_spellings_agree_on_every_command() {
     let mut wrong: Vec<String> = Vec::new();
 
-    for (command, _) in COMMANDS.iter().filter(|(c, _)| *c != "plugin") {
+    for (command, _) in COMMANDS {
         let screen = String::from_utf8_lossy(&flz(&[command, "help"]).stdout).to_string();
         for spelling in ["--help", "-h"] {
-            let got = String::from_utf8_lossy(&flz(&[command, spelling]).stdout).to_string();
-            if got != screen {
+            let out = flz(&[command, spelling]);
+            if !out.status.success() || String::from_utf8_lossy(&out.stdout) != screen {
                 wrong.push(format!(
-                    "flz {} {} prints a different screen",
+                    "flz {} {} does not print the screen",
                     command, spelling
                 ));
             }
@@ -162,21 +163,6 @@ fn the_help_spellings_agree_wherever_they_are_accepted() {
     }
 
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
-}
-
-/// `flz plugin --help` has always been a refusal, not a screen: `help` there
-/// takes a provider id and asks the controller about it.
-#[test]
-fn plugin_refuses_the_help_flags_it_never_accepted() {
-    for spelling in ["--help", "-h"] {
-        let out = flz(&["plugin", spelling]);
-        assert!(
-            !out.status.success(),
-            "flz plugin {} must stay a refusal",
-            spelling
-        );
-        assert!(String::from_utf8_lossy(&out.stderr).contains("(usage.unknown_command)"));
-    }
 }
 
 /// A refusal of the command line honours `--json` wherever it was written: one

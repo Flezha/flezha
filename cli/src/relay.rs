@@ -2,7 +2,7 @@ use flz_transport::errors::FlezhaError;
 use serde_json::{Map, Value};
 
 use crate::args::{self, OptSpec, Positional, Reading, DURATION_MS, INIT_VALUES, NAMESPACE};
-use crate::dispatch::{self, Command, Missing, Verb};
+use crate::dispatch::{Command, Missing, Verb};
 use crate::help;
 use crate::rpc::{self, Opt};
 
@@ -114,7 +114,6 @@ pub(crate) const TABLE: Command = Command {
             .taking(&[Positional::required("<relay/tasklet/key>")])
             .reading(&[FROM, NAMESPACE]),
     ],
-    help_verbs: dispatch::HELP_VERBS,
     missing: Missing::Refuse,
     unknown_prints_help: false,
 };

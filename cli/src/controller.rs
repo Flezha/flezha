@@ -4,7 +4,7 @@ use flz_transport::errors::{self, FlezhaError};
 use serde_json::Value;
 
 use crate::args::{OptSpec, Reading};
-use crate::dispatch::{self, Command, Missing, Verb};
+use crate::dispatch::{Command, Missing, Verb};
 use crate::help;
 use crate::rpc::{self, Out};
 
@@ -33,7 +33,6 @@ pub(crate) const TABLE: Command = Command {
         Verb::new("mem-top", |read| rpc::bare(read, "Controller.mem_top"))
             .screen(help::CONTROLLER_MEM_TOP),
     ],
-    help_verbs: dispatch::HELP_VERBS,
     missing: Missing::Refuse,
     unknown_prints_help: false,
 };

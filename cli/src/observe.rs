@@ -1,7 +1,7 @@
 use serde_json::Value;
 
 use crate::args::{Positional, Reading, DURATION_MS};
-use crate::dispatch::{self, Command, Missing, Verb};
+use crate::dispatch::{Command, Missing, Verb};
 use crate::{help, rpc};
 
 const SOURCE: &[Positional] = &[Positional::required("<source>")];
@@ -31,7 +31,6 @@ pub(crate) const TABLE: Command = Command {
         .taking(SOURCE)
         .screen(help::OBSERVE_DISABLE),
     ],
-    help_verbs: dispatch::HELP_VERBS,
     missing: Missing::Screen,
     unknown_prints_help: false,
 };

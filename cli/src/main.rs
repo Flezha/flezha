@@ -58,7 +58,6 @@ const FLZ: Command = Command {
         Verb::table("role", &role::TABLE),
         Verb::new("help", help::handle_help),
     ],
-    help_verbs: dispatch::HELP_VERBS,
     missing: Missing::Screen,
     unknown_prints_help: true,
 };

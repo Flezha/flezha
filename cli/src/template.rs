@@ -16,7 +16,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::args::{OptSpec, Positional, Reading};
-use crate::dispatch::{self, Command, Missing, Verb};
+use crate::dispatch::{Command, Missing, Verb};
 use crate::help;
 use crate::rpc::{self, text, Out};
 
@@ -41,7 +41,6 @@ pub(crate) const TABLE: Command = Command {
             .reading(&[EXAMPLE, TAR])
             .strict(),
     ],
-    help_verbs: dispatch::HELP_VERBS,
     missing: Missing::Refuse,
     unknown_prints_help: false,
 };

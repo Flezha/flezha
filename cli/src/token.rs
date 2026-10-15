@@ -2,7 +2,7 @@ use flz_transport::errors::FlezhaError;
 use serde_json::{json, Value};
 
 use crate::args::{OptSpec, Positional, Reading};
-use crate::dispatch::{self, Command, Missing, Verb};
+use crate::dispatch::{Command, Missing, Verb};
 use crate::{help, rpc};
 
 /// How long an issued token lives. An option, not a positional: it is optional
@@ -30,7 +30,6 @@ pub(crate) const TABLE: Command = Command {
         .taking(&[Positional::required("<token-id>")]),
         Verb::new("list", |read| rpc::bare(read, "Namespace.tokens")),
     ],
-    help_verbs: dispatch::HELP_VERBS,
     missing: Missing::Screen,
     unknown_prints_help: false,
 };

@@ -123,9 +123,6 @@ pub(crate) struct Command {
     /// The screen `help` prints, and the one a bare invocation falls back to.
     pub(crate) help: Help,
     pub(crate) verbs: &'static [Verb],
-    /// The spellings that print the screen. `flz plugin` carries none: `help`
-    /// is one of its own verbs, and it refuses `--help` today.
-    pub(crate) help_verbs: &'static [&'static str],
     /// What a bare `flz <command>` answers.
     pub(crate) missing: Missing,
     /// Whether the refusal prints the screen as well. Two commands do.
@@ -141,14 +138,15 @@ pub(crate) enum Missing {
     Screen,
 }
 
-pub(crate) const HELP_VERBS: &[&str] = &["help", "--help", "-h"];
+/// The spellings that print a command's screen, on every command.
+const HELP_VERBS: &[&str] = &["help", "--help", "-h"];
 
 /// What a command says about a word that names none of its verbs. Built from
 /// the table, so a verb added to it is offered by name without a sentence
 /// being edited anywhere.
 fn unrecognised(cmd: &'static Command, word: &str) -> FlezhaError {
     let mut names: Vec<&str> = cmd.verbs.iter().map(|verb| verb.name).collect();
-    if cmd.help_verbs.contains(&"help") && !names.contains(&"help") {
+    if !names.contains(&"help") {
         names.push("help");
     }
 
@@ -204,7 +202,7 @@ pub(crate) fn run(cmd: &'static Command, args: &[String]) {
         };
     }
 
-    if cmd.help_verbs.contains(&word.as_str()) {
+    if HELP_VERBS.contains(&word.as_str()) {
         return help::render(cmd.help);
     }
 

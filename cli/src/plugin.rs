@@ -57,7 +57,6 @@ pub(crate) const TABLE: Command = Command {
         .taking(PLUGIN_ID),
         Verb::new("sync", |read| local(read, "sync", &[])),
     ],
-    help_verbs: &[],
     missing: Missing::Refuse,
     unknown_prints_help: false,
 };
