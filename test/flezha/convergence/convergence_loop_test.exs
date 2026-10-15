@@ -104,14 +104,25 @@ defmodule Flezha.Convergence.LoopTest do
 
     defp attempt(key), do: Backoff.attempt(:sys.get_state(Loop).backoff, key)
 
+    # Every heal from here on reports its primitive and answers `answer`. With
+    # `:unmet` a later tick neither advances nor resets the ladder, so what a
+    # test reads no longer depends on when the Loop's own tick runs.
+    defp observe_heals(answer) do
+      test_pid = self()
+      stub(Heal, :execute, fn op -> send(test_pid, {:healed, op.primitive}) && answer end)
+    end
+
     # fails when: the release walks only the parked relays and resets only
     # the two key shapes it listed. A relay misbound to a departed runner
     # is in neither set, so it waited out its own rung — up to five minutes —
     # with a healthy runner already there.
     test "a relay whose runner died is released the moment a capable one connects" do
       arm_misbound_rung()
+      observe_heals(:unmet)
 
       connect(@fresh)
+
+      assert_receive {:healed, :rebind_relay}, 1_000
 
       assert attempt(@misbound_key) == 0,
              "the rebind stayed on its rung with a capable runner present"
@@ -134,9 +145,11 @@ defmodule Flezha.Convergence.LoopTest do
     test "a runner that has advertised nothing yet still releases" do
       stub(FleetManager, :factories_for_runner, fn _ns, _runner -> MapSet.new() end)
       arm_misbound_rung()
+      observe_heals(:unmet)
 
       connect(@fresh)
 
+      assert_receive {:healed, :rebind_relay}, 1_000
       assert attempt(@misbound_key) == 0
     end
 
@@ -187,9 +200,11 @@ defmodule Flezha.Convergence.LoopTest do
 
       :ok = Loop.tick_now()
       assert attempt({:parked, "op"}) == 1, "the parked rebind did not walk a rung"
+      observe_heals(:unmet)
 
       connect(@fresh)
 
+      assert_receive {:healed, :rebind_relay}, 1_000
       assert attempt({:parked, "op"}) == 0
     end
 
@@ -198,8 +213,7 @@ defmodule Flezha.Convergence.LoopTest do
     # than the stable window, so a second report re-declares a known key,
     # which ticks nothing, and its rebind waits the rung the first one walked.
     test "an instance that keeps exiting is rebound on its rung, and one that stays up clears it" do
-      test_pid = self()
-      stub(Heal, :execute, fn op -> send(test_pid, {:healed, op.primitive}) && :ok end)
+      observe_heals(:ok)
       exited = {:relay_exited, ":killed"}
       park = {:relay_parked, {:ns, "op"}, %{reason: exited, transport: nil}}
       observe = fn fields -> stub(Probe, :snapshot, fn -> reality(fields) end) end
