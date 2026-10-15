@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Security: mint 1.10.2 and decimal 3.1.2
+
+The controller now ships `mint` 1.10.2 and `decimal` 3.1.2, the patch releases that fix the
+published advisories against the versions it pinned before (six for `mint`'s HTTP/1 and HTTP/2
+response parsing, one for `Decimal.round/3`). `mix hex.audit` reports none.
+
 ### Fixed: validating a steps class refuses what declaring it refuses
 
 A builder's `validate()` (the core's `flz_core_check_class`) accepted a steps class that
