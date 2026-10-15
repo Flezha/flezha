@@ -45,8 +45,8 @@ fn compact_slot(slot: &Arc<CellSlot>, errors: &mut Vec<crate::Error>) -> Option<
 
 /// The snapshot frame, seq and size of one Cell. MUST run under the cell's
 /// handout exclusivity: a host-run Cell crosses a SnapshotRequest activation;
-/// a typed one encodes in-process holding the slot locks in dispatch order
-/// (state, then flush_buffer, then timers).
+/// a typed one encodes in-process holding the slot's state lock, which keeps
+/// out a dispatch, then its flush_buffer and timers.
 fn snapshot_slot(slot: &Arc<CellSlot>) -> Result<(Vec<u8>, u64, usize), crate::Error> {
     if slot.dispatcher.host_facts().is_some() {
         return crate::host::snapshot_frame_crossing(slot);

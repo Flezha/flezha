@@ -151,7 +151,7 @@ When `true`, the flusher SHALL invoke `send_frame` for each frame and propagate 
 
 ### Requirement: Hot-path cost is bounded to one Vec::push per state.apply
 
-The Rust SDK's `ctx.change(change)` SHALL pay exactly: one `change.apply_to(state)` call (user-supplied; cost varies) plus one `Vec::push(change)` tasklet. The hot path SHALL NOT serialize, fsync, network-send, or acquire any lock beyond the existing per-Cell sticky CAS and the `&mut self` borrow on the buffer (which is already exclusive via the runner thread's ownership of the cell's buffer for the duration of `Tasklet::run`).
+The Rust SDK's `ctx.change(change)` SHALL pay exactly: one `change.apply_to(state)` call (user-supplied; cost varies) plus one `Vec::push(change)` tasklet. The hot path SHALL NOT serialize, fsync, network-send, or acquire any lock beyond the existing per-Cell sticky CAS: the change is pushed onto the invocation's own change list, which only the dispatching thread touches during `Tasklet::run`, and the Cell's flush buffer is taken only when the invocation settles or an emit drains it.
 
 The microbench `state_apply_throughput` (`sdk/rust/benches/state.rs`) SHALL exercise this requirement and report nanoseconds per `ctx.change(...)` call across change-payload-size and coalesce-key dimensions; CI SHALL fail the build if any dimension regresses >50% from the recorded baseline.
 

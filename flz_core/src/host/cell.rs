@@ -123,7 +123,6 @@ impl TaskletDispatcher for HostDispatcher {
         _work: ItemAttempt,
         _slot: &Arc<CellSlot>,
         _state: &mut Box<dyn Any + Send>,
-        _flush_buffer: &mut Box<dyn FlushableBuffer>,
         _timers: &mut PendingTimers,
         _instance: &Weak<crate::relay::instance::RelayInstance>,
     ) -> ItemDisposition {

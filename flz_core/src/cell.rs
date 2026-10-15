@@ -439,13 +439,14 @@ pub trait TaskletDispatcher: Send + Sync + 'static {
     /// Run ONE attempt of one item: user code plus the effect record it
     /// produces; the ladder is the engine's. `slot` is the producing Cell —
     /// an inter-tasklet emit withholds work from it rather than holding the
-    /// calling thread.
+    /// calling thread. The caller holds `state` and `timers`; the dispatcher
+    /// takes the flush buffer itself, briefly, to settle, to drain before an
+    /// emit and to hold a retried attempt's changes, never across author code.
     fn dispatch_item(
         &self,
         work: crate::poll_core::ItemAttempt,
         slot: &Arc<CellSlot>,
         state: &mut Box<dyn Any + Send>,
-        flush_buffer: &mut Box<dyn crate::flusher::FlushableBuffer>,
         timers: &mut crate::timer::PendingTimers,
         instance: &Weak<crate::relay::instance::RelayInstance>,
     ) -> ItemDisposition;
