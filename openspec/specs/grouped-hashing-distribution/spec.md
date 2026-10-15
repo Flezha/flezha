@@ -96,8 +96,9 @@ grouped child, through the hub's migration strategy.
 
 A start naming a group with no serving node SHALL be refused with
 `{:error, {:no_group_members, groups}}` and SHALL start none of the request's children.
-A declared child in that position SHALL remain declared and SHALL be started by a
-reconcile round after a node serves its group.
+A declared child in that position SHALL remain declared. A node that starts serving a
+group SHALL ask its hub for a reconcile round, which waits for neither
+`reconcile_interval_ms` nor the sync tick, and that round SHALL start the child.
 
 #### Scenario: The last serving node withdraws and the children keep running
 
@@ -114,12 +115,14 @@ reconcile round after a node serves its group.
 
 #### Scenario: A declared child waits for its group
 
-- **GIVEN** a durable child of group `"report"` whose only serving node `b` has left the
-  hub
+- **GIVEN** a durable child of group `"report"` with no registry row, whose only serving
+  node `b` has left the hub
 - **WHEN** reconcile rounds run on `a`, which does not serve `"report"`
 - **THEN** the child is started nowhere and stays in the declared list
-- **WHEN** `a` calls `serve_groups(hub, ["report"])` and the next round runs
-- **THEN** the child runs on `a` with the metadata it was declared with
+- **WHEN** `a` calls `serve_groups(hub, ["report"])`
+- **THEN** a reconcile round runs within a few seconds, without waiting for the reconcile
+  interval or the sync tick
+- **AND** the child runs on `a` with the metadata it was declared with
 
 ### Requirement: A strategy learns from a start request before the request is validated
 

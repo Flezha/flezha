@@ -21,12 +21,16 @@ defmodule Flezha.Cluster.GroupedHashingMultiNodeTest do
 
   alias FlezhaTest.Helper.GroupedHubTestHelper, as: Helper
   alias FlezhaTest.Helper.NodeTestHelper
+  alias ProcessHub.Service.ProcessRegistry
 
   setup context do
     hub_id = :"grouped_hashing_#{System.unique_integer([:positive])}"
     {peer_pid, peer} = NodeTestHelper.start_peer_node(:groupedhashing2)
 
-    reconcile = [reconcile: context[:reconcile] == true]
+    reconcile =
+      [reconcile: context[:reconcile] == true] ++
+        Map.to_list(Map.take(context, [:sync_interval]))
+
     {:ok, _} = Helper.start_hub(hub_id, reconcile)
     {:ok, _} = :erpc.call(peer, Helper, :start_hub, [hub_id, reconcile], 60_000)
 
@@ -212,7 +216,9 @@ defmodule Flezha.Cluster.GroupedHashingMultiNodeTest do
            end)
   end
 
-  @tag reconcile: true
+  # The sync tick also opens rounds; pushed past the test so only serving the
+  # group can start the child within the bound below.
+  @tag reconcile: true, sync_interval: 600_000
   test "a declared child whose group nobody serves waits for one, and keeps its metadata",
        %{hub_id: hub_id, peer: peer} do
     :ok = on(peer, :serve, [hub_id, ["report"]])
@@ -228,18 +234,31 @@ defmodule Flezha.Cluster.GroupedHashingMultiNodeTest do
     :ok = on(peer, :stop_hub, [hub_id])
     assert wait(fn -> Helper.group_nodes(hub_id, "report") == [] end)
 
+    # The departed peer leaves an empty durable row, which serving the group
+    # would place by redistribution alone. Without the row, as a controller
+    # restart can leave a declared child, only a reconcile round starts it.
+    assert wait(fn ->
+             match?({_, []}, ProcessRegistry.lookup(hub_id, "waiting", include_empty: true))
+           end)
+
+    _ = ProcessRegistry.delete(hub_id, "waiting")
+    assert ProcessRegistry.lookup(hub_id, "waiting", include_empty: true) == nil
+
     for _ <- 1..5 do
       Process.sleep(500)
       assert Helper.child_nodes(hub_id, "waiting") == []
       assert Helper.declared(hub_id) == ["waiting"]
     end
 
-    # Once this node serves the group, the next round starts it here — with the
+    # Serving the group asks for a round soon, which starts it here — with the
     # group it was declared with, which is what puts it on this node at all.
     :ok = Helper.serve(hub_id, ["report"])
 
-    assert wait(fn -> Helper.child_nodes(hub_id, "waiting") == [node()] end),
-           "the reconcile round never started the declared child"
+    assert NodeTestHelper.wait_until(
+             fn -> Helper.child_nodes(hub_id, "waiting") == [node()] end,
+             5_000
+           ),
+           "the declared child waited for a later round after its group gained a member"
   end
 
   defp on(peer, fun, args), do: :erpc.call(peer, Helper, fun, args, 60_000)

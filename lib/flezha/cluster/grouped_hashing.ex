@@ -47,6 +47,7 @@ defmodule Flezha.Cluster.GroupedHashing do
   alias ProcessHub.Service.Cluster
   alias ProcessHub.Service.HookManager
   alias ProcessHub.Service.ProcessRegistry
+  alias ProcessHub.Service.Recovery
   alias ProcessHub.Service.Ring
   alias ProcessHub.Service.Storage
   alias ProcessHub.Strategy.Distribution.Base, as: DistributionStrategy
@@ -146,6 +147,9 @@ defmodule Flezha.Cluster.GroupedHashing do
       put_node_groups(hub, node(), groups)
       announce(hub, groups)
       recheck(hub)
+      # A declared child the last reconcile round refused for want of a member
+      # can start now, without waiting for the reconcile interval.
+      unless MapSet.subset?(next, current), do: Recovery.request_round(hub.hub_id)
     end
 
     :ok

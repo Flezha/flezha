@@ -42,7 +42,8 @@ defmodule FlezhaTest.Helper.GroupedHubTestHelper do
   it outlives the call that asked for it.
 
   Its id is deliberately off the `<namespace>_hub` convention, so every
-  relay-oriented walker in the controller ignores it.
+  relay-oriented walker in the controller ignores it. `:sync_interval` sets the
+  PubSub sync tick, which also opens reconcile rounds.
   """
   @spec start_hub(atom(), keyword()) :: {:ok, pid()} | {:error, term()}
   def start_hub(hub_id, opts \\ []) do
@@ -59,7 +60,8 @@ defmodule FlezhaTest.Helper.GroupedHubTestHelper do
         distribution_strategy: %GroupedHashing{},
         migration_strategy: %ProcessHub.Strategy.Migration.HotSwap{handover: true},
         redundancy_strategy: %ProcessHub.Strategy.Redundancy.Singularity{},
-        synchronization_strategy: %ProcessHub.Strategy.Synchronization.PubSub{},
+        synchronization_strategy:
+          struct(ProcessHub.Strategy.Synchronization.PubSub, Keyword.take(opts, [:sync_interval])),
         partition_tolerance_strategy: %ProcessHub.Strategy.PartitionTolerance.Divergence{},
         registry_backend: registry_backend(hub_id, recovery),
         auto_recovery: recovery
@@ -80,12 +82,10 @@ defmodule FlezhaTest.Helper.GroupedHubTestHelper do
     :ok
   end
 
-  # A hub with the reconcile on opens a durable declared list whatever its
-  # registry backend is, and ProcessHub resolves that file from the REGISTRY
-  # backend's path — with no path it lands in the process_hub dependency's own
-  # `priv/` and outlives the run. Naming the registry file under this project's
-  # hub root keeps both files inside `app_data/`, where `stop_hub/1` and
-  # `flz reset` can reach them.
+  # ProcessHub keeps a hub's declared list beside its registry file, and an
+  # `:ets` registry keeps it in memory only, so a restarted test hub would lose
+  # it. Naming the registry file under this project's hub root keeps both files
+  # inside `app_data/`, where `stop_hub/1` and `flz reset` can reach them.
   defp registry_backend(_hub_id, false), do: :ets
   defp registry_backend(hub_id, _recovery), do: {:durable_ets, [path: registry_path(hub_id)]}
 
