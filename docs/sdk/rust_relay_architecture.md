@@ -604,8 +604,8 @@ held in one long block episode would otherwise show a frozen dispatch count
 beside a frozen block count — byte for byte the picture a wedged runner shows —
 and that distinction is exactly what the controller's `runner_pool_wedged`
 verdict hangs off: dispatches frozen with blocks climbing is backpressure,
-dispatches frozen with blocks flat is a wedge. The entry path pays those as
-wait iterations of a parked thread; a producing Cell pays them as a deferral
+dispatches and handouts frozen with blocks flat is a wedge. The entry path pays
+those as wait iterations of a parked thread; a producing Cell pays them as a deferral
 and its re-attempts, and reports the standing condition separately through
 `pending_pushes` / `pending_push_oldest_ms` — it holds no handout, so
 `inflight` is blind to it.

@@ -19,6 +19,7 @@ fn the_heartbeat_builds_exactly_the_contracted_keys() {
         "dispatches",
         "drops_newest",
         "drops_oldest",
+        "handouts",
         "inflight",
         "inflight_oldest_ms",
         "parts_dropped_no_stream",

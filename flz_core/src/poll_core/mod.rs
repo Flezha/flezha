@@ -449,6 +449,13 @@ impl PollCore {
         self.outstanding_count.load(Ordering::Acquire)
     }
 
+    /// Activations issued so far, which is the latest token: it moves on every
+    /// work handout, a retry's re-handout included, and on every command
+    /// queued for a host.
+    pub fn handouts_issued(&self) -> u64 {
+        self.next_token.load(Ordering::Relaxed)
+    }
+
     /// Milliseconds the oldest unanswered handout has been out; `0` when none.
     pub fn outstanding_oldest_age_ms(&self) -> u64 {
         let now = Instant::now();

@@ -36,12 +36,13 @@ defmodule Flezha.Convergence.StallClassifier do
     * `:socket_write_blocked`   — driver writing into a buffer the peer won't drain
     * `:runner_not_consuming` — controller sending fine, runner reads nothing back
     * `:runner_pool_wedged`   — runner alive (heartbeats flowing) and fed, but its
-      self-reported dispatch counter is frozen AND its block counter is flat —
-      the SDK pool stopped processing. A frozen dispatch count with the block
-      counter climbing is healthy backpressure, not a wedge: producers are held
-      on full mailboxes and a rebind would only move the congestion. Judged
-      only across a heartbeat that landed after a frame was sent, because a
-      heartbeat counts only what reached the runner before it
+      self-reported dispatch and handout counters are frozen AND its block
+      counter is flat — the SDK pool stopped taking work up. A frozen dispatch
+      count with the block counter climbing is healthy backpressure, not a
+      wedge: producers are held on full mailboxes and a rebind would only move
+      the congestion. Judged only across a heartbeat that landed after a frame
+      was sent, because a heartbeat counts only what reached the runner before
+      it
     * `:channel_not_sending`    — channel fed but not calling send_frame
     * `:relay_not_forwarding`   — relay fed but not forwarding to its channel
     * `:cell_dispatch_stalled` — the runner is completing work, but one
@@ -279,24 +280,25 @@ defmodule Flezha.Convergence.StallClassifier do
   # ---------- runner self-report checks ----------
 
   # The runner's heartbeat thread outlives a wedged dispatch pool, so a runner
-  # can look perfectly alive while processing nothing.
-  # Heartbeat metadata carries a dispatch-progress counter; flag the runner when
-  # that counter is frozen.
+  # can look perfectly alive while taking nothing up. Flag it when none of its
+  # motion counters moved across a heartbeat that landed after a send:
   #
-  # Unless its block counter is climbing. A producer held on a full cell
-  # mailbox freezes `dispatches` exactly as a wedge does — the two pictures were
-  # byte-for-byte identical — but it is the system working: the consumer is
-  # behind, backpressure is propagating, and the remedy for a wedge (a rebind)
-  # would only move the congestion. The runner counts a block per wait
-  # iteration precisely so this reads as motion.
+  #   * `dispatches` moves when an activation settles, or when a frame is
+  #     dropped unrun at assembly, which hands nothing out;
+  #   * `handouts` moves when work is handed out, so a handler still running at
+  #     the heartbeat, or a retry waiting out its backoff, reads as motion
+  #     although nothing settled;
+  #   * `blocked_parks` moves per wait iteration of a producer held on a full
+  #     mailbox: that is backpressure, and a rebind would only move the jam.
   #
-  # And only across a heartbeat that landed after a send. A heartbeat reports
-  # the count as it stood when the runner sent it, so no heartbeat has counted
-  # a frame sent after the latest one, and a flat count says nothing about it.
+  # A heartbeat reports the counts as they stood when the runner sent it, so a
+  # flat count says nothing about a frame sent after the latest one. A runner
+  # that reports no `handouts` reads 0 in both samples and is judged on the
+  # other two.
   defp runner_pool_wedged(current, previous) do
     find_runner(current, previous, fn runner_id, cur, prev ->
-      if cur.hb_dispatches > 0 and cur.hb_dispatches == prev.hb_dispatches and
-           cur.hb_blocked_parks == prev.hb_blocked_parks and answered_send?(cur, prev) do
+      if cur.hb_dispatches > 0 and answered_send?(cur, prev) and
+           Enum.all?([:hb_dispatches, :hb_handouts, :hb_blocked_parks], &(cur[&1] == prev[&1])) do
         {:runner_pool_wedged, %{runner_id: runner_id, dispatches: cur.hb_dispatches}}
       end
     end)

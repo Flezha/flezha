@@ -608,3 +608,48 @@ fn under_the_tier_the_recorded_request_carries_the_call_stamps() {
     );
     assert_eq!(outputs[0].key, "anna-42");
 }
+
+/// The heartbeat's `handouts` is what tells a runner that took a frame up
+/// from a wedged one, so it moves when the work is handed out, and again when
+/// a retry is re-handed, never waiting for the item to settle.
+#[test]
+fn the_handout_mark_moves_on_a_handout_and_on_a_retry() {
+    let id = format!("handout_mark_{}", std::process::id());
+    let instance = host_class::instance_of(&id, &["in"], &[], &[1], false);
+    let slot = Arc::clone(&instance.cells[0][0]);
+    let core = crate::poll_core::PollCore::new();
+    let (work, mut failed) = work_and_effect(1, &[]);
+    failed.verdict = schema::Verdict::RetryableError {
+        message: "not yet".to_string(),
+    };
+    assert!(slot.mailbox.try_push(work.item).is_ok());
+    assert!(slot.mailbox.claim_inflight());
+
+    let handed = core.try_assemble(&slot).expect("the work is handed out");
+    assert_eq!(
+        core.handouts_issued(),
+        1,
+        "the handout itself moves the mark"
+    );
+    let token = handed.token;
+    let outcome = schema::ActivationOutcome::Work(vec![failed]);
+    crate::host::apply_result(&core, handed, schema::ActivationResult { token, outcome })
+        .expect("answered");
+    assert_eq!(
+        core.outstanding_count(),
+        0,
+        "a retry waiting out its backoff holds no handout"
+    );
+
+    let crate::poll_core::Polled::Activation(retried) =
+        core.poll(std::time::Duration::from_secs(5))
+    else {
+        panic!("the retry was never re-handed");
+    };
+    assert_eq!(retried.items()[0].attempt, 2, "the re-handout is the retry");
+    assert_eq!(
+        core.handouts_issued(),
+        2,
+        "the retry's re-handout moves the mark"
+    );
+}

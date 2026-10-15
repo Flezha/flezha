@@ -550,8 +550,11 @@ fn heartbeat_metadata() -> HashMap<String, String> {
     // slot, so a key added here stays invisible until it gains one — which the
     // cross-SDK gate refuses.
     [
-        // Dispatch progress: frozen with the runner alive is a wedged pool.
+        // Pool progress: work settled and work handed out. Both frozen with
+        // the runner alive is a wedged pool; `handouts` moving alone is a
+        // handler still running or a retry waiting out its backoff.
         ("dispatches", crate::cell::dispatches_completed()),
+        ("handouts", core.handouts_issued()),
         // Overflow outcomes. `dispatches` frozen with `blocked_parks` climbing
         // is healthy backpressure; frozen with it flat is a wedge. The two drop
         // counters are the shed a user would otherwise only find by

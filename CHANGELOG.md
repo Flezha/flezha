@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Fixed: a runner busy in a handler or waiting out a retry is no longer restarted as wedged
+
+The controller judged a runner's worker pool wedged when a frame was sent between two of its
+heartbeats and the runner's count of completed work did not move. A handler still running when
+the next heartbeat landed, or a failed payload waiting out its retry backoff, completes nothing
+in that window, so a healthy runner could be restarted terminally. The heartbeat now also
+carries `handouts`, the number of activations the runner has issued, and the pool reads as
+wedged only while that count is flat too. A runner built before this change does not send the
+key and is judged as before.
+
 ### Fixed: a park no longer costs a thread, and is never lost when one cannot start
 
 A payload the runner could not deliver (a frame naming a channel the relay does not declare, an

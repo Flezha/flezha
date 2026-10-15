@@ -424,6 +424,8 @@ The classifier verdict the Loop already computes each tick SHALL be consumed by 
 
 `cell_dispatch_stalled` SHALL be minted from the runner's self-reported handout liveness — a non-zero outstanding count whose oldest-age exceeds the configured threshold — under the same "is it actually being fed?" precondition every other check carries, and SHALL rank *shallower* than every runner-scoped verdict, since a wedged runner explains a wedged cell and not the reverse. Its detail SHALL carry the reported age so a false positive is diagnosable from the log alone.
 
+`runner_pool_wedged` SHALL be minted only across a heartbeat that landed after a frame was sent, and only while the runner's self-reported completed dispatches, issued handouts and block counter are all flat between the two heartbeats. A handler still running when the heartbeat lands, or a retry waiting out its backoff, completes nothing but has moved the handout count, so it SHALL NOT read as a wedge. A runner that reports no handout count SHALL be judged on its dispatches alone.
+
 **The precondition is universal, and the two driver-global checks SHALL carry it in their own form.** A verdict is a statement that something which was working has stopped, so a layer SHALL NOT be judged from a baseline that never showed it working:
 
 * `driver_loop_frozen` SHALL be minted only when the *previous* sample shows an established driver — a non-zero loop-iteration count and a stamped last-loop time — and the current sample's iteration count has not gone backwards. A driver that has never completed a loop iteration SHALL NOT be reported frozen, and a counter that decreased SHALL be read as a re-created driver at the same transport key rather than as a frozen one. In consequence a reported `driver_loop_frozen` can never carry an infinite loop age.
@@ -432,8 +434,18 @@ The classifier verdict the Loop already computes each tick SHALL be consumed by 
 A close the controller itself initiated SHALL NOT mint an `output_stall` for the relays mapped to the closing stream, so a planned teardown SHALL NOT enter the loop as a divergence to heal. An unexpected close SHALL continue to emit it unchanged.
 
 #### Scenario: A wedged runner pool is restarted from a classifier verdict
-- **WHEN** the classifier reports `runner_pool_wedged` (heartbeats flowing, dispatch counter frozen) for a runner that remains in the active set
+- **WHEN** the classifier reports `runner_pool_wedged` (heartbeats flowing, dispatch and handout counters frozen) for a runner that remains in the active set
 - **THEN** the same tick's plan issues a `restart_runner` op with the verdict as reason, the runner exits non-zero and its relays are rerouted by the existing disconnect path and planner ordering, and repeats are backoff-throttled on the standard ladder
+
+#### Scenario: A handler running across a heartbeat is not a wedge
+- **GIVEN** a fed runner that took a frame up after one heartbeat and still runs its handler when the next lands
+- **WHEN** the two heartbeats report the same dispatch count and a handout count that moved
+- **THEN** the classifier SHALL NOT report `runner_pool_wedged` for that runner
+
+#### Scenario: A retry waiting out its backoff is not a wedge
+- **GIVEN** a fed runner whose frame failed and waits out its retry backoff, with no activation outstanding
+- **WHEN** the two heartbeats report the same dispatch count and a handout count that moved
+- **THEN** the classifier SHALL NOT report `runner_pool_wedged` for that runner
 
 #### Scenario: A wedged channel is resynced, a wedged relay is rebound
 - **WHEN** the classifier reports `channel_not_sending` for a fed channel, and on a later tick `relay_not_forwarding` for a fed relay
@@ -449,7 +461,7 @@ A close the controller itself initiated SHALL NOT mint an `output_stall` for the
 - **THEN** the classifier SHALL report `cell_dispatch_stalled` scoped to that relay, the plan SHALL issue `rebind_relay` for it, and no `evict_runner` SHALL be issued for the runner
 
 #### Scenario: A wedged runner outranks a stalled cell
-- **WHEN** a runner reports both a frozen dispatch counter and an aged outstanding activation
+- **WHEN** a runner reports frozen dispatch and handout counters and an aged outstanding activation
 - **THEN** the classifier SHALL report only `runner_pool_wedged`, and the cell-scoped verdict SHALL surface on a later tick only if it survives the runner-level remedy
 
 #### Scenario: A driver that has not started yet is not frozen

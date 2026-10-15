@@ -463,6 +463,10 @@ data-channel heartbeat's metadata map beside the counters it already reports
 controller reads them through the liveness snapshot it already builds — no new
 frame, no new payload id, and no new sensor process.
 
+The heartbeat SHALL also carry `handouts`, the number of activations the core
+has issued (its latest activation token), which moves when work is handed out,
+a retry's re-handout included, and does not wait for the work to settle.
+
 The counters are reporting only: nothing in the SDK SHALL change behaviour based
 on them.
 
@@ -470,6 +474,10 @@ on them.
 - **GIVEN** a runner whose overall dispatch counter is still advancing
 - **WHEN** one cell's activation has been outstanding far longer than any other
 - **THEN** the heartbeat SHALL report a non-zero outstanding count and an oldest-age reflecting that activation
+
+#### Scenario: A handout moves the handout count before it settles
+- **WHEN** a cell's work is handed out, fails and waits out its retry backoff
+- **THEN** the heartbeat's `handouts` SHALL have moved on the handout, and SHALL move again when the retry is re-handed, while no activation is outstanding in between
 
 #### Scenario: An idle runner reports zero
 - **WHEN** a runner has no outstanding activations

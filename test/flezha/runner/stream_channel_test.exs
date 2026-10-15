@@ -298,6 +298,7 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
 
       assert row.hb_inflight == 0
       assert row.hb_inflight_oldest_ms == 0
+      assert row.hb_handouts == 0
     end
 
     # Every key the runner's heartbeat carries lands in a slot. The cross-SDK
@@ -322,7 +323,8 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
            "pending_push_oldest_ms" => "9",
            "restore_discarded_inputs" => "10",
            "timers_armed" => "11",
-           "timers_fired" => "12"
+           "timers_fired" => "12",
+           "handouts" => "13"
          }}
       )
 
@@ -341,7 +343,8 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
             hb_pending_push_oldest_ms: 9,
             hb_restore_discarded_inputs: 10,
             hb_timers_armed: 11,
-            hb_timers_fired: 12
+            hb_timers_fired: 12,
+            hb_handouts: 13
           ] do
         assert Map.fetch(row, slot) == {:ok, value}, "#{slot} did not mirror"
       end

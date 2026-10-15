@@ -244,7 +244,9 @@ per-channel liveness clock fresh. Its metadata is the runner's self-report, and
 the key set is **one declaration**: every row of
 `Flezha.Transport.LivenessCounters` that names a `heartbeat:`, answered by
 `LivenessCounters.heartbeat_keys/0`. It is headed by `dispatches` (completed
-dispatches — what the `runner_pool_wedged` classifier reads) and covers the
+dispatches) and `handouts` (activations issued, which a handler still running or
+a retry in its backoff moves while `dispatches` stays put); the
+`runner_pool_wedged` classifier reads both. It covers the
 overflow outcomes, the handout and deferred-push reports, the credit park, the
 rebind discard and the two timer counters; read the rows for the current list
 rather than a copy of it here.

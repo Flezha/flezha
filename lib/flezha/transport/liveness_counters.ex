@@ -54,12 +54,14 @@ defmodule Flezha.Transport.LivenessCounters do
   # than a mirrored runner fact — which is why it alone among the `hb_` slots
   # is scoped `:channel`.
   #
-  # `hb_dispatches` mirrors the runner's dispatch-progress counter: heartbeats
-  # advancing while it is frozen means the runner process is alive and its
-  # dispatch pool is wedged. `hb_inflight` and `hb_inflight_oldest_ms` mirror
-  # the handout self-report — `hb_dispatches` freezing says the WHOLE pool
-  # stopped, these two are what make ONE wedged Cell visible while the runner
-  # keeps completing work. `hb_pending_pushes` and `hb_pending_push_oldest_ms`
+  # `hb_dispatches` and `hb_handouts` mirror the runner's pool progress, work
+  # settled and work handed out: heartbeats advancing while both are frozen
+  # means the runner process is alive and its dispatch pool is wedged, and
+  # handouts moving alone is a handler still running or a retry waiting out its
+  # backoff. `hb_inflight` and `hb_inflight_oldest_ms` mirror the handout
+  # self-report — the two progress counts freezing say the WHOLE pool stopped,
+  # these two are what make ONE wedged Cell visible while the runner keeps
+  # completing work. `hb_pending_pushes` and `hb_pending_push_oldest_ms`
   # mirror the deferred-push self-report: a gated producer holds no handout, so
   # `hb_inflight` is blind to it and backpressure that withholds work would
   # otherwise read as a runner doing nothing. `hb_blocked_parks` mirrors the
@@ -135,6 +137,14 @@ defmodule Flezha.Transport.LivenessCounters do
         measurement: :count,
         heartbeat: "dispatches",
         surface: [{:verdict, :runner_pool_wedged}, {:metric, :dispatches}]
+      ],
+      [
+        name: :hb_handouts,
+        kind: :set,
+        scope: :runner,
+        aggregate: :sum,
+        heartbeat: "handouts",
+        surface: [{:verdict, :runner_pool_wedged}]
       ],
       [
         name: :hb_credit_parked,

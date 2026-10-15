@@ -51,6 +51,7 @@ defmodule FlezhaTest.System.LivenessSlotExportE2ETest do
     last_heartbeat_ms: :here,
     hb_count: :here,
     hb_dispatches: :here,
+    hb_handouts: :here,
     hb_inflight: :here,
     hb_inflight_oldest_ms: :here,
     forwarded: :here,
@@ -220,6 +221,7 @@ defmodule FlezhaTest.System.LivenessSlotExportE2ETest do
     # A per-runner fact read once per runner, not once per channel: the defect
     # `count-a-runner-self-report-once` closed, asserted through a real fleet.
     assert row.hb_dispatches >= 1, "the runner reported no completed dispatch"
+    assert row.hb_handouts >= 1, "the runner reported no handout"
 
     # Every metric row the layout declares reaches a real scrape body.
     TransportSource.start_link([]) |> drive_one_poll()
@@ -233,7 +235,7 @@ defmodule FlezhaTest.System.LivenessSlotExportE2ETest do
 
     # And the wire contract itself: the mirror's key list and the runner's are
     # the same list, because there is only one.
-    assert length(LivenessCounters.heartbeat_keys()) == 16
+    assert length(LivenessCounters.heartbeat_keys()) == 17
   end
 
   # ---------- helpers ----------

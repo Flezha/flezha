@@ -303,6 +303,49 @@ defmodule Flezha.Convergence.StallClassifierTest do
     assert StallClassifier.classify(curr, prev) == :ok
   end
 
+  # A quiet runner: H1 at -6 s, a frame sent at -4 s and handed out at once, H2
+  # at -2 s while that handler still runs (out 2 s), so no dispatch completed
+  # between the two. The handout moved, so the runner took the frame up.
+  test "a heartbeat landing mid-handler is not a wedge (KB-328)" do
+    {prev, curr} =
+      fed_runner(
+        [hb_dispatches: 7, hb_handouts: 11, last_heartbeat_ms: @now - 6_000],
+        hb_dispatches: 7,
+        hb_handouts: 12,
+        hb_inflight: 1,
+        hb_inflight_oldest_ms: 2_000,
+        last_send_ms: @now - 4_000,
+        last_heartbeat_ms: @now - 2_000
+      )
+
+    assert StallClassifier.classify(curr, prev) == :ok
+  end
+
+  # The frame was handed out, failed and waits out its backoff: nothing is
+  # outstanding and the dispatch count moves only at the final attempt.
+  test "a retry waiting out its backoff is not a wedge (KB-539)" do
+    {prev, curr} =
+      fed_runner([hb_dispatches: 5, hb_handouts: 20],
+        hb_dispatches: 5,
+        hb_handouts: 21,
+        hb_inflight: 0
+      )
+
+    assert StallClassifier.classify(curr, prev) == :ok
+  end
+
+  test "runner_pool_wedged DOES fire when handouts are frozen too, a handout outstanding" do
+    {prev, curr} =
+      fed_runner([hb_dispatches: 9_000, hb_handouts: 9_100, hb_inflight: 1],
+        hb_dispatches: 9_000,
+        hb_handouts: 9_100,
+        hb_inflight: 1,
+        hb_inflight_oldest_ms: 9_000
+      )
+
+    assert {:runner_pool_wedged, %{runner_id: "exec-1"}} = StallClassifier.classify(curr, prev)
+  end
+
   test "channel_not_sending: channel fed but send_frame flat (stream bound)" do
     prev = snapshot(channels: [channel(io_in_received: 10, send_frame_calls: 10)])
     curr = snapshot(channels: [channel(io_in_received: 30, send_frame_calls: 10)])
