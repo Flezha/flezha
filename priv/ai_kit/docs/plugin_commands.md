@@ -138,7 +138,7 @@ $ flz plugin list
 ```
 
 ```output
-writer  file_sink  bound: my_echo  runs on: idle
+writer  file_sink  bound: my_echo  runs on: flezha@127.0.0.1
 ```
 
 ```sh

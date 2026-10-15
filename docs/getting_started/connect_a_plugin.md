@@ -137,13 +137,13 @@ $ ./bin/flz plugin list
 ```
 
 ```output
-reader  file_source  bound: my_echo  runs on: idle
-writer  file_sink  bound: my_echo  runs on: idle
+reader  file_source  bound: my_echo  runs on: flezha@127.0.0.1
+writer  file_sink  bound: my_echo  runs on: flezha@127.0.0.1
 ```
 
-`runs on` names the controllers that run a shared copy of a plugin; the file
-plugins run inside the relay itself, so they show `idle`. `--json` prints the
-same rows as JSON.
+`runs on` names the controllers where a plugin is running: the file plugins run
+inside the relay itself, so they show the relay's controller, and a plugin
+running nowhere shows `idle`. `--json` prints the same rows as JSON.
 
 ## Unbind and bind again
 

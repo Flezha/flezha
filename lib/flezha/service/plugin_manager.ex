@@ -21,6 +21,7 @@ defmodule Flezha.Service.PluginManager do
   alias Flezha.Cluster.Directory
   alias Flezha.Config.Backoff
   alias Flezha.Config.Durations
+  alias Flezha.Convergence.Probe
   alias Flezha.Relay.Overwatch
   alias Flezha.Relay.PartitionGroup
   alias Flezha.Parallel
@@ -627,6 +628,7 @@ defmodule Flezha.Service.PluginManager do
   @doc false
   def plugins_here(namespace) do
     bound = all_bindings(namespace)
+    running = Probe.plugins_running(namespace, relays_of(bound))
 
     for %Plugin{id: name} = entry <- HubManager.plugin_entries(namespace) do
       %{
@@ -637,17 +639,15 @@ defmodule Flezha.Service.PluginManager do
         relays: bound |> bound_to(name) |> relays_of() |> Enum.sort(),
         hooks: Enum.map(entry.hooks, &to_string(elem(&1, 0)))
       }
-      |> Map.merge(Shared.running_on(%Plugin{entry | namespace: namespace}))
+      |> Map.merge(Shared.running_on(%Plugin{entry | namespace: namespace}, running))
     end
   end
 
   # The id the provider is registered under, which `Fleet.provider/2` and an
-  # enable take; `nil` for one whose package this controller did not load.
+  # enable take, and its name: `nil` and its module's for one not loaded here.
   defp provider_id(provider),
     do: Enum.find_value(Providers.all(), fn {id, module} -> module == provider && id end)
 
-  # A provider whose package this controller did not load still has a name to
-  # show: its module's.
   defp provider_name(provider) do
     if Code.ensure_loaded?(provider), do: provider.__provider__().name, else: inspect(provider)
   end

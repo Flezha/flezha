@@ -24,6 +24,9 @@ defmodule Flezha.Convergence.Probe do
           {binary(), binary()} => %{local: [binary()] | :unknown, remote_nodes: [node()]}
         }
 
+  @typedoc "The node of each relay read, with the plugin ids it has running."
+  @type plugins_running :: [{node(), [binary()]}]
+
   @type reality :: %{
           relays: %{{binary(), binary()} => map()},
           active_runners: %{binary() => MapSet.t() | :unknown},
@@ -75,6 +78,32 @@ defmodule Flezha.Convergence.Probe do
     }
   end
 
+  @doc """
+  The node of each of `relay_ids` in `namespace` that answers, with the plugin
+  ids its Overwatch has running: read as the snapshot reads a relay, in one
+  bounded fan-out. A relay that is not registered, or does not answer within
+  `relay_call_timeout_ms`, is left out.
+  """
+  @spec plugins_running(binary(), [binary()]) :: plugins_running()
+  def plugins_running(namespace, relay_ids) do
+    pairs = for id <- relay_ids, {:ok, pid} <- [HubManager.get_pid(namespace, id)], do: {id, pid}
+
+    for {{_id, pid}, {:ok, {:ok, ow}}} <- each_relay(pairs, &overwatch/1),
+        do: {node(pid), running_plugins(ow)}
+  end
+
+  @doc """
+  The relay's Overwatch state, read under `relay_call_timeout_ms`; `:error`
+  when it does not answer.
+  """
+  @spec overwatch(pid()) :: {:ok, map()} | :error
+  def overwatch(pid) do
+    case SafeCall.bounded(pid, :get_overwatch_state, Durations.get(:relay_call_timeout_ms)) do
+      {:ok, ow} when is_map(ow) -> {:ok, ow}
+      _ -> :error
+    end
+  end
+
   # The Cells with a live writer — the evidence a declared gap or give-up
   # still has a log to close. `:unknown` on a failed read, never empty: a
   # missing writer clears a fact, and a read that failed proves nothing.
@@ -84,8 +113,7 @@ defmodule Flezha.Convergence.Probe do
     :exit, _ -> :unknown
   end
 
-  # Probe every relay this controller hosts, concurrently: one wedged Overwatch
-  # costs ~one timeout, not N×timeout serial in the Loop process. A relay hosted
+  # Probe every relay this controller hosts, off the Loop process. A relay hosted
   # elsewhere is its own controller's loop's: this one holds neither the runners
   # nor the streams it would be judged and bound against. A relay we cannot read
   # is recorded as `bound_runner: :unknown` so the Diff skips it — a failed
@@ -98,19 +126,25 @@ defmodule Flezha.Convergence.Probe do
           do: {{ns, relay_id}, pid}
 
     pairs
-    |> Parallel.results(fn {_ref, pid} -> observe_relay(pid) end,
-      max_concurrency: System.schedulers_online() * 4,
-      timeout: Durations.get(:relay_call_timeout_ms) + Durations.get(:health_probe_budget_ms)
-    )
+    |> each_relay(&observe_relay/1)
     |> Enum.reduce(%{}, fn
       {{ref, _pid}, {:ok, observed}}, acc -> Map.put(acc, ref, observed)
       {{ref, _pid}, {:exit, _reason}}, acc -> Map.put(acc, ref, unreadable())
     end)
   end
 
+  # Run `fun` on every `{key, pid}` concurrently: one wedged Overwatch costs
+  # ~one timeout, not N×timeout serial.
+  defp each_relay(pairs, fun) do
+    Parallel.results(pairs, fn {_key, pid} -> fun.(pid) end,
+      max_concurrency: System.schedulers_online() * 4,
+      timeout: Durations.get(:relay_call_timeout_ms) + Durations.get(:health_probe_budget_ms)
+    )
+  end
+
   defp observe_relay(pid) do
-    case SafeCall.bounded(pid, :get_overwatch_state, Durations.get(:relay_call_timeout_ms)) do
-      {:ok, ow} when is_map(ow) ->
+    case overwatch(pid) do
+      {:ok, ow} ->
         observed(%{
           pid: pid,
           bound_runner: Map.get(ow, :runner_id),
@@ -128,7 +162,7 @@ defmodule Flezha.Convergence.Probe do
           plugin_health: with_table(ow, %{}, &Table.health/1)
         })
 
-      _ ->
+      :error ->
         unreadable()
     end
   end

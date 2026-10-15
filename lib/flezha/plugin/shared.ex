@@ -22,7 +22,7 @@ defmodule Flezha.Plugin.Shared do
   `Flezha.Observability.HookSink` hands over; it listens by joining its hooks'
   directory groups, and it never stops idle. Its home places it
   (`Flezha.Plugin.Home`). One whose workers cannot start runs without them,
-  its health naming why and `running_on/1` leaving its controller out, and
+  its health naming why and `running_on/2` leaving its controller out, and
   tries again every `convergence_tick_ms`, as one whose worker went down does.
   Its waiting events are one forwarder's backlog
   (`Flezha.Plugin.Shared.Forwarder`), which hands it one at a time;
@@ -243,13 +243,21 @@ defmodule Flezha.Plugin.Shared do
   @doc """
   The controllers where the enabled `plugin` runs, and those where a
   controller plugin's copy lags. A copy waiting for its workers to start runs
-  nowhere.
+  nowhere. A relay plugin runs where its shared copy runs and on each node
+  `relays` (each read relay's node with the plugin ids it has running) names
+  for it.
   """
-  @spec running_on(Plugin.t()) :: %{controllers: [node()], lagging: [node()]}
-  def running_on(%Plugin{namespace: namespace, id: name} = plugin) do
+  @spec running_on(Plugin.t(), [{node(), [binary()]}]) ::
+          %{controllers: [node()], lagging: [node()]}
+  def running_on(%Plugin{namespace: namespace, id: name} = plugin, relays) do
     if Plugin.controller?(plugin),
       do: copies_running_on(namespace, name),
-      else: %{controllers: Enum.sort(Directory.plugin_nodes(namespace, name)), lagging: []}
+      else: %{controllers: relay_plugin_nodes(namespace, name, relays), lagging: []}
+  end
+
+  defp relay_plugin_nodes(namespace, name, relays) do
+    on_relays = for {on, ids} <- relays, Enum.any?(ids, &(Plugin.base_id(&1) == name)), do: on
+    Enum.sort(Enum.uniq(Directory.plugin_nodes(namespace, name) ++ on_relays))
   end
 
   defp copies_running_on(namespace, name) do

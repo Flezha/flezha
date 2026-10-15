@@ -51,6 +51,7 @@ defmodule Flezha.Convergence.Heal do
 
   alias Flezha.Config.Durations
   alias Flezha.Convergence.Planner
+  alias Flezha.Convergence.Probe
   alias Flezha.Relay.Overwatch
   alias Flezha.Runner.{ControlUnit, FleetManager}
   alias Flezha.SDK.SafeCall
@@ -146,8 +147,8 @@ defmodule Flezha.Convergence.Heal do
   # through `rebind_relay` instead.
   defp apply_primitive(:resync_runner, %{namespace: namespace, target: relay_id}) do
     on_relay(namespace, relay_id, fn pid ->
-      case overwatch_snapshot(pid) do
-        %{runner_id: runner_id} when is_binary(runner_id) ->
+      case Probe.overwatch(pid) do
+        {:ok, %{runner_id: runner_id}} when is_binary(runner_id) ->
           Recovery.resync_for_overwatch(pid, runner_id)
 
         _ ->
@@ -244,7 +245,7 @@ defmodule Flezha.Convergence.Heal do
   # registry tag and the target runner's route once it lands; a bind that
   # fails parks the relay for the next tick under Backoff.
   defp rebind_relay(%{namespace: namespace, target: relay_id} = op, pid) do
-    with %{factory_id: factory, runner_id: prev} <- overwatch_snapshot(pid),
+    with {:ok, %{factory_id: factory, runner_id: prev}} <- Probe.overwatch(pid),
          true <- factory != nil,
          false <- skip_rebind?(namespace, factory, prev, op),
          {:ok, target} <- placed(RelayManager.assign_runner(namespace, factory, relay_id)),
@@ -311,20 +312,11 @@ defmodule Flezha.Convergence.Heal do
     end)
   end
 
-  # The reply is always the full `%Overwatch{}` struct — callers hand it to
-  # `Overwatch`'s own functions (the consent gate) or read its fields.
   # The placement decision, told apart from the reads around it: `nil` is "no
   # runner or node can serve this relay", the one failure that is an unmet
   # precondition rather than a repair that failed.
   defp placed(nil), do: :unplaced
   defp placed(target), do: {:ok, target}
-
-  defp overwatch_snapshot(pid) do
-    case SafeCall.bounded(pid, :get_overwatch_state, Durations.get(:relay_call_timeout_ms)) do
-      {:ok, %Overwatch{} = ow} -> ow
-      _ -> nil
-    end
-  end
 
   # A runner restarting on a schedule must be visible rather than mysterious:
   # the verdict that proved the wedge and the ladder rung both ride the event.
