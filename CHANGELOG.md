@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Fixed: a controller no longer binds a relay another controller hosts to its own runner
+
+Each controller's convergence loop judged every relay in the cluster against its own runners, so
+a relay bound to another controller's runner read as bound to a dead one and was rebound onto a
+runner of this controller. Its Overwatch stayed where it was, could not reach that runner's
+stream, and every message sent to it was dropped; two healthy controllers could also take each
+other's relays. A controller's loop now observes, judges and places only the relays it hosts. A
+relay whose controller lost its last runner for it moves to a controller that has one, as the
+hub's redistribution already does. On `/healthz` and in `flz` listings a controller now reports
+the relays another controller hosts as `unknown` instead of `failed`, and they no longer cut
+short the `recovering` grace of its own relays.
+
 ### Fixed: a relay moved to a node that held nothing no longer keeps half of the copy it pulled
 
 When the node a relay moved from stopped answering part-way through the pull, the node it moved

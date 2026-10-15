@@ -96,12 +96,12 @@ The guard protects a target that is merely *observed* healthy. It SHALL NOT prot
 
 ### Requirement: A failed heal SHALL NOT erase the divergence it failed to fix
 
-`Overwatch.handle_call({:runner_migrate, new_runner_id})` SHALL commit the new binding only after `attempt_ping_and_start/2` reports the runner answered; on failure it SHALL return the state untouched. Runner ownership is node-local — `ControlUnit` and the `StreamChannel` registry live in the per-node `Identificator` registry and `FleetManager` is a per-node GenServer — so a heal handing a local runner to an Overwatch on another node fails by construction, and that failure MUST leave the relay honestly misbound.
+`Overwatch.handle_call({:runner_migrate, new_runner_id})` SHALL commit the new binding only after `attempt_ping_and_start/2` reports the runner answered; on failure it SHALL return the state untouched. A failed migrate MUST leave the relay honestly misbound.
 
 Committing the binding first records `bound_runner ∈ active_runners` for a runner the relay cannot reach: `Convergence.Probe` reads it as placed, `Convergence.Diff` stops classifying it misbound, and the delta goes permanently empty. The relay then reports healthy while every frame drops.
 
-#### Scenario: a failed cross-node migrate stays visible to the next tick
-- **GIVEN** relay `btc_feed` is misbound and the Heal targets a runner on another controller's node
+#### Scenario: a failed migrate stays visible to the next tick
+- **GIVEN** relay `btc_feed` is misbound and the Heal targets a runner
 - **WHEN** `runner_migrate` cannot reach that runner (`{:ping_failed, :no_control_unit}`)
 - **THEN** the relay's `runner_id` and `channel` SHALL be unchanged
 - **AND** the next Diff SHALL still classify it misbound and re-plan the heal under backoff.
@@ -530,7 +530,12 @@ Every path that starts or binds a relay — the ProcessHub orphan reconcile, the
 The heal/rebind path SHALL only bind a relay to a runner reachable from
 the node hosting that relay's Overwatch, and every rebind path SHALL pick
 its target through the same factory-filtered placement function as the start
-path.
+path. Runner ownership is node-local: a runner's control unit, its stream
+channels and the `FleetManager` that places it all live on the controller it
+connected to. A controller's loop SHALL therefore observe, judge and place
+only the relays whose Overwatch runs on that controller, against that
+controller's own runners; a relay hosted elsewhere is its own controller's
+loop's to place.
 
 The convergence loop SHALL NOT move a relay to another node. Which
 controller hosts a relay is decided by the namespace hub's distribution
@@ -551,6 +556,13 @@ against it and no backoff key advances.
 - **THEN** the plan contains no op targeting the relay
 - **AND** the relay reaches the other node through the hub's
   redistribution once this node withdraws the factory's group
+
+#### Scenario: A loop leaves another controller's relays alone
+
+- **GIVEN** two controllers, each with a runner advertising a relay's factory
+- **WHEN** the relay's Overwatch runs on one of them, bound to that
+  controller's runner
+- **THEN** the other controller's loop plans no op targeting the relay
 
 #### Scenario: No eligible fleet anywhere degrades loudly, without churn
 

@@ -30,13 +30,15 @@ defmodule Flezha.Convergence.Loop.Summary do
     # vacuously `healthy` until every durable relay is reloaded and bound.
     pending_restore = HubManager.durable_registry_pending?()
 
-    # Unmet-intent clock: runs while `bound < intended` and not recovering.
+    # Unmet-intent clock: runs while a judged relay is not bound and nothing is
+    # recovering. An `:unknown` relay (hosted by another controller, or unread
+    # this tick) is not judged here, so it neither starts nor holds the clock.
     now = System.monotonic_time(:millisecond)
     recovering? = RecoveryGate.any_recovering?(Map.get(reality, :recovery, %{}))
 
     unmet_intent_since =
       cond do
-        counts.bound >= counts.intended or recovering? -> nil
+        counts.bound >= counts.intended - counts.unknown or recovering? -> nil
         is_integer(state.unmet_intent_since) -> state.unmet_intent_since
         true -> now
       end

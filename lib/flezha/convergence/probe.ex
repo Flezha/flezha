@@ -4,7 +4,9 @@ defmodule Flezha.Convergence.Probe do
   looks like right now". No decisions, no side effects.
 
   `snapshot/0` builds a `Reality` map the Loop diffs against
-  `Intent.declared/0`.
+  `Intent.declared/0`. It observes only the relays whose Overwatch runs on
+  this controller, so a declared relay hosted elsewhere is unobserved here and
+  its own controller's loop places it.
   """
 
   alias Flezha.Cluster.Directory
@@ -82,15 +84,18 @@ defmodule Flezha.Convergence.Probe do
     :exit, _ -> :unknown
   end
 
-  # Probe every relay concurrently: one wedged Overwatch costs ~one timeout,
-  # not N×timeout serial in the Loop process. A relay we cannot read is
-  # recorded as `bound_runner: :unknown` so the Diff skips it — a failed
+  # Probe every relay this controller hosts, concurrently: one wedged Overwatch
+  # costs ~one timeout, not N×timeout serial in the Loop process. A relay hosted
+  # elsewhere is its own controller's loop's: this one holds neither the runners
+  # nor the streams it would be judged and bound against. A relay we cannot read
+  # is recorded as `bound_runner: :unknown` so the Diff skips it — a failed
   # observation must never drive a mutating heal.
   defp relays(namespaces) do
     pairs =
-      Enum.flat_map(namespaces, fn ns ->
-        Enum.map(safe_relays(ns), fn {relay_id, pid} -> {{ns, relay_id}, pid} end)
-      end)
+      for ns <- namespaces,
+          {relay_id, pid} <- safe_relays(ns),
+          node(pid) == node(),
+          do: {{ns, relay_id}, pid}
 
     pairs
     |> Parallel.results(fn {_ref, pid} -> observe_relay(pid) end,
@@ -103,7 +108,7 @@ defmodule Flezha.Convergence.Probe do
     end)
   end
 
-  defp observe_relay(pid) when is_pid(pid) do
+  defp observe_relay(pid) do
     case SafeCall.bounded(pid, :get_overwatch_state, Durations.get(:relay_call_timeout_ms)) do
       {:ok, ow} when is_map(ow) ->
         observed(%{
@@ -120,15 +125,13 @@ defmodule Flezha.Convergence.Probe do
           down_plugins: phase_plugins(ow, :down),
           not_started_plugins: phase_plugins(ow, :not_started),
           plugin_uptimes: plugin_uptimes(ow),
-          plugin_health: plugin_health(pid, ow)
+          plugin_health: with_table(ow, %{}, &Table.health/1)
         })
 
       _ ->
         unreadable()
     end
   end
-
-  defp observe_relay(_), do: observed()
 
   # A relay whose state could not be read at all. `:unknown` rather than
   # `nil` for the binding: "we could not tell" must not be diffed as "unbound".
@@ -138,7 +141,7 @@ defmodule Flezha.Convergence.Probe do
   # default, so a field added to one constructor and forgotten in another would
   # not fail — it would silently read as "nothing diverged". There is therefore
   # exactly one place the keys are listed.
-  defp observed(fields \\ %{}) do
+  defp observed(fields) do
     Map.merge(
       %{
         pid: nil,
@@ -193,14 +196,6 @@ defmodule Flezha.Convergence.Probe do
     HubManager.relay_runner_tag(Map.get(ow, :namespace), Map.get(ow, :id))
   catch
     _, _ -> nil
-  end
-
-  # Provider self-reported health (`Extension.Table.health/1`). Owned plugin
-  # pids live on the Overwatch's node, so only the loop running there can probe
-  # them; elsewhere, report `%{}` — an uncertain probe is healthy and must never
-  # drive a heal.
-  defp plugin_health(pid, ow) do
-    if node(pid) == node(), do: with_table(ow, %{}, &Table.health/1), else: %{}
   end
 
   # The one read of a relay's extension table. A snapshot that carries no

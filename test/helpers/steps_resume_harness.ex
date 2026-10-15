@@ -81,9 +81,38 @@ defmodule FlezhaTest.Helper.StepsResumeHarness do
     :ok = RelayManager.send_io(relay_id, namespace, text, %{"channel" => channel})
   end
 
-  def committed_iters(relay_id) do
-    {:ok, entries} = TaskJournal.read(relay_id)
-    for %{type: :iter_committed, iter: iter} <- entries, do: iter
+  # The committed iterations as `node`'s journal holds them; `[]` while it
+  # holds none, as during a move.
+  def committed_iters(relay_id, node \\ node()) do
+    case :erpc.call(node, TaskJournal, :read, [relay_id]) do
+      {:ok, entries} -> for %{type: :iter_committed, iter: iter} <- entries, do: iter
+      _ -> []
+    end
+  end
+
+  # --- two-controller helpers -------------------------------------------------
+
+  # A steps relay the hub placed on `peer`, its outputs forwarded to `collector`.
+  def start_steps_on_peer(peer, namespace, factory_id, collector) do
+    NodeTestHelper.await_serving(peer, namespace, factory_id)
+
+    Enum.find_value(1..20, fn i ->
+      id = "#{factory_id}_#{System.unique_integer([:positive])}_#{i}"
+
+      builder = %Builder{
+        id: id,
+        factory_id: factory_id,
+        run: :steps,
+        init_values: %{},
+        opts: [bindings: RelayFixture.bindings(namespace, id, [forward_sink("out", collector)])]
+      }
+
+      {:ok, %{node: placed}} = RelayManager.start_relay(namespace, builder)
+
+      if placed == peer,
+        do: id,
+        else: RelayManager.request_stop(namespace, id) && nil
+    end) || flunk("no steps relay landed on #{inspect(peer)} in 20 attempts")
   end
 
   def committed_tasks(relay_id) do

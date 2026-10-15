@@ -2,7 +2,6 @@ defmodule FlezhaTest.Handover do
   alias Flezha.Convergence.Loop
   alias Flezha.Convergence.Snapshot, as: ConvergenceSnapshot
   alias Flezha.Identificator
-  alias Flezha.Relay.Builder
   alias Flezha.Relay.Replay
   alias Flezha.Payloader
   alias Flezha.Runner.FleetManager
@@ -451,7 +450,7 @@ defmodule FlezhaTest.Handover do
     # Losing its last runner for a factory makes a controller stop serving that
     # factory's group, and the hub then reassigns every relay of it through
     # the migration-consent gate with handover. No convergence op, no hub drain.
-    {peer_pid, peer_node} = start_healing_peer(:anode1)
+    {peer_pid, peer_node} = NodeTestHelper.start_healing_peer(:anode1)
 
     # The withdrawal's grace is what a returning runner buys; this test has no
     # returning runner, so it is cut to keep the move prompt.
@@ -611,14 +610,14 @@ defmodule FlezhaTest.Handover do
   @tag :stale_snapshot
   @tag timeout: 180_000
   test "a migration after a hard kill ships neither a shutdown snapshot nor one read earlier" do
-    {peer_pid, peer} = start_healing_peer(:stale_snap)
+    {peer_pid, peer} = NodeTestHelper.start_healing_peer(:stale_snap)
     local_runner = NodeTestHelper.start_runner(@temp_namespace)
-    {rem_a, os_pid_a} = start_remote_runner(peer)
+    {rem_a, os_pid_a} = NodeTestHelper.start_runner_remote_with_pid(peer, @temp_namespace)
     op = start_relay_on_peer(peer, "stale_snapshot", @temp_namespace)
     assert bound_runner(op) == rem_a
 
     # B is up before A leaves, so the peer rebinds rather than re-placing.
-    {rem_b, os_pid_b} = start_remote_runner(peer)
+    {rem_b, os_pid_b} = NodeTestHelper.start_runner_remote_with_pid(peer, @temp_namespace)
 
     RelayTestHelper.send_sync_io(op, @temp_namespace, "before_snapshot", %{})
     assert NodeTestHelper.wait_until(fn -> state_has?(op, "before_snapshot") end, 10_000)
@@ -664,32 +663,41 @@ defmodule FlezhaTest.Handover do
   @tag :durable_move
   @tag timeout: 240_000
   test "a durable loop moved after its runner died resumes without re-running input" do
-    {peer_pid, peer} = start_healing_peer(:durable_move)
+    {peer_pid, peer} = NodeTestHelper.start_healing_peer(:durable_move)
     :erpc.call(peer, Application, :put_env, [:flezha, :group_withdraw_grace_ms, 500])
-    _local_runner = NodeTestHelper.start_runner(@temp_namespace)
-    {_rem, os_pid} = start_remote_runner(peer)
+    local_runner = NodeTestHelper.start_runner(@temp_namespace)
+    {_rem, os_pid} = NodeTestHelper.start_runner_remote_with_pid(peer, @temp_namespace)
     collector = spawn_link(fn -> StepsResumeHarness.collect_loop([]) end)
-    op = start_steps_on_peer(peer, "keyed_loop_steps", collector)
+
+    op =
+      StepsResumeHarness.start_steps_on_peer(peer, @temp_namespace, "keyed_loop_steps", collector)
 
     for _ <- 1..3, do: send_trade(op, "SOL-USD:1")
 
-    assert NodeTestHelper.wait_until(fn -> committed_iters(peer, op) == [0, 1, 2] end, 30_000),
+    assert NodeTestHelper.wait_until(
+             fn -> StepsResumeHarness.committed_iters(op, peer) == [0, 1, 2] end,
+             30_000
+           ),
            "the loop never committed three iterations on the peer"
 
     signal_runner(os_pid, "-KILL")
 
-    assert NodeTestHelper.wait_until(fn -> overwatch_node(op) == node() end, 150_000),
+    assert NodeTestHelper.wait_until(fn -> bound_runner(op) == local_runner end, 150_000),
            "the loop never moved to this controller"
+
+    # This controller's runner is reached by moving here, never across controllers.
+    assert overwatch_node(op) == node()
 
     send_trade(op, "SOL-USD:1")
 
     assert NodeTestHelper.wait_until(
-             fn -> committed_iters(node(), op) == [0, 1, 2, 3] end,
+             fn -> StepsResumeHarness.committed_iters(op, node()) == [0, 1, 2, 3] end,
              30_000
            ),
            "the message sent after the move did not commit one iteration: " <>
              inspect(
-               {committed_iters(node(), op), StepsResumeHarness.collected(collector),
+               {StepsResumeHarness.committed_iters(op, node()),
+                StepsResumeHarness.collected(collector),
                 RelayManager.get_overwatch_state(@temp_namespace, op)
                 |> then(fn {:ok, s} ->
                   Map.take(s, [
@@ -720,58 +728,13 @@ defmodule FlezhaTest.Handover do
     NodeTestHelper.stop_peer_node(peer_pid, peer)
   end
 
-  defp start_steps_on_peer(peer, factory_id, collector) do
-    NodeTestHelper.await_serving(peer, @temp_namespace, factory_id)
-
-    Enum.find_value(1..20, fn i ->
-      id = "#{factory_id}_#{System.unique_integer([:positive])}_#{i}"
-
-      builder = %Builder{
-        id: id,
-        factory_id: factory_id,
-        run: :steps,
-        init_values: %{},
-        opts: [
-          bindings:
-            RelayFixture.bindings(@temp_namespace, id, [
-              StepsResumeHarness.forward_sink("out", collector)
-            ])
-        ]
-      }
-
-      {:ok, %{node: placed}} = RelayManager.start_relay(@temp_namespace, builder)
-
-      if placed == peer,
-        do: id,
-        else: RelayManager.request_stop(@temp_namespace, id) && nil
-    end) || flunk("no steps relay landed on #{inspect(peer)} in 20 attempts")
-  end
-
-  defp send_trade(op, text),
-    do: :ok = RelayManager.send_io(op, @temp_namespace, text, %{"channel" => "trades"})
+  defp send_trade(op, text), do: StepsResumeHarness.send_turn(@temp_namespace, op, text, "trades")
 
   defp overwatch_node(op) do
     case RelayManager.get_relay_pid(@temp_namespace, op) do
       {:ok, pid} when is_pid(pid) -> node(pid)
       _ -> nil
     end
-  end
-
-  defp committed_iters(node, op) do
-    case :erpc.call(node, Flezha.State.TaskJournal, :read, [op]) do
-      {:ok, entries} -> for %{type: :iter_committed, iter: iter} <- entries, do: iter
-      _ -> []
-    end
-  end
-
-  # Both controllers heal, as in production: only the peer's own loop may
-  # re-place the relays it hosts.
-  defp start_healing_peer(name) do
-    {:ok, _} = start_supervised({Loop, tick_ms: 1_000})
-
-    NodeTestHelper.start_peer_node(name,
-      app_env: [convergence_health_enabled: true, convergence_tick_ms: 1_000]
-    )
   end
 
   defp assert_pulled_with(op, local_runner, text) do
@@ -804,24 +767,6 @@ defmodule FlezhaTest.Handover do
 
     assert NodeTestHelper.wait_until(caught_up?, 15_000),
            "the WAL on #{node} never caught up with #{op}: #{inspect(observe.())}"
-  end
-
-  # A runner started on the peer, with the OS pid of the port that launched it.
-  defp start_remote_runner(peer) do
-    before = runner_os_pids(peer)
-    runner_id = NodeTestHelper.start_runner_remote(peer, @temp_namespace)
-
-    case runner_os_pids(peer) -- before do
-      [os_pid] -> {runner_id, os_pid}
-      other -> flunk("expected one new runner port on the peer, got #{inspect(other)}")
-    end
-  end
-
-  defp runner_os_pids(peer) do
-    for port <- :erpc.call(peer, :erlang, :ports, []),
-        {:os_pid, os_pid} <- [:erpc.call(peer, :erlang, :port_info, [port, :os_pid])],
-        is_integer(os_pid),
-        do: os_pid
   end
 
   defp signal_runner(os_pid, signal),

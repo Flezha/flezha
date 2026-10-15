@@ -596,4 +596,29 @@ defmodule Flezha.Convergence.LoopTest do
       refute_received {^ref, [:flezha, :convergence, :intent_mismatch], _, _}
     end
   end
+
+  describe "Loop.Summary unmet-intent clock" do
+    alias Flezha.Convergence.{Snapshot, Verdict}
+    alias Flezha.Convergence.Loop.{State, Summary}
+
+    # A relay another controller hosts is `:unknown` here: it must not hold the
+    # clock, or a local relay losing its runner skips its `recovering` grace.
+    test "an unknown relay holds no clock, so a local relay's lost runner reads recovering" do
+      foreign = {{:relay, {:ns, "foreign"}}, Verdict.new({:relay, {:ns, "foreign"}}, :unknown)}
+      local = {:relay, {:ns, "local"}}
+      long_ago = System.monotonic_time(:millisecond) - 600_000
+
+      healthy = %State{
+        verdicts: Map.new([foreign, {local, Verdict.new(local, :healthy)}]),
+        unmet_intent_since: long_ago
+      }
+
+      state = Summary.publish(%Intent{}, %{recovery: %{}}, healthy)
+      assert state.unmet_intent_since == nil
+
+      lost = %{state | verdicts: Map.new([foreign, {local, Verdict.new(local, :failed)}])}
+      Summary.publish(%Intent{}, %{recovery: %{}}, lost)
+      assert Snapshot.relay_health(:ns, "local") == :recovering
+    end
+  end
 end

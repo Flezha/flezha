@@ -214,6 +214,36 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
 
   def start_runner_remote(node, namespace), do: on_peer(node, :start_runner_recv, [namespace])
 
+  # A runner started on the peer, with the OS pid of the port that launched it.
+  def start_runner_remote_with_pid(peer, namespace) do
+    before = runner_os_pids(peer)
+    runner_id = start_runner_remote(peer, namespace)
+
+    case runner_os_pids(peer) -- before do
+      [os_pid] -> {runner_id, os_pid}
+      other -> raise "expected one new runner port on the peer, got #{inspect(other)}"
+    end
+  end
+
+  defp runner_os_pids(peer) do
+    for port <- :erpc.call(peer, :erlang, :ports, []),
+        {:os_pid, os_pid} <- [:erpc.call(peer, :erlang, :port_info, [port, :os_pid])],
+        is_integer(os_pid),
+        do: os_pid
+  end
+
+  @doc """
+  A peer controller beside this one, both running the convergence loop on a
+  1 s tick, as in production: each loop places only the relays it hosts.
+  """
+  def start_healing_peer(name) do
+    {:ok, _} = ExUnit.Callbacks.start_supervised({Flezha.Convergence.Loop, tick_ms: 1_000})
+
+    start_peer_node(name,
+      app_env: [convergence_health_enabled: true, convergence_tick_ms: 1_000]
+    )
+  end
+
   def stop_runner_remote(node, namespace, runner_id),
     do: on_peer(node, :stop_runner_recv, [namespace, runner_id])
 
