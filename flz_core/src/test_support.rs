@@ -48,22 +48,53 @@ pub(crate) struct CapturedPark {
 }
 
 /// Every `park_payload` frame the core shipped, decoded and acked as it
-/// arrives so the parking thread finishes instead of re-sending for the rest
-/// of the run. Hold [`crate::state_sink::test_guard`] around it.
+/// arrives so the park is let go of instead of re-sent for the rest of the
+/// run. Hold [`crate::state_sink::test_guard`] around it.
 #[cfg(test)]
 pub(crate) fn capture_parks() -> Arc<std::sync::Mutex<Vec<CapturedPark>>> {
+    capture_parks_acking(true)
+}
+
+/// [`capture_parks`] from a controller that acks nothing: every re-send of a
+/// park is captured again.
+#[cfg(test)]
+pub(crate) fn capture_unacked_parks() -> Arc<std::sync::Mutex<Vec<CapturedPark>>> {
+    capture_parks_acking(false)
+}
+
+#[cfg(test)]
+fn capture_parks_acking(ack: bool) -> Arc<std::sync::Mutex<Vec<CapturedPark>>> {
     let parks = Arc::new(std::sync::Mutex::new(Vec::new()));
     let seen = Arc::clone(&parks);
     let sink: crate::flusher::SendFrameFn = Arc::new(move |payload_id: &str, frame: &[u8]| {
         if payload_id == crate::state_sink::PARK_PAYLOAD_PAYLOAD_ID {
             let park = decode_park(frame);
-            crate::park::complete_ack(&park.body.park_id);
+            if ack {
+                crate::park::complete_ack(&park.body.park_id);
+            }
             seen.lock().expect("park capture poisoned").push(park);
         }
         Ok(())
     });
     crate::state_sink::install_global_sink(sink);
     parks
+}
+
+/// Run the test at path `test` alone in a child process of this test
+/// binary, for a test that changes process-wide state: `None` inside that
+/// child, the child's output in the parent.
+#[cfg(test)]
+pub(crate) fn run_alone(test: &str) -> Option<std::process::Output> {
+    const CHILD: &str = "FLZ_TEST_ALONE_CHILD";
+    if crate::util::env_raw(CHILD).is_some() {
+        return None;
+    }
+    let child = std::process::Command::new(std::env::current_exe().expect("the test binary"))
+        .args(["--exact", test, "--nocapture", "--test-threads=1"])
+        .env(CHILD, "1")
+        .output()
+        .expect("the child test runs");
+    Some(child)
 }
 
 /// The identity and `ParkBody` inside a frame `build_cell_frame` wrote:

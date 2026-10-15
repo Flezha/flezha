@@ -120,11 +120,22 @@ channel. That is the default a input plugin relies on and it is not an unresolve
 A relay that declares no entry channel at all SHALL park such a frame with a reason naming that
 condition, rather than reporting an unresolved name against an empty set.
 
+Until the controller acks it, a park SHALL be held by the runner as its payload, not as a thread
+per frame. The runner SHALL hold a bounded number of unacked parks; past the bound, the thread
+handing over the next park, a frame's reader or a Cell's worker whose output could not be delivered,
+SHALL wait for an ack, counted and logged once per wait, and the park SHALL NOT be dropped.
+
 #### Scenario: A named channel the relay does not declare is parked
 
 - **GIVEN** a relay declaring one entry channel `prices`
 - **WHEN** a frame arrives whose metadata carries `channel = "not_prices"`
 - **THEN** the frame SHALL be parked in the dead-letter store with its payload bytes, and SHALL NOT reach any tasklet
+
+#### Scenario: A misspelled channel at rate holds no thread per frame
+
+- **GIVEN** a relay declaring one entry channel `prices` and a controller that has not acked any park
+- **WHEN** 2 000 frames arrive naming `pricse`
+- **THEN** every frame SHALL be shipped as a park, none SHALL hold a thread of its own, and a frame arriving while the runner holds its bound of unacked parks SHALL wait for an ack rather than be dropped
 
 #### Scenario: A frame with no channel still reaches the first entry channel
 

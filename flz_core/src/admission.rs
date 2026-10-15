@@ -28,6 +28,40 @@ pub(crate) fn try_admit(slot: &Arc<CellSlot>, item: CellItem) -> Result<(), Cell
     Ok(())
 }
 
+/// An item addressed for the entry path and not yet admitted, with its
+/// channel's overflow policy.
+pub(crate) type Held = (Arc<CellSlot>, CellItem, OverflowPolicy);
+
+/// Admit `held` in order as [`admit_from_reader`] would, but without
+/// waiting: stops at the first item `DropNothing` has no room for, counted
+/// once as a blocked push however often it is tried (`blocked` carries that
+/// across calls), and answers whether everything is in. For the park
+/// owner's ladder lane, whose wait would hold up every other relay's ladder.
+pub(crate) fn admit_in_order(
+    held: &mut std::collections::VecDeque<Held>,
+    blocked: &mut bool,
+) -> bool {
+    while let Some((slot, item, policy)) = held.pop_front() {
+        let replay = matches!(&item, CellItem::Input(p) if p.replay);
+        if replay {
+            slot.replay_open.store(true, Ordering::Release);
+        }
+        match try_admit(&slot, item) {
+            Err(item) if replay || policy == OverflowPolicy::DropNothing => {
+                if !std::mem::replace(blocked, true) {
+                    slot.note_blocked();
+                }
+                held.push_front((slot, item, policy));
+                return false;
+            }
+            Err(item) => admit_from_reader(&slot, item, policy),
+            Ok(()) => {}
+        }
+        *blocked = false;
+    }
+    true
+}
+
 /// What every admission owes: the count, the reaper's activity stamp, and
 /// the round claim that schedules the cell when nobody is draining it.
 fn note_admitted(slot: &Arc<CellSlot>) {

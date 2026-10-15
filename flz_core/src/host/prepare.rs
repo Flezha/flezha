@@ -195,7 +195,7 @@ pub(super) fn apply_prepare_outcome(
         }
         match answer {
             Ok(ans) => deliver_prepared(&instance, channel, channel_desc, entry, ans),
-            Err(e) => spawn_prepare_ladder(
+            Err(e) => hand_prepare_ladder(
                 Arc::clone(&instance),
                 channel,
                 want_keys,
@@ -276,10 +276,10 @@ fn deliver_prepared(
     );
 }
 
-/// A failed prepare climbs its channel's ladder, one blocking re-crossing
-/// per attempt. Where the ladder would park an entry payload, a steps relay
-/// stage's value fails its stage instead: nothing is parked.
-fn spawn_prepare_ladder(
+/// A failed prepare climbs its channel's ladder on the park owner, one
+/// re-crossing per attempt. Where the ladder would park an entry payload, a
+/// steps relay stage's value fails its stage instead: nothing is parked.
+fn hand_prepare_ladder(
     instance: Arc<RelayInstance>,
     channel_id: u32,
     want_keys: bool,
@@ -287,55 +287,101 @@ fn spawn_prepare_ladder(
     entry: StagedEntry,
     first_error: schema::WorkError,
 ) {
-    let ladder_instance = Arc::clone(&instance);
-    crate::retry::spawn_park_thread(&ladder_instance, "flezha-prepare-park", move || {
-        let channel = instance
-            .topology
-            .channel(channel_id)
-            .expect("prepare channel present in topology");
-        let label = format!("prepare for channel `{}`", channel.name);
-        let attempt = || {
-            let (tx, rx) = crossbeam::channel::bounded(1);
-            crate::poll_core::global().submit_direct(EnginePayload::Prepare(PrepareCrossing {
-                instance: Arc::clone(&instance),
-                channel: channel_id,
-                want_keys,
-                want_event_time,
-                entries: vec![entry.clone()],
-                reply: Some(tx),
-            }));
-            let mut answers = rx
-                .recv_timeout(std::time::Duration::from_secs(30))
-                .map_err(|_| "prepare re-attempt not answered".to_string())?;
-            match answers.pop() {
-                Some(Ok(ans)) => {
-                    deliver_prepared(&instance, channel_id, channel, entry.clone(), ans);
-                    Ok(())
-                }
-                Some(Err(e)) => Err(e.message),
-                None => Err("prepare re-attempt answered nothing".to_string()),
-            }
-        };
-        match entry.stage {
-            Some(node) => {
-                if let Err((error, _attempts)) =
-                    crate::retry::climb_ladder(&label, channel.retry, first_error.message, attempt)
-                {
-                    crate::steps::crossed(&instance, node, Err(error));
-                }
-            }
-            None => crate::retry::run_entrance_ladder(
-                &*instance,
-                &label,
-                crate::retry::ParkTarget::entry(channel),
-                entry.consumed_offset,
-                entry.call.as_ref(),
-                Some(entry.bytes.clone()),
-                first_error.message,
-                attempt,
-            ),
-        }
+    let channel =
+        (instance.topology.channel(channel_id)).expect("prepare channel present in topology");
+    let label = format!("prepare for channel `{}`", channel.name);
+    let (held, staged, mut asked) = (Arc::clone(&instance), entry.clone(), None);
+    let wants = (want_keys, want_event_time);
+    let attempt = move || re_cross(&held, channel_id, wants, &staged, &mut asked);
+    let end = entry.stage.map(|node| {
+        let failed = Arc::clone(&instance);
+        Box::new(move |error, _attempts| {
+            crate::steps::crossed(&failed, node, Err(error));
+            None
+        }) as crate::retry::End
     });
+    crate::retry::hand_ladder(
+        &instance,
+        label,
+        crate::retry::ParkTarget::entry(channel),
+        entry.consumed_offset,
+        entry.call.clone(),
+        Some(entry.bytes.clone()),
+        first_error.message,
+        attempt,
+        end,
+    );
+}
+
+type Answers = Vec<Result<schema::PrepareAnswer, schema::WorkError>>;
+
+/// How long a re-crossing waits for the host's answer before it counts as
+/// a failed attempt.
+const RE_CROSS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// One look at a failed prepare's re-crossing, which never waits: the first
+/// asks the host, a later one takes its answer, delivered for the ladder to
+/// admit.
+fn re_cross(
+    instance: &Arc<RelayInstance>,
+    channel_id: u32,
+    (want_keys, want_event_time): (bool, bool),
+    staged: &StagedEntry,
+    asked: &mut Option<(crossbeam::channel::Receiver<Answers>, std::time::Instant)>,
+) -> crate::retry::Attempt {
+    use crate::retry::Attempt;
+    let Some((rx, since)) = asked else {
+        let (tx, rx) = crossbeam::channel::bounded(1);
+        crate::poll_core::global().submit_direct(EnginePayload::Prepare(PrepareCrossing {
+            instance: Arc::clone(instance),
+            channel: channel_id,
+            want_keys,
+            want_event_time,
+            entries: vec![staged.clone()],
+            reply: Some(tx),
+        }));
+        *asked = Some((rx, std::time::Instant::now()));
+        return Attempt::Pending;
+    };
+    let answer = match rx.try_recv() {
+        Err(crossbeam::channel::TryRecvError::Empty) if since.elapsed() < RE_CROSS_TIMEOUT => {
+            return Attempt::Pending;
+        }
+        Ok(mut answers) => answers.pop(),
+        Err(_) => Some(Err(schema::WorkError {
+            message: "prepare re-attempt not answered".to_string(),
+            non_retryable: false,
+        })),
+    };
+    *asked = None;
+    let value: Arc<dyn Any + Send + Sync> = match answer {
+        Some(Ok(answer)) => Arc::new(HostPayload {
+            bytes: staged.bytes.clone(),
+            channel: channel_id,
+            keys: answer.keys,
+            event_time: answer.event_time,
+            metadata: Vec::new(),
+        }),
+        Some(Err(e)) => return Attempt::Failed(e.message),
+        None => return Attempt::Failed("prepare re-attempt answered nothing".to_string()),
+    };
+    if let Some(node) = staged.stage {
+        crate::steps::crossed(instance, node, Ok((value, Arc::clone(&staged.stream))));
+        return Attempt::Delivered(Vec::new());
+    }
+    let channel = (instance.topology.channel(channel_id)).expect("prepare channel present");
+    let (offset, call) = (staged.consumed_offset, staged.call.as_ref());
+    let stream = &staged.stream;
+    let routed = crate::retry::route_held(
+        instance,
+        channel,
+        &value,
+        stream,
+        offset,
+        call,
+        staged.replay,
+    );
+    Attempt::Delivered(routed)
 }
 
 /// Release the inflight gate, re-arm the next batch, fire a deferred

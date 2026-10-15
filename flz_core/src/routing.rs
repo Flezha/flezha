@@ -21,7 +21,7 @@ use crate::error::{Code, Error};
 use crate::relay::instance::RelayInstance;
 use crate::relay::registry::RelayRegistry;
 use crate::relay::topology::{CellMode, ChannelLookup, RelayTopology, TaskletDescriptor};
-use crate::retry::{spawn_edge_ladder, spawn_entry_parse_ladder, EntryDeliver, EntryParseLadder};
+use crate::retry::{hand_edge_ladder, hand_entry_parse_ladder, EntryDeliver, EntryParseLadder};
 
 /// What the entrance reads off an instance of either kind: the topology the
 /// channel name resolves against, the id a park is filed under and the
@@ -102,7 +102,7 @@ pub fn route_to_consumers(
             &mut Destination::Mailbox(producer),
         ) {
             Ok(held) => deferred |= held,
-            Err(e) => spawn_edge_ladder(
+            Err(e) => hand_edge_ladder(
                 instance,
                 channel,
                 edge,
@@ -688,7 +688,7 @@ fn unresolved_entry_error(declared: &[&str], requested: &str) -> String {
 }
 
 /// A frame naming a channel the relay does not declare: parked under the
-/// name it asked for, off the reader thread as every other park is. The budget
+/// name it asked for, by the park owner as every other park is. The budget
 /// is one — the same declared set answers every re-attempt — so the ladder
 /// parks without waiting.
 fn park_unresolved_entry<V: EntryView>(
@@ -705,26 +705,21 @@ fn park_unresolved_entry<V: EntryView>(
     // hash) rather than on the park id, so a re-park of a frame that parked
     // before is the same row. Skipping the replay would instead lose a frame
     // that only became unresolved after the class changed.
-    let parked = Arc::clone(instance);
-    let requested = requested.to_string();
-    let payload = payload.to_vec();
-    let call = call.cloned();
-    crate::retry::spawn_park_thread(instance, "flezha-unresolved-entry-park", move || {
-        crate::retry::run_entrance_ladder(
-            &*parked,
-            &format!("entry channel `{requested}`"),
-            // The budget of one, and the identity slot a frame-controlled name
-            // never reaches, are the target's to decide.
-            crate::retry::ParkTarget::unresolved(&requested),
-            consumed_offset,
-            call.as_ref(),
-            Some(payload),
-            error,
-            // Unreachable at a budget of one, and the truth at any other:
-            // the name is a fact of the frame.
-            || Err("an unresolved channel name cannot resolve on a re-attempt".to_string()),
-        );
-    });
+    crate::retry::hand_ladder(
+        instance,
+        format!("entry channel `{requested}`"),
+        // The budget of one, and the identity slot a frame-controlled name
+        // never reaches, are the target's to decide.
+        crate::retry::ParkTarget::unresolved(requested),
+        consumed_offset,
+        call.cloned(),
+        Some(payload.to_vec()),
+        error,
+        // Unreachable at a budget of one, and the truth at any other:
+        // the name is a fact of the frame.
+        || crate::retry::Attempt::Failed("an unresolved channel name cannot resolve".to_string()),
+        None,
+    );
 }
 
 /// The value a frame becomes on its entry channel, or `None` when it left
@@ -752,8 +747,8 @@ fn enter_channel(
     let payload = crate::host::stage_prepare(instance, channel_id, channel, vec![entry])
         .pop()?
         .bytes;
-    // The ladder's re-attempt runs off the reader thread with no producing
-    // Cell in hand, so it takes the entry form of delivery.
+    // The ladder's re-attempt runs on the park owner with no producing Cell
+    // in hand, so it takes the entry form of delivery, without waiting.
     let deliver = || {
         let instance = Arc::clone(instance);
         let stream = Arc::clone(stream);
@@ -763,7 +758,7 @@ fn enter_channel(
                 .topology
                 .channel(channel_id)
                 .ok_or_else(|| format!("entry channel {channel_id} left the topology"))?;
-            route_to_consumers(
+            Ok(crate::retry::route_held(
                 &instance,
                 channel,
                 &value,
@@ -771,9 +766,7 @@ fn enter_channel(
                 consumed_offset,
                 call.as_ref(),
                 replay,
-                None,
-            );
-            Ok(())
+            ))
         }) as EntryDeliver
     };
     wrap_entry(
@@ -812,7 +805,7 @@ fn wrap_entry<V: EntryView>(
         Ok(p) => Some(p),
         Err(e) => {
             match retry_bytes {
-                Some(bytes) => spawn_entry_parse_ladder(EntryParseLadder {
+                Some(bytes) => hand_entry_parse_ladder(EntryParseLadder {
                     instance: Arc::clone(instance),
                     channel_id,
                     bytes,

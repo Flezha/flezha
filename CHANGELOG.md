@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Fixed: a park no longer costs a thread, and is never lost when one cannot start
+
+A payload the runner could not deliver (a frame naming a channel the relay does not declare, an
+unreadable entry, an edge that failed) used to wait for the controller's ack on a thread of its
+own, so a source with one misspelled channel name at a high rate started one thread per frame,
+and a frame whose thread could not start was lost with only a line on stderr. Every such payload
+is now held by one park owner per runner, which retries and re-sends it as before and never
+waits on a full consumer. It holds at most 4 096; past that, the thread handing over the next one
+(the reader of a frame, or a Cell's worker whose output could not be delivered) waits for an ack,
+with one log line per wait, instead of dropping it.
+
 ### Changed: every SDK's `cell_state` takes the controller's selector (breaking)
 
 The argument of each SDK's `cell_state` (`cellState` in Java, Node and PHP) is now `cell`, the

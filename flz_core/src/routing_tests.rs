@@ -743,3 +743,6 @@ fn an_inputs_call_rides_its_entry_item_and_every_value_derived_from_it() {
     .expect("the edge delivers");
     assert_eq!(queued_call(&consumer).as_deref(), Some("w:t"));
 }
+
+#[path = "routing_tests/park_bound.rs"]
+mod park_bound;

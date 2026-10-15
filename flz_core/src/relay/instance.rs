@@ -110,8 +110,8 @@ pub struct RelayInstance {
     background_handles: Mutex<Vec<JoinHandle<()>>>,
     /// The host prepare crossing's staging; a typed class never touches it.
     pub host_prepare: Mutex<crate::host::HostPrepareState>,
-    /// Retry ladders still running for this instance, each holding a payload
-    /// on its own thread rather than in any mailbox.
+    /// Retry ladders and parks the park owner holds for this instance, each
+    /// a payload in no mailbox.
     pub(crate) ladders: AtomicUsize,
     /// Resolved once at start from the class const and the runner override.
     keeps_state: bool,
@@ -157,6 +157,11 @@ impl RelayInstance {
             .filter(|_| topology.effectively_once || topology.sleep_after().is_some())
         {
             crate::flusher::CellFlusher::instance().watch_prefix(prefix);
+        }
+        // Started here, while threads can still be spawned, so a later park
+        // never needs one; a hand-off retries the start if this one failed.
+        if let Err(e) = crate::park::start_owner() {
+            eprintln!("[flezha] the park owner could not start yet: {e}");
         }
         Arc::new_cyclic(|weak: &Weak<RelayInstance>| {
             let background_stop = Arc::new(AtomicBool::new(false));

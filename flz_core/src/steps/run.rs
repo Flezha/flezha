@@ -596,39 +596,34 @@ fn entry_ladder(
     let Some(owner) = inst.steps.as_ref().and_then(|run| run.me.upgrade()) else {
         return;
     };
-    let value = Arc::clone(value);
-    let stream = Arc::clone(stream);
-    let call = call.cloned();
+    let Some(channel) = owner.topology.channel(channel_id) else {
+        return;
+    };
+    let label = format!("entry channel `{}` into its chain", channel.name);
+    let target = crate::retry::ParkTarget::edge(channel);
     let held = Arc::clone(&owner);
-    crate::retry::spawn_park_thread(&owner, "flezha-edge-transform-park", move || {
-        let Some(channel) = held.topology.channel(channel_id) else {
-            return;
+    let (value, stream, call) = (Arc::clone(value), Arc::clone(stream), call.cloned());
+    let retried_call = call.clone();
+    let step = move || {
+        let (Some(r), Some(channel)) = (Run::of(&held), held.topology.channel(channel_id)) else {
+            return crate::retry::Attempt::Delivered(Vec::new());
         };
-        crate::retry::run_entrance_ladder(
-            &*held,
-            &format!("entry channel `{}` into its chain", channel.name),
-            crate::retry::ParkTarget::edge(channel),
-            offset,
-            call.as_ref(),
-            None,
-            error,
-            || {
-                let Some(r) = Run::of(&held) else {
-                    return Ok(());
-                };
-                let roots = r.address(channel, &channel.consumers, &value, &stream, None)?;
-                r.decide(|d| {
-                    d.arrived(Message {
-                        channel: channel_id,
-                        offset,
-                        call: call.clone(),
-                        roots,
-                    })
-                });
-                Ok(())
-            },
-        );
-    });
+        let roots = match r.address(channel, &channel.consumers, &value, &stream, None) {
+            Ok(roots) => roots,
+            Err(e) => return crate::retry::Attempt::Failed(e),
+        };
+        let call = retried_call.clone();
+        r.decide(|d| {
+            d.arrived(Message {
+                channel: channel_id,
+                offset,
+                call,
+                roots,
+            })
+        });
+        crate::retry::Attempt::Delivered(Vec::new())
+    };
+    crate::retry::hand_ladder(&owner, label, target, offset, call, None, error, step, None);
 }
 
 // ---- addressing, off the lock ------------------------------------------------
@@ -2487,53 +2482,44 @@ impl Run<'_> {
         );
     }
 
-    /// A message into the dead-letter queue, off this thread as every park
-    /// is: an unreadable one under its entry channel, which the run counts
-    /// consumed once the park is durable; a failed turn's under `_turn`.
+    /// A message into the dead-letter queue, held by the park owner as every
+    /// park is: an unreadable one under its entry channel, which the run
+    /// counts consumed once the park is let go of; a failed turn's under
+    /// `_turn`.
     fn park_message(&self, park: MessagePark) {
         let Some(owner) = self.run.me.upgrade() else {
             return;
         };
-        let held = Arc::clone(&owner);
-        crate::retry::spawn_park_thread(&owner, "flezha-steps-message-park", move || {
-            let MessagePark {
-                channel,
-                turn,
-                offset,
-                call,
-                payload,
-                error,
-                attempts,
-            } = park;
-            if let Some(descriptor) = held.topology.channel(channel) {
-                let (label, target) = match turn {
-                    true => (
-                        "turn on entry channel",
-                        crate::retry::ParkTarget::turn(descriptor),
-                    ),
-                    false => ("entry channel", crate::retry::ParkTarget::entry(descriptor)),
-                };
-                crate::retry::park_exhausted(
-                    &format!("{label} `{}`", descriptor.name),
-                    target,
-                    &*held,
-                    offset,
-                    call.as_ref(),
-                    payload,
-                    error,
-                    attempts,
-                );
-            }
-            if turn {
-                return;
-            }
+        let (held, offset) = (Arc::clone(&owner), park.offset);
+        let counted = move || {
             if let Some(r) = Run::of(&held) {
                 r.decide(|d| {
                     d.s.parks_in_flight = d.s.parks_in_flight.saturating_sub(1);
                     d.s.parked_offset = d.s.parked_offset.max(offset);
                 });
             }
-        });
+        };
+        let then = (!park.turn).then(|| Box::new(counted) as crate::park::Then);
+        let Some(descriptor) = owner.topology.channel(park.channel) else {
+            return then.into_iter().for_each(|then| then());
+        };
+        let (label, target) = match park.turn {
+            true => (
+                "turn on entry channel",
+                crate::retry::ParkTarget::turn(descriptor),
+            ),
+            false => ("entry channel", crate::retry::ParkTarget::entry(descriptor)),
+        };
+        let park = crate::retry::park_exhausted(
+            &format!("{label} `{}`", descriptor.name),
+            target,
+            &owner.instance_id,
+            (offset, park.call, park.payload),
+            park.error,
+            park.attempts,
+            then,
+        );
+        crate::park::hand_off(&owner, crate::park::Work::Parking(park));
     }
 }
 

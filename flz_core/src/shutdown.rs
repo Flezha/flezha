@@ -567,32 +567,24 @@ mod tests {
 
     #[test]
     fn end_process_runs_no_exit_handler() {
-        const CHILD: &str = "FLZ_END_PROCESS_CHILD";
-
         // The child: a handler that aborts stands in for a host runtime whose
         // teardown an exit handler would race.
-        if crate::util::env_raw(CHILD).is_some() {
+        let Some(child) =
+            crate::test_support::run_alone("shutdown::tests::end_process_runs_no_exit_handler")
+        else {
             extern "C" fn abort_on_exit() {
                 std::process::abort();
             }
             // SAFETY: registers a plain function with no captured state.
             unsafe { libc::atexit(abort_on_exit) };
             end_process(0);
-        }
-
-        let status = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([
-                "--exact",
-                "shutdown::tests::end_process_runs_no_exit_handler",
-            ])
-            .env(CHILD, "1")
-            .status()
-            .expect("run the child");
+        };
 
         assert_eq!(
-            status.code(),
+            child.status.code(),
             Some(0),
-            "the exit ran an exit handler: {status}"
+            "the exit ran an exit handler: {}",
+            child.status
         );
     }
 

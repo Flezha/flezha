@@ -1345,7 +1345,13 @@ effectively-once tier. When an invocation exhausts its input channel's retry
 budget (`max_attempts` default 3, exponential backoff ±50 % jitter capped at
 5 s) or returns a non-retryable error, the runner ships this frame and holds
 the Cell until the controller acks the park as durable (`ParkPayloadAck`),
-re-sending every 2 s — park-then-advance, never a drop. Same outer frame as
+re-sending every 2 s — park-then-advance, never a drop. A payload the
+routing seam could not deliver (a frame naming an undeclared channel, an
+unreadable entry, an edge that unwound) parks the same way, held by the
+runner's one park owner rather than a thread of its own. The owner holds at
+most 4 096 such payloads; past that, the thread handing over the next one (a
+frame's reader, or a Cell's worker whose output could not be delivered) waits
+until one is acked, so the runner slows down and nothing is dropped. Same outer frame as
 `cell_state_change` with a zero header; `body` is the postcard `ParkBody`
 (`Flezha.State.Wire.decode_park_body/1`):
 
