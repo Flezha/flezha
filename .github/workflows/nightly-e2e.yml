@@ -170,13 +170,6 @@ jobs:
         # client on its first `mix run`, which no connect budget covers.
         run: cd test/apps/elixir_runner && mix deps.get && mix compile
 
-      - name: Build the prod release
-        # The plugin package release test boots the released binaries, and the
-        # release copies the release-built `flz`.
-        run: |
-          cargo build -p flz --release
-          MIX_ENV=prod mix release --overwrite
-
       - name: Run system + multi_node suites
         run: |
           mix test --include system --include multi_node \

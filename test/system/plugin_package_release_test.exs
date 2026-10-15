@@ -6,9 +6,10 @@ defmodule FlezhaTest.System.PluginPackageReleaseTest do
   --installed` across restarts, with the audit log recording what each boot
   loaded and refused.
 
-  Reads the prod release (`MIX_ENV=prod mix release`, after `cargo build -p flz
-  --release`). Tagged `:system`; run with
-  `mix test --include system test/system/plugin_package_release_test.exs`.
+  Builds the prod release of this tree into a scratch directory (`cargo build
+  -p flz --release`, then `MIX_ENV=prod mix release --path`), so it never reads
+  a release left in `_build/prod/rel` by an earlier version. Tagged `:system`;
+  run with `mix test --include system test/system/plugin_package_release_test.exs`.
   """
 
   # Proves the controller's packaging and drives no runner; the capability is
@@ -20,20 +21,10 @@ defmodule FlezhaTest.System.PluginPackageReleaseTest do
   alias Flezha.TestHelpers.PluginPackage
   alias FlezhaTest.Helper.NodeTestHelper
 
-  @release Path.expand("_build/prod/rel/flezha")
-  @flz Path.join(@release, "bin/flz")
-  @flzvm Path.join(@release, "bin/flzvm")
-
   setup_all do
-    unless File.regular?(@flz) and File.regular?(@flzvm) do
-      flunk("""
-      The prod release is not built. Run:
-          cargo build -p flz --release && MIX_ENV=prod mix release --overwrite
-      """)
-    end
-
     tmp = Path.join(System.tmp_dir!(), "flzpkg#{System.unique_integer([:positive])}")
     File.mkdir_p!(tmp)
+    release = build_release!(Path.join(tmp, "rel"))
 
     dirs =
       for name <- ~w(plugins recovery sockets state audit), into: %{} do
@@ -59,12 +50,14 @@ defmodule FlezhaTest.System.PluginPackageReleaseTest do
       {"FLEZHA_TESTNET_ENABLED", "false"}
     ]
 
+    ctx = %{tmp: tmp, env: env, root: dirs["plugins"], audit: dirs["audit"], release: release}
+
     on_exit(fn ->
-      _ = System.cmd(@flzvm, ["stop"], env: env, stderr_to_stdout: true)
+      stop!(ctx)
       File.rm_rf!(tmp)
     end)
 
-    {:ok, tmp: tmp, env: env, root: dirs["plugins"], audit: dirs["audit"]}
+    {:ok, ctx}
   end
 
   test "install before the first start, load at boot, and every status across restarts", ctx do
@@ -81,7 +74,7 @@ defmodule FlezhaTest.System.PluginPackageReleaseTest do
     assert [%{"id" => "flezha_example_plugin", "status" => "loaded", "error" => nil}] =
              installed(ctx)
 
-    {providers, 0} = flz(ctx, ["plugin", "list"])
+    {providers, 0} = flz(ctx, ["plugin", "list", "--providers"])
     assert providers =~ "example_stamp"
     {help, 0} = flz(ctx, ["plugin", "help", "example_stamp"])
     assert help =~ "path"
@@ -97,7 +90,7 @@ defmodule FlezhaTest.System.PluginPackageReleaseTest do
            |> IO.puts()
            """) =~ "true"
 
-    for beam <- Path.wildcard(Path.join(@release, "releases/*/consolidated/*.beam")) do
+    for beam <- Path.wildcard(Path.join(ctx.release, "releases/*/consolidated/*.beam")) do
       {:ok, _, chunks} = :beam_lib.all_chunks(String.to_charlist(beam))
       assert List.keymember?(chunks, ~c"Dbgi", 0), "#{beam} carries no debug info"
     end
@@ -156,10 +149,36 @@ defmodule FlezhaTest.System.PluginPackageReleaseTest do
     assert audit =~ "plugin.library_conflict"
   end
 
-  defp flz(ctx, args), do: System.cmd(@flz, args, env: ctx.env, stderr_to_stdout: true)
+  # The release `flz` copies the release-built binary, so both are built from
+  # the tree under test; `_build/prod/rel` is left alone.
+  defp build_release!(path) do
+    for {cmd, args, env} <- [
+          {"cargo", ~w(build -p flz --release), []},
+          {"mix", ~w(release flezha --overwrite --quiet --path) ++ [path], [{"MIX_ENV", "prod"}]}
+        ] do
+      {out, status} = System.cmd(cmd, args, env: env, stderr_to_stdout: true)
+      if status != 0, do: flunk("#{cmd} #{Enum.join(args, " ")} failed (#{status}):\n#{out}")
+    end
+
+    path
+  end
+
+  defp flz(ctx, args), do: run(ctx, "flz", args)
+  defp flzvm(ctx, args), do: run(ctx, "flzvm", args)
+
+  # Run from the scratch directory: every path the controller does not get from
+  # `env` resolves against its working directory, which is the repository's
+  # own `app_data` otherwise.
+  defp run(ctx, bin, args) do
+    System.cmd(Path.join(ctx.release, "bin/#{bin}"), args,
+      cd: ctx.tmp,
+      env: ctx.env,
+      stderr_to_stdout: true
+    )
+  end
 
   defp rpc(ctx, expression) do
-    {out, 0} = System.cmd(@flzvm, ["rpc", expression], env: ctx.env, stderr_to_stdout: true)
+    {out, 0} = flzvm(ctx, ["rpc", expression])
     out
   end
 
@@ -169,7 +188,7 @@ defmodule FlezhaTest.System.PluginPackageReleaseTest do
   end
 
   defp start!(ctx) do
-    {_, 0} = System.cmd(@flzvm, ["daemon"], env: ctx.env, stderr_to_stdout: true)
+    {_, 0} = flzvm(ctx, ["daemon"])
 
     assert NodeTestHelper.wait_until(
              fn -> match?({_, 0}, flz(ctx, ["boot", "await", "--timeout", "0"])) end,
@@ -180,20 +199,18 @@ defmodule FlezhaTest.System.PluginPackageReleaseTest do
   end
 
   defp restart!(ctx) do
-    {_, _} = System.cmd(@flzvm, ["stop"], env: ctx.env, stderr_to_stdout: true)
+    stop!(ctx)
+    start!(ctx)
+  end
+
+  defp stop!(ctx) do
+    {_, _} = flzvm(ctx, ["stop"])
 
     assert NodeTestHelper.wait_until(
-             fn ->
-               not match?(
-                 {_, 0},
-                 System.cmd(@flzvm, ["pid"], env: ctx.env, stderr_to_stdout: true)
-               )
-             end,
+             fn -> not match?({_, 0}, flzvm(ctx, ["pid"])) end,
              60_000,
              500
            ),
            "the controller did not stop"
-
-    start!(ctx)
   end
 end
