@@ -233,6 +233,7 @@ SDK raises or returns its one error type carrying them.
 | `diagnose.stuck` | unavailable | 7 | relay '{relay}' takes input but has not moved forward for {seconds}s ({detail}) | `restart the runner it is bound to: flz runner list --namespace {namespace}` |
 | `diagnose.unbound` | unavailable | 7 | relay '{relay}' has had no runner bound for {seconds}s, although a runner can take it | `flz relay info --namespace {namespace}` |
 | `diagnose.unknown` | unavailable | 7 | the controller has not judged relay '{relay}' yet | `try again in a few seconds: flz relay diagnose {relay} --namespace {namespace}` |
+| `diagnose.unread` | unavailable | 7 | relay '{relay}' did not answer for its own state ({live_read}), so these findings come from the controller's last verdict alone | `try again in a few seconds: flz relay diagnose {relay} --namespace {namespace}` |
 
 ### dlq
 

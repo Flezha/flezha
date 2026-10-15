@@ -14,7 +14,12 @@ runners announcing the relay's factory, the relay's dead letters, its input log'
 inputs and, for a finished relay, its completion record, and SHALL answer
 `{relay, verdict, findings}` with `verdict` one of `ok`, `warning`, `problem` (the highest finding level, `ok` when only notes) and each finding
 `{level, code, message, details, hint}` with `message` and `hint` from the error catalogue. A
-relay neither live nor retained SHALL answer `relay.not_found`. The dead letters' error texts
+relay neither live nor retained SHALL answer `relay.not_found`. A relay its hub holds whose
+Overwatch does not answer SHALL be answered from its published verdict, with `live_read` naming
+the failed read's error code and its runner, factory and plugins as the hub's registry recorded
+them; a runner, node or provider nobody recorded SHALL be absent from the details and named
+`unknown` in the message. Such a relay SHALL never be reported `healthy`: a `diagnose.unread`
+warning naming the `live_read` code SHALL be among its findings, in place of the healthy note. With no published verdict it SHALL answer the read's error. The dead letters' error texts
 SHALL be given only to a caller also allowed `dlq.list` in the namespace, and the input log and
 dead letters SHALL be read only when the relay runs on the controller that answers.
 
@@ -63,6 +68,26 @@ dead letters SHALL be read only when the relay runs on the controller that answe
 #### Scenario: Unknown relay
 
 - **WHEN** an id that never ran is diagnosed
+- **THEN** the call answers `relay.not_found`
+
+#### Scenario: A relay whose Overwatch does not answer
+
+- **WHEN** a relay its hub holds, judged wedged by the convergence loop, is diagnosed and the
+  read of its Overwatch times out
+- **THEN** the verdict is `problem` with `diagnose.data_plane_wedge`, `live_read` is
+  `controller.timeout`, and no message carries a `{` placeholder or `null`
+
+#### Scenario: A healthy verdict is not trusted without the live state
+
+- **WHEN** a relay whose published verdict is healthy is diagnosed and the read of its
+  Overwatch times out
+- **THEN** the verdict is `warning` with the single finding `diagnose.unread`, whose details
+  carry `live_read: controller.timeout`
+
+#### Scenario: A relay its hub no longer holds
+
+- **WHEN** a relay with a published verdict, no longer held by its hub and with no completion
+  record, is diagnosed
 - **THEN** the call answers `relay.not_found`
 
 ### Requirement: Every verdict reason and state SHALL map to one finding

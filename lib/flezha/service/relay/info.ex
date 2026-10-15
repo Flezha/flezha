@@ -1,9 +1,10 @@
 defmodule Flezha.Service.Relay.Info do
   @moduledoc """
   What `Flezha.Service.Relay.info/2` answers for a namespace: every live
-  relay as its Overwatch reports it, every finished one whose completion
-  record is still inside its retention window, and every partition group with
-  its read-time key-group coverage.
+  relay as its Overwatch reports it, or by its published phase and health,
+  marked `live_read`, when that Overwatch does not answer; every finished one
+  whose completion record is still inside its retention window; and every
+  partition group with its read-time key-group coverage.
   """
 
   alias Flezha.Convergence.Snapshot
@@ -30,7 +31,7 @@ defmodule Flezha.Service.Relay.Info do
       key_groups: KeyGroup.key_groups(),
       groups: namespace |> HubManager.relay_rows() |> Partition.groups() |> Enum.map(&group/1),
       relays:
-        Enum.map(live, &live(namespace, &1)) ++
+        Enum.map(live, &row(namespace, &1)) ++
           Enum.map(retained(namespace, live), fn {id, record} -> finished(id, record) end)
     }
   end
@@ -38,10 +39,16 @@ defmodule Flezha.Service.Relay.Info do
   @doc """
   One relay of `namespace`: `{:live, state}` with its Overwatch state,
   `{:finished, row}` as `report/1` lists a completion record still inside its
-  retention window, `relay_not_found` when it is neither, or the error a live
-  relay's Overwatch read answered.
+  retention window, `{:unread, code, verdict}` for a relay its hub holds whose
+  Overwatch did not answer (`code` names the read's error) but whose verdict
+  the convergence loop published,
+  `relay_not_found` when it is none of these, or the error the read answered.
   """
-  @spec relay(String.t(), String.t()) :: {:live, map()} | {:finished, map()} | {:error, term()}
+  @spec relay(String.t(), String.t()) ::
+          {:live, map()}
+          | {:finished, map()}
+          | {:unread, String.t(), Verdict.t()}
+          | {:error, term()}
   def relay(namespace, relay_id) do
     case RelayManager.get_overwatch_state(namespace, relay_id) do
       {:ok, state} ->
@@ -53,38 +60,65 @@ defmodule Flezha.Service.Relay.Info do
           record -> {:finished, finished(relay_id, record)}
         end
 
+      # A bare reason is the bounded call's refusal of a pid the hub resolved.
+      {:error, reason} = refused when reason in [:timeout, :noproc, :other] ->
+        case Snapshot.verdict(namespace, relay_id) do
+          %Verdict{} = verdict ->
+            {:unread, Flezha.Error.from_reason(reason, :"relay.list").code, verdict}
+
+          nil ->
+            refused
+        end
+
       {:error, _reason} = refused ->
         refused
     end
   end
 
-  defp live(namespace, relay_id) do
-    case RelayManager.get_overwatch_state(namespace, relay_id) do
-      {:ok, state} ->
-        settings = Map.get(state, :settings) || %{}
+  # The row of a relay the hub lists, read once.
+  defp row(namespace, relay_id) do
+    case relay(namespace, relay_id) do
+      {:live, state} ->
+        live(namespace, relay_id, state)
 
+      {:finished, row} ->
+        row
+
+      {:unread, code, verdict} ->
         %{
           id: relay_id,
-          runner_id: state.runner_id,
-          namespace: state.namespace,
-          run: run(state),
-          each: Map.get(settings, :each),
-          on_failure: Map.get(settings, :on_failure),
-          effectively_once: Map.get(state, :effectively_once) == true,
-          durable: durable_level(relay_id, state),
-          sleep_after_ms: ClassRegistry.sleep_after_ms(class_of(relay_id, state)),
-          phase: phase(namespace, relay_id, state),
+          phase: to_string(verdict.phase || :unknown),
           health: Snapshot.relay_health(namespace, relay_id),
-          uptime_ms: uptime_ms(state),
-          default_input_type: state.default_input_type,
-          waiting_callers: Calls.waiting(state.calls),
-          failed_turns: failed_turns(relay_id, state),
-          plugins: plugins(state.extensions)
+          live_read: code
         }
 
       {:error, reason} ->
-        %{id: relay_id, error: Flezha.Error.from_reason(reason, :"relay.list")}
+        error = Flezha.Error.from_reason(reason, :"relay.list")
+        %{id: relay_id, error: Jason.decode!(Flezha.Error.object(error))}
     end
+  end
+
+  defp live(namespace, relay_id, state) do
+    settings = Map.get(state, :settings) || %{}
+
+    %{
+      id: relay_id,
+      runner_id: state.runner_id,
+      namespace: state.namespace,
+      run: run(state),
+      each: Map.get(settings, :each),
+      on_failure: Map.get(settings, :on_failure),
+      effectively_once: Map.get(state, :effectively_once) == true,
+      durable: durable_level(relay_id, state),
+      sleep_after_ms: ClassRegistry.sleep_after_ms(class_of(relay_id, state)),
+      phase: phase(namespace, relay_id, state),
+      health: Snapshot.relay_health(namespace, relay_id),
+      uptime_ms: uptime_ms(state),
+      default_input_type: state.default_input_type,
+      waiting_callers: Calls.waiting(state.calls),
+      failed_turns: failed_turns(relay_id, state),
+      plugins: plugins(state.extensions)
+    }
   end
 
   # Finished relays with a completion record still inside the retention

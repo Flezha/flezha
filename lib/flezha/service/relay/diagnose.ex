@@ -4,7 +4,8 @@ defmodule Flezha.Service.Relay.Diagnose do
   findings that explain it.
 
   It reads only what the controller already keeps: the relay's Overwatch state
-  as `Flezha.Service.Relay.Info` reads it, the convergence loop's verdict records
+  as `Flezha.Service.Relay.Info` reads it, or its hub's registry record when
+  that Overwatch does not answer, the convergence loop's verdict records
   for the relay, its runner and its plugins, the runners that announce its
   factory, its dead letters, its input log and, for a finished relay, its
   completion record.
@@ -18,6 +19,7 @@ defmodule Flezha.Service.Relay.Diagnose do
   alias Flezha.Convergence.Verdict
   alias Flezha.Dlq.Store
   alias Flezha.Runner.FleetManager
+  alias Flezha.Service.HubManager
   alias Flezha.Service.Relay.Info
   alias Flezha.Service.RelayManager
   alias Flezha.Service.RelayManager.Admission
@@ -39,6 +41,7 @@ defmodule Flezha.Service.Relay.Diagnose do
     parked: :warning,
     dead_letters: :warning,
     inputs_stuck: :warning,
+    unread: :warning,
     healthy: :note,
     rebinding: :note,
     asleep: :note,
@@ -65,6 +68,8 @@ defmodule Flezha.Service.Relay.Diagnose do
 
   @error_chars 120
 
+  @unknown_facts [:runner, :node, :provider]
+
   @type finding :: %{
           level: :problem | :warning | :note,
           code: String.t(),
@@ -79,14 +84,26 @@ defmodule Flezha.Service.Relay.Diagnose do
   ordered by level, then by kind. A relay neither live nor retained as
   finished answers `relay_not_found`.
 
+  A relay its hub holds whose Overwatch did not answer is diagnosed from its
+  published verdict alone: the report's `live_read` names the read's error
+  code, a `diagnose.unread` warning says so in place of any `healthy` note, the
+  findings only the live state could add are absent, and its runner, factory
+  and plugins are the ones the hub's registry recorded.
+
   `errors?` says whether the caller may read dead letters, and so their error
   texts; without it the dead-letter finding carries the count alone.
   """
   @spec report(String.t(), String.t(), boolean()) ::
-          {:ok, %{relay: String.t(), verdict: :ok | :warning | :problem, findings: [finding()]}}
+          {:ok,
+           %{
+             required(:relay) => String.t(),
+             required(:verdict) => :ok | :warning | :problem,
+             required(:findings) => [finding()],
+             optional(:live_read) => String.t()
+           }}
           | {:error, term()}
   def report(namespace, relay_id, errors?) do
-    with {:ok, found} <- found(namespace, relay_id, errors?) do
+    with {:ok, found, read} <- found(namespace, relay_id, errors?) do
       findings =
         found
         |> Enum.uniq_by(fn {code, details} -> {code, details[:plugin]} end)
@@ -95,7 +112,7 @@ defmodule Flezha.Service.Relay.Diagnose do
         end)
         |> Enum.map(&render(&1, %{relay: relay_id, namespace: namespace}))
 
-      {:ok, %{relay: relay_id, verdict: verdict(findings), findings: findings}}
+      {:ok, Map.merge(%{relay: relay_id, verdict: verdict(findings), findings: findings}, read)}
     end
   end
 
@@ -111,10 +128,14 @@ defmodule Flezha.Service.Relay.Diagnose do
   defp found(namespace, relay_id, errors?) do
     case Info.relay(namespace, relay_id) do
       {:live, state} ->
-        {:ok, live(namespace, relay_id, state, errors?)}
+        {:ok, live(namespace, relay_id, state, errors?), %{}}
 
       {:finished, row} ->
-        {:ok, [{:finished, Map.take(row, [:status, :error])} | dead_letters(relay_id, errors?)]}
+        {:ok, [{:finished, Map.take(row, [:status, :error])} | dead_letters(relay_id, errors?)],
+         %{}}
+
+      {:unread, code, verdict} ->
+        {:ok, unread(namespace, relay_id, code, verdict), %{live_read: code}}
 
       {:error, _reason} = refused ->
         refused
@@ -129,7 +150,7 @@ defmodule Flezha.Service.Relay.Diagnose do
     local = if node == node(), do: dead_letters(class, errors?) ++ inputs(class), else: []
     others = runner(state.runner_id) ++ plugins(namespace, relay_id, state, node) ++ local
 
-    case verdict_finding(namespace, relay_id, state) do
+    case verdict_finding(namespace, Snapshot.verdict(namespace, relay_id), state) do
       {:healthy, details} ->
         if Enum.all?(others, &(level(&1) == :note)),
           do: [{:healthy, Map.put(details, :node, node)} | others],
@@ -142,16 +163,33 @@ defmodule Flezha.Service.Relay.Diagnose do
 
   # ---------- the verdict ----------
 
-  defp verdict_finding(namespace, relay_id, state) do
-    case Snapshot.verdict(namespace, relay_id) do
-      %Verdict{reason: reason} = verdict ->
-        reason
-        |> reason_code()
-        |> binding(namespace, verdict, state)
-        |> verdict_details(verdict, state)
+  defp verdict_finding(_namespace, nil, _state), do: {:unknown, %{}}
 
-      nil ->
-        {:unknown, %{}}
+  defp verdict_finding(namespace, %Verdict{reason: reason} = verdict, state) do
+    reason
+    |> reason_code()
+    |> binding(namespace, verdict, state)
+    |> verdict_details(verdict, state)
+  end
+
+  # A relay whose Overwatch did not answer is not known to be healthy, so a
+  # healthy verdict gives way to the warning that its state was not read.
+  defp unread(namespace, relay_id, code, verdict) do
+    case verdict_finding(namespace, verdict, registered(namespace, relay_id)) do
+      {:healthy, _details} -> [{:unread, %{live_read: code}}]
+      finding -> [{:unread, %{live_read: code}}, finding]
+    end
+  end
+
+  # What the hub's registry recorded for a relay whose Overwatch did not
+  # answer, in the shape of the state it stands in for: its runner, its
+  # factory and its bound plugins.
+  defp registered(namespace, relay_id) do
+    with {:ok, relay, host} <- HubManager.relay_spec(namespace, relay_id),
+         {:ok, bindings} <- HubManager.relay_bindings(namespace, relay_id) do
+      %{runner_id: host.runner, builder: relay, extensions: %{plugins: Map.new(bindings)}}
+    else
+      _unrecorded -> %{}
     end
   end
 
@@ -183,12 +221,12 @@ defmodule Flezha.Service.Relay.Diagnose do
 
     details =
       case {code, reason} do
-        {:runner_disconnected, _} -> %{runner: state.runner_id, seconds: seconds}
+        {:runner_disconnected, _} -> %{runner: Map.get(state, :runner_id), seconds: seconds}
         {:parked, {:parked, why}} -> %{seconds: seconds, reason: text(why)}
         {:data_plane_wedge, {:wedged, layer}} -> %{layer: layer, seconds: seconds}
         {:stuck, {:stuck, detail}} -> %{detail: detail, seconds: seconds}
         {:plugin_unhealthy, {_, plugin, why}} -> plugin_details(state, plugin, why)
-        {:healthy, _} -> %{runner: state.runner_id}
+        {:healthy, _} -> %{runner: Map.get(state, :runner_id)}
         _seconds_only -> %{seconds: seconds}
       end
 
@@ -295,14 +333,22 @@ defmodule Flezha.Service.Relay.Diagnose do
     end
   end
 
+  # A runner, node or provider nobody recorded is left out of the details and
+  # named `unknown` in the message.
   defp render({code, details}, base) do
-    error = Flezha.Error.new("diagnose.#{code}", Map.merge(base, details))
+    unknown =
+      for fact <- @unknown_facts, Map.has_key?(details, fact), details[fact] == nil, do: fact
+
+    known = Map.merge(base, Map.drop(details, unknown))
+
+    error =
+      Flezha.Error.new("diagnose.#{code}", Map.merge(known, Map.new(unknown, &{&1, "unknown"})))
 
     %{
       level: level({code, details}),
       code: error.code,
       message: error.message,
-      details: error.details,
+      details: Map.drop(error.details, Enum.map(unknown, &Atom.to_string/1)),
       hint: error.hint
     }
   end
@@ -319,7 +365,7 @@ defmodule Flezha.Service.Relay.Diagnose do
 
   defp plugin_details(state, plugin_id, why) do
     provider = state |> bound() |> Map.get(plugin_id, %{}) |> Map.get(:provider)
-    %{plugin: plugin_id, provider: inspect(provider), reason: plugin_reason(why)}
+    %{plugin: plugin_id, provider: provider && inspect(provider), reason: plugin_reason(why)}
   end
 
   # What a plugin's own probe said, without the wrapper the judge puts on it.

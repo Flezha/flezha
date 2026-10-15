@@ -226,7 +226,7 @@ NOTE     diagnose.asleep  relay 'turns' is asleep, and the next message wakes it
 - **`PROBLEM`** needs action: no runner announces the factory, the runner is
   gone, a bound plugin is unhealthy or missing, the outputs are not read.
 - **`WARNING`** is worth a look: dead letters, a parked relay, inputs that
-  wait while nothing moves.
+  wait while nothing moves, a relay that did not answer for its own state.
 - **`NOTE`** is information: the relay sleeps, it is being bound again, it
   finished.
 
@@ -236,6 +236,12 @@ for a caller whose role may list dead letters, the dead-letter finding also
 carries their most common errors. The command exits 0 whenever the diagnosis
 itself ran. A relay that is neither running nor kept as finished answers
 `relay.not_found`, exit 5.
+
+A running relay that does not answer, because it is wedged or its process is
+gone, is diagnosed from the convergence loop's verdict alone, with a
+`diagnose.unread` warning in place of any `OK`: `--json` adds `live_read` with
+the code of the failed read, such as `controller.timeout`, and its runner and
+plugins are the ones its hub recorded.
 
 ## Stop it
 

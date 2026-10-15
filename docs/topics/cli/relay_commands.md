@@ -216,6 +216,10 @@ Relay: my_echo
         health: :healthy
 ```
 
+A relay that does not answer shows the phase and health the convergence loop
+gave it, then `Live state: not read (controller.timeout)`; `--json` carries that
+code as `live_read`.
+
 `diagnose` says what is wrong with one relay and what to do, one block per
 finding, and exits 0 whatever it found
 ([`running_and_testing.md`](../core/running_and_testing.md#diagnose-a-relay)):

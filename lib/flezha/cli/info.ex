@@ -255,7 +255,15 @@ defmodule Flezha.Service.Cli.Info do
 
   defp print_relay(%{error: error} = relay) do
     IO.puts("Relay: #{relay.id}")
-    IO.puts("  Error getting overwatch state: #{error.message}")
+    IO.puts("  Error getting overwatch state: #{error["message"]}")
+    IO.puts("")
+  end
+
+  defp print_relay(%{live_read: code} = relay) do
+    IO.puts("Relay: #{relay.id}")
+    IO.puts("  Phase: #{relay.phase}")
+    IO.puts("  Health: #{relay.health}")
+    IO.puts("  Live state: not read (#{code})")
     IO.puts("")
   end
 
