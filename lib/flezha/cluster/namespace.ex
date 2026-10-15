@@ -25,8 +25,10 @@ defmodule Flezha.Service.Namespace do
   alias Flezha.AuthZ.Role
   alias Flezha.AuthZ.RoleStore
   alias Flezha.AuthZ.TokenStore
+  alias Flezha.Runner.FleetManager
   alias Flezha.Service.Admin
   alias Flezha.Service.CallerContext
+  alias Flezha.Service.HubManager
 
   @type caller_context :: CallerContext.t()
 
@@ -51,7 +53,7 @@ defmodule Flezha.Service.Namespace do
   verb get(name, caller_context) when is_binary(name),
     verb: :namespace_show,
     args: [name: @name] do
-    with :error <- NamespaceStore.get(name), do: {:error, {:not_found, name}}
+    entry(name)
   end
 
   @doc "The quota kinds a namespace can be given a ceiling for."
@@ -136,12 +138,17 @@ defmodule Flezha.Service.Namespace do
     end
   end
 
-  @doc "Delete the namespace `name` and the quota counters keyed on it."
+  @doc """
+  Delete the namespace `name` and the quota counters keyed on it, refused while
+  any relay or runner is still attached to it, naming them.
+  """
   @spec delete(String.t(), caller_context()) :: :ok | {:error, term()}
   verb delete(name, caller_context) when is_binary(name),
     verb: :namespace_delete,
     args: [name: @name] do
-    with :ok <- NamespaceStore.delete(name) do
+    with {:ok, _entry} <- entry(name),
+         :ok <- vacant(name),
+         :ok <- NamespaceStore.delete(name) do
       _ = QuotaCounters.drop_namespace(name)
       :ok
     end
@@ -274,6 +281,20 @@ defmodule Flezha.Service.Namespace do
   # ---------- Helpers ----------
 
   defp actor(caller_context), do: Map.get(caller_context, :principal)
+
+  defp entry(name), do: with(:error <- NamespaceStore.get(name), do: {:error, {:not_found, name}})
+
+  # The reads `flz relay list` and `flz runner list` answer, so a refusal names
+  # what those show.
+  defp vacant(name) do
+    relays = name |> HubManager.relay_rows() |> Enum.map(& &1.id)
+    {:ok, runners} = FleetManager.global_runner_pids(name)
+
+    case {relays, Enum.map(runners, &elem(&1, 0))} do
+      {[], []} -> :ok
+      {relays, runners} -> {:error, {:namespace_in_use, name, relays, runners}}
+    end
+  end
 
   defp bound_identity(principal) do
     case RoleStore.lookup(principal) do

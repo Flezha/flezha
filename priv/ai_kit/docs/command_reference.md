@@ -136,7 +136,7 @@ on the command line.
 | `flz namespace list` | Lists the namespaces |
 | `flz namespace show <name>` | Shows a namespace's quotas |
 | `flz namespace set-quota <name> --X<quota>=<value>` | Changes its quotas |
-| `flz namespace delete <name>` | Deletes a namespace |
+| `flz namespace delete <name>` | Deletes a namespace nothing is attached to |
 
 ## [`flz auth`](access_commands.md#flz-auth)
 

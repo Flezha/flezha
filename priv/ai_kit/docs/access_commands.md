@@ -76,6 +76,10 @@ error: namespace 'ghost' does not exist (namespace.not_found)
 hint: flz namespace list
 ```
 
+A namespace that still has a relay or a runner attached is refused
+`namespace.in_use` (exit 6), naming them; stop them first
+([`namespaces.md`](../core/namespaces.md#delete-a-namespace)).
+
 ## `flz auth`
 
 Claims the first admin token, and shows who a token belongs to. Explained in [`authorization.md`](../core/authorization.md#claim-the-admin), [a lost admin](../core/authorization.md#a-lost-admin).

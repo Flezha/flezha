@@ -311,6 +311,7 @@ SDK raises or returns its one error type carrying them.
 | Code | Class | Exit | Message | Hint |
 |---|---|---|---|---|
 | `namespace.already_exists` | conflict | 6 | namespace '{namespace}' already exists | `flz namespace show {namespace}` |
+| `namespace.in_use` | conflict | 6 | namespace '{namespace}' still has relays [{relays}] and runners [{runners}] attached; stop them before deleting it | `flz relay list --namespace {namespace}` |
 | `namespace.invalid_name` | invalid | 2 | '{namespace}' is not a valid namespace name: a lowercase letter, then up to 62 lowercase letters, digits, '_' or '-' |  |
 | `namespace.invalid_quota_value` | invalid | 2 | quota {field} must be a whole number of zero or more, got {value} |  |
 | `namespace.not_found` | not_found | 5 | namespace '{namespace}' does not exist | `flz namespace list` |

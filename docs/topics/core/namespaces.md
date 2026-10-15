@@ -279,12 +279,23 @@ error: namespace 'scratch' does not exist (namespace.not_found)
 hint: flz namespace list
 ```
 
-Delete removes the catalog entry and its quota counters, and only those. Empty
-a namespace first: stop each relay with `flz relay stop` and stop its
-runners. A running relay is not stopped by the entry going away: it carries
-on, in a namespace that is no longer listed. A deleted namespace stays gone;
-a namespace whose hub was merely stopped comes back on the next controller
-start while its entry stands.
+Delete removes the catalog entry and its quota counters, and only those, so
+it refuses while the namespace still has a relay or a runner attached. Empty
+the namespace first: stop each relay with `flz relay stop` and stop its
+runners.
+
+```sh
+$ flz namespace delete trading
+```
+
+```output
+error: namespace 'trading' still has relays [candles] and runners [trading-runner-1] attached; stop them before deleting it (namespace.in_use)
+hint: flz relay list --namespace trading
+```
+
+The refusal exits 6. A deleted namespace stays gone; a namespace whose hub
+was merely stopped comes back on the next controller start while its entry
+stands.
 
 ## Administering from application code
 
