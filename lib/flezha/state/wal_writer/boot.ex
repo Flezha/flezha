@@ -141,11 +141,7 @@ defmodule Flezha.State.WalWriter.Boot do
       Epoch.scan_effect_records_above(state, file, dedup.outbox_flushed_seq)
 
     {rc, _sh, _pk} = state.cell_id
-
-    # Behind the remote gate the re-driven records are acknowledged only once a
-    # ship covers them, so their consumed offset is reported by that dispatch.
-    if is_integer(max_consumed) and is_nil(state.remote),
-      do: InputLog.record_consumed(rc, state.cell_id, max_consumed)
+    report_consumed(state, max_consumed, dedup.outbox_flushed_seq)
 
     state = %{
       state
@@ -165,6 +161,21 @@ defmodule Flezha.State.WalWriter.Boot do
       :record -> RemoteGate.synced(%{state | credit_pending: RemoteGate.take_owed(state.cell_id)})
       :stage -> Settlement.seed_commits(state, TaskJournal.committed_records(rc), :hold)
     end
+  end
+
+  # Behind the remote gate a re-driven record reports its consumed offset when
+  # its ship lands and it is dispatched. Until then the Cell reports the
+  # highest offset its WAL records at or below the flush cursor carry: those
+  # were shipped before they were dispatched. Records a snapshot folded away
+  # report nothing.
+  defp report_consumed(state, max_consumed, flushed_seq) do
+    offset =
+      if state.remote,
+        do: Epoch.consumed_offset_through(state.cell_id, flushed_seq),
+        else: max_consumed
+
+    {rc, _sh, _pk} = state.cell_id
+    if offset, do: InputLog.record_consumed(rc, state.cell_id, offset)
   end
 
   # A Cell of a steps class commits at its stage marker; every other Cell at

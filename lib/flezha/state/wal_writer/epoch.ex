@@ -13,7 +13,7 @@ defmodule Flezha.State.WalWriter.Epoch do
 
   alias Flezha.Runner.FleetManager.Marks
   alias Flezha.State.Wire
-  alias Flezha.State.{InputLog, Metrics, Paths, RecordFrame, SeqIndex}
+  alias Flezha.State.{InputLog, Metrics, Outbox, Paths, RecordFrame, SeqIndex}
   alias Flezha.State.WalWriter.{Admission, RemoteGate, Settlement, State}
 
   # Only a frame from a *different* session than the epoch owner consults the
@@ -211,11 +211,25 @@ defmodule Flezha.State.WalWriter.Epoch do
 
   @doc """
   The highest consumed offset `cell_id`'s WAL records carry, read from the file
-  alone, with no writer started; `nil` when none carries one.
+  alone; `nil` when none carries one. Behind the remote gate only the records
+  at or below the persisted flush cursor count, as `consumed_offset_through/2`
+  reads them.
   """
   @spec consumed_offset_on_disk(Paths.cell_id()) :: non_neg_integer() | nil
   def consumed_offset_on_disk(cell_id) do
-    case RecordFrame.fold_path(Paths.wal_path(cell_id), -1, consumed_through(:infinity)) do
+    if RemoteGate.new(cell_id, :record),
+      do: consumed_offset_through(cell_id, Outbox.read(cell_id).outbox_flushed_seq),
+      else: consumed_offset_through(cell_id, :infinity)
+  end
+
+  @doc """
+  The highest consumed offset `cell_id`'s WAL records up to seq `upto` carry,
+  read from the file alone; `nil` when none carries one.
+  """
+  @spec consumed_offset_through(Paths.cell_id(), integer() | :infinity) ::
+          non_neg_integer() | nil
+  def consumed_offset_through(cell_id, upto) do
+    case RecordFrame.fold_path(Paths.wal_path(cell_id), -1, consumed_through(upto)) do
       {:ok, offset} when offset >= 0 -> offset
       _none_or_refused -> nil
     end

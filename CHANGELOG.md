@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Fixed: a remote flow Cell keeps its inputs while its first ship after a restart fails
+
+A `durable: remote` flow Cell whose first ship after a controller restart kept failing reported no
+consumed offset, so the class's input-log floor came from the other Cells alone and a sweep could
+cut inputs this Cell still needed. It now reports the offset its remote copy holds: its records at
+or below the flush cursor. A sleeping `durable: remote` class seeds its Cells' floors with the same
+offset instead of counting records that were never shipped.
+
 ### Fixed: one plugin name in two namespaces runs two workers
 
 A built-in provider's worker was registered under the plugin's id alone, so a plugin of one name
