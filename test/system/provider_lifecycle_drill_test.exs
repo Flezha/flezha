@@ -124,8 +124,6 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
     # The forward's destination: a second relay in the same namespace, which
     # is the only shape that provider accepts.
     target_id = start_relay(namespace, "drill_target")
-    # Two entry channels, so two socket plugins can each feed their own.
-    ws_relay_id = start_relay(namespace, "drill_ws", "merged_input")
 
     on_exit(fn -> stop_namespace(namespace) end)
 
@@ -152,7 +150,6 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
       sink_name: sink_name,
       relay_id: relay_id,
       target_id: target_id,
-      ws_relay_id: ws_relay_id,
       origin_url: "http://127.0.0.1:1/drill",
       ws_uri: "ws://127.0.0.1:1/drill",
       stamp_path: Path.join(file_root, "stamped.txt")
@@ -240,9 +237,11 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
   # same channel by accident. Driven through the user's own verb on the live
   # relay: what the socket process is started with is the whole of what this
   # decides, and delivering a frame that names a channel to that channel is the
-  # runner's, pinned in `flz_core/src/routing_tests.rs`.
+  # runner's, pinned in `flz_core/src/routing_tests.rs`. Two entry channels,
+  # so two socket plugins can each feed their own: a merging fixture.
+  @tag capability: :graph_builder, skip: FlezhaTest.SystemCase.deferral(:graph_builder)
   test "each websocket plugin feeds the channel its own option names", ctx do
-    ctx = %{ctx | relay_id: ctx.ws_relay_id}
+    ctx = %{ctx | relay_id: start_relay(ctx.namespace, "drill_ws", "merged_input")}
 
     rows = [
       {%{channel: "ticks"}, :on_interval, "ticks", nil},

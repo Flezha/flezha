@@ -25,6 +25,8 @@ defmodule FlezhaTest.Plugin.Provider.RelayForwardTest do
 
   @ns "default"
   @plugin_id "kb591"
+  # A hang guard for a delivery through the worker, not a latency claim.
+  @delivery_ms 2_000
 
   setup :set_mimic_global_until_exit
 
@@ -134,11 +136,11 @@ defmodule FlezhaTest.Plugin.Provider.RelayForwardTest do
       stamps = stamps()
       forward(inst, stamps)
 
-      assert_receive {:attempt, 1, :ok}, 2_000
-      assert_receive {:attempt, 2, retry_verdict}, 2_000
+      assert_receive {:attempt, 1, :ok}, @delivery_ms
+      assert_receive {:attempt, 2, retry_verdict}, @delivery_ms
 
       # The stamps survive the hop unmodified.
-      assert_receive {:forwarded, ^inst, {"tick", delivered}}
+      assert_receive {:forwarded, ^inst, {"tick", delivered}}, @delivery_ms
       assert Map.take(delivered, Map.keys(stamps)) == stamps
 
       assert retry_verdict == {:ok, :absorbed}
@@ -154,9 +156,9 @@ defmodule FlezhaTest.Plugin.Provider.RelayForwardTest do
     start_worker(inst, "b")
 
     forward(inst, stamps(), "a")
-    assert_receive {:forwarded, ^inst, {"tick", %{"flz.msg_id" => "a/" <> key}}}
+    assert_receive {:forwarded, ^inst, {"tick", %{"flz.msg_id" => "a/" <> key}}}, @delivery_ms
     forward(inst, stamps(), "b")
-    assert_receive {:forwarded, ^inst, {"tick", %{"flz.msg_id" => "b/" <> ^key}}}
+    assert_receive {:forwarded, ^inst, {"tick", %{"flz.msg_id" => "b/" <> ^key}}}, @delivery_ms
 
     assert key == Outbox.dedup_key(stamps())
     assert [{0, "tick", _}, {1, "tick", _}] = InputLog.undelivered(inst)
@@ -168,10 +170,10 @@ defmodule FlezhaTest.Plugin.Provider.RelayForwardTest do
     start_worker(inst)
 
     forward(inst, Map.put(stamps(), "flz.msg_id", "mine"))
-    assert_receive {:forwarded, ^inst, {"tick", %{"flz.msg_id" => "mine"}}}
+    assert_receive {:forwarded, ^inst, {"tick", %{"flz.msg_id" => "mine"}}}, @delivery_ms
 
     forward(inst, %{"channel" => "out"})
-    assert_receive {:forwarded, ^inst, {"tick", off_tier}}
+    assert_receive {:forwarded, ^inst, {"tick", off_tier}}, @delivery_ms
     refute Map.has_key?(off_tier, "flz.msg_id")
   end
 end

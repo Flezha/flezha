@@ -30,7 +30,7 @@ defmodule FlezhaTest.Plugin.Provider.WebsocketSinkTest do
 
   ## ---------- preparation ----------
 
-  defp prepared(extra \\ %{}, subscriptions \\ [:on_output]) do
+  defp prepared(extra, subscriptions \\ [:on_output]) do
     ProviderPrepare.prepare(
       Websocket,
       Map.merge(
