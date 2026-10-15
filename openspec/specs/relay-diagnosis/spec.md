@@ -41,7 +41,8 @@ dead letters SHALL be read only when the relay runs on the controller that answe
 #### Scenario: A viewer sees the count only
 
 - **WHEN** a `viewer` diagnoses a relay with dead letters
-- **THEN** the `diagnose.dead_letters` warning carries their count and no error texts
+- **THEN** the `diagnose.dead_letters` warning carries their count and no error texts, and no
+  `:authorization_denied` record is written for `dlq.list`, which the viewer never asked for
 
 #### Scenario: An unhealthy plugin
 

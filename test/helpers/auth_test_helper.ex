@@ -100,24 +100,13 @@ defmodule FlezhaTest.Helper.AuthTestHelper do
   def stop_if_running(mods) when is_list(mods), do: Enum.each(mods, &stop_if_running_one/1)
 
   @doc """
-  Poll the `:platform_authz` ring buffer for events named `name` emitted
-  after `since_us` (monotonic microseconds); returns the matches, `[]` after
-  `attempts × 25 ms`.
+  The `:platform_authz` events named `name` emitted after `since_us`, read once
+  the ring buffer has handled every signal already sent to it: an empty answer
+  means none was emitted, not none yet.
   """
-  def await_platform_authz_events(name, since_us, attempts \\ 20) do
-    NodeTestHelper.wait_until(
-      fn ->
-        case Enum.filter(
-               RingBufferSink.query(:platform_authz, since_us),
-               &(&1.name == name)
-             ) do
-          [] -> nil
-          matches -> matches
-        end
-      end,
-      attempts * 25,
-      25
-    ) || []
+  def platform_authz_events(name, since_us) do
+    TestSinks.settle(RingBufferSink)
+    Enum.filter(RingBufferSink.query(:platform_authz, since_us), &(&1.name == name))
   end
 
   @doc """

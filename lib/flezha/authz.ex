@@ -18,7 +18,8 @@ defmodule Flezha.AuthZ do
 
   Every denial emits a `:event` signal `:authorization_denied` on the
   `:platform_authz` source so downstream audit / observability tooling
-  can record refused attempts.
+  can record refused attempts. `allowed?/3` is the same decision without that
+  record, for a permitted call that only chooses what to show.
 
   ## The `:internal` caller source
 
@@ -82,18 +83,15 @@ defmodule Flezha.AuthZ do
           :ok
           | {:error, {:forbidden, forbid_reason()}}
           | {:error, {:forbidden, :bootstrap_pending, String.t()}}
-  def authorize(caller_context, action, scope) do
-    case enforcement_posture() do
-      :open ->
-        :ok
+  def authorize(caller_context, action, scope),
+    do: caller_context |> decide(action, scope) |> recorded(action)
 
-      :enforced ->
-        do_authorize(caller_context, action, scope)
-
-      :bootstrap_pending ->
-        authorize_bootstrap_pending(caller_context, action, scope)
-    end
-  end
+  @doc """
+  The judgment `authorize/3` makes, without recording a denial: for a caller
+  that only chooses what to show, never for a gate.
+  """
+  @spec allowed?(caller_context(), action(), Scope.t()) :: boolean()
+  def allowed?(caller_context, action, scope), do: decide(caller_context, action, scope) == :ok
 
   @doc """
   The effective enforcement posture:
@@ -114,6 +112,16 @@ defmodule Flezha.AuthZ do
     end
   end
 
+  # `:ok`, an unrecorded `{:error, reason}`, or `{:error, refusal, record}`: a
+  # refusal and what its record names besides the action.
+  defp decide(caller_context, action, scope) do
+    case enforcement_posture() do
+      :open -> :ok
+      :enforced -> do_authorize(caller_context, action, scope)
+      :bootstrap_pending -> authorize_bootstrap_pending(caller_context, action, scope)
+    end
+  end
+
   # An un-bootstrapped upgrade must not take down pipelines, but must not be
   # open either: only the controller's own machinery and transport-bound
   # runner identities pass; every administration verb refuses naming the way in.
@@ -131,8 +139,7 @@ defmodule Flezha.AuthZ do
 
       ctx ->
         refusal = {:forbidden, :bootstrap_pending, Config.bootstrap_token_path()}
-        emit_denial(Map.get(ctx, :principal), refusal, action, scope)
-        {:error, refusal}
+        refused(refusal, Map.get(ctx, :principal), scope)
     end
   end
 
@@ -147,22 +154,12 @@ defmodule Flezha.AuthZ do
   def require_bound_principal(%{source: :internal}), do: :ok
 
   def require_bound_principal(%{principal: principal} = _ctx) when is_binary(principal) do
-    if principal != "" do
-      :ok
-    else
-      emit_denial(nil, :principal_not_bound, nil, nil)
-      {:error, {:forbidden, :principal_not_bound}}
-    end
+    if principal != "", do: :ok, else: unbound()
   end
 
-  def require_bound_principal(_ctx) do
-    if enabled?() do
-      emit_denial(nil, :principal_not_bound, nil, nil)
-      {:error, {:forbidden, :principal_not_bound}}
-    else
-      :ok
-    end
-  end
+  def require_bound_principal(_ctx), do: if(enabled?(), do: unbound(), else: :ok)
+
+  defp unbound(), do: :principal_not_bound |> refused(nil, nil) |> recorded(nil)
 
   @doc """
   Returns `true` when `:authn_authz, :enabled` is configured `true`
@@ -179,43 +176,28 @@ defmodule Flezha.AuthZ do
   # ---------- Internal ----------
 
   defp do_authorize(caller_context, action, scope) do
+    principal = Map.get(caller_context, :principal)
+
     with :ok <- validate_action(action),
          :ok <- Scope.validate(scope),
-         :ok <- check_principal_bound(caller_context, action, scope),
-         {:ok, held} <- resolve_roles(caller_context, action, scope),
-         {:ok, granting} <- check_role_grants(held, action, caller_context, scope) do
-      check_namespace_scope(held, granting, action, caller_context, scope)
+         :ok <- check_principal_bound(caller_context, scope),
+         {:ok, held} <- resolve_roles(caller_context, scope),
+         {:ok, granting} <- check_role_grants(held, action, principal, scope) do
+      check_namespace_scope(held, granting, action, principal, scope)
     end
   end
 
-  defp validate_action(action) do
-    if Action.known?(action) do
-      :ok
-    else
-      emit_denial(nil, :unknown_action, action, nil)
-      {:error, {:forbidden, :unknown_action}}
-    end
-  end
+  defp validate_action(action),
+    do: if(Action.known?(action), do: :ok, else: refused(:unknown_action, nil, nil))
 
   # Internal callers (`source: :internal`) are pre-authorized; the
   # boundary that exposes them to a service surface is responsible
   # for never propagating untrusted input here.
-  defp check_principal_bound(%{source: :internal}, _action, _scope), do: :ok
+  defp check_principal_bound(%{source: :internal}, _scope), do: :ok
+  defp check_principal_bound(%{principal: p}, _scope) when is_binary(p) and p != "", do: :ok
 
-  defp check_principal_bound(%{principal: p} = _ctx, action, scope)
-       when is_binary(p) and p != "" do
-    :ok
-  rescue
-    _ ->
-      emit_denial(nil, :principal_not_bound, action, scope)
-      {:error, {:forbidden, :principal_not_bound}}
-  end
-
-  defp check_principal_bound(ctx, action, scope) do
-    principal = Map.get(ctx, :principal)
-    emit_denial(principal, :principal_not_bound, action, scope)
-    {:error, {:forbidden, :principal_not_bound}}
-  end
+  defp check_principal_bound(ctx, scope),
+    do: refused(:principal_not_bound, Map.get(ctx, :principal), scope)
 
   @doc """
   The roles a caller is judged with, and the namespace they are held in.
@@ -247,29 +229,20 @@ defmodule Flezha.AuthZ do
   # What the caller was judged with, as one value: the set and the namespace it
   # is held in always travel together, and both the decision below and the
   # record it writes read them.
-  defp resolve_roles(caller_context, action, scope) do
+  defp resolve_roles(caller_context, scope) do
     case held_roles(caller_context) do
-      {:ok, roles, bound_ns} ->
-        {:ok, %{roles: roles, namespace: bound_ns}}
-
-      :error ->
-        principal = Map.get(caller_context, :principal)
-        emit_denial(principal, :no_role_binding, action, scope)
-        {:error, {:forbidden, :no_role_binding}}
+      {:ok, roles, bound_ns} -> {:ok, %{roles: roles, namespace: bound_ns}}
+      :error -> refused(:no_role_binding, Map.get(caller_context, :principal), scope)
     end
   end
 
   # The roles that grant, so the namespace rule below reads `admin` from among
   # them rather than from a single role. None granting is the refusal, and the
   # record names the whole held set rather than the part that granted.
-  defp check_role_grants(%{roles: roles}, action, caller_context, scope) do
+  defp check_role_grants(%{roles: roles}, action, principal, scope) do
     case Enum.filter(roles, &Policy.grants?(&1, action)) do
-      [] ->
-        emit_denial(Map.get(caller_context, :principal), :role_insufficient, action, scope, roles)
-        {:error, {:forbidden, :role_insufficient}}
-
-      granting ->
-        {:ok, granting}
+      [] -> refused(:role_insufficient, principal, scope, roles)
+      granting -> {:ok, granting}
     end
   end
 
@@ -277,33 +250,20 @@ defmodule Flezha.AuthZ do
          %{roles: roles, namespace: bound_ns},
          granting,
          action,
-         caller_context,
+         principal,
          %{namespace: target_ns} = scope
        ) do
     admin? = :admin in granting
+    auth_state? = Policy.cross_namespace_admin_action?(action)
 
     cond do
-      Policy.cross_namespace_admin_action?(action) ->
-        if admin? and Namespace.system?(bound_ns) do
-          :ok
-        else
-          # If the caller is admin on the target namespace, allow
-          # mutations on its own auth state (e.g. issuing caller
-          # tokens for the namespace the caller administers).
-          if admin? and bound_ns == target_ns do
-            :ok
-          else
-            emit_denial(
-              Map.get(caller_context, :principal),
-              :cross_namespace_admin_denied,
-              action,
-              scope,
-              roles
-            )
+      # admin@_system mutates any namespace's auth state, and an admin its own
+      # namespace's (e.g. issuing caller tokens for the namespace it administers).
+      auth_state? and admin? and (Namespace.system?(bound_ns) or bound_ns == target_ns) ->
+        :ok
 
-            {:error, {:forbidden, :cross_namespace_admin_denied}}
-          end
-        end
+      auth_state? ->
+        refused(:cross_namespace_admin_denied, principal, scope, roles)
 
       bound_ns == target_ns ->
         :ok
@@ -315,41 +275,40 @@ defmodule Flezha.AuthZ do
         :ok
 
       true ->
-        emit_denial(
-          Map.get(caller_context, :principal),
-          :namespace_mismatch,
-          action,
-          scope,
-          roles
-        )
-
-        {:error, {:forbidden, :namespace_mismatch}}
+        refused(:namespace_mismatch, principal, scope, roles)
     end
   end
 
-  # `caller_roles` is the set the refusal was judged with, and `nil` for a
-  # refusal that came before any role was resolved. `reason` (a forbid reason,
-  # or the whole refusal) is recorded as the code a caller of the refused act
-  # receives.
-  defp emit_denial(principal, reason, action, scope, roles \\ nil) do
+  # A refusal (a forbid reason, or the whole refusal) and what its record names:
+  # `caller_roles` is the set it was judged with, and `nil` for a refusal that
+  # came before any role was resolved.
+  defp refused(reason, principal, scope, roles \\ nil) do
     refusal = if is_atom(reason), do: {:forbidden, reason}, else: reason
+    {:error, refusal, %{principal: principal, scope: scope, caller_roles: roles}}
+  end
 
+  # The one place a refusal is recorded, as the code a caller of the refused
+  # act receives.
+  defp recorded({:error, refusal, record}, action) do
+    emit_denial(refusal, action, record)
+    {:error, refusal}
+  end
+
+  defp recorded(decision, _action), do: decision
+
+  defp emit_denial(refusal, action, record) do
     Bus.emit(
       Signal.new(%{
         kind: :event,
         source: @source,
         name: :authorization_denied,
-        metadata: %{
-          principal: principal,
-          reason: Flezha.Error.from_reason(refusal, action).code,
-          action: action,
-          scope: scope,
-          caller_roles: roles
-        }
+        metadata:
+          Map.merge(record, %{
+            reason: Flezha.Error.from_reason(refusal, action).code,
+            action: action
+          })
       })
     )
-
-    :ok
   rescue
     _ -> :ok
   end

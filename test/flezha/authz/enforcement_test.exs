@@ -214,7 +214,7 @@ defmodule Flezha.AuthZ.EnforcementTest do
                AuthZ.authorize(%{source: :cli}, :"state.delete", Scope.build("_system"))
 
       assert [signal | _] =
-               AuthTestHelper.await_platform_authz_events(
+               AuthTestHelper.platform_authz_events(
                  :authorization_denied,
                  boundary
                )
@@ -236,10 +236,98 @@ defmodule Flezha.AuthZ.EnforcementTest do
                )
 
       assert [signal | _] =
-               AuthTestHelper.await_platform_authz_events(:authorization_denied, boundary)
+               AuthTestHelper.platform_authz_events(:authorization_denied, boundary)
 
       assert signal.metadata.reason == "authz.role_insufficient"
       assert signal.metadata.caller_roles == [:viewer]
+    end
+  end
+
+  describe "every refusal is recorded once, and allowed?/3 records none" do
+    # The whole record each refusal writes, keyed by what it names besides the
+    # action and reason: who, where, and the set judged (nil before resolution).
+    defp denials_since(boundary) do
+      :authorization_denied
+      |> AuthTestHelper.platform_authz_events(boundary)
+      |> Enum.map(& &1.metadata)
+    end
+
+    defp refused_once(ctx, action, scope, reason, recorded) do
+      boundary = System.monotonic_time(:microsecond)
+      refute AuthZ.allowed?(ctx, action, scope)
+      assert denials_since(boundary) == []
+
+      assert {:error, refusal} = AuthZ.authorize(ctx, action, scope)
+      assert elem(refusal, 1) == reason
+      code = "authz.#{reason}"
+
+      assert [%{action: ^action, reason: ^code} = record] = denials_since(boundary)
+      assert Map.take(record, [:principal, :scope, :caller_roles]) == recorded
+    end
+
+    test "each refusal writes its one record, the same through authorize/3 as before" do
+      team_a = Scope.build("team-a")
+      ops = %{source: :cli, principal: "ops-a"}
+      nobody = %{principal: nil, scope: nil, caller_roles: nil}
+
+      refused_once(ops, :"relay.list", team_a, :bootstrap_pending, %{
+        nobody
+        | principal: "ops-a",
+          scope: team_a
+      })
+
+      claim!()
+      :ok = RoleStore.bind("ops-a", "team-a", :ops)
+      :ok = RoleStore.bind("viewer-a", "team-a", :viewer)
+      :ok = RoleStore.bind("admin-a", "team-a", :admin)
+      viewer = %{source: :cli, principal: "viewer-a"}
+      admin = %{source: :cli, principal: "admin-a"}
+      team_b = Scope.build("team-b")
+
+      refused_once(ops, :"no.such_action", team_a, :unknown_action, nobody)
+
+      refused_once(%{source: :cli}, :"relay.list", team_a, :principal_not_bound, %{
+        nobody
+        | scope: team_a
+      })
+
+      refused_once(
+        %{source: :cli, principal: "stranger"},
+        :"relay.list",
+        team_a,
+        :no_role_binding,
+        %{nobody | principal: "stranger", scope: team_a}
+      )
+
+      refused_once(viewer, :"state.delete", team_a, :role_insufficient, %{
+        principal: "viewer-a",
+        scope: team_a,
+        caller_roles: [:viewer]
+      })
+
+      refused_once(viewer, :"relay.list", team_b, :namespace_mismatch, %{
+        principal: "viewer-a",
+        scope: team_b,
+        caller_roles: [:viewer]
+      })
+
+      refused_once(admin, :"authz.namespace_create", team_b, :cross_namespace_admin_denied, %{
+        principal: "admin-a",
+        scope: team_b,
+        caller_roles: [:admin]
+      })
+
+      boundary = System.monotonic_time(:microsecond)
+      refute AuthZ.allowed?(ops, :"relay.list", %{})
+      assert {:error, :invalid_scope} = AuthZ.authorize(ops, :"relay.list", %{})
+
+      assert {:error, {:forbidden, :principal_not_bound}} =
+               AuthZ.require_bound_principal(%{source: :cli})
+
+      assert [%{reason: "authz.principal_not_bound", action: nil} = record] =
+               denials_since(boundary)
+
+      assert Map.take(record, [:principal, :scope, :caller_roles]) == nobody
     end
   end
 end

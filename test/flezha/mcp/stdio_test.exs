@@ -116,7 +116,7 @@ defmodule Flezha.Mcp.StdioTest do
       assert answer["structuredContent"]["error"]["code"] =~ ~r/^authz\./
 
       assert [signal | _] =
-               AuthTestHelper.await_platform_authz_events(:authorization_denied, boundary)
+               AuthTestHelper.platform_authz_events(:authorization_denied, boundary)
 
       assert signal.metadata.principal == "assistant"
     end

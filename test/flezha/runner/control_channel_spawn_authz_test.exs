@@ -91,7 +91,7 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnAuthzTest do
     assert FakeStartRegistry.started() == []
     refute RelayManager.exist?(@ns, ctx.instance_id)
 
-    assert [denial] = AuthTestHelper.await_platform_authz_events(:authorization_denied, since)
+    assert [denial] = AuthTestHelper.platform_authz_events(:authorization_denied, since)
     assert denial.metadata.principal == @principal
     assert denial.metadata.action == :"relay.start"
     assert denial.metadata.reason == "authz.role_insufficient"
@@ -155,7 +155,7 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnAuthzTest do
     assert {"ref-spawn", %{outcome: "", error: %{class: "denied"}}} = await_response()
     assert Instance.ingested(instance) == []
 
-    assert [denial] = AuthTestHelper.await_platform_authz_events(:authorization_denied, since)
+    assert [denial] = AuthTestHelper.platform_authz_events(:authorization_denied, since)
     assert denial.metadata.principal == @principal
     assert denial.metadata.action == :"relay.send"
     assert denial.metadata.reason == "authz.role_insufficient"

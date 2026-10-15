@@ -23,11 +23,13 @@ defmodule FlezhaTest.Service.RelayDiagnoseTest do
   alias Flezha.Relay.Calls
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.Cli
-  alias Flezha.AuthZ.RoleStore
+  alias Flezha.AuthZ
+  alias Flezha.AuthZ.{RoleStore, Scope}
   alias Flezha.Service.Relay
   alias Flezha.Service.Relay.Diagnose
   alias Flezha.Service.RelayManager
   alias Flezha.State.{Completion, InputLog, Paths}
+  alias FlezhaTest.Helper.AuthTestHelper
 
   @namespace "relay-diagnose-test"
   @subject {:relay, {@namespace, "op-1"}}
@@ -335,7 +337,7 @@ defmodule FlezhaTest.Service.RelayDiagnoseTest do
 
   describe "under enforcement" do
     setup do
-      FlezhaTest.Case.install([{:auth_stores, enabled: true, claim: true}])
+      FlezhaTest.Case.install([{:auth_stores, enabled: true, claim: true, register_source: true}])
       :ok = RoleStore.bind("eve", @namespace, :viewer)
       :ok = RoleStore.bind("olga", @namespace, :ops)
       stub_one()
@@ -353,6 +355,30 @@ defmodule FlezhaTest.Service.RelayDiagnoseTest do
 
     test "a caller that may list dead letters is shown their errors" do
       assert dead_letters_for("olga").details["errors"] == ["card 4111 declined"]
+    end
+
+    test "a viewer's diagnose records no denial for dlq.list, which it never asked for" do
+      boundary = System.monotonic_time(:microsecond)
+      assert dead_letters_for("eve").details["count"] == 1
+
+      denials =
+        :authorization_denied
+        |> AuthTestHelper.platform_authz_events(boundary)
+        |> Enum.filter(&(&1.metadata.action == :"dlq.list"))
+
+      assert denials == [],
+             "diagnose wrote #{length(denials)} authorization_denied event(s) for dlq.list: " <>
+               inspect(Enum.map(denials, & &1.metadata))
+
+      # The ring keeps denials: the same check asked as a refusal records one.
+      control = System.monotonic_time(:microsecond)
+      ctx = %{source: :cli, principal: "eve"}
+
+      assert {:error, {:forbidden, :role_insufficient}} =
+               AuthZ.authorize(ctx, :"dlq.list", Scope.build(@namespace))
+
+      assert [%{metadata: %{action: :"dlq.list", principal: "eve"}}] =
+               AuthTestHelper.platform_authz_events(:authorization_denied, control)
     end
   end
 

@@ -72,7 +72,7 @@ defmodule Flezha.AuthZ.VerbsTest do
         refute_received {:acted, ^row}, "#{row.verb} ran its effect for an unbound caller"
         refute_received {:fetched, ^row}, "#{row.verb} read its row for an unbound caller"
 
-        denials = AuthTestHelper.await_platform_authz_events(:authorization_denied, boundary, 4)
+        denials = AuthTestHelper.platform_authz_events(:authorization_denied, boundary)
         assert length(denials) == 1, "#{row.verb}: #{length(denials)} denials audited"
       end
     end

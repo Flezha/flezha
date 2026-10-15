@@ -124,7 +124,7 @@ defmodule Flezha.Service.Relay do
     verb: :relay_info,
     args: [namespace: @namespace, relay_id: @relay_id] do
     namespace = Namespace.or_default(namespace)
-    errors? = AuthZ.authorize(caller_context, :"dlq.list", Scope.build(namespace)) == :ok
+    errors? = AuthZ.allowed?(caller_context, :"dlq.list", Scope.build(namespace))
     Diagnose.report(namespace, relay_id, errors?)
   end
 

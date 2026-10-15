@@ -58,7 +58,7 @@ The system SHALL provide a token registry (`Flezha.AuthZ.TokenStore`) persisted 
 
 ### Requirement: Single policy point `Flezha.AuthZ.authorize/3`
 
-The system SHALL expose exactly one authorization decision function `Flezha.AuthZ.authorize(caller_context, action, scope) :: :ok | {:error, {:forbidden, reason}}`. `action` SHALL be an atom from the `Flezha.AuthZ.Action` enumeration. `scope` SHALL be a map containing at minimum `:namespace`. Every user-action function in `Flezha.Service.Observability` and `Flezha.Service.AuditLog` SHALL call this function before any side effect. Failed authorization SHALL emit an `:authorization_denied` event on `:platform_authz`.
+The system SHALL make every authorization decision in one place, `Flezha.AuthZ`, and expose it through two entry points: `Flezha.AuthZ.authorize(caller_context, action, scope) :: :ok | {:error, {:forbidden, reason}}` and `Flezha.AuthZ.allowed?(caller_context, action, scope) :: boolean()`, which SHALL answer the same decision. `action` SHALL be an atom from the `Flezha.AuthZ.Action` enumeration. `scope` SHALL be a map containing at minimum `:namespace`. Every user-action function in `Flezha.Service.Observability` and `Flezha.Service.AuditLog` SHALL call `authorize/3` before any side effect. A refusal by `authorize/3` SHALL emit an `:authorization_denied` event on `:platform_authz`. `allowed?/3` SHALL never emit that event, and SHALL be used only where the answer chooses what a permitted call shows, never to gate an act the caller asked for.
 
 #### Scenario: Denial returns forbidden tuple
 - **WHEN** a `viewer` invokes a service function whose action requires `ops` or higher
@@ -71,6 +71,10 @@ The system SHALL expose exactly one authorization decision function `Flezha.Auth
 #### Scenario: Disabled mode returns ok unconditionally
 - **WHEN** `:authn_authz, :enabled` is `false` and any caller invokes any service function
 - **THEN** `authorize/3` SHALL return `:ok` unconditionally AND no quota check SHALL execute
+
+#### Scenario: A check that chooses what to show records no denial
+- **WHEN** `allowed?/3` answers `false` for a caller whose `authorize/3` would answer `{:error, {:forbidden, reason}}`
+- **THEN** no `:authorization_denied` event SHALL appear on `:platform_authz` for that check
 
 ### Requirement: Fixed role set
 

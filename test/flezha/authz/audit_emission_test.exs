@@ -126,7 +126,7 @@ defmodule Flezha.AuthZ.AuditEmissionTest do
   defp now_us(), do: System.monotonic_time(:microsecond)
 
   defp wait_for_events(name, since_us, expected_count) do
-    matches = AuthTestHelper.await_platform_authz_events(name, since_us)
+    matches = AuthTestHelper.platform_authz_events(name, since_us)
 
     assert length(matches) == expected_count,
            "expected exactly #{expected_count} #{inspect(name)} event(s), got #{length(matches)}"

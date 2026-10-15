@@ -168,7 +168,7 @@ defmodule Flezha.AuthZ.RebootstrapTest do
       assert {:error, :bootstrap_already_completed} = Bootstrap.claim(written, [])
 
       assert [%{metadata: %{mode: :online}} | _] =
-               AuthTestHelper.await_platform_authz_events(:rebootstrap_recovery, since)
+               AuthTestHelper.platform_authz_events(:rebootstrap_recovery, since)
     end
 
     test "a wrong value does not consume the file the caller wrote" do
