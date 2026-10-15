@@ -21,7 +21,9 @@ defmodule Flezha.Plugin.Shared do
   the controller catalogue declared here, each hook of which takes the event
   `Flezha.Observability.HookSink` hands over; it listens by joining its hooks'
   directory groups, and it never stops idle. Its home places it
-  (`Flezha.Plugin.Home`).
+  (`Flezha.Plugin.Home`). One whose workers cannot start runs without them,
+  its health naming why and `running_on/1` leaving its controller out, and
+  tries again every `convergence_tick_ms`, as one whose worker went down does.
   Its waiting events are one forwarder's backlog
   (`Flezha.Plugin.Shared.Forwarder`), which hands it one at a time;
   the copy runs each hook's chain in a task and answers when the chain returns,
@@ -82,6 +84,8 @@ defmodule Flezha.Plugin.Shared do
     :home,
     # Whether its provider ever injected into the copy itself.
     :misfed,
+    # Why its workers did not start, while it waits to try again.
+    :waiting,
     hook_groups: MapSet.new(),
     # Each bound relay's `Flezha.Plugin.Host.target/3`, by its pid.
     subscribers: %{},
@@ -236,13 +240,28 @@ defmodule Flezha.Plugin.Shared do
     end
   end
 
-  @doc "The controllers whose copy of the controller plugin `name` lags."
-  @spec lagging_on(binary(), binary()) :: [node()]
-  def lagging_on(namespace, name) do
-    for copy <- Directory.plugin_hosts(namespace, name),
-        match?({:unhealthy, {:plugin_lagging, _}}, health(copy)),
-        do: node(copy)
+  @doc """
+  The controllers where the enabled `plugin` runs, and those where a
+  controller plugin's copy lags. A copy waiting for its workers to start runs
+  nowhere.
+  """
+  @spec running_on(Plugin.t()) :: %{controllers: [node()], lagging: [node()]}
+  def running_on(%Plugin{namespace: namespace, id: name} = plugin) do
+    if Plugin.controller?(plugin),
+      do: copies_running_on(namespace, name),
+      else: %{controllers: Enum.sort(Directory.plugin_nodes(namespace, name)), lagging: []}
   end
+
+  defp copies_running_on(namespace, name) do
+    verdicts = for copy <- Directory.plugin_hosts(namespace, name), do: {node(copy), health(copy)}
+
+    %{
+      controllers: for({on, verdict} <- verdicts, not waiting?(verdict), do: on) |> Enum.sort(),
+      lagging: for({on, {:unhealthy, {:plugin_lagging, _}}} <- verdicts, do: on)
+    }
+  end
+
+  defp waiting?(verdict), do: match?({:unhealthy, {:plugin_not_started, _}}, verdict)
 
   @doc "Apply a changed entry: in place when `mode` is `:live`, by a restart otherwise."
   @spec update(pid(), Plugin.t(), :live | :restart) :: :ok
@@ -294,17 +313,46 @@ defmodule Flezha.Plugin.Shared do
   @impl true
   def init(%{namespace: namespace, plugin: %Plugin{id: name} = plugin} = args) do
     Process.flag(:trap_exit, true)
-    table = Table.new(catalog(plugin))
 
-    with {:ok, table} <- Table.bulk_subscribe(table, [{name, plugin}]),
-         {table, []} <- Table.bulk_activate(table, activation_env(%__MODULE__{})) do
-      Directory.join_plugin(self(), namespace, name)
-      state = %__MODULE__{namespace: namespace, name: name, plugin: plugin, table: table}
-      {:ok, state |> watch_home(args[:home]) |> listen_for_hooks() |> idle_if_empty()}
-    else
-      {:error, {_id, reason}} -> {:stop, reason}
-      {table, [{_id, reason}]} -> {:stop, teardown(table, reason)}
+    state = %__MODULE__{
+      namespace: namespace,
+      name: name,
+      plugin: plugin,
+      table: Table.new(catalog(plugin))
+    }
+
+    case activate(state) do
+      {:ok, state} ->
+        {:ok, state |> placed(args[:home]) |> listen_for_hooks() |> idle_if_empty()}
+
+      # Nothing joins a controller plugin's copy to start it again: it waits,
+      # retrying as one whose worker went down does.
+      {:error, reason} ->
+        if Plugin.controller?(plugin),
+          do: {:ok, state |> placed(args[:home]) |> failed(reason, :start)},
+          else: {:stop, reason}
     end
+  end
+
+  # The plugin subscribed and its workers started, or the refusal with
+  # whatever started torn down.
+  defp activate(%{table: table, name: name, plugin: plugin} = state) do
+    with {:ok, activated} <- Table.bulk_subscribe(table, [{name, plugin}]),
+         {activated, []} <- Table.bulk_activate(activated, activation_env(state)) do
+      {:ok, %{state | table: activated, waiting: nil}}
+    else
+      {:error, {_id, reason}} ->
+        {:error, reason}
+
+      {activated, [{_id, reason} | _]} ->
+        Table.teardown_all(activated)
+        {:error, reason}
+    end
+  end
+
+  defp placed(state, home) do
+    Directory.join_plugin(self(), state.namespace, state.name)
+    watch_home(state, home)
   end
 
   defp catalog(plugin) do
@@ -349,11 +397,6 @@ defmodule Flezha.Plugin.Shared do
     forwarder
   end
 
-  defp teardown(table, reason) do
-    Table.teardown_all(table)
-    reason
-  end
-
   @impl true
   def handle_call({:join, _target}, _from, %{retiring: ref} = state)
       when is_reference(ref),
@@ -369,6 +412,9 @@ defmodule Flezha.Plugin.Shared do
 
     {:reply, :ok, retarget(put_in(state.subscribers[overwatch], target))}
   end
+
+  def handle_call(:health, _from, %{waiting: reason} = state) when reason != nil,
+    do: {:reply, {:unhealthy, {:plugin_not_started, reason}}, state}
 
   def handle_call(:health, _from, state),
     do:
@@ -618,22 +664,20 @@ defmodule Flezha.Plugin.Shared do
     end
   end
 
+  # An update restarts a waiting copy at once, so its retry is no longer due.
   defp restart(state) do
-    table = Table.teardown_all(state.table, :now)
+    state = %{cancel_timer(state, :restart) | table: Table.teardown_all(state.table, :now)}
 
-    with {:ok, table} <- Table.bulk_subscribe(table, [{state.name, state.plugin}]),
-         {table, []} <- Table.bulk_activate(table, activation_env(state)) do
-      listen_for_hooks(%{state | table: table})
-    else
-      {:error, {_id, reason}} -> restart_failed(state, table, reason)
-      {_table, [{_id, reason} | _]} -> restart_failed(state, table, reason)
+    case activate(state) do
+      {:ok, state} -> listen_for_hooks(state)
+      {:error, reason} -> failed(state, reason, :restart)
     end
   end
 
   # The refusal alone: the table carries the plugin's options, a token among them.
-  defp restart_failed(state, table, reason) do
-    Logger.warning("[Plugin.Shared] #{state.name} did not restart: #{inspect(reason)}")
-    restart_later(%{state | table: table})
+  defp failed(state, reason, attempt) do
+    Logger.warning("[Plugin.Shared] #{state.name} did not #{attempt}: #{inspect(reason)}")
+    restart_later(%{state | waiting: reason})
   end
 
   defp restart_later(state),

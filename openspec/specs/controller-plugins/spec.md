@@ -68,6 +68,17 @@ cluster, moved as a `single` relay plugin is moved.
 - **WHEN** `FLEZHA_PLUGIN_IDLE_STOP_MS` passes twice
 - **THEN** the plugin SHALL still run on every controller of `n`
 
+#### Scenario: A copy whose worker cannot start
+
+- **GIVEN** a controller plugin whose worker cannot start on a controller, as an HTTP API
+  on a port in use cannot
+- **WHEN** the cause goes away
+- **THEN** its copy there SHALL start its worker on a later convergence tick, with no
+  disable and enable
+- **AND** until then `flz plugin list` SHALL NOT list that controller under `runs on`, and
+  each refused attempt SHALL log the worker's error-level crash report and one warning
+  naming the refusal
+
 ### Requirement: Five hooks SHALL tell a controller plugin what happened
 
 A controller plugin SHALL be able to take the hooks `on_relay_started`,

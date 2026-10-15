@@ -635,10 +635,9 @@ defmodule Flezha.Service.PluginManager do
         provider_id: provider_id(entry.provider),
         single: entry.single,
         relays: bound |> bound_to(name) |> relays_of() |> Enum.sort(),
-        controllers: Directory.plugin_nodes(namespace, name) |> Enum.sort(),
-        hooks: Enum.map(entry.hooks, &to_string(elem(&1, 0))),
-        lagging: if(Plugin.controller?(entry), do: Shared.lagging_on(namespace, name), else: [])
+        hooks: Enum.map(entry.hooks, &to_string(elem(&1, 0)))
       }
+      |> Map.merge(Shared.running_on(%Plugin{entry | namespace: namespace}))
     end
   end
 

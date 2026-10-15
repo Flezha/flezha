@@ -86,8 +86,10 @@ In a plugin spec (`--plugins` at a relay's start) a hook is a name, a
 A controller plugin is bound to no relay. It runs on every controller that holds its
 namespace and has its provider, from its enable until it is disabled, and it never stops
 for want of relays; with `--single` it runs one copy in the whole cluster, moved like a
-`single` relay plugin. A provider may take no hook at all and run only its worker,
-as the [HTTP API](../../plugins/http_api.md) does; it is enabled with none. A provider
+`single` relay plugin. A copy whose worker cannot start, such as an HTTP API on a port
+in use, logs why, is not listed under `runs on`, and tries again on every convergence
+tick. A provider may take no hook at all and run only its worker, as the
+[HTTP API](../../plugins/http_api.md) does; it is enabled with none. A provider
 may also be bound to one namespace (`http_api` to `_system`), and an enable in any other
 is refused (`plugin.namespace_refused`). It is told what happens in its own namespace,
 and only there, through five hooks:
