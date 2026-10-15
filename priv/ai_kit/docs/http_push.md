@@ -54,7 +54,7 @@ $ flz plugin bind orders_out --relay_id orders --hook on_output
 | --- | --- |
 | Hooks | `on_output`, `on_input` |
 | Request | `POST` (or `PUT`) to `url`, the payload as the body unchanged, `content_type` as its `content-type`, the configured `headers` and the output's identity headers |
-| Connections | `max_in_flight` (default 1), each kept open between requests; with one, payloads are sent in the order they were dispatched |
+| Connections | `max_in_flight` (default 1), each kept open between requests unless an unfinished response body passes 8 KiB, which is left unread and its connection closed; with one, payloads are sent in the order they were dispatched |
 | Shared | every relay bound to the plugin on a controller sends through one worker, one queue and its connections; each member of a partitioned relay has its own |
 | Plain output | queued and sent; dropped and counted once its retries are spent |
 | Guaranteed output | held in the outbox until a 2xx; parked as a dead letter when it is refused or its retries run out |

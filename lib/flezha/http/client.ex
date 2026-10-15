@@ -12,8 +12,8 @@ defmodule Flezha.Http.Client do
   else about driving a Mint exchange is identical, and lived in two copies
   before this.
 
-  Responses are drained fully even when the caller only wants the status: a
-  half-drained connection cannot be reused, and the exporter's is. Only the
+  Responses are drained fully, since a half-drained connection cannot be
+  reused, unless `max_body_bytes` caps the body. Only the
   connection's own socket messages are read while a request is in flight: every
   caller is a process whose calls, casts and timers keep arriving, and a
   message taken here would be lost to it.
@@ -21,6 +21,10 @@ defmodule Flezha.Http.Client do
 
   @type conn :: Mint.HTTP.t()
   @type header :: {binary(), binary()}
+
+  # The tags of the messages a connection's socket sends its owner.
+  @socket_message [:tcp, :ssl, :tcp_error, :ssl_error]
+  @socket_closed [:tcp_closed, :ssl_closed]
 
   @doc """
   Open a connection. A thin pass-through, here so a caller needs only this
@@ -70,7 +74,11 @@ defmodule Flezha.Http.Client do
   means the connection is unusable, which only the caller knows how to handle.
 
   With `max_body_bytes: n` the exchange is abandoned, `{:error, {:body_too_large,
-  bytes}, conn}`, as soon as the response body passes `n` bytes.
+  bytes}, conn}`, as soon as the response body passes `n` bytes. With
+  `max_body_bytes: {n, :close}`, for a caller that uses only the status, an
+  unfinished body past `n` answers `{:ok, conn, status, headers,
+  body_read_so_far}` instead and closes `conn`, which `ensure_open/5` then
+  replaces; a response complete in the read that passed `n` keeps it.
   """
   @spec request(conn(), binary(), binary(), [header()], iodata(), timeout(), keyword()) ::
           {:ok, conn(), non_neg_integer(), [header()], binary()}
@@ -79,35 +87,36 @@ defmodule Flezha.Http.Client do
     case Mint.HTTP.request(conn, method, path, headers, body) do
       {:ok, conn, ref} ->
         deadline = System.monotonic_time(:millisecond) + timeout
-        recv(conn, {ref, deadline, opts[:max_body_bytes]}, nil, [], "")
+        {max, past_max} = max_body(opts[:max_body_bytes])
+        recv(conn, {ref, deadline, max, past_max}, nil, [], "")
 
       {:error, conn, reason} ->
         {:error, reason, conn}
     end
   end
 
-  defp recv(conn, {_ref, deadline, _max} = exchange, status, headers, body) do
+  defp recv(conn, {_ref, deadline, _max, _past_max} = exchange, status, headers, body) do
     timeout = max(deadline - System.monotonic_time(:millisecond), 0)
     socket = Mint.HTTP.get_socket(conn)
 
     receive do
-      {tag, ^socket, _data_or_reason} = message
-      when tag in [:tcp, :ssl, :tcp_error, :ssl_error] ->
+      {tag, ^socket, _data_or_reason} = message when tag in @socket_message ->
         stream(conn, message, exchange, status, headers, body)
 
-      {tag, ^socket} = message when tag in [:tcp_closed, :ssl_closed] ->
+      {tag, ^socket} = message when tag in @socket_closed ->
         stream(conn, message, exchange, status, headers, body)
     after
       timeout -> {:error, :timeout, conn}
     end
   end
 
-  defp stream(conn, message, {ref, _deadline, max} = exchange, status, headers, body) do
+  defp stream(conn, message, {ref, _deadline, max, past_max} = exchange, status, headers, body) do
     case Mint.HTTP.stream(conn, message) do
       {:ok, conn, responses} ->
         case fold(responses, ref, status, headers, body) do
-          {_, _status, _headers, body} when max != nil and byte_size(body) > max ->
-            {:error, {:body_too_large, byte_size(body)}, conn}
+          {read, status, headers, body}
+          when max != nil and byte_size(body) > max and (read == :cont or past_max == :error) ->
+            past_max(past_max, conn, status, headers, body)
 
           {:done, status, headers, body} ->
             {:ok, conn, status, headers, body}
@@ -118,6 +127,31 @@ defmodule Flezha.Http.Client do
 
       {:error, conn, reason, _responses} ->
         {:error, reason, conn}
+    end
+  end
+
+  defp max_body({max, :close}), do: {max, :close}
+  defp max_body(max), do: {max, :error}
+
+  defp past_max(:error, conn, _status, _headers, body),
+    do: {:error, {:body_too_large, byte_size(body)}, conn}
+
+  # The rest of the body is never read, so the connection cannot carry another
+  # request; whatever its socket delivered before the close is dropped with it.
+  # Only that socket's messages are taken, and a closed socket sends no more.
+  defp past_max(:close, conn, status, headers, body) do
+    socket = Mint.HTTP.get_socket(conn)
+    {:ok, conn} = Mint.HTTP.close(conn)
+    flush(socket)
+    {:ok, conn, status, headers, body}
+  end
+
+  defp flush(socket) do
+    receive do
+      {tag, ^socket, _data_or_reason} when tag in @socket_message -> flush(socket)
+      {tag, ^socket} when tag in @socket_closed -> flush(socket)
+    after
+      0 -> :ok
     end
   end
 

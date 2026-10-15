@@ -6,13 +6,18 @@ defmodule Flezha.Plugin.Provider.HttpSend.Connection do
 
   It is a process of its own because a request blocks for up to its timeout,
   and the worker must stay answerable meanwhile. It opens the connection on the
-  first request and again after a failed exchange: a response that arrives
-  after its timeout would be read as the next one's. What it holds between
+  first request, again after a failed exchange (a response that arrives after
+  its timeout would be read as the next one's), and after a response whose body
+  it stopped reading. What it holds between
   requests is the endpoint and the connection, never a header; it is a bare
   process, so no status of it shows the request target either.
   """
 
   alias Flezha.Http.Client
+
+  # Only a response's status is used: past this much body the connection is
+  # closed rather than read on.
+  @max_body_bytes 8 * 1024
 
   @type request :: {binary(), [Client.header()], binary()}
 
@@ -56,7 +61,9 @@ defmodule Flezha.Plugin.Provider.HttpSend.Connection do
              timeout: state.timeout
            ),
          {:ok, conn, status, response_headers, _body} <-
-           Client.request(conn, method, endpoint.target, headers, body, state.timeout) do
+           Client.request(conn, method, endpoint.target, headers, body, state.timeout,
+             max_body_bytes: {@max_body_bytes, :close}
+           ) do
       {%{state | conn: conn}, {:ok, status, response_headers}}
     else
       {:error, reason, conn} -> {close(%{state | conn: conn}), {:error, reason}}

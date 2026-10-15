@@ -102,7 +102,9 @@ health reason, is `internal.uncatalogued`.
 
 A 2xx completes an event. A 429, a 5xx, a timeout or a transport error is sent again after
 1 s and then after 5 s, at most `retries` times, and is then dropped; any other status is
-dropped at once. The connection is opened again after a failed exchange. Each drop is
+dropped at once. Only the status of a response is read: an unfinished body past 8 KiB is
+left unread and its connection closed. The connection is opened again after a failed exchange or a
+closed one. Each drop is
 counted, and logged at warning level once per plugin and status, naming the plugin and the
 URL's host: the URL's path and query and the headers may hold a token and are never logged,
 nor shown in the status of the plugin's copy or its worker.

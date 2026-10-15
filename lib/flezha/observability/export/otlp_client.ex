@@ -20,6 +20,10 @@ defmodule Flezha.Observability.Export.OtlpClient do
   alias Flezha.Config.Backoff
   alias Flezha.Http.Client, as: HttpClient
 
+  # Only a response's status is used: past this much body the connection is
+  # closed rather than read on.
+  @max_body_bytes 8 * 1024
+
   # ---------- Public API ----------
 
   def start_link(opts \\ []) do
@@ -136,7 +140,8 @@ defmodule Flezha.Observability.Export.OtlpClient do
            path,
            headers,
            body,
-           Durations.get(:otlp_request_timeout_ms)
+           Durations.get(:otlp_request_timeout_ms),
+           max_body_bytes: {@max_body_bytes, :close}
          ) do
       {:ok, conn, status, _headers, _body} -> {:ok, %{state | conn: conn}, status}
       {:error, reason, conn} -> {:error, reason, %{state | conn: conn}}
