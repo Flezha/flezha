@@ -207,7 +207,7 @@ defmodule FlezhaTest.Plugin.ControllerPluginTest do
       end
 
       assert Directory.hub_nodes(vacant) == []
-      assert {:error, :registry_unavailable} = enable.(WorkerOnly)
+      assert {:error, {:hub_down, ^vacant}} = enable.(WorkerOnly)
       assert Directory.hub_nodes(vacant) == []
 
       assert {:ok, _} = enable.(VacantOnly)

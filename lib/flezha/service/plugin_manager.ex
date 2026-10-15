@@ -62,7 +62,7 @@ defmodule Flezha.Service.PluginManager do
     with {:ok, entry} <- entry_of(plugin),
          :ok <- hub_for(plugin),
          {:ok, enabled} <-
-           on_hub_node(namespace, :declare_entry, [entry], :registry_unavailable) do
+           on_hub_node(namespace, :declare_entry, [entry], {:hub_down, namespace}) do
       bind_after_enable(plugin, enabled, channel)
     end
   end
