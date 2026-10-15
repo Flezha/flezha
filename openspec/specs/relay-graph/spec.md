@@ -6,9 +6,10 @@ How the controller keeps the graph a factory's runners announce, and how a calle
 ### Requirement: The controller SHALL keep each factory's announced graph
 
 The controller SHALL keep the graph of each runner's latest announcement of a factory beside that
-announcement's API, replaced by every full-set announcement of the runner. When the runners of one
-factory announce different graphs, the read SHALL mark the factory as disagreeing and serve the latest
-announcement. A factory whose runners all disconnect SHALL lose its graph with the rest of its
+announcement's API, replaced by every full-set announcement of the runner. A relay's graph read SHALL
+serve the announcement of the runner hosting the relay, and the factory's latest announcement while
+the relay has no runner. When the runners of one factory announce different graphs, the read SHALL
+mark the factory as disagreeing. A factory whose runners all disconnect SHALL lose its graph with the rest of its
 announcement. The graph SHALL NOT be part of the factory rows `Relay.api` and `Relay.call_channel`
 read.
 
@@ -20,7 +21,8 @@ read.
 #### Scenario: Two runners disagree
 
 - **WHEN** two connected runners announce factory `market` with different graphs
-- **THEN** the graph read for a `market` relay is marked as disagreeing and is the later announcement
+- **THEN** the graph read for a `market` relay is marked as disagreeing and is the announcement of
+  the runner hosting that relay
 
 #### Scenario: A call does not carry the graph
 

@@ -306,8 +306,8 @@ API of relay 'orders-eu' (factory 'orders'):
     flz relay call orders-eu --channel audit --text <payload>
 ```
 
-`flz relay graph <relay_id>` prints what a relay is made of, as its runners
-announce it: the entry channels, then each tasklet with its cell mode, its
+`flz relay graph <relay_id>` prints what a relay is made of, as the runner
+hosting it announces it: the entry channels, then each tasklet with its cell mode, its
 mailbox and the channels it reads (`in`) and writes (`out`). A channel that ends
 at a plugin output is marked `→ output`, one that ends in a call `→ call` with
 its target, and one that sheds when full names its policy. With `--json` it is
@@ -329,8 +329,8 @@ Graph of relay 'trade_watcher' (factory 'trade_watcher'):
     out: signals → output
 ```
 
-A factory whose runners announce no graph, because they run an older SDK, says
-so instead.
+A relay whose runner announces no graph, because it runs an older SDK, says so
+instead.
 
 `flz relay activity <relay_id>` asks the runner hosting a relay what each of its
 tasklets is doing: its live Cells, the items queued in all of them and in the

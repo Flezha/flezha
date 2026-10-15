@@ -40,23 +40,12 @@ defmodule Flezha.Service.RelayManager do
 
   # The hub's rows of relays: a plugin entry's row is keyed `{:plugin, name}`.
   def relay_registry(namespace) do
-    case HubManager.get_registry(namespace) do
-      {:ok, registry} ->
-        Map.filter(registry, fn {id, _row} -> is_binary(id) end)
-
-      {:error, reason} ->
-        {:error, reason}
-    end
+    with {:ok, registry} <- HubManager.get_registry(namespace),
+         do: Map.filter(registry, fn {id, _row} -> is_binary(id) end)
   end
 
-  def get_relay_ids(namespace) do
-    relays =
-      namespace
-      |> HubManager.get_all_relays()
-      |> Enum.map(&elem(&1, 0))
-
-    {:ok, relays}
-  end
+  def get_relay_ids(namespace),
+    do: {:ok, namespace |> HubManager.get_all_relays() |> Enum.map(&elem(&1, 0))}
 
   @doc """
   Resolve `relay_id`'s pid from ANY controller node. A node that is not a
@@ -668,21 +657,32 @@ defmodule Flezha.Service.RelayManager do
   def factory_run(namespace, factory_id),
     do: on_factory_node(namespace, factory_id, :factory_run, {:error, :no_such_factory})
 
-  @doc "`factory_id`'s factory-table row, its API among it, asked as `factory_run/2` is."
-  def factory_row(namespace, factory_id),
-    do: on_factory_node(namespace, factory_id, :factory_row, nil)
+  @doc """
+  `factory_id`'s factory-table row or `nil`, its API as `host`'s runner (a relay's,
+  `HubManager.relay_spec/2`) announced it, else asked as `factory_run/2` is.
+  """
+  def factory_row(namespace, factory_id, host),
+    do: on_factory_node(namespace, factory_id, :factory_row, nil, host)
 
-  @doc "`factory_id`'s announced graph, asked as `factory_row/2` is."
-  def factory_graph(namespace, factory_id),
-    do: on_factory_node(namespace, factory_id, :factory_graph, %{graph: nil, disagree: false})
+  @doc "`factory_id`'s announced graph or `nil`, asked as `factory_row/3` is."
+  def factory_graph(namespace, factory_id, host),
+    do: on_factory_node(namespace, factory_id, :factory_graph, nil, host)
 
-  defp on_factory_node(namespace, factory_id, fun, none) do
+  # A relay runs on its runner's node, which holds that runner's advertisement.
+  defp on_factory_node(namespace, factory_id, fun, none, host \\ %{runner: nil}) do
+    args = [namespace, factory_id]
+
     cond do
+      read =
+          host.runner && host.node &&
+            route_call(host.node, FleetManager, fun, args ++ [host.runner], fn _ -> nil end) ->
+        read
+
       FleetManager.runners_for_factory(namespace, factory_id) != [] ->
-        apply(FleetManager, fun, [namespace, factory_id])
+        apply(FleetManager, fun, args)
 
       target = List.first(capable_nodes(namespace, factory_id)) ->
-        route_call(target, FleetManager, fun, [namespace, factory_id], &{:error, &1})
+        route_call(target, FleetManager, fun, args, &{:error, &1})
 
       true ->
         none

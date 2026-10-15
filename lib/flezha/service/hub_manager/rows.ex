@@ -191,11 +191,10 @@ defmodule Flezha.Service.HubManager.Rows do
         %{
           id: relay_id,
           health: Snapshot.relay_health(namespace, relay_id),
-          runner: Map.get(metadata, :tag),
           factory: builder && Map.get(builder, :factory_id),
-          partition: cspec_partition(cspec),
-          node: live_node(node_pids)
+          partition: cspec_partition(cspec)
         }
+        |> Map.merge(host(node_pids, metadata))
       end)
       |> Enum.sort_by(&inspect(&1.id))
     end)
@@ -229,25 +228,33 @@ defmodule Flezha.Service.HubManager.Rows do
   @spec relay_bindings(String.t(), String.t()) ::
           {:ok, [{binary(), Plugin.t()}]} | {:error, term()}
   def relay_bindings(namespace, relay_id) do
-    with {:ok, relay} <- relay_spec(namespace, relay_id),
+    with {:ok, relay, _host} <- relay_spec(namespace, relay_id),
          do: {:ok, normalize_plugins(Keyword.get(relay.opts, :bindings, []))}
   end
 
   @doc """
   The relay `relay_id` as its start declared it (its factory id, its
-  options), read from the one registry entry it has.
+  options), and where it runs, as `relay_rows/1` names it. Read from the one
+  registry entry it has.
   """
-  @spec relay_spec(String.t(), String.t()) :: {:ok, map()} | {:error, term()}
+  @spec relay_spec(String.t(), String.t()) ::
+          {:ok, map(), %{runner: term(), node: node() | nil}} | {:error, term()}
   def relay_spec(namespace, relay_id) do
     with_live_hub(namespace, {:error, {:hub_down, namespace}}, fn hub_id ->
-      with entry when entry != nil <- ProcessRegistry.lookup(hub_id, relay_id),
-           %{} = relay <- cspec_relay(elem(entry, 0)) do
-        {:ok, relay}
+      with {cspec, node_pids, metadata} <-
+             ProcessRegistry.lookup(hub_id, relay_id, with_metadata: true),
+           %{} = relay <- cspec_relay(cspec) do
+        {:ok, relay, host(node_pids, metadata)}
       else
         _none -> {:error, {:relay_not_found, namespace, relay_id}}
       end
     end)
   end
+
+  # Where a registry entry's relay runs: its runner (`nil` while it has none)
+  # and its live node.
+  defp host(node_pids, metadata),
+    do: %{runner: Map.get(metadata, :tag), node: live_node(node_pids)}
 
   @doc """
   The plugins enabled in `namespace`, each the `%Flezha.Plugin{}` entry its

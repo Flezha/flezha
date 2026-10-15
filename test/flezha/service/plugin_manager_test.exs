@@ -429,10 +429,10 @@ defmodule Flezha.Service.PluginManagerTest do
   # The relay's factory row as its runners announce it.
   defp announce(channels) do
     Mimic.stub(HubManager, :relay_spec, fn @namespace, @relay_id ->
-      {:ok, %{id: @relay_id, factory_id: "do_nothing"}}
+      {:ok, %{id: @relay_id, factory_id: "do_nothing"}, %{runner: nil, node: nil}}
     end)
 
-    Mimic.stub(RelayManager, :factory_row, fn @namespace, "do_nothing" ->
+    Mimic.stub(RelayManager, :factory_row, fn @namespace, "do_nothing", _host ->
       api = for c <- channels, do: %{channel: c, codec: "json", answer_codec: nil}
       %{id: "do_nothing", description: nil, api: api, api_at: 1, api_disagree: false}
     end)

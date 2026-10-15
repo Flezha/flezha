@@ -105,33 +105,41 @@ defmodule Flezha.Runner.FleetManager.Factories do
   end
 
   @doc """
-  The API the latest advertisement of a factory entry announced, and whether
-  its advertising runners announce different ones.
+  The API `runner`'s advertisement of a factory entry announced, the latest
+  advertisement's when `runner` has none here, and whether its advertising
+  runners announce different ones.
   """
-  @spec latest_api(map()) :: %{api: [map()], api_at: integer() | nil, api_disagree: boolean()}
-  def latest_api(info) do
-    {api, at, disagree} = latest(info, :api, [])
+  @spec announced_api(map(), String.t() | nil) ::
+          %{api: [map()], api_at: integer() | nil, api_disagree: boolean()}
+  def announced_api(info, runner) do
+    {api, at, disagree} = announced(info, runner, :api, [])
     %{api: api, api_at: at, api_disagree: disagree}
   end
 
   @doc """
-  The graph the latest advertisement of a factory entry announced (`nil` when
-  it announced none), and whether its advertising runners announce different
-  ones. Read on its own, so no factory row carries it.
+  The graph a factory entry's advertisement announced (`nil` when it announced
+  none), chosen as `announced_api/2` chooses it, and whether its advertising
+  runners announce different ones. Read on its own, so no factory row carries it.
   """
-  @spec latest_graph(map() | nil) :: %{graph: map() | nil, disagree: boolean()}
-  def latest_graph(info) do
-    {graph, _at, disagree} = latest(info, :graph, nil)
+  @spec announced_graph(map(), String.t() | nil) :: %{
+          graph: map() | nil,
+          disagree: boolean()
+        }
+  def announced_graph(info, runner) do
+    {graph, _at, disagree} = announced(info, runner, :graph, nil)
     %{graph: graph, disagree: disagree}
   end
 
-  # `key` of the newest advertisement, when it was announced, and whether the
-  # advertisements disagree on it.
-  defp latest(info, key, none) do
-    adverts = info |> factory_entry() |> Map.fetch!(:adverts) |> Map.values()
-    latest = Enum.max_by(adverts, &Map.get(&1, :announced_at, 0), fn -> %{} end)
-    disagree = adverts |> Enum.map(&Map.get(&1, key, none)) |> Enum.uniq() |> length() > 1
-    {Map.get(latest, key, none), Map.get(latest, :announced_at), disagree}
+  # `key` of `runner`'s advertisement, or of the newest, when it was announced,
+  # and whether the advertisements disagree on it.
+  defp announced(info, runner, key, none) do
+    adverts = factory_entry(info).adverts
+    all = Map.values(adverts)
+    newest = fn -> Enum.max_by(all, &Map.get(&1, :announced_at, 0), fn -> %{} end) end
+    advert = Map.get_lazy(adverts, runner, newest)
+    disagree = all |> Enum.map(&Map.get(&1, key, none)) |> Enum.uniq() |> length() > 1
+
+    {Map.get(advert, key, none), Map.get(advert, :announced_at), disagree}
   end
 
   # The API entries a factory's announcement carries, whether from the connect

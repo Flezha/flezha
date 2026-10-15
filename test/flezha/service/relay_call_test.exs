@@ -226,13 +226,13 @@ defmodule Flezha.Service.RelayCallTest do
     setup do
       stub(HubManager, :relay_spec, fn
         _namespace, id when id in ["echo", "prices#p0", "prices#p1"] ->
-          {:ok, %{factory_id: "echo", opts: []}}
+          {:ok, %{factory_id: "echo", opts: []}, %{runner: nil, node: nil}}
 
         namespace, id ->
           {:error, {:relay_not_found, namespace, id}}
       end)
 
-      stub(RelayManager, :factory_row, fn _namespace, _factory -> nil end)
+      stub(RelayManager, :factory_row, fn _namespace, _factory, _host -> nil end)
       :ok
     end
 

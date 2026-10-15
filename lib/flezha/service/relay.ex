@@ -438,7 +438,7 @@ defmodule Flezha.Service.Relay do
   The factories announced in `namespace`, each with its description and its
   API: one entry per entry channel, with its format, whether it answers and
   in which format, its description, its schemas and its MCP tool name. With
-  `relay_id`, only that relay's factory.
+  `relay_id`, only that relay's factory, as the runner hosting it announced it.
   """
   @spec api(String.t(), String.t(), caller_context()) :: {:ok, [map()]} | {:error, term()}
   verb api(namespace, relay_id \\ "", caller_context),
@@ -464,12 +464,12 @@ defmodule Flezha.Service.Relay do
   end
 
   @doc """
-  The graph of `relay_id`'s factory as its runners announce it: every channel
-  with its kind, producer, consumers, plugin end, call target and overflow,
-  and every tasklet with its cell mode, cell keys and mailbox capacity. A
-  factory whose runners announced none answers `graph: nil` with the reason
-  `not_announced`; `disagree` is true when its runners announce different
-  graphs, the latest served.
+  The graph of `relay_id`'s factory as the runner hosting it announces it (the
+  latest announcement while it has no runner): every channel with its kind,
+  producer, consumers, plugin end, call target and overflow, and every tasklet
+  with its cell mode, cell keys and mailbox capacity. A runner that announced
+  none answers `graph: nil` with the reason `not_announced`; `disagree` is true
+  when the factory's runners announce different graphs.
   """
   @spec graph(String.t(), String.t(), caller_context()) :: {:ok, map()} | {:error, term()}
   verb graph(namespace, relay_id, caller_context),

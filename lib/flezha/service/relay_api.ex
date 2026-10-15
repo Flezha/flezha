@@ -1,7 +1,7 @@
 defmodule Flezha.Service.RelayApi do
   @moduledoc """
-  A relay's API: its factory's entry channels as the factory's runners
-  announce them, and the encoding a call of one channel needs.
+  A relay's API: its factory's entry channels as the runner hosting the relay
+  announces them, and the encoding a call of one channel needs.
   `Flezha.Service.Relay.api/3` and `Flezha.Service.Relay.call_channel/6` publish
   it, so the CLI, HTTP and MCP serve it with no code of their own.
 
@@ -15,6 +15,7 @@ defmodule Flezha.Service.RelayApi do
   alias Flezha.Service.RelayManager
 
   @binary ["bytes", "msgpack", "custom"]
+  @no_graph %{graph: nil, disagree: false}
 
   @typedoc "One entry channel of a factory's API, as `Relay.api` answers it."
   @type entry :: %{
@@ -53,14 +54,15 @@ defmodule Flezha.Service.RelayApi do
   end
 
   @doc """
-  The factory row of the relay `relay_id`, read from its own registry entry;
-  a partition group's is its members' factory. A factory no runner announces
-  has no channels.
+  The factory row of the relay `relay_id`, read from its own registry entry
+  as the runner hosting it announced it; a partition group's is its first
+  member's. A relay with no runner reads the factory's latest announcement,
+  and a factory no runner announces has no channels.
   """
   @spec factory_of(String.t(), String.t()) :: {:ok, map()} | {:error, term()}
   def factory_of(namespace, relay_id) do
-    with {:ok, relay} <- declared(namespace, relay_id) do
-      case RelayManager.factory_row(namespace, relay.factory_id) do
+    with {:ok, relay, host} <- declared(namespace, relay_id) do
+      case RelayManager.factory_row(namespace, relay.factory_id, host) do
         none when not is_map(none) ->
           {:ok, %{factory: relay.factory_id, description: nil, channels: [], disagree: false}}
 
@@ -71,21 +73,20 @@ defmodule Flezha.Service.RelayApi do
   end
 
   @doc """
-  The graph of the relay `relay_id`'s factory as its runners announce it,
-  `%{factory:, graph:, disagree:}` with `graph: nil` when none was announced;
-  read as `factory_of/2` finds the factory.
+  The graph of the relay `relay_id`'s factory as `factory_of/2` reads its API,
+  `%{factory:, graph:, disagree:}` with `graph: nil` when none was announced.
   """
   @spec graph_of(String.t(), String.t()) :: {:ok, map()} | {:error, term()}
   def graph_of(namespace, relay_id) do
-    with {:ok, %{factory: factory}} <- factory_of(namespace, relay_id),
-         %{graph: _} = read <- RelayManager.factory_graph(namespace, factory),
+    with {:ok, %{factory_id: factory}, host} <- declared(namespace, relay_id),
+         %{graph: _} = read <- RelayManager.factory_graph(namespace, factory, host) || @no_graph,
          do: {:ok, Map.put(read, :factory, factory)}
   end
 
   defp declared(namespace, relay_id) do
     case HubManager.relay_spec(namespace, relay_id) do
-      {:ok, relay} ->
-        {:ok, relay}
+      {:ok, _relay, _host} = declared ->
+        declared
 
       {:error, _not_one_relay} ->
         case PartitionGroup.members(namespace, relay_id) do
@@ -125,8 +126,8 @@ defmodule Flezha.Service.RelayApi do
 
   @doc """
   Refuse `channel` as an entry channel of the relay `relay_id` the way
-  `entry/4` does, when the relay's runners announced channels and it is none
-  of them. A `nil` channel, a relay not declared yet and one whose runners
+  `entry/4` does, when the relay's runner announced channels and it is none
+  of them. A `nil` channel, a relay not declared yet and one whose runner
   announced no API are not checked.
   """
   @spec refuse_unknown_entry(String.t(), String.t(), String.t() | nil) ::

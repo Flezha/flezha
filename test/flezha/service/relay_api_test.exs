@@ -13,11 +13,13 @@ defmodule Flezha.Service.RelayApiTest do
   import FlezhaTest.Helper.MimicGlobal
 
   alias Flezha.Error
+  alias Flezha.Identificator
   alias Flezha.Partition
-  alias Flezha.Relay.PartitionGroup
+  alias Flezha.Relay.{Builder, Overwatch, PartitionGroup}
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.{Cli, HubManager, Relay, RelayApi, RelayManager}
   alias FlezhaTest.Helper.{CliCapture, FleetStateHelper}
+  alias ProcessHub.Service.ProcessRegistry
 
   setup :set_mimic_global_until_exit
 
@@ -125,6 +127,115 @@ defmodule Flezha.Service.RelayApiTest do
     end
   end
 
+  # A rolling deploy: runner `old` announces channel `a`, runner `new` channel
+  # `b`. Each relay's registry row names the runner hosting it; `idle` has none,
+  # and `stranded` names `old` but runs only on a node that is gone.
+  describe "a relay's API is its hosting runner's" do
+    @hosts %{
+      "on-old" => "old",
+      "on-new" => "new",
+      "idle" => nil,
+      "stranded" => "old",
+      "prices#p0" => "old",
+      "prices#p1" => "new"
+    }
+
+    setup do
+      original = :sys.get_state(FleetManager)
+      namespace = "relay_api_host_#{System.unique_integer([:positive])}"
+      hub_id = Identificator.hub(namespace)
+      FleetStateHelper.seed(namespace, %{"old" => [], "new" => []})
+
+      on_exit(fn ->
+        FleetStateHelper.forget_established(namespace, ["orders"])
+        :sys.replace_state(FleetManager, fn _ -> original end)
+      end)
+
+      stub(ProcessHub, :is_alive?, fn
+        ^hub_id -> true
+        other -> Mimic.call_original(ProcessHub, :is_alive?, [other])
+      end)
+
+      stub(ProcessRegistry, :lookup, fn
+        ^hub_id, id, [with_metadata: true] when is_map_key(@hosts, id) ->
+          relay = %Builder{id: id, factory_id: "orders"}
+          cspec = %{id: id, start: {Overwatch, :start_link, [{namespace, relay}]}}
+          node = if id == "stranded", do: :"gone@127.0.0.1", else: node()
+          {cspec, [{node, self()}], %{tag: @hosts[id]}}
+
+        hub, id, opts ->
+          Mimic.call_original(ProcessRegistry, :lookup, [hub, id, opts])
+      end)
+
+      stub(PartitionGroup, :members, fn
+        _namespace, "prices" -> for i <- 0..1, do: member("prices", i)
+        _namespace, _id -> []
+      end)
+
+      %{namespace: namespace}
+    end
+
+    defp announce(namespace, runner, channel) do
+      graph = %{"channels" => [], "tasklets" => [%{"name" => "on-#{runner}"}]}
+      factory = Map.put(orders_factory([entry(channel, "text")]), "graph", graph)
+      FleetStateHelper.announce(namespace, runner, [factory])
+    end
+
+    defp channels(namespace, relay_id) do
+      {:ok, %{channels: channels}} = RelayApi.factory_of(namespace, relay_id)
+      Enum.map(channels, & &1.channel)
+    end
+
+    defp tasklets(namespace, relay_id) do
+      {:ok, %{graph: %{tasklets: tasklets}}} = RelayApi.graph_of(namespace, relay_id)
+      Enum.map(tasklets, & &1.name)
+    end
+
+    test "a relay on the old runner keeps the channel its runner announced", %{namespace: ns} do
+      announce(ns, "old", "a")
+      announce(ns, "new", "b")
+
+      assert RelayApi.refuse_unknown_entry(ns, "on-old", "a") == :ok
+      assert channels(ns, "on-old") == ["a"]
+      assert tasklets(ns, "on-old") == ["on-old"]
+      assert channels(ns, "on-new") == ["b"]
+
+      assert {:error, %Error{code: "api.channel_unknown"}} =
+               RelayApi.refuse_unknown_entry(ns, "on-old", "b")
+
+      # The namespace listing and a relay with no runner or no live node read
+      # the latest; a partition group its first member's runner.
+      assert [%{channels: [%{channel: "b"}], disagree: true}] = RelayApi.list(ns)
+      assert channels(ns, "idle") == ["b"]
+      assert channels(ns, "stranded") == ["b"]
+
+      # A host node that cannot be asked (not connected, as an older node
+      # without the read answers `:undef`) falls back the same way.
+      stub(HubManager, :relay_spec, fn
+        _namespace, "ghost" ->
+          {:ok, %Builder{id: "ghost", factory_id: "orders"},
+           %{runner: "old", node: :"ghost@127.0.0.1"}}
+
+        namespace, id ->
+          Mimic.call_original(HubManager, :relay_spec, [namespace, id])
+      end)
+
+      assert channels(ns, "ghost") == ["b"]
+      assert channels(ns, "prices") == ["a"]
+    end
+
+    test "an old runner reconnecting does not take the API from a relay on the new runner",
+         %{namespace: ns} do
+      announce(ns, "new", "b")
+      announce(ns, "old", "a")
+
+      assert channels(ns, "on-new") == ["b"]
+      assert tasklets(ns, "on-new") == ["on-new"]
+      assert RelayApi.refuse_unknown_entry(ns, "on-new", "b") == :ok
+      assert channels(ns, "idle") == ["a"]
+    end
+  end
+
   describe "Relay.call_channel and Relay.api" do
     setup do
       test_pid = self()
@@ -135,7 +246,8 @@ defmodule Flezha.Service.RelayApiTest do
       # `orders-eu` is an `orders` relay; `prices` a group of two of them.
       stub(HubManager, :relay_spec, fn
         _namespace, id when id in ["orders-eu", "prices#p0", "prices#p1"] ->
-          {:ok, %{factory_id: Process.get(:factory, "orders"), opts: []}}
+          {:ok, %{factory_id: Process.get(:factory, "orders"), opts: []},
+           %{runner: nil, node: nil}}
 
         namespace, id ->
           {:error, {:relay_not_found, namespace, id}}
@@ -146,7 +258,7 @@ defmodule Flezha.Service.RelayApiTest do
         _namespace, _id -> []
       end)
 
-      stub(RelayManager, :factory_row, fn _namespace, factory ->
+      stub(RelayManager, :factory_row, fn _namespace, factory, _host ->
         %{
           id: factory,
           description: "Demo orders",

@@ -48,11 +48,14 @@ the class.
 - **WHEN** an Elixir entry channel declares `schema: "object"`
 - **THEN** the runner refuses the class with `topology.schema_invalid` and announces nothing for it
 
-### Requirement: The controller SHALL keep the latest API per namespace and factory
+### Requirement: The controller SHALL keep each runner's API per namespace and factory
 
-The controller SHALL store the API entries a runner announces for a factory, keyed by namespace
-and factory, replacing them with each later announcement, and SHALL record when two connected
-runners announce different APIs for one factory. The API SHALL never decide placement.
+The controller SHALL store the API entries each runner announces for a factory, keyed by
+namespace and factory, replacing them with that runner's later announcement, and SHALL record when
+two connected runners announce different APIs for one factory. The namespace listing SHALL show
+the latest announcement, and a relay's own reads (`Relay.api` with a relay id, a call, a bind)
+SHALL use the announcement of the runner hosting the relay, the latest while it has no runner. The
+API SHALL never decide placement.
 
 #### Scenario: The API is known before any instance runs
 
@@ -62,8 +65,9 @@ runners announce different APIs for one factory. The API SHALL never decide plac
 #### Scenario: A rolling deploy shows the newest and says so
 
 - **WHEN** two connected runners announce different APIs for `orders`
-- **THEN** `Relay.api` answers the later one and marks that the runners disagree, and
-  relays of `orders` are still placed on both
+- **THEN** `Relay.api` for the namespace answers the later one and marks that the runners
+  disagree, `Relay.api` for an `orders` relay answers its own runner's, and relays of `orders`
+  are still placed on both
 
 ### Requirement: `Relay.api` SHALL list a namespace's APIs
 
@@ -79,7 +83,9 @@ catalogue entry.
 ### Requirement: `Relay.call_channel` SHALL call a channel with a value
 
 `Relay.call_channel(namespace, relay_id, channel, value, opts, caller)` SHALL be judged as
-`relay.send`, resolve the relay's factory and its API entry for `channel`, encode `value` by
+`relay.send`, resolve the relay's factory and its API entry for `channel` as the runner hosting
+the relay announced it (the factory's latest announcement while the relay has no runner), encode
+`value` by
 the entry's format (any JSON value for `json`, a string for `text`, a base64 string for `bytes`,
 `msgpack` and `custom`), and then call the relay with the deadline in `opts` (default 30000 ms)
 when the entry answers, or send to it otherwise. It SHALL decode the answer by the answer's format
@@ -104,6 +110,13 @@ does not answer SHALL never be called. Every other failure SHALL keep the code `
 - **WHEN** `Relay.call_channel` is called on `audit` with `"checked"`
 - **THEN** the input is delivered and the call answers `{"accepted": true}` without waiting for an
   output
+
+#### Scenario: A rolling deploy calls each relay by its own runner's API
+
+- **WHEN** runner `old` announces `orders` with channel `a`, runner `new` later announces it with
+  channel `b`, and `orders-eu` runs on `old`
+- **THEN** `Relay.call_channel` on `orders-eu` with channel `a` is encoded by `a`'s entry, and with
+  channel `b` it is refused with `api.channel_unknown`
 
 #### Scenario: An unknown channel is named
 

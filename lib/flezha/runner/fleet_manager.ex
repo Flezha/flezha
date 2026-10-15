@@ -43,8 +43,8 @@ defmodule Flezha.Runner.FleetManager do
     GenServer.start_link(__MODULE__, nil, name: __MODULE__)
   end
 
-  def list_factories(namespace) do
-    GenServer.call(__MODULE__, {:list_factories, namespace}, manager_call_timeout())
+  def list_factories(namespace, runner \\ nil) do
+    GenServer.call(__MODULE__, {:list_factories, namespace, runner}, manager_call_timeout())
   end
 
   @doc """
@@ -54,24 +54,22 @@ defmodule Flezha.Runner.FleetManager do
   @spec global_factories(String.t()) :: [map()]
   def global_factories(namespace), do: across_runner_nodes(namespace, :factory_rows)
 
-  @doc "`factory_id`'s row of this node's `list_factories/1`, or `nil`."
-  @spec factory_row(String.t(), String.t()) :: map() | nil
-  def factory_row(namespace, factory_id),
-    do: namespace |> factory_rows() |> Enum.find(&(&1.id == factory_id))
+  @doc "`factory_id`'s row of this node's `list_factories/2`, with `runner`'s API, or `nil`."
+  @spec factory_row(String.t(), String.t(), String.t() | nil) :: map() | nil
+  def factory_row(namespace, factory_id, runner \\ nil),
+    do: namespace |> factory_rows(runner) |> Enum.find(&(&1.id == factory_id))
 
-  @doc """
-  The graph `factory_id`'s latest advertisement on this node announced, and
-  whether its runners disagree; no graph when no runner here advertises it.
-  """
-  @spec factory_graph(String.t(), String.t()) :: %{graph: map() | nil, disagree: boolean()}
-  def factory_graph(namespace, factory_id),
-    do:
-      GenServer.call(__MODULE__, {:factory_graph, namespace, factory_id}, manager_call_timeout())
+  @doc "`factory_id`'s graph and `disagree` here, read as `factory_row/3` reads its API, or `nil`."
+  @spec factory_graph(String.t(), String.t(), String.t() | nil) :: map() | nil
+  def factory_graph(namespace, factory_id, runner \\ nil) do
+    request = {:factory_graph, namespace, factory_id, runner}
+    GenServer.call(__MODULE__, request, manager_call_timeout())
+  end
 
   @doc false
   # This node's rows, read over `:erpc` by `global_factories/1`.
-  def factory_rows(namespace) do
-    {:ok, rows} = list_factories(namespace)
+  def factory_rows(namespace, runner \\ nil) do
+    {:ok, rows} = list_factories(namespace, runner)
     rows
   end
 
@@ -605,7 +603,7 @@ defmodule Flezha.Runner.FleetManager do
   end
 
   @impl true
-  def handle_call({:list_factories, namespace}, _from, state) do
+  def handle_call({:list_factories, namespace, runner}, _from, state) do
     factories =
       state.namespace_factories
       |> Map.get(namespace, %{})
@@ -615,7 +613,7 @@ defmodule Flezha.Runner.FleetManager do
           description: info.description,
           run: run_of(state, namespace, factory_id)
         }
-        |> Map.merge(Factories.latest_api(info))
+        |> Map.merge(Factories.announced_api(info, runner))
       end)
       |> Enum.sort_by(& &1.id)
 
@@ -623,9 +621,9 @@ defmodule Flezha.Runner.FleetManager do
   end
 
   @impl true
-  def handle_call({:factory_graph, namespace, factory_id}, _from, state) do
+  def handle_call({:factory_graph, namespace, factory_id, runner}, _from, state) do
     info = get_in(state.namespace_factories, [namespace, factory_id])
-    {:reply, Factories.latest_graph(info), state}
+    {:reply, info && Factories.announced_graph(info, runner), state}
   end
 
   @impl true

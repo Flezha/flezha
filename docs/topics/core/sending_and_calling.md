@@ -212,8 +212,9 @@ API of relay 'orders-eu' (factory 'orders'):
 With `--json` the section is the entries as data. `Relay.api` is the same read as a published
 operation: the factories of a namespace with their entries, judged as `flz relay info` is.
 When two connected runners announce different APIs for one factory, as in a rolling deploy,
-the latest one is shown and a line says the runners disagree. The API describes and never
-decides where a relay runs.
+`Relay.api` shows the latest one and a line says the runners disagree, while a relay's own API,
+in `flz relay info <relay_id>` and at a call, is the one its runner announced. The API describes
+and never decides where a relay runs.
 
 ### Formats
 

@@ -1195,7 +1195,7 @@
     },
     {
       "name": "Relay.graph",
-      "doc": "The graph of `relay_id`'s factory as its runners announce it: every channel with its kind, producer, consumers, plugin end, call target and overflow, and every tasklet with its cell mode, cell keys and mailbox capacity.",
+      "doc": "The graph of `relay_id`'s factory as the runner hosting it announces it (the latest announcement while it has no runner): every channel with its kind, producer, consumers, plugin end, call target and overflow, and every tasklet with its cell mode, cell keys and mailbox capacity.",
       "action": "relay.list",
       "remote": true,
       "stream": false,

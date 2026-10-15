@@ -38,10 +38,10 @@ defmodule Flezha.Service.RelayGraphTest do
     # `legacy-1` a relay of a factory that announced no graph.
     stub(HubManager, :relay_spec, fn
       _namespace, id when id in ["market-eu", "demo#p0", "demo#p1"] ->
-        {:ok, %{factory_id: "market", opts: []}}
+        {:ok, %{factory_id: "market", opts: []}, %{runner: nil, node: nil}}
 
       _namespace, "legacy-1" ->
-        {:ok, %{factory_id: "legacy", opts: []}}
+        {:ok, %{factory_id: "legacy", opts: []}, %{runner: nil, node: nil}}
 
       namespace, id ->
         {:error, {:relay_not_found, namespace, id}}
@@ -169,7 +169,7 @@ defmodule Flezha.Service.RelayGraphTest do
       FleetStateHelper.announce(ns, "r1", [factory("market", graph(["ohlc", "atr"]))])
       FleetStateHelper.disconnected(ns, "r1")
 
-      assert FleetManager.factory_graph(ns, "market") == %{graph: nil, disagree: false}
+      assert FleetManager.factory_graph(ns, "market") == nil
     end
   end
 
@@ -205,7 +205,7 @@ defmodule Flezha.Service.RelayGraphTest do
 
     test "a node that could not be asked is an error, not an unannounced graph",
          %{namespace: ns} do
-      stub(Flezha.Service.RelayManager, :factory_graph, fn _ns, _factory ->
+      stub(Flezha.Service.RelayManager, :factory_graph, fn _ns, _factory, _host ->
         {:error, {:routed_call_failed, :"peer@127.0.0.1", :exit, :timeout}}
       end)
 
