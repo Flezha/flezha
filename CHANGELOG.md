@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Added: a Kafka consumer can read committed transactions only
+
+`kafka_consumer` takes `isolation_level: :read_committed`, which leaves out the records of
+aborted transactions and the transaction markers; the default, `:read_uncommitted`, hands over
+every record as before. The package's Kafka client now also gives a consumer group's join and
+sync the timeout they name instead of the client's general request timeout.
+
 ### Changed: `:relay_persistence` is gone; a class's `durable` alone decides its state (breaking)
 
 The controller's `:relay_persistence` map (`%{class => bool}`) could switch a class's state off

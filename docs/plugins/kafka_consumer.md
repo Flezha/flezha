@@ -33,6 +33,7 @@ provider id `kafka_consumer`, in the Kafka plugin package beside the producer
 | `start_at` | enum | `"end"` | no | Where a group with no committed offset starts: the earliest record, or the next one written |
 | `max_bytes` | int | `1048576` | no | Bytes one fetch takes from one partition |
 | `max_wait_ms` | int | `500` | no | How long a fetch waits for records; below the client's 5 s request timeout |
+| `isolation_level` | enum | `:read_uncommitted` | no | Which records a fetch hands over: every record, or only those of committed transactions and no transaction markers |
 | `commit_interval_ms` | int | `5000` | no | Longest the offsets of taken records wait to be committed, unless the relay's input is durable |
 | `lag_interval_ms` | int | `5000` | no | How often the lag of each assigned partition is read |
 | `failure_threshold` | int | `3` | no | Refused batches in a row before the plugin reports unhealthy |
@@ -96,6 +97,13 @@ controller.
 `start_at` places a group that has no committed offset for a partition: `beginning` reads
 from the earliest record Kafka still holds, `end` from the next one written. A group with a
 committed offset resumes from it, whatever `start_at` says.
+
+`isolation_level` decides what a topic written in transactions hands over. With
+`read_uncommitted` (the default) every record is an input, the records of aborted
+transactions too. With `read_committed` neither the records of aborted transactions nor the
+transaction markers are handed over, and the offsets still move past both; a transaction
+still open holds back every record written after it until it ends. A record written outside
+a transaction is handed over under either level.
 
 ## A record as an input
 
@@ -194,26 +202,26 @@ They are bridged to the observability bus under the source `:flezha_kafka_consum
 
 ## The client timeout
 
-The `kafka_ex` client bounds every request it makes by its `sync_timeout`, whatever timeout
-the caller names. A group's join waits at the broker for the rebalance: 3 s for a new group
-(the broker's `group.initial.rebalance.delay.ms`), and at most the rebalance timeout the
-member joins with, 4 s. The library's 1 s default covers neither, so the package sets
-`sync_timeout` to 5 s, above both and above the longest `max_wait_ms`. The member's other
-timings fit inside it: a heartbeat every second, a 10 s session, and a partition consumer
-given 2.5 s to stop. The setting is the whole library's: while a broker is away, the
-producer's worker can answer a stats call up to 5 s late, and loses nothing.
+The `kafka_ex` client bounds a request by the timeout its caller names, retries included,
+and a request that names none by its `sync_timeout`. A group's join and sync name their
+own, the session timeout plus 10 s: the broker holds a join for the rebalance, 3 s for a new
+group (its `group.initial.rebalance.delay.ms`) and at most the 4 s rebalance timeout the
+member joins with. A fetch names none, and the broker holds it for up to `max_wait_ms` when
+no record waits. The library's 1 s default would fail every longer poll, so the package
+sets `sync_timeout` to 5 s, above the longest `max_wait_ms`. A heartbeat every second and a
+partition consumer given 2.5 s to stop fit inside it. The setting is the whole library's:
+while a broker is away, the producer's worker can answer a stats call up to 5 s late, and
+loses nothing.
 
 ## Limits
 
-- **Read committed is not offered.** The client library delivers the records of aborted
-  transactions, so a topic written transactionally is read as `read_uncommitted`.
 - **A partitioned relay is refused.** Bind the consumer to a relay that is not
   partitioned and route from there.
 - **No regex subscription, no manual assignment, no seek.** The group decides; a reset of
   the group's offsets is Kafka's own tooling.
 - **A broker that holds a connection open without answering** while a group starts keeps the
-  member from answering its probe until the request's 5 s run out; the probe then reads as
-  uncertain, which counts as healthy.
+  member from answering its probe until the client's 5 s `sync_timeout` runs out; the probe
+  then reads as uncertain, which counts as healthy.
 - **`channel` is checked at bind.** As for every source, a name the relay's runners did not
   announce as an entry channel is refused with `api.channel_unknown`; a relay started with
   `--plugins`, or whose runners announced no channels, is not checked.

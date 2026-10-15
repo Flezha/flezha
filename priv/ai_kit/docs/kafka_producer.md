@@ -396,8 +396,8 @@ working broker connection (`:no_broker`, `:broker_not_available`, `:network_exce
 `:leader_not_available`, `:closed`, `:correlation_mismatch`) forces a client replacement
 immediately, throttled to one per 2 s.
 
-The package sets the `kafka_ex` library's `sync_timeout`, which bounds every request its
-client makes, to 5 s: the consumer's group join needs it
+The package sets the `kafka_ex` library's `sync_timeout`, which bounds every request that
+names no timeout of its own, to 5 s: the consumer's fetch needs it
 ([`kafka_consumer.md`](kafka_consumer.md#the-client-timeout)). While a broker is away the
 worker can wait that long on its client, so a `stats/1` answer can come up to 5 s late; no
 record is lost.
