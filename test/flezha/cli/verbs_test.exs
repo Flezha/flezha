@@ -527,11 +527,7 @@ defmodule Flezha.Service.Cli.AuthzRenderTest do
 
     # A second claim says the admin is claimed and names the recovery verb,
     # never an Elixir term or the file a claimed controller does not write.
-    reclaim_err =
-      capture_io(:stderr, fn ->
-        assert catch_exit(Cli.call("Namespace.bootstrap", Jason.encode!([raw_bootstrap]), [])) ==
-                 {:shutdown, 6}
-      end)
+    reclaim_err = cli_refusal("Namespace.bootstrap", [raw_bootstrap], [], 6)
 
     assert reclaim_err =~ "already claimed"
     assert reclaim_err =~ "flz auth rebootstrap"
@@ -637,15 +633,7 @@ defmodule Flezha.Service.Cli.AuthzRenderTest do
     {:ok, admin, _} = TokenStore.issue("render-admin", "_system", :admin, 3_600)
 
     out =
-      capture_io(:stderr, fn ->
-        assert catch_exit(
-                 Cli.call(
-                   "Namespace.bind_role",
-                   Jason.encode!(["dave", "superuser", "render-ns"]),
-                   token: admin
-                 )
-               ) == {:shutdown, 2}
-      end)
+      cli_refusal("Namespace.bind_role", ["dave", "superuser", "render-ns"], [token: admin], 2)
 
     assert out =~ "unknown_role"
   end
@@ -680,15 +668,12 @@ defmodule Flezha.Service.Cli.AuthzRenderTest do
       end)
 
       out =
-        capture_io(:stderr, fn ->
-          assert catch_exit(
-                   Cli.call(
-                     "Namespace.bind_role",
-                     Jason.encode!(["runner@render-ns", "viewer", "_system"]),
-                     token: admin
-                   )
-                 ) == {:shutdown, 6}
-        end)
+        cli_refusal(
+          "Namespace.bind_role",
+          ["runner@render-ns", "viewer", "_system"],
+          [token: admin],
+          6
+        )
 
       assert out =~ "render-ns"
 
@@ -784,14 +769,7 @@ defmodule Flezha.Service.Cli.AuthzRenderTest do
     end
 
     test "an unknown role on unbind is refused by name", %{admin: admin} do
-      out =
-        capture_io(:stderr, fn ->
-          assert catch_exit(
-                   Cli.call("Namespace.unbind_role", Jason.encode!(["carol", "superuser"]),
-                     token: admin
-                   )
-                 ) == {:shutdown, 2}
-        end)
+      out = cli_refusal("Namespace.unbind_role", ["carol", "superuser"], [token: admin], 2)
 
       assert out =~ "unknown_role"
     end
@@ -859,23 +837,35 @@ defmodule Flezha.Service.Cli.AuthzRenderTest do
     end
 
     test "no credential is issued for #{role}, a role only a runner principal is bound to" do
-      :ok = AuthState.set_enabled()
-      {:ok, admin, _} = TokenStore.issue("render-admin", "_system", :admin, 3_600)
-      role = unquote(role)
+      out = refused_token_issue("#{unquote(role)}")
 
-      out =
-        capture_io(:stderr, fn ->
-          assert catch_exit(
-                   Cli.call(
-                     "Namespace.issue_token",
-                     Jason.encode!(["carol", "render-ns", "#{role}", %{ttl: 3_600}]),
-                     token: admin
-                   )
-                 ) == {:shutdown, 2}
-        end)
-
-      assert out =~ "unknown_role"
+      assert out =~ "authz.role_not_issuable"
+      assert out =~ "'#{unquote(role)}' is a role a runner's principal is bound to"
+      refute out =~ "unknown_role"
     end
+  end
+
+  test "a token for a name that is no role is refused as an unknown role" do
+    assert refused_token_issue("superuser") =~ "authz.unknown_role"
+  end
+
+  defp refused_token_issue(role) do
+    :ok = AuthState.set_enabled()
+    {:ok, admin, _} = TokenStore.issue("render-admin", "_system", :admin, 3_600)
+
+    cli_refusal(
+      "Namespace.issue_token",
+      ["carol", "render-ns", role, %{ttl: 3_600}],
+      [token: admin],
+      2
+    )
+  end
+
+  # The stderr of a CLI call that exits with `exit`.
+  defp cli_refusal(verb, args, opts, exit) do
+    capture_io(:stderr, fn ->
+      assert catch_exit(Cli.call(verb, Jason.encode!(args), opts)) == {:shutdown, exit}
+    end)
   end
 end
 

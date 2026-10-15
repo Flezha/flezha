@@ -136,6 +136,7 @@ SDK raises or returns its one error type carrying them.
 | `authz.principal_not_bound` | denied | 4 | the call carries no verifiable identity | `export FLEZHA_TOKEN=<token>` |
 | `authz.registry_unavailable` | unavailable | 7 | the token registry is not open yet; try again |  |
 | `authz.role_insufficient` | denied | 4 | the caller's role does not allow this | `flz auth whoami` |
+| `authz.role_not_issuable` | invalid | 2 | '{role}' is a role a runner's principal is bound to, so no token is issued for it; issue that principal a runner token and bind '{role}' to it | `flz role bind <principal> {role} <namespace>` |
 | `authz.runner_token_expiry` | invalid | 2 | a runner credential cannot expire | `flz token issue <principal> <namespace> runner --ttl never` |
 | `authz.runner_token_system` | invalid | 2 | a runner credential cannot be issued in the _system namespace |  |
 | `authz.token_ambiguous` | invalid | 2 | the id '{token}' matches more than one token; give more of it | `flz token list` |

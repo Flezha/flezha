@@ -190,13 +190,8 @@ defmodule Flezha.Service.Namespace do
       role: [type: :string, doc: "The role the token holds."],
       opts: [type: :keyword, default: [], doc: "`ttl`, in seconds or `\"never\"`, and `label`."]
     ] do
-    # A role carrying `runner.connect` is what a runner principal is bound to,
-    # and a runner proves itself with a `runner` credential, so no credential is
-    # issued for any of them. Worked out from the grant, so a role added to the
-    # enumeration with the connect needs no list edited here.
-    issuable = [:runner | Enum.reject(Role.all(), &Policy.runner_principal_role?/1)]
-
-    with {:ok, role} <- parse_role(role, issuable),
+    with {:ok, role} <- parse_role(role),
+         :ok <- issuable(role),
          {:ok, ttl} <- ttl(Keyword.get(opts, :ttl)),
          {:ok, raw, entry} <-
            TokenStore.issue(principal, namespace, role, ttl,
@@ -329,11 +324,21 @@ defmodule Flezha.Service.Namespace do
 
   # Resolved against the one enumeration, so a name nobody declared never
   # becomes an atom and a declared role is never missing here.
-  defp parse_role(role, roles \\ Role.all()) do
-    case Enum.find(roles, &(Atom.to_string(&1) == to_string(role))) do
+  defp parse_role(role) do
+    case Enum.find(Role.all(), &(Atom.to_string(&1) == to_string(role))) do
       nil -> {:error, {:unknown_role, role}}
       role -> {:ok, role}
     end
+  end
+
+  # A role carrying `runner.connect` is what a runner principal is bound to,
+  # and a runner proves itself with a `runner` credential, so no credential is
+  # issued for any of the others. Worked out from the grant, so a role added to
+  # the enumeration with the connect needs no list edited here.
+  defp issuable(role) do
+    if role != :runner and Policy.runner_principal_role?(role),
+      do: {:error, {:role_not_issuable, role}},
+      else: :ok
   end
 
   # Quota overrides name documented quota fields and give each a whole number,

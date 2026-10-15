@@ -237,9 +237,9 @@ $ flz role unbind alice                        # removes every role
   (`runner`, `spawner`, `stopper`, `app`). A runner principal bound to
   `viewer`, `ops` or `admin` connects as `runner` and is refused each
   administration action, whatever `flz role list` shows. For the same reason
-  `flz token issue` refuses a token for `app`, `spawner` or `stopper`: a runner
-  proves its namespace with a `runner` credential, and the other roles are
-  bound to it.
+  `flz token issue` refuses a token for `app`, `spawner` or `stopper`
+  (`authz.role_not_issuable`): a runner proves its namespace with a `runner`
+  credential, and the other roles are bound to it.
 - `authz.*` actions are admin-only in the bound namespace; only
   `admin@_system` may act on another namespace.
 
