@@ -175,15 +175,16 @@ defmodule Flezha.Service.Controller do
 
   Asks every node in the list, including this one. A node that cannot be reached
   answers `:unreachable` rather than failing the whole read, so one unreachable
-  peer does not blank the panel.
+  peer does not blank the panel. A node named as text is asked only when it is
+  this node or a connected one; any other name answers `:unreachable`.
   """
-  @spec recovery_per_node(String.t(), [node()], caller_context()) ::
+  @spec recovery_per_node(String.t(), [node() | String.t()], caller_context()) ::
           {:ok, map()} | {:error, term()}
   verb recovery_per_node(namespace, nodes, caller_context)
        when is_binary(namespace) and is_list(nodes),
        verb: :controller_recovery,
        args: [namespace: @namespace, nodes: [type: :list, doc: "The nodes to ask."]] do
-    {:ok, recovery_map(namespace, nodes)}
+    {:ok, recovery_map(Namespace.or_default(namespace), nodes)}
   end
 
   @doc "Where the graceful shutdown sequence has reached."
@@ -286,6 +287,15 @@ defmodule Flezha.Service.Controller do
   defp recovery_map(namespace, nodes) do
     hub_id = Identificator.hub(namespace)
     Map.new(nodes, &{&1, node_recovery(&1, hub_id)})
+  end
+
+  # A name arriving as text is asked only when it is a connected node: comparing
+  # as strings mints no atom from caller input.
+  defp node_recovery(peer, hub_id) when is_binary(peer) do
+    case Enum.find([node() | Node.list()], &(Atom.to_string(&1) == peer)) do
+      nil -> :unreachable
+      known -> node_recovery(known, hub_id)
+    end
   end
 
   defp node_recovery(peer, hub_id) when peer == node(), do: local_recovery_snapshot(hub_id)
