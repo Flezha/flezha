@@ -164,7 +164,8 @@ defmodule Flezha.Service.Controller do
   @doc "One hub's recovery state, by hub id."
   @spec recovery_state(atom(), caller_context()) :: {:ok, atom()} | {:error, term()}
   verb recovery_state(hub_id, caller_context) when is_atom(hub_id),
-    verb: :controller_status,
+    verb: :controller_hub_recovery,
+    row: &hub_namespace/1,
     args: [hub_id: [type: :atom, doc: "The hub's id."]] do
     HubManager.recovery_state(hub_id)
   end
@@ -274,6 +275,12 @@ defmodule Flezha.Service.Controller do
       {:ok, state} -> state
       {:error, :unknown_hub} -> :unknown
     end
+  end
+
+  defp hub_namespace([hub_id]) do
+    if Identificator.hub_id?(hub_id),
+      do: {:ok, %{namespace: Identificator.namespace_from_hub(hub_id)}},
+      else: {:error, :invalid_scope}
   end
 
   defp recovery_map(namespace, nodes) do

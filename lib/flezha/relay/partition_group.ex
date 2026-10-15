@@ -149,19 +149,20 @@ defmodule Flezha.Relay.PartitionGroup do
   defp check_group_quota(namespace, needed),
     do: Admission.check_relay_quota(namespace, needed)
 
-  # Only the missing members start, after two preflights: the survivors must
-  # declare exactly the identity the request recomputes, and the group-level
-  # checks price quota on the missing count alone (the rescale's own seam).
+  # Only the missing members start, after two preflights: the group-level
+  # checks, which bound the count before any range is built and price quota on
+  # the missing count alone (the rescale's own seam), then the survivors must
+  # declare exactly the identity the request recomputes.
   defp converge(namespace, relay, partitions, members, plugins_fun) do
     present = MapSet.new(members, & &1.partition.index)
 
-    missing =
-      Partition.ranges(partitions)
-      |> Enum.with_index()
-      |> Enum.reject(fn {_range, index} -> index in present end)
-
-    with :ok <- check_converge_identity(members, partitions, relay.id),
-         :ok <- check_partitionable(namespace, relay, partitions, length(members)),
+    with :ok <- check_partitionable(namespace, relay, partitions, length(members)),
+         ranges = Partition.ranges(partitions),
+         :ok <- check_converge_identity(members, ranges, relay.id),
+         missing =
+           ranges
+           |> Enum.with_index()
+           |> Enum.reject(fn {_range, index} -> index in present end),
          {:ok, started, skipped} <-
            run_member_starts(namespace, relay, missing, partitions, plugins_fun,
              on_duplicate: :skip
@@ -178,8 +179,8 @@ defmodule Flezha.Relay.PartitionGroup do
   defp in_partition_order(member_ids),
     do: Enum.sort_by(member_ids, &Partition.split_member_suffix/1)
 
-  defp check_converge_identity(members, partitions, group_id) do
-    ranges = Partition.ranges(partitions)
+  defp check_converge_identity(members, ranges, group_id) do
+    partitions = length(ranges)
 
     members
     |> Enum.find(fn %{partition: p} ->

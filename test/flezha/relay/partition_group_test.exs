@@ -273,6 +273,20 @@ defmodule FlezhaTest.Relay.PartitionGroupTest do
       # The restart restores from this WAL at bind; converge must not touch it.
       assert File.read!(wal) == "durable-bytes"
     end
+
+    # Fails when: converge builds the ranges before the range check, so naming
+    # more partitions than key groups raises instead of being refused.
+    test "naming more partitions than key groups is refused, not raised" do
+      assert {:ok, _} = PartitionGroup.start(@namespace, builder(), 3)
+      _ = started_members()
+
+      for n <- [257, 1_000_000] do
+        assert {:error, {:partitions_out_of_range, ^n, 256}} =
+                 PartitionGroup.start(@namespace, builder(), n)
+      end
+
+      assert started_members() == []
+    end
   end
 
   describe "the base-id / singleton collision guards" do

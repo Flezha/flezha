@@ -120,6 +120,8 @@ defmodule Flezha.AuthZ.Verbs do
     controller_status: [action: :"controller.status", scope: :caller],
     controller_mem_top: [action: :"controller.status", scope: :caller],
     controller_hub_id: [action: :"controller.status", scope: {:argument, 1}],
+    # Judged in the namespace the hub id names, read off the id itself.
+    controller_hub_recovery: [action: :"controller.status", scope: {:row, :namespace}],
     controller_recovery: [action: :"relay.list", scope: {:argument, 1}],
     controller_stop: [
       action: :"controller.stop",
