@@ -4,7 +4,8 @@ defmodule FlezhaTest.System.PluginPackageReleaseTest do
   installed by `flz plugin install` into a release that has never started,
   loaded when the controller starts, and every status of `flz plugin list
   --installed` across restarts, with the audit log recording what each boot
-  loaded and refused.
+  loaded and refused. The VM those verbs run in keeps OTP's boot reports off
+  their stderr.
 
   Builds the prod release of this tree into a scratch directory (`cargo build
   -p flz --release`, then `MIX_ENV=prod mix release --path`), so it never reads
@@ -147,6 +148,21 @@ defmodule FlezhaTest.System.PluginPackageReleaseTest do
     assert audit =~ ~s|"name":"loaded"|
     assert audit =~ ~s|"name":"refused"|
     assert audit =~ "plugin.library_conflict"
+  end
+
+  test "the VM a plugin verb runs in prints no boot report, and still its warnings", ctx do
+    # `started_applications/0` returns once the application controller has
+    # logged the report it makes after starting `:logger`, and `flush/0` once
+    # the handler has written it: a report the boot let through is in `out`.
+    {out, 0} =
+      flzvm(ctx, [
+        "eval",
+        ~s|Application.started_applications(); require Logger; Logger.warning("eval warns"); Logger.flush(); IO.puts("answered")|
+      ])
+
+    refute out =~ "Application logger started"
+    assert out =~ "[warning] eval warns"
+    assert out =~ "answered"
   end
 
   # The release `flz` copies the release-built binary, so both are built from

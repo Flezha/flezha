@@ -16,7 +16,6 @@ defmodule Flezha.Plugin.Installer.Command do
   """
   @spec eval(binary(), [binary()], keyword()) :: no_return()
   def eval(verb, args, opts) do
-    Logger.configure(level: :warning)
     {:ok, _} = Application.ensure_all_started([:crypto, :public_key, :ssl])
     format = Context.format(opts)
 

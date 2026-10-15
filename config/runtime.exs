@@ -24,3 +24,9 @@ config :logger, :file_log,
     max_bytes: Environment.env_value(environment, config_env(), :log_max_bytes),
     keep: Environment.env_value(environment, config_env(), :log_keep_files)
   }
+
+# Not a knob: a VM `flzvm eval` starts answers one `flz` verb, and its stderr
+# is the verb's. It logs warnings and errors only, from `:logger`'s start, so
+# OTP's boot progress reports, which the application controller logs after the
+# boot has moved on, never race the verb's halt onto it.
+if environment["RELEASE_COMMAND"] == "eval", do: config(:logger, level: :warning)
