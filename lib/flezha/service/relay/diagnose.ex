@@ -44,6 +44,7 @@ defmodule Flezha.Service.Relay.Diagnose do
     asleep: :note,
     finished: :note,
     inputs_waiting: :note,
+    plugin_disabled: :note,
     unknown: :note
   ]
 
@@ -209,7 +210,8 @@ defmodule Flezha.Service.Relay.Diagnose do
   end
 
   # A plugin whose provider this controller lacks, read only where the relay
-  # runs here, and every plugin whose own verdict record is degraded.
+  # runs here, every plugin whose own verdict record is degraded, and every
+  # plugin its operator disabled.
   defp plugins(namespace, relay_id, state, node) do
     for {plugin_id, plugin} <- bound(state),
         finding = plugin_finding(namespace, relay_id, state, {plugin_id, plugin.provider}, node),
@@ -227,6 +229,9 @@ defmodule Flezha.Service.Relay.Diagnose do
 
       match?(%Verdict{state: :degraded}, record) ->
         {:plugin_unhealthy, plugin_details(state, plugin_id, record.reason)}
+
+      match?(%Verdict{reason: :disabled}, record) ->
+        {:plugin_disabled, %{plugin: plugin_id}}
 
       true ->
         nil

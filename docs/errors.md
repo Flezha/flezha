@@ -223,6 +223,7 @@ SDK raises or returns its one error type carrying them.
 | `diagnose.no_runner` | unavailable | 7 | no connected runner announces factory '{factory}', so relay '{relay}' has nowhere to run | `start a runner that defines '{factory}', then check it with flz runner list --namespace {namespace}` |
 | `diagnose.output_stall` | unavailable | 7 | relay '{relay}' has had its outputs unread for {seconds}s | `a listener or output plugin downstream is not reading: flz plugin list --namespace {namespace}` |
 | `diagnose.parked` | conflict | 6 | relay '{relay}' has been parked for {seconds}s: {reason} | `fix the cause named here; the controller retries the bind on its own, with a growing delay` |
+| `diagnose.plugin_disabled` | unavailable | 7 | plugin '{plugin}' bound to relay '{relay}' is disabled; its guaranteed outputs are held until a plugin of that name is enabled again |  |
 | `diagnose.plugin_missing` | not_found | 5 | plugin '{plugin}' bound to relay '{relay}' needs provider {provider}, which is not installed on controller {node} | `install its package on that controller: flz plugin list --installed` |
 | `diagnose.plugin_unhealthy` | unavailable | 7 | plugin '{plugin}' ({provider}) bound to relay '{relay}' is unhealthy: {reason} | `flz plugin list --namespace {namespace}` |
 | `diagnose.rebinding` | unavailable | 7 | the controller is binding relay '{relay}' to a runner again ({seconds}s so far), and it recovers by itself | `wait, then flz relay diagnose {relay} --namespace {namespace}` |

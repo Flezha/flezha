@@ -11,7 +11,8 @@ defmodule Flezha.Convergence.Probe.Judge do
   classifier's deepest-wins, made one list: an unobserved reader wins, then
   suspension, then no binding, then a binding the roster does not hold, then a
   park, then the deepest of a stall, a stuck marker or a plugin that is not
-  running, otherwise healthy.
+  running, otherwise healthy. A plugin the operator disabled is a pause, not a
+  plugin that is not running.
 
   A reader that raises does not stop the tick: every subject of the kind it
   speaks about is `:unknown`, `:unknown` escalates nothing, and the tick
@@ -82,10 +83,10 @@ defmodule Flezha.Convergence.Probe.Judge do
     end)
   end
 
-  # A declared plugin that is not running, crashed, or self-reported unhealthy
-  # is its relay's divergence too — the plugin keeps its own record and the
-  # relay carries the deepest one as a fact, so both surfaces agree without
-  # either re-reading the other.
+  # A declared plugin that is not running, crashed, or self-reported unhealthy,
+  # and was not disabled, is its relay's divergence too — the plugin keeps its
+  # own record and the relay carries the deepest one as a fact, so both
+  # surfaces agree without either re-reading the other.
   defp roll_up_plugins(observations) do
     issues =
       for {{:plugin, {ns, rid, plugin_id}}, facts} <- observations,
@@ -104,6 +105,7 @@ defmodule Flezha.Convergence.Probe.Judge do
   defp plugin_issue(facts) do
     cond do
       not is_nil(Map.get(facts, :down)) -> {:crashed, Map.get(facts, :down)}
+      disabled?(facts) -> nil
       match?({:unhealthy, _}, Map.get(facts, :probe)) -> Map.get(facts, :probe)
       not Map.get(facts, :running?, false) -> :not_running
       true -> nil
@@ -177,6 +179,7 @@ defmodule Flezha.Convergence.Probe.Judge do
     cond do
       not Map.get(facts, :subscribed?, false) -> {:degraded, :not_running}
       not is_nil(Map.get(facts, :down)) -> {:degraded, {:crashed, Map.get(facts, :down)}}
+      disabled?(facts) -> {:healthy, :disabled}
       true -> plugin_probe(Map.get(facts, :probe), Map.get(facts, :running?, false))
     end
   end
@@ -216,6 +219,11 @@ defmodule Flezha.Convergence.Probe.Judge do
       do: {:unknown, {:unobserved, :active_runners}},
       else: {:failed, :dead_runner}
   end
+
+  # A binding whose plugin the operator disabled is a pause, not a fault: it
+  # stays recorded not started for that reason until a plugin of its name is
+  # enabled again. A plugin missing or failing for any other reason is not.
+  defp disabled?(facts), do: match?({:unhealthy, {:plugin_not_found, _}}, Map.get(facts, :probe))
 
   # A plugin the loop has not probed at all is `unknown`; a prepared one is
   # healthy and its PHASE says it is not running; an uncertain probe is healthy

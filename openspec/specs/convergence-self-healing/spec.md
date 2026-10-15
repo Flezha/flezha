@@ -391,7 +391,7 @@ extension table, so that fail-open is observable rather than silent.
 
 ### Requirement: Plugin-degraded relays surface on /healthz and telemetry
 
-A declared plugin SHALL carry its own verdict record: `degraded` when it is not subscribed at all, when its owning process crashed, or when its provider self-reports unhealthy. A relay with at least one declared plugin that is not RUNNING — whichever of those it is, and including a plugin subscribed but left `prepared` by a failed activation — SHALL carry that divergence as its own `degraded` reason naming the plugin, so the relay surface and the plugin surface agree without either re-reading the other, and the snapshot's plugin-degraded set SHALL be derived from those records rather than kept as a second list. While any plugin record is `degraded`, `/healthz` SHALL report `degraded` with HTTP 200 and a reason that names `plugin_unhealthy` — degraded MUST NOT trigger a kubelet restart. The loop SHALL log plugin-health verdict transitions (a record's state changes, the degraded set changes membership, or it clears), not steady-state. A suspended steps instance — alive, unbound, its plugins released with its runner — SHALL NOT be plugin-diffed: the rehydrating bind replays its declared plugins, and until then there is nothing to heal.
+A declared plugin SHALL carry its own verdict record: `degraded` when it is not subscribed at all, when its owning process crashed, or when its provider self-reports unhealthy. A relay with at least one declared plugin that is not RUNNING — whichever of those it is, and including a plugin subscribed but left `prepared` by a failed activation — SHALL carry that divergence as its own `degraded` reason naming the plugin, so the relay surface and the plugin surface agree without either re-reading the other, and the snapshot's plugin-degraded set SHALL be derived from those records rather than kept as a second list. While any plugin record is `degraded`, `/healthz` SHALL report `degraded` with HTTP 200 and a reason that names `plugin_unhealthy` — degraded MUST NOT trigger a kubelet restart. The loop SHALL log plugin-health verdict transitions (a record's state changes, the degraded set changes membership, or it clears), not steady-state. A suspended steps instance — alive, unbound, its plugins released with its runner — SHALL NOT be plugin-diffed: the rehydrating bind replays its declared plugins, and until then there is nothing to heal. A binding whose plugin the operator disabled — recorded not started with `{:plugin_not_found, name}` — is a pause, not a divergence: its plugin record SHALL be `healthy` with reason `:disabled`, and it SHALL NOT degrade its relay or `/healthz`; a plugin missing or failing for any other reason SHALL still degrade both.
 
 #### Scenario: pluginless running relay is degraded, not healthy
 - **GIVEN** a running relay whose declared cspec lists plugins that are not subscribed
@@ -402,6 +402,12 @@ A declared plugin SHALL carry its own verdict record: `degraded` when it is not 
 - **GIVEN** a parked steps instance whose cspec declares plugins and whose extension table runs none
 - **WHEN** the Loop ticks
 - **THEN** no `missing_plugins` entry, no heal op and no degraded verdict SHALL be produced for it
+
+#### Scenario: a disabled plugin pauses its binding without degrading the relay
+- **GIVEN** a running relay with a binding whose plugin was disabled, and a second bound plugin that self-reports unhealthy
+- **WHEN** the Loop ticks before the second plugin is unhealthy, and again after
+- **THEN** the first tick SHALL judge the relay `healthy` and the disabled plugin's record `healthy` with reason `:disabled`
+- **AND** the second SHALL judge the relay `degraded` with a reason naming the unhealthy plugin
 
 #### Scenario: verdict clears after heal
 - **GIVEN** a plugin-degraded relay

@@ -146,7 +146,7 @@ $ flz plugin unbind writer --relay_id=my_echo
 ```
 
 ```output
-Plugin writer unbound from my_echo; it stays enabled.
+Plugin writer unbound from my_echo.
 ```
 
 ```sh

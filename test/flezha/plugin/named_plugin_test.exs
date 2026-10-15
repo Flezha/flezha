@@ -179,6 +179,24 @@ defmodule FlezhaTest.Plugin.NamedPluginTest do
       assert {:ok, []} = HubManager.relay_bindings(@namespace, op)
       assert "ws_keep" in enabled()
     end
+
+    test "unbind of a disabled plugin's binding does not call it enabled" do
+      op = start_relay("named_unbind_off_op")
+
+      {:ok, _} =
+        PluginManager.enable_plugin("off_sink", plugin("off_sink", FlezhaTest.SickProvider, %{}))
+
+      :ok = PluginManager.bind_plugin(@namespace, "off_sink", op, hooks: [{:on_output, []}])
+      {:ok, _} = PluginManager.disable_plugin(@namespace, "off_sink")
+
+      {{:ok, _}, out, _err} =
+        FlezhaTest.Helper.CliCapture.run(fn ->
+          door("PluginManager.unbind", "off_sink", %{"relay_id" => op})
+        end)
+
+      assert out == "Plugin off_sink unbound from #{op}.\n"
+      refute "off_sink" in enabled()
+    end
   end
 
   describe "a relay entry with old plugin rows" do

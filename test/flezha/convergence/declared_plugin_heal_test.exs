@@ -8,16 +8,20 @@ defmodule FlezhaTest.Convergence.DeclaredPluginHealTest do
   alias Flezha.Convergence.Loop
   alias Flezha.Convergence.Planner
   alias Flezha.Convergence.Snapshot, as: ConvergenceSnapshot
+  alias Flezha.Convergence.Verdict
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.HubManager
   alias Flezha.Service.PluginManager
+  alias Flezha.Service.Relay.Diagnose
   alias Flezha.State.TestHelpers
   alias FlezhaTest.Fixtures.RelayFixture
   alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.Helper.Telemetry
 
   use ExUnit.Case
+
+  import ExUnit.CaptureLog
 
   @temp_namespace "test_temp_namespace"
   @test_store_input_factory "store_input"
@@ -187,6 +191,52 @@ defmodule FlezhaTest.Convergence.DeclaredPluginHealTest do
       # guards against ticks well over a hundred times in the same window.
       ticks = count_ticks(loop, 0)
       assert ticks <= 15, "the loop ticked #{ticks} times in #{6 * tick_ms} ms"
+    end
+
+    test "is a pause: the relay reads healthy and diagnose names it as a note", %{relay_id: rid} do
+      [name] = disabled_bindings(rid, 1)
+      {:ok, _} = start_supervised({Loop, tick_ms: 60_000})
+      Loop.tick_now()
+
+      assert ConvergenceSnapshot.relay_health(@temp_namespace, rid) == :healthy
+      plugin = ConvergenceSnapshot.record({:plugin, {@temp_namespace, rid, name}})
+      assert {plugin.state, plugin.reason} == {:healthy, :disabled}
+
+      assert {:ok, %{verdict: :ok, findings: findings}} =
+               Diagnose.report(@temp_namespace, rid, true)
+
+      assert %{level: :note, message: message} =
+               Enum.find(findings, &(&1.code == "diagnose.plugin_disabled"))
+
+      assert message =~ "plugin '#{name}' bound to relay '#{rid}' is disabled"
+    end
+
+    test "does not hide a bound plugin that fails", %{relay_id: rid} do
+      [_off] = disabled_bindings(rid, 1)
+      sick = rid <> "_sick"
+      FlezhaTest.SickProvider.reset()
+      on_exit(&FlezhaTest.SickProvider.reset/0)
+      {:ok, "plugin enabled"} = PluginManager.enable_plugin(sick, sick_plugin(sick, rid))
+      {:ok, _} = start_supervised({Loop, tick_ms: 60_000})
+      Loop.tick_now()
+      assert ConvergenceSnapshot.relay_health(@temp_namespace, rid) == :healthy
+
+      on_exit(NodeTestHelper.override_log_level(:warning))
+
+      # A tick a declared fact requested may be the first to see the plugin
+      # unhealthy, so the capture opens before the plugin turns.
+      log =
+        capture_log([level: :warning], fn ->
+          FlezhaTest.SickProvider.set_health({:unhealthy, :test_sick})
+          Loop.tick_now()
+        end)
+
+      assert ConvergenceSnapshot.relay_health(@temp_namespace, rid) == :degraded
+
+      assert %Verdict{reason: {:plugin_unhealthy, ^sick, {:unhealthy, :test_sick}}} =
+               ConvergenceSnapshot.verdict(@temp_namespace, rid)
+
+      assert log =~ ~s([convergence] plugin-degraded relays ["#{rid}"])
     end
 
     test "enabling the plugin again brings the binding up without the loop", %{

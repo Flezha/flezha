@@ -48,6 +48,12 @@ dead letters SHALL be read only when the relay runs on the controller that answe
 - **WHEN** a Kafka consumer bound to the relay cannot reach its broker
 - **THEN** a `diagnose.plugin_unhealthy` problem names the plugin, its provider and the reason
 
+#### Scenario: A disabled plugin is a note
+
+- **WHEN** a relay bound to a plugin its operator disabled, and otherwise healthy, is diagnosed
+- **THEN** the verdict is `ok`, with `diagnose.healthy` and a `diagnose.plugin_disabled` note
+  saying the plugin is disabled and its guaranteed outputs are held
+
 #### Scenario: Asleep is not a problem
 
 - **WHEN** a session that sleeps is diagnosed

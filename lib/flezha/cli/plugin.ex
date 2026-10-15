@@ -38,7 +38,7 @@ defmodule Flezha.Service.Cli.Plugin do
 
   @doc "`flz plugin unbind`."
   def unbind(_unbound, [name, fields | _], _opts),
-    do: IO.puts("Plugin #{name} unbound from #{fields["relay_id"]}; it stays enabled.")
+    do: IO.puts("Plugin #{name} unbound from #{fields["relay_id"]}.")
 
   @doc "`flz plugin update`."
   def update(%{applied: applied, relays: relays}, [name | _], _opts) do

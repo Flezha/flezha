@@ -64,9 +64,9 @@ left it and the idle stop has passed, so the new connection opens before the old
 closes.
 
 Only `flz plugin disable <name>` turns a plugin off. It stops every running copy on every
-controller and leaves every binding on its relay. Each bound relay keeps running and
-reports `plugin_unhealthy` with `plugin.not_found` for that binding, and enabling a plugin
-of that name again brings the bindings up.
+controller and leaves every binding on its relay, paused. Each bound relay keeps running
+and reads healthy, its guaranteed outputs to that binding are held, and `flz relay diagnose`
+names the plugin as disabled; enabling a plugin of that name again brings the bindings up.
 
 ## A controller without the provider
 

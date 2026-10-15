@@ -217,15 +217,18 @@ A plugin with no running bound relay SHALL be listed `idle`.
 
 `flz plugin disable <name>` SHALL remove the plugin, stop every running copy on every
 controller, and leave every binding on its relay. A binding whose plugin is not enabled
-SHALL make the relay's health report `plugin_unhealthy` with `plugin.not_found`, and SHALL
-come up when a plugin of that name is enabled. Nothing else SHALL remove a plugin.
+SHALL be recorded not started with `plugin.not_found`, SHALL hold the relay's guaranteed
+outputs to it, and SHALL come up when a plugin of that name is enabled. It is a pause the
+operator chose, not a fault: it SHALL NOT degrade the relay's health, and `flz relay diagnose`
+SHALL name it in a `diagnose.plugin_disabled` note. Nothing else SHALL remove a plugin.
 
 #### Scenario: Disable with bound relays
 
 - **GIVEN** `trades` bound to `a` and `b`
 - **WHEN** `flz plugin disable trades --namespace n` runs
-- **THEN** no copy of `trades` SHALL run, `a` and `b` SHALL keep running, each SHALL report
-  `plugin.not_found` for `trades`, and enabling `trades` again SHALL bring both bindings up
+- **THEN** no copy of `trades` SHALL run, `a` and `b` SHALL keep running, each SHALL record
+  `plugin.not_found` for `trades` and read healthy, and enabling `trades` again SHALL bring
+  both bindings up
 
 ### Requirement: A missing provider SHALL leave the relay running
 

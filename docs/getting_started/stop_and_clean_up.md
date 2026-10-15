@@ -40,8 +40,9 @@ Relay has been stopped
 Relay stopped successfully.
 ```
 
-Disabling a plugin takes its bindings with it, which `flz plugin unbind` does
-not: an unbound plugin stays enabled. Nothing is left in the namespace:
+Disabling a plugin stops it and pauses its bindings: a relay still bound to it
+reads healthy, and `flz relay diagnose` names the plugin as disabled. An unbound
+plugin stays enabled. With the relay stopped, nothing is left in the namespace:
 
 ```sh
 $ ./bin/flz plugin list

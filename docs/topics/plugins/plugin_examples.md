@@ -165,7 +165,7 @@ $ flz plugin unbind reader --relay_id=my_echo
 ```
 
 ```output
-Plugin reader unbound from my_echo; it stays enabled.
+Plugin reader unbound from my_echo.
 ```
 
 ```sh

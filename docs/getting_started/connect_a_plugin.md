@@ -154,7 +154,7 @@ $ ./bin/flz plugin unbind writer --relay_id=my_echo
 ```
 
 ```output
-Plugin writer unbound from my_echo; it stays enabled.
+Plugin writer unbound from my_echo.
 ```
 
 Until it is bound again, what `my_echo` sends out is not written to the file.
