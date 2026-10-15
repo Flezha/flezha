@@ -11,7 +11,6 @@ defmodule FlezhaTest.Plugin.ControllerPluginMultinodeTest do
   alias Flezha.Plugin
   alias Flezha.Plugin.Provider.HookWebhook
   alias Flezha.Service.HubManager
-  alias Flezha.Service.RelayManager
   alias Flezha.Service.PluginManager
   alias Flezha.State.TestHelpers
   alias FlezhaTest.Fixtures.RelayFixture
@@ -33,15 +32,7 @@ defmodule FlezhaTest.Plugin.ControllerPluginMultinodeTest do
         &PluginManager.disable_plugin(@namespace, &1)
       )
 
-      for {pid, peer} <- [{pid1, p1}, {pid2, p2}] do
-        try do
-          NodeTestHelper.stop_peer_node(pid, peer)
-        catch
-          _, _ -> :ok
-        end
-      end
-
-      RelayManager.stop_all_relays(@namespace)
+      NodeTestHelper.stop_peers_and_relays([{pid1, p1}, {pid2, p2}], @namespace)
     end)
 
     for peer <- [p1, p2] do

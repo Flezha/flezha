@@ -15,6 +15,7 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
   alias Flezha.Runner.StreamChannel
   alias Flezha.Service.EventManager
   alias Flezha.Service.PortPilot
+  alias Flezha.Service.RelayManager
 
   @doc """
   The name this run's node is distributed under: `<base>@<host>` from the two
@@ -184,6 +185,30 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
       tolerate(fn -> :erpc.call(peer_node, :application, :stop, [:flezha]) end)
       tolerate(fn -> :peer.stop(peer_pid) end)
     end
+  end
+
+  @doc """
+  A teardown: stop `peers` (`[{peer_pid, node}]`), then every relay in
+  `namespace`. A peer is linked to the test process, so it is already going
+  down when a teardown runs, and the hub places its children here only after
+  dropping it from the cluster. The stop waits until every child the hub
+  registers runs on this node: a relay stopped earlier is placed again and
+  moves onto the next test's peers.
+  """
+  def stop_peers_and_relays(peers, namespace) do
+    for {pid, peer} <- peers, do: stop_peer_node(pid, peer)
+    hub_id = Identificator.hub(namespace)
+
+    wait_until(
+      fn ->
+        Enum.all?(ProcessHub.process_list(hub_id, :global), fn {_id, node_pids} ->
+          Keyword.keys(node_pids) -- [node()] == []
+        end)
+      end,
+      30_000
+    )
+
+    RelayManager.stop_all_relays(namespace)
   end
 
   @doc """

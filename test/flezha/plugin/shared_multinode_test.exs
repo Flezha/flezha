@@ -38,15 +38,7 @@ defmodule FlezhaTest.Plugin.SharedMultinodeTest do
     {pid2, p2} = NodeTestHelper.start_peer_node(:share_p2, app_env: app_env)
 
     on_exit(fn ->
-      for {pid, peer} <- [{pid1, p1}, {pid2, p2}] do
-        try do
-          NodeTestHelper.stop_peer_node(pid, peer)
-        catch
-          _, _ -> :ok
-        end
-      end
-
-      RelayManager.stop_all_relays(@namespace)
+      NodeTestHelper.stop_peers_and_relays([{pid1, p1}, {pid2, p2}], @namespace)
     end)
 
     for peer <- [p1, p2] do
