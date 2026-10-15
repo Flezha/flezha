@@ -712,6 +712,8 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
           # A word the enable does not read is refused, so the screen names none.
           refute screen =~ "--trigger"
           refute screen =~ "--position"
+          # A note to provider authors is not for the user reading the screen.
+          refute screen =~ "Override this help"
 
           for {name, row} <- module.__provider__().options do
             internal = Keyword.get(row, :internal, false)

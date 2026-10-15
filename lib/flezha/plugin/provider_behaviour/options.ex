@@ -284,8 +284,6 @@ defmodule Flezha.Plugin.ProviderBehaviour.Options do
           --relay_id <id>        Target relay ID
           --hook=<name>              Call the plugin at this hook; repeatable
           --<name>.<key>=<value>     A sub-option of the hook <name>
-
-      Override this help/1 function in your provider module for custom help text.
       """
   end
 
