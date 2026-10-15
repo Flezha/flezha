@@ -8,29 +8,9 @@
 # change: the reconnect-ring cap was one option away, because `Hold.new/1`
 # already took `:cap` and only the Relay had no way to state it.
 #
-# The four here split in two. Two want a value and have no seam to state it at;
-# two are ABOUT the variable, which is a different test and not an exemption
-# from the rule. Neither kind is a licence to write one: a test that wants a
-# small quantity states it where the thing is built.
-
-# `FLEZHA_SOCKET_FILES_PATH` and `FLEZHA_DATA_HEARTBEAT_MS`. Both are read by a
-# real runner this module starts, and neither reader takes the quantity from
-# its caller: the socket directory is resolved inside `Flezha.SDK.Transport`
-# and the heartbeat cadence inside the control unit's own timer. Giving either
-# a caller-stated seam is a production change, filed as W-053.
-test/flezha/sdk/transport_modes_test.exs
-
-# `FLEZHA_RUNNER_ID_PATH`. `Flezha.SDK.PersistentId.stable_id/2` reads it and
-# memoises the answer, and the two tests here are ABOUT that path: a writable
-# one and an unwritable one. Passing the path in would change the function
-# under test. Filed as W-053.
-test/flezha/sdk/sdk_unit_test.exs
-
-# `FLEZHA_MAILBOX_CAPACITY`, through `Keys.env_name/1`. The subject is the SDK
-# READER: that it parses the variable and falls back on a value that is not one.
-# There is nothing to state instead, because the variable is what is being
-# tested. It is exposed all the same, and the module is `async: true`, so the
-# window is wider here than anywhere else on this list.
+# The one left is ABOUT the variables, a different test and not an exemption
+# from the rule. It is no licence to write one: a test that wants a small
+# quantity states it where the thing is built.
 
 # Every documented variable at once, built from `Keys.rows/0`. The subject is
 # the boot translation: that each variable reaches the key its row names, in

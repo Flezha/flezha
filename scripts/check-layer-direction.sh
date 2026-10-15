@@ -166,6 +166,11 @@ MODULE_LAYERS = {
     # `whoami/1` answers which of the whole surface's operations a caller holds
     "Flezha.Service.Namespace": 6,
     "Flezha.Service.Steps": 5,
+    # the cell-frame codec the runner channels decode with, naming only the
+    # record header beside it
+    "Flezha.State.Wire": 1,
+    # a compile-time slot table that names nothing; transport counts with it
+    "Flezha.Observability.CounterTable": 0,
 }
 
 DEFMODULE = re.compile(r"^\s*defmodule\s+([A-Z][\w.]*)\s+do", re.M)
@@ -382,10 +387,10 @@ defmodule Flezha.Relay.Mover do
   # Flezha.Service.Comment is a comment and not an edge either.
   @doc "So is Flezha.Service.OneLiner, written without a heredoc."
   alias Flezha.Service.Manager
-  alias Flezha.State.{Paths, Wire}
+  alias Flezha.State.{Paths, Store}
   alias Flezha.Transport.Server
 
-  def go, do: {Manager, Paths, Wire, Server, Flezha.Service.NamedProcess}
+  def go, do: {Manager, Paths, Store, Server, Flezha.Service.NamedProcess}
 end
 ''',
         # The higher layer naming a lower one is the correct direction.
@@ -409,7 +414,7 @@ defmodule Flezha.Service.Dlq do
   def go, do: Flezha.Service.Manager
 end
 """,
-        "lib/flezha/state/wire.ex": "defmodule Flezha.State.Wire do\nend\n",
+        "lib/flezha/state/store.ex": "defmodule Flezha.State.Store do\nend\n",
         "lib/flezha/http/client.ex": "defmodule Flezha.Http.Client do\nend\n",
         "lib/flezha/http/listener.ex": "defmodule Flezha.Http.Listener do\nend\n",
         "lib/flezha/transport/server.ex": "defmodule Flezha.Transport.Server do\nend\n",
@@ -419,7 +424,7 @@ end
         "lib/flezha/loose.ex -> (no directory owns it)",
         "lib/flezha/relay/mover.ex -> Flezha.Service.Manager",
         "lib/flezha/relay/mover.ex -> Flezha.State.Paths",
-        "lib/flezha/relay/mover.ex -> Flezha.State.Wire",
+        "lib/flezha/relay/mover.ex -> Flezha.State.Store",
         # No file defines it, so its name places it — a registered process name
         # is still a reach into the service layer.
         "lib/flezha/relay/mover.ex -> Flezha.Service.NamedProcess",
