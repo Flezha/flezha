@@ -149,8 +149,9 @@ gate --in "$P" --stderr-ok sdk-python-install bash -c '.venv/bin/python -m pip i
 gate --in "$P" sdk-python-ruff .venv/bin/ruff check .
 gate --in "$P" sdk-python-ruff-format .venv/bin/ruff format --check .
 gate --in "$P" sdk-python-pytest env PYTHONPATH=src:tests PATH="$P/.venv/bin:$PATH" .venv/bin/python -m pytest tests examples/starter -q
-gate --in "$P" sdk-python-pyright env PYTHONPATH=src .venv/bin/pyright --pythonpath .venv/bin/python src/flezha
-gate --in "$P" sdk-python-pyright-wrong-edge bash -c '! PYTHONPATH=src .venv/bin/pyright --pythonpath .venv/bin/python tests/typing_fixtures/wrong_edge.py >/dev/null'
+gate --in "$P" sdk-python-pyright env PYTHONPATH=src .venv/bin/pyright --pythonpath .venv/bin/python src/flezha tests
+gate --in "$P" sdk-python-pyright-wrong-edge bash -c '! PYTHONPATH=src .venv/bin/pyright --pythonpath .venv/bin/python --project tests/typing_fixtures tests/typing_fixtures/wrong_edge.py >/dev/null'
+gate --in "$P" sdk-python-pyright-wrong-emit bash -c '! PYTHONPATH=src .venv/bin/pyright --pythonpath .venv/bin/python --project tests/typing_fixtures tests/typing_fixtures/wrong_emit.py >/dev/null'
 gate --in "$P" sdk-python-pyright-well-typed env PYTHONPATH=src .venv/bin/pyright --pythonpath .venv/bin/python tests/typing_fixtures/well_typed.py
 smoke sdk-python-smoke "$P" .venv/bin/python test_app/runner.py smoke
 
