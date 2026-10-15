@@ -216,6 +216,30 @@ defmodule FlezhaTest.Relay.RelayCallsTest do
       refute_receive {:channel_got, _, _}, 100
     end
 
+    # A start over an instance whose input log already holds entries leaves its
+    # call for the start's own `:registry_runner_set` call, which no restore asks.
+    test "a call a start left held is taken by that start's call, once", %{inst: inst} do
+      call = relay_call(%{created: true})
+      held = {"turn", %{"channel" => "in"}, call}
+      host = start_supervised!({Host, Host.state(inst, channel: :fake_channel, seed: held)})
+
+      assert {:ok, "ex_1"} = GenServer.call(host, {:registry_runner_set, false})
+      assert_receive {:channel_got, ^inst, {"turn", %{"flz.msg_id" => "c1"}}}
+
+      assert {:ok, "ex_1"} = GenServer.call(host, {:registry_runner_set, false})
+      refute_receive {:channel_got, _, _}, 100
+    end
+
+    test "a held call the instance refuses fails the start with that refusal", %{inst: inst} do
+      held = {"turn", %{}, relay_call(%{created: true, factory: "agent"})}
+      host = start_supervised!({Host, Host.state(inst, channel: :fake_channel, seed: held)})
+
+      assert {:error, %Error{code: "relay.factory_mismatch"}} =
+               GenServer.call(host, {:registry_runner_set, false})
+
+      refute_receive {:channel_got, _, _}, 100
+    end
+
     test "a dead-lettered call answers its relay caller call.failed, row or not", %{
       inst: inst
     } do

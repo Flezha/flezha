@@ -121,7 +121,11 @@ defmodule Flezha.Schedule.JobTest do
       start_supervised!({Job, Helper.entry(%{text: ~s({"day":"today"}), channel: "requests"})})
 
       assert_receive {:spawned, opts}, 2_000
-      assert Keyword.get(opts, :seed_input) == {~s({"day":"today"}), %{"channel" => "requests"}}
+
+      assert {~s({"day":"today"}), %{"channel" => "requests", "flz.msg_id" => id}} =
+               Keyword.get(opts, :seed_input)
+
+      assert id =~ ~r/^job@\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:00Z$/
     end
 
     test "an entry stored without a message fires an instance that waits for one" do
@@ -150,7 +154,7 @@ defmodule Flezha.Schedule.JobTest do
       assert {:ok, %{relay_id: "job@manual-1"}} = Job.spawn_instance(entry, "job@manual-1")
 
       assert_receive {:spawned, opts}, 2_000
-      assert Keyword.get(opts, :seed_input) == {"hello", %{}}
+      assert Keyword.get(opts, :seed_input) == {"hello", %{"flz.msg_id" => "job@manual-1"}}
     end
 
     test "a due slot fires and re-arms" do

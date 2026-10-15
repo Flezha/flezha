@@ -40,6 +40,7 @@ defmodule FlezhaTest.System.RelayCallE2ETest do
     only: [
       await_outbox_drained: 1,
       cleanup: 3,
+      force_fresh_rebind: 2,
       kill_overwatch: 2,
       os_pid: 1,
       sigkill: 1,
@@ -50,6 +51,7 @@ defmodule FlezhaTest.System.RelayCallE2ETest do
   alias Flezha.Relay.Builder
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.{Listener, RelayManager}
+  alias Flezha.Service.RelayManager.Teardown
   alias Flezha.State.{InputLog, TaskJournal}
   alias FlezhaTest.Fixtures.RelayFixture
   alias FlezhaTest.Helper.NodeTestHelper
@@ -236,6 +238,82 @@ defmodule FlezhaTest.System.RelayCallE2ETest do
              "#{anna}:again=ok:answer:#{anna}:again@#{anna}/false"
   end
 
+  # A session whose durable state outlives its instance, as after a controller
+  # restart whose reconcile has not started it: the next call starts it, and
+  # its request is journaled and answered, not dropped as a restart. A restart
+  # of the instance that call started takes the request no second time.
+  test "a call starting a session restored from its durable state is journaled and answered",
+       ctx do
+    boot(ctx)
+    gateway = start(ctx.namespace, "call_gateway", :flow, unique("gateway"), ctx.collector)
+    anna = session("anna")
+
+    send_in(ctx.namespace, gateway, "#{anna}:hello")
+    assert lines(ctx.collector, 1) == ["#{anna}:hello=ok:answer:#{anna}:hello@#{anna}/true"]
+
+    assert :ok = Teardown.hub_stop_children(ctx.namespace, [anna], 5_000)
+    refute RelayManager.exist?(ctx.namespace, anna)
+    assert InputLog.last_offset(anna) == 0
+
+    send_in(ctx.namespace, gateway, "#{anna}:again")
+
+    assert lines(ctx.collector, 2) |> List.last() ==
+             "#{anna}:again=ok:answer:#{anna}:again@#{anna}/true"
+
+    assert InputLog.last_offset(anna) == 1
+
+    assert restarted_log_end(ctx.namespace, anna) == 1
+    assert settled_lines(ctx.collector, [gateway, anna]) == 2
+    assert committed_turns(anna) == 2
+  end
+
+  # The same over a start carrying a message (`flz relay start --text`): it has
+  # no identity of its own, so only the start's own call may take it.
+  test "a start with a message over a session's durable state takes it once", ctx do
+    boot(ctx)
+    anna = session("anna")
+
+    start_with = fn text ->
+      assert {:ok, _} =
+               RelayManager.start_relay(ctx.namespace, %Builder{
+                 id: anna,
+                 factory_id: "call_agent",
+                 run: :steps,
+                 opts: [seed_input: {text, %{"channel" => "turn"}}]
+               })
+    end
+
+    start_with.("hello")
+    assert NodeTestHelper.wait_until(fn -> committed_turns(anna) == 1 end, 30_000)
+    assert :ok = Teardown.hub_stop_children(ctx.namespace, [anna], 5_000)
+
+    start_with.("again")
+    assert NodeTestHelper.wait_until(fn -> committed_turns(anna) == 2 end, 30_000)
+    assert InputLog.last_offset(anna) == 1
+
+    assert restarted_log_end(ctx.namespace, anna) == 1
+  end
+
+  # The same over a session asleep when its instance went: the start finds it
+  # suspended, and the call it carries wakes it.
+  test "a call starting an asleep session restored from its durable state is answered", ctx do
+    boot(ctx, [{"FLEZHA_FIXTURE_SLEEP_AFTER_MS", "700"}])
+    gateway = start(ctx.namespace, "call_gateway", :flow, unique("gateway"), ctx.collector)
+    anna = session("anna")
+
+    send_in(ctx.namespace, gateway, "#{anna}:hello")
+    assert lines(ctx.collector, 1) == ["#{anna}:hello=ok:answer:#{anna}:hello@#{anna}/true"]
+    assert NodeTestHelper.wait_until(fn -> suspended?(ctx.namespace, anna) end, 30_000)
+    assert :ok = Teardown.hub_stop_children(ctx.namespace, [anna], 5_000)
+
+    send_in(ctx.namespace, gateway, "#{anna}:again")
+
+    assert lines(ctx.collector, 2) |> List.last() ==
+             "#{anna}:again=ok:answer:#{anna}:again@#{anna}/true"
+
+    assert InputLog.last_offset(anna) == 1
+  end
+
   describe "a durable pair's crash drills" do
     test "the runner killed while a turn runs: one outcome and one committed turn", ctx do
       {port, runner} = boot(ctx)
@@ -286,6 +364,27 @@ defmodule FlezhaTest.System.RelayCallE2ETest do
       assert settled_lines(ctx.collector, [gateway, anna]) == 2
       assert committed_turns(anna) == 2
     end
+  end
+
+  # The session's last journaled offset once a replacement of its killed
+  # Overwatch, started from the same start, has bound and its log has answered
+  # every append it asked for.
+  defp restarted_log_end(namespace, session) do
+    log =
+      capture_log(fn ->
+        force_fresh_rebind(namespace, session)
+        {:ok, replacement} = RelayManager.get_relay_pid(namespace, session)
+
+        assert NodeTestHelper.wait_until(
+                 fn ->
+                   :gen_server.reqids_size(:sys.get_state(replacement).journal_reqids) == 0
+                 end,
+                 5_000
+               )
+      end)
+
+    assert log =~ ~s(Child "#{session}" of Supervisor)
+    InputLog.last_offset(session)
   end
 
   # The session's input log holds its `offset`th request.

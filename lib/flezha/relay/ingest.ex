@@ -128,6 +128,54 @@ defmodule Flezha.Relay.Ingest do
     end
   end
 
+  @doc """
+  The input a start carries (a spawn's payload or call, or the message
+  `flz relay start --text` and a schedule carry), judged inside the bind
+  continue, which is what makes it first: no other message in the mailbox, a
+  concurrent requester's delivery included, can be ingested ahead of it. A
+  durable instance whose input log already holds entries was either restored
+  (a restart, a move, a wake), whose start already gave its input, or started
+  anew over that state; only a start asks `:registry_runner_set`, so the input
+  is held for that call (`seed/2`).
+  """
+  @spec seed_or_hold(Overwatch.t(), Flezha.Relay.Builder.t()) :: Overwatch.t()
+  def seed_or_hold(%Overwatch{init_error: nil} = state, relay) do
+    case Keyword.get(relay.opts, :seed_input) do
+      {message, metadata} when is_binary(message) and is_map(metadata) ->
+        seed = {message, metadata, Keyword.get(relay.opts, :seed_call)}
+
+        if first_input?(state),
+          do: state |> seed(seed) |> elem(1),
+          else: %Overwatch{state | seed: seed}
+
+      _ ->
+        state
+    end
+  end
+
+  def seed_or_hold(%Overwatch{} = state, _relay), do: state
+
+  @doc """
+  Take the input a start carries, `{message, metadata, call}` (`nil` for
+  none): a call through `take_call/5`, so its answer reaches its caller, and
+  any other input as a cast. Answers `{:ok, state}`, or the refusal of a call
+  this instance does not take.
+  """
+  @spec seed(Overwatch.t(), {binary(), map(), map() | nil} | nil) ::
+          {:ok | {:error, Flezha.Error.t()}, Overwatch.t()}
+  def seed(%Overwatch{} = state, nil), do: {:ok, state}
+
+  def seed(%Overwatch{} = state, {message, metadata, nil}),
+    do: {:ok, state |> confirming_ingest(message, metadata, :cast) |> elem(1)}
+
+  def seed(%Overwatch{} = state, {message, metadata, call}) do
+    case take_call(state, message, metadata, call, nil) do
+      {:reply, {:error, %Flezha.Error{}} = refused, state} -> {refused, state}
+      {:reply, _taken, state} -> {:ok, state}
+      {:noreply, state} -> {:ok, state}
+    end
+  end
+
   defp unadmitted(state, callee, message, metadata, deadline, error) do
     Calls.announce(callee, nil, message, metadata, deadline, error)
     {:reply, {:error, error}, state}
@@ -465,7 +513,7 @@ defmodule Flezha.Relay.Ingest do
   @doc """
   Whether the next input is the instance's first: always for an instance
   without a durable steps relay's log, and for one whose log has journaled
-  nothing. A log that holds records makes a bind a restart, not a spawn.
+  nothing. A log that holds records makes the instance one restored from them.
   """
   @spec first_input?(Overwatch.t()) :: boolean()
   def first_input?(%Overwatch{durable_steps: true} = state),

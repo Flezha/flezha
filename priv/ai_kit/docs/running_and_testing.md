@@ -54,7 +54,10 @@ it. Without `--id` the controller generates one from the factory id, such as
 > A start without `--id` that is run again because its answer was lost starts
 > a second relay. A second flow relay runs until it is stopped. Passing
 > `--id` prevents it: a start of an id that is already running changes nothing
-> and prints `my_echo is already running, left untouched`.
+> and prints `my_echo is already running, left untouched`. An id that is not
+> running but kept its durable state starts again, and a `--text` it carries is
+> taken again: that message has no identity of its own, as a relay call's
+> request and a schedule's message have, to tell a retry from a new one.
 
 **Starting a live id again changes nothing, quietly.** The options are not
 compared, so editing the command to add `--partitions 3` and running it again

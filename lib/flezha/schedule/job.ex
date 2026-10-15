@@ -80,14 +80,19 @@ defmodule Flezha.Schedule.Job do
   end
 
   # The stored first message rides the bind as a spawn's payload does, on the
-  # entry channel the entry names or the first declared one.
+  # entry channel the entry names or the first declared one. The slot's
+  # instance id is its message id, so a retry of the slot over the input an
+  # earlier attempt journaled is absorbed by the input log.
   defp start(entry, instance_id, plugins, attempt) do
     opts = if plugins == [], do: [], else: [bindings: plugins]
 
     opts =
       case Builder.seed_input(Map.get(entry, :text), Map.get(entry, :channel)) do
-        {:ok, nil} -> opts
-        {:ok, seed} -> [{:seed_input, seed} | opts]
+        {:ok, nil} ->
+          opts
+
+        {:ok, {text, metadata}} ->
+          [{:seed_input, {text, Map.put(metadata, "flz.msg_id", instance_id)}} | opts]
       end
 
     case RelayManager.start_steps(

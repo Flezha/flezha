@@ -752,8 +752,9 @@ names no channel, so it enters the first declared entry channel, is decoded by t
 codec or parser, and runs the chain that channel starts, whichever way the relay loops. Every
 SDK encodes it the way an output with no codec encodes a value, the rule `ctx.complete` uses:
 bytes as they are, a string as UTF-8, anything else as JSON, so a `text` or `json` entry reads
-it. A durable instance whose input log already holds records is a restart, not a spawn, and is
-not given the payload again.
+it. A spawn over the durable state an earlier run of that id left (its input log already holds
+records) takes the payload after that state, not ahead of it, and a restart of a durable instance
+never takes it again; an instance without a durable input log restarts empty and takes it again.
 
 The factory is looked up cluster-wide: a controller with no runner for it routes the request to
 one that has one, so `relay.factory_unknown` means no runner anywhere serves it.

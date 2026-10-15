@@ -137,7 +137,10 @@ defmodule Flezha.Relay.Overwatch do
     # Whether a `:once` or `:chained` steps instance has taken its one
     # input in this process, so a later call is refused; a durable instance
     # also asks its input log (`Ingest.first_input?/1`), which outlives it.
-    fed: false
+    fed: false,
+    # A start's input held for the start's own `:registry_runner_set` call
+    # (`Ingest.seed_or_hold/2`), because the input log already holds entries.
+    seed: nil
   ]
 
   @type t :: %__MODULE__{}
@@ -362,39 +365,10 @@ defmodule Flezha.Relay.Overwatch do
     |> seed_input(relay)
   end
 
-  # The instance's first input (a tasklet-requested spawn's payload, or the
-  # message `flz relay start --text` and a schedule carry), ingested with
-  # its metadata (the entry channel it names) inside the bind continue, which
-  # is what makes it first: no other message in the mailbox — including a
-  # concurrent requester's delivery — can be ingested ahead of it. A durable
-  # instance whose inbox already holds entries is a restart rather than a
-  # spawn; its payload is journaled, so re-seeding it would duplicate.
-  defp seed_input({:noreply, %__MODULE__{} = state} = result, relay) do
-    case Keyword.get(relay.opts, :seed_input) do
-      {message, metadata}
-      when is_binary(message) and is_map(metadata) and is_nil(state.init_error) ->
-        if Ingest.first_input?(state),
-          do: {:noreply, seed(state, message, metadata, Keyword.get(relay.opts, :seed_call))},
-          else: result
-
-      _ ->
-        result
-    end
-  end
-
-  defp seed_input(result, _relay), do: result
-
-  # A call that started this instance: its request is the first input, taken
-  # through the call entry point so its answer reaches the caller.
-  defp seed(state, message, metadata, nil),
-    do: state |> Ingest.confirming_ingest(message, metadata, :cast) |> elem(1)
-
-  defp seed(state, message, metadata, call) do
-    case Ingest.take_call(state, message, metadata, call, nil) do
-      {:noreply, state} -> state
-      {:reply, _verdict, state} -> state
-    end
-  end
+  # The input a start carries, taken in the bind continue or held for the
+  # start's own `:registry_runner_set` call (`Ingest.seed_or_hold/2`).
+  defp seed_input(result, relay),
+    do: put_elem(result, 1, Ingest.seed_or_hold(elem(result, 1), relay))
 
   @impl true
   def terminate(reason, state), do: Migration.terminate(state, reason)
@@ -416,9 +390,17 @@ defmodule Flezha.Relay.Overwatch do
   # handle_call
   # ---------------------------------------------------------------
 
+  # A start's held input is taken here; a call it carries that this instance
+  # refuses fails the start with that refusal, so its caller is told.
   def handle_call({:registry_runner_set, announce?}, _from, %__MODULE__{init_error: nil} = state) do
-    Lifecycle.started(state, announce?)
-    {:reply, {:ok, state.runner_id}, state}
+    case Ingest.seed(%__MODULE__{state | seed: nil}, state.seed) do
+      {:ok, state} ->
+        Lifecycle.started(state, announce?)
+        {:reply, {:ok, state.runner_id}, state}
+
+      {refused, state} ->
+        {:reply, refused, state}
+    end
   end
 
   def handle_call({:registry_runner_set, _}, _from, %__MODULE__{init_error: reason} = state) do

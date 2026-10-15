@@ -340,7 +340,8 @@ defmodule Flezha.Service.RelayManager.Init do
     # returns; the relay's `handle_continue(:bind_runner, …)`
     # surfaces a plugin-chain failure via the `init_error` field
     # on Overwatch state — `:registry_runner_set` returns
-    # `{:error, _}` instead of crashing the GenServer. The
+    # `{:error, _}` instead of crashing the GenServer, as it does for a
+    # call the start carried that the instance refuses. The
     # `:exit` catch covers older failure modes (timeout, kill).
     # Started, then exited cleanly before we could read its binding — a
     # run-once steps relay that already completed, or a concurrent
