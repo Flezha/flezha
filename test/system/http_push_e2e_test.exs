@@ -153,6 +153,9 @@ defmodule FlezhaTest.System.HttpPushE2ETest do
         send_inputs(first, namespace, ["k5:a"])
         assert_receive {:request, _, _, "k5=a"}, 30_000
         assert wait_until(fn -> Store.list(first) != [] end, 30_000)
+        # The park confirms the output only after logging it, so a drained
+        # outbox means the log line is in the capture.
+        assert await_outbox_drained(first)
       end)
 
     assert log =~ "parked undeliverable output"
@@ -161,7 +164,5 @@ defmodule FlezhaTest.System.HttpPushE2ETest do
 
     assert %{"code" => "http_push.rejected", "details" => %{"status" => 422}} =
              Jason.decode!(entry["error"])
-
-    assert await_outbox_drained(first)
   end
 end
