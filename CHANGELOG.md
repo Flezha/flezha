@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Fixed: a Kafka producer no longer holds every output while its broker is down
+
+Under the default `drop_nothing`, a record that found its partition's queue full waited in a
+second, uncapped queue, so a producer whose broker was unreachable kept every output in memory.
+A dispatch now waits while the producer's queue is full, at most `queue_block_timeout_ms`, and the
+record then overflows; a delivery-guaranteed one is parked with the reason `queue_full`.
+
 ### Fixed: a remote flow Cell keeps its inputs while its first ship after a restart fails
 
 A `durable: remote` flow Cell whose first ship after a controller restart kept failing reported no

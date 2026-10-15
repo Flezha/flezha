@@ -45,7 +45,7 @@ the durability trade-offs, and how broker clients are shared.
 | `max_batch_bytes` | int | `1048576` | no | Largest record batch produced, in encoded bytes |
 | `queue_max` | int | `10000` | no | Records held before the policy applies |
 | `queue_overflow` | enum | `:drop_nothing` | no | What a full queue does: block, drop the oldest, or drop the newest |
-| `queue_block_timeout_ms` | int | `5000` | no | How long an enqueue parks on a full queue before it is refused |
+| `queue_block_timeout_ms` | int | `5000` | no | How long a dispatch waits on a full queue before the record overflows, or an enqueue before it is refused |
 | `idempotent` | bool | `true` | no | Use the broker's idempotent producer session |
 | `max_in_flight` | int | none | no | Batches in flight; derived as 5 with `idempotent`, else 1 |
 | `auto_create_topic` | bool | `true` | no | Create the topic when missing |
@@ -241,11 +241,9 @@ Passwords are redacted in the persisted and returned opts.
 so the window holds up to `:max_in_flight × :max_batch_bytes` beyond the queue: 5 MiB per
 partition at the defaults. Each partition the worker produces to has a queue of its own.
 
-Under the default `:drop_nothing`, `queue_max` bounds the queue and not the worker: a record
-arriving on a full queue waits in a second, uncapped queue until room frees. A synchronous
-caller leaves that queue after `:queue_block_timeout_ms`; a chain-dispatched record has no
-deadline and waits for as long as the broker is unreachable. Pick `:drop_oldest` or
-`:drop_newest` where a hard memory ceiling matters more than the records.
+Under the default `:drop_nothing`, a dispatch waits while its worker has a full queue, at
+most `:queue_block_timeout_ms`, and its record then overflows. Records already on their way
+when a queue fills are admitted past `queue_max`, so the bound is exceeded by those alone.
 
 ### `:max_in_flight`
 
@@ -258,10 +256,11 @@ order without idempotence, so a wider window without `:idempotent` is refused.
 
 ### `:queue_overflow`
 
-- **`:drop_nothing`** (default): back-pressure instead of loss. A sync `enqueue/4` caller waits
-  out `:queue_block_timeout_ms`; a chain-dispatched record waits for room without blocking
-  the process that enqueued it, so the pressure lands on the outbox flush that produced
-  it rather than on ingest.
+- **`:drop_nothing`** (default): the dispatch waits until there is room, at most
+  `:queue_block_timeout_ms`, and the record then overflows. The dispatch waits only while a
+  queue of the worker is full; records already on their way when it fills are admitted past
+  the bound. A sync `enqueue/4` caller waits the same budget and is then answered
+  `{:error, {:queue_full, :timeout}}`.
 - **`:drop_oldest`**: keeps recency: the oldest queued record is evicted. Suits market
   data where stale prices are useless.
 - **`:drop_newest`**: keeps order: new arrivals are rejected until space frees. Suits
@@ -271,11 +270,12 @@ Any other value is refused at preparation (`{:error, "Invalid value for queue_ov
 naming the offered value) so a misspelled policy is a plugin that does not enable rather
 than one that serves until its queue fills.
 
-Every drop is counted in `stats/1`'s `dropped_total` and emits
-`[:flezha, :plugin, :kafka, :overflowed]`. Dropping a delivery-guaranteed record is
-alarm-grade: it logs at `error`, tags the event `guaranteed: true`, and leaves the record's
-outbox cursor where it is, so the loss shows as an outbox that stops draining until the
-entry is re-driven.
+Every drop and overflow is counted in `stats/1`'s `dropped_total` and emits
+`[:flezha, :plugin, :kafka, :overflowed]`. A delivery-guaranteed record that overflows under
+`:drop_nothing` is parked with the reason `queue_full`. Dropping one under `:drop_oldest` or
+`:drop_newest` is alarm-grade: it logs at `error`, tags the event `guaranteed: true`, and
+leaves the record's outbox cursor where it is, so the loss shows as an outbox that stops
+draining until the entry is re-driven.
 
 ### Delivery confirmation
 
@@ -288,15 +288,17 @@ dead-letter store under its own `(cell, seq, epoch)` identity (`Outbox.park/4`, 
 record because a park carries the payload), so the cursor advances past a recorded,
 replayable loss rather than a silent one. Records without the `flz.ack` token settle nothing.
 
-## Chain dispatch is non-blocking
+## Chain dispatch does not wait on the broker
 
 `on_input/2` and `on_output/2` return `{:ok, ctx}` in O(1) relative to broker latency:
 they hold a delivery-guaranteed output, `cast` to the plugin's one `ProducerWorker` per
-topic and return. The bounded queue, not the host's mailbox, is the back-pressure boundary.
+topic and return. The bounded queue, not the host's mailbox, is the back-pressure boundary:
+under `:drop_nothing` the dispatch waits while the worker has a full queue, at most
+`:queue_block_timeout_ms`.
 
 | Function | Caller | Return | Failure surfacing |
 | --- | --- | --- | --- |
-| `ProducerWorker.cast_enqueue/3` | chain plugins | `:ok` immediately | telemetry; outbox park for guaranteed records |
+| `ProducerWorker.cast_enqueue/3` | chain plugins | `:ok` once handed over, or once a full queue was waited out | telemetry; outbox park for guaranteed records |
 | `ProducerWorker.enqueue/4` | tests, tooling, explicit-flush sites | `:ok` after the broker ack, or `{:error, _}` | return value (default `timeout: 35_000`) |
 
 A chain-admitted record that ultimately fails emits one
@@ -369,7 +371,7 @@ A quick Logger handler for installations without a metrics stack:
 
 ```elixir
 {:ok, stats} = FlezhaKafka.Producer.stats(plugin_id)
-# %{queue_depth: 0, in_flight: 0, dropped_total: 4, last_error: nil,
+# %{queue_depth: 0, in_flight: 0, waiting: 0, dropped_total: 4, last_error: nil,
 #   consecutive_failures: 0, topic: "trades",
 #   partitions: %{0 => %{queue_depth: 0, in_flight: 0}}}
 ```
@@ -378,7 +380,8 @@ A quick Logger handler for installations without a metrics stack:
 `consecutive_failures` and `last_error` are the partition that has failed the most batches in
 a row (or the broker client's own trouble), and it returns `{:error, :no_producer}` when no
 worker is registered for the plugin id. A partition count the worker cannot read counts as a
-failed batch.
+failed batch. `waiting` counts the records held back by a full queue: dispatches and
+`enqueue/4` callers waiting for room.
 
 A partition's idempotent producer session opens on its first record, with a synchronous
 `InitProducerId` bounded by `metadata_refresh_timeout_ms`; one that fails leaves the
