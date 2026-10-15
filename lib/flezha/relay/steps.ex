@@ -152,7 +152,8 @@ defmodule Flezha.Service.Steps do
     row: &persisted_cell_row/1,
     as: located,
     args: [cell: @cell, target: [type: :string, doc: "A WAL seq, or an ISO 8601 time."]] do
-    with {:ok, result} <- TimeTravel.query(located.cell_id, target(target)) do
+    with {:ok, at} <- target(target, "target"),
+         {:ok, result} <- TimeTravel.query(located.cell_id, at) do
       {:ok,
        %{
          cell: cell,
@@ -384,19 +385,30 @@ defmodule Flezha.Service.Steps do
 
   @doc false
   # A `--from` or a time-travel target: a WAL seq, or an ISO 8601 time.
-  @spec target(String.t()) :: {:seq, integer()} | {:timestamp, integer()}
-  def target(written) do
+  # `option` names the argument in a refusal.
+  @spec target(String.t(), String.t()) ::
+          {:ok, {:seq, non_neg_integer()} | {:timestamp, integer()}} | {:error, Flezha.Error.t()}
+  def target(written, option) do
     case Integer.parse(written) do
+      {n, ""} when n >= 0 ->
+        {:ok, {:seq, n}}
+
       {n, ""} ->
-        {:seq, n}
+        {:error, Flezha.Error.new("usage.negative", option: option, value: n)}
 
       _ ->
         case DateTime.from_iso8601(written) do
-          {:ok, dt, _} -> {:timestamp, DateTime.to_unix(dt)}
-          _ -> {:seq, 0}
+          {:ok, dt, _} -> {:ok, {:timestamp, DateTime.to_unix(dt)}}
+          _ -> invalid_number(option, written)
         end
     end
   end
+
+  @doc false
+  @spec invalid_number(String.t(), term()) :: {:error, Flezha.Error.t()}
+  def invalid_number(option, written),
+    do:
+      {:error, Flezha.Error.new("usage.invalid_number", option: option, value: inspect(written))}
 
   defp persisted_cell_row([path | _]), do: persisted_cell(path)
 

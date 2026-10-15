@@ -257,7 +257,7 @@ defmodule Flezha.Service.Relay do
       case Keyword.get(opts, :limit) do
         nil -> {:ok, read}
         n when n in 0..0xFFFF_FFFF -> {:ok, Map.put(read, :limit, n)}
-        written -> invalid_number("limit", written)
+        written -> Steps.invalid_number("limit", written)
       end
     end
   end
@@ -563,11 +563,7 @@ defmodule Flezha.Service.Relay do
   defp deadline(deadline_ms) when is_integer(deadline_ms) and deadline_ms > 0,
     do: {:ok, deadline_ms}
 
-  defp deadline(written), do: invalid_number("deadline_ms", written)
-
-  defp invalid_number(option, written),
-    do:
-      {:error, Flezha.Error.new("usage.invalid_number", option: option, value: inspect(written))}
+  defp deadline(written), do: Steps.invalid_number("deadline_ms", written)
 
   @doc """
   Hand every frame `relay_id` emits (with its parts and dead-letter
@@ -642,9 +638,10 @@ defmodule Flezha.Service.Relay do
     ] do
     {relay_class, _tasklet, _key} = cell_id = located.cell_id
 
-    with :ok <- replayable(relay_class, path),
+    with {:ok, at} <- Steps.target(from, "from"),
+         :ok <- replayable(relay_class, path),
          {:ok, overwatch} <- overwatch(relay_class),
-         {:ok, %{terminal_seq: seq}} <- TimeTravel.query(cell_id, Steps.target(from)) do
+         {:ok, %{terminal_seq: seq}} <- TimeTravel.query(cell_id, at) do
       Replay.replay_from(overwatch, cell_id, seq)
       {:ok, %{cell: path, from_seq: seq}}
     end

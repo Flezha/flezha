@@ -907,3 +907,68 @@ defmodule Flezha.Service.Cli.ReplayTest do
     assert WalWriter.outbox_epoch(writer) == 0, "no epoch was bumped"
   end
 end
+
+defmodule Flezha.Service.Cli.TargetTest do
+  @moduledoc """
+  A `flz state at` target or a `flz relay replay --from` that is neither a
+  WAL seq nor an ISO 8601 time, or is a negative seq, is refused as a bad
+  argument before anything is read or rewound, never read as seq 0.
+  """
+  # async: false: the state tree is node-global.
+  use FlezhaTest.Case, fixtures: [:tmp_app_data, :state_tree], async: false
+
+  import ExUnit.CaptureIO
+
+  alias Flezha.Service.{Cli, Steps}
+  alias Flezha.State.{TestHelpers, WalWriter}
+
+  @garbage ["garbage", "12x", "", "seq:5", "2026-13-45T99:00:00Z"]
+
+  test "the parser keeps a seq and a time" do
+    assert Steps.target("7", "target") == {:ok, {:seq, 7}}
+    assert Steps.target("0", "target") == {:ok, {:seq, 0}}
+    assert {:ok, {:timestamp, _}} = Steps.target("2026-10-04T12:00:00Z", "target")
+  end
+
+  test "the parser refuses text and a negative seq, naming the argument" do
+    for written <- @garbage do
+      assert {:error, %Flezha.Error{code: "usage.invalid_number", details: details}} =
+               Steps.target(written, "from")
+
+      assert details["option"] == "from", inspect(details)
+    end
+
+    assert {:error, %Flezha.Error{code: "usage.negative", message: message}} =
+             Steps.target("-5", "target")
+
+    assert message == "target must be zero or more, got -5"
+  end
+
+  for written <- @garbage ++ ["-5"] do
+    test "flz state at <cell> #{inspect(written)} is refused" do
+      class = written_cell("tt")
+      stderr = refusal("Steps.time_travel", ["#{class}/task/key", unquote(written)])
+      assert stderr =~ ~r/target (must be zero or more|value)/, inspect(stderr)
+    end
+
+    test "flz relay replay --from #{inspect(written)} is refused before anything is rewound" do
+      class = written_cell("rp")
+      stderr = refusal("Relay.replay", ["default", "#{class}/task/key", unquote(written)])
+      assert stderr =~ ~r/from (must be zero or more|value)/, inspect(stderr)
+    end
+  end
+
+  defp written_cell(prefix) do
+    class = "#{prefix}_#{System.unique_integer([:positive])}"
+    {:ok, writer} = Flezha.State.Supervisor.find_or_start({class, "task", "key"})
+    for n <- 0..3, do: :ok = WalWriter.append(writer, n, TestHelpers.stub_header(), "x")
+    class
+  end
+
+  # The stderr of a CLI call refused as a bad argument: exit 2, nothing answered.
+  defp refusal(verb, args) do
+    capture_io(:stderr, fn ->
+      assert catch_exit(Cli.call(verb, Jason.encode!(args), [])) == {:shutdown, 2}
+    end)
+  end
+end
