@@ -286,6 +286,15 @@ defmodule Flezha.Relay.Lifecycle do
     {:ok, cancel_wake_timer(%{state | suspended: false})}
   end
 
+  @doc """
+  The class stops running on this node, the counterpart of the adoption a bind
+  records (`DurabilityTier.release_relay/2`).
+  """
+  @spec release_lineage(binary(), :moved | :stopped) :: :ok
+  defdelegate release_lineage(relay_class, departure),
+    to: DurabilityTier,
+    as: :release_relay
+
   # A refused restore is not a cold start: the durable state never reached the
   # runner, so the relay parks rather than folding new inputs onto empty
   # state. Rides the existing parked-error contract, so `bind/3` needs no new

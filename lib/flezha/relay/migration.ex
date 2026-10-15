@@ -355,7 +355,8 @@ defmodule Flezha.Relay.Migration do
   Process teardown — the `:process` walk of the shutdown plan, deliberate stops
   included: the hub stop path terminates the Overwatch through its supervisor,
   so everything a stop owes runs here, as the steps this module declares.
-  Evicts the in-memory class entry; the durable sidecar stays for the
+  Evicts the in-memory class entry and, after the final flush, this node's
+  adoption of the class's remote lineage; the durable sidecar stays for the
   process-less retention sweep over any retained finished-job state.
   """
   @spec terminate(Overwatch.t(), term()) :: :ok
@@ -383,6 +384,7 @@ defmodule Flezha.Relay.Migration do
       %{scope: :process, order: 20, name: :class_registry, run: &class_registry_step/2},
       %{scope: :process, order: 30, name: :control_unit, run: &control_unit_step/2},
       %{scope: :process, order: 35, name: :writers, run: &writers_step/2},
+      %{scope: :process, order: 37, name: :lineage, run: &lineage_step/2},
       %{scope: :process, order: 40, name: :plugin_table, run: &plugin_table_step/2}
     ]
   end
@@ -437,14 +439,24 @@ defmodule Flezha.Relay.Migration do
     end
   end
 
+  # After the writers' final flush, so the last turns of a relay stopped here
+  # still ship under the adoption that entitles them.
+  defp lineage_step({state, _reason}, _budget),
+    do: Lifecycle.release_lineage(Overwatch.relay_class(state), departure(state))
+
   # A deliberate stop removed the relay's declared entry before it
   # terminated: a shared plugin it was the last one on stops at once. A move or
   # a restart leaves the entry, and the plugin waits out its idle stop.
   defp plugin_table_step({state, reason}, _budget) do
     unless is_nil(state.runner_id), do: Plugins.fire_on_terminate(state, reason)
-    declared? = Enum.any?(HubManager.declared_relays(state.namespace), &(&1.id == state.id))
-    _ = Table.teardown_all(state.extensions, if(declared?, do: :idle, else: :now))
+    idle_or_now = if departure(state) == :moved, do: :idle, else: :now
+    _ = Table.teardown_all(state.extensions, idle_or_now)
     :ok
+  end
+
+  defp departure(state) do
+    declared? = Enum.any?(HubManager.declared_relays(state.namespace), &(&1.id == state.id))
+    if declared?, do: :moved, else: :stopped
   end
 
   @doc """

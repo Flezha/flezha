@@ -107,16 +107,22 @@ defmodule Flezha.State.DurabilityTier do
   relay now.
   """
   @spec adopt_relay(binary()) :: :ok
-  def adopt_relay(state_key) when is_binary(state_key) do
-    if enabled?() do
-      case GenServer.whereis(Shipper) do
-        nil -> :ok
-        pid -> GenServer.cast(pid, {:adopt, state_key})
-      end
-    end
+  def adopt_relay(state_key) when is_binary(state_key),
+    do: if(enabled?(), do: Shipper.adopt(state_key), else: :ok)
 
-    :ok
-  end
+  @doc """
+  `state_key`'s relay no longer runs on this node, so the adoption is withdrawn:
+  the node may extend a lineage it still holds, and takes none over until the
+  relay binds here again (`adopt_relay/1`).
+
+  A relay that `:moved` is released at once: its new node pulled the files, and
+  a bid from here could only fence it. One `:stopped` here first ships every
+  reference of the class and keeps the adoption until none is owed any more,
+  since those ships are the only way its last turns reach the backend.
+  """
+  @spec release_relay(binary(), :moved | :stopped) :: :ok
+  def release_relay(state_key, departure) when is_binary(state_key),
+    do: if(enabled?(), do: Shipper.release(state_key, departure), else: :ok)
 
   @doc "Backstop sweep period — the bound on how stale a quiet cell's remote copy gets."
   @spec ship_interval_ms() :: pos_integer()

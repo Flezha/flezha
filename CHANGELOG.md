@@ -10,6 +10,14 @@ cut inputs this Cell still needed. It now reports the offset its remote copy hol
 or below the flush cursor. A sleeping `durable: remote` class seeds its Cells' floors with the same
 offset instead of counting records that were never shipped.
 
+### Fixed: a controller a relay left no longer rolls back the copy shipped after it
+
+A controller that once ran a relay kept its right to take the relay's remote copy over after
+the relay moved on. Its periodic ship of a Cell it had never shipped then replaced the copy the
+controller now running the relay had shipped with its own older one, and the relay's return
+kept those older files, losing the turns taken elsewhere. That right now ends when the relay
+leaves the controller and comes back when it binds there again.
+
 ### Fixed: one plugin name in two namespaces runs two workers
 
 A built-in provider's worker was registered under the plugin's id alone, so a plugin of one name

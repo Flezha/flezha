@@ -42,6 +42,7 @@ defmodule Flezha.State.DurabilityTier.Shipper do
             manifests: %{},
             writer: nil,
             adopted: MapSet.new(),
+            releasing: MapSet.new(),
             timers: %{}
 
   # ---------- API ----------
@@ -52,12 +53,18 @@ defmodule Flezha.State.DurabilityTier.Shipper do
 
   @doc "Queue `ref` for shipping. Never blocks; a no-op when the tier is not running."
   @spec enqueue(Manifest.ref()) :: :ok
-  def enqueue(ref) do
-    case GenServer.whereis(__MODULE__) do
-      nil -> :ok
-      pid -> GenServer.cast(pid, {:enqueue, ref})
-    end
-  end
+  def enqueue(ref), do: cast({:enqueue, ref})
+
+  @doc "This node now runs `state_key`'s relay (`DurabilityTier.adopt_relay/1`)."
+  @spec adopt(binary()) :: :ok
+  def adopt(state_key), do: cast({:adopt, state_key})
+
+  @doc "`state_key`'s relay left this node (`DurabilityTier.release_relay/2`)."
+  @spec release(binary(), :moved | :stopped) :: :ok
+  def release(state_key, departure), do: cast({:release, state_key, departure})
+
+  # `GenServer.cast/2` answers `:ok` whether or not the tier is running.
+  defp cast(request), do: GenServer.cast(__MODULE__, request)
 
   # Every synchronous entry point answers the same way when the tier is not
   # running, and none of them may bring down its caller.
@@ -86,12 +93,7 @@ defmodule Flezha.State.DurabilityTier.Shipper do
   its RPO clock stops, as it does when an asynchronous ship finds it superseded.
   """
   @spec end_wait(Manifest.ref()) :: :ok
-  def end_wait(ref) do
-    case GenServer.whereis(__MODULE__) do
-      nil -> :ok
-      pid -> GenServer.cast(pid, {:end_wait, ref})
-    end
-  end
+  def end_wait(ref), do: cast({:end_wait, ref})
 
   @doc "Run one orphan-blob collection synchronously. Used by the sweep and by tests."
   @spec gc() :: {:ok, non_neg_integer()} | {:error, term()}
@@ -175,10 +177,25 @@ defmodule Flezha.State.DurabilityTier.Shipper do
     state = %{
       state
       | adopted: MapSet.put(state.adopted, state_key),
+        releasing: MapSet.delete(state.releasing, state_key),
         manifests: Map.drop(state.manifests, refs)
     }
 
     {:noreply, Enum.reduce(refs, state, &push(&2, &1))}
+  end
+
+  # The relay left this node. A reference it never shipped has no cached entry
+  # to fail an extend against, so a standing adoption would let the next ship
+  # bid above the writer that runs the relay now and roll its cut back.
+  def handle_cast({:release, state_key, :moved}, state),
+    do: {:noreply, withdraw(state, state_key)}
+
+  # Stopped here, its last turns have no other way to the backend: every
+  # reference ships once more, and the adoption ends when none is owed.
+  def handle_cast({:release, state_key, :stopped}, state) do
+    refs = DurabilityTier.refs_of_state_key(state_key)
+    state = %{state | releasing: MapSet.put(state.releasing, state_key)}
+    {:noreply, refs |> Enum.reduce(state, &push(&2, &1)) |> settle_release(state_key)}
   end
 
   @impl true
@@ -303,10 +320,33 @@ defmodule Flezha.State.DurabilityTier.Shipper do
     # uploaded, so a node that lost a lineage stops spending on it immediately.
     # This is an economy, not the guard — the cache can be stale, and the
     # conditional write below is what actually decides.
-    case entitled?(state, ref) do
-      {:no, holder} -> {{:error, {:superseded, holder}}, supersede(state, ref, holder)}
-      :yes -> ship_and_record(state, ref)
-    end
+    {result, state} =
+      case entitled?(state, ref) do
+        {:no, holder} -> {{:error, {:superseded, holder}}, supersede(state, ref, holder)}
+        :yes -> ship_and_record(state, ref)
+      end
+
+    {result, settle_release(state, Artifact.state_key(ref))}
+  end
+
+  # A reference is owed while it has unshipped progress and nobody else holds
+  # its lineage; a failing one stays owed through its retries.
+  defp settle_release(state, state_key) do
+    if MapSet.member?(state.releasing, state_key) and
+         not Enum.any?(DurabilityTier.refs_of_state_key(state_key), &owed?/1),
+       do: withdraw(state, state_key),
+       else: state
+  end
+
+  defp owed?(ref),
+    do: match?(%{pending_since_ms: at, superseded_by: nil} when at != nil, status_of(ref))
+
+  defp withdraw(state, state_key) do
+    %{
+      state
+      | adopted: MapSet.delete(state.adopted, state_key),
+        releasing: MapSet.delete(state.releasing, state_key)
+    }
   end
 
   defp ship_and_record(state, ref) do
@@ -333,8 +373,8 @@ defmodule Flezha.State.DurabilityTier.Shipper do
     end
   end
 
-  # A writer extends its own lineage always, and takes one over only when this
-  # node has adopted the relay.
+  # A writer extends its own lineage always, and takes one over only while this
+  # node runs the relay: adopted at its bind, released when it leaves.
   #
   # An unclaimed lineage needs no adoption: two nodes first-shipping it both bid
   # `{:claim, 1}` against a stored 0, and the strict compare-and-set already

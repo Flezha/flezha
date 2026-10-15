@@ -21,11 +21,14 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
 
   alias Flezha.Layout.Table, as: Layout
   alias Flezha.Dlq.Store, as: DlqStore
+  alias Flezha.Relay.Migration
+  alias Flezha.Service.HubManager
+  alias Flezha.Shutdown
   alias Flezha.State.DurabilityTier
   alias Flezha.State.DurabilityTier.{Artifact, Hydrator, Manifest, Shipper}
   alias Flezha.State.{Adoption, Paths, TestHelpers}
   alias FlezhaTest.Helper.DurabilityBackendStub, as: Stub
-  alias FlezhaTest.Helper.NodeTestHelper
+  alias FlezhaTest.Helper.{NodeTestHelper, OverwatchHost}
 
   @peer_writer "peer-controller"
 
@@ -420,8 +423,8 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
     end
 
     # fails when: a claim refused to a node that once adopted the relay is
-    # re-bid instead of recorded as lost. Nothing withdraws an adoption when the
-    # relay moves on, so that node would fence the writer that runs it now.
+    # re-bid instead of recorded as lost. Its adoption stands until its teardown
+    # releases it, so that node would fence the writer that runs it now.
     test "a node the relay moved away from stays superseded though it once adopted", ctx do
       ref = {:cell, ctx.cell_id}
 
@@ -435,6 +438,93 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
       TestHelpers.append_wal(ctx.cell_id, 4..5)
       assert {:error, {:superseded, @peer_writer}} = Shipper.ship_now(ref)
       assert %{owner: @peer_writer, claim: 2} = Stub.stored_manifest(ref)
+    end
+
+    # fails when: an adoption outlives the relay on this node, so a reference
+    # it never shipped, which it has no entry cached for, is bid above the
+    # writer that runs the relay now: the remote cut goes back to this node's
+    # older files and the relay's return keeps them.
+    test "a node the relay left never bids on a reference it never shipped", ctx do
+      k1 = {:cell, ctx.cell_id}
+      k2_id = {ctx.class, "task", "k2"}
+      k2 = {:cell, k2_id}
+
+      TestHelpers.write_wal(ctx.cell_id, 0..3)
+      {:ok, _} = start_supervised(Shipper)
+      Shipper.adopt(ctx.class)
+      :ok = Shipper.sweep_now()
+      assert %{claim: 1} = Stub.stored_manifest(k1)
+      TestHelpers.write_wal(k2_id, 0..3)
+
+      relay_leaves_here(ctx.class, :moved)
+      peer = start_peer_node(ctx.peer_base)
+
+      newer =
+        with_root(ctx.peer_base, fn ->
+          TestHelpers.write_wal(ctx.cell_id, 0..3)
+          TestHelpers.write_wal(k2_id, 0..3)
+          TestHelpers.append_wal(k2_id, 4..5, "peer")
+          GenServer.cast(peer, {:adopt, ctx.class})
+          assert :ok = GenServer.call(peer, :sweep_now)
+          File.read!(Paths.wal_path(k2_id))
+        end)
+
+      :ok = Shipper.sweep_now()
+      assert %{owner: @peer_writer, claim: 1} = shipped = Stub.stored_manifest(k2)
+      assert Manifest.shipped_through(shipped) == 5
+      assert %{superseded_by: @peer_writer} = status_of(k2)
+
+      # The relay comes back through the bind: the newer copy, then the lineage.
+      assert :ok = Adoption.adopt_newest(ctx.class, nil)
+      assert File.read!(Paths.wal_path(k2_id)) == newer
+      Shipper.adopt(ctx.class)
+      assert :ok = Shipper.ship_now(k2)
+      assert %{owner: owner, claim: 2} = shipped = Stub.stored_manifest(k2)
+      assert owner == this_writer()
+      assert Manifest.shipped_through(shipped) == 5
+    end
+
+    # fails when: a relay stopped here is released before its last ships land,
+    # so a reference whose takeover claim had not landed is recorded as lost to
+    # the writer it moved from, and the turns it took here never reach the
+    # backend.
+    test "a relay stopped here ships its last turns before it is released", ctx do
+      ref = {:cell, ctx.cell_id}
+      k2_id = {ctx.class, "task", "k2"}
+      peer = start_peer_node(ctx.peer_base)
+
+      with_root(ctx.peer_base, fn ->
+        TestHelpers.write_wal(ctx.cell_id, 0..3)
+        GenServer.cast(peer, {:adopt, ctx.class})
+        assert :ok = GenServer.call(peer, :sweep_now)
+      end)
+
+      # The relay moved here and took turns; its takeover claim has not landed.
+      {:ok, _} = start_supervised(Shipper)
+      Shipper.adopt(ctx.class)
+      _ = :sys.get_state(Shipper)
+      TestHelpers.write_wal(ctx.cell_id, 0..5)
+
+      relay_leaves_here(ctx.class, :stopped)
+      :ok = Shipper.sweep_now()
+
+      assert %{owner: owner, claim: 2} = shipped = Stub.stored_manifest(ref)
+      assert owner == this_writer()
+      assert Manifest.shipped_through(shipped) == 5
+      assert %{superseded_by: nil, pending_since_ms: nil} = status_of(ref)
+
+      # Nothing is owed any more, so the release is complete: a reference
+      # written after it is not bid above the writer that ships it next.
+      TestHelpers.write_wal(k2_id, 0..3)
+
+      with_root(ctx.peer_base, fn ->
+        TestHelpers.write_wal(k2_id, 0..5)
+        GenServer.cast(peer, {:adopt, ctx.class})
+        assert :ok = GenServer.call(peer, :sweep_now)
+      end)
+
+      :ok = Shipper.sweep_now()
+      assert %{owner: @peer_writer, claim: 1} = Stub.stored_manifest({:cell, k2_id})
     end
 
     # fails when: hydration skips every reference with local files, so the node
@@ -576,6 +666,16 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
   end
 
   defp this_writer(), do: to_string(node())
+
+  # The relay's Overwatch ends on this node: the teardown step that releases
+  # its lineage. A move keeps the relay's declared entry, a stop removes it.
+  defp relay_leaves_here(class, departure) do
+    declared = if departure == :moved, do: [%{id: class, factory_id: "chat"}], else: []
+    Mimic.stub(HubManager, :declared_relays, fn _namespace -> declared end)
+    overwatch = OverwatchHost.state(class)
+    steps = Enum.filter(Migration.shutdown_steps(), &(&1.name == :lineage))
+    assert {:ok, _report} = Shutdown.run(:process, {overwatch, :shutdown}, 5_000, steps)
+  end
 
   # The parked set as the store lays it out — an index line plus a payload blob.
   # Written directly: the case is about who may ship the directory, not about

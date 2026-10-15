@@ -124,7 +124,7 @@ Every manifest write SHALL be applied conditionally against a claim counter held
 
 The fencing token SHALL NOT be any value that travels with the local state it protects. The WAL-owner epoch does travel — it is copied when state is transferred between controllers and restored verbatim by hydration — and therefore SHALL NOT be used as the guard; it remains in the manifest as the supersession fact recovery reads.
 
-Taking over a reference's lineage SHALL require that the controller has adopted the relay, not merely that it holds local state for it: state transfer copies rather than moves, so a controller that has lost a relay still holds its files. Losing a claim SHALL be reported as a routine handover rather than an alarm, and SHALL NOT leave the reference counted as having unshipped progress.
+Taking over a reference's lineage SHALL require that the relay runs on the controller now, adopted when it binds there and released when it leaves, not merely that the controller holds local state for it or once ran it. A relay that moves away SHALL be released at once; one stopped on the controller SHALL be released after its writers' final flush, once every reference of it that has unshipped progress has shipped or been claimed by another writer: state transfer copies rather than moves, so a controller that has lost a relay still holds its files. Losing a claim SHALL be reported as a routine handover rather than an alarm, and SHALL NOT leave the reference counted as having unshipped progress.
 
 #### Scenario: Split-brain claimant is fenced
 - **WHEN** two controllers both attempt to ship manifests for the same cell and one does not hold the claim
@@ -133,6 +133,14 @@ Taking over a reference's lineage SHALL require that the controller has adopted 
 #### Scenario: A controller that lost a relay cannot take its lineage back
 - **WHEN** a relay migrates to another controller, which adopts it and ships, while the source controller still holds every local file
 - **THEN** the source controller's backstop sweep does not reclaim the lineage, and the manifest continues to name the adopting controller
+
+#### Scenario: A relay stopped on a controller ships its last turns first
+- **WHEN** a relay is stopped on the controller it moved to before that controller's claim on a reference landed
+- **THEN** the controller still claims the reference and ships its last turns, and is released once nothing of the relay is owed
+
+#### Scenario: A controller the relay left cannot claim a reference it never shipped
+- **WHEN** a relay leaves a controller that ran it, which holds a reference it never shipped, and the controller the relay moved to ships that reference
+- **THEN** the left controller's backstop sweep does not claim the reference, and the manifest continues to name the controller the relay moved to
 
 #### Scenario: A controller the relay moves back to ships again
 - **WHEN** a relay moves back to a controller that shipped its lineage before the relay moved away, and the other controller has since claimed it
