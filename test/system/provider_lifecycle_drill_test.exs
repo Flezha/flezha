@@ -55,7 +55,8 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
 
   # One row per provider: the options an enable needs, and what stands in for
   # its upstream. `:none` is a provider with no upstream at all, which is not
-  # the same as a missing fixture and is why the two are spelled apart.
+  # the same as a missing fixture and is why the two are spelled apart. A
+  # source feeds `input`, the one entry channel the drill relay announces.
   defp fixtures(ctx) do
     %{
       Provider.StdOut => {:none, %{}},
@@ -71,10 +72,10 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
            heartbeat_interval: 60_000
          }},
       Provider.HttpPoll =>
-        {:tcp_origin, %{url: ctx.origin_url, channel: "drill", interval_ms: 60_000}},
+        {:tcp_origin, %{url: ctx.origin_url, channel: "input", interval_ms: 60_000}},
       Provider.HttpPush => {:tcp_origin, %{url: ctx.origin_url, channel: "drill"}},
       Provider.HookWebhook => {:tcp_origin, %{url: ctx.origin_url}},
-      Provider.File.Source => {:file, %{path: "drill_source.ndjson", channel: "drill"}},
+      Provider.File.Source => {:file, %{path: "drill_source.ndjson", channel: "input"}},
       Provider.File.Sink => {:file, %{path: "drill_sink.ndjson"}},
       Provider.Websocket => {:websocket, %{uri: ctx.ws_uri, idle_timeout_ms: 0}},
       Provider.RelayForward => {:second_relay, %{target_relay_id: ctx.target_id}},
@@ -91,7 +92,7 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
            port: 1,
            table: "drill",
            id_column: "id",
-           channel: "drill"
+           channel: "input"
          }},
       # The example plugin package, loaded in setup: a package's row is driven
       # like a first-party one.
@@ -123,6 +124,8 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
     # The forward's destination: a second relay in the same namespace, which
     # is the only shape that provider accepts.
     target_id = start_relay(namespace, "drill_target")
+    # Two entry channels, so two socket plugins can each feed their own.
+    ws_relay_id = start_relay(namespace, "drill_ws", "merged_input")
 
     on_exit(fn -> stop_namespace(namespace) end)
 
@@ -149,6 +152,7 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
       sink_name: sink_name,
       relay_id: relay_id,
       target_id: target_id,
+      ws_relay_id: ws_relay_id,
       origin_url: "http://127.0.0.1:1/drill",
       ws_uri: "ws://127.0.0.1:1/drill",
       stamp_path: Path.join(file_root, "stamped.txt")
@@ -238,14 +242,15 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
   # decides, and delivering a frame that names a channel to that channel is the
   # runner's, pinned in `flz_core/src/routing_tests.rs`.
   test "each websocket plugin feeds the channel its own option names", ctx do
+    ctx = %{ctx | relay_id: ctx.ws_relay_id}
+
     rows = [
-      {%{channel: "feed_a"}, :on_interval, "feed_a", nil},
-      {%{channel: "feed_b"}, :on_interval, "feed_b", nil},
-      {%{channel_in: "requests", channel_out: "responses"}, :on_output, "requests",
-       ["responses"]},
+      {%{channel: "ticks"}, :on_interval, "ticks", nil},
+      {%{channel: "quotes"}, :on_interval, "quotes", nil},
+      {%{channel_in: "ticks", channel_out: "responses"}, :on_output, "ticks", ["responses"]},
       # The user's own comma-separated spelling, through the real verb: one
       # filter naming two channels, resolved to the set the dispatch reads.
-      {%{channel_in: "requests", channel_out: "alerts,audit"}, :on_output, "requests",
+      {%{channel_in: "quotes", channel_out: "alerts,audit"}, :on_output, "quotes",
        ["alerts", "audit"]}
     ]
 
@@ -285,12 +290,12 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
     end
   end
 
-  defp start_relay(namespace, label) do
+  defp start_relay(namespace, label, factory_id \\ "do_nothing") do
     id = "#{label}_#{System.unique_integer([:positive])}"
 
     builder = %Flezha.Relay.Builder{
       id: id,
-      factory_id: "do_nothing",
+      factory_id: factory_id,
       init_values: %{}
     }
 
