@@ -121,7 +121,7 @@ defmodule FlezhaTest.Plugin.NamedPluginTest do
       {:ok, _} =
         PluginManager.enable_plugin(
           "in",
-          plugin("in", FileSource, %{path: "named_in.txt", channel: "in"})
+          plugin("in", FileSource, %{path: "named_in.txt", channel: "input"})
         )
 
       :ok = PluginManager.bind_plugin(@namespace, "in", a, [])
@@ -138,7 +138,7 @@ defmodule FlezhaTest.Plugin.NamedPluginTest do
       {:ok, _} =
         PluginManager.enable_plugin(
           "race_in",
-          plugin("race_in", FileSource, %{path: "named_race.txt", channel: "in"})
+          plugin("race_in", FileSource, %{path: "named_race.txt", channel: "input"})
         )
 
       # Each bind reads its relay's bindings after its check: held open
@@ -252,7 +252,7 @@ defmodule FlezhaTest.Plugin.NamedPluginTest do
       {:ok, _} =
         PluginManager.enable_plugin(
           "cli_in",
-          plugin("cli_in", FileSource, %{path: "cli_in.txt", channel: "in"})
+          plugin("cli_in", FileSource, %{path: "cli_in.txt", channel: "input"})
         )
 
       :ok = PluginManager.bind_plugin(@namespace, "cli_in", a)

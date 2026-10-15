@@ -470,7 +470,6 @@ defmodule FlezhaTest.Plugin.SharedTest do
       )
 
     trades(server, %{
-      channel: "in",
       subscription_items: ["SOL-USD", "BTC-USD", "ETH-USD"],
       subscribe_template: ~s({"op":"sub","items":{{items}}}),
       unsubscribe_template: ~s({"op":"unsub","items":{{items}}}),
@@ -478,7 +477,7 @@ defmodule FlezhaTest.Plugin.SharedTest do
     })
 
     :ok = PluginManager.bind_plugin(@namespace, "trades", a)
-    :ok = PluginManager.bind_plugin(@namespace, "trades", group)
+    :ok = PluginManager.bind_plugin(@namespace, "trades", group, channel: "in")
 
     subscribed =
       for _ <- 1..3 do
