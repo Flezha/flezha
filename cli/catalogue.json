@@ -576,7 +576,7 @@
     },
     {
       "name": "Namespace.delete",
-      "doc": "Delete the namespace `name` and the quota counters keyed on it.",
+      "doc": "Delete the namespace `name` and the quota counters keyed on it, refused while any relay or runner is still attached to it, naming them.",
       "action": "authz.namespace_delete",
       "remote": false,
       "stream": false,
