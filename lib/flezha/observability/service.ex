@@ -18,7 +18,9 @@ defmodule Flezha.Service.Observability do
 
   use Flezha.AuthZ.Verb
 
-  @source [type: :atom, doc: "A registered observability source."]
+  # Taken as text so the service, not the door, refuses an unknown source:
+  # it names the registered ones and mints no atom.
+  @source [type: :string, doc: "A registered observability source."]
 
   alias Flezha.AuthZ
   alias Flezha.Config
@@ -37,13 +39,13 @@ defmodule Flezha.Service.Observability do
   # ---------- Subscriptions ----------
 
   @doc "Subscribe the calling process to the live signals of `source`."
-  @spec subscribe(atom(), caller_context()) :: :ok | {:error, term()}
-  verb subscribe(source, caller_context) when is_atom(source),
+  @spec subscribe(atom() | String.t(), caller_context()) :: :ok | {:error, term()}
+  verb subscribe(source, caller_context) when is_atom(source) or is_binary(source),
     verb: :observability_subscribe,
     stream: true,
     args: [source: @source] do
     with :ok <- check_enabled(),
-         {:ok, _} <- registered(source),
+         {:ok, source} <- registered(source),
          do: Observability.subscribe(source)
   end
 
@@ -54,11 +56,13 @@ defmodule Flezha.Service.Observability do
   never has to reach past the service API to release what it took through it.
   Authorized as `subscribe/2` is: the two are one capability.
   """
-  @spec unsubscribe(atom(), caller_context()) :: :ok | {:error, term()}
-  verb unsubscribe(source, caller_context) when is_atom(source),
+  @spec unsubscribe(atom() | String.t(), caller_context()) :: :ok | {:error, term()}
+  verb unsubscribe(source, caller_context) when is_atom(source) or is_binary(source),
     verb: :observability_unsubscribe,
     args: [source: @source] do
-    with :ok <- check_enabled(), do: Observability.unsubscribe(source)
+    with :ok <- check_enabled(),
+         {:ok, source} <- registered(source),
+         do: Observability.unsubscribe(source)
   end
 
   @doc """
@@ -75,13 +79,13 @@ defmodule Flezha.Service.Observability do
   Answers `{:error, :pubsub_sink_disabled}` when the PubSub sink is not
   enabled: there is no broadcast to stream.
   """
-  @spec tail(atom(), caller_context()) :: :ok | {:ok, atom()} | {:error, term()}
-  verb tail(source, caller_context) when is_atom(source),
+  @spec tail(atom() | String.t(), caller_context()) :: :ok | {:ok, atom()} | {:error, term()}
+  verb tail(source, caller_context) when is_atom(source) or is_binary(source),
     verb: :observability_tail,
     stream: true,
     args: [source: @source] do
     with :ok <- check_enabled(),
-         {:ok, _} <- registered(source),
+         {:ok, source} <- registered(source),
          :ok <- check_pubsub_sink() do
       if Map.has_key?(caller_context, :emit),
         do: forward(source, caller_context),
@@ -128,19 +132,21 @@ defmodule Flezha.Service.Observability do
   # ---------- Mutations ----------
 
   @doc "Enable the source `name`."
-  @spec enable_source(atom(), caller_context()) :: :ok | {:error, term()}
-  verb enable_source(name, caller_context) when is_atom(name),
+  @spec enable_source(atom() | String.t(), caller_context()) :: :ok | {:error, term()}
+  verb enable_source(name, caller_context) when is_atom(name) or is_binary(name),
     verb: :observability_enable,
     args: [name: @source] do
-    with :ok <- check_enabled(), {:ok, _} <- registered(name), do: Registry.enable_source(name)
+    with :ok <- check_enabled(), {:ok, name} <- registered(name), do: Registry.enable_source(name)
   end
 
   @doc "Disable the source `name`."
-  @spec disable_source(atom(), caller_context()) :: :ok | {:error, term()}
-  verb disable_source(name, caller_context) when is_atom(name),
+  @spec disable_source(atom() | String.t(), caller_context()) :: :ok | {:error, term()}
+  verb disable_source(name, caller_context) when is_atom(name) or is_binary(name),
     verb: :observability_disable,
     args: [name: @source] do
-    with :ok <- check_enabled(), {:ok, _} <- registered(name), do: Registry.disable_source(name)
+    with :ok <- check_enabled(),
+         {:ok, name} <- registered(name),
+         do: Registry.disable_source(name)
   end
 
   # ---------- Internal helpers ----------

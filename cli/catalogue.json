@@ -669,8 +669,15 @@
         },
         {
           "name": "kind",
-          "type": "atom",
+          "type": "enum",
           "required": true,
+          "values": [
+            "relays",
+            "cells",
+            "mailbox_bytes",
+            "runners",
+            "disk_bytes"
+          ],
           "doc": "The quota kind."
         }
       ]
@@ -783,7 +790,7 @@
       "args": [
         {
           "name": "name",
-          "type": "atom",
+          "type": "string",
           "required": true,
           "doc": "A registered observability source."
         }
@@ -798,7 +805,7 @@
       "args": [
         {
           "name": "name",
-          "type": "atom",
+          "type": "string",
           "required": true,
           "doc": "A registered observability source."
         }
@@ -844,7 +851,7 @@
       "args": [
         {
           "name": "source",
-          "type": "atom",
+          "type": "string",
           "required": true,
           "doc": "A registered observability source."
         }
@@ -859,7 +866,7 @@
       "args": [
         {
           "name": "source",
-          "type": "atom",
+          "type": "string",
           "required": true,
           "doc": "A registered observability source."
         }
@@ -874,7 +881,7 @@
       "args": [
         {
           "name": "source",
-          "type": "atom",
+          "type": "string",
           "required": true,
           "doc": "A registered observability source."
         }

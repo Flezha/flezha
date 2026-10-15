@@ -172,7 +172,8 @@ defmodule Flezha.Service.ObservabilityTest do
       Bus.emit(Signal.new(%{kind: :event, source: src, name: :door_probe}))
       assert_receive {:flezha_signal, %Signal{source: ^src, name: :door_probe}}, 1_000
 
-      assert {:ok, :ok} = Admin.run("Observability.unsubscribe", [src], %{source: :cli}, :given)
+      assert {:ok, :ok} =
+               Admin.run("Observability.unsubscribe", ~s(["#{src}"]), %{source: :cli}, :given)
     end
 
     # Fails when: the named fields keep their text, so the read can never find
@@ -190,18 +191,23 @@ defmodule Flezha.Service.ObservabilityTest do
                )
     end
 
-    test "a source naming no atom is refused, and none is minted" do
-      assert {:error, %Flezha.Error{code: "control.unknown_parameter", details: details}} =
-               refute_minted(["obs_door_never_an_atom_7f3a"], fn ->
-                 Admin.call(
-                   "Observability.tail",
-                   ~s(["obs_door_never_an_atom_7f3a"]),
-                   %{source: :cli},
-                   :given
-                 )
-               end)
+    # Fails when: a mistyped source that happens to name no atom is refused as
+    # `control.unknown_parameter`, without the sources a user could have meant,
+    # while the same mistake on a word that is an atom names them.
+    test "a mistyped source answers the source list whether or not the word is an atom",
+         %{src: src} do
+      verbs = ~w(subscribe unsubscribe tail enable_source disable_source)
 
-      assert details["parameter"] == "obs_door_never_an_atom_7f3a"
+      for verb <- verbs, word <- ["obs_door_never_an_atom_7f3a", "ok"] do
+        answer =
+          refute_minted(["obs_door_never_an_atom_7f3a"], fn ->
+            Admin.call("Observability." <> verb, Jason.encode!([word]), %{source: :cli}, :given)
+          end)
+
+        assert {:error, %Flezha.Error{code: "usage.unknown_word", message: message}} = answer
+        assert message =~ "unknown source '#{word}'"
+        assert message =~ Atom.to_string(src)
+      end
     end
   end
 

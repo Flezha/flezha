@@ -309,6 +309,20 @@ defmodule Flezha.Service.AdminTest do
       end)
     end
 
+    # Fails when: a quota kind outside the set is refused without the kinds,
+    # or, when the word is an atom, answered as a count of zero.
+    test "a quota kind outside the set is refused naming the kinds, and none is minted" do
+      for word <- ["quota_kind_never_an_atom_5c2e", "ok"] do
+        assert {:error, %Flezha.Error{code: "usage.unknown_word", message: message}} =
+                 refute_minted(["quota_kind_never_an_atom_5c2e"], fn ->
+                   door("Namespace.quota", Jason.encode!([word]))
+                 end)
+
+        assert message =~ "'#{word}'"
+        assert message =~ "mailbox_bytes"
+      end
+    end
+
     # Fails when: `null` reaches the body as `nil` instead of the declared default.
     test "an optional argument written as null takes its default" do
       assert {:error, %Flezha.Error{code: code}} =

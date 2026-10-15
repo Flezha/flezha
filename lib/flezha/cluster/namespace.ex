@@ -66,7 +66,10 @@ defmodule Flezha.Service.Namespace do
   @spec quota(String.t(), atom(), caller_context()) :: {:ok, term()} | {:error, term()}
   verb quota(name, kind, caller_context) when is_binary(name) and is_atom(kind),
     verb: :namespace_show,
-    args: [name: @name, kind: [type: :atom, doc: "The quota kind."]] do
+    args: [
+      name: @name,
+      kind: [type: :enum, values: QuotaCounters.kinds(), doc: "The quota kind."]
+    ] do
     {:ok, QuotaCounters.get(name, kind)}
   end
 
