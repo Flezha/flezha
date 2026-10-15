@@ -17,7 +17,7 @@ defmodule Flezha.State.InputLogCallRetentionTest do
   setup %{base: base} do
     class = "ilc_" <> uniq()
     on_exit(TestHelpers.override_env(:record_log_cut_after_bytes, 0))
-    on_exit(TestHelpers.override_env(:call_retention_margin_ms, 200))
+    on_exit(TestHelpers.override_env(:call_retention_margin_ms, :timer.minutes(10)))
 
     on_exit(fn ->
       TestHelpers.close_input_log(class)
@@ -32,30 +32,25 @@ defmodule Flezha.State.InputLogCallRetentionTest do
   defp call_record(id, deadline_at),
     do: %{"flz.msg_id" => id, "flz.deadline_at" => Integer.to_string(deadline_at)}
 
-  defp sweep_until(class, expected) do
-    wait_until(
-      fn ->
-        :ok = Sweep.run(class)
-        offsets(class) == expected
-      end,
-      3_000
-    )
-  end
-
   for {what, id} <- [{"a consumed request", "c1"}, {"a Response", "r:c1"}] do
     test "#{what} is kept until its call is over, then goes with the watermark", %{class: class} do
-      now = System.system_time(:millisecond)
+      # A deadline already reached: the margin alone decides, so the test moves
+      # the margin rather than waiting on the clock.
+      deadline_at = System.system_time(:millisecond) - 1
       {:ok, 0} = InputLog.append(class, "before", %{})
-      {:ok, 1} = InputLog.append(class, "call", call_record(unquote(id), now + 300))
+      {:ok, 1} = InputLog.append(class, "call", call_record(unquote(id), deadline_at))
       {:ok, 2} = InputLog.append(class, "after", %{})
       InputLog.record_consumed(class, {class, "task", "a"}, 3)
 
+      # The read is answered by the log after any cut the sweep cast to it.
       :ok = Sweep.run(class)
-      assert wait_until(fn -> offsets(class) == [1, 2] end, 2_000)
+      assert offsets(class) == [1, 2]
       assert {:duplicate, 1} = InputLog.append(class, "again", %{"flz.msg_id" => unquote(id)})
 
       # Deadline plus margin gone: the next sweep takes it like any record.
-      assert sweep_until(class, [])
+      on_exit(TestHelpers.override_env(:call_retention_margin_ms, 0))
+      :ok = Sweep.run(class)
+      assert offsets(class) == []
     end
   end
 

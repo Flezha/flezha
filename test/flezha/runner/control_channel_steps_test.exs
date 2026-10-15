@@ -26,6 +26,10 @@ defmodule FlezhaTest.Runner.ControlChannelRelayCompletedTest do
 
   @namespace "ctrl-chan-task-completed-test"
 
+  # The teardown always follows a durable completion write, whose datasync a
+  # loaded disk can hold past a second: the bound only guards against a hang.
+  @torn_down_within 5_000
+
   setup :set_mimic_global_until_exit
 
   setup do
@@ -62,7 +66,7 @@ defmodule FlezhaTest.Runner.ControlChannelRelayCompletedTest do
     payload = build_relay_completed_payload("task-1", "ok", "", "the-answer", "ref-1")
     send(control_channel, {:flz_data, :stream_id, "control_command", payload, %{}})
 
-    assert_receive {:stop_relay_called, "task-1"}, 500
+    assert_receive {:stop_relay_called, "task-1"}, @torn_down_within
 
     # The terminal outcome + result payload is surfaced on `:completed`.
     assert_receive {:telemetry, [:flezha, :steps, :completed], %{count: 1}, meta}, 500
@@ -96,7 +100,7 @@ defmodule FlezhaTest.Runner.ControlChannelRelayCompletedTest do
                    500
 
     # Terminal failure deregisters exactly as success — no retry.
-    assert_receive {:stop_relay_called, "task-2"}, 500
+    assert_receive {:stop_relay_called, "task-2"}, @torn_down_within
   end
 
   test "RelayCompleted cancelled (cooperative stop) → same converged teardown + result" do
@@ -114,7 +118,7 @@ defmodule FlezhaTest.Runner.ControlChannelRelayCompletedTest do
     send(control_channel, {:flz_data, :stream_id, "control_command", payload, %{}})
 
     # A cooperative external stop converges on the identical teardown path.
-    assert_receive {:stop_relay_called, "task-3"}, 500
+    assert_receive {:stop_relay_called, "task-3"}, @torn_down_within
 
     assert_receive {:telemetry, [:flezha, :steps, :completed], %{count: 1}, meta}, 500
     assert meta.status == "cancelled"
@@ -150,12 +154,12 @@ defmodule FlezhaTest.Runner.ControlChannelRelayCompletedTest do
     send(control_channel, {:flz_data, :stream_id, "control_command", payload, %{}})
 
     # The barrier is driven for the runner this completion arrived on...
-    assert_receive {:flushing, "exec-task-direct", teardown}, 1_000
+    assert_receive {:flushing, "exec-task-direct", teardown}, @torn_down_within
     refute_received {:stop_relay_called, "task-direct"}
 
     # ...and the teardown proceeds only once it answers.
     send(teardown, :release)
-    assert_receive {:stop_relay_called, "task-direct"}, 1_000
+    assert_receive {:stop_relay_called, "task-direct"}, @torn_down_within
   end
 
   test "RelayCompleted writes a durable completion record for finished-job retention" do
@@ -175,7 +179,7 @@ defmodule FlezhaTest.Runner.ControlChannelRelayCompletedTest do
 
     # The record is written synchronously in `handle_relay_completed` BEFORE the
     # off-process teardown, so once teardown is observed the record must exist.
-    assert_receive {:stop_relay_called, "task-rec"}, 500
+    assert_receive {:stop_relay_called, "task-rec"}, @torn_down_within
 
     assert {:ok, rec} = Completion.read("task-rec")
     assert rec.namespace == @namespace
