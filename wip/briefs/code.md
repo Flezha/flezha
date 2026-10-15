@@ -99,6 +99,10 @@ your own handover if you in turn reach 80 %.
 fall into. No board edits, except appending a found issue to
 `wip/NEW-ISSUES.md`.
 
+**Leave nothing running.** Before you report or hand over: close the
+Playwright browser if you opened one, stop every background process, server,
+container and loop you started, and say in the report that you did.
+
 **Do not commit, do not stage, do not archive.** Stop and report, in at most 400
 words: the screen verdict, the red and green output, the fix with file and
 line, one line per refine pass (candidates accepted and rejected, what

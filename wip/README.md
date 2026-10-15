@@ -20,7 +20,7 @@ file stays out of git unless someone decides otherwise.
 | `templates/` | The blank boards a reset restores. |
 | `briefs/` | What a worker is told: `reproduce.md`, `code.md`, `critic.md`. |
 | `status.py` | Derives every count from the boards. Counts are read from here, never typed. |
-| `reap.sh` | Finds what a session left running: zombies, leftover builds and test runs, polling loops, containers. |
+| `reap.sh` | Finds and kills what a session left running: zombies, orphaned agents, browsers, builds, test runs, polling loops, containers, with the CPU top list. Ownership comes from each process's ancestry. |
 | `reset.sh` | Closes a campaign and opens the next one. |
 
 | Ignored | Holds |
@@ -100,8 +100,10 @@ would fall into.
    by the first row that needs it, and kept.
 5. Work the cycle. `python3 wip/status.py` at any time for the counts, the net
    production lines and what is next.
-6. `bash wip/reap.sh` at session start, at every heartbeat and at every item
-   boundary. Add `--kill` to clean up what the work started.
+6. `bash wip/reap.sh --kill` at session start and at every heartbeat: it kills
+   orphans only, so it is safe while work runs. At every item boundary and
+   before stopping, once no worker runs, `--kill-mine` also kills what this
+   session started and stops this repository's containers.
 
 Before a reset, the issue inbox is drained by hand into the standing bug list:
 deciding what a found issue is worth is a judgement, not a copy.

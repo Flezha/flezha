@@ -199,5 +199,12 @@ hand in every row. Whatever a campaign does in every row is done by a script.
   everything the worker ran.
 - **A session never ends with a subagent alive**, and the check is `ListAgents`
   showing no subagent section, not memory.
+- **Clean up as you go, unasked.** `bash wip/reap.sh --kill` at session start
+  and at every heartbeat kills orphans: zombie loops, leaked builds and tests,
+  Playwright browsers and agents whose session is gone. At every item boundary
+  and before a session or loop ends: stop every finished subagent, close the
+  Playwright browser, then `--kill-mine` for whatever else this session started,
+  this repository's containers included. A process high in the CPU list that
+  nobody can name as needed is a leak. Every kill is logged in `LOG.md`.
 - **A ruling the maintainer has given is work, never a question.** It lives
   in `DECISIONS.md` and is not re-asked.
