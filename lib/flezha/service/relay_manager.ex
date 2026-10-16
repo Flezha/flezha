@@ -11,6 +11,7 @@ defmodule Flezha.Service.RelayManager do
   alias Flezha.Relay.Builder, as: RelayBuilder
   alias Flezha.Relay.Calls
   alias Flezha.Relay.ClassRegistry
+  alias Flezha.Relay.Ingest
   alias Flezha.Relay.PartitionGroup
   alias Flezha.Partition
   alias Flezha.Plugin.Host
@@ -455,7 +456,7 @@ defmodule Flezha.Service.RelayManager do
     with {:ok, relay_pid} <- get_relay_pid(namespace, relay_id) do
       relay_pid
       |> GenServer.call({:ingest, message, metadata}, timeout)
-      |> named_verdict(relay_id)
+      |> Ingest.named(relay_id)
     end
   end
 
@@ -508,13 +509,6 @@ defmodule Flezha.Service.RelayManager do
          {:ok, pid} <- get_relay_pid(namespace, member),
          do: Calls.call(pid, message, metadata, deadline_ms, member, source)
   end
-
-  # The ingest path answers for itself; a caller is told which relay.
-  defp named_verdict({:error, :not_ready}, relay_id),
-    do: {:error, {:not_accepting_input, relay_id}}
-
-  defp named_verdict({:error, :refused}, relay_id), do: {:error, {:input_refused, relay_id}}
-  defp named_verdict(verdict, _relay_id), do: verdict
 
   @doc """
   `send_io_confirming/5` for a source holding many inputs at once, with up to

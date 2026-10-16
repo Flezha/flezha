@@ -20,6 +20,7 @@ defmodule Flezha.Relay.Ingest do
   alias Flezha.Config.Durations
   alias Flezha.Relay.Calls
   alias Flezha.Relay.ClassRegistry
+  alias Flezha.Relay.Lifecycle
   alias Flezha.Relay.Migration
   alias Flezha.Relay.Overwatch
   alias Flezha.Relay.Plugins
@@ -136,7 +137,7 @@ defmodule Flezha.Relay.Ingest do
   durable instance whose input log already holds entries was either restored
   (a restart, a move, a wake), whose start already gave its input, or started
   anew over that state; only a start asks `:registry_runner_set`, so the input
-  is held for that call (`seed/2`).
+  is held for that call (`seed/3`).
   """
   @spec seed_or_hold(Overwatch.t(), Flezha.Relay.Builder.t()) :: Overwatch.t()
   def seed_or_hold(%Overwatch{init_error: nil} = state, relay) do
@@ -145,7 +146,7 @@ defmodule Flezha.Relay.Ingest do
         seed = {message, metadata, Keyword.get(relay.opts, :seed_call)}
 
         if first_input?(state),
-          do: state |> seed(seed) |> elem(1),
+          do: state |> seed(seed, nil) |> elem(1),
           else: %Overwatch{state | seed: seed}
 
       _ ->
@@ -157,24 +158,49 @@ defmodule Flezha.Relay.Ingest do
 
   @doc """
   Take the input a start carries, `{message, metadata, call}` (`nil` for
-  none): a call through `take_call/5`, so its answer reaches its caller, and
-  any other input as a cast. Answers `{:ok, state}`, or the refusal of a call
-  this instance does not take.
+  none): a call through `take_call/5`, any other input through the confirming
+  ingest, either owing its verdict to `from` (`nil` for nobody). Answers the
+  verdict, or `:pending` when `from` is answered once the log has the input.
   """
-  @spec seed(Overwatch.t(), {binary(), map(), map() | nil} | nil) ::
-          {:ok | {:error, Flezha.Error.t()}, Overwatch.t()}
-  def seed(%Overwatch{} = state, nil), do: {:ok, state}
+  @spec seed(Overwatch.t(), {binary(), map(), map() | nil} | nil, GenServer.from() | nil) ::
+          {term() | :pending, Overwatch.t()}
+  def seed(%Overwatch{} = state, nil, _from), do: {:ok, state}
 
-  def seed(%Overwatch{} = state, {message, metadata, nil}),
-    do: {:ok, state |> confirming_ingest(message, metadata, :cast) |> elem(1)}
+  def seed(%Overwatch{} = state, {message, metadata, nil}, from),
+    do: confirming_ingest(state, message, metadata, if(from, do: {:ingest, from}, else: :cast))
 
-  def seed(%Overwatch{} = state, {message, metadata, call}) do
-    case take_call(state, message, metadata, call, nil) do
-      {:reply, {:error, %Flezha.Error{}} = refused, state} -> {refused, state}
-      {:reply, _taken, state} -> {:ok, state}
-      {:noreply, state} -> {:ok, state}
+  def seed(%Overwatch{} = state, {message, metadata, call}, from) do
+    case take_call(state, message, metadata, call, from) do
+      {:reply, verdict, state} -> {verdict, state}
+      {:noreply, state} -> {:pending, state}
     end
   end
+
+  @doc "A start's answer to its input's verdict (`call` its call): its runner, or its error."
+  @spec started(Overwatch.t(), boolean(), map() | nil, term()) ::
+          {:ok, String.t() | nil} | {:error, Flezha.Error.t()}
+  def started(state, announce?, _call, verdict) when verdict in @taken do
+    Lifecycle.started(state, announce?)
+    {:ok, state.runner_id}
+  end
+
+  def started(_state, _announce?, _call, {:error, %Flezha.Error{}} = refused), do: refused
+
+  def started(state, _announce?, nil, {:error, _reason} = verdict) do
+    {:error, reason} = named(verdict, state.id)
+    {:error, Flezha.Error.from_reason(reason, nil)}
+  end
+
+  def started(state, _announce?, _call, verdict) do
+    {code, details} = refusal(verdict)
+    {:error, Calls.error(Overwatch.callee(state), code, details)}
+  end
+
+  @doc "An ingest verdict as a caller outside the relay is told it, naming the relay."
+  @spec named(term(), String.t()) :: term()
+  def named({:error, :not_ready}, relay_id), do: {:error, {:not_accepting_input, relay_id}}
+  def named({:error, :refused}, relay_id), do: {:error, {:input_refused, relay_id}}
+  def named(verdict, _relay_id), do: verdict
 
   defp unadmitted(state, callee, message, metadata, deadline, error) do
     Calls.announce(callee, nil, message, metadata, deadline, error)

@@ -724,7 +724,9 @@ defmodule Flezha.Relay.Calls do
     error(callee, code, details)
   end
 
-  defp error(callee, code, details),
+  @doc "The error `code` names for a call to `callee`, counting nothing."
+  @spec error(callee(), String.t(), map()) :: Error.t()
+  def error(callee, code, details),
     do: Error.new(code, Map.put(details, :relay, callee.relay_id))
 
   # ---------------------------------------------------------------

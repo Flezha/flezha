@@ -389,16 +389,15 @@ defmodule Flezha.Relay.Overwatch do
   # handle_call
   # ---------------------------------------------------------------
 
-  # A start's held input is taken here; a call it carries that this instance
-  # refuses fails the start with that refusal, so its caller is told.
-  def handle_call({:registry_runner_set, announce?}, _from, %__MODULE__{init_error: nil} = state) do
-    case Ingest.seed(%__MODULE__{state | seed: nil}, state.seed) do
-      {:ok, state} ->
-        Lifecycle.started(state, announce?)
-        {:reply, {:ok, state.runner_id}, state}
+  # A start's held input is taken here and the start answered once it is: a
+  # refused call or input fails the start, so its caller is told.
+  def handle_call({:registry_runner_set, announce?}, from, %__MODULE__{init_error: nil} = state) do
+    call = state.seed && elem(state.seed, 2)
+    owed = {self(), {:seed_taken, from, announce?, call}}
 
-      {refused, state} ->
-        {:reply, refused, state}
+    case Ingest.seed(%__MODULE__{state | seed: nil}, state.seed, owed) do
+      {:pending, state} -> {:noreply, state}
+      {verdict, state} -> {:reply, Ingest.started(state, announce?, call, verdict), state}
     end
   end
 
@@ -849,10 +848,17 @@ defmodule Flezha.Relay.Overwatch do
         {:noreply, state}
 
       :ignore ->
-        Logger.warning("[Overwatch] #{state.id} dropped an unexpected message: #{inspect(msg)}")
+        unexpected(state, msg)
         {:noreply, state}
     end
   end
+
+  # Past the log's answers, so no append pays for it: a start's held input's verdict.
+  defp unexpected(state, {{:seed_taken, from, announce?, call}, verdict}),
+    do: GenServer.reply(from, Ingest.started(state, announce?, call, verdict))
+
+  defp unexpected(state, msg),
+    do: Logger.warning("[Overwatch] #{state.id} dropped an unexpected message: #{inspect(msg)}")
 
   # One output on either route: a request goes to its callee and never reaches
   # the `:on_output` chain. An output carrying a call's token answers its

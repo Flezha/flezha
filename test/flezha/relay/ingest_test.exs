@@ -134,14 +134,19 @@ defmodule FlezhaTest.Relay.IngestTest do
       refute_received {:channel_got, _, _}
     end
 
-    test "a durable-log refusal reports refused so the sender retries, logged once by the log" do
-      inst = instance_id()
+    # A log holding three records, the second corrupt: it refuses every append.
+    defp refusing_log(inst) do
       for i <- 0..2, do: {:ok, _} = InputLog.append(inst, "m#{i}", %{})
       TestHelpers.close_input_log(inst)
       path = Paths.input_log_path(inst)
       [_first, second, _third] = TestHelpers.record_offsets(path)
       TestHelpers.corrupt_record_body(path, second)
+      path
+    end
 
+    test "a durable-log refusal reports refused so the sender retries, logged once by the log" do
+      inst = instance_id()
+      path = refusing_log(inst)
       state = state(inst, durable_steps: true, channel: fake_channel(:ok))
       {:ok, host} = start_supervised({Host, state})
 
@@ -156,6 +161,48 @@ defmodule FlezhaTest.Relay.IngestTest do
       assert [_, _] = String.split(log, "durable record refused (crc_mismatch)")
       assert log =~ path
       refute_received {:channel_got, _, _}
+    end
+
+    # A start over a log that already holds records leaves its input for the
+    # start's own call, which answers only once the log has taken it.
+    defp assert_start_fails(call, code) do
+      inst = instance_id()
+      refusing_log(inst)
+      seed = {"first", %{}, call}
+      state = state(inst, durable_steps: true, channel: fake_channel(:ok), seed: seed)
+      {:ok, host} = start_supervised({Host, state})
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          send(self(), {:started, GenServer.call(host, {:registry_runner_set, false})})
+        end)
+
+      assert_received {:started, {:error, %Flezha.Error{code: ^code}}}
+      assert log =~ "durable record refused (crc_mismatch)"
+      refute_received {:channel_got, _, _}
+      assert GenServer.call(host, :get_overwatch_state).calls.rows == %{}
+    end
+
+    test "a held input the log takes starts the relay once it is journaled" do
+      inst = instance_id()
+
+      state =
+        state(inst, durable_steps: true, channel: fake_channel(:ok), seed: {"first", %{}, nil})
+
+      {:ok, host} = start_supervised({Host, state})
+
+      assert {:ok, "ex_1"} = GenServer.call(host, {:registry_runner_set, false})
+      assert_received {:channel_got, ^inst, {"first", %{"flz.offset" => "0"}}}
+    end
+
+    test "a held --text input the log refuses fails the start" do
+      assert_start_fails(nil, "relay.input_refused")
+    end
+
+    test "a held spawn call the log refuses fails the start, answering its caller unavailable" do
+      deadline_at = System.system_time(:millisecond) + 60_000
+      call = %{caller: "gw", call: "c1", created: true, factory: nil, deadline_at: deadline_at}
+      assert_start_fails(call, "call.unavailable")
     end
 
     test "an unbound stream is not-ready for a non-durable target, :ok for a durable one" do

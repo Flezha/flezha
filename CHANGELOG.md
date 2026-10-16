@@ -17,6 +17,13 @@ without state: its Cells were then not restored and the state was lost on restar
 removed. Whether a class keeps its work is the `durable` it declares and its runner announces;
 a class that should keep no state declares `durable: false`. A leftover entry is ignored.
 
+### Fixed: a start whose first message the input log refuses fails
+
+A start, spawn or schedule of a durable steps relay whose first message the input log refused
+reported started, and the message was dropped without a word; a spawn's caller timed out. The
+start now waits for the log's answer and fails with the refusal, and the caller is answered
+`call.unavailable`.
+
 ### Fixed: a relay whose moved copy did not land whole asks for it again
 
 A relay arriving on a controller where the copy from the node it moved from, or from the
