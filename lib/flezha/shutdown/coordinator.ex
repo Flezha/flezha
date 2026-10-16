@@ -99,7 +99,7 @@ defmodule Flezha.Shutdown.Coordinator do
   runs before `:init.stop/0`, so a caller can print the outcome while the node
   still answers, and its answer is returned. A coordinator that exits is
   reported as `{:exit, reason}` and the node is stopped anyway. The stop
-  re-enters `Flezha.Application.prep_stop/1`, whose drain lands on the
+  re-enters the application's `prep_stop/1`, whose drain lands on the
   `phase: :done` short-circuit.
   """
   @spec shutdown_and_stop(atom(), keyword(), (term() -> answer)) :: answer when answer: term()

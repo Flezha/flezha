@@ -409,7 +409,7 @@ defmodule Flezha.Relay.Replay do
   `AddRelay.effect_result_count`, so a steps driver holds its first Tasklet
   until they have landed; `[]` for an instance that keeps none.
   """
-  @spec effect_results(binary()) :: [RunnerCommands.EffectResult.t()]
+  @spec effect_results(binary()) :: [%RunnerCommands.EffectResult{}]
   def effect_results(relay_class) do
     case InputLog.effect_results(relay_class, InputLog.watermark(relay_class) || -1) do
       results when is_list(results) ->
@@ -432,7 +432,7 @@ defmodule Flezha.Relay.Replay do
   tail: a flow relay's re-run then finds them, and a steps relay's gate counts
   them.
   """
-  @spec ship_effect_results(Overwatch.t(), [RunnerCommands.EffectResult.t()]) :: :ok
+  @spec ship_effect_results(Overwatch.t(), [%RunnerCommands.EffectResult{}]) :: :ok
   def ship_effect_results(%Overwatch{} = state, results) do
     results
     |> Enum.chunk_while({[], 0}, &batch_result/2, &close_batch/1)

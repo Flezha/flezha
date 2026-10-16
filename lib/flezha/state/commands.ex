@@ -84,7 +84,7 @@ defmodule Flezha.State.Commands do
   a restore takes. A failure is logged and answered: the runner's gate stops
   waiting for the batch on its own deadline.
   """
-  @spec ship_effect_results(binary(), binary(), [RunnerCommands.EffectResult.t()]) ::
+  @spec ship_effect_results(binary(), binary(), [%RunnerCommands.EffectResult{}]) ::
           :ok | {:error, term()}
   def ship_effect_results(runner_id, relay_id, results) do
     command =
@@ -177,7 +177,7 @@ defmodule Flezha.State.Commands do
   `nil` when the instance has no journal — a fresh spawn, a flow relay
   relay, an opted-out class.
   """
-  @spec task_journal_state(binary()) :: RunnerCommands.TaskJournalState.t() | nil
+  @spec task_journal_state(binary()) :: %RunnerCommands.TaskJournalState{} | nil
   def task_journal_state(instance_id) do
     case TaskJournal.restore_state(instance_id) do
       nil ->

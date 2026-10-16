@@ -36,7 +36,7 @@ defmodule Flezha.Runner.ControlChannel.Commits do
   end
 
   @doc "Hand a decoded barrier frame over; the reader returns at once."
-  @spec commit(binary(), binary(), RunnerCommands.TaskCommit.t() | RunnerCommands.IterCommit.t()) ::
+  @spec commit(binary(), binary(), %RunnerCommands.TaskCommit{} | %RunnerCommands.IterCommit{}) ::
           :ok
   def commit(runner_id, reference_id, frame),
     do: GenServer.cast(Identificator.commits(runner_id), {:commit, reference_id, frame})
@@ -45,7 +45,7 @@ defmodule Flezha.Runner.ControlChannel.Commits do
   Hand over a barrier from a runner that does not own its instance: it is
   answered with an error and journals nothing.
   """
-  @spec refuse(binary(), binary(), RunnerCommands.TaskCommit.t() | RunnerCommands.IterCommit.t()) ::
+  @spec refuse(binary(), binary(), %RunnerCommands.TaskCommit{} | %RunnerCommands.IterCommit{}) ::
           :ok
   def refuse(runner_id, reference_id, frame),
     do: GenServer.cast(Identificator.commits(runner_id), {:refuse, reference_id, frame})

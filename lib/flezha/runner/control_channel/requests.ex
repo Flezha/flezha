@@ -47,7 +47,7 @@ defmodule Flezha.Runner.ControlChannel.Requests do
   Overwatch already migrated to a peer controller alike, so the SDK never
   blocks its container's shutdown grace period on an ack that will not arrive.
   """
-  @spec runner_shutdown(map(), RunnerCommands.RunnerShutdownNotification.t()) ::
+  @spec runner_shutdown(map(), %RunnerCommands.RunnerShutdownNotification{}) ::
           {tuple(), binary()}
   def runner_shutdown(state, %RunnerCommands.RunnerShutdownNotification{} = notif) do
     %{relay_id: relay_id, serialized_state: serialized_state} = notif
@@ -77,7 +77,7 @@ defmodule Flezha.Runner.ControlChannel.Requests do
   completion from a runner that does not own the instance is not an exit
   trigger.
   """
-  @spec relay_completed(map(), RunnerCommands.RelayCompleted.t()) :: :ok
+  @spec relay_completed(map(), %RunnerCommands.RelayCompleted{}) :: :ok
   def relay_completed(state, %RunnerCommands.RelayCompleted{} = completed) do
     if Records.admit(state, completed.relay_id, :relay_completed),
       do: complete(state, completed)
@@ -213,7 +213,7 @@ defmodule Flezha.Runner.ControlChannel.Requests do
   on this control stream, so doing it inline would deadlock the reader, the
   same reason as the steps-completed teardown.
   """
-  @spec iter_park(map(), RunnerCommands.IterPark.t()) :: :ok
+  @spec iter_park(map(), %RunnerCommands.IterPark{}) :: :ok
   def iter_park(state, %RunnerCommands.IterPark{} = park) do
     with {:ok, bound} <- Records.admit_to(state, park.relay_id, :iter_park),
          do: park_instance(state, park, bound)
@@ -258,7 +258,7 @@ defmodule Flezha.Runner.ControlChannel.Requests do
   frame the dead incarnation wrote is read before the rebind restores its
   Cells, and the flush waits on channels this process does not own.
   """
-  @spec relay_exited(map(), RunnerCommands.RelayExited.t()) :: :ok
+  @spec relay_exited(map(), %RunnerCommands.RelayExited{}) :: :ok
   def relay_exited(state, %RunnerCommands.RelayExited{} = exited) do
     %RunnerCommands.RelayExited{relay_id: relay_id, reason: reason} = exited
     %{namespace: namespace, runner_id: runner_id} = state
@@ -292,7 +292,7 @@ defmodule Flezha.Runner.ControlChannel.Requests do
   cast so it never blocks the control channel; the reconnect init frame
   remains the resync of record.
   """
-  @spec update_factories(map(), RunnerCommands.UpdateFactories.t()) :: :ok
+  @spec update_factories(map(), %RunnerCommands.UpdateFactories{}) :: :ok
   def update_factories(state, %RunnerCommands.UpdateFactories{factories: factories}) do
     factories =
       Enum.map(factories, fn %RunnerCommands.FactoryDecl{
@@ -328,7 +328,7 @@ defmodule Flezha.Runner.ControlChannel.Requests do
   the identity this connection proved. The namespace is this channel's, never
   the requester's claim, so a request cannot reach another namespace.
   """
-  @spec spawn_steps(map(), RunnerCommands.SpawnStepsRequest.t(), binary()) :: :ok
+  @spec spawn_steps(map(), %RunnerCommands.SpawnStepsRequest{}, binary()) :: :ok
   def spawn_steps(state, request, reference_id) do
     %RunnerCommands.SpawnStepsRequest{
       instance_id: instance_id,
@@ -400,7 +400,7 @@ defmodule Flezha.Runner.ControlChannel.Requests do
   held another. A result for a relay this runner does not own keeps nothing
   and is refused as a commit from it is.
   """
-  @spec effect_result(map(), RunnerCommands.EffectResult.t(), binary()) :: :ok
+  @spec effect_result(map(), %RunnerCommands.EffectResult{}, binary()) :: :ok
   def effect_result(state, result, reference_id) do
     %RunnerCommands.EffectResult{relay_id: relay_id, cell_identity: cell} = result
 
@@ -442,7 +442,7 @@ defmodule Flezha.Runner.ControlChannel.Requests do
   judges it as the connection's identity against the published surface, so
   nothing about the request names a namespace, a principal or a role.
   """
-  @spec admin(map(), RunnerCommands.AdminRequest.t(), binary()) :: :ok
+  @spec admin(map(), %RunnerCommands.AdminRequest{}, binary()) :: :ok
   def admin(state, request, reference_id) do
     %RunnerCommands.AdminRequest{verb: verb, args: args} = request
     namespace = state.namespace

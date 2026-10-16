@@ -9,7 +9,7 @@ defmodule Flezha.Shutdown.SignalHandler do
   `gen_event` that ERTS notifies. `Forwarder` is registered there and
   **replaces** kernel's own `erl_signal_handler`: that handler calls
   `init:stop()` on `sigterm` by itself, which would drive the shutdown
-  through `Flezha.Application.prep_stop/1` and record it as
+  through the application's `prep_stop/1` and record it as
   `reason: :prep_stop` roughly a millisecond before this server could
   dispatch. The two cannot both own SIGTERM.
 

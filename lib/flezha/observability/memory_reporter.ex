@@ -4,7 +4,7 @@ defmodule Flezha.Diagnostics.MemoryReporter do
   allocator state on a fixed interval and emits one structured
   `[info]` log line per tick.
 
-  Off by default; started by `Flezha.Application` only when the env
+  Off by default; started by the application module only when the env
   var `FLEZHA_MEMORY_REPORT_INTERVAL_MS` parses as a positive integer
   (the interval in milliseconds between reports).
 
@@ -30,7 +30,7 @@ defmodule Flezha.Diagnostics.MemoryReporter do
 
   @doc """
   Returns `{:ok, ms}` when the env var parses as a positive integer,
-  `:disabled` otherwise. `Flezha.Application` uses this to decide
+  `:disabled` otherwise. The application module uses this to decide
   whether to add the reporter to the supervision tree.
   """
   @spec configured_interval_ms() :: {:ok, pos_integer()} | :disabled

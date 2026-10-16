@@ -18,7 +18,7 @@ defmodule Flezha.Convergence.Snapshot do
     * `:current => map` — the latest reality + health summary published
       by `Flezha.Convergence.Loop` once per tick.
 
-  Started unconditionally by `Flezha.Application` so recovery-state
+  Started unconditionally by the application module so recovery-state
   reads work even when the optional `Loop` is disabled (e.g. tests).
   Reads run in the caller against the public table; the GenServer only
   owns the table and the telemetry handler lifecycle.

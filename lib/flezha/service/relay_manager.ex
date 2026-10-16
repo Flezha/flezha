@@ -32,6 +32,7 @@ defmodule Flezha.Service.RelayManager do
 
   defdelegate assign_runner(arg1, arg2, arg3), to: Placement
   defdelegate await_runner(arg1, arg2, arg3, arg4, arg5 \\ fn _ -> true end), to: Placement
+  @doc false
   defdelegate pick_runner(arg1, arg2), to: Placement
   defdelegate redeclare(arg1, arg2), to: Init
   defdelegate runner_registered?(arg1), to: Placement
@@ -631,7 +632,7 @@ defmodule Flezha.Service.RelayManager do
   and `relay.factory_not_steps` (a factory its runners announced as a
   flow relay) perform no act and are answered without one.
 
-  `opts` (`Flezha.Service.RelayManager.Spawn.opts/0`) is what a relay's
+  `opts` (`t:Flezha.Service.RelayManager.Spawn.opts/0`) is what a relay's
   call adds: the kinds it may start, `if_absent: :not_found`, the metadata the
   seed and the delivery carry, and the call the callee's `:call` entry point
   takes its token from.

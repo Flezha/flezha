@@ -165,7 +165,7 @@ defmodule Flezha.Error do
   The error as the wire's `Error` message, which every runner reply carries,
   as a caller over the network reads it (`withheld/2`).
   """
-  @spec to_wire(t()) :: RunnerCommands.Error.t()
+  @spec to_wire(t()) :: %RunnerCommands.Error{}
   def to_wire(%__MODULE__{} = error) do
     error = withheld(error, "a runner is answered")
 
@@ -182,7 +182,7 @@ defmodule Flezha.Error do
   The error a runner answered with on the wire, as it rendered it from the same
   catalogue; `nil` for a message that carries none.
   """
-  @spec from_wire(RunnerCommands.Error.t() | nil) :: t() | nil
+  @spec from_wire(%RunnerCommands.Error{} | nil) :: t() | nil
   def from_wire(nil), do: nil
   def from_wire(%{code: ""}), do: nil
 

@@ -67,7 +67,7 @@ defmodule Flezha.Boot.Readiness do
   end
 
   @doc """
-  Record that the boot sequence completed. Called by `Flezha.Application`
+  Record that the boot sequence completed. Called by the application module
   once `Supervisor.start_link/2` has returned *and* the boot continuation has
   finished — the only point at which both facts hold.
   """

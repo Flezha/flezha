@@ -79,7 +79,7 @@ defmodule Flezha.Plugin.Extension.Table do
 
   @doc """
   Build a new table from a catalog map (as produced by
-  `Flezha.Plugin.Host.build_catalog/2`).
+  the plugin host's `build_catalog/2`).
   """
   @spec new(map(), keyword()) :: t()
   def new(catalog, opts \\ []) when is_map(catalog) do

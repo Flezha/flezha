@@ -146,7 +146,7 @@ defmodule Flezha.State.Supervisor do
   defdelegate registry_name(), to: WriterRegistry, as: :name
 
   @doc """
-  Child specs to add to `Flezha.Application` — the underlying `Registry`
+  Child specs to add to the application module — the underlying `Registry`
   plus this `DynamicSupervisor`.
   """
   def application_children() do

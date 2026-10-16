@@ -51,7 +51,7 @@ defmodule FlezhaTest.Helper.ControlFrameTestHelper do
   @doc """
   Decode the `CommandRequest` carried by one control message (raw protobuf).
   """
-  @spec decode_request(binary()) :: RunnerCommands.CommandRequest.t()
+  @spec decode_request(binary()) :: %RunnerCommands.CommandRequest{}
   def decode_request(message) do
     {:ok, %RunnerCommands.CommandRequest{} = request} =
       RunnerCommands.CommandRequest.decode(message)

@@ -80,7 +80,7 @@ defmodule Flezha.Plugin.Extension.Table.Subscription do
   durable intent runs it first, so nothing ill-typed is ever persisted. It is
   idempotent: canonical input is returned unchanged.
   """
-  @spec canonicalise(map(), Plugin.map()) :: {:ok, Plugin.map()} | {:error, term()}
+  @spec canonicalise(map(), Plugin.t()) :: {:ok, Plugin.t()} | {:error, term()}
   def canonicalise(catalog, %Plugin{hooks: subs} = plugin)
       when is_map(catalog) and is_list(subs) do
     subs

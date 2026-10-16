@@ -23,9 +23,11 @@ defmodule Flezha.Service.HubManager do
 
   defdelegate alter_child_data(arg1, arg2), to: Placement
   defdelegate attempt_start(arg1, arg2), to: Lifecycle
+  @doc false
   defdelegate auto_recovery_config(), to: Lifecycle
   defdelegate await_cluster_gate(), to: Lifecycle
   defdelegate ensure_hub(arg1), to: Lifecycle
+  @doc false
   defdelegate consent_settings(), to: Lifecycle
   defdelegate cspec_partition(arg1), to: Rows
   defdelegate declared_relays(arg1, arg2 \\ []), to: Rows
@@ -39,6 +41,7 @@ defmodule Flezha.Service.HubManager do
   defdelegate hub_alive?(arg1), to: Rows
   defdelegate live_node(arg1), to: Rows
   defdelegate live_pid(arg1), to: Hub
+  @doc false
   defdelegate migration_strategy(), to: Lifecycle
   defdelegate relay_bindings(arg1), to: Rows
   defdelegate declared_bindings(arg1), to: Rows
@@ -53,6 +56,7 @@ defmodule Flezha.Service.HubManager do
   defdelegate recovery_state(arg1), to: Lifecycle
   defdelegate registered_relays?(arg1), to: Rows
   defdelegate registry_dump(arg1), to: Rows
+  @doc false
   defdelegate registry_backend_config(arg1), to: Lifecycle
   defdelegate rewrite_cspec_plugins(arg1, arg2), to: Rows
   defdelegate runner_relays(arg1, arg2), to: Placement

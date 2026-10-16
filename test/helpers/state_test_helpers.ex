@@ -22,7 +22,7 @@ defmodule Flezha.State.TestHelpers do
   `extra` children — tolerating those the application already runs. Call from
   a `setup` block.
   """
-  @spec start_state_tree([Supervisor.child_spec() | module()]) :: :ok
+  @spec start_state_tree([Elixir.Supervisor.child_spec() | module()]) :: :ok
   def start_state_tree(extra \\ []) do
     children = [
       {Elixir.Registry, keys: :unique, name: Supervisor.registry_name()},
@@ -459,7 +459,8 @@ defmodule Flezha.State.TestHelpers do
   `WalWriter.close/1` is a `GenServer.stop/2`, so it returns once the process
   has exited — but `Elixir.Registry` drops the entry only when it processes the
   monitor's `:DOWN`, which happens after. A re-open in that window gets the
-  dead pid back from `Supervisor.lookup/1` and the next call exits `:noproc`.
+  dead pid back from `Flezha.State.Supervisor.lookup/1` and the next call exits
+  `:noproc`.
   """
   @spec close_and_await(pid(), Paths.cell_id(), timeout()) :: :ok
   def close_and_await(server, cell_id, timeout_ms \\ 2_000) do

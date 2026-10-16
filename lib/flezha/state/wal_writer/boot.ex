@@ -82,9 +82,9 @@ defmodule Flezha.State.WalWriter.Boot do
   @doc """
   Open the WAL, repair a torn tail, and re-drive every durable effect record
   above the flush cursor. Deferred out of `new/1` so the process is
-  Registry-registered before it touches disk: a `Supervisor.find_or_start/1`
-  from a StreamChannel never blocks, and appends queue in this writer's mailbox
-  rather than the channel's.
+  Registry-registered before it touches disk: a
+  `Flezha.State.Supervisor.find_or_start/1` from a StreamChannel never blocks,
+  and appends queue in this writer's mailbox rather than the channel's.
   """
   def open(state) do
     unit = commit_unit(state.cell_id)

@@ -10,7 +10,7 @@ defmodule Flezha.Boot.StatePathMigrator do
        one atomic `rename/2` per class dir, so an interrupted pass leaves
        whole classes either moved or not, and a re-run moves the rest.
 
-  Runs synchronously during `Flezha.Application.start/2` BEFORE
+  Runs synchronously during the application's `start/2` BEFORE
   `Flezha.State.Supervisor` opens any per-Cell `WalWriter`. The
   `.layout` marker at the state root (written after a completed pass 2)
   is what makes later boots skip both passes — the two legacy layouts and

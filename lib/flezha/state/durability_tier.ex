@@ -171,7 +171,7 @@ defmodule Flezha.State.DurabilityTier do
   end
 
   @doc """
-  Supervision children for `Flezha.Application`: the backend connection, the
+  Supervision children for the application module: the backend connection, the
   boot-time hydration of the control-plane stores and the registry cspec, and
   the shipper — or `[]` when the tier is off, which is what makes an explicit
   `none` byte-identical to a build without the tier.
