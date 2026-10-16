@@ -187,9 +187,10 @@ defmodule Flezha.Service.RelayManager.Init do
   end
 
   defp hub_state(hub_id) do
-    {:ok, GenServer.call(hub_id, :get_state, Durations.get(:hub_declared_mutate_ms))}
-  catch
-    :exit, _ -> {:error, :hub_unavailable}
+    case ProcessHub.Hub.get(hub_id) do
+      nil -> {:error, :hub_unavailable}
+      hub -> {:ok, hub}
+    end
   end
 
   # An upsert would declare a child that was never declared, which would let a

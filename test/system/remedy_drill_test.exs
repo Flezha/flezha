@@ -555,7 +555,7 @@ defmodule FlezhaTest.System.RemedyDrillTest do
   # race: the altered child_data's metadata, carrying the runner alter resolved.
   defp write_stale_tag(namespace, id, stale) do
     hub_id = Identificator.hub(namespace)
-    hub = ProcessHub.Coordinator.get_hub(hub_id)
+    hub = ProcessHub.Hub.get(hub_id)
     {cspec, node_pids, _meta} = ProcessRegistry.lookup(hub_id, id, with_metadata: true)
 
     :ok =

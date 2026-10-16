@@ -25,7 +25,7 @@ defmodule Flezha.State.WalWriter.RemoteGate do
 
   alias Flezha.Config.Backoff
   alias Flezha.Relay.ClassRegistry
-  alias Flezha.Process.Timer
+  alias Flezha.Process.{Timer, Watch}
   alias Flezha.State.{DurabilityTier, Paths, WriterRegistry}
   alias Flezha.State.WalWriter.{Admission, Settlement}
 
@@ -197,25 +197,31 @@ defmodule Flezha.State.WalWriter.RemoteGate do
   def await_held(identity) do
     credit = %{channel: self(), session: make_ref(), wire_size: 1}
 
-    for {{relay_class, _, _} = cell_id, pid} <- WriterRegistry.cell_writers(),
-        DurabilityTier.sync_class?(relay_class),
-        match?({:ok, _, ^identity}, ClassRegistry.owner(relay_class)),
-        into: %{} do
-      GenServer.cast(pid, {:fence, credit})
-      {cell_id, Process.monitor(pid)}
-    end
-    |> await_drains(credit.session)
+    {owed, watch} =
+      for {{relay_class, _, _} = cell_id, pid} <- WriterRegistry.cell_writers(),
+          DurabilityTier.sync_class?(relay_class),
+          match?({:ok, _, ^identity}, ClassRegistry.owner(relay_class)),
+          reduce: {%{}, Watch.new()} do
+        {owed, watch} ->
+          GenServer.cast(pid, {:fence, credit})
+          {Map.put(owed, cell_id, pid), Watch.watch(watch, pid, cell_id)}
+      end
+
+    await_drains(owed, watch, credit.session)
   end
 
-  defp await_drains(owed, _ref) when owed == %{}, do: :ok
+  defp await_drains(owed, _watch, _ref) when owed == %{}, do: :ok
 
-  defp await_drains(owed, ref) do
+  defp await_drains(owed, watch, ref) do
     receive do
       {_drained_or_released, ^ref, _bytes, cell_id} ->
-        await_drains(Map.delete(owed, cell_id), ref)
+        await_drains(Map.delete(owed, cell_id), watch, ref)
 
       {:DOWN, monitor, :process, _pid, _reason} ->
-        await_drains(Map.reject(owed, &(elem(&1, 1) == monitor)), ref)
+        case Watch.down(watch, monitor) do
+          {:unknown, watch} -> await_drains(owed, watch, ref)
+          {cell_ids, watch} -> await_drains(Map.drop(owed, cell_ids), watch, ref)
+        end
     end
   end
 
