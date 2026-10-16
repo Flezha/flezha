@@ -270,15 +270,16 @@ defmodule Flezha.Relay.Replay do
 
   @doc """
   Ask this relay's running Cell writers to dispatch again, now, every call
-  their outboxes hold: how many went. An Overwatch restarted alone relearns its
-  calls from those dispatches.
+  their outboxes hold from before this Overwatch started: how many entries hold
+  call `id` still to reach it. An Overwatch restarted alone relearns its calls
+  from those dispatches.
   """
-  @spec redrive_calls(Overwatch.t()) :: non_neg_integer()
-  def redrive_calls(%Overwatch{} = state) do
+  @spec redrive_calls(Overwatch.t(), binary()) :: non_neg_integer()
+  def redrive_calls(%Overwatch{} = state, id) do
     state
     |> Overwatch.relay_class()
     |> Flezha.State.Supervisor.live_writers()
-    |> Enum.map(&WalWriter.redrive_calls/1)
+    |> Enum.map(&WalWriter.redrive_calls(&1, state.started_mono, id))
     |> Enum.filter(&is_integer/1)
     |> Enum.sum()
   end

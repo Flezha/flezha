@@ -403,8 +403,10 @@ answered `call.timeout`. A recovered call past its deadline plus that margin, wh
 longer retained, SHALL be settled with no new `Response` and counted as `recovered_unanswered`:
 there the guarantee is at most one `Response`. A caller whose Overwatch restarted and holds no
 row for a call whose output its outbox still holds SHALL NOT drop that call's answer: its Cells
-SHALL dispatch their held calls again at once, and the answer SHALL be taken when its delivery
-retries. The callee SHALL hold its answer in its own outbox until the caller's Overwatch has taken
+SHALL dispatch again at once the held calls they dispatched before that restart, a call they
+dispatched since SHALL NOT go again on that re-drive, and the answer's delivery SHALL be told to
+retry while a Cell still holds its call, so the answer is taken when it retries. An answer for a
+call no Cell holds SHALL be absorbed. The callee SHALL hold its answer in its own outbox until the caller's Overwatch has taken
 it, and SHALL keep retrying it until then, until the call's deadline plus the margin has passed,
 or until the caller is no longer declared in its namespace. An answer whose delivery was lost
 while held SHALL be dispatched again by the callee's outbox and handed to the delivery again. An

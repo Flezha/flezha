@@ -7,6 +7,8 @@ defmodule Flezha.State.WalWriterOutboxDeliveryTest do
   """
   use FlezhaTest.OutboxCase, async: false
 
+  alias Flezha.Relay.Calls
+
   test "stall_status reports the outbox cursors producing-liveness compares", %{
     rc: rc,
     cell_id: cell_id
@@ -414,7 +416,8 @@ defmodule Flezha.State.WalWriterOutboxDeliveryTest do
     :ok = Outbox.hold(sink_md)
     Enum.each([call_md, sink_md], &settle/1)
 
-    assert WalWriter.redrive_calls(pid) == 1
+    started = System.monotonic_time(:millisecond)
+    assert WalWriter.redrive_calls(pid, started, Calls.durable_id(call_md)) == 1
     assert {"call", again, _} = next_output()
     assert again["flz.seq"] == call_md["flz.seq"]
     refute_dispatched(0)
@@ -624,5 +627,45 @@ defmodule Flezha.State.WalWriterOutboxDeliveryTest do
 
     :ok = WalWriter.fsync(pid)
     assert %{outbox_flushed_seq: 0, awaiting: 0} = WalWriter.outbox_status(pid)
+  end
+
+  test "a re-drive of held calls leaves a call whose chain run is still in flight", %{
+    rc: rc,
+    cell_id: cell_id
+  } do
+    started = System.monotonic_time(:millisecond) - 1
+    pid = armed_writer(rc, cell_id)
+    append_effect(pid, 0, [output("k", "call", [{"flz.call", "id:pricing"}])], 1)
+    assert {"call", call_md, _} = next_output()
+
+    # The live Overwatch has not run this entry's chain yet: the call stays
+    # owed to it, so an answer for it waits, and it does not go again.
+    assert WalWriter.redrive_calls(pid, started, Calls.durable_id(call_md)) == 1
+    refute_dispatched(0)
+
+    # The one run reports: the live Overwatch holds the call, so nothing waits.
+    :ok = Outbox.hold_delivery(call_md)
+    settle(call_md)
+    assert WalWriter.redrive_calls(pid, started, Calls.durable_id(call_md)) == 0
+    refute_dispatched(0)
+
+    # The caller answers it: the cursor passes the entry.
+    :ok = Outbox.confirm_delivery(call_md)
+    :ok = WalWriter.fsync(pid)
+    assert %{outbox_flushed_seq: 0} = WalWriter.outbox_status(pid)
+  end
+
+  test "an answer for no call this writer holds is not owed by an unrelated call in flight", %{
+    rc: rc,
+    cell_id: cell_id
+  } do
+    started = System.monotonic_time(:millisecond) - 1
+    pid = armed_writer(rc, cell_id)
+    append_effect(pid, 0, [output("k", "call", [{"flz.call", "id:pricing"}])], 1)
+    assert {"call", _call_md, _} = next_output()
+
+    # A stray answer (its call is over) must be absorbed, not retried.
+    assert WalWriter.redrive_calls(pid, started, Calls.durable_id(%{})) == 0
+    refute_dispatched(0)
   end
 end

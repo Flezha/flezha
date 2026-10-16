@@ -187,11 +187,13 @@ defmodule Flezha.State.WalWriter do
   def outbox_epoch(server), do: call(server, :outbox_epoch)
 
   @doc """
-  Re-dispatch now every relay call this Cell's outbox still holds; how many
-  entries went again, or the writer's refusal.
+  Re-dispatch now every relay call this Cell's outbox still holds from before
+  `started` (monotonic ms); how many entries hold call `id` with a chain run
+  yet to report, or the writer's refusal.
   """
-  @spec redrive_calls(GenServer.server()) :: non_neg_integer() | {:error, term()}
-  def redrive_calls(server), do: call(server, :redrive_calls)
+  @spec redrive_calls(GenServer.server(), integer(), binary()) ::
+          non_neg_integer() | {:error, term()}
+  def redrive_calls(server, started, id), do: call(server, {:redrive_calls, started, id})
 
   @doc """
   Where a correction for `target_event_time` must rewind to: the last seq whose
@@ -456,8 +458,8 @@ defmodule Flezha.State.WalWriter do
     {:reply, state.outbox_epoch, state}
   end
 
-  def handle_call(:redrive_calls, _from, state) do
-    {count, state} = Settlement.redrive_calls(state)
+  def handle_call({:redrive_calls, started, id}, _from, state) do
+    {count, state} = Settlement.redrive_calls(state, started, id)
     {:reply, count, state}
   end
 

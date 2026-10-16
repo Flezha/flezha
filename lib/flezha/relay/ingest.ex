@@ -385,11 +385,11 @@ defmodule Flezha.Relay.Ingest do
 
   # An outcome for no row the caller can take: the call is over, or, for a
   # caller that journals its `Response`s and restarted since it made the call,
-  # not relearned yet. Its writers then dispatch their held calls now and the
-  # delivery retries.
+  # not relearned yet. Its writers then dispatch their held calls now, and the
+  # delivery retries while one of them still holds this call.
   defp unclaimed(%Overwatch{} = state, id) do
     if Replay.floor_reporter(state) != nil and Calls.pending(state.calls, id) == nil and
-         not answered?(state, id) and Replay.redrive_calls(state) > 0 do
+         not answered?(state, id) and Replay.redrive_calls(state, id) > 0 do
       {:error, :call_not_relearned}
     else
       Calls.unclaimed(Overwatch.callee(state))

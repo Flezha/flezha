@@ -79,6 +79,9 @@ defmodule Flezha.Relay.Overwatch do
     # Wall-clock ms at process start, for `flz relay info` uptime. Wall-clock
     # (not monotonic) so the value stays comparable when read from another node.
     started_at: nil,
+    # This node's monotonic ms at process start: a Cell writer's dispatch from
+    # before it went to an earlier Overwatch (`Replay.redrive_calls/1`).
+    started_mono: nil,
     # Wall-clock ms at which a bind task's binding was last adopted: how long a
     # rebound instance has stayed up, for the convergence loop's stable window.
     bound_at: nil,
@@ -285,6 +288,7 @@ defmodule Flezha.Relay.Overwatch do
       extensions: Host.relay_table(__extensions_catalog__(), relay.opts),
       builder: relay,
       started_at: System.system_time(:millisecond),
+      started_mono: System.monotonic_time(:millisecond),
       liveness_ref: LivenessCounters.register_relay(relay.id)
     }
 

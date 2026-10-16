@@ -21,7 +21,7 @@ defmodule Flezha.State.WalWriter.Settlement do
   alias Flezha.Dlq.Entry, as: DlqEntry
   alias Flezha.Dlq.Store, as: DlqStore
   alias Flezha.Config.Durations
-  alias Flezha.Relay.Lookup
+  alias Flezha.Relay.{Calls, Lookup}
   alias Flezha.State.Wire
   alias Flezha.State.{DurabilityTier, InputLog, Outbox, Paths}
   alias Flezha.Process.Timer
@@ -439,28 +439,31 @@ defmodule Flezha.State.WalWriter.Settlement do
   # never be answered, wedging the cursor for good.
   def resettle_outbox(state) do
     if resettle_due?(state) do
-      {_count, state} =
-        resettle(state, fn tally ->
-          unanswered?(tally) and State.now_ms() - tally.at >= state.limits.outbox_resettle_ms
-        end)
-
-      state
+      resettle(state, fn tally ->
+        unanswered?(tally) and State.now_ms() - tally.at >= state.limits.outbox_resettle_ms
+      end)
     else
       state
     end
   end
 
   @doc """
-  Re-dispatch every call this writer holds now, not at the resettle tick: its
-  caller's Overwatch got an answer for a call it has no row for, having
-  restarted since. How many entries went again.
+  Re-dispatch now, not at the resettle tick, every call this writer dispatched
+  by `started`: its caller's Overwatch, started then, got an answer for a call
+  it has no row for. A later dispatch went to that Overwatch and is its own.
+  How many entries hold call `id` with a chain run yet to report, so its
+  answer waits; an answer no entry holds is the caller's to absorb.
   """
-  @spec redrive_calls(State.t()) :: {non_neg_integer(), State.t()}
-  def redrive_calls(state),
-    do:
-      resettle(state, fn tally ->
-        unanswered?(tally) and Enum.any?(tally.entry.outputs, &call_output?(&1.metadata))
-      end)
+  @spec redrive_calls(State.t(), integer(), binary()) :: {non_neg_integer(), State.t()}
+  def redrive_calls(state, started, id) do
+    call? = &Enum.any?(&1.entry.outputs, fn output -> call_output?(output.metadata) end)
+    state = resettle(state, &(call?.(&1) and &1.at <= started and unanswered?(&1)))
+
+    {Enum.count(state.outbox_awaiting, fn {key, tally} ->
+       tally.pending > 0 and call?.(tally) and
+         Enum.any?(entry_outputs(state, key, tally.entry), &(Calls.durable_id(elem(&1, 1)) == id))
+     end), state}
+  end
 
   defp resettle(state, due?) do
     {rc, _sh, _pk} = state.cell_id
@@ -473,7 +476,7 @@ defmodule Flezha.State.WalWriter.Settlement do
 
     with {:ok, pid} <- overwatch, do: Outbox.dispatch(pid, in_dispatch_order(chunks))
 
-    {length(chunks), rename_inflight(state, renamed)}
+    rename_inflight(state, renamed)
   end
 
   # A chain run that never reported, or a delivery hold of a relay's call or

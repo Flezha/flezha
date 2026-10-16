@@ -575,10 +575,7 @@ defmodule Flezha.Relay.Calls do
   """
   @spec request(binary(), map(), boolean()) :: {call_id(), out_row()}
   def request(message, metadata, durable?) do
-    id =
-      if durable?,
-        do: digest([metadata["flz.cell"], metadata["flz.seq"], metadata["flz.epoch"]]),
-        else: digest([:crypto.strong_rand_bytes(16)])
+    id = if durable?, do: durable_id(metadata), else: digest([:crypto.strong_rand_bytes(16)])
 
     deadline_at = String.to_integer(Map.fetch!(metadata, "flz.deadline_at"))
 
@@ -601,6 +598,12 @@ defmodule Flezha.Relay.Calls do
 
     {id, row}
   end
+
+  @doc "A durable call's id, from its output's identity: a re-dispatch keeps it."
+  @spec durable_id(map()) :: binary()
+  @compile {:inline, durable_id: 1}
+  def durable_id(metadata),
+    do: digest([metadata["flz.cell"], metadata["flz.seq"], metadata["flz.epoch"]])
 
   defp digest(parts) do
     :sha256

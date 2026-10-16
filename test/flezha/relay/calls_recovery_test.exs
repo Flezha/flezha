@@ -103,7 +103,7 @@ defmodule FlezhaTest.Relay.CallsRecoveryTest do
     inst: inst
   } do
     {host, id, metadata} = redrive(inst, now() + 30_000)
-    writer = spawn_link(fn -> holding_writer(host, metadata) end)
+    writer = spawn_link(fn -> holding_writer(host, id, metadata) end)
     stub(Flezha.State.Supervisor, :live_writers, fn ^inst -> [writer] end)
 
     assert {:error, _retry} = GenServer.call(host, {:call_answer, id, ok_outcome("hi")})
@@ -117,12 +117,12 @@ defmodule FlezhaTest.Relay.CallsRecoveryTest do
 
   # A Cell writer still holding the call's output: asked for its held calls, it
   # dispatches the output again and says how many it sent.
-  defp holding_writer(host, metadata) do
+  defp holding_writer(host, id, metadata) do
     receive do
-      {:"$gen_call", from, :redrive_calls} ->
+      {:"$gen_call", from, {:redrive_calls, _started, ^id}} ->
         dispatch(host, "o1", metadata)
         GenServer.reply(from, 1)
-        holding_writer(host, metadata)
+        holding_writer(host, id, metadata)
     end
   end
 end
