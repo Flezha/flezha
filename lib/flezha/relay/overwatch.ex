@@ -136,6 +136,9 @@ defmodule Flezha.Relay.Overwatch do
     # The outside callers waiting on this relay for an answer; each row's
     # deadline is armed under the timer family `:call`.
     calls: %Calls{},
+    # Whether this process handed its state to a HotSwap target: it ends as a
+    # move, whether or not the relay has a declared entry.
+    handed_over?: false,
     # Whether a `:once` or `:chained` steps instance has taken its one
     # input in this process, so a later call is refused; a durable instance
     # also asks its input log (`Ingest.first_input?/1`), which outlives it.
@@ -770,7 +773,7 @@ defmodule Flezha.Relay.Overwatch do
     keys = Map.keys(state.calls.rows) ++ Map.keys(state.calls.out)
     state = Enum.reduce(keys, state, &cancel_timer(&2, {:call, &1}))
 
-    {:noreply, %{state | calls: Calls.depart(state.calls)}}
+    {:noreply, %{state | calls: Calls.depart(state.calls), handed_over?: true}}
   end
 
   @impl true

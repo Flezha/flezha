@@ -450,13 +450,17 @@ defmodule Flezha.Relay.Migration do
 
   # A deliberate stop removed the relay's declared entry before it
   # terminated: a shared plugin it was the last one on stops at once. A move or
-  # a restart leaves the entry, and the plugin waits out its idle stop.
+  # a restart leaves the entry (a move also hands over, which counts without
+  # one: auto-restore off declares nothing), and the plugin waits out its idle
+  # stop.
   defp plugin_table_step({state, reason}, _budget) do
     unless is_nil(state.runner_id), do: Plugins.fire_on_terminate(state, reason)
     idle_or_now = if departure(state) == :moved, do: :idle, else: :now
     _ = Table.teardown_all(state.extensions, idle_or_now)
     :ok
   end
+
+  defp departure(%Overwatch{handed_over?: true}), do: :moved
 
   defp departure(state) do
     declared? = Enum.any?(HubManager.declared_relays(state.namespace), &(&1.id == state.id))
