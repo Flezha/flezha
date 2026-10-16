@@ -85,7 +85,7 @@ defmodule Flezha.Relay.PartitionGroup do
       identity = Partition.identity(partition_opts)
 
       with {:ok, plugins} <- SpecDecoder.decode(plugins_json, namespace, member_id),
-           {:ok, bindings} <- PluginManager.start_bindings(namespace, plugins),
+           {:ok, bindings} <- PluginManager.start_bindings(namespace, relay.factory_id, plugins),
            do: {:ok, Enum.map(bindings, &Plugin.for_partition(&1, member_id, identity))}
     end
 

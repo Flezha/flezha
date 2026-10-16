@@ -223,8 +223,8 @@ loses nothing.
   member from answering its probe until the client's 5 s `sync_timeout` runs out; the probe
   then reads as uncertain, which counts as healthy.
 - **`channel` is checked at bind.** As for every source, a name the relay's runners did not
-  announce as an entry channel is refused with `api.channel_unknown`; a relay started with
-  `--plugins`, or whose runners announced no channels, is not checked.
+  announce as an entry channel is refused with `api.channel_unknown`; a relay whose runners
+  announced no channels is not checked.
 
 ## See also
 

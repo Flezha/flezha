@@ -426,6 +426,53 @@ defmodule Flezha.Service.PluginManagerTest do
     end
   end
 
+  describe "a channel named off the bind path is one its relay announces" do
+    setup do
+      Mimic.stub(HubManager, :plugin_entry, fn @namespace, name ->
+        {:ok,
+         %Plugin{
+           id: name,
+           provider: Source,
+           namespace: @namespace,
+           opts: %{path: "in.log", channel: "orders"}
+         }}
+      end)
+
+      announce(["orders"])
+    end
+
+    # Fails when: `relay start --plugins` binds a channel the factory does not
+    # announce, because the relay is not declared yet when it is checked.
+    test "a start binding's unannounced channel is refused" do
+      Mimic.stub(HubManager, :relay_spec, fn @namespace, _id -> {:error, :not_found} end)
+
+      start = %Plugin{id: "tail", provider: nil, relay_id: "fresh_op", opts: %{channel: "nope"}}
+
+      assert {:error, %Flezha.Error{code: "api.channel_unknown"}} =
+               PluginManager.start_bindings(@namespace, "do_nothing", [start])
+    end
+
+    test "the same binding on a declared relay is refused" do
+      start = %Plugin{id: "tail", provider: nil, relay_id: @relay_id, opts: %{channel: "nope"}}
+
+      assert {:error, %Flezha.Error{code: "api.channel_unknown"}} =
+               PluginManager.start_bindings(@namespace, "do_nothing", [start])
+    end
+
+    # Fails when: `plugin update --channel` moves a bound relay's entry onto a
+    # channel its factory does not announce.
+    test "an update to a channel a bound relay does not announce is refused", %{store: store} do
+      :ok = PluginManager.bind_plugin(@namespace, "tail", @relay_id)
+      assert [{"tail", _}] = read_bindings(store)
+
+      Mimic.stub(Flezha.Service.RelayManager.Init, :write_plugins, fn _ns, _id, _fun -> :ok end)
+      Mimic.stub(Flezha.Relay.Overwatch, :plugin_update, fn _pid, _id, _b, _mode, _e -> :ok end)
+
+      assert {:error, %Flezha.Error{code: "api.channel_unknown"}} =
+               PluginManager.update_plugin(@namespace, "tail", %{channel: "nope"})
+    end
+  end
+
   # The relay's factory row as its runners announce it.
   defp announce(channels) do
     Mimic.stub(HubManager, :relay_spec, fn @namespace, @relay_id ->

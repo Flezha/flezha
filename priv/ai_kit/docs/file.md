@@ -481,9 +481,8 @@ under source `:flezha_file_source`, and the output plugin's as `flushed` under
   plugin, no multipart upload, and no reading every object under a prefix.
 - **`channel` is checked at bind.** As for every source, binding it to a relay whose
   runners announced their entry channels refuses a name that is none of them, with
-  `api.channel_unknown`. A relay started with `--plugins`, or whose runners announced no
-  channels, is not checked: an undeclared name surfaces on the runner as a dead-letter
-  park under that name.
+  `api.channel_unknown`. A relay whose runners announced no channels is not checked: an
+  undeclared name surfaces on the runner as a dead-letter park under that name.
 
 ## See also
 

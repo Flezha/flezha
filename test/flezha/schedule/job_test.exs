@@ -219,7 +219,7 @@ defmodule Flezha.Schedule.JobTest do
 
       # The enable and the binding check are the plugin manager's; what the job
       # owes is the spec decoded for this slot's instance.
-      stub(PluginManager, :start_bindings, fn "default", plugins ->
+      stub(PluginManager, :start_bindings, fn "default", _factory_id, plugins ->
         send(test_pid, {:decoded, plugins})
         {:ok, Enum.map(plugins, &%{&1 | opts: %{}})}
       end)

@@ -82,8 +82,9 @@ type, whether it is required, its default, its bounds and its allowed values.
 - `--channel` on a bind names the entry channel that relay's records arrive on, when it
   is not the one the plugin was enabled with: one plugin can feed `trades` on one relay
   and `ticks` on another. A source's entry channel, the bind's or the plugin's own, that
-  the runner hosting the relay did not announce is refused with `api.channel_unknown`; a
-  relay whose runner announced no channels is not checked.
+  the runner hosting the relay did not announce is refused with `api.channel_unknown`, at a
+  bind, a `relay start --plugins` and a `plugin update` alike; a relay whose runner
+  announced no channels is not checked.
 - Options belong to the enable and the update; a bind that carries `--X` settings is
   refused.
 

@@ -97,7 +97,7 @@ defmodule FlezhaTest.Fixtures.RelayFixture do
       ExUnit.Callbacks.on_exit(fn -> PluginManager.disable_plugin(namespace, plugin.id) end)
     end)
 
-    {:ok, bindings} = PluginManager.start_bindings(namespace, plugins)
+    {:ok, bindings} = PluginManager.start_bindings(namespace, nil, plugins)
     bindings
   end
 

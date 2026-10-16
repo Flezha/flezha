@@ -219,7 +219,7 @@ defmodule Flezha.Service.PluginManager do
     with :ok <- refuse_init_hook(binding),
          {:ok, entry} <- fetch_entry(namespace, binding.id) do
       one_holder(entry, fn ->
-        with {:ok, binding} <- checked_binding(binding, targets) do
+        with {:ok, binding} <- checked_binding(binding, targets, nil) do
           targets
           |> Parallel.map(fn {member_id, identity} ->
             member = member_binding(binding, member_id, identity)
@@ -241,55 +241,57 @@ defmodule Flezha.Service.PluginManager do
     do: Code.ensure_loaded?(provider) and provider.__provider__().shareable
 
   # The binding with its hooks canonical and its plugin's provider, or the
-  # refusal its plugin's entry or its relay's announced channels give it.
-  defp checked_binding(%Plugin{id: name, namespace: namespace} = binding, targets) do
+  # refusal its plugin's entry or its relay's announced channels give it; a
+  # relay not declared yet announces `factory_id`'s.
+  defp checked_binding(%Plugin{id: name, namespace: namespace} = binding, targets, factory_id) do
     with {:ok, entry} <- fetch_entry(namespace, name),
          binding = %Plugin{binding | provider: entry.provider},
          {:ok, binding} <- Table.canonicalise(Overwatch.__extensions_catalog__(), binding),
          :ok <- refuse_binding(entry, binding, targets),
          channel = Plugin.entry_channel(binding, entry),
-         :ok <- RelayApi.refuse_unknown_entry(namespace, binding.relay_id, channel),
+         :ok <- RelayApi.refuse_unknown_entry(namespace, binding.relay_id, channel, factory_id),
          do: {:ok, binding}
   end
 
   @doc """
-  The bindings a relay starting with `--plugins` specs carries: each spec
-  that names a provider enables its plugin when it is not enabled yet, and each
-  is checked as a bind of `plugins`' relay would be. A spec that only binds
-  may name the binding's `channel` and nothing else in its options.
+  The bindings a relay of `factory_id` starting with `--plugins` specs
+  carries: each spec that names a provider enables its plugin when it is not
+  enabled yet, and each is checked as a bind of `plugins`' relay would be, an
+  undeclared relay against the channels `factory_id` announces. A spec that
+  only binds may name the binding's `channel` and nothing else in its options.
   """
-  @spec start_bindings(binary(), [Plugin.t()]) :: {:ok, [Plugin.t()]} | {:error, term()}
-  def start_bindings(namespace, plugins) do
+  @spec start_bindings(binary(), binary() | nil, [Plugin.t()]) ::
+          {:ok, [Plugin.t()]} | {:error, term()}
+  def start_bindings(namespace, factory_id, plugins) do
     Enum.reduce_while(plugins, {:ok, []}, fn plugin, {:ok, acc} ->
-      case start_binding(namespace, plugin) do
+      case start_binding(namespace, factory_id, plugin) do
         {:ok, binding} -> {:cont, {:ok, acc ++ [binding]}}
         {:error, _} = refused -> {:halt, refused}
       end
     end)
   end
 
-  defp start_binding(namespace, %Plugin{provider: nil, opts: opts} = plugin) do
+  defp start_binding(namespace, factory_id, %Plugin{provider: nil, opts: opts} = plugin) do
     case Map.keys(opts) -- [:channel] do
       [] ->
-        binding = %Plugin{plugin | namespace: namespace}
-
-        on_hub_node(namespace, :checked_start_binding, [binding], {:plugin_not_found, plugin.id})
+        args = [%Plugin{plugin | namespace: namespace}, factory_id]
+        on_hub_node(namespace, :checked_start_binding, args, {:plugin_not_found, plugin.id})
 
       unread ->
         {:error, {:unread_plugin_options, Enum.map(unread, &"opts.#{&1}")}}
     end
   end
 
-  defp start_binding(namespace, %Plugin{id: name} = plugin) do
+  defp start_binding(namespace, factory_id, %Plugin{id: name} = plugin) do
     with {:ok, _enabled} <-
            enable_plugin(name, %Plugin{plugin | namespace: namespace, relay_id: nil}) do
-      start_binding(namespace, %Plugin{plugin | provider: nil, opts: %{}})
+      start_binding(namespace, factory_id, %Plugin{plugin | provider: nil, opts: %{}})
     end
   end
 
   @doc false
-  def checked_start_binding(%Plugin{relay_id: relay_id} = binding),
-    do: checked_binding(binding, [{relay_id, nil}])
+  def checked_start_binding(%Plugin{relay_id: relay_id} = binding, factory_id),
+    do: checked_binding(binding, [{relay_id, nil}], factory_id)
 
   # A group id names no relay — it names N of them, each bound under its
   # `#pK` id with its partition options.
@@ -541,8 +543,16 @@ defmodule Flezha.Service.PluginManager do
     end
   end
 
+  # Each bound relay's entry channel is checked before anything is rewritten.
   defp apply_update(namespace, name, new, mode) do
     with :ok <-
+           Enum.find_value(bound_to(all_bindings(namespace), name), :ok, fn {relay_id, _, binding} ->
+             channel = Plugin.entry_channel(binding, new)
+             refused = RelayApi.refuse_unknown_entry(namespace, relay_id, channel)
+
+             if refused != :ok, do: refused
+           end),
+         :ok <-
            update_cspec_plugins(namespace, {:plugin, name}, RegistryUpdate.add_plugin(name, new)) do
       Enum.each(Directory.plugin_hosts(namespace, name), &Shared.update(&1, new, mode))
       relays = bound_relays(namespace, name)

@@ -715,7 +715,7 @@ defmodule Flezha.Service.Relay do
   # the start runs under, which for a generated id is each one drawn.
   defp start_with_plugins(namespace, spec, plugins, opts) do
     with {:ok, decoded} <- SpecDecoder.decode(plugins, namespace, spec.id),
-         {:ok, bindings} <- PluginManager.start_bindings(namespace, decoded) do
+         {:ok, bindings} <- PluginManager.start_bindings(namespace, spec.factory_id, decoded) do
       spec_opts =
         if bindings == [], do: spec.opts, else: Keyword.put(spec.opts, :bindings, bindings)
 

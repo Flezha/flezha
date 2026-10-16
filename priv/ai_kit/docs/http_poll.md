@@ -219,10 +219,10 @@ plugin's health verdict, not on a failure-rate metric.
 - **No per-item diffing.** A changed byte anywhere re-injects the whole body.
 - **`channel` is checked at bind.** Binding it to a relay whose runners announced their
   entry channels refuses a name that is none of them, with `api.channel_unknown`. A relay
-  started with `--plugins`, or whose runners announced no channels, is not checked: an
-  undeclared name surfaces on the runner as a dead-letter park under that name, exactly
-  as a mistyped `flz relay send --channel` does: `flz dlq list` shows the frames and
-  `flz dlq replay` re-injects them once a channel of that name exists.
+  whose runners announced no channels is not checked: an undeclared name surfaces on the
+  runner as a dead-letter park under that name, exactly as a mistyped
+  `flz relay send --channel` does: `flz dlq list` shows the frames and `flz dlq replay`
+  re-injects them once a channel of that name exists.
 - **HTTPS is verified** against the system CA store; a host with no usable store fails the
   poll rather than dropping to an unverified connection.
 - **Requests share the default `:httpc` profile** with the rest of the controller;

@@ -76,7 +76,7 @@ defmodule Flezha.Schedule.Job do
   # its plugin the first time.
   defp instance_plugins(entry, instance_id) do
     with {:ok, plugins} <- SpecDecoder.decode(entry.plugins, entry.namespace, instance_id),
-         do: PluginManager.start_bindings(entry.namespace, plugins)
+         do: PluginManager.start_bindings(entry.namespace, entry.factory_id, plugins)
   end
 
   # The stored first message rides the bind as a spawn's payload does, on the

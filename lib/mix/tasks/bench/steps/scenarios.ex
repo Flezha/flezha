@@ -537,7 +537,7 @@ defmodule Mix.Tasks.Bench.Steps.Scenarios do
 
     # One sink per instance: the forward cannot be shared between relays.
     {:ok, bindings} =
-      PluginManager.start_bindings(Run.namespace(), [
+      PluginManager.start_bindings(Run.namespace(), cfg.factory, [
         %{sink | id: "#{sink.id}_#{id}", namespace: Run.namespace(), relay_id: id}
       ])
 
