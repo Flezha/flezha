@@ -93,9 +93,11 @@ defmodule Flezha.State.Outbox do
   What one confirmation completes on the owning writer: the entry of the
   effect record at that seq, whose completion lets the cursor pass it. Every
   output of one entry decodes to the same key, which is what makes the
-  writer's tally per entry rather than per output.
+  writer's tally per entry rather than per output. A re-dispatch numbers its
+  key (`{n, seq}` for the entry's nth), so a superseded copy's reports name an
+  entry the writer no longer holds.
   """
-  @type key :: {:cursor, non_neg_integer()}
+  @type key :: {:cursor | pos_integer(), non_neg_integer()}
 
   @typedoc """
   Decoded `flz.ack` token: the Cell whose writer owns the cursor and whose
@@ -181,6 +183,11 @@ defmodule Flezha.State.Outbox do
   def token(owner, {:cursor, seq}) do
     owner = cell_bytes(owner)
     encode(<<byte_size(owner)::16-big, owner::binary, 1, seq::64-big>>)
+  end
+
+  def token(owner, {n, seq}) do
+    owner = cell_bytes(owner)
+    encode(<<byte_size(owner)::16-big, owner::binary, 2, n::64-big, seq::64-big>>)
   end
 
   @doc """
@@ -344,6 +351,15 @@ defmodule Flezha.State.Outbox do
   defp decode_body(<<owner_len::16-big, owner::binary-size(owner_len), 1, seq::64-big>>) do
     case Wire.decode_cell_id(owner) do
       {:ok, owner_id} -> {:ok, %{owner: owner_id, key: {:cursor, seq}}}
+      _ -> :error
+    end
+  end
+
+  defp decode_body(
+         <<owner_len::16-big, owner::binary-size(owner_len), 2, n::64-big, seq::64-big>>
+       ) do
+    case Wire.decode_cell_id(owner) do
+      {:ok, owner_id} -> {:ok, %{owner: owner_id, key: {n, seq}}}
       _ -> :error
     end
   end

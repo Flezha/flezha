@@ -28,7 +28,7 @@ defmodule FlezhaTest.Relay.CallsRecoveryTest do
     ]
 
   alias Flezha.Relay.Calls
-  alias Flezha.State.{InputLog, TestHelpers}
+  alias Flezha.State.{InputLog, Outbox, TestHelpers}
   alias FlezhaTest.Helper.CallHarness
 
   setup :set_mimic_global_until_exit
@@ -63,6 +63,23 @@ defmodule FlezhaTest.Relay.CallsRecoveryTest do
     assert_receive {:delivery_request, _, ^inst, %{id: ^id}}
     refute_received {:"$gen_cast", {:outbox_delivery_confirmed, _}}
     assert %{} = Calls.pending(:sys.get_state(host).calls, id)
+  end
+
+  test "re-dispatched while it waits, its answer releases the newest copy's hold", %{inst: inst} do
+    {host, id, metadata} = redrive(inst, now() + 30_000)
+    dispatch(host, "o1", metadata)
+    assert_receive {:delivery_request, _, ^inst, %{id: ^id}}
+
+    # The writer's resettle sends the call again under the entry's next key.
+    {:ok, %{owner: cell}} = Outbox.decode(metadata["flz.ack"])
+    again = %{metadata | "flz.ack" => Outbox.token(cell, {1, 4})}
+    dispatch(host, "o1", again)
+
+    assert :ok = GenServer.call(host, {:call_answer, id, ok_outcome("hi")})
+    {%{"call" => ^id, "value" => _}, _} = response(inst)
+    assert_receive {:"$gen_cast", {:outbox_delivery_confirmed, {1, 4}}}
+    refute_received {:"$gen_cast", {:outbox_delivery_confirmed, {:cursor, 4}}}
+    refute_received {:delivery_request, _, _, _}
   end
 
   test "past its deadline within the margin is answered call.timeout", %{inst: inst} do

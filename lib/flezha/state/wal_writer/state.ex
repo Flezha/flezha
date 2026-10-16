@@ -60,7 +60,7 @@ defmodule Flezha.State.WalWriter.State do
     :timers,
     # Dispatched but not yet confirmed by the sinks: the per-entry tallies
     # (`Flezha.State.Outbox` keys) and, for a flow relay writer, the dispatch-order
-    # queue of `{seq, at}` the cursor drains in. The cursor may only reach a seq
+    # queue of `{key, at}` the cursor drains in. The cursor may only reach a seq
     # once every earlier one has left this queue, which is what stops an
     # out-of-order confirmation from advancing it past unconfirmed output.
     :outbox_awaiting,
@@ -122,7 +122,7 @@ defmodule Flezha.State.WalWriter.State do
           folded_offset: integer(),
           timers: Flezha.Process.Timer.timers(),
           outbox_awaiting: %{optional(Outbox.key()) => map()},
-          outbox_inflight: :queue.queue({non_neg_integer(), integer()}),
+          outbox_inflight: :queue.queue({Outbox.key(), integer()}),
           outbox_last_seq: integer(),
           seq_index: SeqIndex.t(),
           sync_waiters: [{GenServer.from(), term()}],

@@ -371,8 +371,8 @@ defmodule Flezha.State.WalWriter.Settlement do
     |> tally(key, & &1)
   end
 
-  defp await_entry(state, {:cursor, seq} = key, entry, outputs) do
-    %{state | outbox_inflight: :queue.in({seq, State.now_ms()}, state.outbox_inflight)}
+  defp await_entry(state, key, entry, outputs) do
+    %{state | outbox_inflight: :queue.in({key, State.now_ms()}, state.outbox_inflight)}
     |> register_entry(key, outputs, entry)
     |> schedule_outbox_retry()
   end
@@ -394,10 +394,9 @@ defmodule Flezha.State.WalWriter.Settlement do
 
   def delivery(state, key, :confirmed), do: tally(state, key, &delivered/1)
 
-  # A confirmation no delivery hold still waits on (a superseded dispatch's,
-  # whose re-dispatch was answered too) is dropped: its weight would answer the
-  # sinks' holds. Until the run settles its holds are not in, so the entry's
-  # call and answer outputs bound them.
+  # A confirmation no delivery hold still waits on (a second one of one copy)
+  # is dropped: its weight would answer the sinks' holds. Until the run settles
+  # its holds are not in, so the entry's call and answer outputs bound them.
   defp delivered(tally) do
     if delivery_owed?(tally),
       do: %{tally | confirms: tally.confirms + @delivery_hold},
@@ -429,17 +428,15 @@ defmodule Flezha.State.WalWriter.Settlement do
     end
   end
 
-  # `pending` may go negative when a superseded chain run settles late; its
-  # outputs were delivered under the same identity, so it is still complete.
   def complete?(%{pending: pending, holds: holds, confirms: confirms}),
     do: pending <= 0 and confirms >= holds
 
   # A chain run that never reported back — the Overwatch died between the cast
   # and the settlement — leaves the entry owed with nothing in flight to answer
   # it. Re-dispatch its outputs under their identical identity (conforming sinks
-  # dedup; the record's own side effects already landed) and
-  # start the tally over: a hold the lost run took would otherwise never be
-  # answered, wedging the cursor for good.
+  # dedup; the record's own side effects already landed) and start the tally
+  # over under the entry's next key: a hold the lost run took would otherwise
+  # never be answered, wedging the cursor for good.
   def resettle_outbox(state) do
     if resettle_due?(state) do
       {_count, state} =
@@ -469,16 +466,14 @@ defmodule Flezha.State.WalWriter.Settlement do
     {rc, _sh, _pk} = state.cell_id
     overwatch = Lookup.overwatch(rc)
 
-    {state, chunks} =
-      Enum.reduce(state.outbox_awaiting, {state, []}, fn {key, tally}, {acc, chunks} ->
-        if due?.(tally),
-          do: resettle_entry(overwatch, acc, chunks, key, tally),
-          else: {acc, chunks}
+    {state, chunks, renamed} =
+      Enum.reduce(state.outbox_awaiting, {state, [], %{}}, fn {key, tally}, acc ->
+        if due?.(tally), do: resettle_entry(overwatch, acc, key, tally), else: acc
       end)
 
     with {:ok, pid} <- overwatch, do: Outbox.dispatch(pid, in_dispatch_order(chunks))
 
-    {length(chunks), state}
+    {length(chunks), rename_inflight(state, renamed)}
   end
 
   # A chain run that never reported, or a delivery hold of a relay's call or
@@ -500,20 +495,34 @@ defmodule Flezha.State.WalWriter.Settlement do
   # sweep out on a healthy stream writer.
   def resettle_due?(state) do
     case :queue.peek(state.outbox_inflight) do
-      {:value, {_seq, at}} -> State.now_ms() - at >= state.limits.outbox_resettle_ms
+      {:value, {_key, at}} -> State.now_ms() - at >= state.limits.outbox_resettle_ms
       :empty -> map_size(state.outbox_awaiting) > 0
     end
   end
 
-  defp resettle_entry({:ok, _pid}, state, chunks, key, %{entry: entry}) do
-    outputs = entry_outputs(state, key, entry)
-    {register_entry(state, key, length(outputs), entry), [outputs | chunks]}
+  defp resettle_entry({:ok, _pid}, {state, chunks, renamed}, {n, seq} = key, %{entry: entry}) do
+    next = {if(n == :cursor, do: 1, else: n + 1), seq}
+    outputs = entry_outputs(state, next, entry)
+    state = %{state | outbox_awaiting: Map.delete(state.outbox_awaiting, key)}
+
+    {register_entry(state, next, length(outputs), entry), [outputs | chunks],
+     Map.put(renamed, key, next)}
   end
 
   # Nothing to re-dispatch to: the entry stays owed with its tally untouched, so
   # the next tick tries again instead of restarting the clock against a chain
   # that cannot run.
-  defp resettle_entry({:error, _reason}, state, chunks, _key, _tally), do: {state, chunks}
+  defp resettle_entry({:error, _reason}, acc, _key, _tally), do: acc
+
+  defp rename_inflight(state, renamed) do
+    inflight =
+      :queue.filtermap(
+        fn {key, at} -> {true, {Map.get(renamed, key, key), at}} end,
+        state.outbox_inflight
+      )
+
+    %{state | outbox_inflight: inflight}
+  end
 
   defp complete_entry(state, key) do
     %{state | outbox_awaiting: Map.delete(state.outbox_awaiting, key)}
@@ -526,8 +535,8 @@ defmodule Flezha.State.WalWriter.Settlement do
   # never carry the cursor past output no sink has taken.
   defp drain_confirmed(state) do
     case :queue.peek(state.outbox_inflight) do
-      {:value, {seq, _at}} ->
-        if Map.has_key?(state.outbox_awaiting, {:cursor, seq}) do
+      {:value, {{_n, seq} = key, _at}} ->
+        if Map.has_key?(state.outbox_awaiting, key) do
           state
         else
           {_, rest} = :queue.out(state.outbox_inflight)
@@ -543,7 +552,7 @@ defmodule Flezha.State.WalWriter.Settlement do
   # evidence for a sink that stopped answering while nothing new is emitted.
   def unconfirmed_age_ms(state) do
     case :queue.peek(state.outbox_inflight) do
-      {:value, {_seq, at}} -> State.now_ms() - at
+      {:value, {_key, at}} -> State.now_ms() - at
       :empty -> 0
     end
   end

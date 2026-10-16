@@ -290,10 +290,16 @@ defmodule Flezha.Relay.Ingest do
   def request(%Overwatch{} = state, message, metadata, durable?) do
     {id, row} = Calls.request(message, metadata, durable?)
 
+    # A call sent again while it waits: its outcome answers the newest copy's hold.
     cond do
-      Calls.pending(state.calls, id) != nil -> state
-      durable? and answered?(state, id) -> settle_hold(state, row)
-      true -> send_request(state, id, row)
+      pending = Calls.pending(state.calls, id) ->
+        %{state | calls: Calls.open(state.calls, id, %{pending | hold: row.hold})}
+
+      durable? and answered?(state, id) ->
+        settle_hold(state, row)
+
+      true ->
+        send_request(state, id, row)
     end
   end
 

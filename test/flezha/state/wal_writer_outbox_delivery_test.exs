@@ -317,8 +317,8 @@ defmodule Flezha.State.WalWriterOutboxDeliveryTest do
     append_effect(pid, 0, [output("k", "answer", answer)], 1)
     assert {"answer", md, _} = output = next_output()
 
-    # A superseded dispatch's delivery and the live one both confirm, before
-    # and after the run settles; the sink's hold is still open.
+    # The delivery confirms one copy more than once, before and after the run
+    # settles; the sink's hold is still open.
     :ok = Outbox.confirm_delivery(md)
     :ok = Outbox.confirm_delivery(md)
 
@@ -332,6 +332,50 @@ defmodule Flezha.State.WalWriterOutboxDeliveryTest do
     assert %{awaiting: 1, outbox_flushed_seq: -1} = WalWriter.outbox_status(pid)
 
     :ok = Outbox.confirm(md)
+    :ok = WalWriter.fsync(pid)
+    assert %{awaiting: 0, outbox_flushed_seq: 0} = WalWriter.outbox_status(pid)
+  end
+
+  test "a superseded dispatch's delivery confirm does not answer the re-dispatch's sink hold", %{
+    rc: rc,
+    cell_id: cell_id
+  } do
+    on_exit(TestHelpers.override_env(:outbox_resettle_ms, 0))
+
+    pid = armed_writer(rc, cell_id)
+    answer = [{"flz.reply_to", "o:gateway:c1:0:1:"}]
+    append_effect(pid, 0, [output("k", "answer", answer)], 1)
+    assert {"answer", md, _} = output = next_output()
+
+    # The first run: the delivery and a sink both hold the answer.
+    run_batch([output], fn _payload, metadata ->
+      :ok = Outbox.hold_delivery(metadata)
+      :ok = Outbox.hold(metadata)
+    end)
+
+    # The caller stays away past the resettle: the answer goes again.
+    send(pid, :outbox_retry)
+    :ok = WalWriter.fsync(pid)
+    assert {"answer", again, _} = output_again = next_output()
+    assert again["flz.seq"] == md["flz.seq"]
+
+    # The superseded copy's delivery confirms while the re-dispatch is in flight.
+    :ok = Outbox.confirm_delivery(md)
+    :ok = WalWriter.fsync(pid)
+
+    # Past its deadline the answer takes no delivery hold; the sink holds again.
+    run_batch([output_again], fn _payload, metadata -> :ok = Outbox.hold(metadata) end)
+    :ok = WalWriter.fsync(pid)
+
+    # No sink has confirmed either copy: the cursor must not pass the entry.
+    assert %{awaiting: 1, outbox_flushed_seq: -1} = WalWriter.outbox_status(pid)
+
+    # The superseded copy's sink answers its own hold, not the re-dispatch's.
+    :ok = Outbox.confirm(md)
+    :ok = WalWriter.fsync(pid)
+    assert %{awaiting: 1, outbox_flushed_seq: -1} = WalWriter.outbox_status(pid)
+
+    :ok = Outbox.confirm(again)
     :ok = WalWriter.fsync(pid)
     assert %{awaiting: 0, outbox_flushed_seq: 0} = WalWriter.outbox_status(pid)
   end
