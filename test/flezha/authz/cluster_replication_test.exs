@@ -98,13 +98,12 @@ defmodule Flezha.AuthZ.ClusterReplicationTest do
 
     {:ok, ^mark} = on(a, DropMarks, :put, [mark])
 
-    assert on(b, DropMarks, :match?, ["team-orders", "runner-1", "process-1"])
-    refute on(b, DropMarks, :match?, ["team-orders", "runner-1", "process-2"])
+    assert on(b, DropMarks, :standing, ["team-orders", "runner-1"]) == mark
 
     {c, _c_dir} = start_controller(:authz_drop_c)
 
     assert NodeTestHelper.wait_until(
-             fn -> on(c, DropMarks, :match?, ["team-orders", "runner-1", "process-1"]) end,
+             fn -> on(c, DropMarks, :standing, ["team-orders", "runner-1"]) == mark end,
              30_000
            ),
            "#{c} never adopted the drop placed before it joined"
