@@ -58,8 +58,7 @@ defmodule FlezhaTest.System.StepsFailedTurnE2ETest do
     assert collected(session.collector) == ["re:hello", "re:again"]
     assert registered?(namespace, relay_id)
 
-    assert iteration_records(relay_id) ==
-             [{:iter_committed, 0}, {:dead_lettered, 1}, {:iter_committed, 2}]
+    assert_iterations(relay_id, [{:iter_committed, 0}, {:dead_lettered, 1}, {:iter_committed, 2}])
 
     assert [entry] = DlqStore.list(relay_id)
     assert %{"tasklet_id" => "_turn", "channel" => "in", "origin_offset" => 1} = entry
@@ -94,8 +93,7 @@ defmodule FlezhaTest.System.StepsFailedTurnE2ETest do
 
     answered!(session, "re:boom-until-healed")
 
-    assert iteration_records(relay_id) ==
-             [{:dead_lettered, 0}, {:iter_committed, 1}, {:iter_committed, 2}]
+    assert_iterations(relay_id, [{:dead_lettered, 0}, {:iter_committed, 1}, {:iter_committed, 2}])
 
     assert NodeTestHelper.wait_until(fn -> DlqStore.list(relay_id) == [] end, 10_000),
            "the replayed entry was not removed"
@@ -196,8 +194,11 @@ defmodule FlezhaTest.System.StepsFailedTurnE2ETest do
       assert length(compensated(relay_id, 0, 1)) == 1
       assert collected(session.collector) == ["re:hello", "re:again"]
 
-      assert iteration_records(relay_id) ==
-               [{:iter_committed, 0}, {:dead_lettered, 1}, {:iter_committed, 2}]
+      assert_iterations(relay_id, [
+        {:iter_committed, 0},
+        {:dead_lettered, 1},
+        {:iter_committed, 2}
+      ])
 
       assert [%{"origin_offset" => 1}] = DlqStore.list(relay_id)
     end
@@ -268,6 +269,13 @@ defmodule FlezhaTest.System.StepsFailedTurnE2ETest do
     for %{type: type, iter: iter} <- entries,
         type in [:iter_committed, :dead_lettered],
         do: {type, iter}
+  end
+
+  # An answer leaves at its tasklet's commit, before the runner sends the
+  # iteration's own, so the iteration's record may land just after it.
+  defp assert_iterations(relay_id, expected) do
+    NodeTestHelper.wait_until(fn -> iteration_records(relay_id) == expected end, 10_000)
+    assert iteration_records(relay_id) == expected
   end
 
   defp compensated(relay_id, task_idx, iter) do

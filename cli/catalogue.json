@@ -89,7 +89,7 @@
     },
     {
       "name": "Controller.boot_status",
-      "doc": "The readiness verdict and every precondition behind it, then each running namespace's recovery state and persistent-registry row count.",
+      "doc": "The readiness verdict and every precondition behind it, then the recovery state and persistent-registry row count of each running namespace the caller may see (`Flezha.AuthZ.Namespace.visible/3`).",
       "action": "public",
       "remote": true,
       "stream": false,
