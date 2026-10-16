@@ -107,10 +107,11 @@ defmodule Flezha.Service.RelayManager do
     # success shape as before, but a wedged relay now yields a logged
     # `{:error, :timeout}` (with the target's mailbox/current-function) instead
     # of an unhandled exit.
-    with_relay_pid(namespace, relay_id, fn pid ->
-      SafeCall.bounded(pid, :get_overwatch_state, overwatch_call_timeout_ms())
-    end)
+    with_relay_pid(namespace, relay_id, &overwatch_state/1)
   end
+
+  defp overwatch_state(pid),
+    do: SafeCall.bounded(pid, :get_overwatch_state, overwatch_call_timeout_ms())
 
   @doc """
   Starts a new relay to the runner.
@@ -327,6 +328,10 @@ defmodule Flezha.Service.RelayManager do
   iteration; either closes the writers on the node the relay ran on.
   `reason: :completed` names a completion to the stop's announcement, and
   `announce: false` a stop that is not one (a rescale's), as for a start.
+  `overwatch:` is the Overwatch a completion was admitted against: a task can
+  complete before the hub writes the row of the start that ran it, and the hub
+  queues a stop behind a start it sent and has not yet registered. The fallback
+  covers a completion handled on the node that started the relay.
   """
   @spec stop_relay(String.t(), String.t(), keyword()) :: :ok | {:error, term()}
   def stop_relay(namespace, relay_id, opts \\ []) do
@@ -336,10 +341,10 @@ defmodule Flezha.Service.RelayManager do
   end
 
   defp do_stop_relay(namespace, relay_id, opts) do
-    with_relay_pid(namespace, relay_id, fn relay_pid ->
+    with {:ok, relay_pid} <- stop_pid(namespace, relay_id, Keyword.get(opts, :overwatch)) do
       # Read before the teardown removes the relay: the flush needs its
       # runner, the quota step the Cells its start allocated.
-      {runner_id, cell_count} = stop_facts(namespace, relay_id)
+      {runner_id, cell_count} = stop_facts(namespace, relay_id, relay_pid)
 
       target = %{
         namespace: namespace,
@@ -362,12 +367,19 @@ defmodule Flezha.Service.RelayManager do
         {:partial, %{skipped: skipped}} ->
           {:error, {:stop_timeout, relay_id, skipped}}
       end
-    end)
+    end
   end
 
-  defp stop_facts(namespace, relay_id) do
+  defp stop_pid(namespace, relay_id, overwatch) do
+    case get_relay_pid(namespace, relay_id) do
+      {:error, {:relay_not_found, _, _}} when is_pid(overwatch) -> {:ok, overwatch}
+      found_or_error -> found_or_error
+    end
+  end
+
+  defp stop_facts(namespace, relay_id, relay_pid) do
     {runner_id, relay} =
-      case get_overwatch_state(namespace, relay_id) do
+      case overwatch_state(relay_pid) do
         {:ok, %{builder: builder} = ow} ->
           {Map.get(ow, :runner_id), builder}
 

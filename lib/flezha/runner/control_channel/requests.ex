@@ -79,13 +79,13 @@ defmodule Flezha.Runner.ControlChannel.Requests do
   """
   @spec relay_completed(map(), %RunnerCommands.RelayCompleted{}) :: :ok
   def relay_completed(state, %RunnerCommands.RelayCompleted{} = completed) do
-    if Records.admit(state, completed.relay_id, :relay_completed),
-      do: complete(state, completed)
+    with {:ok, overwatch} <- Records.admit_to(state, completed.relay_id, :relay_completed),
+         do: complete(state, completed, overwatch)
 
     :ok
   end
 
-  defp complete(state, completed) do
+  defp complete(state, completed, overwatch) do
     %RunnerCommands.RelayCompleted{
       relay_id: relay_id,
       status: status,
@@ -120,7 +120,7 @@ defmodule Flezha.Runner.ControlChannel.Requests do
         finished_at: System.system_time(:second)
       })
 
-    deregister_on_completion(state, relay_id)
+    deregister_on_completion(state, relay_id, overwatch)
   end
 
   defp report_steps_failure(state, relay_id, error) do
@@ -139,11 +139,15 @@ defmodule Flezha.Runner.ControlChannel.Requests do
   # Tear down off the control-channel process: `stop_relay` drives a
   # RemRelay round-trip whose CommandResponse returns on THIS control
   # stream, so calling it inline would deadlock the reader.
-  defp deregister_on_completion(%{namespace: namespace, runner_id: runner_id}, relay_id) do
+  defp deregister_on_completion(
+         %{namespace: namespace, runner_id: runner_id},
+         relay_id,
+         overwatch
+       ) do
     Task.start(fn ->
       drain_owed_outputs(runner_id, relay_id)
 
-      case RelayManager.stop_relay(namespace, relay_id, reason: :completed) do
+      case RelayManager.stop_relay(namespace, relay_id, reason: :completed, overwatch: overwatch) do
         :ok ->
           :ok
 

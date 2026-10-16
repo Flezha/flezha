@@ -17,6 +17,7 @@ defmodule FlezhaTest.System.TaskKindE2ETest do
   import FlezhaTest.Helper.StepsResumeHarness,
     only: [collect_loop: 1, forward_sink: 2, await_outputs: 3, send_turn: 3]
 
+  alias Flezha.Identificator
   alias Flezha.Relay.Builder
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.HubManager
@@ -77,6 +78,42 @@ defmodule FlezhaTest.System.TaskKindE2ETest do
     # The SDK runs the task once and ships `RelayCompleted`; the controller
     # tears it down. Deregister-on-completion: the unit drops out of the
     # durable registry with no explicit stop — proof the full loop ran.
+    assert wait_until(fn -> not registered?(relay_id) end, 5_000),
+           "task was never deregistered after completion"
+  end
+
+  # The hub writes a started relay's row only after the relay runs, and a task
+  # takes its first message at once: held behind a busy hub registry, the task
+  # completes before its row exists. The completion's teardown still removes it.
+  test "a task that completes before its hub row is written is still deregistered" do
+    relay_id = "task_e2e_early_#{System.unique_integer([:positive])}"
+    trace_teardown_lookup(relay_id)
+
+    registry = hub_registry()
+    :ok = :sys.suspend(registry)
+    on_exit(fn -> :sys.resume(registry) end)
+
+    start =
+      Task.async(fn ->
+        RelayManager.start_relay(@namespace, %Builder{
+          id: relay_id,
+          factory_id: @factory,
+          opts: [seed_input: {"hi", %{}}]
+        })
+      end)
+
+    # The row is held back until the teardown's stop has looked the relay up.
+    assert_receive {:trace, teardown, :call, {RelayManager, :stop_relay, [_, ^relay_id, _]}},
+                   10_000
+
+    assert_receive {:trace, ^teardown, :return_from, {RelayManager, :get_relay_pid, 2}, lookup},
+                   10_000
+
+    assert {:error, {:relay_not_found, _, _}} = lookup
+    :ok = :sys.resume(registry)
+
+    assert {:ok, _info} = Task.await(start, 30_000)
+
     assert wait_until(fn -> not registered?(relay_id) end, 5_000),
            "task was never deregistered after completion"
   end
@@ -251,6 +288,25 @@ defmodule FlezhaTest.System.TaskKindE2ETest do
     for [_line, label, id, outcome] <-
           Regex.scan(~r/^spawn_result (unnamed|named) (\S+) (.+)$/m, seen),
         do: {label, id, String.trim(outcome)}
+  end
+
+  defp hub_registry do
+    hub = ProcessHub.Hub.get(Identificator.hub(@namespace))
+    GenServer.whereis(hub.procs.process_registry)
+  end
+
+  # Tells this process of every stop of `relay_id` and of each hub lookup of it
+  # with its result, made by processes started from now on: the completion's
+  # teardown among them.
+  defp trace_teardown_lookup(relay_id) do
+    session = :trace.session_create(:steps_teardown_lookup, self(), [])
+    on_exit(fn -> :trace.session_destroy(session) end)
+
+    _ = :trace.process(session, :new_processes, true, [:call])
+    stop = [{[:_, relay_id, :_], [], []}]
+    lookup = [{[:_, relay_id], [], [{:return_trace}]}]
+    1 = :trace.function(session, {RelayManager, :stop_relay, 3}, stop, [:local])
+    1 = :trace.function(session, {RelayManager, :get_relay_pid, 2}, lookup, [:local])
   end
 
   defp registered?(relay_id) do
