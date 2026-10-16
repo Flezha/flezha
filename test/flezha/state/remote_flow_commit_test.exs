@@ -13,7 +13,7 @@ defmodule Flezha.State.RemoteFlowCommitTest do
 
   import ExUnit.CaptureIO
 
-  alias Flezha.Runner.StreamChannel.Prefix
+  alias Flezha.Runner.StreamChannel.{Prefix, Records}
   alias Flezha.Service.Cli
   alias Flezha.State.DurabilityTier
   alias Flezha.State.DurabilityTier.{Manifest, Shipper}
@@ -294,7 +294,67 @@ defmodule Flezha.State.RemoteFlowCommitTest do
       Stub.release_manifest(first)
       assert {[{_, 1, 1}], _} = stream(prefix, 5_000)
     end
+
+    test "a new stream's marker waits for the ship of what an earlier stream handed over", ctx do
+      Stub.hold_manifests(self())
+      pid = armed_writer(ctx.rc, ctx.cell_id)
+
+      # The earlier stream handed input 0's record over; it is fsynced here and
+      # its ship is mid-write.
+      append_credited(pid, 0, 10)
+      shipper = held({:cell, ctx.cell_id})
+
+      # The runner reconnects: the new stream's first marker covers input 0.
+      stream_ref = make_ref()
+
+      state =
+        new_stream(stream_ref, nil)
+        |> Records.fence_once()
+        |> Records.confirm_prefix(&Prefix.marker(&1, ctx.rc, 0))
+
+      refute_receive {:prefix_fenced, ^stream_ref}, 500
+
+      # A runner that does not own the class is fenced by the flush alone.
+      other = make_ref()
+      _ = Records.fence_once(new_stream(other, "another runner"))
+      assert_receive {:prefix_fenced, ^other}, 5_000
+
+      Stub.release_manifest(shipper)
+      assert_receive {:prefix_fenced, ^stream_ref}, 5_000
+      _ = Records.confirm_prefix(state, &Prefix.fenced/1)
+      assert wait_until(fn -> InputLog.watermark(ctx.rc) == 0 end, 5_000)
+    end
+
+    test "a writer killed while a fence waits on its held ship ends the wait", ctx do
+      Stub.hold_manifests(self())
+      pid = armed_writer(ctx.rc, ctx.cell_id)
+      append_credited(pid, 0, 10)
+      _shipper = held({:cell, ctx.cell_id})
+
+      stream_ref = make_ref()
+      _ = Records.fence_once(new_stream(stream_ref, nil))
+      refute_receive {:prefix_fenced, ^stream_ref}, 500
+
+      log =
+        capture_log(fn ->
+          Process.exit(pid, :kill)
+          assert_receive {:prefix_fenced, ^stream_ref}, 5_000
+          # The supervisor reports the kill before it restarts the writer.
+          assert wait_until(
+                   fn -> match?({:ok, p} when p != pid, Supervisor.lookup(ctx.cell_id)) end,
+                   5_000
+                 )
+        end)
+
+      assert log =~ "WalWriter.start_link"
+      assert log =~ "killed"
+    end
   end
+
+  # A stream channel's state as `Records.fence_once/1` reads it, for the
+  # runner `identity` (the Overwatch this case records owns its class as `nil`).
+  defp new_stream(stream_ref, identity),
+    do: %{prefix: Prefix.new(), stream_ref: stream_ref, identity: identity}
 
   test "a rewind dispatches no kept record before its ship lands", ctx do
     Stub.hold_manifests(self())

@@ -354,8 +354,8 @@ defmodule Flezha.Runner.StreamChannel.Records do
 
   @doc """
   Records an earlier stream handed to the writers are not counted by this
-  stream's markers; one batcher flush, asked for by the stream's first marker,
-  makes them durable before any marker of this stream is confirmed, and the
+  stream's markers; one batcher flush and the ships of the runner's gated
+  writers, asked for by the stream's first marker, acknowledge them before the
   channel hears `{:prefix_fenced, stream_ref}`. A stream that never carries a
   marker never forces a flush.
   """
@@ -364,10 +364,11 @@ defmodule Flezha.Runner.StreamChannel.Records do
     case Prefix.ask_fence(state.prefix) do
       {true, prefix} ->
         channel = self()
-        stream_ref = state.stream_ref
+        %{stream_ref: stream_ref, identity: identity} = state
 
         Task.start(fn ->
           :ok = Flezha.State.Supervisor.flush_all()
+          :ok = WalWriter.RemoteGate.await_held(identity)
           send(channel, {:prefix_fenced, stream_ref})
         end)
 

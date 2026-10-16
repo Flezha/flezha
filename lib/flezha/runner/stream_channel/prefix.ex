@@ -10,8 +10,8 @@ defmodule Flezha.Runner.StreamChannel.Prefix do
   drain, so a writer that has fsynced everything costs nothing. A marker waits
   behind the stream's fence: records a previous stream handed to the writers
   are fsynced by one batcher flush, which the stream's first marker asks for,
-  before any marker of the stream is confirmed. A stream that carries no
-  marker asks for none.
+  and shipped by the runner's `durable: remote` writers, before any marker
+  of the stream is confirmed. A stream that carries no marker asks for none.
 
   Pure over its own struct; `Flezha.Runner.StreamChannel` performs the effects.
   """
@@ -145,7 +145,7 @@ defmodule Flezha.Runner.StreamChannel.Prefix do
   def ask_fence(%__MODULE__{fence: :none} = prefix), do: {true, %{prefix | fence: :asked}}
   def ask_fence(%__MODULE__{} = prefix), do: {false, prefix}
 
-  @doc "The fence flush landed: every earlier stream's record is durable."
+  @doc "The fence landed: every record an earlier stream handed over is acknowledged."
   @spec fenced(t()) :: {[{binary(), non_neg_integer(), pos_integer()}], t()}
   def fenced(%__MODULE__{} = prefix) do
     prefix = %{prefix | fence: :done}

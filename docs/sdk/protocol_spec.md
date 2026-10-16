@@ -1894,7 +1894,8 @@ marker for a reconnect, and sends none covering a record it lost.
 The controller confirms `P` once every Cell writer of the instance has fsynced
 past the bytes this stream had handed it when the marker arrived; records an
 earlier stream handed over are made durable by one flush the stream's first
-marker asks for, before any of its markers counts. A confirmed `P` is the instance's floor.
+marker asks for, and under `durable: remote` shipped, before any of its markers
+counts. A confirmed `P` is the instance's floor.
 Before one is confirmed, and after a controller restart, the floor is the
 minimum durable consumed offset over the instance's reporters.
 

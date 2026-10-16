@@ -526,6 +526,7 @@ defmodule Flezha.State.WalWriter do
   end
 
   def handle_cast(:fsync, state), do: {:noreply, do_fsync(state)}
+  def handle_cast({:fence, credit}, state), do: {:noreply, RemoteGate.released(state, credit)}
 
   def handle_cast({:truncate_up_to, seq, opts}, state) do
     {:reply, _reply, state} = handle_call({:truncate_up_to, seq, opts}, nil, state)

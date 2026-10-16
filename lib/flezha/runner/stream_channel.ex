@@ -492,7 +492,7 @@ defmodule Flezha.Runner.StreamChannel do
     {:noreply, drain_credit(state, session, bytes)}
   end
 
-  # The fence flush this stream asked for landed; a fence of a stream since
+  # The fence this stream asked for landed; a fence of a stream since
   # replaced is stale.
   def handle_info({:prefix_fenced, stream_ref}, %{stream_ref: stream_ref} = state),
     do: {:noreply, Records.confirm_prefix(state, &Prefix.fenced/1)}

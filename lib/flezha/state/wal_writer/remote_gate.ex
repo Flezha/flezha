@@ -26,7 +26,7 @@ defmodule Flezha.State.WalWriter.RemoteGate do
   alias Flezha.Config.Backoff
   alias Flezha.Relay.ClassRegistry
   alias Flezha.Process.Timer
-  alias Flezha.State.{DurabilityTier, Paths}
+  alias Flezha.State.{DurabilityTier, Paths, WriterRegistry}
   alias Flezha.State.WalWriter.{Admission, Settlement}
 
   # The credit of records a closed writer left on disk unshipped, one row per
@@ -187,6 +187,33 @@ defmodule Flezha.State.WalWriter.RemoteGate do
     end
 
     :ok
+  end
+
+  @doc "Wait until each gated writer `identity` owns drains a credit behind what it held, or dies."
+  @spec await_held(binary() | nil) :: :ok
+  def await_held(identity) do
+    credit = %{channel: self(), session: make_ref(), wire_size: 1}
+
+    for {{relay_class, _, _} = cell_id, pid} <- WriterRegistry.cell_writers(),
+        DurabilityTier.sync_class?(relay_class),
+        match?({:ok, _, ^identity}, ClassRegistry.owner(relay_class)),
+        into: %{} do
+      GenServer.cast(pid, {:fence, credit})
+      {cell_id, Process.monitor(pid)}
+    end
+    |> await_drains(credit.session)
+  end
+
+  defp await_drains(owed, _ref) when owed == %{}, do: :ok
+
+  defp await_drains(owed, ref) do
+    receive do
+      {_drained_or_released, ^ref, _bytes, cell_id} ->
+        await_drains(Map.delete(owed, cell_id), ref)
+
+      {:DOWN, monitor, :process, _pid, _reason} ->
+        await_drains(Map.reject(owed, &(elem(&1, 1) == monitor)), ref)
+    end
   end
 
   @doc "Create the owed-credit table; its owner must outlive every writer."
