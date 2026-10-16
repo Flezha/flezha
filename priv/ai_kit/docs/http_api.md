@@ -200,6 +200,8 @@ controller's machine for those ([cli.md](../topics/cli/cli.md)).
   by the role the token holds now.
 - **Connections are capped before the token is read.** `max_connections` bounds open
   connections, idle ones included, so put the listener where only its clients reach it.
+  A connection that sends nothing for 15 s, while its request head arrives or idle
+  between requests, is closed.
 - **Nothing secret is logged.** The listener logs the method, the path, the status, the
   duration and the tool, at debug level, never a header, a body or a token.
 

@@ -236,6 +236,10 @@ events.addEventListener("ended", () => events.close());
   a request takes its waiting slot before its body is read, so at most `max_waiting` bodies
   of `max_body_bytes` are held at once; a body must carry `content-length` (a chunked one is
   answered 411 unread) and arrive in full within 15 s.
+- A client that sends no byte of its request line or headers for 15 s is answered 408 and
+  its connection closed, and an idle keep-alive connection closes after 15 s too. A client
+  that keeps sending a byte inside every 15 s still holds its connection until its head is
+  complete.
 - The plugin logs method, path, status and duration at debug level, never a header, a body
   or a query; an invalid answer's warning names the broken rule with the answer's key and
   header names escaped.
