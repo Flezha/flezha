@@ -282,13 +282,13 @@ defmodule Flezha.Service.Namespace do
 
   defp entry(name), do: with(:error <- NamespaceStore.get(name), do: {:error, {:not_found, name}})
 
-  # The reads `flz relay list` and `flz runner list` answer, so a refusal names
-  # what those show.
+  # The relays `flz relay list` shows, and the runners `flz runner list` shows
+  # plus those still in their handshake, which already run in the namespace.
   defp vacant(name) do
     relays = name |> HubManager.relay_rows() |> Enum.map(& &1.id)
-    {:ok, runners} = FleetManager.global_runner_pids(name)
+    {:ok, runners} = FleetManager.global_occupants(name)
 
-    case {relays, Enum.map(runners, &elem(&1, 0))} do
+    case {relays, runners} do
       {[], []} -> :ok
       {relays, runners} -> {:error, {:namespace_in_use, name, relays, runners}}
     end

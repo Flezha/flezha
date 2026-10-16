@@ -296,6 +296,20 @@ defmodule Flezha.Runner.FleetManager do
     do: Enum.map(active_runners(namespace), &{&1, ControlChannel.peer_pid(&1)})
 
   @doc """
+  Every runner attached to `namespace` across the cluster: the active ones and
+  those still in their handshake, whose hub is already up. Serves the
+  vacancy check of `flz namespace delete`.
+  """
+  @spec global_occupants(String.t()) :: {:ok, [binary()]}
+  def global_occupants(namespace),
+    do: {:ok, namespace |> across_runner_nodes(:occupants) |> Enum.uniq()}
+
+  @doc false
+  # This node's half of `global_occupants/1`, reached over `:erpc`.
+  def occupants(namespace),
+    do: GenServer.call(__MODULE__, {:occupants, namespace}, Durations.get(:runner_lookup_ms))
+
+  @doc """
   The active session `runner_id` of `namespace`, wherever in the cluster it is
   held: its stable identity and incarnation (`nil` where the runner presented
   none), the process id of the runner on its socket where the transport can
@@ -534,6 +548,10 @@ defmodule Flezha.Runner.FleetManager do
   def handle_call({:active_runners, namespace}, _from, state) do
     {:reply, candidates(state, namespace, nil), state}
   end
+
+  @impl true
+  def handle_call({:occupants, namespace}, _from, state),
+    do: {:reply, Roster.occupants(state, namespace), state}
 
   @impl true
   def handle_call({:runners_for_factory, namespace, factory_id}, _from, state) do
@@ -856,7 +874,7 @@ defmodule Flezha.Runner.FleetManager do
   end
 
   defp reclaim_vacant_hub(state, namespace) do
-    unless Roster.occupied?(state, namespace), do: HubManager.stop_hub_if_vacant(namespace)
+    if Roster.occupants(state, namespace) == [], do: HubManager.stop_hub_if_vacant(namespace)
   end
 
   defp runner_cleanup(state) do

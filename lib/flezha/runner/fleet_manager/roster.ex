@@ -31,11 +31,12 @@ defmodule Flezha.Runner.FleetManager.Roster do
     end)
   end
 
-  # A connect starts the namespace's hub before its handshake ends, and only the
-  # end makes the runner active.
-  def occupied?(state, namespace) do
-    get_runner_ids(state, namespace, :active) != [] or
-      Enum.any?(state.pending_handshakes, &match?({_, %{connect: %{namespace: ^namespace}}}, &1))
+  # The runners holding `namespace`: the active ones and those still in their
+  # handshake, because a connect starts the namespace's hub before its handshake
+  # ends and only the end makes the runner active.
+  def occupants(state, namespace) do
+    pending = for {id, %{connect: %{namespace: ^namespace}}} <- state.pending_handshakes, do: id
+    get_runner_ids(state, namespace, :active) ++ pending
   end
 
   def find_runner_namespace(state, runner_id) do

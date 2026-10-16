@@ -14,6 +14,7 @@ defmodule Flezha.Service.NamespaceDeleteTest do
 
   alias Flezha.AuthZ.NamespaceStore
   alias Flezha.Runner.FleetManager
+  alias Flezha.Runner.FleetManager.Session
   alias Flezha.Service.HubManager
   alias Flezha.Service.Namespace
   alias FlezhaTest.Helper.FleetStateHelper
@@ -74,5 +75,43 @@ defmodule Flezha.Service.NamespaceDeleteTest do
 
     assert :ok = Namespace.delete("empty", @context)
     assert :error = NamespaceStore.get("empty")
+  end
+
+  test "a runner still in its handshake is attached: the delete refuses rather than letting it outlive the entry" do
+    {:ok, _} = NamespaceStore.create("trading")
+
+    # A runner admitted against the entry, its hub up, one handshake answer owed.
+    connect = %{
+      namespace: "trading",
+      factories: [],
+      credential: nil,
+      stable_id: nil,
+      incarnation: nil
+    }
+
+    pending = %{connect: connect, stream_ref: nil, owed: [:command_sockets_connect], waiters: []}
+
+    :sys.replace_state(
+      FleetManager,
+      &put_in(&1, [:pending_handshakes, "trading-runner-1"], pending)
+    )
+
+    deleted = Namespace.delete("trading", @context)
+
+    # The last answer lands after the delete returned.
+    :sys.replace_state(FleetManager, fn state ->
+      Session.handshake_answered(
+        state,
+        "trading-runner-1",
+        :command_sockets_connect,
+        {:reply, {:ok, ""}}
+      )
+    end)
+
+    assert {:ok, [{"trading-runner-1", _}]} = FleetManager.global_runner_pids("trading")
+
+    assert {:error, %Flezha.Error{code: "namespace.in_use"} = error} = deleted
+    assert error.details["runners"] == ["trading-runner-1"]
+    assert {:ok, _} = NamespaceStore.get("trading")
   end
 end
