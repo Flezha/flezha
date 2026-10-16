@@ -48,7 +48,7 @@ defmodule Flezha.AuthZ.Quotas do
   @type quota_error ::
           {:error,
            {:quota_exceeded, kind(), %{current: non_neg_integer(), limit: non_neg_integer()}}}
-          | {:error, :namespace_unknown}
+          | {:error, {:namespace_unknown, binary()}}
 
   @doc """
   Check whether allocating `requested` units of `kind` for
@@ -71,7 +71,7 @@ defmodule Flezha.AuthZ.Quotas do
   defp do_check(namespace, kind, requested) do
     case NamespaceStore.get(namespace) do
       :error ->
-        {:error, :namespace_unknown}
+        {:error, {:namespace_unknown, namespace}}
 
       {:ok, %{quotas: quotas}} ->
         case Map.get(quotas, kind) do

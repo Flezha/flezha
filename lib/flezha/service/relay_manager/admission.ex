@@ -153,7 +153,7 @@ defmodule Flezha.Service.RelayManager.Admission do
   defp check_quota(namespace, kind, requested) do
     case Quotas.check_allocation(namespace, kind, requested) do
       :ok -> :ok
-      {:error, :namespace_unknown} -> :ok
+      {:error, {:namespace_unknown, _}} -> :ok
       {:error, _} = err -> err
     end
   end

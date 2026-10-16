@@ -66,6 +66,26 @@ defmodule Flezha.AuthZ.QuotaPointsTest do
 
       assert :ok = Quotas.check_allocation("team-roomy", :max_runners)
     end
+
+    test "a runner of a namespace never created is refused namespace.not_found, and admitted once it exists" do
+      {:ok, secret, _} = TokenStore.issue("runner@team-later", "team-later", :runner, :never)
+
+      assert {:error,
+              %Flezha.Error{
+                code: "namespace.not_found",
+                message: "namespace 'team-later' does not exist",
+                details: %{"namespace" => "team-later"}
+              }} =
+               FleetManager.connect_handler(
+                 make_ref(),
+                 "team-later",
+                 %{"namespace_secret" => secret},
+                 :uds
+               )
+
+      {:ok, _} = NamespaceStore.create("team-later", quotas: %{})
+      assert :ok = FleetManager.Session.admit_runner("team-later", :uds)
+    end
   end
 
   describe "max_relays" do

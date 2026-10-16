@@ -13,7 +13,7 @@ defmodule Flezha.AuthZ.QuotasTest do
   end
 
   test "unknown namespace surfaces :namespace_unknown" do
-    assert {:error, :namespace_unknown} = Quotas.check_allocation("ghost", :max_relays)
+    assert {:error, {:namespace_unknown, "ghost"}} = Quotas.check_allocation("ghost", :max_relays)
   end
 
   test "system namespace allows allocations within default quotas" do
