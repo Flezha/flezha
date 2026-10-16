@@ -5,7 +5,8 @@
 #
 # Runs every gate of the bar in order: the core compile, the core suite split by
 # top-level test directory, the :system tier under the Elixir runtime, the
-# multi-node tier and the admin e2e, the Rust workspace, each SDK's own suites
+# multi-node tier and the admin e2e, the four plugin packages, the Rust
+# workspace, each SDK's own suites
 # and linters, then wip/tools/verify.sh and the known-bugs check. Each command
 # runs under `timeout 600` and prints PASS, FAIL or NOISY with its duration:
 # NOISY is green with a warning, an uncaptured [error]/[warning] line or a stray
@@ -108,6 +109,17 @@ for ((i = 0; i < ${#system[@]}; i += 6)); do
 done
 gate e2e-admin mix test --warnings-as-errors --include system test/system/sdk_admin_e2e_test.exs
 gate e2e-multi-node mix test --warnings-as-errors --only multi_node
+
+# The plugin packages build against this checkout (`path: "../.."`); their
+# broker-backed integration tags stay excluded, as each test_helper sets.
+for p in "$ROOT"/plugins/*/; do
+  n=$(basename "$p" _plugin)
+  n=${n#flezha_}
+  gate --in "$p" --stderr-ok "plugin-$n-deps" mix deps.get
+  gate --in "$p" "plugin-$n-compile" mix compile --warnings-as-errors
+  gate --in "$p" "plugin-$n-test" mix test --warnings-as-errors
+  gate --in "$p" "plugin-$n-format" mix format --check-formatted
+done
 
 # Rust: the workspace (sdk/rust and its crates are members), with the feature
 # flags elixir.yml and sdk/rust/scripts/ci.sh test them under.
