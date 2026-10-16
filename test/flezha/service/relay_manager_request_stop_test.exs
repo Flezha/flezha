@@ -184,6 +184,49 @@ defmodule FlezhaTest.Service.RelayManagerRequestStopTest do
     # No completion record → the class dir is deleted as before.
     refute File.dir?(Paths.class_dir(task_id))
   end
+
+  # A wedged Overwatch still has a runner and Cells on its registry row; the hard
+  # stop must flush that runner and give back the Cells its start allocated.
+  test "a stop whose Overwatch times out takes its runner and Cells from the row" do
+    test_pid = self()
+    task_id = unique_id()
+    prior = Application.get_env(:flezha, :overwatch_call_timeout_ms)
+    Application.put_env(:flezha, :overwatch_call_timeout_ms, 200)
+
+    on_exit(fn ->
+      if prior,
+        do: Application.put_env(:flezha, :overwatch_call_timeout_ms, prior),
+        else: Application.delete_env(:flezha, :overwatch_call_timeout_ms)
+    end)
+
+    {:ok, stub} = start_stub(%{builder: %{run: :steps}, runner_id: "exec1"})
+    on_exit(fn -> NodeTestHelper.ensure_stopped(stub) end)
+    :ok = :sys.suspend(stub)
+
+    HubManager
+    |> stub(:get_pid, fn @namespace, ^task_id -> {:ok, stub} end)
+    |> stub(:relay_spec, fn @namespace, ^task_id ->
+      {:ok, %{id: task_id, cells: ["a", "b"]}, %{runner: "exec1", node: node()}}
+    end)
+
+    stub_hub_stop(test_pid, task_id)
+
+    Flezha.Runner.StreamPool
+    |> stub(:flush_channels, fn runner -> send(test_pid, {:flushed, runner}) end)
+
+    Quotas
+    |> stub(:record_deallocation, fn @namespace, kind, n ->
+      send(test_pid, {:dealloc, kind, n})
+      :ok
+    end)
+
+    assert :ok = RelayManager.stop_relay(@namespace, task_id)
+
+    assert_receive {:hub_stop, ^task_id}, 500
+    assert_receive {:dealloc, :max_relays, 1}, 500
+    assert_receive {:flushed, "exec1"}, 500
+    assert_receive {:dealloc, :max_cells_per_relay, 2}, 500
+  end
 end
 
 defmodule StubOverwatch do

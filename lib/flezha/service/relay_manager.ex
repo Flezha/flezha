@@ -336,10 +336,8 @@ defmodule Flezha.Service.RelayManager do
 
   defp do_stop_relay(namespace, relay_id, opts) do
     with_relay_pid(namespace, relay_id, fn relay_pid ->
-      # Read the binding and the cell count before the stop tears the
-      # relay down — the relay is gone afterwards, the flush needs its
-      # runner and the quota step needs the count to release
-      # `:max_cells_per_relay` symmetrically with the start.
+      # Read before the teardown removes the relay: the flush needs its
+      # runner, the quota step the Cells its start allocated.
       {runner_id, cell_count} = stop_facts(namespace, relay_id)
 
       target = %{
@@ -367,13 +365,20 @@ defmodule Flezha.Service.RelayManager do
   end
 
   defp stop_facts(namespace, relay_id) do
-    case get_overwatch_state(namespace, relay_id) do
-      {:ok, %{builder: builder} = ow} ->
-        {normalize_runner(Map.get(ow, :runner_id)), Admission.cell_count(builder)}
+    {runner_id, relay} =
+      case get_overwatch_state(namespace, relay_id) do
+        {:ok, %{builder: builder} = ow} ->
+          {Map.get(ow, :runner_id), builder}
 
-      _ ->
-        {nil, 0}
-    end
+        # Unreadable: the row its start wrote, which the Cell allocation counted.
+        _unreadable ->
+          case HubManager.relay_spec(namespace, relay_id) do
+            {:ok, relay, %{runner: runner_id}} -> {runner_id, relay}
+            {:error, _} -> {nil, %{}}
+          end
+      end
+
+    {normalize_runner(runner_id), Admission.cell_count(relay)}
   end
 
   defp normalize_runner(runner_id) when is_binary(runner_id), do: runner_id
