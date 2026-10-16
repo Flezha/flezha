@@ -10,7 +10,9 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
 
   import ExUnit.Assertions
   import ExUnit.Callbacks, only: [on_exit: 1, start_supervised!: 1]
-  import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
+
+  import FlezhaTest.Helper.NodeTestHelper,
+    only: [crash_report: 1, wait_until: 2, with_only_logged: 2]
 
   alias Flezha.Identificator
   alias Flezha.Relay.ClassRegistry
@@ -41,10 +43,16 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
   identity.
   """
   def stale_cursor_and_crash_writers(relay_id, cell_id) do
-    crash_writer(cell_id)
-    crash_writer({relay_id, :input_log})
-    dedup = Outbox.read(cell_id)
-    :ok = Outbox.write(cell_id, %{dedup | outbox_flushed_seq: -1})
+    with_only_logged([{crash_report(relay_id), :always}], fn ->
+      killed =
+        for id <- [cell_id, {relay_id, :input_log}],
+            {:ok, pid} <- [Flezha.State.Supervisor.lookup(id)],
+            do: kill(pid)
+
+      dedup = Outbox.read(cell_id)
+      :ok = Outbox.write(cell_id, %{dedup | outbox_flushed_seq: -1})
+      Enum.each(killed, &await_handled/1)
+    end)
   end
 
   def boot_runner(namespace, id_path, opts \\ []) do
@@ -79,8 +87,7 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
   """
   def kill_overwatch(namespace, relay_id) do
     {:ok, pid} = RelayManager.get_relay_pid(namespace, relay_id)
-    Process.exit(pid, :kill)
-    :ok
+    crash(pid, relay_id)
   end
 
   @doc """
@@ -90,7 +97,7 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
   """
   def force_fresh_rebind(namespace, relay_id) do
     {:ok, old_pid} = RelayManager.get_relay_pid(namespace, relay_id)
-    Process.exit(old_pid, :kill)
+    crash(old_pid, relay_id)
 
     assert wait_until(
              fn ->
@@ -218,9 +225,45 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
   @doc "Kill a durable writer outright, as a controller crash does; it boots again from disk."
   def crash_writer(id) do
     case Flezha.State.Supervisor.lookup(id) do
-      {:ok, pid} -> Process.exit(pid, :kill)
+      {:ok, pid} -> crash(pid, elem(id, 0))
       :error -> :ok
     end
+  end
+
+  @doc """
+  Kill a supervised process outright and wait until its supervisor has
+  handled the exit. That supervisor's crash report, naming `child` (see
+  `NodeTestHelper.crash_report/2`), is the only line the kill may print.
+  """
+  def crash(pid, child) do
+    with_only_logged([{crash_report(child), :always}], fn ->
+      pid |> kill() |> await_handled()
+    end)
+  end
+
+  defp kill(pid) do
+    {:parent, supervisor} = Process.info(pid, :parent)
+    Process.exit(pid, :kill)
+    {pid, supervisor}
+  end
+
+  # A supervisor logs its report as it handles the exit, so once the dead pid
+  # is gone from its children the report is in any capture around the kill.
+  # A supervisor that has itself gone handled it too, by dying.
+  defp await_handled({pid, supervisor}) do
+    assert wait_until(
+             fn ->
+               try do
+                 not List.keymember?(Supervisor.which_children(supervisor), pid, 1)
+               catch
+                 :exit, _ -> true
+               end
+             end,
+             10_000
+           ),
+           "#{inspect(supervisor)} never handled the exit of #{inspect(pid)}"
+
+    :ok
   end
 
   @doc """

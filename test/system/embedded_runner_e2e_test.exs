@@ -89,11 +89,15 @@ defmodule FlezhaTest.System.EmbeddedRunnerE2ETest do
        } do
     # Without a credential the controller refuses it; the start fails at the
     # call and no runner of this process keeps knocking.
-    assert {:error, %Flezha.SDK.Error{code: "runner.namespace_not_proven"}} =
-             @ns
-             |> Flezha.SDK.create_runner()
-             |> Flezha.SDK.register_factory(Embedded)
-             |> Flezha.SDK.start()
+    rejected = ~r/\[Transport.Server\] Rejected runner connect \(:namespace_not_proven\)/
+
+    NodeTestHelper.with_only_logged([{rejected, :always}], fn ->
+      assert {:error, %Flezha.SDK.Error{code: "runner.namespace_not_proven"}} =
+               @ns
+               |> Flezha.SDK.create_runner()
+               |> Flezha.SDK.register_factory(Embedded)
+               |> Flezha.SDK.start()
+    end)
 
     EventManager.add_handler(:runner_connected_event)
     on_exit(fn -> EventManager.rem_handler(:runner_connected_event) end)

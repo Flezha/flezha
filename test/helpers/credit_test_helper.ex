@@ -96,7 +96,8 @@ defmodule FlezhaTest.Helper.CreditTestHelper do
 
   @doc """
   Restart the (permanent) FsyncBatcher so it re-reads
-  `:agent_fsync_interval_ms` from the current env.
+  `:agent_fsync_interval_ms` from the current env. Its supervisor reports the
+  stop, and that report is the only line the restart may print.
   """
   def restart_fsync_batcher() do
     case GenServer.whereis(Flezha.State.FsyncBatcher) do
@@ -104,9 +105,12 @@ defmodule FlezhaTest.Helper.CreditTestHelper do
         :ok
 
       pid ->
-        GenServer.stop(pid)
+        report = NodeTestHelper.crash_report(Flezha.State.FsyncBatcher, "normal")
 
-        NodeTestHelper.wait_until(fn -> replaced?(pid) end, 5_000)
+        NodeTestHelper.with_only_logged([{report, :always}], fn ->
+          GenServer.stop(pid)
+          NodeTestHelper.wait_until(fn -> replaced?(pid) end, 5_000)
+        end)
 
         :ok
     end

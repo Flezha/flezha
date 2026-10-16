@@ -23,7 +23,8 @@ defmodule FlezhaTest.System.RemedyDrillTest do
   import ExUnit.CaptureLog
   import FlezhaTest.Helper.MimicGlobal
 
-  import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
+  import FlezhaTest.Helper.NodeTestHelper,
+    only: [crash_report: 2, wait_until: 2, with_only_logged: 2]
 
   import FlezhaTest.Helper.TierE2EHarness,
     only: [
@@ -291,11 +292,15 @@ defmodule FlezhaTest.System.RemedyDrillTest do
     # --- a compaction request never answered for four sweeps ----------------
     on_exit(TestHelpers.override_env(:compaction_timeout_ms, 50))
 
-    for _ <- 1..4 do
-      Watchdog.compaction_started(cell, runner)
-      age_compaction(cell, 200)
-      :ok = Watchdog.sweep_now()
-    end
+    gave_up = ~r/\[watchdog\] compaction GAVE UP after 4 failed attempts relay=#{id} /
+
+    with_only_logged([{gave_up, :always}], fn ->
+      for _ <- 1..4 do
+        Watchdog.compaction_started(cell, runner)
+        age_compaction(cell, 200)
+        :ok = Watchdog.sweep_now()
+      end
+    end)
 
     assert_receive {:heal, %{primitive: :resync_runner, target: ^cell}}, 30_000
     assert wait_until(fn -> attempt({:compaction_gave_up, cell}) >= 1 end, 10_000)
@@ -432,8 +437,21 @@ defmodule FlezhaTest.System.RemedyDrillTest do
       {:error, :no_target_nodes}
     end)
 
-    assert :ok = Coordinator.shutdown(:cli, timeout_ms: 15_000)
-    assert_receive :ticked_under_the_drain, 30_000
+    # Finalise stops the hub manager, which its supervisor reports and restarts;
+    # a tick caught calling it meanwhile aborts.
+    hub_manager = Process.whereis(HubManager)
+
+    aborted =
+      ~r/\[convergence\] tick aborted \(exit\): \{:(normal|noproc), \{GenServer, :call, \[#{inspect(HubManager)},/
+
+    with_only_logged([{crash_report(HubManager, "normal"), :always}, {aborted, :maybe}], fn ->
+      assert :ok = Coordinator.shutdown(:cli, timeout_ms: 15_000)
+      assert_receive :ticked_under_the_drain, 30_000
+      assert wait_until(fn -> Process.whereis(HubManager) not in [nil, hub_manager] end, 10_000)
+      # A tick runs in the Loop's own process, so this waits out one in flight.
+      _ = :sys.get_state(Loop)
+    end)
+
     refute heal?(:rebind_relay, id)
 
     # Finalise clears the fact.

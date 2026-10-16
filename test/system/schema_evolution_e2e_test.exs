@@ -173,9 +173,15 @@ defmodule FlezhaTest.System.SchemaEvolutionE2ETest do
     # Placement only: `start/3`'s residency wait would raise on the very outcome
     # this scenario proves, since a refused restore never makes the Cell
     # resident.
-    _ = place(namespace, relay_id, @v1)
+    refused =
+      ~r/\[Overwatch\] restore REFUSED cell=\{"#{relay_id}".*schema_version 2 is above the running tasklet's 1/
 
-    assert_receive {:refused, _, %{cell: {^relay_id, _, _}, reason: reason}}, 30_000
+    reason =
+      NodeTestHelper.with_only_logged([{refused, :always}], fn ->
+        _ = place(namespace, relay_id, @v1)
+        assert_receive {:refused, _, %{cell: {^relay_id, _, _}, reason: reason}}, 30_000
+        reason
+      end)
 
     # Refused BY NAME, which is the whole point. v2's change records encode
     # `{delta, note}` where v1's encode `(delta)`, and a positional codec reads

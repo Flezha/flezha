@@ -13,7 +13,9 @@ defmodule FlezhaTest.System.RecordedEffectsE2ETest do
   use FlezhaTest.SystemCase, capability: :recorded_effects
 
   import FlezhaTest.Helper.StepsResumeHarness
-  import FlezhaTest.Helper.TierE2EHarness, only: [cleanup: 3, unique: 1, unique_id_path: 0]
+
+  import FlezhaTest.Helper.TierE2EHarness,
+    only: [cleanup: 3, crash: 2, unique: 1, unique_id_path: 0]
 
   alias Flezha.Convergence.Snapshot, as: ConvergenceSnapshot
   alias Flezha.Relay.ClassRegistry
@@ -47,7 +49,7 @@ defmodule FlezhaTest.System.RecordedEffectsE2ETest do
           before_rebind: fn relay_id ->
             TestHelpers.close_input_log(relay_id)
             {:ok, overwatch, _owner} = ClassRegistry.owner(relay_id)
-            Process.exit(overwatch, :kill)
+            crash(overwatch, relay_id)
           end
         )
 

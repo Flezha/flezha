@@ -7,6 +7,8 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
 
   use Flezha.Constant
 
+  import ExUnit.Assertions, only: [assert: 2]
+
   alias Flezha.Cluster.GroupedHashing
   alias Flezha.Config
   alias Flezha.Config.Environment
@@ -492,6 +494,45 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
   @doc "How many times `line` appears in `text`: a captured log or a runner's output."
   @spec occurrences(String.t(), String.t()) :: non_neg_integer()
   def occurrences(text, line), do: length(String.split(text, line)) - 1
+
+  @doc """
+  Run `fun`, which provokes log lines on purpose, and return its result.
+
+  Every entry logged meanwhile must match one of `expected`, so the capture
+  hides nothing else. `{pattern, :always}` must also appear at least once;
+  `{pattern, :maybe}` names a line only some timings print. A line logged by
+  another process lands in the capture only if `fun` waits for something that
+  happens after it.
+  """
+  @spec with_only_logged([{Regex.t(), :always | :maybe}], (-> result)) :: result
+        when result: var
+  def with_only_logged(expected, fun) do
+    {result, log} = ExUnit.CaptureLog.with_log(fun)
+    entries = String.split(log, ~r/^(?=\d\d:\d\d:\d\d\.\d{3} )/m, trim: true)
+
+    for entry <- entries do
+      assert Enum.any?(expected, fn {pattern, _} -> entry =~ pattern end),
+             "a line nobody provoked on purpose was logged:\n#{entry}"
+    end
+
+    for {pattern, :always} <- expected do
+      assert Enum.any?(entries, &(&1 =~ pattern)),
+             "the provoked line #{inspect(pattern)} was never logged; the log was:\n#{log}"
+    end
+
+    result
+  end
+
+  @doc """
+  A supervisor's report that its child ended with `reason`, for
+  `with_only_logged/2`. `child` is matched by its inspected form, which the
+  report's child id or start call carries: a relay id names its Overwatch and
+  each of its state writers, a module its singleton.
+  """
+  @spec crash_report(term(), String.t()) :: Regex.t()
+  def crash_report(child, reason \\ "killed") do
+    ~r/ terminated\n\*\* \(exit\) #{reason}\n(?s:.*)#{Regex.escape(inspect(child))}/
+  end
 
   @doc """
   A runner's stdout until `enough?` says the answer has arrived, or the budget

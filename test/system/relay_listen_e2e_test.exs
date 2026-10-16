@@ -191,7 +191,7 @@ defmodule FlezhaTest.System.RelayListenE2ETest do
       deliver!(ns, id, "before")
       {_, first} = tally_until(fn totals, _epochs -> totals["echo"] == 1 end)
 
-      capture_log(fn -> force_fresh_rebind(ns, id) end)
+      force_fresh_rebind(ns, id)
       assert wait_until(fn -> listeners(ns, id) != [] and bound?(ns, id) end, 30_000)
       deliver!(ns, id, "after")
 

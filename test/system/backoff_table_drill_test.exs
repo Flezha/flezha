@@ -37,6 +37,7 @@ defmodule FlezhaTest.System.BackoffTableDrillTest do
   alias Flezha.Plugin.Provider.Websocket
   alias Flezha.Service.RelayManager.Init
   alias Flezha.State.Watchdog
+  alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.Helper.ProviderPrepare
   alias FlezhaTest.Helper.WebhookServer
   alias FlezhaTest.Helper.WebsocketServer
@@ -113,9 +114,11 @@ defmodule FlezhaTest.System.BackoffTableDrillTest do
         {driver, attempts, knobs} = Map.fetch!(devices(), @key)
         collect(@key)
 
-        driver.()
-
-        waits = drain_waits(@key, attempts)
+        waits =
+          NodeTestHelper.with_only_logged(provoked(@key), fn ->
+            driver.()
+            drain_waits(@key, attempts)
+          end)
 
         assert length(waits) >= attempts,
                "#{@key}: expected #{attempts} waits, saw #{length(waits)}"
@@ -182,6 +185,13 @@ defmodule FlezhaTest.System.BackoffTableDrillTest do
       ws_sink_ack: {&ws_sink_ack_device/0, 2, []}
     }
   end
+
+  # The lines a row's device provokes on purpose: each refused upgrade is a
+  # failed connect the WebSocket library reports before it backs off.
+  defp provoked(:ws_reconnect),
+    do: [{~r/\(Fresh\) Establishing WebSocket connection failed: .*status_code: 429/, :always}]
+
+  defp provoked(_key), do: []
 
   defp heal_device() do
     key = {:rebind_relay, "drill_#{System.unique_integer([:positive])}"}

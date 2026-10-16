@@ -25,8 +25,6 @@ defmodule FlezhaTest.System.RelayCallE2ETest do
 
   use FlezhaTest.SystemCase, capability: :relay_call
 
-  import ExUnit.CaptureLog, only: [capture_log: 1]
-
   import FlezhaTest.Helper.StepsResumeHarness,
     only: [
       boot_runner: 4,
@@ -40,6 +38,7 @@ defmodule FlezhaTest.System.RelayCallE2ETest do
     only: [
       await_outbox_drained: 1,
       cleanup: 3,
+      crash: 2,
       force_fresh_rebind: 2,
       kill_overwatch: 2,
       os_pid: 1,
@@ -347,19 +346,11 @@ defmodule FlezhaTest.System.RelayCallE2ETest do
       send_in(ctx.namespace, gateway, "#{anna}:slow")
       assert NodeTestHelper.wait_until(fn -> journaled?(anna, 1) end, 30_000)
 
-      log =
-        capture_log(fn ->
-          for writer <- Flezha.State.Supervisor.live_writers(gateway),
-              do: Process.exit(writer, :kill)
+      for writer <- Flezha.State.Supervisor.live_writers(gateway), do: crash(writer, gateway)
+      kill_overwatch(ctx.namespace, gateway)
 
-          kill_overwatch(ctx.namespace, gateway)
-
-          assert lines(ctx.collector, 2) |> List.last() ==
-                   "#{anna}:slow=ok:answer:#{anna}:slow@#{anna}/false"
-        end)
-
-      assert log =~ ~s(Child "#{gateway}" of Supervisor)
-      assert log =~ "Flezha.State.Supervisor terminated"
+      assert lines(ctx.collector, 2) |> List.last() ==
+               "#{anna}:slow=ok:answer:#{anna}:slow@#{anna}/false"
 
       assert settled_lines(ctx.collector, [gateway, anna]) == 2
       assert committed_turns(anna) == 2
@@ -370,20 +361,14 @@ defmodule FlezhaTest.System.RelayCallE2ETest do
   # Overwatch, started from the same start, has bound and its log has answered
   # every append it asked for.
   defp restarted_log_end(namespace, session) do
-    log =
-      capture_log(fn ->
-        force_fresh_rebind(namespace, session)
-        {:ok, replacement} = RelayManager.get_relay_pid(namespace, session)
+    force_fresh_rebind(namespace, session)
+    {:ok, replacement} = RelayManager.get_relay_pid(namespace, session)
 
-        assert NodeTestHelper.wait_until(
-                 fn ->
-                   :gen_server.reqids_size(:sys.get_state(replacement).journal_reqids) == 0
-                 end,
-                 5_000
-               )
-      end)
+    assert NodeTestHelper.wait_until(
+             fn -> :gen_server.reqids_size(:sys.get_state(replacement).journal_reqids) == 0 end,
+             5_000
+           )
 
-    assert log =~ ~s(Child "#{session}" of Supervisor)
     InputLog.last_offset(session)
   end
 

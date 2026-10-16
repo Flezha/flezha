@@ -14,7 +14,6 @@ defmodule FlezhaTest.System.ListenerSurvivalDrillTest do
   use FlezhaTest.SystemCase, capability: :runner_lifecycle
 
   import ExUnit.CaptureIO
-  import ExUnit.CaptureLog
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
   import FlezhaTest.Helper.ListenerHarness
   import FlezhaTest.Helper.TierE2EHarness, only: [cleanup: 3, kill_overwatch: 2, unique: 1]
@@ -64,10 +63,8 @@ defmodule FlezhaTest.System.ListenerSurvivalDrillTest do
     assert wait_until(fn -> suspended?(ns, id) end, 30_000)
 
     # The restart finds it asleep and brings nothing of its table up.
-    assert capture_log(fn ->
-             kill_overwatch(ns, id)
-             assert wait_until(fn -> suspended?(ns, id) end, 30_000)
-           end) =~ "terminated"
+    kill_overwatch(ns, id)
+    assert wait_until(fn -> suspended?(ns, id) end, 30_000)
 
     listener = listen(ns, id)
     send!(ns, id, "a:3")
@@ -126,10 +123,8 @@ defmodule FlezhaTest.System.ListenerSurvivalDrillTest do
     id = start!(ns, "part_echo", :flow)
     listener = listen(ns, id)
 
-    assert capture_log(fn ->
-             TierE2EHarness.force_fresh_rebind(ns, id)
-             assert wait_until(fn -> bound?(ns, id) end, 60_000)
-           end) =~ "terminated"
+    TierE2EHarness.force_fresh_rebind(ns, id)
+    assert wait_until(fn -> bound?(ns, id) end, 60_000)
 
     send!(ns, id, "1")
     assert_receive {:heard, {:output, "done:1", _}}, 60_000
