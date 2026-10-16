@@ -253,7 +253,8 @@ defmodule FlezhaTest.Relay.CallsTest do
         channel: "in",
         offset: 1,
         tasklet: "t",
-        attempts: 3
+        attempts: 3,
+        new: true
       }
     end
 

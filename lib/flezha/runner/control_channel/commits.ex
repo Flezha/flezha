@@ -222,7 +222,7 @@ defmodule Flezha.Runner.ControlChannel.Commits do
 
   # The park is durable: the `dead_lettered` entry names its DLQ entry, and the
   # post-ack step reports it.
-  defp turn_parked({:reply, {:ok, entry_ref}}) do
+  defp turn_parked({:reply, {parked, entry_ref}}) when parked in [:ok, :existing] do
     {:ok,
      fn commit ->
        stall(:turn_parked, commit.relay_id)

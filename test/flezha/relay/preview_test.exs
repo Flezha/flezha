@@ -109,12 +109,16 @@ defmodule FlezhaTest.Relay.PreviewTest do
       channel: "in",
       offset: 7,
       tasklet: "t",
-      attempts: 3
+      attempts: 3,
+      new: true
     }
 
+    # An entry already parked is told to no listener.
+    GenServer.cast(host, {:dead_lettered, %{notice | offset: 6, new: false}})
     GenServer.cast(host, {:dead_lettered, notice})
 
     assert_receive {:preview_forward, {document, %{"channel" => "in", "flz.offset" => "7"}}}
+    refute_received {:preview_forward, {_, %{"flz.offset" => "6"}}}
     error = Flezha.SDK.Error.from_document(document)
     assert error.code == "input.dead_lettered"
     assert error.details["entry"] == "#{inst}/t/1"

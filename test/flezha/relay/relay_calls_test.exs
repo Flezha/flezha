@@ -256,7 +256,8 @@ defmodule FlezhaTest.Relay.RelayCallsTest do
         channel: "in",
         offset: 1,
         tasklet: "t",
-        attempts: 3
+        attempts: 3,
+        new: false
       }
 
       GenServer.cast(host, {:dead_lettered, notice})

@@ -340,6 +340,39 @@ defmodule Flezha.State.WalWriterOutboxTest do
                    2_000
   end
 
+  # fails when: a restart that re-drives an effect record whose dead letter is
+  # already durable tells the listeners again, or stops answering its caller.
+  test "a restart re-drive of a tier-on park answers its caller but tells no listener", %{
+    rc: rc,
+    cell_id: cell_id,
+    base: base
+  } do
+    redirect_dlq_dir(base)
+    {:ok, 0} = InputLog.append(rc, "good", %{})
+    {:ok, 1} = InputLog.append(rc, "poison", %{"flz.reply_to" => "w:caller"})
+    pid = armed_writer(rc, cell_id)
+    dlq = %{channel: "in", error: "kaboom", attempts: 3, payload: "poison"}
+
+    # An output no sink has settled holds the cursor below the park, as a crash
+    # between the park's announce and the cursor write would.
+    stage_effect(pid, 0, [output("k", "good")], 0)
+    append_effect(pid, 1, [], 1, dlq)
+    assert {"good", _, _} = next_output()
+    assert_receive {:"$gen_cast", {:dead_lettered, %{offset: 1} = first}}, 2_000
+    close_writer(pid, cell_id)
+    assert Outbox.read(cell_id).outbox_flushed_seq == -1
+
+    pid = armed_writer(rc, cell_id)
+    _ = WalWriter.last_persisted_seq(pid)
+    assert {"good", _, _} = next_output(2_000)
+
+    assert_receive {:"$gen_cast", {:dead_lettered, %{offset: 1, token: "w:caller"} = again}},
+                   2_000
+
+    assert {first[:new], again[:new]} == {true, false}
+    assert [_entry] = DlqStore.list(rc)
+  end
+
   # KI-1: the outer window's own furthest offset must not overwrite the higher
   # one a window nested inside its dispatch already reported.
   test "a nested window's advance survives the outer window closing", %{

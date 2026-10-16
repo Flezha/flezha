@@ -313,7 +313,7 @@ defmodule Flezha.State.Outbox do
         })
 
       case DlqStore.append(entry) do
-        {:ok, ref} ->
+        {parked, ref} when parked in [:ok, :existing] ->
           Logger.error(
             "[outbox] parked undeliverable output #{rc}/#{sh}/#{pk} " <>
               "seq=#{Map.get(metadata, "flz.seq")} epoch=#{Map.get(metadata, "flz.epoch")} " <>

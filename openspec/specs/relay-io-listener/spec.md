@@ -373,7 +373,9 @@ author's error text, and whose hint is `flz dlq show <entry>`, and SHALL carry t
 `channel` and, when known, the input's `flz.offset`. The notice SHALL be as durable as a
 part is (not at all) and SHALL be kept like an output by a listener's backlog. A payload
 parked by an output or a forward, which is an output that could not be delivered, SHALL NOT
-raise a notice.
+raise a notice. A park that lands on an entry the DLQ already holds (a restart re-driving
+it, a re-sent park, a failing replay) SHALL NOT raise a second notice, and a caller waiting
+on it SHALL still be answered `call.failed`.
 
 #### Scenario: A poison input of a stream is announced
 
@@ -389,6 +391,14 @@ raise a notice.
 - **WHEN** `boom` is sent
 - **THEN** the listener SHALL receive the `input.dead_lettered` notice only after the turn's
   `dead_lettered` record is durable
+
+#### Scenario: A restart re-driving a park raises no second notice
+
+- **GIVEN** a flow relay on the effectively-once tier whose input `boom` is parked and
+  announced, and a controller restart before the park's effect record is settled
+- **WHEN** the restart re-drives that record
+- **THEN** the listener SHALL receive no second `input.dead_lettered` notice, and a call
+  waiting on `boom` SHALL be answered `call.failed`
 
 #### Scenario: An output's park raises no notice
 

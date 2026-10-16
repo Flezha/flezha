@@ -642,10 +642,11 @@ defmodule Flezha.Relay.Overwatch do
   end
 
   # A dead-letter entry for an input is durable: its caller, if one waits, is
-  # answered, and its listeners are told (`Flezha.Dlq.Store.announce/2`).
+  # answered, and its listeners are told of a new entry
+  # (`Flezha.Dlq.Store.announce/3`).
   @impl true
   def handle_cast({:dead_lettered, notice}, %__MODULE__{} = state) do
-    Plugins.preview_dead_letter(state, notice)
+    if notice.new, do: Plugins.preview_dead_letter(state, notice)
     details = %{dlq_ref: notice.entry, error: notice.error}
     calls = Calls.refuse(state.calls, callee(state), notice.token, "call.failed", details)
     {:noreply, %{state | calls: calls}}

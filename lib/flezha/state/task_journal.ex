@@ -626,7 +626,7 @@ defmodule Flezha.State.TaskJournal do
   end
 
   @doc """
-  Announce a failed turn's dead letter (`Flezha.Dlq.Store.announce/2`): called
+  Announce a failed turn's dead letter (`Flezha.Dlq.Store.announce/3`): called
   once the turn's `dead_lettered` record is durable and before its input is
   released, since a caller's token rides the input-log record the turn consumed.
   """
@@ -634,9 +634,8 @@ defmodule Flezha.State.TaskJournal do
   def announce_turn(instance_id, turn, entry_ref) do
     offset = turn.consumed_offset
 
-    Store.announce(instance_id, %{
+    Store.announce(instance_id, {:ok, entry_ref}, %{
       token: offset && InputLog.reply_to(instance_id, offset),
-      entry: entry_ref,
       error: turn_error(turn),
       channel: turn.entry_channel,
       offset: offset,

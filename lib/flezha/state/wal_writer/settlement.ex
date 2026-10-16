@@ -206,14 +206,14 @@ defmodule Flezha.State.WalWriter.Settlement do
     # the watermark move can truncate the poison input out of the
     # input-log, so the DLQ store entry must be durable first (synchronous
     # — the append is fsynced and idempotent, so a boot re-drive of the
-    # same record is a no-op). Parks are rare; the hot path pays one nil
-    # check.
+    # same record lands on the existing entry and tells no listener). Parks
+    # are rare; the hot path pays one nil check.
     case Map.get(entry, :dlq) do
       nil ->
         :ok
 
       dlq ->
-        {:ok, ref} =
+        parked =
           DlqStore.append(
             DlqEntry.new!(%{
               relay_class: rc,
@@ -231,9 +231,8 @@ defmodule Flezha.State.WalWriter.Settlement do
         token =
           if is_integer(entry.consumed_offset), do: InputLog.reply_to(rc, entry.consumed_offset)
 
-        DlqStore.announce(rc, %{
+        DlqStore.announce(rc, parked, %{
           token: token,
-          entry: ref,
           error: dlq.error,
           channel: dlq.channel,
           offset: entry.consumed_offset,

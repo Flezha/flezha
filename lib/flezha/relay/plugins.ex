@@ -99,7 +99,7 @@ defmodule Flezha.Relay.Plugins do
   end
 
   @doc """
-  The `input.dead_lettered` notice of `Flezha.Dlq.Store.announce/2`, previewed:
+  The `input.dead_lettered` notice of `Flezha.Dlq.Store.announce/3`, previewed:
   the error document as the payload, the channel and the input's offset, when
   known, as the metadata.
   """

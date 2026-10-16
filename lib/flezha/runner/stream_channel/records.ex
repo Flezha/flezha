@@ -420,15 +420,14 @@ defmodule Flezha.Runner.StreamChannel.Records do
       DlqStore.park_async(
         {rc, sh, pk},
         park,
-        fn entry_ref ->
+        fn parked ->
           ControlChannel.send_control_async(
             runner_id,
             {:park_payload_ack, %RunnerCommands.ParkPayloadAck{park_id: park.park_id}}
           )
 
-          DlqStore.announce(rc, %{
+          DlqStore.announce(rc, parked, %{
             token: park.reply_to,
-            entry: entry_ref,
             error: park.error,
             channel: park.channel,
             offset: park.origin_offset,

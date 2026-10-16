@@ -44,7 +44,7 @@ defmodule FlezhaTest.Helper.DlqFixtures do
     spawn_link(fn ->
       receive do
         {:"$gen_cast", {:io_in, payload, _metadata}} ->
-          {:ok, _ref} = Store.append(%{entry | payload: payload, attempts: 3})
+          {:existing, _ref} = Store.append(%{entry | payload: payload, attempts: 3})
           send(parent, :re_parked)
       end
     end)

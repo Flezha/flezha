@@ -620,11 +620,15 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
 
     assert_receive {:"$gen_cast",
                     {:dead_lettered,
-                     %{token: "w:caller", entry: ref, error: "kaboom", channel: "in", offset: 3}}},
+                     %{token: "w:caller", entry: ref, error: "kaboom", offset: 3, new: true}}},
                    2_000
 
     assert [%{"id" => id}] = Flezha.Dlq.Store.list(rc)
     assert ref == "#{rc}/task/#{id}"
+
+    # A re-sent park lands on the entry: its caller is answered, no listener told.
+    park.(3, "w:caller")
+    assert_receive {:"$gen_cast", {:dead_lettered, %{token: "w:caller", offset: 3, new: false}}}
 
     park.(4, nil)
 

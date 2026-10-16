@@ -59,7 +59,7 @@ defmodule Flezha.Dlq.StoreTest do
 
   test "re-park of the same origin identity is idempotent", %{store: store} do
     assert {:ok, ref} = Store.append(store, entry())
-    assert {:ok, ^ref} = Store.append(store, entry(%{attempts: 5}))
+    assert {:existing, ^ref} = Store.append(store, entry(%{attempts: 5}))
 
     assert [listed] = Store.list(store, nil)
     assert listed["attempts"] == 3, "idempotent re-park must not mutate the durable entry"
@@ -102,7 +102,9 @@ defmodule Flezha.Dlq.StoreTest do
   # replay from writing a second row per restart, without bound.
   test "a re-park under a fresh park_id is still one entry", %{store: store} do
     assert {:ok, ref} = Store.append(store, entry(%{park_id: "unresolved/not_prices/_entry#0"}))
-    assert {:ok, ^ref} = Store.append(store, entry(%{park_id: "unresolved/not_prices/_entry#7"}))
+
+    assert {:existing, ^ref} =
+             Store.append(store, entry(%{park_id: "unresolved/not_prices/_entry#7"}))
 
     assert length(Store.list(store, nil)) == 1
   end
@@ -110,7 +112,7 @@ defmodule Flezha.Dlq.StoreTest do
   test "tier-on parks dedup on cell@offset identity", %{store: store} do
     e = entry(%{origin_offset: 42, park_id: nil})
     assert {:ok, ref} = Store.append(store, e)
-    assert {:ok, ^ref} = Store.append(store, e)
+    assert {:existing, ^ref} = Store.append(store, e)
     assert length(Store.list(store, nil)) == 1
 
     assert {:ok, other} = Store.append(store, entry(%{origin_offset: 43, park_id: nil}))
@@ -121,7 +123,7 @@ defmodule Flezha.Dlq.StoreTest do
   test "re-park while replaying increments generation", %{store: store} do
     assert {:ok, ref} = Store.append(store, entry())
     assert :ok = Store.mark_replaying(store, ref)
-    assert {:ok, ^ref} = Store.append(store, entry(%{attempts: 4, error: "boom again"}))
+    assert {:existing, ^ref} = Store.append(store, entry(%{attempts: 4, error: "boom again"}))
 
     assert [listed] = Store.list(store, nil)
     assert listed["generation"] == 2
@@ -168,10 +170,10 @@ defmodule Flezha.Dlq.StoreTest do
     refute File.exists?(Path.join(dir, "MarketRelay"))
   end
 
-  test "append_async runs the durable callback with the entry ref", %{store: store} do
+  test "append_async runs the durable callback with the append's answer", %{store: store} do
     parent = self()
-    :ok = Store.append_async(store, entry(), fn ref -> send(parent, {:durable, ref}) end)
-    assert_receive {:durable, "MarketRelay/ohlc/" <> _}, 2_000
+    :ok = Store.append_async(store, entry(), &send(parent, {:durable, &1}))
+    assert_receive {:durable, {:ok, "MarketRelay/ohlc/" <> _}}, 2_000
     assert [_] = Store.list(store, nil)
   end
 

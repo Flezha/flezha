@@ -50,23 +50,28 @@ defmodule Flezha.Dlq.Store do
   @doc """
   Durably append a parked payload, built through `Flezha.Dlq.Entry.new/1`.
   Returns `{:ok, entry_ref}` after the index line (and blob) are fsynced;
-  idempotent on origin identity.
+  idempotent on origin identity, answering `{:existing, entry_ref}` for an
+  entry already parked.
   """
-  @spec append(pid() | atom(), Entry.t()) :: {:ok, String.t()} | {:error, term()}
+  @spec append(pid() | atom(), Entry.t()) ::
+          {:ok | :existing, String.t()} | {:error, term()}
   def append(server \\ __MODULE__, entry), do: GenServer.call(server, {:append, entry}, 30_000)
 
   @doc """
   Tell the relay serving `relay_class` that one of its inputs is durably
-  dead-lettered: a caller waiting on it under `notice.token` is answered
-  `call.failed`, and its listeners are handed the `input.dead_lettered` notice.
-  Every input park route calls this once its park is durable; a payload parked
-  by a sink or a forward is an output, and none of them calls it.
+  dead-lettered, as `parked` (the append's answer) names it: a caller waiting on
+  it under `notice.token` is answered `call.failed`, and its listeners are handed
+  the `input.dead_lettered` notice only for a new entry. Every input park route
+  calls this once its park is durable; a payload parked by a sink or a forward
+  is an output, and none of them calls it.
 
-  `notice` carries `token` (or `nil`), `entry`, `error` (the entry's error
-  text), `channel`, `offset` (or `nil`), `tasklet` and `attempts`.
+  `notice` carries `token` (or `nil`), `error` (the entry's error text),
+  `channel`, `offset` (or `nil`), `tasklet` and `attempts`.
   """
-  @spec announce(binary(), map()) :: :ok
-  def announce(relay_class, notice) do
+  @spec announce(binary(), {:ok | :existing, String.t()}, map()) :: :ok
+  def announce(relay_class, {parked, entry_ref}, notice) when parked in [:ok, :existing] do
+    notice = Map.merge(notice, %{entry: entry_ref, new: parked == :ok})
+
     with {:ok, overwatch} <- Lookup.overwatch(relay_class),
          do: GenServer.cast(overwatch, {:dead_lettered, notice})
 
@@ -74,11 +79,12 @@ defmodule Flezha.Dlq.Store do
   end
 
   @doc """
-  Non-blocking append for the data-channel path: `on_durable.(entry_ref)`
-  runs in the store process once the entry is fsynced (the ParkPayloadAck
-  send site).
+  Non-blocking append for the data-channel path: `on_durable` runs in the
+  store process with `append/2`'s answer once the entry is fsynced (the
+  ParkPayloadAck send site).
   """
-  @spec append_async(pid() | atom(), Entry.t(), (String.t() -> any())) :: :ok
+  @spec append_async(pid() | atom(), Entry.t(), ({:ok | :existing, String.t()} -> any())) ::
+          :ok
   def append_async(server \\ __MODULE__, entry, on_durable),
     do: GenServer.cast(server, {:append, entry, on_durable})
 
@@ -92,7 +98,7 @@ defmodule Flezha.Dlq.Store do
           pid() | atom(),
           {binary(), binary(), binary()},
           map(),
-          (String.t() -> any())
+          ({:ok | :existing, String.t()} -> any())
         ) :: :ok
   def park_async(server \\ __MODULE__, cell_id, park, on_durable)
 
@@ -270,8 +276,8 @@ defmodule Flezha.Dlq.Store do
   @impl true
   def handle_cast({:append, entry, on_durable}, state) do
     case do_append(entry) do
-      {:ok, ref} ->
-        on_durable.(ref)
+      {parked, _ref} = durable when parked in [:ok, :existing] ->
+        on_durable.(durable)
 
       {:error, reason} ->
         Logger.error("[dlq] durable append failed (no ack sent): #{inspect(reason)}")
@@ -301,7 +307,7 @@ defmodule Flezha.Dlq.Store do
       {:ok, _existing} ->
         # Idempotent re-park (ack-lost re-send or crash-replay): the entry
         # is already durable — re-acking is all the caller needs.
-        {:ok, ref(rc, sh, id)}
+        {:existing, ref(rc, sh, id)}
 
       {:error, :not_found} ->
         write_new_entry(rc, sh, id, entry, payload)
@@ -383,7 +389,7 @@ defmodule Flezha.Dlq.Store do
     })
 
     dir_changed(rc, sh)
-    {:ok, ref(rc, sh, id)}
+    {:existing, ref(rc, sh, id)}
   end
 
   # Origin identity: tier-on parks carry the input-log offset (stable
