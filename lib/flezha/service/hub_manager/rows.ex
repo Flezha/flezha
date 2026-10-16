@@ -392,13 +392,14 @@ defmodule Flezha.Service.HubManager.Rows do
   @doc """
   True when THIS node still hosts relays of `namespace`'s hub — the
   question a node-local reclaim asks, as opposed to the cluster-wide
-  `registered_relays?/1`. A hub that cannot be read answers `true`: a
-  read that failed proves nothing, and nothing is torn down on it.
+  `registered_relays?/1`. A plugin home placed here is not a relay. A hub
+  that cannot be read answers `true`: a read that failed proves nothing,
+  and nothing is torn down on it.
   """
   @spec local_relays?(binary()) :: boolean()
   def local_relays?(namespace) do
     with_live_hub(namespace, true, fn hub_id ->
-      ProcessHub.process_list(hub_id, :local) != []
+      ProcessHub.process_list(hub_id, :local) |> Enum.any?(fn {id, _pids} -> is_binary(id) end)
     end)
   catch
     _kind, _reason -> true

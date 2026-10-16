@@ -29,10 +29,13 @@ defmodule Flezha.Service.HubManagerStarterTest do
   alias Flezha.Convergence.Loop
   alias Flezha.Convergence.Snapshot
   alias Flezha.Identificator
+  alias Flezha.Plugin
+  alias Flezha.Plugin.Provider.File.Sink, as: FileSink
   alias Flezha.Runner.FleetManager
   alias Flezha.Runner.FleetManager.Session
   alias Flezha.Service.HubManager
   alias Flezha.Service.HubManager.Starter
+  alias Flezha.Service.PluginManager
   alias Flezha.State.TestHelpers
   alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.Helper.Telemetry
@@ -210,6 +213,31 @@ defmodule Flezha.Service.HubManagerStarterTest do
       # Recovery reached a terminal state with nothing in the registry: there
       # is no unreplayed row to lose, so the reclaim keeps its purpose.
       Snapshot.observe_recovery(Identificator.hub(namespace), :normal)
+
+      HubManager.stop_hub_if_vacant(namespace)
+
+      refute namespace in HubManager.get_running_namespaces()
+    end
+
+    test "reclaims a hub whose only local child is a plugin home", %{tmp: tmp} do
+      # The suite's setting, so the declared set is empty and only the local
+      # children decide.
+      Application.put_env(:flezha, :auto_restore_enabled, false)
+      namespace = unique("plugin-home-only")
+      {:ok, _} = ensure_hub(namespace)
+      Snapshot.observe_recovery(Identificator.hub(namespace), :normal)
+
+      sink = %Plugin{
+        id: "home_only",
+        provider: FileSink,
+        namespace: namespace,
+        opts: %{path: tmp}
+      }
+
+      {:ok, _} = PluginManager.enable_plugin(sink.id, sink)
+
+      assert [{{:plugin, "home_only"}, _}] =
+               ProcessHub.process_list(Identificator.hub(namespace), :local)
 
       HubManager.stop_hub_if_vacant(namespace)
 
