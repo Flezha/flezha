@@ -188,6 +188,18 @@ impl ControllerEnd {
 /// `node` behind a control session read and coordinated as in production;
 /// the controller's end, past the handshake.
 fn coordinated(node: RunnerNode) -> ControllerEnd {
+    coordinated_with(node).0
+}
+
+/// [`coordinated`], with the coordinator's own channel, so a test can queue a
+/// command in a fixed order, and the bridge its timers write through.
+fn coordinated_with(
+    node: RunnerNode,
+) -> (
+    ControllerEnd,
+    Arc<Mutex<Sender<RunnerMessage>>>,
+    Arc<ShutdownBridge>,
+) {
     let (sdk_end, ctrl_end) = crate::test_support::stream_pair();
     ctrl_end
         .set_read_timeout(Some(DEADLINE))
@@ -203,14 +215,16 @@ fn coordinated(node: RunnerNode) -> ControllerEnd {
         Arc::clone(&otx_arc),
     );
     let (ctx, _) = crossbeam::channel::unbounded();
+    let bridge = ShutdownBridge::new();
+    bridge.set_control_stream(Some(Arc::clone(&control_stream)));
     let mut coordinator = Coordinator {
         runner: node,
         control_stream,
         namespace: "test-ns".to_string(),
         declared,
-        otx_arc,
+        otx_arc: Arc::clone(&otx_arc),
         ctx_arc: Arc::new(Mutex::new(ctx)),
-        shutdown_bridge: ShutdownBridge::new(),
+        shutdown_bridge: Arc::clone(&bridge),
     };
     thread::spawn(move || {
         while let Ok(message) = orx.recv() {
@@ -218,7 +232,7 @@ fn coordinated(node: RunnerNode) -> ControllerEnd {
         }
     });
     payloader::extract_payload(&ctrl_end).expect("the handshake");
-    ControllerEnd(ctrl_end)
+    (ControllerEnd(ctrl_end), otx_arc, bridge)
 }
 
 /// A bound host Cell that keeps state, with its wire identity.
@@ -320,4 +334,86 @@ fn a_grant_frees_the_sender_a_compaction_waits_behind() {
         (cell_id, 1)
     );
     crate::credit::global().disarm();
+}
+
+/// A compaction waiting out a long activation holds the coordinator; what
+/// the liveness timers write meanwhile must still reach the controller, or
+/// its silence window closes a healthy session. `payload_id` is the frame
+/// awaited: the keepalive on the control stream, or the data heartbeat.
+fn a_liveness_frame_leaves_while_a_compaction_waits(test: &str, payload_id: &str) {
+    const WITHIN: std::time::Duration = std::time::Duration::from_secs(3);
+    if crate::test_support::passes_alone(test).is_some() {
+        return;
+    }
+    // Its own process, so the short intervals reach no other test.
+    std::env::set_var("FLEZHA_CONTROL_KEEPALIVE_MS", "50");
+    std::env::set_var("FLEZHA_DATA_HEARTBEAT_MS", "50");
+    let _sink = crate::state_sink::test_guard();
+    crate::state_sink::install_global_sink(Arc::new(|_: &str, _: &[u8]| Ok(())));
+    let mut node = RunnerNode::new("test-ns".to_string());
+    let (cell_id, slot) = bound_cell(&mut node);
+    let (data_stream, data_end) = crate::test_support::stream_pair();
+    let io_streams = node.get_io_streams();
+    io_streams.write().unwrap().insert(0, data_stream);
+    let (mut controller, otx, bridge) = coordinated_with(node);
+    // An outstanding activation: the compaction's exclusive gate waits on it.
+    slot.drain_active
+        .store(true, std::sync::atomic::Ordering::Release);
+    host_answering_snapshot(&slot);
+    // Queued ahead of the timers' first tick, so the coordinator is held first.
+    let request = CommandRequest {
+        reference_id: "ref-compact".to_string(),
+        command: Some(Command::CompactCell(crate::pb::CompactCell { cell_id })),
+    };
+    otx.lock()
+        .unwrap()
+        .send(RunnerMessage::HandleCommandAction(
+            "control_command".to_string(),
+            request.encode_to_vec(),
+            HashMap::new(),
+        ))
+        .expect("the coordinator is up");
+    let _timers = super::spawn_timers(&bridge, io_streams);
+
+    let end = if payload_id == liveness::CONTROL_PING_PAYLOAD_ID {
+        &controller.0
+    } else {
+        &data_end
+    };
+    end.set_read_timeout(Some(WITHIN)).expect("a deadline");
+    let arrived = loop {
+        match payloader::extract_payload(end) {
+            Ok((id, _, _)) if id == payload_id => break true,
+            Ok(_) => continue,
+            Err(_) => break false,
+        }
+    };
+    slot.drain_active
+        .store(false, std::sync::atomic::Ordering::Release);
+    controller
+        .0
+        .set_read_timeout(Some(DEADLINE))
+        .expect("a deadline");
+    assert_eq!(controller.answer("ref-compact").status, "success");
+    assert!(
+        arrived,
+        "no {payload_id} within {WITHIN:?} while a compaction waited on an activation"
+    );
+    bridge.set_control_stream(None);
+}
+
+#[test]
+fn a_keepalive_leaves_while_a_compaction_waits_on_an_activation() {
+    a_liveness_frame_leaves_while_a_compaction_waits(
+        "coordinator::tests::a_keepalive_leaves_while_a_compaction_waits_on_an_activation",
+        liveness::CONTROL_PING_PAYLOAD_ID,
+    );
+}
+
+#[test]
+fn a_data_heartbeat_leaves_while_a_compaction_waits_on_an_activation() {
+    a_liveness_frame_leaves_while_a_compaction_waits(
+        "coordinator::tests::a_data_heartbeat_leaves_while_a_compaction_waits_on_an_activation",
+        liveness::DATA_HEARTBEAT_PAYLOAD_ID,
+    );
 }

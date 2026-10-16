@@ -1,10 +1,11 @@
 //! The coordinator: one thread per runner that owns the control stream and
-//! every control-plane write — command replies, keepalives, heartbeats,
-//! steps completions and SDK-initiated requests — so those writes never
-//! interleave. A credit command is answered where control frames are read
-//! instead (`command::answer_credit`), so a blocked command never holds back a
-//! grant. Data-plane traffic bypasses it entirely: stream readers push
-//! straight into the targeted relay's cell mailboxes.
+//! runs its commands in arrival order, writing their replies, steps
+//! completions and SDK-initiated requests. What must leave while a command
+//! runs writes from its own thread instead, whole frames through the same
+//! writer: a credit answer where control frames are read
+//! (`command::answer_credit`), keepalives and heartbeats from their timers.
+//! Data-plane traffic bypasses it entirely: stream readers push straight into
+//! the targeted relay's cell mailboxes.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
@@ -317,9 +318,8 @@ fn install_snapshot_fn(shutdown_bridge: &ShutdownBridge, registry: Arc<RelayRegi
 }
 
 impl Coordinator {
-    /// Open the control channel and build the coordinator around it. The two
-    /// timers only signal this loop, so every control write stays on one
-    /// thread and both survive reconnects.
+    /// Open the control channel and build the coordinator around it, with
+    /// its two liveness timers.
     fn connect(
         namespace: String,
         declared: Arc<RwLock<Vec<String>>>,
@@ -346,10 +346,7 @@ impl Coordinator {
         runner.set_connect_answered(answered);
         shutdown_bridge.set_control_stream(Some(Arc::clone(&control_stream)));
 
-        let timers = [
-            control_unit::spawn_keepalive(otx_arc.clone()),
-            control_unit::spawn_data_heartbeat(otx_arc.clone()),
-        ];
+        let timers = spawn_timers(&shutdown_bridge, runner.get_io_streams());
         let coordinator = Coordinator {
             runner,
             control_stream,
@@ -378,14 +375,6 @@ impl Coordinator {
                     self.reconnect(reason);
                 }
             }
-            // A failed keepalive write means the control stream died; the
-            // reader loop detects the same and drives reconnect.
-            RunnerMessage::SendControlKeepalive => {
-                let _ = control_unit::send_keepalive_ping(&self.control_stream);
-            }
-            RunnerMessage::SendDataHeartbeat => {
-                heartbeat_tick(&self.runner.shared_io_streams);
-            }
             RunnerMessage::EmitRelayCompleted {
                 relay_id,
                 status,
@@ -410,10 +399,11 @@ impl Coordinator {
             .send(ClientResponseMessage::RemoveFactoryResult(result));
     }
 
-    /// Stop for good: every later reconnect is a no-op, and the session this
-    /// coordinator holds is closed.
+    /// Stop for good: every later reconnect is a no-op, the session this
+    /// coordinator holds is closed, and its timers stop.
     fn abandon(&mut self) {
         self.runner.set_status(RunnerStatus::Stopped);
+        self.shutdown_bridge.set_control_stream(None);
         let _ = self.control_stream.shutdown(std::net::Shutdown::Both);
     }
 
@@ -492,6 +482,39 @@ fn framed_request(reference_id: String, command: Command) -> Vec<u8> {
         command: Some(command),
     };
     payloader::build_without_metadata("control_command", &request.encode_to_vec())
+}
+
+/// The keepalive on the control stream and the heartbeat on every secondary.
+/// A failed keepalive write means the control stream died; the reader loop
+/// detects the same and drives reconnect.
+fn spawn_timers(bridge: &Arc<ShutdownBridge>, io_streams: IoStreams) -> [JoinHandle<()>; 2] {
+    [
+        spawn_liveness(bridge, liveness::control_keepalive_interval, |stream| {
+            let _ = control_unit::send_keepalive_ping(stream);
+        }),
+        spawn_liveness(bridge, liveness::data_heartbeat_interval, move |_| {
+            heartbeat_tick(&io_streams)
+        }),
+    ]
+}
+
+/// A timer whose `tick` writes on its own thread, so a command the
+/// coordinator is still running never holds it back. It takes the control
+/// stream the bridge holds, so it outlives every reconnect, and stops once
+/// the session is abandoned; jittered so a fleet does not tick in lockstep.
+fn spawn_liveness(
+    bridge: &Arc<ShutdownBridge>,
+    interval: fn() -> std::time::Duration,
+    tick: impl Fn(&FlezhaStream) + Send + 'static,
+) -> JoinHandle<()> {
+    let bridge = Arc::clone(bridge);
+    thread::spawn(move || loop {
+        thread::sleep(liveness::jittered(interval()));
+        let Some(stream) = bridge.control_stream() else {
+            break;
+        };
+        tick(&stream);
+    })
 }
 
 /// One heartbeat tick; a heartbeat that reached nothing feeds the flood

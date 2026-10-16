@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Fixed: a runner keeps its control session while a command waits on a Cell
+
+A compaction, restore or state read waiting out a long activation held the runner's command
+thread, and the control keepalive and the data heartbeat waited behind it; past the
+controller's silence window a healthy runner was closed as dead. Both now leave from their
+own timers, whatever command is running.
+
 ### Fixed: `flz boot status` names only the namespaces its caller may see
 
 The verb answers any caller, so its table of running namespaces named every tenant on the node.

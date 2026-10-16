@@ -90,10 +90,6 @@ pub enum RunnerMessage {
         stream: Arc<FlezhaStream>,
         reason: &'static str,
     },
-    /// The keepalive timer's tick: a ping on the current control stream.
-    SendControlKeepalive,
-    /// The heartbeat timer's tick: a heartbeat on every secondary stream.
-    SendDataHeartbeat,
     /// A steps relay reached an exit trigger.
     EmitRelayCompleted {
         relay_id: String,

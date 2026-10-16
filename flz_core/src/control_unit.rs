@@ -517,46 +517,15 @@ pub fn send_keepalive_ping(stream: &FlezhaStream) -> io::Result<()> {
     crate::state_sink::write(crate::state_sink::Class::Control, Some(stream), frame)
         .refused()
         .map_err(|e| {
-            tracing::warn!(
+            // Every tick during a reconnect meets the dead stream; the reader
+            // already reported the loss.
+            tracing::debug!(
                 target: "flezha::transport",
                 kind = ?e.kind(),
                 "control keepalive ping write failed: {}", e
             );
             e
         })
-}
-
-/// The keepalive timer only signals the coordinator, so it outlives every
-/// reconnect; jittered so a fleet does not ping in lockstep.
-pub fn spawn_keepalive(otx: Arc<Mutex<Sender<RunnerMessage>>>) -> thread::JoinHandle<()> {
-    thread::spawn(move || loop {
-        thread::sleep(liveness::jittered(liveness::control_keepalive_interval()));
-        if otx
-            .lock()
-            .unwrap()
-            .send(RunnerMessage::SendControlKeepalive)
-            .is_err()
-        {
-            // Coordinator gone (runner shutting down) — stop the timer.
-            break;
-        }
-    })
-}
-
-/// The heartbeat timer, shaped as `spawn_keepalive`.
-pub fn spawn_data_heartbeat(otx: Arc<Mutex<Sender<RunnerMessage>>>) -> thread::JoinHandle<()> {
-    thread::spawn(move || loop {
-        thread::sleep(liveness::jittered(liveness::data_heartbeat_interval()));
-        if otx
-            .lock()
-            .unwrap()
-            .send(RunnerMessage::SendDataHeartbeat)
-            .is_err()
-        {
-            // Coordinator gone (runner shutting down) — stop the timer.
-            break;
-        }
-    })
 }
 
 /// True when the ack window really elapsed: the read waited it out and no ack
@@ -1043,7 +1012,7 @@ mod tests {
         );
     }
 
-    // `send_keepalive_ping` (the coordinator's write path) must put a bare
+    // `send_keepalive_ping` (the keepalive timer's write) must put a bare
     // `Ping` on the dedicated control_ping payload, so the controller recognizes
     // it without entering command dispatch.
     #[test]

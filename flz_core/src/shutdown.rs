@@ -55,6 +55,10 @@ impl ShutdownBridge {
         *self.control_stream.lock().unwrap() = stream;
     }
 
+    pub fn control_stream(&self) -> Option<Arc<FlezhaStream>> {
+        self.control_stream.lock().unwrap().clone()
+    }
+
     pub fn set_snapshot_fn(&self, snapshot_fn: RelaySnapshotFn) {
         *self.snapshot_fn.lock().unwrap() = Some(snapshot_fn);
     }
@@ -65,7 +69,7 @@ impl ShutdownBridge {
             return;
         }
 
-        let stream = match self.control_stream.lock().unwrap().clone() {
+        let stream = match self.control_stream() {
             Some(s) => s,
             None => {
                 // No control channel attached: e.g. the SDK was dropped
