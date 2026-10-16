@@ -297,3 +297,68 @@ fn a_start_held_once_its_leave_is_answered_comes_back_to_run_at_once() {
     let start = ("control_command".to_string(), vec![1, 2]);
     assert_eq!(pending.hold(start.clone()), Some(start));
 }
+
+#[test]
+fn a_stop_does_not_wait_out_an_evictions_unanswered_leave() {
+    let _env = crate::runner::env_test_guard();
+    let id = format!("host_leave_reaper_{}", std::process::id());
+    let node = crate::runner::RunnerNode::new("test-ns".to_string());
+    let registry = leaving_relay(&node, &id, "leave-10", Some(1));
+    drop(registry.get_or_create("k1").expect("the Cell is minted"));
+    // The reaper holds the Cell's gate for its leave, which no host takes.
+    spin_until("the eviction's leave", || {
+        let gate = |s: &Arc<crate::cell::CellSlot>| {
+            s.drain_active.load(std::sync::atomic::Ordering::Acquire)
+        };
+        registry.cells.get("k1").is_some_and(|s| gate(s.value()))
+    });
+    let started = std::time::Instant::now();
+    assert!(node.stop_relay("leave-10"));
+    let took = started.elapsed();
+    assert!(
+        took < std::time::Duration::from_secs(5),
+        "the stop waited {took:?} on the reaper's unanswered leave"
+    );
+    let evicted = &registry.counters.cells_evicted_total;
+    assert_eq!(evicted.load(std::sync::atomic::Ordering::Relaxed), 1);
+    assert_eq!(
+        next_leave("leave-10").kind,
+        schema::ActivationKind::Leave { whole_relay: true }
+    );
+    assert!(
+        crate::poll_core::global().take_leave("leave-10").is_none(),
+        "the Cell's withdrawn leave reached the host"
+    );
+}
+
+#[test]
+fn a_stopped_relays_leave_waits_for_a_cell_leave_a_host_took() {
+    let _env = crate::runner::env_test_guard();
+    let id = format!("host_leave_sweep_stop_{}", std::process::id());
+    let node = crate::runner::RunnerNode::new("test-ns".to_string());
+    let registry = leaving_relay(&node, &id, "leave-11", None);
+    for key in ["k1", "k2"] {
+        let slot = registry.get_or_create(key).expect("the Cell is minted");
+        slot.last_activity_ms
+            .store(i64::MIN / 2, std::sync::atomic::Ordering::Relaxed);
+    }
+    let sweeping = Arc::clone(&registry);
+    let sweep = std::thread::spawn(move || sweeping.reap_sweep(std::time::Duration::ZERO));
+    let held = take_leave("leave-11");
+    assert!(node.stop_relay("leave-11"));
+    assert!(
+        crate::poll_core::global().take_leave("leave-11").is_none(),
+        "a leave while the host still holds a Cell's leave"
+    );
+    answer_leave(held);
+    sweep.join().expect("the sweep ends");
+    // The sweep is done, so a Cell leave it sent after the stop is queued now.
+    assert_eq!(
+        next_leave("leave-11").kind,
+        schema::ActivationKind::Leave { whole_relay: true }
+    );
+    assert!(
+        crate::poll_core::global().take_leave("leave-11").is_none(),
+        "a Cell leave sent after the relay stopped"
+    );
+}

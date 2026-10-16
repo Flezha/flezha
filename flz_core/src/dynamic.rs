@@ -134,7 +134,12 @@ impl DynamicCellRegistry {
         }
 
         for (key, slot, records) in candidates {
-            self.evict(key, slot, records);
+            // A stop's leave covers every Cell, so none is sent its own.
+            if self.relay_stopped.load(Ordering::Acquire) {
+                slot.release_drained();
+            } else {
+                self.evict(key, slot, records);
+            }
         }
     }
 
@@ -229,18 +234,15 @@ impl DynamicCellRegistry {
     }
 }
 
-/// One reaper, sweeping every `reap_interval(idle_ttl)` until `stop`.
-pub fn spawn_reaper(
-    idle_ttl: Duration,
-    registry: Arc<DynamicCellRegistry>,
-    stop: Arc<AtomicBool>,
-) -> JoinHandle<()> {
+/// One reaper, sweeping every `reap_interval(idle_ttl)` until the relay stops.
+pub fn spawn_reaper(idle_ttl: Duration, registry: Arc<DynamicCellRegistry>) -> JoinHandle<()> {
     let interval = reap_interval(idle_ttl);
     thread::Builder::new()
         .name("flezha-reaper".to_string())
         .spawn(move || {
+            let stop = &registry.relay_stopped;
             while !stop.load(Ordering::Acquire) {
-                sleep_responsive(interval, &stop);
+                sleep_responsive(interval, stop);
                 if !stop.load(Ordering::Acquire) {
                     registry.reap_sweep(idle_ttl);
                 }

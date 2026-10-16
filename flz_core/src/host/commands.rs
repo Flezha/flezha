@@ -223,7 +223,7 @@ pub fn state_json_locked(
     } else {
         (schema::ActivationKind::LiveStateRead, "live_state_read")
     };
-    let json = match crate::poll_core::global().host_command_within(slot, kind, wait)? {
+    let json = match crate::poll_core::global().host_command_within(slot, kind, wait, None)? {
         schema::ActivationOutcome::StateJson { json }
         | schema::ActivationOutcome::MigrationState { json } => json,
         schema::ActivationOutcome::Failed(err) => return Err(host_failed(command, err.message)),

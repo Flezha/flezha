@@ -117,7 +117,10 @@ The core SHALL hand the host a `Leave` activation when a host-run relay leaves t
 runner (stopped, finished or migrated away), with `whole_relay` set and the relay as
 its target, once no activation handed out for that relay is still running; and when
 it evicts an idle host-run Cell, with the Cell as its target, under the Cell's gate
-and before the Cell's key is removed, waiting for the host's answer. The host SHALL
+and before the Cell's key is removed, waiting for the host's answer; once the relay
+stops, a Cell's `Leave` no host has taken yet is withdrawn, the relay's own `Leave`
+covering the Cell, and a reaper sends no Cell of a stopped relay its own `Leave`. The
+host SHALL
 drop the state it holds for the target, or for every Cell of the relay, and SHALL
 answer `StateApplied`. An `AddRelay` for an id whose relay's leave the host has not
 answered SHALL be handled, and answered, only after it has. A host-run Cell whose
@@ -139,6 +142,14 @@ have. A typed relay's state lives in the core's Cells and SHALL NOT produce a `L
 #### Scenario: A Cell evicted idle begins again at init_state
 - **WHEN** the reaper evicts an idle dynamic Cell of a host-run relay and an input for its key arrives later
 - **THEN** the host SHALL have answered a `Leave` for that Cell before any Cell minted for the key is handed work, and that Cell SHALL begin at `init_state`
+
+#### Scenario: A stop does not wait out an eviction's leave
+- **WHEN** a host-run relay is stopped while a Cell's `Leave` the reaper sent is still queued for the host
+- **THEN** the core SHALL withdraw that `Leave` and send no other Cell one, and the stop SHALL NOT wait for a host's answer
+
+#### Scenario: A relay's leave waits for a Cell's leave a host took
+- **WHEN** a host-run relay is stopped while a host holds a Cell's `Leave` unanswered
+- **THEN** the relay's `Leave` SHALL be handed out only after that Cell's `Leave` is answered
 
 #### Scenario: An eviction waits for the Cell's records to ship
 - **WHEN** an idle host-run Cell still keeps a hold on its relay's processed prefix whose record has not shipped

@@ -643,6 +643,13 @@ impl PollCore {
         token
     }
 
+    /// Take a queued, not yet handed out, payload off the direct queue.
+    fn take_direct(&self, pick: impl Fn(&EngineActivation) -> bool) -> Option<EngineActivation> {
+        let mut direct = self.direct.lock_recover();
+        let at = direct.iter().position(pick)?;
+        direct.remove(at)
+    }
+
     /// Cross a command interaction to a host poller and block for its answer.
     /// MUST run inside [`Self::with_cell_exclusive`]: that gate keeps input
     /// activations out while the command runs.
@@ -651,15 +658,18 @@ impl PollCore {
         slot: &Arc<CellSlot>,
         kind: crate::schema::ActivationKind,
     ) -> Result<crate::schema::ActivationOutcome, Error> {
-        self.host_command_within(slot, kind, HOST_COMMAND_TIMEOUT)
+        self.host_command_within(slot, kind, HOST_COMMAND_TIMEOUT, None)
     }
 
-    /// [`Self::host_command`] with the wait chosen by the caller.
+    /// [`Self::host_command`] with the wait chosen by the caller. Once
+    /// `until`'s flag is set, a command no host has taken yet is withdrawn
+    /// and answered with `until`'s outcome; one a host took is waited out.
     pub fn host_command_within(
         &self,
         slot: &Arc<CellSlot>,
         kind: crate::schema::ActivationKind,
         wait: Duration,
+        mut until: Option<(&AtomicBool, crate::schema::ActivationOutcome)>,
     ) -> Result<crate::schema::ActivationOutcome, Error> {
         let describe = kind.as_str();
         if self.shutting_down.load(Ordering::Acquire) {
@@ -668,7 +678,7 @@ impl PollCore {
             ));
         }
         let (tx, rx) = crossbeam::channel::bounded(1);
-        self.submit_direct(EnginePayload::Command {
+        let token = self.submit_direct(EnginePayload::Command {
             slot: Arc::clone(slot),
             change_seq: slot.change_seq.load(Ordering::Acquire),
             kind,
@@ -678,7 +688,23 @@ impl PollCore {
                 let _ = tx.send(outcome);
             }),
         });
-        match rx.recv_timeout(wait) {
+        let started = Instant::now();
+        let answer = loop {
+            let poll = until.as_ref().map_or(wait, |_| Duration::from_millis(200));
+            match rx.recv_timeout(poll.min(wait.saturating_sub(started.elapsed()))) {
+                Err(crossbeam::channel::RecvTimeoutError::Timeout) if started.elapsed() < wait => {
+                    if let Some((_, withdrawn)) =
+                        until.take_if(|(stop, _)| stop.load(Ordering::Acquire))
+                    {
+                        if self.take_direct(|act| act.token == token).is_some() {
+                            return Ok(withdrawn);
+                        }
+                    }
+                }
+                answer => break answer,
+            }
+        };
+        match answer {
             Ok(outcome) => Ok(outcome),
             Err(crossbeam::channel::RecvTimeoutError::Timeout) => {
                 Err(Error::HostCrossing(Code::HostTimeout.with([

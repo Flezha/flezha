@@ -7,7 +7,6 @@ use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Duration;
 
-use super::cell::cell_ref_of;
 use crate::cell::CellSlot;
 use crate::poll_core::{CommandReply, EnginePayload};
 use crate::relay::instance::RelayInstance;
@@ -67,19 +66,25 @@ pub fn pending_leave(relay: &str) -> Option<Arc<PendingLeave>> {
 /// Tell the host an evicted Cell left, and wait for its answer: the caller
 /// holds the Cell's gates and removes its key only after, so a Cell minted
 /// again under the key is never handed work before the host dropped the old
-/// state. MUST run under the cell gate.
+/// state. A leave no host has taken when the relay stops is withdrawn: the
+/// relay's own leave, sent once its reapers are done, covers the Cell. MUST
+/// run under the cell gate.
 pub fn cell_left_locked(slot: &Arc<CellSlot>) {
     let leave = schema::ActivationKind::Leave { whole_relay: false };
-    let target = cell_ref_of(slot);
+    let covered = (
+        &*slot.relay_stopped,
+        schema::ActivationOutcome::StateApplied,
+    );
+    let wait = crate::poll_core::HOST_COMMAND_TIMEOUT;
     let outcome = crate::poll_core::global()
-        .host_command(slot, leave)
+        .host_command_within(slot, leave, wait, Some(covered))
         .unwrap_or_else(|err| {
             schema::ActivationOutcome::Failed(schema::WorkError {
                 message: err.to_string(),
                 non_retryable: false,
             })
         });
-    leave_answered(&target.relay, outcome);
+    leave_answered(&slot.instance_id, outcome);
 }
 
 /// Tell the host a relay left this runner (stopped, finished or migrated

@@ -189,8 +189,7 @@ impl RelayInstance {
                 dynamic_registries.push(registry);
             }
 
-            let background_handles =
-                spawn_reapers(&topology, &dynamic_registries, &background_stop);
+            let background_handles = spawn_reapers(&topology, &dynamic_registries);
 
             RelayInstance {
                 host_prepare: Mutex::new(crate::host::HostPrepareState::default()),
@@ -321,17 +320,12 @@ impl RelayInstance {
 fn spawn_reapers(
     topology: &RelayTopology,
     dynamic_registries: &[Option<Arc<DynamicCellRegistry>>],
-    stop: &Arc<AtomicBool>,
 ) -> Vec<JoinHandle<()>> {
     let mut handles: Vec<JoinHandle<()>> = Vec::new();
     for (tasklet_id, registry) in dynamic_registries.iter().enumerate() {
         if let (Some(registry), Some(idle_ttl)) = (registry, topology.tasklets[tasklet_id].idle_ttl)
         {
-            handles.push(spawn_reaper(
-                idle_ttl,
-                Arc::clone(registry),
-                Arc::clone(stop),
-            ));
+            handles.push(spawn_reaper(idle_ttl, Arc::clone(registry)));
         }
     }
     handles
