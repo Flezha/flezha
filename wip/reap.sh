@@ -79,6 +79,12 @@ reap() {
     who=$(owner "$pid")
     printf '%-9s %8s %10s  %s\n' "$who" "$pid" "$etime" "${cmd:0:150}"
     any=1
+    # A test's peer BEAM is detached from its parent, so it reads as an
+    # orphan while its run is live; a gone session's leftovers are older.
+    if [ "$who" = orphan ] && [[ $etime =~ ^0?[0-4]:[0-9]{2}$ ]]; then
+      echo "  spared $pid (orphan under 5 min old)"
+      continue
+    fi
     case "$MODE/$who" in
       orphans/orphan | mine/orphan) ;;
       mine/mine) [ "$spare_mcp" = 1 ] && [[ $cmd == *mcp* ]] && continue ;;
