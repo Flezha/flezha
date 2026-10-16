@@ -104,6 +104,31 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
     assert {:ok, []} = TaskJournal.read(inst)
   end
 
+  # Fails when: the exit of a journal writer closed under an append (its relay
+  # stopping) reaches the runner as the reason the commit failed.
+  test "an append whose journal writer is closed under it is answered as the writer gone" do
+    on_exit(override_log_level(:warning))
+    inst = "opc_closed_#{System.unique_integer([:positive])}"
+    {control_channel, stream_ref} = start_control_channel("closed")
+    {:ok, writer} = Flezha.State.Supervisor.find_or_start(Paths.journal_id(inst))
+    :ok = :sys.suspend(writer)
+    :erlang.trace(writer, true, [:receive])
+
+    payload = build_task_commit_payload(inst, 0, [], [], "ref-opc-closed")
+    send(control_channel, {:flz_data, :stream_id, "control_command", payload, %{}})
+    assert_receive {:trace, ^writer, :receive, {:"$gen_call", _, {:append_next, _, _, _}}}, 1_000
+
+    log =
+      ExUnit.CaptureLog.capture_log([level: :warning], fn ->
+        :ok = Flezha.State.Supervisor.close_writers(inst)
+        assert_receive {:test_writer_called, ^stream_ref, reply}, 2_000
+        assert {:task_commit_response, %{error: error}} = decode_reply(reply).command
+        assert error.code == "controller.process_gone"
+      end)
+
+    assert log =~ "task-journal commit relay=#{inspect(inst)} task_idx=0 failed"
+  end
+
   test "a re-sent barrier under the same reference_id is acked again from the one entry" do
     inst = "opc_resend_#{System.unique_integer([:positive])}"
     {control_channel, stream_ref} = start_control_channel("resend")

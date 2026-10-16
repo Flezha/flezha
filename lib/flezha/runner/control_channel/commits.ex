@@ -125,11 +125,8 @@ defmodule Flezha.Runner.ControlChannel.Commits do
         {:noreply,
          owed_answered(%{state | reqids: reqids}, reference_id, :turn, turn_parked(answer))}
 
-      {{:reply, _synced}, {reference_id, commit}, reqids} ->
-        {:noreply, settle(%{state | reqids: reqids}, reference_id, commit, :ok)}
-
-      {{:error, {reason, _writer}}, {reference_id, commit}, reqids} ->
-        {:noreply, settle(%{state | reqids: reqids}, reference_id, commit, {:error, reason})}
+      {answer, {reference_id, commit}, reqids} ->
+        {:noreply, settle(%{state | reqids: reqids}, reference_id, commit, journaled(answer))}
 
       _no_reply_or_no_request ->
         Logger.warning(
@@ -214,6 +211,11 @@ defmodule Flezha.Runner.ControlChannel.Commits do
         records_failed(state, reference_id, reason)
     end
   end
+
+  # A journal writer that exits under the append (its relay's writers closed)
+  # is gone as one gone before it was asked; its exit reason is no error's.
+  defp journaled({:reply, _synced}), do: :ok
+  defp journaled({:error, {_exit, _writer}}), do: {:error, :noproc}
 
   defp record_durable({:reply, {:ok, _synced}}, _cell_id, _seq), do: {:ok, & &1}
 
