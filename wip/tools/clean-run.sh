@@ -112,6 +112,18 @@ gate e2e-multi-node mix test --warnings-as-errors --only multi_node
 
 # The plugin packages build against this checkout (`path: "../.."`); their
 # broker-backed integration tags stay excluded, as each test_helper sets.
+# Their own mix.lock must pin every git dependency they share with the core at
+# the core's commit, or they test the core against a different library.
+gate plugin-locks bash -c '
+  bad=0
+  while IFS= read -r line; do
+    dep=${line%%:*}
+    for l in plugins/*/mix.lock; do
+      got=$(grep -F "$dep:" "$l") || continue
+      [ "$got" = "$line" ] || { echo "$l: ${dep//[\" ]/} is not locked as in mix.lock"; bad=1; }
+    done
+  done < <(grep ":git," mix.lock)
+  exit $bad'
 for p in "$ROOT"/plugins/*/; do
   n=$(basename "$p" _plugin)
   n=${n#flezha_}
