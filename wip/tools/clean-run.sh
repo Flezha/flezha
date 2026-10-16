@@ -14,6 +14,11 @@
 # <gate>.err) under the directory printed first. Exits non-zero unless every
 # gate passed clean.
 #
+# Only our own code is held to that: third-party Elixir dependencies compile in
+# a `*-deps-compile-*` step of their own, whose warnings stay in its log and
+# fail nothing. Path dependencies (the core, the Elixir SDK and its test app)
+# are ours: that step skips them and the compile gate after it builds them.
+#
 # The commands are the repository's own CI lines: elixir.yml and nightly-e2e.yml
 # for the core, each sdk/<x>/scripts/ci.sh and workflow for the SDKs. An SDK's
 # ci.sh fetches its core from a release; here the core is this checkout, so each
@@ -42,12 +47,13 @@ BENIGN+='|^PHP CS Fixer [0-9.]+ .* by |^PHP runtime: [0-9.]+$|^Loaded config \S+
 # pyright's notice that a newer release exists: it says nothing about the code.
 UPDATE_NOTICE='^WARNING: there is a new pyright version available \(v[0-9.]+ -> v[0-9.]+\)\.$'
 
-gate() { # [--in dir] [--stderr-ok] name command...
-  local dir=$ROOT stderr_ok=0
+gate() { # [--in dir] [--stderr-ok] [--noise-ok] name command...
+  local dir=$ROOT stderr_ok=0 noise_ok=0
   while :; do
     case $1 in
       --in) dir=$2; shift 2 ;;
       --stderr-ok) stderr_ok=1; shift ;;
+      --noise-ok) noise_ok=1 stderr_ok=1; shift ;;
       *) break ;;
     esac
   done
@@ -61,7 +67,7 @@ gate() { # [--in dir] [--stderr-ok] name command...
     verdict="FAIL $name (timed out)"
   elif [ $status -ne 0 ]; then
     verdict="FAIL $name"
-  elif grep -vE "$UPDATE_NOTICE" "$log" | grep -qiE "$NOISE" ||
+  elif { [ $noise_ok -eq 0 ] && grep -vE "$UPDATE_NOTICE" "$log" | grep -qiE "$NOISE"; } ||
     { [ $stderr_ok -eq 0 ] && grep -qvE "$BENIGN" "$err"; }; then
     verdict="NOISY $name"
   else
@@ -79,7 +85,16 @@ smoke() { # name dir runner...: the smoke tier every SDK's ci.sh ends with
     --input alpha --input beta --timeout-ms 60000 -- "$@"
 }
 
+deps_compile() { # name dir env...: third-party deps only, warnings logged
+  local name=$1 dir=$2 env
+  shift 2
+  for env in "$@"; do
+    gate --in "$dir" --noise-ok "$name-deps-compile-$env" env MIX_ENV="$env" mix deps.compile --skip-local-deps
+  done
+}
+
 # Core compile: dev's elixirc_paths carry test/fixtures and test/helpers too.
+deps_compile core "$ROOT" dev test
 gate core-compile mix compile --warnings-as-errors
 gate core-compile-test env MIX_ENV=test mix compile --warnings-as-errors
 
@@ -103,6 +118,7 @@ gate core-suite-rest mix test --warnings-as-errors test/*_test.exs test/sdk_conf
 
 # :system tier under the Elixir runtime, as nightly-e2e.yml prepares and runs it.
 gate --stderr-ok e2e-prep-elixir-deps bash -c 'cd test/apps/elixir_runner && mix deps.get'
+deps_compile e2e-prep-elixir "$ROOT/test/apps/elixir_runner" dev
 gate --stderr-ok e2e-prep-elixir-compile bash -c 'cd test/apps/elixir_runner && mix compile'
 mapfile -t system < <(cd "$ROOT" && ls test/system/*_test.exs | grep -v plugin_package_release_test)
 for ((i = 0; i < ${#system[@]}; i += 6)); do
@@ -130,6 +146,7 @@ for p in "$ROOT"/plugins/*/; do
   n=$(basename "$p" _plugin)
   n=${n#flezha_}
   gate --in "$p" --stderr-ok "plugin-$n-deps" mix deps.get
+  deps_compile "plugin-$n" "$p" dev test
   gate --in "$p" "plugin-$n-compile" mix compile --warnings-as-errors
   gate --in "$p" "plugin-$n-test" mix test --warnings-as-errors
   gate --in "$p" "plugin-$n-format" mix format --check-formatted
@@ -208,6 +225,8 @@ smoke sdk-php-smoke "$H" php test_app/runner.php smoke
 # Elixir: sdk/elixir/scripts/ci.sh (it has no workflow of its own).
 E=$ROOT/sdk/elixir
 gate --in "$E" --stderr-ok sdk-elixir-deps mix deps.get
+deps_compile sdk-elixir "$E" dev test
+deps_compile sdk-elixir-test-app "$E/test_app" dev
 gate --in "$E" sdk-elixir-compile mix compile --warnings-as-errors
 gate --in "$E" sdk-elixir-test mix test
 gate --in "$E/test_app" sdk-elixir-test-app mix compile --warnings-as-errors
