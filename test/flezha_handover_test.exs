@@ -92,16 +92,18 @@ defmodule FlezhaTest.Handover do
     relay_id = start_relay_on_peer(peer_node, "drain_call")
     {:ok, source} = RelayManager.get_relay_pid(@default_namespace, relay_id)
 
-    # `store_input` declares no response() end, so nothing answers either call
-    # before the move; the answer is handed to the arriving Overwatch below.
+    # Both calls name an answer channel `store_input` never emits on, so its
+    # own output answers neither before the move; the answer is handed to the
+    # arriving Overwatch below.
     # The drain takes seconds, so both deadlines outlast it.
     started = System.monotonic_time(:millisecond)
+    waits = %{"flz.call_answer_channel" => "moved"}
 
     answered =
-      Task.async(fn -> Flezha.Relay.Calls.call(source, "x", %{}, 40_000, relay_id, "cli") end)
+      Task.async(fn -> Flezha.Relay.Calls.call(source, "x", waits, 40_000, relay_id, "cli") end)
 
     timed =
-      Task.async(fn -> Flezha.Relay.Calls.call(source, "y", %{}, 15_000, relay_id, "cli") end)
+      Task.async(fn -> Flezha.Relay.Calls.call(source, "y", waits, 15_000, relay_id, "cli") end)
 
     assert NodeTestHelper.wait_until(
              fn -> map_size(:sys.get_state(source).calls.rows) == 2 end,
@@ -127,7 +129,7 @@ defmodule FlezhaTest.Handover do
     {:ok, target} = RelayManager.get_relay_pid(@default_namespace, relay_id)
     assert node(target) == node()
     refute Task.yield(answered, 0), "the moved caller was answered by the departing node"
-    GenServer.cast(target, {:io_out, "moved", %{"flz.reply_to" => token}})
+    GenServer.cast(target, {:io_out, "moved", %{"flz.reply_to" => token, "channel" => "moved"}})
     assert {:ok, "moved", _} = Task.await(answered, 5_000)
     assert {:error, %Flezha.Error{code: "call.timeout"}} = Task.await(timed, 20_000)
 

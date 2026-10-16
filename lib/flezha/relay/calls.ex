@@ -511,16 +511,17 @@ defmodule Flezha.Relay.Calls do
     }
 
   @doc """
-  The rows a handover carries, each with the time it has left: a `from` is
-  valid on any node, so the answer can still reach its caller from there.
+  The rows a handover carries, each with its deadline on the wall clock, so
+  the time the handover spends in flight counts against it: a `from` is valid
+  on any node, so the answer can still reach its caller from there.
   """
   @spec export(t()) :: [{token() | {:out, call_id()}, map()}]
   def export(%__MODULE__{rows: rows, out: out}) do
-    now = now_ms()
+    shift = System.system_time(:millisecond) - now_ms()
 
     for(
       {token, row} <- rows,
-      do: {token, Map.put(row, :remaining_ms, max(row.started_ms + row.deadline_ms - now, 0))}
+      do: {token, Map.put(row, :deadline_at, row.started_ms + row.deadline_ms + shift)}
     ) ++ for({id, row} <- out, do: {{:out, id}, %{row | settling: false}})
   end
 
@@ -542,13 +543,14 @@ defmodule Flezha.Relay.Calls do
   @spec absorb([{token(), map()}]) :: t()
   def absorb(exported) do
     now = now_ms()
+    shift = System.system_time(:millisecond) - now
     out = for {{:out, id}, row} <- exported, into: %{}, do: {id, row}
 
     rows =
       for {token, row} when is_binary(token) <- exported, into: %{} do
-        # Re-based on this node's clock, so the time left is what it was.
-        started = now - (row.deadline_ms - row.remaining_ms)
-        {token, row |> Map.delete(:remaining_ms) |> Map.put(:started_ms, started)}
+        # Re-based on this node's clock, so the deadline is where it was.
+        started = row.deadline_at - shift - row.deadline_ms
+        {token, row |> Map.delete(:deadline_at) |> Map.put(:started_ms, started)}
       end
 
     reply_waiting(rows, fn -> {:call_moved, self()} end)

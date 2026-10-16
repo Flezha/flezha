@@ -196,14 +196,18 @@ defmodule FlezhaTest.Relay.CallsTest do
       refute_received {^r3, _}
     end
 
-    test "a handover's rows keep the time they had left" do
+    test "a handover's rows keep their deadline, the time in flight counted against it" do
       {token, calls} = admit(%Calls{}, from(), 10_000)
-      assert [{^token, %{remaining_ms: left}}] = exported = Calls.export(calls)
-      assert left in 9_000..10_000
+      left = Calls.remaining_ms(calls, token)
+      assert [{^token, row}] = Calls.export(calls)
 
-      absorbed = Calls.absorb(exported)
+      absorbed = Calls.absorb([{token, row}])
       assert Calls.remaining_ms(absorbed, token) in (left - 1_000)..left
       assert Calls.waiting(absorbed) == 1
+
+      # The same row arriving after 4 s in flight has 4 s less left.
+      late = Calls.absorb([{token, Map.update!(row, :deadline_at, &(&1 - 4_000))}])
+      assert Calls.remaining_ms(late, token) in (left - 5_000)..(left - 4_000)
     end
 
     test "a hook can neither add, drop nor rewrite a token" do
