@@ -375,6 +375,23 @@ defmodule Flezha.State.RemoteFlowCommitTest do
     assert {"kept", _, _} = next_output(5_000)
   end
 
+  test "a gated rewind keeps the Cell's floor at what the flushed records consumed", ctx do
+    pid = armed_writer(ctx.rc, ctx.cell_id)
+    for seq <- 0..2, do: append_effect(pid, seq, [], seq)
+
+    assert wait_until(fn -> InputLog.watermark(ctx.rc) == 2 end, 5_000)
+    assert wait_until(fn -> WalWriter.outbox_status(pid).outbox_flushed_seq == 2 end, 5_000)
+
+    # A second Cell of the class, further ahead.
+    InputLog.record_consumed(ctx.rc, {ctx.rc, "task", "k2"}, 5)
+
+    :ok = WalWriter.rewind_to(pid, 0, 1)
+
+    # Seq 0 survives and consumed input 0; inputs 1 and up are for the
+    # correction to replay, so the class floor must not rise above 0.
+    assert InputLog.watermark(ctx.rc) == 0
+  end
+
   test "a gated ship refused as superseded keeps the RPO alarm running", ctx do
     Application.put_env(
       :flezha,

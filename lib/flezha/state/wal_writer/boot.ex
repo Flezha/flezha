@@ -136,12 +136,14 @@ defmodule Flezha.State.WalWriter.Boot do
     # the flush cursor re-enters the outbox queue with identical identity —
     # a stale cursor widens the re-drive (sink dedup absorbs), never skips.
     dedup = Outbox.read(state.cell_id)
+    durable = RemoteGate.durable_through(state, last_seq, dedup.outbox_flushed_seq)
 
+    # Records a snapshot folded away report no consumed offset.
     {redrive, max_consumed} =
-      Epoch.scan_effect_records_above(state, file, dedup.outbox_flushed_seq)
+      Epoch.scan_effect_records_above(state, file, dedup.outbox_flushed_seq, durable)
 
     {rc, _sh, _pk} = state.cell_id
-    report_consumed(state, max_consumed, dedup.outbox_flushed_seq)
+    if max_consumed >= 0, do: InputLog.record_consumed(rc, state.cell_id, max_consumed)
 
     state = %{
       state
@@ -151,7 +153,7 @@ defmodule Flezha.State.WalWriter.Boot do
         oldest_unsnapshotted_at: oldest,
         outbox_flushed_seq: dedup.outbox_flushed_seq,
         outbox_epoch: dedup.epoch,
-        outbox_durable_seq: RemoteGate.durable_through(state, last_seq, dedup.outbox_flushed_seq),
+        outbox_durable_seq: durable,
         pending_outbox: :queue.from_list(redrive),
         outbox_last_seq: redrive_last_seq(redrive, dedup.outbox_flushed_seq)
     }
@@ -161,21 +163,6 @@ defmodule Flezha.State.WalWriter.Boot do
       :record -> RemoteGate.synced(%{state | credit_pending: RemoteGate.take_owed(state.cell_id)})
       :stage -> Settlement.seed_commits(state, TaskJournal.committed_records(rc), :hold)
     end
-  end
-
-  # Behind the remote gate a re-driven record reports its consumed offset when
-  # its ship lands and it is dispatched. Until then the Cell reports the
-  # highest offset its WAL records at or below the flush cursor carry: those
-  # were shipped before they were dispatched. Records a snapshot folded away
-  # report nothing.
-  defp report_consumed(state, max_consumed, flushed_seq) do
-    offset =
-      if state.remote,
-        do: Epoch.consumed_offset_through(state.cell_id, flushed_seq),
-        else: max_consumed
-
-    {rc, _sh, _pk} = state.cell_id
-    if offset, do: InputLog.record_consumed(rc, state.cell_id, offset)
   end
 
   # A Cell of a steps class commits at its stage marker; every other Cell at

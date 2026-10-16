@@ -286,35 +286,22 @@ defmodule Flezha.State.WalWriter.Epoch do
     end
   end
 
-  # The rewound records are the ones that reported this Cell's consumed
-  # offsets, so the input-log watermark it advanced is now a claim about inputs
-  # nothing has consumed. Lower it, or the next retention sweep truncates away
-  # the very inputs the correction is about to replay.
-  # Behind the remote gate a surviving record not yet acknowledged reports its
-  # offset when its ship lands, through its dispatch.
-  defp rewind_input_watermark(%{remote: nil} = state, max_consumed, _surviving, _durable),
-    do: rewind_input_watermark(state, max_consumed)
-
-  defp rewind_input_watermark(state, _max_consumed, surviving, durable) do
-    for(%{seq: s, consumed_offset: o} <- surviving, s <= durable, is_integer(o), do: o)
-    |> Enum.max(fn -> nil end)
-    |> then(&rewind_input_watermark(state, &1))
-  end
-
-  defp rewind_input_watermark(state, max_consumed) do
-    {relay_class, _, _} = state.cell_id
-    InputLog.rewind_consumed(relay_class, state.cell_id, max_consumed || -1)
-  end
-
   # ---------- Effect-record scan ----------
 
-  def scan_effect_records_above(state, device, cursor) do
+  @doc """
+  The effect records above `cursor`, as outbox entries in record order, and
+  the highest consumed offset the records at or below `durable` carry (`-1`
+  when none carries one). Behind the remote gate a record not yet acknowledged
+  reports its offset when its ship lands, through its dispatch, so `durable`
+  is the acknowledged seq there and the last record otherwise.
+  """
+  def scan_effect_records_above(state, device, cursor, durable) do
     # Both callers walked this file to its end immediately before, so a record
     # that does not decode here is impossible, not a case to answer.
     {:ok, {acc, max_consumed}} =
-      RecordFrame.fold_records(device, state.wal_path, {[], nil}, fn {seq, header, body},
-                                                                     {acc, max_consumed} =
-                                                                       unchanged ->
+      RecordFrame.fold_records(device, state.wal_path, {[], -1}, fn {seq, header, body},
+                                                                    {acc, max_consumed} =
+                                                                      unchanged ->
         case Wire.decode_effect_record(header, body) do
           nil ->
             {:cont, unchanged}
@@ -322,16 +309,13 @@ defmodule Flezha.State.WalWriter.Epoch do
           effect ->
             entry = Settlement.entry(state, seq, effect)
             acc = if seq > cursor, do: [entry | acc], else: acc
-            {:cont, {acc, max_offset(max_consumed, effect.consumed_offset)}}
+            offset = if seq <= durable, do: consumed_offset_of(effect), else: -1
+            {:cont, {acc, max(max_consumed, offset)}}
         end
       end)
 
     {Enum.reverse(acc), max_consumed}
   end
-
-  defp max_offset(current, nil), do: current
-  defp max_offset(nil, offset), do: offset
-  defp max_offset(current, offset), do: max(current, offset)
 
   @doc """
   Cut the WAL and the snapshots above `seq`, re-derive what the boundary left
@@ -366,11 +350,14 @@ defmodule Flezha.State.WalWriter.Epoch do
     # un-flushed is still owed. Re-derive it from the rewritten file rather than
     # filtering the in-memory queue — the file is the authority on what survived,
     # and the same scan yields the consumed-offset the input-log watermark must
-    # fall back to.
+    # fall back to: the rewound records reported this Cell's offsets, so the
+    # watermark they advanced now claims inputs nothing has consumed, and the
+    # next retention sweep would truncate the inputs the correction replays.
     flushed = min(state.outbox_flushed_seq, seq)
-    {surviving, max_consumed} = scan_effect_records_above(state, file, flushed)
     durable = RemoteGate.durable_through(state, seq, state.outbox_durable_seq)
-    rewind_input_watermark(state, max_consumed, surviving, durable)
+    {surviving, max_consumed} = scan_effect_records_above(state, file, flushed, durable)
+    {relay_class, _, _} = state.cell_id
+    InputLog.rewind_consumed(relay_class, state.cell_id, max_consumed)
 
     size = RecordFrame.file_size(state.wal_path)
     now = State.now_ms()
