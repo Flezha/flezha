@@ -213,6 +213,7 @@ mod tests {
     use crate::admission::{admit_from_reader, try_admit};
     use crate::cell::{CellItem, CellSlot};
     use crate::channel::OverflowPolicy;
+    use crate::dynamic::tests::LeaveAnswerer;
 
     /// `ohlc`: one Cell; `trades`: dynamic, capped at two Cells; `book`: static,
     /// keys `a` to `d`; `symbols`: dynamic, room for the cap and timing tests.
@@ -308,8 +309,9 @@ mod tests {
         a.mailbox.release_inflight();
         a.last_activity_ms
             .store(crate::util::monotonic_ms() - 60_000, Ordering::Relaxed);
-        registry.reap_sweep(Duration::from_millis(1));
         drop(a);
+        let _host = LeaveAnswerer::start(instance.instance_id.to_string());
+        registry.reap_sweep(Duration::from_millis(1));
 
         let after = row_of(&activity(&instance, None), "trades");
         assert_eq!((after.cells, after.queued), (1, Some(2)), "`a` was evicted");

@@ -1,10 +1,11 @@
 //! The dynamic-mode registry: Cells minted on first sight of a key and,
 //! under a TTL, evicted destructively by a per-tasklet reaper. The
-//! invariant: an eviction takes the drain gate and re-checks the mailbox, so
-//! it never drops an item a producer pushed after the idle check.
+//! invariant: an eviction takes the drain gate and removes the key only while
+//! the mailbox is empty and nothing else holds the Cell, so no item a producer
+//! pushed after the idle check, or pushes later through a Cell it took, is lost.
 
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{fence, AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -106,9 +107,9 @@ impl DynamicCellRegistry {
     pub fn reap_sweep(&self, idle_ttl: Duration) {
         let now = crate::util::monotonic_ms();
         let ttl_ms = idle_ttl.as_millis() as i64;
-        let held = match self.instance.upgrade() {
+        let (held, recorded) = match self.instance.upgrade() {
             Some(instance) => match crate::steps::reap_holds(&instance) {
-                Some(held) => held,
+                Some(holds) => holds,
                 None => return,
             },
             None => Default::default(),
@@ -117,7 +118,7 @@ impl DynamicCellRegistry {
         // Collect idle candidates, taking each one's drain gate. Removal is
         // deferred until the iterator drops (mutating mid-iteration would
         // deadlock on the DashMap tasklet lock).
-        let mut candidates: Vec<(String, Arc<CellSlot>)> = Vec::new();
+        let mut candidates: Vec<(String, Arc<CellSlot>, usize)> = Vec::new();
         for entry in self.cells.iter() {
             let slot = entry.value();
             if now - slot.last_activity_ms.load(Ordering::Relaxed) <= ttl_ms
@@ -128,31 +129,44 @@ impl DynamicCellRegistry {
             if !slot.claim_drained() {
                 continue; // queued or running; retry next sweep
             }
-            candidates.push((entry.key().clone(), Arc::clone(slot)));
+            let records = recorded.get(&Arc::as_ptr(slot)).copied().unwrap_or(0);
+            candidates.push((entry.key().clone(), Arc::clone(slot), records));
         }
 
-        for (key, slot) in candidates {
-            self.evict(key, slot);
+        for (key, slot, records) in candidates {
+            self.evict(key, slot, records);
         }
     }
 
-    /// Drop one candidate whose gate this sweep holds; a push that landed
-    /// after the idle check re-inserts it instead. Its timers go with it. A
-    /// host-run Cell's state is dropped by the host first, while the key still
-    /// names this slot, so a Cell minted again under the key never meets it.
-    fn evict(&self, key: String, slot: Arc<CellSlot>) {
+    /// Drop one candidate whose gate this sweep holds, unless a push landed
+    /// after the idle check or anything beyond the registry, this sweep and
+    /// the run's `records` holds it (a router that took it may push yet). Its
+    /// timers go with it. A host-run Cell's state is dropped by the host first,
+    /// while the key still names this slot, so a Cell minted again under the
+    /// key never meets it.
+    fn evict(&self, key: String, slot: Arc<CellSlot>, records: usize) {
         let host = slot.dispatcher.host_facts().is_some();
-        if host && !host_left(&slot) {
+        let held = |slot: &Arc<CellSlot>| Arc::strong_count(slot) > 2 + records;
+        if held(&slot) || (host && !host_left(&slot)) {
             slot.release_drained();
             return;
         }
-        self.cells.remove(&key);
-        if !slot.mailbox.is_empty() {
-            self.cells.insert(key, Arc::clone(&slot));
+        // Under the key's lock nobody takes the Cell, so once it goes unheld
+        // and empty nothing can push to it; the fence shows a push its last
+        // holder made before letting go.
+        let unpushed = |_: &String, slot: &Arc<CellSlot>| {
+            !held(slot) && {
+                fence(Ordering::Acquire);
+                slot.mailbox.is_empty()
+            }
+        };
+        if self.cells.remove_if(&key, unpushed).is_none() {
             if host {
-                // The host already dropped the state, so the Cell starts again
-                // in place and its timers go too; its gates held, nothing
-                // was settled since the check above.
+                // The host was told the Cell left, and drops its state when it
+                // takes the leave (a leave it has not answered may still be
+                // pending), so the Cell starts again in place: its timers and
+                // durable state go too. Its gates held, nothing was settled
+                // since the check above.
                 *slot.timers.lock_recover() = Default::default();
                 drop_timers_and_durable_state(&slot);
                 slot.drain_active.store(false, Ordering::Release);
@@ -168,8 +182,8 @@ impl DynamicCellRegistry {
         }
         drop_timers_and_durable_state(&slot);
         if host {
-            // A command that found the slot before its removal runs on it
-            // rather than waiting for ever.
+            // Whatever reaches it later through the run's records finds the
+            // gate free rather than waiting for ever.
             slot.drain_active.store(false, Ordering::Release);
         }
         self.counters
@@ -284,5 +298,204 @@ fn sleep_responsive(total: Duration, stop: &AtomicBool) {
     while slept < total && !stop.load(Ordering::Acquire) {
         thread::sleep(chunk);
         slept += chunk;
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, Mutex};
+    use std::thread::JoinHandle;
+    use std::time::Duration;
+
+    use super::DynamicCellRegistry;
+    use crate::admission::try_admit;
+    use crate::cell::{CellItem, CellSlot};
+    use crate::poll_core::{CommandReply, EngineActivation, EnginePayload};
+    use crate::relay::instance::RelayInstance;
+    use crate::schema;
+
+    fn registry(id: &str) -> (Arc<RelayInstance>, Arc<DynamicCellRegistry>) {
+        let id = format!("{id}_{}", std::process::id());
+        let json = format!(
+            r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","durable":false,"run":"flow",
+                 "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"key"}},{{"link":"into","tasklet":0}}]]}}],
+                 "tasklets":[{{"name":"trades","cell_mode":"dynamic","mailbox_capacity":16}}]}}"#
+        );
+        crate::host::register_host_class_json(json.as_bytes()).expect("class registers");
+        let instance = RelayInstance::of_class(&id, &format!("{id}_inst")).expect("registered");
+        let registry = instance.dynamic_registries[0].clone().expect("dynamic");
+        (instance, registry)
+    }
+
+    fn answered() -> schema::ActivationResult {
+        let outcome = schema::ActivationOutcome::StateApplied;
+        schema::ActivationResult { token: 0, outcome }
+    }
+
+    /// Answers every leave the sweep sends `relay`'s host, as a host would,
+    /// running `meanwhile` while each one is pending, until the guard drops.
+    pub(crate) struct LeaveAnswerer(Arc<AtomicBool>, Option<JoinHandle<()>>);
+
+    impl LeaveAnswerer {
+        pub(crate) fn start(relay: String) -> Self {
+            Self::with(relay, || {})
+        }
+
+        fn with(relay: String, meanwhile: impl Fn() + Send + 'static) -> Self {
+            let stop = Arc::new(AtomicBool::new(false));
+            let stopping = Arc::clone(&stop);
+            let handle = std::thread::spawn(move || {
+                while !stopping.load(Ordering::Acquire) {
+                    let Some(act) = crate::poll_core::global().take_leave(&relay) else {
+                        std::thread::yield_now();
+                        continue;
+                    };
+                    meanwhile();
+                    let result = schema::ActivationResult {
+                        token: act.token,
+                        ..answered()
+                    };
+                    crate::host::apply_result(crate::poll_core::global(), act, result)
+                        .expect("answered");
+                }
+            });
+            Self(stop, Some(handle))
+        }
+    }
+
+    impl Drop for LeaveAnswerer {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::Release);
+            if let Some(handle) = self.1.take() {
+                let _ = handle.join();
+            }
+        }
+    }
+
+    fn idle(slot: &CellSlot) {
+        slot.last_activity_ms
+            .store(crate::util::monotonic_ms() - 60_000, Ordering::Relaxed);
+    }
+
+    /// Whether `key` names the Cell a push went into.
+    fn named(registry: &DynamicCellRegistry, key: &str, pushed: *const CellSlot) -> bool {
+        registry
+            .cells
+            .get(key)
+            .is_some_and(|slot| std::ptr::eq(Arc::as_ptr(slot.value()), pushed))
+    }
+
+    /// A router took the Cell before the sweep and pushes after it.
+    #[test]
+    fn a_push_after_an_eviction_reaches_a_cell_the_key_names() {
+        let (instance, registry) = registry("kb501_evict_push");
+        let _host = LeaveAnswerer::start(instance.instance_id.to_string());
+        let routed = registry.get_or_create("a").expect("minted");
+        idle(&routed);
+        registry.reap_sweep(Duration::from_millis(1));
+        assert!(try_admit(&routed, CellItem::CloseInterval).is_ok());
+        assert!(
+            named(&registry, "a", Arc::as_ptr(&routed)),
+            "a push landed in an evicted slot: {} item(s) queued, drain gate still held: {}",
+            routed.mailbox.len(),
+            !routed.mailbox.claim_inflight()
+        );
+    }
+
+    /// A router takes the Cell while its leave is pending and pushes once the
+    /// sweep is done.
+    #[test]
+    fn a_cell_routed_during_its_leave_stays_named_by_its_key() {
+        let (instance, registry) = registry("kb501_route_in_leave");
+        let routed: Arc<Mutex<Option<Arc<CellSlot>>>> = Arc::default();
+        let (routing, taken) = (Arc::clone(&registry), Arc::clone(&routed));
+        let _host = LeaveAnswerer::with(instance.instance_id.to_string(), move || {
+            *taken.lock().unwrap() = routing.get_or_create("a").ok();
+        });
+        idle(&registry.get_or_create("a").expect("minted"));
+        registry.reap_sweep(Duration::from_millis(1));
+        let routed = routed
+            .lock()
+            .unwrap()
+            .take()
+            .expect("routed during the leave");
+        assert!(try_admit(&routed, CellItem::CloseInterval).is_ok());
+        assert!(
+            named(&registry, "a", Arc::as_ptr(&routed)),
+            "a push landed in an evicted slot: {} item(s) queued",
+            routed.mailbox.len()
+        );
+    }
+
+    /// A host that answered a leave but still holds it, as a leave that timed
+    /// out is held, keeps the Cell started again in place, and no sweep sends
+    /// it a second leave until the host lets go.
+    #[test]
+    fn a_leave_the_host_still_holds_pins_its_cell() {
+        let (instance, registry) = registry("kb501_held_leave");
+        let relay = instance.instance_id.to_string();
+        let slot = Arc::downgrade(&registry.get_or_create("a").expect("minted"));
+        let sweep = |registry: &DynamicCellRegistry| {
+            idle(registry.cells.get("a").expect("named").value());
+            registry.reap_sweep(Duration::from_millis(1));
+        };
+        let sweeping = Arc::clone(&registry);
+        let first = std::thread::spawn(move || sweep(&sweeping));
+        let act = crate::host::leave_tests::take_leave(&relay);
+        let EnginePayload::Command {
+            slot: held, reply, ..
+        } = act.payload
+        else {
+            panic!("a Cell's leave is a command");
+        };
+        reply.answer(answered().outcome);
+        first.join().expect("the sweep ends");
+        assert!(
+            named(&registry, "a", slot.as_ptr()),
+            "started again in place"
+        );
+
+        sweep(&registry);
+        let again = crate::poll_core::global().take_leave(&relay);
+        assert!(again.is_none(), "a second leave while the host holds one");
+        assert!(named(&registry, "a", slot.as_ptr()));
+
+        drop(held);
+        let _host = LeaveAnswerer::start(relay);
+        sweep(&registry);
+        assert!(!registry.cells.contains_key("a"), "evicted once let go");
+        let evicted = registry
+            .counters
+            .cells_evicted_total
+            .load(Ordering::Relaxed);
+        assert_eq!(evicted, 1);
+    }
+
+    /// The answer to a command reaches its waiter once the activation let go
+    /// of the Cell, so an eviction counting who holds it finds no leave.
+    #[test]
+    fn a_command_answer_lets_go_of_its_cell_first() {
+        let (_instance, registry) = registry("kb501_answer_order");
+        let slot = registry.get_or_create("a").expect("minted");
+        let watched = Arc::downgrade(&slot);
+        let (tx, rx) = std::sync::mpsc::channel();
+        let payload = EnginePayload::Command {
+            slot,
+            change_seq: 0,
+            kind: schema::ActivationKind::Leave { whole_relay: false },
+            values: Vec::new(),
+            offset: None,
+            reply: CommandReply::new(move |_| {
+                let _ = tx.send(watched.strong_count());
+            }),
+        };
+        let act = EngineActivation { token: 0, payload };
+        crate::host::apply_result(crate::poll_core::global(), act, answered()).expect("answered");
+        assert_eq!(
+            rx.recv().expect("answered"),
+            1,
+            "Cell holders at the answer"
+        );
     }
 }

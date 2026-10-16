@@ -30,9 +30,14 @@ pub fn apply_result(
 ) -> Result<(), Error> {
     let EngineActivation { token, payload } = act;
     let (slot, items) = match payload {
-        EnginePayload::Command { reply, .. } | EnginePayload::Leave { reply, .. } => {
-            // A command interaction or a relay's leave: whoever enqueued it
-            // validates the outcome; this side only answers it.
+        EnginePayload::Command { reply, slot, .. } => {
+            // Whoever enqueued it validates the outcome; this side lets go of
+            // the Cell first, for an eviction that counts who holds it.
+            drop(slot);
+            reply.answer(result.outcome);
+            return Ok(());
+        }
+        EnginePayload::Leave { reply, .. } => {
             reply.answer(result.outcome);
             return Ok(());
         }

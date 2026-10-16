@@ -25,7 +25,7 @@ fn take_leave_unless(
     taken.into_inner()
 }
 
-fn take_leave(relay: &str) -> crate::poll_core::EngineActivation {
+pub(crate) fn take_leave(relay: &str) -> crate::poll_core::EngineActivation {
     take_leave_unless(relay, || false).expect("taken")
 }
 
@@ -88,9 +88,11 @@ fn an_evicted_cell_and_a_stopped_relay_each_tell_the_host_they_left() {
     let slot = leaving_relay(&node, &id, "leave-1", Some(1))
         .get_or_create("k1")
         .expect("the Cell is minted");
+    let target = crate::host::cell_ref_of(&slot);
+    drop(slot);
 
     let evicted = next_leave("leave-1");
-    assert_eq!(evicted.target, crate::host::cell_ref_of(&slot));
+    assert_eq!(evicted.target, target);
     assert_eq!(
         evicted.kind,
         schema::ActivationKind::Leave { whole_relay: false }
@@ -115,12 +117,12 @@ fn an_evicted_cells_key_names_it_until_the_host_answers_its_leave() {
     let id = format!("host_leave_evicted_{}", std::process::id());
     let node = crate::runner::RunnerNode::new("test-ns".to_string());
     let registry = leaving_relay(&node, &id, "leave-3", Some(1));
-    let slot = registry.get_or_create("k1").expect("the Cell is minted");
+    let slot = Arc::downgrade(&registry.get_or_create("k1").expect("the Cell is minted"));
 
     let leave = take_leave("leave-3");
     let named = registry.get_or_create("k1").expect("the key names a Cell");
     assert!(
-        Arc::ptr_eq(&named, &slot),
+        std::ptr::eq(Arc::as_ptr(&named), slot.as_ptr()),
         "a Cell minted again before the host dropped the old state"
     );
     drop(named);
@@ -162,17 +164,24 @@ fn a_push_during_an_evictions_leave_keeps_the_cell_started_again_in_place() {
     let id = format!("host_leave_pushed_{}", std::process::id());
     let node = crate::runner::RunnerNode::new("test-ns".to_string());
     let registry = leaving_relay(&node, &id, "leave-4", Some(1));
-    let slot = registry.get_or_create("k1").expect("the Cell is minted");
+    let slot = Arc::downgrade(&registry.get_or_create("k1").expect("the Cell is minted"));
 
     let leave = take_leave("leave-4");
-    push_one(&slot);
+    push_one(&slot.upgrade().expect("the Cell is live"));
     answer_leave(leave);
 
+    // Read through the key, so this test holds nothing the eviction counts.
     spin_until("the eviction gives the gate back", || {
-        !slot.drain_active.load(std::sync::atomic::Ordering::Acquire)
+        let gate = |s: &Arc<crate::cell::CellSlot>| {
+            s.drain_active.load(std::sync::atomic::Ordering::Acquire)
+        };
+        registry.cells.get("k1").is_some_and(|s| !gate(s.value()))
     });
     let named = registry.get_or_create("k1").expect("the key names a Cell");
-    assert!(Arc::ptr_eq(&named, &slot), "the pushed Cell was dropped");
+    assert!(
+        std::ptr::eq(Arc::as_ptr(&named), slot.as_ptr()),
+        "the pushed Cell was dropped"
+    );
     let evicted = &registry.counters.cells_evicted_total;
     assert_eq!(evicted.load(std::sync::atomic::Ordering::Relaxed), 0);
     assert!(node.stop_relay("leave-4"));

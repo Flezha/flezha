@@ -5,7 +5,7 @@
 //! acts after it: no frame is sent, no item admitted and no author code run
 //! while the lock is held, and nothing waits.
 
-use std::collections::{BTreeMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Weak};
 use std::time::Duration;
@@ -481,26 +481,36 @@ pub(crate) fn committed_firings(slot: &Arc<CellSlot>) -> Vec<(TimerKind, u64)> {
     fired
 }
 
+/// The identities an idle sweep keeps, and the record references per Cell.
+pub(crate) type ReapHolds = (HashSet<Arc<Vec<u8>>>, HashMap<*const CellSlot, usize>);
+
 /// The Cells an idle sweep of `inst` must keep: `None` — every one — unless
 /// the run waits between passes, else those a rollback of the declared mode
-/// could still reach through a compensation hook. A flow relay keeps none.
-pub(crate) fn reap_holds(inst: &RelayInstance) -> Option<HashSet<Arc<Vec<u8>>>> {
+/// could still reach through a compensation hook; with them, how many
+/// references the run's records keep to each Cell, none of which pushes to
+/// it. A flow relay keeps none.
+pub(crate) fn reap_holds(inst: &RelayInstance) -> Option<ReapHolds> {
     let Some(r) = Run::of(inst) else {
-        return Some(HashSet::new());
+        return Some(Default::default());
     };
     let sheet = r.run.sheet();
     if sheet.phase != Phase::Waiting {
         return None;
     }
     let reach = plan_compensation(r.spec.on_failure, &sheet.committed, &sheet.done);
-    Some(
-        reach
-            .into_iter()
-            .filter(|record| r.task(record.stage_idx).compensate_overridden)
-            .flat_map(|record| &record.cells)
-            .map(|run| Arc::clone(&run.cell.cell_identity))
-            .collect(),
-    )
+    let mut recorded = HashMap::new();
+    for record in sheet.committed.iter().flatten().chain(&sheet.done) {
+        for run in &record.cells {
+            *recorded.entry(Arc::as_ptr(&run.cell)).or_default() += 1;
+        }
+    }
+    let kept = reach
+        .into_iter()
+        .filter(|record| r.task(record.stage_idx).compensate_overridden)
+        .flat_map(|record| &record.cells)
+        .map(|run| Arc::clone(&run.cell.cell_identity))
+        .collect();
+    Some((kept, recorded))
 }
 
 /// A stage's keyless host value back from the prepare crossing: addressed

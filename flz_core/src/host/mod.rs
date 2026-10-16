@@ -28,7 +28,7 @@ mod check_tests;
 #[cfg(test)]
 mod decl_tests;
 #[cfg(test)]
-mod leave_tests;
+pub(crate) mod leave_tests;
 
 #[cfg(feature = "bench-internals")]
 pub(crate) use activation::empty_effect;
