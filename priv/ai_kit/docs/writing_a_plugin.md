@@ -315,7 +315,8 @@ option table equal to its declaration.
   library the release ships cannot be reconfigured.
 - **No error codes of its own.** A provider refusal whose reason the catalogue already
   maps keeps that code; any other is wrapped as `plugin.provider_refused` or
-  `plugin.provider_failed`, with the package's own text in `details`.
+  `plugin.provider_failed`, with the package's own text in `details` (for
+  `plugin.provider_failed`, in the controller's log when the caller is remote).
 - **A protocol the package defines itself stays unconsolidated.**
 - **Telemetry is exported only for declared verbs.** The observability bridge maps every
   provider's `shipped`, `retried`, `overflowed` and `failed` and the verbs it declares with

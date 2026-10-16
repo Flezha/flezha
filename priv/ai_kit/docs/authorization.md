@@ -173,7 +173,7 @@ before its namespace exists. Three rules hold for it:
 
 A runner without a credential, or with one for another namespace, is refused.
 The runner only reports that it keeps reconnecting; the reason is in the
-controller's log: `Rejected runner connect (:namespace_not_proven)`.
+controller's log: `Rejected runner connect: the runner proved no namespace: ... (runner.namespace_not_proven)`.
 
 A namespace may hold as many live credentials as you issue, so rotating one
 disconnects nothing:
