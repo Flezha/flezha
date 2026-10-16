@@ -27,12 +27,7 @@ defmodule FlezhaTest.Plugin.ControllerPluginMultinodeTest do
     {pid2, p2} = NodeTestHelper.start_peer_node(:hooks_p2)
 
     on_exit(fn ->
-      Enum.each(
-        ["hook_local", "hook_single", "hook_late", "hook_joined"],
-        &PluginManager.disable_plugin(@namespace, &1)
-      )
-
-      NodeTestHelper.stop_peers_and_relays([{pid1, p1}, {pid2, p2}], @namespace)
+      NodeTestHelper.stop_peers_and_namespace([{pid1, p1}, {pid2, p2}], @namespace)
     end)
 
     for peer <- [p1, p2] do

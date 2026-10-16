@@ -24,6 +24,8 @@ defmodule FlezhaTest.Plugin.SharedMultinodeTest do
   alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.Helper.WebsocketServer
 
+  import NodeTestHelper, only: [with_only_logged: 2]
+
   @moduletag :multi_node
   @namespace "default"
   @factory "store_input"
@@ -33,12 +35,15 @@ defmodule FlezhaTest.Plugin.SharedMultinodeTest do
 
   setup context do
     TestHelpers.reset_all_cells()
+    # Started before the teardown is registered, so it closes after it: no copy
+    # is left to dial a closed server.
+    server = WebsocketServer.start()
     app_env = if context[:loop], do: @loop_env, else: []
     {pid1, p1} = NodeTestHelper.start_peer_node(:share_p1, app_env: app_env)
     {pid2, p2} = NodeTestHelper.start_peer_node(:share_p2, app_env: app_env)
 
     on_exit(fn ->
-      NodeTestHelper.stop_peers_and_relays([{pid1, p1}, {pid2, p2}], @namespace)
+      NodeTestHelper.stop_peers_and_namespace([{pid1, p1}, {pid2, p2}], @namespace)
     end)
 
     for peer <- [p1, p2] do
@@ -49,7 +54,7 @@ defmodule FlezhaTest.Plugin.SharedMultinodeTest do
              "#{peer} never joined the hub cluster"
     end
 
-    %{p1: p1, p2: p2, peers: %{p1 => pid1, p2 => pid2}, server: WebsocketServer.start()}
+    %{p1: p1, p2: p2, peers: %{p1 => pid1, p2 => pid2}, server: server}
   end
 
   defp hub_nodes, do: HubManager.get_hub_nodes(@namespace, false)
@@ -84,8 +89,6 @@ defmodule FlezhaTest.Plugin.SharedMultinodeTest do
   end
 
   defp websocket(name, server, single \\ false) do
-    on_exit(fn -> PluginManager.disable_plugin(@namespace, name) end)
-
     {:ok, _} =
       PluginManager.enable_plugin(name, %Plugin{
         id: name,
@@ -278,17 +281,22 @@ defmodule FlezhaTest.Plugin.SharedMultinodeTest do
     ops = [relay_on(p2, "l_b"), relay_on(node(), "l_c")]
     Enum.each(ops, &(:ok = PluginManager.bind_plugin(@namespace, name, &1)))
 
-    NodeTestHelper.stop_peer_node(Map.fetch!(ctx.peers, p1), p1)
+    # Stopping the controller may stop the copy's worker before the copy, which
+    # then reports it ended.
+    with_only_logged([{~r/subscriber #{name} crashed: :shutdown/, :maybe}], fn ->
+      NodeTestHelper.stop_peer_node(Map.fetch!(ctx.peers, p1), p1)
 
-    assert NodeTestHelper.wait_until(
-             fn ->
-               match?([_], Directory.plugin_hosts(@namespace, name)) and
-                 length(Shared.subscribers(hd(Directory.plugin_hosts(@namespace, name)))) == 2 and
-                 Enum.all?(ops, &serving?(&1, name))
-             end,
-             30_000
-           ),
-           "the relays were not served again without a new bind"
+      assert NodeTestHelper.wait_until(
+               fn ->
+                 match?([_], Directory.plugin_hosts(@namespace, name)) and
+                   length(Shared.subscribers(hd(Directory.plugin_hosts(@namespace, name)))) ==
+                     2 and
+                   Enum.all?(ops, &serving?(&1, name))
+               end,
+               30_000
+             ),
+             "the relays were not served again without a new bind"
+    end)
 
     WebsocketServer.broadcast(server, "after-loss")
     for op <- ops, do: assert_receive({:ingested, ^op, "after-loss"}, 15_000)

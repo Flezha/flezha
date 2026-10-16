@@ -16,8 +16,9 @@ defmodule FlezhaTest.Helper.WebsocketServer do
   @guid "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
   @doc """
-  Listen on `port`, a free one by default; the listener and its acceptor go when
-  the test does.
+  Listen on `port`, a free one by default; the listener and its acceptor go with
+  this call's `on_exit`, not with the test process, so a teardown registered
+  earlier, which runs later, still has the server to disconnect from.
   """
   @spec start(:inet.port_number()) :: %{port: :inet.port_number(), agent: pid()}
   def start(port \\ 0) do
@@ -29,6 +30,7 @@ defmodule FlezhaTest.Helper.WebsocketServer do
 
     test = self()
     acceptor = spawn(fn -> accept_loop(listen, agent, test) end)
+    :ok = :gen_tcp.controlling_process(listen, acceptor)
 
     on_exit(fn ->
       if Process.alive?(acceptor), do: Process.exit(acceptor, :kill)

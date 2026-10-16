@@ -114,7 +114,8 @@ defmodule Flezha.AuthZ.ClusterReplicationTest do
   end
 
   # A peer running the whole authorization subtree, enforced, against an auth
-  # directory of its own.
+  # directory of its own. It launches none of the suite's runners: they carry
+  # no runner credential, so an enforcing controller would refuse every one.
   defp start_controller(name) do
     dir = NodeTestHelper.claim_tmp_dir("flz_authz_#{name}")
     File.chmod!(dir, 0o700)
@@ -130,7 +131,9 @@ defmodule Flezha.AuthZ.ClusterReplicationTest do
         bootstrap_token_path: Path.join(auth_dir, "bootstrap.token")
       )
 
-    {_pid, node} = NodeTestHelper.start_peer_node(name, app_env: [authn_authz: authz])
+    {_pid, node} =
+      NodeTestHelper.start_peer_node(name, app_env: [authn_authz: authz, external_processes: []])
+
     {node, auth_dir}
   end
 

@@ -16,6 +16,7 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
   alias Flezha.Runner.FleetManager
   alias Flezha.Runner.StreamChannel
   alias Flezha.Service.EventManager
+  alias Flezha.Service.PluginManager
   alias Flezha.Service.PortPilot
   alias Flezha.Service.RelayManager
 
@@ -87,6 +88,17 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
 
     # The peer runs on the host's configuration for each of these.
     for app <- [:flezha, :logger], do: copy_env(node_name, app)
+
+    # Its log goes through this node's logger instead of its own console, so
+    # a test captures what it provokes on the peer as it does here.
+    :erpc.call(node_name, Application, :put_env, [:logger, :default_handler, false])
+    # An event whose group leader is remote already goes to that node's logger.
+    handler = %{
+      config: %{origin: node()},
+      filters: [remote_gl: {&:logger_filters.remote_gl/2, :stop}]
+    }
+
+    :ok = :erpc.call(node_name, :logger, :add_handler, [:origin, __MODULE__.PeerLog, handler])
 
     # Disable the testnet for the peer node.
     :erpc.call(node_name, Application, :put_env, [:flezha, :testnet_enabled, false])
@@ -190,14 +202,15 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
   end
 
   @doc """
-  A teardown: stop `peers` (`[{peer_pid, node}]`), then every relay in
-  `namespace`. A peer is linked to the test process, so it is already going
-  down when a teardown runs, and the hub places its children here only after
-  dropping it from the cluster. The stop waits until every child the hub
-  registers runs on this node: a relay stopped earlier is placed again and
-  moves onto the next test's peers.
+  A teardown: stop `peers` (`[{peer_pid, node}]`), then disable every plugin
+  and stop every relay in `namespace`. A peer is linked to the test process,
+  so it is already going down when a teardown runs, and the hub places its
+  children here only after dropping it from the cluster. The stop waits until
+  every child the hub registers runs on this node: a relay stopped earlier is
+  placed again and moves onto the next test's peers, and a disable sent while
+  a peer leaves gets no answer from it and leaves its copies running.
   """
-  def stop_peers_and_relays(peers, namespace) do
+  def stop_peers_and_namespace(peers, namespace) do
     for {pid, peer} <- peers, do: stop_peer_node(pid, peer)
     hub_id = Identificator.hub(namespace)
 
@@ -209,6 +222,9 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
       end,
       30_000
     )
+
+    for %{name: name} <- PluginManager.plugins(namespace),
+        do: {:ok, _} = PluginManager.disable_plugin(namespace, name)
 
     RelayManager.stop_all_relays(namespace)
   end
@@ -680,5 +696,30 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
     end
 
     :ok
+  end
+end
+
+defmodule FlezhaTest.Helper.NodeTestHelper.PeerLog do
+  @moduledoc false
+
+  # A peer controller's logger handler: an event is logged again on the node
+  # that started the peer, where a test's log capture sees it. The peer's
+  # group leader goes, or this node's console handler would drop the event as
+  # remote and an uncaptured line would vanish instead of printing. The call
+  # is synchronous, so a step that waits on the peer waits on its lines too.
+  def log(%{level: level, msg: msg, meta: meta}, %{config: %{origin: origin}}) do
+    meta = Map.delete(meta, :gl)
+
+    args =
+      case msg do
+        {:string, string} -> [level, string, meta]
+        {:report, report} -> [level, report, meta]
+        {format, args} -> [level, format, args, meta]
+      end
+
+    :erpc.call(origin, :logger, :log, args)
+  catch
+    # The node that started the peer is gone, and with it every reader.
+    :error, {:erpc, _} -> :ok
   end
 end

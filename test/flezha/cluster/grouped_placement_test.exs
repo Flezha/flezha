@@ -43,7 +43,11 @@ defmodule Flezha.Cluster.GroupedPlacementTest do
 
   setup do
     peers = start_supervised_peers()
-    on_exit(fn -> teardown(peers) end)
+
+    on_exit(fn ->
+      NodeTestHelper.stop_peers_and_namespace([{peers.peer_pid, peers.peer_node}], @ns)
+    end)
+
     {:ok, peers}
   end
 
@@ -174,13 +178,5 @@ defmodule Flezha.Cluster.GroupedPlacementTest do
       {:ok, pid} -> node(pid)
       other -> other
     end
-  end
-
-  defp teardown(%{peer_pid: peer_pid, peer_node: peer_node}) do
-    for index <- 1..@relays, prefix <- ["first", "join"] do
-      RelayManager.stop_relay(@ns, "#{prefix}_#{index}")
-    end
-
-    NodeTestHelper.stop_peer_node(peer_pid, peer_node)
   end
 end

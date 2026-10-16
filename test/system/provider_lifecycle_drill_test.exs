@@ -35,7 +35,9 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
   use FlezhaTest.SystemCase, capability: :runner_lifecycle
 
   import ExUnit.CaptureLog, only: [with_log: 1]
-  import FlezhaTest.Helper.NodeTestHelper, only: [claim_tmp_dir: 1, wait_until: 2]
+
+  import FlezhaTest.Helper.NodeTestHelper,
+    only: [claim_tmp_dir: 1, wait_until: 2, with_only_logged: 2]
 
   import FlezhaTest.Helper.TierE2EHarness,
     only: [boot_runner: 3, stop_namespace: 1, unique_id_path: 1]
@@ -231,10 +233,17 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
       {fixture, opts} = Map.fetch!(rows, provider)
 
       if provider == Provider.Websocket do
-        {_, log} = with_log(fn -> drive(id, provider, fixture, opts, ctx, events) end)
-        # The row's kill reports reach this capture too; the nested one asserts them.
         dyn_sup = inspect(WorkerSup.dyn_sup_name(WorkerSup.family(provider)))
-        assert_refused_only(log, ["crashed: :killed", "#{dyn_sup} terminated"])
+
+        # The row's kill reports reach this capture too; the nested one asserts them.
+        kills = [
+          {~r/crashed: :killed/, :maybe},
+          {~r/#{Regex.escape(dyn_sup)} terminated/, :maybe}
+        ]
+
+        with_only_logged([refused() | kills], fn ->
+          drive(id, provider, fixture, opts, ctx, events)
+        end)
       else
         drive(id, provider, fixture, opts, ctx, events)
       end
@@ -262,22 +271,12 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
        ["alerts", "audit"]}
     ]
 
-    {_, log} = with_log(fn -> Enum.each(rows, &assert_ws_channel(&1, ctx)) end)
-    assert_refused_only(log)
+    with_only_logged([refused()], fn -> Enum.each(rows, &assert_ws_channel(&1, ctx)) end)
   end
 
   # `ctx.ws_uri` answers nothing, so a socket that dials it before its disable
-  # logs the refusal, and whether it does is timing: every error or warning in
-  # the capture is that refusal, or one of `also`.
-  defp assert_refused_only(log, also \\ []) do
-    stray =
-      log
-      |> String.split("\n")
-      |> Enum.filter(&(&1 =~ ~r/\[(error|warning)\]/))
-      |> Enum.reject(&String.contains?(&1, ["econnrefused" | also]))
-
-    assert stray == [], "a socket logged more than refused reconnects:\n#{Enum.join(stray, "\n")}"
-  end
+  # logs the refusal, and whether it does is timing.
+  defp refused, do: {~r/econnrefused/, :maybe}
 
   defp assert_ws_channel({flags, extension, entry, filter}, ctx) do
     plugin_id = "drill-ws-channel-#{System.unique_integer([:positive])}"
