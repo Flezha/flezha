@@ -5,7 +5,7 @@ defmodule Flezha.Service.Cli.Boot do
   `GET /readyz` and the container layer cannot disagree.
   """
 
-  @doc "`flz boot status`: the verdict, its preconditions, and each namespace's recovery."
+  @doc "`flz boot status`: the verdict, its preconditions, and each visible namespace's recovery."
   def status(status, _args, _opts) do
     IO.puts("readiness: #{status.readiness}")
 

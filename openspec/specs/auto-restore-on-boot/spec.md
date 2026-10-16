@@ -225,7 +225,7 @@ Ungraceful kill (SIGKILL of a controller without orchestration giving it time to
 
 The CLI SHALL provide:
 
-- `flz boot status` — for each namespace hub, print: hub_id, ProcessHub `recovery_state`, persistent-registry row count, last replay outcome (telemetry-aggregated), pending pull-on-attach transfers. It SHALL additionally print the readiness verdict and one line per unmet readiness precondition, so a user can see which precondition is holding the node.
+- `flz boot status` — for each namespace hub the caller may see (`Flezha.AuthZ.Namespace.visible/3`: every hub for an admin of `_system`, the bound namespace's hub for any other identified caller, only `_system`'s hub for a caller with no identity), print: hub_id, ProcessHub `recovery_state`, persistent-registry row count, last replay outcome (telemetry-aggregated), pending pull-on-attach transfers. It SHALL additionally print the readiness verdict and one line per unmet readiness precondition, so a user can see which precondition is holding the node.
 - `flz boot await [--timeout=N]` — block until the readiness verdict is `:ready`, or the timeout elapses. It SHALL read the verdict rather than iterating hubs itself, and SHALL exit non-zero when the timeout elapses with the verdict below `:ready`, naming the unmet preconditions. A timeout of zero SHALL evaluate the verdict once and return, so the same verb serves a container healthcheck.
 
 `flz boot await` SHALL NOT report success on the grounds that the set of things to wait for is empty. A controller that has not yet created its namespace hubs SHALL be reported as not ready.
@@ -238,6 +238,11 @@ The option reader SHALL be unchanged: `--timeout`, `--timeout=`, `-t` and `-t=` 
 
 - **WHEN** the runner runs `flz boot status` while one namespace hub is `:normal` and another is still `:recovery_pending`
 - **THEN** the CLI prints both hubs with their respective states and metrics
+
+#### Scenario: flz boot status names no namespace the caller may not see
+
+- **WHEN** a viewer of one namespace, or a caller with no identity, runs `flz boot status` while two namespace hubs are running
+- **THEN** the viewer is shown its own namespace's hub only, and the caller with no identity the readiness verdict and no hub but `_system`'s
 
 #### Scenario: flz boot status names the unmet precondition
 

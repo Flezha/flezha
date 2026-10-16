@@ -598,7 +598,7 @@ everything is the supported way to fill gaps after a warm restart. A claim
 refused with no live winner (a stale registry entry) stays a loud error.
 
 ```sh
-$ flz boot status                # readiness verdict and its conditions, then each namespace
+$ flz boot status                # readiness verdict and its conditions, then each namespace you may see
 $ flz boot await --timeout 60    # wait until ready (exit 7, boot.not_ready, otherwise)
 $ flz boot await --timeout 0     # evaluate once: what the image healthcheck runs
 $ flz cluster status             # recovery state per node

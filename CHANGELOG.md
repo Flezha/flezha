@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Fixed: `flz boot status` names only the namespaces its caller may see
+
+The verb answers any caller, so its table of running namespaces named every tenant on the node.
+The readiness verdict and its conditions are still shown to everyone; the namespace rows now
+follow the rule `flz namespace list` uses: an admin of `_system` sees every namespace, another
+caller the one it is bound to, and a caller with no token only `_system`. `flz boot await` and
+the image healthcheck read the verdict alone and are unchanged.
+
 ### Added: a Kafka consumer can read committed transactions only
 
 `kafka_consumer` takes `isolation_level: :read_committed`, which leaves out the records of

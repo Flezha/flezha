@@ -47,16 +47,18 @@ defmodule Flezha.Service.Controller do
   # ---------- Reads ----------
 
   @doc """
-  The readiness verdict and every precondition behind it, then each running
-  namespace's recovery state and persistent-registry row count. Answers at
-  once; `boot_await/2` waits.
+  The readiness verdict and every precondition behind it, then the recovery
+  state and persistent-registry row count of each running namespace the
+  caller may see (`Flezha.AuthZ.Namespace.visible/3`). The verb is public, so
+  a caller with no identity gets the verdict and only `_system`'s row.
+  Answers at once; `boot_await/2` waits.
   """
   @spec boot_status(caller_context()) :: {:ok, map()} | {:error, term()}
   verb boot_status(caller_context) do
     {verdict, rows} = Readiness.verdict()
 
     namespaces =
-      for namespace <- HubManager.get_running_namespaces() do
+      for namespace <- Namespace.visible(HubManager.get_running_namespaces(), caller_context) do
         hub_id = Identificator.hub(namespace)
 
         %{
