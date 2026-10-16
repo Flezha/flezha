@@ -15,6 +15,7 @@ defmodule Flezha.Service.HubManager.Lifecycle do
   alias Flezha.Convergence.Snapshot
   alias Flezha.Layout.Table, as: Layout
   alias Flezha.Parallel
+  alias Flezha.Plugin.Shared
   alias Flezha.Process.Hub
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.HubManager
@@ -258,7 +259,8 @@ defmodule Flezha.Service.HubManager.Lifecycle do
   @doc """
   Migrate every locally-hosted relay of `namespace` to a peer controller
   through the migration-consent gate (live HotSwap handover), then wait for the
-  local children to actually be gone.
+  local children, and the plugin copies they left retiring, to actually be
+  gone.
 
   The wait is load-bearing: `Migration.drain/2` returns once the deferred list
   is empty, but the migration start requests are async and HotSwap stops a
@@ -268,6 +270,8 @@ defmodule Flezha.Service.HubManager.Lifecycle do
   `:budget_ms` is required and bounds the whole call: the caller always hands
   the drain its slice of the one shutdown budget. `:handover_grace_ms` is
   carved off it so the deadline force pass can land before the caller moves on.
+  A retiring copy whose successor's upstream never opens holds the drain until
+  that budget runs out.
 
   The one drain seam, reached by the `:node` step alone.
   """
@@ -279,23 +283,30 @@ defmodule Flezha.Service.HubManager.Lifecycle do
 
     Rows.with_live_hub(namespace, {:error, :no_target_nodes}, fn hub_id ->
       result = Migration.drain(hub_id, timeout: max(budget - grace, 1_000))
-      with {:ok, _} <- result, do: await_local_children_gone(hub_id, deadline)
+      with {:ok, _} <- result, do: await_local_children_gone(hub_id, namespace, deadline)
       result
     end)
   catch
     kind, reason -> {:error, {kind, reason}}
   end
 
-  # Monitor every local child and wait for each exit; the node is quiesced, so
-  # none is started meanwhile. Answers `:deadline` with the monitors flushed
-  # when the budget runs out first.
-  defp await_local_children_gone(hub_id, deadline) do
+  # Monitor every local child and wait for each exit, then for the plugin
+  # copies those children left retiring: a moved `single` plugin's hand-over
+  # ends when its old copy closes, after the new one opened. The node is
+  # quiesced, so none is started meanwhile. Answers `:deadline` with the
+  # monitors flushed when the budget runs out first.
+  defp await_local_children_gone(hub_id, namespace, deadline) do
     monitors =
       for {_child_id, pid} <- ProcessHub.process_list(hub_id, :local), is_pid(pid) do
         Process.monitor(pid)
       end
 
-    await_downs(monitors, deadline)
+    with :ok <- await_downs(monitors, deadline),
+         do:
+           await_downs(
+             Enum.map(Shared.retiring(namespace, deadline), &Process.monitor/1),
+             deadline
+           )
   catch
     _kind, _reason -> :ok
   end

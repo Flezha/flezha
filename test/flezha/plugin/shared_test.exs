@@ -7,8 +7,10 @@ defmodule FlezhaTest.Plugin.SharedTest do
   """
 
   use FlezhaTest.Case, fixtures: [:env], async: false
+  use Mimic
 
   import ExUnit.CaptureLog
+  import FlezhaTest.Helper.MimicGlobal, only: [set_mimic_global_until_exit: 0]
 
   alias Flezha.Cluster.Directory
   alias Flezha.Relay.Builder
@@ -402,6 +404,70 @@ defmodule FlezhaTest.Plugin.SharedTest do
 
       restore.()
       assert log =~ "lone retired before its successor opened"
+    end
+
+    # A controller that stops right after its drain would otherwise close the
+    # old connection before the successor's opens.
+    test "holds its controller's drain until it stops", ctx do
+      drain = drain_with_children_moved()
+      assert NodeTestHelper.wait_until(fn -> settled?(drain, ctx.copy) end, 5_000)
+
+      assert Process.alive?(drain.pid), "the drain returned while a copy was retiring"
+      send(ctx.successor, {:connecting, false})
+      assert {:ok, _} = Task.await(drain, 10_000)
+      refute Process.alive?(ctx.copy)
+    end
+
+    test "a copy that cannot say in time whether it retires is waited for", ctx do
+      test = self()
+
+      mute =
+        spawn_link(fn ->
+          receive(do: ({:"$gen_call", {asker, _}, :retiring?} -> send(test, {:asked, asker})))
+          receive(do: (:stop -> :ok))
+        end)
+
+      Directory.join_plugin(mute, @namespace, "mute")
+      drain = drain_with_children_moved()
+      assert_receive {:asked, asker}, 5_000
+
+      # The question has gone unanswered and the drain waits on the copy.
+      assert NodeTestHelper.wait_until(
+               fn ->
+                 watchers = watchers(mute)
+                 asker not in watchers and drain.pid in watchers
+               end,
+               10_000
+             ),
+             "the drain passed over a copy that did not answer"
+
+      send(ctx.successor, {:connecting, false})
+      send(mute, :stop)
+      assert {:ok, _} = Task.await(drain, 10_000)
+    end
+  end
+
+  # The drain of this controller's hub with every hub child already moved: a
+  # relay an earlier test is still stopping is not this drain's to wait for.
+  defp drain_with_children_moved do
+    set_mimic_global_until_exit()
+    stub(ProcessHub.Service.Migration, :drain, fn _hub, _opts -> {:ok, %{migrated: 1}} end)
+
+    stub(ProcessHub, :process_list, fn
+      _hub, :local -> []
+      hub, scope -> call_original(ProcessHub, :process_list, [hub, scope])
+    end)
+
+    Task.async(fn -> HubManager.drain_hub(@namespace, budget_ms: 5_000) end)
+  end
+
+  # Whether `drain` returned or waits on `copy`.
+  defp settled?(drain, copy), do: drain.pid in watchers(copy) or not Process.alive?(drain.pid)
+
+  defp watchers(pid) do
+    case Process.info(pid, :monitored_by) do
+      {:monitored_by, watchers} -> watchers
+      nil -> []
     end
   end
 

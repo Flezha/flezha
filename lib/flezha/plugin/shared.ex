@@ -47,6 +47,7 @@ defmodule Flezha.Plugin.Shared do
   alias Flezha.Cluster.Directory
   alias Flezha.Config.Durations
   alias Flezha.Identificator
+  alias Flezha.Parallel
   alias Flezha.Relay.Overwatch
   alias Flezha.Plugin
   alias Flezha.Plugin.Extension
@@ -286,6 +287,24 @@ defmodule Flezha.Plugin.Shared do
   @spec retire(pid()) :: :ok
   def retire(copy), do: GenServer.cast(copy, :retire)
 
+  @doc """
+  The copies of `namespace`'s plugins on this controller that are retiring,
+  all asked at once under `plugin_call_timeout_ms`, never past `deadline`
+  (monotonic milliseconds): one that cannot answer in time counts as retiring.
+  """
+  @spec retiring(String.t(), integer()) :: [pid()]
+  def retiring(namespace, deadline) do
+    left = max(deadline - System.monotonic_time(:millisecond), 0)
+    ask = &GenServer.call(&1, :retiring?, :infinity)
+
+    for {copy, answer} <-
+          Parallel.results(Directory.local_plugin_hosts(namespace), ask,
+            timeout: min(Durations.get(:plugin_call_timeout_ms), left)
+          ),
+        answer != {:ok, false},
+        do: copy
+  end
+
   @doc "Stop `copy` and the workers it holds."
   @spec stop(pid()) :: :ok
   def stop(copy) do
@@ -429,6 +448,8 @@ defmodule Flezha.Plugin.Shared do
       {:reply, lagging(state) || Map.get(Table.health(state.table), state.name, :healthy), state}
 
   def handle_call(:connecting?, _from, state), do: {:reply, connecting?(state), state}
+
+  def handle_call(:retiring?, _from, state), do: {:reply, is_reference(state.retiring), state}
 
   # The forwarder's next hook event: run in a task, answered when its chain
   # returns, so the forwarder sends the one after.

@@ -74,6 +74,20 @@ defmodule Flezha.Cluster.Directory do
     if scope_up?(), do: :pg.get_members(@scope, plugin_group(namespace, name)), else: []
   end
 
+  @doc "Every running copy of any plugin of `namespace` on this node."
+  @spec local_plugin_hosts(String.t() | atom()) :: [pid()]
+  def local_plugin_hosts(namespace) do
+    namespace = to_string(namespace)
+
+    if scope_up?() do
+      for {:plugin, ^namespace, _name} = group <- :pg.which_groups(@scope),
+          copy <- :pg.get_local_members(@scope, group),
+          do: copy
+    else
+      []
+    end
+  end
+
   @doc """
   Watch the copies of the plugin `name` of `namespace`: answers the reference
   `{ref, :join | :leave, group, pids}` messages carry and the copies running
