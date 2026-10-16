@@ -231,9 +231,10 @@ defmodule Flezha.Plugin.Extension.Table do
 
       # Under a worker key of its own, beside the shared copy's.
       Workers.own_source?(table, provider) ->
-        own = WorkerSup.keyed(Map.put(opts, :plugin_id, "#{plugin_id}@#{plugin.relay_id}"))
-        table = put_plugin_opts(table, plugin_id, Map.take(own, [:plugin_id, :worker_key]))
-        start_and_activate(table, plugin_id, provider, own)
+        own_id = "#{plugin_id}@#{plugin.relay_id}"
+        own = %{plugin_id: own_id, worker_key: {plugin.namespace, own_id}}
+        table = put_plugin_opts(table, plugin_id, own)
+        start_and_activate(table, plugin_id, provider, Map.merge(opts, own))
 
       true ->
         start_and_activate(table, plugin_id, provider, opts)

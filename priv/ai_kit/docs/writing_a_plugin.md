@@ -31,7 +31,7 @@ callback (`mod`).
 | --- | --- | --- |
 | `init_provider/1` | validate and normalise the options; no I/O, no process | the options as given |
 | `activate/1` | acquire upstream resources once the relay is bound | nothing to acquire |
-| `worker_specs/1` | the workers to start, as `{registry_key, worker_opts}` | one worker keyed `{namespace, plugin_id}` (`WorkerSup.key/1`) |
+| `worker_specs/1` | the workers to start, as `{registry_key, worker_opts}` | one worker keyed `{namespace, name}` (`WorkerSup.key/1`) |
 | `health/1` | the verdict of a running instance: `:healthy` or `{:unhealthy, reason}` | the owned worker being alive |
 | `inspect_state/1` | detail shown under the plugin in `flz relay info`; `connected: false` says the upstream is not open yet | `nil` |
 | `terminate_provider/1` | teardown of anything that is neither a worker nor an option; must be idempotent | `:ok` |
@@ -102,7 +102,7 @@ def init_provider(%{path: ""}), do: {:error, :stamp_path_empty}
 def init_provider(opts), do: {:ok, opts}
 
 # The default `worker_specs/1` starts one writer per plugin, keyed by its
-# namespace and id; the table hands that key to every callback as `:worker_key`.
+# namespace and name; the table hands that key to every callback as `:worker_key`.
 @impl true
 def on_output(%Ctx.IO{message: payload} = ctx, opts) do
   Writer.append(WorkerSup.worker(__MODULE__, opts.worker_key), payload)

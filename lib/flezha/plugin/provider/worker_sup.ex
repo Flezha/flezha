@@ -67,24 +67,24 @@ defmodule Flezha.Plugin.Provider.WorkerSup do
   def via(family, key), do: {:via, Registry, {registry_name(family), key}}
 
   @doc """
-  The key a plugin's worker is registered under: the plugin's namespace with its
-  `:plugin_id`, or the name it was enabled under when it settled none, so one
-  name enabled in two namespaces is two workers. A provider that runs one worker
-  per member keys each `{key, member}`.
+  The key a plugin's worker is registered under: the `:worker_key` the table
+  stored (a durable-input source's own), or the plugin's namespace with the name
+  it was enabled under, which is unique there, so two plugins never share a
+  worker whatever `:plugin_id` they set. A provider that runs one worker per
+  member keys each `{key, member}`.
   """
   @spec key(map()) :: {term(), term()}
-  def key(opts),
-    do:
-      {Map.get(opts, :source_namespace),
-       Map.get(opts, :plugin_id) || Map.get(opts, :source_plugin_id)}
+  def key(%{worker_key: {_, _} = key}), do: key
+  def key(opts), do: {Map.get(opts, :source_namespace), Map.get(opts, :source_plugin_id)}
 
   @doc """
   `opts` holding its `key/1` as `:worker_key`, which the table stores once a
   plugin is prepared, so a dispatch path reads the key rather than building it
-  per message.
+  per message. Built afresh, so a re-prepared plugin drops a key an earlier
+  activation stored.
   """
   @spec keyed(map()) :: map()
-  def keyed(opts), do: Map.put(opts, :worker_key, key(opts))
+  def keyed(opts), do: Map.put(opts, :worker_key, key(Map.delete(opts, :worker_key)))
 
   @doc """
   The worker `provider` registered under `key`, addressed by name.

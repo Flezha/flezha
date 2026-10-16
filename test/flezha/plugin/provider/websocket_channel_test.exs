@@ -186,13 +186,13 @@ defmodule FlezhaTest.Plugin.Provider.WebsocketChannelTest do
 
   # `Table.attempt_restart/3` falls back to the convergence loop's DECLARED
   # manifest for a plugin the table does not hold, and the teardown asks the
-  # provider for its declared worker keys from those raw user options: no
-  # host key merged, no row default filled. `Workers.declared_keys/3` turns a
+  # provider for its declared worker keys from those raw user options: only the
+  # host identity merged, no row default filled. `Workers.declared_keys/3` turns a
   # raise there into an empty key list, so a worker its own supervisor restarted
   # under that key would never be stopped.
   describe "the declared worker keys are readable from raw user options" do
     test "a map that was never normalised still answers a worker spec" do
-      raw = %{uri: @uri, plugin_id: "ws_raw", channel: "prices"}
+      raw = %{uri: @uri, source_plugin_id: "ws_raw", channel: "prices"}
 
       assert [{{nil, "ws_raw"}, worker_opts}] = Websocket.worker_specs(raw)
 

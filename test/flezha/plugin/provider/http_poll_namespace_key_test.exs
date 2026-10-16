@@ -1,8 +1,9 @@
 defmodule Flezha.Plugin.Provider.HttpPollNamespaceKeyTest do
   @moduledoc """
-  A shareable plugin's copy is one per `(namespace, name)`, so the same name
-  enabled in two namespaces on one controller runs two workers, each polling its
-  own endpoint, and a disable in one namespace leaves the other's running.
+  A plugin's worker is one per `(namespace, name)`: the same name enabled in two
+  namespaces, and two names in one namespace that set the same `plugin_id`, each
+  run two workers polling their own endpoints, and a disable of one leaves the
+  other's running.
   """
 
   use FlezhaTest.HttpPollCase, async: false
@@ -11,15 +12,13 @@ defmodule Flezha.Plugin.Provider.HttpPollNamespaceKeyTest do
   alias Flezha.Plugin.Provider.HttpPoll
   alias FlezhaTest.Helper.ProviderPrepare
 
-  setup do
-    name = "ticker_#{System.unique_integer([:positive])}"
+  # Two plugins activated as the extension table runs them (`Table.Workers.start/5`).
+  defp start_pair(host_a, host_b) do
     origin_a = start_origin(body: "from-a")
     origin_b = start_origin(body: "from-b")
+    {:ok, opts_a} = prepare(origin_a, host_a)
+    {:ok, opts_b} = prepare(origin_b, host_b)
 
-    {:ok, opts_a} = prepare(origin_a, %{source_namespace: "ns_a", source_plugin_id: name})
-    {:ok, opts_b} = prepare(origin_b, %{source_namespace: "ns_b", source_plugin_id: name})
-
-    # Activation as the extension table runs it (`Table.Workers.start/5`).
     {:ok, pid_a} = ProviderPrepare.activate(HttpPoll, opts_a)
     stop_on_exit(pid_a)
     assert {"from-a", _} = take_ingest()
@@ -30,18 +29,56 @@ defmodule Flezha.Plugin.Provider.HttpPollNamespaceKeyTest do
     %{opts_a: opts_a, pid_a: pid_a, pid_b: pid_b, origin_b: origin_b}
   end
 
-  test "one name in two namespaces runs two workers", ctx do
-    assert ctx.pid_b != ctx.pid_a, "namespace ns_b was handed ns_a's worker"
+  defp disable_a(ctx) do
+    table = %{entries: %{}, monitors: %{}}
+    Workers.stop_all(table, ctx.opts_a.source_plugin_id, HttpPoll, ctx.opts_a, & &1.())
+    refute Process.alive?(ctx.pid_a)
+  end
+
+  defp assert_b_polled(ctx) do
     assert {"from-b", _} = take_ingest()
     assert Agent.get(ctx.origin_b.agent, & &1.requests) == 1
   end
 
-  test "a disable in one namespace leaves the other's worker running", ctx do
-    table = %{entries: %{}, monitors: %{}}
+  describe "one name in two namespaces" do
+    setup do
+      name = "ticker_#{System.unique_integer([:positive])}"
 
-    Workers.stop_all(table, ctx.opts_a.source_plugin_id, HttpPoll, ctx.opts_a, & &1.())
+      start_pair(
+        %{source_namespace: "ns_a", source_plugin_id: name},
+        %{source_namespace: "ns_b", source_plugin_id: name}
+      )
+    end
 
-    refute Process.alive?(ctx.pid_a)
-    assert Process.alive?(ctx.pid_b), "disabling in ns_a stopped ns_b's worker"
+    test "runs two workers", ctx do
+      assert ctx.pid_b != ctx.pid_a, "namespace ns_b was handed ns_a's worker"
+      assert_b_polled(ctx)
+    end
+
+    test "a disable in one namespace leaves the other's worker running", ctx do
+      disable_a(ctx)
+      assert Process.alive?(ctx.pid_b), "disabling in ns_a stopped ns_b's worker"
+    end
+  end
+
+  describe "two names with one plugin_id in one namespace" do
+    setup do
+      n = System.unique_integer([:positive])
+
+      start_pair(
+        %{source_namespace: "ns", source_plugin_id: "a_#{n}", plugin_id: "id_#{n}"},
+        %{source_namespace: "ns", source_plugin_id: "b_#{n}", plugin_id: "id_#{n}"}
+      )
+    end
+
+    test "run two workers", ctx do
+      assert ctx.pid_b != ctx.pid_a, "plugin b was handed plugin a's worker"
+      assert_b_polled(ctx)
+    end
+
+    test "a disable of one leaves the other's worker running", ctx do
+      disable_a(ctx)
+      assert Process.alive?(ctx.pid_b), "disabling plugin a stopped plugin b's worker"
+    end
   end
 end

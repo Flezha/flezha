@@ -39,7 +39,7 @@ The provider's `:on_output` and `:on_input` callbacks SHALL enqueue the payload 
 worker process and return without waiting for delivery. No extension callback SHALL perform a
 synchronous call into another relay's Overwatch. The worker SHALL be supervised through the
 shared `Flezha.Plugin.Provider.WorkerSup` core as its own provider family, keyed by
-`{{namespace, plugin_id}, target_relay_id}`, and a re-prepared plugin SHALL reuse its live worker so
+`{{namespace, name}, target_relay_id}`, and a re-prepared plugin SHALL reuse its live worker so
 queued items survive source-Overwatch restarts.
 
 #### Scenario: Source Overwatch is not blocked by a slow target
@@ -259,7 +259,7 @@ and the plugin id, so a user can observe a saturating cycle without parsing log 
   user
 
 ### Requirement: Forwarding to a partitioned target SHALL route each message by key hash
-When the configured `target_relay_id` names a partition group (N ≥ 2 members), the provider SHALL resolve the member set and ranges at init, keep one forward worker per target member (the existing `{{namespace, plugin_id}, target}` worker keying), and route each message in `forward/2` to the member whose key-group range contains `fnv1a128(flz.key) mod 256`. Per-partition workers preserve per-member FIFO; a slow member SHALL NOT head-of-line-block deliveries to other members. A target with one member behaves byte-identically to today. A not-yet-started member is tolerated exactly as a not-yet-started target is today (the worker retries).
+When the configured `target_relay_id` names a partition group (N ≥ 2 members), the provider SHALL resolve the member set and ranges at init, keep one forward worker per target member (the existing `{{namespace, name}, target}` worker keying), and route each message in `forward/2` to the member whose key-group range contains `fnv1a128(flz.key) mod 256`. Per-partition workers preserve per-member FIFO; a slow member SHALL NOT head-of-line-block deliveries to other members. A target with one member behaves byte-identically to today. A not-yet-started member is tolerated exactly as a not-yet-started target is today (the worker retries).
 
 #### Scenario: Keyed outputs land on the owning partition
 - **WHEN** a keyed stream output with `flz.key: "BTC-USD"` is forwarded to a 2-partition target

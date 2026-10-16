@@ -16,13 +16,11 @@ defmodule FlezhaExamplePlugin.Stamp do
   def init_provider(%{path: ""}), do: {:error, :stamp_path_empty}
   def init_provider(opts), do: {:ok, opts}
 
-  # One writer per plugin, under the id it was enabled with.
-  @impl true
-  def worker_specs(opts), do: [{opts.source_plugin_id, opts}]
-
+  # The default `worker_specs/1` starts one writer per plugin, keyed by its
+  # namespace and name; the table hands that key to every callback as `:worker_key`.
   @impl true
   def on_output(%Ctx.IO{message: payload} = ctx, opts) do
-    Writer.append(WorkerSup.worker(__MODULE__, opts.source_plugin_id), payload)
+    Writer.append(WorkerSup.worker(__MODULE__, opts.worker_key), payload)
     {:ok, ctx}
   end
 end

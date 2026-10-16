@@ -3,7 +3,7 @@ defmodule Flezha.Plugin.Provider.RelayForward do
   Relay-to-relay delivery (a relay plugin): the sink whose destination
   is another relay in the same namespace rather than an external endpoint.
 
-  The callback enqueues and returns; a per-`{{namespace, plugin_id}, member}`
+  The callback enqueues and returns; a per-`{{namespace, name}, member}`
   worker does the confirming delivery and retries until the target confirms.
   Nothing ever blocks one Overwatch on another, so a cycle of relays feeding
   each other is safe by construction.

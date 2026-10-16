@@ -199,8 +199,11 @@ defmodule FlezhaTest.Plugin.SharedInjectionTest do
       for n <- 1..5, do: WebsocketServer.broadcast(server, "w#{n}")
       for _ <- 1..5, do: assert_receive({:other, :cast, "w" <> _}, 5_000)
 
-      unbind(plain)
+      # Stopping its own connection leaves the shared one running.
       Table.teardown_all(table, :now)
+      WebsocketServer.broadcast(server, "after")
+      assert_receive {:other, :cast, "after"}, 5_000
+      unbind(plain)
     end
 
     test "casts to each bound relay, stamped with its channel", %{server: server} do

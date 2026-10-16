@@ -98,6 +98,20 @@ defmodule FlezhaTest.Relay.PackageProviderTest do
     {table, init_error}
   end
 
+  test "the example keys one writer per namespace and name", %{root: root, example: example} do
+    [%{status: :loaded}] = PluginPackage.load!(root, [example])
+
+    keys =
+      for ns <- ["ns_a", "ns_b"] do
+        [{key, _opts}] =
+          apply(@stamp, :worker_specs, [%{source_namespace: ns, source_plugin_id: "s"}])
+
+        key
+      end
+
+    assert keys == [{"ns_a", "s"}, {"ns_b", "s"}]
+  end
+
   describe "a binding whose provider no package here loaded" do
     test "leaves the relay running, the binding not started, warned once",
          %{root: root, example: example, tmp: tmp} do
