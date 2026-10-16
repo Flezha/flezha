@@ -59,6 +59,7 @@ defmodule Flezha.Shutdown.Coordinator do
             waiters: [],
             captured_local: %{},
             still_local: [],
+            drain_runner: nil,
             outcome: nil,
             timers: %{}
 
@@ -184,6 +185,7 @@ defmodule Flezha.Shutdown.Coordinator do
 
   def handle_call(:__reset_for_tests__, _from, state) do
     _ = cancel_timer(state, :phase_timeout)
+    stop_drain_runner(state)
     Shutdown.node_phase(:idle)
     Facts.declare({:node_drained, node(), %{}})
     {:reply, :ok, %__MODULE__{}}
@@ -218,37 +220,25 @@ defmodule Flezha.Shutdown.Coordinator do
 
     if captured == %{} do
       # Nothing was running locally; drain trivially complete.
-      send(self(), {:drain_done, %{migrated: 0, forced: 0}})
-      {:noreply, state}
+      drain_done(state, %{migrated: 0, forced: 0})
     else
       # `Migration.drain/2` blocks up to its deadline, so it runs off the
       # coordinator loop; the `:phase_timeout` timer is the backstop if the
       # runner dies without reporting.
-      start_drain_runner(self(), Map.keys(captured), drain_budget(state, now), now)
-      {:noreply, state}
+      runner = start_drain_runner(Map.keys(captured), drain_budget(state, now), now)
+      {:noreply, %{state | drain_runner: runner}}
     end
   end
 
   def handle_info(
-        {:drain_done, %{migrated: migrated, forced: forced}},
-        %__MODULE__{phase: :draining} = state
+        {:drain_done, ref, totals},
+        %__MODULE__{phase: :draining, drain_runner: {_pid, ref}} = state
       ) do
-    Logger.info("[shutdown] drain migrated=#{migrated} forced=#{forced}")
-
-    # The children were claimed by peers (or degraded to next-boot WAL
-    # restore) while still alive; only now does the hub supervisor stop.
-    safe_finalise_step(:stop_hub_manager, &HubManager.stop_hub_manager/0)
-
-    now = monotonic_ms()
-    duration_ms = now - state.phase_start_ms
-    emit_telemetry(:phase_completed, %{duration_ms: duration_ms}, %{phase: :drain})
-
-    Logger.info("[shutdown] phase=finalise")
-    {:noreply, enter_finalise(state, now)}
+    drain_done(state, totals)
   end
 
-  def handle_info({:drain_done, _}, state) do
-    # Phase advanced (timeout or force) — discard the stale report.
+  def handle_info({:drain_done, _ref, _totals}, state) do
+    # A report from a walk that is no longer this shutdown's: discarded.
     {:noreply, state}
   end
 
@@ -274,9 +264,10 @@ defmodule Flezha.Shutdown.Coordinator do
 
     emit_telemetry(:timeout, %{}, %{phase: external_phase(phase), still_local: still_local})
 
-    # The drain runner is abandoned, not awaited: its late `:drain_done`
-    # lands in the stale clause. The hub still has to stop before finalise.
+    # The walk ends with its budget; a report it sent first is discarded by
+    # its ref. The hub still has to stop before finalise.
     if phase == :draining do
+      stop_drain_runner(state)
       safe_finalise_step(:stop_hub_manager, &HubManager.stop_hub_manager/0)
     end
 
@@ -289,6 +280,21 @@ defmodule Flezha.Shutdown.Coordinator do
   def handle_info(_msg, state), do: {:noreply, state}
 
   # ---------- Phase helpers ----------
+
+  defp drain_done(state, %{migrated: migrated, forced: forced}) do
+    Logger.info("[shutdown] drain migrated=#{migrated} forced=#{forced}")
+
+    # The children were claimed by peers (or degraded to next-boot WAL
+    # restore) while still alive; only now does the hub supervisor stop.
+    safe_finalise_step(:stop_hub_manager, &HubManager.stop_hub_manager/0)
+
+    now = monotonic_ms()
+    duration_ms = now - state.phase_start_ms
+    emit_telemetry(:phase_completed, %{duration_ms: duration_ms}, %{phase: :drain})
+
+    Logger.info("[shutdown] phase=finalise")
+    {:noreply, enter_finalise(state, now)}
+  end
 
   defp transition(state, new_phase, now) do
     Shutdown.node_phase(new_phase)
@@ -375,17 +381,28 @@ defmodule Flezha.Shutdown.Coordinator do
 
   # Runs the `:node` walk off the coordinator loop: the drain step drains
   # every hub concurrently and emits one `:drain_progress` per hub; one
-  # `{:drain_done, totals}` lands here at the end. Unlinked on purpose — a
-  # crash here is covered by the `:phase_timeout` backstop.
-  defp start_drain_runner(coordinator, namespaces, budget, phase_start_ms) do
-    spawn(fn ->
-      {_outcome, report} =
-        Shutdown.run(:node, %{namespaces: namespaces, phase_start_ms: phase_start_ms}, budget)
+  # `{:drain_done, ref, totals}` lands here at the end. Unlinked on purpose —
+  # a crash here is covered by the `:phase_timeout` backstop. Killing the walk
+  # strands no handover: the hub's own processes start each move and stop
+  # its source only once the target runs.
+  defp start_drain_runner(namespaces, budget, phase_start_ms) do
+    coordinator = self()
+    ref = make_ref()
 
-      totals = Map.get(report.results, :drain, %{migrated: 0, forced: 0})
-      send(coordinator, {:drain_done, totals})
-    end)
+    pid =
+      spawn(fn ->
+        {_outcome, report} =
+          Shutdown.run(:node, %{namespaces: namespaces, phase_start_ms: phase_start_ms}, budget)
+
+        totals = Map.get(report.results, :drain, %{migrated: 0, forced: 0})
+        send(coordinator, {:drain_done, ref, totals})
+      end)
+
+    {pid, ref}
   end
+
+  defp stop_drain_runner(%__MODULE__{drain_runner: {pid, _ref}}), do: Process.exit(pid, :kill)
+  defp stop_drain_runner(_state), do: true
 
   defp safe_close_audit_writer() do
     if Process.whereis(Flezha.Observability.AuditLog.Writer) do

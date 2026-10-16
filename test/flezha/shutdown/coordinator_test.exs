@@ -271,6 +271,45 @@ defmodule Flezha.Shutdown.CoordinatorTest do
       # The timeout path still stops the hub before finalise.
       assert_receive :hub_stopped, 1_000
     end
+
+    test "the drain walk ends with its shutdown, and an old walk's report is never read" do
+      test_pid = self()
+      stub_local_relays()
+      expect(ProcessHub, :process_list, fn _hub, :local -> [{"op-1", self()}] end)
+      stub(HubManager, :stop_hub_manager, fn -> send(test_pid, :hub_stopped) && :ok end)
+
+      stub(ProcessHub.Service.Migration, :drain, fn _hub, _opts ->
+        send(test_pid, {:walk, hd(Process.get(:"$callers"))})
+        NodeTestHelper.park()
+      end)
+
+      # The phase timeout is fired by hand, so the walk is known to be inside
+      # its drain when the budget runs out.
+      {first, walk} = start_parked_shutdown()
+      draining = :sys.get_state(Coordinator)
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          send(Coordinator, :phase_timeout)
+          assert {:partial, ["op-1"]} = Task.await(first)
+        end)
+
+      assert log =~ "timeout phase=draining"
+      assert_receive {:DOWN, _, :process, ^walk, :killed}, 5_000
+      assert_receive :hub_stopped
+
+      reset_coordinator!()
+      {second, walk} = start_parked_shutdown()
+      {_pid, old_ref} = draining.drain_runner
+      send(Coordinator, {:drain_done, old_ref, %{migrated: 0, forced: 0}})
+
+      assert %{shutdown_phase: :drain} = Coordinator.status()
+      refute_received :hub_stopped
+
+      reset_coordinator!()
+      assert_receive {:DOWN, _, :process, ^walk, :killed}, 5_000
+      Task.shutdown(second, :brutal_kill)
+    end
   end
 
   # ---------- helpers ----------
@@ -307,6 +346,14 @@ defmodule Flezha.Shutdown.CoordinatorTest do
 
   defp reset_coordinator!() do
     Coordinator.__reset_for_tests__()
+  end
+
+  # A shutdown in flight with its walk parked inside the drain; the walk is monitored.
+  defp start_parked_shutdown() do
+    task = Task.async(fn -> Coordinator.shutdown(:cli, timeout_ms: 60_000) end)
+    assert_receive {:walk, walk}, 5_000
+    Process.monitor(walk)
+    {task, walk}
   end
 
   defp attach_telemetry() do
