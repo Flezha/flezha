@@ -321,9 +321,16 @@ defmodule Flezha.Cluster.GroupedHashingTest do
     start_supervised!({Registry, keys: :unique, name: registry}, id: registry)
     {:ok, _} = Registry.register(registry, "dist_sup", nil)
 
+    # The pass hands its migration to the worker queue, named as the hub names it.
+    worker_queue = {:via, Registry, {registry, "worker_queue"}}
+
+    start_supervised!({ProcessHub.Worker.WorkerQueue, {hub_id, worker_queue, misc}},
+      id: {:gh_worker_queue, hub_id}
+    )
+
     hub = %ProcessHub.Hub{
       hub_id: hub_id,
-      procs: %{task_sup: task_sup, system_registry: registry},
+      procs: %{task_sup: task_sup, system_registry: registry, worker_queue: worker_queue},
       storage: %{misc: misc, hook: hook}
     }
 
