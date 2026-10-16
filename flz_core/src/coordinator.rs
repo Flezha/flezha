@@ -180,6 +180,19 @@ impl RunnerNode {
             Some(instance) => {
                 instance.shutdown_background_threads();
                 crate::steps::removed(&instance);
+                let flusher = crate::flusher::CellFlusher::instance();
+                if let Some(prefix) = &instance.prefix {
+                    flusher.forget_prefix(prefix);
+                }
+                // A drain parked on credit here waits for the next grant,
+                // which the control-frame reader applies, not this thread.
+                for id in instance
+                    .all_slots()
+                    .iter()
+                    .filter_map(|s| s.flusher_entry_id)
+                {
+                    flusher.deregister_drained(id);
+                }
                 crate::effect_result::forget(instance_id);
                 crate::host::relay_left(&instance);
                 true

@@ -166,8 +166,7 @@ pub fn stop(inst: &RelayInstance) {
     }
 }
 
-/// The registry dropped the instance: every later event finds it done. Its
-/// Cells' flusher entries go with it.
+/// The registry dropped the instance: every later event finds it done.
 pub fn removed(inst: &RelayInstance) {
     let Some(r) = Run::of(inst) else { return };
     // One step under the lock: an event racing the removal sees it whole.
@@ -177,11 +176,6 @@ pub fn removed(inst: &RelayInstance) {
         d.r.run.pass_dead.store(true, Ordering::Release);
         d.clear_waits();
     });
-    for slot in inst.all_slots() {
-        if let Some(id) = slot.flusher_entry_id {
-            crate::flusher::CellFlusher::instance().deregister(id);
-        }
-    }
 }
 
 /// A message through the entrance: its items for the chain's roots are

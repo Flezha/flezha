@@ -215,7 +215,8 @@ pub struct CellSlot {
     /// `util::monotonic_ms` of the last successful push; the idle clock of
     /// the dynamic reaper and of an instance's sleep.
     pub last_activity_ms: AtomicI64,
-    /// `Some` iff the class persists changes; eviction deregisters it.
+    /// `Some` iff the class persists changes; eviction or relay removal
+    /// deregisters it.
     pub flusher_entry_id: Option<crate::flusher::FlusherEntryId>,
     /// Pending timers, folded from this Cell's own change log. Lock order:
     /// state → flush buffer → timers.

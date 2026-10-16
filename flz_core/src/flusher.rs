@@ -46,6 +46,30 @@ struct FlusherEntry {
     push_deferred: Arc<AtomicBool>,
 }
 
+impl FlusherEntry {
+    fn drain(&self) {
+        // A Cell owing an undelivered inter-tasklet push keeps its records:
+        // the offset must not become durable ahead of the edge delivery it
+        // derives from. Bounded — a gated Cell is handed no further work, so
+        // at most one item's record waits here.
+        if self.push_deferred.load(Ordering::Acquire) {
+            return;
+        }
+        flush_one(
+            &mut **self.buffer.lock_recover(),
+            &self.cell_identity,
+            &self.change_seq,
+            &self.header,
+            self.keeps_state,
+        );
+        // Behind this Cell's records; the first Cell of an instance to report
+        // takes the instance's move, the rest find nothing to send.
+        if let Some(prefix) = &self.prefix {
+            prefix.report();
+        }
+    }
+}
+
 /// The wire `cell_id_bytes` the controller's `decode_cell_id` reads.
 pub fn encode_cell_identity(relay_class: &str, tasklet_id: &str, cell_key: &str) -> Vec<u8> {
     let rc = relay_class.as_bytes();
@@ -176,9 +200,17 @@ impl CellFlusher {
             .clone()
     }
 
-    /// Report `prefix` after every pass for as long as its instance lives.
+    /// Report `prefix` after every pass until its instance is removed.
     pub(crate) fn watch_prefix(&self, prefix: &Arc<crate::prefix::PrefixLedger>) {
         self.prefixes.lock_recover().push(Arc::downgrade(prefix));
+    }
+
+    /// Stop reporting a removed instance's `prefix`: a hold its late settle
+    /// releases unshipped must not move it.
+    pub(crate) fn forget_prefix(&self, prefix: &Arc<crate::prefix::PrefixLedger>) {
+        self.prefixes
+            .lock_recover()
+            .retain(|watched| watched.as_ptr() != Arc::as_ptr(prefix));
     }
 
     /// Drop an evicted Cell's entry. Idempotent.
@@ -186,7 +218,16 @@ impl CellFlusher {
         self.entries.remove(&id);
     }
 
-    /// Register a Cell's buffer; the id deregisters it on eviction.
+    /// Drop a removed relay's Cell entry after one last drain, so a change
+    /// buffered in the last linger window ships. Idempotent.
+    pub fn deregister_drained(&self, id: FlusherEntryId) {
+        if let Some((_, entry)) = self.entries.remove(&id) {
+            entry.drain();
+        }
+    }
+
+    /// Register a Cell's buffer; the id deregisters it on eviction or relay
+    /// removal.
     #[allow(clippy::too_many_arguments)]
     pub fn register(
         &self,
@@ -238,29 +279,7 @@ impl CellFlusher {
 
     fn drain_pass(&self) {
         for entry_ref in self.entries.iter() {
-            let entry = entry_ref.value();
-            // A Cell owing an undelivered inter-tasklet push keeps its
-            // records: the offset must not become durable ahead of the edge
-            // delivery it derives from. Bounded — a gated Cell is handed no
-            // further work, so at most one item's record waits here.
-            if entry.push_deferred.load(Ordering::Acquire) {
-                continue;
-            }
-            {
-                let mut guard = entry.buffer.lock_recover();
-                flush_one(
-                    &mut **guard,
-                    &entry.cell_identity,
-                    &entry.change_seq,
-                    &entry.header,
-                    entry.keeps_state,
-                );
-            }
-            // Behind this Cell's records; the first Cell of an instance to
-            // report takes the instance's move, the rest find nothing to send.
-            if let Some(prefix) = &entry.prefix {
-                prefix.report();
-            }
+            entry_ref.value().drain();
         }
         self.prefixes
             .lock_recover()

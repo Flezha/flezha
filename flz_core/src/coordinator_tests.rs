@@ -123,6 +123,82 @@ fn a_stopped_steps_leaves_no_cell_with_the_flusher() {
     assert!(!flusher.holds_class(&id), "its Cell left with it");
 }
 
+/// A removed stream relay's Cells leave the flusher with it, as a steps
+/// relay's do.
+#[test]
+fn a_stopped_stream_leaves_no_cell_with_the_flusher() {
+    let _env = crate::runner::env_test_guard();
+    let factory = format!("flusher_stream_stop_{}", std::process::id());
+    let class = crate::test_support::host_class::steps_json(&factory, &["in"], 1)
+        .replace(
+            r#""durable":false"#,
+            r#""durable":{"local":{"sleep_after":false}}"#,
+        )
+        .replace(r#""run":"steps""#, r#""run":"flow""#);
+    crate::host::register_host_class_json(class.as_bytes()).expect("class registers");
+    let mut node = RunnerNode::new("test-ns".to_string());
+    let id = format!("{factory}_inst");
+    let errors = crate::test_support::host_class::bind(&mut node, &factory, &id, "", 0);
+    assert!(errors.is_empty(), "{errors:?}");
+    let flusher = crate::flusher::CellFlusher::instance();
+    assert!(flusher.holds_class(&id), "its Cell was registered");
+
+    assert!(node.stop_relay(&id));
+
+    assert!(!flusher.holds_class(&id), "its Cell left with it");
+}
+
+/// A removed instance's processed prefix is never reported again: a hold a
+/// settle still in flight at the stop releases unshipped must not move it.
+#[test]
+fn a_stopped_stream_reports_no_prefix_a_late_release_moves() {
+    let _env = crate::runner::env_test_guard();
+    let _sink = crate::state_sink::test_guard();
+    let factory = format!("prefix_stream_stop_{}", std::process::id());
+    let class = crate::test_support::host_class::steps_json(&factory, &["in"], 1)
+        .replace(
+            r#""durable":false"#,
+            r#""durable":{"local":{"sleep_after":600000}}"#,
+        )
+        .replace(r#""run":"steps""#, r#""run":"flow""#);
+    crate::host::register_host_class_json(class.as_bytes()).expect("class registers");
+    let mut node = RunnerNode::new("test-ns".to_string());
+    let id = format!("{factory}_inst");
+    let errors = crate::test_support::host_class::bind(&mut node, &factory, &id, "", 0);
+    assert!(errors.is_empty(), "{errors:?}");
+    let ledger = node.get_relay(&id).and_then(|i| i.prefix.clone());
+    let ledger = ledger.expect("a flow relay keeps a prefix");
+    // Two Cells' inputs in flight at the stop: 10 settles after it, 11 not yet.
+    let (settles_late, still_running) = (ledger.hold(10), ledger.hold(11));
+    let markers = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let (seen, identity) = (
+        Arc::clone(&markers),
+        crate::flusher::encode_cell_identity(&id, "", ""),
+    );
+    crate::state_sink::install_global_sink(Arc::new(move |payload_id: &str, frame: &[u8]| {
+        let seq_at = 2 + identity.len();
+        if payload_id == crate::prefix::PROCESSED_PREFIX_PAYLOAD_ID
+            && frame[2..seq_at] == identity[..]
+        {
+            let seq = frame[seq_at..seq_at + 8].try_into().unwrap();
+            seen.lock().unwrap().push(u64::from_be_bytes(seq));
+        }
+        Ok(())
+    }));
+
+    assert!(node.stop_relay(&id));
+    drop(settles_late);
+    crate::flusher::CellFlusher::instance().drain_now_for_tests();
+
+    crate::state_sink::reset_for_test();
+    let markers = markers.lock().unwrap();
+    assert!(
+        markers.iter().all(|&p| p < 10),
+        "a prefix past the unshipped input: {markers:?}"
+    );
+    drop(still_running);
+}
+
 /// A local send reaches only what this runner holds: a relay bound
 /// elsewhere, a channel the relay does not declare and one that is not an
 /// entry channel are each refused by code, and nothing is dispatched.
