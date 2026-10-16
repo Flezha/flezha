@@ -1015,8 +1015,8 @@ retain existing coalescing behaviour.
 ### Requirement: Dedup-file writes are amortized off the append hot path
 
 The per-record WAL append SHALL NOT perform a separate dedup-file write: the
-WAL append is the only per-record durable write. The dedup file
-(`last_persisted_seq` and `outbox_flushed_seq`) is a rebuildable cache and
+WAL append is the only per-record durable write. The dedup file's cursors
+(`last_persisted_seq` and `outbox_flushed_seq`) are a rebuildable cache and
 SHALL be advanced at most at fsync-batch cadence, and on snapshot, rotation,
 and clean shutdown. On boot, a missing or stale dedup file SHALL be repaired
 by recomputing from the WAL itself; a stale `outbox_flushed_seq` follows the
@@ -1474,8 +1474,10 @@ durable record as the state that input produced: the effect record under the eff
 tier, and outside the tier every change record the Cell drains, carrying the highest offset
 folded into that record after coalescing. No other record SHALL hold a Cell's consumed offset. A
 controller boot scan, a hydration and a restore SHALL read a Cell's consumed offset from its last
-durable record of either kind; a Cell whose records carry none has consumed nothing the log still
-holds.
+durable record of either kind. A prefix cut SHALL keep the highest offset the records it drops
+carried in the Cell's dedup file, and the boot scan, a sleeper's seed, a rewind and a correction's
+baseline at or above that cut SHALL take the higher of that and its records'; a Cell whose records and dedup file carry none has consumed
+nothing the log still holds.
 
 Every persistent Cell SHALL keep a consumed floor: restored from its durable offset on
 `RestoreInitState`, and advanced when the Cell takes an input stamped with a higher `flz.offset`.
@@ -1486,6 +1488,11 @@ The record that carries a Cell's consumed offset SHALL also keep every inter-tas
 input produced, with that offset as its origin, and a bind SHALL deliver each kept value whose
 origin is above the instance's floor to its consumer ahead of the re-forwarded tail. A consumer
 SHALL drop a delivered value at or below its own floor.
+
+#### Scenario: A compaction that folded every offset-bearing record keeps the offset
+
+- **WHEN** a Cell's only offset-bearing record is cut by a compaction and the controller restarts
+- **THEN** the boot scan and a sleeper's seed SHALL report that record's offset, and a rewind whose surviving records carry none SHALL keep it
 
 #### Scenario: A plain persistent Cell restores its floor
 

@@ -548,11 +548,10 @@ defmodule Flezha.State.WalWriter.Settlement do
     end
   end
 
-  # Advance the dedup file (persistence watermark + flush cursor + epoch)
-  # with one atomic tmp+rename — at most once per fsync batch. The reserved
-  # per-instance identities (the task-journal, the input log) skip it: they
-  # carry no effect records, and the dedup side-file would register a phantom
-  # Cell with `Paths.scan_dir/1`.
+  # Advance the dedup file (`Outbox.t()`) with one atomic tmp+rename — at
+  # most once per fsync batch. The reserved per-instance identities (the
+  # task-journal, the input log) skip it: they carry no effect records, and the
+  # dedup side-file would register a phantom Cell with `Paths.scan_dir/1`.
   def persist_dedup(%{cell_id: {_, _, key}} = state) when key in @reserved_cell_keys,
     do: state
 
@@ -566,7 +565,7 @@ defmodule Flezha.State.WalWriter.Settlement do
     # record re-drives work the sinks dedup — writing a flush cursor ahead of
     # what is durable would drop those outputs for good.
     if State.ordered?(progress) do
-      _ = Outbox.write(state.cell_id, progress)
+      _ = Outbox.write(state.cell_id, Map.put(progress, :folded_offset, state.folded_offset))
     else
       Logger.error(
         "[state] refusing to persist an out-of-order cursor record for " <>

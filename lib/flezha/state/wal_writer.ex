@@ -18,7 +18,7 @@ defmodule Flezha.State.WalWriter do
   alias Flezha.Config.Durations
   alias Flezha.State.Frame
   alias Flezha.SDK.SafeCall
-  alias Flezha.State.{FsyncBatcher, Metrics, RecordFrame, SeqIndex, WriterRegistry}
+  alias Flezha.State.{FsyncBatcher, Metrics, Paths, RecordFrame, SeqIndex, WriterRegistry}
   alias Flezha.State.WalWriter.{Admission, Boot, Epoch, RemoteGate, Settlement, State}
 
   @type t :: State.t()
@@ -412,10 +412,19 @@ defmodule Flezha.State.WalWriter do
   # below it (a retention tick on a writer compaction already cut), or with too
   # little below it to be worth a rewrite yet, answers at once; a seq ahead of
   # the writer is still recorded, since that snapshot is its new baseline. The
-  # dedup window releases the records in every case.
-  def handle_call({:truncate_up_to, seq, opts}, _from, state) do
+  # dedup window releases the records in every case. What the dropped records
+  # consumed moves to the dedup file's folded offset, behind the remote gate
+  # only once acknowledged; a reserved writer keeps no dedup file.
+  def handle_call({:truncate_up_to, seq, opts}, _from, %{cell_id: {_, _, key}} = state) do
     min_bytes = Keyword.get(opts, :min_bytes, 0)
     state = trim_header_index(state, seq)
+    bound = RemoteGate.durable_through(state, seq, state.outbox_durable_seq)
+
+    folded =
+      case key not in Paths.reserved_cell_keys() and Epoch.scan_consumed_at(state, bound) do
+        offset when is_integer(offset) -> max(state.folded_offset, offset)
+        _reserved_or_refused -> state.folded_offset
+      end
 
     case RecordFrame.cut_below(
            state.wal_path,
@@ -425,7 +434,8 @@ defmodule Flezha.State.WalWriter do
            min_bytes
          ) do
       {:ok, _cut, file, seq_index} ->
-        {:reply, :ok, after_prefix_cut(%{state | file_handle: file, seq_index: seq_index}, seq)}
+        state = %{state | file_handle: file, seq_index: seq_index, folded_offset: folded}
+        {:reply, :ok, after_prefix_cut(state, seq)}
 
       :none ->
         {:reply, :ok, Epoch.establish_baseline(state, seq)}
@@ -452,11 +462,11 @@ defmodule Flezha.State.WalWriter do
   end
 
   def handle_call({:correction_baseline, target}, _from, state) do
-    {:reply, Epoch.scan_correction_baseline(state.file_handle, state.wal_path, target), state}
+    {:reply, Epoch.scan_correction_baseline(state, target), state}
   end
 
   def handle_call({:consumed_offset_at, seq}, _from, state) do
-    {:reply, Epoch.scan_consumed_at(state.file_handle, state.wal_path, seq), state}
+    {:reply, Epoch.scan_consumed_at(state, seq), state}
   end
 
   def handle_call(:outbox_status, _from, state) do

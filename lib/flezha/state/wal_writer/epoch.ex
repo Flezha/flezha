@@ -85,7 +85,8 @@ defmodule Flezha.State.WalWriter.Epoch do
         pending_since_us: nil,
         oldest_unsnapshotted_at: nil,
         header_index: nil,
-        seq_index: SeqIndex.new()
+        seq_index: SeqIndex.new(),
+        folded_offset: -1
     }
 
     # A realign discards the whole lineage, so nothing in the new one has been
@@ -175,18 +176,19 @@ defmodule Flezha.State.WalWriter.Epoch do
   # is the baseline. A record with no event time (a plain change record from
   # pre-tier history) belongs to the baseline — it cannot be placed on the event
   # -time axis, so it cannot be said to come after the target.
-  def scan_correction_baseline(device, path, target) do
-    # `{-1, -1}` = no baseline seen yet; a first record already at or after the
-    # target means the rewind would have to go below the retained history.
-    RecordFrame.fold_records(device, path, {-1, -1}, fn {seq, header, body},
-                                                        {seq_acc, offset_acc} ->
-      case Wire.decode_effect_record(header, body) do
-        %{event_time: event_time} when event_time >= target ->
-          {:halt, baseline_result(seq_acc, offset_acc)}
+  def scan_correction_baseline(state, target) do
+    # Seq `-1` = no baseline seen yet, and the offset starts from the folded
+    # one; a first record already at or after the target means the rewind
+    # would have to go below the retained history.
+    RecordFrame.fold_records(state.file_handle, state.wal_path, {-1, state.folded_offset}, fn
+      {seq, header, body}, {seq_acc, offset_acc} ->
+        case Wire.decode_effect_record(header, body) do
+          %{event_time: event_time} when event_time >= target ->
+            {:halt, baseline_result(seq_acc, offset_acc)}
 
-        effect ->
-          {:cont, {seq, max(offset_acc, consumed_offset_of(effect))}}
-      end
+          effect ->
+            {:cont, {seq, max(offset_acc, consumed_offset_of(effect))}}
+        end
     end)
     |> case do
       {:ok, {:ok, _} = ok} -> ok
@@ -202,34 +204,28 @@ defmodule Flezha.State.WalWriter.Epoch do
   defp baseline_result(seq, _offset) when seq < 0, do: {:error, :nothing_to_correct}
   defp baseline_result(seq, offset), do: {:ok, %{seq: seq, consumed_offset: offset}}
 
-  def scan_consumed_at(device, path, upto) do
-    case RecordFrame.fold_records(device, path, -1, consumed_through(upto)) do
+  def scan_consumed_at(state, upto) do
+    seed = folded_through(state, upto)
+
+    case RecordFrame.fold_records(state.file_handle, state.wal_path, seed, consumed_through(upto)) do
       {:ok, offset} -> offset
       {:error, _refusal} = refused -> refused
     end
   end
 
   @doc """
-  The highest consumed offset `cell_id`'s WAL records carry, read from the file
-  alone; `nil` when none carries one. Behind the remote gate only the records
-  at or below the persisted flush cursor count, as `consumed_offset_through/2`
-  reads them.
+  The highest consumed offset `cell_id`'s WAL records carry, or its dedup
+  file's `folded_offset`, read from disk alone; `nil` when neither holds one.
+  Behind the remote gate only the records at or below the persisted flush
+  cursor count.
   """
   @spec consumed_offset_on_disk(Paths.cell_id()) :: non_neg_integer() | nil
   def consumed_offset_on_disk(cell_id) do
-    if RemoteGate.new(cell_id, :record),
-      do: consumed_offset_through(cell_id, Outbox.read(cell_id).outbox_flushed_seq),
-      else: consumed_offset_through(cell_id, :infinity)
-  end
+    dedup = Outbox.read(cell_id)
+    upto = if RemoteGate.new(cell_id, :record), do: dedup.outbox_flushed_seq, else: :infinity
+    fold = consumed_through(upto)
 
-  @doc """
-  The highest consumed offset `cell_id`'s WAL records up to seq `upto` carry,
-  read from the file alone; `nil` when none carries one.
-  """
-  @spec consumed_offset_through(Paths.cell_id(), integer() | :infinity) ::
-          non_neg_integer() | nil
-  def consumed_offset_through(cell_id, upto) do
-    case RecordFrame.fold_path(Paths.wal_path(cell_id), -1, consumed_through(upto)) do
+    case RecordFrame.fold_path(Paths.wal_path(cell_id), dedup.folded_offset, fold) do
       {:ok, offset} when offset >= 0 -> offset
       _none_or_refused -> nil
     end
@@ -279,6 +275,11 @@ defmodule Flezha.State.WalWriter.Epoch do
     )
   end
 
+  # The folded offset as far as `seq`: a cut is always at a snapshot's seq, so
+  # below the newest snapshot it may claim records above `seq`, and counts nothing.
+  defp folded_through(state, seq),
+    do: if(seq >= highest_snapshot_seq(state.cell_id), do: state.folded_offset, else: -1)
+
   defp highest_snapshot_seq(cell_id) do
     case Paths.snapshot_paths(cell_id) do
       [] -> 0
@@ -290,28 +291,28 @@ defmodule Flezha.State.WalWriter.Epoch do
 
   @doc """
   The effect records above `cursor`, as outbox entries in record order, and
-  the highest consumed offset the records at or below `durable` carry (`-1`
-  when none carries one). Behind the remote gate a record not yet acknowledged
-  reports its offset when its ship lands, through its dispatch, so `durable`
-  is the acknowledged seq there and the last record otherwise.
+  the highest consumed offset the records at or below `durable` carry, or the
+  writer's `folded_offset` (`-1` when neither holds one). Behind the remote
+  gate a record not yet acknowledged reports its offset when its ship lands,
+  through its dispatch, so `durable` is the acknowledged seq there and the last
+  record otherwise.
   """
   def scan_effect_records_above(state, device, cursor, durable) do
     # Both callers walked this file to its end immediately before, so a record
     # that does not decode here is impossible, not a case to answer.
     {:ok, {acc, max_consumed}} =
-      RecordFrame.fold_records(device, state.wal_path, {[], -1}, fn {seq, header, body},
-                                                                    {acc, max_consumed} =
-                                                                      unchanged ->
-        case Wire.decode_effect_record(header, body) do
-          nil ->
-            {:cont, unchanged}
+      RecordFrame.fold_records(device, state.wal_path, {[], state.folded_offset}, fn
+        {seq, header, body}, {acc, max_consumed} = unchanged ->
+          case Wire.decode_effect_record(header, body) do
+            nil ->
+              {:cont, unchanged}
 
-          effect ->
-            entry = Settlement.entry(state, seq, effect)
-            acc = if seq > cursor, do: [entry | acc], else: acc
-            offset = if seq <= durable, do: consumed_offset_of(effect), else: -1
-            {:cont, {acc, max(max_consumed, offset)}}
-        end
+            effect ->
+              entry = Settlement.entry(state, seq, effect)
+              acc = if seq > cursor, do: [entry | acc], else: acc
+              offset = if seq <= durable, do: consumed_offset_of(effect), else: -1
+              {:cont, {acc, max(max_consumed, offset)}}
+          end
       end)
 
     {Enum.reverse(acc), max_consumed}
@@ -338,6 +339,8 @@ defmodule Flezha.State.WalWriter.Epoch do
     # Only the snapshots ABOVE the boundary die. The ones at or below it are
     # exactly the baselines a restore to `seq` needs — dropping them all, as a
     # realign does, would be a wipe, not a rewind.
+    state = %{state | folded_offset: folded_through(state, seq)}
+
     Enum.each(Paths.snapshot_paths(state.cell_id), fn {snap_seq, path} ->
       if snap_seq > seq, do: File.rm(path)
     end)

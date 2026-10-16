@@ -39,6 +39,16 @@ second, uncapped queue, so a producer whose broker was unreachable kept every ou
 A dispatch now waits while the producer's queue is full, at most `queue_block_timeout_ms`, and the
 record then overflows; a delivery-guaranteed one is parked with the reason `queue_full`.
 
+### Fixed: a compacted Cell keeps its consumed offset
+
+A Cell whose compaction cut every record that carried a consumed offset reported none after a
+controller restart, to a sleeping class's floor seed, or after a rewind whose remaining records
+carried none, so the class's input-log floor came from the other Cells alone. The controller now
+keeps the highest offset a cut drops in the Cell's `.outbox.dedup` file, which grows to 32 bytes;
+an older file reads as before. An older controller reads the new file as unknown (epoch 0,
+cursor -1), so rolling back across this change re-drives outputs and can fence a Cell's remote
+copy as stale.
+
 ### Fixed: a remote flow Cell keeps its inputs while its first ship after a restart fails
 
 A `durable: remote` flow Cell whose first ship after a controller restart kept failing reported no

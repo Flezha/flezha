@@ -197,6 +197,43 @@ defmodule Flezha.State.WalWriterOutboxTest do
            "open must repopulate the durable consumed-offset from the WAL scan"
   end
 
+  test "a compaction that folded every offset-bearing record keeps the consumed offset", %{
+    rc: rc,
+    cell_id: cell_id
+  } do
+    pid = armed_writer(rc, cell_id)
+    append_effect(pid, 0, [output("k", "a")], 17)
+    assert {"a", md, _} = next_output()
+    settle(md)
+    :ok = WalWriter.fsync(pid)
+    assert InputLog.watermark(rc) == 17
+
+    # Compaction: the snapshot covers seq 0 and the WAL is cut through it.
+    {:ok, _} = Flezha.State.Snapshot.write_snapshot(cell_id, 0, TestHelpers.stub_header(), "s")
+    close_writer(pid, cell_id)
+
+    assert WalWriter.consumed_offset_on_disk(cell_id) == 17,
+           "a sleeper's seed must still see the consumed offset"
+
+    # Crash simulation: the rebuildable watermark cache is gone.
+    InputLog.forget_cell(rc, cell_id)
+    pid = start_writer(cell_id)
+    _ = WalWriter.last_persisted_seq(pid)
+
+    assert InputLog.watermark(rc) == 17,
+           "open must report the consumed offset the snapshot folded away"
+
+    # A rewind whose surviving records carry no offset falls back to the folded one.
+    append_effect(pid, 1, [], nil)
+    assert WalWriter.consumed_offset_at(pid, 1) == 17
+    append_effect(pid, 2, [], 20)
+    assert InputLog.watermark(rc) == 20
+    :ok = WalWriter.rewind_to(pid, 1, 1)
+
+    assert InputLog.watermark(rc) == 17,
+           "a rewind must not drop the row the folded records reported"
+  end
+
   test "flz state outbox renders live and offline status", %{
     rc: rc,
     cell_id: cell_id

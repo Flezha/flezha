@@ -4,11 +4,14 @@ defmodule Flezha.State.Outbox do
   seam over it.
 
   The file holds the persistence watermark `last_persisted_seq`, the outbox
-  flush cursor `outbox_flushed_seq` and the realign `epoch`, written together
-  through `.tmp` -> rename so a crash leaves either the previous triple or the
-  new one. It is a rebuildable cache advanced at fsync-batch cadence, never per
-  record: on boot the WAL scan is authoritative for `last_persisted_seq`, and a
-  stale cursor only widens the restart re-drive — it may lag, never lead.
+  flush cursor `outbox_flushed_seq`, the realign `epoch` and `folded_offset`,
+  the highest consumed offset the WAL records a prefix cut dropped carried
+  (`-1` for none), written together through `.tmp` -> rename so a crash leaves
+  either the previous record or the new one. It is a rebuildable cache
+  advanced at fsync-batch cadence, never per record: on boot the WAL scan is
+  authoritative for `last_persisted_seq`, and a stale cursor only widens the
+  restart re-drive — it may lag, never lead. Only the folded offset has no
+  other home: the records it came from are gone.
 
   The cursor is durable proof that a sink HAS the output, so it advances on the
   sink's confirmation, never on the in-memory hand-off. Every flushed output
@@ -29,7 +32,8 @@ defmodule Flezha.State.Outbox do
   @type t :: %{
           last_persisted_seq: non_neg_integer(),
           outbox_flushed_seq: integer(),
-          epoch: non_neg_integer()
+          epoch: non_neg_integer(),
+          folded_offset: integer()
         }
 
   @spec read(Paths.cell_id()) :: t()
@@ -37,26 +41,35 @@ defmodule Flezha.State.Outbox do
     path = Paths.outbox_dedup_path(cell_id)
 
     case File.read(path) do
+      {:ok, <<seq::64-big, flushed::64-big-signed, epoch::64-big, folded::64-big-signed>>} ->
+        %{
+          last_persisted_seq: seq,
+          outbox_flushed_seq: flushed,
+          epoch: epoch,
+          folded_offset: folded
+        }
+
       {:ok, <<seq::64-big, flushed::64-big-signed, epoch::64-big>>} ->
-        %{last_persisted_seq: seq, outbox_flushed_seq: flushed, epoch: epoch}
+        %{last_persisted_seq: seq, outbox_flushed_seq: flushed, epoch: epoch, folded_offset: -1}
 
       {:ok, <<seq::64-big>>} ->
-        %{last_persisted_seq: seq, outbox_flushed_seq: -1, epoch: 0}
+        %{last_persisted_seq: seq, outbox_flushed_seq: -1, epoch: 0, folded_offset: -1}
 
       _ ->
-        %{last_persisted_seq: 0, outbox_flushed_seq: -1, epoch: 0}
+        %{last_persisted_seq: 0, outbox_flushed_seq: -1, epoch: 0, folded_offset: -1}
     end
   end
 
-  @spec write(Paths.cell_id(), t()) :: :ok | {:error, term()}
-  def write(cell_id, %{
-        last_persisted_seq: seq,
-        outbox_flushed_seq: flushed,
-        epoch: epoch
-      })
+  @doc "Write the record; an absent `folded_offset` writes `-1`."
+  @spec write(Paths.cell_id(), map()) :: :ok | {:error, term()}
+  def write(
+        cell_id,
+        %{last_persisted_seq: seq, outbox_flushed_seq: flushed, epoch: epoch} = record
+      )
       when is_integer(seq) and seq >= 0 and is_integer(flushed) and flushed >= -1 and
              is_integer(epoch) and epoch >= 0 do
-    bytes = <<seq::64-big, flushed::64-big-signed, epoch::64-big>>
+    folded = Map.get(record, :folded_offset, -1)
+    bytes = <<seq::64-big, flushed::64-big-signed, epoch::64-big, folded::64-big-signed>>
 
     # The declaration creates no directory here: the WAL open owns that, so a
     # cache write can never resurrect a deleted Cell dir (it fails with

@@ -64,6 +64,7 @@ defmodule Flezha.State.WalWriter.Boot do
       outbox_durable_seq: -1,
       outbox_flushed_seq: -1,
       outbox_epoch: 0,
+      folded_offset: -1,
       timers: Flezha.Process.Timer.new(),
       outbox_awaiting: %{},
       outbox_inflight: :queue.new(),
@@ -136,9 +137,9 @@ defmodule Flezha.State.WalWriter.Boot do
     # the flush cursor re-enters the outbox queue with identical identity —
     # a stale cursor widens the re-drive (sink dedup absorbs), never skips.
     dedup = Outbox.read(state.cell_id)
+    state = %{state | folded_offset: dedup.folded_offset}
     durable = RemoteGate.durable_through(state, last_seq, dedup.outbox_flushed_seq)
 
-    # Records a snapshot folded away report no consumed offset.
     {redrive, max_consumed} =
       Epoch.scan_effect_records_above(state, file, dedup.outbox_flushed_seq, durable)
 

@@ -70,7 +70,7 @@ on the effectively-once tier writes.
 | `Flezha.State.RecordLog` / `SeqIndex` | Append/read for the reserved journal over `WalWriter.append_next/3` (assigns the seq, writes and fsyncs in one call); the sparse seq→position index (one sample per 256 records, pure — no file I/O) shared by the WAL writer and the input log so a prefix cut copies the tail as bytes. |
 | `Flezha.State.FsyncBatcher` | One shared GenServer casting `:fsync` to every dirty writer per tick. |
 | `Flezha.State.Snapshot` | Snapshot file lifecycle (`.tmp → fsync → rename → truncate`). |
-| `Flezha.State.Outbox` | Per-Cell dedup file (`last_persisted_seq`, `outbox_flushed_seq`, realign `epoch`; advanced at fsync cadence, repaired at boot from the WAL scan) and the delivery-confirmation seam (`dispatch/2`, `token/2,3`, `hold/1`, `settled/1`, `confirm/1`, `park/4`). The owner is always the Cell's writer, for a flow relay Cell and a steps relay Cell alike: a flow relay's entry is committed by its record's fsync, a steps relay's is held until a durable stage marker names its record (`commit_unit: :stage`, read at boot from the class registry). |
+| `Flezha.State.Outbox` | Per-Cell dedup file (`last_persisted_seq`, `outbox_flushed_seq`, realign `epoch`, and `folded_offset`, the highest consumed offset of the records a prefix cut dropped; advanced at fsync cadence, the first three repaired at boot from the WAL scan) and the delivery-confirmation seam (`dispatch/2`, `token/2,3`, `hold/1`, `settled/1`, `confirm/1`, `park/4`). The owner is always the Cell's writer, for a flow relay Cell and a steps relay Cell alike: a flow relay's entry is committed by its record's fsync, a steps relay's is held until a durable stage marker names its record (`commit_unit: :stage`, read at boot from the class registry). |
 | `Flezha.State.InputLog` / `CreditLedger` | Durable input for either kind (a flow relay on the effectively-once tier, a durable steps relay): the per-instance ingest journal (`<key>/input.log`), answered once synced, with its `flz.msg_id` index; the min-watermark the log owns over its reporters (Cells, or a steps relay's journal identity; `consumed: %{reporter => offset}` in its state, the ETS table the published view); `tail/1` (floor and last offset, no record read); truncation below `min(watermark, now - hold_window)` once the prefix exceeds the cut threshold; and the pure byte ledger (`admit/2`, `drain/2`) behind both source credit and the state-stream window. |
 | `Flezha.State.PersistenceResolver` | Per-class knobs: user map → instance metadata → SDK declaration → global default. |
 | `Flezha.State.Commands` / `Recovery` / `Restore` | Control-channel round-trips (`dispatch_restore_init_state/2`, `dispatch_compact_cell/2`, `notify_cell_backpressure/2`); `resync/2` (push `RestoreInitState` or pull `CompactCell`); assembly of the restore payload (latest snapshot + WAL tail + compensation markers). |
@@ -241,11 +241,21 @@ record.
 
 ## Outbox dedup file format
 
-`<key>.outbox.dedup` v2 is three 8-byte big-endian integers —
+`<key>.outbox.dedup` v3 is four 8-byte big-endian integers —
 `last_persisted_seq` (unsigned), `outbox_flushed_seq` (signed, `-1` = nothing flushed yet),
-`epoch` (unsigned) — written through `.tmp` + rename. A legacy 8-byte file reports its value as
-`last_persisted_seq` with cursor `-1` and epoch `0`; shorter or unreadable files report the
-empty triple.
+`epoch` (unsigned), `folded_offset` (signed, `-1` = none) — written through `.tmp` + rename.
+A v2 file (the first three) reads `folded_offset` as `-1`; a legacy 8-byte file reports its value
+as `last_persisted_seq` with cursor `-1` and epoch `0`; shorter or unreadable files report the
+empty record.
+
+`folded_offset` is the highest consumed offset the WAL records a live writer's prefix cut
+(`WalWriter.truncate_up_to/3`: compaction, or retention while the writer runs) dropped carried,
+behind the remote gate only those already acknowledged. A retention cut with no live writer
+(`Retention.rewrite_offline/2`) does not fold. It is the one
+field the WAL cannot rebuild, so every consumed-offset read of a Cell (the boot scan, a sleeper's
+seed, a rewind, a correction's baseline) starts from it. A cut is always at a snapshot's seq, so a
+rewind below the newest snapshot, or a realign, resets it to `-1`, and a read bounded below the
+newest snapshot does not count it.
 
 ## Schema evolution
 
