@@ -370,8 +370,10 @@ session minted per attach. The SDK answers `CreditWindowAck`; from then on:
   an empty buffer is always admitted, even past the window (single-frame overshoot).
 - **Fsync mints credit** — the writer attributes each written frame to the debiting channel
   (`credit_pending`, session-tagged) and reports `{:credit_drained, session, bytes}` on durable
-  drain, or immediately for frames that never occupy the buffer (dedup, gap, shed, realign, stale
-  refusal). `CreditLedger.drain/2` returns one batched `CreditGrant` when the outstanding bytes
+  drain, or immediately for frames that never occupy the buffer (dedup, gap, shed, stale refusal).
+  Bytes the writer lets go unsynced (a realign, a rewind's cut, a stop whose final sync fails) are
+  reported `{:credit_released, session, bytes}`: the window is freed, no marker is confirmed.
+  `CreditLedger.drain/2` returns one batched `CreditGrant` when the outstanding bytes
   fall below the low watermark or a low-watermark's worth has been freed; a stalled fsync mints
   nothing.
 - **The sender parks** — `flz_core/src/credit.rs` (one implementation for every host) debits

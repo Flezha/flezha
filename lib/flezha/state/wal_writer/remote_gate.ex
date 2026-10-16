@@ -72,12 +72,12 @@ defmodule Flezha.State.WalWriter.RemoteGate do
   def synced(state), do: state |> hold() |> advance()
 
   @doc """
-  A drain outside an fsync (a prefix cut's rewrite): released at once without
+  A drain outside an fsync (a prefix cut's rewrite): drained at once without
   the gate, held behind the earlier batches with it. Every drain of a gated
   writer reaches its stream in the order its records were written, because
   the stream counts drained bytes per writer to confirm its markers.
   """
-  def drained(%{remote: nil} = state), do: Admission.flush_credit_pending(state)
+  def drained(%{remote: nil} = state), do: Admission.flush_credit_pending(state, :credit_drained)
   def drained(state), do: state |> hold() |> advance()
 
   @doc """
@@ -112,11 +112,13 @@ defmodule Flezha.State.WalWriter.RemoteGate do
   boundary. Held batches through `keep_through` stay held behind a fresh ship;
   every other held or pending drain is released, freeing the stream's window
   without counting toward its markers, since the backend may never hold those
-  records. The ship in flight is forgotten. Without the gate this is the plain
-  credit flush.
+  records. The ship in flight is forgotten. Without the gate every pending
+  drain is released.
   """
   def reset(state, keep_through \\ -1)
-  def reset(%{remote: nil} = state, _keep_through), do: Admission.flush_credit_pending(state)
+
+  def reset(%{remote: nil} = state, _keep_through),
+    do: Admission.flush_credit_pending(state, :credit_released)
 
   def reset(state, keep_through),
     do: let_go(state, keep_through, &Admission.drain_credit(&1, &2, :credit_released))
@@ -125,9 +127,10 @@ defmodule Flezha.State.WalWriter.RemoteGate do
   The writer is going with every record it took synced on this disk: what it
   holds for them is not released but kept owed under the Cell, for the next
   writer's boot ship to drain (`take_owed/1`), so no marker confirms a record
-  before the backend holds it. The gate lets go as `reset/2` does.
+  before the backend holds it. The gate lets go as `reset/2` does. Without the
+  gate the synced records drain at once.
   """
-  def close(%{remote: nil} = state), do: reset(state)
+  def close(%{remote: nil} = state), do: drained(state)
   def close(state), do: let_go(state, -1, &:ets.insert(@owed, {&1, &2}))
 
   # Hand each held or pending drain after `keep_through` to `dispose`, keep

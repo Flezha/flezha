@@ -162,10 +162,10 @@ defmodule Flezha.State.WalWriter.Admission do
   # rejection, shed): it is drained at once.
   def release_credit(state, opts), do: drain_credit(state.cell_id, add_credit(%{}, opts))
 
-  def flush_credit_pending(%{credit_pending: cp} = state) when map_size(cp) == 0, do: state
+  def flush_credit_pending(%{credit_pending: cp} = state, _tag) when map_size(cp) == 0, do: state
 
-  def flush_credit_pending(state) do
-    drain_credit(state.cell_id, state.credit_pending)
+  def flush_credit_pending(state, tag) do
+    drain_credit(state.cell_id, state.credit_pending, tag)
     %{state | credit_pending: %{}}
   end
 

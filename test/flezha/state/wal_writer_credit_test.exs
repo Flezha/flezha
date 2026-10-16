@@ -77,6 +77,60 @@ defmodule Flezha.State.WalWriterCreditTest do
     assert_receive {:credit_drained, nil, 40, ^cell_id}
   end
 
+  # A drain confirms the stream's processed-prefix markers, so bytes that may
+  # be on no disk are released: the window is freed, no input is acknowledged.
+  describe "bytes a writer lets go unsynced are released, never drained" do
+    test "a clean stop syncs its pending bytes and drains them", %{pid: pid, cell_id: cell_id} do
+      append!(pid, 0, "a", opts(70))
+      assert sync(pid) == 0
+
+      {:ok, _} = Supervisor.delete_cell(cell_id)
+
+      assert_receive {:credit_drained, @session, 70, ^cell_id}
+      refute_received {:credit_released, _, _, _}
+    end
+
+    # The handle is closed inside the writer, so terminate's final datasync fails.
+    test "a stop whose final datasync fails", %{pid: pid, cell_id: cell_id} do
+      append!(pid, 0, "a", opts(70))
+      assert sync(pid) == 0
+
+      :sys.replace_state(pid, fn state ->
+        :ok = :file.close(state.file_handle)
+        state
+      end)
+
+      {:ok, _} = Supervisor.delete_cell(cell_id)
+
+      assert_receive {:credit_released, @session, 70, ^cell_id}
+      refute_received {:credit_drained, _, _, _}
+    end
+
+    test "a realign that truncates them", %{pid: pid, cell_id: cell_id} do
+      append!(pid, 0, "a", opts(70))
+      assert sync(pid) == 0
+
+      # A restarted runner's diverged seq discards record 0's lineage.
+      WalWriter.append_async(pid, 5, TestHelpers.stub_header(), "b", "exec-2", opts(30))
+      assert sync(pid) == 5
+
+      assert_received {:credit_released, @session, 70, ^cell_id}
+      refute_received {:credit_drained, _, _, _}
+    end
+
+    test "a rewind that cuts them", %{pid: pid, cell_id: cell_id} do
+      append!(pid, 0, "a", opts(70))
+      :ok = WalWriter.fsync(pid)
+      assert_receive {:credit_drained, @session, 70, ^cell_id}
+
+      append!(pid, 1, "b", opts(30))
+      :ok = WalWriter.rewind_to(pid, 0, 1)
+
+      assert_received {:credit_released, @session, 30, ^cell_id}
+      refute_received {:credit_drained, _, _, _}
+    end
+  end
+
   test "a dedup-dropped Change releases its bytes immediately", %{pid: pid} do
     append!(pid, 0, "a", opts(50))
     assert sync(pid) == 0
