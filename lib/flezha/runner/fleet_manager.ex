@@ -403,6 +403,15 @@ defmodule Flezha.Runner.FleetManager do
   @spec hub_started(String.t()) :: :ok
   def hub_started(namespace), do: GenServer.cast(__MODULE__, {:hub_started, namespace})
 
+  @doc """
+  Stop `namespace`'s hub unless a runner of this fleet occupies the namespace or
+  the hub holds anything (`HubManager.stop_hub_if_vacant/1`). Decided here, in
+  line with the connects that start the hub, so none lands between check and stop.
+  """
+  @spec reclaim_vacant_hub(String.t()) :: :ok
+  def reclaim_vacant_hub(namespace),
+    do: GenServer.cast(__MODULE__, {:reclaim_vacant_hub, namespace})
+
   def stop_namespace(namespace) do
     GenServer.call(__MODULE__, {:stop_namespace, namespace}, manager_call_timeout())
   end
@@ -723,6 +732,9 @@ defmodule Flezha.Runner.FleetManager do
     {:noreply, state |> Announce.forget(namespace) |> Announce.sync()}
   end
 
+  def handle_cast({:reclaim_vacant_hub, namespace}, state),
+    do: {:noreply, tap(state, &reclaim_vacant_hub(&1, namespace))}
+
   @impl true
   def handle_info(:schedule_runner_cleanup, state) do
     {:noreply, state |> arm_runner_cleanup() |> runner_cleanup() |> Announce.sync()}
@@ -829,7 +841,7 @@ defmodule Flezha.Runner.FleetManager do
   end
 
   # Which of `namespace`'s inactive runners have outlived the keepalive. The hub
-  # is reclaimed on the way past only when it holds no (suspended) relays.
+  # is reclaimed on the way past only when it is vacant.
   defp expired_runners(state, namespace, now, keep_alive) do
     state
     |> Roster.get_runner_ids(namespace, :inactive)
@@ -837,10 +849,14 @@ defmodule Flezha.Runner.FleetManager do
       {_status, timestamp} = state.runner_namespaces[namespace][runner_id]
 
       if timestamp + keep_alive <= now do
-        HubManager.stop_hub_if_vacant(namespace)
+        reclaim_vacant_hub(state, namespace)
         runner_id
       end
     end)
+  end
+
+  defp reclaim_vacant_hub(state, namespace) do
+    unless Roster.occupied?(state, namespace), do: HubManager.stop_hub_if_vacant(namespace)
   end
 
   defp runner_cleanup(state) do

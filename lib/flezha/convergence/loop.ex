@@ -26,7 +26,7 @@ defmodule Flezha.Convergence.Loop do
 
   alias Flezha.Convergence.Loop.{Liveness, Progress, State, Summary}
   alias Flezha.Runner.FleetManager
-  alias Flezha.Service.{EventManager, HubManager}
+  alias Flezha.Service.EventManager
 
   require Logger
 
@@ -385,12 +385,13 @@ defmodule Flezha.Convergence.Loop do
   # its relays here, is reclaimed: the node leaves that namespace's cluster
   # rather than being handed children it cannot host. Idempotent, and it stops
   # nothing while a local relay is still there — which is what makes it
-  # safe to run beside the plan that is still moving them off.
+  # safe to run beside the plan that is still moving them off. The fleet
+  # manager decides, since a runner may have connected since the snapshot.
   defp reclaim_vacant_hubs(%{active_runners: active}) do
     for {namespace, runners} <- active,
         runners != :unknown,
         MapSet.size(runners) == 0,
-        do: HubManager.stop_hub_if_vacant(namespace)
+        do: FleetManager.reclaim_vacant_hub(namespace)
 
     :ok
   end

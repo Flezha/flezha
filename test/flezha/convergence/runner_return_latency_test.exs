@@ -14,7 +14,7 @@ defmodule Flezha.Convergence.RunnerReturnLatencyTest do
   alias Flezha.Convergence.{Loop, Planner}
   alias Flezha.Convergence.Snapshot, as: ConvergenceSnapshot
   alias Flezha.Runner.FleetManager
-  alias Flezha.Service.RelayManager
+  alias Flezha.Service.{HubManager, RelayManager}
   alias Flezha.State.TestHelpers
   alias FlezhaTest.Fixtures.RelayFixture
   alias FlezhaTest.Helper.NodeTestHelper
@@ -115,6 +115,40 @@ defmodule Flezha.Convergence.RunnerReturnLatencyTest do
            ),
            "the rebound relay still read " <>
              "#{ConvergenceSnapshot.relay_health(@namespace, @relay)} after #{@budget_ms} ms"
+  end
+
+  # A connecting runner starts its namespace's hub before its handshake ends,
+  # and is not active until it does. A tick in between must not stop that hub:
+  # nothing starts it again until the runner reconnects.
+  @tag :runner_return_latency
+  test "a tick leaves the hub of a namespace whose only runner is still in its handshake" do
+    {:ok, _} = start_supervised({Loop, tick_ms: @periodic_tick_ms})
+    # Spend the tick the Loop fires on start, before the hub exists.
+    :ok = Loop.tick_now()
+
+    :ok = HubManager.ensure_hub(@namespace)
+    :ok = HubManager.await_recovery_complete()
+
+    session = "handshaking_runner"
+    pending = %{connect: %{namespace: @namespace}, stream_ref: nil, owed: [], waiters: []}
+    :sys.replace_state(FleetManager, &put_in(&1, [:pending_handshakes, session], pending))
+
+    on_exit(fn ->
+      :sys.replace_state(FleetManager, &(pop_in(&1, [:pending_handshakes, session]) |> elem(1)))
+    end)
+
+    :ok = Loop.tick_now()
+    _ = :sys.get_state(FleetManager)
+
+    assert HubManager.hub_alive?(@namespace),
+           "a tick stopped the hub of a runner in its handshake"
+
+    # The same tick reclaims the hub once the namespace is truly vacant, so the
+    # assertion above is not met by a tick that never reclaims at all.
+    :sys.replace_state(FleetManager, &(pop_in(&1, [:pending_handshakes, session]) |> elem(1)))
+    :ok = Loop.tick_now()
+    _ = :sys.get_state(FleetManager)
+    refute HubManager.hub_alive?(@namespace)
   end
 
   defp bound_to?(runner_id) do

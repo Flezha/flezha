@@ -183,6 +183,23 @@ defmodule Flezha.Runner.FleetManagerHubLifecycleTest do
     assert HubManager.hub_alive?(ns) === false, "an empty hub should still be reclaimed"
   end
 
+  test "cleanup preserves an empty hub while another runner is active in its namespace" do
+    ns = fresh_ns("occupied")
+    {:ok, _} = ensure_hub(ns)
+    on_exit(fn -> HubManager.stop_hub(ns) end)
+
+    seed_inactive(ns, "dead_runner")
+
+    :sys.replace_state(FleetManager, fn state ->
+      put_in(state, [:runner_namespaces, ns, "live_runner"], {:active, 0})
+    end)
+
+    cleanup_now()
+
+    assert HubManager.hub_alive?(ns) === true, "hub torn down under an active runner"
+    refute Map.has_key?(runner_map(ns), "dead_runner"), "dead runner ref must still be reaped"
+  end
+
   test "get_pid returns a clean error (never raises) when the hub is gone" do
     ns = fresh_ns("nohub")
     assert HubManager.get_pid(ns, "whoever") == {:error, {:hub_down, ns}}

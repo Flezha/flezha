@@ -29,6 +29,7 @@ defmodule Flezha.Service.HubManagerStarterTest do
   alias Flezha.Convergence.Loop
   alias Flezha.Convergence.Snapshot
   alias Flezha.Identificator
+  alias Flezha.Runner.FleetManager
   alias Flezha.Runner.FleetManager.Session
   alias Flezha.Service.HubManager
   alias Flezha.Service.HubManager.Starter
@@ -195,6 +196,7 @@ defmodule Flezha.Service.HubManagerStarterTest do
 
       {:ok, _} = start_supervised({Loop, tick_ms: 60_000})
       for _tick <- 1..3, do: :ok = Loop.tick_now()
+      _ = :sys.get_state(FleetManager)
 
       assert namespace in HubManager.get_running_namespaces()
       assert File.regular?(registry_file(namespace))

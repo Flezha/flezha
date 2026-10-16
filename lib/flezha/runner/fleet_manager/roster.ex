@@ -1,7 +1,7 @@
 defmodule Flezha.Runner.FleetManager.Roster do
   @moduledoc """
   Reads over `state.runner_namespaces` — which runners a namespace holds and
-  what status each is in.
+  what status each is in — and over the handshakes still pending in one.
 
   Every function is pure and takes the manager's state as a plain map, so the
   index can be asked a question without going through the GenServer that owns
@@ -29,6 +29,13 @@ defmodule Flezha.Runner.FleetManager.Roster do
     |> Enum.any?(fn {_ns, runners} ->
       match?({:active, _}, Map.get(runners, runner_id))
     end)
+  end
+
+  # A connect starts the namespace's hub before its handshake ends, and only the
+  # end makes the runner active.
+  def occupied?(state, namespace) do
+    get_runner_ids(state, namespace, :active) != [] or
+      Enum.any?(state.pending_handshakes, &match?({_, %{connect: %{namespace: ^namespace}}}, &1))
   end
 
   def find_runner_namespace(state, runner_id) do
