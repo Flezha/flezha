@@ -40,7 +40,8 @@ defmodule Flezha.Service.Admin do
   `call/4` answers the published function's value as JSON, and a failure as
   its `%Flezha.Error{}`; `run/4` answers the value itself, for a surface that
   renders terms. A request the door cannot place is refused with a `control.*`
-  code.
+  code. An unexpected failure (`internal.uncatalogued`) reaches a networked
+  caller without its reason, which the controller's log keeps.
   """
 
   alias Flezha.AuthZ
@@ -48,6 +49,8 @@ defmodule Flezha.Service.Admin do
   alias Flezha.Observability.Signal
   alias Flezha.Plugin.ProviderBehaviour.Options
   alias Flezha.Service.CallerContext
+
+  require Logger
 
   @type placement :: {:proven, String.t()} | :given
 
@@ -62,7 +65,7 @@ defmodule Flezha.Service.Admin do
     with {:ok, entry} <- resolve(name, caller_context),
          {:ok, written} <- decode_args(args),
          {:ok, positional} <- positional(entry, written, placement) do
-      apply_entry(entry, positional ++ [caller_context])
+      entry |> apply_entry(positional ++ [caller_context]) |> withheld(name, caller_context)
     end
   end
 
@@ -91,6 +94,22 @@ defmodule Flezha.Service.Admin do
 
   defp raised(:error, %{__struct__: _} = exception), do: Exception.message(exception)
   defp raised(kind, reason), do: "#{kind}: #{inspect(reason)}"
+
+  # An unexpected failure's reason is the controller's own text: module names,
+  # terms, the data they held. A caller over the network reads the code alone;
+  # the operator reads the reason in the log.
+  defp withheld({:error, %Flezha.Error{code: "internal.uncatalogued"} = error}, name, caller) do
+    if CallerContext.networked?(caller) do
+      Logger.error("#{name} failed for a #{caller.source} caller: #{error.message}")
+
+      {:error,
+       Flezha.Error.new("internal.uncatalogued", reason: "the controller's log names the cause")}
+    else
+      {:error, error}
+    end
+  end
+
+  defp withheld(answer, _name, _caller), do: answer
 
   defp answer({:error, %Flezha.Error{}} = refused), do: refused
   defp answer({:ok, value}), do: {:ok, value}

@@ -14,6 +14,7 @@ defmodule Flezha.Service.AdminTest do
 
   use Mimic
 
+  import ExUnit.CaptureLog
   import FlezhaTest.Case, only: [refute_minted: 2]
 
   alias Flezha.AuthZ
@@ -329,6 +330,43 @@ defmodule Flezha.Service.AdminTest do
                door("Relay.send", ~s(["o1", "m", "", null]))
 
       refute code == "internal.uncatalogued"
+    end
+  end
+
+  describe "an operation that raises" do
+    setup do
+      bind_app!()
+
+      Mimic.stub(Flezha.Service.RelayApi, :list, fn _namespace ->
+        raise "vault key s3cr3t-7f3a"
+      end)
+
+      :ok
+    end
+
+    # Fails when: a networked caller is answered the exception's text, or the
+    # operator's log loses it.
+    test "a networked caller gets its code alone, and the log the cause" do
+      log =
+        capture_log(fn ->
+          assert {:error, %Flezha.Error{code: "internal.uncatalogued", details: details}} =
+                   door("Relay.api", "[]")
+
+          assert details == %{"reason" => "the controller's log names the cause"}
+        end)
+
+      assert log =~ "Relay.api failed for a sdk caller"
+      assert log =~ "vault key s3cr3t-7f3a"
+    end
+
+    # Fails when: the local operator's `flz` loses the cause it is answered with.
+    test "a local caller is answered the cause" do
+      context = %{source: :cli, principal: @principal, namespace: @ns, role: :app}
+
+      assert {:error, %Flezha.Error{code: "internal.uncatalogued", details: details}} =
+               Admin.call("Relay.api", ~s(["#{@ns}"]), context, :given)
+
+      assert details["reason"] == "vault key s3cr3t-7f3a"
     end
   end
 

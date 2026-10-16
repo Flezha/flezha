@@ -9,11 +9,15 @@ defmodule Flezha.Mcp.StdioTest do
     fixtures: [{:auth_stores, prefix: "flz_mcp_stdio", claim: true, register_source: true}],
     async: false
 
+  use Mimic
+
   import ExUnit.CaptureIO
+  import ExUnit.CaptureLog
 
   alias Flezha.AuthZ.TokenStore
   alias Flezha.Mcp.Stdio
   alias Flezha.Runner.FleetManager
+  alias Flezha.Service.RelayApi
   alias FlezhaTest.Helper.{AuthTestHelper, FleetStateHelper}
 
   defp rpc(method, params \\ %{}),
@@ -176,6 +180,28 @@ defmodule Flezha.Mcp.StdioTest do
 
       assert answer["isError"]
       assert answer["structuredContent"]["error"]["code"] == "authz.token_unknown"
+    end
+
+    # Fails when: an operation that raises answers the assistant with the
+    # exception's text, or the operator's log loses it.
+    test "an operation that raises answers its code alone and logs its cause" do
+      {:ok, token, _} = TokenStore.issue("assistant", "default", :viewer, 3600)
+      Mimic.stub(RelayApi, :list, fn _namespace -> raise "vault key s3cr3t-7f3a" end)
+      call = %{"name" => "relay_api", "arguments" => %{"namespace" => "default"}}
+
+      log =
+        capture_log(fn ->
+          send(self(), {:line, online(rpc("tools/call", call), token: token)})
+        end)
+
+      assert_received {:line, line}
+
+      refute line =~ "s3cr3t"
+      assert %{"isError" => true, "structuredContent" => %{"error" => error}} = result(line)
+      assert error["code"] == "internal.uncatalogued"
+      assert error["details"] == %{"reason" => "the controller's log names the cause"}
+      assert log =~ "Relay.api failed for a mcp caller"
+      assert log =~ "vault key s3cr3t-7f3a"
     end
 
     test "an assistant reaches no operation kept off the network, whatever its token" do
