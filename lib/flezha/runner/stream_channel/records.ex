@@ -169,15 +169,15 @@ defmodule Flezha.Runner.StreamChannel.Records do
 
   @doc """
   `admit/3`, answering where an admitted frame goes: the Overwatch the
-  ownership record names while it is alive, the one the frame was admitted
-  against, else `nil` for the caller to resolve through the hub. During a hub
-  merge's hand-over the hub can still list the source node's departing
-  Overwatch, which would lose the frame.
+  ownership record names, alive or not, the one the frame was admitted
+  against, else `nil` (no record on this node) for the caller to resolve
+  through the hub. During a hub merge's hand-over the hub can still list the
+  source node's departing Overwatch, which would lose the frame.
   """
   @spec admit_to(map(), binary(), atom()) :: {:ok, pid() | nil} | :refused
   def admit_to(state, relay_class, kind) do
     case ownership(state, relay_class, kind) do
-      {:owner, pid} -> {:ok, if(Process.alive?(pid), do: pid)}
+      {:owner, pid} -> {:ok, pid}
       :unrecorded -> {:ok, nil}
       :refused -> :refused
     end

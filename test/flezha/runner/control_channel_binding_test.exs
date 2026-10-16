@@ -223,6 +223,46 @@ defmodule FlezhaTest.Runner.ControlChannelBindingTest do
     assert GenServer.call(ctx.overwatch, :snapshot) == "final-from-a"
   end
 
+  # KB-764: the ownership record outlives the Overwatch it names, and the hub
+  # can still list that dead pid or a departing copy, so the owner's park is
+  # recorded on disk for the next start to find instead.
+  test "KB-764: the owner's IterPark is recorded when its recorded Overwatch died and the hub " <>
+         "still lists that dead pid",
+       ctx do
+    %{relay_id: op, runner_a: runner_a, overwatch: overwatch} = ctx
+    NodeTestHelper.ensure_stopped(overwatch, :normal, 1_000)
+    assert {:ok, ^overwatch, ^runner_a} = ClassRegistry.owner(op)
+    assert HubManager.get_pid(@ns, op) == {:ok, overwatch}
+
+    write_frame(
+      start_channel(runner_a),
+      {:iter_park, %RunnerCommands.IterPark{relay_id: op, iter: 0, wake_deadline_ms: 0}}
+    )
+
+    assert NodeTestHelper.wait_until(fn -> parked?(op) end, 1_000) == true,
+           "the park went to the dead pid the hub listed and was lost"
+  end
+
+  test "KB-764: the owner's IterPark is recorded, not sent to a departing copy the hub lists, " <>
+         "when its recorded Overwatch died",
+       ctx do
+    %{relay_id: op, runner_a: runner_a, overwatch: overwatch} = ctx
+    NodeTestHelper.ensure_stopped(overwatch, :normal, 1_000)
+    hub_lists_a_departing_copy(op)
+
+    write_frame(
+      start_channel(runner_a),
+      {:iter_park, %RunnerCommands.IterPark{relay_id: op, iter: 0, wake_deadline_ms: 0}}
+    )
+
+    # The cast and the record are the two ends of one decision, so once the
+    # record is there a cast to the departing copy would already have landed.
+    assert NodeTestHelper.wait_until(fn -> parked?(op) end, 1_000) == true,
+           "the park went to the departing copy the hub listed"
+
+    refute_received {:suspend_cast, "departing", 0, _}
+  end
+
   test "KB-211: runner B's shutdown notification leaves A's relay's snapshot alone", ctx do
     %{relay_id: op, runner_b: runner_b} = ctx
 

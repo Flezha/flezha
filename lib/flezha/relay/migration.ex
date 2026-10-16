@@ -45,8 +45,9 @@ defmodule Flezha.Relay.Migration do
   the Overwatch process) stay, so a new input still has somewhere to land; it
   is the **runner** that holds zero resources for a suspended relay.
 
-  With no Overwatch on this node (already migrated or torn down) the record is
-  written under the instance's own key, so it is rediscovered as suspended
+  With no live Overwatch on this node (already migrated, torn down, or dead
+  while its ownership record remains) the record is written under the
+  instance's own key, so it is rediscovered as suspended
   whenever it is next started, unless another namespace owns its state.
 
   Called by `ControlChannel` on the runner's `IterPark`, with the Overwatch the
@@ -65,10 +66,14 @@ defmodule Flezha.Relay.Migration do
   @doc """
   The Overwatch a runner's frame about `relay_id` goes to: `bound`, the one the
   frame was admitted against (`Flezha.Runner.StreamChannel.Records.admit_to/3`),
-  else the hub's.
+  while it is alive, else the hub's when no Overwatch was recorded. A dead
+  `bound` is `{:error, :overwatch_down}`: the hub may still list that pid or a
+  departing copy, and a cast to either is lost.
   """
   @spec overwatch(binary(), binary(), pid() | nil) :: {:ok, pid()} | {:error, term()}
-  def overwatch(_namespace, _relay_id, bound) when is_pid(bound), do: {:ok, bound}
+  def overwatch(_namespace, _relay_id, bound) when is_pid(bound),
+    do: if(Process.alive?(bound), do: {:ok, bound}, else: {:error, :overwatch_down})
+
   def overwatch(namespace, relay_id, nil), do: HubManager.get_pid(namespace, relay_id)
 
   @doc """

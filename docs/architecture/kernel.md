@@ -570,7 +570,8 @@ as `[:flezha, :runner, :foreign_frame_refused]`, and answered with `RemRelay`, s
 that was evicted while still alive is told to stop the first time it speaks. An admitted
 control frame goes to the Overwatch the record names (`Records.admit_to/3`), not to a fresh
 hub lookup, which during a hub merge's hand-over can still name the source node's departing
-Overwatch.
+Overwatch. When the Overwatch the record names has died, the frame goes to no Overwatch: a park
+is written as the instance's park record for its next start to find (`Migration.overwatch/3`).
 
 The identity check cannot tell an old session of the **same** identity from the new one. Two
 fences cover that:
