@@ -16,6 +16,7 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
   alias Flezha.Runner.FleetManager
   alias Flezha.Runner.StreamChannel
   alias Flezha.Service.EventManager
+  alias Flezha.Service.HubManager
   alias Flezha.Service.PluginManager
   alias Flezha.Service.PortPilot
   alias Flezha.Service.RelayManager
@@ -230,18 +231,30 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
   end
 
   @doc """
-  Wait until `node` serves `factory_id` in `namespace` as this node's table
-  has it, or flunk. A relay is hashed over the controllers in that table, and a
-  peer joins the hub before its runner's factories reach it, so a placement
-  probe started on hub membership alone can place every candidate here.
+  Wait until `node` serves `factory_id` in `namespace` and every hub node's
+  table names the same members, or flunk after `timeout_ms`. A relay is hashed
+  over those members, and a peer joins the hub before its runner's factories
+  reach it. A node whose table still differs re-places a start it receives and
+  forwards it, and the start's caller never hears that answered.
   """
-  def await_serving(node, namespace, factory_id) do
+  def await_serving(node, namespace, factory_id, timeout_ms \\ 30_000) do
     hub_id = Identificator.hub(namespace)
 
-    wait_until(fn -> node in GroupedHashing.group_nodes(hub_id, factory_id) end, 30_000) ||
+    wait_until(fn -> served_alike?(hub_id, namespace, node, factory_id) end, timeout_ms) ||
       ExUnit.Assertions.flunk(
-        "#{inspect(node)} never served #{factory_id} in the #{namespace} hub"
+        "#{inspect(node)} never served #{factory_id} alike on every node of the #{namespace} hub"
       )
+  end
+
+  # Each node answers from its own table; one that cannot answer agrees with nothing.
+  defp served_alike?(hub_id, namespace, node, factory_id) do
+    members = GroupedHashing.group_nodes(hub_id, factory_id)
+
+    node in members and
+      namespace
+      |> HubManager.get_hub_nodes()
+      |> :erpc.multicall(GroupedHashing, :group_nodes, [hub_id, factory_id], 5_000)
+      |> Enum.all?(&(&1 == {:ok, members}))
   end
 
   # A peer BEAM is linked to the test process, so by the time a teardown runs
