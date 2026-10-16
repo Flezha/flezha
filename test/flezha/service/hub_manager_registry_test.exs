@@ -78,6 +78,17 @@ defmodule Flezha.Service.HubManagerRegistryTest do
       assert got_pid == local_pid
     end
 
+    test "get_pid/2 (a call's target) skips a dead-node entry, else answers the head" do
+      parked = spawn(&NodeTestHelper.park/0)
+      on_exit(fn -> Process.exit(parked, :kill) end)
+
+      inject_relay(@namespace, "relay_moved", [{:dead@nohost, parked}, {node(), self()}])
+      assert HubManager.get_pid(@namespace, "relay_moved") == {:ok, self()}
+
+      inject_relay(@namespace, "relay_handover", [{node(), parked}, {node(), self()}])
+      assert HubManager.get_pid(@namespace, "relay_handover") == {:ok, parked}
+    end
+
     test "get_all_relays/1 omits a relay that has only dead-node entries" do
       inject_relay(@namespace, "relay_dead", [{:dead@nohost, spawn(fn -> :ok end)}])
 

@@ -87,51 +87,13 @@ defmodule Flezha.Service.HubManager.Rows do
     end
   end
 
-  @doc """
-  Resolve a relay's runnable pid from a ProcessHub `node_pids` list
-  (`[{node, pid}]`, with 0, 1, or many entries).
-
-  Drops entries on nodes absent from the live cluster, prefers the local node's
-  pid (verified alive), and otherwise returns a pid on another live node.
-  Returns `nil` when no live pid remains.
-
-  This centralises the multi-node-safe access that replaced the former
-  single-element `[{_node, pid}]` matches, which raised `FunctionClauseError`
-  the moment a relay was registered on more than one node.
-  """
-  @spec live_pid([{node(), pid()}]) :: pid() | nil
-  def live_pid(node_pids) when is_list(node_pids) do
-    local = node()
-    live_nodes = [local | Node.list()]
-    on_live_node = Enum.filter(node_pids, fn {n, _pid} -> n in live_nodes end)
-
-    local_alive =
-      Enum.find_value(on_live_node, fn
-        {^local, pid} -> if Process.alive?(pid), do: pid, else: nil
-        _ -> nil
-      end)
-
-    cond do
-      is_pid(local_alive) ->
-        local_alive
-
-      true ->
-        case Enum.find(on_live_node, fn {n, _pid} -> n != local end) do
-          {_n, pid} -> pid
-          nil -> nil
-        end
-    end
-  end
-
-  def live_pid(_), do: nil
-
   # A plugin entry is a hub child too, keyed `{:plugin, name}`; every reader
   # here that means relays takes the binary keys only.
   def get_all_relays(namespace) do
     with_live_hub(namespace, [], fn hub_id ->
       ProcessHub.process_list(hub_id, :global)
       |> Enum.flat_map(fn {relay_id, node_pids} ->
-        case is_binary(relay_id) && live_pid(node_pids) do
+        case is_binary(relay_id) && Hub.live_pid(node_pids) do
           pid when is_pid(pid) -> [{relay_id, pid}]
           _plugin_or_dead -> []
         end
@@ -140,30 +102,16 @@ defmodule Flezha.Service.HubManager.Rows do
   end
 
   @doc """
-  The live node hosting a relay from its `node_pids` (`[{node, pid}]`): the
-  local node when it holds the runnable pid, else another live cluster node,
-  else `nil` (every entry is on a dead node — a FAILED placement). Sibling of
-  `live_pid/1` for surfacing per-node placement in the CLI.
+  The node hosting the pid `Flezha.Process.Hub.live_pid/1` picks from
+  `node_pids`, or `nil` when every entry is on a dead node (a FAILED
+  placement); it surfaces per-node placement in the CLI.
   """
   @spec live_node([{node(), pid()}]) :: node() | nil
-  def live_node(node_pids) when is_list(node_pids) do
-    local = node()
-    live_nodes = [local | Node.list()]
-    on_live_node = Enum.filter(node_pids, fn {n, _pid} -> n in live_nodes end)
-
-    cond do
-      Enum.any?(on_live_node, fn {n, pid} -> n == local and Process.alive?(pid) end) ->
-        local
-
-      true ->
-        case Enum.find(on_live_node, fn {n, _pid} -> n != local end) do
-          {n, _pid} -> n
-          nil -> nil
-        end
-    end
+  def live_node(node_pids) do
+    with pid when is_pid(pid) <- Hub.live_pid(node_pids),
+         {host, ^pid} <- List.keyfind(node_pids, pid, 1),
+         do: host
   end
-
-  def live_node(_), do: nil
 
   @doc """
   Per-relay view of a namespace's durable registry for user surfaces:

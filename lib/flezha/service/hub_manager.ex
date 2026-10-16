@@ -38,7 +38,7 @@ defmodule Flezha.Service.HubManager do
   defdelegate hook_registry_written(arg1, arg2), to: Placement
   defdelegate hub_alive?(arg1), to: Rows
   defdelegate live_node(arg1), to: Rows
-  defdelegate live_pid(arg1), to: Rows
+  defdelegate live_pid(arg1), to: Hub
   defdelegate migration_strategy(), to: Lifecycle
   defdelegate relay_bindings(arg1), to: Rows
   defdelegate declared_bindings(arg1), to: Rows

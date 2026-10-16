@@ -18,9 +18,20 @@ defmodule Flezha.Relay.Lookup.Hub do
     namespace
     |> Identificator.hub()
     |> Hub.with_live({:error, :hub_down}, fn hub_id ->
-      case ProcessHub.get_pids(hub_id, relay_id) do
-        [] -> {:error, :not_found}
-        [pid | _] -> {:ok, pid}
+      # A second entry is a hand-over's arriving copy, answered after the head,
+      # or a dead node's row left by a move: only then is the row filtered.
+      case ProcessHub.child_lookup(hub_id, relay_id) do
+        {_spec, [{_node, pid}]} ->
+          {:ok, pid}
+
+        {_spec, node_pids} ->
+          case Hub.on_live_nodes(node_pids) do
+            [{_node, pid} | _] -> {:ok, pid}
+            [] -> {:error, :not_found}
+          end
+
+        nil ->
+          {:error, :not_found}
       end
     end)
   end

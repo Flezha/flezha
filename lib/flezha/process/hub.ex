@@ -7,7 +7,8 @@ defmodule Flezha.Process.Hub do
   and the call itself must survive the hub going away underneath it. Every
   hub read and every hub call runs through `with_live/3`, which answers the
   caller's declared value either way: a namespace hub dying may not take a
-  node-wide process with it.
+  node-wide process with it. `live_pid/1` picks the runnable pid from a hub
+  registry row.
   """
 
   require Logger
@@ -40,5 +41,31 @@ defmodule Flezha.Process.Hub do
       )
 
       on_dead
+  end
+
+  @doc """
+  Resolve a relay's runnable pid from a ProcessHub `node_pids` list
+  (`[{node, pid}]`, with 0, 1, or many entries).
+
+  Drops entries on nodes absent from the live cluster, prefers the local node's
+  pid (verified alive), and otherwise returns a pid on another live node.
+  Returns `nil` when no live pid remains.
+  """
+  @spec live_pid([{node(), pid()}]) :: pid() | nil
+  def live_pid(node_pids) when is_list(node_pids) do
+    local = node()
+    on_live_node = on_live_nodes(node_pids)
+
+    Enum.find_value(on_live_node, fn {n, pid} -> n == local and Process.alive?(pid) and pid end) ||
+      Enum.find_value(on_live_node, fn {n, pid} -> n != local and pid end)
+  end
+
+  def live_pid(_), do: nil
+
+  @doc "The `node_pids` entries on nodes in the live cluster, in their order."
+  @spec on_live_nodes([{node(), pid()}]) :: [{node(), pid()}]
+  def on_live_nodes(node_pids) do
+    live_nodes = [node() | Node.list()]
+    Enum.filter(node_pids, fn {n, _pid} -> n in live_nodes end)
   end
 end
