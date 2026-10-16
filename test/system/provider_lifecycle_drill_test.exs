@@ -34,6 +34,7 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
 
   use FlezhaTest.SystemCase, capability: :runner_lifecycle
 
+  import ExUnit.CaptureLog, only: [with_log: 1]
   import FlezhaTest.Helper.NodeTestHelper, only: [claim_tmp_dir: 1, wait_until: 2]
 
   import FlezhaTest.Helper.TierE2EHarness,
@@ -228,7 +229,15 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
 
     for {id, provider} <- Providers.all(), not Map.has_key?(@deferred, provider) do
       {fixture, opts} = Map.fetch!(rows, provider)
-      drive(id, provider, fixture, opts, ctx, events)
+
+      if provider == Provider.Websocket do
+        {_, log} = with_log(fn -> drive(id, provider, fixture, opts, ctx, events) end)
+        # The row's kill reports reach this capture too; the nested one asserts them.
+        dyn_sup = inspect(WorkerSup.dyn_sup_name(WorkerSup.family(provider)))
+        assert_refused_only(log, ["crashed: :killed", "#{dyn_sup} terminated"])
+      else
+        drive(id, provider, fixture, opts, ctx, events)
+      end
     end
   end
 
@@ -253,40 +262,56 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
        ["alerts", "audit"]}
     ]
 
-    for {flags, extension, entry, filter} <- rows do
-      plugin_id = "drill-ws-channel-#{System.unique_integer([:positive])}"
+    {_, log} = with_log(fn -> Enum.each(rows, &assert_ws_channel(&1, ctx)) end)
+    assert_refused_only(log)
+  end
 
-      fields = %{
-        "provider" => "relay_websocket",
-        "opts" =>
-          flags
-          |> Map.merge(%{uri: ctx.ws_uri, idle_timeout_ms: 0, plugin_id: plugin_id})
-          |> cli_opts(),
-        "hooks" => [
-          %{"name" => Atom.to_string(extension), "opts" => subscription_opts(extension)}
-        ],
-        "namespace" => ctx.namespace,
-        "relay_id" => ctx.relay_id
-      }
+  # `ctx.ws_uri` answers nothing, so a socket that dials it before its disable
+  # logs the refusal, and whether it does is timing: every error or warning in
+  # the capture is that refusal, or one of `also`.
+  defp assert_refused_only(log, also \\ []) do
+    stray =
+      log
+      |> String.split("\n")
+      |> Enum.filter(&(&1 =~ ~r/\[(error|warning)\]/))
+      |> Enum.reject(&String.contains?(&1, ["econnrefused" | also]))
 
-      # The verb prints its own confirmation; this test asserts on the table.
-      assert {:ok, _printed} =
-               ExUnit.CaptureIO.with_io(fn ->
-                 Cli.call("PluginManager.enable", Jason.encode!([plugin_id, fields]), [])
-               end)
+    assert stray == [], "a socket logged more than refused reconnects:\n#{Enum.join(stray, "\n")}"
+  end
 
-      stored = plugin_table(ctx).plugins[plugin_id].opts
-      assert stored.entry_channel == entry
-      assert stored.filter_channel == filter
+  defp assert_ws_channel({flags, extension, entry, filter}, ctx) do
+    plugin_id = "drill-ws-channel-#{System.unique_integer([:positive])}"
 
-      # The map the socket process is started with, from the options the live
-      # table holds: this is what every injection of that socket carries.
-      assert [{{_namespace, ^plugin_id}, %{targets: [%{channel: ^entry}]}}] =
-               Provider.Websocket.worker_specs(stored)
+    fields = %{
+      "provider" => "relay_websocket",
+      "opts" =>
+        flags
+        |> Map.merge(%{uri: ctx.ws_uri, idle_timeout_ms: 0, plugin_id: plugin_id})
+        |> cli_opts(),
+      "hooks" => [
+        %{"name" => Atom.to_string(extension), "opts" => subscription_opts(extension)}
+      ],
+      "namespace" => ctx.namespace,
+      "relay_id" => ctx.relay_id
+    }
 
-      assert {:ok, _printed} =
-               ExUnit.CaptureIO.with_io(fn -> disable(plugin_id, ctx) end)
-    end
+    # The verb prints its own confirmation; this test asserts on the table.
+    assert {:ok, _printed} =
+             ExUnit.CaptureIO.with_io(fn ->
+               Cli.call("PluginManager.enable", Jason.encode!([plugin_id, fields]), [])
+             end)
+
+    stored = plugin_table(ctx).plugins[plugin_id].opts
+    assert stored.entry_channel == entry
+    assert stored.filter_channel == filter
+
+    # The map the socket process is started with, from the options the live
+    # table holds: this is what every injection of that socket carries.
+    assert [{{_namespace, ^plugin_id}, %{targets: [%{channel: ^entry}]}}] =
+             Provider.Websocket.worker_specs(stored)
+
+    assert {:ok, _printed} =
+             ExUnit.CaptureIO.with_io(fn -> disable(plugin_id, ctx) end)
   end
 
   defp start_relay(namespace, label, factory_id \\ "do_nothing") do
@@ -346,9 +371,7 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
     assert :ok = disable(plugin_id, ctx), "provider `#{id}` refused a real disable"
 
     if worker = provider.__provider__().worker do
-      family = WorkerSup.family(provider)
-
-      assert wait_until(fn -> keys_for(family, plugin_id) == [] end, 5_000),
+      assert wait_until(fn -> not alive_worker?(provider, plugin_id) end, 5_000),
              "provider `#{id}` left a #{worker.restart} worker registered after disable"
     end
 
@@ -360,24 +383,27 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
   # plugin back; a `:transient` or `:permanent` one is restarted by its own
   # supervisor under the same key. A source has nothing to keep and a sink has a
   # queue, which is why the value is the provider's and not the shape's.
+  # The kill's crash reports are captured and must name the killed worker, so
+  # the capture hides nothing else.
   defp assert_declared_restart(id, provider, plugin_id) do
     case provider.__provider__().worker do
       nil ->
         :ok
 
-      %{restart: :temporary} ->
-        kill_worker(provider, plugin_id)
+      worker ->
+        {back?, log} =
+          with_log(fn ->
+            kill_worker(provider, plugin_id)
+            wait = if worker.restart == :temporary, do: 500, else: 5_000
+            wait_until(fn -> alive_worker?(provider, plugin_id) end, wait)
+          end)
 
-        refute wait_until(fn -> alive_worker?(provider, plugin_id) end, 500),
-               "provider `#{id}` declares restart :temporary and its supervisor brought the " <>
-                 "worker back anyway"
+        assert log =~ "killed" and log =~ inspect(worker.module),
+               "provider `#{id}`'s kill logged no report naming #{inspect(worker.module)}"
 
-      %{restart: restart} ->
-        kill_worker(provider, plugin_id)
-
-        assert wait_until(fn -> alive_worker?(provider, plugin_id) end, 5_000),
-               "provider `#{id}` declares restart #{inspect(restart)} and its supervisor did " <>
-                 "not bring the worker back"
+        assert back? == (worker.restart != :temporary),
+               "provider `#{id}` declares restart #{inspect(worker.restart)} and its " <>
+                 "supervisor #{if back?, do: "brought the worker back", else: "did not bring it back"}"
     end
   end
 
@@ -385,10 +411,7 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
   # stamp from that library's priv/ and rendering it through a protocol the
   # boot consolidated again. The package is loaded at run time, hence `apply/3`.
   defp assert_stamped(FlezhaExamplePlugin.Stamp = provider, plugin_id, %{path: path}) do
-    apply(FlezhaExamplePlugin.Stamp.Writer, :append, [
-      WorkerSup.worker(provider, plugin_id),
-      "drill"
-    ])
+    apply(FlezhaExamplePlugin.Stamp.Writer, :append, [worker_pid!(provider, plugin_id), "drill"])
 
     assert wait_until(fn -> File.read(path) == {:ok, ">>[stamped] drill\n"} end, 5_000),
            "the example package's worker wrote no stamped line to #{path}"
@@ -399,11 +422,19 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
   # The provider's own worker, through its family: a shared plugin's table
   # tracks the copy that holds it, and the declared restart is the worker's.
   defp kill_worker(provider, plugin_id) do
-    [key | _] = keys_for(WorkerSup.family(provider), plugin_id)
-    pid = WorkerSup.worker_pid(provider, key)
+    pid = worker_pid!(provider, plugin_id)
     ref = Process.monitor(pid)
     Process.exit(pid, :kill)
     assert_receive {:DOWN, ^ref, :process, ^pid, _}, 5_000
+  end
+
+  # Resolved through the key the product registered, because a cast to a name
+  # nobody holds is dropped without a word.
+  defp worker_pid!(provider, plugin_id) do
+    assert [key | _] = keys_for(WorkerSup.family(provider), plugin_id),
+           "no #{inspect(provider)} worker is registered for `#{plugin_id}`"
+
+    WorkerSup.worker_pid(provider, key)
   end
 
   defp alive_worker?(provider, plugin_id) do
@@ -437,7 +468,7 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
         assert is_pid(Table.owned_pid(table, plugin_id)),
                "provider `#{id}` declares #{inspect(worker.module)} and the table tracks nothing"
 
-        assert keys_for(WorkerSup.family(provider), plugin_id) != [],
+        assert alive_worker?(provider, plugin_id),
                "provider `#{id}`'s worker is registered under no key of its own family"
     end
   end
