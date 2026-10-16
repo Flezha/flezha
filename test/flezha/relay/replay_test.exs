@@ -1,7 +1,8 @@
 defmodule FlezhaTest.Relay.ReplayAdoptionTest do
   @moduledoc """
   `Replay.adopt_moved_state/3` adopting a relay's durable state from
-  another controller node, once per arrival and never from a restore.
+  another controller node on arrival, again before the runner starts while it
+  has not landed (`Replay.adopt_unlanded_state/3`), and never from a restore.
 
   A partition rescale gathers the whole group's Cells onto the node that ran
   it and stamps that node on every new member's opts. ProcessHub then places the
@@ -33,10 +34,10 @@ defmodule FlezhaTest.Relay.ReplayAdoptionTest do
     }
   end
 
-  defp expect_adopt(reply_to) do
-    stub(Adoption, :adopt_newest, fn relay_class, source ->
-      send(reply_to, {:adopted, source, relay_class})
-      :ok
+  defp expect_adopt(reply_to, verdict \\ :ok) do
+    stub(Adoption, :adopt_newest, fn relay_class, source, owner ->
+      send(reply_to, {:adopted, source, relay_class, owner})
+      verdict
     end)
   end
 
@@ -67,7 +68,7 @@ defmodule FlezhaTest.Relay.ReplayAdoptionTest do
 
     relay = adopt("ohlc#p1", state_source_node: @peer)
 
-    assert_received {:adopted, @peer, "ohlc#p1"}
+    assert_received {:adopted, @peer, "ohlc#p1", _}
     refute Keyword.has_key?(relay.opts, :state_source_node)
   end
 
@@ -76,7 +77,7 @@ defmodule FlezhaTest.Relay.ReplayAdoptionTest do
 
     adopt("ohlc#p1", state_source_node: @peer, relay_class: "shared_class")
 
-    assert_received {:adopted, @peer, "shared_class"}
+    assert_received {:adopted, @peer, "shared_class", _}
   end
 
   test "a member placed on the assembling node adopts from no node" do
@@ -84,7 +85,7 @@ defmodule FlezhaTest.Relay.ReplayAdoptionTest do
 
     adopt("ohlc#p0", state_source_node: node())
 
-    assert_received {:adopted, nil, "ohlc#p0"}
+    assert_received {:adopted, nil, "ohlc#p0", _}
   end
 
   test "a relay that was never rescaled adopts from no node" do
@@ -92,7 +93,54 @@ defmodule FlezhaTest.Relay.ReplayAdoptionTest do
 
     adopt("plain", [])
 
-    assert_received {:adopted, nil, "plain"}
+    assert_received {:adopted, nil, "plain", _}
+  end
+
+  # fails when: a pull that did not land drops its source, so the relay binds
+  # without the copy that node still holds and no later bind asks it again.
+  test "a pull that did not land keeps its source for the bind to pull again" do
+    expect_adopt(self(), :not_landed)
+
+    relay = adopt("ohlc#p1", state_source_node: @peer)
+    owner = self()
+    assert_received {:adopted, @peer, "ohlc#p1", ^owner}
+    assert relay.opts[:state_source_node] == @peer
+
+    task = spawn(fn -> :ok end)
+    Replay.adopt_unlanded_state(state("ohlc#p1"), relay, task)
+    assert_received {:adopted, @peer, "ohlc#p1", ^task}
+  end
+
+  # fails when: the bind adopts again over a copy that is already here, so a
+  # tie with the backend's cut downloads the whole class a second time.
+  test "before the runner starts, a copy already here is not adopted again" do
+    expect_adopt(self())
+    Flezha.State.TestHelpers.write_wal({"here", "task", "k"}, 0..1)
+    builder = %Builder{id: "here", factory_id: "candles", run: :flow}
+
+    assert Replay.adopt_unlanded_state(state("here"), builder, self()) == builder
+    refute_received {:adopted, _, _, _}
+  end
+
+  # fails when: only an arrival adopts, so a node that lost its disk binds a
+  # restarted runner with nothing while the backend holds the class.
+  test "before the runner starts, a node holding nothing adopts" do
+    expect_adopt(self())
+
+    Replay.adopt_unlanded_state(state("cold"), state("cold").builder, self())
+
+    assert_received {:adopted, nil, "cold", _}
+  end
+
+  # fails when: every bind of a class that keeps no state lists the backend.
+  test "before the runner starts, a class that keeps no state adopts nothing" do
+    expect_adopt(self())
+    :ok = Flezha.Relay.ClassRegistry.put_persistent("stateless", false)
+    on_exit(fn -> Flezha.Relay.ClassRegistry.delete("stateless") end)
+
+    Replay.adopt_unlanded_state(state("stateless"), state("stateless").builder, self())
+
+    refute_received {:adopted, _, _, _}
   end
 
   # fails when: the restore a heal kicks on a bound relay adopts again, and
@@ -104,7 +152,7 @@ defmodule FlezhaTest.Relay.ReplayAdoptionTest do
     :ok = Replay.dispatch_restore(state("ohlc#p1"), [state_source_node: @peer], "runner-1")
 
     assert_receive ^scanned, 2_000
-    refute_received {:adopted, _, _}
+    refute_received {:adopted, _, _, _}
   end
 end
 

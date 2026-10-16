@@ -6,7 +6,7 @@ defmodule Flezha.Relay.Handover do
   The SDK's serialized state travels, and it comes from the **runner**, so a
   migration caused by that runner's death ships nothing. The source
   controller's disk then holds the only surviving state, which the destination
-  already pulled at its start (`Replay.adopt_moved_state/3`), before it bound.
+  already pulled at its start (`Replay.adopt_moved_state/4`), before it bound.
 
   Consent is the other half: a migration mid-correction, mid-iteration, or with
   an outbox still owing output would strand work on the departing node, so those

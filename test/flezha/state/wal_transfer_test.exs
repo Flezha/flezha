@@ -13,6 +13,7 @@ defmodule FlezhaTest.State.WalTransferTest do
 
   import ExUnit.CaptureLog
 
+  alias Flezha.Relay.{Builder, Overwatch, Replay}
   alias Flezha.State.{Adoption, FsyncBatcher, InputLog, Paths, Supervisor, TaskJournal}
   alias Flezha.State.TestHelpers
   alias Flezha.State.{WalTransfer, WalWriter}
@@ -246,6 +247,8 @@ defmodule FlezhaTest.State.WalTransferTest do
     # fails when: a writer a relay stopped before its writers closed stays
     # open, so the bind's writer start returns it and appends to the copy set
     # aside and removed.
+    # fails when: it closes after the newer copy landed, and writes the stale
+    # copy's cursors over the newer one's.
     test "closes the writers a stopped relay left open, then adopts" do
       {class, cell_id} = class_and_cell("open")
       newer = with_source_copy(cell_id, 0..5)
@@ -258,6 +261,7 @@ defmodule FlezhaTest.State.WalTransferTest do
 
       assert_received {:DOWN, ^ref, :process, ^writer, :normal}
       assert File.read!(Paths.wal_path(cell_id)) == newer
+      refute File.exists?(Paths.outbox_dedup_path(cell_id))
     end
 
     # fails when: a writer a late runner frame opens while the newer copy is
@@ -302,6 +306,22 @@ defmodule FlezhaTest.State.WalTransferTest do
       assert File.read!(Paths.wal_path(cell_id)) == stale
     end
 
+    # fails when: a bind task adopting for the Overwatch it binds reads that
+    # Overwatch as another relay bound here, so a restarted runner's bind
+    # never pulls a copy that did not land on arrival.
+    test "adopts for the Overwatch bound here when it binds" do
+      {class, cell_id} = class_and_cell("owner")
+      newer = with_source_copy(cell_id, 0..5)
+      peer = move_root_to_peer(:waltransfer15)
+      TestHelpers.write_wal(cell_id, 0..3, "stale")
+      bound = spawn_link(fn -> Process.sleep(:infinity) end)
+      :ok = Flezha.Relay.ClassRegistry.put_overwatch(class, bound, nil)
+      on_exit(fn -> Flezha.Relay.ClassRegistry.delete(class) end)
+
+      assert :ok = Adoption.adopt_newest(class, peer, bound)
+      assert File.read!(Paths.wal_path(cell_id)) == newer
+    end
+
     # fails when: the incoming copy must hold every reference the local one
     # does, so a Cell the source deleted blocks every adoption, silently.
     # fails when: a reference only this node holds is dropped with the local
@@ -338,7 +358,7 @@ defmodule FlezhaTest.State.WalTransferTest do
 
       on_exit(NodeTestHelper.override_log_level(:warning))
 
-      log = capture_log(fn -> assert :ok = Adoption.adopt_newest(class, peer) end)
+      log = capture_log(fn -> assert :not_landed = Adoption.adopt_newest(class, peer) end)
 
       assert log =~ "did not land whole; the local copy stays"
 
@@ -365,13 +385,64 @@ defmodule FlezhaTest.State.WalTransferTest do
 
       on_exit(NodeTestHelper.override_log_level(:warning))
 
-      log = capture_log(fn -> assert :ok = Adoption.adopt_newest(class, peer) end)
+      log = capture_log(fn -> assert :not_landed = Adoption.adopt_newest(class, peer) end)
 
       refute File.exists?(Paths.journal_path(class))
       refute File.exists?(Paths.wal_path(cell_id))
       refute File.exists?(Paths.class_dir(class))
       refute File.exists?(Paths.set_aside_dir(class))
       assert log =~ "did not land whole"
+    end
+
+    # fails when: the arrival drops the node it moved from after one pull that
+    # did not land whole, so the relay binds empty while the source still holds
+    # its copy, and no later bind pulls it again.
+    test "a pull that did not land whole is retried by the next bind" do
+      {class, cell_id} = class_and_cell("retry")
+      source = with_source_copy(cell_id, 0..5)
+      :ok = TaskJournal.append_iter_committed(class, 0, 0, [])
+      FsyncBatcher.flush_now()
+      peer = move_root_to_peer(:waltransfer14)
+      pull_only(cell_id)
+
+      relay = %Builder{id: class, factory_id: "f", run: :steps, opts: [state_source_node: peer]}
+      state = %Overwatch{id: class, builder: relay}
+      on_exit(NodeTestHelper.override_log_level(:warning))
+
+      log =
+        capture_log(fn ->
+          rebound = Replay.adopt_moved_state(state, relay, :undefined)
+          refute File.exists?(Paths.wal_path(cell_id))
+          # The source answers again; the relay's next bind on this node.
+          stub(WalTransfer, :pull_relay, &call_original(WalTransfer, :pull_relay, [&1, &2]))
+          Replay.adopt_unlanded_state(%Overwatch{state | builder: rebound}, rebound, self())
+        end)
+
+      assert log =~ "did not land whole"
+      assert File.read!(Paths.wal_path(cell_id)) == source
+      assert File.exists?(Paths.journal_path(class))
+    end
+
+    # fails when: the source kept after a pull that did not land is pulled
+    # again once the relay took turns here, so those acknowledged turns are set
+    # aside and dropped.
+    test "a relay that bound empty keeps the turns it took since" do
+      {class, cell_id} = class_and_cell("turns")
+      with_source_copy(cell_id, 0..5)
+      peer = move_root_to_peer(:waltransfer16)
+      pull_only({class, "task", "other"})
+      relay = %Builder{id: class, factory_id: "f", run: :steps, opts: [state_source_node: peer]}
+      state = %Overwatch{id: class, builder: relay}
+      on_exit(NodeTestHelper.override_log_level(:warning))
+
+      {rebound, _log} = with_log(fn -> Replay.adopt_moved_state(state, relay, :undefined) end)
+      TestHelpers.write_wal(cell_id, 0..1, "turn")
+      turns = File.read!(Paths.wal_path(cell_id))
+      stub(WalTransfer, :pull_relay, &call_original(WalTransfer, :pull_relay, [&1, &2]))
+
+      next = Replay.adopt_unlanded_state(%Overwatch{state | builder: rebound}, rebound, self())
+      assert File.read!(Paths.wal_path(cell_id)) == turns
+      refute Keyword.has_key?(next.opts, :state_source_node)
     end
 
     # fails when: a tie keeps the local copy, so two histories of equal length

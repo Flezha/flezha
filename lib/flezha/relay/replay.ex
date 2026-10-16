@@ -163,21 +163,44 @@ defmodule Flezha.Relay.Replay do
 
   @doc """
   The relay an arriving instance binds with, once its durable state is the
-  newest copy there is (`Flezha.State.Adoption.adopt_newest/2`): the copy on
+  newest copy there is (`Flezha.State.Adoption.adopt_newest/3`): the copy on
   the node it moves from, which is the one the hub still names while a move
   starts its destination or the `:state_source_node` a partition rescale
-  stamped on a new member, else the backend's. Runs once per arrival, before
-  anything below reads or opens the state, and drops the source from the
-  relay so no later bind or heal adopts from it again. `hub_pid` is the
-  hub's answer for the instance.
+  stamped on a new member, else the backend's. Runs on arrival, before
+  anything below reads or opens the state. A source whose copy did not land
+  stays on the relay as `:state_source_node`; any other is dropped. `hub_pid`
+  is the hub's answer for the instance, `owner` the Overwatch.
   """
-  @spec adopt_moved_state(Overwatch.t(), Flezha.Relay.Builder.t(), term()) ::
+  @spec adopt_moved_state(Overwatch.t(), Flezha.Relay.Builder.t(), term(), pid()) ::
           Flezha.Relay.Builder.t()
-  def adopt_moved_state(%Overwatch{} = state, relay, hub_pid) do
+  def adopt_moved_state(%Overwatch{} = state, relay, hub_pid, owner \\ self()) do
     source = moved_from(hub_pid) || foreign_state_source(relay.opts)
-    :ok = Adoption.adopt_newest(Overwatch.relay_class(state), source)
-    %{relay | opts: Keyword.delete(relay.opts, :state_source_node)}
+    relay = drop_source(relay)
+
+    case Adoption.adopt_newest(Overwatch.relay_class(state), source, owner) do
+      :not_landed when source != nil -> put_in(relay.opts[:state_source_node], source)
+      _landed_or_from_the_backend -> relay
+    end
   end
+
+  @doc """
+  What a bind adopts before the runner starts: while this node holds nothing of a
+  persistent class, `adopt_moved_state/4` again; else only what this controller
+  shipped and lost since, so a lost Cell never ships a cut over its own.
+  """
+  @spec adopt_unlanded_state(Overwatch.t(), Flezha.Relay.Builder.t(), pid()) ::
+          Flezha.Relay.Builder.t()
+  def adopt_unlanded_state(%Overwatch{} = state, relay, owner) do
+    class = Overwatch.relay_class(state)
+
+    cond do
+      not ClassRegistry.persistent?(class) -> relay
+      Paths.durable_refs(class) == [] -> adopt_moved_state(state, relay, nil, owner)
+      true -> with :ok <- DurabilityTier.hydrate_relay(class, :own), do: drop_source(relay)
+    end
+  end
+
+  defp drop_source(relay), do: %{relay | opts: Keyword.delete(relay.opts, :state_source_node)}
 
   defp moved_from({:ok, pid}) when is_pid(pid) and node(pid) != node(), do: node(pid)
   defp moved_from(_here_or_nowhere), do: nil
@@ -319,17 +342,10 @@ defmodule Flezha.Relay.Replay do
     do: Config.get(:bind_restore_concurrency)
 
   # Persisted, restorable Cells of this class, empty when its persistence is
-  # off.
+  # off. Only listed: a copy comes in before the runner starts
+  # (`adopt_unlanded_state/3`), never under its writers.
   defp restorable_cells(relay_class) do
     if ClassRegistry.persistent?(relay_class) do
-      # Remote hydration runs first, and in this one place: a controller
-      # adopting a relay whose disk is gone then finds its Cells,
-      # task-journal and input log on disk by the time this walks
-      # them — and every caller (bind restore, the tier's awaited restore, the
-      # resume-gate count) sees the same set. Inert unless a durability backend
-      # is configured and the local state really is absent.
-      DurabilityTier.hydrate_relay(relay_class)
-
       relay_class
       |> Paths.cells_of()
       |> Enum.filter(&Restore.has_persisted_state?/1)

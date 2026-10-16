@@ -28,24 +28,26 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
 
   @doc """
   Hydrate every shipped reference of `relay_class` whose local files are
-  absent. Called from the bind-time restore enumeration, so a fresh controller
-  binding a remote-only relay finds its Cells, task-journal, input log, effect
-  log and parked failures on disk by the time it enumerates them.
+  absent, or with `:own` only those this controller shipped. Runs before the
+  runner starts, so a fresh controller binding a remote-only relay finds its
+  Cells, task-journal, input log, effect log and parked failures on disk by
+  the time the bind enumerates them.
   """
-  @spec hydrate_relay(module(), keyword(), binary()) :: :ok
-  def hydrate_relay(module, opts, relay_class) when is_binary(relay_class) do
-    hydrate_prefix(module, opts, Manifest.prefix(:cell, [relay_class]))
+  @spec hydrate_relay(module(), keyword(), binary(), :all | :own) :: :ok
+  def hydrate_relay(module, opts, relay_class, scope) when is_binary(relay_class) do
+    select = scope(scope)
+    hydrate_prefix(module, opts, Manifest.prefix(:cell, [relay_class]), select)
 
     # The input log is class-level, so it sits outside the per-Cell prefix
     # above and has to be asked for by name. Without it a hydrated Cell
     # comes back with its consumed floor intact and no log to replay from —
     # the next input lands at offset 0, below the floor, and is silently
     # skipped as already-consumed.
-    hydrate_ref(module, opts, {:input_log, relay_class})
+    hydrate_ref(module, opts, {:input_log, relay_class}, select)
 
     # The effect results kept for the inputs that log still holds, so a
     # hydrated instance's re-run is served them.
-    hydrate_ref(module, opts, {:effects_log, relay_class})
+    hydrate_ref(module, opts, {:effects_log, relay_class}, select)
 
     # Parked failures belong to the relay that produced them, so they come
     # back with it rather than at boot: a replacement controller's `flz dlq`
@@ -53,16 +55,20 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
     hydrate_prefix(
       module,
       opts,
-      Manifest.prefix(:dlq, [Dlq.Store.path_component(relay_class)])
+      Manifest.prefix(:dlq, [Dlq.Store.path_component(relay_class)]),
+      select
     )
 
     :ok
   end
 
+  defp scope(:all), do: & &1
+  defp scope(:own), do: &Enum.filter(&1, fn m -> m.owner == DurabilityTier.writer_id() end)
+
   @doc """
-  How new the cut of `relay_class`'s Cells, task-journal and input log
-  another controller shipped is, as `%{ref => Manifest.freshness/1}`; `%{}`
-  when this controller shipped every one of them.
+  How new the shipped cut of `relay_class`'s Cells, task-journal and input log
+  is, as `%{ref => Manifest.freshness/1}`; `%{}` when this controller shipped
+  every one of them and still holds a copy of the class.
   """
   @spec shipped_freshness(module(), keyword(), binary()) :: %{Paths.durable_ref() => term()}
   def shipped_freshness(module, opts, relay_class) do
@@ -72,9 +78,10 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
       manifests(module, opts, Manifest.prefix(:cell, [relay_class])) ++
         manifests(module, opts, log_key, &(&1 == log_key))
 
-    if Enum.all?(manifests, &(&1.owner == DurabilityTier.writer_id())),
-      do: %{},
-      else: Map.new(manifests, &{&1.ref, Manifest.freshness(&1)})
+    if Enum.all?(manifests, &(&1.owner == DurabilityTier.writer_id())) and
+         Paths.durable_refs(relay_class) != [],
+       do: %{},
+       else: Map.new(manifests, &{&1.ref, Manifest.freshness(&1)})
   end
 
   @doc """
@@ -168,8 +175,8 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
 
   # One walk over a manifest-key prefix. `select` narrows the entries found to
   # the authoritative ones — identity for a prefix whose entries are all
-  # distinct references, newest-per-store for one whose entries are replicas.
-  defp hydrate_prefix(module, opts, prefix, select \\ & &1) do
+  # distinct references, newest-per-store for replicas, this node's own (`scope/1`).
+  defp hydrate_prefix(module, opts, prefix, select) do
     module
     |> manifests(opts, prefix)
     |> select.()
@@ -202,9 +209,9 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
 
   # `apply_manifest/3` is where local-state precedence is decided, so this only
   # names the manifest to fetch.
-  defp hydrate_ref(module, opts, ref) do
+  defp hydrate_ref(module, opts, ref, select \\ & &1) do
     case read_manifest(module, opts, Manifest.key(ref)) do
-      {:ok, manifest} -> apply_manifest(module, opts, manifest)
+      {:ok, manifest} -> Enum.each(select.([manifest]), &apply_manifest(module, opts, &1))
       :error -> :ok
     end
   end

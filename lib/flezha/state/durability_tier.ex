@@ -513,14 +513,14 @@ defmodule Flezha.State.DurabilityTier do
 
   @doc """
   Hydrate `relay_class`'s artifacts from the remote manifest when its local
-  state is absent. A no-op when the tier is off, when nothing is shipped, or
-  when local state already exists; a newer shipped copy replaces a local one
-  only through `Flezha.State.Adoption`.
+  state is absent (`Hydrator.hydrate_relay/4`). A no-op when the tier is off,
+  when nothing is shipped, or when local state already exists; a newer shipped
+  copy replaces a local one only through `Flezha.State.Adoption`.
   """
-  @spec hydrate_relay(binary()) :: :ok
-  def hydrate_relay(relay_class) when is_binary(relay_class) do
+  @spec hydrate_relay(binary(), :all | :own) :: :ok
+  def hydrate_relay(relay_class, scope \\ :all) when is_binary(relay_class) do
     with {module, opts} <- BackendConfig.resolve(),
-         do: Hydrator.hydrate_relay(module, opts, relay_class)
+         do: Hydrator.hydrate_relay(module, opts, relay_class, scope)
 
     :ok
   end

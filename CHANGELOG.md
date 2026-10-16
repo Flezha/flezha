@@ -17,6 +17,14 @@ without state: its Cells were then not restored and the state was lost on restar
 removed. Whether a class keeps its work is the `durable` it declares and its runner announces;
 a class that should keep no state declares `durable: false`. A leftover entry is ignored.
 
+### Fixed: a relay whose moved copy did not land whole asks for it again
+
+A relay arriving on a controller where the copy from the node it moved from, or from the
+durability backend, did not land whole bound empty and never asked for that copy again, and a
+later restore could still hydrate the readable part of a backend copy: Cells without their
+journal. While the controller holds nothing of the relay, each bind now asks again before the
+runner starts, and a restore after the runner started only lists the Cells on disk.
+
 ### Fixed: a Kafka producer no longer holds every output while its broker is down
 
 Under the default `drop_nothing`, a record that found its partition's queue full waited in a

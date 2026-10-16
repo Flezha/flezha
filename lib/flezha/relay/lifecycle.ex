@@ -163,6 +163,8 @@ defmodule Flezha.Relay.Lifecycle do
         placement \\ :resolve
       ) do
     state = bind_to_runner(state, relay.id, runner_id, owner)
+    relay = Replay.adopt_unlanded_state(state, relay, owner)
+    state = %{state | builder: %{state.builder | opts: relay.opts}}
 
     with {:ok, state} <- Plugins.prepare(state, declared_bindings(state, relay)),
          {:ok, state, relay} <- Plugins.resolve_init_state(state, relay),

@@ -17,8 +17,9 @@ defmodule Flezha.State.Adoption do
   the next arrival finishes, or an unmarked set-aside copy it puts back. Nothing is replaced
   while another relay bound on this node owns the class.
 
-  It runs once per arrival (`Flezha.Relay.Replay.adopt_moved_state/3`),
-  before any writer of the relay opens on this node.
+  It runs on arrival (`Flezha.Relay.Replay.adopt_moved_state/4`) and, while
+  the class holds nothing, again before the runner starts; the class's writers
+  close before its copy is set aside.
   """
 
   require Logger
@@ -30,31 +31,33 @@ defmodule Flezha.State.Adoption do
   @doc """
   Replace `relay_class`'s local copy with the newest one: the copy on
   `source` when a node is named, else the backend's. A copy that is not newer,
-  or that does not land whole, leaves the local one as it is.
+  or that does not land whole (`:not_landed`), leaves the local one as it is.
+  `owner` is the Overwatch the adoption runs for.
   """
-  @spec adopt_newest(binary(), node() | nil) :: :ok
-  def adopt_newest(relay_class, source) do
+  @spec adopt_newest(binary(), node() | nil, pid()) :: :ok | :not_landed
+  def adopt_newest(relay_class, source, owner \\ self()) do
     :ok = recover(relay_class)
 
     with theirs when theirs != %{} <- newest(relay_class, source),
          ours = Artifact.freshness_of(relay_class),
          true <- Artifact.copy_supersedes?(theirs, ours),
-         :unbound <- bound_here(relay_class) do
+         :unbound <- bound_here(relay_class, owner) do
+      # Closed before the rename (a stopped relay's or a restarted runner's
+      # writers) and after the fetch (one a late frame opened meanwhile).
+      Supervisor.close_writers(relay_class)
       kept = set_aside(relay_class, ours, theirs)
       fetch(relay_class, source)
-      settle(relay_class, kept, landed?(relay_class, theirs))
-      # Whatever the replaced copy had open (a relay stopped before its
-      # writers closed, a late frame admitted during the fetch) closes before
-      # the bind opens the class's writers.
+      verdict = settle(relay_class, kept, landed?(relay_class, theirs))
       Supervisor.close_writers(relay_class)
+      verdict
+    else
+      _current_or_bound -> :ok
     end
-
-    :ok
   end
 
-  defp bound_here(relay_class) do
+  defp bound_here(relay_class, owner) do
     case Lookup.overwatch(relay_class) do
-      {:ok, pid} when pid != self() ->
+      {:ok, pid} when pid != owner ->
         Logger.warning(
           "[state] #{relay_class}: a newer copy is not adopted, the relay is bound " <>
             "on this node; the local copy stays"
@@ -107,6 +110,7 @@ defmodule Flezha.State.Adoption do
   defp settle(relay_class, kept, true = _landed) do
     :ok = Paths.mark_landed(relay_class, kept)
     keep(relay_class, kept)
+    :ok
   end
 
   defp settle(relay_class, _kept, false) do
@@ -115,6 +119,7 @@ defmodule Flezha.State.Adoption do
     )
 
     Paths.restore_set_aside(relay_class)
+    :not_landed
   end
 
   # Idempotent: a file the newer copy or an earlier pass already placed stays.

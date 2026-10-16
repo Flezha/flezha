@@ -95,7 +95,7 @@ For every class at `durable: local`, shipping SHALL run off the ack paths: a slo
 - **THEN** throughput and ack latency are unchanged, shipping retries with backoff, and the RPO alarm (below) fires when the target is exceeded
 
 ### Requirement: Recovery hydrates from the manifest into the existing restore path
-Recovery SHALL rebuild local durable files from the manifest and then run the existing restore-and-replay path unchanged. A reference with local durable files SHALL NOT be overwritten by that hydration. When a relay arrives on a controller, its local copy SHALL be replaced by the shipped one only when another controller wrote it and it is the newer copy: on every reference both hold the shipped cut is at least as new, judged by the WAL-owner epoch and then the highest seq covered, a tie going to the shipped copy. The local copy SHALL be set aside whole while the shipped one is hydrated, a reference only the local copy holds SHALL be kept, never deleted, and the local copy SHALL come back whole when any reference of the shipped one does not land.
+Recovery SHALL rebuild local durable files from the manifest and then run the existing restore-and-replay path unchanged. A reference with local durable files SHALL NOT be overwritten by that hydration. When a relay arrives on a controller, its local copy SHALL be replaced by the shipped one only when another controller wrote it and it is the newer copy: on every reference both hold the shipped cut is at least as new, judged by the WAL-owner epoch and then the highest seq covered, a tie going to the shipped copy. The local copy SHALL be set aside whole while the shipped one is hydrated, a reference only the local copy holds SHALL be kept, never deleted, and the local copy SHALL come back whole when any reference of the shipped one does not land. Hydration SHALL run only before the relay's runner starts, and a whole copy SHALL come in only through that replacement: on arrival and, while the controller holds none of the relay's references, at each bind, where a controller that lost its own disk adopts its own shipped cut the same way. Otherwise a bind SHALL hydrate, one by one, only the references this controller shipped and no longer holds. A restore after the runner started SHALL only list the Cells on disk.
 
 A manifest that references an artifact the backend does not hold SHALL be reported as an alarm-grade event naming the reference and the missing artifact. It SHALL NOT be degraded into a silent cold start, because a corrupt lineage and an unreachable backend are different conditions calling for different user responses.
 
@@ -106,6 +106,14 @@ A manifest that references an artifact the backend does not hold SHALL be report
 #### Scenario: A returning controller hydrates over the copy it kept
 - **WHEN** a relay moves back to a controller still holding the copy it shipped before the relay moved away, and another controller has since shipped a newer cut
 - **THEN** the controller replaces its copy with the newer cut, and a copy with a reference newer than its shipped cut is kept
+
+#### Scenario: A cut that does not hydrate whole leaves the node cold
+- **WHEN** a controller holding none of a relay's references binds it and one reference of the shipped cut cannot be fetched
+- **THEN** none of the shipped references is kept, and the bind's restore lists no Cell of the relay
+
+#### Scenario: A Cell a controller lost comes back from its own cut
+- **WHEN** a controller still holding other references of a relay binds it after losing one Cell it shipped
+- **THEN** that Cell is hydrated from its shipped cut before the runner starts, so its next ship never replaces the cut
 
 #### Scenario: Partial hydration by cell key
 - **WHEN** hydration is requested for named cell keys of one tasklet

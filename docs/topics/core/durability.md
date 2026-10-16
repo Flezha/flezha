@@ -365,8 +365,9 @@ to a controller that kept an older copy, the newer copy (by owner epoch, then
 highest sequence number; a tie goes to the incoming one) replaces it whole; a
 replacement that does not land whole leaves the local copy as it was. On a
 controller that held nothing, that means the relay binds empty while the node it
-moved from keeps its copy, and nothing retries the move by itself: the state
-comes back only with a new move or a hydration from the backend.
+moved from keeps its copy; while that controller still holds nothing of the
+relay, each bind asks for the copy again before the runner starts. A node that
+cannot be asked is not asked again.
 
 **At `local`**, shipping is in the background and never delays an
 acknowledgement; a failing backend delays nothing. What degrades is the

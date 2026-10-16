@@ -22,6 +22,7 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
   alias Flezha.Layout.Table, as: Layout
   alias Flezha.Dlq.Store, as: DlqStore
   alias Flezha.Relay.Migration
+  alias Flezha.Relay.Replay
   alias Flezha.Service.HubManager
   alias Flezha.Shutdown
   alias Flezha.State.DurabilityTier
@@ -556,6 +557,42 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
       assert File.read!(Paths.wal_path(ctx.cell_id)) == local
     end
 
+    # fails when: a controller's own shipped cut reads as nothing to adopt, so
+    # a controller that lost its disk binds the relay empty.
+    test "a controller that lost its disk adopts its own shipped cut", ctx do
+      ref = {:cell, ctx.cell_id}
+      TestHelpers.write_wal(ctx.cell_id, 0..3)
+      shipped = File.read!(Paths.wal_path(ctx.cell_id))
+      {:ok, _} = start_supervised(Shipper)
+      assert :ok = Shipper.ship_now(ref)
+      File.rm_rf!(Paths.class_dir(ctx.class))
+
+      assert :ok = Adoption.adopt_newest(ctx.class, nil)
+      assert File.read!(Paths.wal_path(ctx.cell_id)) == shipped
+    end
+
+    # fails when: a Cell this controller shipped and lost since stays absent
+    # while the class holds other references, so the bind starts it empty and
+    # its first ship prunes the shipped cut away (`Manifest.prune_above/2`).
+    test "a Cell lost here comes back from this controller's own cut", ctx do
+      ref = {:cell, ctx.cell_id}
+      TestHelpers.write_wal(ctx.cell_id, 0..3)
+      shipped = File.read!(Paths.wal_path(ctx.cell_id))
+      TestHelpers.write_wal({ctx.class, "task", "k2"}, 0..1)
+      {:ok, _} = start_supervised(Shipper)
+      assert :ok = Shipper.ship_now(ref)
+      Enum.each(Paths.durable_files(ref), &File.rm/1)
+      relay = %Flezha.Relay.Builder{id: ctx.class, factory_id: "f"}
+
+      Replay.adopt_unlanded_state(
+        %Flezha.Relay.Overwatch{id: ctx.class, builder: relay},
+        relay,
+        self()
+      )
+
+      assert File.read!(Paths.wal_path(ctx.cell_id)) == shipped
+    end
+
     # fails when: a Cell created here inside the last ship interval, which no
     # manifest names yet, is dropped with the copy the newer cut replaces.
     test "a Cell no manifest names yet survives the adoption", ctx do
@@ -580,7 +617,7 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
       Stub.delete(newest_range_blob(ref), [])
       on_exit(NodeTestHelper.override_log_level(:warning))
 
-      log = capture_log(fn -> assert :ok = Adoption.adopt_newest(ctx.class, nil) end)
+      log = capture_log(fn -> assert :not_landed = Adoption.adopt_newest(ctx.class, nil) end)
 
       assert log =~ "which the backend does not hold"
       assert log =~ "did not land whole; the local copy stays"
@@ -597,13 +634,33 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
       Stub.delete(newest_range_blob({:cell, other}), [])
       on_exit(NodeTestHelper.override_log_level(:warning))
 
-      log = capture_log(fn -> assert :ok = Adoption.adopt_newest(ctx.class, nil) end)
+      log = capture_log(fn -> assert :not_landed = Adoption.adopt_newest(ctx.class, nil) end)
 
       refute File.exists?(Paths.wal_path(ctx.cell_id))
       refute File.exists?(Paths.class_dir(ctx.class))
       refute File.exists?(Paths.set_aside_dir(ctx.class))
       assert log =~ "which the backend does not hold"
       assert log =~ "did not land whole"
+    end
+
+    # fails when: the bind-time restore enumeration hydrates every shipped
+    # reference whose local files are absent, so the part of a newer lineage
+    # the adoption refused to keep lands anyway and the bind restores it.
+    test "the bind-time restore keeps a node cold that the adoption left cold", ctx do
+      other = {ctx.class, "task", "k2"}
+      peer_adopts_and_ships(ctx, {:cell, ctx.cell_id}, [other])
+      Stub.delete(newest_range_blob({:cell, other}), [])
+      on_exit(NodeTestHelper.override_log_level(:warning))
+
+      capture_log(fn ->
+        Adoption.adopt_newest(ctx.class, nil)
+        refute File.exists?(Paths.wal_path(ctx.cell_id))
+
+        assert Replay.resume_cell_count(ctx.class) == 0
+      end)
+
+      refute File.exists?(Paths.wal_path(ctx.cell_id)),
+             "the readable Cell of a lineage that did not hydrate whole was hydrated"
     end
 
     test "a bid is a compare-and-set, so simultaneous claimants cannot both win", _ctx do

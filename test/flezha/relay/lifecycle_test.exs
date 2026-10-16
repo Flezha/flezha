@@ -95,7 +95,16 @@ defmodule FlezhaTest.Relay.OverwatchRetryTest do
       opts: [bindings: [plugin]]
     }
 
+    stub(Flezha.State.Adoption, :adopt_newest, fn class, _source, _owner ->
+      send(test_pid, {:adopted, class})
+      :ok
+    end)
+
     assert {:ok, _} = RelayManager.start_relay(@namespace, relay)
+
+    # On arrival, and again before the start: the class still holds nothing.
+    assert_receive {:adopted, "ping_success_relay"}, 2_000
+    assert_receive {:adopted, "ping_success_relay"}, 2_000
 
     # The start's ping is issued after the bind and right before the start, so
     # the ownership record already names the runner the relay starts on.
