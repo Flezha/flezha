@@ -83,8 +83,8 @@ fn capture_parks_acking(ack: bool) -> Arc<std::sync::Mutex<Vec<CapturedPark>>> {
 /// Run the test at path `test` alone in a child process of this test
 /// binary, for a test that changes process-wide state: `None` inside that
 /// child, the child's output in the parent.
-#[cfg(test)]
-pub(crate) fn run_alone(test: &str) -> Option<std::process::Output> {
+#[cfg(any(test, feature = "bench-internals"))]
+pub fn run_alone(test: &str) -> Option<std::process::Output> {
     const CHILD: &str = "FLZ_TEST_ALONE_CHILD";
     if crate::util::env_raw(CHILD).is_some() {
         return None;
@@ -99,8 +99,8 @@ pub(crate) fn run_alone(test: &str) -> Option<std::process::Output> {
 
 /// [`run_alone`] for the test at path `test`, asserting it passed there:
 /// `None` inside the child, the child's stderr in the parent.
-#[cfg(test)]
-pub(crate) fn passes_alone(test: &str) -> Option<String> {
+#[cfg(any(test, feature = "bench-internals"))]
+pub fn passes_alone(test: &str) -> Option<String> {
     let out = run_alone(test)?;
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr).into_owned();

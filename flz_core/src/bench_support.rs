@@ -14,7 +14,7 @@ use flz_transport::transport::FlezhaStream;
 
 use crate::runner::RelayDispatchHandle;
 use crate::schema::ItemEffect;
-pub use crate::test_support::stream_pair;
+pub use crate::test_support::{passes_alone, stream_pair};
 use crate::util::LockRecover;
 
 /// What a host answers for an item it processed with no effect.

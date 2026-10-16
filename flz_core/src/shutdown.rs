@@ -537,8 +537,28 @@ mod tests {
         run_handle.join().expect("shutdown thread joins");
     }
 
+    /// How many ack-timeout lines for `relay_id` the test `name` of this module
+    /// printed in a process of its own: `None` inside that process.
+    fn ack_timeouts_alone(name: &str, relay_id: &str) -> Option<usize> {
+        let stderr = crate::test_support::passes_alone(&format!("shutdown::tests::{name}"))?;
+        Some(
+            stderr
+                .matches(&format!(
+                    "[flezha] RunnerShutdownAck timeout for {relay_id}\n"
+                ))
+                .count(),
+        )
+    }
+
     #[test]
     fn graceful_shutdown_returns_within_2s_when_ack_never_arrives() {
+        if let Some(lines) = ack_timeouts_alone(
+            "graceful_shutdown_returns_within_2s_when_ack_never_arrives",
+            "p_timeout",
+        ) {
+            assert_eq!(lines, 1, "one line for the timed-out ack");
+            return;
+        }
         let (bridge, _controller_side) = build_bridge_with_relay("p_timeout", b"unused".to_vec());
 
         let started = Instant::now();
@@ -594,6 +614,10 @@ mod tests {
 
     #[test]
     fn run_graceful_shutdown_is_idempotent() {
+        if let Some(lines) = ack_timeouts_alone("run_graceful_shutdown_is_idempotent", "p_idem") {
+            assert_eq!(lines, 1, "the second run ships nothing to time out");
+            return;
+        }
         let (bridge, _controller_side) = build_bridge_with_relay("p_idem", b"x".to_vec());
 
         // First run — exercises the timeout path. Second run sees

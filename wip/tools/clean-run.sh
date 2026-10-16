@@ -35,6 +35,8 @@ failed=0
 NOISE='warning:|\[warning\]|\[error\]|\[critical\]|npm warn|warnings summary|deprecated:|there were issues'
 # Progress lines tools write to stderr by design; anything else there is stray.
 BENIGN='^\s*(Compiling|Finished|Running|Doc-tests|Checking|Blocking|Updating|Locking|Adding|Downloaded|Downloading|Fresh|Building)\b|^\s*$'
+# trybuild's verdict on each UI case: a result, written to stderr.
+BENIGN+='|^test \S+ \.\.\. ok$'
 # php-cs-fixer's banner and progress bar, written to stderr on every run.
 BENIGN+='|^PHP CS Fixer [0-9.]+ .* by |^PHP runtime: [0-9.]+$|^Loaded config \S+ from ".*"\.$|^\s*[0-9]+/[0-9]+ \[[▓░]+\]\s+[0-9]+%$'
 # pyright's notice that a newer release exists: it says nothing about the code.
@@ -137,7 +139,11 @@ done
 # flags elixir.yml and sdk/rust/scripts/ci.sh test them under.
 gate rust-build cargo build --quiet --workspace
 gate rust-test-core cargo test --quiet -p flz_core -p flz_transport -p flz_nif -p flz
-gate rust-test-runner cargo test --quiet -p flezha_runner --features bench-internals,testing --lib --tests
+# Quiet through the environment, so the cargo trybuild runs inside the UI tests is
+# quiet too: it copies the workspace's whole [patch], whose flz_core_ffi entry
+# only the Elixir NIF uses, and would warn that it went unused. NO_COLOR keeps
+# trybuild's per-case results plain.
+gate rust-test-runner env CARGO_TERM_QUIET=true NO_COLOR=1 cargo test -p flezha_runner --features bench-internals,testing --lib --tests
 gate rust-test-macros cargo test --quiet -p flezha-macros
 gate rust-test-app cargo test --quiet -p rust_runner
 gate rust-clippy cargo clippy --quiet --workspace -- -D warnings
