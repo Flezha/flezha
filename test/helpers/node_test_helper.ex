@@ -238,23 +238,32 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
   forwards it, and the start's caller never hears that answered.
   """
   def await_serving(node, namespace, factory_id, timeout_ms \\ 30_000) do
-    hub_id = Identificator.hub(namespace)
-
-    wait_until(fn -> served_alike?(hub_id, namespace, node, factory_id) end, timeout_ms) ||
+    wait_until(fn -> served_alike?(namespace, node, factory_id) end, timeout_ms) ||
       ExUnit.Assertions.flunk(
         "#{inspect(node)} never served #{factory_id} alike on every node of the #{namespace} hub"
       )
   end
 
-  # Each node answers from its own table; one that cannot answer agrees with nothing.
-  defp served_alike?(hub_id, namespace, node, factory_id) do
-    members = GroupedHashing.group_nodes(hub_id, factory_id)
+  defp served_alike?(namespace, node, factory_id) do
+    members = GroupedHashing.group_nodes(Identificator.hub(namespace), factory_id)
 
-    node in members and
-      namespace
-      |> HubManager.get_hub_nodes()
-      |> :erpc.multicall(GroupedHashing, :group_nodes, [hub_id, factory_id], 5_000)
-      |> Enum.all?(&(&1 == {:ok, members}))
+    node in members and Enum.all?(group_views(namespace, factory_id), &(&1 == {:ok, members}))
+  end
+
+  @doc """
+  The members of `factory_id`'s group as each node of `namespace`'s hub, this
+  one included, answers from its own table: one `:erpc.multicall/5` result per
+  node. A node that cannot answer agrees with nothing.
+  """
+  def group_views(namespace, factory_id) do
+    namespace
+    |> HubManager.get_hub_nodes(true)
+    |> :erpc.multicall(
+      GroupedHashing,
+      :group_nodes,
+      [Identificator.hub(namespace), factory_id],
+      5_000
+    )
   end
 
   # A peer BEAM is linked to the test process, so by the time a teardown runs

@@ -21,7 +21,6 @@ defmodule Flezha.Cluster.GroupedPlacementTest do
   @moduletag :capture_log
   @moduletag timeout: 600_000
 
-  alias Flezha.Cluster.GroupedHashing
   alias Flezha.Identificator
   alias Flezha.Service.HubManager
   alias Flezha.Service.RelayManager
@@ -70,9 +69,10 @@ defmodule Flezha.Cluster.GroupedPlacementTest do
     {joiner_pid, joiner_node} = start_controller(:groupedplacement3, serves?: false)
     wait_for_hub_members([node(), peer_node, joiner_node])
 
-    # The joining controller's own runner advertises the factory until the test
-    # cuts it down, so the join settles when the hub's table names the peer
-    # alone and every relay has been handed back.
+    # The joining controller's runner declared the factory as it connected, and
+    # the cut-down withdraws it only after the grace, so the join settles when
+    # every node's table names the peer alone and every relay has been handed
+    # back. The peer moves relays by its own table, not by this node's.
     wait_for_sole_server(peer_node)
     settled? = NodeTestHelper.wait_until(fn -> strays(ids, peer_node) == [] end, 120_000)
 
@@ -116,16 +116,17 @@ defmodule Flezha.Cluster.GroupedPlacementTest do
 
   # A controller that stops being able to run a factory withdraws it only after
   # `group_withdraw_grace_ms`, so "only the peer serves it" is a state the hub's
-  # own table reaches, not one the fleet reaches.
+  # tables reach, not one the fleet reaches. Each hub node answers from its own
+  # table, and a start forwarded between two that disagree loses its answer.
   defp wait_for_sole_server(peer_node) do
-    hub_id = Identificator.hub(@ns)
-
     assert NodeTestHelper.wait_until(
-             fn -> GroupedHashing.group_nodes(hub_id, @served) == [peer_node] end,
+             fn -> Enum.uniq(views()) == [{:ok, [peer_node]}] end,
              60_000
            ),
-           "#{@served} is still served by #{inspect(GroupedHashing.group_nodes(hub_id, @served))}"
+           "#{@served} is still served by #{inspect(views())}"
   end
+
+  defp views, do: NodeTestHelper.group_views(@ns, @served)
 
   # A peer BEAM with a runner in the namespace. `serves?: false` cuts that
   # runner down to `@kept`, so the peer holds the namespace's hub without being
@@ -136,6 +137,10 @@ defmodule Flezha.Cluster.GroupedPlacementTest do
 
     unless serves? do
       :erpc.call(peer_node, FleetStateHelper, :sync, [@ns, runner_id, [@kept]])
+      # The connect's declaration of every factory is already queued at the
+      # hub; once the hub has taken it, its table drops `@served` only by the
+      # withdrawal, never because the declaration has not landed yet.
+      :erpc.call(peer_node, :sys, :get_state, [Identificator.hub(@ns)])
     end
 
     {peer_pid, peer_node}
@@ -148,13 +153,7 @@ defmodule Flezha.Cluster.GroupedPlacementTest do
            "the namespace hub never held #{inspect(want)}: #{inspect(hub_members())}"
   end
 
-  defp hub_members do
-    if HubManager.hub_alive?(@ns) do
-      @ns |> Identificator.hub() |> ProcessHub.nodes([:include_local]) |> Enum.sort()
-    else
-      []
-    end
-  end
+  defp hub_members, do: @ns |> HubManager.get_hub_nodes(true) |> Enum.sort()
 
   # `{id, placement}` per relay, where a placement is the node it started
   # on or, for a start that failed, the verdict — a start refused because the
