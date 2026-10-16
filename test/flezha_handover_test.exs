@@ -463,34 +463,9 @@ defmodule FlezhaTest.Handover do
     rem_runner_1 = NodeTestHelper.start_runner_remote(peer_node, namespace)
     rem_runner_2 = NodeTestHelper.start_runner_remote(peer_node, namespace)
 
-    # Wait for peer node to join the ProcessHub hub cluster
-    hub_id = Identificator.hub(namespace)
-    test_pid = self()
-
-    ProcessHub.register_hook_handlers(
-      hub_id,
-      Hook.post_node_join(),
-      [
-        %ProcessHub.Service.HookManager{
-          id: "hub_node_join_wait",
-          m: Process,
-          f: :send,
-          a: [test_pid, :peer_node_joined, []]
-        }
-      ]
-    )
-
-    if length(HubManager.get_hub_nodes(namespace, true)) < 2 do
-      receive do
-        :peer_node_joined -> :ok
-      after
-        5_000 -> flunk("Peer node did not join the hub cluster within 5 seconds")
-      end
-    end
-
-    ProcessHub.cancel_hook_handlers(hub_id, Hook.post_node_join(), [
-      "hub_node_join_wait"
-    ])
+    # Some relays must land on the peer, so every controller has to name it
+    # among the factory's servers before the first one is placed.
+    NodeTestHelper.await_serving(peer_node, namespace, @test_store_input_factory)
 
     self = self()
     _node = node()

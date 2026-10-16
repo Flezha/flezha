@@ -271,6 +271,7 @@ defmodule FlezhaTest.System.ListenerSurvivalDrillTest do
 
   defp rescale_drill(ns) do
     group = unique("drill_grp")
+    NodeTestHelper.await_serving(node(), ns, "partition_pass")
 
     assert {:ok, %{members: members}} =
              PartitionGroup.start(ns, %Builder{id: group, factory_id: "partition_pass"}, 2)
@@ -299,22 +300,10 @@ defmodule FlezhaTest.System.ListenerSurvivalDrillTest do
     end
   end
 
-  # Probe ids until one is placed on `node`; the others are stopped again.
   defp start_on!(ns, factory, node) do
-    Enum.find_value(1..30, fn i ->
-      id = "#{unique(factory)}_#{i}"
-
-      assert {:ok, %{node: placed}} =
-               RelayManager.start_relay(ns, %Builder{id: id, factory_id: factory})
-
-      if placed == node do
-        assert wait_until(fn -> bound?(ns, id) end, 30_000)
-        id
-      else
-        RelayManager.stop_relay(ns, id)
-        nil
-      end
-    end) || flunk("no #{factory} landed on #{node}")
+    id = RelayFixture.start_on(node, unique(factory), factory, namespace: ns, attempts: 30)
+    assert wait_until(fn -> bound?(ns, id) end, 30_000)
+    id
   end
 
   # This node's runner stops advertising `part_echo`, so its relays move.
