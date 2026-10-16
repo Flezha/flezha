@@ -298,8 +298,8 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
       assert inspect(start_error) =~ "Set FLEZHA_SOCKET_FILES_PATH to a shorter directory"
 
       # The crash report names the path whatever the refusal says, so the
-      # refusal's own line is what is read.
-      refusal = log |> String.split("\n") |> Enum.find("", &(&1 =~ "on #{ns} has no control"))
+      # line keeping what the runner is not answered is what is read.
+      refusal = log |> String.split("\n") |> Enum.find("", &(&1 =~ "a runner is answered"))
       assert refusal =~ "#{too_long}/primary_stream_"
     end
   end
@@ -321,14 +321,10 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
       assert_received {:rejected, %{count: 1}, %{reason: reason}}
       assert inspect(reason) =~ inspect(start_error)
 
-      refusal =
-        log
-        |> String.split("\n")
-        |> Enum.find("", &(&1 =~ "on #{ns} " and &1 =~ "refusing the connect"))
-
-      assert refusal =~ inspect(start_error)
-      assert log =~ "Failed to connect runner"
-      assert log =~ "Rejected runner connect"
+      # Fails when: the start's error reaches the log other than once.
+      assert length(String.split(log, inspect(start_error))) == 2
+      assert log =~ "on #{ns} could not start its hub; refusing the connect"
+      assert log =~ "Rejected runner connect: "
     end
 
     test "still connects when a concurrent start answers already started", %{ns: ns} do

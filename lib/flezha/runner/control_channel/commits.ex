@@ -235,7 +235,7 @@ defmodule Flezha.Runner.ControlChannel.Commits do
      end}
   end
 
-  defp turn_parked(refused_or_gone), do: {:error, {:turn_not_parked, inspect(refused_or_gone)}}
+  defp turn_parked(refused_or_gone), do: {:error, {:turn_not_parked, refused_or_gone}}
 
   defp records_failed(state, reference_id, reason) do
     {%{commit: commit, timer: timer}, waiting} = Map.pop(state.waiting, reference_id)
@@ -283,9 +283,10 @@ defmodule Flezha.Runner.ControlChannel.Commits do
     error =
       case result do
         :ok -> nil
-        {:error, reason} -> Flezha.Error.from_reason(reason, :"wire.commit")
+        {:error, reason} -> Flezha.Error.to_wire(Flezha.Error.from_reason(reason, :"wire.commit"))
       end
 
+    # The failure as the runner reads it; what it does not read is logged where it is withheld.
     if error,
       do:
         Logger.warning(
@@ -296,7 +297,7 @@ defmodule Flezha.Runner.ControlChannel.Commits do
 
     ControlChannel.send_control_async(
       state.runner_id,
-      {tag, %{response | error: error && Flezha.Error.to_wire(error)}},
+      {tag, %{response | error: error}},
       reference_id
     )
 

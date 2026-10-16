@@ -44,6 +44,18 @@ defmodule Flezha.ErrorCatalogueTest do
     assert wrong == [], Enum.join(wrong, "\n")
   end
 
+  # Fails when: an internal code the controller converts a reason into carries
+  # its term under another name, which `Flezha.Error.withheld/2` would pass on.
+  test "every internal code the controller converts a reason into carries it as reason" do
+    misnamed =
+      for {code, %{"class" => "internal", "details" => details} = entry} <- @catalogue["codes"],
+          Map.has_key?(entry, "reasons"),
+          details != [] and "reason" not in details,
+          do: code
+
+    assert misnamed == []
+  end
+
   test "every site an entry is limited to is a verb action or a declared wire site" do
     sites =
       MapSet.new(Enum.map(Verbs.all(), &Atom.to_string(&1.action)) ++ @catalogue["sites"])

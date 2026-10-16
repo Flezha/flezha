@@ -10,6 +10,9 @@ defmodule FlezhaTest.Runner.ControlChannelEffectsTest do
   # installs a backend.
   use FlezhaTest.Case, fixtures: [:tmp_app_data], async: false
 
+  import ExUnit.CaptureLog
+  import FlezhaTest.Helper.MimicGlobal
+
   alias Flezha.Relay.ClassRegistry
   alias Flezha.Runner.ControlChannel
   alias Flezha.State.Wire
@@ -70,6 +73,25 @@ defmodule FlezhaTest.Runner.ControlChannelEffectsTest do
              keep(ctx, "ref-foreign", "answer")
 
     assert InputLog.effect_results(ctx.inst, -1) == []
+  end
+
+  # Fails when: an internal failure's raw term rides to the runner, or its
+  # reason reaches the log other than once.
+  test "an internal failure is refused with its code, and the log keeps its reason", ctx do
+    own(ctx)
+    set_mimic_global_until_exit()
+    reason = {:decode_error, "vault key s3cr3t-7f3a"}
+
+    Mimic.stub(Flezha.Service.RelayManager, :keep_effect, fn _, _, _, _, _ -> {:error, reason} end)
+
+    log =
+      capture_log(fn ->
+        assert %RunnerCommands.EffectResultAck{error: error} = keep(ctx, "ref-internal", "answer")
+        assert error.code == "runner.bad_reply"
+        assert error.details_json == ~s({"reason":"the controller's log names the cause"})
+      end)
+
+    assert length(String.split(log, "s3cr3t-7f3a")) == 2
   end
 
   describe "synchronous remote durability" do

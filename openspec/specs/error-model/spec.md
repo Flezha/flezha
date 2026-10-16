@@ -33,7 +33,7 @@ The file `flz_transport/errors.json` SHALL be the only definition of the codes. 
 
 ### Requirement: A new caller-visible reason SHALL NOT ship without a code
 
-A test SHALL parse every source file under `lib/`. Each `{:error, atom}` and `{:error, {atom, ...}}` literal it finds SHALL be mapped by the catalogue or named on its internal list. It SHALL refuse every `{:error, <text>}` literal, plain or interpolated. At runtime, a reason that reaches a caller with no catalogue entry SHALL become the code `internal.uncatalogued`, of class `internal`, carrying the raw reason as text in `details.reason`, and SHALL emit `[:flezha, :error, :uncatalogued]`. An operation called through `Flezha.Service.Admin` by a networked caller (HTTP, MCP, a runner's admin request) SHALL answer that code with `details.reason` naming the controller's log, which SHALL record the raw reason. The test suite SHALL fail when that event fires. In Rust, the code of every error type SHALL come from an exhaustive match, and a test SHALL check each code it can return against the catalogue.
+A test SHALL parse every source file under `lib/`. Each `{:error, atom}` and `{:error, {atom, ...}}` literal it finds SHALL be mapped by the catalogue or named on its internal list. It SHALL refuse every `{:error, <text>}` literal, plain or interpolated. At runtime, a reason that reaches a caller with no catalogue entry SHALL become the code `internal.uncatalogued`, of class `internal`, carrying the raw reason as text in `details.reason`, and SHALL emit `[:flezha, :error, :uncatalogued]`. The test suite SHALL fail when that event fires. In Rust, the code of every error type SHALL come from an exhaustive match, and a test SHALL check each code it can return against the catalogue.
 
 #### Scenario: An uncatalogued literal fails the build's tests
 
@@ -49,6 +49,31 @@ A test SHALL parse every source file under `lib/`. Each `{:error, atom}` and `{:
 
 - **WHEN** a reason with no catalogue entry reaches the conversion during the test suite
 - **THEN** the caller SHALL receive `internal.uncatalogued` and the suite SHALL fail
+
+### Requirement: The controller's own terms SHALL stay with the controller
+
+A networked caller SHALL NOT read what the controller made of its own state: a detail filled from a term that is not plain data (text, a number, a boolean, an atom, or a list or object of those), and the `reason` of an `internal` code, whose keys beyond the declared details SHALL be dropped. Each such detail SHALL read as naming the controller's log, and the log SHALL record the error's code and details once. Text a site writes for the caller, and every other detail, SHALL be answered as it is. The rule SHALL apply in one place per path: `Flezha.Service.Admin` for a caller over HTTP or MCP, and `Flezha.Error.to_wire/1` for every reply a runner is sent, its admin answers included. A site that answers a runner SHALL log the failure as the runner reads it, so its reason reaches the log once. A local `flz` caller SHALL read every detail. An internal code the controller converts a reason into SHALL carry that reason as its `reason` detail; the codes a runner renders (`runtime.*`) carry the runner's own text.
+
+#### Scenario: A caller over HTTP reads the code without the reason
+
+- **GIVEN** a published operation that fails with `plugin.provider_failed` whose reason holds a package worker's start term
+- **WHEN** a caller over HTTP calls it
+- **THEN** the answer SHALL carry `plugin.provider_failed` with `details.reason` naming the controller's log, and the log SHALL hold the start term
+
+#### Scenario: A runner's commit ack withholds a controller term
+
+- **WHEN** a runner's dead-lettered turn cannot be parked because the journal answered with a term
+- **THEN** the ack SHALL carry `commit.turn_not_parked` with `details.reason` naming the controller's log, and the log SHALL hold the term once
+
+#### Scenario: A refused connect logs its reason once
+
+- **WHEN** a runner's connect is refused because its namespace hub did not start
+- **THEN** the runner SHALL be answered `runner.hub_unavailable` without the start's error, and the log SHALL hold that error once
+
+#### Scenario: The local operator reads the reason
+
+- **WHEN** `flz` calls the same operation
+- **THEN** the answer SHALL carry the reason in `details.reason`
 
 ### Requirement: The catalogue SHALL be published as a generated page
 

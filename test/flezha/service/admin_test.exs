@@ -333,40 +333,79 @@ defmodule Flezha.Service.AdminTest do
     end
   end
 
-  describe "an operation that raises" do
+  describe "an internal failure" do
     setup do
       bind_app!()
-
-      Mimic.stub(Flezha.Service.RelayApi, :list, fn _namespace ->
-        raise "vault key s3cr3t-7f3a"
-      end)
-
       :ok
     end
 
-    # Fails when: a networked caller is answered the exception's text, or the
-    # operator's log loses it.
-    test "a networked caller gets its code alone, and the log the cause" do
-      log =
-        capture_log(fn ->
-          assert {:error, %Flezha.Error{code: "internal.uncatalogued", details: details}} =
-                   door("Relay.api", "[]")
+    # An exception, a package worker's start term and a provider's answer, as
+    # the door, the plugin loader and the extension table turn them into codes.
+    defp internal_failures,
+      do: [
+        {fn -> raise "vault key s3cr3t-7f3a" end, "internal.uncatalogued"},
+        {fn -> {:error, {:provider_failed, "acme", "acme_source", "{:EXIT, s3cr3t-7f3a}"}} end,
+         "plugin.provider_failed"},
+        {fn -> {:error, {:invalid_init_provider_return, %{token: "s3cr3t-7f3a"}}} end,
+         "plugin.provider_bad_answer"}
+      ]
 
-          assert details == %{"reason" => "the controller's log names the cause"}
-        end)
+    defp failing_with(failure),
+      do: Mimic.stub(Flezha.Service.RelayApi, :factory_of, fn _ns, _relay -> failure.() end)
 
-      assert log =~ "Relay.api failed for a sdk caller"
-      assert log =~ "vault key s3cr3t-7f3a"
+    defp as(source), do: %{source: source, principal: @principal, namespace: @ns, role: :app}
+
+    # Fails when: an HTTP or MCP caller is answered an internal failure's raw
+    # term, or the operator's log loses it.
+    test "a caller over HTTP reads the code, and the log the reason" do
+      for {failure, code} <- internal_failures() do
+        failing_with(failure)
+
+        log =
+          capture_log(fn ->
+            assert {:error, %Flezha.Error{code: ^code} = error} =
+                     Admin.call("Relay.api", ~s(["#{@ns}", "o1"]), as(:http), :given)
+
+            assert error.details["reason"] == "the controller's log names the cause"
+            refute Flezha.Error.object(error) =~ "s3cr3t"
+          end)
+
+        assert log =~ "Relay.api failed for a http caller"
+        assert log =~ "s3cr3t-7f3a"
+      end
     end
 
-    # Fails when: the local operator's `flz` loses the cause it is answered with.
-    test "a local caller is answered the cause" do
-      context = %{source: :cli, principal: @principal, namespace: @ns, role: :app}
+    # Fails when: a runner's admin answer is withheld at the door as well as on
+    # the wire, so its reason reaches the log twice, or not at all.
+    test "a runner's answer is withheld where it crosses the wire, once" do
+      for {failure, code} <- internal_failures() do
+        failing_with(failure)
 
-      assert {:error, %Flezha.Error{code: "internal.uncatalogued", details: details}} =
-               Admin.call("Relay.api", ~s(["#{@ns}"]), context, :given)
+        log =
+          capture_log(fn ->
+            assert {:error, %Flezha.Error{code: ^code} = error} = door("Relay.api", ~s(["o1"]))
+            wire = Flezha.Error.to_wire(error)
 
-      assert details["reason"] == "vault key s3cr3t-7f3a"
+            assert Jason.decode!(wire.details_json)["reason"] ==
+                     "the controller's log names the cause"
+
+            refute wire.details_json =~ "s3cr3t"
+          end)
+
+        assert length(String.split(log, "s3cr3t-7f3a")) == 2
+      end
+    end
+
+    # Fails when: the local operator's `flz` loses the reason it is answered with.
+    test "a local caller is answered the reason" do
+      for {failure, code} <- internal_failures() do
+        failing_with(failure)
+
+        assert {:error, %Flezha.Error{code: ^code} = error} =
+                 Admin.call("Relay.api", ~s(["#{@ns}", "o1"]), as(:cli), :given)
+
+        assert Flezha.Error.object(error) =~ "s3cr3t-7f3a"
+      end
     end
   end
 

@@ -85,30 +85,19 @@ defmodule Flezha.Runner.FleetManager do
   `init_payload` is the decoded JSON from the initial frame.
   """
   def connect_handler(stream_ref, namespace, init_payload, transport) do
+    # A refusal is logged where the runner is answered (`Flezha.Transport.Server`).
     with {:ok, %{namespace: proven} = proof} <-
            RunnerProof.prove(stream_ref, namespace, init_payload, transport),
          :ok <- Session.check_not_shutting_down(proven),
-         :ok <- Session.admit_runner(proven, transport) do
-      connect = Session.connect_record(proof, init_payload, transport)
-
-      case GenServer.call(
+         :ok <- Session.admit_runner(proven, transport),
+         connect = Session.connect_record(proof, init_payload, transport),
+         {:ok, {_namespace, session_token}} <-
+           GenServer.call(
              __MODULE__,
              {:runner_connect, stream_ref, connect},
              runner_connect_timeout()
            ) do
-        # A dropped process retries at its reconnect rate for as long as it
-        # lives; its refusal is the operator's intent, counted by telemetry.
-        {:error, {:runner_dropped, _namespace, _stable_id} = reason} ->
-          Logger.debug("Refused dropped runner: #{inspect(reason)}")
-          {:error, reason}
-
-        {:error, reason} ->
-          Logger.error("Failed to connect runner: #{inspect(reason)}")
-          {:error, reason}
-
-        {:ok, {_namespace, session_token}} ->
-          {:ok, session_token}
-      end
+      {:ok, session_token}
     end
   end
 

@@ -290,8 +290,9 @@ to remove it, delete it and rebuild.
 A package cannot add codes of its own. A provider refusal whose reason the catalogue
 already maps keeps that code, and so does the reason a provider's worker stopped with at
 start; any other is wrapped as `plugin.provider_refused` or `plugin.provider_failed`, with
-the package, the provider and the package's own text in `details`. The full catalogue is
-[`errors.md`](../../errors.md).
+the package, the provider and the package's own text in `details`. A caller over HTTP,
+MCP or a runner reads `plugin.provider_failed`'s text as a pointer to the controller's log,
+which holds it. The full catalogue is [`errors.md`](../../errors.md).
 
 ## Limits
 

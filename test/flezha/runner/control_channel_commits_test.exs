@@ -544,6 +544,23 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
       response
     end
 
+    # Fails when: a controller term rides to the runner in the ack, or its
+    # reason reaches the log other than once.
+    test "a park the journal refuses is acked without the controller's term", ctx do
+      set_mimic_global_until_exit()
+      refused = {:error, {:shutdown, "vault key s3cr3t-7f3a"}}
+      Mimic.stub(TaskJournal, :park_turn_async, fn _id, _turn, _reqids, _label -> refused end)
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          assert %{error: error} = send_dead_letter(ctx, ctx.inst, 0, "ref-dl-refused")
+          assert error.code == "commit.turn_not_parked"
+          assert error.details_json == ~s({"reason":"the controller's log names the cause"})
+        end)
+
+      assert length(String.split(log, "s3cr3t-7f3a")) == 2
+    end
+
     test "parks the message, journals the record naming its entry, acks, then releases", ctx do
       %{inst: inst} = ctx
       test_pid = self()

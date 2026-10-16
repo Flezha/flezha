@@ -73,6 +73,27 @@ defmodule Flezha.ErrorTest do
     assert exits == [1, 2, 3, 4, 5, 6, 7]
   end
 
+  # Fails when: a controller term or an internal reason reaches a networked
+  # caller, the log loses it, or a detail written for the caller is withheld.
+  test "a networked caller reads no term of the controller's own, and the log keeps it" do
+    internal = Error.new("relay.start_failed", relay: "o1", reason: "vault key s3cr3t-7f3a")
+    term = Error.new("commit.turn_not_parked", reason: {:exit, "vault key s3cr3t-7f3a"})
+    pointer = "the controller's log names the cause"
+
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        assert Error.withheld(internal, "door").details == %{"relay" => "o1", "reason" => pointer}
+        assert Error.withheld(term, "wire").details == %{"reason" => pointer}
+      end)
+
+    assert log =~ "door: " and log =~ "wire: "
+    assert length(String.split(log, "s3cr3t-7f3a")) == 3
+
+    unknown = %Error{code: "runtime.newer", class: :internal, details: %{"reason" => "x"}}
+    others = [Error.new("call.unavailable", relay: "o1", reason: "parked"), unknown]
+    assert Enum.map(others, &Error.withheld(&1, "door")) == others
+  end
+
   test "a detail that is not plain data is carried as text" do
     error = Error.new("namespace.not_found", namespace: {:a, self()})
     assert error.details["namespace"] =~ "{:a, #PID<"

@@ -40,8 +40,8 @@ defmodule Flezha.Service.Admin do
   `call/4` answers the published function's value as JSON, and a failure as
   its `%Flezha.Error{}`; `run/4` answers the value itself, for a surface that
   renders terms. A request the door cannot place is refused with a `control.*`
-  code. An unexpected failure (`internal.uncatalogued`) reaches a networked
-  caller without its reason, which the controller's log keeps.
+  code. A failure reaches a caller over HTTP or MCP as `Flezha.Error.withheld/2`
+  leaves it, and a runner as it crosses the wire.
   """
 
   alias Flezha.AuthZ
@@ -49,8 +49,6 @@ defmodule Flezha.Service.Admin do
   alias Flezha.Observability.Signal
   alias Flezha.Plugin.ProviderBehaviour.Options
   alias Flezha.Service.CallerContext
-
-  require Logger
 
   @type placement :: {:proven, String.t()} | :given
 
@@ -95,18 +93,11 @@ defmodule Flezha.Service.Admin do
   defp raised(:error, %{__struct__: _} = exception), do: Exception.message(exception)
   defp raised(kind, reason), do: "#{kind}: #{inspect(reason)}"
 
-  # An unexpected failure's reason is the controller's own text: module names,
-  # terms, the data they held. A caller over the network reads the code alone;
-  # the operator reads the reason in the log.
-  defp withheld({:error, %Flezha.Error{code: "internal.uncatalogued"} = error}, name, caller) do
-    if CallerContext.networked?(caller) do
-      Logger.error("#{name} failed for a #{caller.source} caller: #{error.message}")
-
-      {:error,
-       Flezha.Error.new("internal.uncatalogued", reason: "the controller's log names the cause")}
-    else
-      {:error, error}
-    end
+  # A runner's answer is withheld where it crosses the wire (`Flezha.Error.to_wire/1`).
+  defp withheld({:error, %Flezha.Error{} = error}, name, caller) do
+    if CallerContext.networked?(caller) and caller.source != :sdk,
+      do: {:error, Flezha.Error.withheld(error, "#{name} failed for a #{caller.source} caller")},
+      else: {:error, error}
   end
 
   defp withheld(answer, _name, _caller), do: answer

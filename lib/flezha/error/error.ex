@@ -16,12 +16,17 @@ defmodule Flezha.Error do
 
   alias Flezha.SDK.Error, as: Renderer
 
+  require Logger
+
   @external_resource Path.expand("../../../flz_transport/errors.json", __DIR__)
   @catalogue Renderer.catalogue()
 
   @uncatalogued "internal.uncatalogued"
+  @log_pointer "the controller's log names the cause"
 
-  defstruct [:code, :class, :message, details: %{}, hint: nil]
+  # `terms` names the details filled from a term that is not plain data: the
+  # controller's own, which `withheld/2` keeps from a caller over the network.
+  defstruct [:code, :class, :message, details: %{}, hint: nil, terms: []]
 
   @type class ::
           :internal | :invalid | :unreachable | :denied | :not_found | :conflict | :unavailable
@@ -31,10 +36,17 @@ defmodule Flezha.Error do
           class: class(),
           message: String.t(),
           details: %{optional(String.t()) => term()},
-          hint: String.t() | nil
+          hint: String.t() | nil,
+          terms: [String.t()]
         }
 
   @codes @catalogue["codes"]
+
+  # The declared details of each internal code that carries a `reason`.
+  @withheld_details for {code, %{"class" => "internal", "details" => declared}} <- @codes,
+                        "reason" in declared,
+                        into: %{},
+                        do: {code, declared}
 
   # `{prefix, arity}` -> [{sites, code, args}], where `prefix` is the reason's
   # leading atoms, `arity` the positions after them, and `sites` the verb
@@ -104,9 +116,12 @@ defmodule Flezha.Error do
   """
   @spec new(String.t(), map() | keyword()) :: t()
   def new(code, details \\ %{}) do
-    if Map.has_key?(@codes, code),
-      do: struct(__MODULE__, Map.from_struct(Renderer.new(code, details))),
-      else: uncatalogued({:unknown_code, code}, nil)
+    if Map.has_key?(@codes, code) do
+      error = struct(__MODULE__, Map.from_struct(Renderer.new(code, details)))
+      %{error | terms: for({key, value} <- details, term?(value), do: to_string(key))}
+    else
+      uncatalogued({:unknown_code, code}, nil)
+    end
   end
 
   @doc "`:text` is `error: <message> (<code>)` and a `hint:` line; `:json` the one-line document."
@@ -121,9 +136,39 @@ defmodule Flezha.Error do
   @spec details_json(t()) :: String.t()
   defdelegate details_json(error), to: Renderer
 
-  @doc "The error as the wire's `Error` message, which every runner reply carries."
+  @doc """
+  `error` as a caller over the network reads it. What the controller made of
+  its own state never reaches one: a detail filled from a term that is not
+  plain data, and the `reason` of an internal code, whose keys beyond the
+  declared ones are dropped. Each reads as naming the controller's log, which
+  records its code and details once, prefixed by `what`. Any other error is
+  answered as it is.
+  """
+  @spec withheld(t(), String.t()) :: t()
+  def withheld(%__MODULE__{code: code, details: details, terms: terms} = error, what) do
+    {kept, withheld} =
+      case @withheld_details[code] do
+        nil -> {details, terms}
+        declared -> {Map.take(details, declared), ["reason" | terms]}
+      end
+
+    if withheld == [] do
+      error
+    else
+      Logger.error("#{what}: #{code} #{details_json(error)}")
+      pointers = Map.new(withheld, &{&1, @log_pointer})
+      new(code, kept |> Map.merge(pointers) |> Map.take(["reason" | Map.keys(kept)]))
+    end
+  end
+
+  @doc """
+  The error as the wire's `Error` message, which every runner reply carries,
+  as a caller over the network reads it (`withheld/2`).
+  """
   @spec to_wire(t()) :: RunnerCommands.Error.t()
   def to_wire(%__MODULE__{} = error) do
+    error = withheld(error, "a runner is answered")
+
     %RunnerCommands.Error{
       code: error.code,
       class: Atom.to_string(error.class),
@@ -218,6 +263,17 @@ defmodule Flezha.Error do
 
     new(@uncatalogued, %{"reason" => inspect(reason)})
   end
+
+  # Whether the renderer has to inspect `value`: the shapes it keeps are text,
+  # numbers, booleans, atoms, and lists and maps of those.
+  defp term?(value)
+       when is_binary(value) or is_number(value) or is_boolean(value) or is_atom(value),
+       do: false
+
+  defp term?(value) when is_list(value), do: Enum.any?(value, &term?/1)
+  defp term?(%{__struct__: _} = error) when is_map_key(error, :code), do: false
+  defp term?(%{} = map) when not is_struct(map), do: Enum.any?(Map.values(map), &term?/1)
+  defp term?(_value), do: true
 
   defp stringify_keys(map), do: Map.new(map, fn {key, value} -> {to_string(key), value} end)
 end

@@ -581,7 +581,7 @@ defmodule Flezha.Runner.FleetManager.Session do
         refuse(
           runner_id,
           namespace,
-          "could not start its hub (#{inspect(reason)})",
+          "could not start its hub",
           {:hub_unavailable, namespace, reason}
         )
     end
@@ -605,7 +605,7 @@ defmodule Flezha.Runner.FleetManager.Session do
         pid
 
       {:error, reason} ->
-        refuse(runner_id, namespace, "has no control channel (#{inspect(reason)})", reason)
+        refuse(runner_id, namespace, "has no control channel", reason)
     end
   end
 

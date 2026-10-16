@@ -416,14 +416,18 @@ defmodule Flezha.Transport.Server do
         # reject is observable rather than only logged.
         # A dropped process is refused at its reconnect rate for as long as it
         # lives, by the operator's own choice: counted, not raised as an error.
+        # The refusal as the runner reads it; what it does not read is logged
+        # where it is withheld.
+        error = Flezha.Error.to_wire(Flezha.Error.from_reason(reason, :"wire.connect"))
+
         Logger.log(
           if(match?({:runner_dropped, _, _}, reason), do: :debug, else: :error),
-          "[Transport.Server] Rejected runner connect (#{inspect(reason)}); closing stream"
+          "[Transport.Server] Rejected runner connect: #{error.message} (#{error.code}); closing stream"
         )
 
         emit_connect_rejected(reason, :authorization, state.transport)
 
-        answer_refusal(stream_ref, reason)
+        answer_refusal(stream_ref, error)
         safe_close(stream_ref)
         {:noreply, state}
     end
@@ -443,12 +447,9 @@ defmodule Flezha.Transport.Server do
   # A refused runner is told why before its stream closes, in the same frame
   # every control command rides, so it reports the refusal rather than retrying
   # a connection that will never be admitted. The runner may already be gone.
-  defp answer_refusal(stream_ref, reason) do
-    error = Flezha.Error.from_reason(reason, :"wire.connect")
-
+  defp answer_refusal(stream_ref, error) do
     request = %RunnerCommands.CommandRequest{
-      command:
-        {:connect_refused, %RunnerCommands.ConnectRefused{error: Flezha.Error.to_wire(error)}}
+      command: {:connect_refused, %RunnerCommands.ConnectRefused{error: error}}
     }
 
     {:ok, iodata, _size} = Protox.encode(request)
