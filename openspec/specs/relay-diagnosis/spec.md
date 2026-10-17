@@ -68,7 +68,8 @@ dead letters SHALL be read only when the relay runs on the controller that answe
 
 #### Scenario: A suspended relay nothing can run is a problem
 
-- **WHEN** a suspended relay is diagnosed and no connected runner announces its factory
+- **WHEN** a suspended relay is diagnosed and no connected runner on any node announces its
+  factory
 - **THEN** the verdict is `problem` with `diagnose.no_runner` naming the factory, and no
   `diagnose.asleep` note
 - **AND** when runners announce the factory but none can take the relay, the finding is

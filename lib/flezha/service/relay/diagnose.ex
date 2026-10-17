@@ -15,6 +15,7 @@ defmodule Flezha.Service.Relay.Diagnose do
   message and hint are worded there, once.
   """
 
+  alias Flezha.Cluster.Directory
   alias Flezha.Convergence.Snapshot
   alias Flezha.Convergence.Verdict
   alias Flezha.Dlq.Store
@@ -201,7 +202,10 @@ defmodule Flezha.Service.Relay.Diagnose do
 
     case factory && FleetManager.placement_refusal(namespace, factory) do
       :no_such_factory ->
-        {:no_runner, %{factory: factory}}
+        # The refusal reads this node's runners; another node may serve it.
+        if List.delete(Directory.factory_nodes(namespace, factory), node()) == [],
+          do: {:no_runner, %{factory: factory}},
+          else: code
 
       refusal when refusal in [:none, nil] ->
         if Verdict.listed_state(verdict.state, Snapshot.unmet_intent()) == :recovering,

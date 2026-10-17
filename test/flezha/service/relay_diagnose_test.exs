@@ -212,6 +212,14 @@ defmodule FlezhaTest.Service.RelayDiagnoseTest do
       assert finding(answer, "diagnose.no_runner")["details"]["factory"] == "orders"
     end
 
+    test "a suspended relay another node's runners serve is asleep, not a problem" do
+      stub(FleetManager, :placement_refusal, fn @namespace, "orders" -> :no_such_factory end)
+      stub(Flezha.Cluster.Directory, :factory_nodes, fn @namespace, "orders" -> [:other@host] end)
+      publish_judged(%{bound_runner: "exec1", suspended?: true})
+
+      assert %{"verdict" => "ok", "findings" => [%{"code" => "diagnose.asleep"}]} = answer()
+    end
+
     test "a suspended relay the serving runners cannot take is a mismatch" do
       stub(FleetManager, :placement_refusal, fn _ns, _factory -> {:language, 3} end)
       publish_judged(%{bound_runner: "exec1", suspended?: true})

@@ -6,7 +6,7 @@
 
 `flz relay diagnose` answered a suspended relay with the `diagnose.asleep` note, verdict `ok`,
 even when no connected runner announced its factory, so nothing could ever wake it. It now
-answers `diagnose.no_runner`, or `diagnose.runner_mismatch` when runners announce the factory
+answers `diagnose.no_runner` when no runner on any node of the cluster announces it, or `diagnose.runner_mismatch` when runners announce the factory
 but none can take the relay. `diagnose.asleep` remains for a relay a runner can take, and says
 it is suspended at a committed boundary and that the next message wakes it on a runner.
 
