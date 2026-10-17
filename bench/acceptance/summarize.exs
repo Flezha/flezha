@@ -129,7 +129,7 @@ baseline =
     File.stream!(baseline_path)
     |> Enum.flat_map(fn l ->
       case String.split(String.trim(l), "\t") do
-        [n, tp | _] when n != "" -> [{n, String.to_float(tp)}]
+        [n, rt, tp | _] when n != "" -> [{{n, rt}, String.to_float(tp)}]
         _ -> []
       end
     end)
@@ -138,22 +138,24 @@ baseline =
     %{}
   end
 
-verdict = fn name, tp, integ ->
+# A baseline is per (case, runtime): a `default` case run under another
+# `--runtime` is not compared with the number another SDK recorded.
+verdict = fn key, tp, integ ->
   cond do
     integ != "clean" ->
       "❌ #{integ}"
 
-    Map.has_key?(baseline, name) and baseline[name] > 0 ->
-      drop = (baseline[name] - tp) / baseline[name] * 100
+    Map.has_key?(baseline, key) and baseline[key] > 0 ->
+      drop = (baseline[key] - tp) / baseline[key] * 100
 
       cond do
-        drop > 15 -> "❌ -#{Float.round(drop, 1)}% vs #{Float.round(baseline[name], 1)}"
+        drop > 15 -> "❌ -#{Float.round(drop, 1)}% vs #{Float.round(baseline[key], 1)}"
         drop > 5 -> "⚠ -#{Float.round(drop, 1)}%"
         drop < -5 -> "✅ +#{Float.round(-drop, 1)}%"
         true -> "✅ ~baseline (#{Float.round(-drop, 1)}%)"
       end
 
-    Map.has_key?(baseline, name) ->
+    Map.has_key?(baseline, key) ->
       "—"
 
     true ->
@@ -179,7 +181,7 @@ body =
   Enum.map_join(meds, "\n", fn {name, rt, tp, unit, p50, peak, fsync, integ, n} ->
     "| #{name} | #{rt} | #{Float.round(tp, 1)} #{unit} | #{opt.(p50 && "#{Float.round(p50, 1)} ms")} " <>
       "| #{opt.(peak && "#{round(peak)} MiB")} | #{opt.(fsync && "#{round(fsync)} ms")} | #{integ} " <>
-      "| #{n} | #{verdict.(name, tp, integ)} |"
+      "| #{n} | #{verdict.({name, rt}, tp, integ)} |"
   end)
 
 legend = """
@@ -205,10 +207,8 @@ Numbers drift ±20 % on a shared box — trust medians over `--repeat`, not one 
 """
 
 any_fail =
-  Enum.any?(meds, fn {name, _rt, tp, _u, _p50, _peak, _fsync, integ, _n} ->
-    integ != "clean" or
-      (Map.has_key?(baseline, name) and baseline[name] > 0 and
-         (baseline[name] - tp) / baseline[name] * 100 > 15)
+  Enum.any?(meds, fn {name, rt, tp, _u, _p50, _peak, _fsync, integ, _n} ->
+    String.starts_with?(verdict.({name, rt}, tp, integ), "❌")
   end)
 
 md = "# #{title}\n\n" <> header <> body <> "\n" <> legend
@@ -223,8 +223,8 @@ IO.puts(legend)
 if save? do
   File.write!(
     baseline_path,
-    Enum.map_join(meds, "\n", fn {n, _rt, tp, _u, _p50, _pk, _fs, _i, _c} ->
-      "#{n}\t#{Float.round(tp, 2)}"
+    Enum.map_join(meds, "\n", fn {n, rt, tp, _u, _p50, _pk, _fs, _i, _c} ->
+      "#{n}\t#{rt}\t#{Float.round(tp, 2)}"
     end) <> "\n"
   )
 

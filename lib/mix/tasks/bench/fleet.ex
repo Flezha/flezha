@@ -7,8 +7,9 @@ defmodule Mix.Tasks.Bench.Fleet do
   and tear the namespace down afterwards. This module owns that; the tasks own
   the workload.
 
-  The runtime (`:rust` / `:java` / `:elixir`) is read from the `:bench_runtime` process key,
-  which the calling task sets once before any fleet call. A runner is launched
+  The runtime (any SDK `parse_runtime/3` resolves) is read from the
+  `:bench_runtime` process key, which the calling task sets once before any
+  fleet call. A runner is launched
   from its test app's manifest (`test/apps/<runtime>_runner/conformance.json`,
   `bench` profile) — the same line the e2e harness renders for its `test` profile.
   """

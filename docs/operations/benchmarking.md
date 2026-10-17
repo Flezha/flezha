@@ -9,7 +9,7 @@ triage a failed `bench-regression` job.
 - Single entry point: `./scripts/bench.sh` (wraps `mix bench`, sets
   `FLEZHA_TRANSPORT`, defaults `MIX_ENV=prod` and
   `FLEZHA_DURABILITY_BACKEND=none`).
-- Independent axes: **runtime** (rust/java/elixir) × **transport**
+- Independent axes: **runtime** (rust/java/elixir/node/php/python/ruby) × **transport**
   (uds/quic/native) × **shape** (regression/cell/dynamic).
 - No CI job fails on an absolute throughput number; see [CI gates](#ci-gates).
 - Two different kinds of floor live here: the **absolute** reference figures
@@ -46,7 +46,7 @@ environment and forwards them.
 
 | Flag                               | Values                                      | Effect                                                                                                                                                                                                                                                                      |
 | ---------------------------------- | ------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `-r` / `--runtime`                 | `rust` (default), `java`, `elixir`          | Which SDK runner is launched. Each runner is launched from its test app's manifest, `bench` profile (`test/apps/<runtime>_runner/conformance.json`), which also names the build command for a missing artifact — `java` wants `mvn -f test/apps/java_runner/pom.xml package`, `elixir` wants `cd test/apps/elixir_runner && mix deps.get && MIX_ENV=prod mix compile`. |
+| `-r` / `--runtime`                 | `rust` (default), `java`, `elixir`, `node`, `php`, `python`, `ruby` | Which SDK runner is launched. Each runner is launched from its test app's manifest, `bench` profile (`test/apps/<runtime>_runner/conformance.json`), whose `bench` build command runs before every measurement (`FLEZHA_BENCH_SKIP_BUILD=1` skips it). |
 | `-t` / `--transport`               | `uds` (default), `quic`                     | Sets `FLEZHA_TRANSPORT`. QUIC generates self-signed certs at `app_data/certs/` on first run.                                                                                                                                                                                |
 | `-s` / `--shape`                   | `regression` (default), `cell`, `dynamic` | The workload (below). `cell` ignores `-n`/`-m`.                                                                                                                                                                                                                               |
 | `-n` / `--num-relays`          | int (default 100)                           | Relay count, `regression` and `dynamic`.                                                                                                                                                                                                                                |
@@ -55,7 +55,7 @@ environment and forwards them.
 | `-w` / `--warmup`                  | int (default 10, `0` disables)              | Untimed messages per relay drained before the measured phase, so runner cold start (class loading, JIT, lazy codec init) stays out of the numbers.                                                                                                                      |
 
 Runner placement: the Rust runtime reuses runners already connected in the
-`default` namespace, otherwise (and always for `java`/`elixir`) two runners
+`default` namespace, otherwise (and always for every other runtime) two runners
 are spawned into the scratch namespace `bench`, which the task wipes
 (`app_data/state/bench`, `app_data/process_hub/bench_hub`) before the
 controller boots. A Rust runner binary is built on demand; build
@@ -179,7 +179,10 @@ pre-building the standalone app; small runs are setup-dominated.
 Measures the paths a flow relay never takes: instance lifecycle (spawn → chain →
 completion), the durable task barrier, the chat turn (iteration commit),
 suspension and the wake paths. Runs in the scratch namespace `bench_steps`
-against `--runtime rust|java` (the Elixir SDK has no steps relays).
+against any of the seven runtimes (`--runtime`, default `rust`).
+`bench/acceptance/run.sh` runs it over fixed case sets, one chain case per SDK
+among them, and compares the medians with a baseline per case and runtime
+(`bench/acceptance/README.md`).
 
 ```sh
 mix bench.steps --scenario chain -n 1000 --tasks 4 -c 100

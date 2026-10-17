@@ -9,6 +9,10 @@
 #                                          $RUN/logs/<name>.log
 #   wip/tools/env.sh stop <name> [signal]  signal it (TERM by default) and wait
 #   wip/tools/env.sh down                  stop everything `up` and `start` started
+#   wip/tools/env.sh vars [dir]            write the same private settings to
+#                                          <dir>/vars.sh (default
+#                                          wip/tools/.cache/bench) and print its
+#                                          path; starts nothing
 #
 # `up` builds the controller release once into wip/tools/.cache/rel, compiled
 # under wip/tools/.cache/build so the tree's own _build is untouched, and reuses
@@ -23,6 +27,12 @@
 # claimed: claiming one is the guides' first step. FLEZHA_AUTHZ_ENABLED=false
 # set for `up` starts it with authorization off instead, as Part 1 runs it. The exchange takes its
 # manual commands (`/pause`, `/resume`, `/jump ...`) written to $RUN/exchange.in.
+#
+# `vars` serves a controller `mix` boots from the repository (`mix bench`,
+# `mix bench.steps`, bench/acceptance/run.sh): sourced, it gives that controller
+# its own state, registry, dead-letter and plugin roots under <dir>, a socket
+# directory, a node name and free ports, so a controller already holding
+# app_data/ does not stop it. `rm -rf "$FLEZHA_SOCKET_FILES_PATH" <dir>` clears it.
 #
 # The owner's release in _build/prod/rel and its app_data are never touched,
 # and neither is port 4500.
@@ -81,20 +91,12 @@ up() {
   build_release
   native_library "$sdk"
 
-  # A Unix socket path must fit in 108 bytes, so the directory stays short.
-  local sockets
-  sockets=$(mktemp -d /tmp/flzt.XXXX)
   cat >"$RUN/vars.sh" <<EOF
 export PATH=$REL/bin:\$PATH
 export FLEZHA_TOOLS_RUN=$RUN
 export FLEZHA_TOOLS_SDK=$sdk
 export FLEZHA_CTL_DIR=$RUN/ctl
-export FLEZHA_SOCKET_FILES_PATH=$sockets
-export FLEZHA_NODE_NAME=flzt$$
-export FLEZHA_STATE_DIR=$RUN/ctl/app_data/state
-export FLEZHA_HEALTHZ_PORT=$(free_port)
-export FLEZHA_PROMETHEUS_PORT=$(free_port)
-export FLEZHA_TESTNET_WS_PORT=$(free_port)
+$(private_vars "$RUN/ctl/app_data")
 export FLEZHA_RUNNER_ID_PATH=$RUN/runner-id
 EOF
   # shellcheck disable=SC1091
@@ -114,6 +116,35 @@ EOF
 
   trap - ERR
   echo "env.sh: up; source $RUN/vars.sh (exchange on ws://localhost:$FLEZHA_TESTNET_WS_PORT/)"
+}
+
+# The settings one controller owns exclusively, its state under <app_data>.
+private_vars() {
+  # A Unix socket path must fit in 108 bytes, so the directory stays short.
+  cat <<EOF
+export FLEZHA_SOCKET_FILES_PATH=$(mktemp -d /tmp/flzt.XXXX)
+export FLEZHA_NODE_NAME=flzt$$
+export FLEZHA_STATE_DIR=$1/state
+export FLEZHA_HEALTHZ_PORT=$(free_port)
+export FLEZHA_PROMETHEUS_PORT=$(free_port)
+export FLEZHA_TESTNET_WS_PORT=$(free_port)
+EOF
+}
+
+# `up` runs the release from $RUN/ctl, which places the other app_data roots;
+# a controller `mix` boots runs from the repository, so they are named here.
+vars() {
+  local dir=${1:-$CACHE/bench}
+  mkdir -p "$dir"
+  dir=$(cd "$dir" && pwd)
+  cat >"$dir/vars.sh" <<EOF
+$(private_vars "$dir/app_data")
+export FLEZHA_PROCESS_HUB_REGISTRY_ROOT=$dir/app_data/process_hub
+export FLEZHA_DLQ_DIR=$dir/app_data/dlq
+export FLEZHA_PLUGIN_ROOT=$dir/app_data/plugins
+export FLEZHA_QUIC_LISTEN_ADDRESS=0.0.0.0:$(free_port)
+EOF
+  echo "$dir/vars.sh"
 }
 
 # The controller, started from $RUN/ctl, where its app_data lives.
@@ -169,6 +200,7 @@ case "${1:-}" in
   up) up "${2:-}" ;;
   controller | start | stop) [ -f "$RUN/vars.sh" ] && source "$RUN/vars.sh"; "$@" ;;
   down) down ;;
-  *) echo "usage: env.sh up <sdk> | controller | start <name> <dir> <cmd...> | stop <name> [signal] | down" >&2
+  vars) vars "${2:-}" ;;
+  *) echo "usage: env.sh up <sdk> | controller | start <name> <dir> <cmd...> | stop <name> [signal] | down | vars [dir]" >&2
     exit 2 ;;
 esac

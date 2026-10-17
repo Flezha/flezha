@@ -6,15 +6,17 @@ median summary at the end that flags regressions against a saved baseline.
 
 Everything here drives `mix bench.steps`; the cases only pick scenarios and
 sizes. Transport, runner count and SDK are run-time flags, so one case set
-sweeps across configurations without editing.
+sweeps across configurations without editing. The quick and standard sets also
+pin one chain case to every SDK but rust, which runs the `default` cases, so
+all seven runtimes are measured in every run.
 
 ## Quick start
 
 ```bash
-# fast smoke — does every path run clean? (~3 min)
+# fast smoke — does every path and SDK run clean? (~8 min)
 bench/acceptance/run.sh --profile quick --repeat 1
 
-# the acceptance gate — the numbers to trust (~15–25 min)
+# the acceptance gate — the numbers to trust
 bench/acceptance/run.sh --profile standard
 
 # record the current medians as the baseline to compare future runs against
@@ -22,6 +24,14 @@ bench/acceptance/run.sh --profile standard --save-baseline
 
 # endurance — sustained integrity over time (~1–2 h)
 bench/acceptance/run.sh --profile soak
+```
+
+Each run boots its own controller from the repository, under `app_data/`. When
+another controller on the machine already holds that state root, give the runs
+private settings first:
+
+```bash
+source "$(wip/tools/env.sh vars)" && bench/acceptance/run.sh --profile quick --repeat 1
 ```
 
 ## Flags
@@ -32,7 +42,7 @@ bench/acceptance/run.sh --profile soak
 | `--repeat N` | 3 (soak: 1) | Runs per case. The summary takes the **median**, so odd N ≥ 3 tames the box's ±20 % drift. |
 | `--runners N` | 2 | Runner (SDK) processes the controller drives. |
 | `--transport uds\|quic` | `uds` | Wire transport (sets `FLEZHA_TRANSPORT` for the whole run). QUIC first-connects are slower — the harness widens the connect budget automatically. |
-| `--runtime rust\|java` | `rust` | Default SDK. A case can pin its own (the `runtime` column); |
+| `--runtime SDK` | `rust` | SDK for the `default` cases: `rust`, `java`, `elixir`, `node`, `php`, `python` or `ruby` (any `test/apps/<SDK>_runner/conformance.json`). A case can pin its own (the `runtime` column). |
 | `--save-baseline` | off | Write the run's medians as the new `baseline.<profile>.tsv` instead of comparing. |
 
 Examples:
@@ -61,6 +71,8 @@ bench/acceptance/run.sh --profile standard --repeat 5 --save-baseline
   limits below.
 - **Regression rule:** a case fails if its median throughput is **>15 % below**
   the baseline, or its integrity is not `clean`. 5–15 % shows as ⚠, a gain as ✅.
+  A baseline row is per case **and runtime**, so a `default` case run under
+  `--runtime java` is never compared with the number rust recorded.
 - **Integrity** is `clean` / `loss` (a missing or duplicated record — always a
   bug) / `stall` (the case did not finish). It is not a throughput judgement;
   a `loss` fails regardless of speed.
@@ -74,21 +86,24 @@ Each profile is a TSV, one case per line:
 ```
 name<TAB>runtime<TAB>scenario args
 chain_4_c50	default	--scenario chain -n 300 --tasks 4 -c 50 --stall-timeout 120
-chain_4_java	java	--scenario chain -n 100 --tasks 4 -c 20 --stall-timeout 180
+chain_4_java	java	--scenario chain -n 300 --tasks 4 -c 50 --stall-timeout 180
 ```
 
-- `runtime` is `default` (use `--runtime`) or a pin (`rust` / `java`).
+- `runtime` is `default` (use `--runtime`) or a pin (any SDK `--runtime` takes).
 - The args are passed straight to `mix bench.steps`; `--runners` and the
   transport come from the run flags, so don't put them here.
 - Add a case by adding a line. If you baseline it, re-run `--save-baseline`.
+- Each runtime's bench build (its manifest's `build.bench`) runs once per
+  invocation, before that runtime's first run; later runs skip it.
 
 The three profiles:
 
-- **quick** — small cases, one repeat. A smoke that every scenario (chain,
-  turns, sleep) runs clean. Not for numbers.
+- **quick** — small cases, run with `--repeat 1`. A smoke that every scenario
+  (chain, turns, sleep) and every SDK runs clean. Not for numbers.
 - **standard** — the acceptance set: the durable chain at several widths, the
-  opt-out chain, a Java case, a chat-turn case, and a sleeper case. This is what
-  you baseline and gate on.
+  opt-out chain, a 4-task chain case per SDK (`chain_4_<sdk>`, the same size as
+  `chain_4_c50`), a chat-turn case, and a sleeper case. This is what you
+  baseline and gate on.
 - **soak** — long-running (a 20 000-instance chain, an hour of chat turns, a
   1 000-sleeper wake soak). Endurance and integrity over time, not throughput.
 

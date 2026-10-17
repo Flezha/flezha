@@ -4,13 +4,16 @@
 #
 #   bench/acceptance/run.sh [--profile quick|standard|soak]
 #                           [--repeat N] [--runners N]
-#                           [--transport uds|quic] [--runtime rust|java]
+#                           [--transport uds|quic] [--runtime SDK]
 #                           [--save-baseline]
 #
 # Runs every case in cases.<profile>.tsv `--repeat` times, prints each run's
 # result as it lands, then writes a median summary and compares it against
-# baseline.<profile>.tsv (regression = median throughput down >15%, or any
-# non-clean integrity). --save-baseline records the current medians instead.
+# baseline.<profile>.tsv, per case and runtime (regression = median throughput
+# down >15%, or any non-clean integrity). --save-baseline records the current
+# medians instead. SDK is any test/apps/<SDK>_runner with a conformance.json;
+# it runs the `default` cases, and a case's runtime column pins its own. Each
+# runtime's bench build runs once per invocation, before its first run.
 set -u
 cd "$(dirname "$0")/../.."
 A=bench/acceptance
@@ -46,17 +49,20 @@ FILTER='intent mismatch|Connection closed|compact_cell|SignalHandler|authz|Setti
 echo "== acceptance: profile=$PROFILE repeat=$REPEAT runners=$RUNNERS transport=$TRANSPORT runtime=$RUNTIME  $(date '+%F %T') =="
 echo "   (one controller — multi-controller/multi-node is a separate harness; see README)"
 
+BUILT=" "
 grep -vE '^\s*#|^\s*$' "$CASES" | while IFS=$'\t' read -r name case_rt args; do
   rt="$RUNTIME"; [ "$case_rt" != default ] && rt="$case_rt"
   for r in $(seq 1 "$REPEAT"); do
     printf '[%-14s %d/%d rt=%s] ' "$name" "$r" "$REPEAT" "$rt"
-    line=$(FLEZHA_TRANSPORT="$TRANSPORT" timeout 5400 \
+    skip=""; case "$BUILT" in *" $rt "*) skip=1 ;; esac
+    line=$(FLEZHA_TRANSPORT="$TRANSPORT" env ${skip:+FLEZHA_BENCH_SKIP_BUILD=1} timeout 5400 \
              mix bench.steps --runtime "$rt" --runners "$RUNNERS" $args 2>&1 \
              | grep -Ev "$FILTER" | grep '^BENCH_RESULT' | tail -1)
     if [ -z "$line" ]; then
       echo "NO RESULT (stall/crash)"
       printf '%s\t%s\tthroughput=0\tintegrity=stall\n' "$name" "$rt" >> "$RESULTS"
     else
+      BUILT="$BUILT$rt "
       echo "${line#BENCH_RESULT }" | awk '{
         for (i=1; i<=NF; i++) { split($i, a, "="); v[a[1]] = a[2] }
         printf "%s %s · p50 %s ms · peak %s MiB · fsync %s ms · %s\n",

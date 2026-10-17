@@ -1,9 +1,14 @@
-# Acceptance gate (~15-25 min at --repeat 3): the numbers to baseline.
+# Acceptance gate (--repeat 3): the numbers to baseline.
 # name	runtime	scenario args
 chain_1	default	--scenario chain -n 500 --tasks 1 --stall-timeout 120
 chain_4_c50	default	--scenario chain -n 300 --tasks 4 -c 50 --stall-timeout 120
 chain_16_c10	default	--scenario chain -n 200 --tasks 16 -c 10 --stall-timeout 180
 chain_optout	default	--scenario chain -n 500 --tasks 4 --tier optout -c 50 --stall-timeout 120
-chain_4_java	java	--scenario chain -n 100 --tasks 4 -c 20 --stall-timeout 180
+chain_4_java	java	--scenario chain -n 300 --tasks 4 -c 50 --stall-timeout 180
+chain_4_elixir	elixir	--scenario chain -n 300 --tasks 4 -c 50 --stall-timeout 180
+chain_4_node	node	--scenario chain -n 300 --tasks 4 -c 50 --stall-timeout 180
+chain_4_php	php	--scenario chain -n 300 --tasks 4 -c 50 --stall-timeout 180
+chain_4_python	python	--scenario chain -n 300 --tasks 4 -c 50 --stall-timeout 180
+chain_4_ruby	ruby	--scenario chain -n 300 --tasks 4 -c 50 --stall-timeout 180
 turns_100	default	--scenario turns -n 100 -m 50 --rate 500 --stall-timeout 150
 sleep_100	default	--scenario sleep -n 100 --wake-after-ms 10000 --stall-timeout 120
