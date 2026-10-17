@@ -193,8 +193,10 @@ defmodule Flezha.Service.Relay.Diagnose do
     end
   end
 
-  # An unbound or orphaned relay is first a question of who could take it.
-  defp binding(code, namespace, verdict, state) when code in [:unbound, :runner_disconnected] do
+  # An unbound, orphaned or suspended relay is first a question of who could
+  # take it: a suspended one wakes on its next message only onto a runner.
+  defp binding(code, namespace, verdict, state)
+       when code in [:unbound, :runner_disconnected, :asleep] do
     factory = state |> Map.get(:builder, %{}) |> Map.get(:factory_id)
 
     case factory && FleetManager.placement_refusal(namespace, factory) do

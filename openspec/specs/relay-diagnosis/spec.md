@@ -62,8 +62,17 @@ dead letters SHALL be read only when the relay runs on the controller that answe
 
 #### Scenario: Asleep is not a problem
 
-- **WHEN** a session that sleeps is diagnosed
-- **THEN** the verdict is `ok` with a `diagnose.asleep` note saying the next message wakes it
+- **WHEN** a suspended relay that a connected runner can take is diagnosed
+- **THEN** the verdict is `ok` with a `diagnose.asleep` note saying it is suspended at a
+  committed boundary and the next message wakes it on a runner
+
+#### Scenario: A suspended relay nothing can run is a problem
+
+- **WHEN** a suspended relay is diagnosed and no connected runner announces its factory
+- **THEN** the verdict is `problem` with `diagnose.no_runner` naming the factory, and no
+  `diagnose.asleep` note
+- **AND** when runners announce the factory but none can take the relay, the finding is
+  `diagnose.runner_mismatch` with the reason
 
 #### Scenario: Unknown relay
 

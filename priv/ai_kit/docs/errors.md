@@ -214,7 +214,7 @@ SDK raises or returns its one error type carrying them.
 
 | Code | Class | Exit | Message | Hint |
 |---|---|---|---|---|
-| `diagnose.asleep` | unavailable | 7 | relay '{relay}' is asleep, and the next message wakes it |  |
+| `diagnose.asleep` | unavailable | 7 | relay '{relay}' is suspended at a committed boundary; the next message wakes it on a runner |  |
 | `diagnose.data_plane_wedge` | unavailable | 7 | relay '{relay}' has had its data plane wedged at the {layer} layer for {seconds}s | `restart the runner it is bound to: flz runner list --namespace {namespace}` |
 | `diagnose.dead_letters` | conflict | 6 | relay '{relay}' has dead letters: {count}, the newest {newest_s}s old | `flz dlq list {class}` |
 | `diagnose.finished` | conflict | 6 | relay '{relay}' finished as {status} |  |

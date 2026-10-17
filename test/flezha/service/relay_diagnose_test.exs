@@ -192,12 +192,31 @@ defmodule FlezhaTest.Service.RelayDiagnoseTest do
       :ok
     end
 
-    test "a sleeping session is not a problem" do
+    test "a suspended relay a runner can take is not a problem" do
+      stub(FleetManager, :placement_refusal, fn @namespace, "orders" -> :none end)
       publish_judged(%{bound_runner: "exec1", suspended?: true})
 
       assert %{"verdict" => "ok", "findings" => [asleep]} = answer()
       assert asleep["code"] == "diagnose.asleep"
-      assert asleep["message"] =~ "the next message wakes it"
+      assert asleep["message"] =~ "is suspended at a committed boundary"
+      assert asleep["message"] =~ "the next message wakes it on a runner"
+    end
+
+    test "a suspended relay no runner serves is a problem, not asleep" do
+      stub(FleetManager, :placement_refusal, fn @namespace, "orders" -> :no_such_factory end)
+      publish_judged(%{bound_runner: "exec1", suspended?: true})
+
+      answer = answer()
+      assert answer["verdict"] == "problem"
+      assert codes(answer) == ["diagnose.no_runner"]
+      assert finding(answer, "diagnose.no_runner")["details"]["factory"] == "orders"
+    end
+
+    test "a suspended relay the serving runners cannot take is a mismatch" do
+      stub(FleetManager, :placement_refusal, fn _ns, _factory -> {:language, 3} end)
+      publish_judged(%{bound_runner: "exec1", suspended?: true})
+
+      assert codes(answer()) == ["diagnose.runner_mismatch"]
     end
 
     test "a parked relay is a warning naming why" do

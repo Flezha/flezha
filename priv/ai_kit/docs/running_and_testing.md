@@ -220,7 +220,7 @@ each with its code and the hint to act on:
 ```output
 WARNING  diagnose.dead_letters  relay 'turns' has dead letters: 3, the newest 42s old
          hint: flz dlq list turns
-NOTE     diagnose.asleep  relay 'turns' is asleep, and the next message wakes it
+NOTE     diagnose.asleep  relay 'turns' is suspended at a committed boundary; the next message wakes it on a runner
 ```
 
 - **`PROBLEM`** needs action: no runner announces the factory, the runner is
