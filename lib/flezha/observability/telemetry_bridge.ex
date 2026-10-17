@@ -4,7 +4,7 @@ defmodule Flezha.Observability.TelemetryBridge do
   `[:flezha, ...]` telemetry events onto the observability bus.
 
   No producer call-site is rewritten. The mapping has three halves: the
-  hand-kept lifecycle half in `@mapping`; a half DERIVED from the convergence
+  hand-kept lifecycle half in `@lines`; a half DERIVED from the convergence
   loop's detector table, so every event a detector entry declares is bridged by
   that declaration and a new detector needs no edit here; and a half derived at
   start from the providers packages installed (`provider_mapping/0`), so a
@@ -31,177 +31,264 @@ defmodule Flezha.Observability.TelemetryBridge do
   require Logger
 
   alias Flezha.Convergence.Probe.Table
-  alias Flezha.Observability.{Bus, Counters, Registry, Signal}
+  alias Flezha.Observability.{Bus, Counters, Registry, Signal, Source}
   alias Flezha.Plugin.{ProviderBehaviour, Providers}
 
   @handler_id :flezha_observability_telemetry_bridge
 
-  # event => {source_atom, name_atom, kind}
-  @mapping %{
-    [:flezha, :state, :wal, :backpressure] => {:flezha_state, :wal_backpressure, :metric},
-    [:flezha, :state, :fsync, :tick] => {:flezha_state, :fsync_tick, :event},
-    [:flezha, :boot, :recovery_complete] => {:flezha_boot, :recovery_complete, :event},
-    [:flezha, :boot, :reconcile_duplicate] => {:flezha_boot, :reconcile_duplicate, :event},
-    [:flezha, :shutdown, :requested] => {:flezha_shutdown, :requested, :event},
-    [:flezha, :shutdown, :phase_started] => {:flezha_shutdown, :phase_started, :event},
-    [:flezha, :shutdown, :phase_completed] => {:flezha_shutdown, :phase_completed, :event},
-    [:flezha, :shutdown, :drain_progress] => {:flezha_shutdown, :drain_progress, :event},
-    [:flezha, :shutdown, :timeout] => {:flezha_shutdown, :timeout, :event},
-    [:flezha, :shutdown, :complete] => {:flezha_shutdown, :complete, :event},
-    [:flezha, :plugin_package, :loaded] => {:flezha_plugin_packages, :loaded, :event},
-    [:flezha, :plugin_package, :refused] => {:flezha_plugin_packages, :refused, :event},
-    [:flezha, :plugin, :websocket, :idle_reconnect] => {:flezha_ws, :idle_reconnect, :event},
-    [:flezha, :plugin, :websocket, :resubscribe] => {:flezha_ws, :resubscribe, :event},
-    [:flezha, :plugin, :websocket, :reconcile] => {:flezha_ws, :reconcile, :event},
-    [:flezha, :state, :seq_gap] => {:flezha_state, :seq_gap, :event},
-    [:flezha, :state, :credit_anomaly] => {:flezha_state, :credit_anomaly, :event},
-    [:flezha, :state, :output_stall] => {:flezha_state, :output_stall, :event},
-    [:flezha, :state, :compaction_timeout] => {:flezha_state, :compaction_timeout, :event},
-    [:flezha, :state, :compaction_trigger] => {:flezha_state, :compaction_trigger, :event},
-    [:flezha, :state, :baseline_seed] => {:flezha_state, :baseline_seed, :event},
-    [:flezha, :state, :wal_realign] => {:flezha_state, :wal_realign, :event},
-    [:flezha, :state, :stale_writer_refused] => {:flezha_state, :stale_writer_refused, :event},
-    # Remote durability tier. Every alarm it documents was a Logger line until
-    # these entries existed — including `rpo_exceeded`, which the user guide
-    # calls alarm-grade and reports through `/healthz`.
-    [:flezha, :state, :rpo_exceeded] => {:flezha_durability, :rpo_exceeded, :event},
-    [:flezha, :state, :ship_fenced] => {:flezha_durability, :ship_fenced, :event},
-    [:flezha, :state, :ship_failed] => {:flezha_durability, :ship_failed, :event},
-    [:flezha, :state, :artifact_shipped] => {:flezha_durability, :artifact_shipped, :metric},
-    [:flezha, :state, :remote_commit] => {:flezha_durability, :remote_commit, :metric},
-    [:flezha, :state, :hydrated] => {:flezha_durability, :hydrated, :event},
-    [:flezha, :state, :hydration_failed] => {:flezha_durability, :hydration_failed, :event},
-    [:flezha, :state, :artifact_missing] => {:flezha_durability, :artifact_missing, :event},
-    [:flezha, :state, :durability_gc] => {:flezha_durability, :durability_gc, :metric},
-    [:flezha, :leadership, :transition] => {:flezha_leadership, :transition, :event},
-    # A reason that reached a caller with no catalogue code: a defect to read.
-    [:flezha, :error, :uncatalogued] => {:flezha_error, :uncatalogued, :event},
-    [:flezha, :reconcile, :action] => {:flezha_reconcile, :action, :event},
-    [:flezha, :reconcile, :health] => {:flezha_reconcile, :health, :event},
-    [:flezha, :stream, :drop] => {:flezha_stream, :drop, :metric},
-    [:flezha, :convergence, :intent_mismatch] => {:flezha_convergence, :intent_mismatch, :event},
-    [:flezha, :dlq, :parked] => {:flezha_dlq, :dlq_parked_total, :metric},
+  # The hand-kept half: event => {source, name, kind, meaning}. The meaning is
+  # what a reader is told the signal says; it never reaches the per-event path,
+  # which reads `@all_mapping`, the same lines without it.
+  @lines %{
+    [:flezha, :state, :wal, :backpressure] =>
+      {:flezha_state, :wal_backpressure, :metric,
+       "A Cell's write-ahead log is pushing back on its writer."},
+    [:flezha, :state, :fsync, :tick] =>
+      {:flezha_state, :fsync_tick, :event, "A batched fsync flushed pending writes to disk."},
+    [:flezha, :boot, :recovery_complete] =>
+      {:flezha_boot, :recovery_complete, :event, "A hub finished replaying its relays at boot."},
+    [:flezha, :boot, :reconcile_duplicate] =>
+      {:flezha_boot, :reconcile_duplicate, :event,
+       "Boot found a relay running on more than one node and stopped the extras."},
+    [:flezha, :shutdown, :requested] =>
+      {:flezha_shutdown, :requested, :event, "A graceful shutdown of the controller began."},
+    [:flezha, :shutdown, :phase_started] =>
+      {:flezha_shutdown, :phase_started, :event, "A shutdown phase started."},
+    [:flezha, :shutdown, :phase_completed] =>
+      {:flezha_shutdown, :phase_completed, :event, "A shutdown phase finished."},
+    [:flezha, :shutdown, :drain_progress] =>
+      {:flezha_shutdown, :drain_progress, :event, "A hub finished draining its relays."},
+    [:flezha, :shutdown, :timeout] =>
+      {:flezha_shutdown, :timeout, :event, "A shutdown phase ran out of time."},
+    [:flezha, :shutdown, :complete] =>
+      {:flezha_shutdown, :complete, :event, "The graceful shutdown finished."},
+    [:flezha, :plugin_package, :loaded] =>
+      {:flezha_plugin_packages, :loaded, :event, "A plugin package was loaded at boot."},
+    [:flezha, :plugin_package, :refused] =>
+      {:flezha_plugin_packages, :refused, :event, "A plugin package was refused at boot."},
+    [:flezha, :plugin, :websocket, :idle_reconnect] =>
+      {:flezha_ws, :idle_reconnect, :event,
+       "A websocket fell silent for too long and was reconnected."},
+    [:flezha, :plugin, :websocket, :resubscribe] =>
+      {:flezha_ws, :resubscribe, :event, "A websocket sent its subscriptions again."},
+    [:flezha, :plugin, :websocket, :reconcile] =>
+      {:flezha_ws, :reconcile, :event, "A websocket compared its subscriptions with the feed's."},
+    [:flezha, :state, :seq_gap] =>
+      {:flezha_state, :seq_gap, :event, "A Cell's state arrived with a gap in its sequence."},
+    [:flezha, :state, :credit_anomaly] =>
+      {:flezha_state, :credit_anomaly, :event,
+       "A runner wrote past the credit it was given; a protocol fault, not back-pressure."},
+    [:flezha, :state, :output_stall] =>
+      {:flezha_state, :output_stall, :event, "A Cell has produced no output for too long."},
+    [:flezha, :state, :compaction_timeout] =>
+      {:flezha_state, :compaction_timeout, :event, "A Cell's log compaction ran out of time."},
+    [:flezha, :state, :compaction_trigger] =>
+      {:flezha_state, :compaction_trigger, :event, "A Cell's log grew enough to be compacted."},
+    [:flezha, :state, :baseline_seed] =>
+      {:flezha_state, :baseline_seed, :event, "A Cell's log took its first sequence number."},
+    [:flezha, :state, :wal_realign] =>
+      {:flezha_state, :wal_realign, :event,
+       "A Cell's log moved its sequence to match its runner."},
+    [:flezha, :state, :stale_writer_refused] =>
+      {:flezha_state, :stale_writer_refused, :event,
+       "A write from a runner that no longer owns the Cell was refused."},
+    [:flezha, :state, :rpo_exceeded] =>
+      {:flezha_durability, :rpo_exceeded, :event,
+       "Remote copies fell further behind than the recovery point objective allows."},
+    [:flezha, :state, :ship_failed] =>
+      {:flezha_durability, :ship_failed, :event,
+       "Shipping a state artifact to remote storage failed."},
+    [:flezha, :state, :artifact_shipped] =>
+      {:flezha_durability, :artifact_shipped, :metric,
+       "A state artifact was shipped to remote storage."},
+    [:flezha, :state, :remote_commit] =>
+      {:flezha_durability, :remote_commit, :metric, "Remote storage confirmed a commit."},
+    [:flezha, :state, :hydrated] =>
+      {:flezha_durability, :hydrated, :event, "State was restored from remote storage."},
+    [:flezha, :state, :hydration_failed] =>
+      {:flezha_durability, :hydration_failed, :event,
+       "Restoring state from remote storage failed."},
+    [:flezha, :state, :artifact_missing] =>
+      {:flezha_durability, :artifact_missing, :event,
+       "Remote storage lacks an artifact the state refers to."},
+    [:flezha, :state, :durability_gc] =>
+      {:flezha_durability, :durability_gc, :metric,
+       "Old artifacts were removed from remote storage."},
+    [:flezha, :error, :uncatalogued] =>
+      {:flezha_error, :uncatalogued, :event,
+       "A caller got an error with no catalogue code: a defect to report."},
+    [:flezha, :stream, :drop] =>
+      {:flezha_stream, :drop, :metric, "Messages on a runner's stream were dropped."},
+    [:flezha, :convergence, :intent_mismatch] =>
+      {:flezha_convergence, :intent_mismatch, :event,
+       "Durable state exists for relays nothing intends to run."},
+    [:flezha, :dlq, :parked] =>
+      {:flezha_dlq, :dlq_parked_total, :metric, "Messages were put in the dead-letter queue."},
     [:flezha, :dlq, :retention_dropped] =>
-      {:flezha_dlq, :dlq_dropped_by_retention_total, :metric},
-    [:flezha, :dlq, :usage] => {:flezha_dlq, :dlq_usage, :metric},
-    [:flezha, :plugin, :relay_forward, :shipped] => {:flezha_relay_forward, :delivered, :metric},
-    [:flezha, :plugin, :relay_forward, :retried] => {:flezha_relay_forward, :retry, :metric},
+      {:flezha_dlq, :dlq_dropped_by_retention_total, :metric,
+       "Dead letters were deleted by the retention limit."},
+    [:flezha, :dlq, :usage] =>
+      {:flezha_dlq, :dlq_usage, :metric, "Entries and bytes a tasklet's dead-letter queue holds."},
+    [:flezha, :plugin, :relay_forward, :shipped] =>
+      {:flezha_relay_forward, :delivered, :metric, "Messages were forwarded to the next relay."},
+    [:flezha, :plugin, :relay_forward, :retried] =>
+      {:flezha_relay_forward, :retry, :metric, "A forward failed and will be tried again."},
     [:flezha, :plugin, :relay_forward, :queue_depth] =>
-      {:flezha_relay_forward, :queue_depth, :metric},
+      {:flezha_relay_forward, :queue_depth, :metric, "Messages waiting to be forwarded."},
     [:flezha, :plugin, :relay_forward, :overflowed] =>
-      {:flezha_relay_forward, :saturated, :event},
-    [:flezha, :plugin, :http_poll, :shipped] => {:flezha_http_poll, :injected, :metric},
-    [:flezha, :plugin, :http_poll, :unchanged] => {:flezha_http_poll, :unchanged, :metric},
-    [:flezha, :plugin, :http_poll, :failed] => {:flezha_http_poll, :failed, :event},
-    # The file source and sink. A delivered line and a synced batch are counts;
-    # a truncation, a failure and a record refused as a line are read one at a time.
-    [:flezha, :plugin, :file_source, :shipped] => {:flezha_file_source, :injected, :metric},
-    [:flezha, :plugin, :file_source, :truncated] => {:flezha_file_source, :truncated, :event},
-    [:flezha, :plugin, :file_source, :failed] => {:flezha_file_source, :failed, :event},
-    # The Postgres poll source: rows delivered are a count; a failure and the
-    # moment it caught up are read one at a time.
-    [:flezha, :plugin, :postgres_poll, :shipped] => {:flezha_postgres_poll, :injected, :metric},
-    [:flezha, :plugin, :postgres_poll, :failed] => {:flezha_postgres_poll, :failed, :event},
-    [:flezha, :plugin, :postgres_poll, :caught_up] => {:flezha_postgres_poll, :caught_up, :event},
-    [:flezha, :plugin, :file_sink, :shipped] => {:flezha_file_sink, :flushed, :metric},
-    [:flezha, :plugin, :file_sink, :refused] => {:flezha_file_sink, :refused, :event},
-    [:flezha, :plugin, :file_sink, :failed] => {:flezha_file_sink, :failed, :event},
-    # A deliberate start, and a stop or completion: read by every sink, the
-    # hook sink among them, which names this source.
-    [:flezha, :relay, :started] => {:flezha_relay, :relay_started, :event},
-    [:flezha, :relay, :stopped] => {:flezha_relay, :relay_stopped, :event},
-    # What controller plugins hear and nothing else does: a new dead letter
-    # (`Flezha.Observability.HookSink`).
-    [:flezha, :dlq, :dead_lettered] => {:flezha_hooks, :on_dead_letter, :event},
-    # The two HTTP senders (`Flezha.Plugin.Provider.HttpSend`): a request sent,
-    # retried or overflowed is a count; one given up is read one at a time. The
-    # webhook's queue is its copy's, so it never overflows its own.
-    [:flezha, :plugin, :hook_webhook, :shipped] => {:flezha_hook_webhook, :shipped, :metric},
-    [:flezha, :plugin, :hook_webhook, :retried] => {:flezha_hook_webhook, :retried, :metric},
-    [:flezha, :plugin, :hook_webhook, :failed] => {:flezha_hook_webhook, :failed, :event},
+      {:flezha_relay_forward, :saturated, :event,
+       "The forward queue was full and refused messages."},
+    [:flezha, :plugin, :http_poll, :shipped] =>
+      {:flezha_http_poll, :injected, :metric, "A poll's response was delivered to the relay."},
+    [:flezha, :plugin, :http_poll, :unchanged] =>
+      {:flezha_http_poll, :unchanged, :metric,
+       "A poll's response matched the last one and was skipped."},
+    [:flezha, :plugin, :http_poll, :failed] =>
+      {:flezha_http_poll, :failed, :event, "A poll request failed."},
+    [:flezha, :plugin, :file_source, :shipped] =>
+      {:flezha_file_source, :injected, :metric, "Lines read from the file were delivered."},
+    [:flezha, :plugin, :file_source, :truncated] =>
+      {:flezha_file_source, :truncated, :event,
+       "The file was truncated or replaced; it is read again from the start."},
+    [:flezha, :plugin, :file_source, :failed] =>
+      {:flezha_file_source, :failed, :event, "Reading the file failed."},
+    [:flezha, :plugin, :postgres_poll, :shipped] =>
+      {:flezha_postgres_poll, :injected, :metric, "Rows read from the table were delivered."},
+    [:flezha, :plugin, :postgres_poll, :failed] =>
+      {:flezha_postgres_poll, :failed, :event, "A Postgres poll failed."},
+    [:flezha, :plugin, :postgres_poll, :caught_up] =>
+      {:flezha_postgres_poll, :caught_up, :event, "The poll reached the newest row."},
+    [:flezha, :plugin, :file_sink, :shipped] =>
+      {:flezha_file_sink, :flushed, :metric, "Lines were written to the file; count is how many."},
+    [:flezha, :plugin, :file_sink, :refused] =>
+      {:flezha_file_sink, :refused, :event,
+       "A record was refused because it cannot be written as one line."},
+    [:flezha, :plugin, :file_sink, :failed] =>
+      {:flezha_file_sink, :failed, :event, "Writing to the file failed."},
+    [:flezha, :relay, :started] =>
+      {:flezha_relay, :relay_started, :event, "A relay was started."},
+    [:flezha, :relay, :stopped] =>
+      {:flezha_relay, :relay_stopped, :event, "A relay was stopped or completed."},
+    # Only the sinks naming this source hear it (`Flezha.Observability.HookSink`).
+    [:flezha, :dlq, :dead_lettered] =>
+      {:flezha_hooks, :on_dead_letter, :event,
+       "A message became a dead letter; controller plugins are told."},
+    [:flezha, :plugin, :hook_webhook, :shipped] =>
+      {:flezha_hook_webhook, :shipped, :metric, "A webhook request was sent."},
+    [:flezha, :plugin, :hook_webhook, :retried] =>
+      {:flezha_hook_webhook, :retried, :metric, "A webhook request failed and will be retried."},
+    [:flezha, :plugin, :hook_webhook, :failed] =>
+      {:flezha_hook_webhook, :failed, :event, "A webhook request was given up."},
     [:flezha, :plugin, :hook_webhook, :overflowed] =>
-      {:flezha_hook_webhook, :overflowed, :metric},
-    [:flezha, :plugin, :http_push, :shipped] => {:flezha_http_push, :shipped, :metric},
-    [:flezha, :plugin, :http_push, :retried] => {:flezha_http_push, :retried, :metric},
-    [:flezha, :plugin, :http_push, :failed] => {:flezha_http_push, :failed, :event},
-    [:flezha, :plugin, :http_push, :overflowed] => {:flezha_http_push, :overflowed, :metric},
-    # The plugin lifecycle's one event: every phase a plugin enters or leaves,
-    # from the table's one transition function.
-    [:flezha, :plugin, :phase] => {:flezha_plugin, :phase, :event},
-    [:flezha, :relay, :parked] => {:flezha_relay, :relay_parked_total, :metric},
-    # A steps session's turn that failed and was parked, the session going on.
+      {:flezha_hook_webhook, :overflowed, :metric,
+       "The webhook queue was full and requests were dropped."},
+    [:flezha, :plugin, :http_push, :shipped] =>
+      {:flezha_http_push, :shipped, :metric, "An HTTP request was sent."},
+    [:flezha, :plugin, :http_push, :retried] =>
+      {:flezha_http_push, :retried, :metric, "An HTTP request failed and will be retried."},
+    [:flezha, :plugin, :http_push, :failed] =>
+      {:flezha_http_push, :failed, :event, "An HTTP request was given up."},
+    [:flezha, :plugin, :http_push, :overflowed] =>
+      {:flezha_http_push, :overflowed, :metric,
+       "The HTTP queue was full and requests were dropped."},
+    [:flezha, :plugin, :phase] =>
+      {:flezha_plugin, :phase, :event, "A plugin entered or left a lifecycle phase."},
+    [:flezha, :relay, :parked] =>
+      {:flezha_relay, :relay_parked_total, :metric, "A relay was parked after a failure."},
     [:flezha, :steps, :turn_dead_lettered] =>
-      {:flezha_steps, :flezha_steps_turns_dead_lettered_total, :metric},
-    # A call, an outside caller's or a relay's: how long each answer took,
-    # and the calls that ended with none, counted by reason or code; a caller's
-    # call recovered past its deadline and the retention margin settles with no
-    # `Response` at all.
-    [:flezha, :call, :answered] => {:flezha_call, :flezha_call_answer_duration, :metric},
-    [:flezha, :call, :timeout] => {:flezha_call, :flezha_call_timeouts_total, :metric},
+      {:flezha_steps, :flezha_steps_turns_dead_lettered_total, :metric,
+       "A steps session's turn failed and was parked; the session goes on."},
+    [:flezha, :call, :answered] =>
+      {:flezha_call, :flezha_call_answer_duration, :metric,
+       "A call was answered; how long it took."},
+    [:flezha, :call, :timeout] =>
+      {:flezha_call, :flezha_call_timeouts_total, :metric, "A call got no answer in time."},
     [:flezha, :call, :answer_dropped] =>
-      {:flezha_call, :flezha_call_answers_dropped_total, :metric},
-    [:flezha, :call, :refused] => {:flezha_call, :flezha_call_refused_total, :metric},
+      {:flezha_call, :flezha_call_answers_dropped_total, :metric,
+       "An answer arrived that no caller was waiting for."},
+    [:flezha, :call, :refused] =>
+      {:flezha_call, :flezha_call_refused_total, :metric, "A call was refused."},
     [:flezha, :call, :recovered_unanswered] =>
-      {:flezha_call, :flezha_call_recovered_unanswered_total, :metric},
-    # A runner's report that an instance's process died, which parks it.
-    [:flezha, :relay, :exited] => {:flezha_relay, :relay_exited, :event},
-    # The backoff table's two events: every wait a ladder takes and every reset
-    # a success records, whichever site walks the row.
-    [:flezha, :backoff, :wait] => {:flezha_convergence, :backoff_wait, :metric},
-    [:flezha, :backoff, :reset] => {:flezha_convergence, :backoff_reset, :metric},
-    # Every hub owner's start failure, from the one `attempt_start/2` that
-    # reports it; `target` names the hub that would not come up.
-    [:flezha, :hub, :start_failed] => {:flezha_boot, :hub_start_failed, :event},
-    # The recovery replay's opening marker, beside the two hooks that report its
-    # outcome; one per hub per boot.
-    [:flezha, :boot, :pre_recovery_replay] => {:flezha_boot, :pre_recovery_replay, :event},
-    # The websocket sink's four provider verbs, on the source its three
-    # watchdog events already publish under. `shipped` counts, so it is the one
-    # new exposed series; the other three are read one at a time.
-    [:flezha, :plugin, :websocket, :shipped] => {:flezha_ws, :shipped, :metric},
-    [:flezha, :plugin, :websocket, :retried] => {:flezha_ws, :retried, :event},
-    [:flezha, :plugin, :websocket, :failed] => {:flezha_ws, :failed, :event},
-    [:flezha, :plugin, :websocket, :overflowed] => {:flezha_ws, :overflowed, :event},
-    # Detection verdicts outside the detector table: a refusal, a failure, a
-    # loss, a breach or a death the controller observed. Every one was a
-    # `Logger` line and an unexported event until these entries existed.
-    [:flezha, :correction, :refused] => {:flezha_correction, :refused, :event},
-    # A runner session opening and closing, for consumers on another node:
-    # the event bus that carries the same two facts reaches local processes only.
-    [:flezha, :runner, :connected] => {:flezha_runner, :runner_connected, :event},
-    [:flezha, :runner, :disconnected] => {:flezha_runner, :runner_disconnected, :event},
-    # A runner process an operator dropped, a drop lifted, and a dropped
-    # process refused again, at the rate the runner's reconnect backoff sets.
-    [:flezha, :runner, :dropped] => {:flezha_runner, :runner_dropped, :event},
-    [:flezha, :runner, :readmitted] => {:flezha_runner, :runner_readmitted, :event},
-    [:flezha, :runner, :drop_refused] => {:flezha_runner, :runner_drop_refused, :event},
+      {:flezha_call, :flezha_call_recovered_unanswered_total, :metric,
+       "A call recovered after a restart was settled without an answer."},
+    [:flezha, :relay, :exited] =>
+      {:flezha_relay, :relay_exited, :event, "A runner reported that a relay's process died."},
+    [:flezha, :backoff, :wait] =>
+      {:flezha_convergence, :backoff_wait, :metric, "A retry waited before its next attempt."},
+    [:flezha, :backoff, :reset] =>
+      {:flezha_convergence, :backoff_reset, :metric, "A success reset a retry's wait."},
+    [:flezha, :hub, :start_failed] =>
+      {:flezha_boot, :hub_start_failed, :event, "A namespace's hub failed to start."},
+    [:flezha, :boot, :pre_recovery_replay] =>
+      {:flezha_boot, :pre_recovery_replay, :event, "A hub began replaying its relays at boot."},
+    [:flezha, :plugin, :websocket, :shipped] =>
+      {:flezha_ws, :shipped, :metric, "Messages were sent over a websocket."},
+    [:flezha, :plugin, :websocket, :retried] =>
+      {:flezha_ws, :retried, :event, "A websocket send failed and will be retried."},
+    [:flezha, :plugin, :websocket, :failed] =>
+      {:flezha_ws, :failed, :event, "A websocket send was given up."},
+    [:flezha, :plugin, :websocket, :overflowed] =>
+      {:flezha_ws, :overflowed, :event, "A websocket's queue was full and messages were dropped."},
+    [:flezha, :correction, :refused] =>
+      {:flezha_correction, :refused, :event, "The controller refused to apply a correction."},
+    [:flezha, :runner, :connected] =>
+      {:flezha_runner, :runner_connected, :event, "A runner connected."},
+    [:flezha, :runner, :disconnected] =>
+      {:flezha_runner, :runner_disconnected, :event, "A runner disconnected."},
+    [:flezha, :runner, :dropped] =>
+      {:flezha_runner, :runner_dropped, :event, "An operator dropped a runner process."},
+    [:flezha, :runner, :readmitted] =>
+      {:flezha_runner, :runner_readmitted, :event, "A dropped runner process was let back in."},
+    [:flezha, :runner, :drop_refused] =>
+      {:flezha_runner, :runner_drop_refused, :event,
+       "A dropped runner process tried to reconnect and was refused."},
     [:flezha, :runner, :factory_language_conflict] =>
-      {:flezha_runner, :factory_language_conflict, :event},
-    [:flezha, :runner, :factory_run_conflict] => {:flezha_runner, :factory_run_conflict, :event},
-    [:flezha, :runner, :quota_refused] => {:flezha_runner, :quota_refused, :event},
-    [:flezha, :runner, :admin_request] => {:flezha_runner, :admin_request, :event},
+      {:flezha_runner, :factory_language_conflict, :event,
+       "A runner offered a factory already served in another language."},
+    [:flezha, :runner, :factory_run_conflict] =>
+      {:flezha_runner, :factory_run_conflict, :event,
+       "A runner offered a factory that conflicts with one already running."},
+    [:flezha, :runner, :quota_refused] =>
+      {:flezha_runner, :quota_refused, :event,
+       "A runner was refused because the namespace's runner quota is full."},
+    [:flezha, :runner, :admin_request] =>
+      {:flezha_runner, :admin_request, :event, "A runner sent an administration request."},
     [:flezha, :runner, :foreign_frame_refused] =>
-      {:flezha_runner, :foreign_frame_refused, :event},
-    [:flezha, :schedule, :spawn_failed] => {:flezha_schedule, :spawn_failed, :event},
-    [:flezha, :stream, :fanout_warning] => {:flezha_stream, :fanout_warning, :event},
-    [:flezha, :state, :claim_superseded] => {:flezha_durability, :claim_superseded, :event},
-    [:flezha, :state, :compaction_failed] => {:flezha_state, :compaction_failed, :event},
-    [:flezha, :state, :compaction_gave_up] => {:flezha_state, :compaction_gave_up, :event},
-    [:flezha, :state, :disk_quota_breach] => {:flezha_state, :disk_quota_breach, :event},
-    [:flezha, :state, :inbox_duplicate] => {:flezha_state, :inbox_duplicate, :event},
+      {:flezha_runner, :foreign_frame_refused, :event,
+       "A runner sent a frame for a relay it does not own; it was refused."},
+    [:flezha, :schedule, :spawn_failed] =>
+      {:flezha_schedule, :spawn_failed, :event, "A schedule fired but its relay failed to start."},
+    [:flezha, :stream, :fanout_warning] =>
+      {:flezha_stream, :fanout_warning, :event,
+       "A stream found more than one process for one relay."},
+    [:flezha, :state, :claim_superseded] =>
+      {:flezha_durability, :claim_superseded, :event,
+       "Another node took over shipping a relay's state."},
+    [:flezha, :state, :compaction_failed] =>
+      {:flezha_state, :compaction_failed, :event, "A Cell's log compaction failed."},
+    [:flezha, :state, :compaction_gave_up] =>
+      {:flezha_state, :compaction_gave_up, :event, "A Cell's log compaction was given up."},
+    [:flezha, :state, :disk_quota_breach] =>
+      {:flezha_state, :disk_quota_breach, :event, "A namespace's state passed its disk quota."},
+    [:flezha, :state, :inbox_duplicate] =>
+      {:flezha_state, :inbox_duplicate, :event, "A relay received a message it already had."},
     [:flezha, :state, :input_log_frozen_watermark] =>
-      {:flezha_state, :input_log_frozen_watermark, :event},
-    [:flezha, :state, :input_log_syncer_died] => {:flezha_state, :input_log_syncer_died, :event},
-    [:flezha, :state, :record_frame, :refused] => {:flezha_state, :record_frame_refused, :event},
-    [:flezha, :state, :restore_refused] => {:flezha_state, :restore_refused, :event},
-    [:flezha, :state, :wal_pull_failed] => {:flezha_state, :wal_pull_failed, :event},
-    # A torn tail discarded from a durable log, and a WAL rewound from one seq
-    # to another. Neither is a step completing: both report bytes the system
-    # gave up on, and `record_frame :refused` above is the same event's other
-    # outcome.
+      {:flezha_state, :input_log_frozen_watermark, :event,
+       "A relay's input log stopped advancing."},
+    [:flezha, :state, :input_log_syncer_died] =>
+      {:flezha_state, :input_log_syncer_died, :event, "A relay's input log syncer crashed."},
+    [:flezha, :state, :record_frame, :refused] =>
+      {:flezha_state, :record_frame_refused, :event,
+       "A damaged record at the end of a durable log was refused."},
+    [:flezha, :state, :restore_refused] =>
+      {:flezha_state, :restore_refused, :event, "A relay's state could not be restored."},
+    [:flezha, :state, :wal_pull_failed] =>
+      {:flezha_state, :wal_pull_failed, :event, "Pulling a log from another node failed."},
     [:flezha, :state, :record_frame, :repaired] =>
-      {:flezha_state, :record_frame_repaired, :event},
-    [:flezha, :state, :wal_rewind] => {:flezha_state, :wal_rewind, :event}
+      {:flezha_state, :record_frame_repaired, :event,
+       "A torn record at the end of a durable log was discarded."},
+    [:flezha, :state, :wal_rewind] =>
+      {:flezha_state, :wal_rewind, :event, "A Cell's log was rewound to an earlier sequence."}
   }
 
   # Every `[:flezha, …]` event name the tree writes that reaches no exporter,
@@ -248,26 +335,61 @@ defmodule Flezha.Observability.TelemetryBridge do
   # Mapped events nothing in `lib/flezha` writes any more, each with the reason
   # the line stays. A dead line costs nothing at run time and removing one is a
   # published-surface decision, so the suite pins the set rather than the count.
-  @unwritten %{
-    [:flezha, :leadership, :transition] =>
-      "named in the observability-foundation at-minimum list; the reconciler that " <>
-        "emitted it was replaced by the convergence loop",
-    [:flezha, :reconcile, :action] =>
-      "named in the observability-foundation at-minimum list; same reconciler",
-    [:flezha, :reconcile, :health] =>
-      "named in the observability-foundation at-minimum list; same reconciler",
-    [:flezha, :state, :ship_fenced] =>
-      "documented as an event of `:flezha_durability`; the shipper reports a lost " <>
-        "claim as `claim_superseded` instead"
-  }
+  @unwritten %{}
 
   # Derived at COMPILE time from the detector table, so adding a detector
   # recompiles this module and its event is bridged with no edit here.
-  @derived Map.new(Table.events(), fn event ->
-             {event, {:flezha_health, List.last(event), :event}}
+  @derived_lines Map.new(Table.event_descriptions(), fn {event, meaning} ->
+                   {event, {:flezha_health, List.last(event), :event, meaning}}
+                 end)
+
+  @derived Map.new(@derived_lines, fn {event, {source, name, kind, _meaning}} ->
+             {event, {source, name, kind}}
            end)
 
-  @all_mapping Map.merge(@derived, @mapping)
+  @all_lines Map.merge(@derived_lines, @lines)
+  @all_mapping Map.new(@all_lines, fn {event, {source, name, kind, _meaning}} ->
+                 {event, {source, name, kind}}
+               end)
+
+  # Every source a line names, with where it sits and what it is.
+  @sources %{
+    flezha_boot: {:controller, "Controller boot: recovering relays and starting hubs."},
+    flezha_shutdown: {:controller, "Graceful shutdown of the controller and its phases."},
+    flezha_error: {:controller, "Errors that reached a caller without a catalogue code."},
+    flezha_state: {:storage, "Each Cell's write-ahead log: writes, compaction and repairs."},
+    flezha_durability:
+      {:storage, "Copies of relay state shipped to and restored from remote storage."},
+    flezha_relay: {:relays, "Relays starting, stopping, parking and exiting."},
+    flezha_runner: {:relays, "Runner sessions: connects, disconnects, drops and refusals."},
+    flezha_call: {:relays, "Calls to relays: answers, timeouts and refusals."},
+    flezha_steps: {:relays, "Steps sessions and their failed turns."},
+    flezha_dlq: {:relays, "Dead-letter queues: messages parked and removed."},
+    flezha_stream: {:relays, "Runner streams carrying messages to and from relays."},
+    flezha_schedule: {:relays, "Schedules that start relays on a timetable."},
+    flezha_health: {:relays, "Health checks' findings about relays, runners and plugins."},
+    flezha_convergence: {:relays, "The loop that keeps running relays matching what was asked."},
+    flezha_correction: {:relays, "Corrections the controller refused to apply."},
+    flezha_plugin: {:plugins, "Plugins entering and leaving their lifecycle phases."},
+    flezha_plugin_packages: {:plugins, "Plugin packages loaded or refused at boot."},
+    flezha_hooks: {:plugins, "Notices handed to controller plugins."},
+    flezha_ws: {:plugins, "The websocket plugin: connections, subscriptions and sends."},
+    flezha_relay_forward:
+      {:plugins, "The relay forward plugin, which hands messages to the next relay."},
+    flezha_http_poll: {:plugins, "The HTTP poll plugin, which reads a URL on a timer."},
+    flezha_http_push: {:plugins, "The HTTP push plugin, which sends relay output to a URL."},
+    flezha_hook_webhook:
+      {:plugins, "The webhook plugin, which sends controller notices to a URL."},
+    flezha_file_source: {:plugins, "The file source plugin, which reads lines from a file."},
+    flezha_file_sink: {:plugins, "The file sink plugin, which writes relay output to a file."},
+    flezha_postgres_poll:
+      {:plugins, "The Postgres poll plugin, which reads new rows from a table."}
+  }
+
+  for {_event, {source, _name, _kind}} <- @all_mapping, not Map.has_key?(@sources, source) do
+    raise CompileError,
+      description: "bridged source #{inspect(source)} has no area and description in @sources"
+  end
 
   # The controller hooks' lines: plugin notices, not telemetry, which only the
   # sinks naming their source hear (`Bus.emit_named/1`).
@@ -276,8 +398,8 @@ defmodule Flezha.Observability.TelemetryBridge do
                     do: row
 
   # The shared provider verbs: a failure is read one at a time, the rest are counts.
-  @verb_kinds for verb <- ProviderBehaviour.verbs(),
-                  do: {verb, if(verb == :failed, do: :event, else: :metric)}
+  @shared_verbs for {verb, meaning} <- ProviderBehaviour.verb_descriptions(),
+                    do: {verb, if(verb == :failed, do: :event, else: :metric), meaning}
 
   # ---------- Public API ----------
 
@@ -286,15 +408,37 @@ defmodule Flezha.Observability.TelemetryBridge do
   end
 
   @doc """
-  The bridged source atoms of `mapping`. Pre-registered with the Registry on
-  bridge start so `Bus` can enforce cardinality budgets against them.
+  What the bridge registers for each source its lines name: kinds, area,
+  description and every signal with its meaning. `providers` are the
+  provider-derived lines, as `provider_lines/0` answers them. Registered on
+  bridge start so `Bus` enforces cardinality budgets against them and a
+  reader can tell what each one says.
   """
-  @spec bridged_sources(map()) :: [{atom(), [Signal.kind()]}]
-  def bridged_sources(mapping) do
-    mapping
-    |> Map.values()
-    |> Enum.group_by(fn {source, _name, _kind} -> source end, fn {_s, _n, k} -> k end)
-    |> Enum.map(fn {source, kinds} -> {source, Enum.uniq(kinds)} end)
+  @spec registrations(map()) :: [map()]
+  def registrations(providers \\ provider_lines()) do
+    (Map.values(@all_lines) ++ Map.values(providers))
+    |> Enum.group_by(&elem(&1, 0))
+    |> Enum.map(fn {source, lines} ->
+      {area, description} = Map.get_lazy(@sources, source, fn -> package_source(source) end)
+
+      %{
+        name: source,
+        kinds: lines |> Enum.map(&elem(&1, 2)) |> Enum.uniq(),
+        flavour: :declarative,
+        area: area,
+        description: description,
+        signals:
+          Source.signals(
+            for {_source, name, kind, meaning} <- Enum.uniq_by(lines, &elem(&1, 1)),
+                do: {name, {kind, meaning}}
+          )
+      }
+    end)
+  end
+
+  defp package_source(source) do
+    name = source |> Atom.to_string() |> String.replace_prefix("flezha_", "")
+    {:plugins, "The #{name} plugin, installed from a package."}
   end
 
   @doc """
@@ -307,18 +451,38 @@ defmodule Flezha.Observability.TelemetryBridge do
   once at bridge start, which a package's provider row precedes.
   """
   @spec provider_mapping() :: %{[atom()] => {atom(), atom(), Signal.kind()}}
-  def provider_mapping() do
+  def provider_mapping(), do: strip(provider_lines())
+
+  @doc "`provider_mapping/0` with each line's meaning."
+  @spec provider_lines() :: %{[atom()] => {atom(), atom(), Signal.kind(), String.t()}}
+  def provider_lines() do
     for {_id, module} <- Providers.installed(),
         Code.ensure_loaded?(module),
         decl = module.__provider__(),
-        # A package built before `telemetry:` existed declares no own verbs.
-        {verb, kind} <- @verb_kinds ++ Map.get(decl, :telemetry, []),
+        {verb, kind, meaning} <- @shared_verbs ++ own_verbs(decl),
         # A name from code a verified package ships, never input.
         event = ProviderBehaviour.event(String.to_atom(decl.name), verb),
         not Map.has_key?(@all_mapping, event),
         into: %{},
-        do: {event, {:"flezha_#{decl.name}", verb, kind}}
+        do: {event, {:"flezha_#{decl.name}", verb, kind, meaning}}
   end
+
+  # A package built before `telemetry:` existed declares no own verbs, and one
+  # built before a verb could carry a meaning declares a bare kind.
+  defp own_verbs(decl) do
+    for {verb, declared} <- Map.get(decl, :telemetry, []) do
+      case declared do
+        {kind, meaning} -> {verb, kind, meaning}
+        kind -> {verb, kind, "No description from the plugin."}
+      end
+    end
+  end
+
+  defp strip(lines),
+    do:
+      Map.new(lines, fn {event, {source, name, kind, _meaning}} ->
+        {event, {source, name, kind}}
+      end)
 
   @doc false
   @spec handler_id() :: atom()
@@ -436,19 +600,18 @@ defmodule Flezha.Observability.TelemetryBridge do
   def init(_opts) do
     Process.flag(:trap_exit, true)
 
-    providers = provider_mapping()
-    all = Map.merge(providers, @all_mapping)
+    provider_lines = provider_lines()
+    providers = strip(provider_lines)
 
-    # Pre-register the bridged sources so the Bus + Registry track
-    # them (cardinality budget, source-status, etc.).
-    Enum.each(bridged_sources(all), fn {source, kinds} ->
-      _ =
-        Registry.register_source(%{
-          name: source,
-          kinds: kinds,
-          flavour: :declarative
-        })
-    end)
+    # A refused registration leaves its signals unbudgeted and unlisted, so it
+    # is said rather than dropped.
+    for entry <- registrations(provider_lines),
+        {:error, reason} <- [Registry.register_source(entry)] do
+      Logger.error(
+        "[observability.telemetry_bridge] source #{inspect(entry.name)} not registered: " <>
+          inspect(reason)
+      )
+    end
 
     compiled = Map.keys(@all_mapping) -- Map.keys(@hook_mapping)
     :ok = :telemetry.attach_many(@handler_id, compiled, &__MODULE__.handle_event/4, nil)

@@ -412,7 +412,9 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
 
   defmodule AcmeSink do
     @moduledoc false
-    use Flezha.Plugin.ProviderBehaviour, name: "acme_sink", telemetry: [rebalanced: :event]
+    use Flezha.Plugin.ProviderBehaviour,
+      name: "acme_sink",
+      telemetry: [rebalanced: {:event, "The sink moved its partitions."}, paused: :event]
   end
 
   # A provider compiled against a core whose declaration had no `telemetry`
@@ -421,6 +423,18 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
     @moduledoc false
     def __provider__,
       do: AcmeSink.__provider__() |> Map.delete(:telemetry) |> Map.put(:name, "old_sink")
+  end
+
+  # A package whose own verb carries a blank meaning, which its declaration
+  # would now refuse at compile time; built here by hand as an older core's
+  # compiler would have let it through.
+  defmodule BlankSink do
+    @moduledoc false
+    def __provider__,
+      do:
+        AcmeSink.__provider__()
+        |> Map.put(:telemetry, rebalanced: {:event, " "})
+        |> Map.put(:name, "blank_sink")
   end
 
   describe "the half derived from the provider table" do
@@ -469,6 +483,20 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
       refute inspect(TelemetryBridge.mapping()) =~ "acme_sink"
     end
 
+    test "a package source is registered with an area, a description and its verbs' meanings" do
+      {:ok, entry} = Registry.lookup_source(:flezha_acme_sink)
+
+      assert entry.area == :plugins
+      assert entry.description == "The acme_sink plugin, installed from a package."
+
+      meanings = Map.new(entry.signals, &{&1.name, &1.description})
+      assert meanings[:rebalanced] == "The sink moved its partitions."
+      assert meanings[:paused] == "No description from the plugin."
+
+      assert meanings[:shipped] ==
+               Keyword.fetch!(Flezha.Plugin.ProviderBehaviour.verb_descriptions(), :shipped)
+    end
+
     test "each derived event has a handler of its own carrying only its line" do
       [handler] = :telemetry.list_handlers([:flezha, :plugin, :acme_sink, :shipped])
       assert handler.config == {:flezha_acme_sink, :shipped, :metric}
@@ -512,6 +540,20 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
 
     restart_bridge()
     assert [_handler] = :telemetry.list_handlers([:flezha, :plugin, :old_sink, :shipped])
+  end
+
+  test "a source the registry refuses is logged, not dropped in silence" do
+    :ok = Flezha.Plugin.Providers.add("blank_sink", BlankSink)
+
+    on_exit(fn ->
+      Flezha.Plugin.Providers.reset_installed()
+      restart_bridge()
+    end)
+
+    log = ExUnit.CaptureLog.capture_log(fn -> restart_bridge() end)
+
+    assert log =~ "source :flezha_blank_sink not registered"
+    assert Registry.lookup_source(:flezha_blank_sink) == :error
   end
 
   test "an own verb that repeats the vocabulary fails the provider's compilation" do

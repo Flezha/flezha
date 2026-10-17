@@ -7,7 +7,6 @@ defmodule Flezha.Observability.OtpBackendTest do
 
   alias Flezha.Observability.OtpBackend.{
     BeamVmSource,
-    BoundedMailboxSource,
     HostSource,
     ProcessHubSource,
     ProcParser,
@@ -28,7 +27,7 @@ defmodule Flezha.Observability.OtpBackendTest do
     # Ensure tear-down resets any source that this test starts so
     # registry pollution doesn't cross test files.
     on_exit(fn ->
-      for name <- [:beam_vm, :host, :processhub, :flezha_transport, :flezha_bounded_mailbox] do
+      for name <- [:beam_vm, :host, :processhub, :flezha_transport] do
         Registry.unregister_source(name)
       end
     end)
@@ -275,23 +274,6 @@ defmodule Flezha.Observability.OtpBackendTest do
     end
   end
 
-  describe "BoundedMailboxSource" do
-    test "registers and emits a one-shot degraded event on first poll" do
-      arm(:flezha_bounded_mailbox)
-
-      {:ok, pid} = BoundedMailboxSource.start_link([])
-
-      {:ok, %{name: :flezha_bounded_mailbox, status: :active}} =
-        Registry.lookup_source(:flezha_bounded_mailbox)
-
-      poll(pid, 1)
-
-      events = RingBufferSink.query(:flezha_bounded_mailbox, 0)
-      assert Enum.any?(events, fn s -> s.name == :bounded_mailbox_unavailable end)
-      :ok = GenServer.stop(pid)
-    end
-  end
-
   # `use Flezha.Observability.OtpBackend.Poller` writes every source's
   # registration, its first state and the `Flezha.Observability.Source`
   # contract it registers under. Read them back — from the registry, from
@@ -302,9 +284,7 @@ defmodule Flezha.Observability.OtpBackendTest do
     {BeamVmSource, :beam_vm, [:metric], 50, 1_000, [:last_scheduler_sample]},
     {HostSource, :host, [:metric, :event], 50, 5_000, [:prev_cpu_jiffies, :status]},
     {ProcessHubSource, :processhub, [:metric], 1_000, 1_000, []},
-    {TransportSource, :flezha_transport, [:metric], 40, 1_000, []},
-    {BoundedMailboxSource, :flezha_bounded_mailbox, [:metric, :event], 5_000, 1_000,
-     [:announced?]}
+    {TransportSource, :flezha_transport, [:metric], 40, 1_000, []}
   ]
 
   describe "source lifecycle" do
@@ -378,13 +358,12 @@ defmodule Flezha.Observability.OtpBackendTest do
       assert children == []
     end
 
-    test "source_modules/0 lists the five built-in sources" do
+    test "source_modules/0 lists the four built-in sources" do
       assert Flezha.Observability.OtpBackend.Supervisor.source_modules() == [
                Flezha.Observability.OtpBackend.BeamVmSource,
                Flezha.Observability.OtpBackend.HostSource,
                Flezha.Observability.OtpBackend.ProcessHubSource,
-               Flezha.Observability.OtpBackend.TransportSource,
-               Flezha.Observability.OtpBackend.BoundedMailboxSource
+               Flezha.Observability.OtpBackend.TransportSource
              ]
     end
   end

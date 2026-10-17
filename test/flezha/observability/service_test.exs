@@ -46,6 +46,64 @@ defmodule Flezha.Service.ObservabilityTest do
     end
   end
 
+  describe "list_sources recent activity" do
+    test "counts each signal name the window holds and ages the newest", %{src: src} do
+      window_ms = Flezha.Config.get(:observability_ring_buffer_retention_ms)
+      old_ts = System.monotonic_time(:microsecond) - (window_ms + 1_000) * 1_000
+
+      Bus.emit(Signal.new(%{kind: :event, source: src, name: :old, ts: old_ts}))
+      for name <- [:a, :a, :b], do: Bus.emit(Signal.new(%{kind: :event, source: src, name: name}))
+      TestSinks.settle(RingBufferSink)
+
+      %{recent: recent} = listed(src, %{source: :internal})
+
+      assert recent.window_ms == window_ms
+      assert %{a: %{count: 2, last_age_ms: age}, b: %{count: 1}} = recent.signals
+      refute Map.has_key?(recent.signals, :old)
+      assert age in 0..5_000
+    end
+
+    test "a source that said nothing in the window has no signals" do
+      quiet = :"obs_svc_quiet_#{:erlang.unique_integer([:positive])}"
+      :ok = Registry.register_source(%{name: quiet, kinds: [:event], flavour: :declarative})
+      on_exit(fn -> Registry.unregister_source(quiet) end)
+      TestSinks.settle(RingBufferSink)
+
+      assert %{recent: %{signals: signals}} = listed(quiet, %{source: :internal})
+      assert signals == %{}
+    end
+
+    test "counts only the signals a namespace-bound caller may read", %{src: src} do
+      AuthTestHelper.setup_auth_stores(prefix: "flz_obs_recent", claim: true)
+
+      for {name, metadata} <- [own: %{namespace: "team-a"}, other: %{namespace: "b"}, bare: %{}],
+          do: Bus.emit(Signal.new(%{kind: :event, source: src, name: name, metadata: metadata}))
+
+      TestSinks.settle(RingBufferSink)
+
+      context = %{source: :ui, principal: "viewer@team-a", namespace: "team-a", role: :viewer}
+      %{recent: %{signals: signals}} = listed(src, context)
+
+      assert signals |> Map.keys() |> Enum.sort() == [:bare, :own]
+    end
+
+    test "is nil while the ring buffer is not running", %{src: src} do
+      :ok = Registry.unregister_sink(:ring_buffer)
+
+      on_exit(fn ->
+        {:ok, _pid} =
+          Registry.register_sink(%{name: :ring_buffer, module: RingBufferSink, config: %{}})
+      end)
+
+      assert %{recent: nil} = listed(src, %{source: :internal})
+    end
+  end
+
+  defp listed(name, context) do
+    {:ok, sources} = Observability.list_sources(context)
+    Enum.find(sources, &(&1.name == name))
+  end
+
   describe "query/2" do
     test "returns ring-buffer contents for source", %{src: src} do
       Bus.emit(
@@ -66,6 +124,25 @@ defmodule Flezha.Service.ObservabilityTest do
 
       assert is_list(results)
       assert Enum.any?(results, &(&1.name == :query_test))
+    end
+
+    test "a namespace-bound caller's limit counts only what it may read", %{src: src} do
+      AuthTestHelper.setup_auth_stores(prefix: "flz_obs_query_limit", claim: true)
+
+      Bus.emit(
+        Signal.new(%{kind: :event, source: src, name: :own, metadata: %{namespace: "team-a"}})
+      )
+
+      for _ <- 1..3,
+          do:
+            Bus.emit(
+              Signal.new(%{kind: :event, source: src, name: :other, metadata: %{namespace: "b"}})
+            )
+
+      TestSinks.settle(RingBufferSink)
+
+      context = %{source: :ui, principal: "viewer@team-a", namespace: "team-a", role: :viewer}
+      assert {:ok, [%Signal{name: :own}]} = Observability.query(%{source: src, limit: 2}, context)
     end
 
     test "missing :source param returns error" do
@@ -263,6 +340,40 @@ defmodule Flezha.Service.ObservabilityTest do
   end
 
   describe "the CLI renderers" do
+    test "observe sources prints each source's description, and --json its keys" do
+      described = :"obs_svc_described_#{:erlang.unique_integer([:positive])}"
+      signals = [%{name: :said, kind: :event, description: "It said something."}]
+
+      :ok =
+        Registry.register_source(%{
+          name: described,
+          kinds: [:event],
+          flavour: :declarative,
+          area: :relays,
+          description: "A described probe.",
+          signals: signals
+        })
+
+      on_exit(fn -> Registry.unregister_source(described) end)
+
+      text =
+        ExUnit.CaptureIO.capture_io(fn -> Cli.call("Observability.list_sources", "[]", []) end)
+
+      assert text =~ "name\tstatus\tkinds\tbudget\tdescription"
+      assert text =~ "#{described}\tactive\tevent\t1000\tA described probe."
+
+      json =
+        ExUnit.CaptureIO.capture_io(fn ->
+          Cli.call("Observability.list_sources", "[]", output: "json")
+        end)
+
+      entry = json |> Jason.decode!() |> Enum.find(&(&1["name"] == to_string(described)))
+      assert entry["description"] == "A described probe."
+      assert entry["area"] == "relays"
+      assert [%{"name" => "said", "kind" => "event"}] = entry["signals"]
+      assert %{"window_ms" => _, "signals" => %{}} = entry["recent"]
+    end
+
     test "observe tail --json renders a metadata key of any shape", %{src: src} do
       # `stringify_keys/1` was a fourth copy of the term->string decision and
       # applied `to_string/1` to the KEY: a tuple key raised

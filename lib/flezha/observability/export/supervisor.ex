@@ -25,6 +25,7 @@ defmodule Flezha.Observability.Export.Supervisor do
   }
 
   alias Flezha.Observability.Registry, as: ObsRegistry
+  alias Flezha.Observability.Source
 
   @export_source :observability_export
 
@@ -45,13 +46,28 @@ defmodule Flezha.Observability.Export.Supervisor do
     Supervisor.init(children, strategy: :one_for_one)
   end
 
-  defp register_export_source() do
-    ObsRegistry.register_source(%{
+  defp register_export_source(), do: ObsRegistry.register_source(registration())
+
+  @doc "The export source's registration."
+  @spec registration() :: map()
+  def registration() do
+    %{
       name: @export_source,
       kinds: [:event],
       flavour: :declarative,
-      cardinality_budget: 200
-    })
+      cardinality_budget: 200,
+      area: :controller,
+      description: "Exporting signals to Prometheus and OTLP.",
+      signals:
+        Source.signals(
+          prometheus_scrape: {:event, "Prometheus scraped the metrics."},
+          prometheus_label_truncated:
+            {:event, "A label value was too long for Prometheus and was cut."},
+          otlp_batch_flushed: {:event, "A batch was sent to the OTLP collector."},
+          otlp_batch_dropped:
+            {:event, "A batch could not be sent to the OTLP collector and was dropped."}
+        )
+    }
   end
 
   defp prometheus_children() do

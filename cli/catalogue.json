@@ -821,7 +821,7 @@
     },
     {
       "name": "Observability.list_sources",
-      "doc": "Every registered observability source and its status.",
+      "doc": "Every registered observability source, its status, and what it said recently: `recent` holds the ring buffer's `window_ms` and, per signal name the caller may read, how many the buffer holds and the age of the newest in milliseconds.",
       "action": "observability.query",
       "remote": true,
       "stream": false,

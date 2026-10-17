@@ -56,7 +56,7 @@ defmodule Flezha.Plugin.ProviderBehaviour do
             extensions: [atom()],
             own: [atom()],
             worker: worker() | nil,
-            telemetry: [{atom(), :metric | :event}],
+            telemetry: [{atom(), :metric | :event | {:metric | :event, String.t()}}],
             feeds: boolean(),
             shareable: boolean(),
             namespace: binary() | nil
@@ -760,11 +760,22 @@ defmodule Flezha.Plugin.ProviderBehaviour do
 
   # ---------- telemetry vocabulary ----------
 
-  @verbs [:shipped, :retried, :failed, :overflowed]
+  @verb_descriptions [
+    shipped: "The plugin delivered items; count is how many.",
+    retried: "A delivery failed and will be tried again.",
+    failed: "A delivery or read failed.",
+    overflowed: "The plugin's queue was full and items were dropped."
+  ]
+
+  @verbs Keyword.keys(@verb_descriptions)
 
   @doc "The verbs that mean the same thing for every provider."
   @spec verbs() :: [atom()]
   def verbs(), do: @verbs
+
+  @doc "Each shared verb with what its signal says."
+  @spec verb_descriptions() :: keyword(String.t())
+  def verb_descriptions(), do: @verb_descriptions
 
   @doc """
   Emit one provider event. The prefix is DERIVED from the provider's own

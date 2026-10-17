@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Changed: every observability source says what it is and what it said recently
+
+`flz observe sources` and `Observability.list_sources/1` now answer each source's description,
+its area, and every signal it can emit with what that signal means, and `list_sources/1` adds
+what the ring buffer holds for each one: per signal, how many in the window and how long ago the
+newest arrived. A plugin can describe its own verbs with `telemetry: [verb: {:event, "..."}]`.
+**Breaking:** the `flezha_reconcile`, `flezha_leadership` and `flezha_bounded_mailbox` sources,
+and the `ship_fenced` event, are gone. Nothing had emitted them since the reconciler was
+replaced, so no metric series disappears; the `flezha_bounded_mailbox` poll-interval key is
+removed with its source.
+
 ### Fixed: diagnosing a suspended relay nothing can run reports the problem
 
 `flz relay diagnose` answered a suspended relay with the `diagnose.asleep` note, verdict `ok`,

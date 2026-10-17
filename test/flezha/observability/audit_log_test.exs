@@ -795,12 +795,9 @@ defmodule Flezha.Observability.AuditLogTest do
     stop_audit_supervisor()
 
     _ =
-      Flezha.Observability.Registry.register_source(%{
-        name: :audit_log,
-        kinds: [:event],
-        flavour: :declarative,
-        cardinality_budget: 200
-      })
+      Flezha.Observability.Registry.register_source(
+        Flezha.Observability.AuditLog.Supervisor.registration()
+      )
 
     children = [Writer, Rotation, Retention, Sink]
 

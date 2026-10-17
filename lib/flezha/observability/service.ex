@@ -106,21 +106,34 @@ defmodule Flezha.Service.Observability do
     with :ok <- check_enabled(),
          {:ok, written} <- Map.fetch(params, :source),
          {:ok, source} <- registered(written) do
-      from_ts = Map.get(params, :from_ts, 0)
-      opts = if l = Map.get(params, :limit), do: [limit: l], else: []
+      # The caller's namespace is applied before the limit, so a bound caller
+      # gets its own newest signals rather than what is left of everyone's.
+      visible =
+        source
+        |> RingBufferSink.query(Map.get(params, :from_ts, 0))
+        |> filter_by_namespace(caller_context)
 
-      results = RingBufferSink.query(source, from_ts, opts)
-      {:ok, filter_by_namespace(results, caller_context)}
+      {:ok,
+       case Map.get(params, :limit) do
+         nil -> visible
+         limit -> Enum.take(visible, -limit)
+       end}
     else
       :error -> {:error, :missing_source}
       other -> other
     end
   end
 
-  @doc "Every registered observability source and its status."
+  @doc """
+  Every registered observability source, its status, and what it said
+  recently: `recent` holds the ring buffer's `window_ms` and, per signal name
+  the caller may read, how many the buffer holds and the age of the newest in
+  milliseconds. `recent` is `nil` when the ring buffer is not running.
+  """
   @spec list_sources(caller_context()) :: {:ok, [map()]} | {:error, term()}
   verb list_sources(caller_context), verb: :observability_sources do
-    with :ok <- check_enabled(), do: {:ok, Registry.list_sources()}
+    with :ok <- check_enabled(),
+         do: {:ok, with_recent(Registry.list_sources(), caller_context)}
   end
 
   @doc "Every registered observability sink."
@@ -200,30 +213,45 @@ defmodule Flezha.Service.Observability do
       else: {:error, :pubsub_sink_disabled}
   end
 
-  # Filter signals to those visible to the caller's namespace, for a query and
-  # for a forwarded tail alike. `admin@_system` sees everything; every other
-  # caller sees only their own namespace's signals (and signals whose metadata
-  # carries no namespace — pre-change emits).
-  defp filter_by_namespace(signals, %{role: :admin, namespace: "_system"}), do: signals
-  defp filter_by_namespace(signals, %{source: :internal}), do: signals
+  defp with_recent(sources, caller_context) do
+    if Process.whereis(RingBufferSink) do
+      window_ms = Config.get(:observability_ring_buffer_retention_ms)
+      now = System.monotonic_time(:microsecond)
+      from_ts = now - window_ms * 1_000
+      visible? = visible_to(caller_context)
 
-  defp filter_by_namespace(signals, caller_context) do
+      Enum.map(sources, fn source ->
+        signals = RingBufferSink.summary(source.name, from_ts, visible?)
+        Map.put(source, :recent, %{window_ms: window_ms, signals: aged(signals, now)})
+      end)
+    else
+      Enum.map(sources, &Map.put(&1, :recent, nil))
+    end
+  end
+
+  defp aged(summary, now) do
+    for {name, %{count: count, newest_ts: ts}} <- summary,
+        into: %{},
+        do: {name, %{count: count, last_age_ms: div(max(now - ts, 0), 1_000)}}
+  end
+
+  defp filter_by_namespace(signals, caller_context),
+    do: Enum.filter(signals, visible_to(caller_context))
+
+  # Which signals the caller's namespace may see, for a query, a forwarded tail
+  # and the listing's counts alike. `admin@_system` sees everything; every
+  # other caller sees only their own namespace's signals (and signals whose
+  # metadata carries no namespace — pre-change emits).
+  defp visible_to(%{role: :admin, namespace: "_system"}), do: fn _signal -> true end
+  defp visible_to(%{source: :internal}), do: fn _signal -> true end
+
+  defp visible_to(caller_context) do
     bound_ns = Map.get(caller_context, :namespace)
 
-    cond do
-      not AuthZ.enabled?() ->
-        signals
-
-      is_nil(bound_ns) ->
-        signals
-
-      true ->
-        Enum.filter(signals, fn signal ->
-          case Map.get(signal.metadata, :namespace) do
-            nil -> true
-            ns -> ns == bound_ns
-          end
-        end)
+    if is_nil(bound_ns) or not AuthZ.enabled?() do
+      fn _signal -> true end
+    else
+      fn signal -> Map.get(signal.metadata, :namespace) in [nil, bound_ns] end
     end
   end
 

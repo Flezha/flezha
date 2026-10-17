@@ -293,7 +293,7 @@ USAGE:
     flz observe <COMMAND> [OPTIONS]
 
 COMMANDS:
-    sources    List registered sources and their status / cardinality budget
+    sources    List registered sources: status, budget and what each one is
     sinks      List registered sinks and their overflow policy / watermark
     tail       Stream live signals from a source via the PubSub sink
     enable     Enable a source (transitions its registry status to :active)
@@ -306,14 +306,18 @@ $ flz observe sources
 ```
 
 ```output
-name	status	kinds	budget
-flezha_http_push	active	metric,event	1000
-flezha_plugin	active	event	1000
-flezha_dlq	active	metric	1000
-flezha_correction	active	event	1000
-flezha_transport	active	metric	40
+name	status	kinds	budget	description
+flezha_http_push	active	metric,event	1000	The HTTP push plugin, which sends relay output to a URL.
+flezha_plugin	active	event	1000	Plugins entering and leaving their lifecycle phases.
+flezha_dlq	active	metric	1000	Dead-letter queues: messages parked and removed.
+flezha_correction	active	event	1000	Corrections the controller refused to apply.
+flezha_transport	active	metric	40	Runner transports and the data plane: connections, driver health and message counters.
 ...
 ```
+
+`--json` answers each source with its `area`, every signal it can emit with its kind and
+meaning (`signals`), and what it said recently (`recent`): per signal name, how many the
+ring buffer holds within its window and how long ago the newest one arrived.
 
 ## `flz reset`
 

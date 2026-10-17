@@ -135,12 +135,9 @@ defmodule FlezhaTest.Helper.AuthTestHelper do
   # off in tests by `application_managed: false`.
   defp register_platform_authz_source() do
     _ =
-      Flezha.Observability.Registry.register_source(%{
-        name: :platform_authz,
-        kinds: [:event, :metric],
-        flavour: :declarative,
-        cardinality_budget: 256
-      })
+      Flezha.Observability.Registry.register_source(
+        Flezha.AuthZ.SourceRegistration.registration()
+      )
 
     # The registration reaches the RingBufferSink as a message; a call to the
     # sink returns once that message has been handled.

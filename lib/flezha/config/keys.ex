@@ -252,8 +252,7 @@ defmodule Flezha.Config.Keys do
        beam_vm: 1_000,
        host: 5_000,
        processhub: 1_000,
-       flezha_transport: 1_000,
-       flezha_bounded_mailbox: 1_000
+       flezha_transport: 1_000
      }, key: {:observability, :otp_backend, :poll_intervals}},
 
     # ---- observability export -----------------------------------------------

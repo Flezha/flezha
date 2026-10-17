@@ -319,21 +319,34 @@ defmodule Flezha.Plugin.ProviderBehaviour.Declaration do
   defp validate_type!(env, type),
     do: raise_row!(env, "type #{inspect(type)} must be :relay or :controller")
 
+  @verb_form "`verb: :metric | :event` or `verb: {:metric | :event, \"what it says\"}`"
+
   # An own verb that repeats a shared one would be a second account of the same
   # fact under a kind the vocabulary already fixes.
   defp validate_telemetry!(env, verbs) when is_list(verbs) do
     Enum.each(verbs, fn
-      {verb, kind} when is_atom(verb) and kind in [:metric, :event] ->
+      {verb, declared} when is_atom(verb) ->
+        if declared_kind(declared) not in [:metric, :event],
+          do: raise_row!(env, "telemetry entry #{inspect({verb, declared})} is not #{@verb_form}")
+
         if verb in ProviderBehaviour.verbs(),
           do: raise_row!(env, "telemetry verb #{inspect(verb)} is one of the shared verbs")
 
       other ->
-        raise_row!(env, "telemetry entry #{inspect(other)} is not `verb: :metric | :event`")
+        raise_row!(env, "telemetry entry #{inspect(other)} is not #{@verb_form}")
     end)
   end
 
   defp validate_telemetry!(env, other),
     do: raise_row!(env, "telemetry #{inspect(other)} is not a keyword list")
+
+  # A verb's meaning is optional, so a package built before it existed loads.
+  defp declared_kind({kind, meaning}) when is_binary(meaning) do
+    if String.trim(meaning) == "", do: nil, else: kind
+  end
+
+  defp declared_kind(kind) when is_atom(kind), do: kind
+  defp declared_kind(_other), do: nil
 
   defp refuse_row_key!(_env, _name, []), do: :ok
 

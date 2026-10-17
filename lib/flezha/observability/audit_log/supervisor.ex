@@ -14,9 +14,11 @@ defmodule Flezha.Observability.AuditLog.Supervisor do
 
   use Supervisor
 
+  alias Flezha.AuthZ.Verbs
   alias Flezha.Config
   alias Flezha.Observability.AuditLog.{Retention, Rotation, Sink, Writer}
   alias Flezha.Observability.Registry, as: ObsRegistry
+  alias Flezha.Observability.Source
 
   @audit_source :audit_log
 
@@ -49,12 +51,23 @@ defmodule Flezha.Observability.AuditLog.Supervisor do
     Config.get(:audit_log_enabled)
   end
 
-  defp register_audit_source() do
-    ObsRegistry.register_source(%{
+  defp register_audit_source(), do: ObsRegistry.register_source(registration())
+
+  @doc "The audit log's source registration."
+  @spec registration() :: map()
+  def registration() do
+    %{
       name: @audit_source,
       kinds: [:event],
       flavour: :declarative,
-      cardinality_budget: 200
-    })
+      cardinality_budget: 200,
+      area: :controller,
+      description: "The audit log: reads of it, and its files rotating and expiring.",
+      signals:
+        Source.signals(
+          audit_rotated: {:event, "The audit log started a new file."},
+          audit_retention_sweep: {:event, "Audit files past their retention were deleted."}
+        ) ++ Verbs.audit_signals(@audit_source)
+    }
   end
 end

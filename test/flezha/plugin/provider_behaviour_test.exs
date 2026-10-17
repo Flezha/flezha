@@ -174,6 +174,36 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
 
       assert_raise CompileError, fn -> Code.compile_string(source) end
     end
+
+    test "an own telemetry verb may carry its meaning; a malformed one does not compile" do
+      described = """
+      defmodule Flezha.ProviderBehaviourTest.Described#{System.unique_integer([:positive])} do
+        use Flezha.Plugin.ProviderBehaviour,
+          telemetry: [rebalanced: {:event, "Partitions moved."}, paused: :event]
+      end
+      """
+
+      [{module, _bytes}] = Code.compile_string(described)
+
+      assert module.__provider__().telemetry ==
+               [rebalanced: {:event, "Partitions moved."}, paused: :event]
+
+      for bad <- [
+            ~s|[rebalanced: {:event, ""}]|,
+            ~s|[rebalanced: {:event, "  "}]|,
+            "[rebalanced: :gauge]",
+            "[rebalanced: {:log, \"x\"}]"
+          ] do
+        source = """
+        defmodule Flezha.ProviderBehaviourTest.BadVerb#{System.unique_integer([:positive])} do
+          use Flezha.Plugin.ProviderBehaviour, telemetry: #{bad}
+        end
+        """
+
+        error = assert_raise CompileError, fn -> Code.compile_string(source) end
+        assert Exception.message(error) =~ "is not `verb: :metric | :event`"
+      end
+    end
   end
 
   describe "a provider declares whether it can be shared and which options are live" do

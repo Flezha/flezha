@@ -45,13 +45,10 @@ defmodule Flezha.Observability.RingBufferSink do
   as a sentinel meaning *no lower bound* — callers asking for
   "everything in the buffer" can pass `0` rather than reasoning about
   the BEAM monotonic-time origin (which is typically negative on
-  freshly-booted nodes).
-
-  Options:
-    * `:limit` — cap the returned list to N most-recent signals.
+  freshly-booted nodes). Signals come oldest first.
   """
-  @spec query(atom(), integer(), keyword()) :: [Flezha.Observability.Signal.t()]
-  def query(source, from_ts, opts \\ []) when is_atom(source) and is_integer(from_ts) do
+  @spec query(atom(), integer()) :: [Flezha.Observability.Signal.t()]
+  def query(source, from_ts) when is_atom(source) and is_integer(from_ts) do
     case lookup_table(source) do
       :error ->
         []
@@ -64,14 +61,45 @@ defmodule Flezha.Observability.RingBufferSink do
             [{{{:"$1", :_}, :"$2"}, [{:>=, :"$1", from_ts}], [:"$2"]}]
           end
 
-        results = :ets.select(ref, ms)
-
-        case Keyword.get(opts, :limit) do
-          nil -> results
-          limit when is_integer(limit) and limit >= 0 -> Enum.take(results, -limit)
-        end
+        :ets.select(ref, ms)
     end
   end
+
+  @doc """
+  Per signal name, how many of `source`'s signals the buffer holds from
+  `from_ts` on that `keep` keeps, and the newest one's timestamp. Runs in the
+  caller, like `query/3`. `keep` sees `%{metadata: metadata}` only: the match
+  copies a signal's timestamp, name and metadata out of the table, never its
+  measurements.
+  """
+  @spec summary(atom(), integer(), (%{metadata: map()} -> boolean())) ::
+          %{atom() => %{count: pos_integer(), newest_ts: integer()}}
+  def summary(source, from_ts, keep) when is_atom(source) and is_integer(from_ts) do
+    case lookup_table(source) do
+      :error ->
+        %{}
+
+      {:ok, ref} ->
+        ms = [
+          {{{:"$1", :_}, %{name: :"$2", metadata: :"$3"}}, [{:>=, :"$1", from_ts}],
+           [{{:"$1", :"$2", :"$3"}}]}
+        ]
+
+        ref |> :ets.select(ms) |> Enum.reduce(%{}, &tally(&1, &2, keep))
+    end
+  rescue
+    # The source was unregistered and its table dropped mid-fold.
+    ArgumentError -> %{}
+  end
+
+  defp tally({ts, name, metadata}, acc, keep) do
+    if keep.(%{metadata: metadata}),
+      do: Map.update(acc, name, %{count: 1, newest_ts: ts}, &count_one(&1, ts)),
+      else: acc
+  end
+
+  defp count_one(%{count: count, newest_ts: newest}, ts),
+    do: %{count: count + 1, newest_ts: max(newest, ts)}
 
   @spec count(atom()) :: non_neg_integer()
   def count(source) when is_atom(source) do

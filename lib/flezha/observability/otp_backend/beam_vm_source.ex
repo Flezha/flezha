@@ -16,7 +16,24 @@ defmodule Flezha.Observability.OtpBackend.BeamVmSource do
     source: :beam_vm,
     kinds: [:metric],
     cardinality_budget: 50,
-    default_poll_ms: 1_000
+    default_poll_ms: 1_000,
+    area: :machine,
+    description:
+      "The controller's Erlang VM: memory, schedulers, processes and garbage collection.",
+    signals: [
+      memory_total: {:metric, "Bytes of memory the VM holds in all."},
+      memory_processes: {:metric, "Bytes held by Erlang processes."},
+      memory_atom: {:metric, "Bytes held by atoms."},
+      memory_binary: {:metric, "Bytes held by binaries."},
+      memory_ets: {:metric, "Bytes held by ETS tables."},
+      run_queue_total: {:metric, "Processes waiting for a scheduler."},
+      gc_count: {:metric, "Garbage collections since the VM started."},
+      gc_words_reclaimed:
+        {:metric, "Words reclaimed by garbage collection since the VM started."},
+      process_count: {:metric, "Erlang processes alive."},
+      port_count: {:metric, "Ports open."},
+      scheduler_utilisation: {:metric, "Share of time the schedulers were busy, 0 to 1."}
+    ]
 
   alias Flezha.Observability.{Bus, Signal}
 

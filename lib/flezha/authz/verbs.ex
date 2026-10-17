@@ -27,6 +27,7 @@ defmodule Flezha.AuthZ.Verbs do
   """
 
   alias Flezha.AuthZ.Action
+  alias Flezha.Observability.Source
 
   @public [action: :public]
 
@@ -451,4 +452,27 @@ defmodule Flezha.AuthZ.Verbs do
   @doc "Every audit source a row declares; the durable sink subscribes to all of them."
   @spec audit_sources() :: [atom()]
   def audit_sources, do: @sources
+
+  @doc """
+  The name `row`'s audit record is written under: its `audit_name`, else the
+  action's last word — `:"dlq.drop"` audits as `:drop`, the source already
+  naming the domain.
+  """
+  @spec record_name(t()) :: atom()
+  def record_name(%{audit_name: name}) when is_atom(name) and not is_nil(name), do: name
+
+  def record_name(%{action: action}) do
+    action |> Atom.to_string() |> String.split(".") |> List.last() |> String.to_atom()
+  end
+
+  @doc "The records the rows auditing to `source` write, as signal declarations."
+  @spec audit_signals(atom()) :: [map()]
+  def audit_signals(source) do
+    for(
+      %{audit: {_order, ^source}} = row <- all(),
+      do: {record_name(row), {:event, "A caller ran #{row.action}."}}
+    )
+    |> Enum.uniq_by(&elem(&1, 0))
+    |> Source.signals()
+  end
 end

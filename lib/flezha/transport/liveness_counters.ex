@@ -381,6 +381,16 @@ defmodule Flezha.Transport.LivenessCounters do
         do: {group, row, payload}
   end
 
+  @doc "Each metric this layout surfaces, as a signal declaration for its source."
+  @spec metric_signals() :: [{atom(), {:metric, String.t()}}]
+  def metric_signals() do
+    for {group, _row, name} <- surfaces(:metric) do
+      words = name |> Atom.to_string() |> String.replace("_", " ")
+      across = if group == :channels, do: "over every runner", else: "over every relay"
+      {name, {:metric, "Data-plane counter: #{words}, summed #{across}."}}
+    end
+  end
+
   @doc """
   The metric readings a snapshot carries: `{name, measurements}` per row whose
   declared surface is a metric.

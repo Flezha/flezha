@@ -1,11 +1,11 @@
 defmodule Flezha.Observability.OtpBackend.Poller do
   @moduledoc """
   Shared GenServer plumbing for the periodic observability sources
-  (`:beam_vm`, `:host`, `:processhub`, `:flezha_transport`,
-  `:flezha_bounded_mailbox`).
+  (`:beam_vm`, `:host`, `:processhub`, `:flezha_transport`).
 
   `use Flezha.Observability.OtpBackend.Poller, source: :name, kinds: [...],
-  cardinality_budget: N, default_poll_ms: N` injects the whole lifecycle:
+  cardinality_budget: N, default_poll_ms: N, area: :machine, description: "…",
+  signals: [name: {:metric, "what it says"}]` injects the whole lifecycle:
   `start_link/1`, `init/1` (registers the source and arms the first tick),
   `handle_info(:poll, …)` with its catch-all, `poll_interval_ms/0`
   (per-source override under `:flezha, :observability, :otp_backend,
@@ -38,6 +38,9 @@ defmodule Flezha.Observability.OtpBackend.Poller do
       @kinds unquote(Keyword.fetch!(opts, :kinds))
       @cardinality_budget unquote(Keyword.fetch!(opts, :cardinality_budget))
       @default_poll_ms unquote(Keyword.fetch!(opts, :default_poll_ms))
+      @area unquote(Keyword.fetch!(opts, :area))
+      @description unquote(Keyword.fetch!(opts, :description))
+      @signals Flezha.Observability.Source.signals(unquote(Keyword.fetch!(opts, :signals)))
 
       unquote(driven_half())
       unquote(source_half())
@@ -52,12 +55,7 @@ defmodule Flezha.Observability.OtpBackend.Poller do
 
       @impl GenServer
       def init(opts) do
-        Flezha.Observability.Registry.register_source(%{
-          name: @source,
-          kinds: @kinds,
-          flavour: :process_backed,
-          cardinality_budget: @cardinality_budget
-        })
+        Flezha.Observability.Registry.register_source(registration())
 
         interval = poll_interval_ms()
         {:ok, opts |> init_state() |> Map.put(:interval, interval) |> arm_poll()}
@@ -88,6 +86,19 @@ defmodule Flezha.Observability.OtpBackend.Poller do
 
       @doc "The cardinality budget this source declares, readable without starting it."
       def cardinality_budget(), do: @cardinality_budget
+
+      @doc "What this source registers, readable without starting it."
+      def registration() do
+        %{
+          name: @source,
+          kinds: @kinds,
+          flavour: :process_backed,
+          cardinality_budget: @cardinality_budget,
+          area: @area,
+          description: @description,
+          signals: @signals
+        }
+      end
 
       defp poll_interval_ms() do
         Flezha.Config.get(:observability_poll_intervals)

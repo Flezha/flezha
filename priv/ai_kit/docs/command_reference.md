@@ -37,7 +37,7 @@ examples. `flz <group> help` prints the same on the command line, and
 
 | Command | What it does |
 | --- | --- |
-| `flz observe sources` | Lists the sources of metrics and events, and whether each is on |
+| `flz observe sources` | Lists the sources of metrics and events, whether each is on, and what each one is |
 | `flz observe sinks` | Lists where signals are sent |
 | `flz observe tail <source>` | Prints a source's signals as they happen |
 | `flz observe enable <source>` | Turns a source on |

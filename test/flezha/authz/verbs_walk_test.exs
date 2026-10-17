@@ -294,12 +294,9 @@ defmodule Flezha.AuthZ.VerbsWalkTest do
     Application.put_env(:flezha, :audit_log, Keyword.merge(prev, enabled: true, dir: dir))
 
     _ =
-      Flezha.Observability.Registry.register_source(%{
-        name: :audit_log,
-        kinds: [:event],
-        flavour: :declarative,
-        cardinality_budget: 200
-      })
+      Flezha.Observability.Registry.register_source(
+        Flezha.Observability.AuditLog.Supervisor.registration()
+      )
 
     {:ok, sup} =
       Supervisor.start_link([Writer, Rotation, Retention, Sink], strategy: :one_for_one)

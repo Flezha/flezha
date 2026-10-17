@@ -19,7 +19,6 @@ defmodule Flezha.Observability.OtpBackend.Supervisor do
 
   alias Flezha.Observability.OtpBackend.{
     BeamVmSource,
-    BoundedMailboxSource,
     HostSource,
     ProcessHubSource,
     TransportSource
@@ -29,8 +28,7 @@ defmodule Flezha.Observability.OtpBackend.Supervisor do
     BeamVmSource,
     HostSource,
     ProcessHubSource,
-    TransportSource,
-    BoundedMailboxSource
+    TransportSource
   ]
 
   def start_link(opts \\ []) do

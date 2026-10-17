@@ -4,7 +4,7 @@ USAGE:
     flz observe <COMMAND> [OPTIONS]
 
 COMMANDS:
-    sources    List registered sources and their status / cardinality budget
+    sources    List registered sources: status, budget and what each one is
     sinks      List registered sinks and their overflow policy / watermark
     tail       Stream live signals from a source via the PubSub sink
     enable     Enable a source (transitions its registry status to :active)

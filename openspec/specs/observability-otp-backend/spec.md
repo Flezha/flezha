@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The observability-otp-backend capability provides the content side of the observability contract by shipping a library of built-in process-backed sources, each built on `Flezha.Observability.OtpBackend.Poller` — the macro that declares the foundation's `Flezha.Observability.Source` behaviour and registers the source through `Flezha.Observability.Registry.register_source/1`. It covers the BEAM VM (`:beam_vm`), the OS process via Linux `/proc` (`:host`), every active ProcessHub instance (`:processhub`), each configured transport (`:flezha_transport`), and the bounded-mailbox subsystem (`:flezha_bounded_mailbox`). The sources run under a dedicated `Flezha.Observability.OtpBackend.Supervisor` (`:one_for_one`) inserted into the foundation supervision tree after `DefaultSinks`, each honouring per-source cardinality budgets and an `:otp_backend_enabled` runtime flag for wholesale opt-out. The capability also ships the `flz observe` CLI verb family (`sources`, `sinks`, `tail`, `enable`, `disable`) that exposes the observability service API to users with text and `--json` output modes, every verb routing through `Flezha.Service.CliManager.observability_*` wrappers with a `caller_context` of `source: :cli`.
+The observability-otp-backend capability provides the content side of the observability contract by shipping a library of built-in process-backed sources, each built on `Flezha.Observability.OtpBackend.Poller` — the macro that declares the foundation's `Flezha.Observability.Source` behaviour and registers the source through `Flezha.Observability.Registry.register_source/1`. It covers the BEAM VM (`:beam_vm`), the OS process via Linux `/proc` (`:host`), every active ProcessHub instance (`:processhub`) and each configured transport (`:flezha_transport`). The sources run under a dedicated `Flezha.Observability.OtpBackend.Supervisor` (`:one_for_one`) inserted into the foundation supervision tree after `DefaultSinks`, each honouring per-source cardinality budgets and an `:otp_backend_enabled` runtime flag for wholesale opt-out. The capability also ships the `flz observe` CLI verb family (`sources`, `sinks`, `tail`, `enable`, `disable`) that exposes the observability service API to users with text and `--json` output modes, every verb routing through `Flezha.Service.CliManager.observability_*` wrappers with a `caller_context` of `source: :cli`.
 ## Requirements
 ### Requirement: Built-in BEAM VM source
 
@@ -133,25 +133,13 @@ makes its cross-runner value meaningful.
 - **WHEN** the metric rows are derived from the slot layout
 - **THEN** their count SHALL be within this source's declared `cardinality_budget`, and a layout that would exceed it SHALL fail the declaration test rather than the budget check at runtime
 
-### Requirement: Built-in bounded-mailbox source
-
-The system SHALL provide a built-in process-backed source named `:flezha_bounded_mailbox` that polls the bounded-mailbox subsystem and emits `:metric` signals for per-Relay mailbox high-water marks and drop counters.
-
-#### Scenario: Per-Relay mailbox high-water mark
-- **WHEN** a Relay named `"orders"` in namespace `"default"` has a mailbox high-water mark of `120`
-- **THEN** a `:metric` signal on source `:flezha_bounded_mailbox` with `name: :mailbox_high_water`, `measurements: %{value: 120}`, and `metadata: %{namespace: "default", relay: "orders"}` SHALL appear on the bus
-
-#### Scenario: Drop counter exposed
-- **WHEN** a Relay has dropped `5` messages due to bounded-mailbox overflow
-- **THEN** a `:metric` signal with `name: :messages_dropped`, `measurements: %{count: 5}` SHALL appear on the bus with the same `namespace` / `relay` metadata shape
-
 ### Requirement: Cardinality budget enforcement on built-in sources
 
 Every built-in source SHALL declare its cardinality budget at registration time and SHALL be designed so that the cluster-scale label cardinality (relays × tasklets × cells × runners × hubs) fits within the declared budget. Where the natural cardinality exceeds the foundation's default `1_000` budget, the source SHALL raise its budget at registration time and document the rationale in the source module's `@moduledoc`.
 
 #### Scenario: Source declares a budget at registration
-- **WHEN** the `:flezha_bounded_mailbox` source registers
-- **THEN** its `cardinality_budget` value SHALL be at least equal to the expected count of Relays × Namespaces in a typical cluster, and the value SHALL be visible in `Flezha.Observability.Registry.list_sources/0`
+- **WHEN** the `:processhub` source registers
+- **THEN** its `cardinality_budget` value SHALL be at least equal to the expected count of runner × namespace pairs in a typical cluster, and the value SHALL be visible in `Flezha.Observability.Registry.list_sources/0`
 
 #### Scenario: Over-budget emit triggers the foundation's budget-exceeded event
 - **WHEN** a built-in source emits `:metric` signals with more distinct metadata shapes than its declared cardinality budget allows
@@ -167,7 +155,7 @@ The system SHALL host all built-in sources under a dedicated supervisor `Flezha.
 
 #### Scenario: OTP backend disabled by config
 - **WHEN** the application boots with `:observability, :otp_backend_enabled: false`
-- **THEN** `Flezha.Observability.OtpBackend.Supervisor` SHALL be running with zero children, and `Flezha.Observability.Registry.list_sources/0` SHALL NOT include any of `:beam_vm`, `:host`, `:processhub`, `:flezha_transport`, `:flezha_bounded_mailbox`
+- **THEN** `Flezha.Observability.OtpBackend.Supervisor` SHALL be running with zero children, and `Flezha.Observability.Registry.list_sources/0` SHALL NOT include any of `:beam_vm`, `:host`, `:processhub`, `:flezha_transport`
 
 #### Scenario: Per-source crash does not affect peers
 - **WHEN** the `:host` source process exits abnormally
@@ -179,7 +167,7 @@ The system SHALL provide a `flz observe` CLI command tree exposing the observabi
 
 #### Scenario: `flz observe sources` lists registered sources
 - **WHEN** the user runs `flz observe sources` against a running Controller
-- **THEN** the command SHALL print one row per registered source with at minimum its name, status (`active` / `disabled`), declared kinds, and cardinality budget
+- **THEN** the command SHALL print one row per registered source with at minimum its name, status (`active` / `disabled`), declared kinds, cardinality budget and description
 
 #### Scenario: `flz observe tail` streams live signals from a source
 - **WHEN** the user runs `flz observe tail beam_vm` and a `:metric` signal is emitted on `:beam_vm`
@@ -199,7 +187,7 @@ The system SHALL provide a `flz observe` CLI command tree exposing the observabi
 
 ### Requirement: Built-in sources share one poller template that declares the source contract
 
-Every built-in process-backed source SHALL be built with `Flezha.Observability.OtpBackend.Poller`, which SHALL inject the whole poll lifecycle — `start_link/1`, an `init/1` that registers the source and arms the first tick, `handle_info(:poll, …)` with a catch-all, and `poll_interval_ms/0` — and SHALL declare `@behaviour Flezha.Observability.Source` on every module it builds, supplying an overridable `config_schema/0`. A source SHALL supply only what varies: `init_state/1`, `poll/1`, and `config_schema/0` when it has configuration to describe.
+Every built-in process-backed source SHALL be built with `Flezha.Observability.OtpBackend.Poller`, which SHALL inject the whole poll lifecycle — `start_link/1`, an `init/1` that registers the source and arms the first tick, `handle_info(:poll, …)` with a catch-all, and `poll_interval_ms/0` — and SHALL declare `@behaviour Flezha.Observability.Source` on every module it builds, supplying an overridable `config_schema/0`. A source SHALL supply only what varies: `init_state/1`, `poll/1`, and `config_schema/0` when it has configuration to describe. A source SHALL declare its `area`, `description` and `signals` to the template, which SHALL register them.
 
 The template SHALL be named for what it is. It is poll plumbing, not a source: the modules it builds are the sources, and naming the template `Source` too leaves the subsystem with two different contracts under one name, which is what left the foundation's own `Source` behaviour with no declared implementers.
 
@@ -223,6 +211,10 @@ The template's periodic half SHALL be a separate extension point from its pollin
 #### Scenario: A periodic process re-arms through the declared tick
 - **WHEN** a process declares `tick_interval_ms/1` and `handle_tick/1` and its tick fires
 - **THEN** the next tick SHALL be armed by the extension point, with no `handle_info` clause or re-arm helper of the process's own
+
+#### Scenario: A built-in source registers its description
+- **WHEN** a built-in source starts
+- **THEN** its registry entry SHALL carry the area, description and signals it declared to the template
 
 ### Requirement: A stamp SHALL be collapsed within a runner to the latest reading a channel took
 

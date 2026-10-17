@@ -20,7 +20,14 @@ defmodule Flezha.Observability.OtpBackend.ProcessHubSource do
     source: :processhub,
     kinds: [:metric],
     cardinality_budget: 1_000,
-    default_poll_ms: 1_000
+    default_poll_ms: 1_000,
+    area: :machine,
+    description: "Each namespace's process hub: registered processes, recovery and runner load.",
+    signals: [
+      registered_processes: {:metric, "Processes registered in a namespace's hub."},
+      pending_recoveries: {:metric, "1 while a namespace's hub is recovering, else 0."},
+      runner_bound_relays: {:metric, "Relays bound to one runner in a namespace."}
+    ]
 
   alias Flezha.Identificator
   alias Flezha.Observability.{Bus, Signal}

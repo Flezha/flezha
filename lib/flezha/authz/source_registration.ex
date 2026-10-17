@@ -9,7 +9,7 @@ defmodule Flezha.AuthZ.SourceRegistration do
 
   use GenServer, restart: :transient
 
-  alias Flezha.Observability.Registry
+  alias Flezha.Observability.{Registry, Source}
 
   @source :platform_authz
 
@@ -25,13 +25,30 @@ defmodule Flezha.AuthZ.SourceRegistration do
     end
   end
 
-  defp safe_register() do
-    Registry.register_source(%{
+  @doc "The `:platform_authz` source's registration."
+  @spec registration() :: map()
+  def registration() do
+    %{
       name: @source,
       kinds: [:event, :metric],
       flavour: :declarative,
-      cardinality_budget: 256
-    })
+      cardinality_budget: 256,
+      area: :controller,
+      description: "Authorization: refused calls, tokens and the first-time bootstrap.",
+      signals:
+        Source.signals(
+          authorization_denied: {:event, "A call was refused for lack of a role."},
+          token_issued: {:event, "A token was issued."},
+          token_expiring: {:event, "A token is close to expiring."},
+          token_revoked: {:event, "A token was revoked."},
+          bootstrap_completed: {:event, "The first administrator was set up."},
+          rebootstrap_recovery: {:event, "Authorization was set up again to recover access."}
+        )
+    }
+  end
+
+  defp safe_register() do
+    Registry.register_source(registration())
   rescue
     _ -> {:error, :registry_unavailable}
   catch

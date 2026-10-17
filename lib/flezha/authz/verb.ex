@@ -206,7 +206,7 @@ defmodule Flezha.AuthZ.Verb do
       Signal.new(%{
         kind: :event,
         source: source,
-        name: audit_name(row),
+        name: Verbs.record_name(row),
         measurements: %{count: 1},
         metadata: metadata
       })
@@ -226,13 +226,6 @@ defmodule Flezha.AuthZ.Verb do
 
   defp with_request_id(metadata, nil), do: metadata
   defp with_request_id(metadata, request_id), do: Map.put(metadata, :request_id, request_id)
-
-  # `:"dlq.drop"` audits as `:drop`: the source already names the domain.
-  defp audit_name(%{audit_name: name}) when is_atom(name) and not is_nil(name), do: name
-
-  defp audit_name(%{action: action}) do
-    action |> Atom.to_string() |> String.split(".") |> List.last() |> String.to_atom()
-  end
 
   defp target(row, args, opts, answer) do
     case Keyword.get(opts, :target) do

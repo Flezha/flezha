@@ -43,6 +43,48 @@ defmodule Flezha.Observability.RegistryTest do
       end
     end
 
+    test "keeps a source's description, area and signals", %{name: name} do
+      signals = [%{name: :received, kind: :metric, description: "An order arrived."}]
+
+      assert :ok =
+               Registry.register_source(%{
+                 name: name,
+                 kinds: [:metric],
+                 flavour: :declarative,
+                 description: "Orders received.",
+                 area: :relays,
+                 signals: signals
+               })
+
+      entry = Enum.find(Registry.list_sources(), &(&1.name == name))
+      assert %{description: "Orders received.", area: :relays, signals: ^signals} = entry
+    end
+
+    test "a source declaring none of them still registers", %{name: name} do
+      :ok = Registry.register_source(%{name: name, kinds: [:metric], flavour: :declarative})
+
+      entry = Enum.find(Registry.list_sources(), &(&1.name == name))
+      assert %{description: nil, area: nil, signals: []} = entry
+    end
+
+    test "refuses a malformed description, area or signal list", %{name: name} do
+      base = %{name: name, kinds: [:metric], flavour: :declarative}
+
+      for {key, value, error} <- [
+            {:description, "  ", :invalid_description},
+            {:description, :text, :invalid_description},
+            {:area, :elsewhere, :invalid_area},
+            {:signals, [%{name: :x, kind: :metric}], :invalid_signals},
+            {:signals, [%{name: :x, kind: :nope, description: "x"}], :invalid_signals},
+            {:signals, :none, :invalid_signals}
+          ] do
+        assert {:error, {^error, ^value}} = Registry.register_source(Map.put(base, key, value)),
+               "#{key} #{inspect(value)} was accepted"
+
+        refute name in Enum.map(Registry.list_sources(), & &1.name)
+      end
+    end
+
     test "accepts a legal name unchanged", %{name: name} do
       assert :ok =
                Registry.register_source(%{name: name, kinds: [:metric], flavour: :declarative})
@@ -161,5 +203,61 @@ defmodule Flezha.Observability.RegistryTest do
       sources = Registry.list_sources()
       assert Enum.any?(sources, &(&1.name == name))
     end
+  end
+
+  describe "the sources core registers" do
+    test "each has a description, an area and a meaning for every signal" do
+      for entry <- core_registrations() do
+        assert is_binary(entry.description) and String.trim(entry.description) != "",
+               "#{entry.name} has no description"
+
+        assert entry.area in Registry.areas(), "#{entry.name} has no area"
+        assert entry.signals != [], "#{entry.name} declares no signal"
+
+        for signal <- entry.signals do
+          assert signal.kind in entry.kinds,
+                 "#{entry.name}.#{signal.name} is a #{signal.kind}, which the source does not declare"
+
+          assert is_binary(signal.description) and String.trim(signal.description) != "",
+                 "#{entry.name}.#{signal.name} has no meaning"
+        end
+      end
+    end
+
+    test "every source the booted registry holds is described", %{name: own} do
+      # The test boot starts the bridge and the registry; the pollers, audit log
+      # and authz are not started here and are judged by their registrations above.
+      # Other modules' tests register sources named with a unique number and
+      # do not all remove them; no source core registers is named so.
+      booted =
+        Enum.reject(Registry.list_sources(), fn %{name: name} ->
+          name == own or Atom.to_string(name) =~ ~r/_\d+$/
+        end)
+
+      assert length(booted) >= 20
+
+      undescribed = for entry <- booted, not is_binary(entry.description), do: entry.name
+      assert undescribed == [], "registered without a description: #{inspect(undescribed)}"
+    end
+
+    test "none of them is one that nothing can make emit" do
+      gone = [:flezha_reconcile, :flezha_leadership, :flezha_bounded_mailbox]
+
+      names =
+        Enum.map(core_registrations(), & &1.name) ++ Enum.map(Registry.list_sources(), & &1.name)
+
+      assert Enum.filter(names, &(&1 in gone)) == []
+    end
+  end
+
+  defp core_registrations() do
+    Flezha.Observability.TelemetryBridge.registrations(%{}) ++
+      Enum.map(Flezha.Observability.OtpBackend.Supervisor.source_modules(), & &1.registration()) ++
+      Registry.own_registrations() ++
+      [
+        Flezha.Observability.Export.Supervisor.registration(),
+        Flezha.Observability.AuditLog.Supervisor.registration(),
+        Flezha.AuthZ.SourceRegistration.registration()
+      ]
   end
 end

@@ -75,7 +75,7 @@ in; a project outside the Flezha repository depends on `flezha` by git or Hex in
 | `shareable:` | one running copy can serve every relay bound to the plugin on a controller | `false` |
 | `feeds:` | the provider's own worker injects records into the relay | `false` |
 | `name:` | the name in errors, help and telemetry | the module's last segment, underscored |
-| `telemetry:` | the verbs it emits beyond the shared ones, each `:metric` or `:event` | none |
+| `telemetry:` | the verbs it emits beyond the shared ones, each `:metric` or `:event`, or `{kind, "what it says"}` | none |
 
 An option row takes `type` (`:int`, `:bool`, `:string`, `:names`, `:enum`, `:json`,
 `:map`, `:list`, `:pid`, `:any`), `default`, `required`, `min` and `max`, `values` for an
@@ -168,8 +168,11 @@ overflow policy each one follows.
 A provider reports what it did with `ProviderBehaviour.emit/4`: `shipped`, `retried`,
 `overflowed` and `failed` mean the same for every provider, and a verb of its own is
 declared on the `use`, `telemetry: [rebalanced: :event]`, as a `:metric` or an `:event`.
-The controller exports both under the provider's name, sourced `flezha_<name>`; a verb it
-does not declare reaches only handlers attached to it.
+Give it a meaning, `telemetry: [rebalanced: {:event, "The sink moved its partitions."}]`, and
+`flz observe sources` and the console show that sentence beside the signal; one declared with
+a bare kind reads "No description from the plugin". The controller exports both under the
+provider's name, sourced `flezha_<name>`; a verb it does not declare reaches only handlers
+attached to it.
 
 ### A controller plugin
 

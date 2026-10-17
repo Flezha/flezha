@@ -17,14 +17,30 @@ defmodule Flezha.Observability.OtpBackend.TransportSource do
   `docs/operations/observability.md` → Shipped sources.
   """
 
+  alias Flezha.Transport.LivenessCounters
+
   use Flezha.Observability.OtpBackend.Poller,
     source: :flezha_transport,
     kinds: [:metric],
     cardinality_budget: 40,
-    default_poll_ms: 1_000
+    default_poll_ms: 1_000,
+    area: :machine,
+    description:
+      "Runner transports and the data plane: connections, driver health and message counters.",
+    signals:
+      [
+        open_connections: {:metric, "Connections open on a transport."},
+        driver_loop_iterations: {:metric, "Times the transport driver's loop ran."},
+        driver_loop_age_ms:
+          {:metric, "Milliseconds since the driver's loop last ran; high means wedged."},
+        driver_cmd_queue_depth: {:metric, "Commands waiting for the driver."},
+        driver_write_buffer_bytes: {:metric, "Bytes waiting in the driver's write buffers."},
+        driver_write_buffer_dropped:
+          {:metric, "Frames the driver lost; any non-zero value is a defect."},
+        driver_streams: {:metric, "Streams the driver holds open."}
+      ] ++ LivenessCounters.metric_signals()
 
   alias Flezha.Observability.{Bus, Signal}
-  alias Flezha.Transport.LivenessCounters
   alias Flezha.Transport.Server, as: TransportServer
 
   @impl Flezha.Observability.OtpBackend.Poller

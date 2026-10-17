@@ -18,4 +18,13 @@ defmodule Flezha.Observability.Source do
   """
 
   @callback config_schema() :: map()
+
+  @doc """
+  Signal declarations for a registration's `signals`, written as
+  `[name: {kind, "what it says"}]`.
+  """
+  @spec signals(keyword({Flezha.Observability.Signal.kind(), String.t()})) :: [map()]
+  def signals(declared) do
+    for {name, {kind, meaning}} <- declared, do: %{name: name, kind: kind, description: meaning}
+  end
 end

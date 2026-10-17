@@ -34,7 +34,8 @@ defmodule Flezha.Observability.Registry do
       [name: :crashes, kind: :count]
     ]
 
-  alias Flezha.Observability.Signal
+  alias Flezha.AuthZ.Verbs
+  alias Flezha.Observability.{Signal, Source}
   alias Flezha.Process.Cspec
 
   @sources :flezha_observability_sources
@@ -43,13 +44,23 @@ defmodule Flezha.Observability.Registry do
 
   @system_source :observability_registry
 
+  # Where a source sits, for a reader grouping the listing.
+  @areas [:relays, :storage, :plugins, :controller, :machine]
+
   @type source_flavour :: :declarative | :process_backed
+
+  @type area :: :relays | :storage | :plugins | :controller | :machine
+
+  @type signal_decl :: %{name: atom(), kind: Signal.kind(), description: String.t()}
 
   @type source_entry :: %{
           required(:name) => atom(),
           required(:kinds) => [Signal.kind()],
           required(:flavour) => source_flavour(),
           required(:cardinality_budget) => pos_integer(),
+          optional(:description) => String.t(),
+          optional(:area) => area(),
+          optional(:signals) => [signal_decl()],
           required(:status) => :active | :disabled,
           required(:registered_at) => integer(),
           required(:metadata_shapes) => MapSet.t(),
@@ -76,12 +87,54 @@ defmodule Flezha.Observability.Registry do
   end
 
   @doc """
-  Register a source: `name`, `kinds`, `flavour` and an optional
-  `cardinality_budget`. Contract: `Flezha.Observability.Source`.
+  Register a source: `name`, `kinds`, `flavour`, and optionally a
+  `cardinality_budget`, a one-line `description`, an `area` (see `areas/0`)
+  and the `signals` it can emit, each `%{name, kind, description}`.
+  Contract: `Flezha.Observability.Source`.
   """
   @spec register_source(map()) :: :ok | {:error, term()}
   def register_source(%{name: _, kinds: _, flavour: _} = entry) do
     GenServer.call(__MODULE__, {:register_source, entry})
+  end
+
+  @doc "The areas a source may declare."
+  @spec areas() :: [area()]
+  def areas(), do: @areas
+
+  @doc """
+  The two sources the foundation registers itself: `:observability_registry`
+  for its own diagnostics and `:observability_service` for the service API's
+  audit records.
+  """
+  @spec own_registrations() :: [map()]
+  def own_registrations() do
+    [
+      %{
+        name: @system_source,
+        kinds: [:event],
+        flavour: :declarative,
+        cardinality_budget: 1_000,
+        area: :controller,
+        description: "The observability system's own warnings about sources that misbehave.",
+        signals:
+          Source.signals(
+            source_kind_violation:
+              {:event, "A source sent a kind of signal it did not declare; it was dropped."},
+            cardinality_budget_exceeded:
+              {:event,
+               "A source sent more label combinations than its budget; extras are dropped."}
+          )
+      },
+      %{
+        name: :observability_service,
+        kinds: [:event],
+        flavour: :declarative,
+        cardinality_budget: 1_000,
+        area: :controller,
+        description: "Calls to the observability service: tails, queries and switching sources.",
+        signals: Verbs.audit_signals(:observability_service)
+      }
+    ]
   end
 
   @spec unregister_source(atom()) :: :ok
@@ -261,23 +314,7 @@ defmodule Flezha.Observability.Registry do
     :ets.new(@sources, [:set, :protected, :named_table, read_concurrency: true])
     :ets.new(@sinks, [:set, :protected, :named_table, read_concurrency: true])
 
-    # Pre-register internal sources: `:observability_registry` for
-    # foundation-emitted system events (cardinality breach, kind
-    # violation), and `:observability_service` for service-API audit
-    # events (subscribe/enable/disable invocations).
-    do_register_source(%{
-      name: @system_source,
-      kinds: [:event],
-      flavour: :declarative,
-      cardinality_budget: 1_000
-    })
-
-    do_register_source(%{
-      name: :observability_service,
-      kinds: [:event],
-      flavour: :declarative,
-      cardinality_budget: 1_000
-    })
+    Enum.each(own_registrations(), &do_register_source/1)
 
     {:ok, %{}}
   end
@@ -379,6 +416,9 @@ defmodule Flezha.Observability.Registry do
           kinds: entry.kinds,
           flavour: entry.flavour,
           cardinality_budget: budget,
+          description: Map.get(entry, :description),
+          area: Map.get(entry, :area),
+          signals: Map.get(entry, :signals, []),
           status: Map.get(entry, :status, :active),
           registered_at: System.monotonic_time(:microsecond),
           metadata_shapes: MapSet.new(),
@@ -455,7 +495,7 @@ defmodule Flezha.Observability.Registry do
     end
   end
 
-  defp validate_source(%{name: name, kinds: kinds, flavour: flavour})
+  defp validate_source(%{name: name, kinds: kinds, flavour: flavour} = entry)
        when is_atom(name) and is_list(kinds) and flavour in [:declarative, :process_backed] do
     cond do
       not Enum.all?(kinds, &(&1 in Signal.kinds())) ->
@@ -469,11 +509,45 @@ defmodule Flezha.Observability.Registry do
         {:error, {:invalid_source_name, name}}
 
       true ->
-        :ok
+        validate_meaning(entry)
     end
   end
 
   defp validate_source(_), do: {:error, :invalid_source_entry}
+
+  # What a reader is told about the source: all three keys are optional.
+  defp validate_meaning(entry) do
+    %{description: description, area: area, signals: signals} =
+      Map.merge(%{description: nil, area: nil, signals: []}, entry)
+
+    cond do
+      not (is_nil(description) or text?(description)) ->
+        {:error, {:invalid_description, description}}
+
+      area not in [nil | @areas] ->
+        {:error, {:invalid_area, area}}
+
+      not signal_decls?(signals) ->
+        {:error, {:invalid_signals, signals}}
+
+      true ->
+        :ok
+    end
+  end
+
+  defp text?(text), do: is_binary(text) and String.trim(text) != ""
+
+  defp signal_decls?(signals) when is_list(signals) do
+    Enum.all?(signals, fn
+      %{name: name, kind: kind, description: text} ->
+        is_atom(name) and kind in Signal.kinds() and text?(text)
+
+      _other ->
+        false
+    end)
+  end
+
+  defp signal_decls?(_other), do: false
 
   defp validate_config(schema, config) when is_map(schema) and is_map(config) do
     missing = for key <- Map.keys(schema), not Map.has_key?(config, key), do: key
