@@ -18,7 +18,7 @@ file stays out of git unless someone decides otherwise.
 |---|---|
 | `INVARIANTS.md` | The permanent rules. A reset never touches them, and a campaign may make them stricter but never looser. |
 | `templates/` | The blank boards a reset restores. |
-| `briefs/` | What a worker is told: `reproduce.md`, `code.md`, `critic.md`. |
+| `briefs/` | What a worker is told: `reproduce.md`, `code.md`, `critic.md`; for a planning campaign, `spec-writer.md` (one OpenSpec change per approved section) and `spec-critic.md` (a fresh critic per change, every finding confirmed or invalidated by the supervisor before the change is worked). |
 | `status.py` | Derives every count from the boards. Counts are read from here, never typed. |
 | `reap.sh` | Finds and kills what a session left running: zombies, orphaned agents, browsers, builds, test runs, polling loops, containers, with the CPU top list. Ownership comes from each process's ancestry. |
 | `reset.sh` | Closes a campaign and opens the next one. |
