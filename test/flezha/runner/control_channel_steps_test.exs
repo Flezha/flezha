@@ -52,14 +52,20 @@ defmodule FlezhaTest.Runner.ControlChannelRelayCompletedTest do
     :ok
   end
 
-  test "RelayCompleted ok → drives stop_relay teardown + result, no failure telemetry" do
-    test_pid = self()
-
-    RelayManager
-    |> stub(:stop_relay, fn @namespace, relay_id, [reason: :completed] ->
+  # No Overwatch is admitted in these tests, so the teardown passes `overwatch: nil`.
+  defp stub_stop_relay(test_pid) do
+    stub(RelayManager, :stop_relay, fn @namespace,
+                                       relay_id,
+                                       [reason: :completed, overwatch: nil] ->
       send(test_pid, {:stop_relay_called, relay_id})
       :ok
     end)
+  end
+
+  test "RelayCompleted ok → drives stop_relay teardown + result, no failure telemetry" do
+    test_pid = self()
+
+    stub_stop_relay(test_pid)
 
     {control_channel, _stream_ref} = start_control_channel("exec-task-a")
 
@@ -80,11 +86,7 @@ defmodule FlezhaTest.Runner.ControlChannelRelayCompletedTest do
   test "RelayCompleted error → failure telemetry + identical teardown" do
     test_pid = self()
 
-    RelayManager
-    |> stub(:stop_relay, fn @namespace, relay_id, [reason: :completed] ->
-      send(test_pid, {:stop_relay_called, relay_id})
-      :ok
-    end)
+    stub_stop_relay(test_pid)
 
     {control_channel, _stream_ref} = start_control_channel("exec-task-b")
 
@@ -106,11 +108,7 @@ defmodule FlezhaTest.Runner.ControlChannelRelayCompletedTest do
   test "RelayCompleted cancelled (cooperative stop) → same converged teardown + result" do
     test_pid = self()
 
-    RelayManager
-    |> stub(:stop_relay, fn @namespace, relay_id, [reason: :completed] ->
-      send(test_pid, {:stop_relay_called, relay_id})
-      :ok
-    end)
+    stub_stop_relay(test_pid)
 
     {control_channel, _stream_ref} = start_control_channel("exec-task-c")
 
@@ -142,11 +140,7 @@ defmodule FlezhaTest.Runner.ControlChannelRelayCompletedTest do
       end
     end)
 
-    RelayManager
-    |> stub(:stop_relay, fn @namespace, relay_id, [reason: :completed] ->
-      send(test_pid, {:stop_relay_called, relay_id})
-      :ok
-    end)
+    stub_stop_relay(test_pid)
 
     {control_channel, _stream_ref} = start_control_channel("exec-task-direct")
 
@@ -165,11 +159,7 @@ defmodule FlezhaTest.Runner.ControlChannelRelayCompletedTest do
   test "RelayCompleted writes a durable completion record for finished-job retention" do
     test_pid = self()
 
-    RelayManager
-    |> stub(:stop_relay, fn @namespace, relay_id, [reason: :completed] ->
-      send(test_pid, {:stop_relay_called, relay_id})
-      :ok
-    end)
+    stub_stop_relay(test_pid)
 
     {control_channel, _stream_ref} = start_control_channel("exec-task-rec")
 
