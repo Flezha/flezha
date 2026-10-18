@@ -108,7 +108,11 @@ defmodule Flezha.Service.NamespaceDeleteTest do
       )
     end)
 
-    assert {:ok, [{"trading-runner-1", _}]} = FleetManager.global_runner_pids("trading")
+    assert {:ok, [%{id: "trading-runner-1", node: node, connected_at: connected_at}]} =
+             FleetManager.global_runner_rows("trading")
+
+    assert node == node()
+    assert is_integer(connected_at)
 
     assert {:error, %Flezha.Error{code: "namespace.in_use"} = error} = deleted
     assert error.details["runners"] == ["trading-runner-1"]

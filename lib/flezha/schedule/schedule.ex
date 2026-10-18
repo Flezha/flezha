@@ -37,8 +37,10 @@ defmodule Flezha.Service.Schedule do
 
   @doc """
   Every stored schedule, by name, each with what the hub holds for it: the
-  node that fires it, its last fire and that fire's result, and when it fires
-  next, in UTC.
+  node that fires it, its last fire and that fire's result, when it fires
+  next, in UTC, and `dormant?`. The next fire is the slot the job is armed
+  for, `nil` while it is dormant; only an entry with no job answering has it
+  computed from the cron.
   """
   @spec list(caller_context()) :: {:ok, [map()]} | {:error, term()}
   verb list(caller_context), verb: :schedule_list do
@@ -51,7 +53,8 @@ defmodule Flezha.Service.Schedule do
        Map.merge(entry, %{
          node: Map.get(status, :node),
          last_fire: Map.get(status, :last_fire),
-         next_fire: next_fire_of(entry)
+         next_fire: Map.get_lazy(status, :next_fire, fn -> next_fire_of(entry) end),
+         dormant?: Map.get(status, :dormant?, false)
        })
      end)}
   end

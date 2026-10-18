@@ -156,7 +156,9 @@ $ flz runner list --namespace agents
 ```output
 Fetching runners for namespace 'agents'...
 Runners in namespace 'agents':
-  - agents_33173e7dbe13
+
+  RUNNER                            PID      NODE                  CONNECTED AT          LATE
+  agents_33173e7dbe13               -        flezha@controller.agentdesk2026-10-18T09:20:41Z  no
 ```
 
 > Start a session for Anna, and send it two messages.

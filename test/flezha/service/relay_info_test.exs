@@ -23,8 +23,10 @@ defmodule FlezhaTest.Service.RelayInfoTest do
   alias Flezha.Relay.Calls
   alias Flezha.Relay.ClassRegistry
   alias Flezha.Service.Cli
+  alias Flezha.Service.Relay.Info
   alias Flezha.Service.RelayManager
   alias Flezha.State.Completion
+  alias Flezha.State.PersistenceResolver
 
   @namespace "relay-info-test"
 
@@ -317,6 +319,8 @@ defmodule FlezhaTest.Service.RelayInfoTest do
     # No live relays; the finished one comes only from its on-disk record.
     stub(RelayManager, :get_relay_ids, fn _ns -> {:ok, []} end)
 
+    finished_at = System.system_time(:second)
+
     :ok =
       Completion.write("done-1", %{
         namespace: @namespace,
@@ -324,7 +328,7 @@ defmodule FlezhaTest.Service.RelayInfoTest do
         status: "ok",
         error: "",
         result: "RES",
-        finished_at: System.system_time(:second)
+        finished_at: finished_at
       })
 
     out =
@@ -337,6 +341,14 @@ defmodule FlezhaTest.Service.RelayInfoTest do
     assert proc["phase"] == "finished"
     assert proc["status"] == "ok"
     assert proc["result"] == Base.encode64("RES")
+
+    # Kept until the end of its retention window, on both the listing and the
+    # single-relay read.
+    kept_until =
+      finished_at + PersistenceResolver.completed_retention_hours("done-1") * 3600
+
+    assert proc["expires_at"] == kept_until
+    assert {:finished, %{expires_at: ^kept_until}} = Info.relay(@namespace, "done-1")
   end
 
   test "a finished relay outside the retention window is not surfaced" do

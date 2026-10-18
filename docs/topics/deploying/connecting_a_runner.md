@@ -295,7 +295,9 @@ $ flz runner list
 ```output
 Fetching runners for namespace 'default'...
 Runners in namespace 'default':
-  - default_23fc85126379
+
+  RUNNER                            PID      NODE                  CONNECTED AT          LATE
+  default_23fc85126379              48213    flezha@127.0.0.1      2026-10-18T09:14:02Z  no
 ```
 
 The runner's id in that list means it connected. When it is missing,

@@ -82,9 +82,12 @@ defmodule Flezha.Schedule.HubTest do
       :ok = Hub.assert(entry)
       [pid | _] = Helper.await_registered("digest")
 
-      # A quiet entry has not fired yet.
-      assert %{"digest" => %{node: node, last_fire: nil}} = Hub.statuses()
+      # A quiet entry has not fired yet; its next fire is the slot it is armed for.
+      assert %{"digest" => %{node: node, last_fire: nil, dormant?: false, next_fire: next}} =
+               Hub.statuses()
+
       assert node == node()
+      assert next == :sys.get_state(pid).target
 
       # A wedged job reports its node only — the walk must render regardless.
       :ok = :sys.suspend(pid)

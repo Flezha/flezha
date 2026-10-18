@@ -192,7 +192,9 @@ $ flz runner list --namespace agents
 ```output
 Fetching runners for namespace 'agents'...
 Runners in namespace 'agents':
-  - agents_4d7736218461
+
+  RUNNER                            PID      NODE                  CONNECTED AT          LATE
+  agents_4d7736218461               -        flezha@127.0.0.1      2026-10-18T10:02:57Z  no
 ```
 
 Relays are then started and plugins enabled as anywhere else:

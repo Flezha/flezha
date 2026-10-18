@@ -33,6 +33,7 @@ defmodule Flezha.Runner.FleetManager do
   alias Flezha.SDK.SafeCall
   alias Flezha.Service.HubManager
   alias Flezha.Shutdown
+  alias Flezha.Transport.LivenessCounters
 
   require Logger
 
@@ -43,6 +44,11 @@ defmodule Flezha.Runner.FleetManager do
     GenServer.start_link(__MODULE__, nil, name: __MODULE__)
   end
 
+  @doc """
+  This node's factories in `namespace`, one row each: `id`, `description`,
+  `run`, `runners` (the active runners that can place it, as
+  `runners_for_factory/3` answers) and the API `runner` announced for it.
+  """
   def list_factories(namespace, runner \\ nil) do
     GenServer.call(__MODULE__, {:list_factories, namespace, runner}, manager_call_timeout())
   end
@@ -271,18 +277,41 @@ defmodule Flezha.Runner.FleetManager do
     do: {:ok, namespace |> across_runner_nodes(:active_runners) |> Enum.uniq()}
 
   @doc """
-  `{runner id, process id}` for every active runner in `namespace` across the
-  cluster, with `nil` where the runner's transport cannot say. Serves
+  Every active runner in `namespace` across the cluster, one row each: its
+  `id`, the `node` holding its session, `connected_at` (unix seconds, `nil`
+  for a session that predates the stamp), the runner's OS `pid` where its
+  transport says (a local socket), `nil` otherwise, `silent_ms` since its last control
+  frame (`nil` when none was stamped) and `late?`, true once that silence
+  outlasts two keepalive periods, so at least one keepalive was missed. Each
+  node answers for its own runners against its own clock. Serves
   `flz runner list`.
   """
-  @spec global_runner_pids(String.t()) :: {:ok, [{binary(), non_neg_integer() | nil}]}
-  def global_runner_pids(namespace),
-    do: {:ok, namespace |> across_runner_nodes(:runner_pids) |> Enum.uniq_by(&elem(&1, 0))}
+  @spec global_runner_rows(String.t()) :: {:ok, [map()]}
+  def global_runner_rows(namespace),
+    do: {:ok, namespace |> across_runner_nodes(:runner_rows) |> Enum.uniq_by(& &1.id)}
 
   @doc false
-  # This node's half of `global_runner_pids/1`, reached over `:erpc`.
-  def runner_pids(namespace),
-    do: Enum.map(active_runners(namespace), &{&1, ControlChannel.peer_pid(&1)})
+  # This node's half of `global_runner_rows/1`, reached over `:erpc`.
+  def runner_rows(namespace) do
+    connected =
+      GenServer.call(__MODULE__, {:runner_rows, namespace}, Durations.get(:runner_lookup_ms))
+
+    now = System.monotonic_time(:millisecond)
+    late_after = 2 * Durations.get(:control_keepalive_ms)
+
+    Enum.map(connected, fn {id, facts} ->
+      silent_ms = LivenessCounters.control_silent_ms(id, now)
+
+      %{
+        id: id,
+        node: node(),
+        connected_at: facts[:connected_at],
+        pid: facts[:pid],
+        silent_ms: silent_ms,
+        late?: is_integer(silent_ms) and silent_ms > late_after
+      }
+    end)
+  end
 
   @doc """
   Every runner attached to `namespace` across the cluster: the active ones and
@@ -309,8 +338,7 @@ defmodule Flezha.Runner.FleetManager do
     do: namespace |> across_runner_nodes(:session_rows, [runner_id]) |> List.first()
 
   @doc false
-  # This node's half of `find_session/2`, reached over `:erpc`. The pid is read
-  # from the channel outside this manager, which the channel may be calling.
+  # This node's half of `find_session/2`, reached over `:erpc`.
   def session_rows(namespace, runner_id) do
     case GenServer.call(
            __MODULE__,
@@ -318,7 +346,7 @@ defmodule Flezha.Runner.FleetManager do
            manager_call_timeout()
          ) do
       nil -> []
-      identity -> [Map.merge(identity, %{pid: ControlChannel.peer_pid(runner_id), node: node()})]
+      identity -> [Map.put(identity, :node, node())]
     end
   end
 
@@ -447,6 +475,9 @@ defmodule Flezha.Runner.FleetManager do
        # it (`Session.check_identity_pin/2`).
        stable_sessions: %{},
        session_credentials: %{},
+       # Each live session's facts, read once at connect: `connected_at` (unix
+       # seconds) and the runner's OS `pid` where its transport says.
+       session_facts: %{},
        pending_handshakes: %{},
        handshake_requests: :gen_server.reqids_new(),
        runner_loads: %{},
@@ -514,8 +545,8 @@ defmodule Flezha.Runner.FleetManager do
     reply =
       case get_in(state.runner_namespaces, [namespace, runner_id]) do
         {:active, _since} ->
-          Enum.find_value(
-            state.stable_sessions,
+          state.stable_sessions
+          |> Enum.find_value(
             %{stable_id: nil, incarnation: nil},
             fn
               {stable_id, {^runner_id, _credential, incarnation}} ->
@@ -525,6 +556,7 @@ defmodule Flezha.Runner.FleetManager do
                 nil
             end
           )
+          |> Map.put(:pid, state.session_facts[runner_id][:pid])
 
         _absent_or_inactive ->
           nil
@@ -536,6 +568,12 @@ defmodule Flezha.Runner.FleetManager do
   @impl true
   def handle_call({:active_runners, namespace}, _from, state) do
     {:reply, candidates(state, namespace, nil), state}
+  end
+
+  @impl true
+  def handle_call({:runner_rows, namespace}, _from, state) do
+    rows = for id <- candidates(state, namespace, nil), do: {id, state.session_facts[id] || %{}}
+    {:reply, rows, state}
   end
 
   @impl true
@@ -627,7 +665,8 @@ defmodule Flezha.Runner.FleetManager do
         %{
           id: factory_id,
           description: info.description,
-          run: run_of(state, namespace, factory_id)
+          run: run_of(state, namespace, factory_id),
+          runners: candidates(state, namespace, factory_id)
         }
         |> Map.merge(Factories.announced_api(info, runner))
       end)

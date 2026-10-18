@@ -457,6 +457,10 @@ defmodule FlezhaTest.Runner.FleetManagerSdkLangTest do
       {:ok, factories} = FleetManager.list_factories(ns)
       assert Enum.any?(factories, &(&1.id == id))
       assert FleetManager.runners_for_factory(ns, id) == ["rust_runner"]
+
+      # The row carries the same placeable runners, so a listing needs no
+      # per-factory lookup.
+      assert %{runners: ["rust_runner"]} = Enum.find(factories, &(&1.id == id))
     end
   end
 
@@ -978,5 +982,106 @@ defmodule FlezhaTest.Runner.FleetManagerSessionSignalsTest do
            "no #{name} signal reached the ring buffer"
 
     find.()
+  end
+end
+
+defmodule FlezhaTest.Runner.FleetManagerRunnerRowsTest do
+  @moduledoc """
+  A runner's listing row: the node holding it, when its session connected,
+  how long its control channel has been silent and whether that silence is a
+  missed keepalive. The facts read at connect live exactly as long as the session.
+  """
+  # async: false: the live controller and its fleet; node-global tables.
+  use ExUnit.Case, async: false
+
+  alias Flezha.Config.Durations
+  alias Flezha.Runner.FleetManager
+  alias Flezha.Runner.FleetManager.Session
+  alias Flezha.Transport.LivenessCounters
+  alias FlezhaTest.Helper.FleetStateHelper
+
+  @namespace "runner_rows_#{System.unique_integer([:positive])}"
+
+  setup do
+    original = :sys.get_state(FleetManager)
+    on_exit(fn -> :sys.replace_state(FleetManager, fn _ -> original end) end)
+    :ok
+  end
+
+  test "a connected runner's row carries its node, connect time and silence" do
+    token = connect()
+    stamp_control(token, 1_000)
+
+    # A session with no stream to ask has no OS pid to show.
+    assert [
+             %{
+               id: ^token,
+               node: node,
+               connected_at: at,
+               pid: nil,
+               silent_ms: silent,
+               late?: false
+             }
+           ] = FleetManager.runner_rows(@namespace)
+
+    assert node == node()
+    assert_in_delta at, System.system_time(:second), 5
+    assert silent >= 1_000 and silent < 10_000
+  end
+
+  test "late? flips once the control silence outlasts two keepalives" do
+    token = connect()
+    stamp_control(token, 2 * Durations.get(:control_keepalive_ms) + 1_000)
+
+    assert [%{id: ^token, late?: true}] = FleetManager.runner_rows(@namespace)
+  end
+
+  test "a runner with no control stamp is neither silent nor late" do
+    token = connect()
+
+    assert [%{id: ^token, silent_ms: nil, late?: false}] = FleetManager.runner_rows(@namespace)
+  end
+
+  test "the connect time is forgotten when the session is dropped or evicted" do
+    dropped = connect()
+    evicted = connect()
+
+    :ok = FleetStateHelper.disconnected(@namespace, dropped)
+    :ok = FleetManager.evict_runner(evicted, proved_wedged: true)
+
+    facts = :sys.get_state(FleetManager).session_facts
+    refute Map.has_key?(facts, dropped)
+    refute Map.has_key?(facts, evicted)
+  end
+
+  test "the listing and the drop read the pid recorded at connect, not the channel" do
+    token = connect()
+    :sys.replace_state(FleetManager, &put_in(&1, [:session_facts, token, :pid], 4_242))
+
+    assert [%{id: ^token, pid: 4_242}] = FleetManager.runner_rows(@namespace)
+    assert %{pid: 4_242, node: node} = FleetManager.find_session(@namespace, token)
+    assert node == node()
+  end
+
+  defp connect() do
+    token = "rows_runner_#{System.unique_integer([:positive])}"
+    connect = %{namespace: @namespace, factories: [], credential: nil, stable_id: nil}
+    pending = %{connect: connect, stream_ref: nil, owed: [:command_sockets_connect], waiters: []}
+
+    :sys.replace_state(FleetManager, fn state ->
+      state
+      |> put_in([:pending_handshakes, token], pending)
+      |> Session.handshake_answered(token, :command_sockets_connect, {:reply, {:ok, ""}})
+    end)
+
+    token
+  end
+
+  # A control frame `ago_ms` before now, as the runner's control channel stamps it.
+  defp stamp_control(token, ago_ms) do
+    ref = LivenessCounters.register_channel(token, :control)
+    now = System.monotonic_time(:millisecond)
+    LivenessCounters.set_channel(ref, :last_control_frame_ms, now - ago_ms)
+    on_exit(fn -> :ets.delete(:flezha_liveness_counters, {:channel, token, :control}) end)
   end
 end

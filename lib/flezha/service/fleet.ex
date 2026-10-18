@@ -32,14 +32,15 @@ defmodule Flezha.Service.Fleet do
   @type caller_context :: CallerContext.t()
 
   @doc """
-  Every runner serving `namespace`, anywhere in the cluster, each with the
-  process id of the runner on its socket where the transport can say, so a
-  user can tell which process a runner is.
+  Every runner serving `namespace`, anywhere in the cluster, one row each:
+  `id`, the `node` holding its session, `connected_at` (unix seconds), the
+  runner's OS `pid` where its transport says,
+  `silent_ms` since the controller last heard from it, and `late?` once that
+  silence shows a missed keepalive (`FleetManager.global_runner_rows/1`).
   """
   @spec runners(String.t(), caller_context()) :: {:ok, [map()]} | {:error, term()}
   verb runners(namespace, caller_context), verb: :list_runners, args: [namespace: @namespace] do
-    with {:ok, rows} <- FleetManager.global_runner_pids(namespace),
-         do: {:ok, Enum.map(rows, fn {id, pid} -> %{id: id, pid: pid} end)}
+    FleetManager.global_runner_rows(namespace)
   end
 
   @doc """
@@ -129,7 +130,10 @@ defmodule Flezha.Service.Fleet do
     {:ok, FleetManager.runners_for_factory(namespace, factory_id)}
   end
 
-  @doc "The factories declared in `namespace`."
+  @doc """
+  The factories declared in `namespace`, each with the `runners` that can place
+  it, so a listing needs no `runners_for_factory/3` call per factory.
+  """
   @spec factories(String.t(), caller_context()) :: {:ok, [term()]} | {:error, term()}
   verb factories(namespace, caller_context), verb: :list_runners, args: [namespace: @namespace] do
     FleetManager.list_factories(namespace)

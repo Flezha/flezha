@@ -18,20 +18,42 @@ defmodule Flezha.Service.Cli.RunnersTest do
   alias Flezha.Service.Cli
 
   setup do
-    stub(FleetManager, :global_runner_pids, fn "trading" ->
-      {:ok, [{"trading_2bfeedb5e74f", 48_213}, {"trading_d4c7e284bc33", nil}]}
+    stub(FleetManager, :global_runner_rows, fn "trading" ->
+      {:ok,
+       [
+         %{
+           id: "trading_2bfeedb5e74f",
+           node: :flezha@host,
+           connected_at: 1_791_590_400,
+           pid: 48_213,
+           silent_ms: 4_000,
+           late?: false
+         },
+         %{
+           id: "trading_d4c7e284bc33",
+           node: :flezha@other,
+           connected_at: nil,
+           pid: nil,
+           silent_ms: nil,
+           late?: true
+         }
+       ]}
     end)
 
     :ok
   end
 
-  # fails when: the list drops the process id, so a user who wants to crash a
-  # runner has nothing to kill it by.
-  test "a runner is listed with its process id, and one whose transport cannot say without" do
+  # fails when: the list stops saying which process a runner is, where it is
+  # held or since when, so a user who wants to crash it has nothing to kill.
+  test "a runner is listed with its pid, node, connect time and lateness, a dash where unknown" do
     output = capture_io(fn -> Cli.call("Fleet.runners", Jason.encode!(["trading"]), []) end)
 
-    assert output =~ "  - trading_2bfeedb5e74f  pid 48213\n"
-    assert output =~ "  - trading_d4c7e284bc33\n"
+    assert output =~ "Runners in namespace 'trading':"
+
+    assert output =~
+             ~r/trading_2bfeedb5e74f\s+48213\s+flezha@host\s+2026-10-10T00:00:00Z\s+no\n/
+
+    assert output =~ ~r/trading_d4c7e284bc33\s+-\s+flezha@other\s+-\s+yes\n/
   end
 
   describe "drops" do
@@ -66,13 +88,27 @@ defmodule Flezha.Service.Cli.RunnersTest do
     end
   end
 
-  test "the JSON form carries each runner with its process id, or none" do
+  test "the JSON form carries each runner's row whole" do
     output =
       capture_io(fn -> Cli.call("Fleet.runners", Jason.encode!(["trading"]), output: "json") end)
 
     assert Jason.decode!(output) == [
-             %{"id" => "trading_2bfeedb5e74f", "pid" => 48_213},
-             %{"id" => "trading_d4c7e284bc33", "pid" => nil}
+             %{
+               "id" => "trading_2bfeedb5e74f",
+               "node" => "flezha@host",
+               "connected_at" => 1_791_590_400,
+               "pid" => 48_213,
+               "silent_ms" => 4_000,
+               "late?" => false
+             },
+             %{
+               "id" => "trading_d4c7e284bc33",
+               "node" => "flezha@other",
+               "connected_at" => nil,
+               "pid" => nil,
+               "silent_ms" => nil,
+               "late?" => true
+             }
            ]
   end
 

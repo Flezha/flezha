@@ -408,6 +408,9 @@ defmodule Flezha.Schedule.JobTest do
           assert state.target == nil
           refute Timer.armed?(state.timers, :slot)
           assert Process.alive?(pid)
+
+          # The status says so, rather than a next fire computed from the cron.
+          assert %{next_fire: nil, dormant?: true} = GenServer.call(pid, :status)
         end)
 
       assert log =~ "job is dormant"

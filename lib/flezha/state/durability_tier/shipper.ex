@@ -120,14 +120,27 @@ defmodule Flezha.State.DurabilityTier.Shipper do
   @doc """
   Per-reference shipping state, straight out of ETS. Readable from any process
   and while the shipper is busy — which is what makes it safe for `/healthz`.
+  Each row adds `retry_in_ms`, how long until a pending retry (`nil` when none
+  is pending), so a reader on another node never compares this node's
+  monotonic `retry_after_ms` with its own clock.
   """
   @spec status() :: [map()]
   def status() do
     case :ets.whereis(@table) do
-      :undefined -> []
-      _ -> :ets.select(@table, [{{:_, :"$1"}, [], [:"$1"]}])
+      :undefined ->
+        []
+
+      _ ->
+        now = System.monotonic_time(:millisecond)
+
+        @table
+        |> :ets.select([{{:_, :"$1"}, [], [:"$1"]}])
+        |> Enum.map(&Map.put(&1, :retry_in_ms, retry_in(&1, now)))
     end
   end
+
+  defp retry_in(%{retry_after_ms: at}, now) when is_integer(at), do: max(at - now, 0)
+  defp retry_in(_entry, _now), do: nil
 
   # ---------- GenServer ----------
 

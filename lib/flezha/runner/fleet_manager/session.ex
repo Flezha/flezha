@@ -299,7 +299,7 @@ defmodule Flezha.Runner.FleetManager.Session do
   def do_evict_runner(state, runner_id) do
     case Roster.find_runner_namespace(state, runner_id) do
       nil ->
-        forget_credential(state, runner_id)
+        forget_session(state, runner_id)
 
       namespace ->
         stop_runner_sup(runner_id)
@@ -311,23 +311,26 @@ defmodule Flezha.Runner.FleetManager.Session do
         )
 
         state
-        |> forget_credential(runner_id)
+        |> forget_session(runner_id)
         |> Factories.remove_ce_factories(namespace, runner_id)
         |> Factories.prune_empty_factories(namespace)
         |> update_in([:runner_namespaces, namespace], &Map.delete(&1 || %{}, runner_id))
     end
   end
 
-  # The credential ledger tracks live sessions only, so it is written where a
-  # session is minted and cleared wherever one ends — an eviction here, a
-  # disconnect below.
+  # The credential and session-fact ledgers track live sessions only, so they
+  # are written where a session is minted and cleared wherever one ends — an
+  # eviction here, a disconnect below.
   defp remember_credential(state, _session_token, nil), do: state
 
   defp remember_credential(state, session_token, credential),
     do: put_in(state, [:session_credentials, session_token], credential)
 
-  defp forget_credential(state, session_token),
-    do: update_in(state, [:session_credentials], &Map.delete(&1 || %{}, session_token))
+  defp forget_session(state, session_token) do
+    state
+    |> update_in([:session_credentials], &Map.delete(&1 || %{}, session_token))
+    |> update_in([:session_facts], &Map.delete(&1 || %{}, session_token))
+  end
 
   # The roster answers where a runner may be placed, not whether a session that
   # ended is dismantled: a runner it no longer keys can still have its whole
@@ -363,7 +366,7 @@ defmodule Flezha.Runner.FleetManager.Session do
 
     state =
       state
-      |> forget_credential(runner_id)
+      |> forget_session(runner_id)
       |> Factories.remove_ce_factories(namespace, runner_id)
       |> Factories.prune_empty_factories(namespace)
 
@@ -488,7 +491,7 @@ defmodule Flezha.Runner.FleetManager.Session do
 
         state
         |> cancel_timer({:handshake, session_token})
-        |> finish_runner_connect(session_token, pending.connect)
+        |> finish_runner_connect(session_token, pending.connect, pending.stream_ref)
         |> tap(fn _state -> answer_waiters(pending, :ok) end)
 
       %{owed: owed} = pending ->
@@ -678,13 +681,20 @@ defmodule Flezha.Runner.FleetManager.Session do
 
   defp lift_superseded_drop(_connect), do: :ok
 
-  defp finish_runner_connect(state, session_token, connect) do
+  defp finish_runner_connect(state, session_token, connect, stream_ref) do
     %{namespace: namespace, factories: factories, credential: credential} = connect
 
     timestamp = System.monotonic_time(:millisecond)
 
     state = update_in(state, [:runner_namespaces], &Map.put_new(&1, namespace, %{}))
     state = put_in(state, [:runner_namespaces, namespace, session_token], {:active, timestamp})
+
+    facts = %{
+      connected_at: System.system_time(:second),
+      pid: stream_ref && Flezha.Transport.Stream.peer_pid(stream_ref)
+    }
+
+    state = put_in(state, [:session_facts, session_token], facts)
 
     state = Factories.store_factories(state, namespace, session_token, factories)
 

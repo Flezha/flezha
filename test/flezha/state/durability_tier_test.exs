@@ -560,12 +560,13 @@ defmodule Flezha.State.DurabilityTierTest do
       Stub.set_down(true)
 
       assert {:error, :backend_down} = Shipper.ship_now(ref)
-      assert %{failures: 1, pending_since_ms: pending} = status_of(ref)
+      assert %{failures: 1, pending_since_ms: pending, retry_in_ms: retry_in} = status_of(ref)
       assert is_integer(pending)
+      assert is_integer(retry_in) and retry_in >= 0
 
       Stub.set_down(false)
       assert :ok = Shipper.ship_now(ref)
-      assert %{failures: 0, pending_since_ms: nil} = status_of(ref)
+      assert %{failures: 0, pending_since_ms: nil, retry_in_ms: nil} = status_of(ref)
     end
 
     test "an RPO breach is reported once the target is exceeded", ctx do

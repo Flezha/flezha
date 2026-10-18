@@ -102,6 +102,26 @@ defmodule Flezha.Service.Cli.ScheduleTest do
     assert output =~ "flz@testhost"
   end
 
+  test "schedule_list takes the next fire from the job, and none while it is dormant" do
+    stub(FleetManager, :runners_for_factory, fn _, _ -> ["runner-1"] end)
+    armed = ~U[2031-01-01 08:00:00Z]
+
+    stub(Flezha.Schedule.Hub, :statuses, fn ->
+      %{"digest" => %{node: :flz@testhost, last_fire: nil, next_fire: armed, dormant?: false}}
+    end)
+
+    add_digest()
+
+    assert [%{"next_fire" => next_fire, "dormant?" => false}] = listed_json()
+    assert next_fire =~ "2031-01-01"
+
+    stub(Flezha.Schedule.Hub, :statuses, fn ->
+      %{"digest" => %{node: :flz@testhost, last_fire: nil, next_fire: nil, dormant?: true}}
+    end)
+
+    assert [%{"next_fire" => nil, "dormant?" => true}] = listed_json()
+  end
+
   test "schedule_list renders a dash when the schedule is unplaced" do
     stub(FleetManager, :runners_for_factory, fn _, _ -> ["runner-1"] end)
     stub(Flezha.Schedule.Hub, :statuses, fn -> %{} end)
@@ -213,5 +233,10 @@ defmodule Flezha.Service.Cli.ScheduleTest do
              "Schedule digest removed"
 
     assert ScheduleStore.list() == []
+  end
+
+  defp listed_json() do
+    capture_io(fn -> Cli.call("Schedule.list", Jason.encode!([]), output: "json") end)
+    |> Jason.decode!()
   end
 end

@@ -88,11 +88,13 @@ defmodule Flezha.Schedule.Hub do
   end
 
   @doc """
-  Which node runs each registered schedule, plus each job's live `last_fire`
-  (`nil` before the first fire or when the job does not answer inside the
-  bound — the list must render even with a wedged job).
+  Which node runs each registered schedule, plus each job's live status:
+  `last_fire` (`nil` before the first fire), `next_fire`, the slot it is armed
+  for (`nil` while dormant), and `dormant?`. A job that does not answer inside
+  the bound contributes only its node — the list must render even with a
+  wedged job.
   """
-  @spec statuses() :: %{optional(String.t()) => %{node: node(), last_fire: map() | nil}}
+  @spec statuses() :: %{optional(String.t()) => map()}
   def statuses() do
     with_live_hub(%{}, fn hub_id ->
       hub_id
@@ -100,19 +102,19 @@ defmodule Flezha.Schedule.Hub do
       |> Enum.reduce(%{}, fn {name, node_pids}, acc ->
         case HubManager.live_node(node_pids) do
           nil -> acc
-          node -> Map.put(acc, name, %{node: node, last_fire: job_last_fire(node_pids)})
+          node -> Map.put(acc, name, Map.put(job_status(node_pids), :node, node))
         end
       end)
     end)
   end
 
-  defp job_last_fire(node_pids) do
+  defp job_status(node_pids) do
     with pid when is_pid(pid) <- HubManager.live_pid(node_pids),
-         {:ok, %{last_fire: last_fire}} <-
+         {:ok, %{} = status} <-
            SafeCall.bounded(pid, :status, Durations.get(:schedule_status_call_ms)) do
-      last_fire
+      status
     else
-      _ -> nil
+      _ -> %{last_fire: nil}
     end
   end
 

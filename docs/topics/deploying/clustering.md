@@ -160,8 +160,10 @@ $ flz runner list --namespace agents
 ```output
 Fetching runners for namespace 'agents'...
 Runners in namespace 'agents':
-  - agents_c8cade00c78f
-  - agents_00322d6189cc
+
+  RUNNER                            PID      NODE                  CONNECTED AT          LATE
+  agents_c8cade00c78f               -        flezha@controller.agentdesk2026-10-18T09:20:41Z  no
+  agents_00322d6189cc               -        flezha@controller-2.agentdesk2026-10-18T09:22:05Z  no
 ```
 
 `flz relay list` shows which controller (`NODE`) and runner hosts each relay:

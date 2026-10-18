@@ -19,13 +19,19 @@ defmodule Flezha.Service.Cli.Listing do
     })
   end
 
-  @doc "`flz runner list`: one bullet per runner, with its process id when known."
-  def runners([], [namespace | _], _opts),
-    do: IO.puts("No runners found for namespace '#{namespace}'.")
-
+  @doc "`flz runner list`: one row per runner: its process id when known, node, connect time and lateness."
   def runners(rows, [namespace | _], _opts) do
-    IO.puts("Runners in namespace '#{namespace}':")
-    Enum.each(rows, fn row -> IO.puts("  - #{row.id}#{pid_suffix(row.pid)}") end)
+    table(rows, %{
+      empty: "No runners found for namespace '#{namespace}'.",
+      header: "Runners in namespace '#{namespace}':",
+      columns: [
+        {"RUNNER", 34, & &1.id},
+        {"PID", 9, &Context.label_or(&1[:pid], "-")},
+        {"NODE", 22, &to_string(&1.node)},
+        {"CONNECTED AT", 22, &unix_iso(&1.connected_at)},
+        {"LATE", 0, &if(&1.late?, do: "yes", else: "no")}
+      ]
+    })
   end
 
   @doc "`flz runner dropped`: one row per drop mark standing in the namespace."
@@ -37,7 +43,7 @@ defmodule Flezha.Service.Cli.Listing do
         {"STABLE ID", 38, & &1.stable_id},
         {"PID", 9, &Context.label_or(&1.pid, "-")},
         {"NODE", 22, &to_string(&1.node)},
-        {"DROPPED AT", 22, &(&1.dropped_at |> DateTime.from_unix!() |> DateTime.to_iso8601())},
+        {"DROPPED AT", 22, &unix_iso(&1.dropped_at)},
         {"BY", 0, &Context.label_or(&1.dropped_by, "-")}
       ]
     })
@@ -125,8 +131,8 @@ defmodule Flezha.Service.Cli.Listing do
     ]
   end
 
-  defp pid_suffix(nil), do: ""
-  defp pid_suffix(pid), do: "  pid #{pid}"
+  defp unix_iso(nil), do: "-"
+  defp unix_iso(seconds), do: seconds |> DateTime.from_unix!() |> DateTime.to_iso8601()
 
   defp health_summary(health) when map_size(health) == 0, do: "no relays"
 

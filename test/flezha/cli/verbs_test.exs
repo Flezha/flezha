@@ -607,12 +607,20 @@ defmodule Flezha.Service.Cli.AuthzRenderTest do
 
     assert list_out =~ "carol  ops@render-ns  active"
 
+    # The row carries its times and issuer, so a console can say when and by whom.
+    assert %{"created_at" => issued, "expires_at" => expires, "revoked_at" => nil} =
+             carol = token_json_row(admin_token, token_id)
+
+    assert expires == issued + 3_600
+    assert is_binary(carol["created_by"])
+
     revoke_out =
       capture_io(fn ->
         Cli.call("Namespace.revoke_token", Jason.encode!([token_id]), token: admin_token)
       end)
 
     assert revoke_out =~ "revoked token"
+    assert is_integer(token_json_row(admin_token, token_id)["revoked_at"])
     assert {:error, %Flezha.Error{code: "authz.token_revoked"}} = TokenStore.verify(carol_token)
 
     # `flz role unbind` + `flz namespace delete` close the loop.
@@ -866,6 +874,14 @@ defmodule Flezha.Service.Cli.AuthzRenderTest do
     capture_io(:stderr, fn ->
       assert catch_exit(Cli.call(verb, Jason.encode!(args), opts)) == {:shutdown, exit}
     end)
+  end
+
+  defp token_json_row(admin_token, token_id) do
+    capture_io(fn ->
+      Cli.call("Namespace.tokens", Jason.encode!([]), token: admin_token, output: "json")
+    end)
+    |> Jason.decode!()
+    |> Enum.find(&String.starts_with?(token_id, &1["id"]))
   end
 end
 

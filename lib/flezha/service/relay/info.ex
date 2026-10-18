@@ -3,7 +3,8 @@ defmodule Flezha.Service.Relay.Info do
   What `Flezha.Service.Relay.info/2` answers for a namespace: every live
   relay as its Overwatch reports it, or by its published phase and health,
   marked `live_read`, when that Overwatch does not answer; every finished one
-  whose completion record is still inside its retention window; and every
+  whose completion record is still inside its retention window, with
+  `expires_at` (unix seconds) the end of that window; and every
   partition group with its read-time key-group coverage.
   """
 
@@ -140,8 +141,8 @@ defmodule Flezha.Service.Relay.Info do
     case Completion.read(relay_id) do
       {:ok, %{namespace: ^namespace, finished_at: finished_at} = record}
       when is_integer(finished_at) ->
-        window = PersistenceResolver.completed_retention_hours(relay_id)
-        if finished_at + window * 3600 >= now, do: record
+        expires_at = finished_at + PersistenceResolver.completed_retention_hours(relay_id) * 3600
+        if expires_at >= now, do: Map.put(record, :expires_at, expires_at)
 
       _ ->
         nil
@@ -157,7 +158,8 @@ defmodule Flezha.Service.Relay.Info do
       status: Map.get(record, :status),
       error: nil_if_empty(Map.get(record, :error)),
       result: encode_result(Map.get(record, :result)),
-      finished_at: Map.get(record, :finished_at)
+      finished_at: Map.get(record, :finished_at),
+      expires_at: Map.get(record, :expires_at)
     }
   end
 

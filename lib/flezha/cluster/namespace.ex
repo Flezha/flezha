@@ -113,7 +113,9 @@ defmodule Flezha.Service.Namespace do
 
   @doc """
   The tokens the caller may see, one row each: its id, principal, role,
-  namespace, label and whether it is active, revoked or expired. Never the
+  namespace, label and whether it is active, revoked or expired, with
+  `created_at`, `expires_at` (unix seconds, or `:never`), `revoked_at` (unix
+  seconds, or nil) and `created_by`, the principal that issued it. Never the
   token itself.
   """
   @spec tokens(caller_context()) :: {:ok, [map()]} | {:error, term()}
@@ -308,7 +310,11 @@ defmodule Flezha.Service.Namespace do
       namespace: entry.namespace,
       role: entry.role,
       label: Map.get(entry, :label),
-      status: token_status(entry)
+      status: token_status(entry),
+      created_at: entry.created_at,
+      expires_at: entry.expires_at,
+      revoked_at: entry.revoked_at,
+      created_by: Map.get(entry, :created_by_principal)
     }
   end
 

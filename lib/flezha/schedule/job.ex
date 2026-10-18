@@ -213,7 +213,13 @@ defmodule Flezha.Schedule.Job do
 
   @impl true
   def handle_call(:status, _from, state) do
-    {:reply, %{last_fire: state.last_fire}, state}
+    status = %{
+      last_fire: state.last_fire,
+      next_fire: state.target,
+      dormant?: is_nil(state.target)
+    }
+
+    {:reply, status, state}
   end
 
   @impl true

@@ -619,6 +619,21 @@ defmodule Flezha.Transport.LivenessCounters do
     end)
   end
 
+  @doc """
+  How long `runner_id`'s control channel on this node has gone without a
+  frame, in ms against this node's monotonic `now`; `nil` when the channel is
+  not registered here or never stamped one.
+  """
+  @spec control_silent_ms(term(), integer()) :: non_neg_integer() | nil
+  def control_silent_ms(runner_id, now) do
+    with true <- :ets.whereis(@table) != :undefined,
+         [{_key, ref, _owner}] <- :ets.lookup(@table, {:channel, runner_id, :control}) do
+      silence(now, channel_get(ref, :last_control_frame_ms))
+    else
+      _ -> nil
+    end
+  end
+
   defp silence(_now, 0), do: nil
   defp silence(now, at), do: max(now - at, 0)
 
