@@ -520,10 +520,10 @@ platform, the five that already exist for Java.
 Three things follow, and they are the whole of what is PHP-specific:
 
 1. **The activation codec is postcard in interpreted PHP**, pinned against the
-   hex fixtures in `flz_core/src/schema.rs` — read out of that file by the
-   test rather than copied, so a schema change is a red PHP build in the commit
-   that makes it. Only the two directions a host uses exist: activations decode,
-   results encode.
+   rows of `test/fixtures/postcard_bodies.txt`, which the core encodes from
+   its own structs. The test reads the rows rather than copying them, so a
+   schema change is a red PHP build in the commit that makes it. Only the two
+   directions a host uses exist: activations decode, results encode.
 2. **`u64` has no PHP representation above 2^63−1.** A field needing the 64th
    bit raises a decode error naming it rather than silently widening to a
    float, which would corrupt an offset comparison instead of failing.

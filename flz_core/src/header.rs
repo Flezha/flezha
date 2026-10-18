@@ -569,3 +569,7 @@ mod tests {
         assert!(matches!(err, RestoreError::HeaderInvalid));
     }
 }
+
+#[cfg(test)]
+#[path = "wire_constants_tests.rs"]
+mod wire_constants_tests;

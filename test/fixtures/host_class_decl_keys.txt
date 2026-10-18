@@ -2,18 +2,20 @@
 # line, `section.key` for the nested declarations. `class.run` and
 # `class.durable` carry the settings tree as its JSON (`flz_core`'s
 # `relay::settings`), which the core reads and refuses by the member's
-# name. Six readers pin it: a `flz_core` test serialises a fully populated declaration and asserts its key
+# name. Seven readers pin it: a `flz_core` test serialises a fully populated declaration and asserts its key
 # set is exactly this; `HostClassDeclarationTest` asserts the Java builder emits
 # every key here; `sdk/node/test/decl-keys.test.mjs` asserts the same of the
 # Node builder; `sdk/ruby/test/decl_keys_test.rb` of the Ruby builder;
-# `sdk/php/tests/DeclKeysTest.php` of the PHP builder; and
-# `sdk/python/tests/test_decl_keys.py` of the Python builder. A key the core
+# `sdk/php/tests/DeclKeysTest.php` of the PHP builder;
+# `sdk/python/tests/test_decl_keys.py` of the Python builder; and
+# `sdk/elixir/test/flezha/sdk/declaration_test.exs` that the Elixir builder
+# spells no key outside it. A key the core
 # learns that a builder cannot spell is a red build for that SDK; a key a
 # builder invents that the core never learned already fails at
 # `deny_unknown_fields`.
 #
 # Adding a key: teach the core, add it here, teach the Rust, Java, Node, Ruby,
-# PHP and Python builders — one change, every SDK (docs/architecture/runner.md).
+# PHP, Python and Elixir builders — one change, every SDK (docs/architecture/runner.md).
 class.factory_id
 class.description
 class.max_duration_ms

@@ -19,6 +19,7 @@
 #   sdk/python/tests/test_authoring.py    Python
 #   sdk/node/test/authoring.test.mjs      Node
 #   sdk/php/tests/AuthoringTest.php       PHP
+#   sdk/elixir/test/flezha/sdk/channel_codecs_test.exs  Elixir (no sink codec, no MessagePack)
 
 text|none|hello|hello
 text|text|hello|hello

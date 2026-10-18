@@ -28,8 +28,9 @@ test/fixtures/channel_codecs.txt|One payload rule per channel codec. Every SDK w
 test/fixtures/error_rendering.json|The error model's rendering cases: a code and its details, the text and the JSON they render to. The controller, the Rust renderer and the Elixir SDK render each byte for byte.
 test/fixtures/durable_frame.txt|The on-disk record frame, byte for byte. The controller's writer and the core's reader are held to it.
 test/fixtures/postcard_bodies.txt|The postcard bodies that cross a runtime boundary, byte for byte: activations, results, effect records, parks, corrections. The core encodes every row; the controller, Java and PHP decode or encode them.
-test/fixtures/host_class_decl_keys.txt|Every key of the `HostClassDecl` JSON. Six builders assert they spell exactly these.
-test/fixtures/part_frames.json|The frames a tasklet's parts leave as: payload and metadata of three parts and of a retried attempt. `flz_core`'s part tests and the Elixir SDK's part test produce these byte for byte.
+test/fixtures/wire_constants.txt|The wire constants: `sdk_lang` and `format_id` allocations, the activation `schema_version`, frame payload ids, reserved `flz.` keys. The core holds the file to its sources; every runtime asserts its literals against it.
+test/fixtures/host_class_decl_keys.txt|Every key of the `HostClassDecl` JSON. The core and six SDK builders assert their keys against it.
+test/fixtures/part_frames.json|The frames a tasklet's parts leave as: payload and metadata of three parts and of a retried attempt. `flz_core`'s part tests produce these byte for byte.
 test/fixtures/knob_parse_cases.txt|How a configuration knob parses. Every SDK's `Env` asserts the same verdicts.
 test/fixtures/layout_rows.txt|Where the product puts its files and what `flz reset` does with each subtree.
 test/fixtures/local_mode_word_count.txt|The local-mode example's declared graph and its expected output, run by every SDK's local-mode test.
@@ -39,7 +40,6 @@ test/fixtures/runner_connect_env.txt|The environment contract every SDK's connec
 openspec/specs/java-sdk/spec.md|The Java SDK's scenarios. The Java repository's spec-coverage gate holds its test names against them.
 flz_transport/errors.json|The error catalogue: every code with its class, message template and hint. The Elixir SDK compiles its error type from it; the Rust crates read it through `flz_transport`.
 protobufs/runner_commands.proto|The controller-runner command envelope. An SDK that encodes a command of its own generates from this file.
-flz_core/src/schema.rs|The activation and result wire shapes. PHP's `SchemaFixtureTest` reads its `SCHEMA_VERSION`. Read as data, never compiled by an SDK.
-flz_core_ffi/src/veneer/shape.rs|The veneer's record key tables. Node's `native-types.test.mjs` holds its TypeScript interfaces equal to them.
+flz_core_ffi/src/veneer/shape.rs|The veneer's record key tables. Node's `native-types.test.mjs` holds its TypeScript interfaces equal to them; Python's `test_veneer_keys.py` and Ruby's `veneer_keys_test.rb` read only keys they name.
 flz_core_ffi/src/napi_glue.rs|The Node addon's `#[napi(object)]` structs, read by the same test.
 flz_core_ffi/src/napi_host/mod.rs|The Node addon's host-side objects, read by the same test.

@@ -317,43 +317,27 @@ defmodule FlezhaTest.SdkConformance.GateTest do
       end
     end
 
-    test "each manifest's sdk_lang is the value its SDK actually stamps" do
-      # Static half of the agreement check: the manifest against the constant
-      # the SDK compiles in. The nightly `interop` scenario proves the other
-      # half — that the runner advertises it on connect.
-      stamped = %{
-        rust: {"flz_core/src/header.rs", ~r/pub const SDK_LANG_RUST: u8 = (\d+);/},
-        java:
-          {"sdk/java/flezha-sdk-runtime/src/main/java/com/flezha/sdk/runtime/core/HostClassDeclaration.java",
-           ~r/SDK_LANG_JAVA = (\d+);/},
-        elixir: {"sdk/elixir/lib/flezha/sdk/declaration.ex", ~r/@sdk_lang (\d+)/},
-        node: {"sdk/node/src/graph.ts", ~r/SDK_LANG_NODE = (\d+)/},
-        ruby: {"sdk/ruby/lib/flezha/graph.rb", ~r/SDK_LANG_RUBY = (\d+)/},
-        php: {"sdk/php/src/Graph/HostClassDecl.php", ~r/SDK_LANG_PHP = (\d+);/},
-        python: {"sdk/python/src/flezha/graph.py", ~r/SDK_LANG_PYTHON = (\d+)/}
-      }
+    test "each manifest's sdk_lang is its SDK's row of the wire constants" do
+      # The fixture is held to `flz_core/src/header.rs` by the core, and each
+      # SDK's constants test holds the byte it stamps to the same row, so the
+      # manifest, the SDK and the core cannot drift apart. The nightly `interop`
+      # scenario proves that the runner advertises it on connect.
+      allocated =
+        for line <- File.stream!("test/fixtures/wire_constants.txt"),
+            ["sdk_lang", name, value] <- [line |> String.trim() |> String.split("|")],
+            into: %{},
+            do: {String.to_atom(name), String.to_integer(value)}
 
       for runtime <- runtimes() do
-        {path, pattern} =
-          Map.get(stamped, runtime) ||
-            fail(
-              "runtime #{runtime} has a manifest but no entry in this test's " <>
-                "source-of-truth table; add where its SDK spells its language byte"
-            )
+        expected =
+          Map.get(allocated, runtime) ||
+            fail("test/fixtures/wire_constants.txt allocates no sdk_lang to #{runtime}")
 
-        source = File.read!(path)
-
-        declared =
-          case Regex.run(pattern, source) do
-            [_, value] -> String.to_integer(value)
-            nil -> fail("#{path} no longer spells #{runtime}'s language byte as expected")
-          end
-
-        unless declared == PortPilot.sdk_lang(runtime) do
+        unless PortPilot.sdk_lang(runtime) == expected do
           fail(
             "#{PortPilot.manifest_path(runtime)} declares sdk_lang " <>
-              "#{PortPilot.sdk_lang(runtime)}, but #{path} stamps #{declared} — a " <>
-              "manifest cannot drift from its SDK"
+              "#{PortPilot.sdk_lang(runtime)}, but test/fixtures/wire_constants.txt " <>
+              "allocates #{expected} to #{runtime}"
           )
         end
       end
@@ -601,7 +585,7 @@ defmodule FlezhaTest.SdkConformance.GateTest do
     @contract_manifest "test/fixtures/contract.txt"
 
     test "every fixture under test/fixtures is listed" do
-      unlisted = Path.wildcard("test/fixtures/*.txt") -- contract_members()
+      unlisted = Path.wildcard("test/fixtures/*.{txt,json}") -- contract_members()
 
       if unlisted != [] do
         fail(

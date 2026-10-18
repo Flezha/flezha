@@ -1,0 +1,69 @@
+# The wire constants every runtime spells, one row per value: the `sdk_lang`
+# allocation, the `format_id` allocation, the activation `schema_version`, the
+# frame payload ids and the reserved `flz.` metadata keys.
+#
+# The Rust sources are the authority and the file is checked against them both
+# ways: `flz_core/src/wire_constants_tests.rs` fails on a constant the file
+# lacks and on a row no constant declares. Every other runtime asserts the
+# literals it compiles in against these rows, and `gate_test.exs` holds each
+# conformance manifest's `sdk_lang` to the `sdk_lang` rows.
+#
+# Provenance: TRANSCRIBED BY HAND from one run of that test at `53de4318` and
+# checked in; no runtime derives it at test time.
+#
+# One row per value, `|`-separated: table | name | value. A `flz_key` row is
+# every `"flz.<name>"` key the Rust production code reads or writes.
+
+sdk_lang|unspecified|0
+sdk_lang|rust|1
+sdk_lang|java|2
+sdk_lang|elixir|3
+sdk_lang|node|4
+sdk_lang|ruby|5
+sdk_lang|php|6
+sdk_lang|python|7
+sdk_lang|next_free|8
+sdk_lang|reserved|255
+
+format_id|postcard|1
+format_id|effect_record|2
+format_id|timer_ops|3
+format_id|kryo|4
+format_id|msgpack|5
+format_id|json|6
+format_id|etf|7
+
+schema_version|activation|4
+
+payload_id|cell_state_change|cell_state_change
+payload_id|cell_effect_record|cell_effect_record
+payload_id|cell_state_snapshot|cell_state_snapshot
+payload_id|delete_cell_state|delete_cell_state
+payload_id|compensation_intent|compensation_intent
+payload_id|compensation_done|compensation_done
+payload_id|park_payload|park_payload
+payload_id|processed_prefix|processed_prefix
+payload_id|correction_request|correction_request
+payload_id|output_part|output_part
+payload_id|data_heartbeat|data_heartbeat
+payload_id|control_ping|control_ping
+payload_id|control_command|control_command
+
+flz_key|key|flz.key
+flz_key|cell|flz.cell
+flz_key|seq|flz.seq
+flz_key|offset|flz.offset
+flz_key|edge|flz.edge
+flz_key|relay|flz.relay
+flz_key|replay|flz.replay
+flz_key|replay_end|flz.replay_end
+flz_key|reply_to|flz.reply_to
+flz_key|change_seq|flz.change_seq
+flz_key|part|flz.part
+flz_key|part_attempt|flz.part_attempt
+flz_key|deadline_at|flz.deadline_at
+flz_key|call|flz.call
+flz_key|call_create|flz.call_create
+flz_key|call_response|flz.call_response
+flz_key|call_channel|flz.call_channel
+flz_key|call_answer_channel|flz.call_answer_channel
