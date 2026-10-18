@@ -260,7 +260,9 @@ $ flz runner list
 ```output
 Fetching runners for namespace 'default'...
 Runners in namespace 'default':
-  - default_06355a1b5a63  pid 524527
+
+  RUNNER                            PID      NODE                  CONNECTED AT          LATE
+  default_06355a1b5a63              524527   flezha@127.0.0.1      2026-10-18T09:05:18Z  no
 ```
 
 `drop` closes the runner's session wherever in the cluster it is connected,

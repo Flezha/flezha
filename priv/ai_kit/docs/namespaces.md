@@ -208,7 +208,9 @@ $ flz runner list --namespace trading
 ```output
 Fetching runners for namespace 'trading'...
 Runners in namespace 'trading':
-  - trading_20932a8e7340
+
+  RUNNER                            PID      NODE                  CONNECTED AT          LATE
+  trading_20932a8e7340              48213    flezha@127.0.0.1      2026-10-18T09:31:12Z  no
 ```
 
 ## Quotas
