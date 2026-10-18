@@ -5,7 +5,8 @@
 # Four runtimes read this file and none derives it. `flz_core` encodes every
 # row from the real struct (`flz_core/src/postcard_bodies_tests.rs`) and fails
 # on a row it does not produce or one the file lacks; the controller decodes
-# the effect, park and correction rows through `Flezha.State.Wire`
+# the effect, park and correction rows through `Flezha.State.Wire`, and its
+# test encoders write the effect and park rows back
 # (`test/flezha/state/wire_test.exs`); Java's `ActivationCodecTest` and PHP's
 # `SchemaFixtureTest` encode and decode the activation and result rows.
 #

@@ -106,7 +106,7 @@ fn fold_record(
     Ok(decision.migrating())
 }
 
-/// Frame one WAL record as `Flezha.State.WalWriter.encode_record/3` does —
+/// Frame one WAL record as `Flezha.State.Frame.encode_record/3` does —
 /// the write side of [`iter_change_log_records`], kept beside it.
 #[cfg(any(test, feature = "test-support"))]
 #[doc(hidden)]

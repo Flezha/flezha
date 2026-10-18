@@ -3,7 +3,8 @@ defmodule FlezhaTest.Helper.WireEncoders do
   The write side of the per-Cell persistence codec, which only tests need: a
   runner writes these frames and the controller only decodes them. Each
   function is the byte-exact inverse of its decoder in `Flezha.State.Wire` or
-  `Flezha.State.Frame`, pinned by the cross-language fixtures.
+  `Flezha.State.Frame`. `test/fixtures/durable_frame.txt` pins the header and
+  `test/fixtures/postcard_bodies.txt` the effect and park bodies.
   """
 
   alias Flezha.State.Frame
