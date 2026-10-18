@@ -3,10 +3,6 @@ syntax = "proto3";
 
 package runner_commands;
 
-option java_package = "com.flezha.sdk.proto";
-option java_multiple_files = true;
-option java_outer_classname = "RunnerCommandsProto";
-
 message CommandRequest {
     string reference_id = 1;
 

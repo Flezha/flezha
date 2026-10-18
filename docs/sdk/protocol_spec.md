@@ -332,8 +332,9 @@ header straight off the input slice without copying.
 Control-plane commands are Protocol Buffers v3 (`proto3`, package
 `runner_commands`). The authoritative definition is
 `protobufs/runner_commands.proto`; the generated Rust module is
-`flz_core/src/generated/runner_commands.rs` (and a twin in `flz_transport`),
-and the controller's Elixir decoder is `Flezha.Runner.CommandsProto` (Protox).
+`flz_core/src/generated/runner_commands.rs`, written by `protobufs/regen.sh`
+(the `proto-fresh` gate fails when it is stale), and the controller's Elixir
+decoder is `Flezha.Runner.CommandsProto` (Protox).
 
 ### Envelope
 

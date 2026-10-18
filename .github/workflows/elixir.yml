@@ -74,8 +74,8 @@ jobs:
         with:
           deps-dir: test/apps/testnet
 
-      - name: Install protoc (Protox runtime parses .proto, but the Rust
-              workspace's prost path also needs the binary on $PATH)
+      - name: Install protoc (Protox parses .proto at runtime; the
+              proto-fresh row regenerates the prost output with protoc)
         uses: ./.github/actions/setup-protoc
 
       - name: The core gates
@@ -84,5 +84,6 @@ jobs:
         # boot against, then `mix test --warnings-as-errors` split by
         # directory) and the Rust crates' own tests. Each row is quiet: an
         # uncaptured [error] line fails it, so a test that drives a failure path
-        # wraps it in ExUnit.CaptureLog and asserts the message.
-        run: python3 scripts/naming_gate.py --run @core,rust-test-core,rust-test-runner
+        # wraps it in ExUnit.CaptureLog and asserts the message. `@contract`
+        # regenerates the committed prost output and fails on a diff.
+        run: python3 scripts/naming_gate.py --run @core,rust-test-core,rust-test-runner,@contract

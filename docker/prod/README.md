@@ -27,8 +27,8 @@ tag is written once, in the `ELIXIR_IMAGE` argument, and read by both the
 release stage and the builder:
 
 - **Stage 1** — `rust:1.87.0-slim-bookworm`: builds `flz_nif.so` and the
-  `flz` CLI binary with `--release`. `protoc` lives here because
-  `prost-build` needs it.
+  `flz` CLI binary with `--release`. It needs no `protoc`: the prost output
+  is committed.
 - **Stage 2**, `${ELIXIR_IMAGE}`: assembles the Mix release with
   `include_erts: true`, consuming the Stage 1 artefacts via
   `RUSTLER_SKIP_COMPILATION=true`.

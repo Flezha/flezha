@@ -6,30 +6,16 @@
 ARG ELIXIR_IMAGE=hexpm/elixir:1.20.2-erlang-28.5.0.5-debian-bookworm-20260713-slim
 
 # Stage 1 — Rust builder. Builds flz_nif.so and the flz CLI binary with
-# --release. protoc lives here because prost-build needs it; the Elixir
-# stage uses pure-Elixir protox.
+# --release. No protoc: the prost output is committed under
+# flz_core/src/generated.
 FROM rust:1.87.0-slim-bookworm AS rust-build
 
 WORKDIR /workspace
 
-ENV PROTOC_VERSION=23.4
-
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
-        curl \
-        unzip \
         pkg-config \
         libssl-dev \
-    && ARCH=$(uname -m) \
-    && case "$ARCH" in \
-         x86_64)   PROTOC_ARCH="x86_64" ;; \
-         aarch64)  PROTOC_ARCH="aarch_64" ;; \
-         *)        echo "Unsupported architecture: $ARCH" && exit 1 ;; \
-       esac \
-    && curl -L -o /tmp/protoc.zip \
-        "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-linux-${PROTOC_ARCH}.zip" \
-    && unzip -q /tmp/protoc.zip -d /usr/local \
-    && rm /tmp/protoc.zip \
     && rm -rf /var/lib/apt/lists/*
 
 COPY . .
