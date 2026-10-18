@@ -6,7 +6,7 @@ Defines the Java SDK for Flezha compute engines: the public authoring API and th
 ## Requirements
 ### Requirement: Java SDK Entry Point
 
-The Java SDK SHALL provide `com.flezha.sdk.Flezha.createRunner(String namespace)` as the single entry point, returning a concrete `FlezhaRunner` directly; there SHALL be no separate `RunnerBuilder` type. Creating a runner SHALL NOT connect, claim the process singleton slot, or spawn any thread. Calling `.start()` on the runner MUST connect to the controller's control socket, send the handshake init message per `docs/sdk/protocol_spec.md` §5.2 carrying the runner's currently-declared factory ids (possibly empty), wait for `AssignRunnerId`, and return `this` for chaining. The started runner SHALL expose `getNamespace()` (replacing `getId()`) and `getRelays()` (a snapshot of currently-spawned Relay instances keyed by what the wire calls `relay_id`). `.run()` SHALL be sugar for `.start()` followed by `awaitTermination()`, never an independent implementation.
+The Java SDK SHALL provide `com.flezha.sdk.Flezha.createRunner(String namespace)` as the single entry point, returning a concrete `FlezhaRunner` directly; there SHALL be no separate `RunnerBuilder` type. Creating a runner SHALL NOT connect, claim the process singleton slot, or spawn any thread. Calling `.start()` on the runner MUST connect to the controller's control socket, send the handshake init message per `docs/sdk/protocol_spec.md` §5.2 carrying the runner's currently-declared factories under `factories` (possibly empty), wait for `AssignRunnerId`, and return `this` for chaining. The started runner SHALL expose `getNamespace()` (replacing `getId()`) and `getRelays()` (a snapshot of currently-spawned Relay instances keyed by what the wire calls `relay_id`). `.run()` SHALL be sugar for `.start()` followed by `awaitTermination()`, never an independent implementation.
 
 #### Scenario: Successful connection on a created runner
 - **WHEN** an SDK user calls `Flezha.createRunner("my_app").registerFactory(MarketRelay.class).start()` with the controller running
@@ -18,7 +18,7 @@ The Java SDK SHALL provide `com.flezha.sdk.Flezha.createRunner(String namespace)
 
 #### Scenario: start() with zero defined relay types is legal
 - **WHEN** `.start()` is called on a `FlezhaRunner` with no `.registerFactory(...)` calls, whatever short-form classes are on the classpath
-- **THEN** the runner SHALL connect successfully with an empty `factory_ids` list in the handshake init message, and relay types MAY be defined later on the live runner
+- **THEN** the runner SHALL connect successfully with an empty `factories` list in the handshake init message, and relay types MAY be defined later on the live runner
 
 #### Scenario: RunnerBuilder is not importable
 - **WHEN** user code references `com.flezha.sdk.RunnerBuilder`, `com.flezha.sdk.relay.RelayRegistry`, `com.flezha.sdk.relay.RelayRegistry`, or `Flezha.newRunner`
@@ -356,7 +356,7 @@ The Java SDK SHALL refuse to serialize any user-supplied object whose runtime cl
 
 ### Requirement: Public Java SDK handler classes use canonical Relay vocabulary
 
-The Java SDK SHALL expose handler classes whose names use canonical vocabulary: `AddRelayHandler`, `RemRelayHandler`, `RelayMessageHandler`, `CellStateHandler`, `CellApplyStateHandler`. `FleetManager`-equivalent classes keep their names.
+The Java SDK SHALL expose handler classes whose names use canonical vocabulary: `AddRelayHandler`, `RemRelayHandler`, `RelayMessageHandler`, `CellStateHandler`. `FleetManager`-equivalent classes keep their names.
 
 #### Scenario: New handlers wire into dispatch
 - **WHEN** a Java SDK Runner receives an `AddRelay` protobuf command from the Controller
@@ -614,7 +614,7 @@ Because Java's type erasure precludes Rust's compile-time topology refusals, eve
 
 #### Scenario: Declaring a flow relay class before start() succeeds
 - **WHEN** user code calls `Flezha.createRunner("my_app").registerFactory(MarketRelay.class).start()`
-- **THEN** the handshake init JSON SHALL include `"market"` (the value `MarketRelay::factoryId` returns) in `factory_ids`, and subsequent `AddRelay{factory_id:"market"}` commands SHALL succeed by spawning a `RelayInstance`
+- **THEN** the handshake init JSON SHALL include `"market"` (the value `MarketRelay::factoryId` returns) as the `id` of an entry of `factories`, and subsequent `AddRelay{factory_id:"market"}` commands SHALL succeed by spawning a `RelayInstance`
 
 #### Scenario: Declaring a relay type after start() is accepted
 - **WHEN** user code calls `.registerFactory(...)` on a started `FlezhaRunner` already declaring `"market"`, for a class whose `factoryId()` returns `"orders"`

@@ -5,7 +5,7 @@ TBD - created by archiving change credit-grant-flow-control. Update Purpose afte
 ## Requirements
 ### Requirement: Credit window is negotiated at stream attach
 
-The controller SHALL offer credit-grant flow control to every SDK session at state-stream attach via a `CreditWindowInit{stream_id, window_bytes, low_watermark_bytes}` control-channel frame. A session that acknowledges the handshake is a credit-speaking session; a session that does not acknowledge (a pre-credit SDK) SHALL receive the legacy `CellMailboxStatus` behaviour unchanged. The window SHALL be configurable per Relay (`:credit_window_bytes`), defaulting to `wal_high_watermark_bytes`.
+The controller SHALL offer credit-grant flow control to every SDK session at state-stream attach via a `CreditWindowInit{stream_id, window_bytes}` control-channel frame. The low watermark the controller batches grants on (`:credit_low_watermark_bytes`, default half the window) SHALL stay the controller's own and SHALL NOT be sent: no runner reads it. A session that acknowledges the handshake is a credit-speaking session; a session that does not acknowledge (a pre-credit SDK) SHALL receive the legacy `CellMailboxStatus` behaviour unchanged. The window SHALL be configurable per Relay (`:credit_window_bytes`), defaulting to `wal_high_watermark_bytes`.
 
 #### Scenario: Credit-speaking session established
 
@@ -22,6 +22,11 @@ The controller SHALL offer credit-grant flow control to every SDK session at sta
 - **WHEN** `FLEZHA_CREDIT_FLOW_CONTROL=false` is set on the controller
 - **THEN** no `CreditWindowInit` is offered and every session runs the legacy path
 
+#### Scenario: The offer carries no watermark
+
+- **WHEN** the controller offers a credit window
+- **THEN** the `CreditWindowInit` it sends SHALL carry only `stream_id` and `window_bytes`, field 3 SHALL be reserved in the proto, and the controller's grant batching SHALL still read `:credit_low_watermark_bytes`
+
 ### Requirement: Per-stream byte ledger debits state-change frames
 
 The controller SHALL keep one credit ledger per credit-speaking state stream, owned by the stream's channel process. Every state-change frame received on the stream SHALL debit the ledger by the frame's wire size. The ledger SHALL bound the controller's un-fsynced buffer for that stream at `window_bytes`.
@@ -33,11 +38,11 @@ The controller SHALL keep one credit ledger per credit-speaking state stream, ow
 
 ### Requirement: WAL fsync mints credit; grants are watermark-batched
 
-Credit SHALL be minted only when appended bytes become durable: on fsync completion each `WalWriter` SHALL report the fsynced byte count to its stream's ledger. The controller SHALL NOT send a grant per record; it SHALL send one `CreditGrant{stream_id, bytes}` control frame when the freed credit brings the un-fsynced buffer below `low_watermark_bytes` (batched replenishment). Append without fsync SHALL NOT mint credit.
+Credit SHALL be minted only when appended bytes become durable: on fsync completion each `WalWriter` SHALL report the fsynced byte count to its stream's ledger. The controller SHALL NOT send a grant per record; it SHALL send one `CreditGrant{stream_id, bytes}` control frame when the freed credit brings the un-fsynced buffer below the ledger's low watermark (`:credit_low_watermark_bytes`, default half the window; the controller's own, never sent) (batched replenishment). Append without fsync SHALL NOT mint credit.
 
 #### Scenario: Fsync batch replenishes the window
 
-- **WHEN** an fsync batch completes covering M bytes of a credit-speaking stream's records and the stream's un-fsynced buffer falls below `low_watermark_bytes`
+- **WHEN** an fsync batch completes covering M bytes of a credit-speaking stream's records and the stream's un-fsynced buffer falls below the ledger's low watermark
 - **THEN** the controller sends one `CreditGrant` for the freed bytes and the SDK's window increases by M
 
 #### Scenario: Stalled fsync stops minting

@@ -249,7 +249,7 @@ The Java reference test app at `test/apps/java_runner/` SHALL register at least 
 #### Scenario: Java test app registers a steps relay factory
 
 - **WHEN** the Java test app starts and registers its relays
-- **THEN** it SHALL call `Flezha.registerSteps(EchoRelay.class)`, and the handshake `factory_ids` SHALL include the steps relay's factory id alongside the flow relay factory ids
+- **THEN** it SHALL call `Flezha.registerSteps(EchoRelay.class)`, and the handshake `factories` SHALL include an entry for the steps relay's factory id alongside the flow relay factory ids
 
 #### Scenario: Java and Rust test apps expose the same steps relay factory
 

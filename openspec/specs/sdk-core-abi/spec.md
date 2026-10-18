@@ -54,7 +54,8 @@ The Activation/ActivationResult schema SHALL carry a version. Core and host shim
 negotiate at context creation and SHALL refuse to start on an incompatible version with
 an error naming both versions. Silent runtime skew is forbidden. Every activation kind
 SHALL be pinned by a cross-language byte fixture shared between core tests and each
-shim's tests, extending the existing fixture discipline (`flusher.rs` ↔ `wire_test.exs`).
+shim's tests: a row of `test/fixtures/postcard_bodies.txt`, which the core encodes from
+the real struct and the controller's effect, park and correction decoders read too.
 
 #### Scenario: Version mismatch fails at boot
 - **WHEN** a shim built against schema version N connects to a core speaking N+1 incompatibly

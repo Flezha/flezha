@@ -1251,6 +1251,14 @@ because the sources it judges are not tracked in the same tree, or because an
 untracked file must still be judged — SHALL declare that as an option on the
 runner rather than implement a second walk.
 
+The runner's list SHALL be the only gate list. The campaign bar (`wip/tools/clean-run.sh`),
+the item check (`wip/tools/verify.sh`) and every CI workflow's check steps SHALL each select rows
+by group (`--run @<group>`) and SHALL NOT spell a check of their own; a script that mirrors CI
+by re-listing its commands SHALL NOT exist. A row MAY declare its working directory, environment,
+time limit and whether its output must be quiet; the runner SHALL own the per-gate log, the time
+limit and the quiet verdict (a compiler or runtime warning, an uncaptured log line, or an
+unexpected stderr line is a finding named "noisy"), so the bar and CI read one verdict.
+
 A gate whose tool is absent SHALL be recorded as not run and SHALL NOT stop the
 gates behind it: the runner SHALL run every other requested gate and SHALL list
 the absent tools together, each with the command that installs it. The runner
@@ -1299,6 +1307,26 @@ ended the run and said nothing about the six languages behind it.
   headline
 - **WHEN** the runner's self-test runs
 - **THEN** the self-test fails naming that gate
+
+#### Scenario: The bar and CI select the same rows
+
+- **GIVEN** a gate row in group `sdk-node`
+- **WHEN** `node-sdk.yml` runs its checks and the clean run runs `@clean`
+- **THEN** both run that row through `python3 scripts/naming_gate.py --run`, neither carries the
+  row's command itself, and a row added to the group reaches both with no other edit
+
+#### Scenario: A noisy green is a finding
+
+- **GIVEN** a row declared quiet whose command exits 0 but prints a `warning:` line
+- **WHEN** the runner runs it with `--logs DIR`
+- **THEN** the row SHALL be reported `NOISY` in `DIR/summary.txt` with its duration, the run SHALL
+  exit `1`, and the line SHALL be in `DIR/<id>.log`
+
+#### Scenario: A row past its time limit has no answer
+
+- **WHEN** a row runs longer than its declared limit
+- **THEN** the runner SHALL stop it and report it as timed out under the no-answer heading, and SHALL
+  run the rows behind it
 
 ### Requirement: A decision that publication makes irreversible SHALL be recorded before the first public release
 
@@ -1425,4 +1453,182 @@ repaired, before it is trusted.
 
 - **WHEN** the gate is added
 - **THEN** a malformed entry, a settled entry with no evidence, and an open blocking entry under a release tag SHALL each be introduced, the gate SHALL be shown to exit non-zero naming each, and it SHALL be shown to exit zero once they are repaired
+
+### Requirement: The size ceilings SHALL be a gate row whose baseline only shrinks
+
+The gate list SHALL carry a `ceilings` row that measures every production source file in the
+scope `wip/tools/prod-lines.sh` counts: a file over 800 lines, a function over 50 lines, and, for
+the controller, the cycles `mix xref graph --format cycles` reports (their number and the size of
+the largest). Rust test code (`#[cfg(test)]` items, `*_tests.rs`) and generated files SHALL NOT be
+measured. Every breaker present when the row lands SHALL be recorded in
+`scripts/ceilings_baseline.txt`, read through `load_baseline`. A breaker not in the baseline, or a
+baselined breaker that grew, SHALL be a finding; a baselined breaker that is gone or smaller SHALL
+be a finding until the baseline is lowered to match, so the baseline only shrinks. The two cycle
+numbers SHALL only fall, and every member `mix xref` names SHALL be counted, a member annotated
+`(compile)` or `(export)` included. CI SHALL also run `cargo clippy --workspace --all-targets` with warnings
+denied, which is the reading `docs/contributing/code_standards.md` names for cognitive complexity.
+
+#### Scenario: A new file over the ceiling fails
+
+- **WHEN** a production file not in the baseline reaches 801 lines
+- **THEN** the `ceilings` row SHALL exit `1` naming the file and its length
+
+#### Scenario: A fixed breaker must leave the baseline
+
+- **GIVEN** a baselined function of 72 lines that a change shortens to 40
+- **WHEN** the row runs
+- **THEN** it SHALL exit `1` naming the stale baseline entry, and pass once the entry is removed
+
+#### Scenario: An annotated cycle member is counted
+
+- **WHEN** `mix xref graph --format cycles` names a member as `<path> (compile)`
+- **THEN** the row SHALL count it as a member of its cycle, and its self-test SHALL cover the case
+
+#### Scenario: A new cycle fails
+
+- **WHEN** a change adds an Elixir compile cycle or a module to the largest one
+- **THEN** the row SHALL exit `1` naming the recorded and the measured numbers
+
+### Requirement: The committed protobuf code SHALL equal its generator's output
+
+The prost output `flz_core/src/generated/runner_commands.rs` SHALL stay committed, and its generator
+SHALL live beside `protobufs/runner_commands.proto` with every prost attribute in one
+configuration. A gate row SHALL regenerate the output into a temporary directory and fail on any
+difference from the committed file. No generator SHALL live in an SDK repository or rewrite another
+crate's manifest to run.
+
+#### Scenario: A hand edit of the generated file fails
+
+- **WHEN** a line of `flz_core/src/generated/runner_commands.rs` is edited by hand
+- **THEN** the `proto-fresh` row SHALL exit `1` showing the difference
+
+#### Scenario: A proto change without regeneration fails
+
+- **WHEN** a field is added to `runner_commands.proto` and the generated file is not regenerated
+- **THEN** the `proto-fresh` row SHALL exit `1`
+
+#### Scenario: No protoc on a developer's box
+
+- **WHEN** the row runs where `protoc` is not installed
+- **THEN** it SHALL exit `2` naming the tool and how to install it, and CI SHALL be red on it
+
+### Requirement: A lower directory SHALL NOT name a higher one, held by the layer-direction gate
+
+The repository SHALL carry a layer table ranking every directory under `lib/flezha/`, and the
+`layer-direction` row of the gate list (`scripts/check-layer-direction.sh`) SHALL fail when a file
+under one directory names a module whose defining file lives in a higher layer, when a module
+lives in no directory, or when a directory is not ranked. A module's layer SHALL be read from the
+directory of its defining file, never from its name. Upward references recorded in the gate's
+baseline SHALL only shrink (`load_baseline`).
+
+#### Scenario: A new upward reference fails
+
+- **WHEN** a file under `lib/flezha/runner/` names a module defined under `lib/flezha/service/`
+  and the reference is not in the baseline
+- **THEN** `python3 scripts/naming_gate.py --run layer-direction` SHALL exit `1` naming the file
+  and the module
+
+#### Scenario: An unranked directory is refused
+
+- **WHEN** a new directory appears under `lib/flezha/` with no row in the layer table
+- **THEN** the gate SHALL fail naming the directory before judging its contents
+
+### Requirement: A remedy SHALL pass through one seam, held by `remedy_seam_test.exs`
+
+Every remedy SHALL be executed through `Flezha.Convergence.Heal.execute/1`, planned by the Planner
+from a Diff that consumes every declared fact through one field. `test/flezha/convergence/
+remedy_seam_test.exs` SHALL hold it: every primitive has a key rule, an executor and an evidence
+rule; every kind is consumed by one Diff field and planned by one rule; and no source outside
+`lib/flezha/convergence/` calls a remedy entry point.
+
+#### Scenario: A remedy called from outside the seam
+
+- **WHEN** a module outside `lib/flezha/convergence/` calls a remedy entry point
+- **THEN** `remedy_seam_test.exs` SHALL fail naming the file
+
+### Requirement: The health verdict SHALL be one seam, held by `verdict_seam_test.exs`
+
+"Is this subject healthy" SHALL be answered by `Flezha.Convergence.Verdict` alone.
+`test/flezha/convergence/verdict_seam_test.exs` SHALL fail when a file outside the seam carries two
+or more of the verdict states, when `relay_health` is written into the published snapshot from
+more than one site, or when a detector entry reads facts of another shape than its declared kind.
+
+#### Scenario: A second verdict vocabulary
+
+- **WHEN** a module outside the seam spells two of the verdict states
+- **THEN** `verdict_seam_test.exs` SHALL fail naming the file and the states
+
+### Requirement: A retry ladder and a named duration SHALL be written in one table, held by `backoff_seam_test.exs`
+
+Every wait and every duration in `lib/flezha` SHALL be a row of the backoff or durations table
+(`lib/flezha/config/backoff.ex`, `lib/flezha/config/durations.ex`), and
+`test/flezha/config/backoff_seam_test.exs` SHALL fail on ladder arithmetic or a millisecond literal
+beside them that its shapes match, on an unread row, and on an SDK row that differs from the
+constant `flz_core` compiles.
+
+#### Scenario: A hand-written ladder
+
+- **WHEN** a module computes a backoff with its own arithmetic
+- **THEN** `backoff_seam_test.exs` SHALL fail naming the file
+
+### Requirement: A topology SHALL be judged by one check, held by `topology_check_test.exs`
+
+Judging a topology SHALL be done by `flz_core::host::register::check` against
+`test/fixtures/reference_topologies.txt`, in one vocabulary of refusals.
+`test/sdk_conformance/topology_check_test.exs` SHALL hold the clauses that need no runner and
+`test/system/topology_refusal_e2e_test.exs` the clauses that need one per runtime.
+
+#### Scenario: A rule raised outside the check
+
+- **WHEN** an SDK builder raises a topology refusal of its own
+- **THEN** `topology_check_test.exs` SHALL fail naming the site
+
+### Requirement: A knob SHALL be read only through the keys table, held by `keys_seam_test.exs`
+
+Every configuration knob SHALL be one row of `Flezha.Config.Keys`, read only through the seam.
+`test/flezha/config/keys_seam_test.exs` SHALL fail when a knob is read outside the seam, when a row
+is incomplete or a name in the tree has no row, when a default is written twice, and when a runtime
+reads a name it is not declared to.
+
+#### Scenario: A direct environment read
+
+- **WHEN** a module under `lib/flezha` reads a `FLEZHA_*` variable with `System.get_env/1`
+- **THEN** `keys_seam_test.exs` SHALL fail naming the file and the name
+
+### Requirement: A process call, lookup, monitor, timer or child spec SHALL go through the process seam, held by `process_seam_test.exs`
+
+The five process mechanisms (call and lookup, monitor, timer, child spec, remote call) SHALL each
+have one implementation in the process seam, and a site SHALL declare into it.
+`test/flezha/process/process_seam_test.exs` SHALL fail on a primitive used outside the seam's own
+files and on a declared resolver, restart kind or timer key that does not exist, or one that exists
+undeclared.
+
+#### Scenario: A monitor kept by hand
+
+- **WHEN** a module calls `Process.monitor/1` and keeps its own ref map
+- **THEN** `process_seam_test.exs` SHALL fail naming the file
+
+### Requirement: A path under the data root SHALL be resolved through the layout table, held by `table_test.exs`
+
+Every subtree under the data root SHALL be a row of `Flezha.Layout.Table`, and
+`test/flezha/layout/table_test.exs` SHALL fail when a subtree has a private root or a second module
+spells `app_data/<x>`, holding the table to `test/fixtures/layout_rows.txt`.
+
+#### Scenario: A second spelling of a data path
+
+- **WHEN** a module outside the table builds `app_data/<x>` itself
+- **THEN** `table_test.exs` SHALL fail naming the file
+
+### Requirement: An event name and a heartbeat slot SHALL each be declared once, held by the suite
+
+Every `[:flezha, …]` event name the tree writes SHALL be a key of the telemetry bridge's mapping or
+a member of its pinned unexported list, held by
+`test/flezha/observability/telemetry_event_seam_test.exs`; and every key of the shared core's data
+heartbeat SHALL be mirrored by the controller from one declared set, held by
+`test/sdk_conformance/gate_test.exs` ("data heartbeat").
+
+#### Scenario: An unbridged event name
+
+- **WHEN** a module writes a `[:flezha, …]` event name the bridge neither maps nor lists
+- **THEN** `telemetry_event_seam_test.exs` SHALL fail naming the file and the event
 

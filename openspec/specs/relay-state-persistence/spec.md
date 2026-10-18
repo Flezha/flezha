@@ -614,18 +614,6 @@ The Controller SHALL store snapshot files at `app_data/state/{relay_class}/{task
 - **WHEN** the Controller compacts the WAL of Cell `p1` (Relay class `MarketRelay`, tasklet `s1`, cell_key `k1`) and assigns snapshot seq=42
 - **THEN** the resulting file SHALL be at `app_data/state/MarketRelay/s1/k1.snap.42`
 
-### Requirement: Inbound state application is CellApplyState
-
-The protobuf message carrying inbound state application SHALL be named `CellApplyState`. The field naming the owning relay SHALL be `relay_id`; field `cell_id` (string) IS the canonical identifier for the targeted Cell. The on-the-wire payload-id SHALL be `cell_apply_state`. The inverse `CellState` message and the `cell_state_change` / `cell_state_snapshot` / `delete_cell_state` payload-ids are the same across all SDKs.
-
-#### Scenario: Rust SDK emits CellApplyState
-- **WHEN** the Rust SDK applies a state change to Cell `p1` belonging to Relay `r1`
-- **THEN** the SDK SHALL send a `CellApplyState { relay_id: "r1", cell_id: "...", change_bytes: ... }` on the control channel; the Controller SHALL accept it and route it to the Cell's WAL writer
-
-#### Scenario: Java SDK emits CellApplyState
-- **WHEN** the Java SDK applies a state change to a Cell
-- **THEN** the SDK SHALL send a `CellApplyState` message identical in shape to the Rust SDK's; the Controller SHALL handle both identically
-
 ### Requirement: SDK serializes Relay state on `CellState` request via the Decision-10 JSON shape
 
 When the SDK receives a `CellState{relay_id, tasklet, cell_key}` command, it SHALL respond with a JSON object whose top-level keys are the Relay's Tasklet names and whose values are:

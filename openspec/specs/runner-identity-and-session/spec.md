@@ -212,7 +212,7 @@ hold no pending identity, because the runner a rebind moves away from is dead, h
 no copy, or was proved not producing, and its copy is refused and removed when it
 speaks. Every frame the controller reads that names
 a relay (an output frame, the seven cell-write payloads, `correction_request`,
-`RelayCompleted`, `IterPark`, `RunnerShutdownNotification`, `RelayExited`,
+`RelayCompleted`, `IterPark`, `RunnerShutdownNotification`,
 `TaskCommit` and `IterCommit`) SHALL be accepted only when the record names the sending session's
 identity as the owner, or when no record exists for the relay. A
 frame the record refuses SHALL NOT act on the relay: it SHALL be counted on the
@@ -221,7 +221,7 @@ runner, its identity, the recorded owner, the relay and the frame kind, and the
 sending runner SHALL be told `RemRelay` for that relay once per session. A
 refused durability barrier SHALL be acked with a non-empty error; a refused shutdown
 notification SHALL still be acked; a refused completion SHALL write no record and
-drive no teardown; a refused park SHALL journal nothing; a refused exit report SHALL park and rebind nothing. A runner presenting no stable
+drive no teardown; a refused park SHALL journal nothing. A runner presenting no stable
 identity SHALL be its own session token for this rule. A route from a relay to
 its Overwatch SHALL exist only in the channels of the session that owns it, written
 by the same publish that writes the registry tag and removed from the previously
@@ -283,14 +283,6 @@ bound session's channels by it; no other mechanism SHALL seed a route.
 - **THEN** an output SHALL be the counted `:unrouted` drop it is today, a cell
   write SHALL reach its writer under the session fence alone, and a control frame
   SHALL be handled as one whose Overwatch is absent
-
-#### Scenario: An exit report from a runner that does not own the instance parks nothing
-
-- **GIVEN** relay `X` bound to runner A and a second session B in the namespace
-- **WHEN** B sends `RelayExited` naming `X`
-- **THEN** `X` SHALL NOT be parked or rebound, its Overwatch SHALL receive nothing,
-  the refusal SHALL be counted and reported with B, A and `X`, and B SHALL be sent
-  `RemRelay` for `X` once
 
 ### Requirement: A refused runner connect SHALL be answered with its error
 

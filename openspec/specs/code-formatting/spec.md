@@ -93,7 +93,9 @@ The Maven parent at `sdk/java/pom.xml` SHALL configure `spotless-maven-plugin` w
 
 ### Requirement: Project SHALL ship local format scripts
 
-The repository SHALL ship one script at `scripts/format-apply.sh` that runs every language's formatter in write mode to fix the whole tree in one command, and SHALL expose the same list in check mode together with the licensing checks as rows of the gate runner, reached by `python3 scripts/naming_gate.py --run @format`. The script and the runner SHALL attempt every check they cover and report the outcome of each; neither SHALL let one check's failure, or one tool's absence, prevent the checks behind it from running. Both SHALL be tracked under version control and documented in the top-level `README.md`.
+The repository SHALL ship one script at `scripts/format-apply.sh` that runs every language's formatter in write mode to fix the tree in one command, and SHALL expose the same list in check mode together with the licensing checks as rows of the gate runner, reached by `python3 scripts/naming_gate.py --run @format`. The script and the runner SHALL attempt every check they cover and report the outcome of each; neither SHALL let one check's failure, or one tool's absence, prevent the checks behind it from running. Both SHALL be tracked under version control and documented in the top-level `README.md`.
+
+In write mode the Rust formatter SHALL be `rustfmt` on the Rust files that differ from `HEAD` (modified, added or untracked), never `cargo fmt --all`: a whole-workspace rewrite reformats files another session is editing. The check mode SHALL stay whole-workspace.
 
 There SHALL NOT be a second script that re-spells the same checks. Two lists drift: a local gate that claims to cover a language CI never runs is worse than no gate, because its green reads as a verdict.
 
@@ -110,9 +112,15 @@ The script and the runner SHALL exit non-zero when anything is unformatted, non-
 #### Scenario: Developer fixes formatting in one shot
 
 - **WHEN** a developer runs `scripts/format-apply.sh` from the repo root
-- **THEN** the script runs every language's formatter in write mode
-- **AND** every authored source file whose formatter is installed conforms to it on completion
-- **AND** a subsequent `python3 scripts/naming_gate.py --run @format` exits 0 on a box with every formatter installed
+- **THEN** the script runs every language's formatter in write mode, Rust on the changed Rust files only
+- **AND** every file the run formats (for Rust, the changed Rust files) conforms to its formatter on completion
+- **AND** on a tree whose unchanged files were already clean, a subsequent `python3 scripts/naming_gate.py --run @format` exits 0 on a box with every formatter installed
+
+#### Scenario: Write mode leaves an unchanged Rust file alone
+
+- **GIVEN** a tree where `a.rs` is modified and `b.rs` is unchanged but not rustfmt-clean
+- **WHEN** a developer runs `scripts/format-apply.sh`
+- **THEN** `a.rs` SHALL be formatted, `b.rs` SHALL be byte-identical afterwards, and `python3 scripts/naming_gate.py --run @format` SHALL still report `b.rs`
 
 ### Requirement: Project SHALL track bulk-format SHAs in `.git-blame-ignore-revs`
 

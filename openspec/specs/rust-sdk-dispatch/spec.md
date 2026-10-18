@@ -286,7 +286,7 @@ The header SHALL be stamped in `HeaderTemplate::stamp(change_bytes: &[u8]) -> [u
 
 ### Requirement: Public Rust SDK API uses canonical Relay/Runner vocabulary
 
-The Rust SDK SHALL expose its top-level dispatch types under the names `RunnerNode` and provide a method `get_relays()` returning the registered Relays on the current Runner. The module path SHALL be `sdk/rust/src/runner/`. Generated protobuf types SHALL carry the messages `AssignRunnerId`, `RunnerDisconnect`, `AddRelay`, `RemRelay`, `CellState`, `CellApplyState`, `RelayMessage`, `RelayMessageResponse`, plus existing `RestoreInitState`, `CompactCell`, `CellMailboxStatus`.
+The Rust SDK SHALL expose its top-level dispatch types under the names `RunnerNode` and provide a method `get_relays()` returning the registered Relays on the current Runner. The module path SHALL be `sdk/rust/src/runner/`. Generated protobuf types SHALL carry the messages `AssignRunnerId`, `RunnerDisconnect`, `AddRelay`, `RemRelay`, `CellState`, `RelayMessage`, `RelayMessageResponse`, plus existing `RestoreInitState`, `CompactCell`, `CellMailboxStatus`.
 
 #### Scenario: Public types compile under their names
 - **WHEN** a downstream Rust crate depends on `flezha-sdk` and writes `use flezha_sdk::runner::RunnerNode;`
@@ -322,15 +322,6 @@ This requirement covers fixture behavior only; it does not change the SDK's `Tas
 
 - **WHEN** a `CompareFilterRelay` instance is initialized with `comparable = "hello world"` and the test sends `"hello world"` to the relay
 - **THEN** the test SHALL receive `{:message_forward, "hello world"}` within 2 seconds
-
-### Requirement: `RunnerReconnected` control message defined and emitted
-
-The SDK SHALL emit an `RunnerReconnected { previous_id, new_id, reason }` control frame as the first message after re-establishing the control stream, and SHALL emit a single structured reconnect log line. The controller SHALL use this frame to compute the binding delta: a stable reconnect under the same id is a zero-frame no-op; a controller-side reassignment during the disconnect window triggers `ReassignRunnerId { new_id }` and a re-issue of the relay set. `reason` SHALL be one of the transport-edge causes (e.g. broken pipe, read/write error, keepalive timeout, controller-requested).
-
-#### Scenario: a stable reconnect is a zero-delta no-op
-- **GIVEN** the SDK reconnects within the disconnect window holding the same `runner_id`
-- **WHEN** it sends `RunnerReconnected{previous_id == current, new_id == current}`
-- **THEN** the controller's bindings already agree and no `AddRelay`/`RemRelay` frames are issued.
 
 ### Requirement: Node-local persisted runner id announced as `previous_runner_id`
 

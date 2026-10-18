@@ -50,7 +50,7 @@ overwrites the other. The script SHALL refuse any other `uname -m` before it bui
 `.github/workflows/docker.yml` builds the images on pull requests for the size gate
 and SHALL NOT push, keeping the script the single publisher of the manifest list.
 
-The Dockerfile SHALL NOT contain branches for any other Linux architecture. The protoc-download arch-detection block SHALL accept exactly `x86_64` and `aarch64` machine types and SHALL exit non-zero with `Unsupported architecture: <arch>` for anything else.
+The Dockerfile SHALL NOT contain branches for any other Linux architecture, and its Rust stage SHALL NOT install `protoc`: the prost output is committed.
 
 #### Scenario: A publish assembles the manifest from the per-arch tags
 
@@ -63,12 +63,6 @@ The Dockerfile SHALL NOT contain branches for any other Linux architecture. The 
 - **GIVEN** a publishing host whose `uname -m` reports `riscv64`
 - **WHEN** `scripts/publish-image.sh --prod` is run
 - **THEN** it exits 1 with `ERROR: unsupported architecture riscv64` on stderr and no image is built
-
-#### Scenario: Build on a non-supported arch fails fast
-
-- **GIVEN** a hypothetical builder reporting `uname -m` as `riscv64`
-- **WHEN** the protoc-install layer runs
-- **THEN** the layer exits with status 1 and stderr `Unsupported architecture: riscv64`
 
 ### Requirement: Prod release SHALL exclude `:wx` and `:observer` extra applications
 

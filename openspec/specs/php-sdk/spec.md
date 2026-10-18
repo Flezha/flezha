@@ -71,13 +71,13 @@ The PHP SDK SHALL serve time from `Ctx::now()` and identifiers from `Ctx::stable
 - **THEN** it SHALL equal the value the Rust and Java SDKs produce for the same inputs, pinned by a shared fixture
 
 ### Requirement: Activation codec pinned to the shared fixtures
-The PHP SDK SHALL encode and decode the postcard `Activation` and `ActivationResult` schema in PHP, pinned against the hex fixtures in `flz_core/src/schema.rs` — the same artefact the Rust and Java fixture suites assert against.
+The PHP SDK SHALL encode and decode the postcard `Activation` and `ActivationResult` schema in PHP, pinned against the rows of `test/fixtures/postcard_bodies.txt` — the bytes the core encodes from its own structs, which the Java fixture suite and the controller also assert against.
 
 A `u64` field SHALL decode into a PHP integer, and a value whose high bit is set SHALL raise a decode error rather than silently degrade to a float, because `PHP_INT_MAX` is 2^63−1 and a silently widened offset would corrupt comparison rather than fail.
 
 #### Scenario: Every schema fixture round-trips
-- **WHEN** each hex fixture in `flz_core/src/schema.rs` is decoded and re-encoded by the PHP codec
-- **THEN** the re-encoded bytes SHALL be identical to the fixture
+- **WHEN** each activation row of `test/fixtures/postcard_bodies.txt` is decoded, and the values of each result row are encoded, by the PHP codec
+- **THEN** the decoded activation SHALL be the value the core encoded, and the encoded result SHALL be identical to the row
 
 #### Scenario: A u64 above 2^63-1 is rejected
 - **WHEN** a schema field carries a `u64` with the high bit set

@@ -264,7 +264,7 @@ A test app SHALL NOT read `FLEZHA_QUIC_ADDRESS`; the harness renders `FLEZHA_QUI
 
 ### Requirement: CI runs two runtimes nightly and any runtime on demand
 
-`nightly-e2e.yml` SHALL run the `:system` and `:multi_node` suites as a matrix over `runtime: [rust, java]` with `fail-fast: false`, one job per runtime, `FLEZHA_E2E_RUNTIME` set from the matrix. It SHALL accept a `workflow_dispatch` input `runtime` with values `rust`, `java`, `elixir`, `all` (default `all`) that selects the matrix. Per-pull-request steps relays SHALL NOT spawn runners for more than one runtime; the static gate SHALL be their only addition. `java-sdk.yml` SHALL run `FLEZHA_E2E_RUNTIME=java mix test --include sdk_smoke` in place of the removed `mix test.java_sdk`.
+`nightly-e2e.yml` SHALL run the `:system` and `:multi_node` suites as a matrix over `runtime: [rust, java]` with `fail-fast: false`, one job per runtime, `FLEZHA_E2E_RUNTIME` set from the matrix. It SHALL accept a `workflow_dispatch` input `runtime` whose values are every runtime that carries a conformance manifest plus `all` (default `all`); a value SHALL select exactly that runtime's job and `all` SHALL select every manifest runtime. The runtimes a dispatch can run SHALL be read from the manifests, so the workflow names no runtime outside its schedule and its option list. Per-pull-request steps relays SHALL NOT spawn runners for more than one runtime; the static gate SHALL be their only addition. `java-sdk.yml` SHALL run `FLEZHA_E2E_RUNTIME=java mix test --include sdk_smoke` through the shared `sdk-smoke` action, as every other SDK workflow does.
 
 #### Scenario: A nightly Java failure is attributed
 - **WHEN** the nightly `java` job fails and the `rust` job passes
@@ -273,6 +273,11 @@ A test app SHALL NOT read `FLEZHA_QUIC_ADDRESS`; the harness renders `FLEZHA_QUI
 #### Scenario: Any runtime on demand
 - **WHEN** the workflow is dispatched with `runtime: elixir`
 - **THEN** one job runs the suite with `FLEZHA_E2E_RUNTIME=elixir` after pre-building `test/apps/elixir_runner`
+
+#### Scenario: A python dispatch runs python
+
+- **WHEN** the workflow is dispatched with `runtime: python`
+- **THEN** one job SHALL run with `FLEZHA_E2E_RUNTIME=python`, and `all` SHALL include python
 
 ### Requirement: Every run produces a conformance report
 
@@ -325,7 +330,7 @@ Each SDK test app's `conformance.json` SHALL declare `sdk_lang`: the allocated l
 
 - every manifest declares one, and it is a value from the allocation table (never `0`);
 - no two manifests declare the same value;
-- the declared value equals what its SDK actually stamps — the gate is static (it spawns no runner), so it SHALL compare each manifest against the constant that SDK compiles in, and fail naming both. That a runner then *advertises* that value on connect is proved by the `interop` scenario below.
+- the declared value equals what its SDK actually stamps — the gate is static (it spawns no runner), so it SHALL compare each manifest against that runtime's `sdk_lang` row of `test/fixtures/wire_constants.txt`, and fail naming both; that the constant the SDK compiles in equals the same row is asserted by the SDK's own constants test (see "Shared wire constants SHALL be one fixture every runtime asserts"), never by reading its source. That a runner then *advertises* that value on connect is proved by the `interop` scenario below.
 
 An SDK that persists nothing SHALL still declare a value: the byte identifies the runtime at the placement seam, not only in a record header.
 
@@ -341,6 +346,7 @@ An SDK that persists nothing SHALL still declare a value: the byte identifies th
 - **GIVEN** a manifest declaring `sdk_lang: 2` for an SDK whose source stamps `1`
 - **WHEN** the gate runs
 - **THEN** it SHALL fail naming the declared and the stamped value, and the file each came from
+- **AND** when the SDK's compiled constant differs from the fixture instead, that SDK's constants test SHALL fail naming both
 
 #### Scenario: A persistence-free SDK still declares one
 - **GIVEN** a runtime whose manifest defers `state_persistence`
@@ -1046,4 +1052,71 @@ renamed with the settled words.
 
 - **WHEN** the static drift gate reads the seven manifests
 - **THEN** each SHALL declare the same fixture ids for the flow class and the three steps loop shapes, and no manifest SHALL carry a kind field or a retired fixture name
+
+### Requirement: Shared wire constants SHALL be one fixture every runtime asserts
+
+`test/fixtures/wire_constants.txt` SHALL list, one row each, the shared constant tables: the
+`sdk_lang` allocation, the `format_id` allocation, the activation `SCHEMA_VERSION`, every payload
+id and every reserved `flz.` metadata key the Rust production code reads or writes. It SHALL be a
+member of the contract set. A core test SHALL hold every row equal to the Rust constant or key it
+names and fail on a Rust constant or key the file lacks. Each of the seven runtimes (the controller included for the tables it uses) SHALL assert
+the literals it compiles in against the fixture in its own test suite. The fixture SHALL be
+written by hand and never derived at test time.
+
+#### Scenario: A Rust constant changes alone
+
+- **WHEN** `SDK_LANG_PYTHON` in `flz_core/src/header.rs` is changed and the fixture is not
+- **THEN** the core constants test SHALL fail naming the constant, the fixture row and both values
+
+#### Scenario: An SDK literal drifts
+
+- **WHEN** a literal the Python SDK compiles in (its language byte, codec, schema version or an
+  output stamp key) differs from its fixture row
+- **THEN** the Python constants test SHALL fail naming the literal, the row and both values
+
+### Requirement: The postcard bodies a hand-written decoder reads SHALL be pinned by one fixture
+
+`test/fixtures/postcard_bodies.txt` SHALL hold, as `<type>|<case>|<hex>` rows, the postcard bytes
+of every body a non-Rust runtime encodes or decodes by hand: the activation, the activation result,
+the effect record, the park body and the correction request. The timer op and the DLQ entry SHALL
+be pinned embedded in the effect and park rows rather than as rows of their own. It SHALL be a
+member of the contract set. A `flz_core` test SHALL encode each row's case from the real Rust
+struct and assert the bytes. The controller's `Flezha.State.Wire` tests SHALL decode every body it
+decodes in production from the fixture; the Java and PHP codec tests SHALL read their rows from the
+fixture and SHALL NOT copy bytes or parse Rust source.
+
+#### Scenario: A Rust body field is reordered
+
+- **WHEN** two fields of `ParkBody` are swapped in `flz_core/src/park.rs`
+- **THEN** the core fixture test SHALL fail, and with the fixture regenerated by hand the
+  controller's park decode test SHALL fail until `wire.ex` agrees
+
+#### Scenario: A hand decoder disagrees with the fixture
+
+- **WHEN** the controller's effect-body decoder reads a field in the wrong order
+- **THEN** its fixture test SHALL fail naming the row
+
+### Requirement: A runtime's runner SHALL be built by its manifest's build profile
+
+Every build of a runtime's test or bench runner, in CI, in the campaign bar and in the bench, SHALL
+run the `build.<profile>` command of that runtime's `conformance.json`, through one entry
+(`Mix.Tasks.Bench.Fleet.ensure_built/2`, wrapped for YAML by `scripts/build-runner.sh`). No
+workflow, action or script SHALL spell a runner's build command itself.
+
+#### Scenario: A manifest build change reaches every caller
+
+- **WHEN** a runtime's `build.test` command changes in its manifest
+- **THEN** the nightly, the SDK smoke job and the clean run SHALL build with the new command with no
+  other edit
+
+#### Scenario: A build that fails stops its caller
+
+- **WHEN** the manifest's build command exits non-zero
+- **THEN** the entry SHALL exit non-zero with the command and its output, and no test SHALL run
+  against a stale runner
+
+#### Scenario: A manifest with no test build stops its caller
+
+- **WHEN** a runtime's manifest declares no `build.test`
+- **THEN** the entry SHALL exit non-zero naming the runtime, rather than pass having built nothing
 
