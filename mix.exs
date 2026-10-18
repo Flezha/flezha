@@ -238,6 +238,8 @@ defmodule Flezha.MixProject do
   defp docs do
     [
       main: "what_is_flezha",
+      filter_modules: fn module, _ -> not test_module?(module) end,
+      skip_code_autolink_to: &(&1 |> autolink_module() |> test_module?()),
       extras: [
         "docs/public/getting_started/what_is_flezha.md",
         "docs/public/getting_started/up_and_running.md",
@@ -355,6 +357,24 @@ defmodule Flezha.MixProject do
     ] ++ docs_look()
   end
 
+  # The test helpers compile into this build too, and are no part of the API:
+  # they get no page, and a page naming one shows the name unlinked.
+  defp test_module?(module) do
+    source = Code.ensure_loaded?(module) && module.module_info(:compile)[:source]
+    is_list(source) and String.starts_with?(to_string(source), Path.expand("test") <> "/")
+  end
+
+  # The module of an autolink term such as `Mod`, `Mod.fun/2` or `c:Mod.cb/1`.
+  defp autolink_module(term) do
+    parts =
+      term |> String.replace(~r"^[a-z]:", "") |> String.split("/") |> hd() |> String.split(".")
+
+    parts =
+      if parts |> List.last() |> String.match?(~r"^[A-Z]"), do: parts, else: Enum.drop(parts, -1)
+
+    Module.concat(parts)
+  end
+
   defp docs_look do
     [
       api_reference: false,
@@ -370,7 +390,7 @@ defmodule Flezha.MixProject do
   # under the main one, so they stay off its sidebar. ExDoc resolves a `.md`
   # link only within one site, so links between the two are written as `.html`
   # links.
-  defp tutorial_docs(output) do
+  def tutorial_docs(output) do
     [
       main: "tutorials",
       output: output,

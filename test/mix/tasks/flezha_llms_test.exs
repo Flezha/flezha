@@ -124,6 +124,22 @@ defmodule Mix.Tasks.Flezha.LlmsTest do
              )
   end
 
+  test "docs/public holds exactly the pages the two ExDoc sites publish" do
+    extras =
+      for config <- [Mix.Project.config()[:docs], Flezha.MixProject.tutorial_docs(nil)],
+          extra <- config[:extras],
+          is_binary(extra),
+          do: extra
+
+    unpublished = Path.wildcard("docs/public/**/*.md") -- extras
+    outside = Enum.reject(extras, &String.starts_with?(&1, "docs/public/"))
+
+    assert unpublished == [],
+           "pages under docs/public/ that no extra of mix.exs publishes: #{inspect(unpublished)}"
+
+    assert outside == [], "extras of mix.exs outside docs/public/: #{inspect(outside)}"
+  end
+
   test "each page line carries the first sentence of its introduction", %{doc: doc} do
     map = Llms.render(doc)
 

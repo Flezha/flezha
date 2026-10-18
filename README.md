@@ -130,7 +130,7 @@ Decide which ones, then specify each in OpenSpec. -->
 | [Getting started](docs/public/getting_started/what_is_flezha.md) | What Flezha is, its pieces, and what it is for |
 | [Up and running](docs/public/getting_started/up_and_running.md) | The echo built by hand: a controller, your own runner and a relay |
 | [Tutorials](docs/public/tutorials/tutorials.md) | Two example applications: a trading desk on a demo exchange, and AI agent sessions |
-| [Documentation index](docs/README.md) | Every topic page, the configuration reference, the plugins and the SDKs |
+| [Documentation index](docs/README.md) | Where the published pages and the contributors' pages live |
 | [Errors](docs/public/errors.md) | Every error code and what to do about it |
 
 ## SDKs
