@@ -663,13 +663,18 @@ defmodule Flezha.Relay.Overwatch do
   end
 
   @impl true
+  # A runner that can take this relay connected: wake if work is owed. One
+  # that stays asleep hibernates again, as at its suspension.
+  def handle_cast(:rehydrate_if_pending, %__MODULE__{} = state) do
+    case Migration.rehydrate_if_pending(state) do
+      %__MODULE__{suspended: true, migrate_task: nil} = asleep -> {:noreply, asleep, :hibernate}
+      state -> {:noreply, state}
+    end
+  end
+
   # A sleeper hibernates: the bind's restore frames and plugin setup leave
   # megabytes of garbage on a heap that otherwise sits uncollected until the
   # next wake (2.5 MiB → 5 KiB per sleeper measured).
-  # A runner that can take this relay connected: wake if work is owed.
-  def handle_cast(:rehydrate_if_pending, %__MODULE__{} = state),
-    do: {:noreply, Migration.rehydrate_if_pending(state)}
-
   def handle_cast({:suspend, iter, park}, %__MODULE__{} = state) do
     {:noreply, Migration.suspend_at(state, iter, park), :hibernate}
   end

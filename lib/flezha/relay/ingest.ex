@@ -234,10 +234,10 @@ defmodule Flezha.Relay.Ingest do
     end
   end
 
-  # Why a call cannot be taken at all: a parked relay, or a single-pass
+  # Why a call cannot be taken at all: a halted relay, or a single-pass
   # steps instance that has already been given its input.
   defp call_refusal(%Overwatch{init_error: reason}) when reason != nil,
-    do: {"call.unavailable", %{reason: "the relay is parked"}}
+    do: {"call.unavailable", %{reason: "the relay is halted"}}
 
   defp call_refusal(%Overwatch{} = state) do
     if single_input?(state) and (state.fed or not first_input?(state)),
@@ -469,7 +469,7 @@ defmodule Flezha.Relay.Ingest do
   answers — the caller then returns `{:noreply, state}` and `journal_reply/2`
   settles it.
 
-  A parked relay is refused by the callers before it reaches here — each owes
+  A halted relay is refused by the callers before it reaches here — each owes
   its own reply for that.
   """
   @spec confirming_ingest(Overwatch.t(), binary(), map(), reply_to()) ::

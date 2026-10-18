@@ -242,6 +242,21 @@ defmodule FlezhaTest.Relay.OverwatchSuspensionTest do
     :ok = await_migrate_task(rehydrating)
   end
 
+  test "a runner connecting wakes a sleeper that owes input and leaves one that owes nothing" do
+    inst = instance_id()
+    stub(Flezha.Service.RelayManager, :assign_runner, fn _, _, _ -> "ex_2" end)
+    suspended = state(inst, suspended: true, runner_id: nil, channel: nil)
+
+    {:noreply, idle, :hibernate} = Overwatch.handle_cast(:rehydrate_if_pending, suspended)
+    assert idle.migrate_task == nil, "a sleeper owing nothing was woken"
+
+    {:ok, 0} = InputLog.append(inst, "kept while no runner served it", %{})
+    {:noreply, waking} = Overwatch.handle_cast(:rehydrate_if_pending, suspended)
+    assert waking.migrate_task != nil, "a sleeper owing input stayed asleep"
+
+    :ok = await_migrate_task(waking)
+  end
+
   test "with no runner to rehydrate onto, the instance stays suspended" do
     inst = instance_id()
     stub(Flezha.Service.RelayManager, :assign_runner, fn _, _, _ -> nil end)

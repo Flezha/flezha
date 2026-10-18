@@ -8,7 +8,7 @@ defmodule Flezha.Relay.Plugins do
   `:prepared` and holding no process at all; `bring_up/1` starts each provider's
   declared worker and calls `activate/1`, which is where TLS connects and
   subscribe handshakes go out. A bind that fails between them leaves nothing
-  talking to an upstream, which is what makes a parked relay silent rather
+  talking to an upstream, which is what makes a halted relay silent rather
   than half-live.
 
   Operations that are a bare `Flezha.Plugin.Extension.Table` call are made
@@ -142,7 +142,7 @@ defmodule Flezha.Relay.Plugins do
   and the bind goes on.
 
   A refusal of a binding that could come up answers
-  `{:error, {:plugin_prepare_failed, plugin_id, reason}}`: the relay parks on
+  `{:error, {:plugin_prepare_failed, plugin_id, reason}}`: the relay halts on
   that reason, so it has to name the plugin.
   """
   @spec prepare(Overwatch.t(), list()) :: {:ok, Overwatch.t()} | {:error, term()}
@@ -162,7 +162,7 @@ defmodule Flezha.Relay.Plugins do
       {:ok, table} ->
         {:ok, %{state | extensions: table}}
 
-      # The id is the only thing naming WHICH plugin parked the relay. It
+      # The id is the only thing naming WHICH plugin halted the relay. It
       # rides `init_error` out through `:registry_runner_set` to whoever asked
       # for the start.
       {:error, {plugin_id, reason}} ->

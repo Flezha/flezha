@@ -327,7 +327,7 @@ defmodule Flezha.Transport.LivenessCounters do
       # which keeps a forwarded message at two writes on the hot path.
       [name: :forwarded, surface: [{:metric, :relay_forwarded}]],
       [name: :bytes_forwarded, surface: [{:metric, :relay_bytes_forwarded}]],
-      # Ingress casts a parked relay dropped; the confirming entry point
+      # Ingress casts a halted relay dropped; the confirming entry point
       # refuses instead, so this counts only what a cast-based source lost.
       [name: :halted_drops, surface: [{:metric, :relay_halted_drops}]],
       # Plain outputs to a binding recorded not started: it makes no delivery
