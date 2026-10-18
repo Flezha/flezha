@@ -472,7 +472,6 @@ One frame, payload id `connect_control_channel`, empty metadata, JSON message:
   connect (`profile_hash8` hashes the declared factory set order-independently,
   `rand6` is a per-process random suffix). The controller binds relays to
   it and on a reconnect swaps the prior session's bindings onto the new token.
-  See [`../internals/runner_identity.md`](../internals/runner_identity.md).
 - `incarnation` — an opaque value the runner process mints once and presents
   on every connect it makes. Under a `stable_id` the controller already holds,
   the same incarnation is a reconnect of the process that still runs the
@@ -553,8 +552,7 @@ idle watchdog on **every** inbound control frame; `FLEZHA_CONTROL_IDLE_TIMEOUT_M
 runner drives a reconnect. The controller runs the mirror-image watchdog
 (`FLEZHA_CONTROL_LIVENESS_WINDOW_MS` 45 s, checked every
 `FLEZHA_CONTROL_LIVENESS_INTERVAL_MS` 15 s) and treats sustained silence as a
-close, emitting `[:flezha, :runner, :liveness_timeout]`. Details:
-[`../internals/transport_liveness.md`](../internals/transport_liveness.md).
+close, emitting `[:flezha, :runner, :liveness_timeout]`.
 
 ### Step 10: disconnect
 
@@ -816,8 +814,7 @@ controller SHALL discard `payload`. A `flz_core` runner always answers the
 code `runtime.relay_message_unsupported` with an empty payload — the kernel
 has no per-instance message hook. Sent by
 `Flezha.Plugin.Provider.MessageForward` via
-`ControlUnit.send_relay_message/3`
-([`../plugins/message_handlers.md`](../plugins/message_handlers.md)); the
+`ControlUnit.send_relay_message/3`; the
 caller owns the timeout, and payloads share the control stream — keep them
 small.
 
@@ -1833,6 +1830,4 @@ record key and ships `<cell>/<outbox_seq>/<epoch>` in its
 - [`poll_core.md`](poll_core.md) — the Activation/ActivationResult boundary inside a `flz_core` runner
 - [`state_persistence.md`](state_persistence.md) — the per-SDK persistence trait surface (Rust and Java)
 - [`../internals/state_persistence.md`](../internals/state_persistence.md) — the controller's on-disk layout, WAL writer and `flz state` CLI
-- [`../internals/transport_liveness.md`](../internals/transport_liveness.md) — keep-alives, watchdogs and the stall classifier
-- [`../internals/nif_transport.md`](../internals/nif_transport.md) — the controller-side UDS/QUIC drivers
 - [`../architecture/steps_profile.md`](../architecture/steps_profile.md) — the steps relay barrier, journal and outbox model

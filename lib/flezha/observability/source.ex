@@ -13,8 +13,6 @@ defmodule Flezha.Observability.Source do
   and a process-backed source's `init/1` is GenServer's — so the sole
   callback is the registration schema, declared for every polled source
   by `Flezha.Observability.OtpBackend.Poller`.
-
-  Worked examples: `docs/operations/observability.md` → Extending.
   """
 
   @callback config_schema() :: map()

@@ -99,7 +99,7 @@ name: Naming
 # publishes all five), and `size` holds the packed repository under 150 MB.
 # `size` needs the whole history, so its job checks out with fetch-depth 0. It is
 # blocking: the purge reclaimed 961 MB -> 15 MB, and the ceiling is what keeps
-# it there (docs/runbooks/purge-build-artifacts.md).
+# it there.
 #
 # check_ceilings is the structure ratchet: no production file over 800 lines,
 # no function over 50, and the controller's compile cycles may only fall. Its

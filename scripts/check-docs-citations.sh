@@ -12,7 +12,7 @@
 # gets turned off, and the repository has already paid for one that went red on
 # correct prose.
 #
-# Seven citation kinds, each judged against the tracked tree:
+# Eight citation kinds, each judged against the tracked tree:
 #
 #   module     `Flezha.A.B` — live when the tracked Elixir source names it, or
 #              names something below it. `#{__MODULE__}` is resolved first, so a
@@ -20,10 +20,13 @@
 #   function   `Flezha.A.B.fun/2` — live when `fun` is defined in the file that
 #              defines `Flezha.A.B`. Arity is not checked: defaults make one
 #              clause answer several arities.
-#   path       a code-spanned or linked path, with an optional `:line` — live
-#              when the repository tracks it, when it resolves relative to the
-#              citing document, or when a tracked path ends with it (an SDK's
-#              own root, `.../` elision). `:line` must be a line the file has.
+#   path       a code-spanned path, with an optional `:line` — live when the
+#              repository tracks it, when it resolves relative to the citing
+#              document, or when a tracked path ends with it (an SDK's own root,
+#              `.../` elision). `:line` must be a line the file has.
+#   link       a Markdown link target — live when the path from the citing
+#              document is tracked, wherever inside the repository it lands
+#              (`../x.md`, a sibling `x.md`, a head no tracked path starts with).
 #   env var    `FLEZHA_*` — live when any tracked non-document file names it.
 #   maven      `flezha-sdk…` — live when `sdk/java/pom.xml` lists it as a
 #              `<module>`. A Maven module is a directory, and every path pattern
@@ -41,8 +44,9 @@
 #
 # WHAT IS NOT JUDGED, and why each is a shape rather than a list of instances:
 #
-#   A citation with no directory component (`poll_core.md`, `mod.rs`) is
-#   shorthand for a file named elsewhere in the sentence, not a coordinate.
+#   A code-spanned citation with no directory component (`poll_core.md`,
+#   `mod.rs`) is shorthand for a file named elsewhere in the sentence, not a
+#   coordinate. A link that leaves the repository has no answer here.
 #
 #   A path rooted where the repository carries nothing — `deps/`,
 #   `flezha_market/`, `META-INF/` — cannot be checked against this tree. So can
@@ -292,15 +296,26 @@ def check_paths(rel, line):
     out = []
     for match in list(SPANNED.finditer(line)) + list(LINKED.finditer(line)):
         cited = match.group(1)
-        tally["citations"] += 1
         lineno = match.group(2) if match.re is SPANNED else None
+        if match.re is LINKED and "..." not in cited:
+            # A link means the path from the citing file, so that is the only
+            # resolution judged, wherever inside the repository it lands.
+            landed = os.path.normpath(os.path.join(os.path.dirname(rel), cited))
+            if landed.startswith("..") or (landed not in TRACKED and repo_ignores(landed)):
+                continue
+            tally["citations"] += 1
+            if landed not in TRACKED:
+                out.append(f"links `{cited}`, which resolves to `{landed}`, a path the repository does not carry")
+            continue
         if "/" not in cited:
             continue
         resolved = resolve(rel, cited)
         if resolved is None:
             if not unjudgeable(cited):
+                tally["citations"] += 1
                 out.append(f"cites `{cited}`, which the repository does not carry")
             continue
+        tally["citations"] += 1
         if lineno and resolved in TRACKED:
             count = line_count(resolved)
             if int(lineno) > count:

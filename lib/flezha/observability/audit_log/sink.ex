@@ -13,8 +13,7 @@ defmodule Flezha.Observability.AuditLog.Sink do
   signals are discarded against a `:post_close_dropped` counter.
 
   The default allow-list is the system pairs plus every source
-  `Flezha.AuthZ.Verbs` declares; `:extra_subscriptions` extends it:
-  `docs/operations/audit_log.md`.
+  `Flezha.AuthZ.Verbs` declares; `:extra_subscriptions` extends it.
   """
 
   use GenServer

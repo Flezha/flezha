@@ -7,7 +7,7 @@ defmodule Flezha.Observability do
     * `Flezha.Observability.Bus.emit/1` — emit a `Signal`.
     * `Flezha.Observability.subscribe/1` — subscribe the current
       process to live signals from one source.
-    * `Flezha.Observability.RingBufferSink.query/3` — read recent
+    * `Flezha.Observability.RingBufferSink.query/2` — read recent
       signals back out of the ring buffer.
 
   For user-facing access (CLI / future Phoenix UI) use the

@@ -3,8 +3,7 @@
 How the guarantees of [Durability](../topics/core/durability.md) are built: the
 guarantee class of a frame, the parts of the effectively-once tier, and the input
 floor. This page is for contributors; what survives what, and how to use it, is on the
-topic page. Relay placement recovery is
-[`../internals/process_hub.md`](../internals/process_hub.md); the WAL substrate is
+topic page. The WAL substrate is
 [`../internals/state_persistence.md`](../internals/state_persistence.md).
 
 ## The guarantee class of a frame

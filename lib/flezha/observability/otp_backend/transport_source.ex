@@ -13,8 +13,7 @@ defmodule Flezha.Observability.OtpBackend.TransportSource do
   label, so nothing here grows with runner or relay churn.
 
   Both server drivers produce the self-report, so the same metrics are
-  emitted whichever transport carries the traffic. The metric list is in
-  `docs/operations/observability.md` → Shipped sources.
+  emitted whichever transport carries the traffic.
   """
 
   alias Flezha.Transport.LivenessCounters

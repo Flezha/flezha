@@ -7,8 +7,8 @@ contributors working in `lib/flezha/state/`. The guarantee-level picture (write 
 record, push-vs-pull baseline) is [`../architecture/kernel.md`](../architecture/kernel.md) and is
 linked, not repeated; the runner-side flush path is
 [`../sdk/state_persistence.md`](../sdk/state_persistence.md). Per-Cell WAL persistence is
-independent of plugin persistence (the ProcessHub cspec,
-[`process_hub.md`](process_hub.md)): the WAL persists data-plane progress, the cspec which
+independent of plugin persistence (the ProcessHub cspec):
+the WAL persists data-plane progress, the cspec which
 plugins are attached and on which hooks.
 
 ## On-disk layout
@@ -555,7 +555,7 @@ one poll. The mark is written by the sensor, never polled from it.
 - **Output staleness** — a Cell still receiving Changes whose persisted seq froze past
   `PersistenceResolver.output_stall_timeout_ms/1` (default 60 000 ms, `0` disables) emits
   `[:flezha, :state, :output_stall]` and nothing else; the remedy is the Loop's ladder
-  (`resync_runner` → `rebind_relay`, [`convergence_loop.md`](convergence_loop.md)). An idle
+  (`resync_runner` → `rebind_relay`). An idle
   Cell is not flagged.
 - **Compaction timeout** — stays with the Watchdog because it owns the handshake end to end.
 - **Disk quota and RPO** — latched `[:flezha, :state, :disk_quota_breach]` (the namespace's
@@ -603,8 +603,7 @@ writer realigns — truncates the WAL, removes the snapshots, adopts `seq - 1` a
 `last_persisted_seq` and the new session as `owning_runner` — and emits
 `[:flezha, :state, :wal_realign]`. A same-session low seq stays a dedup. The realign is honoured
 only from the Cell's current owner binding: a newest-wins takeover unbinds the superseded
-session before binding the new one ([`runner_identity.md`](runner_identity.md) "The WAL binds to
-the owner") — fenced `StreamChannel`s refuse durable-write forwards, and the writer refuses frames
+session before binding the new one — fenced `StreamChannel`s refuse durable-write forwards, and the writer refuses frames
 from a session `FleetManager.Marks.superseded_session?/1` marks superseded with `{:error, :stale_writer}`,
 consulted only when the frame's session differs from the epoch owner so the owner's append path
 pays nothing. Refusals emit `[:flezha, :state, :stale_writer_refused]` once per (Cell, session)
@@ -690,7 +689,5 @@ fragment.
 - [`../architecture/kernel.md`](../architecture/kernel.md) — the write path, the effect record, push-vs-pull baseline, the minimum watermark.
 - [`../sdk/state_persistence.md`](../sdk/state_persistence.md) — the runner-side flush, restore and compaction path in both SDKs.
 - [`../sdk/protocol_spec.md`](../sdk/protocol_spec.md) — `CellState` selector fields, `flz.change_seq`, refusal tokens; `CreditWindowInit` / `CreditGrant`.
-- [`runner_identity.md`](runner_identity.md) — the takeover guard the owner-bound realign relies on.
-- [`convergence_loop.md`](convergence_loop.md) — the output-stall remediation ladder.
 - [`../topics/core/durability.md`](../topics/core/durability.md) — surviving the loss of the disk.
 - [`../../test/scripts/state_persistence.sh`](../../test/scripts/state_persistence.sh) — the manual smoke check for this capability's data-plane half.

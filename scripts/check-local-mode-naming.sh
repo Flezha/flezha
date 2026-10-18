@@ -77,12 +77,12 @@ SYMBOL = [re.compile(p) for p in (
 )]
 
 # Inside the public surface: a declaration whose declared name carries a
-# testing word, and a heading that files the page as testing material.
-SURFACE_NAMES = [re.compile(p) for p in (
+# testing word, and, in a Markdown page only (a `#` line elsewhere is a
+# comment), a heading that files the page as testing material.
+DECLARATION = re.compile(
     r"\b(?:fn|struct|enum|trait|mod|type|const|static|class|interface|record|"
-    r"defmodule|defstruct|def|defp)\s+[A-Za-z0-9_.]*(?:" + TESTING + r")",
-    r"^\s*#{1,6}\s.*(?:" + TESTING + r")",
-)]
+    r"defmodule|defstruct|def|defp)\s+[A-Za-z0-9_.]*(?:" + TESTING + r")")
+HEADING = re.compile(r"^\s*#{1,6}\s.*(?:" + TESTING + r")")
 
 missing = [rel for rel in SURFACE if not os.path.exists(rel)]
 if missing:
@@ -96,7 +96,8 @@ if missing:
     sys.exit(naming_gate.FINDING)
 
 symbol = naming_gate.pattern_check(SYMBOL)
-surface = naming_gate.pattern_check(SURFACE_NAMES)
+surface = {False: naming_gate.pattern_check([DECLARATION]),
+           True: naming_gate.pattern_check([DECLARATION, HEADING])}
 
 # A path under a test directory is not part of the public surface, so it is
 # never read: `tests/`, `test/`, `src/test/` and a `*_test`/`*_tests` file.
@@ -107,7 +108,7 @@ def check(rel, line):
         return []
     found = symbol(rel, line)
     if rel in SURFACE and not found:
-        found = surface(rel, line)
+        found = surface[rel.endswith(".md")](rel, line)
     return found
 
 sys.exit(naming_gate.walk(

@@ -21,8 +21,7 @@
 +Bd
 
 ## Reclaiming refc binaries more aggressively is a memory-drift remedy, chosen
-## against a measured series rather than set here. See
-## docs/operations/memory_drift.md.
+## against a measured series rather than set here.
 
 ## Enable deployment without epmd
 ## (requires changing both vm.args and remote.vm.args)

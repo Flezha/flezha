@@ -26,7 +26,6 @@ in reading order, then a section on how Flezha is built and one for contributors
 | [`operations/`](#operations) | users, contributors | Observability, the audit log, schedules, memory and benchmarking |
 | [`resilience/`](#resilience) | contributors | The mechanism behind the guarantees |
 | [`internals/`](#internals) | controller contributors | How the controller is built |
-| [`runbooks/`](#runbooks) | users, contributors | Step-by-step tasklets for one-off operations |
 | [`troubleshooting/`](#troubleshooting) | users | A symptom, what it means, and the fix |
 | [`publishing/`](#publishing) | the maintainer before the first public release; every user after it | The decisions publishing makes irreversible, which of them block a release, and which parts are not yet settled |
 
@@ -210,10 +209,6 @@ Connecting relays to the outside; every plugin's own page is under [`plugins/`](
 
 | Doc | Covers |
 | --- | --- |
-| [`audit_log.md`](operations/audit_log.md) | The durable JSONL audit log: layout, fsync, rotation, CLI |
-| [`observability.md`](operations/observability.md) | Signals, sources, sinks, `flz observe`, Prometheus and OTLP export |
-| [`schedules.md`](operations/schedules.md) | `flz schedule`: cron-driven relay spawns |
-| [`memory_drift.md`](operations/memory_drift.md) | Localising controller memory growth |
 | [`benchmarking.md`](operations/benchmarking.md) | `mix bench`, shapes, recorded floors, CI gates |
 
 ## resilience
@@ -228,19 +223,7 @@ Connecting relays to the outside; every plugin's own page is under [`plugins/`](
 
 | Doc | Covers |
 | --- | --- |
-| [`process_hub.md`](internals/process_hub.md) | ProcessHub as the source of truth: hubs per namespace, recovery as reconcile, handover |
-| [`overwatch_lifecycle.md`](internals/overwatch_lifecycle.md) | The per-relay Overwatch: boot sequence, ping before `AddRelay`, the retry ladder and parked-error state, ingest entry points |
 | [`state_persistence.md`](internals/state_persistence.md) | The controller's WAL/snapshot store, flow control, `flz state` |
-| [`convergence_loop.md`](internals/convergence_loop.md) | The self-heal loop: tick pipeline, heal primitives, /healthz |
-| [`transport_liveness.md`](internals/transport_liveness.md) | Session liveness and data-plane stall localisation |
-| [`runner_identity.md`](internals/runner_identity.md) | Runner identity, binding swap on reconnect, WAL owner fence |
-| [`nif_transport.md`](internals/nif_transport.md) | The `flz_nif` UDS/QUIC drivers and their Elixir integration |
-
-## runbooks
-
-| Doc | Covers |
-| --- | --- |
-| [`purge-build-artifacts.md`](runbooks/purge-build-artifacts.md) | One-time removal of build output from git history: what it removes, the rewrite, verifying by measurement, publishing |
 
 ## troubleshooting
 

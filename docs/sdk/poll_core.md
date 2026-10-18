@@ -555,4 +555,3 @@ and the per-SDK matrix live in
 - [`state_persistence.md`](state_persistence.md) — WAL layout and restore the flusher feeds
 - [`rust_relay_architecture.md`](rust_relay_architecture.md) — the Rust typed layer in detail
 - [`../architecture/runner.md`](../architecture/runner.md) — the runner drawn, all three hosts
-- [`../internals/nif_transport.md`](../internals/nif_transport.md) — the controller's side of `flz_transport`

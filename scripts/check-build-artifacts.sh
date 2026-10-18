@@ -117,9 +117,8 @@ def size_check():
     for group, size in heaviest_paths():
         print(f"  {size / 1048576:8.0f} MB  {group}", file=sys.stderr)
     print(
-        "\nBytes already in the history are reclaimed only by a rewrite "
-        "(docs/runbooks/purge-build-artifacts.md). Stop the flow first: an "
-        "artefact still being committed grows back.",
+        "\nBytes already in the history are reclaimed only by a rewrite. Stop the "
+        "flow first: an artefact still being committed grows back.",
         file=sys.stderr,
     )
     return 1

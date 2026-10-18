@@ -19,7 +19,7 @@ owns the mechanism; for concepts, [`architecture/`](https://github.com/flezha/fl
   (`FLEZHA_RUNNER_ID_PATH`, default `/var/lib/flezha-runner/id`) that survives restarts; the
   controller mints a **session token** per connection (`AssignRunnerId`) and routes on it, while a
   relay's owner is the stable identity, so a reconnect re-points each relay's session
-  without moving its ownership. See [`internals/runner_identity.md`](internals/runner_identity.md).
+  without moving its ownership.
 - **Namespace** — the hard tenancy boundary: every relay, tasklet, state path, audit record
   and signal carries one (`Flezha.AuthZ.Namespace`); `_system` is the singleton compatibility
   namespace. A runner connects into one namespace; the CLI selects one with `--namespace`.
@@ -264,7 +264,7 @@ owns the mechanism; for concepts, [`architecture/`](https://github.com/flezha/fl
   the declared set through the one idempotent start authority (the registry claim in ProcessHub's
   `Distributor`, reached identically by the reconcile and by `RelayManager.start_relay/3`).
   The loser answers `:duplicate` after checking the winner is live; `[:flezha, :boot,
-  :reconcile_duplicate]` outside a partition recovery means a start bypassed the claim. See [`internals/process_hub.md`](internals/process_hub.md).
+  :reconcile_duplicate]` outside a partition recovery means a start bypassed the claim.
 
 ## Steps relay vocabulary
 
@@ -372,7 +372,7 @@ owns the mechanism; for concepts, [`architecture/`](https://github.com/flezha/fl
   on its way to an output plugin.
 - **Convergence loop** — `Flezha.Convergence.Loop`, the controller's only self-healer. Every 5 s
   and on declared events it runs `Intent → Probe → Diff → Planner → Heal` and publishes a
-  `Convergence.Snapshot` that `/healthz` and the CLI read. See [`internals/convergence_loop.md`](internals/convergence_loop.md).
+  `Convergence.Snapshot` that `/healthz` and the CLI read.
 - **Chain of custody** — sensors sense, exactly one actor acts, `/healthz` reads the actor's
   snapshot, the orchestrator restarts on `/healthz`. `State.Watchdog`, `StallClassifier` and
   `LivenessCounters` emit facts and invoke no remedy; `Convergence.Loop` is the actor.
@@ -383,7 +383,7 @@ owns the mechanism; for concepts, [`architecture/`](https://github.com/flezha/fl
 - **Stall localization** — `StallClassifier` compares two counter snapshots and returns the deepest
   wedged layer (`driver_loop_frozen` → `nif_queue_backing_up` → `socket_write_blocked` →
   `runner_not_consuming` → `runner_pool_wedged` → `channel_not_sending` → `relay_not_forwarding`),
-  emitting `[:flezha, :data_plane, :stall_localized]` on a change. See [`internals/transport_liveness.md`](internals/transport_liveness.md).
+  emitting `[:flezha, :data_plane, :stall_localized]` on a change.
 - **Fabric wedge** — a stall inside the controller's own NIF driver thread (`driver_loop_frozen`,
   `nif_queue_backing_up`) that no BEAM-level heal reaches; sustained for `FLEZHA_FABRIC_503_POLLS`
   polls (default 3, `0` disables) it is `/healthz` `503 data_plane_fabric_wedged`. A wedged
@@ -426,12 +426,11 @@ owns the mechanism; for concepts, [`architecture/`](https://github.com/flezha/fl
   writes `app_data/auth/REBOOTSTRAP`; the next boot unbinds the stale `admin@_system`, revokes
   its tokens, re-enters the bootstrap flow and emits an auditable `:rebootstrap_recovery` event.
 - **Audit log** — the durable JSONL record of every authorized control-plane action
-  (`Flezha.Service.AuditLog`, `flz audit list|read|tail|stats|rotate`). See [`operations/audit_log.md`](operations/audit_log.md).
+  (`Flezha.Service.AuditLog`, `flz audit list|read|tail|stats|rotate`).
 
 ## See also
 
 - [`architecture/overview.md`](https://github.com/flezha/flezha/blob/main/docs/architecture/overview.md) — roles, the workload model, the eight kernel invariants.
 - [`sdk/rust_relay_architecture.md`](https://github.com/flezha/flezha/blob/main/docs/sdk/rust_relay_architecture.md) — Relay/Tasklet/Cell authoring.
 - [`sdk/protocol_spec.md`](https://github.com/flezha/flezha/blob/main/docs/sdk/protocol_spec.md) — the wire protocol between Runners and the Controller.
-- [`internals/process_hub.md`](internals/process_hub.md) — ProcessHub picks a node, the node picks a Runner.
 - [`resilience/overview.md`](architecture/overview.md) — what survives what.

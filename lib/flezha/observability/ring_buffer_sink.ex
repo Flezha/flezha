@@ -3,13 +3,12 @@ defmodule Flezha.Observability.RingBufferSink do
   In-memory per-source ring buffer of recent signals.
 
   One `:protected` ETS `:ordered_set` per registered source, written by
-  this sink alone and read from any process: `query/3` runs in the
+  this sink alone and read from any process: `query/2` runs in the
   caller and never serializes through this GenServer. Entries are
   keyed `{ts, seq}` — `seq` is what keeps two same-tick emits apart.
 
-  Two retention layers, an opportunistic cap on insert and a periodic
-  age sweep; both bounds are in
-  `docs/operations/observability.md` → Default sinks.
+  Two retention layers: an opportunistic cap on insert and a periodic
+  age sweep.
   """
 
   use GenServer, restart: :transient
@@ -68,7 +67,7 @@ defmodule Flezha.Observability.RingBufferSink do
   @doc """
   Per signal name, how many of `source`'s signals the buffer holds from
   `from_ts` on that `keep` keeps, and the newest one's timestamp. Runs in the
-  caller, like `query/3`. `keep` sees `%{metadata: metadata}` only: the match
+  caller, like `query/2`. `keep` sees `%{metadata: metadata}` only: the match
   copies a signal's timestamp, name and metadata out of the table, never its
   measurements.
   """

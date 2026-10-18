@@ -738,8 +738,7 @@ port: [`state_persistence.md`](state_persistence.md).
 
 - **Per-Tasklet `handle_message` is not served by the SDK**: the
   `RelayMessage` command is answered `relay does not support
-  handle_message` (`flz_core/src/command/relay_message.rs`); controller-side
-  handlers are in [`../plugins/message_handlers.md`](../plugins/message_handlers.md).
+  handle_message` (`flz_core/src/command/relay_message.rs`).
 - **One started runner per process** (`FlezhaError::AlreadyRunning`).
 - **`UpdateFactories` has no ack**; the reconnect init frame is the resync.
 - **`unregister_factory` cannot see a suspended durable steps instance**:
@@ -776,4 +775,3 @@ port: [`state_persistence.md`](state_persistence.md).
 - [`poll_core.md`](poll_core.md) — the kernel boundary the SDK is hosted on
 - [`state_persistence.md`](state_persistence.md) — `Change`, WAL wire format, restore
 - [`../architecture/flow_profile.md`](../architecture/flow_profile.md): a flow relay end to end
-- [`../internals/overwatch_lifecycle.md`](../internals/overwatch_lifecycle.md) — the controller-side Overwatch that starts and feeds an instance

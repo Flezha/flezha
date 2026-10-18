@@ -13,8 +13,6 @@ defmodule Flezha.Observability.Sink do
   Delivery is a message, not a callback: the bus sends
   `{:signal, signal}` to the pid, asynchronously under the `:drop`
   overflow policy and as a `GenServer.call/3` under `:block`.
-
-  Worked example: `docs/operations/observability.md` → Extending.
   """
 
   alias Flezha.Observability.Signal
