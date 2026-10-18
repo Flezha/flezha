@@ -10,6 +10,7 @@ defmodule Flezha.Config.KeysSeamTest do
   use ExUnit.Case, async: true
 
   alias Flezha.Config.Keys
+  alias Flezha.Config.Reference
   alias FlezhaTest.Helper.SourceWalk
 
   # The readers. Everything else asks one of these.
@@ -43,6 +44,13 @@ defmodule Flezha.Config.KeysSeamTest do
     python: ["sdk/python/src"],
     ruby: ["sdk/ruby/lib"],
     php: ["sdk/php/src"]
+  }
+
+  # The published reference: each page and the groups of rows it carries.
+  @reference %{
+    "docs/public/configuration/environment_variables.md" => [:environment, :build],
+    "docs/public/configuration/application_env.md" => [:application_env],
+    "docs/public/configuration/runner_environment.md" => [:runner]
   }
 
   # The fixture every runtime's own reader is fed, and the suite that feeds it.
@@ -157,19 +165,26 @@ defmodule Flezha.Config.KeysSeamTest do
   end
 
   describe "a default is written down once" do
-    test "the published default field carries the row's own" do
-      drifted =
-        for {number, var, field} <- documented_defaults(),
-            row = Keys.by_env(var),
-            row != nil,
-            comparable?(row),
-            plain = String.replace(field, "`", ""),
-            renderings = renderings(row),
-            not Enum.any?(renderings, &String.contains?(plain, &1)),
-            rendered = Enum.join(renderings, " or "),
-            do: "#{number}: #{var} is published as #{field}, and the row says #{rendered}"
+    test "each reference table is its group's rendering of the rows" do
+      for {page, groups} <- @reference, group <- groups do
+        rendered = Reference.render_table(group)
 
-      assert drifted == []
+        assert SourceWalk.block(page, "config-keys", to_string(group)) == rendered,
+               "#{page}'s #{group} table has drifted from the rows.\n" <>
+                 "Replace the block between its config-keys markers with:\n\n" <> rendered
+      end
+    end
+
+    test "no other page restates a variable's default in a table of its own" do
+      restated =
+        for path <- Path.wildcard("docs/**/*.md"),
+            not Map.has_key?(@reference, path),
+            not String.starts_with?(path, ["docs/refactor/", "docs/dev_notes/"]),
+            where <- restated_rows(path),
+            do: where
+
+      assert restated == [],
+             "link the reference instead of restating its rows:\n" <> Enum.join(restated, "\n")
     end
 
     test "a crate's own default beside a name is the row's" do
@@ -208,42 +223,6 @@ defmodule Flezha.Config.KeysSeamTest do
       undeclared = for {name, _} <- Flezha.SDK.Knob.rows(), is_nil(Keys.row(name)), do: name
 
       assert {undeclared, drifted} == {[], []}
-    end
-
-    test "the reference states both sides of a row two roles read differently" do
-      per_reader =
-        for {_name, row} <- Keys.rows(),
-            match?([{first, _} | _] when first in [:controller, :runner], row.default),
-            do: row
-
-      assert per_reader != []
-
-      understated =
-        for row <- per_reader,
-            {where, var, field} <- documented_defaults(),
-            String.starts_with?(where, "docs/public/configuration"),
-            var == row.env,
-            side <- Keyword.values(row.default),
-            not String.contains?(field, to_string(side)),
-            do: "#{where}: #{var} does not state #{side}"
-
-      assert understated == []
-    end
-
-    test "every variable the published table names is a row, and every user row is published" do
-      published = for {_where, var, _field} <- documented_defaults(), into: MapSet.new(), do: var
-
-      # Layer 1 of the published table is what `config/runtime.exs` translates:
-      # every row a controller reads. An SDK's, the CLI's and the shell
-      # wrappers' names are published with their own surfaces.
-      config_rows =
-        for {_name, row} <- Keys.rows(),
-            row.env,
-            :controller in row.runtimes,
-            into: MapSet.new(),
-            do: row.env
-
-      assert MapSet.difference(config_rows, published) |> MapSet.to_list() == []
     end
   end
 
@@ -317,95 +296,20 @@ defmodule Flezha.Config.KeysSeamTest do
   defp row_for_key(key),
     do: Enum.find_value(Keys.rows(), fn {_name, row} -> row.key == key && row end)
 
-  # The `| Variable | Default | Sets / notes |` tables of the published
-  # reference, and only those: the build-time table's second column is who
-  # reads a variable, not what it is when nobody sets it.
-  defp documented_defaults() do
-    for path <- Path.wildcard("docs/**/*.md"),
-        not String.starts_with?(path, "docs/refactor/"),
-        not String.starts_with?(path, "docs/dev_notes/"),
-        {number, var, field} <- documented_defaults(path),
-        do: {"#{path}:#{number}", var, field}
-  end
-
-  defp documented_defaults(path) do
-    path
-    |> File.read!()
-    |> String.split("\n")
-    |> Enum.with_index(1)
-    |> Enum.reduce({nil, []}, &read_row/2)
+  # The rows of a table with a `Default` column that name a variable.
+  defp restated_rows(path) do
+    [path]
+    |> SourceWalk.lines()
+    |> Enum.reduce({false, []}, fn {_path, line, number}, {defaults?, found} ->
+      cond do
+        not String.starts_with?(line, "|") -> {false, found}
+        String.contains?(line, "| Default |") -> {true, found}
+        defaults? and line =~ ~r/^\| `FLEZHA_/ -> {true, ["#{path}:#{number}" | found]}
+        true -> {defaults?, found}
+      end
+    end)
     |> elem(1)
     |> Enum.reverse()
-  end
-
-  # A header opens a table and says which column holds its defaults; a row
-  # inside one is read at that column; everything else leaves the reading as it
-  # stands.
-  defp read_row({line, number}, {column, found}) do
-    cond do
-      table_header?(line) -> {default_column(line), found}
-      column == nil -> {column, found}
-      true -> {column, field_at(line, column, number) ++ found}
-    end
-  end
-
-  defp field_at(line, column, number) do
-    case row_fields(line) do
-      [var | _] = fields when length(fields) > column -> [{number, var, Enum.at(fields, column)}]
-      _ -> []
-    end
-  end
-
-  # A table header, and which of its columns holds the value a variable takes
-  # when nobody sets it — `nil` for a table that states no default, which ends
-  # the previous table's reading rather than continuing it.
-  defp table_header?(line) do
-    fields = fields(line)
-    fields != [] and Enum.any?(fields, &(&1 in ["Variable", "Knob", "Setting"]))
-  end
-
-  defp default_column(line) do
-    line
-    |> fields()
-    |> Enum.find_index(&(String.downcase(&1) == "default"))
-  end
-
-  defp row_fields(line) do
-    case fields(line) do
-      [first | _] = all ->
-        case Regex.run(~r/^`(FLEZHA_[A-Z0-9_]+)`$/, first) do
-          [_, var] -> [var | tl(all)]
-          nil -> []
-        end
-
-      [] ->
-        []
-    end
-  end
-
-  defp fields(line) do
-    case String.trim(line) do
-      "|" <> rest -> rest |> String.split("|") |> Enum.map(&String.trim/1) |> Enum.drop(-1)
-      _ -> []
-    end
-  end
-
-  # What a document may render this row's default as. A row read by two roles
-  # with different needs has one rendering per role; the reference table states
-  # both (its own clause), and a role's own document states that role's.
-  defp renderings(%{default: [{first, _} | _] = per_reader} = row)
-       when first in [:controller, :runner] do
-    [Keys.render_default(row) | Enum.map(per_reader, fn {_who, value} -> to_string(value) end)]
-  end
-
-  defp renderings(row), do: [Keys.render_default(row)]
-
-  # A row whose default is one value a user can read back. A derivation, a
-  # per-run resource and a value computed at boot are published as prose.
-  defp comparable?(row) do
-    is_nil(row.derived) and is_nil(row.per_run) and
-      not match?({:late, _}, row.default) and not match?({:env, _, _}, row.default) and
-      not is_nil(row.default) and row.type != :term
   end
 
   # `const NAME: usize = 64 * 1024 * 1024;` — the arithmetic a crate writes its

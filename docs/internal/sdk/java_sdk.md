@@ -148,10 +148,10 @@ are minted by `flz_core`'s heartbeat, which this SDK also uses unchanged. The st
 supervisor stays exactly as load-bearing: with the flag off it is still the only
 rescue, and it is what the holdback's bound falls back on.
 
-| Knob | Meaning | Default |
-| --- | --- | --- |
-| `FLEZHA_WORKER_POOL_SIZE` | Fetchers started at boot | 2 |
-| `FLEZHA_WORKER_POOL_MAX` | Ceiling the supervisor may grow to | 10× the count, never below it |
+- `FLEZHA_WORKER_POOL_SIZE`: Fetchers started at boot.
+- `FLEZHA_WORKER_POOL_MAX`: Ceiling the supervisor may grow to.
+
+Their types and defaults are in [Runner environment variables](../../public/configuration/runner_environment.md#every-variable).
 
 Every growth is logged at `INFO`; the first refusal at the ceiling is logged at
 `WARN` and latched, so a sustained wedge names itself once instead of once a

@@ -193,13 +193,13 @@ recorded as the telemetry events `[:flezha, :plugin_package, :loaded]` and
 
 ### Settings
 
-| Setting | Default | What it does |
-| --- | --- | --- |
-| `FLEZHA_PLUGIN_ROOT` | `app_data/plugins` | the folder of installed `*.fpz` packages, loaded at every boot; must be writable |
-| `FLEZHA_PLUGINS` | unset | the packages this node declares, which `flz plugin sync` places |
-| `FLEZHA_PLUGIN_TRUSTED_KEYS` | `""` | comma-separated PEM public key paths, read at boot |
-| `FLEZHA_PLUGIN_REQUIRE_SIGNATURE` | `false` | refuse unsigned packages |
-| `FLEZHA_PLUGIN_MAX_PACKAGE_BYTES` | `50000000` | a package's unpacked size and a download alike |
+- `FLEZHA_PLUGIN_ROOT`: The folder of installed `*.fpz` packages, loaded at every boot; must be writable.
+- `FLEZHA_PLUGINS`: The packages this node declares, which `flz plugin sync` places.
+- `FLEZHA_PLUGIN_TRUSTED_KEYS`: Comma-separated PEM public key paths, read at boot.
+- `FLEZHA_PLUGIN_REQUIRE_SIGNATURE`: Refuse unsigned packages.
+- `FLEZHA_PLUGIN_MAX_PACKAGE_BYTES`: A package's unpacked size and a download alike.
+
+Their types and defaults are in [Controller environment variables](../../configuration/environment_variables.md#every-variable).
 
 [Controller environment variables](../../configuration/environment_variables.md#plugins-dlq-and-schedules) has each row.
 

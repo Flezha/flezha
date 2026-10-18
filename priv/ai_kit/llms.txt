@@ -50,7 +50,7 @@ only the pages a task needs: each link is that page's full Markdown, next to thi
 
 - [Configuration overview](configuration.md): Flezha starts with no configuration.
 - [Controller environment variables](environment_variables.md): Every variable the controller node reads, grouped by area.
-- [Application env keys](application_env.md): Read via `Flezha.Config.get/1` by row name; `Read in` names the module that reads the key.
+- [Application env keys](application_env.md): Read via `Flezha.Config.get/1` by row name.
 - [Relay settings](relay_settings.md): A relay is configured by one settings tree, declared in its class.
 - [Plugin options](plugin_options.md): A plugin's options are its own settings: the URL it polls, the topic it publishes to, the file it writes.
 - [Runner environment variables](runner_environment.md): Read by the runner process, not the controller node, so they are set where the runner runs.

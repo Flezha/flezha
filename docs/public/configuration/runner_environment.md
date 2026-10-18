@@ -7,38 +7,91 @@ Elixir runner reads the connection rows through `Flezha.SDK.Knob` (the OS
 environment, then `config :flezha_sdk, ...`) and hands them to the core, so a
 runner in the controller's own BEAM can be given its own values.
 
-| Variable | Default | Read by |
+What each variable does is below; the type and default of every one is in
+[Every variable](#every-variable), generated from the configuration table.
+
+- `FLEZHA_RUNNER_ID_PATH`: The durable stable identity; an unwritable path degrades to a fresh per-boot id with one warning, never a refusal.
+- `FLEZHA_MAILBOX_CAPACITY`: The per-Cell mailbox bound, read today by the Elixir, Java and Rust SDKs; a Tasklet that overrides `mailbox_capacity()` wins over it. The range is `1..1_048_576`.
+- `FLEZHA_SOCKET_FILES_PATH`: Read through the `flz_transport` path helper, which every SDK reaches. Default: resolved by the [socket-directory ladder](files_and_sockets.md#the-socket-directory-ladder).
+- `FLEZHA_TRANSPORT`: `uds` or `quic`, which is [experimental: quic](../publishing/maturity.md#quic).
+- `FLEZHA_QUIC_ADDRESSES`: A comma list of controller endpoints, each a name or a literal with an optional port (default `4433`), re-resolved on **every** attempt. `FLEZHA_QUIC_ADDRESS` is not honoured and, set alone, refuses startup naming this one; [experimental: quic](../publishing/maturity.md#quic).
+- `FLEZHA_QUIC_CLIENT_CERT` / `FLEZHA_QUIC_CLIENT_KEY`: The client pair presented to a QUIC server that requires peer authentication; [experimental: quic](../publishing/maturity.md#quic).
+- `FLEZHA_MAX_FRAME_BYTES`: Pre-auth frame-length limit enforced by both frame parsers, cached on first read. Default: `67108864` (64 MiB).
+- `FLEZHA_EFFECT_MAX_BYTES`: The largest encoded result `ctx.effect` keeps; a larger one is refused `effect.too_large` ([recorded effects](../topics/core/effectively_once.md#recorded-effects)). Default: `4194304` (4 MiB).
+- `FLEZHA_MAX_WRITE_BUFFER_BYTES`: Per-stream send-buffer cap. A sender that honours the send gate never reaches it; what it refuses is answered to the caller, never discarded. Default: `8388608` (8 MiB).
+- `FLEZHA_SEND_GATE_HIGH_WATER` / `FLEZHA_SEND_GATE_LOW_WATER`: The send gate's watermarks, as **fractions** of `FLEZHA_MAX_WRITE_BUFFER_BYTES` so lowering the cap moves them with it. The gate rises when a stream's buffered plus queued bytes cross the high mark and falls when they drop under the low one; the sender holds in between. **The pair is taken whole or refused whole**: anything but two fractions with `0 < low < high < 1` leaves both defaults standing, because one configured mark beside one default is how a low-water mark ends up above its high-water one. Widening the gap costs memory and buys fewer wake-ups; narrowing it does the reverse. Neither is a throughput dial — the frames are sent either way. Default: `0.8` / `0.5`.
+- `FLEZHA_CREDIT_PARK_INTERVAL_MS`: How long a sender parked on an exhausted credit window waits before re-checking it. **A lost-wake fallback and a diagnostic, not a pacing dial**: `arm` and `grant` both `notify_all`, so the wait normally ends on the event and this bounds only a wake that never came. Lowering it buys no latency in the normal case and costs wakeups; raising it only lengthens recovery from a wake that was lost. `0` or an unparseable value reads as unset. Read inside `flz_core`, so a runner in any SDK satisfies it from its own environment.
+- `FLEZHA_CONTROL_ACK_TIMEOUT_MS`: First-frame ack deadline.
+- `FLEZHA_CONTROL_IDLE_TIMEOUT_MS`: Steady-state idle window.
+- `FLEZHA_CONTROL_KEEPALIVE_MS`: Control-channel ping interval.
+- `FLEZHA_DATA_HEARTBEAT_MS`: `data_heartbeat` interval, jittered into `[base/2, base]`.
+- `FLEZHA_WORKER_POOL_SIZE`: Read today by the Elixir, Java, Python, Ruby and Rust SDKs; the Node and PHP SDKs size their work otherwise. Default: Rust: host parallelism; Java: `2` fetchers; Python and Ruby: the processor count; Elixir: the schedulers online.
+- `FLEZHA_WORKER_POOL_MAX`: The ceiling the starvation supervisor may grow the worker or fetcher set to, read by the same five SDKs. Default: `10 × FLEZHA_WORKER_POOL_SIZE` (derived, never below it).
+- `FLEZHA_MAX_INFLIGHT_ACTIVATIONS`: How many cells are handed out at once, a steps stage's as well as a flow relay's.
+- `FLEZHA_DROP_NOTHING_NONPARKING`: **Temporary rollout switch** (`flz_core::routing`). On, a `DropNothing` push a producing Cell cannot deliver is held in that Cell's push holdback and the Cell is handed no further work until it lands, instead of parking the calling host thread. Off, the producer parks as before. Reaches every SDK, since all complete through `flz_core`. Nothing an author declared changes either way — the guarantee is "nothing discarded, order preserved" in both. **It buys the freed thread and costs throughput under saturation**: free at the default mailbox capacity (p = 0.46), but **30–36% slower than the park** on a mailbox held continuously full (measured at `FLEZHA_MAILBOX_CAPACITY=4`). Turn it on where a host cannot afford to hold a thread — a single-threaded FFI host, a Java carrier pinned by a native frame — not for speed. Flipping the DEFAULT is gated on three things: a ≥ 2 h soak with it on against a genuinely saturated consumer, the Java round-trip bench under both settings (owed), and that 30–36% cost closed or accepted in writing; the flag is deleted in the change that flips it or the next one (`docs/dev_notes/nonblocking-drop-nothing-backpressure.md`). Default: `false` (off).
+- `FLEZHA_PUSH_HOLDBACK_MAX`: How many undelivered pushes one producing Cell may hold before an emit waits for its own earlier ones to land. Only an in-process typed emit loop can reach it; an FFI host's outputs are materialized before the core sees them. Reaching it logs one throttled `flezha::mailbox` warning naming the producer and the consumer.
+- `FLEZHA_FLUSH_BEFORE_EMIT`: `0`/`false`/`off`/`no` reverts to inline emit. Default: `true` (on).
+- `FLEZHA_REAP_INTERVAL_MS`: Idle-Cell reaper cadence. Default: `min(cell_idle_ttl / 4, 30 s)` (derived).
+- `FLEZHA_RECONNECT_RING_CAPACITY`: Frames held while no stream will take them, replayed when one binds, oldest dropped on overflow and counted as a drop-oldest shed. Only a frame whose guarantee class is held enters it: a durable record or a plugin/steps output, never a control frame and never the heartbeat.
+- `FLEZHA_BROKEN_PIPE_RECONNECT_THRESHOLD` / `FLEZHA_BROKEN_PIPE_WINDOW_MS`: Write failures inside the window that request a reconnect.
+- `FLEZHA_RECONNECT_REQUEST_RETRY_MS`: An unanswered reconnect request re-arms after this, so it cannot disarm the detector for good.
+- `FLEZHA_STEPS_ACK_TIMEOUT_MS`: How long one barrier send waits for its ack before it is re-sent (three sends in all), a deadline on the pass sheet; the controller reads the same value as its deadline for the effect records a barrier names to become durable, and fails the barrier with `record_not_durable` past it.
+- `FLEZHA_FIXTURE_SLEEP_AFTER_MS`: Test apps only: the `sleep_after` the reference runners' sleeping fixtures declare, so a drill or `mix bench.steps` can watch an instance sleep. A relay's sleep interval is its class's `durable` setting (`sleep_after`; by default a flow class never sleeps and a steps class sleeps after six hours), never the environment.
+- `FLEZHA_NATIVE_LIB_DIR`: Where the bundled `flz_core_ffi` library is extracted. Default: `java.io.tmpdir`.
+
+## Every variable
+
+<!-- config-keys:begin runner -->
+| Variable | Type | Default |
 |---|---|---|
-| `FLEZHA_RUNNER_ID_PATH` | `/var/lib/flezha-runner/id` | `flz_core::persistent_id` — the durable stable identity; an unwritable path degrades to a fresh per-boot id with one warning, never a refusal |
-| `FLEZHA_MAILBOX_CAPACITY` | `1024` (range `1..1_048_576`) | per-Cell mailbox bound in every SDK; a Tasklet that overrides `mailbox_capacity()` wins over it |
-| `FLEZHA_SOCKET_FILES_PATH` | resolved by the [socket-directory ladder](files_and_sockets.md#the-socket-directory-ladder) | `flz_transport` path helper — every SDK reaches it |
-| `FLEZHA_TRANSPORT` | `uds` | `flz_transport` (`quic` is the only other value, [experimental: quic](../publishing/maturity.md#quic)) |
-| `FLEZHA_QUIC_ADDRESSES` | `127.0.0.1:4433` | `flz_transport` — a comma list of controller endpoints, each a name or a literal with an optional port (default `4433`), re-resolved on **every** attempt. `FLEZHA_QUIC_ADDRESS` is not honoured and, set alone, refuses startup naming this one; [experimental: quic](../publishing/maturity.md#quic) |
-| `FLEZHA_CA_CERT_PATH` | `app_data/certs/ca.pem` | `flz_transport` |
-| `FLEZHA_QUIC_CLIENT_CERT` / `FLEZHA_QUIC_CLIENT_KEY` | `app_data/certs/client.pem` / `app_data/certs/client.key` | `flz_transport` — the client pair presented to a QUIC server that requires peer authentication; [experimental: quic](../publishing/maturity.md#quic) |
-| `FLEZHA_MAX_FRAME_BYTES` | `67108864` (64 MiB) | `flz_transport` — pre-auth frame-length limit enforced by both frame parsers, cached on first read |
-| `FLEZHA_EFFECT_MAX_BYTES` | `4194304` (4 MiB) | `flz_core::effect_result`, `Flezha.SDK.Knob` — the largest encoded result `ctx.effect` keeps; a larger one is refused `effect.too_large` ([recorded effects](../topics/core/effectively_once.md#recorded-effects)) |
-| `FLEZHA_MAX_WRITE_BUFFER_BYTES` | `8388608` (8 MiB) | `flz_transport` — per-stream send-buffer cap. A sender that honours the send gate never reaches it; what it refuses is answered to the caller, never discarded |
-| `FLEZHA_SEND_GATE_HIGH_WATER` / `FLEZHA_SEND_GATE_LOW_WATER` | `0.8` / `0.5` | `flz_transport::transport::send_gate` — the send gate's watermarks, as **fractions** of `FLEZHA_MAX_WRITE_BUFFER_BYTES` so lowering the cap moves them with it. The gate rises when a stream's buffered plus queued bytes cross the high mark and falls when they drop under the low one; the sender holds in between. **The pair is taken whole or refused whole**: anything but two fractions with `0 < low < high < 1` leaves both defaults standing, because one configured mark beside one default is how a low-water mark ends up above its high-water one. Widening the gap costs memory and buys fewer wake-ups; narrowing it does the reverse. Neither is a throughput dial — the frames are sent either way |
-| `FLEZHA_CREDIT_PARK_INTERVAL_MS` | `50` | `flz_core::credit` — how long a sender parked on an exhausted credit window waits before re-checking it. **A lost-wake fallback and a diagnostic, not a pacing dial**: `arm` and `grant` both `notify_all`, so the wait normally ends on the event and this bounds only a wake that never came. Lowering it buys no latency in the normal case and costs wakeups; raising it only lengthens recovery from a wake that was lost. `0` or an unparseable value reads as unset. Read inside `flz_core`, so a runner in any SDK satisfies it from its own environment |
-| `FLEZHA_CONTROL_ACK_TIMEOUT_MS` | `10000` | `flz_transport` — first-frame ack deadline |
-| `FLEZHA_CONTROL_IDLE_TIMEOUT_MS` | `45000` | `flz_transport` — steady-state idle window |
-| `FLEZHA_CONTROL_KEEPALIVE_MS` | `15000` | `flz_transport` — control-channel ping interval |
-| `FLEZHA_DATA_HEARTBEAT_MS` | `10000` | `flz_transport` — `data_heartbeat` interval, jittered into `[base/2, base]` |
-| `FLEZHA_WORKER_POOL_SIZE` | Rust: host parallelism; Java: `2` fetchers; Elixir: the schedulers online | `flezha_runner::relay::poll_pool`, `FlezhaEnv`, `Flezha.SDK.Pool` |
-| `FLEZHA_WORKER_POOL_MAX` | `10 × FLEZHA_WORKER_POOL_SIZE` (derived, never below it) | Rust, Java and Elixir — ceiling the starvation supervisor may grow the worker/fetcher set to (`flezha_runner::relay::poll_pool`, `FlezhaEnv`, `Flezha.SDK.Pool`) |
-| `FLEZHA_MAX_INFLIGHT_ACTIVATIONS` | `1024` | `flz_core::poll_core` — how many cells are handed out at once, a steps stage's as well as a flow relay's |
-| `FLEZHA_DROP_NOTHING_NONPARKING` | `false` (off) | **Temporary rollout switch** (`flz_core::routing`). On, a `DropNothing` push a producing Cell cannot deliver is held in that Cell's push holdback and the Cell is handed no further work until it lands, instead of parking the calling host thread. Off, the producer parks as before. Reaches every SDK, since all complete through `flz_core`. Nothing an author declared changes either way — the guarantee is "nothing discarded, order preserved" in both. **It buys the freed thread and costs throughput under saturation**: free at the default mailbox capacity (p = 0.46), but **30–36% slower than the park** on a mailbox held continuously full (measured at `FLEZHA_MAILBOX_CAPACITY=4`). Turn it on where a host cannot afford to hold a thread — a single-threaded FFI host, a Java carrier pinned by a native frame — not for speed. Flipping the DEFAULT is gated on three things: a ≥ 2 h soak with it on against a genuinely saturated consumer, the Java round-trip bench under both settings (owed), and that 30–36% cost closed or accepted in writing; the flag is deleted in the change that flips it or the next one (`docs/dev_notes/nonblocking-drop-nothing-backpressure.md`) |
-| `FLEZHA_PUSH_HOLDBACK_MAX` | `4096` | `flz_core::routing` — how many undelivered pushes one producing Cell may hold before an emit waits for its own earlier ones to land. Only an in-process typed emit loop can reach it; an FFI host's outputs are materialized before the core sees them. Reaching it logs one throttled `flezha::mailbox` warning naming the producer and the consumer |
-| `FLEZHA_FLUSH_LINGER_MS` | `5` | `flz_core::flusher` |
-| `FLEZHA_FLUSH_BEFORE_EMIT` | `true` (on) | Rust dispatcher; `0`/`false`/`off`/`no` reverts to inline emit |
-| `FLEZHA_REAP_INTERVAL_MS` | `min(cell_idle_ttl / 4, 30 s)` (derived) | `flz_core::dynamic` — idle-Cell reaper cadence |
-| `FLEZHA_RECONNECT_RING_CAPACITY` | `1024` | `flz_core::state_sink` — frames held while no stream will take them, replayed when one binds, oldest dropped on overflow and counted as a drop-oldest shed. Only a frame whose guarantee class is held enters it: a durable record or a plugin/steps output, never a control frame and never the heartbeat |
-| `FLEZHA_BROKEN_PIPE_RECONNECT_THRESHOLD` / `FLEZHA_BROKEN_PIPE_WINDOW_MS` | `10` / `5000` | `flz_core::state_sink` — write failures inside the window that request a reconnect |
-| `FLEZHA_RECONNECT_REQUEST_RETRY_MS` | `30000` | `flz_core::state_sink` — an unanswered reconnect request re-arms after this, so it cannot disarm the detector for good |
-| `FLEZHA_STEPS_ACK_TIMEOUT_MS` | `30000` | `flz_core::steps` and the controller's commit worker: how long one barrier send waits for its ack before it is re-sent (three sends in all), a deadline on the pass sheet; the controller reads the same value as its deadline for the effect records a barrier names to become durable, and fails the barrier with `record_not_durable` past it |
-| `FLEZHA_FIXTURE_SLEEP_AFTER_MS` | unset | Test apps only: the `sleep_after` the reference runners' sleeping fixtures declare, so a drill or `mix bench.steps` can watch an instance sleep. A relay's sleep interval is its class's `durable` setting (`sleep_after`; by default a flow class never sleeps and a steps class sleeps after six hours), never the environment |
-| `FLEZHA_NATIVE_LIB_DIR` | `java.io.tmpdir` | Java `NativeLibraryLoader` — where the bundled `flz_core_ffi` library is extracted |
+| `FLEZHA_BENCH_MEASUREMENT_SECS` | int | `30` |
+| `FLEZHA_BROKEN_PIPE_RECONNECT_THRESHOLD` | positive_int | `10` |
+| `FLEZHA_BROKEN_PIPE_WINDOW_MS` | ms | `5000` |
+| `FLEZHA_CA_CERT_PATH` | path | `app_data/certs/ca.pem` |
+| `FLEZHA_CONTRACT_DIR` | path | unset |
+| `FLEZHA_CONTROL_ACK_TIMEOUT_MS` | ms | `10000` |
+| `FLEZHA_CONTROL_IDLE_TIMEOUT_MS` | ms | `45000` |
+| `FLEZHA_CONTROL_KEEPALIVE_MS` | ms | `15000` |
+| `FLEZHA_CREDIT_PARK_INTERVAL_MS` | ms | `50` |
+| `FLEZHA_DATA_HEARTBEAT_MS` | ms | `10000` |
+| `FLEZHA_DROP_NOTHING_NONPARKING` | bool | `false` |
+| `FLEZHA_EFFECT_MAX_BYTES` | int | `4194304` |
+| `FLEZHA_FLUSH_BEFORE_EMIT` | bool | `true` |
+| `FLEZHA_FLUSH_LINGER_MS` | ms | `5` |
+| `FLEZHA_LOG_LEVEL` | one of `debug`, `info`, `warn`, `error` | `info (controller), warn (runner)` |
+| `FLEZHA_MAILBOX_CAPACITY` | positive_int | `1024` |
+| `FLEZHA_MAX_ACTIVATIONS` | positive_int | unset |
+| `FLEZHA_MAX_FRAME_BYTES` | int | `67108864` |
+| `FLEZHA_MAX_INFLIGHT_ACTIVATIONS` | positive_int | `1024` |
+| `FLEZHA_MAX_WRITE_BUFFER_BYTES` | int | `8388608` |
+| `FLEZHA_NAMESPACE_SECRET` | string | unset |
+| `FLEZHA_NATIVE_BINARY` | path | unset |
+| `FLEZHA_NATIVE_LIB_DIR` | path | unset |
+| `FLEZHA_NODE_WORKERS` | positive_int | unset |
+| `FLEZHA_PHP_EXECUTOR` | string | unset |
+| `FLEZHA_PUSH_HOLDBACK_MAX` | positive_int | `4096` |
+| `FLEZHA_PYTHON_EXECUTOR` | string | unset |
+| `FLEZHA_QUIC_ADDRESS` | address | unset |
+| `FLEZHA_QUIC_ADDRESSES` | string | `127.0.0.1:4433` |
+| `FLEZHA_QUIC_CLIENT_CERT` | path | `app_data/certs/client.pem` |
+| `FLEZHA_QUIC_CLIENT_KEY` | path | `app_data/certs/client.key` |
+| `FLEZHA_REAP_INTERVAL_MS` | ms | unset |
+| `FLEZHA_RECONNECT_REQUEST_RETRY_MS` | ms | `30000` |
+| `FLEZHA_RECONNECT_RING_CAPACITY` | positive_int | `1024` |
+| `FLEZHA_RELEASE_BASE_URL` | string | unset |
+| `FLEZHA_RUBY_EXECUTOR` | string | unset |
+| `FLEZHA_RUNNER_ID_PATH` | path | `/var/lib/flezha-runner/id` |
+| `FLEZHA_SDK_BUILD_NIF` | bool | `false` |
+| `FLEZHA_SEND_GATE_HIGH_WATER` | int | unset |
+| `FLEZHA_SEND_GATE_LOW_WATER` | int | unset |
+| `FLEZHA_SOCKET_DIR_GROUP` | string | unset |
+| `FLEZHA_SOCKET_FILES_PATH` | path | derived per run |
+| `FLEZHA_STEPS_ACK_TIMEOUT_MS` | ms | `30000` |
+| `FLEZHA_TRANSPORT` | one of `uds`, `quic` | `uds` |
+| `FLEZHA_WORKER_POOL_MAX` | positive_int | unset |
+| `FLEZHA_WORKER_POOL_SIZE` | positive_int | unset |
+| `FLEZHA_YJIT` | bool | `false` |
+<!-- config-keys:end -->
 
 ## `FLEZHA_DROP_NOTHING_NONPARKING`: read this before you set it
 

@@ -1005,10 +1005,12 @@ and state are kept for a while: `flz relay info <id>` shows phase
 `finished` with the status, result and finish time. They are removed once the
 retention window has passed.
 
-| Setting | Default |
-| --- | --- |
-| `FLEZHA_STEPS_RETENTION_HOURS` (`:default_relay_completed_retention_hours`) | 72 hours |
-| `:relay_completed_retention_hours`, `%{<class> => hours}` | none: a per-class override |
+- `FLEZHA_STEPS_RETENTION_HOURS` sets `:default_relay_completed_retention_hours`, the
+  retention every class takes.
+- `:relay_completed_retention_hours`, a `%{<class> => hours}` map, overrides it per class.
+
+Their types and defaults are in [Controller environment variables](../../configuration/environment_variables.md#every-variable)
+and [Application env keys](../../configuration/application_env.md#every-key).
 
 A workflow's cell keeps point-in-time history for
 `time_travel_retention_hours`, like a stream's; set it to `0` for a class that

@@ -734,30 +734,4 @@ defmodule Flezha.Config.Keys do
   end
 
   def env_name(name), do: fetch!(name).env
-
-  @doc """
-  The default as a user reads it in the `docs/public/configuration/` pages — the one
-  rendering, so a document and a row cannot disagree about a value's spelling.
-  """
-  @spec render_default(name() | row()) :: binary()
-  def render_default(name) when is_atom(name), do: render_default(fetch!(name))
-  def render_default(%{default: {:late, _}}), do: "derived at boot"
-  def render_default(%{default: {:env, var, _}}), do: var
-  def render_default(%{per_run: p, default: nil}) when p != nil, do: "derived per run"
-  def render_default(%{default: nil, derived: d}) when d != nil, do: "derived"
-  def render_default(%{default: nil}), do: "unset"
-
-  # The variable is days; the key it fills is seconds, because that is what
-  # every reader of the key wants. The published default is the variable's unit.
-  def render_default(%{type: {:custom, :days_to_seconds}, default: seconds}),
-    do: to_string(div(seconds, 86_400))
-
-  def render_default(%{default: [{reader, _} | _] = per_reader})
-      when reader in [:controller, :runner],
-      do: Enum.map_join(per_reader, ", ", fn {who, v} -> "#{v} (#{who})" end)
-
-  def render_default(%{type: {:list, _}, default: list}) when is_list(list),
-    do: Enum.map_join(list, ",", &to_string/1)
-
-  def render_default(%{default: value}), do: to_string(value)
 end

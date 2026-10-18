@@ -398,10 +398,10 @@ its child about two seconds later, whatever the timeouts say.
 > `docker/{prod,dev}/docker-compose.yml` and
 > `docker/dev/docker-compose.healing.yml`.
 
-| Setting | Default | What it does |
-| --- | --- | --- |
-| `FLEZHA_GRACEFUL_SHUTDOWN_ENABLED` | `true` | `1`, `true`, `yes` or `on` (any case) is true; anything else turns graceful shutdown off |
-| `FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS` | 60000 | bounds the whole sequence |
+- `FLEZHA_GRACEFUL_SHUTDOWN_ENABLED`: `1`, `true`, `yes` or `on` (any case) is true; anything else turns graceful shutdown off.
+- `FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS`: Bounds the whole sequence.
+
+Their types and defaults are in [Controller environment variables](../../configuration/environment_variables.md#every-variable).
 
 **Relays that defer their move.** When any move is planned (a node joining,
 a rebind, a drain), each relay is asked whether it may move now, and
@@ -413,11 +413,11 @@ answers "not yet" while a move would tear critical work:
 | a durable steps instance that is not asleep | it reaches a committed iteration boundary and sleeps |
 | an effectively-once outbox not yet flushed | it is asked again on the next retry |
 
-| Setting | Default | What it does |
-| --- | --- | --- |
-| `FLEZHA_MIGRATION_CONSENT_TIMEOUT_MS` | 5000 | no answer within this counts as "not yet" |
-| `FLEZHA_MIGRATION_RETRY_INTERVAL_MS` | 2000 | how often a deferring relay is asked again |
-| `FLEZHA_MIGRATION_MAX_DEFER_MS` | the shutdown timeout | after this, the relay is moved by force and recovers from its journal and log on the target; a deferring relay does not outlive the shutdown window |
+- `FLEZHA_MIGRATION_CONSENT_TIMEOUT_MS`: No answer within this counts as "not yet".
+- `FLEZHA_MIGRATION_RETRY_INTERVAL_MS`: How often a deferring relay is asked again.
+- `FLEZHA_MIGRATION_MAX_DEFER_MS`: After this, the relay is moved by force and recovers from its journal and log on the target; a deferring relay does not outlive the shutdown window.
+
+Their types and defaults are in [Controller environment variables](../../configuration/environment_variables.md#every-variable).
 
 **`flz controller stop`** drives the shutdown in each run mode, streams drain
 progress to stderr, and needs the `controller.stop` permission. Its options:

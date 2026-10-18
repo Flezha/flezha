@@ -498,14 +498,14 @@ can call it with no runner started and no controller running.
 
 ## Configuration
 
-| Variable | Meaning | Default |
-| --- | --- | --- |
-| `FLEZHA_NODE_WORKERS` | Dispatch loops; `0` is the main loop | `0` |
-| `FLEZHA_WORKER_POOL_SIZE` | Base native threads for blocking core calls | `2` |
-| `FLEZHA_WORKER_POOL_MAX` | Ceiling the pool and the fetcher set may grow to | 10× the base |
-| `FLEZHA_TRANSPORT` | `uds` (default) or `quic` | `uds` |
-| `FLEZHA_NATIVE_BINARY` | An already-built addon, skipping resolution | unset |
-| `FLEZHA_LOG_LEVEL` | `debug` / `info` / `warn` / `error` for the default logger | `warn` |
+- `FLEZHA_NODE_WORKERS`: Dispatch loops; `0` is the main loop.
+- `FLEZHA_WORKER_POOL_SIZE`: Base native threads for blocking core calls.
+- `FLEZHA_WORKER_POOL_MAX`: Ceiling the pool and the fetcher set may grow to.
+- `FLEZHA_TRANSPORT`: `uds` (default) or `quic`.
+- `FLEZHA_NATIVE_BINARY`: An already-built addon, skipping resolution.
+- `FLEZHA_LOG_LEVEL`: `debug` / `info` / `warn` / `error` for the default logger.
+
+Their types and defaults are in [Runner environment variables](../../public/configuration/runner_environment.md#every-variable).
 
 Transport configuration rides the same environment every poll host reads —
 [Runner environment variables](../../public/configuration/runner_environment.md).

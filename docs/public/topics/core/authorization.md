@@ -466,15 +466,16 @@ take `--token` like the others.
 Precedence is the environment variable, then `config :flezha, :authn_authz`,
 then the default.
 
-| Variable | Default | Meaning |
-| --- | --- | --- |
-| `FLEZHA_AUTHZ_ENABLED` | `false`, on in a release | `1`, `true`, `yes` or `on` enables it; any other value is the explicit opt-out, warned on every boot |
-| `FLEZHA_AUTHZ_DIR` | `app_data/auth` | where the stores live |
-| `FLEZHA_AUTHZ_BOOTSTRAP_TOKEN_PATH` | `<auth_dir>/bootstrap.token` | the one-time token file |
-| `FLEZHA_AUTHZ_TOKEN_EXPIRY_WARNING_MS` | 86400000 | how far ahead of its expiry a token emits `:token_expiring` |
-| `:token_ttl_default_seconds` (application env) | 86 400 | lifetime of the admin token a claim mints |
-| `:token_expiry_check_interval_ms` (application env) | 300 000 | how often expiring tokens are looked for |
-| `:namespaces` (application env) | none | per-namespace quota overrides |
+- `FLEZHA_AUTHZ_ENABLED`: On in a release, off otherwise. `1`, `true`, `yes` or `on` enables it; any other value is the explicit opt-out, warned on every boot.
+- `FLEZHA_AUTHZ_DIR`: Where the stores live.
+- `FLEZHA_AUTHZ_BOOTSTRAP_TOKEN_PATH`: The one-time token file.
+- `FLEZHA_AUTHZ_TOKEN_EXPIRY_WARNING_MS`: How far ahead of its expiry a token emits `:token_expiring`.
+- `:token_ttl_default_seconds` (application env): Lifetime of the admin token a claim mints.
+- `:token_expiry_check_interval_ms` (application env): How often expiring tokens are looked for.
+- `:namespaces` (application env): Per-namespace quota overrides.
+
+Their types and defaults are in [Controller environment variables](../../configuration/environment_variables.md#every-variable)
+and [Application env keys](../../configuration/application_env.md#every-key).
 
 The stores, in the auth directory (mode `0700`, files `0600`):
 

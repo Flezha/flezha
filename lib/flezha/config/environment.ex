@@ -21,6 +21,7 @@ defmodule Flezha.Config.Environment do
 
   alias Flezha.Config
   alias Flezha.Config.Keys
+  alias Flezha.Config.Reference
   alias Flezha.SDK.Knob
 
   @doc """
@@ -188,7 +189,7 @@ defmodule Flezha.Config.Environment do
       :error ->
         raise ArgumentError,
               "#{row.env}=#{inspect(raw)} is not a #{inspect(row.type)}; " <>
-                "#{row.name} keeps #{Keys.render_default(row)} when it is unset"
+                "#{row.name} keeps #{Reference.render_default(row)} when it is unset"
     end
   end
 

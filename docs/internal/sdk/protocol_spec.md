@@ -163,10 +163,10 @@ the logical id.
 
 ### Frame limits
 
-| Knob | Default | Meaning |
-|------|---------|---------|
-| `FLEZHA_MAX_FRAME_BYTES` | `67108864` (64 MiB) | Largest declared payload length either parser accepts; read once at boot |
-| `FLEZHA_MAX_WRITE_BUFFER_BYTES` | `8388608` (8 MiB) | Per-stream send-buffer cap in the UDS and QUIC drivers |
+- `FLEZHA_MAX_FRAME_BYTES`: Largest declared payload length either parser accepts; read once at boot.
+- `FLEZHA_MAX_WRITE_BUFFER_BYTES`: Per-stream send-buffer cap in the UDS and QUIC drivers.
+
+Their types and defaults are in [Runner environment variables](../../public/configuration/runner_environment.md#every-variable).
 
 Both are defined once (`max_frame_bytes()` / `max_write_buffer_bytes()` in
 `flz_transport/src/transport/config.rs`) and shared by the runner-side

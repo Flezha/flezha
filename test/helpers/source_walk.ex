@@ -75,6 +75,25 @@ defmodule FlezhaTest.Helper.SourceWalk do
   def read(path), do: held({:read, path}, fn -> File.read!(path) end)
 
   @doc """
+  The generated block `page` carries between `<!-- marker:begin name -->` and
+  the next `<!-- marker:end -->`, for a test that compares it with its
+  rendering. A page carrying one block of the kind opens it with the bare
+  `<!-- marker:begin -->`, so `name` falls back to that. `""` when there is none.
+  """
+  @spec block(binary(), binary(), binary() | nil) :: binary()
+  def block(page, marker, name \\ nil) do
+    text = read(page)
+    named = "<!-- #{marker}:begin #{name} -->\n"
+    open = if name && String.contains?(text, named), do: named, else: "<!-- #{marker}:begin -->\n"
+
+    text
+    |> String.split(open)
+    |> Enum.at(1, "")
+    |> String.split("<!-- #{marker}:end -->")
+    |> hd()
+  end
+
+  @doc """
   `path`'s quoted form, parsed once for the run.
 
   A gate that judges a shape rather than a spelling reads the AST, and parsing

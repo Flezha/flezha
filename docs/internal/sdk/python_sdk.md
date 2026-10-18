@@ -412,12 +412,12 @@ the core's starvation wait. It is `sdk/rust/src/relay/poll_pool.rs`
 transliterated, and it reads that host's environment rather than inventing a
 vocabulary:
 
-| Variable | What it sets | Default |
-| --- | --- | --- |
-| `FLEZHA_WORKER_POOL_SIZE` | base worker threads | the machine's processor count |
-| `FLEZHA_WORKER_POOL_MAX` | the ceiling the supervisor grows to | ten times the base, never below it |
-| `FLEZHA_MAX_INFLIGHT_ACTIVATIONS` | the core's in-flight cap | 1024 |
-| `FLEZHA_PYTHON_EXECUTOR` | `thread` (default) or `asyncio` | `thread` |
+- `FLEZHA_WORKER_POOL_SIZE`: Base worker threads.
+- `FLEZHA_WORKER_POOL_MAX`: The ceiling the supervisor grows to.
+- `FLEZHA_MAX_INFLIGHT_ACTIVATIONS`: The core's in-flight cap.
+- `FLEZHA_PYTHON_EXECUTOR`: `thread` (default) or `asyncio`.
+
+Their types and defaults are in [Runner environment variables](../../public/configuration/runner_environment.md#every-variable).
 
 State it plainly:
 

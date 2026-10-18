@@ -615,14 +615,14 @@ $ flz boot await --timeout 0
 boot await: recovering; unmet: durable_registry_loaded
 ```
 
-| Setting | Default | What it does |
-| --- | --- | --- |
-| `FLEZHA_AUTO_RESTORE_ENABLED` | `true` | only `true` or `1` enable it; off, nothing is written to the registry and relays must be started again after each boot |
-| `FLEZHA_PROCESS_HUB_CLUSTER_SETTLE_MS` | 2000 | how long a starting hub waits for peers before treating itself as alone; `0` when the cluster forms before the application starts |
-| `FLEZHA_PROCESS_HUB_RECONCILE_GRACE_MS` | 45000 | the longest a peer that never answers can hold a hub in `recovering` |
-| `FLEZHA_PROCESS_HUB_RECONCILE_INTERVAL_MS` | 30000 | at most one later recovery round per this interval |
-| `FLEZHA_BOOT_REPLAY_TIMEOUT_MS` | 60000 | how long a connecting runner is given while the cluster forms |
-| `FLEZHA_PROCESS_HUB_REGISTRY_ROOT` | `app_data/process_hub` | where the registry lives; must be persistent storage |
+- `FLEZHA_AUTO_RESTORE_ENABLED`: Only `true` or `1` enable it; off, nothing is written to the registry and relays must be started again after each boot.
+- `FLEZHA_PROCESS_HUB_CLUSTER_SETTLE_MS`: How long a starting hub waits for peers before treating itself as alone; `0` when the cluster forms before the application starts.
+- `FLEZHA_PROCESS_HUB_RECONCILE_GRACE_MS`: The longest a peer that never answers can hold a hub in `recovering`.
+- `FLEZHA_PROCESS_HUB_RECONCILE_INTERVAL_MS`: At most one later recovery round per this interval.
+- `FLEZHA_BOOT_REPLAY_TIMEOUT_MS`: How long a connecting runner is given while the cluster forms.
+- `FLEZHA_PROCESS_HUB_REGISTRY_ROOT`: Where the registry lives; must be persistent storage.
+
+Their types and defaults are in [Controller environment variables](../../configuration/environment_variables.md#every-variable).
 
 Turning auto-restore off takes effect on the next restart; an existing
 `app_data/process_hub/` is then ignored, and `flz reset` deletes it.

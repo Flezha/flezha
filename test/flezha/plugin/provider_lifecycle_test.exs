@@ -25,6 +25,7 @@ defmodule Flezha.Plugin.ProviderLifecycleTest do
   alias Flezha.Plugin.ProviderBehaviour.Options, as: ProviderOptions
   alias Flezha.TestHelpers.PluginPackage
 
+  alias FlezhaTest.Helper.SourceWalk
   alias FlezhaTest.Helper.Telemetry
   alias __MODULE__.ConformanceWorker
 
@@ -224,7 +225,8 @@ defmodule Flezha.Plugin.ProviderLifecycleTest do
 
         rendered = ProviderOptions.render_options_table(provider)
 
-        assert documented_table(page, provider) == rendered,
+        assert SourceWalk.block(page, "provider-options", provider.__provider__().name) ==
+                 rendered,
                "#{page}'s option table has drifted from #{inspect(provider)}'s declaration.\n" <>
                  "Replace the block between the provider-options markers with:\n\n" <> rendered
       end
@@ -437,23 +439,6 @@ defmodule Flezha.Plugin.ProviderLifecycleTest do
       Flezha.Plugin.Provider.PostgresPoll -> "docs/public/plugins/postgres_poll.md"
       _ -> nil
     end
-  end
-
-  @options_begin "<!-- provider-options:begin -->"
-  @options_end "<!-- provider-options:end -->"
-
-  # A page documenting two providers names each block after its provider; a page
-  # documenting one opens its block with the bare marker.
-  defp documented_table(page, provider) do
-    text = File.read!(page)
-    named = "<!-- provider-options:begin #{provider.__provider__().name} -->"
-
-    text
-    |> String.split(if String.contains?(text, named), do: named, else: @options_begin)
-    |> Enum.at(1, "")
-    |> String.split(@options_end)
-    |> hd()
-    |> String.trim_leading("\n")
   end
 
   ## Tree reading

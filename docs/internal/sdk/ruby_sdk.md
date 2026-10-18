@@ -443,10 +443,10 @@ itself, plus one supervisor parked in the core's starvation wait. Each
 starvation observation starts one more worker up to a ceiling; workers above
 the base retire after an idle streak.
 
-| Knob | Default | Meaning |
-| ---- | ------- | ------- |
-| `FLEZHA_WORKER_POOL_SIZE` | the machine's processor count | base workers |
-| `FLEZHA_WORKER_POOL_MAX` | ten times the base, never below it | the ceiling |
+- `FLEZHA_WORKER_POOL_SIZE`: Base workers.
+- `FLEZHA_WORKER_POOL_MAX`: The ceiling.
+
+Their types and defaults are in [Runner environment variables](../../public/configuration/runner_environment.md#every-variable).
 
 These are the Rust host's knobs, deliberately: this host is the Rust host's
 model, and a second vocabulary for the same decision makes a fleet harder to
