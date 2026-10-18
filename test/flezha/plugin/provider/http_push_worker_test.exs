@@ -20,7 +20,6 @@ defmodule FlezhaTest.Plugin.Provider.HttpPushWorkerTest do
   alias Flezha.Plugin.Extension.Ctx
   alias Flezha.Plugin.Provider.HttpPush
   alias Flezha.Plugin.Provider.HttpSend
-  alias Flezha.State.TestHelpers
   alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.Helper.ProviderPrepare
   alias FlezhaTest.Helper.Telemetry
@@ -36,7 +35,7 @@ defmodule FlezhaTest.Plugin.Provider.HttpPushWorkerTest do
 
     rc = "push_#{System.unique_integer([:positive])}"
     cell = {rc, "task", "k1"}
-    :ok = TestHelpers.stub_outbox_owner(cell)
+    :ok = ProviderPrepare.stub_outbox_owner(cell)
     {:ok, cell: cell, rc: rc}
   end
 
@@ -62,7 +61,7 @@ defmodule FlezhaTest.Plugin.Provider.HttpPushWorkerTest do
   defp out(opts, body, metadata \\ %{"channel" => "out"}),
     do: HttpPush.on_output(%Ctx.IO{message: body, metadata: metadata}, opts)
 
-  defp guaranteed(cell, seq, extra \\ %{}), do: TestHelpers.guaranteed_metadata(cell, seq, extra)
+  defp guaranteed(cell, seq, extra \\ %{}), do: ProviderPrepare.guaranteed_metadata(cell, seq, extra)
 
   defp header(headers, name) do
     Enum.find_value(String.split(headers, "\n"), fn line ->
@@ -148,7 +147,7 @@ defmodule FlezhaTest.Plugin.Provider.HttpPushWorkerTest do
     assert_receive {:request, _, first, "v1"}, 5_000
     assert_receive {:request, _, second, "v1"}, 5_000
     assert header(first, "idempotency-key") == header(second, "idempotency-key")
-    assert :ok = TestHelpers.assert_confirmed([{:cursor, 1}], 2_000)
+    assert :ok = ProviderPrepare.assert_confirmed([{:cursor, 1}], 2_000)
     assert_receive {:telemetry, [:flezha, :plugin, :http_push, :retried], _, %{reason: 503}}
   end
 
@@ -159,7 +158,7 @@ defmodule FlezhaTest.Plugin.Provider.HttpPushWorkerTest do
     log =
       capture_log(fn ->
         out(opts, "v1", guaranteed(cell, 1))
-        assert :ok = TestHelpers.assert_confirmed([{:cursor, 1}], 5_000)
+        assert :ok = ProviderPrepare.assert_confirmed([{:cursor, 1}], 5_000)
       end)
 
     assert_received {:request, _, _, "v1"}
@@ -179,7 +178,7 @@ defmodule FlezhaTest.Plugin.Provider.HttpPushWorkerTest do
 
     capture_log(fn ->
       out(opts, "v1", guaranteed(cell, 1))
-      assert :ok = TestHelpers.assert_confirmed([{:cursor, 1}], 5_000)
+      assert :ok = ProviderPrepare.assert_confirmed([{:cursor, 1}], 5_000)
     end)
 
     assert [entry] = dead_letters(rc)
@@ -196,7 +195,7 @@ defmodule FlezhaTest.Plugin.Provider.HttpPushWorkerTest do
     first = System.monotonic_time(:millisecond)
     assert_receive {:request, _, _, "v1"}, 5_000
     assert System.monotonic_time(:millisecond) - first >= 1_000
-    assert :ok = TestHelpers.assert_confirmed([{:cursor, 1}], 2_000)
+    assert :ok = ProviderPrepare.assert_confirmed([{:cursor, 1}], 2_000)
   end
 
   test "retries that run out park the output as http_push.exhausted", %{cell: cell, rc: rc} do
@@ -205,7 +204,7 @@ defmodule FlezhaTest.Plugin.Provider.HttpPushWorkerTest do
 
     capture_log(fn ->
       out(opts, "v1", guaranteed(cell, 1))
-      assert :ok = TestHelpers.assert_confirmed([{:cursor, 1}], 5_000)
+      assert :ok = ProviderPrepare.assert_confirmed([{:cursor, 1}], 5_000)
     end)
 
     for _ <- 1..3, do: assert_received({:request, _, _, "v1"})
@@ -228,7 +227,7 @@ defmodule FlezhaTest.Plugin.Provider.HttpPushWorkerTest do
 
     capture_log(fn ->
       out(opts, "v1", guaranteed(cell, 1))
-      assert :ok = TestHelpers.assert_confirmed([{:cursor, 1}], 5_000)
+      assert :ok = ProviderPrepare.assert_confirmed([{:cursor, 1}], 5_000)
     end)
 
     assert [entry] = dead_letters(rc)
@@ -337,14 +336,14 @@ defmodule FlezhaTest.Plugin.Provider.HttpPushWorkerTest do
         assert %{queued: 2, overflowed: 1} = HttpSend.stats(pid)
         out(opts, "g3", guaranteed(cell, 3))
         assert %{queued: 2, overflowed: 2} = HttpSend.stats(pid)
-        assert :ok = TestHelpers.assert_confirmed([{:cursor, 1}], 5_000)
+        assert :ok = ProviderPrepare.assert_confirmed([{:cursor, 1}], 5_000)
       end)
 
       assert [entry] = dead_letters(rc)
       assert %{"details" => %{"reason" => "queue_full"}} = error_of(entry)
       WebhookServer.set(server, [200])
       assert received_bodies("g3") |> Enum.dedup() |> Enum.take(-2) == ["g2", "g3"]
-      assert :ok = TestHelpers.assert_confirmed([{:cursor, 2}, {:cursor, 3}], 5_000)
+      assert :ok = ProviderPrepare.assert_confirmed([{:cursor, 2}, {:cursor, 3}], 5_000)
     end
 
     test "drop_nothing makes the dispatch wait until there is room" do
@@ -375,7 +374,7 @@ defmodule FlezhaTest.Plugin.Provider.HttpPushWorkerTest do
         started = System.monotonic_time(:millisecond)
         out(opts, "g", guaranteed(cell, 1))
         assert System.monotonic_time(:millisecond) - started >= 200
-        assert :ok = TestHelpers.assert_confirmed([{:cursor, 1}], 5_000)
+        assert :ok = ProviderPrepare.assert_confirmed([{:cursor, 1}], 5_000)
       end)
 
       assert %{overflowed: 1, queued: 1} = HttpSend.stats(pid)
@@ -395,7 +394,7 @@ defmodule FlezhaTest.Plugin.Provider.HttpPushWorkerTest do
 
     capture_log(fn ->
       ProviderPrepare.stop(HttpPush, pid)
-      assert :ok = TestHelpers.assert_confirmed([{:cursor, 1}, {:cursor, 2}], 5_000)
+      assert :ok = ProviderPrepare.assert_confirmed([{:cursor, 1}, {:cursor, 2}], 5_000)
     end)
 
     assert entries = dead_letters(rc)

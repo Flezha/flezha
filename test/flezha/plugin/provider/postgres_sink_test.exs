@@ -24,7 +24,6 @@ defmodule FlezhaTest.Plugin.Provider.PostgresSinkTest do
   alias Flezha.Plugin.Provider.Postgres.SinkWorker
   alias Flezha.Plugin.Provider.WorkerSup
   alias Flezha.State.Outbox
-  alias Flezha.State.TestHelpers
   alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.Helper.ProviderPrepare
 
@@ -125,7 +124,7 @@ defmodule FlezhaTest.Plugin.Provider.PostgresSinkTest do
   } do
     rc = "pg_#{System.unique_integer([:positive])}"
     cell_id = {rc, "task", "k1"}
-    :ok = TestHelpers.stub_outbox_owner(cell_id)
+    :ok = ProviderPrepare.stub_outbox_owner(cell_id)
 
     {opts, _pid} = start_provider()
     cell = "#{rc}/task/k1"
@@ -142,7 +141,7 @@ defmodule FlezhaTest.Plugin.Provider.PostgresSinkTest do
     emit(opts, "v2", ack.(2))
 
     assert :ok =
-             TestHelpers.assert_confirmed([{:cursor, 1}, {:cursor, 2}], 10_000)
+             ProviderPrepare.assert_confirmed([{:cursor, 1}, {:cursor, 2}], 10_000)
 
     assert wait_until(fn -> progress(db) == [[cell, "2.0", 1]] end, 10_000)
 
@@ -154,7 +153,7 @@ defmodule FlezhaTest.Plugin.Provider.PostgresSinkTest do
     emit(opts, "v2", ack.(2))
 
     assert :ok =
-             TestHelpers.assert_confirmed([{:cursor, 1}, {:cursor, 2}], 10_000)
+             ProviderPrepare.assert_confirmed([{:cursor, 1}, {:cursor, 2}], 10_000)
 
     assert {rows(db), progress(db)} == before,
            "a re-driven batch must leave rows and progress byte-identical"

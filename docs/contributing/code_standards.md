@@ -87,7 +87,8 @@ stops being true the day the machine is busy.
 **Poll for the state the assertion needs, with a deadline and a message naming
 what never happened.** There is one polling loop in the suite for this,
 `FlezhaTest.Helper.NodeTestHelper.wait_until/3`. Reuse it rather than writing a
-second one. A sleep inside that loop is the poll interval and is correct; a
+second one; a plugin package reaches it as
+[Writing a test](testing.md#writing-a-test) says. A sleep inside that loop is the poll interval and is correct; a
 sleep in a test body is the smell.
 
 **A fixed delay in front of a negative assertion can pass without testing

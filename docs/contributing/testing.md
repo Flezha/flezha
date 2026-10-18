@@ -111,3 +111,17 @@ fails.
 A test waits on a condition, never on the clock.
 [How a test waits](code_standards.md#how-a-test-waits) has the rules and the
 one helper to use.
+
+The shared Elixir helpers live in `test/helpers/`; reuse one rather than
+writing a copy. `FlezhaTest.Helper.NodeTestHelper.wait_until/3` polls,
+`FlezhaTest.Helper.Telemetry.capture/2` forwards telemetry events to the test,
+`FlezhaTest.Helper.MimicGlobal.set_mimic_global_until_exit/1` holds Mimic's
+global mode for one test, and `FlezhaTest.Helper.ProviderPrepare` prepares and
+activates one provider and stands in for the writer a sink's outputs confirm
+to.
+
+A plugin package under `plugins/` uses the same helpers. A dependency compiles
+only its `lib`, so the package's test `elixirc_paths` names each core helper
+file it needs, as `plugins/flezha_kafka_plugin/mix.exs` does. A file named there
+must compile on its own against the core's `lib`: a helper that lives beside
+code needing more moves into a file of its own first.

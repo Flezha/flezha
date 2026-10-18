@@ -86,45 +86,6 @@ defmodule Flezha.State.TestHelpers do
   end
 
   @doc """
-  Stand in as the WalWriter that owns `cell_id`'s outbox cursor: the
-  delivery-confirmation seam (`Flezha.State.Outbox`) resolves the owning writer
-  through the state registry, so a registered test process receives the sink's
-  `hold` / `settled` / `confirm` reports as plain casts.
-
-  Used by the sink-plugin suites, which exercise the confirmation seam without a
-  real persistence subsystem behind it.
-  """
-  @spec stub_outbox_owner(Paths.cell_id()) :: :ok
-  def stub_outbox_owner(cell_id) do
-    case Elixir.Registry.start_link(keys: :unique, name: Supervisor.registry_name()) do
-      {:ok, _} -> :ok
-      {:error, {:already_started, _}} -> :ok
-    end
-
-    {:ok, _} = Elixir.Registry.register(Supervisor.registry_name(), cell_id, nil)
-    :ok
-  end
-
-  @doc """
-  Metadata a durable outbox flush would stamp on one output of `cell_id`'s
-  entry `seq` — identity plus the confirmation token the owning writer waits
-  on. `extra` merges over it for the fields a given sink reads.
-  """
-  @spec guaranteed_metadata(Paths.cell_id(), non_neg_integer(), map()) :: map()
-  def guaranteed_metadata({rc, sh, pk} = cell_id, seq, extra \\ %{}) do
-    Map.merge(
-      %{
-        "channel" => "out",
-        "flz.cell" => "#{rc}/#{sh}/#{pk}",
-        "flz.seq" => "#{seq}.0",
-        "flz.epoch" => "0",
-        Outbox.ack_key() => Outbox.token(cell_id, {:cursor, seq})
-      },
-      extra
-    )
-  end
-
-  @doc """
   The next durable output the chain was handed.
 
   The dispatcher hands a whole pass to the chain in ONE `{:io_out_batch,
@@ -203,31 +164,6 @@ defmodule Flezha.State.TestHelpers do
 
       buffered ->
         ExUnit.Assertions.flunk("output queued from an earlier batch: #{inspect(buffered)}")
-    end
-  end
-
-  @doc """
-  Every named entry is confirmed to its owning writer. A sink confirms a
-  completed batch in one report and parks one record at a time, and how many
-  records a linger window gathered into a batch is timing — so this asserts on
-  the entries confirmed, never on how they were reported.
-  """
-  def assert_confirmed(keys, timeout \\ 2_000), do: await_confirmed(MapSet.new(keys), timeout)
-
-  defp await_confirmed(remaining, timeout) do
-    if MapSet.size(remaining) == 0 do
-      :ok
-    else
-      receive do
-        {:"$gen_cast", {:outbox_confirmed_many, keys}} ->
-          await_confirmed(Enum.reduce(keys, remaining, &MapSet.delete(&2, &1)), timeout)
-
-        {:"$gen_cast", {:outbox_confirmed, key}} ->
-          await_confirmed(MapSet.delete(remaining, key), timeout)
-      after
-        timeout ->
-          ExUnit.Assertions.flunk("never confirmed: #{inspect(MapSet.to_list(remaining))}")
-      end
     end
   end
 

@@ -22,7 +22,6 @@ defmodule Flezha.Plugin.Provider.FileSinkTest do
   alias Flezha.Plugin.Provider.File.Sink
   alias Flezha.Plugin.Provider.File.WriteWorker
   alias Flezha.Plugin.Provider.WorkerSup
-  alias Flezha.State.TestHelpers
   alias FlezhaTest.Helper.Minio
   alias FlezhaTest.Helper.ProviderPrepare
 
@@ -53,7 +52,7 @@ defmodule Flezha.Plugin.Provider.FileSinkTest do
     test "a record holding a newline is parked, not written", %{out: file} do
       owner = owner()
       {opts, _sink} = start_sink()
-      release(opts, "a\nb", TestHelpers.guaranteed_metadata(owner, 1))
+      release(opts, "a\nb", ProviderPrepare.guaranteed_metadata(owner, 1))
 
       # Its hold is answered once the park is durable.
       assert_receive {:"$gen_cast", {:outbox_confirmed, {:cursor, 1}}}, 5_000
@@ -69,7 +68,7 @@ defmodule Flezha.Plugin.Provider.FileSinkTest do
       {opts, sink} = start_sink(@held_retry)
       fail_next_write(sink, file)
 
-      release(opts, "a", TestHelpers.guaranteed_metadata(owner, 1))
+      release(opts, "a", ProviderPrepare.guaranteed_metadata(owner, 1))
       assert wait_until(fn -> WriteWorker.stats(sink).consecutive_failures == 1 end, 2_000)
       refute_received {:"$gen_cast", {:outbox_confirmed_many, _}}
       assert File.read(file) == {:ok, ""}
@@ -85,7 +84,7 @@ defmodule Flezha.Plugin.Provider.FileSinkTest do
       {opts, sink} = start_sink(Map.merge(@held_retry, %{linger_ms: 60_000, max_batch: 3}))
       fail_next_write(sink, file)
 
-      for seq <- 1..3, do: release(opts, "r#{seq}", TestHelpers.guaranteed_metadata(owner, seq))
+      for seq <- 1..3, do: release(opts, "r#{seq}", ProviderPrepare.guaranteed_metadata(owner, seq))
       assert wait_until(fn -> WriteWorker.stats(sink).consecutive_failures == 1 end, 2_000)
 
       # What a write that failed part-way leaves behind, with a descriptor too
@@ -107,7 +106,7 @@ defmodule Flezha.Plugin.Provider.FileSinkTest do
 
       crash(opts, sink)
       activate(opts)
-      :ok = TestHelpers.stub_outbox_owner(cell_id)
+      :ok = ProviderPrepare.stub_outbox_owner(cell_id)
       hand_over(opts, records)
 
       assert_confirmed([{:cursor, 1}, {:cursor, 2}])
@@ -162,7 +161,7 @@ defmodule Flezha.Plugin.Provider.FileSinkTest do
       dir = Path.join(root, "out")
       owner = owner()
       {opts, sink} = start_sink(rename(%{roll_after_ms: 60_000}))
-      release(opts, "a", TestHelpers.guaranteed_metadata(owner, 1))
+      release(opts, "a", ProviderPrepare.guaranteed_metadata(owner, 1))
 
       assert wait_until(fn -> open_roll(dir) == "a\n" end, 2_000)
       refute_received {:"$gen_cast", {:outbox_confirmed_many, _}}
@@ -182,7 +181,7 @@ defmodule Flezha.Plugin.Provider.FileSinkTest do
 
       crash(opts, sink)
       activate(%{opts | roll_after_ms: 1})
-      :ok = TestHelpers.stub_outbox_owner(cell_id)
+      :ok = ProviderPrepare.stub_outbox_owner(cell_id)
       hand_over(opts, records)
 
       assert_confirmed([{:cursor, 1}, {:cursor, 2}])
@@ -207,7 +206,7 @@ defmodule Flezha.Plugin.Provider.FileSinkTest do
       activate(opts)
       assert wait_until(fn -> not File.exists?(Path.join(dir, "part-00000002")) end, 2_000)
 
-      :ok = TestHelpers.stub_outbox_owner(cell_id)
+      :ok = ProviderPrepare.stub_outbox_owner(cell_id)
       hand_over(opts, [first, second])
 
       assert_confirmed([{:cursor, 1}, {:cursor, 2}])
@@ -225,7 +224,7 @@ defmodule Flezha.Plugin.Provider.FileSinkTest do
 
       crash(opts, sink)
       activate(opts)
-      :ok = TestHelpers.stub_outbox_owner(cell_id)
+      :ok = ProviderPrepare.stub_outbox_owner(cell_id)
       hand_over(opts, records)
 
       assert_confirmed([{:cursor, 1}, {:cursor, 2}])
@@ -286,7 +285,7 @@ defmodule Flezha.Plugin.Provider.FileSinkTest do
       owner = owner()
       extra = Map.merge(@held_retry, %{roll_after_ms: 60_000, unhealthy_after_ms: 1})
       {opts, sink} = start_sink(rename(extra))
-      release(opts, "a", TestHelpers.guaranteed_metadata(owner, 1))
+      release(opts, "a", ProviderPrepare.guaranteed_metadata(owner, 1))
       assert wait_until(fn -> open_roll(dir) == "a\n" end, 2_000)
 
       # A directory the worker cannot rename in: the part rename fails.
@@ -338,7 +337,7 @@ defmodule Flezha.Plugin.Provider.FileSinkTest do
     test "a roll becomes one object, and its holds wait for the sidecar", %{s3: s3} do
       owner = owner()
       {opts, sink} = start_sink(rename(%{roll_after_ms: 60_000}))
-      for seq <- 1..2, do: release(opts, "r#{seq}", TestHelpers.guaranteed_metadata(owner, seq))
+      for seq <- 1..2, do: release(opts, "r#{seq}", ProviderPrepare.guaranteed_metadata(owner, seq))
 
       assert wait_until(fn -> :sys.get_state(sink).roll.bytes == 6 end, 2_000)
       assert keys(s3, "out") == []
@@ -367,7 +366,7 @@ defmodule Flezha.Plugin.Provider.FileSinkTest do
       activate(%{opts | roll_after_ms: 1})
       assert wait_until(fn -> keys(s3, "out") == [] end, 5_000)
 
-      :ok = TestHelpers.stub_outbox_owner(cell_id)
+      :ok = ProviderPrepare.stub_outbox_owner(cell_id)
       hand_over(opts, records)
 
       assert_confirmed([{:cursor, 1}, {:cursor, 2}])
@@ -390,7 +389,7 @@ defmodule Flezha.Plugin.Provider.FileSinkTest do
          %{s3: s3} do
       owner = owner()
       {opts, sink} = start_sink(rename(%{roll_after_ms: 60_000}))
-      release(opts, "a", TestHelpers.guaranteed_metadata(owner, 1))
+      release(opts, "a", ProviderPrepare.guaranteed_metadata(owner, 1))
       assert wait_until(fn -> :sys.get_state(sink).roll.bytes == 2 end, 2_000)
       :ok = S3.put_if("out/.progress", ~s({"part":7,"watermarks":{}}), 7, &(&1 <= 7), s3)
 
@@ -518,7 +517,7 @@ defmodule Flezha.Plugin.Provider.FileSinkTest do
   # The test process stands in for the writer owning the record's entry.
   defp owner do
     cell_id = cell_id()
-    :ok = TestHelpers.stub_outbox_owner(cell_id)
+    :ok = ProviderPrepare.stub_outbox_owner(cell_id)
     cell_id
   end
 
@@ -532,8 +531,8 @@ defmodule Flezha.Plugin.Provider.FileSinkTest do
 
     {cell_id,
      [
-       {"a", TestHelpers.guaranteed_metadata(cell_id, 1)},
-       {"b", TestHelpers.guaranteed_metadata(cell_id, 2)}
+       {"a", ProviderPrepare.guaranteed_metadata(cell_id, 1)},
+       {"b", ProviderPrepare.guaranteed_metadata(cell_id, 2)}
      ]}
   end
 

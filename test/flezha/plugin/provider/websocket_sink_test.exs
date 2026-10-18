@@ -19,7 +19,6 @@ defmodule FlezhaTest.Plugin.Provider.WebsocketSinkTest do
   alias Flezha.Plugin.Provider.Websocket.Sink
   alias Flezha.Process.Timer
   alias Flezha.State.Outbox
-  alias Flezha.State.TestHelpers
   alias FlezhaTest.Helper.ProviderPrepare
   alias FlezhaTest.Helper.Telemetry
   alias FlezhaTest.Helper.WebsocketSourceFixtures
@@ -224,17 +223,17 @@ defmodule FlezhaTest.Plugin.Provider.WebsocketSinkTest do
     setup do
       rc = "ws_#{System.unique_integer([:positive])}"
       cell_id = {rc, "task", "k1"}
-      :ok = TestHelpers.stub_outbox_owner(cell_id)
+      :ok = ProviderPrepare.stub_outbox_owner(cell_id)
       {:ok, cell_id: cell_id}
     end
 
-    defp guaranteed(cell_id, seq), do: TestHelpers.guaranteed_metadata(cell_id, seq)
+    defp guaranteed(cell_id, seq), do: ProviderPrepare.guaranteed_metadata(cell_id, seq)
 
     test "\"none\" answers the hold at handoff", %{cell_id: cell_id} do
       {{:reply, _frames, _state}, _ref} =
         dispatch(state(sink!()), "v1", guaranteed(cell_id, 1))
 
-      assert :ok = TestHelpers.assert_confirmed([{:cursor, 1}], 2_000)
+      assert :ok = ProviderPrepare.assert_confirmed([{:cursor, 1}], 2_000)
     end
 
     test "\"none\" answers nothing while the socket is down", %{cell_id: cell_id} do
@@ -270,7 +269,7 @@ defmodule FlezhaTest.Plugin.Provider.WebsocketSinkTest do
         Client.handle_in({:text, Jason.encode!(%{"req_id" => req_id, "success" => true})}, sent)
 
       assert settled.sink.inflight == %{}
-      assert :ok = TestHelpers.assert_confirmed([{:cursor, 1}], 2_000)
+      assert :ok = ProviderPrepare.assert_confirmed([{:cursor, 1}], 2_000)
     end
 
     # The per-frame path: a frame answered on its first send served no rung. The
@@ -335,7 +334,7 @@ defmodule FlezhaTest.Plugin.Provider.WebsocketSinkTest do
 
       assert log =~ "parked undeliverable output"
       assert log =~ "ws_sink_unacknowledged"
-      assert :ok = TestHelpers.assert_confirmed([{:cursor, 1}], 2_000)
+      assert :ok = ProviderPrepare.assert_confirmed([{:cursor, 1}], 2_000)
     end
 
     defp required_opts do

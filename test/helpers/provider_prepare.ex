@@ -7,6 +7,10 @@ defmodule FlezhaTest.Helper.ProviderPrepare do
   merges the host's identity and it normalises the options through the
   provider's declaration. A test that skips either is testing a shape the
   system never produces, so both live here rather than in each test file.
+
+  A sink provider's test also stands in for the writer its outputs confirm to:
+  `stub_outbox_owner/1`, `guaranteed_metadata/3` and `assert_confirmed/2`.
+  This file compiles alone, so a plugin package names it in its test paths.
   """
 
   import ExUnit.Assertions, only: [assert_receive: 2, flunk: 1, refute_received: 1]
@@ -16,6 +20,9 @@ defmodule FlezhaTest.Helper.ProviderPrepare do
   alias Flezha.Plugin.Extension.Table.Workers
   alias Flezha.Plugin.Provider.WorkerSup
   alias Flezha.Plugin.ProviderBehaviour.Options, as: ProviderOptions
+  alias Flezha.State.Outbox
+  alias Flezha.State.Paths
+  alias Flezha.State.Supervisor, as: StateSupervisor
 
   @doc """
   Prepare `opts` for `provider`: normalise through the declaration, run
@@ -172,5 +179,69 @@ defmodule FlezhaTest.Helper.ProviderPrepare do
       ref = Process.monitor(worker)
       assert_receive {:DOWN, ^ref, :process, ^worker, _}, 2_000
     end)
+  end
+
+  @doc """
+  Stand in as the WalWriter that owns `cell_id`'s outbox cursor: the
+  delivery-confirmation seam (`Flezha.State.Outbox`) resolves the owning writer
+  through the state registry, so a registered test process receives the sink's
+  `hold` / `settled` / `confirm` reports as plain casts.
+
+  Used by the sink-plugin suites, which exercise the confirmation seam without a
+  real persistence subsystem behind it.
+  """
+  @spec stub_outbox_owner(Paths.cell_id()) :: :ok
+  def stub_outbox_owner(cell_id) do
+    case Registry.start_link(keys: :unique, name: StateSupervisor.registry_name()) do
+      {:ok, _} -> :ok
+      {:error, {:already_started, _}} -> :ok
+    end
+
+    {:ok, _} = Registry.register(StateSupervisor.registry_name(), cell_id, nil)
+    :ok
+  end
+
+  @doc """
+  Metadata a durable outbox flush would stamp on one output of `cell_id`'s
+  entry `seq` — identity plus the confirmation token the owning writer waits
+  on. `extra` merges over it for the fields a given sink reads.
+  """
+  @spec guaranteed_metadata(Paths.cell_id(), non_neg_integer(), map()) :: map()
+  def guaranteed_metadata({rc, sh, pk} = cell_id, seq, extra \\ %{}) do
+    Map.merge(
+      %{
+        "channel" => "out",
+        "flz.cell" => "#{rc}/#{sh}/#{pk}",
+        "flz.seq" => "#{seq}.0",
+        "flz.epoch" => "0",
+        Outbox.ack_key() => Outbox.token(cell_id, {:cursor, seq})
+      },
+      extra
+    )
+  end
+
+  @doc """
+  Every named entry is confirmed to its owning writer. A sink confirms a
+  completed batch in one report and parks one record at a time, and how many
+  records a linger window gathered into a batch is timing — so this asserts on
+  the entries confirmed, never on how they were reported.
+  """
+  def assert_confirmed(keys, timeout \\ 2_000), do: await_confirmed(MapSet.new(keys), timeout)
+
+  defp await_confirmed(remaining, timeout) do
+    if MapSet.size(remaining) == 0 do
+      :ok
+    else
+      receive do
+        {:"$gen_cast", {:outbox_confirmed_many, keys}} ->
+          await_confirmed(Enum.reduce(keys, remaining, &MapSet.delete(&2, &1)), timeout)
+
+        {:"$gen_cast", {:outbox_confirmed, key}} ->
+          await_confirmed(MapSet.delete(remaining, key), timeout)
+      after
+        timeout ->
+          flunk("never confirmed: #{inspect(MapSet.to_list(remaining))}")
+      end
+    end
   end
 end
