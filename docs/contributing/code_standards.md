@@ -16,12 +16,20 @@ checks yourself.
   second job, and splitting it on the state it mutates is almost always the cut.
 - **No function over 50 lines.** A macro body counts as a function; so does a
   builder method and a `match` arm block long enough to be one.
-- **No Rust function over cognitive complexity 25.** `cargo clippy --workspace
-  --all-targets` is the reading; the threshold is in `clippy.toml`.
+- **No Rust function over cognitive complexity 25.** The gate row
+  `rust-clippy` (`cargo clippy --workspace --all-targets`) is the reading; the
+  threshold is in `clippy.toml`.
 - **No new dependency cycle.** `mix xref graph --format cycles` is the reading
   for Elixir. A change may not add a module to an existing cycle either: a cycle
   that grows is a cycle that is getting harder to cut, and the count alone will
   not say so.
+
+The gate row `ceilings` (`scripts/check_ceilings.py`) is the reading for the
+other three: every production file and function, and the number of cycles and
+the files in the largest. What the tree held when the row landed is recorded in
+`scripts/ceilings_baseline.txt`, which may only shrink: a breaker outside it or
+larger than its entry fails the row, and so does an entry the tree no longer
+holds at its recorded size, so the commit that shrinks a breaker lowers its line.
 
 A change that would cross a ceiling either does not land in that shape, or it
 lands with the cut that keeps it under. There is no allowance for going over by

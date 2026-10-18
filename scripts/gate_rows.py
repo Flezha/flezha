@@ -113,6 +113,12 @@ GATES = (
      "argv": ["scripts/check-layer-direction.sh", "--self-test"]},
     {"id": "openspec-scenarios-self-test", "group": "naming",
      "argv": ["scripts/check-openspec-scenarios.sh", "--self-test"]},
+    {"id": "ceilings-self-test", "group": "naming",
+     "argv": ["python3", "scripts/check_ceilings.py", "--self-test"]},
+    # File 800, function 50 and the compile cycles, against a baseline that may
+    # only shrink. Its own group: the cycle count needs `mix`.
+    {"id": "ceilings", "group": "ceilings", "tools": ["mix:install Elixir"],
+     "argv": ["python3", "scripts/check_ceilings.py"]},
     # The publication-readiness record's SHAPE. Its content arm is the row
     # below, in its own group, because every blocking entry is open until the
     # day of the release and a gate that lands red stops being read.
@@ -499,5 +505,5 @@ GATES += (
               "test/flezha/mcp/knowledge_test.exs"),
     {"id": "clean", "group": "clean",
      "groups": "@core,@e2e,@plugins,@rust,@sdk-java,@sdk-node,@sdk-python,@sdk-ruby,@sdk-php,"
-               "@sdk-elixir,@naming,@format,@history,@ledgers"},
+               "@sdk-elixir,@naming,@ceilings,@format,@history,@ledgers"},
 )

@@ -101,11 +101,11 @@ name: Naming
 # blocking: the purge reclaimed 961 MB -> 15 MB, and the ceiling is what keeps
 # it there (docs/runbooks/purge-build-artifacts.md).
 #
-# There is no structure ratchet here, deliberately. There was one, and it read
-# its baseline from a directory this repository does not track, so on a fresh
-# checkout it exited 2 and could only ever be green by being ignored. A check
-# whose memory lives on one laptop does not belong in CI, and the rules it was
-# ratcheting are written down in docs/code_standards.md instead.
+# check_ceilings is the structure ratchet: no production file over 800 lines,
+# no function over 50, and the controller's compile cycles may only fall. Its
+# baseline, scripts/ceilings_baseline.txt, is tracked, so a fresh checkout can
+# judge itself; like the layer-direction list it may only shrink. It runs in the
+# `structure` job, beside clippy, because the cycle count needs `mix`.
 
 on:
   pull_request:
@@ -125,9 +125,11 @@ jobs:
       - name: Every naming, structure and weight gate
         run: python3 scripts/naming_gate.py --run @naming
 
-  # `cargo clippy --workspace --all-targets` with warnings denied: the lint
-  # reading of the code standards, and the one build of the criterion benches.
-  clippy:
+  # The size ceilings (file 800, function 50, the compile cycles) against their
+  # baseline, and `cargo clippy --workspace --all-targets` with warnings denied:
+  # the lint reading of the code standards, and the one build of the criterion
+  # benches.
+  structure:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -142,8 +144,8 @@ jobs:
           components: clippy
       - name: Install protoc
         uses: ./.github/actions/setup-protoc
-      - name: Clippy over every target
-        run: python3 scripts/naming_gate.py --run rust-clippy
+      - name: The ceilings and clippy over every target
+        run: python3 scripts/naming_gate.py --run @ceilings,rust-clippy
 
   repo-size:
     runs-on: ubuntu-latest

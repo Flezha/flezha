@@ -1,0 +1,99 @@
+# Ceiling breakers when scripts/check_ceilings.py recorded this tree: files
+# over 800 lines, functions over 50, and the controller's compile cycles.
+# Recorded debt, not an exemption: the gate fails on a breaker outside this
+# list or larger than its entry, and on an entry the tree no longer holds at
+# that size. Lower or delete a line in the commit that shrinks its breaker.
+#
+# One `<file> <lines>`, `<file>::<function> <lines>` or `xref <measure> <n>`
+# per line, sorted.
+cli/src/args.rs::scan 64
+cli/src/help.rs 820
+cli/src/rpc.rs::child 59
+flz_core/src/admission.rs::admit_from_cell 53
+flz_core/src/command/mod.rs::classify 63
+flz_core/src/command/mod.rs::handle_command 87
+flz_core/src/control_unit.rs 1056
+flz_core/src/control_unit.rs::read_loop 70
+flz_core/src/coordinator.rs::heartbeat_metadata 59
+flz_core/src/effect.rs::fold 76
+flz_core/src/effect_result.rs::keep 52
+flz_core/src/host/activation.rs::route_edge_outputs 61
+flz_core/src/host/activation.rs::settle_item 69
+flz_core/src/host/activation.rs::settle_items 60
+flz_core/src/host/build.rs::build_channel 51
+flz_core/src/host/commands.rs::restore_fold_exclusive 51
+flz_core/src/host/issue.rs::details 170
+flz_core/src/host/issue.rs::kind 67
+flz_core/src/host/leave.rs::relay_left 58
+flz_core/src/host/prepare.rs::re_cross 61
+flz_core/src/host/register.rs::refuse_channel 60
+flz_core/src/poll_core/assembly.rs::assemble_batch 64
+flz_core/src/poll_core/mod.rs 816
+flz_core/src/poll_core/mod.rs::host_command_within 53
+flz_core/src/poll_core/wake.rs::wake_target 52
+flz_core/src/relay/instance.rs::with_options 71
+flz_core/src/retry.rs::hand_edge_ladder 54
+flz_core/src/retry.rs::route_held 53
+flz_core/src/routing.rs 831
+flz_core/src/routing.rs::enter_channel 53
+flz_core/src/routing.rs::redeliver_edge 54
+flz_core/src/routing.rs::route_stream_frame 51
+flz_core/src/state_sink.rs 882
+flz_core/src/steps/resume.rs::resumed_seed 74
+flz_core/src/steps/run.rs 2532
+flz_core/src/steps/run.rs::act 75
+flz_core/src/steps/run.rs::admit 55
+flz_core/src/steps/run.rs::open_gate 56
+flz_core/src/steps/run.rs::resolve_failure 51
+flz_core/src/steps/run.rs::send_barrier 63
+flz_core/src/steps/run.rs::stage_committed 59
+flz_core/src/steps/run.rs::stage_done 61
+flz_core/src/steps/run.rs::undo_step 62
+flz_core_ffi/src/bin/flz-fake-controller.rs::parse 91
+flz_core_ffi/src/lib.rs 1352
+flz_core_ffi/src/napi_glue.rs::native_surface 63
+flz_nif/src/driver/mod.rs::handle_command 53
+flz_nif/src/driver/quic.rs::accept_streams 58
+flz_transport/src/transport/quic.rs 842
+flz_transport/src/transport/quic_pair_tests.rs::serve 64
+flz_transport/src/utility/socket_dir.rs 824
+lib/flezha/observability/counter_table.ex::__using__ 107
+lib/flezha/plugin/provider_behaviour.ex 818
+lib/flezha/relay/calls.ex 842
+lib/flezha/relay/class_registry.ex 815
+lib/flezha/relay/handover.ex::absorb 65
+lib/flezha/relay/lifecycle.ex::complete_init 69
+lib/flezha/relay/overwatch.ex 983
+lib/flezha/runner/fleet_manager.ex 950
+lib/flezha/runner/fleet_manager/session.ex::do_handle_runner_disconnect 53
+lib/flezha/runner/stream_channel.ex::init 52
+lib/flezha/service/plugin_manager.ex 881
+lib/flezha/service/relay_manager.ex 838
+lib/flezha/state/durability_tier/shipper.ex 812
+lib/flezha/state/input_log.ex 1225
+lib/flezha/state/paths.ex 829
+lib/flezha/state/task_journal.ex 1008
+lib/flezha/state/wal_writer/epoch.ex::do_rewind 53
+sdk/elixir/lib/flezha/sdk/declaration.ex::channel 52
+sdk/elixir/lib/flezha/sdk/declaration.ex::from_record 61
+sdk/elixir/native/flz_core_beam/src/threads.rs::poll_for 51
+sdk/java/flezha-sdk-runtime/src/main/java/com/flezha/sdk/runtime/core/RelayInstance.java::runItem 64
+sdk/node/src/definition.ts::defineTasklet 66
+sdk/node/src/dispatch.ts::answer 55
+sdk/node/src/dispatch.ts::runWork 73
+sdk/php/src/Dispatch/Dispatcher.php::prepare 52
+sdk/php/src/Graph/ChannelSpec.php::__construct 63
+sdk/python/src/flezha/ctx.py::__init__#2 54
+sdk/python/src/flezha/dispatch.py::_prepare 51
+sdk/python/src/flezha/relay.py::relay 61
+sdk/rust/macros/src/relay.rs::parse 63
+sdk/rust/src/relay/builder.rs::build_topology_with_settings 69
+sdk/rust/src/relay/builder.rs::channel_descriptor 52
+sdk/rust/src/relay/dispatcher.rs::dispatch_input 56
+sdk/rust/src/relay/dispatcher.rs::dispatch_item 66
+sdk/rust/src/relay/dispatcher.rs::run_activation 51
+sdk/rust/src/relay/dispatcher/emit_sink.rs::emit 61
+sdk/rust/src/relay/dispatcher/invocation.rs::call_contained 61
+sdk/rust/src/tasklet/ctx.rs 813
+xref cycles 4
+xref largest 143
