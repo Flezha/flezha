@@ -144,4 +144,10 @@ export MIX_ENV="$MIX_ENV_OVERRIDE"
 # A benchmark's state is disposable, so the opt-out is the honest default here;
 # set the variable yourself to measure a real tier's cost.
 export FLEZHA_DURABILITY_BACKEND="${FLEZHA_DURABILITY_BACKEND:-none}"
+# The run boots its own controller state, so a dev controller already running
+# from this checkout neither holds the state lock against it nor hands it its
+# declared relays and installed plugin packages.
+export FLEZHA_STATE_DIR="${FLEZHA_STATE_DIR:-app_data/bench/state}"
+export FLEZHA_PROCESS_HUB_REGISTRY_ROOT="${FLEZHA_PROCESS_HUB_REGISTRY_ROOT:-app_data/bench/process_hub}"
+export FLEZHA_PLUGIN_ROOT="${FLEZHA_PLUGIN_ROOT:-app_data/bench/plugins}"
 exec mix bench "${ARGS[@]}"

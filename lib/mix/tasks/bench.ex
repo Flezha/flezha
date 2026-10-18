@@ -397,7 +397,9 @@ defmodule Mix.Tasks.Bench do
 
     {elapsed, _} =
       :timer.tc(fn ->
-        Flezha.Parallel.map(relay_infos, fn {relay_id, _info} ->
+        # Every enable queues on the one hub coordinator, whose call budget is
+        # 5 s per start; an unbounded fan-out over 1000 relays waits past it.
+        Flezha.Parallel.each(relay_infos, fn {relay_id, _info} ->
           PluginManager.enable_plugin(
             relay_id <> "_beam_msg_forward",
             %Flezha.Plugin{

@@ -156,8 +156,8 @@ defmodule Flezha.Service.RelayManager.Init do
     hub_id = Identificator.hub(namespace)
 
     with {:ok, hub} <- hub_state(hub_id),
-         {:ok, spec} <- declared_spec(hub, child_id),
-         {:ok, row_plugins} <- row_plugins(namespace, hub_id, child_id) do
+         {:ok, spec} <- declared_spec(hub_id, child_id),
+         {:ok, row_plugins} <- row_plugins(namespace, child_id) do
       case HubManager.rewrite_cspec_plugins(spec, fn _ -> row_plugins end) do
         ^spec ->
           :ok
@@ -170,20 +170,14 @@ defmodule Flezha.Service.RelayManager.Init do
     end
   end
 
-  defp row_plugins(namespace, _hub_id, relay_id) when is_binary(relay_id),
+  defp row_plugins(namespace, relay_id) when is_binary(relay_id),
     do: HubManager.relay_bindings(namespace, relay_id)
 
-  defp row_plugins(namespace, hub_id, {:plugin, name} = child_id) do
-    case ProcessHub.Service.ProcessRegistry.lookup(hub_id, child_id) do
-      {cspec, _node_pids} -> plugin_of(cspec, name)
-      {cspec, _node_pids, _metadata} -> plugin_of(cspec, name)
-      nil -> {:error, {:plugin_not_found, namespace, name}}
+  defp row_plugins(namespace, {:plugin, name}) do
+    case HubManager.plugin_row(namespace, name) do
+      {:ok, plugin} -> {:ok, [{name, plugin}]}
+      :error -> {:error, {:plugin_not_found, namespace, name}}
     end
-  end
-
-  defp plugin_of(cspec, name) do
-    {:ok, {_namespace, %Flezha.Plugin{} = plugin}} = Flezha.Process.Cspec.start_arg(cspec)
-    {:ok, [{name, plugin}]}
   end
 
   defp hub_state(hub_id) do
@@ -195,18 +189,19 @@ defmodule Flezha.Service.RelayManager.Init do
 
   # An upsert would declare a child that was never declared, which would let a
   # plugin write resurrect one a stop removed for good.
-  defp declared_spec(hub, child_id) do
-    case DeclaredChildren.manifest(hub) do
-      %{entries: %{^child_id => spec}} -> {:ok, spec}
-      _ -> {:error, :relay_not_declared}
+  defp declared_spec(hub_id, child_id) do
+    case DeclaredChildren.declared_child(hub_id, child_id) do
+      nil -> {:error, :relay_not_declared}
+      spec -> {:ok, spec}
     end
   end
 
-  # `{:add, [spec]}` is an upsert keyed on child id (`DeclaredChildren`'s
-  # `mutate_entries/2`), so re-declaring replaces that one entry in place and
-  # starts, stops or moves nothing. It must run on the leader, the one node that
-  # may bump the list version, and it shares the batch that coalesces every
-  # concurrent declared write into one write and one sync.
+  # `{:add, [spec]}` is an upsert keyed on child id
+  # (`DeclaredChildren.apply_mutation/2`), so re-declaring replaces that one
+  # entry in place and starts, stops or moves nothing. It must run on the
+  # leader, the one node that may bump the list version, and it shares the
+  # batch that coalesces every concurrent declared write into one write and
+  # one sync.
   #
   # `{:declared_mutate, _}` is process_hub's own leader-side entry point and is
   # not part of its public API; `declared_mutate_contract_test.exs` fails loudly

@@ -114,7 +114,7 @@ defmodule Mix.Tasks.Bench.Fleet do
         {:ok, _entry} ->
           IO.puts("Registered namespace #{namespace} in the authz catalog")
 
-        {:error, :already_exists} ->
+        {:error, {:namespace_exists, ^namespace}} ->
           :ok
 
         {:error, reason} ->

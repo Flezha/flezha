@@ -47,6 +47,7 @@ defmodule Flezha.Service.HubManager do
   defdelegate declared_bindings(arg1), to: Rows
   defdelegate relay_bindings(arg1, arg2), to: Rows
   defdelegate plugin_entries(arg1), to: Rows
+  defdelegate plugin_row(arg1, arg2), to: Rows
   defdelegate plugin_entry(arg1, arg2), to: Rows
   defdelegate relay_rows(arg1), to: Rows
   defdelegate relay_spec(arg1, arg2), to: Rows

@@ -218,20 +218,41 @@ defmodule Flezha.Service.HubManager.Rows do
         for {{:plugin, _name}, entry} <- live_registry_dump(hub_id),
             do: elem(normalize_registry_entry(entry), 0)
 
-      for spec <- children ++ rows,
-          {:ok, {_namespace, %Plugin{} = plugin}} <- [Cspec.start_arg(spec)],
-          uniq: true,
-          do: plugin
+      for spec <- children ++ rows, {:ok, plugin} <- [plugin_of(spec)], uniq: true, do: plugin
     end)
     |> Enum.uniq_by(& &1.id)
   end
 
-  @doc "The plugin `name` enabled in `namespace`, or `:error`."
+  @doc """
+  The plugin `name` enabled in `namespace`, or `:error`: its `{:plugin, name}`
+  child's entry, read by that id from the declared set, else from its
+  registry row, as `plugin_entries/1` ranks them.
+  """
   @spec plugin_entry(binary() | atom(), binary()) :: {:ok, Plugin.t()} | :error
   def plugin_entry(namespace, name) do
-    case Enum.find(plugin_entries(namespace), &(&1.id == name)) do
-      %Plugin{} = plugin -> {:ok, plugin}
+    with_live_hub(namespace, :error, fn hub_id ->
+      case DeclaredChildren.declared_child(hub_id, {:plugin, name}) do
+        nil -> row_plugin(hub_id, name)
+        spec -> plugin_of(spec)
+      end
+    end)
+  end
+
+  @doc "The plugin `name`'s entry as its registry row carries it, or `:error`."
+  @spec plugin_row(binary() | atom(), binary()) :: {:ok, Plugin.t()} | :error
+  def plugin_row(namespace, name), do: with_live_hub(namespace, :error, &row_plugin(&1, name))
+
+  defp row_plugin(hub_id, name) do
+    case ProcessRegistry.lookup(hub_id, {:plugin, name}) do
+      {cspec, _node_pids} -> plugin_of(cspec)
       nil -> :error
+    end
+  end
+
+  defp plugin_of(spec) do
+    case Cspec.start_arg(spec) do
+      {:ok, {_namespace, %Plugin{} = plugin}} -> {:ok, plugin}
+      _other -> :error
     end
   end
 

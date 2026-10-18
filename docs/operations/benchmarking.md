@@ -57,8 +57,12 @@ environment and forwards them.
 Runner placement: the Rust runtime reuses runners already connected in the
 `default` namespace, otherwise (and always for every other runtime) two runners
 are spawned into the scratch namespace `bench`, which the task wipes
-(`app_data/state/bench`, `app_data/process_hub/bench_hub`) before the
-controller boots. A Rust runner binary is built on demand; build
+(`<state root>/bench`, `<process hub root>/bench_hub`) before the
+controller boots. `scripts/bench.sh` gives the run its own state root,
+process hub root and plugin root under `app_data/bench/` (each overridable
+through `FLEZHA_STATE_DIR`, `FLEZHA_PROCESS_HUB_REGISTRY_ROOT`,
+`FLEZHA_PLUGIN_ROOT`), so a dev controller running from the same checkout
+neither locks the bench out nor hands it its relays and plugin packages. A Rust runner binary is built on demand; build
 `cargo build -p rust_runner --release` first for representative numbers.
 
 ## What a run prints
