@@ -12,10 +12,9 @@ name: Nightly E2E
 # runnable on demand (`workflow_dispatch`) before a release, against any SDK
 # runtime that carries a conformance manifest.
 #
-# Deliberately NOT carrying elixir.yml's "fail on uncaptured error logs" gate:
-# these tests kill runners and tear down channels on purpose, so error-level
-# logs are the expected output of the thing under test, not an unasserted
-# failure.
+# The rows are quiet, as everywhere: a test that kills a runner or tears a
+# channel down on purpose captures the error it causes and asserts it, so an
+# uncaptured error-level line is still a finding here.
 
 on:
   schedule:
@@ -123,9 +122,6 @@ jobs:
       - name: Install protoc
         uses: ./.github/actions/setup-protoc
 
-      - name: Compile Elixir (warnings as errors)
-        run: mix compile --warnings-as-errors
-
       - name: Pre-build rust_runner
         # Every e2e case spawns runners through `cargo run`; a cold build does
         # not fit inside the connect budget the harness allows, so build the
@@ -170,27 +166,14 @@ jobs:
         # client on its first `mix run`, which no connect budget covers.
         run: cd test/apps/elixir_runner && mix deps.get && mix compile
 
-      - name: Run system + multi_node suites
+      - name: The system and multi-node tiers under this runtime
+        # The rows of `@e2e-<runtime>` in scripts/gate_rows.py (the runner's
+        # build, then the `:system` files in shards of six, and on java the
+        # cross-SDK interop scenario) and the multi-node tier, after the
+        # warnings-as-errors compile.
         run: |
-          mix test --include system --include multi_node \
-            --formatter FlezhaTest.Helper.TimingFormatter \
-            --formatter ExUnit.CLIFormatter
-
-      - name: Run the cross-SDK interop scenario
-        # The one scenario that places TWO runtimes in a single run, so it is
-        # excluded from the tiers above and invoked on its own. It rides the
-        # java job because that is the one with both a JDK and the pre-built
-        # rust_runner; the runtime axis does not apply to it.
-        #
-        # The topology refusal drill is `:interop` too and is deliberately NOT
-        # named here: it reads every runtime from the manifests, and this job
-        # builds two, so asking for the whole sweep would be red on the five it
-        # did not build. Each matrix job proves its own runtime instead, in the
-        # `--include system` step above.
-        if: matrix.runtime == 'java'
-        run: |
-          mix test --include system --include interop \
-            test/system/cross_sdk_placement_e2e_test.exs
+          python3 scripts/naming_gate.py \
+            --run core-compile,@e2e-${{ matrix.runtime }},e2e-multi-node
 
       - name: Upload the conformance report
         if: always()

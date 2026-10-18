@@ -63,17 +63,17 @@ defmodule FlezhaTest.SdkConformance.TierGateTest do
 
             assert File.exists?(path), "#{tier.tag} names #{file}, which does not exist"
 
-            source = File.read!(path)
+            source = path |> File.read!() |> Tiers.selected_rows()
 
-            # A subset runs whenever its parent's include runs, so the workflow
-            # line naming the parent is what proves the subset runs too.
+            # A subset runs whenever its parent's include runs, so the row
+            # naming the parent is what proves the subset runs too.
             selected =
               [tier.tag | List.wrap(tier.within)]
-              |> Enum.map(&"--include #{&1}")
+              |> Enum.flat_map(&["--include #{&1}", "--only #{&1}"])
               |> Enum.any?(&String.contains?(source, &1))
 
             assert selected,
-                   "#{tier.tag} names #{file}, whose `mix test` line includes neither " <>
+                   "#{tier.tag} names #{file}, whose gate rows include neither " <>
                      "#{tier.tag} nor its parent #{inspect(tier.within)}"
 
             if tier.within do

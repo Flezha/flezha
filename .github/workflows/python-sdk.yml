@@ -19,6 +19,7 @@ on:
       - "test/fixtures/host_class_decl_keys.txt"
       - "scripts/build-python-sdk.sh"
       - ".github/workflows/python-sdk.yml"
+      - "scripts/gate_rows.py"
   push:
     branches: [main]
     paths:
@@ -29,6 +30,7 @@ on:
       - "test/fixtures/host_class_decl_keys.txt"
       - "scripts/build-python-sdk.sh"
       - ".github/workflows/python-sdk.yml"
+      - "scripts/gate_rows.py"
 
 env:
   CARGO_TERM_COLOR: always

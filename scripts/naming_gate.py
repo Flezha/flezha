@@ -26,9 +26,14 @@ import contextlib
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import threading
+import time
+
+from gate_rows import GATES, noisy
 
 # ---------------------------------------------------------------------------
 # The exit contract every gate in this repository answers on.
@@ -383,169 +388,130 @@ def walk(*, check, headline, hint, ok_message, pathspec=(), path_filter=None,
     return found_code or unclosed_code
 
 
-# ---------------------------------------------------------------------------
-# The gate registry. One row per gate; `--run` is the one reader.
-#
-# A gate is declared here and nowhere else: CI runs `naming_gate.py --run @<group>`
-# rather than re-spelling one step per gate, so adding a gate is a row and a
-# workflow that forgets to call it is not a thing that can happen. `tools` names
-# what the gate needs on PATH together with how to install it; an absent tool
-# takes that gate out of the report and nothing else. A gate answers on this contract
-# unless it declares `finding`, which is how a tool whose status alone cannot
-# tell "found something" from "did not complete" says which it was.
-GATES = (
-    {"id": "overflow-naming", "group": "naming",
-     "argv": ["scripts/check-overflow-naming.sh"]},
-    {"id": "local-mode-naming", "group": "naming",
-     "argv": ["scripts/check-local-mode-naming.sh"]},
-    {"id": "module-naming", "group": "naming",
-     "argv": ["scripts/check-module-naming.sh"]},
-    {"id": "layer-direction", "group": "naming",
-     "argv": ["scripts/check-layer-direction.sh"]},
-    {"id": "mimic-global", "group": "naming",
-     "argv": ["scripts/check-mimic-global.sh"]},
-    {"id": "docs-citations", "group": "naming",
-     "argv": ["scripts/check-docs-citations.sh"]},
-    {"id": "test-fixture", "group": "naming",
-     "argv": ["scripts/check-test-fixture.sh"]},
-    {"id": "live-env-in-tests", "group": "naming",
-     "argv": ["scripts/check-live-env-in-tests.sh"]},
-    {"id": "ci-toolchain", "group": "naming",
-     "argv": ["scripts/check-ci-toolchain.sh"]},
-    {"id": "vm-args", "group": "naming",
-     "argv": ["scripts/check-vm-args.sh"]},
-    # The queue's order, and the scenarios a MODIFIED block would delete.
-    # `/openspec/changes` is in .gitignore, so a CI checkout carries none of it
-    # and both rows read an empty queue and say so; where they bite is a
-    # developer's tree and the `--run @naming` made before an archive.
-    {"id": "openspec-order", "group": "naming",
-     "argv": ["scripts/check-openspec-order.sh"]},
-    {"id": "openspec-scenarios", "group": "naming",
-     "argv": ["scripts/check-openspec-scenarios.sh"]},
-    {"id": "build-artifacts-tracked", "group": "naming",
-     "argv": ["scripts/check-build-artifacts.sh", "tracked"]},
-    {"id": "naming-gate-self-test", "group": "naming",
-     "argv": ["python3", "scripts/naming_gate.py", "--self-test"]},
-    {"id": "layer-direction-self-test", "group": "naming",
-     "argv": ["scripts/check-layer-direction.sh", "--self-test"]},
-    {"id": "openspec-scenarios-self-test", "group": "naming",
-     "argv": ["scripts/check-openspec-scenarios.sh", "--self-test"]},
-    # The publication-readiness record's SHAPE. Its content arm is the row
-    # below, in its own group, because every blocking entry is open until the
-    # day of the release and a gate that lands red stops being read.
-    {"id": "publish-readiness", "group": "naming",
-     "argv": ["scripts/check-publish-readiness.sh"]},
-    {"id": "feature-maturity", "group": "naming",
-     "argv": ["scripts/check-feature-maturity.sh"]},
-    # Content: every blocking entry settled. Selected only by `@release`, which
-    # the tag-triggered release job runs before it builds any artefact - after
-    # an artefact is on a registry it is too late by definition.
-    {"id": "publish-readiness-release", "group": "release",
-     "argv": ["scripts/check-publish-readiness.sh", "--release"]},
-    # Every SDK repository's CI, run locally against a release built from this
-    # tree. Run by hand before a release: it builds, and it needs docker.
-    {"id": "sdk-ci-rehearsal", "group": "rehearsal",
-     "tools": ["docker:install Docker", "act:brew install act"],
-     "argv": ["scripts/rehearse-sdk-ci.sh"]},
-    # Its `size` arm reads the packed repository, so it needs the whole history
-    # and runs in a job that checks out with fetch-depth 0.
-    {"id": "build-artifacts-size", "group": "history",
-     "argv": ["scripts/check-build-artifacts.sh", "size"]},
-    # The source-shape gate. `format-apply.sh --check` answers on this contract
-    # itself, so its status is read as one of ours instead of being flattened.
-    {"id": "formatters", "group": "format",
-     "argv": ["scripts/format-apply.sh", "--check"]},
-    # `reuse lint-file` over git-listed paths: a full `reuse lint` walks the
-    # tree and chokes on the stale test sockets under app_data/, which git never
-    # lists. xargs collapses every status from 1 to 125 into 123, which alone
-    # would make a reuse crash and a file with no licence header the same
-    # number, so the wrapper keeps reuse's own 1 and turns every other failure
-    # into 255 — which xargs reports as 124.
-    {"id": "reuse-lint", "group": "format", "finding": "status:123",
-     "tools": ["reuse:pipx install reuse"],
-     "argv": ["bash", "-c",
-              "git ls-files -co --exclude-standard -z | "
-              "xargs -0 sh -c 'reuse lint-file \"$@\" || exit $(($? == 1 ? 1 : 255))' reuse-lint"]},
-    {"id": "third-party-notices", "group": "format", "finding": "status:1",
-     "tools": ["cargo-about:cargo install cargo-about"],
-     "argv": ["bash", "-c",
-              'g="${TMPDIR:-/tmp}/third_party_notices.md"; '
-              # A generator that cannot run is not a stale notices file: keep
-              # its status out of diff's, whose 1 is the only finding here.
-              'cargo about generate about.hbs -o "$g" || exit 255; '
-              'diff -u THIRD_PARTY_NOTICES.md "$g"']},
-)
-
-# `scripts/check-feature-symbols.sh` is deliberately not a row. It is not a gate
-# over the tree: it builds an artefact three ways and compares the exported
-# symbols, so it takes arguments, needs a compiler, and answers about one build
-# rather than about the repository. Two CI workflows call it directly.
-
-
-def gate(gate_id):
-    """The declared row for `gate_id`, or None."""
-    return next((row for row in GATES if row["id"] == gate_id), None)
-
-
-def select(spec):
-    """The rows `spec` names: `all`, `@<group>`, or a comma list of ids."""
-    if spec == "all":
-        return list(GATES)
-    rows = []
-    for name in spec.split(","):
+def select(spec, table=GATES):
+    """The rows `spec` names: `all`, `@<group>`, or a comma list of ids. A row
+    declaring `groups` stands for what that spec selects; a row reached twice runs once."""
+    names = spec.split(",") if spec != "all" else \
+        [row["id"] for row in table if "groups" not in row]
+    rows = {}
+    for name in names:
         if name.startswith("@"):
-            group = name[1:]
-            matched = [row for row in GATES if row["group"] == group]
+            matched = [row for row in table if row["group"] == name[1:]]
             if not matched:
-                raise KeyError(f"no gate is declared in group {group!r}")
-            rows.extend(matched)
+                raise KeyError(f"no gate is declared in group {name[1:]!r}")
         else:
-            row = gate(name)
-            if row is None:
+            matched = [row for row in table if row["id"] == name]
+            if not matched:
                 raise KeyError(f"no gate is declared as {name!r}")
-            rows.append(row)
-    return rows
+        for row in matched:
+            for picked in select(row["groups"], table) if "groups" in row else [row]:
+                rows.setdefault(picked["id"], picked)
+    return list(rows.values())
 
 
-def run_gate(row, report):
+# A row's time limit unless it declares `timeout`; a stopped row's grace before SIGKILL.
+TIMEOUT = 600
+KILL_AFTER = 30
+
+
+def _execute(row, logs):
+    """Run a row's command; return (status, merged output, stderr). The status
+    is None when the row outran its limit: its session, all it spawned, is stopped."""
+    env = {**os.environ, **{k: os.path.expandvars(v) for k, v in row.get("env", {}).items()}}
+    proc = subprocess.Popen(row["argv"], cwd=row.get("cwd"), env=env, start_new_session=True,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    files = [open(os.path.join(logs, f"{row['id']}.{ext}"), "w", encoding="utf-8")
+             for ext in ("log", "err")] if logs else []
+    log = files[0] if files else sys.stdout
+    merged, errs, lock = [], [], threading.Lock()
+
+    def pump(stream, captures, sinks):
+        for chunk in stream:
+            line = chunk.decode("utf-8", "replace")
+            with lock:
+                for capture in captures:
+                    capture.append(line)
+                for sink in sinks:
+                    sink.write(line)
+
+    pumps = [threading.Thread(target=pump, args=args, daemon=True) for args in (
+        (proc.stdout, [merged], [log]), (proc.stderr, [merged, errs], [log, *files[1:]]))]
+    for pumper in pumps:
+        pumper.start()
+    try:
+        status = proc.wait(timeout=row.get("timeout", TIMEOUT))
+    except subprocess.TimeoutExpired:
+        status = None
+    finally:
+        if proc.poll() is None:
+            _stop(proc)
+    # A process the row left behind may hold a pipe open; its output is not
+    # worth waiting for once the row itself has ended.
+    for pumper in pumps:
+        pumper.join(timeout=10)
+    with lock:
+        for sink in files:
+            sink.close()
+    return status, "".join(merged), "".join(errs)
+
+
+def _stop(proc):
+    """SIGTERM the row's session, then SIGKILL it if it is still there."""
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(proc.pid, sig)
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            proc.wait(timeout=KILL_AFTER)
+            return
+
+
+def run_gate(row, report, logs=None):
     """Run one declared gate and file its outcome under this contract.
 
     `report` is the three lists `run_gates` prints. Returns nothing: the verdict
     is the lists, because a gate that could not run must not end the loop. That
     rule is the whole point — testing every tool before running any check is
     what let one absent formatter hide six unformatted languages, and only the
-    install hint survived from it.
+    install hint survived from it. With `logs` the output goes to `<id>.log`
+    (stderr also to `<id>.err`) there, and each verdict to `summary.txt`.
     """
     label = row["id"]
+    started = time.monotonic()
     missing = [need for need in row.get("tools", ())
                if shutil.which(need.split(":", 1)[0]) is None]
     if missing:
         for need in missing:
             tool, _, hint = need.partition(":")
             report["unavailable"].append(f"{label} — no {tool}: {hint}")
-        print(f"==> {label} — NOT RUN, see the summary")
-        return
+        verdict = ("NOT RUN", None, None)
+    else:
+        print(f"==> {label}", flush=True)
+        verdict = _judge(row, *_execute(row, logs))
+    word, bucket, entry = verdict
+    if bucket:
+        report[bucket].append(entry)
+    line = f"{word} {label} ({round(time.monotonic() - started)}s)"
+    print(line, flush=True)
+    if logs:
+        with open(os.path.join(logs, "summary.txt"), "a", encoding="utf-8") as fh:
+            fh.write(line + "\n")
 
-    print(f"==> {label}", flush=True)
-    proc = subprocess.Popen(row["argv"], stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT)
-    captured = []
-    for chunk in proc.stdout:
-        line = chunk.decode("utf-8", "replace")
-        captured.append(line)
-        sys.stdout.write(line)
-    sys.stdout.flush()
-    status = proc.wait()
-    out = "".join(captured)
 
+def _judge(row, status, out, err):
+    """(summary word, report list or None, report entry) for one finished row."""
+    label = row["id"]
+    if status is None:
+        return "NO ANSWER", "errored", f"{label} — timed out after {row.get('timeout', TIMEOUT)}s"
     if status == 0:
-        return
+        line = noisy(row, out, err)
+        if line is None:
+            return "PASS", None, None
+        return "NOISY", "failed", f"{label} — noisy: {line.strip()[:160]}"
     # A gate that fails and prints nothing has told the reader nothing. It is
     # not a finding, because a finding names what it found.
     if not out.strip():
-        report["errored"].append(
-            f"{label} — exit {status} with no output: a gate that fails says what it found")
-        return
+        return ("NO ANSWER", "errored",
+                f"{label} — exit {status} with no output: a gate that fails says what it found")
     finding = row.get("finding")
     if finding is None:
         # No rule declared, so the gate answers on this contract itself and its
@@ -553,50 +519,71 @@ def run_gate(row, report):
         # 2 is not a gate's 2, which is why the exception has to be the one that
         # is declared.
         if status == TOOL_MISSING:
-            report["unavailable"].append(f"{label} — see its own summary above")
-        elif status == NO_ANSWER:
-            report["errored"].append(f"{label} — see its own summary above")
-        elif status == FINDING:
-            report["failed"].append(label)
-        else:
-            report["errored"].append(f"{label} — exit {status}")
-        return
-    if finding.startswith("status:"):
-        codes = {int(code) for code in finding[len("status:"):].split(",")}
-        matched = status in codes
+            return "NOT RUN", "unavailable", f"{label} — see its own summary above"
+        if status == NO_ANSWER:
+            return "NO ANSWER", "errored", f"{label} — see its own summary above"
+        if status == FINDING:
+            return "FAIL", "failed", label
+        return "NO ANSWER", "errored", f"{label} — exit {status}"
+    if finding == "status:any":
+        matched = True
+    elif finding.startswith("status:"):
+        matched = status in {int(code) for code in finding[len("status:"):].split(",")}
     else:
         matched = re.search(finding[len("says:"):], out) is not None
     if matched:
-        report["failed"].append(label)
-    else:
-        report["errored"].append(f"{label} — exit {status}")
+        return "FAIL", "failed", label
+    return "NO ANSWER", "errored", f"{label} — exit {status}"
 
 
-def run_gates(rows):
+def run_gates(rows, logs=None):
     """Run `rows` in order and return the status the contract at the top says."""
+    if logs:
+        os.makedirs(logs, exist_ok=True)
     report = {"unavailable": [], "failed": [], "errored": []}
     for row in rows:
-        run_gate(row, report)
+        run_gate(row, report, logs)
 
     status = OK
-    if report["unavailable"]:
-        print("\nNOT RUN — the tool is not installed here:")
-        for line in report["unavailable"]:
-            print(f"  {line}")
-        status = TOOL_MISSING
-    if report["failed"]:
-        print("\nFAILED — the output above says why:")
-        for line in report["failed"]:
-            print(f"  {line}")
-        status = FINDING
-    if report["errored"]:
-        print("\nNO ANSWER — the gate ran and did not complete:")
-        for line in report["errored"]:
-            print(f"  {line}")
-        status = NO_ANSWER
+    for key, code, heading in (
+            ("unavailable", TOOL_MISSING, "NOT RUN — the tool is not installed here:"),
+            ("failed", FINDING, "FAILED — its output says why:"),
+            ("errored", NO_ANSWER, "NO ANSWER — the gate ran and did not complete:")):
+        if report[key]:
+            print(f"\n{heading}")
+            for line in report[key]:
+                print(f"  {line}")
+            status = code
     if status == OK:
         print(f"\nevery gate ran and had nothing to report ({len(rows)} gates)")
     return status
+
+
+def _sh(script):
+    return ["bash", "-c", script]
+
+
+# One planted gate per outcome: its row, the list the runner must file it under,
+# and the status one such gate alone must produce.
+_OUTCOMES = {
+    "clean": ({"argv": _sh("echo fine")}, None, OK),
+    "finding": ({"argv": _sh("echo 'found one'; exit 1")}, "failed", FINDING),
+    "silent": ({"argv": _sh("exit 1")}, "errored", NO_ANSWER),
+    "crashed": ({"argv": _sh("echo boom; exit 9")}, "errored", NO_ANSWER),
+    "absent-tool": ({"argv": _sh("echo unreachable"),
+                     "tools": ["flezha-no-such-tool:there is no install for this"]},
+                    "unavailable", TOOL_MISSING),
+    "says-finding": ({"finding": "says:Diff in ", "argv": _sh("echo 'Diff in a.rs'; exit 1")},
+                     "failed", FINDING),
+    "says-crash": ({"finding": "says:Diff in ", "argv": _sh("echo 'panicked'; exit 1")},
+                   "errored", NO_ANSWER),
+    "child-missing": ({"argv": _sh("echo child summary; exit 2")}, "unavailable", TOOL_MISSING),
+    "child-no-answer": ({"argv": _sh("echo child summary; exit 3")}, "errored", NO_ANSWER),
+    "noisy": ({"quiet": True, "argv": _sh("echo 'warning: unused'")}, "failed", FINDING),
+    "stray-stderr": ({"quiet": True, "argv": _sh("echo oops >&2")}, "failed", FINDING),
+    "timed-out": ({"timeout": 1, "argv": _sh("echo started; sleep 30")}, "errored", NO_ANSWER),
+    "plain-tool": ({"finding": "status:any", "argv": _sh("echo red; exit 2")}, "failed", FINDING),
+}
 
 
 def _contract_self_test():
@@ -607,44 +594,14 @@ def _contract_self_test():
     wrong. A gate that exits non-zero and prints NOTHING is not a finding — a
     finding names what it found — so it is filed as "no answer"; that is the
     planted case a bare `1` with no headline has to fail on. And a gate whose
-    tool is absent must leave the loop running, because ending it is the defect
-    this contract removed.
+    tool is absent, or that runs past its time limit, must leave the loop
+    running, because ending it is the defect this contract removed.
     """
     import io
 
-    def sh(script):
-        return ["bash", "-c", script]
-
-    rows = {
-        "clean": {"id": "clean", "argv": sh("echo fine")},
-        "finding": {"id": "finding", "argv": sh("echo 'found one'; exit 1")},
-        "silent": {"id": "silent", "argv": sh("exit 1")},
-        "crashed": {"id": "crashed", "argv": sh("echo boom; exit 9")},
-        "absent-tool": {"id": "absent-tool", "argv": sh("echo unreachable"),
-                        "tools": ["flezha-no-such-tool:there is no install for this"]},
-        "says-finding": {"id": "says-finding", "finding": "says:Diff in ",
-                         "argv": sh("echo 'Diff in a.rs'; exit 1")},
-        "says-crash": {"id": "says-crash", "finding": "says:Diff in ",
-                       "argv": sh("echo 'panicked'; exit 1")},
-        "child-missing": {"id": "child-missing", "argv": sh("echo child summary; exit 2")},
-        "child-no-answer": {"id": "child-no-answer", "argv": sh("echo child summary; exit 3")},
-    }
-    # id -> the list the runner must file it under, and the status one such gate
-    # alone must produce.
-    expected = {
-        "clean": (None, OK),
-        "finding": ("failed", FINDING),
-        "silent": ("errored", NO_ANSWER),
-        "crashed": ("errored", NO_ANSWER),
-        "absent-tool": ("unavailable", TOOL_MISSING),
-        "says-finding": ("failed", FINDING),
-        "says-crash": ("errored", NO_ANSWER),
-        "child-missing": ("unavailable", TOOL_MISSING),
-        "child-no-answer": ("errored", NO_ANSWER),
-    }
-
+    rows = {name: {"id": name, **row} for name, (row, _, _) in _OUTCOMES.items()}
     problems = []
-    for name, (bucket, status) in expected.items():
+    for name, (_, bucket, status) in _OUTCOMES.items():
         report = {"unavailable": [], "failed": [], "errored": []}
         with contextlib.redirect_stdout(io.StringIO()):
             run_gate(rows[name], report)
@@ -667,13 +624,39 @@ def _contract_self_test():
         pair = run_gates([rows["absent-tool"], rows["finding"]])
     if pair != FINDING:
         problems.append(f"  precedence: got {pair}, expected {FINDING}")
+    problems += _runner_problems(rows)
 
     if problems:
         print("naming_gate exit-contract self-test FAILED", file=sys.stderr)
         print("\n".join(problems), file=sys.stderr)
         return 1
-    print(f"naming_gate exit-contract self-test OK ({len(expected)} outcomes)")
+    print(f"naming_gate exit-contract self-test OK ({len(_OUTCOMES)} outcomes)")
     return 0
+
+
+def _runner_problems(rows):
+    """The row behind a timed-out one still runs, `--logs` files a noisy row's
+    output and verdict, and a `groups` row stands for its rows once each."""
+    import io
+
+    problems = []
+    with contextlib.redirect_stdout(out := io.StringIO()):
+        run_gates([rows["timed-out"], rows["clean"]])
+    if "PASS clean" not in out.getvalue():
+        problems.append("  timed-out: the row behind it did not run")
+    logs = tempfile.mkdtemp(prefix="naming-gate-logs-")
+    with contextlib.redirect_stdout(io.StringIO()):
+        run_gates([rows["noisy"]], logs)
+    summary, log = (open(os.path.join(logs, name), encoding="utf-8").read()
+                    for name in ("summary.txt", "noisy.log"))
+    shutil.rmtree(logs)
+    if not summary.startswith("NOISY noisy (") or "warning: unused" not in log:
+        problems.append(f"  --logs: summary {summary!r}, log {log!r}")
+    table = ({"id": "a", "group": "x"}, {"id": "b", "group": "y"},
+             {"id": "u", "group": "union", "groups": "@x,@y,a"})
+    if [row["id"] for row in select("@union", table)] != ["a", "b"]:
+        problems.append("  groups: @union does not stand for the rows of @x and @y once each")
+    return problems
 
 
 def _registry_self_test():
@@ -682,7 +665,8 @@ def _registry_self_test():
     A registry whose rows point at nothing is the silence this table replaced:
     CI used to hand-write one step per gate, so a gate could be added and never
     called. Here the row IS the call, and this refuses a row whose command is
-    not on disk, whose id repeats, or whose group nobody selects.
+    not on disk, whose id repeats, whose group nobody selects, or whose
+    `groups` names nothing.
     """
     problems = []
     seen = set()
@@ -693,25 +677,25 @@ def _registry_self_test():
         seen.add(gate_id)
         if not row.get("group"):
             problems.append(f"  {gate_id}: declares no group, so no `--run @group` reaches it")
+        if "groups" in row:
+            continue
         argv = row.get("argv") or []
         if not argv:
             problems.append(f"  {gate_id}: declares no command")
             continue
-        # `bash -c` and the interpreter running this file are commands by
-        # construction; anything else is a path in the tree and must be there.
-        head = argv[0]
-        if head == "python3":
-            target = argv[1] if len(argv) > 1 else None
-        elif head == "bash":
-            target = None
-        else:
-            target = head
-        if target and not os.path.isfile(target):
+        # A bare name is a command on PATH and `bash -c` one by construction; a
+        # path run from the root is in the tree and must be there. A row run
+        # elsewhere runs what its own build puts there.
+        target = argv[1] if argv[0] == "python3" and len(argv) > 1 else argv[0]
+        if argv[0] == "bash" or "/" not in target or row.get("cwd"):
+            continue
+        if not os.path.isfile(target):
             problems.append(f"  {gate_id}: {target} is not a file")
-        elif target and head != "python3" and not os.access(target, os.X_OK):
+        elif argv[0] != "python3" and not os.access(target, os.X_OK):
             problems.append(f"  {gate_id}: {target} is not executable")
 
-    for spec in ("all", "@naming", "@format", "@history", "@release", "@rehearsal"):
+    unions = [row["id"] for row in GATES if "groups" in row]
+    for spec in ["all", *sorted({f"@{row['group']}" for row in GATES}), *unions]:
         try:
             if not select(spec):
                 problems.append(f"  {spec}: selects no gate")
@@ -771,25 +755,37 @@ def _self_test():
 
 
 USAGE = """usage: naming_gate.py --self-test
-       naming_gate.py --list
-       naming_gate.py --run all|@<group>|<id>[,<id>...]"""
+       naming_gate.py --list [all|@<group>|<id>[,<id>...]]
+       naming_gate.py [--logs DIR] --run all|@<group>|<id>[,<id>...]"""
+
+
+def _command(row):
+    """A row's command as `--list` prints it."""
+    if "groups" in row:
+        return f"= {row['groups']}"
+    words = [f"cd {row['cwd']} &&"] if row.get("cwd") else []
+    words += ["env", *(f"{k}={v}" for k, v in row["env"].items())] if row.get("env") else []
+    return " ".join(words + row["argv"])
 
 
 def _main(argv):
+    logs = None
+    if argv[:1] == ["--logs"] and len(argv) > 2:
+        logs, argv = argv[1], argv[2:]
     if argv == ["--self-test"]:
         return max(_self_test(), _contract_self_test(), _registry_self_test())
-    if argv == ["--list"]:
-        for row in GATES:
-            print(f"{row['id']:<26} {row['group']:<8} {' '.join(row['argv'])}")
-        return OK
-    if len(argv) == 2 and argv[0] == "--run":
+    if argv[:1] == ["--list"] and len(argv) <= 2 or argv[:1] == ["--run"] and len(argv) == 2:
         try:
-            rows = select(argv[1])
+            rows = select(argv[1]) if len(argv) == 2 else None
         except KeyError as exc:
             print(f"naming_gate.py: {exc}", file=sys.stderr)
             print(USAGE, file=sys.stderr)
             return NO_ANSWER
-        return run_gates(rows)
+        if argv[0] == "--run" and rows is not None:
+            return run_gates(rows, logs)
+        for row in GATES if rows is None else rows:
+            print(f"{row['id']:<26} {row['group']:<8} {_command(row)}")
+        return OK
     print(USAGE, file=sys.stderr)
     # Not a gate result: the runner itself was called wrongly, which is the
     # caller's own mistake and not a verdict about the tree.

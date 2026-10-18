@@ -24,8 +24,9 @@ defmodule FlezhaTest.Helper.TimingFormatter do
   When `FLEZHA_E2E_RUNTIME` is set or any `:system` test ran, the formatter also
   prints the SDK conformance table — every capability of the vocabulary with its
   outcome (`pass`, `fail`, `deferred` or `untested`) — and
-  writes the same table as JSON to `$CONFORMANCE_OUT` when that is set. The
-  nightly uploads it per runtime.
+  merges the same table into the JSON at `$CONFORMANCE_OUT` when that is set,
+  each capability keeping its worst outcome across the runs that wrote there.
+  The nightly uploads it per runtime.
   """
   use GenServer
 
@@ -143,8 +144,21 @@ defmodule FlezhaTest.Helper.TimingFormatter do
         :ok
 
       path ->
+        # A sharded run's gate rows each write here: keep every capability's
+        # worst outcome across them.
+        table = Map.merge(written_outcomes(path), table, fn _, a, b -> worst(a, b) end)
         File.write!(path, Jason.encode!(%{runtime: runtime, capabilities: table}, pretty: true))
         IO.puts(:stderr, "[conformance] #{path}")
+    end
+  end
+
+  defp written_outcomes(path) do
+    if File.exists?(path) do
+      Map.new(Jason.decode!(File.read!(path))["capabilities"], fn {capability, outcome} ->
+        {String.to_existing_atom(capability), String.to_existing_atom(outcome)}
+      end)
+    else
+      %{}
     end
   end
 

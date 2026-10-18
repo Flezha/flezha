@@ -51,11 +51,14 @@ the container, and VM flags:
 
 `.github/workflows/docker.yml` runs `docker-size-gate` on PRs that touch
 `docker/prod/**`, `mix.exs`, `mix.lock`, `Cargo.toml`, `Cargo.lock`, or
-`flz_nif/**`. The job builds the prod image, prints its size to the
-GitHub step summary, and fails if the image exceeds the budget.
+`flz_nif/**`. The job builds the prod and runtime-dev images, then runs the
+gate row `image-size` (`python3 scripts/naming_gate.py --run @docker`), which
+prints their sizes to the GitHub step summary and fails if either exceeds its
+budget.
 
-Budget: **300 MiB** (`IMAGE_SIZE_LIMIT_BYTES=314572800`). Adjust with a
-one-line edit if a legitimate size change ships in the same PR.
+Budget: **300 MiB** for the prod image, **450 MiB** for runtime-dev, both in
+`IMAGE_SIZE` in `scripts/gate_rows.py`. Adjust with a one-line edit if a
+legitimate size change ships in the same PR.
 
 
 ## process_hub source

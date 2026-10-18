@@ -59,20 +59,21 @@ a writable directory the native library can be loaded from.
 
 ## CI on your machine
 
-`scripts/ci-local.sh` runs the same commands, in the same order, as the
-GitHub Actions workflows it mirrors, so a failure shows up locally instead of
-after a remote run:
+Every check a workflow runs, the suites included, is a row in
+`scripts/gate_rows.py`, and the workflow selects rows by group. Run the same
+group here and you run what CI runs:
 
 ```sh
-$ scripts/ci-local.sh               # every section
-$ scripts/ci-local.sh elixir        # mix compile, the Rust tests, mix test
-$ scripts/ci-local.sh java          # the Java smoke tier
+$ python3 scripts/naming_gate.py --list @core      # what a group runs
+$ python3 scripts/naming_gate.py --run @core       # the controller's compile and suites
+$ python3 scripts/naming_gate.py --run @sdk-java   # one SDK's gates and smoke tier
+$ python3 scripts/naming_gate.py --run <id>        # one row
 ```
 
-What each section runs is listed in the script's own header. It builds what it
-needs, and uses its own `target-ci-local/` directory so leftovers in `target/`
-cannot get in the way. It ends with `ALL CI CHECKS PASSED`, or exits non-zero
-on the first section that fails.
+`--list` with no group prints every row and the group it is in. A runtime's
+runner is built by its manifest's `build.test` command, as the rows do, with
+`scripts/build-runner.sh <runtime> test`. See
+[the gates](code_standards.md#the-gates) for what the runner reports.
 
 ## The Docker stacks
 

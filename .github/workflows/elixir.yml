@@ -1,9 +1,9 @@
 name: Elixir
 
-# Runs `mix test` — every ExUnit case except `:system`, which is excluded in
-# `test/test_helper.exs`. That includes the SDK conformance gate
+# Runs the `core` gate rows: every ExUnit case except `:system`, which is
+# excluded in `test/test_helper.exs`. That includes the SDK conformance gate
 # (`test/sdk_conformance/gate_test.exs`), which is untagged and spawns no
-# runner. The runner-backed smoke tier runs in `java-sdk.yml` and the full
+# runner. The runner-backed smoke tier runs in each SDK's workflow and the full
 # `:system` suite in `nightly-e2e.yml`; this workflow stays Elixir+Rust only.
 #
 # Nothing here touches the Java SDK's native binary: the conformance gate reads
@@ -28,6 +28,7 @@ on:
       - "test/apps/testnet"
       - "test/apps/testnet/**"
       - ".github/workflows/elixir.yml"
+      - "scripts/gate_rows.py"
   push:
     branches: [main]
     paths:
@@ -46,6 +47,7 @@ on:
       - "test/apps/testnet"
       - "test/apps/testnet/**"
       - ".github/workflows/elixir.yml"
+      - "scripts/gate_rows.py"
 
 env:
   CARGO_TERM_COLOR: always
@@ -55,7 +57,7 @@ env:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v5
         with:
@@ -76,68 +78,11 @@ jobs:
               workspace's prost path also needs the binary on $PATH)
         uses: ./.github/actions/setup-protoc
 
-      - name: Build testnet
-        # Equivalent to `mix test.setup` (mix.exs alias); the install half is
-        # the `npm ci` the Node setup step above ran. Without the bundle the
-        # WS-dependent ExUnit cases are auto-skipped at compile time, so the
-        # build keeps them in scope for CI.
-        working-directory: test/apps/testnet
-        run: npm run build
-
-      - name: Compile Elixir (warnings as errors)
-        run: mix compile --warnings-as-errors
-
-      - name: Pre-build rust_runner
-        # PortPilot launches two `cargo run --quiet` processes for
-        # rust_runner at boot; BootLoader's post_hook gives
-        # them 20s to connect (config/test.exs). A cold debug build
-        # of the binary + workspace deps doesn't fit in that window,
-        # so build it ahead of time into the same ./target dir the
-        # cargo-run command uses.
-        run: |
-          cargo build --quiet \
-            --manifest-path=sdk/rust/test_app/Cargo.toml \
-            --target-dir=./target
-
-      - name: Generate the QUIC development certificates
-        # The QUIC tests in `flz_core`, `flz_transport` and `flz_nif` handshake
-        # with the peer certificates under `app_data/`, which is runtime data
-        # no checkout carries. The controller's own generator writes the set a
-        # boot would have written.
-        run: mix run --no-start -e 'Flezha.Transport.CertGenerator.ensure_certs()'
-
-      - name: Run Rust tests
-        # The only place the flz_core, flz_transport, flz_nif, flz (the CLI) and
-        # flezha_runner crates' own unit and integration tests run in CI.
-        # `cell_timers`, `sugar_emit` and `simple_tasklet` require the
-        # `testing` feature, and without it cargo skips them silently.
-        run: |
-          cargo test --quiet -p flz_core -p flz_transport -p flz_nif -p flz
-          cargo test --quiet \
-            -p flezha_runner --features bench-internals,testing \
-            --lib --tests
-
-      - name: Run mix test
-        # Default `mix test` excludes `:system`, so no runner is spawned —
-        # but it does run the SDK conformance gate, which is untagged. The
-        # runner-backed smoke tier runs in `java-sdk.yml` and the full
-        # `:system` suite in the nightly matrix.
-        #
-        # `--warnings-as-errors` is the half the compile step above cannot
-        # reach: the project's elixirc_paths carry lib/, test/fixtures/ and
-        # test/helpers/, so until this flag landed nothing judged a warning in
-        # a test file and they accumulated unseen.
-        run: |
-          set -o pipefail
-          mix test --warnings-as-errors 2>&1 | tee /tmp/mix-test.log
-
-      - name: Fail on uncaptured error logs
-        # `config/test.exs` pins the logger to :error, so nothing below that
-        # level can print. A test that drives a failure path on purpose must
-        # wrap it in ExUnit.CaptureLog and assert the message; anything that
-        # reaches the console is an unasserted error.
-        run: |
-          if grep -nE '\[(error|critical)\]' /tmp/mix-test.log; then
-            echo "::error::uncaptured error/critical log during mix test — wrap the failure-path test in capture_log and assert the message"
-            exit 1
-          fi
+      - name: The core gates
+        # Every row of `@core` in scripts/gate_rows.py (the warnings-as-errors
+        # compile, the testnet bundle, the runner and certificates the suites
+        # boot against, then `mix test --warnings-as-errors` split by
+        # directory) and the Rust crates' own tests. Each row is quiet: an
+        # uncaptured [error] line fails it, so a test that drives a failure path
+        # wraps it in ExUnit.CaptureLog and asserts the message.
+        run: python3 scripts/naming_gate.py --run @core,rust-test-core,rust-test-runner

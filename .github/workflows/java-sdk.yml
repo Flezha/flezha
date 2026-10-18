@@ -15,6 +15,7 @@ on:
       - "test/helpers/node_test_helper.ex"
       - "test/system/sdk_smoke_e2e_test.exs"
       - ".github/workflows/java-sdk.yml"
+      - "scripts/gate_rows.py"
   # No `paths:` here, deliberately. A path filter is evaluated against the
   # commits a push carries, and a tag pushed onto an existing commit carries
   # none — so a filtered push trigger would skip the release job every time.
@@ -57,7 +58,7 @@ jobs:
         uses: ./.github/actions/setup-rust
 
       - name: Assert the Java native surface against the declared table
-        run: cargo test -p flz_core_ffi --features jni --test abi_scenario veneer_jni
+        run: python3 scripts/naming_gate.py --run rust-test-ffi-jni
 
   # Java <-> Elixir integration matrix: end to end, which is the half the Java
   # repository cannot run. The submodule is what it runs the Java runtime from,
@@ -142,13 +143,10 @@ jobs:
         # it is build output, not tracked in git.
         run: mvn -B -q -DskipTests -f test/apps/java_runner/pom.xml package
 
-      - name: Run the shared smoke tier against the Java runtime
-        env:
-          FLEZHA_E2E_RUNTIME: java
-        run: |
-          mix test --include sdk_smoke \
-            --formatter FlezhaTest.Helper.TimingFormatter \
-            --formatter ExUnit.CLIFormatter
+      - name: The Java SDK's gates and the shared smoke tier
+        # The rows of `@sdk-java` in scripts/gate_rows.py, the fake controller
+        # its own smoke runs against first.
+        run: python3 scripts/naming_gate.py --run sdk-fake-controller,@sdk-java
 
   # The two release artefacts this repository cannot cross-build, both for the
   # same reason and neither fixable with zig:

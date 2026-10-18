@@ -133,8 +133,6 @@ defmodule FlezhaTest.System.CrossSdkPlacementE2ETest do
         opts: []
       })
 
-    message = inspect(reason)
-    assert message =~ "sdk_lang", message
-    refute message =~ "does not exist", message
+    assert {:factory_language_unserved, @namespace, @shared_factory, @rust} = reason
   end
 end

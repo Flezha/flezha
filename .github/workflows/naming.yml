@@ -125,6 +125,26 @@ jobs:
       - name: Every naming, structure and weight gate
         run: python3 scripts/naming_gate.py --run @naming
 
+  # `cargo clippy --workspace --all-targets` with warnings denied: the lint
+  # reading of the code standards, and the one build of the criterion benches.
+  clippy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: true
+      - name: Set up Erlang + Elixir
+        uses: ./.github/actions/setup-beam
+      - name: Install Rust
+        uses: ./.github/actions/setup-rust
+        with:
+          components: clippy
+      - name: Install protoc
+        uses: ./.github/actions/setup-protoc
+      - name: Clippy over every target
+        run: python3 scripts/naming_gate.py --run rust-clippy
+
   repo-size:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -133,4 +153,4 @@ jobs:
         with:
           fetch-depth: 0
       - name: check-build-artifacts size
-        run: python3 scripts/naming_gate.py --run build-artifacts-size
+        run: python3 scripts/naming_gate.py --run @history

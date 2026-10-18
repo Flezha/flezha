@@ -21,6 +21,7 @@ on:
       - "test/fixtures/host_class_decl_keys.txt"
       - "scripts/build-node-sdk.sh"
       - ".github/workflows/node-sdk.yml"
+      - "scripts/gate_rows.py"
   push:
     branches: [main]
 
@@ -42,7 +43,7 @@ jobs:
         uses: ./.github/actions/setup-rust
 
       - name: The ABI scenario, driven through the Node veneer
-        run: cargo test -p flz_core_ffi --features napi
+        run: python3 scripts/naming_gate.py --run rust-test-ffi-napi
 
       - name: The feature is additive
         # Enabling `napi` adds one exported symbol and removes none, and the

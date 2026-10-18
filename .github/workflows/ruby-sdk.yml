@@ -21,6 +21,7 @@ on:
       - "test/fixtures/host_class_decl_keys.txt"
       - "scripts/build-ruby-sdk.sh"
       - ".github/workflows/ruby-sdk.yml"
+      - "scripts/gate_rows.py"
   push:
     branches: [main]
     paths:
@@ -31,6 +32,7 @@ on:
       - "test/fixtures/host_class_decl_keys.txt"
       - "scripts/build-ruby-sdk.sh"
       - ".github/workflows/ruby-sdk.yml"
+      - "scripts/gate_rows.py"
 
 env:
   CARGO_TERM_COLOR: always
@@ -55,15 +57,11 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libclang-dev
 
       # The full ABI scenario, mapped through the Ruby veneer on an embedded
-      # CRuby VM, with no Ruby process involved. `--test-threads=1` because the
-      # VM's setup records the stack frame it is booted from.
-      - name: The ABI scenario, driven through the Ruby veneer
-        run: cargo test -p flz_core_ffi --features ruby-embed -- --test-threads=1
-
-      - name: The crate still builds without any veneer
-        # The point of the feature gate: a machine with no Ruby, no JVM and no
-        # Node still builds this crate.
-        run: cargo build -p flz_core_ffi
+      # CRuby VM, with no Ruby process involved; then the crate with no veneer,
+      # the point of the feature gate: a machine with no Ruby, no JVM and no
+      # Node still builds it.
+      - name: The ABI scenario through the Ruby veneer, and the crate without one
+        run: python3 scripts/naming_gate.py --run rust-test-ffi-ruby,rust-build-ffi
 
       - name: The feature is additive
         # Enabling `ruby` adds the extension's module registration and removes

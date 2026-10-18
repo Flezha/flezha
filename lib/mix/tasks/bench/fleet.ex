@@ -159,7 +159,12 @@ defmodule Mix.Tasks.Bench.Fleet do
   end
 
   @doc """
-  Run the runtime's own bench build before measuring with it.
+  Run the runtime's own build for `profile` (`:bench` or `:test`) before
+  running it.
+
+  The one place a runner is built: the bench calls it, and CI and the gate rows
+  reach it through `scripts/build-runner.sh`. The command is the manifest's
+  `build.<profile>`, so a manifest is the only place a build is spelled.
 
   An artifact that EXISTS is not an artifact that is CURRENT, and nothing else
   in this path can tell the difference: a runner built against a two-day-old
@@ -168,18 +173,18 @@ defmodule Mix.Tasks.Bench.Fleet do
   its own dependency graph, which no mtime heuristic here could. So the cheap
   correct move is to run it every time.
 
-  `FLEZHA_BENCH_SKIP_BUILD=1` opts out for someone iterating on the harness
-  rather than on a number.
+  `FLEZHA_BENCH_SKIP_BUILD=1` opts out of the bench build for someone iterating
+  on the harness rather than on a number.
 
   Returns `:built`, `:skipped` or `:none` so the run can report which — an
   artifact that exists tells the reader nothing about whether it is current.
   """
-  @spec ensure_built(atom()) :: :built | :skipped | :none
-  def ensure_built(runtime) do
-    command = PortPilot.manifest(runtime)["build"]["bench"]
+  @spec ensure_built(atom(), :bench | :test) :: :built | :skipped | :none
+  def ensure_built(runtime, profile \\ :bench) do
+    command = PortPilot.manifest(runtime)["build"][Atom.to_string(profile)]
 
     cond do
-      Config.get(:bench_skip_build) ->
+      profile == :bench and Config.get(:bench_skip_build) ->
         IO.puts("Skipping the #{runtime} bench build (FLEZHA_BENCH_SKIP_BUILD)")
         :skipped
 
@@ -187,15 +192,19 @@ defmodule Mix.Tasks.Bench.Fleet do
         :none
 
       true ->
-        IO.puts("Building the #{runtime} bench runner: #{command}")
+        IO.puts("Building the #{runtime} #{profile} runner: #{command}")
 
-        case System.cmd("sh", ["-c", command], stderr_to_stdout: true) do
+        # Streamed, so a warning the build prints reaches the caller's log.
+        case System.cmd("sh", ["-c", command],
+               stderr_to_stdout: true,
+               into: IO.binstream(:stdio, :line)
+             ) do
           {_output, 0} ->
             :built
 
-          {output, status} ->
-            raise "the #{runtime} bench build failed (exit #{status}); a bench against a " <>
-                    "stale artifact is not a measurement.\n\n#{command}\n\n#{output}"
+          {_output, status} ->
+            raise "the #{runtime} #{profile} build failed (exit #{status}); nothing may run " <>
+                    "against a stale artifact. Its output is above.\n\n#{command}"
         end
     end
   end

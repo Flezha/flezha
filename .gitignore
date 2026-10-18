@@ -75,10 +75,6 @@ examples/**/target/
 # five-triple build produces. Build output, never tracked.
 /dist/
 
-# scripts/ci-local.sh isolates its Cargo artifacts here so it doesn't
-# collide with anything else under /target/.
-/target-ci-local/
-
 # Memory-drift load-harness outputs.
 /test/load/artifacts/*.json
 /test/load/artifacts/*.log

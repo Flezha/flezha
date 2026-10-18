@@ -7,7 +7,7 @@ name: PHP SDK
 # controller, and the threaded executor's arm needs the thread-safe image this
 # tree builds.
 #
-# A change to the SDK reaches these jobs when the pin is bumped, which is the
+# A change to the SDK reaches this job when the pin is bumped, which is the
 # change that brings it into end to end at all.
 
 on:
@@ -21,6 +21,7 @@ on:
       - "scripts/build-php-sdk.sh"
       - "docker/dev/Dockerfile.php"
       - ".github/workflows/php-sdk.yml"
+      - "scripts/gate_rows.py"
   push:
     branches: [main]
     paths:
@@ -32,27 +33,30 @@ on:
       - "scripts/build-php-sdk.sh"
       - "docker/dev/Dockerfile.php"
       - ".github/workflows/php-sdk.yml"
+      - "scripts/gate_rows.py"
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # The threaded executor, on the build most distributions do not ship. Cached
-  # so a reproduction is a container away rather than a local source build, and
-  # run on every change to the SDK rather than nightly: an arm that only runs
-  # when someone remembers to set an environment variable is an arm that rots.
-  threaded:
+  # The package's gates from the one gate list: its suites, the threaded
+  # executor's arm on the thread-safe build most distributions do not ship, and
+  # end to end, which is the half an SDK repository cannot run: it needs the
+  # controller. The submodule is what this job runs the PHP runtime from, at the
+  # commit this tree pins. The ZTS PHP + Swoole image is cached, so a
+  # reproduction is a container away rather than a local source build, and the
+  # arm runs on every change to the SDK rather than nightly: an arm that only
+  # runs when someone remembers to set an environment variable is an arm that
+  # rots.
+  gates:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
         with:
           submodules: true
 
-      - name: Install Rust
-        uses: ./.github/actions/setup-rust
-
-      - name: Build the library
-        run: cargo build -p flz_core_ffi
+      - name: Set up PHP
+        uses: ./.github/actions/setup-php
 
       - name: Cache the ZTS PHP + Swoole image
         uses: actions/cache@v5
@@ -70,40 +74,6 @@ jobs:
             mkdir -p /tmp/php-zts-image
             docker save -o /tmp/php-zts-image/image.tar flezha-php-zts
           fi
-
-      # `Swoole\Thread` is what the whole adapter rests on, and the floor the
-      # package's `suggest` names. Confirmed on the image rather than assumed.
-      - name: Confirm the threading floor
-        run: |
-          docker run --rm flezha-php-zts php -r '
-            assert(PHP_ZTS, "not a thread-safe build");
-            assert(class_exists("Swoole\\Thread"), "no Swoole\\Thread");
-            assert(ini_get("ffi.enable") === "1", "ffi.enable must be true inside a thread");
-            printf("php %s zts, swoole %s, %d cpus\n", PHP_VERSION, swoole_version(), swoole_cpu_num());
-          '
-
-      # The package's suite, on the thread-safe build: the five threaded tests
-      # that skip on a stock build run here.
-      - name: Unit tests on the thread-safe build
-        run: |
-          set -euo pipefail
-          mkdir -p sdk/php/lib/linux-x64
-          cp target/debug/libflz_core_ffi.so sdk/php/lib/linux-x64/
-          docker run --rm -v "$PWD:$PWD" -w "$PWD/sdk/php" flezha-php-zts \
-            sh -c 'composer install --no-interaction --no-progress && vendor/bin/phpunit'
-
-  # End to end, which is the half an SDK repository cannot run: it needs the
-  # controller. The submodule is what this job runs the PHP runtime from, at
-  # the commit this tree pins.
-  smoke:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          submodules: true
-
-      - name: Set up PHP
-        uses: ./.github/actions/setup-php
 
       - uses: ./.github/actions/sdk-smoke
         with:

@@ -18,8 +18,8 @@ defmodule FlezhaTest.Tiers do
     * `:tag` - the ExUnit tag, and the token an `--include` names.
     * `:runs_in` - `:workflow` when some workflow runs it, `:manual` when a
       person does. `:manual` requires `:reason`.
-    * `:workflow` - the file under `.github/workflows/` whose `mix test` line
-      names the tag.
+    * `:workflow` - the file under `.github/workflows/` whose gate rows
+      (`selected_rows/1`) name the tag.
     * `:reason` - why a `:manual` tier is not in CI. A tier with neither a
       workflow nor a reason is a gate failure, because it is a slice of the
       suite that nothing anywhere runs.
@@ -242,6 +242,25 @@ defmodule FlezhaTest.Tiers do
       tag in (ExUnit.configuration()[:include] || []) -> nil
       true -> "#{tag} needs #{tier.needs}; pass --include #{tag}"
     end
+  end
+
+  @doc """
+  The commands of the gate rows a workflow runs. A workflow spells no `mix test`
+  line of its own: it selects rows with `naming_gate.py --run <spec>`, and a
+  `${{ ... }}` in the spec is read as every runtime that has a manifest.
+  """
+  @spec selected_rows(String.t()) :: String.t()
+  def selected_rows(source) do
+    for [_, spec] <-
+          Regex.scan(~r/naming_gate\.py[\s\\]+--run\s+((?:\$\{\{[^}]*\}\}|\S)+)/, source),
+        runtime <- Flezha.Service.PortPilot.runtimes(),
+        uniq: true do
+      Regex.replace(~r/\$\{\{[^}]*\}\}/, spec, Atom.to_string(runtime))
+    end
+    |> Enum.map_join(fn spec ->
+      {rows, 0} = System.cmd("python3", ["scripts/naming_gate.py", "--list", spec])
+      rows
+    end)
   end
 
   @doc "The workflow directory this table reads its triggers from."

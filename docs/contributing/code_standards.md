@@ -136,16 +136,25 @@ report and nothing else. The commits that only reformatted code are listed in
 
 ## The gates
 
-Every check CI runs besides the tests is a gate, and every gate is a row in
-`scripts/naming_gate.py`. CI calls the same runner, so what you run is what CI
-runs:
+Every check CI runs is a gate, the test suites included, and every gate is a
+row in `scripts/gate_rows.py`. That list is the one place a gate is added: each
+workflow's check steps select rows by group, so a new row reaches CI with no
+other edit, and a workflow cannot spell a check of its own.
+`scripts/naming_gate.py` runs the rows, so what you run is what CI runs:
 
 ```sh
 $ python3 scripts/naming_gate.py --list            # every gate and its command
+$ python3 scripts/naming_gate.py --list @core      # the rows one group selects
 $ python3 scripts/naming_gate.py --run @naming     # the naming and structure gates
 $ python3 scripts/naming_gate.py --run @format     # formatters, license headers, notices
 $ python3 scripts/naming_gate.py --run <id>        # one gate
 ```
+
+A row may run in a directory of its own, under extra environment and a time
+limit, and may be declared quiet: a quiet row that passes but prints a warning,
+an uncaptured `[error]` log line or a stray stderr line is a finding, reported
+as NOISY. `--logs DIR` writes each row's output to `DIR/<id>.log` and its
+verdict and duration to `DIR/summary.txt`.
 
 The runner reports every gate and ends on one of three non-zero statuses when
 something is wrong:

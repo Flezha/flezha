@@ -24,13 +24,7 @@ on:
       - "flz_nif/**"
       - ".dockerignore"
       - ".github/workflows/docker.yml"
-
-env:
-  # 300 MiB. Documented in docker/prod/README.md.
-  PROD_IMAGE_SIZE_LIMIT_BYTES: 314572800
-  # 450 MiB — prod budget plus an allowance for Node.js runtime and the
-  # built testnet bundle. Documented in the controller-packaging spec.
-  RUNTIME_DEV_IMAGE_SIZE_LIMIT_BYTES: 471859200
+      - "scripts/gate_rows.py"
 
 jobs:
   docker-size-gate:
@@ -55,42 +49,7 @@ jobs:
             -t flezha/flezha:latest-dev \
             .
 
-      - name: Measure image sizes
-        id: size
-        run: |
-          PROD_SIZE=$(docker image inspect flezha/flezha:latest --format '{{.Size}}')
-          DEV_SIZE=$(docker image inspect flezha/flezha:latest-dev --format '{{.Size}}')
-          mb() { awk "BEGIN { printf \"%.1f\", $1/1024/1024 }"; }
-          PROD_MB=$(mb "$PROD_SIZE")
-          DEV_MB=$(mb "$DEV_SIZE")
-          PROD_LIMIT_MB=$(mb "$PROD_IMAGE_SIZE_LIMIT_BYTES")
-          DEV_LIMIT_MB=$(mb "$RUNTIME_DEV_IMAGE_SIZE_LIMIT_BYTES")
-          {
-            echo "prod_size_bytes=${PROD_SIZE}"
-            echo "prod_size_mb=${PROD_MB}"
-            echo "prod_limit_mb=${PROD_LIMIT_MB}"
-            echo "dev_size_bytes=${DEV_SIZE}"
-            echo "dev_size_mb=${DEV_MB}"
-            echo "dev_limit_mb=${DEV_LIMIT_MB}"
-          } >> "$GITHUB_OUTPUT"
-          {
-            echo "## Image sizes"
-            echo ""
-            echo "| Tag | Size | Limit |"
-            echo "|-----|------|-------|"
-            echo "| \`flezha/flezha:latest\` | ${PROD_MB} MiB | ${PROD_LIMIT_MB} MiB |"
-            echo "| \`flezha/flezha:latest-dev\` | ${DEV_MB} MiB | ${DEV_LIMIT_MB} MiB |"
-          } >> "$GITHUB_STEP_SUMMARY"
-
       - name: Enforce size budgets
-        run: |
-          fail=0
-          if [ "${{ steps.size.outputs.prod_size_bytes }}" -gt "${PROD_IMAGE_SIZE_LIMIT_BYTES}" ]; then
-            echo "::error::prod image ${{ steps.size.outputs.prod_size_mb }} MiB exceeds threshold ${{ steps.size.outputs.prod_limit_mb }} MiB"
-            fail=1
-          fi
-          if [ "${{ steps.size.outputs.dev_size_bytes }}" -gt "${RUNTIME_DEV_IMAGE_SIZE_LIMIT_BYTES}" ]; then
-            echo "::error::runtime-dev image ${{ steps.size.outputs.dev_size_mb }} MiB exceeds threshold ${{ steps.size.outputs.dev_limit_mb }} MiB"
-            fail=1
-          fi
-          exit "$fail"
+        # Row `image-size` in scripts/gate_rows.py: the budgets, the measured
+        # sizes and the step-summary table.
+        run: python3 scripts/naming_gate.py --run @docker

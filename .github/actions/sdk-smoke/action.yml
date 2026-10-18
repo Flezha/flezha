@@ -1,8 +1,8 @@
 name: Run an SDK's smoke tier end to end
 description: >
-  The half of an extracted SDK's testing its own repository cannot run: the
-  shared smoke tier against the controller, with the SDK taken from its
-  submodule at the commit this tree pins. The job checks out with submodules
+  The SDK's gates from the one gate list, among them the half of its testing
+  its own repository cannot run: the shared smoke tier against the controller,
+  with the SDK taken from its submodule at the commit this tree pins. The job checks out with submodules
   and sets up the SDK's own language first.
 
 inputs:
@@ -33,11 +33,8 @@ runs:
           --manifest-path=sdk/rust/test_app/Cargo.toml \
           --target-dir=./target
 
-    - name: Run the shared smoke tier
+    - name: The SDK's gates and the shared smoke tier
+      # The rows of `@sdk-<runtime>` in scripts/gate_rows.py, the fake
+      # controller its own smoke runs against first.
       shell: bash
-      env:
-        FLEZHA_E2E_RUNTIME: ${{ inputs.runtime }}
-      run: |
-        mix test --include sdk_smoke \
-          --formatter FlezhaTest.Helper.TimingFormatter \
-          --formatter ExUnit.CLIFormatter
+      run: python3 scripts/naming_gate.py --run sdk-fake-controller,@sdk-${{ inputs.runtime }}

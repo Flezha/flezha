@@ -1,6 +1,5 @@
 # build outputs
 **/target
-target-ci-local
 _build
 deps
 priv/native/*.so
