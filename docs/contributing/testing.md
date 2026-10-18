@@ -118,7 +118,17 @@ writing a copy. `FlezhaTest.Helper.NodeTestHelper.wait_until/3` polls,
 `FlezhaTest.Helper.MimicGlobal.set_mimic_global_until_exit/1` holds Mimic's
 global mode for one test, and `FlezhaTest.Helper.ProviderPrepare` prepares and
 activates one provider and stands in for the writer a sink's outputs confirm
-to.
+to. `FlezhaTest.Helper.WebhookServer` is the HTTP/1.1 origin a test drives a
+client or plugin against, and `FlezhaTest.DurabilityBackendContract` is the blob
+contract each durability backend's test file runs.
+
+The Rust tests share `flz_core::test_support`, which a crate built on the core
+reaches through its `test-support` feature, and the Rust SDK's integration
+tests share `sdk/rust/tests/common`. The PHP SDK's tests fake the controller by
+extending `Flezha\Tests\RefusingSpawnBridge`, which fails a call its test does
+not expect. The Java SDK's tests capture standard error with
+`com.flezha.sdk.CapturedStderr`, which the API module's test jar carries to the
+runtime's tests.
 
 A plugin package under `plugins/` uses the same helpers. A dependency compiles
 only its `lib`, so the package's test `elixirc_paths` names each core helper

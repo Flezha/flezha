@@ -212,13 +212,7 @@ defmodule FlezhaTest.System.BackoffTableDrillTest do
   end
 
   defp otlp_device() do
-    {:ok, listener} = :gen_tcp.listen(0, [:binary, active: false, reuseaddr: true])
-    {:ok, port} = :inet.port(listener)
-
-    spawn_link(fn ->
-      answer_http(listener, "HTTP/1.1 503 Service Unavailable\r\ncontent-length: 0\r\n\r\n")
-    end)
-
+    %{port: port} = WebhookServer.start([503])
     previous = Application.get_env(:flezha, :observability_export, [])
 
     Application.put_env(
@@ -227,10 +221,7 @@ defmodule FlezhaTest.System.BackoffTableDrillTest do
       Keyword.put(previous, :otlp_endpoint, "http://127.0.0.1:#{port}")
     )
 
-    on_exit(fn ->
-      Application.put_env(:flezha, :observability_export, previous)
-      :gen_tcp.close(listener)
-    end)
+    on_exit(fn -> Application.put_env(:flezha, :observability_export, previous) end)
 
     # The client is a named singleton; the drill owns it for the duration.
     if pid = Process.whereis(OtlpClient), do: Supervisor.stop(pid)
@@ -294,12 +285,7 @@ defmodule FlezhaTest.System.BackoffTableDrillTest do
   end
 
   defp ws_reconnect_device() do
-    {:ok, listener} = :gen_tcp.listen(0, [:binary, active: false, reuseaddr: true])
-    {:ok, port} = :inet.port(listener)
-
-    spawn_link(fn ->
-      answer_http(listener, "HTTP/1.1 429 Too Many Requests\r\ncontent-length: 0\r\n\r\n")
-    end)
+    %{port: port} = WebhookServer.start([429])
 
     {:ok, _opts, client} =
       ProviderPrepare.prepare_and_activate(Websocket, %{
@@ -308,8 +294,6 @@ defmodule FlezhaTest.System.BackoffTableDrillTest do
       })
 
     ProviderPrepare.stop_on_exit(Websocket, client)
-    on_exit(fn -> :gen_tcp.close(listener) end)
-
     :ok
   end
 
@@ -396,19 +380,6 @@ defmodule FlezhaTest.System.BackoffTableDrillTest do
       {:unjittered, max} -> max
     after
       0 -> raise "#{ladder} declares jitter but its delay took no random value"
-    end
-  end
-
-  defp answer_http(listener, response) do
-    case :gen_tcp.accept(listener) do
-      {:ok, socket} ->
-        :gen_tcp.recv(socket, 0, 1_000)
-        :gen_tcp.send(socket, response)
-        :gen_tcp.close(socket)
-        answer_http(listener, response)
-
-      _ ->
-        :ok
     end
   end
 end

@@ -13,6 +13,7 @@ defmodule Flezha.State.WalWriterProgressTest do
 
   alias Flezha.State.WalWriter.Settlement
   alias Flezha.State.WalWriter.State
+  alias FlezhaTest.Helper.NodeTestHelper
 
   defp progress(pid), do: WalWriter.outbox_status(pid)
 
@@ -110,13 +111,13 @@ defmodule Flezha.State.WalWriterProgressTest do
     end
   end
 
-  defp wait_for_flush(pid, was, tries \\ 50) do
-    cursors = progress(pid)
-
-    cond do
-      cursors.outbox_flushed_seq > was -> cursors
-      tries == 0 -> flunk("the flush cursor never advanced past #{was}")
-      true -> Process.sleep(10) && wait_for_flush(pid, was, tries - 1)
+  defp wait_for_flush(pid, was) do
+    advanced = fn ->
+      cursors = progress(pid)
+      cursors.outbox_flushed_seq > was && cursors
     end
+
+    NodeTestHelper.wait_until(advanced, 500, 10) ||
+      flunk("the flush cursor never advanced past #{was}")
   end
 end

@@ -12,6 +12,7 @@ defmodule Flezha.Process.ParallelAndCspecTest do
 
   alias Flezha.Parallel
   alias Flezha.Process.Cspec
+  alias FlezhaTest.Helper.NodeTestHelper
 
   # ---------- Parallel ----------
 
@@ -20,14 +21,19 @@ defmodule Flezha.Process.ParallelAndCspecTest do
   end
 
   test "map/3 keeps input order however the items finish" do
-    # The later items answer first, so an unordered stream would reverse them.
-    gate = :counters.new(1, [])
+    # Each item finishes only after the one behind it, so they finish in reverse.
+    finished = :atomics.new(4, [])
 
-    assert Parallel.map([3, 2, 1], fn n ->
-             :counters.add(gate, 1, 1)
-             wait_until(fn -> :counters.get(gate, 1) == 3 end)
+    assert Parallel.map([1, 2, 3], fn n ->
+             assert NodeTestHelper.wait_until(
+                      fn -> n == 3 or :atomics.get(finished, n + 1) == 1 end,
+                      1_000,
+                      5
+                    )
+
+             :atomics.put(finished, n, 1)
              n
-           end) == [3, 2, 1]
+           end) == [1, 2, 3]
   end
 
   test "each/3 runs every item for its side effect" do
@@ -74,10 +80,6 @@ defmodule Flezha.Process.ParallelAndCspecTest do
   test "a duplicate node is asked once" do
     assert length(Parallel.map_nodes([node(), node()], & &1, timeout: 1_000)) == 1
   end
-
-  defp wait_until(fun, remaining \\ 10_000)
-  defp wait_until(_fun, 0), do: :timeout
-  defp wait_until(fun, remaining), do: if(fun.(), do: :ok, else: wait_until(fun, remaining - 1))
 
   # ---------- Cspec ----------
 

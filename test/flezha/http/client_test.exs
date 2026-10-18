@@ -9,25 +9,22 @@ defmodule Flezha.Http.ClientTest do
   use ExUnit.Case, async: true
 
   alias Flezha.Http.Client
+  alias FlezhaTest.Helper.WebhookServer
 
   test "a message for the caller that arrives during a request stays in its mailbox" do
-    port =
-      serve(fn socket, test ->
-        # Delivered before the response is written, so a loop reading every
-        # message meets it first.
-        send(test, :unrelated)
-        :ok = :gen_tcp.send(socket, "HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\nok")
-      end)
+    # The server reports the request to this process before it writes the
+    # response, so a loop reading every message meets that report first.
+    %{port: port} = WebhookServer.start([{200, [], "ok"}])
 
     {:ok, conn} = Client.connect(:http, "127.0.0.1", port)
     assert {:ok, conn, 200, _headers, "ok"} = Client.request(conn, "GET", "/", [], "", 5_000)
     Client.close(conn)
 
-    assert_received :unrelated
+    assert_received {:request, "GET / HTTP/1.1", _headers, ""}
   end
 
   test "a connection closed before a response is a failure, not a wait" do
-    port = serve(fn _socket, _test -> :ok end)
+    %{port: port} = WebhookServer.start([:close])
 
     {:ok, conn} = Client.connect(:http, "127.0.0.1", port)
     assert {:error, _reason, _conn} = Client.request(conn, "GET", "/", [], "", 5_000)
@@ -35,7 +32,7 @@ defmodule Flezha.Http.ClientTest do
 
   describe "max_body_bytes" do
     test "an integer abandons the exchange once the body passes it" do
-      port = serve(&large_body/2)
+      %{port: port} = WebhookServer.start([&large_body/1])
 
       {:ok, conn} = Client.connect(:http, "127.0.0.1", port)
 
@@ -47,7 +44,7 @@ defmodule Flezha.Http.ClientTest do
     end
 
     test "{n, :close} answers the status once the body passes n and closes the connection" do
-      port = serve(&large_body/2)
+      %{port: port} = WebhookServer.start([&large_body/1])
 
       {:ok, conn} = Client.connect(:http, "127.0.0.1", port)
 
@@ -61,10 +58,7 @@ defmodule Flezha.Http.ClientTest do
     end
 
     test "{n, :close} keeps a connection whose body stays within n" do
-      port =
-        serve(fn socket, _test ->
-          :ok = :gen_tcp.send(socket, "HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\nok")
-        end)
+      %{port: port} = WebhookServer.start([{200, [], "ok"}])
 
       {:ok, conn} = Client.connect(:http, "127.0.0.1", port)
 
@@ -77,8 +71,8 @@ defmodule Flezha.Http.ClientTest do
 
     test "{n, :close} keeps a connection whose complete body passes n in one read" do
       body = :binary.copy("x", 10 * 1024)
-      response = "HTTP/1.1 200 OK\r\ncontent-length: #{byte_size(body)}\r\n\r\n" <> body
-      port = serve_keep_alive(2, response)
+      # Each response is written in a single send.
+      %{port: port} = server = WebhookServer.start([{200, [], body}])
 
       {:ok, conn} = Client.connect(:http, "127.0.0.1", port)
       opts = [max_body_bytes: {8 * 1024, :close}]
@@ -91,50 +85,15 @@ defmodule Flezha.Http.ClientTest do
       assert {:ok, conn, 200, _headers, ^body} =
                Client.request(conn, "GET", "/", [], "", 5_000, opts)
 
+      assert WebhookServer.connections(server) == 1
       Client.close(conn)
     end
   end
 
-  # One connection that answers `count` requests with `response`, each written
-  # in a single send, so a second request succeeds only on the same connection.
-  defp serve_keep_alive(count, response) do
-    {:ok, listener} = :gen_tcp.listen(0, [:binary, active: false])
-    {:ok, port} = :inet.port(listener)
-
-    spawn_link(fn ->
-      {:ok, socket} = :gen_tcp.accept(listener)
-
-      for _ <- 1..count do
-        {:ok, _request} = :gen_tcp.recv(socket, 0)
-        :ok = :gen_tcp.send(socket, response)
-      end
-
-      :gen_tcp.close(socket)
-    end)
-
-    port
-  end
-
   # A 1 000 000-byte body, written in pieces so the client meets the cap
   # before the whole body has arrived.
-  defp large_body(socket, _test) do
+  defp large_body(socket) do
     :ok = :gen_tcp.send(socket, "HTTP/1.1 200 OK\r\ncontent-length: 1000000\r\n\r\n")
     for _ <- 1..100, do: :gen_tcp.send(socket, :binary.copy("x", 10_000))
-  end
-
-  # A one-request listener: it reads the request, runs `respond`, then closes.
-  defp serve(respond) do
-    {:ok, listener} = :gen_tcp.listen(0, [:binary, active: false])
-    {:ok, port} = :inet.port(listener)
-    test = self()
-
-    spawn_link(fn ->
-      {:ok, socket} = :gen_tcp.accept(listener)
-      {:ok, _request} = :gen_tcp.recv(socket, 0)
-      respond.(socket, test)
-      :gen_tcp.close(socket)
-    end)
-
-    port
   end
 end

@@ -69,7 +69,8 @@ pub mod spawn;
 pub mod state_sink;
 pub mod steps;
 #[cfg(any(test, feature = "test-support"))]
-mod test_support;
+#[doc(hidden)]
+pub mod test_support;
 pub mod timer;
 #[doc(hidden)]
 pub mod util;

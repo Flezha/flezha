@@ -17,7 +17,7 @@ defmodule Flezha.Service.HubManagerTest do
 
   # async: false: writes Application env; a shared on-disk root; the live controller and its fleet.
 
-  use ExUnit.Case, async: false
+  use FlezhaTest.Case, fixtures: [:env], async: false
 
   alias Flezha.Relay.Builder
   alias Flezha.Plugin
@@ -154,40 +154,27 @@ defmodule Flezha.Service.HubManagerTest do
 
   describe "consent_settings/0" do
     test "defaults derive max_defer_time from the graceful-shutdown budget" do
-      previous_consent = Application.get_env(:flezha, :migration_consent)
-      previous_timeout = Application.get_env(:flezha, :graceful_shutdown_timeout_ms)
       Application.delete_env(:flezha, :migration_consent)
       Application.put_env(:flezha, :graceful_shutdown_timeout_ms, 60_000)
 
-      try do
-        settings = HubManager.consent_settings()
-        assert %ProcessHub.Strategy.Migration.MigrationConsent{} = settings
-        assert settings.consent_timeout == 5_000
-        assert settings.retry_interval == 2_000
-        assert settings.max_defer_time == 60_000
-      after
-        restore_env(:migration_consent, previous_consent)
-        restore_env(:graceful_shutdown_timeout_ms, previous_timeout)
-      end
+      settings = HubManager.consent_settings()
+      assert %ProcessHub.Strategy.Migration.MigrationConsent{} = settings
+      assert settings.consent_timeout == 5_000
+      assert settings.retry_interval == 2_000
+      assert settings.max_defer_time == 60_000
     end
 
     test "explicit max_defer_ms overrides the derived default" do
-      previous_consent = Application.get_env(:flezha, :migration_consent)
-
       Application.put_env(:flezha, :migration_consent,
         consent_timeout_ms: 1_000,
         retry_interval_ms: 500,
         max_defer_ms: 10_000
       )
 
-      try do
-        settings = HubManager.consent_settings()
-        assert settings.consent_timeout == 1_000
-        assert settings.retry_interval == 500
-        assert settings.max_defer_time == 10_000
-      after
-        restore_env(:migration_consent, previous_consent)
-      end
+      settings = HubManager.consent_settings()
+      assert settings.consent_timeout == 1_000
+      assert settings.retry_interval == 500
+      assert settings.max_defer_time == 10_000
     end
 
     test "the hub strategy carries the resolved consent settings" do
@@ -196,9 +183,6 @@ defmodule Flezha.Service.HubManagerTest do
       assert strategy.consent_settings == HubManager.consent_settings()
     end
   end
-
-  defp restore_env(key, nil), do: Application.delete_env(:flezha, key)
-  defp restore_env(key, value), do: Application.put_env(:flezha, key, value)
 
   describe "rewrite_cspec_plugins/2" do
     test "appends a binding to a cspec with empty opts[:bindings]" do

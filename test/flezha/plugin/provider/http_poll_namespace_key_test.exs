@@ -37,7 +37,7 @@ defmodule Flezha.Plugin.Provider.HttpPollNamespaceKeyTest do
 
   defp assert_b_polled(ctx) do
     assert {"from-b", _} = take_ingest()
-    assert Agent.get(ctx.origin_b.agent, & &1.requests) == 1
+    assert requests(ctx.origin_b) == 1
   end
 
   describe "one name in two namespaces" do

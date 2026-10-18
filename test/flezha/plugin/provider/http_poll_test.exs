@@ -21,6 +21,7 @@ defmodule Flezha.Plugin.Provider.HttpPollTest do
   alias Flezha.Plugin.Provider.HttpPoll
   alias Flezha.Plugin.ProviderBehaviour.Options, as: ProviderOptions
   alias FlezhaTest.Helper.NodeTestHelper
+  alias FlezhaTest.Helper.WebhookServer
 
   @catalog Host.build_catalog(
              [{:on_terminate, :fold, Ctx.Terminate}],
@@ -211,7 +212,7 @@ defmodule Flezha.Plugin.Provider.HttpPollTest do
       poller = start_poller(origin, %{failure_threshold: 1})
       assert {"cfg-v1", _} = take_ingest()
 
-      stop_origin(origin)
+      WebhookServer.stop(origin)
       send(poller, :poll)
       assert_receive {:poll_event, :failed, %{consecutive_failures: 1}, _}, 2_000
 
@@ -227,7 +228,7 @@ defmodule Flezha.Plugin.Provider.HttpPollTest do
       # poll fails at connect rather than at option construction.
       origin = start_origin(body: "unused")
       port = origin.port
-      stop_origin(origin)
+      WebhookServer.stop(origin)
 
       {:ok, opts} =
         ProviderOptions.normalise_opts(HttpPoll, %{
@@ -294,7 +295,7 @@ defmodule Flezha.Plugin.Provider.HttpPollTest do
       Enum.each(1..50, fn n -> assert_received {:host_work, ^n} end)
 
       assert {:ok, {0, nil, _last_settled_at}} = probe(poller)
-      release_origin()
+      WebhookServer.release()
       assert {"cfg-v1", _} = take_ingest(:ok, 5_000)
     end
 
@@ -307,7 +308,7 @@ defmodule Flezha.Plugin.Provider.HttpPollTest do
       assert {:ok, {0, nil, _last_settled_at}} = probe(poller)
       assert :healthy = HttpPoll.health(health_opts(%{owned_pid: poller, failure_threshold: 3}))
 
-      release_origin()
+      WebhookServer.release()
       assert {"cfg-v1", _} = take_ingest(:ok, 5_000)
     end
 
@@ -388,7 +389,7 @@ defmodule Flezha.Plugin.Provider.HttpPollTest do
       poller = start_poller(origin)
 
       # The request is in flight for as long as the origin holds it.
-      assert_receive {:origin_holding, conn}, 5_000
+      assert_receive {:holding, conn}, 5_000
       assert :healthy = HttpPoll.health(health_opts(%{owned_pid: poller, failure_threshold: 3}))
       send(conn, :unpark)
       assert {"cfg-v1", _} = take_ingest(:ok, 5_000)

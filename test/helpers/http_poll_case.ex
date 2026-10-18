@@ -11,15 +11,12 @@ defmodule FlezhaTest.HttpPollCase do
 
   use ExUnit.CaseTemplate
 
-  import ExUnit.Assertions
-  import ExUnit.Callbacks
-
   alias Flezha.Plugin.Provider.HttpPoll
   alias Flezha.Plugin.Provider.HttpPoll.PollWorker
   alias Flezha.Plugin.Provider.WorkerSup
   alias Flezha.Plugin.ProviderBehaviour.Options, as: ProviderOptions
-  alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.Helper.ProviderPrepare
+  alias FlezhaTest.Helper.WebhookServer
 
   @channel "config_in"
 
@@ -106,128 +103,38 @@ defmodule FlezhaTest.HttpPollCase do
 
   # ---------- fake HTTP origin ----------
 
-  # The held request the origin reported; answering it lets the poll settle.
-  def release_origin() do
-    assert_receive {:origin_holding, conn}, 5_000
-    send(conn, :unpark)
+  @doc """
+  An origin answering every request from `config` (`:status`, `:body`, `:etag`,
+  `:location`, `:hold`): a held origin keeps each request in flight until
+  `WebhookServer.release/0`, and a conditional request to a 200 with an ETag is
+  answered 304, which is what makes the ETag pass-through observable.
+  """
+  def start_origin(config), do: WebhookServer.start([answer(config)])
+
+  @doc "Answer from `config` from now on; what it leaves out takes its default."
+  def set(origin, config), do: WebhookServer.set(origin, [answer(config)])
+
+  def requests(origin), do: length(WebhookServer.requests(origin))
+
+  def conditional_requests(origin),
+    do: Enum.count(WebhookServer.requests(origin), &WebhookServer.conditional?/1)
+
+  def last_request_headers(origin) do
+    {_line, headers, _body} = List.last(WebhookServer.requests(origin), {"", "", ""})
+    headers
   end
 
-  def start_origin(config) do
-    {:ok, listen} =
-      :gen_tcp.listen(0, [:binary, packet: :raw, active: false, reuseaddr: true, backlog: 16])
+  defp answer(config) do
+    config =
+      Map.merge(%{status: 200, body: "", etag: nil, location: nil, hold: nil}, Map.new(config))
 
-    {:ok, port} = :inet.port(listen)
+    headers =
+      [{"etag", config.etag}, {"location", config.location}]
+      |> Enum.reject(fn {_name, value} -> is_nil(value) end)
+      |> Kernel.++([{"content-type", "application/octet-stream"}, {"connection", "close"}])
 
-    {:ok, agent} =
-      Agent.start(fn ->
-        Map.merge(
-          %{
-            status: 200,
-            body: "",
-            etag: nil,
-            location: nil,
-            hold: nil,
-            requests: 0,
-            conditional: 0,
-            last: ""
-          },
-          Map.new(config)
-        )
-      end)
-
-    acceptor = spawn(fn -> accept_loop(listen, agent) end)
-    origin = %{port: port, listen: listen, agent: agent, acceptor: acceptor}
-
-    on_exit(fn -> stop_origin(origin) end)
-    origin
+    answer = {config.status, headers, config.body}
+    answer = if config.etag && config.status == 200, do: {:conditional, answer}, else: answer
+    if config.hold, do: {:hold, answer}, else: answer
   end
-
-  def stop_origin(origin) do
-    if Process.alive?(origin.acceptor), do: Process.exit(origin.acceptor, :kill)
-    :gen_tcp.close(origin.listen)
-    :ok
-  end
-
-  def set(origin, config), do: Agent.update(origin.agent, &Map.merge(&1, Map.new(config)))
-  def requests(origin), do: Agent.get(origin.agent, & &1.requests)
-  def conditional_requests(origin), do: Agent.get(origin.agent, & &1.conditional)
-  def last_request_headers(origin), do: Agent.get(origin.agent, & &1.last)
-
-  defp accept_loop(listen, agent) do
-    case :gen_tcp.accept(listen) do
-      {:ok, socket} ->
-        spawn(fn -> serve(socket, agent) end)
-        accept_loop(listen, agent)
-
-      {:error, _closed} ->
-        :ok
-    end
-  end
-
-  defp serve(socket, agent) do
-    with {:ok, request} <- read_request(socket) do
-      config =
-        Agent.get_and_update(agent, fn state ->
-          conditional? = String.contains?(String.downcase(request), "if-none-match:")
-
-          state = %{
-            state
-            | requests: state.requests + 1,
-              conditional: state.conditional + if(conditional?, do: 1, else: 0),
-              last: request
-          }
-
-          {Map.put(state, :conditional?, conditional?), state}
-        end)
-
-      # A held origin keeps the request in flight until the test releases it.
-      if is_pid(config.hold) do
-        send(config.hold, {:origin_holding, self()})
-        NodeTestHelper.park()
-      end
-
-      :gen_tcp.send(socket, response(config))
-    end
-
-    :gen_tcp.close(socket)
-  end
-
-  defp read_request(socket, acc \\ "") do
-    if String.contains?(acc, "\r\n\r\n") do
-      {:ok, acc}
-    else
-      case :gen_tcp.recv(socket, 0, 2_000) do
-        {:ok, chunk} -> read_request(socket, acc <> chunk)
-        {:error, _} -> :error
-      end
-    end
-  end
-
-  # A conditional request whose validator the origin still holds is answered
-  # 304, which is what makes the ETag pass-through observable — and what a
-  # failure path must never be able to trigger for itself.
-  defp response(%{conditional?: true, etag: etag, status: 200}) when is_binary(etag) do
-    "HTTP/1.1 304 Not Modified\r\netag: #{etag}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
-  end
-
-  defp response(config) do
-    optional =
-      [
-        if(config.etag, do: "etag: #{config.etag}\r\n"),
-        if(config.location, do: "location: #{config.location}\r\n")
-      ]
-      |> Enum.reject(&is_nil/1)
-      |> Enum.join()
-
-    "HTTP/1.1 #{config.status} #{reason_phrase(config.status)}\r\n" <>
-      optional <>
-      "Content-Type: application/octet-stream\r\n" <>
-      "Content-Length: #{byte_size(config.body)}\r\n" <>
-      "Connection: close\r\n\r\n" <> config.body
-  end
-
-  defp reason_phrase(200), do: "OK"
-  defp reason_phrase(302), do: "Found"
-  defp reason_phrase(503), do: "Service Unavailable"
-  defp reason_phrase(_), do: "Status"
 end

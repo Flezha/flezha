@@ -21,6 +21,7 @@ defmodule FlezhaTest.Runner.FleetManagerHubTeardownRaceTest do
   alias Flezha.Service.HubManager
   alias Flezha.Service.HubManager.Lifecycle
   alias FlezhaTest.Helper.MessageTestHelper
+  alias FlezhaTest.Helper.NodeTestHelper
 
   test "recovery-hook registration racing the hub teardown refuses instead of exiting its caller" do
     ns = "ki178_race_#{System.unique_integer([:positive])}"
@@ -75,17 +76,11 @@ defmodule FlezhaTest.Runner.FleetManagerHubTeardownRaceTest do
     assert_receive {:hub_unavailable, %{count: 1}, %{hub_id: ^hub_id}}, 1_000
   end
 
-  defp wait_for_queued_call(pid, attempts \\ 200)
-  defp wait_for_queued_call(_pid, 0), do: false
-
-  defp wait_for_queued_call(pid, attempts) do
-    case Process.info(pid, :message_queue_len) do
-      {:message_queue_len, len} when len > 0 ->
-        true
-
-      _ ->
-        Process.sleep(5)
-        wait_for_queued_call(pid, attempts - 1)
+  defp wait_for_queued_call(pid) do
+    queued? = fn ->
+      match?({:message_queue_len, len} when len > 0, Process.info(pid, :message_queue_len))
     end
+
+    NodeTestHelper.wait_until(queued?, 1_000, 5)
   end
 end

@@ -2,8 +2,9 @@ defmodule Flezha.State.DurabilityTier.Backend.LocalPathTest do
   @moduledoc """
   The filesystem durability backend, plus the declared-manifest adapter that
   rides whichever backend the tier resolves. Dependency-free — unlike the S3
-  and Postgres suites this one always runs, so it doubles as the blob-contract
-  regression net for the shared `put_if/4` guard semantics.
+  and Postgres suites this one always runs, so its run of
+  `FlezhaTest.DurabilityBackendContract` is the blob contract's regression net
+  in the default suite.
   """
 
   # async: false: writes Application env; a shared on-disk root.
@@ -13,47 +14,23 @@ defmodule Flezha.State.DurabilityTier.Backend.LocalPathTest do
   alias Flezha.State.DurabilityTier.Backend.LocalPath
   alias Flezha.State.DurabilityTier.DeclaredManifest
 
+  use FlezhaTest.DurabilityBackendContract, backend: LocalPath
+
   setup %{tmp: root} do
     %{opts: [path: root], root: root}
   end
 
-  test "put, get and delete round-trip opaque bytes", %{opts: opts} do
-    blob = :crypto.strong_rand_bytes(64 * 1024)
-
-    assert :ok = LocalPath.put("blob/e/cls/task/k/r-0-0-9", blob, opts)
-    assert {:ok, ^blob} = LocalPath.get("blob/e/cls/task/k/r-0-0-9", opts)
-
-    assert :ok = LocalPath.delete("blob/e/cls/task/k/r-0-0-9", opts)
-    assert {:error, :not_found} = LocalPath.get("blob/e/cls/task/k/r-0-0-9", opts)
-    assert :ok = LocalPath.delete("blob/e/cls/task/k/r-0-0-9", opts), "delete is idempotent"
-  end
-
-  test "list is prefix-scoped, ages entries, and hides claim sidecars", %{opts: opts} do
+  test "list hides claim sidecars", %{opts: opts} do
     assert :ok = LocalPath.put("manifest/e/cls/task/_key", "a", opts)
     assert :ok = LocalPath.put("manifest/e/other/task/k", "b", opts)
     assert :ok = LocalPath.put_if("manifest/e/cls/task/_key", "a2", {:extend, 1}, opts)
 
-    assert {:ok, [{"manifest/e/cls/task/_key", age}]} = LocalPath.list("manifest/e/cls/", opts)
-    assert is_integer(age) and age >= 0
+    assert {:ok, [{"manifest/e/cls/task/_key", _age}]} = LocalPath.list("manifest/e/cls/", opts)
 
     {:ok, all} = LocalPath.list("", opts)
 
     assert Enum.sort(Enum.map(all, &elem(&1, 0))) ==
              ["manifest/e/cls/task/_key", "manifest/e/other/task/k"]
-  end
-
-  test "put_if extends an owned lineage and refuses a bid that is not ahead", %{opts: opts} do
-    key = "manifest/e/cls/task/k"
-
-    assert :ok = LocalPath.put_if(key, "claim-1", {:claim, 1}, opts)
-    assert :ok = LocalPath.put_if(key, "claim-1-again", {:extend, 1}, opts)
-    assert {:ok, "claim-1-again"} = LocalPath.get(key, opts)
-
-    assert {:error, {:claim_held, 1}} = LocalPath.put_if(key, "collision", {:claim, 1}, opts)
-
-    assert :ok = LocalPath.put_if(key, "claim-2", {:claim, 2}, opts)
-    assert {:error, {:claim_held, 2}} = LocalPath.put_if(key, "stale", {:extend, 1}, opts)
-    assert {:ok, "claim-2"} = LocalPath.get(key, opts)
   end
 
   test "an unconditional put preserves the stored claim", %{opts: opts} do

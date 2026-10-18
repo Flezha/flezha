@@ -1,8 +1,8 @@
-//! Helpers this crate's test modules share.
+//! Helpers this crate's test modules share, and through `test-support` the
+//! tests of the crates built on this one.
 
 use std::os::unix::net::UnixStream;
 use std::sync::Arc;
-#[cfg(test)]
 use std::time::{Duration, Instant};
 
 use flz_transport::transport::FlezhaStream;
@@ -10,17 +10,30 @@ use flz_transport::transport::FlezhaStream;
 #[cfg(test)]
 use crate::mailbox::Mailbox;
 
+/// Poll `done` every `interval` (a yield when zero) until it holds, or `false`
+/// once `timeout` has passed. The one polling loop of the Rust tests.
+pub fn wait_until(timeout: Duration, interval: Duration, mut done: impl FnMut() -> bool) -> bool {
+    let started = Instant::now();
+    while !done() {
+        if started.elapsed() >= timeout {
+            return false;
+        }
+        if interval.is_zero() {
+            std::thread::yield_now();
+        } else {
+            std::thread::sleep(interval);
+        }
+    }
+    true
+}
+
 /// Yield until `done` holds; a 5 s deadline names `what` on failure.
 #[cfg(test)]
 pub(crate) fn spin_until(what: &str, done: impl Fn() -> bool) {
-    let started = Instant::now();
-    while !done() {
-        assert!(
-            started.elapsed() < Duration::from_secs(5),
-            "timed out waiting for {what}"
-        );
-        std::thread::yield_now();
-    }
+    assert!(
+        wait_until(Duration::from_secs(5), Duration::ZERO, done),
+        "timed out waiting for {what}"
+    );
 }
 
 /// A connected pair: the SDK's end as a `FlezhaStream`, the controller's raw.

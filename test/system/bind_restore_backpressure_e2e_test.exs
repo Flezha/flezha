@@ -24,7 +24,7 @@ defmodule FlezhaTest.System.BindRestoreBackpressureE2ETest do
   use Mimic
 
   import FlezhaTest.Helper.MimicGlobal
-  import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
+  import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2, wait_until: 3]
 
   alias Flezha.Payloader
   alias Flezha.Relay.Builder
@@ -44,6 +44,7 @@ defmodule FlezhaTest.System.BindRestoreBackpressureE2ETest do
   @keys Map.keys(@cells)
   @padding String.duplicate("x", 100_000)
   @stall_ms 1_500
+  @test_timeout 180_000
 
   setup :set_mimic_global_until_exit
 
@@ -56,7 +57,7 @@ defmodule FlezhaTest.System.BindRestoreBackpressureE2ETest do
   # (`relay stuck: wal_frozen`) while the runner keeps producing, through
   # every rebind the convergence loop tries.
   @tag reference_runtime: true
-  @tag timeout: 180_000
+  @tag timeout: @test_timeout
   test "every Cell is restored when the restores fill the control stream's send buffer" do
     id_path = TierE2EHarness.unique_id_path()
     {_port_a, runner_a} = TierE2EHarness.boot_runner(@namespace, id_path)
@@ -126,9 +127,9 @@ defmodule FlezhaTest.System.BindRestoreBackpressureE2ETest do
     end)
   end
 
-  defp await_stopped(stall) do
-    if :atomics.get(stall, 2) == 0, do: Process.sleep(1) && await_stopped(stall)
-  end
+  # Bounded only by the test's own timeout, as the stop is a precondition.
+  defp await_stopped(stall),
+    do: wait_until(fn -> :atomics.get(stall, 2) == 1 end, @test_timeout, 1)
 
   defp bound_runner(relay_id) do
     case RelayManager.get_overwatch_state(@namespace, relay_id) do

@@ -1,48 +1,94 @@
 defmodule FlezhaTest.Helper.WebhookServer do
   @moduledoc """
-  A keep-alive HTTP/1.1 receiver on `:gen_tcp`, for a test that drives an HTTP
-  sending plugin (`hook_webhook`, `http_push`): it reads every request on every
-  connection, sends it to the process that started it as
-  `{:request, request_line, headers, body}`, and answers it with the next of
-  the statuses it was started with (the last one repeats), which `set/2`
-  replaces. A status is a code, `{code, headers}` to answer with response
-  headers, `:hang` to read the request and never answer, or `:close` to close
-  the connection without an answer. `connections/1` counts the connections
-  accepted.
+  A keep-alive HTTP/1.1 origin on `:gen_tcp`, for a test that drives an HTTP
+  client or plugin: it reads every request on every connection, records it,
+  sends it to the process that started it as
+  `{:request, request_line, headers, body}`, and only then answers it with the
+  next of the statuses it was started with (the last one repeats), which `set/2`
+  replaces.
+
+  A status is a code; `{code, headers}` or `{code, headers, body}` to answer
+  with response headers and a body; `:hang` to read the request and never
+  answer; `:close` to close the connection without an answer;
+  `{:hold, status}` to report `{:holding, conn}` to the starter and answer
+  `status` once `release/0` lets it go; `{:conditional, status}` to answer a
+  request carrying `if-none-match` 304 with `status`'s headers and no body, and
+  any other with `status`; or a function of the socket that writes its own
+  response, after which the connection closes. `connections/1` counts the
+  connections accepted, `requests/1` returns the requests read.
   """
 
+  import ExUnit.Assertions, only: [assert_receive: 2]
   import ExUnit.Callbacks, only: [on_exit: 1]
 
-  @doc "Listen on a free port; the listener and its acceptor go when the test does."
-  @spec start([status]) :: %{
+  alias FlezhaTest.Helper.NodeTestHelper
+
+  @type status ::
+          pos_integer()
+          | {pos_integer(), [{binary(), binary()}]}
+          | {pos_integer(), [{binary(), binary()}], iodata()}
+          | :hang
+          | :close
+          | {:hold, status()}
+          | {:conditional, status()}
+          | (:gen_tcp.socket() -> term())
+
+  @type server :: %{
           port: :inet.port_number(),
+          listen: :gen_tcp.socket(),
+          acceptor: pid(),
           agent: pid(),
           accepted: :counters.counters_ref()
         }
-        when status: pos_integer() | {pos_integer(), [{binary(), binary()}]} | :hang | :close
+
+  @doc "Listen on a free port; the listener and its acceptor go when the test does."
+  @spec start([status()]) :: server()
   def start(statuses) do
-    {:ok, listen} = :gen_tcp.listen(0, [:binary, packet: :raw, active: false, reuseaddr: true])
+    {:ok, listen} =
+      :gen_tcp.listen(0, [:binary, packet: :raw, active: false, reuseaddr: true, backlog: 16])
+
     {:ok, port} = :inet.port(listen)
-    {:ok, agent} = Agent.start(fn -> statuses end)
+    {:ok, agent} = Agent.start(fn -> %{statuses: statuses, requests: []} end)
     accepted = :counters.new(1, [])
     test = self()
     acceptor = spawn(fn -> accept(listen, {agent, accepted}, test) end)
+    server = %{port: port, listen: listen, acceptor: acceptor, agent: agent, accepted: accepted}
 
-    on_exit(fn ->
-      Process.exit(acceptor, :kill)
-      :gen_tcp.close(listen)
-    end)
+    on_exit(fn -> stop(server) end)
+    server
+  end
 
-    %{port: port, agent: agent, accepted: accepted}
+  @doc "Stop listening: a new connection is refused from now on."
+  @spec stop(server()) :: :ok
+  def stop(%{acceptor: acceptor, listen: listen}) do
+    Process.exit(acceptor, :kill)
+    :gen_tcp.close(listen)
   end
 
   @doc "Answer the requests from now on with `statuses`."
-  @spec set(map(), list()) :: :ok
-  def set(%{agent: agent}, statuses), do: Agent.update(agent, fn _ -> statuses end)
+  @spec set(server(), [status()]) :: :ok
+  def set(%{agent: agent}, statuses), do: Agent.update(agent, &%{&1 | statuses: statuses})
 
   @doc "How many connections it has accepted."
-  @spec connections(map()) :: non_neg_integer()
+  @spec connections(server()) :: non_neg_integer()
   def connections(%{accepted: accepted}), do: :counters.get(accepted, 1)
+
+  @doc "Every request read so far, oldest first, as `{request_line, headers, body}`."
+  @spec requests(server()) :: [{binary(), binary(), binary()}]
+  def requests(%{agent: agent}), do: Agent.get(agent, &Enum.reverse(&1.requests))
+
+  @doc "Whether a request read is conditional: it carries `if-none-match`."
+  @spec conditional?({binary(), binary(), binary()}) :: boolean()
+  def conditional?({_line, headers, _body}),
+    do: String.contains?(String.downcase(headers), "if-none-match:")
+
+  @doc "Let the request a `{:hold, status}` answer is holding be answered."
+  @spec release() :: :ok
+  def release do
+    assert_receive {:holding, conn}, 5_000
+    send(conn, :unpark)
+    :ok
+  end
 
   defp accept(listen, {agent, accepted} = server, test) do
     case :gen_tcp.accept(listen) do
@@ -60,9 +106,11 @@ defmodule FlezhaTest.Helper.WebhookServer do
   defp serve(socket, agent, test, buffer) do
     case read_request(socket, buffer) do
       {:ok, request_line, headers, body, rest} ->
+        request = {request_line, headers, body}
+        status = take_status(agent, request)
         send(test, {:request, request_line, headers, body})
 
-        if answer(socket, next_status(agent)) == :ok,
+        if answer(socket, status, request, test) == :ok,
           do: serve(socket, agent, test, rest),
           else: :gen_tcp.close(socket)
 
@@ -71,21 +119,51 @@ defmodule FlezhaTest.Helper.WebhookServer do
     end
   end
 
-  defp next_status(agent) do
-    Agent.get_and_update(agent, fn
-      [only] -> {only, [only]}
-      [next | rest] -> {next, rest}
+  defp take_status(agent, request) do
+    Agent.get_and_update(agent, fn %{statuses: statuses, requests: requests} ->
+      {next, left} =
+        case statuses do
+          [only] -> {only, [only]}
+          [next | rest] -> {next, rest}
+        end
+
+      {next, %{statuses: left, requests: [request | requests]}}
     end)
   end
 
-  defp answer(_socket, :hang), do: Process.sleep(:infinity)
-  defp answer(_socket, :close), do: :closed
-  defp answer(socket, status) when is_integer(status), do: answer(socket, {status, []})
+  defp answer(_socket, :hang, _request, _test), do: Process.sleep(:infinity)
+  defp answer(_socket, :close, _request, _test), do: :closed
 
-  defp answer(socket, {status, headers}) do
-    lines = Enum.map(headers, fn {name, value} -> "#{name}: #{value}\r\n" end)
-    :gen_tcp.send(socket, ["HTTP/1.1 #{status} X\r\n", lines, "content-length: 0\r\n\r\n"])
+  defp answer(socket, respond, _request, _test) when is_function(respond, 1) do
+    respond.(socket)
+    :closed
   end
+
+  defp answer(socket, {:hold, status}, request, test) do
+    send(test, {:holding, self()})
+    NodeTestHelper.park()
+    answer(socket, status, request, test)
+  end
+
+  defp answer(socket, {:conditional, status}, request, test) do
+    if conditional?(request),
+      do: answer(socket, {304, response_headers(status), ""}, request, test),
+      else: answer(socket, status, request, test)
+  end
+
+  defp answer(socket, status, _request, _test) do
+    {code, response_headers, body} = response(status)
+    lines = Enum.map(response_headers, fn {name, value} -> "#{name}: #{value}\r\n" end)
+    head = "HTTP/1.1 #{code} X\r\n"
+
+    :gen_tcp.send(socket, [head, lines, "content-length: #{IO.iodata_length(body)}\r\n\r\n", body])
+  end
+
+  defp response(code) when is_integer(code), do: {code, [], ""}
+  defp response({code, headers}), do: {code, headers, ""}
+  defp response({_code, _headers, _body} = status), do: status
+
+  defp response_headers(status), do: elem(response(status), 1)
 
   defp read_request(socket, buffer) do
     case String.split(buffer, "\r\n\r\n", parts: 2) do

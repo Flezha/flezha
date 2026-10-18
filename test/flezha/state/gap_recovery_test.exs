@@ -16,7 +16,6 @@ defmodule Flezha.State.GapRecoveryTest do
   import FlezhaTest.Helper.MessageTestHelper, only: [become_loop: 0]
 
   alias Flezha.Convergence.Heal
-  alias Flezha.Runner.StreamChannel
   alias Flezha.State.Wire
   alias Flezha.State.Restore
   alias Flezha.State.Snapshot, as: StateSnapshot
@@ -69,11 +68,7 @@ defmodule Flezha.State.GapRecoveryTest do
     end
   end
 
-  defp start_channel(runner_id) do
-    name = :"sc_#{uniq()}"
-    {:ok, pid} = StreamChannel.start_link({runner_id, name, :primary})
-    pid
-  end
+  defp start_channel(runner_id), do: elem(NodeTestHelper.unbound_stream_channel(runner_id), 1)
 
   defp frame({rc, sh, pk}, seq, header, body) do
     pid_bytes = Wire.encode_cell_id(rc, sh, pk)

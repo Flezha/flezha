@@ -136,7 +136,7 @@ defmodule Flezha.Runner.FleetManagerHubLifecycleTest do
   `HubManagerRegistryTest` does — no SDK / no runner process needed.
   """
   # async: false: writes Application env; the live controller and its fleet.
-  use ExUnit.Case, async: false
+  use FlezhaTest.Case, fixtures: [:env], async: false
 
   import FlezhaTest.Helper.HubRegistryTestHelper
 
@@ -145,13 +145,7 @@ defmodule Flezha.Runner.FleetManagerHubLifecycleTest do
 
   setup do
     original = :sys.get_state(FleetManager)
-    keepalive = Application.get_env(:flezha, :runner_keepalive)
-
-    on_exit(fn ->
-      :sys.replace_state(FleetManager, fn _ -> original end)
-      restore_env(:runner_keepalive, keepalive)
-    end)
-
+    on_exit(fn -> :sys.replace_state(FleetManager, fn _ -> original end) end)
     :ok
   end
 
@@ -223,9 +217,6 @@ defmodule Flezha.Runner.FleetManagerHubLifecycleTest do
   end
 
   defp runner_map(ns), do: :sys.get_state(FleetManager).runner_namespaces[ns] || %{}
-
-  defp restore_env(key, nil), do: Application.delete_env(:flezha, key)
-  defp restore_env(key, val), do: Application.put_env(:flezha, key, val)
 end
 
 defmodule FlezhaTest.Runner.FleetManagerSdkLangTest do

@@ -18,6 +18,7 @@ defmodule FlezhaTest.Service.CallsTest do
   alias Flezha.State.{Outbox, TestHelpers, WriterRegistry}
   alias FlezhaTest.Helper.FakeStartRegistry
   alias FlezhaTest.Helper.FakeStartRegistry.Instance
+  alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.Helper.Telemetry
 
   @ns "calls-delivery-test"
@@ -148,8 +149,12 @@ defmodule FlezhaTest.Service.CallsTest do
       assert_receive {:"$gen_cast", {:call_accepted, "c1", "anna-42", false}}
       assert_receive {:"$gen_cast", {:call_accepted, "c2", "anna-42", false}}
 
+      # The router outlives the test, and an earlier test's workers may still
+      # be idling in it: only this one's must be gone.
       router = Process.whereis(CallDelivery.name())
-      assert eventually(fn -> :sys.get_state(router).workers == %{} end)
+      worker = {:request, @ns, "gateway", {"factory:agent", "anna-42"}}
+      gone? = fn -> not Map.has_key?(:sys.get_state(router).workers, worker) end
+      assert NodeTestHelper.wait_until(gone?, 1_000, 25)
     end
 
     # Each case answers from its own callee, so each has its own worker.
@@ -185,7 +190,13 @@ defmodule FlezhaTest.Service.CallsTest do
       assert %{{:answer, @ns, "agent-c1", "gateway"} => ^worker} = :sys.get_state(router).workers
 
       GenServer.reply(from, :ok)
-      assert eventually(fn -> ForwardWorker.stats(worker).buffer_len == 0 end)
+
+      assert NodeTestHelper.wait_until(
+               fn -> ForwardWorker.stats(worker).buffer_len == 0 end,
+               1_000,
+               25
+             )
+
       refute_received {:"$gen_call", _, {:call_answer, _, _}}
     end
 
@@ -197,7 +208,12 @@ defmodule FlezhaTest.Service.CallsTest do
         capture_log(fn ->
           Process.exit(router, :kill)
           assert_receive {:DOWN, ^ref, :process, ^worker, _reason}, 1_000
-          assert eventually(fn -> Process.whereis(CallDelivery.name()) not in [nil, router] end)
+
+          assert NodeTestHelper.wait_until(
+                   fn -> Process.whereis(CallDelivery.name()) not in [nil, router] end,
+                   1_000,
+                   25
+                 )
         end)
 
       assert log =~
@@ -288,10 +304,6 @@ defmodule FlezhaTest.Service.CallsTest do
       assert_receive {:"$gen_cast", {:outbox_delivery_confirmed, {:cursor, 5}}}, 1_000
       refute_received {:answer_dropped, _metadata}
     end
-  end
-
-  defp eventually(fun, tries \\ 40) do
-    fun.() or (tries > 0 and (Process.sleep(25) || eventually(fun, tries - 1)))
   end
 
   describe "spawn_or_deliver for a call" do

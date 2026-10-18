@@ -32,10 +32,10 @@ defmodule Flezha.State.RunnerRestartRealignTest do
 
   alias Flezha.Relay.ClassRegistry
   alias Flezha.Runner.FleetManager.Marks
-  alias Flezha.Runner.StreamChannel
   alias Flezha.State.Wire
   alias Flezha.State.{Metrics, Paths, RecordFrame, Snapshot, Supervisor, TestHelpers, WalWriter}
   alias Flezha.Transport.LivenessCounters
+  alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.Helper.Telemetry
 
   setup do
@@ -306,11 +306,7 @@ defmodule Flezha.State.RunnerRestartRealignTest do
     :ok
   end
 
-  defp start_channel(runner_id) do
-    name = :"sc_#{uniq()}"
-    {:ok, pid} = StreamChannel.start_link({runner_id, name, :primary})
-    pid
-  end
+  defp start_channel(runner_id), do: elem(NodeTestHelper.unbound_stream_channel(runner_id), 1)
 
   defp frame({rc, sh, pk}, seq, header, body) do
     pid_bytes = Wire.encode_cell_id(rc, sh, pk)
