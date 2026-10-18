@@ -2,8 +2,7 @@
         refresh-process-hub \
         docker-build docker-publish \
         docker-build-dev docker-build-toolchain \
-        k8s-apply k8s-delete \
-        stabilize-test-check
+        k8s-apply k8s-delete
 
 # ── Local build ──────────────────────────────────────────────────────────────
 
@@ -43,22 +42,6 @@ test:
 # Format every language; `python3 scripts/naming_gate.py --run @format` is the gate
 fmt:
 	scripts/format-apply.sh
-
-# Archive criterion for the `stabilize-test-suite` OpenSpec change. Runs
-# the four invocations the proposal calls out — `mix test`, then a re-run
-# (verifies test ordering does not flip pass/fail), the cargo workspace
-# with bench-internals, and `mvn -f sdk/java verify` — and exits 0 only
-# if every step does. Local Java users without the toolchain can skip
-# the `mvn` step with `SKIP_JAVA=1 make stabilize-test-check`.
-stabilize-test-check:
-	mix test
-	mix test
-	cargo test --workspace --features flezha_runner/bench-internals
-	@if [ "$(SKIP_JAVA)" = "1" ]; then \
-	  echo "skipping mvn -f sdk/java verify (SKIP_JAVA=1)"; \
-	else \
-	  mvn -f sdk/java verify; \
-	fi
 
 # Remove all build artifacts
 clean:

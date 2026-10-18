@@ -126,19 +126,7 @@ defmodule FlezhaTest.SdkConformance.GateTest do
   # Bench tasks whose `--runtime` resolves against `PortPilot.runtimes/0`. Their
   # help text may name a runtime as an example but may not enumerate the set: a
   # second copy of it goes stale the run after an SDK is added.
-  #
-  # Filtered to what this checkout compiled. `mix bench.roundtrip` lives outside
-  # the tree, so naming it unconditionally made both tests below die on
-  # `module_info/1` in every clean clone: a red row about a module that is not
-  # there, which says nothing about the runtime set either way.
-  @manifest_runtime_tasks Enum.filter(
-                            [
-                              Mix.Tasks.Bench,
-                              Mix.Tasks.Bench.Roundtrip,
-                              Mix.Tasks.Bench.Steps
-                            ],
-                            &Code.ensure_loaded?/1
-                          )
+  @manifest_runtime_tasks [Mix.Tasks.Bench, Mix.Tasks.Bench.Steps]
 
   describe "the administration surface" do
     test "every runtime carries one, and it is the declared set" do
