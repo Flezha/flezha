@@ -23,6 +23,7 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
   alias Flezha.State.DurabilityTier.Backend.Postgres, as: PostgresBackend
   alias Flezha.State.Outbox
   alias Flezha.State.Paths
+  alias Flezha.State.WriterRegistry
   alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.Helper.PostgresSink
 
@@ -300,19 +301,17 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
   # state tree goes and every class under it with it. It stays in the signature
   # because every caller names what it created.
   def cleanup(namespace, _relay_id, id_path) do
-    try do
-      RelayManager.stop_all_relays(namespace)
-    catch
-      _, _ -> :ok
-    end
-
-    try do
-      FleetManager.stop_namespace(namespace)
-    catch
-      _, _ -> :ok
-    end
-
+    stop_namespace(namespace)
     File.rm(id_path)
+
+    # A frame a runner queued before it stopped can still have opened a writer
+    # for a class whose relay's writers the stop already closed, and removing
+    # the tree under it races that writer's own directory creation.
+    for id <- WriterRegistry.registered_ids(),
+        class = elem(id, 0),
+        Paths.namespace_of_class(class) == namespace,
+        uniq: true,
+        do: RelayManager.close_writers(class)
 
     # The namespace is this test's alone, so its whole tree goes. The path is
     # the registry's: a leftover tree captures `namespace_of_class/1` for the

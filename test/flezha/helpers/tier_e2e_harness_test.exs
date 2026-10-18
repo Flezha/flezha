@@ -4,12 +4,15 @@ defmodule FlezhaTest.Helper.TierE2EHarnessTest do
   compute their prefix rather than writing one down, so no rule about call
   sites can hold the bound; and the ids it mints name state trees on disk, so
   an id that fits today has to come out byte for byte as it did before.
+  `cleanup/3` removes a namespace's state tree, which no writer may still hold.
   """
   use ExUnit.Case, async: true
 
-  import FlezhaTest.Helper.TierE2EHarness, only: [unique: 2, unique_id_path: 1]
+  import FlezhaTest.Helper.TierE2EHarness, only: [cleanup: 3, unique: 2, unique_id_path: 1]
 
   alias Flezha.Identificator
+  alias Flezha.State.Paths
+  alias Flezha.State.WriterRegistry
 
   # The widest prefix the suite mints, and two computed ones. 24 bytes leaves
   # room for 7 digits, which is one more than a full run reaches.
@@ -69,5 +72,22 @@ defmodule FlezhaTest.Helper.TierE2EHarnessTest do
     refute File.exists?(path)
     assert File.dir?(Path.dirname(path))
     assert File.ls!(Path.dirname(path)) == []
+  end
+
+  # A frame a runner queued before it stopped can open a writer for a class of
+  # the namespace after that relay's writers were closed; deleting the tree
+  # under it races the writer's own directory creation.
+  test "cleanup leaves no writer of the namespace behind the tree it removes" do
+    namespace = "harness_cleanup_#{System.unique_integer([:positive])}"
+    class = "late_writer_#{System.unique_integer([:positive])}"
+    on_exit(fn -> Flezha.State.Supervisor.close_writers(class) end)
+
+    :ok = Paths.claim_namespace(class, namespace)
+    {:ok, _pid} = Flezha.State.Supervisor.find_or_start({class, "late", ""})
+
+    cleanup(namespace, class, unique_id_path("harness_cleanup"))
+
+    assert WriterRegistry.live_writers(class) == []
+    refute File.exists?(Paths.namespace_dir(namespace))
   end
 end
