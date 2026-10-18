@@ -9,9 +9,9 @@ path = ["**"]
 SPDX-FileCopyrightText = "2026 Anuar Alfetahe"
 SPDX-License-Identifier = "MPL-2.0"
 
-# The SDK side, the wire contract every SDK implements, and the examples. A
-# later table wins for its paths. The plugins under plugins/ are submodules
-# that carry their own Apache-2.0 license.
+# The SDK side, the wire contract every SDK implements, the examples and the
+# project templates. A later table wins for its paths. The plugins under
+# plugins/ are submodules that carry their own Apache-2.0 license.
 [[annotations]]
 path = [
   "sdk/**",
@@ -19,9 +19,10 @@ path = [
   "flz_core_ffi/**",
   "flz_transport/**",
   "protobufs/**",
-  # Examples are meant to be copied into a user's own project, so they carry
-  # the SDK's licence rather than the controller's.
+  # Examples and project templates are meant to be copied into a user's own
+  # project, so they carry the SDK's licence rather than the controller's.
   "examples/**",
+  "priv/ai_kit/templates/**",
 ]
 SPDX-FileCopyrightText = "2026 Anuar Alfetahe"
 SPDX-License-Identifier = "Apache-2.0"

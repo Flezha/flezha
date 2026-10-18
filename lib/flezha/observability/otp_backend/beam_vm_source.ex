@@ -19,7 +19,7 @@ defmodule Flezha.Observability.OtpBackend.BeamVmSource do
     default_poll_ms: 1_000,
     area: :machine,
     description:
-      "The controller's Erlang VM: memory, schedulers, processes and garbage collection.",
+      "Controller memory and load: how much memory the controller's Erlang VM uses and how busy it is — schedulers, processes and garbage collection.",
     signals: [
       memory_total: {:metric, "Bytes of memory the VM holds in all."},
       memory_processes: {:metric, "Bytes held by Erlang processes."},
