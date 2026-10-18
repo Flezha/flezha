@@ -653,31 +653,22 @@ defmodule Flezha.Relay.Overwatch do
     do: {:noreply, %{state | calls: Calls.accepted(state.calls, id, callee, created)}}
 
   @impl true
-  def handle_cast({:correction_request, cell_id, target}, state) do
-    {:noreply, Replay.note_correction(state, cell_id, target)}
-  end
+  def handle_cast({:correction_request, cell_id, target}, state),
+    do: {:noreply, Replay.note_correction(state, cell_id, target)}
 
   @impl true
-  def handle_cast({:plugin_opt_persist, plugin_id, key, value}, %__MODULE__{} = state) do
-    {:noreply, Plugins.persist_opt(state, plugin_id, key, value)}
-  end
+  def handle_cast({:plugin_opt_persist, plugin_id, key, value}, %__MODULE__{} = state),
+    do: {:noreply, Plugins.persist_opt(state, plugin_id, key, value)}
 
   @impl true
-  # A runner that can take this relay connected: wake if work is owed. One
-  # that stays asleep hibernates again, as at its suspension.
-  def handle_cast(:rehydrate_if_pending, %__MODULE__{} = state) do
-    case Migration.rehydrate_if_pending(state) do
-      %__MODULE__{suspended: true, migrate_task: nil} = asleep -> {:noreply, asleep, :hibernate}
-      state -> {:noreply, state}
-    end
-  end
-
   # A sleeper hibernates: the bind's restore frames and plugin setup leave
-  # megabytes of garbage on a heap that otherwise sits uncollected until the
-  # next wake (2.5 MiB → 5 KiB per sleeper measured).
-  def handle_cast({:suspend, iter, park}, %__MODULE__{} = state) do
-    {:noreply, Migration.suspend_at(state, iter, park), :hibernate}
-  end
+  # megabytes of garbage on its heap until the next wake (2.5 MiB → 5 KiB per
+  # sleeper measured). A runner of its factory connecting wakes it if it owes work.
+  def handle_cast({:suspend, iter, park}, %__MODULE__{} = state),
+    do: {:noreply, Migration.suspend_at(state, iter, park), :hibernate}
+
+  def handle_cast(:rehydrate_if_pending, state),
+    do: {:noreply, Migration.rehydrate_if_pending(state), :hibernate}
 
   # Replaces `state.snapshot` with the SDK's final state on graceful shutdown.
   # A handover ships it and the next running migrate seeds from it, until a
