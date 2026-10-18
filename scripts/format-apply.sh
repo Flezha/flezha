@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Format every language; with `--check`, report what is unformatted and write
+# Format every language, Rust only in the files this tree changed; with
+# `--check`, report what is unformatted across the whole workspace and write
 # nothing. The list of formatters lives here and nowhere else:
 # `python3 scripts/naming_gate.py --run formatters` is what a gate run calls,
 # and .github/workflows/format.yml calls that runner rather than re-spelling
@@ -119,19 +120,46 @@ gate_report() {
 # reads every non-zero status as the tool failing.
 declare -A drift=()
 if [[ "${1:-}" == "--check" ]]; then
-  rust=(-- --check) elixir=(--check-formatted)
+  elixir=(--check-formatted)
   drift=([rust]='says:Diff in '
     [elixir]='says:format failed due to --check-formatted')
 else
-  rust=() elixir=()
+  elixir=()
 fi
 
 # The nightly is pinned to the one .github/workflows/format.yml installs.
 # rustfmt.toml's `imports_granularity`, `group_imports` and `ignore` are
 # nightly-only options, and two nightlies are two style opinions; bump this
 # with the CI workflow and rustfmt.toml together, as rust-toolchain.toml says.
-gate_run --finding "${drift[rust]:-}" "cargo fmt" cargo:"install Rust via rustup" -- \
-  cargo +nightly-2026-05-07 fmt --all "${rust[@]}"
+RUST_NIGHTLY=nightly-2026-05-07
+
+# Write mode formats only the Rust files this tree and its submodules changed
+# against HEAD, or added and not ignored: `cargo fmt --all` would also rewrite
+# files a parallel session is editing. `skip_children` keeps rustfmt from
+# following a changed file's `mod` declarations into files nobody changed.
+changed_rust() {
+  { git diff --name-only HEAD -- '*.rs'
+    git ls-files --others --exclude-standard -- '*.rs'
+    # shellcheck disable=SC2016
+    git submodule --quiet foreach --recursive \
+      '{ git diff --name-only HEAD -- "*.rs"; git ls-files --others --exclude-standard -- "*.rs"; } |
+         sed "s#^#$sm_path/#"'
+  } | grep -v '/generated/' | sort -u | while IFS= read -r f; do [[ -f $f ]] && echo "$f"; done
+}
+
+format_changed_rust() {
+  local files
+  mapfile -t files < <(changed_rust)
+  ((${#files[@]} == 0)) && { echo "no changed Rust file"; return 0; }
+  rustfmt +"$RUST_NIGHTLY" --edition 2021 --config skip_children=true "${files[@]}"
+}
+
+if [[ "${1:-}" == "--check" ]]; then
+  gate_run --finding "${drift[rust]}" "cargo fmt" cargo:"install Rust via rustup" -- \
+    cargo +"$RUST_NIGHTLY" fmt --all -- --check
+else
+  gate_run "rustfmt (changed files)" rustfmt:"install Rust via rustup" -- format_changed_rust
+fi
 gate_run --finding "${drift[elixir]:-}" "mix format" mix:"install Elixir" -- \
   mix format "${elixir[@]}"
 

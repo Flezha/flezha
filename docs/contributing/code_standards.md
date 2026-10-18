@@ -123,7 +123,9 @@ something new. A new module beside a near-identical old one is a defect, not a
 delivery.
 
 Production lines added and removed are read from `git diff --numstat`, split by
-hand into production and test paths. There is no tool that does the split.
+hand into production and test paths. What counts as production is defined in
+`scripts/production_code.py`, which `python3 scripts/production_code.py` prints
+per repository.
 
 ## The formatters
 
@@ -136,7 +138,9 @@ $ scripts/format-apply.sh            # format it (also `make fmt`)
 ```
 
 Rust is formatted by a pinned nightly `rustfmt`, configured in `rustfmt.toml`,
-and Elixir by `mix format`, configured in `.formatter.exs`. The script names the
+and Elixir by `mix format`, configured in `.formatter.exs`. The check covers the
+whole Rust workspace; formatting touches only the Rust files your tree changed
+against `HEAD` or added, so it never rewrites a file someone else is editing. The script names the
 nightly it uses. Each SDK other than Rust and Elixir is formatted in its own
 repository. A formatter that is not installed drops its language from the
 report and nothing else. The commits that only reformatted code are listed in
