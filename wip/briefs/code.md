@@ -26,9 +26,9 @@ exists.
 5. **Documentation and specs in the same change.** Grep every symbol you touched
    across `docs/` and `openspec/specs/`. A tracked sentence your change makes
    false is fixed now.
-6. **Run only the tests the change affects**, by file. Repeat a test under load
-   only when it depends on timing. No full suite: the supervisor runs it every
-   five to ten items.
+6. **Run the tests the change affects, and rerun as often as the goal needs**:
+   to reproduce a failure, prove a fix, or confirm a clean run. An intermittent
+   failure is run until it reproduces, and its fix until it holds.
    **Use the campaign's tools, never hand steps.** `wip/tools/` has the
    environment script (a private controller, ports, the demo exchange, the shared
    native build: never build your own), the verify command (every gate, one line
@@ -36,10 +36,6 @@ exists.
    codemod; anything you would type live more than twice is a script. A missing
    tool you need is written there and kept, not improvised in your scratchpad.
    Long output goes to a file: you read its summary and failures only.
-   **Build and test at milestones, never after each edit.** Finish a whole
-   section (the API, all fixtures, the example, the docs), then build once and
-   run that section's tests once. A red: fix every failure from inspection in
-   one batch, rerun only the failing tests. A full suite runs once, at the end.
 7. **Run `/cx-refine` over your own diff** before you report, and apply what it
    finds that keeps behaviour unchanged. **A bigger change runs it at least
    three times in a row**: more than a few dozen production lines

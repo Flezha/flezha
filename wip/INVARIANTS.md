@@ -114,17 +114,10 @@ read again. These defaults hold for every campaign.
   a new module or public surface, or concurrency, authorization or durability
   logic changed beyond a few lines. A small or low-risk change gets the refine
   pass and the supervisor's reading, nothing more.
-- **Only the tests the change affects.** A test is repeated under load only when
-  it depends on timing. The full suite runs once every five to ten items, and a
-  red there is diagnosed before the next item starts.
-- **Build and test at milestones, never after each edit.** A milestone is a
-  finished section of work: the API changed, all fixtures moved, the example
-  written, the docs done. Between milestones the worker edits and reads; it does
-  not build or run tests. At a milestone: one build and the tests that section
-  touched. Each full suite (the SDK's, the core `mix test`, the system and e2e
-  runs) runs once, at the end. A red is fixed in one batch from inspection and
-  only the failing tests rerun; the full suite runs once more at most. One row
-  of 2026-09-28 built its SDK 39 times, another ran the core suite 7 times.
+- **Run whatever the goal needs.** There is no limit on reruns: a test, a row or
+  a full suite runs as often as it takes to reproduce a failure, prove a fix or
+  confirm a clean run. An intermittent failure is run until it reproduces, and
+  its fix is run until it holds.
 - **Paperwork is what someone reads**: the commit, one `DONE.md` line carrying the
   reproduction command and its key output, and the bug-list row moved. A dev
   note only for a trap the next session would fall into. No evidence pasted into
@@ -174,8 +167,8 @@ hand in every row. Whatever a campaign does in every row is done by a script.
 3. A test that was red before the fix and is green after.
 4. Documentation and specs updated **in the same commit**. Never a follow up.
 5. Gates green: `openspec validate --strict`, the citation gate, the naming and
-   boundary gates, the tests the change affects. The full suite runs once every
-   five to ten items, not per item.
+   boundary gates, the tests the change affects, and the full suite whenever it
+   helps.
 6. One item, one commit. No AI attribution trailer, ever.
 7. The row moves to `DONE.md` with its commit, its net lines and its cost.
 
@@ -195,8 +188,7 @@ hand in every row. Whatever a campaign does in every row is done by a script.
   by name, never with `docker compose down`: another project on the same machine
   may share the compose project name.
 - **Verification is never delegated, and never duplicated.** The supervisor reads
-  the diff and runs the item's own tests and gates once; it does not re-run
-  everything the worker ran.
+  the diff and runs the item's own tests and gates itself.
 - **A session never ends with a subagent alive**, and the check is `ListAgents`
   showing no subagent section, not memory.
 - **Clean up as you go, unasked.** `bash wip/reap.sh --kill` at session start
