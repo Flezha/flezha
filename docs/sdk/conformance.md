@@ -328,7 +328,8 @@ With `FLEZHA_E2E_RUNTIME` set, or after any `:system` test ran, the
 on every pull request with no runner. It asserts every rule above, plus: no
 `runtime:` literal under `test/system/` outside an `interop: true` scenario;
 every fixture id a file drives belongs to a capability that file declares; every manifest runtime is a `workflow_dispatch` option of
-`nightly-e2e.yml`; every `docs` page exists and names its manifest. A
+`nightly-e2e.yml`, whose pick step reads the runtimes from the manifests and
+names none itself; every `docs` page exists and names its manifest. A
 vocabulary entry no module or test is tagged for fails the gate by name.
 
 It also holds the `control()` surface to one declared set. Every SDK spells

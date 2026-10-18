@@ -246,20 +246,41 @@ defmodule FlezhaTest.Tiers do
 
   @doc """
   The commands of the gate rows a workflow runs. A workflow spells no `mix test`
-  line of its own: it selects rows with `naming_gate.py --run <spec>`, and a
-  `${{ ... }}` in the spec is read as every runtime that has a manifest.
+  line of its own: it selects rows with `naming_gate.py --run <spec>`, itself or
+  through a composite action of this repository it uses. A `${{ ... }}` in the
+  spec is read as every runtime that has a manifest, and such a spec that names
+  a group some runtime does not have adds nothing for it. Any other failure
+  raises with the spec and naming_gate.py's output.
   """
   @spec selected_rows(String.t()) :: String.t()
   def selected_rows(source) do
+    actions =
+      for [_, name] <- Regex.scan(~r{uses: \./\.github/actions/([\w-]+)}, source), uniq: true do
+        File.read!(Path.join([@workflows, "..", "actions", name, "action.yml"]))
+      end
+
     for [_, spec] <-
-          Regex.scan(~r/naming_gate\.py[\s\\]+--run\s+((?:\$\{\{[^}]*\}\}|\S)+)/, source),
+          Regex.scan(
+            ~r/naming_gate\.py[\s\\]+--run\s+((?:\$\{\{[^}]*\}\}|\S)+)/,
+            Enum.join([source | actions], "\n")
+          ),
         runtime <- Flezha.Service.PortPilot.runtimes(),
         uniq: true do
-      Regex.replace(~r/\$\{\{[^}]*\}\}/, spec, Atom.to_string(runtime))
+      expanded = Regex.replace(~r/\$\{\{[^}]*\}\}/, spec, Atom.to_string(runtime))
+      {expanded, expanded != spec}
     end
-    |> Enum.map_join(fn spec ->
-      {rows, 0} = System.cmd("python3", ["scripts/naming_gate.py", "--list", spec])
-      rows
+    |> Enum.map_join(fn {spec, expanded?} ->
+      case System.cmd("python3", ["scripts/naming_gate.py", "--list", spec],
+             stderr_to_stdout: true
+           ) do
+        {rows, 0} ->
+          rows
+
+        {output, _} ->
+          if expanded? and output =~ "no gate is declared in group",
+            do: "",
+            else: raise("naming_gate.py --list #{spec} failed:\n#{output}")
+      end
     end)
   end
 

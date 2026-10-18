@@ -173,6 +173,15 @@ defmodule FlezhaTest.SdkConformance.GateTest do
 
   defp runtimes, do: PortPilot.runtimes()
 
+  # The lines of the nightly workflow after the first one containing `marker`.
+  defp nightly_lines_after(marker) do
+    @nightly
+    |> File.read!()
+    |> String.split("\n")
+    |> Enum.drop_while(&(not String.contains?(&1, marker)))
+    |> Enum.drop(1)
+  end
+
   defp reference, do: NodeTestHelper.reference_runtime()
 
   defp manifest(runtime), do: PortPilot.manifest(runtime)
@@ -516,11 +525,8 @@ defmodule FlezhaTest.SdkConformance.GateTest do
 
     test "every runtime is dispatchable from the nightly" do
       options =
-        @nightly
-        |> File.read!()
-        |> String.split("\n")
-        |> Enum.drop_while(&(not String.contains?(&1, "options:")))
-        |> Enum.drop(1)
+        "options:"
+        |> nightly_lines_after()
         |> Enum.take_while(&Regex.match?(~r/^\s+-\s+\S+\s*$/, &1))
         |> Enum.map(&(&1 |> String.trim() |> String.trim_leading("- ")))
         |> MapSet.new()
@@ -530,6 +536,24 @@ defmodule FlezhaTest.SdkConformance.GateTest do
           "#{runtime} has a manifest but is not an option of #{@nightly}'s workflow_dispatch " <>
             "runtime input (options: #{inspect(MapSet.to_list(options))})"
         )
+      end
+    end
+
+    # A runtime spelled in the pick step is a runtime a dispatch can silently
+    # miss: a `python` dispatch once ran rust and java. The step lists the
+    # manifests instead, so a manifest is the only place a runtime is added.
+    test "the nightly's pick step reads its runtimes from the manifests" do
+      pick =
+        "id: pick"
+        |> nightly_lines_after()
+        |> Enum.take_while(&(&1 == "" or String.starts_with?(&1, "        ")))
+        |> Enum.join("\n")
+
+      assert pick =~ "test/apps/*_runner/conformance.json",
+             "#{@nightly}'s pick step does not list the manifests"
+
+      for runtime <- runtimes(), pick =~ ~r/\b#{runtime}\b/ do
+        fail("#{@nightly}'s pick step names #{runtime}; read it from the manifests instead")
       end
     end
 

@@ -43,21 +43,35 @@ env:
 
 jobs:
   # One job per SDK runtime, so a red job names the SDK that broke. The
-  # schedule runs the two reference SDKs, rust and java; a dispatch can pick any
-  # runtime that carries a conformance manifest.
+  # schedule runs the two reference SDKs; a dispatch can pick any runtime that
+  # carries a conformance manifest, and `all` is every one of them. The
+  # runtimes are read from the manifests, so a manifest is the only place a
+  # runtime is added.
   matrix:
     runs-on: ubuntu-latest
     outputs:
       runtimes: ${{ steps.pick.outputs.runtimes }}
+    env:
+      SCHEDULE: '["rust","java"]'
+      INPUT: ${{ github.event.inputs.runtime }}
     steps:
+      # The test apps are links into the SDK submodules.
+      - uses: actions/checkout@v5
+        with:
+          submodules: true
+
       - id: pick
         run: |
-          case "${{ github.event.inputs.runtime }}" in
-            rust|java|elixir|node|ruby|php)
-              echo "runtimes=[\"${{ github.event.inputs.runtime }}\"]" >> "$GITHUB_OUTPUT" ;;
-            all) echo 'runtimes=["rust","java","elixir","node","ruby","php"]' >> "$GITHUB_OUTPUT" ;;
-            *)   echo 'runtimes=["rust","java"]' >> "$GITHUB_OUTPUT" ;;
+          manifests=$(for m in test/apps/*_runner/conformance.json; do
+            m=${m#test/apps/}; echo "${m%_runner/conformance.json}"; done)
+          case "$INPUT" in
+            "") runtimes=$SCHEDULE ;;
+            all) runtimes=$(jq -Rnc '[inputs]' <<<"$manifests") ;;
+            *) grep -qx -- "$INPUT" <<<"$manifests" ||
+                 { echo "::error::no conformance manifest for runtime $INPUT"; exit 1; }
+               runtimes=$(jq -Rnc '[inputs]' <<<"$INPUT") ;;
           esac
+          echo "runtimes=$runtimes" >> "$GITHUB_OUTPUT"
 
   e2e:
     needs: matrix
@@ -80,6 +94,8 @@ jobs:
           - runtime: elixir
             workers: 4
           - runtime: ruby
+            workers: 4
+          - runtime: python
             workers: 4
           # PHP's second arm is its executor, not a worker count, and it runs
           # in `php-sdk.yml` on every change to the SDK rather than nightly.
@@ -122,58 +138,21 @@ jobs:
       - name: Install protoc
         uses: ./.github/actions/setup-protoc
 
-      - name: Pre-build rust_runner
-        # Every e2e case spawns runners through `cargo run`; a cold build does
-        # not fit inside the connect budget the harness allows, so build the
-        # binary into the same ./target dir the run command uses.
-        run: |
-          cargo build --quiet \
-            --manifest-path=sdk/rust/test_app/Cargo.toml \
-            --target-dir=./target
-
-      - name: Pre-build the Java SDK and its test runner
-        if: matrix.runtime == 'java'
-        # The host-triple libflz_core_ffi the SDK loads, the SDK into this job's
-        # ~/.m2, and the fat jar PortPilot spawns. None of the three is tracked
-        # in git, and no connect budget covers building them on first launch.
-        run: |
-          scripts/build-native.sh --output sdk/java/flezha-sdk-native/src/main/resources/native
-          mvn -B -q -DskipTests -P native-verify -f sdk/java/pom.xml install
-          mvn -B -q -DskipTests -f test/apps/java_runner/pom.xml package
-
-      - name: Pre-build the Node SDK and its test app
-        if: matrix.runtime == 'node'
-        # The addon, the dual-format package and the test app's dependency
-        # link. No connect budget covers building a cdylib on first launch.
-        run: scripts/build-node-sdk.sh
-
-      - name: Pre-build the Ruby SDK and its test app
+      # rb-sys runs bindgen over `ruby.h`, and bindgen needs clang's own
+      # builtin headers.
+      - name: Install libclang and its builtin headers
         if: matrix.runtime == 'ruby'
-        run: |
-          sudo apt-get update && sudo apt-get install -y libclang-dev
-          scripts/build-ruby-sdk.sh
-
-      - name: Pre-build the PHP SDK and its test app
-        if: matrix.runtime == 'php'
-        # The library the package loads through ext-ffi, and the autoloader the
-        # entry script requires. No connect budget covers building a cdylib on
-        # first launch.
-        run: scripts/build-php-sdk.sh
-
-      - name: Pre-build the Elixir test runner
-        if: matrix.runtime == 'elixir'
-        # The standalone runner app compiles the Elixir SDK and builds its socket
-        # client on its first `mix run`, which no connect budget covers.
-        run: cd test/apps/elixir_runner && mix deps.get && mix compile
+        run: sudo apt-get update && sudo apt-get install -y libclang-dev
 
       - name: The system and multi-node tiers under this runtime
-        # The rows of `@e2e-<runtime>` in scripts/gate_rows.py (the runner's
-        # build, then the `:system` files in shards of six, and on java the
-        # cross-SDK interop scenario) and the multi-node tier, after the
-        # warnings-as-errors compile.
+        # The warnings-as-errors compile and the reference runner every case
+        # boots, then the rows of `@e2e-<runtime>` in scripts/gate_rows.py (the
+        # runtime's runner built by its manifest, the `:system` files in shards
+        # of six, and on java the cross-SDK interop scenario) and the
+        # multi-node tier.
         run: |
           python3 scripts/naming_gate.py \
-            --run core-compile,@e2e-${{ matrix.runtime }},e2e-multi-node
+            --run core-compile,core-prep-runner,@e2e-${{ matrix.runtime }},e2e-multi-node
 
       - name: Upload the conformance report
         if: always()

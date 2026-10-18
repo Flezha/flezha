@@ -62,7 +62,9 @@ jobs:
 
   # Java <-> Elixir integration matrix: end to end, which is the half the Java
   # repository cannot run. The submodule is what it runs the Java runtime from,
-  # at the commit this tree pins.
+  # at the commit this tree pins. Flezha.Testnet is a child of
+  # Flezha.Application in :test env and boots `test/apps/testnet`'s bundle, so
+  # the action builds it first.
   mix-integration-matrix:
     if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
@@ -74,79 +76,15 @@ jobs:
       - name: Set up Java
         uses: ./.github/actions/setup-java
 
-      - name: Set up Erlang + Elixir
-        # No deps/_build cache: this job compiles the tree under test from
-        # source, and what it reuses is the cargo tree below.
-        uses: ./.github/actions/setup-beam
-        with:
-          cache: "false"
-
-      - name: Install Rust
-        uses: ./.github/actions/setup-rust
-
-      - name: Install protoc
-        # `mix compile` in lib/flezha/runner/commands_proto.ex uses
-        # `Protox`, which shells out to system protoc. Installed manually
-        # from the GitHub release so no JavaScript action is involved
-        # (arduino/setup-protoc still ships on Node 20 and trips the
-        # runner's deprecation warning) — the version is still the one the
-        # toolchain manifest names.
-        run: |
-          PROTOC_VERSION=$(scripts/manifest_pin.sh .github/toolchains.json protoc)
-          curl -fsSL -o /tmp/protoc.zip \
-            "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-linux-x86_64.zip"
-          sudo unzip -oq /tmp/protoc.zip -d /usr/local
-          rm /tmp/protoc.zip
-          protoc --version
-
-      - name: Set up Node.js (for testnet build)
+      - name: Set up Node.js (for the testnet build)
         uses: ./.github/actions/setup-node
         with:
           deps-dir: test/apps/testnet
 
-      - name: Build testnet
-        # Flezha.Testnet is a child of Flezha.Application in :test env
-        # (config/test.exs sets testnet_enabled: true) and spawns
-        # `npm start --prefix test/apps/testnet` at boot, which runs
-        # `node dist/index.js`. dist/ is gitignored, so it has to be
-        # built before mix test boots the application.
-        working-directory: test/apps/testnet
-        run: npm run build
-
-      - name: Pre-build rust_runner
-        # PortPilot launches two `cargo run --quiet` processes for
-        # rust_runner at boot; BootLoader's post_hook gives
-        # them 20s to connect (config/test.exs). A cold debug build
-        # of the binary + workspace deps doesn't fit in that window,
-        # so build it ahead of time into the same ./target dir the
-        # cargo-run command uses.
-        run: |
-          cargo build --quiet \
-            --manifest-path=sdk/rust/test_app/Cargo.toml \
-            --target-dir=./target
-
-      - name: Build the host triple
-        # flezha-sdk-native's `native-verify` profile asserts this binary before
-        # packaging, and the runner loads it at startup. Host triple only: this
-        # job runs on the machine it tests.
-        run: scripts/build-native.sh --output sdk/java/flezha-sdk-native/src/main/resources/native
-
-      - name: Install Flezha Java SDK into local Maven repo
-        # The test java runner (test/apps/java_runner) depends on
-        # `com.flezha:flezha-sdk` + `flezha-sdk-testing` as Maven
-        # artifacts, resolved against the runner's per-job `~/.m2`. `-DskipTests` skips unit tests + jacoco; the
-        # parallel `java-unit-tests` job covers those.
-        run: mvn -B -DskipTests -f sdk/java/pom.xml -P native-verify install
-
-      - name: Build the java_runner fat jar
-        # PortPilot launches `test/apps/java_runner/target/java_runner.jar`;
-        # it is build output, not tracked in git.
-        run: mvn -B -q -DskipTests -f test/apps/java_runner/pom.xml package
-
-      - name: The Java SDK's gates and the shared smoke tier
-        # The rows of `@sdk-java` in scripts/gate_rows.py, the fake controller
-        # its own smoke runs against first.
-        run: python3 scripts/naming_gate.py --run sdk-fake-controller,@sdk-java
+      - uses: ./.github/actions/sdk-smoke
+        with:
+          runtime: java
+          testnet: "true"
 
   # The two release artefacts this repository cannot cross-build, both for the
   # same reason and neither fixable with zig:

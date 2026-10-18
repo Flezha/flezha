@@ -2,16 +2,19 @@ name: Run an SDK's smoke tier end to end
 description: >
   The SDK's gates from the one gate list, among them the half of its testing
   its own repository cannot run: the shared smoke tier against the controller,
-  with the SDK taken from its submodule at the commit this tree pins. The job checks out with submodules
-  and sets up the SDK's own language first.
+  with the SDK taken from its submodule at the commit this tree pins. The job
+  checks out with submodules and sets up the SDK's own language first.
 
 inputs:
   runtime:
-    description: The `FLEZHA_E2E_RUNTIME` the smoke tier runs against.
+    description: >
+      The runtime whose `@sdk-<runtime>` rows run; its runner is built by its
+      conformance manifest's `build.test` command, as the first of them.
     required: true
-  build:
-    description: The command that builds the SDK and its test app in this tree.
-    required: true
+  testnet:
+    description: Build the WebSocket testnet bundle first (`true` or `false`).
+    required: false
+    default: "false"
 
 runs:
   using: composite
@@ -22,19 +25,19 @@ runs:
     - name: Install Rust
       uses: ./.github/actions/setup-rust
 
-    - name: Build the SDK
-      shell: bash
-      run: ${{ inputs.build }}
+    - name: Install protoc
+      uses: ./.github/actions/setup-protoc
 
-    - name: Build the reference runner the suite boots against
+    - name: Build the testnet bundle
+      if: inputs.testnet == 'true'
       shell: bash
-      run: |
-        cargo build --quiet \
-          --manifest-path=sdk/rust/test_app/Cargo.toml \
-          --target-dir=./target
+      run: python3 scripts/naming_gate.py --run core-testnet
 
     - name: The SDK's gates and the shared smoke tier
-      # The rows of `@sdk-<runtime>` in scripts/gate_rows.py, the fake
-      # controller its own smoke runs against first.
+      # The reference runner every case boots, the fake controller the SDK's
+      # own smoke runs against, then the rows of `@sdk-<runtime>` in
+      # scripts/gate_rows.py.
       shell: bash
-      run: python3 scripts/naming_gate.py --run sdk-fake-controller,@sdk-${{ inputs.runtime }}
+      run: |
+        python3 scripts/naming_gate.py \
+          --run core-prep-runner,sdk-fake-controller,@sdk-${{ inputs.runtime }}
