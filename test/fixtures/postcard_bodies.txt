@@ -1,0 +1,41 @@
+# The postcard bodies that cross a runtime boundary, pinned as bytes: the
+# activation a host decodes, the result it encodes, and the effect record,
+# park and correction bodies the controller decodes off a runner's frames.
+#
+# Four runtimes read this file and none derives it. `flz_core` encodes every
+# row from the real struct (`flz_core/src/postcard_bodies_tests.rs`) and fails
+# on a row it does not produce or one the file lacks; the controller decodes
+# the effect, park and correction rows through `Flezha.State.Wire`
+# (`test/flezha/state/wire_test.exs`); Java's `ActivationCodecTest` and PHP's
+# `SchemaFixtureTest` encode and decode the activation and result rows.
+#
+# Provenance: TRANSCRIBED BY HAND from one run of the Rust encoders at
+# `6816b368` and checked in. A golden a runtime derives at test time is not a
+# golden, it is a second copy of the thing under test.
+#
+# Postcard writes integers as LEB128 varints, a `Vec` or `String` as its varint
+# length and then its items, a struct or tuple as its fields in declaration
+# order, an `Option` as `00` or `01` and the value, and an enum as its variant
+# index and then its fields. Field order IS the wire.
+#
+# One row per case, `|`-separated: type | case | hex. The values each case
+# encodes are spelled in `flz_core/src/postcard_bodies_tests.rs`.
+#
+# Command activations are all token 1 addressed to relay `o`, tasklet 0, no
+# key, change seq 0, factory `f`, so each starts `01016f0000` and ends `000166`.
+
+activation|work|2a046f702d310301016b0002000102aabb010a666c7a2e6f66667365740137010701e8070100d00f090166
+activation|restore_fold|01016f00000101010f000201010001020101000166
+activation|snapshot_request|01016f000002000166
+activation|live_state_read|01016f000003000166
+activation|apply_state|01016f000004027b7d000166
+activation|migration_serialize|01016f000005000166
+activation|key_request|01016f000006020101700100000166
+activation|compensate_run|01016f00000701010a000166
+activation|leave|01016f00000801000166
+result|work|2a0001000101010101036f757401026b32000001020107e8070101d00f00010000
+result|completing|2a0001000101010101036f757401026b32000001020107e8070101d00f0001000104646f6e65
+effect|outputs_edges_timer_register|0101aa01036f7574016b010161016202010201e72400fbd095ffbc31010198f2010101020101e7240109
+effect|dead_letter_timer_cancel|000001090102696e04626f6f6d0300050100d00f0000
+park|parked|03732330010702696e04626f6f6d03010201020103773a74
+correction|request|fbd095ffbc31

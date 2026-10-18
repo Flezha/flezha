@@ -312,7 +312,7 @@ defmodule Flezha.State.Wire do
   @doc """
   Encode a `ParkBody` to postcard bytes — the exact inverse of
   `decode_park_body/1`, byte-compatible with the cross-language fixture
-  (`flz_core/src/park.rs`, `test/flezha/state/wire_test.exs`). The map carries
+  (`test/fixtures/postcard_bodies.txt`). The map carries
   the flattened DLQ entry: `park_id`, `origin_offset`, `channel`, `error`,
   `attempts`, `payload`, `reply_to`. Sharing the module's postcard helpers is what keeps the
   SDK's park frame from drifting from the decoder.

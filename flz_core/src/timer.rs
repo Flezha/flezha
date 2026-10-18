@@ -559,21 +559,4 @@ mod tests {
             "the firing removed a timer this probe never registered"
         );
     }
-
-    /// Pins the postcard bytes the controller's `Flezha.State.Wire` decodes.
-    #[test]
-    fn timer_op_postcard_bytes_are_the_cross_language_fixture() {
-        let ops = vec![
-            TimerOp::register(TimerKind::ProcessingTime, 31_000),
-            TimerOp::cancel(TimerKind::EventTime, 100),
-        ];
-        assert_eq!(
-            postcard::to_allocvec(&ops).unwrap(),
-            vec![
-                0x02, // 2 ops
-                0x01, 0x98, 0xF2, 0x01, 0x01, // ProcessingTime, 31000, register
-                0x00, 0x64, 0x00, // EventTime, 100, cancel
-            ]
-        );
-    }
 }

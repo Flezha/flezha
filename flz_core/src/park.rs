@@ -613,34 +613,4 @@ mod tests {
         struct Opaque;
         assert_eq!(extract_payload_bytes(&Opaque), None);
     }
-
-    #[test]
-    fn park_body_postcard_bytes_are_the_cross_language_fixture() {
-        // Shared fixture with the controller's ParkBody decode
-        // (wire_test.exs); an encoding change breaks loudly here.
-        let body = ParkBody {
-            park_id: "s#0".into(),
-            origin_offset: Some(7),
-            entry: crate::flusher::DlqEntryBody {
-                channel: "in".into(),
-                error: "boom".into(),
-                attempts: 3,
-                payload: Some(vec![1, 2]),
-            },
-            reply_to: Some("w:t".into()),
-        };
-        let bytes = postcard::to_allocvec(&body).unwrap();
-        assert_eq!(
-            bytes,
-            vec![
-                0x03, b's', b'#', b'0', // park_id "s#0"
-                0x01, 0x07, // Some(7)
-                0x02, b'i', b'n', // entry.channel "in"
-                0x04, b'b', b'o', b'o', b'm', // entry.error "boom"
-                0x03, // entry.attempts 3
-                0x01, 0x02, 0x01, 0x02, // entry.payload Some([1,2])
-                0x01, 0x03, b'w', b':', b't', // reply_to Some("w:t")
-            ]
-        );
-    }
 }

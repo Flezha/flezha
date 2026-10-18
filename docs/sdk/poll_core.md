@@ -27,7 +27,7 @@ the C ABI and where the code lives; the system-level picture is
 | Path                                   | Purpose |
 | -------------------------------------- | ------- |
 | `flz_core/src/poll_core/`              | The activation engine (`mod.rs`, `assembly.rs`, `starvation.rs`, `wake.rs`): per-cell handout exclusivity, batch assembly (admission, replay-slice ordering, due-timer generation), the in-flight cap, the deferred-wake list, starvation, `poll` / `complete` |
-| `flz_core/src/schema.rs`               | The versioned Activation / ActivationResult boundary contract (postcard; `SCHEMA_VERSION`; hex-pinned `fixture_tests`) |
+| `flz_core/src/schema.rs`               | The versioned Activation / ActivationResult boundary contract (postcard; `SCHEMA_VERSION`; bytes pinned in `test/fixtures/postcard_bodies.txt`) |
 | `flz_core/src/host/`                   | Erased host classes (`decl.rs`, `register.rs`, `prepare.rs`, `commands.rs`, `activation.rs`, `cell.rs` under `mod.rs`): `HostClassDecl` (JSON), data-declared topologies, completion application — what the C ABI drives |
 | `flz_core/src/cell.rs`, `mailbox.rs` | `CellSlot`, bounded mailbox + inflight CAS, shared slot assembly |
 | `flz_core/src/routing.rs`              | `enqueue` + overflow policies, consumer-edge delivery, entry-parse and edge ladders, end-of-slice broadcast |
@@ -138,8 +138,8 @@ Two notes owed to whoever writes the next SDK:
 
 The boundary contract lives in `flz_core::schema` and is postcard-encoded;
 field order IS the wire contract and `SCHEMA_VERSION` (currently 4) gates it.
-Every kind is pinned by hex byte fixtures (`schema.rs` `fixture_tests`) that
-each shim must reproduce byte-identically.
+Every kind is pinned as bytes in `test/fixtures/postcard_bodies.txt`, which
+the core's tests encode and each shim must reproduce byte-identically.
 
 An **Activation** targets one cell (a relay-wide `Leave`, one relay) and carries one `ActivationKind`:
 
