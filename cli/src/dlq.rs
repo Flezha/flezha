@@ -8,26 +8,31 @@ const ENTRY_REF: &[Positional] = &[Positional::required("<relay/tasklet/entry-id
 
 pub(crate) const TABLE: Command = Command {
     path: "flz dlq",
-    help: help::DLQ,
+    title: "Dead-letter queue: parked poison payloads (retry budget exhausted).",
+    notes: Some(help::DLQ),
     verbs: &[
         Verb::new("list", handle_list)
             .taking(&[Positional::optional("<relay_class>")])
-            .strict(),
+            .strict()
+            .calls(&["Dlq.list"]),
         Verb::new("show", |read| {
             rpc::one_arg(read, ENTRY_REF[0].name, "Dlq.get")
         })
         .taking(ENTRY_REF)
-        .strict(),
+        .strict()
+        .calls(&["Dlq.get"]),
         Verb::new("replay", |read| {
             rpc::one_arg(read, ENTRY_REF[0].name, "Dlq.replay")
         })
         .taking(ENTRY_REF)
-        .strict(),
+        .strict()
+        .calls(&["Dlq.replay"]),
         Verb::new("drop", |read| {
             rpc::one_arg(read, ENTRY_REF[0].name, "Dlq.drop")
         })
         .taking(ENTRY_REF)
-        .strict(),
+        .strict()
+        .calls(&["Dlq.drop"]),
     ],
     missing: Missing::Refuse,
     unknown_prints_help: false,

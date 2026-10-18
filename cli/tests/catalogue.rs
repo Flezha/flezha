@@ -5,7 +5,9 @@
 //! writes from the controller's own declarations and a test on that side
 //! holds fresh. Two checks hold the CLI to it: every door name written in
 //! `cli/src` is an entry, and one invocation of each, run against a `flzvm`
-//! that echoes what it was handed, sends a positional count the entry accepts.
+//! that echoes what it was handed, sends an operation its verb's row names and
+//! a positional count the entry accepts. The rows are read from the tables'
+//! source, since a binary's internals are out of an integration test's reach.
 
 mod common;
 
@@ -155,6 +157,34 @@ fn door_names_in_source() -> Vec<(String, String)> {
     found
 }
 
+/// The operations each verb row names, by its command's path and its name.
+fn row_calls() -> BTreeMap<(String, String), Vec<String>> {
+    let src = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut rows = BTreeMap::new();
+
+    for entry in fs::read_dir(src).unwrap() {
+        let text = fs::read_to_string(entry.unwrap().path()).unwrap_or_default();
+        let Some((_, table)) = text.split_once("path: \"") else {
+            continue;
+        };
+        let path = table.split('"').next().unwrap().to_string();
+        let verbs = table.split_once("verbs: &[").unwrap().1;
+        let verbs = verbs.split_once("\n    missing:").unwrap().0;
+
+        for row in verbs.split("Verb::").skip(1) {
+            let name = row.split('"').nth(1).unwrap().to_string();
+            let calls = row
+                .split_once(".calls(&[")
+                .map(|(_, list)| list.split_once("])").unwrap().0)
+                .unwrap_or_default();
+            let calls = calls.split('"').skip(1).step_by(2).map(String::from);
+            rows.insert((path.clone(), name), calls.collect());
+        }
+    }
+
+    rows
+}
+
 fn door_name(literal: &str) -> bool {
     match literal.split_once('.') {
         Some((module, function)) => {
@@ -197,6 +227,32 @@ fn every_door_name_in_the_source_is_a_catalogue_entry() {
         "names no published operation declares:\n{}",
         unknown.join("\n")
     );
+}
+
+#[test]
+fn every_request_sends_an_operation_its_row_names() {
+    let rows = row_calls();
+    let shim = Shim::new(FLZ_BIN, ECHOING);
+    let mut wrong: Vec<String> = Vec::new();
+
+    for argv in INVOCATIONS {
+        let out = shim.run(argv);
+        let Some((name, _args)) = sent(&String::from_utf8_lossy(&out.stdout)) else {
+            continue;
+        };
+        let row = (format!("flz {}", argv[0]), argv[1].to_string());
+        match rows.get(&row) {
+            Some(calls) if calls.contains(&name) => {}
+            calls => wrong.push(format!(
+                "flz {} sends {}; its row calls {:?}",
+                argv.join(" "),
+                name,
+                calls
+            )),
+        }
+    }
+
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
 
 #[test]

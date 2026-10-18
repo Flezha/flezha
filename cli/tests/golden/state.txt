@@ -1,19 +1,19 @@
-flz state - Per-Cell state inspection and time-travel queries
+flz state - Per-Cell state inspection and time-travel queries.
 
 USAGE:
-    flz state <SUBCOMMAND>
+    flz state <COMMAND>
 
-SUBCOMMANDS:
-    get <relay/tasklet[/key]>             Current in-memory state of a live Cell, with its change_seq
-    list <relay>                          List Cells under a Relay class
-    at <relay/tasklet/key> <seq|ts>       Query state at a point in time
-    rotate <relay/tasklet/key>            Force a compaction snapshot
-    retention <relay> <hours>             Set time-travel retention
-    delete <relay/tasklet/key>            Hard-delete a Cell's persisted state
-    outbox <relay/tasklet/key>            Effectively-once outbox status (lag, cursor, watermark)
-    journal <relay/instance>              Steps instance task-journal (committed tasks, iterations, park)
-    inbox <relay/instance>                Steps instance durable inbox (offsets, undelivered tail)
-    help                                     Show this help message
+COMMANDS:
+    get        The CURRENT in-memory state of live Cells, as JSON.
+    list       One row per Cell of `relay_class` with persisted state.
+    at         One Cell's state as of `target`, from its write-ahead log.
+    rotate     Force a compaction of one Cell.
+    retention  Retain `relay_class`'s write-ahead history for `hours`.
+    delete     Hard-delete one Cell's persisted state.
+    outbox     One Cell's outbox, with its cursors, epoch and lag.
+    journal    One instance's task journal, in append order.
+    inbox      An instance's durable input log, record by record.
+    help       Show this help message.
 
 EXAMPLES:
     flz state get MarketRelay/OhlcTasklet/M1

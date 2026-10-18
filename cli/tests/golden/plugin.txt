@@ -1,23 +1,20 @@
-flz plugin - Plugin management commands
+flz plugin - Plugin management commands.
 
 USAGE:
     flz plugin <COMMAND>
-    flz plugin enable <name> <provider_id> [--single] [X<key>=<value>]... [OPTIONS]
-    flz plugin bind <name> --relay_id <op> [--hook=<name>]... [--channel <c>]
 
 COMMANDS:
-    install    Place a plugin package (.fpz) from a path or an https:// URL
-    uninstall  Remove an installed plugin package
+    enable     Enable the plugin `name` built from `fields`.
+    bind       Bind `fields[:relay_id]` to the plugin `name`.
+    unbind     Unbind `fields[:relay_id]` from the plugin `name`.
+    update     Change the options and hooks of the plugin `name`.
+    disable    Disable the plugin `name`: every running copy stops.
+    help       One plugin provider's help text, type, hooks and options.
+    list       Every plugin enabled in `namespace`.
+    install    Place a plugin package (.fpz) from a path or an https:// URL.
+    uninstall  Remove an installed plugin package.
     sync       Make the plugin root hold exactly the packages FLEZHA_PLUGINS
-               declares
-    enable     Enable a plugin by name in a namespace
-    bind       Connect a relay to an enabled plugin
-    unbind     Take a relay's connection to a plugin away
-    update     Change an enabled plugin's settings
-    disable    Turn a plugin off
-    list       List the plugins enabled in a namespace, the `--installed`
-               packages or the `--providers`
-    help       Show help for a specific plugin provider
+               declares.
 
 PLUGINS:
     A plugin has a name of its own in its namespace and is enabled once, with

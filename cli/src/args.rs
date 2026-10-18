@@ -104,8 +104,9 @@ pub(crate) enum Kind {
 }
 
 /// One option a verb declares: its two spellings, what its value is called,
-/// whether the verb refuses to run without it, and the environment variable
-/// that answers when the caller writes no flag.
+/// whether the verb refuses to run without it, the environment variable that
+/// answers when the caller writes no flag, and the line its help prints when
+/// no argument of the verb's operation describes it.
 pub(crate) struct OptSpec {
     pub(crate) long: &'static str,
     pub(crate) short: &'static str,
@@ -116,6 +117,7 @@ pub(crate) struct OptSpec {
     /// What the usage line calls the value.
     value: &'static str,
     env: Option<&'static str>,
+    pub(crate) doc: Option<&'static str>,
 }
 
 impl OptSpec {
@@ -128,6 +130,7 @@ impl OptSpec {
             repeated: false,
             value,
             env: None,
+            doc: None,
         }
     }
 
@@ -191,6 +194,11 @@ impl OptSpec {
     /// the one place in this crate that name is read.
     pub(crate) const fn answered_by(mut self, name: &'static str) -> Self {
         self.env = Some(name);
+        self
+    }
+
+    pub(crate) const fn doc(mut self, text: &'static str) -> Self {
+        self.doc = Some(text);
         self
     }
 
@@ -263,9 +271,10 @@ pub(crate) enum Open {
     Settings,
 }
 
-pub(crate) const TOKEN: OptSpec =
-    OptSpec::text("--token", "--token", "<token>").answered_by("FLEZHA_TOKEN");
-pub(crate) const HELP: OptSpec = OptSpec::switch("--help", "-h");
+pub(crate) const TOKEN: OptSpec = OptSpec::text("--token", "--token", "<token>")
+    .answered_by("FLEZHA_TOKEN")
+    .doc("The caller's token (default: FLEZHA_TOKEN).");
+pub(crate) const HELP: OptSpec = OptSpec::switch("--help", "-h").doc("Print this help.");
 
 /// The options every verb carries, declared once so that no row repeats them
 /// and no verb scans the argument list for them. The output format selects a
@@ -273,23 +282,29 @@ pub(crate) const HELP: OptSpec = OptSpec::switch("--help", "-h");
 pub(crate) const UNIVERSAL: &[OptSpec] = &[TOKEN, HELP, OUTPUT, JSON_SWITCH];
 
 /// The options more than one verb shares, spelled once each.
-pub(crate) const NAMESPACE: OptSpec = OptSpec::text("--namespace", "-n", "<namespace>");
+pub(crate) const NAMESPACE: OptSpec =
+    OptSpec::text("--namespace", "-n", "<namespace>").doc("The namespace (default: default).");
 /// The document a relay starts from, on a start and on every firing of a
 /// schedule.
-pub(crate) const INIT_VALUES: OptSpec = OptSpec::text("--init-values", "--init-values", "<json>");
+pub(crate) const INIT_VALUES: OptSpec = OptSpec::text("--init-values", "--init-values", "<json>")
+    .doc("The state the relay starts with, keyed by tasklet name.");
 pub(crate) const OUTPUT: OptSpec =
-    OptSpec::choice("--output", "-o", "output format", &["text", "json"]);
+    OptSpec::choice("--output", "-o", "output format", &["text", "json"])
+        .doc("Output format (default: text).");
 /// The switch spelling of `--output json`. `Reading::output_format` is where
 /// the two meet, so they cannot mean different things on different verbs.
-pub(crate) const JSON_SWITCH: OptSpec = OptSpec::switch("--json", "--json");
+pub(crate) const JSON_SWITCH: OptSpec =
+    OptSpec::switch("--json", "--json").doc("The same as --output json.");
 /// The window a bounded stream runs for, and how long it runs when the
 /// caller names none. Two verbs tail; one option, one default.
 pub(crate) const DURATION_MS: OptSpec =
-    OptSpec::number("--duration-ms", "--duration-ms", "<milliseconds>");
+    OptSpec::number("--duration-ms", "--duration-ms", "<milliseconds>")
+        .doc("Stream for at most this long (default 30000).");
 pub(crate) const DEFAULT_WINDOW_MS: u64 = 30_000;
 pub(crate) const APP_DATA_ROOT: OptSpec =
     OptSpec::text("--app-data-root", "--app-data-root", "<path>")
-        .answered_by("FLEZHA_APP_DATA_ROOT");
+        .answered_by("FLEZHA_APP_DATA_ROOT")
+        .doc("The app_data/ root (default: FLEZHA_APP_DATA_ROOT or ./app_data).");
 /// The `app_data/` root when the caller named none. One spelling: two verbs
 /// read this root, and a default written twice is a default that drifts.
 pub(crate) const APP_DATA_ROOT_DEFAULT: &str = "./app_data";
@@ -440,7 +455,12 @@ fn open_entry(args: &[String], i: usize) -> Option<usize> {
 /// The usage line one verb's row renders — the only place this surface says
 /// what a verb takes, so it cannot disagree with what the verb reads.
 pub(crate) fn usage_line(path: &str, verb: &Verb) -> String {
-    let mut out = format!("Usage: {} {}", path, verb.name);
+    format!("Usage: {}", synopsis(path, verb))
+}
+
+/// The usage line without its `Usage:`, as the command reference prints it.
+pub(crate) fn synopsis(path: &str, verb: &Verb) -> String {
+    let mut out = format!("{} {}", path, verb.name);
 
     for slot in verb.positionals {
         out.push_str(&optional_unless(slot.required, slot.name.to_string()));
@@ -551,9 +571,7 @@ fn scan(
             continue;
         }
 
-        // A verb with a screen of its own answers the bare word too: it is the
-        // spelling `flz controller status help` has always used.
-        if verb.help.is_some() && argv[i] == "help" {
+        if verb.help_word && argv[i] == "help" {
             asked_help = true;
             i += 1;
             continue;

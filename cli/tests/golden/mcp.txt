@@ -1,7 +1,12 @@
-flz mcp - Serve Flezha to an AI assistant over MCP, on stdin and stdout
+flz mcp - Serve Flezha to an AI assistant over MCP, on stdin and stdout.
 
-USAGE:
-    flz mcp [--token <token>]
+Usage: flz mcp
+
+OPTIONS:
+    --token <token>          The caller's token (default: FLEZHA_TOKEN).
+    --help | -h              Print this help.
+    --output | -o text|json  Output format (default: text).
+    --json                   The same as --output json.
 
 An AI assistant starts this command and speaks MCP with it; it is not run by
 hand. Five tools need no controller: flezha_guide, flezha_sdk_example,

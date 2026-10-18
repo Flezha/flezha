@@ -1,16 +1,12 @@
-flz audit - Durable audit log inspection
+flz audit - Durable audit log inspection.
 
 USAGE:
-    flz audit <COMMAND> [OPTIONS]
+    flz audit <COMMAND>
 
 COMMANDS:
-    list      List the on-disk catalog of rotated files
-    read      Read records from a specific file with optional filters
-    tail      Stream live audit records until a duration elapses
-    stats     Show operational snapshot (file path, size, totals, drops)
-    rotate    Force an immediate rotation of the active file
-    help      Show this help message
-
-OPTIONS:
-    --json    Emit machine-readable output (one JSON line per record for
-              tail). --output json is the same request.
+    list    The audit log's files, each with its record times and digest.
+    read    The records of one audit file that match `params`.
+    tail    Stream every audit record the caller may read as it is written.
+    stats   The audit log's operational snapshot.
+    rotate  Close the current audit file and start a new one.
+    help    Show this help message.

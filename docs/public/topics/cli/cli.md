@@ -60,72 +60,18 @@ reads the templates the release carries
 ## Options and help
 
 `flz help` lists the command groups, and `flz <group> help` lists a group's
-verbs with a few examples:
-
-```sh
-$ flz relay help
-```
-
-```output
-flz relay - Relay management commands
-
-USAGE:
-    flz relay <COMMAND>
-
-COMMANDS:
-    start       Start a relay
-    scale       Rescale a partition group to N partitions
-    stop        Stop a relay
-    state       Get relay state
-    list        List relays
-    info        Get relay info
-    listen      Print the frames a relay emits or ingests
-    send        Send a payload to a relay's input stream
-    call        Send one input and print the relay's answer
-    rewind      Rewind a steps loop to a committed iteration
-    replay      Re-run a Cell's retained inputs from a point in the past
-    help        Show this help message
-
-EXAMPLES:
-    flz relay start candles --id ohlc --partitions 3
-    flz relay scale ohlc 5
-    flz relay send orchestrator --text '{"task":"refactor"}'
-    flz relay send my_echo --text 'hello world' --await 2000
-    flz relay send prices --key EURUSD --text x
-    flz relay send orders --text x --msg-id orders/0/41
-    flz relay call echo --text hello
-    flz relay listen my_echo --duration-ms 10000
-    flz relay rewind chat-1 --to-iteration 3
-    flz relay replay candles/aggregate/BTC --from 1720000000000
-
-Use 'flz relay <COMMAND> --help' for more information on a specific command.
-
-Identity for gated verbs rides `--token <token>` or the FLEZHA_TOKEN env var.
-```
+verbs, each with one line saying what it does, and a few examples. The
+[command reference](command_reference.md) lists every verb with its usage line.
 
 `flz <group> <verb> --help`, `-h` and `flz <group> help <verb>` print the
-verb's usage line, its line from the group's help and the options its row
-declares, plus the ones every verb takes. Settings a verb takes as
-`X<key>=<value>` or `--<key> <value>` appear only in its usage line.
-A verb with a help page of its own, such as `flz relay start`, prints that
-page instead:
-
-```sh
-$ flz relay stop --help
-```
-
-```output
-Usage: flz relay stop <relay_id> [--namespace | -n <namespace>]
-
-    stop        Stop a relay
-
-OPTIONS:
-    --namespace | -n <namespace>
-    --token <token>
-    --help | -h
-    --output | -o text|json
-    --json
-```
+verb's line, its usage line and each option it reads, plus the ones every verb
+takes; some verbs follow these with notes and examples. Settings a verb takes
+as `X<key>=<value>` or `--<key> <value>` appear only in its usage line. A verb
+that reaches the controller is described by the operation it sends: its line is
+the operation's own description, the one an MCP or HTTP caller reads, and an
+option that carries one of the operation's arguments says what that argument
+is, unless the CLI fills the option in itself: `--namespace` is `default` when
+it is not written.
 
 An option can go before or after the other arguments: `flz relay stop
 --token t op1` and `flz relay stop op1 --token t` are the same command.

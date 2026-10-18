@@ -1,9 +1,13 @@
-flz observe tail <SOURCE> [--json] [--duration-ms N]
+flz observe tail - Stream the live signals of `source` that the caller may see.
 
-Stream live signals from SOURCE via the PubSub sink. Requires
-:pubsub_sink_enabled to be true in :observability config.
+Usage: flz observe tail <source> [--duration-ms <milliseconds>]
 
 OPTIONS:
-    --json              Emit NDJSON (one JSON object per signal per line);
-                        --output json is the same request
-    --duration-ms <N>   Stream for at most N milliseconds (default 30000)
+    --duration-ms <milliseconds>  Stream for at most this long (default 30000).
+    --token <token>               The caller's token (default: FLEZHA_TOKEN).
+    --help | -h                   Print this help.
+    --output | -o text|json       Output format (default: text).
+    --json                        The same as --output json.
+
+Signals arrive through the PubSub sink, which needs :pubsub_sink_enabled to be
+true in :observability config. With --json, one JSON object per signal per line.

@@ -1,173 +1,207 @@
 # Command reference
 
-Every `flz` verb in one line, by group. A group's name leads to its help and
-examples. `flz <group> help` prints the same on the command line, and
-`flz <group> <verb> --help` prints one verb's usage line and options.
+Every `flz` verb with its usage line and what it does, by group. A group's
+name leads to its help and examples. The tables are rendered from the same
+rows as `flz <group> help`, which prints them on the command line, and
+`flz <group> <verb> --help` prints one verb's options.
 
 ## [`flz controller`](controller_commands.md#flz-controller)
 
+<!-- flz-reference:begin flz controller -->
 | Command | What it does |
 | --- | --- |
-| `flz controller start [--mode <mode>]` | Starts the controller, in this terminal or as a daemon |
-| `flz controller stop [--timeout-ms <n>] [--no-wait] [--force]` | Stops it once its relays have drained |
-| `flz controller status` | Prints its settings, and whether a shutdown is running |
-| `flz controller mem-top` | Lists what uses the most memory in the controller |
+| `flz controller start [--mode \| -m attached\|daemon\|attached_iex\|daemon_iex]` | Start the flezha controller. |
+| `flz controller stop [--timeout-ms <ms>] [--no-wait] [--force]` | Drain this controller and stop it. |
+| `flz controller status` | The controller's status: node, clock, shutdown and durability. |
+| `flz controller mem-top` | One snapshot of the controller's memory hot spots. |
+<!-- flz-reference:end -->
 
 ## [`flz boot`](controller_commands.md#flz-boot)
 
+<!-- flz-reference:begin flz boot -->
 | Command | What it does |
 | --- | --- |
-| `flz boot status` | Says whether the controller is ready, and which conditions are met |
-| `flz boot await [--timeout <secs>]` | Waits until the controller is ready |
+| `flz boot status` | The readiness verdict and every precondition behind it. |
+| `flz boot await [--timeout \| -t <seconds>]` | Wait until the readiness verdict is `:ready`, or the timeout passes. |
+<!-- flz-reference:end -->
 
 ## [`flz cluster`](controller_commands.md#flz-cluster)
 
+<!-- flz-reference:begin flz cluster -->
 | Command | What it does |
 | --- | --- |
-| `flz cluster status` | Lists the cluster's controllers, its leader and its relays' health |
+| `flz cluster status [--namespace \| -n <namespace>]` | The cluster as `namespace` sees it: nodes, relays and health. |
+<!-- flz-reference:end -->
 
 ## [`flz runner`](controller_commands.md#flz-runner)
 
+<!-- flz-reference:begin flz runner -->
 | Command | What it does |
 | --- | --- |
-| `flz runner list` | Lists the runners connected to a namespace |
-| `flz runner check` | Checks that a runner on this machine can reach the controller's socket |
+| `flz runner list [--namespace \| -n <namespace>]` | Every runner serving `namespace`, anywhere in the cluster. |
+| `flz runner check` | Report whether a runner on this host can reach a controller. |
+| `flz runner drop <runner_id> [--namespace \| -n <namespace>]` | Drop the runner `runner_id` serving `namespace`. |
+| `flz runner dropped [--namespace \| -n <namespace>]` | The drop marks standing in `namespace`, oldest first. |
+| `flz runner readmit <stable_id> [--namespace \| -n <namespace>]` | Lift the drop mark on the runner `stable_id` in `namespace`. |
+<!-- flz-reference:end -->
 
 ## [`flz observe`](controller_commands.md#flz-observe)
 
+<!-- flz-reference:begin flz observe -->
 | Command | What it does |
 | --- | --- |
-| `flz observe sources` | Lists the sources of metrics and events, whether each is on, and what each one is |
-| `flz observe sinks` | Lists where signals are sent |
-| `flz observe tail <source>` | Prints a source's signals as they happen |
-| `flz observe enable <source>` | Turns a source on |
-| `flz observe disable <source>` | Turns a source off |
+| `flz observe sources` | Every registered observability source and what it said recently. |
+| `flz observe sinks` | Every registered observability sink. |
+| `flz observe tail <source> [--duration-ms <milliseconds>]` | Stream the live signals of `source` that the caller may see. |
+| `flz observe enable <source>` | Enable the source `name`. |
+| `flz observe disable <source>` | Disable the source `name`. |
+<!-- flz-reference:end -->
 
-## [`flz reset`](controller_commands.md#flz-reset)
+## [`flz reset`](controller_commands.md#flz-reset), [`flz mcp`](../core/mcp_server.md) and `flz help`
 
+<!-- flz-reference:begin flz -->
 | Command | What it does |
 | --- | --- |
-| `flz reset [--dry-run] [--yes] [--include-...]` | Deletes a stopped controller's data on disk |
-
-## [`flz mcp`](../core/mcp_server.md)
-
-| Command | What it does |
-| --- | --- |
-| `flz mcp` | Serves Flezha to an AI assistant over MCP, on stdin and stdout |
+| `flz reset [--yes] [--dry-run] [--include-certs] [--include-dlq] [--include-schedules] [--include-auth] [--include-audit] [--include-plugins] [--include-sockets] [--all] [--probe-timeout-ms <ms>] [--app-data-root <path>]` | Clear Controller durable runtime data on disk (controller must be stopped). |
+| `flz mcp` | Serve Flezha to an AI assistant over MCP, on stdin and stdout. |
+| `flz help` | Show this help message, or with --json every operation as data. |
+<!-- flz-reference:end -->
 
 ## [`flz template`](template_commands.md)
 
+<!-- flz-reference:begin flz template -->
 | Command | What it does |
 | --- | --- |
-| `flz template list` | Prints the languages and examples the release carries |
-| `flz template create <language> <dir> [--example <name>] [--tar]` | Writes a template's files into a new folder, or as a tar stream |
+| `flz template list` | Print each language and example the release carries. |
+| `flz template create <language> <dir> [--example <name>] [--tar]` | Write a template's files into a new folder <dir>. |
+<!-- flz-reference:end -->
 
 ## [`flz relay`](relay_commands.md#flz-relay)
 
+<!-- flz-reference:begin flz relay -->
 | Command | What it does |
 | --- | --- |
-| `flz relay start <factory_id>` | Starts a relay from a factory a runner offers |
-| `flz relay stop <relay_id>` | Stops a relay |
-| `flz relay list` | Lists the relays in a namespace, with their health |
-| `flz relay info [<relay_id>]` | Shows each relay's details and plugins, or one relay's API |
-| `flz relay diagnose <relay_id>` | Says what is wrong with a relay and what to do |
-| `flz relay graph <relay_id>` | Prints a relay's tasklets with the channels they consume and produce |
-| `flz relay activity <relay_id>` | Prints what each of a relay's tasklets is doing: its Cells, queued items, and items admitted, blocked and dropped; with `--cells <tasklet>` also that tasklet's most recently active Cells |
-| `flz relay state <relay_id>` | Prints a relay's state |
-| `flz relay send <relay_id> --text <payload>` | Sends an input |
-| `flz relay call <relay_id> (--text <payload> \| --arg <name=value>...)` | Calls one channel by the relay's API and prints its answer |
-| `flz relay listen <relay_id>` | Prints what a relay emits, with `--input` what it takes in, with `--calls` each call it takes and how it ended, or with `--tally` how many frames leave on each output channel |
-| `flz relay scale <group> <partitions>` | Changes the number of members of a partition group |
-| `flz relay rewind <relay_id> --to-iteration <n>` | Takes a workflow loop back to an earlier iteration |
-| `flz relay replay <relay/tasklet/key> --from <seq|time>` | Runs a cell's kept inputs again from a point in the past |
+| `flz relay start <factory_id> [--id \| -i <id>] [--namespace \| -n <namespace>] [--init-values <json>] [--text \| -t <payload>] [--channel \| -c <ch>] [--plugins <json-array>] [--partitions <N>]` | Start `relay` in `namespace`, answering the id it runs under. |
+| `flz relay scale <group> <partitions> [--namespace \| -n <namespace>] [--timeout \| -t <ms>]` | Rescale the partition group `group_id` in `namespace` to `target`. |
+| `flz relay stop <relay_id> [--namespace \| -n <namespace>]` | Stop `relay_id` in `namespace`, or a whole partition group. |
+| `flz relay state <relay_id> [--namespace \| -n <namespace>]` | A relay's live state, as JSON, and the change sequence it was read at. |
+| `flz relay list [--namespace \| -n <namespace>]` | The relays in `namespace`, one row each. |
+| `flz relay info [<relay_id>] [--namespace \| -n <namespace>]` | Every relay in `namespace` as its Overwatch reports it. |
+| `flz relay diagnose <relay_id> [--namespace \| -n <namespace>]` | What is wrong with `relay_id` and what to do about it. |
+| `flz relay graph <relay_id> [--namespace \| -n <namespace>]` | The graph of `relay_id`'s factory, as its runner announces it. |
+| `flz relay activity <relay_id> [--cells <tasklet>] [--limit <count>] [--namespace \| -n <namespace>]` | What each tasklet of `relay_id` is doing, as its runner counts it. |
+| `flz relay listen <relay_id> [--input] [--calls] [--tally] [--duration-ms <milliseconds>] [--namespace \| -n <namespace>]` | Stream every frame `relay_id` emits, or what `direction` names. |
+| `flz relay send <relay_id> --text \| -t <payload> [--channel \| -c <ch>] [--key <key>] [--msg-id <id>] [--await <ms>] [--namespace \| -n <namespace>]` | Inject `message` into `relay_id`'s input stream. |
+| `flz relay call <relay_id> [--text \| -t <payload>] [--arg <name=value>] [--channel \| -c <ch>] [--answer-channel <ch>] [--key <key>] [--timeout <ms>] [--namespace \| -n <namespace>]` | Call the entry channel `channel` of `relay_id` with `value`. |
+| `flz relay rewind <relay_id> --to-iteration <N> [--namespace \| -n <namespace>]` | Rewind `relay_class` in `namespace` to iteration `to_iter`. |
+| `flz relay replay <relay/tasklet/key> --from \| -f <seq\|timestamp> [--namespace \| -n <namespace>]` | Re-run a Cell's retained inputs from a point in the past. |
+<!-- flz-reference:end -->
 
 ## [`flz state`](relay_commands.md#flz-state)
 
+<!-- flz-reference:begin flz state -->
 | Command | What it does |
 | --- | --- |
-| `flz state get <relay/tasklet[/key]>` | Prints a cell's current state |
-| `flz state list <relay>` | Lists a relay's cells |
-| `flz state at <relay/tasklet/key> <seq|time>` | Prints a cell's state at a point in the past |
-| `flz state rotate <relay/tasklet/key>` | Writes a snapshot of a cell's state now |
-| `flz state retention <relay> <hours>` | Sets how long past states are kept |
-| `flz state delete <relay/tasklet/key>` | Deletes a cell's stored state |
-| `flz state outbox <relay/tasklet/key>` | Shows a cell's effectively-once outbox |
-| `flz state journal <relay/instance>` | Shows the steps a workflow instance has committed |
-| `flz state inbox <relay/instance>` | Shows a workflow instance's stored inputs |
+| `flz state get <relay/tasklet[/cell_key]>` | The CURRENT in-memory state of live Cells, as JSON. |
+| `flz state list <relay_class>` | One row per Cell of `relay_class` with persisted state. |
+| `flz state at <relay/tasklet/cell_key> <seq \| iso8601-timestamp>` | One Cell's state as of `target`, from its write-ahead log. |
+| `flz state rotate <relay/tasklet/cell_key>` | Force a compaction of one Cell. |
+| `flz state retention <relay_class> <hours>` | Retain `relay_class`'s write-ahead history for `hours`. |
+| `flz state delete <relay/tasklet/cell_key>` | Hard-delete one Cell's persisted state. |
+| `flz state outbox <relay/tasklet/cell_key>` | One Cell's outbox, with its cursors, epoch and lag. |
+| `flz state journal <relay/instance>` | One instance's task journal, in append order. |
+| `flz state inbox <relay/instance>` | An instance's durable input log, record by record. |
+<!-- flz-reference:end -->
 
 ## [`flz dlq`](relay_commands.md#flz-dlq)
 
+<!-- flz-reference:begin flz dlq -->
 | Command | What it does |
 | --- | --- |
-| `flz dlq list [relay]` | Lists the parked inputs |
-| `flz dlq show <entry>` | Shows one parked input |
-| `flz dlq replay <entry>` | Sends it through the relay again |
-| `flz dlq drop <entry>` | Deletes it |
+| `flz dlq list [<relay_class>]` | Parked entries, nearest-to-expiry first. |
+| `flz dlq show <relay/tasklet/entry-id>` | One entry and its payload bytes, or `nil` bytes when it carries none. |
+| `flz dlq replay <relay/tasklet/entry-id>` | Re-dispatch a parked payload to its relay. |
+| `flz dlq drop <relay/tasklet/entry-id>` | Discard a parked entry and its payload. |
+<!-- flz-reference:end -->
 
 ## [`flz schedule`](relay_commands.md#flz-schedule)
 
+<!-- flz-reference:begin flz schedule -->
 | Command | What it does |
 | --- | --- |
-| `flz schedule add <name> --cron <expr> --tz <zone> --factory <factory_id>` | Adds a schedule |
-| `flz schedule list` | Lists the schedules with their next start |
-| `flz schedule remove <name>` | Removes a schedule |
-| `flz schedule run <name>` | Starts one instance now |
+| `flz schedule add <name> --cron <expr> --tz <iana> --factory <factory_id> [--namespace \| -n <namespace>] [--init-values <json>] [--text \| -t <payload>] [--channel \| -c <ch>] [--plugins \| -p <json>]` | Store a schedule from `fields` and assert it on the hub. |
+| `flz schedule list` | Every stored schedule, by name, with what the hub holds for it. |
+| `flz schedule remove <name>` | Forget the schedule `name` and retract it from the hub. |
+| `flz schedule run <name>` | Fire the schedule `name` once, now. |
+<!-- flz-reference:end -->
 
 ## [`flz plugin`](plugin_commands.md#flz-plugin)
 
+<!-- flz-reference:begin flz plugin -->
 | Command | What it does |
 | --- | --- |
-| `flz plugin install <path-or-https-url>` | Places a plugin package in the plugin folder |
-| `flz plugin uninstall <plugin_id>` | Removes a plugin package |
-| `flz plugin sync` | Makes the plugin folder hold exactly what `FLEZHA_PLUGINS` lists |
-| `flz plugin enable <name> <provider_id>` | Enables a plugin under a name; `--relay_id` binds a relay too |
-| `flz plugin bind <name> --relay_id <op>` | Connects a relay to an enabled plugin |
-| `flz plugin unbind <name> --relay_id <op>` | Disconnects it; the plugin stays enabled |
-| `flz plugin update <name>` | Changes a plugin's settings |
-| `flz plugin disable <name>` | Turns a plugin off for every relay |
-| `flz plugin list` | Lists the enabled plugins; `--installed` the packages, `--providers` the providers |
-| `flz plugin help <provider_id>` | Lists a provider's settings and hooks |
+| `flz plugin enable <name> <provider_id> [X<key>=<value> ...] [--<key> <value> ...] [--single]` | Enable the plugin `name` built from `fields`. |
+| `flz plugin bind <name> [X<key>=<value> ...] [--<key> <value> ...]` | Bind `fields[:relay_id]` to the plugin `name`. |
+| `flz plugin unbind <name> [X<key>=<value> ...] [--<key> <value> ...]` | Unbind `fields[:relay_id]` from the plugin `name`. |
+| `flz plugin update <name> [X<key>=<value> ...] [--<key> <value> ...]` | Change the options and hooks of the plugin `name`. |
+| `flz plugin disable <name> [X<key>=<value> ...] [--<key> <value> ...]` | Disable the plugin `name`: every running copy stops. |
+| `flz plugin help [<provider_id>]` | One plugin provider's help text, type, hooks and options. |
+| `flz plugin list [--installed] [--providers] [--namespace \| -n <namespace>]` | Every plugin enabled in `namespace`. |
+| `flz plugin install <path-or-https-url>` | Place a plugin package (.fpz) from a path or an https:// URL. |
+| `flz plugin uninstall <plugin_id>` | Remove an installed plugin package. |
+| `flz plugin sync` | Make the plugin root hold exactly the packages FLEZHA_PLUGINS declares. |
+<!-- flz-reference:end -->
 
 ## [`flz namespace`](access_commands.md#flz-namespace)
 
+<!-- flz-reference:begin flz namespace -->
 | Command | What it does |
 | --- | --- |
-| `flz namespace create <name>` | Creates a namespace |
-| `flz namespace list` | Lists the namespaces |
-| `flz namespace show <name>` | Shows a namespace's quotas |
-| `flz namespace set-quota <name> --X<quota>=<value>` | Changes its quotas |
-| `flz namespace delete <name>` | Deletes a namespace nothing is attached to |
+| `flz namespace list` | The namespaces in the durable catalog the caller may be shown. |
+| `flz namespace create <name> [X<key>=<value> ...] [--<key> <value> ...]` | Create the namespace `name`. |
+| `flz namespace delete <name>` | Delete the namespace `name` and the quota counters keyed on it. |
+| `flz namespace show <name>` | One namespace record. |
+| `flz namespace set-quota <name> [X<key>=<value> ...] [--<key> <value> ...]` | Replace the namespace's quota overrides. |
+<!-- flz-reference:end -->
 
 ## [`flz auth`](access_commands.md#flz-auth)
 
+<!-- flz-reference:begin flz auth -->
 | Command | What it does |
 | --- | --- |
-| `flz auth bootstrap <token>` | Claims the first admin with the controller's bootstrap token |
-| `flz auth whoami` | Shows who the current token belongs to |
-| `flz auth rebootstrap` | Recovers a lost admin |
+| `flz auth bootstrap <token>` | Claim the first admin with the one-time bootstrap token. |
+| `flz auth whoami` | The identity the caller's credential resolves to. |
+| `flz auth rebootstrap [--app-data-root <path>]` | Break-glass: recover a lost admin@_system. |
+<!-- flz-reference:end -->
 
 ## [`flz token`](access_commands.md#flz-token)
 
+<!-- flz-reference:begin flz token -->
 | Command | What it does |
 | --- | --- |
-| `flz token issue <principal> <namespace> <role>` | Issues a token, shown once |
-| `flz token list` | Lists the tokens |
-| `flz token revoke <token-id>` | Revokes a token |
+| `flz token issue <principal> <namespace> <viewer\|ops\|admin\|runner> [--ttl <seconds>\|never]` | Issue a token for `principal` holding `role` in `namespace`. |
+| `flz token revoke <token-id>` | Revoke the token whose id starts with `token_id`. |
+| `flz token list` | The tokens the caller may see, one row each. |
+<!-- flz-reference:end -->
 
 ## [`flz role`](access_commands.md#flz-role)
 
+<!-- flz-reference:begin flz role -->
 | Command | What it does |
 | --- | --- |
-| `flz role bind <principal> <role> <namespace>` | Gives a principal a role |
-| `flz role unbind <principal> [<role>]` | Takes one role away, or all of them |
-| `flz role list` | Lists who has which role |
+| `flz role bind <principal> <viewer\|app\|ops\|admin\|runner\|spawner\|stopper> <namespace>` | Bind `principal` to `role` in `namespace`. |
+| `flz role unbind <principal> [<viewer\|app\|ops\|admin\|runner\|spawner\|stopper>]` | Unbind `role` from `principal`, or the principal's whole binding. |
+| `flz role list` | The role bindings the caller may see, one per identity. |
+<!-- flz-reference:end -->
 
 ## [`flz audit`](access_commands.md#flz-audit)
 
+<!-- flz-reference:begin flz audit -->
 | Command | What it does |
 | --- | --- |
-| `flz audit list` | Lists the audit files |
-| `flz audit read <file>` | Prints the records of one file |
-| `flz audit tail` | Prints new records as they happen |
-| `flz audit stats` | Shows the audit log's size and counts |
-| `flz audit rotate` | Starts a new audit file now |
+| `flz audit list` | The audit log's files, each with its record times and digest. |
+| `flz audit read <file> [--source <source>] [--name <name>] [--since <microseconds>] [--until <microseconds>] [--limit <count>]` | The records of one audit file that match `params`. |
+| `flz audit tail [--duration-ms <milliseconds>]` | Stream every audit record the caller may read as it is written. |
+| `flz audit stats` | The audit log's operational snapshot. |
+| `flz audit rotate` | Close the current audit file and start a new one. |
+<!-- flz-reference:end -->

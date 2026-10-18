@@ -1,19 +1,22 @@
-flz relay start - Start a relay
+flz relay start - Start `relay` in `namespace`, answering the id it runs under.
 
-USAGE:
-    flz relay start <factory_id> [OPTIONS]
+Usage: flz relay start <factory_id> [--id | -i <id>] [--namespace | -n <namespace>] [--init-values <json>] [--text | -t <payload>] [--channel | -c <ch>] [--plugins <json-array>] [--partitions <N>]
 
 OPTIONS:
-    --id <id>, -i <id>          Id to start under (default: generated)
-    --namespace <ns>            Namespace to start in (default: default)
-    --init-values <json>        Seed state at start
-    --text <payload>, -t        First message, delivered as `send` does
-    --channel <ch>, -c          Entry channel the first message names
-    --plugins <json-array>      Plugins to bind at start, enabling each named
-                                with a provider when it is not enabled yet
-    --partitions <N>            Start N partition members as one group
-    --output <text|json>        Output format (default: text)
-    --json                      The same as --output json
+    --id | -i <id>                Id to start under (default: generated).
+    --namespace | -n <namespace>  The namespace (default: default).
+    --init-values <json>          The state the relay starts with, keyed by
+                                  tasklet name.
+    --text | -t <payload>         The payload, sent as written.
+    --channel | -c <ch>           The entry channel the first message names.
+    --plugins <json-array>        Plugins to bind at start, enabling each named
+                                  with a provider when it is not enabled yet.
+    --partitions <N>              Start this many partition members as one
+                                  group.
+    --token <token>               The caller's token (default: FLEZHA_TOKEN).
+    --help | -h                   Print this help.
+    --output | -o text|json       Output format (default: text).
+    --json                        The same as --output json.
 
 RUN:
     The factory's own: its class declares how it runs (flow or steps) and

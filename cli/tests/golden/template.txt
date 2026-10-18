@@ -1,16 +1,12 @@
-flz template - Start a project from a template the release carries
+flz template - Start a project from a template the release carries.
 
 USAGE:
     flz template <COMMAND>
 
 COMMANDS:
-    list                                Print each language and example the release carries
-    create <language> <dir> [OPTIONS]   Write a template's files into a new folder <dir>
-    help                                Show this help message
-
-CREATE OPTIONS:
-    --example <name>   The template (default: starter)
-    --tar              Write the files as a tar stream on stdout instead of a folder
+    list    Print each language and example the release carries.
+    create  Write a template's files into a new folder <dir>.
+    help    Show this help message.
 
 <dir> must not exist or must be empty, and names the folder only: nothing in
 the files is renamed. With no controller needed, the files come from this

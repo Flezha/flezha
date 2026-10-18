@@ -11,16 +11,19 @@ use crate::{help, rpc};
 /// word they cannot act on: it blocks the caller for as long as this option
 /// says, so answering a typo with the default wait would be a silence rather
 /// than a wait.
-const TIMEOUT: OptSpec = OptSpec::number("--timeout", "-t", "<seconds>");
+const TIMEOUT: OptSpec = OptSpec::number("--timeout", "-t", "<seconds>")
+    .doc("How long to wait, in seconds; 0 evaluates the verdict once.");
 
 pub(crate) const TABLE: Command = Command {
     path: "flz boot",
-    help: help::BOOT,
+    title: "Boot/recovery commands.",
+    notes: Some(help::BOOT),
     verbs: &[
-        Verb::new("status", handle_status),
+        Verb::new("status", handle_status).calls(&["Controller.boot_status"]),
         Verb::new("await", handle_await)
             .reading(&[TIMEOUT])
-            .strict(),
+            .strict()
+            .calls(&["Controller.boot_await"]),
     ],
     missing: Missing::Refuse,
     unknown_prints_help: false,

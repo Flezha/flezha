@@ -13,20 +13,27 @@ const STABLE_ID: &[Positional] = &[Positional::required("<stable_id>")];
 
 pub(crate) const TABLE: Command = Command {
     path: "flz runner",
-    help: help::RUNNER,
+    title: "Runner management commands.",
+    notes: Some(help::RUNNER),
     verbs: &[
-        Verb::new("list", handle_list).reading(&[NAMESPACE]),
-        Verb::new("check", handle_check),
+        Verb::new("list", handle_list)
+            .reading(&[NAMESPACE])
+            .calls(&["Fleet.runners"]),
+        Verb::new("check", handle_check)
+            .about("Report whether a runner on this host can reach a controller."),
         Verb::new("drop", handle_drop)
             .taking(RUNNER_ID)
-            .reading(&[NAMESPACE]),
+            .reading(&[NAMESPACE])
+            .calls(&["Fleet.drop_runner"]),
         Verb::new("dropped", |read| {
             rpc::scoped_read(read, "Fleet.dropped_runners", Some("dropped runners"))
         })
-        .reading(&[NAMESPACE]),
+        .reading(&[NAMESPACE])
+        .calls(&["Fleet.dropped_runners"]),
         Verb::new("readmit", handle_readmit)
             .taking(STABLE_ID)
-            .reading(&[NAMESPACE]),
+            .reading(&[NAMESPACE])
+            .calls(&["Fleet.readmit_runner"]),
     ],
     missing: Missing::Refuse,
     unknown_prints_help: false,

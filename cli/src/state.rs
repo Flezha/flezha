@@ -9,36 +9,48 @@ const CELL: &[Positional] = &[Positional::required("<relay/tasklet/cell_key>")];
 
 pub(crate) const TABLE: Command = Command {
     path: "flz state",
-    help: help::STATE,
+    title: "Per-Cell state inspection and time-travel queries.",
+    notes: Some(help::STATE),
     verbs: &[
         Verb::new("get", |read| scoped_verb(read, "Steps.state_get"))
-            .taking(&[Positional::required("<relay/tasklet[/cell_key]>")]),
+            .taking(&[Positional::required("<relay/tasklet[/cell_key]>")])
+            .calls(&["Steps.state_get"]),
         Verb::new("list", |read| scoped_verb(read, "Steps.cells"))
-            .taking(&[Positional::required("<relay_class>")]),
-        Verb::new("at", handle_at).taking(&[
-            Positional::required("<relay/tasklet/cell_key>"),
-            Positional::required("<seq | iso8601-timestamp>"),
-        ]),
+            .taking(&[Positional::required("<relay_class>")])
+            .calls(&["Steps.cells"]),
+        Verb::new("at", handle_at)
+            .taking(&[
+                Positional::required("<relay/tasklet/cell_key>"),
+                Positional::required("<seq | iso8601-timestamp>"),
+            ])
+            .calls(&["Steps.time_travel"]),
         Verb::new("rotate", |read| {
             rpc::one_arg(read, CELL[0].name, "Steps.rotate")
         })
-        .taking(CELL),
-        Verb::new("retention", handle_retention).taking(&[
-            Positional::required("<relay_class>"),
-            Positional::number("<hours>"),
-        ]),
+        .taking(CELL)
+        .calls(&["Steps.rotate"]),
+        Verb::new("retention", handle_retention)
+            .taking(&[
+                Positional::required("<relay_class>"),
+                Positional::number("<hours>"),
+            ])
+            .calls(&["Steps.set_retention"]),
         Verb::new("delete", |read| {
             rpc::one_arg(read, CELL[0].name, "Steps.delete")
         })
-        .taking(CELL),
+        .taking(CELL)
+        .calls(&["Steps.delete"]),
         Verb::new("outbox", |read| {
             rpc::one_arg(read, CELL[0].name, "Steps.outbox")
         })
-        .taking(CELL),
+        .taking(CELL)
+        .calls(&["Steps.outbox"]),
         Verb::new("journal", |read| scoped_verb(read, "Steps.journal"))
-            .taking(&[Positional::required("<relay/instance>")]),
+            .taking(&[Positional::required("<relay/instance>")])
+            .calls(&["Steps.journal"]),
         Verb::new("inbox", |read| scoped_verb(read, "Steps.inbox"))
-            .taking(&[Positional::required("<relay/instance>")]),
+            .taking(&[Positional::required("<relay/instance>")])
+            .calls(&["Steps.inbox"]),
     ],
     missing: Missing::Refuse,
     unknown_prints_help: false,

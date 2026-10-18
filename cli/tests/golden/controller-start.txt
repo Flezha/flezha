@@ -1,11 +1,14 @@
-flz controller start - Start the flezha controller
+flz controller start - Start the flezha controller.
 
-USAGE:
-    flz controller start [OPTIONS]
+Usage: flz controller start [--mode | -m attached|daemon|attached_iex|daemon_iex]
 
 OPTIONS:
-    --mode <MODE>     Controller start mode
-    -m <MODE>         Short form of --mode
+    --mode | -m attached|daemon|attached_iex|daemon_iex
+                             How the controller runs (default: attached).
+    --token <token>          The caller's token (default: FLEZHA_TOKEN).
+    --help | -h              Print this help.
+    --output | -o text|json  Output format (default: text).
+    --json                   The same as --output json.
 
 AVAILABLE MODES:
     attached          Start in attached mode (default)

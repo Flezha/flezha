@@ -1,3 +1,11 @@
-flz observe sources [--output text|json] [--json]
+flz observe sources - Every registered observability source and what it said recently.
 
-Print one row per registered source (name, status, kinds, cardinality budget).
+Usage: flz observe sources
+
+OPTIONS:
+    --token <token>          The caller's token (default: FLEZHA_TOKEN).
+    --help | -h              Print this help.
+    --output | -o text|json  Output format (default: text).
+    --json                   The same as --output json.
+
+Prints one row per registered source (name, status, kinds, cardinality budget).

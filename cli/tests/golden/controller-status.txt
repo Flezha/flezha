@@ -1,7 +1,12 @@
-flz controller status - Print controller status
+flz controller status - The controller's status: node, clock, shutdown and durability.
 
-USAGE:
-    flz controller status [--output text|json] [--json]
+Usage: flz controller status
+
+OPTIONS:
+    --token <token>          The caller's token (default: FLEZHA_TOKEN).
+    --help | -h              Print this help.
+    --output | -o text|json  Output format (default: text).
+    --json                   The same as --output json.
 
 OUTPUT FIELDS:
     shutdown_in_progress       True while quiesce/drain/finalise is running

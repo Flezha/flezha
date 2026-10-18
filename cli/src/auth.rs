@@ -12,11 +12,17 @@ use crate::rpc::{self, controller_is_up, DEFAULT_PROBE_TIMEOUT_MS};
 
 pub(crate) const TABLE: Command = Command {
     path: "flz auth",
-    help: help::AUTH,
+    title: "Authentication bootstrap and identity.",
+    notes: Some(help::AUTH),
     verbs: &[
-        Verb::new("bootstrap", handle_bootstrap).taking(&[Positional::required("<token>")]),
-        Verb::new("whoami", |read| rpc::bare(read, "Namespace.whoami")),
-        Verb::new("rebootstrap", handle_rebootstrap).reading(&[APP_DATA_ROOT]),
+        Verb::new("bootstrap", handle_bootstrap)
+            .taking(&[Positional::required("<token>")])
+            .calls(&["Namespace.bootstrap"]),
+        Verb::new("whoami", |read| rpc::bare(read, "Namespace.whoami"))
+            .calls(&["Namespace.whoami"]),
+        Verb::new("rebootstrap", handle_rebootstrap)
+            .reading(&[APP_DATA_ROOT])
+            .about("Break-glass: recover a lost admin@_system."),
     ],
     missing: Missing::Screen,
     unknown_prints_help: false,

@@ -13,25 +13,38 @@ const MODE: OptSpec = OptSpec::choice(
     "-m",
     "mode",
     &["attached", "daemon", "attached_iex", "daemon_iex"],
-);
-const TIMEOUT_MS: OptSpec = OptSpec::number("--timeout-ms", "--timeout-ms", "<ms>");
-const NO_WAIT: OptSpec = OptSpec::switch("--no-wait", "--no-wait");
-const FORCE: OptSpec = OptSpec::switch("--force", "--force");
+)
+.doc("How the controller runs (default: attached).");
+const TIMEOUT_MS: OptSpec = OptSpec::number("--timeout-ms", "--timeout-ms", "<ms>")
+    .doc("Override the configured drain timeout (ms).");
+const NO_WAIT: OptSpec =
+    OptSpec::switch("--no-wait", "--no-wait").doc("Issue the shutdown and exit without waiting.");
+const FORCE: OptSpec = OptSpec::switch("--force", "--force")
+    .doc("Skip the drain and only finalise (flush WAL, close transports).");
 
 pub(crate) const TABLE: Command = Command {
     path: "flz controller",
-    help: help::CONTROLLER,
+    title: "Controller management commands.",
+    notes: Some(help::CONTROLLER),
     verbs: &[
         Verb::new("start", handle_start)
             .reading(&[MODE])
-            .screen(help::CONTROLLER_START),
+            .about("Start the flezha controller.")
+            .notes(help::CONTROLLER_START)
+            .help_word(),
         Verb::new("stop", handle_stop)
             .reading(&[TIMEOUT_MS, NO_WAIT, FORCE])
-            .screen(help::CONTROLLER_STOP),
+            .calls(&["Controller.stop"])
+            .notes(help::CONTROLLER_STOP)
+            .help_word(),
         Verb::new("status", |read| rpc::bare(read, "Controller.status"))
-            .screen(help::CONTROLLER_STATUS),
+            .calls(&["Controller.status"])
+            .notes(help::CONTROLLER_STATUS)
+            .help_word(),
         Verb::new("mem-top", |read| rpc::bare(read, "Controller.mem_top"))
-            .screen(help::CONTROLLER_MEM_TOP),
+            .calls(&["Controller.mem_top"])
+            .notes(help::CONTROLLER_MEM_TOP)
+            .help_word(),
     ],
     missing: Missing::Refuse,
     unknown_prints_help: false,

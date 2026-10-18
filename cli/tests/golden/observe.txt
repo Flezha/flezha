@@ -1,12 +1,12 @@
-flz observe - Observability foundation inspection
+flz observe - Observability foundation inspection.
 
 USAGE:
-    flz observe <COMMAND> [OPTIONS]
+    flz observe <COMMAND>
 
 COMMANDS:
-    sources    List registered sources: status, budget and what each one is
-    sinks      List registered sinks and their overflow policy / watermark
-    tail       Stream live signals from a source via the PubSub sink
-    enable     Enable a source (transitions its registry status to :active)
-    disable    Disable a source (transitions to :disabled — Bus drops emits)
-    help       Show this help message
+    sources  Every registered observability source and what it said recently.
+    sinks    Every registered observability sink.
+    tail     Stream the live signals of `source` that the caller may see.
+    enable   Enable the source `name`.
+    disable  Disable the source `name`.
+    help     Show this help message.

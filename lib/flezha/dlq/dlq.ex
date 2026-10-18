@@ -50,7 +50,11 @@ defmodule Flezha.Service.Dlq do
 
   # ---------- Reads ----------
 
-  @doc "Parked entries, nearest-to-expiry first; `nil` for every class."
+  @doc """
+  Parked entries, nearest-to-expiry first.
+
+  A `relay_class` of `nil` reads every class.
+  """
   @spec list(String.t() | nil, caller_context()) :: {:ok, [entry()]} | {:error, term()}
   verb list(relay_class, caller_context),
     verb: :dlq_list,

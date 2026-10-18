@@ -11,16 +11,20 @@ use crate::settings::{
 const PLUGIN_ID: &[Positional] = &[Positional::required("<plugin_id>")];
 const NAME: &[Positional] = &[Positional::required("<name>")];
 const SOURCE: &[Positional] = &[Positional::required("<path-or-https-url>")];
-const INSTALLED: OptSpec = OptSpec::switch("--installed", "--installed");
-const PROVIDERS: OptSpec = OptSpec::switch("--providers", "--providers");
-const SINGLE: OptSpec = OptSpec::switch("--single", "--single");
+const INSTALLED: OptSpec =
+    OptSpec::switch("--installed", "--installed").doc("List the installed packages instead.");
+const PROVIDERS: OptSpec =
+    OptSpec::switch("--providers", "--providers").doc("List the providers instead.");
+const SINGLE: OptSpec =
+    OptSpec::switch("--single", "--single").doc("Run one copy in the whole cluster.");
 
 /// Where the verbs that place packages run, in a VM of their own.
 const LOCAL: &str = "Flezha.Plugin.Installer.Command";
 
 pub(crate) const TABLE: Command = Command {
     path: "flz plugin",
-    help: help::PLUGIN,
+    title: "Plugin management commands.",
+    notes: Some(help::PLUGIN),
     verbs: &[
         Verb::new("enable", handle_enable)
             .taking(&[
@@ -28,34 +32,49 @@ pub(crate) const TABLE: Command = Command {
                 Positional::required("<provider_id>"),
             ])
             .reading(&[SINGLE])
-            .open(),
+            .open()
+            .calls(&["PluginManager.enable"]),
         Verb::new("bind", |read| named(read, "PluginManager.bind"))
             .taking(NAME)
-            .open(),
+            .open()
+            .calls(&["PluginManager.bind"]),
         Verb::new("unbind", |read| named(read, "PluginManager.unbind"))
             .taking(NAME)
-            .open(),
+            .open()
+            .calls(&["PluginManager.unbind"]),
         Verb::new("update", |read| named(read, "PluginManager.update"))
             .taking(NAME)
-            .open(),
+            .open()
+            .calls(&["PluginManager.update"]),
         Verb::new("disable", |read| named(read, "PluginManager.disable"))
             .taking(NAME)
-            .open(),
+            .open()
+            .calls(&["PluginManager.disable"]),
         // `help` is a verb here, not a spelling of the screen: with a provider
         // id it asks the controller for that provider's own help.
-        Verb::new("help", handle_help).taking(&[Positional::optional("<provider_id>")]),
+        Verb::new("help", handle_help)
+            .taking(&[Positional::optional("<provider_id>")])
+            .calls(&["Fleet.provider"]),
         Verb::new("list", handle_list)
             .reading(&[INSTALLED, PROVIDERS, NAMESPACE])
-            .refusing(&[("--installed", "--providers")]),
+            .refusing(&[("--installed", "--providers")])
+            .calls(&[
+                "PluginManager.enabled",
+                "Fleet.installed_plugins",
+                "Fleet.providers",
+            ]),
         Verb::new("install", |read| {
             local(read, "install", &[read.pos(SOURCE[0].name)])
         })
-        .taking(SOURCE),
+        .taking(SOURCE)
+        .about("Place a plugin package (.fpz) from a path or an https:// URL."),
         Verb::new("uninstall", |read| {
             local(read, "uninstall", &[read.pos(PLUGIN_ID[0].name)])
         })
-        .taking(PLUGIN_ID),
-        Verb::new("sync", |read| local(read, "sync", &[])),
+        .taking(PLUGIN_ID)
+        .about("Remove an installed plugin package."),
+        Verb::new("sync", |read| local(read, "sync", &[]))
+            .about("Make the plugin root hold exactly the packages FLEZHA_PLUGINS declares."),
     ],
     missing: Missing::Refuse,
     unknown_prints_help: false,
@@ -134,7 +153,7 @@ fn plain_opts(args: &[String]) -> Vec<(String, String)> {
 
 fn handle_help(read: &Reading) {
     let Some(provider_id) = read.maybe_pos("<provider_id>") else {
-        help::render(help::PLUGIN);
+        help::render(&help::command_screen(&TABLE));
         return;
     };
 

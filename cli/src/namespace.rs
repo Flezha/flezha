@@ -9,19 +9,28 @@ const NAME: &[Positional] = &[Positional::required("<name>")];
 
 pub(crate) const TABLE: Command = Command {
     path: "flz namespace",
-    help: help::NAMESPACE,
+    title: "Namespace management commands.",
+    notes: Some(help::NAMESPACE),
     verbs: &[
-        Verb::new("list", handle_list),
-        Verb::new("create", handle_create).taking(NAME).open(),
+        Verb::new("list", handle_list).calls(&["Relay.list_namespaces"]),
+        Verb::new("create", handle_create)
+            .taking(NAME)
+            .open()
+            .calls(&["Namespace.create"]),
         Verb::new("delete", |read| {
             rpc::one_arg(read, NAME[0].name, "Namespace.delete")
         })
-        .taking(NAME),
+        .taking(NAME)
+        .calls(&["Namespace.delete"]),
         Verb::new("show", |read| {
             rpc::one_arg(read, NAME[0].name, "Namespace.get")
         })
-        .taking(NAME),
-        Verb::new("set-quota", handle_set_quota).taking(NAME).open(),
+        .taking(NAME)
+        .calls(&["Namespace.get"]),
+        Verb::new("set-quota", handle_set_quota)
+            .taking(NAME)
+            .open()
+            .calls(&["Namespace.set_quotas"]),
     ],
     missing: Missing::Refuse,
     unknown_prints_help: false,

@@ -1,1 +1,9 @@
-flz audit rotate [--json]
+flz audit rotate - Close the current audit file and start a new one.
+
+Usage: flz audit rotate
+
+OPTIONS:
+    --token <token>          The caller's token (default: FLEZHA_TOKEN).
+    --help | -h              Print this help.
+    --output | -o text|json  Output format (default: text).
+    --json                   The same as --output json.

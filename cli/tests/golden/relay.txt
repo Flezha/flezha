@@ -1,24 +1,25 @@
-flz relay - Relay management commands
+flz relay - Relay management commands.
 
 USAGE:
     flz relay <COMMAND>
 
 COMMANDS:
-    start       Start a relay
-    scale       Rescale a partition group to N partitions
-    stop        Stop a relay
-    state       Get relay state
-    list        List relays
-    info        Get relay info, or one relay's API
-    diagnose    Say what is wrong with a relay and what to do
-    graph       Print a relay's tasklets and the channels between them
-    activity    Print what each of a relay's tasklets is doing
-    listen      Print the frames a relay emits or ingests
-    send        Send a payload to a relay's input stream
-    call        Send one input and print the relay's answer
-    rewind      Rewind a steps loop to a committed iteration
-    replay      Re-run a Cell's retained inputs from a point in the past
-    help        Show this help message
+    start     Start `relay` in `namespace`, answering the id it runs under.
+    scale     Rescale the partition group `group_id` in `namespace` to `target`.
+    stop      Stop `relay_id` in `namespace`, or a whole partition group.
+    state     A relay's live state, as JSON, and the change sequence it was read
+              at.
+    list      The relays in `namespace`, one row each.
+    info      Every relay in `namespace` as its Overwatch reports it.
+    diagnose  What is wrong with `relay_id` and what to do about it.
+    graph     The graph of `relay_id`'s factory, as its runner announces it.
+    activity  What each tasklet of `relay_id` is doing, as its runner counts it.
+    listen    Stream every frame `relay_id` emits, or what `direction` names.
+    send      Inject `message` into `relay_id`'s input stream.
+    call      Call the entry channel `channel` of `relay_id` with `value`.
+    rewind    Rewind `relay_class` in `namespace` to iteration `to_iter`.
+    replay    Re-run a Cell's retained inputs from a point in the past.
+    help      Show this help message.
 
 EXAMPLES:
     flz relay start candles --id ohlc --partitions 3

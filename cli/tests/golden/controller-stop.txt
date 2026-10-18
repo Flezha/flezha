@@ -1,17 +1,21 @@
-flz controller stop - Stop the flezha controller gracefully
+flz controller stop - Drain this controller and stop it.
 
-USAGE:
-    flz controller stop [OPTIONS]
+Usage: flz controller stop [--timeout-ms <ms>] [--no-wait] [--force]
+
+OPTIONS:
+    --timeout-ms <ms>        Override the configured drain timeout (ms).
+    --no-wait                Issue the shutdown and exit without waiting.
+    --force                  Skip the drain and only finalise (flush WAL, close
+                             transports).
+    --token <token>          The caller's token (default: FLEZHA_TOKEN).
+    --help | -h              Print this help.
+    --output | -o text|json  Output format (default: text).
+    --json                   The same as --output json.
 
 DESCRIPTION:
     Drives Flezha.Shutdown.Coordinator over the running controller's
     CLI socket (works for release, mix, and iex run modes). Streams
     drain progress to stderr and prints a final outcome line on stdout.
-
-OPTIONS:
-    --timeout-ms <N>  Override the configured drain timeout (ms)
-    --no-wait         Issue the shutdown and exit without waiting
-    --force           Skip drain — finalise (flush WAL + close transports) only
 
 EXIT CODES:
     0   Clean shutdown (or `--force` finalised cleanly); a stop issued while one

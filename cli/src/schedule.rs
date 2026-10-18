@@ -2,19 +2,28 @@ use serde_json::{Map, Value};
 
 use crate::args::{OptSpec, Positional, Reading, INIT_VALUES, NAMESPACE};
 use crate::dispatch::{Command, Missing, Verb};
-use crate::relay::{first_message, json_object, plugins_json_or_refuse, CHANNEL, TEXT};
+use crate::relay::{first_message, json_object, plugins_json_or_refuse, FIRST_CHANNEL, TEXT};
 use crate::{help, rpc};
 
-const CRON: OptSpec = OptSpec::text("--cron", "--cron", "<expr>").required();
-const TZ: OptSpec = OptSpec::text("--tz", "--tz", "<iana>").required();
-const FACTORY: OptSpec = OptSpec::text("--factory", "--factory", "<factory_id>").required();
-const PLUGINS: OptSpec = OptSpec::text("--plugins", "-p", "<json>");
+const CRON: OptSpec = OptSpec::text("--cron", "--cron", "<expr>")
+    .required()
+    .doc("The cron expression it fires on.");
+const TZ: OptSpec = OptSpec::text("--tz", "--tz", "<iana>")
+    .required()
+    .doc("The IANA time zone the expression is read in.");
+const FACTORY: OptSpec = OptSpec::text("--factory", "--factory", "<factory_id>")
+    .required()
+    .doc("The steps factory each firing starts.");
+const PLUGINS: OptSpec = OptSpec::text("--plugins", "-p", "<json>").doc(
+    "The same array as `relay start --plugins`; each firing binds its instance to the plugins it names.",
+);
 
 const NAME: &[Positional] = &[Positional::required("<name>")];
 
 pub(crate) const TABLE: Command = Command {
     path: "flz schedule",
-    help: help::SCHEDULE,
+    title: "Cron-scheduled steps relay spawns.",
+    notes: Some(help::SCHEDULE),
     verbs: &[
         Verb::new("add", handle_add)
             .taking(NAME)
@@ -25,19 +34,22 @@ pub(crate) const TABLE: Command = Command {
                 NAMESPACE,
                 INIT_VALUES,
                 TEXT,
-                CHANNEL,
+                FIRST_CHANNEL,
                 PLUGINS,
             ])
-            .strict(),
-        Verb::new("list", |read| rpc::bare(read, "Schedule.list")),
+            .strict()
+            .calls(&["Schedule.add"]),
+        Verb::new("list", |read| rpc::bare(read, "Schedule.list")).calls(&["Schedule.list"]),
         Verb::new("remove", |read| {
             rpc::one_arg(read, NAME[0].name, "Schedule.remove")
         })
-        .taking(NAME),
+        .taking(NAME)
+        .calls(&["Schedule.remove"]),
         Verb::new("run", |read| {
             rpc::one_arg(read, NAME[0].name, "Schedule.run")
         })
-        .taking(NAME),
+        .taking(NAME)
+        .calls(&["Schedule.run"]),
     ],
     missing: Missing::Screen,
     unknown_prints_help: false,

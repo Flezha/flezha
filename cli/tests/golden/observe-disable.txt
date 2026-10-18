@@ -1,1 +1,9 @@
-flz observe disable <SOURCE>
+flz observe disable - Disable the source `name`.
+
+Usage: flz observe disable <source>
+
+OPTIONS:
+    --token <token>          The caller's token (default: FLEZHA_TOKEN).
+    --help | -h              Print this help.
+    --output | -o text|json  Output format (default: text).
+    --json                   The same as --output json.

@@ -10,18 +10,24 @@ const ROLE: &str = "<viewer|app|ops|admin|runner|spawner|stopper>";
 
 pub(crate) const TABLE: Command = Command {
     path: "flz role",
-    help: help::ROLE,
+    title: "Principal → role bindings.",
+    notes: Some(help::ROLE),
     verbs: &[
-        Verb::new("bind", handle_bind).taking(&[
-            Positional::required("<principal>"),
-            Positional::required(ROLE),
-            Positional::required("<namespace>"),
-        ]),
-        Verb::new("unbind", handle_unbind).taking(&[
-            Positional::required("<principal>"),
-            Positional::optional(ROLE),
-        ]),
-        Verb::new("list", |read| rpc::bare(read, "Namespace.list_roles")),
+        Verb::new("bind", handle_bind)
+            .taking(&[
+                Positional::required("<principal>"),
+                Positional::required(ROLE),
+                Positional::required("<namespace>"),
+            ])
+            .calls(&["Namespace.bind_role"]),
+        Verb::new("unbind", handle_unbind)
+            .taking(&[
+                Positional::required("<principal>"),
+                Positional::optional(ROLE),
+            ])
+            .calls(&["Namespace.unbind_role"]),
+        Verb::new("list", |read| rpc::bare(read, "Namespace.list_roles"))
+            .calls(&["Namespace.list_roles"]),
     ],
     missing: Missing::Screen,
     unknown_prints_help: false,

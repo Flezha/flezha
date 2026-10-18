@@ -6,26 +6,42 @@ use crate::{help, rpc};
 
 /// The five filters `audit read` narrows a file with. Their long spelling is
 /// their own name, and the parse and its refusal are the walk's.
-const SOURCE: OptSpec = OptSpec::text("--source", "--source", "<source>");
-const NAME: OptSpec = OptSpec::text("--name", "--name", "<name>");
-const SINCE: OptSpec = OptSpec::number("--since", "--since", "<microseconds>");
-const UNTIL: OptSpec = OptSpec::number("--until", "--until", "<microseconds>");
-const LIMIT: OptSpec = OptSpec::number("--limit", "--limit", "<count>");
+const SOURCE: OptSpec =
+    OptSpec::text("--source", "--source", "<source>").doc("Match records whose source is this.");
+const NAME: OptSpec =
+    OptSpec::text("--name", "--name", "<name>").doc("Match records whose name is this.");
+const SINCE: OptSpec = OptSpec::number("--since", "--since", "<microseconds>")
+    .doc("Match records with ts_us at or after this (monotonic).");
+const UNTIL: OptSpec = OptSpec::number("--until", "--until", "<microseconds>")
+    .doc("Match records with ts_us at or before this.");
+const LIMIT: OptSpec = OptSpec::number("--limit", "--limit", "<count>")
+    .doc("Return at most this many records (default 1000).");
 
 pub(crate) const TABLE: Command = Command {
     path: "flz audit",
-    help: help::AUDIT,
+    title: "Durable audit log inspection.",
+    notes: None,
     verbs: &[
-        Verb::new("list", |read| rpc::bare(read, "AuditLog.list_files")).screen(help::AUDIT_LIST),
+        Verb::new("list", |read| rpc::bare(read, "AuditLog.list_files"))
+            .calls(&["AuditLog.list_files"])
+            .help_word(),
         Verb::new("read", handle_read)
             .taking(&[Positional::required("<file>")])
             .reading(&[SOURCE, NAME, SINCE, UNTIL, LIMIT])
-            .screen(help::AUDIT_READ),
+            .calls(&["AuditLog.read"])
+            .notes(help::AUDIT_READ)
+            .help_word(),
         Verb::new("tail", handle_tail)
             .reading(&[DURATION_MS])
-            .screen(help::AUDIT_TAIL),
-        Verb::new("stats", |read| rpc::bare(read, "AuditLog.stats")).screen(help::AUDIT_STATS),
-        Verb::new("rotate", |read| rpc::bare(read, "AuditLog.rotate")).screen(help::AUDIT_ROTATE),
+            .calls(&["AuditLog.tail"])
+            .notes(help::AUDIT_TAIL)
+            .help_word(),
+        Verb::new("stats", |read| rpc::bare(read, "AuditLog.stats"))
+            .calls(&["AuditLog.stats"])
+            .help_word(),
+        Verb::new("rotate", |read| rpc::bare(read, "AuditLog.rotate"))
+            .calls(&["AuditLog.rotate"])
+            .help_word(),
     ],
     missing: Missing::Screen,
     unknown_prints_help: false,

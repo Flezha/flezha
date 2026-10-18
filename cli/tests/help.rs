@@ -1,10 +1,9 @@
 //! Every help screen `flz` prints, byte for byte.
 //!
-//! The text is hand-aligned and not uniform across screens — `flz schedule
-//! help` sets two description columns inside one block — so it cannot be
-//! re-derived "correctly" without changing what a caller sees. The golden
-//! files are captured from the binary, not written by hand, and they are what
-//! proves a rendering change is deliberate.
+//! A screen is rendered from the verb rows and the catalogue `flz` embeds, so
+//! a changed row, a changed operation description or a changed renderer all
+//! change what a caller sees. The golden files are captured from the binary,
+//! not written by hand, and they are what proves such a change is deliberate.
 
 use std::fs;
 use std::path::PathBuf;
@@ -117,8 +116,8 @@ fn the_golden_files_and_the_screens_are_the_same_set() {
 }
 
 /// Every command table answers `help`, so every screen that lists its
-/// subcommands lists it among them. A screen whose list is of whole
-/// invocations rather than subcommands has no such block and is not asked.
+/// subcommands lists it among them. A verb's screen has no such block and is
+/// not asked.
 #[test]
 fn every_subcommand_list_offers_help() {
     let missing: Vec<&str> = SCREENS
@@ -139,13 +138,13 @@ fn every_subcommand_list_offers_help() {
     );
 }
 
-/// The leading word of each row of a screen's `COMMANDS:` / `SUBCOMMANDS:`
-/// block. `None` when the screen has no such block. A row starts at column 5;
-/// a deeper indent is a continuation of the row above it.
+/// The leading word of each row of a screen's `COMMANDS:` block. `None` when
+/// the screen has no such block. A row starts at column 5; a deeper indent is
+/// a continuation of the row above it.
 fn subcommand_rows(screen: &str) -> Option<Vec<&str>> {
     let mut block = screen
         .lines()
-        .skip_while(|l| !matches!(l.trim_end(), "COMMANDS:" | "SUBCOMMANDS:"))
+        .skip_while(|l| l.trim_end() != "COMMANDS:")
         .skip(1)
         .peekable();
     block.peek()?;

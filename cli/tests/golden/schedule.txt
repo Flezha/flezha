@@ -1,24 +1,20 @@
-flz schedule - cron-scheduled steps relay spawns
+flz schedule - Cron-scheduled steps relay spawns.
 
 USAGE:
-    flz schedule <SUBCOMMAND>
+    flz schedule <COMMAND>
 
-SUBCOMMANDS:
-    add <name> --cron "<expr>" --tz <iana> --factory <factory_id>
-        [--namespace <ns>] [--init-values <json>] [--text <payload>] [--channel <ch>]
-        [--plugins <json>]
-                 Add a durable schedule of a steps factory; a factory a
-                 connected runner announced as flow is refused.
-                 --init-values is the state every fired instance starts with;
-                 --text is the first message it receives, on the entry channel
-                 --channel names or the first declared one.
-                 --plugins takes the same array as `relay start --plugins`;
-                 each firing binds its instance to the plugins it names.
-    list         List schedules with their next fire time
-    remove <name>  Remove a schedule
-    run <name>     Fire one instance immediately with the stored config;
-                   judged as relay.start in the schedule's namespace
-    help         Show this help message
+COMMANDS:
+    add     Store a schedule from `fields` and assert it on the hub.
+    list    Every stored schedule, by name, with what the hub holds for it.
+    remove  Forget the schedule `name` and retract it from the hub.
+    run     Fire the schedule `name` once, now.
+    help    Show this help message.
+
+add stores a durable schedule of a steps factory; a factory a connected runner
+announced as flow is refused. --init-values is the state every fired instance
+starts with; --text is the first message it receives, on the entry channel
+--channel names or the first declared one. run fires one instance at once with
+the stored config, judged as relay.start in the schedule's namespace.
 
 EXAMPLES:
     flz schedule add digest --cron "0 8 * * *" --tz Europe/Tallinn --factory ai_digest

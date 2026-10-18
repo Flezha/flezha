@@ -1,7 +1,12 @@
-flz controller mem-top - Snapshot Controller memory hot spots
+flz controller mem-top - One snapshot of the controller's memory hot spots.
 
-USAGE:
-    flz controller mem-top [--json]
+Usage: flz controller mem-top
+
+OPTIONS:
+    --token <token>          The caller's token (default: FLEZHA_TOKEN).
+    --help | -h              Print this help.
+    --output | -o text|json  Output format (default: text).
+    --json                   The same as --output json.
 
 OUTPUT (default text format):
     Top-20 processes by :erlang.process_info(self, :memory),
@@ -12,6 +17,4 @@ OUTPUT (default text format):
     DETS files under app_data/process_hub/ sorted by file size.
     :recon_alloc.memory(:allocated_types) allocator breakdown.
 
-FLAGS:
-    --json    Emit a single JSON document for machine consumption.
-              --output json is the same request.
+    With --json, a single JSON document for machine consumption.

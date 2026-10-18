@@ -1,17 +1,23 @@
-flz relay call - Send one input and print the relay's answer
+flz relay call - Call the entry channel `channel` of `relay_id` with `value`.
 
-USAGE:
-    flz relay call <relay_id> (--text <payload> | --arg <name=value>...) [OPTIONS]
+Usage: flz relay call <relay_id> [--text | -t <payload>] [--arg <name=value>] [--channel | -c <ch>] [--answer-channel <ch>] [--key <key>] [--timeout <ms>] [--namespace | -n <namespace>]
 
 OPTIONS:
-    -t, --text <payload>      The input's payload, sent as written
-    --arg <name=value>        One field of a JSON input, typed by the channel's schema;
-                              repeat it for each field
-    -c, --channel <ch>        The entry channel to call (default: the first)
-    --answer-channel <ch>     The channel whose output answers (default: the first output)
-    --key <key>               The key whose member of a partition group takes the input
-    --timeout <ms>            How long the relay has to answer (default 30000)
-    --namespace <ns>          Namespace the relay runs in (default: default)
+    --text | -t <payload>         The payload, sent as written.
+    --arg <name=value>            One field of a JSON input, typed by the
+                                  channel's schema; repeat it for each field.
+    --channel | -c <ch>           The entry channel; the first when empty.
+    --answer-channel <ch>         The channel whose output answers (default: the
+                                  first output).
+    --key <key>                   The key whose member of a partition group
+                                  takes the input.
+    --timeout <ms>                How long the relay has to answer, in ms
+                                  (default 30000).
+    --namespace | -n <namespace>  The namespace (default: default).
+    --token <token>               The caller's token (default: FLEZHA_TOKEN).
+    --help | -h                   Print this help.
+    --output | -o text|json       Output format (default: text).
+    --json                        The same as --output json.
 
 OUTPUT:
     The answer and a newline: the first output the input caused, or its first

@@ -32,7 +32,8 @@ use dispatch::{Command, Missing, Verb};
 /// `--json`, are the verbs the top level runs itself.
 const FLZ: Command = Command {
     path: "flz",
-    help: help::FLZ,
+    title: "Flezha CLI.",
+    notes: Some(help::FLZ),
     verbs: &[
         Verb::table("controller", &controller::TABLE),
         Verb::table("cluster", &cluster::TABLE),
@@ -46,8 +47,14 @@ const FLZ: Command = Command {
             .reading(reset::OPTIONS)
             .refusing(reset::CONFLICTS)
             .strict()
-            .screen(help::RESET),
-        Verb::new("mcp", mcp::serve).strict().screen(help::MCP),
+            .about("Clear Controller durable runtime data on disk (controller must be stopped).")
+            .notes(help::RESET)
+            .help_word(),
+        Verb::new("mcp", mcp::serve)
+            .strict()
+            .about("Serve Flezha to an AI assistant over MCP, on stdin and stdout.")
+            .notes(help::MCP)
+            .help_word(),
         Verb::table("template", &template::TABLE),
         Verb::table("observe", &observe::TABLE),
         Verb::table("audit", &audit::TABLE),
@@ -56,7 +63,8 @@ const FLZ: Command = Command {
         Verb::table("auth", &auth::TABLE),
         Verb::table("token", &token::TABLE),
         Verb::table("role", &role::TABLE),
-        Verb::new("help", help::handle_help),
+        Verb::new("help", help::handle_help)
+            .about("Show this help message, or with --json every operation as data."),
     ],
     missing: Missing::Screen,
     unknown_prints_help: true,

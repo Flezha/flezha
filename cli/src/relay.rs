@@ -8,36 +8,61 @@ use crate::rpc::{self, Opt};
 
 const RELAY_ID: &[Positional] = &[Positional::required("<relay_id>")];
 
-const ID: OptSpec = OptSpec::text("--id", "-i", "<id>");
-const PLUGINS: OptSpec = OptSpec::text("--plugins", "--plugins", "<json-array>");
-const PARTITIONS: OptSpec = OptSpec::number("--partitions", "--partitions", "<N>");
-const TIMEOUT: OptSpec = OptSpec::number("--timeout", "-t", "<ms>");
-const PAYLOAD: OptSpec = OptSpec::text("--text", "-t", "<payload>").required();
+const ID: OptSpec =
+    OptSpec::text("--id", "-i", "<id>").doc("Id to start under (default: generated).");
+const PLUGINS: OptSpec = OptSpec::text("--plugins", "--plugins", "<json-array>").doc(
+    "Plugins to bind at start, enabling each named with a provider when it is not enabled yet.",
+);
+const PARTITIONS: OptSpec = OptSpec::number("--partitions", "--partitions", "<N>")
+    .doc("Start this many partition members as one group.");
+const TIMEOUT: OptSpec = OptSpec::number("--timeout", "-t", "<ms>")
+    .doc("How long the group may take to quiesce, in ms.");
+const PAYLOAD: OptSpec = TEXT.required();
 /// `send`'s payload spelling on `start`, where a first message is optional.
-pub(crate) const TEXT: OptSpec = OptSpec::text("--text", "-t", "<payload>");
+pub(crate) const TEXT: OptSpec =
+    OptSpec::text("--text", "-t", "<payload>").doc("The payload, sent as written.");
 pub(crate) const CHANNEL: OptSpec = OptSpec::text("--channel", "-c", "<ch>");
-const TO_ITERATION: OptSpec = OptSpec::number("--to-iteration", "--to-iteration", "<N>").required();
+/// `--channel` where it names the first message's channel, on a start and on
+/// every firing of a schedule; `send` and `call` take its text from their
+/// operation's argument.
+pub(crate) const FIRST_CHANNEL: OptSpec = CHANNEL.doc("The entry channel the first message names.");
+const TO_ITERATION: OptSpec = OptSpec::number("--to-iteration", "--to-iteration", "<N>")
+    .required()
+    .doc("The committed iteration to rewind to.");
 const FROM: OptSpec = OptSpec::text("--from", "-f", "<seq|timestamp>").required();
-const INPUT: OptSpec = OptSpec::switch("--input", "--input");
-const CALLS: OptSpec = OptSpec::switch("--calls", "--calls");
-const TALLY: OptSpec = OptSpec::switch("--tally", "--tally");
-const CELLS: OptSpec = OptSpec::text("--cells", "--cells", "<tasklet>");
-const LIMIT: OptSpec = OptSpec::number("--limit", "--limit", "<count>");
-const AWAIT: OptSpec = OptSpec::number("--await", "--await", "<ms>");
-const KEY: OptSpec = OptSpec::text("--key", "--key", "<key>");
-const MSG_ID: OptSpec = OptSpec::text("--msg-id", "--msg-id", "<id>");
+const INPUT: OptSpec = OptSpec::switch("--input", "--input")
+    .doc("Listen to what the relay ingests, not what it emits.");
+const CALLS: OptSpec = OptSpec::switch("--calls", "--calls")
+    .doc("Print the calls the relay takes and how each ended.");
+const TALLY: OptSpec =
+    OptSpec::switch("--tally", "--tally").doc("Print how many frames left on each output channel.");
+const CELLS: OptSpec = OptSpec::text("--cells", "--cells", "<tasklet>")
+    .doc("A tasklet whose most recently active Cells are listed too.");
+const LIMIT: OptSpec = OptSpec::number("--limit", "--limit", "<count>")
+    .doc("At most this many of those Cells (default 50, at most 500).");
+const AWAIT: OptSpec = OptSpec::number("--await", "--await", "<ms>")
+    .doc("Wait this many milliseconds for what the relay emits, and print it.");
+const KEY: OptSpec = OptSpec::text("--key", "--key", "<key>")
+    .doc("The key whose member of a partition group takes the input.");
+const MSG_ID: OptSpec = OptSpec::text("--msg-id", "--msg-id", "<id>")
+    .doc("The message's id; a relay whose input log still holds it absorbs the repeat.");
 /// The callee's channel whose output answers a call; `--channel` names the
 /// entry channel.
-const ANSWER_CHANNEL: OptSpec = OptSpec::text("--answer-channel", "--answer-channel", "<ch>");
+const ANSWER_CHANNEL: OptSpec = OptSpec::text("--answer-channel", "--answer-channel", "<ch>")
+    .doc("The channel whose output answers (default: the first output).");
 /// One field of a call's value, coerced by the channel's schema.
-const ARG: OptSpec = OptSpec::text("--arg", "--arg", "<name=value>").repeated();
+const ARG: OptSpec = OptSpec::text("--arg", "--arg", "<name=value>")
+    .repeated()
+    .doc("One field of a JSON input, typed by the channel's schema; repeat it for each field.");
 /// `call`'s deadline: no short spelling, since `-t` is `--text`.
-const CALL_TIMEOUT: OptSpec = OptSpec::number("--timeout", "--timeout", "<ms>");
+const CALL_TIMEOUT: OptSpec = OptSpec::number("--timeout", "--timeout", "<ms>")
+    .doc("How long the relay has to answer, in ms (default 30000).");
 const CALL_TIMEOUT_DEFAULT_MS: u64 = 30_000;
 
 pub(crate) const TABLE: Command = Command {
     path: "flz relay",
-    help: help::RELAY,
+    title: "Relay management commands.",
+    notes: Some(help::RELAY),
     verbs: &[
         Verb::new("start", handle_start)
             .taking(&[Positional::required("<factory_id>")])
@@ -46,40 +71,50 @@ pub(crate) const TABLE: Command = Command {
                 NAMESPACE,
                 INIT_VALUES,
                 TEXT,
-                CHANNEL,
+                FIRST_CHANNEL,
                 PLUGINS,
                 PARTITIONS,
             ])
             .strict()
-            .screen(help::RELAY_START),
+            .calls(&["Relay.start"])
+            .notes(help::RELAY_START)
+            .help_word(),
         Verb::new("scale", handle_scale)
             .taking(&[
                 Positional::required("<group>"),
                 Positional::number("<partitions>"),
             ])
-            .reading(&[NAMESPACE, TIMEOUT]),
+            .reading(&[NAMESPACE, TIMEOUT])
+            .calls(&["Steps.rescale"]),
         Verb::new("stop", handle_stop)
             .taking(RELAY_ID)
-            .reading(&[NAMESPACE]),
+            .reading(&[NAMESPACE])
+            .calls(&["Relay.stop"]),
         Verb::new("state", handle_state)
             .taking(RELAY_ID)
-            .reading(&[NAMESPACE]),
+            .reading(&[NAMESPACE])
+            .calls(&["Relay.cell_state"]),
         Verb::new("list", |read| {
             rpc::scoped_read(read, "Relay.list", Some("relays"))
         })
-        .reading(&[NAMESPACE]),
+        .reading(&[NAMESPACE])
+        .calls(&["Relay.list"]),
         Verb::new("info", handle_info)
             .taking(&[Positional::optional("<relay_id>")])
-            .reading(&[NAMESPACE]),
+            .reading(&[NAMESPACE])
+            .calls(&["Relay.info", "Relay.api"]),
         Verb::new("diagnose", |read| relay_door("Relay.diagnose", read))
             .taking(RELAY_ID)
-            .reading(&[NAMESPACE]),
+            .reading(&[NAMESPACE])
+            .calls(&["Relay.diagnose"]),
         Verb::new("graph", |read| relay_door("Relay.graph", read))
             .taking(RELAY_ID)
-            .reading(&[NAMESPACE]),
+            .reading(&[NAMESPACE])
+            .calls(&["Relay.graph"]),
         Verb::new("activity", handle_activity)
             .taking(RELAY_ID)
-            .reading(&[CELLS, LIMIT, NAMESPACE]),
+            .reading(&[CELLS, LIMIT, NAMESPACE])
+            .calls(&["Relay.activity"]),
         Verb::new("listen", handle_listen)
             .taking(RELAY_ID)
             .reading(&[INPUT, CALLS, TALLY, DURATION_MS, NAMESPACE])
@@ -89,10 +124,13 @@ pub(crate) const TABLE: Command = Command {
                 (CALLS.long, TALLY.long),
             ])
             .strict()
-            .screen(help::RELAY_LISTEN),
+            .calls(&["Relay.listen"])
+            .notes(help::RELAY_LISTEN)
+            .help_word(),
         Verb::new("send", handle_send)
             .taking(RELAY_ID)
-            .reading(&[PAYLOAD, CHANNEL, KEY, MSG_ID, AWAIT, NAMESPACE]),
+            .reading(&[PAYLOAD, CHANNEL, KEY, MSG_ID, AWAIT, NAMESPACE])
+            .calls(&["Relay.send"]),
         Verb::new("call", handle_call)
             .taking(RELAY_ID)
             .reading(&[
@@ -106,13 +144,17 @@ pub(crate) const TABLE: Command = Command {
             ])
             .refusing(&[(TEXT.long, ARG.long)])
             .strict()
-            .screen(help::RELAY_CALL),
+            .calls(&["Relay.call_channel"])
+            .notes(help::RELAY_CALL)
+            .help_word(),
         Verb::new("rewind", handle_rewind)
             .taking(RELAY_ID)
-            .reading(&[TO_ITERATION, NAMESPACE]),
+            .reading(&[TO_ITERATION, NAMESPACE])
+            .calls(&["Steps.rewind"]),
         Verb::new("replay", handle_replay)
             .taking(&[Positional::required("<relay/tasklet/key>")])
-            .reading(&[FROM, NAMESPACE]),
+            .reading(&[FROM, NAMESPACE])
+            .calls(&["Relay.replay"]),
     ],
     missing: Missing::Refuse,
     unknown_prints_help: false,
@@ -234,7 +276,7 @@ fn handle_stop(read: &Reading) {
 /// `flz relay send <relay_id> --text <payload> [--channel <ch>]
 /// [--key <k>] [--msg-id <id>] [--await <ms>]`: inject a payload into an
 /// relay's input stream (the SDK-facing `send_io` route). Blocks for the
-/// confirming verdict so a parked or absent target is reported rather than
+/// confirming verdict so a halted or absent target is reported rather than
 /// silently dropped. `--msg-id` and `--await` ride only when written.
 fn handle_send(read: &Reading) {
     let opts: Vec<Opt> = read

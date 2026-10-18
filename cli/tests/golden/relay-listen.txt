@@ -1,16 +1,20 @@
-flz relay listen - Print the frames a relay emits or ingests
+flz relay listen - Stream every frame `relay_id` emits, or what `direction` names.
 
-USAGE:
-    flz relay listen <relay_id> [OPTIONS]
+Usage: flz relay listen <relay_id> [--input] [--calls] [--tally] [--duration-ms <milliseconds>] [--namespace | -n <namespace>]
 
 OPTIONS:
-    --input                   Listen to what the relay ingests, not what it emits
-    --calls                   Print the calls the relay takes and how each ended
-    --tally                   Print how many frames left on each output channel
-    --duration-ms <N>         Stop after N milliseconds (default 30000)
-    --output <text|json>      Output format (default: text)
-    --json                    The same as --output json
-    --namespace <ns>          Namespace the relay runs in (default: default)
+    --input                       Listen to what the relay ingests, not what it
+                                  emits.
+    --calls                       Print the calls the relay takes and how each
+                                  ended.
+    --tally                       Print how many frames left on each output
+                                  channel.
+    --duration-ms <milliseconds>  Stream for at most this long (default 30000).
+    --namespace | -n <namespace>  The namespace (default: default).
+    --token <token>               The caller's token (default: FLEZHA_TOKEN).
+    --help | -h                   Print this help.
+    --output | -o text|json       Output format (default: text).
+    --json                        The same as --output json.
 
 OUTPUT:
     One line per frame: the channel, a tab and the payload. A frame from a

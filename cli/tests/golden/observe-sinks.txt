@@ -1,3 +1,11 @@
-flz observe sinks [--output text|json] [--json]
+flz observe sinks - Every registered observability sink.
 
-Print one row per registered sink (name, module, overflow, watermark).
+Usage: flz observe sinks
+
+OPTIONS:
+    --token <token>          The caller's token (default: FLEZHA_TOKEN).
+    --help | -h              Print this help.
+    --output | -o text|json  Output format (default: text).
+    --json                   The same as --output json.
+
+Prints one row per registered sink (name, module, overflow, watermark).

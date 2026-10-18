@@ -1,16 +1,11 @@
-flz cluster - Controller cluster status
+flz cluster - Controller cluster status (nodes, leader, relay health).
 
 USAGE:
-    flz cluster <SUBCOMMAND>
+    flz cluster <COMMAND>
 
-SUBCOMMANDS:
-    status              Show nodes, leader, per-node relay counts, relay health, recovery state
-    help                Show this help message
-
-OPTIONS:
-    -n, --namespace <NS>   Namespace (default: "default")
-    -o, --output <FMT>     Output format: text (default) or json
-        --json             The switch spelling of --output json
+COMMANDS:
+    status  The cluster as `namespace` sees it: nodes, relays and health.
+    help    Show this help message.
 
 EXAMPLES:
     flz cluster status

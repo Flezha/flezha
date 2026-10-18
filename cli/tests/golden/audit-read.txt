@@ -1,9 +1,17 @@
-flz audit read <FILE> [OPTIONS]
+flz audit read - The records of one audit file that match `params`.
+
+Usage: flz audit read <file> [--source <source>] [--name <name>] [--since <microseconds>] [--until <microseconds>] [--limit <count>]
 
 OPTIONS:
-    --json              Emit the matching records as one JSON array
-    --source <S>        Match records whose source equals S
-    --name <N>          Match records whose name equals N
-    --since <TS_US>     Match records with ts_us >= TS_US (monotonic)
-    --until <TS_US>     Match records with ts_us <= TS_US
-    --limit <N>         Return at most N records (default 1000)
+    --source <source>        Match records whose source is this.
+    --name <name>            Match records whose name is this.
+    --since <microseconds>   Match records with ts_us at or after this
+                             (monotonic).
+    --until <microseconds>   Match records with ts_us at or before this.
+    --limit <count>          Return at most this many records (default 1000).
+    --token <token>          The caller's token (default: FLEZHA_TOKEN).
+    --help | -h              Print this help.
+    --output | -o text|json  Output format (default: text).
+    --json                   The same as --output json.
+
+With --json the matching records are one JSON array.

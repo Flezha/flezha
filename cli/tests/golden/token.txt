@@ -1,14 +1,13 @@
-flz token - Scoped-token management
+flz token - Scoped-token management.
 
 USAGE:
     flz token <COMMAND>
 
 COMMANDS:
-    issue <principal> <namespace> <role>   Issue a token (printed once)
-        [--ttl <seconds>|never]
-    revoke <token-id>                      Revoke by id (prefix of the token hash)
-    list                                   List tokens visible to the caller
-    help                                   Show this help message
+    issue   Issue a token for `principal` holding `role` in `namespace`.
+    revoke  Revoke the token whose id starts with `token_id`.
+    list    The tokens the caller may see, one row each.
+    help    Show this help message.
 
 A `runner` token is the credential a runner connection proves its namespace
 with. It never expires and `--ttl` is refused for it: the holder is an

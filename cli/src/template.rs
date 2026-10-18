@@ -23,23 +23,28 @@ use crate::rpc::{self, text, Out};
 /// Where both verbs run, in a VM of its own.
 const LOCAL: &str = "Flezha.Mcp.Knowledge.Command";
 
-const EXAMPLE: OptSpec = OptSpec::text("--example", "--example", "<name>");
-const TAR: OptSpec = OptSpec::switch("--tar", "--tar");
+const EXAMPLE: OptSpec =
+    OptSpec::text("--example", "--example", "<name>").doc("The template (default: starter).");
+const TAR: OptSpec = OptSpec::switch("--tar", "--tar")
+    .doc("Write the files as a tar stream on stdout instead of a folder.");
 
 pub(crate) const TABLE: Command = Command {
     path: "flz template",
-    help: help::TEMPLATE,
+    title: "Start a project from a template the release carries.",
+    notes: Some(help::TEMPLATE),
     verbs: &[
         Verb::new("list", |read| {
             rpc::eval(LOCAL, "eval", &[text("list"), "[]".into()], read)
-        }),
+        })
+        .about("Print each language and example the release carries."),
         Verb::new("create", handle_create)
             .taking(&[
                 Positional::required("<language>"),
                 Positional::required("<dir>"),
             ])
             .reading(&[EXAMPLE, TAR])
-            .strict(),
+            .strict()
+            .about("Write a template's files into a new folder <dir>."),
     ],
     missing: Missing::Refuse,
     unknown_prints_help: false,

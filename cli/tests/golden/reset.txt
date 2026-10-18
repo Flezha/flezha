@@ -1,7 +1,31 @@
-flz reset - Clear Controller durable runtime data on disk
+flz reset - Clear Controller durable runtime data on disk (controller must be stopped).
 
-USAGE:
-    flz reset [OPTIONS]
+Usage: flz reset [--yes] [--dry-run] [--include-certs] [--include-dlq] [--include-schedules] [--include-auth] [--include-audit] [--include-plugins] [--include-sockets] [--all] [--probe-timeout-ms <ms>] [--app-data-root <path>]
+
+OPTIONS:
+    --yes                    Apply the reset. REQUIRED for any destructive
+                             action.
+    --dry-run                Print the plan without touching the filesystem
+                             (exit 0).
+    --include-certs          Also clear app_data/certs/.
+    --include-dlq            Also clear app_data/dlq/ (every parked dead-letter
+                             record).
+    --include-schedules      Also clear app_data/schedules/ (every schedule).
+    --include-auth           Also clear app_data/auth/ (every token and role
+                             binding).
+    --include-audit          Also clear app_data/audit/ (the audit trail).
+    --include-plugins        Also clear app_data/plugins/ (every installed
+                             plugin).
+    --include-sockets        Also clear Flezha's sockets in the resolved socket
+                             directory.
+    --all                    Every opt-in clear above, auth and audit included.
+    --probe-timeout-ms <ms>  Live-node probe timeout (default 1000).
+    --app-data-root <path>   The app_data/ root (default: FLEZHA_APP_DATA_ROOT
+                             or ./app_data).
+    --token <token>          The caller's token (default: FLEZHA_TOKEN).
+    --help | -h              Print this help.
+    --output | -o text|json  Output format (default: text).
+    --json                   The same as --output json.
 
 DESCRIPTION:
     Clears the contents of the Controller's durable on-disk state so the
@@ -42,22 +66,6 @@ DESCRIPTION:
     is frequently not under app_data/ at all. Only the socket files Flezha
     itself creates are unlinked there, and a directory a Controller is still
     serving in is kept.
-
-OPTIONS:
-    --yes                     Apply the reset. REQUIRED for any destructive action.
-    --dry-run                 Print the plan without touching the filesystem (exit 0).
-    --include-certs           Also clear app_data/certs/
-    --include-dlq             Also clear app_data/dlq/ (every parked dead-letter record)
-    --include-schedules       Also clear app_data/schedules/ (every schedule)
-    --include-auth            Also clear app_data/auth/ (every token and role binding)
-    --include-audit           Also clear app_data/audit/ (the audit trail)
-    --include-plugins         Also clear app_data/plugins/ (every installed plugin)
-    --include-sockets         Also clear Flezha's sockets in the resolved socket directory
-    --all                     Every opt-in clear above, auth and audit included
-    --app-data-root <PATH>    Override the `app_data/` root (else FLEZHA_APP_DATA_ROOT or ./app_data)
-    --probe-timeout-ms <N>    Live-node probe timeout (default 1000)
-    --json                    Machine-readable output (--output json is the same request)
-    --help, -h, help          Show this help message
 
 EXIT CODES:
     0   Success (apply succeeded, or --dry-run preview)

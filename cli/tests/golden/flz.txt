@@ -1,28 +1,30 @@
-flz - Flezha CLI
+flz - Flezha CLI.
 
 USAGE:
     flz <COMMAND>
 
 COMMANDS:
-    controller     Controller management commands
-    cluster        Controller cluster status (nodes, leader, relay health)
-    relay       Relay management commands
-    namespace      Namespace management commands
-    runner         Runner management commands
-    plugin         Plugin management commands
-    boot           Boot/recovery status, await, and legacy snapshot import
-    state          Per-Cell state queries (time-travel, retention, list)
-    reset          Clear Controller durable runtime data on disk (controller must be stopped)
-    mcp            Serve Flezha to an AI assistant over MCP, on stdin and stdout
-    template       Start a project from a template the release carries (list, create)
-    observe        Observability foundation inspection (sources, sinks, tail)
-    audit          Durable audit log inspection (list, read, tail, stats, rotate)
-    dlq            Dead-letter queue: inspect, replay, or drop parked payloads
-    schedule       Cron-scheduled steps relay spawns (add, list, remove, run)
-    auth           Bootstrap claim, identity (whoami), offline break-glass recovery
-    token          Scoped-token management (issue, revoke, list)
-    role           Principal → role bindings (bind, unbind, list)
-    help           Show this help message
+    controller  Controller management commands.
+    cluster     Controller cluster status (nodes, leader, relay health).
+    relay       Relay management commands.
+    namespace   Namespace management commands.
+    runner      Runner management commands.
+    plugin      Plugin management commands.
+    boot        Boot/recovery commands.
+    state       Per-Cell state inspection and time-travel queries.
+    reset       Clear Controller durable runtime data on disk (controller must
+                be stopped).
+    mcp         Serve Flezha to an AI assistant over MCP, on stdin and stdout.
+    template    Start a project from a template the release carries.
+    observe     Observability foundation inspection.
+    audit       Durable audit log inspection.
+    dlq         Dead-letter queue: parked poison payloads (retry budget
+                exhausted).
+    schedule    Cron-scheduled steps relay spawns.
+    auth        Authentication bootstrap and identity.
+    token       Scoped-token management.
+    role        Principal → role bindings.
+    help        Show this help message, or with --json every operation as data.
 
 OUTPUT FORMAT:
     Every verb takes --json, or the same request spelled --output json / -o json.

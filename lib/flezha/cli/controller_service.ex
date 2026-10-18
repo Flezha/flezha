@@ -73,9 +73,10 @@ defmodule Flezha.Service.Controller do
   end
 
   @doc """
-  Wait until the readiness verdict is `:ready`, or `timeout_ms` passes. A
-  timeout of zero evaluates the verdict once, which is what the image
-  `HEALTHCHECK` runs.
+  Wait until the readiness verdict is `:ready`, or the timeout passes.
+
+  The timeout is `timeout_ms`. A timeout of zero evaluates the verdict once,
+  which is what the image `HEALTHCHECK` runs.
   """
   @spec boot_await(non_neg_integer(), caller_context()) :: {:ok, atom()} | {:error, term()}
   verb boot_await(timeout_ms, caller_context),

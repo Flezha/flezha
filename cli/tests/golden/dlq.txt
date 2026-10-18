@@ -1,9 +1,14 @@
-Dead-letter queue: parked poison payloads (retry budget exhausted).
+flz dlq - Dead-letter queue: parked poison payloads (retry budget exhausted).
 
-Usage:
-  flz dlq list [relay]                        Parked entries, nearest-to-expiry first
-  flz dlq show <relay/tasklet/entry-id>       Entry metadata + payload preview
-  flz dlq replay <relay/tasklet/entry-id>     Re-dispatch through the normal input path
-  flz dlq drop <relay/tasklet/entry-id>       Discard the entry (audited)
+USAGE:
+    flz dlq <COMMAND>
+
+COMMANDS:
+    list    Parked entries, nearest-to-expiry first.
+    show    One entry and its payload bytes, or `nil` bytes when it carries
+            none.
+    replay  Re-dispatch a parked payload to its relay.
+    drop    Discard a parked entry and its payload.
+    help    Show this help message.
 
 Identity for gated verbs rides `--token <token>` or the FLEZHA_TOKEN env var.

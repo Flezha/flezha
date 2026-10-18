@@ -17,18 +17,29 @@ use report::{print_human, print_json};
 use crate::args::{app_data_root, OptSpec, Reading, APP_DATA_ROOT};
 use crate::rpc::{self, controller_is_up, DEFAULT_PROBE_TIMEOUT_MS};
 
-pub(crate) const YES: OptSpec = OptSpec::switch("--yes", "--yes");
-pub(crate) const DRY_RUN: OptSpec = OptSpec::switch("--dry-run", "--dry-run");
-const INCLUDE_CERTS: OptSpec = OptSpec::switch("--include-certs", "--include-certs");
-const INCLUDE_DLQ: OptSpec = OptSpec::switch("--include-dlq", "--include-dlq");
-const INCLUDE_SCHEDULES: OptSpec = OptSpec::switch("--include-schedules", "--include-schedules");
-const INCLUDE_AUTH: OptSpec = OptSpec::switch("--include-auth", "--include-auth");
-const INCLUDE_AUDIT: OptSpec = OptSpec::switch("--include-audit", "--include-audit");
-const INCLUDE_PLUGINS: OptSpec = OptSpec::switch("--include-plugins", "--include-plugins");
-const INCLUDE_SOCKETS: OptSpec = OptSpec::switch("--include-sockets", "--include-sockets");
-const ALL: OptSpec = OptSpec::switch("--all", "--all");
+pub(crate) const YES: OptSpec =
+    OptSpec::switch("--yes", "--yes").doc("Apply the reset. REQUIRED for any destructive action.");
+pub(crate) const DRY_RUN: OptSpec = OptSpec::switch("--dry-run", "--dry-run")
+    .doc("Print the plan without touching the filesystem (exit 0).");
+const INCLUDE_CERTS: OptSpec =
+    OptSpec::switch("--include-certs", "--include-certs").doc("Also clear app_data/certs/.");
+const INCLUDE_DLQ: OptSpec = OptSpec::switch("--include-dlq", "--include-dlq")
+    .doc("Also clear app_data/dlq/ (every parked dead-letter record).");
+const INCLUDE_SCHEDULES: OptSpec = OptSpec::switch("--include-schedules", "--include-schedules")
+    .doc("Also clear app_data/schedules/ (every schedule).");
+const INCLUDE_AUTH: OptSpec = OptSpec::switch("--include-auth", "--include-auth")
+    .doc("Also clear app_data/auth/ (every token and role binding).");
+const INCLUDE_AUDIT: OptSpec = OptSpec::switch("--include-audit", "--include-audit")
+    .doc("Also clear app_data/audit/ (the audit trail).");
+const INCLUDE_PLUGINS: OptSpec = OptSpec::switch("--include-plugins", "--include-plugins")
+    .doc("Also clear app_data/plugins/ (every installed plugin).");
+const INCLUDE_SOCKETS: OptSpec = OptSpec::switch("--include-sockets", "--include-sockets")
+    .doc("Also clear Flezha's sockets in the resolved socket directory.");
+const ALL: OptSpec =
+    OptSpec::switch("--all", "--all").doc("Every opt-in clear above, auth and audit included.");
 const PROBE_TIMEOUT_MS: OptSpec =
-    OptSpec::number("--probe-timeout-ms", "--probe-timeout-ms", "<ms>");
+    OptSpec::number("--probe-timeout-ms", "--probe-timeout-ms", "<ms>")
+        .doc("Live-node probe timeout (default 1000).");
 
 /// Everything `flz reset` reads. It is one of the two verbs that refuse a word
 /// they do not recognise: this one deletes state, so a typed word it cannot act

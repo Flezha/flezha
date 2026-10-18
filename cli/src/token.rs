@@ -11,11 +11,13 @@ use crate::{help, rpc};
 /// stores for an entry that must not lapse — a runner credential is refused any
 /// other reading.
 const NEVER: &str = "never";
-const TTL: OptSpec = OptSpec::number_or("--ttl", "--ttl", "<seconds>|never", &[NEVER]);
+const TTL: OptSpec = OptSpec::number_or("--ttl", "--ttl", "<seconds>|never", &[NEVER])
+    .doc("How long the token lives, in seconds, or never.");
 
 pub(crate) const TABLE: Command = Command {
     path: "flz token",
-    help: help::TOKEN,
+    title: "Scoped-token management.",
+    notes: Some(help::TOKEN),
     verbs: &[
         Verb::new("issue", handle_issue)
             .taking(&[
@@ -23,12 +25,14 @@ pub(crate) const TABLE: Command = Command {
                 Positional::required("<namespace>"),
                 Positional::required("<viewer|ops|admin|runner>"),
             ])
-            .reading(&[TTL]),
+            .reading(&[TTL])
+            .calls(&["Namespace.issue_token"]),
         Verb::new("revoke", |read| {
             rpc::one_arg(read, "<token-id>", "Namespace.revoke_token")
         })
-        .taking(&[Positional::required("<token-id>")]),
-        Verb::new("list", |read| rpc::bare(read, "Namespace.tokens")),
+        .taking(&[Positional::required("<token-id>")])
+        .calls(&["Namespace.revoke_token"]),
+        Verb::new("list", |read| rpc::bare(read, "Namespace.tokens")).calls(&["Namespace.tokens"]),
     ],
     missing: Missing::Screen,
     unknown_prints_help: false,

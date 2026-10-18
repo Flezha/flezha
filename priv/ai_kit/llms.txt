@@ -44,7 +44,7 @@ only the pages a task needs: each link is that page's full Markdown, next to thi
 - [Plugin commands](plugin_commands.md): `flz plugin` installs plugin packages, enables plugins and connects relays to them.
 - [Access commands](access_commands.md): The groups that decide who may do what: namespaces and their quotas, the first admin, tokens, roles, and the audit trail that records each action.
 - [Template commands](template_commands.md): `flz template create` writes a new Flezha project from a template the release carries: a small, complete project in one of the seven languages, with a relay, a tasklet that keeps state, a test and a README with the commands to build and run it.
-- [Command reference](command_reference.md): Every `flz` verb in one line, by group.
+- [Command reference](command_reference.md): Every `flz` verb with its usage line and what it does, by group.
 
 ## Configuration
 

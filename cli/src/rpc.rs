@@ -592,8 +592,9 @@ mod tests {
     #[test]
     fn the_reset_screen_quotes_the_default_probe_timeout() {
         let quoted = format!("(default {})", DEFAULT_PROBE_TIMEOUT_MS);
+        let reset = crate::FLZ.verbs.iter().find(|verb| verb.name == "reset");
         assert!(
-            crate::help::RESET.contains(&quoted),
+            crate::help::verb_screen(&crate::FLZ, reset.expect("flz reset")).contains(&quoted),
             "flz reset help must say {}",
             quoted
         );

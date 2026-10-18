@@ -1,1 +1,12 @@
-flz audit tail [--json] [--duration-ms N]
+flz audit tail - Stream every audit record the caller may read as it is written.
+
+Usage: flz audit tail [--duration-ms <milliseconds>]
+
+OPTIONS:
+    --duration-ms <milliseconds>  Stream for at most this long (default 30000).
+    --token <token>               The caller's token (default: FLEZHA_TOKEN).
+    --help | -h                   Print this help.
+    --output | -o text|json       Output format (default: text).
+    --json                        The same as --output json.
+
+With --json each record is one JSON line.

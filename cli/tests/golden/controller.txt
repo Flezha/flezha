@@ -1,13 +1,13 @@
-flz controller - Controller management commands
+flz controller - Controller management commands.
 
 USAGE:
     flz controller <COMMAND>
 
 COMMANDS:
-    start    Start the flezha controller
-    stop     Stop the flezha controller (graceful)
-    status   Print controller status (incl. graceful-shutdown state)
-    mem-top  Snapshot top-memory processes / ETS / DETS / allocators
-    help     Show this help message
+    start    Start the flezha controller.
+    stop     Drain this controller and stop it.
+    status   The controller's status: node, clock, shutdown and durability.
+    mem-top  One snapshot of the controller's memory hot spots.
+    help     Show this help message.
 
 Use 'flz controller <COMMAND> --help' for more information on a specific command.

@@ -1,1 +1,9 @@
-flz audit stats [--json]
+flz audit stats - The audit log's operational snapshot.
+
+Usage: flz audit stats
+
+OPTIONS:
+    --token <token>          The caller's token (default: FLEZHA_TOKEN).
+    --help | -h              Print this help.
+    --output | -o text|json  Output format (default: text).
+    --json                   The same as --output json.

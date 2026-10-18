@@ -584,18 +584,18 @@ defmodule Flezha.Service.Relay do
   defp deadline(written), do: Steps.invalid_number("deadline_ms", written)
 
   @doc """
-  Hand every frame `relay_id` emits to the context's `:emit`.
+  Stream every frame `relay_id` emits, or what `direction` names.
 
-  Each frame carries its parts and dead-letter notices; when `direction` is
-  `input`, the frames it ingests are handed instead. They are handed until the
-  window closes, the caller goes away or the relay ends. With `direction`
-  `calls` it hands each call the relay takes, `{:call, request, metadata}`, and
-  then how that call ended: `{:answered, answer, metadata}`,
-  `{:timed_out, error, metadata}` or `{:refused, error, metadata}`, each
-  carrying the call's `flz.call_id`. With `direction` `tally` it hands, about
-  once per `tally_ms`, `{:tally, totals, %{read_at_ms:, epochs:}}`: how many
-  frames have left on each output channel, counted on the relay's node with
-  nothing sent per frame.
+  Each frame is handed to the context's `:emit` with its parts and dead-letter
+  notices; when `direction` is `input`, the frames it ingests are handed
+  instead. They are handed until the window closes, the caller goes away or the
+  relay ends. With `direction` `calls` it hands each call the relay takes,
+  `{:call, request, metadata}`, and then how that call ended:
+  `{:answered, answer, metadata}`, `{:timed_out, error, metadata}` or
+  `{:refused, error, metadata}`, each carrying the call's `flz.call_id`. With
+  `direction` `tally` it hands, about once per `tally_ms`,
+  `{:tally, totals, %{read_at_ms:, epochs:}}`: how many frames have left on each
+  output channel, counted on the relay's node with nothing sent per frame.
 
   `:emit` is called with `:attached` once the listener is in place, then with
   each `t:Flezha.Service.Listener.event/0`; answering `:done` ends the listen.

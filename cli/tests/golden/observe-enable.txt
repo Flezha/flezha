@@ -1,1 +1,9 @@
-flz observe enable <SOURCE>
+flz observe enable - Enable the source `name`.
+
+Usage: flz observe enable <source>
+
+OPTIONS:
+    --token <token>          The caller's token (default: FLEZHA_TOKEN).
+    --help | -h              Print this help.
+    --output | -o text|json  Output format (default: text).
+    --json                   The same as --output json.

@@ -1,1 +1,9 @@
-flz audit list [--json]
+flz audit list - The audit log's files, each with its record times and digest.
+
+Usage: flz audit list
+
+OPTIONS:
+    --token <token>          The caller's token (default: FLEZHA_TOKEN).
+    --help | -h              Print this help.
+    --output | -o text|json  Output format (default: text).
+    --json                   The same as --output json.

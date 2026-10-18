@@ -72,7 +72,7 @@
     },
     {
       "name": "Controller.boot_await",
-      "doc": "Wait until the readiness verdict is `:ready`, or `timeout_ms` passes.",
+      "doc": "Wait until the readiness verdict is `:ready`, or the timeout passes.",
       "action": "public",
       "remote": true,
       "stream": true,
@@ -273,7 +273,7 @@
     },
     {
       "name": "Dlq.list",
-      "doc": "Parked entries, nearest-to-expiry first; `nil` for every class.",
+      "doc": "Parked entries, nearest-to-expiry first.",
       "action": "dlq.list",
       "remote": true,
       "stream": false,
@@ -1276,7 +1276,7 @@
     },
     {
       "name": "Relay.listen",
-      "doc": "Hand every frame `relay_id` emits to the context's `:emit`.",
+      "doc": "Stream every frame `relay_id` emits, or what `direction` names.",
       "action": "relay.listen",
       "remote": true,
       "stream": true,
