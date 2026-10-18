@@ -75,7 +75,7 @@ defmodule FlezhaTest.Helper.TimingFormatter do
          end))
 
     File.write!(path, rows)
-    IO.puts(:stderr, "\n[timing] #{length(modules)} modules -> #{path}\n#{summary(modules)}")
+    IO.puts("\n[timing] #{length(modules)} modules -> #{path}\n#{summary(modules)}")
 
     {:noreply, state}
   end
@@ -137,7 +137,7 @@ defmodule FlezhaTest.Helper.TimingFormatter do
         "  #{String.pad_trailing(Atom.to_string(capability), 20)} #{outcome}"
       end)
 
-    IO.puts(:stderr, "\n[conformance] runtime=#{runtime}\n#{rows}")
+    IO.puts("\n[conformance] runtime=#{runtime}\n#{rows}")
 
     case System.get_env("CONFORMANCE_OUT") do
       nil ->
@@ -148,7 +148,7 @@ defmodule FlezhaTest.Helper.TimingFormatter do
         # worst outcome across them.
         table = Map.merge(written_outcomes(path), table, fn _, a, b -> worst(a, b) end)
         File.write!(path, Jason.encode!(%{runtime: runtime, capabilities: table}, pretty: true))
-        IO.puts(:stderr, "[conformance] #{path}")
+        IO.puts("[conformance] #{path}")
     end
   end
 

@@ -310,7 +310,6 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
     for id <- WriterRegistry.registered_ids(),
         class = elem(id, 0),
         Paths.namespace_of_class(class) == namespace,
-        uniq: true,
         do: RelayManager.close_writers(class)
 
     # The namespace is this test's alone, so its whole tree goes. The path is

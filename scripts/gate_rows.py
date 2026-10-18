@@ -37,10 +37,7 @@ BENIGN = re.compile(
     r"credential, or one this controller does not know \(runner\.namespace_not_proven\)"
     r"|the controller refused the connect: error: refused by the test \(runner\.namespace_not_proven\)"
     r"|RunnerShutdownAck timeout for (dyn-1|abi_probe))$"
-    r"|^hint: flz token issue runner@<namespace> <namespace> runner --ttl never$"
-    # The per-module timings and the conformance table `TimingFormatter` prints.
-    r"|^\[(timing|conformance)\] |^  [0-9.]+ ms  [0-9]+ tests  \S+$"
-    r"|^  [a-z0-9_]+ +(pass|fail|deferred|untested)$")
+    r"|^hint: flz token issue runner@<namespace> <namespace> runner --ttl never$")
 # pyright's notice that a newer release exists: it says nothing about the code.
 UPDATE_NOTICE = re.compile(
     r"^WARNING: there is a new pyright version available \(v[0-9.]+ -> v[0-9.]+\)\.$")
