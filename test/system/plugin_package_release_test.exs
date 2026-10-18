@@ -28,7 +28,7 @@ defmodule FlezhaTest.System.PluginPackageReleaseTest do
     release = build_release!(Path.join(tmp, "rel"))
 
     dirs =
-      for name <- ~w(plugins recovery sockets state audit), into: %{} do
+      for name <- ~w(plugins sockets state audit), into: %{} do
         path = Path.join(tmp, name)
         File.mkdir_p!(path)
         {name, path}
@@ -38,7 +38,6 @@ defmodule FlezhaTest.System.PluginPackageReleaseTest do
       {"FLEZHA_NODE_NAME", "flzpkg#{System.unique_integer([:positive])}"},
       {"RELEASE_COOKIE", "flz_pkg_release_test"},
       {"FLEZHA_PLUGIN_ROOT", dirs["plugins"]},
-      {"FLEZHA_DATA_DIR", dirs["recovery"]},
       {"FLEZHA_SOCKET_FILES_PATH", dirs["sockets"] <> "/"},
       {"FLEZHA_STATE_DIR", dirs["state"]},
       {"FLEZHA_LOG_PATH", Path.join(tmp, "flezha.log")},

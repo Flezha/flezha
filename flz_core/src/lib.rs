@@ -68,7 +68,7 @@ pub mod spawn;
 #[doc(hidden)]
 pub mod state_sink;
 pub mod steps;
-#[cfg(any(test, feature = "bench-internals"))]
+#[cfg(any(test, feature = "test-support"))]
 mod test_support;
 pub mod timer;
 #[doc(hidden)]

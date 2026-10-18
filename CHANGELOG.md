@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+### Removed: code only tests used, and settings nothing reads (breaking)
+
+Functions no production path called leave the public surface; the ones tests need now live in
+the test sources.
+
+- **BREAKING:** `flz_transport::service::payloader::extract_payload_non_blocking` and
+  `build_from_binary_into` are removed; `extract_payload` and `build_from_binary` remain.
+- **BREAKING:** `flz_core::restore::frame_record` and the test scaffolding are built only with the
+  new `test-support` feature (`bench-internals` enables it);
+  `flezha_runner::cell::flusher::build_cell_state_change_frame` is removed.
+- **BREAKING:** `Flezha.State.Wire.encode_frame/4`, `encode_effect_body/1`,
+  `encode_park_body/1` and `Flezha.State.Frame.encode_header/5` move to the test helpers.
+- **BREAKING:** Java `ActivationCodec.encodeActivation` and `decodeResult` move to the test sources;
+  `RetryPolicy.RETRY_BACKOFF_MAX_MS` is removed.
+- **BREAKING:** eleven configuration rows nothing read are removed: `FLEZHA_SNAPSHOT_STATE_CAP_BYTES`,
+  `FLEZHA_RECOVERY_WINDOW_MS`, `FLEZHA_DATA_DIR`, `FLEZHA_QUIC_CERT_DIR`, `FLEZHA_CONTROL_SOCKET`,
+  `FLEZHA_DATA_STREAM_LOSS_DRILL`, `FLEZHA_PREFER_EXPLICIT_RESTORE`,
+  `FLEZHA_PRE_REPLAY_FLEET_WAIT_MS`, `FLEZHA_PHP`, `FLEZHA_RUST_PROFILE` and `FLEZHA_SHA`.
+  `FLEZHA_CONTROL_KEEPALIVE_MS` keeps one row, `:control_keepalive_ms` (default 15000);
+  `:control_keepalive_env_ms` is gone.
+
 ### Removed: control messages and fields no side used (breaking)
 
 The runner protocol drops what nothing sent or read. A runner whose relay instance dies is

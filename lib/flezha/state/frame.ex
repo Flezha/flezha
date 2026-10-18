@@ -78,21 +78,6 @@ defmodule Flezha.State.Frame do
   def format_id(codec), do: Map.fetch!(@format_ids, codec)
 
   @doc """
-  Stamp the 16-byte header for `body`: language, SDK version, schema version,
-  format, two reserved zero bytes, and the crc32 over the body.
-
-  The write side of `decode_header/1`; the byte layout exists here and nowhere
-  else on this side of the wire.
-  """
-  @spec encode_header(byte(), non_neg_integer(), non_neg_integer(), byte(), binary()) ::
-          <<_::128>>
-  def encode_header(sdk_lang, sdk_version, schema_version, format_id, body)
-      when is_binary(body) do
-    <<sdk_lang, sdk_version::32-big, schema_version::32-big, format_id, 0, 0,
-      :erlang.crc32(body)::32-big>>
-  end
-
-  @doc """
   Decompose the 16 header bytes. `:error` when there are not 16 of them —
   every caller answers a malformed header its own way, and none of them
   re-reads the layout to do it.

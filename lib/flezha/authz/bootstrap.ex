@@ -313,10 +313,6 @@ defmodule Flezha.AuthZ.Bootstrap do
     else
       {:error, :bootstrap_token_mismatch}
     end
-  rescue
-    UndefinedFunctionError ->
-      # Pre-OTP 25 fallback; the local OTP is 27/28, but keep a defensive shim.
-      if stored == presented, do: :ok, else: {:error, :bootstrap_token_mismatch}
   end
 
   defp resolve_principal(opts) do

@@ -12,12 +12,12 @@ defmodule Flezha.Convergence.LoopTest do
 
   import FlezhaTest.Helper.MimicGlobal
 
-  alias Flezha.State.Wire
   alias FlezhaTest.Helper.ConvergenceFixtures
 
   alias Flezha.Convergence.{Diff, Intent}
   alias Flezha.Convergence.Loop.Progress
   alias Flezha.State.Completion
+  alias FlezhaTest.Helper.WireEncoders
 
   describe "Loop.apply_misbound_streak/2 (B5)" do
     alias Flezha.Convergence.Loop
@@ -405,7 +405,7 @@ defmodule Flezha.Convergence.LoopTest do
     end
 
     defp effect(outputs, offset) do
-      Wire.encode_effect_body(%{
+      WireEncoders.encode_effect_body(%{
         changes: [<<1>>],
         outputs: outputs,
         consumed_offset: offset,

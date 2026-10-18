@@ -14,11 +14,11 @@ defmodule Flezha.State.WalRewindTest do
   use FlezhaTest.Case, fixtures: [:tmp_app_data, :state_tree], async: false
 
   alias Flezha.Relay.ClassRegistry
-  alias Flezha.State.Wire
 
   alias Flezha.State.{InputLog, Paths, RecordFrame, Supervisor, WalWriter}
 
   alias Flezha.State.Snapshot, as: StateSnapshot
+  alias FlezhaTest.Helper.WireEncoders
 
   setup do
     ClassRegistry.ensure_table()
@@ -41,7 +41,7 @@ defmodule Flezha.State.WalRewindTest do
   # One invocation: an input consumed at `offset`, whose event time is `event_time`.
   defp append_effect(pid, seq, offset, event_time) do
     body =
-      Wire.encode_effect_body(%{
+      WireEncoders.encode_effect_body(%{
         changes: [<<1>>],
         outputs: [],
         consumed_offset: offset,

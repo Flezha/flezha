@@ -32,7 +32,10 @@ flz_transport = { path = "../flz_transport", features = ["test-support"] }
 [features]
 # The bench scaffolding `flz_core_ffi`'s `host_loop` and the `sdk/rust`
 # benches share. NOT a stable public API.
-bench-internals = []
+bench-internals = ["test-support"]
+# The test scaffolding and the WAL record encoder, for the tests of the crates
+# built on this one. NOT a stable public API.
+test-support = []
 
 [lints]
 workspace = true

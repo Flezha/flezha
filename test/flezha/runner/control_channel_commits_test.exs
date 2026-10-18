@@ -33,6 +33,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
   alias Flezha.State.Frame
 
   alias FlezhaTest.Helper.DurabilityBackendStub, as: Stub
+  alias FlezhaTest.Helper.WireEncoders
 
   @namespace "ctrl-chan-task-commit-test"
 
@@ -223,10 +224,10 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
   end
 
   defp effect_header(),
-    do: Frame.encode_header(1, 1, 1, Frame.format_id(:effect_record), <<>>)
+    do: WireEncoders.encode_header(1, 1, 1, Frame.format_id(:effect_record), <<>>)
 
   defp effect_body(payload, opts) do
-    Wire.encode_effect_body(%{
+    WireEncoders.encode_effect_body(%{
       changes: [<<1>>],
       outputs: [
         %{

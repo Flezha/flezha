@@ -12,6 +12,7 @@ defmodule Flezha.State.TestHelpers do
   alias Flezha.State.Frame
   alias Flezha.State.{FsyncBatcher, Outbox, Paths, Supervisor, WalWriter}
   alias FlezhaTest.Helper.NodeTestHelper
+  alias FlezhaTest.Helper.WireEncoders
 
   # The outputs of a received dispatch batch not yet asserted on.
   @dispatched {__MODULE__, :dispatched}
@@ -392,7 +393,7 @@ defmodule Flezha.State.TestHelpers do
   @spec write_wal_of_lang(Paths.cell_id(), byte()) :: :ok
   def write_wal_of_lang(cell_id, sdk_lang) do
     body = "state-bytes"
-    header = Frame.encode_header(sdk_lang, 0, 1, Frame.format_id(:postcard), body)
+    header = WireEncoders.encode_header(sdk_lang, 0, 1, Frame.format_id(:postcard), body)
     path = Paths.wal_path(cell_id)
 
     File.mkdir_p!(Path.dirname(path))

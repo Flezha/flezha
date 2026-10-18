@@ -273,7 +273,8 @@ defmodule Flezha.Config.DurationRows do
     # ---- the Elixir SDK ----------------------------------------------------
     # The SDK declares these itself (`Flezha.SDK.Knob`); a row here is what its
     # values are held to.
-    {:control_keepalive_ms, :ms, 15_000, runtimes: [:controller, :rust]},
+    {:control_keepalive_ms, :ms, 15_000,
+     env: "FLEZHA_CONTROL_KEEPALIVE_MS", runtimes: [:controller, :rust]},
     {:data_heartbeat_ms, :ms, 10_000,
      env: "FLEZHA_DATA_HEARTBEAT_MS", runtimes: [:controller, :rust]},
     {:sdk_commit_ack_ms, :ms, 30_000,

@@ -193,8 +193,7 @@ It carries **everything the controller must not lose**:
 
 Losing this volume reverts a controller to an empty recovery on restart. See the
 top-level [README.md](../README.md#failure-recovery) for the per-provider
-recoverability table and the semantics of the recovery window
-(`FLEZHA_RECOVERY_WINDOW_MS`).
+recoverability table.
 
 ### One controller per node
 

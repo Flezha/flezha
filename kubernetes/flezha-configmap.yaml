@@ -33,9 +33,7 @@ data:
   # FLEZHA_PROCESS_HUB_REGISTRY_ROOT, which must be mounted from
   # persistent storage (see flezha-daemonset.yaml).
   FLEZHA_AUTO_RESTORE_ENABLED: "true"
-  FLEZHA_RECOVERY_WINDOW_MS: "10000"
   FLEZHA_BOOT_REPLAY_TIMEOUT_MS: "60000"
-  FLEZHA_PRE_REPLAY_FLEET_WAIT_MS: "30000"
   FLEZHA_WAL_TRANSFER_QUERY_TIMEOUT_MS: "5000"
   FLEZHA_PROCESS_HUB_REGISTRY_ROOT: "/var/lib/flezha/process_hub"
   # Every durable path must live on the mounted volume. These default to

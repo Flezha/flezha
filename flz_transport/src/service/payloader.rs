@@ -95,62 +95,6 @@ pub fn extract_payload<R: Read>(
     Ok((payload_id, message_buf, metadata))
 }
 
-// reason: tuple shape is the wire-extraction return type; refactoring would change the public signature
-#[allow(clippy::type_complexity)]
-pub fn extract_payload_non_blocking<R: Read>(
-    mut reader: R,
-) -> io::Result<Option<(String, Vec<u8>, HashMap<String, String>)>> {
-    let Some(header_buf) = read_header_or_none(&mut reader)? else {
-        return Ok(None);
-    };
-
-    let payload_id = parse_payload_id(&header_buf[..PAYLOAD_ID_LEN]);
-    let payload_length = (&header_buf[PAYLOAD_ID_LEN..]).read_u32::<BigEndian>()? as usize;
-    check_payload_length(payload_length)?;
-
-    // Read the entire payload
-    let mut payload_buf = vec![0; payload_length];
-    if payload_length > 0 {
-        match reader.read_exact(&mut payload_buf) {
-            Ok(_) => {}
-            Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
-                // This is a protocol error. We got a header but can't get the body.
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "Partial payload read",
-                ));
-            }
-            Err(e) => {
-                return Err(e);
-            }
-        }
-    }
-
-    let (message_buf, metadata) = parse_payload_body(&payload_buf)?;
-
-    Ok(Some((payload_id, message_buf, metadata)))
-}
-
-/// One non-blocking read of the frame header: the header, `None` when nothing
-/// is readable yet, an error at end of stream or on a short read.
-fn read_header_or_none<R: Read>(reader: &mut R) -> io::Result<Option<[u8; HEADER_LEN]>> {
-    let mut header_buf = [0; HEADER_LEN];
-    match reader.read(&mut header_buf) {
-        Ok(0) => Err(io::Error::new(
-            io::ErrorKind::BrokenPipe,
-            "Connection closed",
-        )),
-        // A short header cannot happen on a UnixStream; refused as a precaution.
-        Ok(n) if n < HEADER_LEN => Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "Incomplete header",
-        )),
-        Ok(_) => Ok(Some(header_buf)),
-        Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => Ok(None),
-        Err(e) => Err(e),
-    }
-}
-
 /// Refused when a metadata key, value or table is longer than the length
 /// prefix the wire format gives it.
 pub fn build_from_binary(
@@ -169,21 +113,6 @@ pub fn build_without_metadata(payload_id: &str, message: &[u8]) -> Vec<u8> {
     let mut out = Vec::new();
     append_checked(&mut out, payload_id, message, &[], 0);
     out
-}
-
-/// Zero-alloc variant of `build_from_binary`: appends the framed payload
-/// bytes to `out` in-place. Used by the hot path to batch many outputs
-/// into a single write syscall.
-///
-/// On refusal `out` is left exactly as it was found, so a rejected frame
-/// cannot half-append into a batch.
-pub fn build_from_binary_into(
-    out: &mut Vec<u8>,
-    payload_id: &str,
-    message: &[u8],
-    metadata: &PayloadMetadata,
-) -> io::Result<()> {
-    append_payload(out, payload_id, message, metadata)
 }
 
 fn append_payload(
@@ -330,9 +259,6 @@ mod tests {
         let err = extract_payload(&bytes[..]).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
         assert!(err.to_string().contains("payload"), "{err}");
-
-        let err = extract_payload_non_blocking(&bytes[..]).unwrap_err();
-        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
     }
 
     #[test]
@@ -345,9 +271,6 @@ mod tests {
         let err = extract_payload(&bytes[..]).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
         assert!(err.to_string().contains("message"), "{err}");
-
-        let err = extract_payload_non_blocking(&bytes[..]).unwrap_err();
-        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
     }
 
     #[test]
@@ -357,13 +280,6 @@ mod tests {
         let bytes = build_from_binary("round_trip", b"hello", metadata.clone()).unwrap();
 
         let (id, message, meta) = extract_payload(&bytes[..]).unwrap();
-        assert_eq!(
-            (id.as_str(), message.as_slice()),
-            ("round_trip", &b"hello"[..])
-        );
-        assert_eq!(meta, metadata);
-
-        let (id, message, meta) = extract_payload_non_blocking(&bytes[..]).unwrap().unwrap();
         assert_eq!(
             (id.as_str(), message.as_slice()),
             ("round_trip", &b"hello"[..])
@@ -384,15 +300,10 @@ mod tests {
         let mut metadata = PayloadMetadata::new();
         metadata.insert("flz.key".to_string(), oversized(MAX_METADATA_FIELD_LEN + 1));
 
-        let err = build_from_binary("emit", b"body", metadata.clone()).unwrap_err();
+        let err = build_from_binary("emit", b"body", metadata).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
         assert!(err.to_string().contains("flz.key"), "{err}");
         assert!(err.to_string().contains("256"), "{err}");
-
-        // ... and no bytes reach the caller's buffer.
-        let mut out = vec![0xAA];
-        assert!(build_from_binary_into(&mut out, "emit", b"body", &metadata).is_err());
-        assert_eq!(out, vec![0xAA]);
     }
 
     #[test]

@@ -11,13 +11,14 @@ defmodule FlezhaTest.Helper.CreditTestHelper do
   alias Flezha.State.{TestHelpers, WalWriter}
   alias Flezha.Transport.LivenessCounters
   alias FlezhaTest.Helper.NodeTestHelper
+  alias FlezhaTest.Helper.WireEncoders
 
   @doc "Build one `cell_state_change` wire frame (`Flezha.State.Wire` layout)."
   def state_change_frame(class, key, seq, body, tasklet \\ "op1") do
     sid = Wire.encode_cell_id(class, tasklet, key)
     header = TestHelpers.stub_header()
 
-    Wire.encode_frame(sid, seq, header, body)
+    WireEncoders.encode_frame(sid, seq, header, body)
   end
 
   @doc "Every LivenessCounters channel row registered for `runner_id`."

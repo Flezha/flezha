@@ -16,6 +16,7 @@ defmodule Flezha.State.DurableFrameConformanceTest do
 
   alias Flezha.State.Frame
   alias Flezha.State.{RecordFrame, TestHelpers}
+  alias FlezhaTest.Helper.WireEncoders
 
   @fixture Path.join([__DIR__, "..", "..", "fixtures", "durable_frame.txt"])
   @external_resource @fixture
@@ -52,7 +53,7 @@ defmodule Flezha.State.DurableFrameConformanceTest do
       log =
         Enum.map_join(@bodies, "", fn {seq, body} ->
           header =
-            Frame.encode_header(@lang_rust, @sdk_version, @schema_version, 1, body)
+            WireEncoders.encode_header(@lang_rust, @sdk_version, @schema_version, 1, body)
 
           Frame.encode_record(seq, header, body)
         end)

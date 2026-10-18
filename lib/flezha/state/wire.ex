@@ -63,19 +63,6 @@ defmodule Flezha.State.Wire do
   def decode_cell_id(_), do: {:error, :bad_cell_id}
 
   @doc """
-  Assemble a durable frame: the Cell identity, its seq, the 16-byte record
-  header and the body under its CRC. The inverse of `decode_frame/1` and the
-  byte-for-byte twin of the runner core's `build_cell_frame`, so one
-  controller handler serves every SDK.
-  """
-  @spec encode_frame(binary(), non_neg_integer(), binary(), binary()) :: binary()
-  def encode_frame(cell_id, seq, header, body)
-      when byte_size(header) == @header_size do
-    <<byte_size(cell_id)::16-big, cell_id::binary, seq::64-big, header::binary,
-      byte_size(body)::32-big, body::binary, :erlang.crc32(body)::32-big>>
-  end
-
-  @doc """
   Decode an inbound `cell_state_change` / `cell_state_snapshot`
   frame.
 
@@ -198,38 +185,6 @@ defmodule Flezha.State.Wire do
     end
   end
 
-  @doc """
-  Encode an effect body back to postcard bytes (byte-exact inverse of
-  `decode_effect_body/1`). Used by tests and the WAL crash-tear fixtures.
-  """
-  @spec encode_effect_body(%{
-          required(:changes) => [binary()],
-          required(:outputs) => [
-            %{
-              channel: binary(),
-              key: binary(),
-              metadata: [{binary(), binary()}],
-              payload: binary()
-            }
-          ],
-          required(:consumed_offset) => non_neg_integer() | nil,
-          optional(:dlq) => map() | nil,
-          optional(:event_time) => non_neg_integer(),
-          optional(:timers) => [map()],
-          optional(:edges) => [edge()]
-        }) :: binary()
-  def encode_effect_body(%{changes: changes, outputs: outputs, consumed_offset: offset} = body) do
-    IO.iodata_to_binary([
-      encode_vec(changes, &encode_bytes/1),
-      encode_vec(outputs, &encode_output/1),
-      encode_option(offset, &encode_varint/1),
-      encode_option(Map.get(body, :dlq), &encode_dlq_entry/1),
-      encode_varint(Map.get(body, :event_time, 0)),
-      encode_vec(Map.get(body, :timers, []), &encode_timer_op/1),
-      encode_vec(Map.get(body, :edges, []), &encode_edge/1)
-    ])
-  end
-
   @typedoc """
   One inter-tasklet value an effect record keeps: the channel it was emitted
   on and the consuming tasklet, the input-log offset it derives from, and the
@@ -249,15 +204,6 @@ defmodule Flezha.State.Wire do
          {:ok, payload, rest} <- decode_bytes(rest) do
       {:ok, %{channel: channel, consumer: consumer, origin: origin, payload: payload}, rest}
     end
-  end
-
-  defp encode_edge(%{channel: channel, consumer: consumer, origin: origin, payload: payload}) do
-    [
-      encode_varint(channel),
-      encode_varint(consumer),
-      encode_option(origin, &encode_varint/1),
-      encode_bytes(payload)
-    ]
   end
 
   @typedoc "One mutation of a Cell's pending-timer set, as the postcard `TimerOp` carries it."
@@ -307,41 +253,6 @@ defmodule Flezha.State.Wire do
       {:ok, _, _trailing} -> {:error, :trailing_bytes}
       {:error, _} = err -> err
     end
-  end
-
-  @doc """
-  Encode a `ParkBody` to postcard bytes — the exact inverse of
-  `decode_park_body/1`, byte-compatible with the cross-language fixture
-  (`test/fixtures/postcard_bodies.txt`). The map carries
-  the flattened DLQ entry: `park_id`, `origin_offset`, `channel`, `error`,
-  `attempts`, `payload`, `reply_to`. Sharing the module's postcard helpers is what keeps the
-  SDK's park frame from drifting from the decoder.
-  """
-  @spec encode_park_body(%{
-          required(:park_id) => binary(),
-          optional(:origin_offset) => non_neg_integer() | nil,
-          required(:channel) => binary(),
-          required(:error) => binary(),
-          required(:attempts) => non_neg_integer(),
-          optional(:payload) => binary() | nil,
-          optional(:reply_to) => binary() | nil
-        }) :: binary()
-  def encode_park_body(
-        %{park_id: park_id, channel: channel, error: error, attempts: attempts} = body
-      ) do
-    entry = %{
-      channel: channel,
-      error: error,
-      attempts: attempts,
-      payload: Map.get(body, :payload)
-    }
-
-    IO.iodata_to_binary([
-      encode_bytes(park_id),
-      encode_option(Map.get(body, :origin_offset), &encode_varint/1),
-      encode_dlq_entry(entry),
-      encode_option(Map.get(body, :reply_to), &encode_bytes/1)
-    ])
   end
 
   @doc """
@@ -430,15 +341,6 @@ defmodule Flezha.State.Wire do
     end
   end
 
-  defp encode_dlq_entry(%{channel: channel, error: error, attempts: attempts, payload: payload}) do
-    [
-      encode_bytes(channel),
-      encode_bytes(error),
-      encode_varint(attempts),
-      encode_option(payload, &encode_bytes/1)
-    ]
-  end
-
   # One pending-timer mutation: `[kind varint][scheduled_at varint][register u8]`.
   # The kind's ordinal order is the SDKs' `TimerKind`: 0 event time, 1 processing
   # time.
@@ -458,23 +360,9 @@ defmodule Flezha.State.Wire do
   defp timer_kind(1), do: :processing_time
   defp timer_kind(other), do: {:unknown, other}
 
-  defp encode_timer_op(%{kind: kind, scheduled_at: scheduled_at, register: register}) do
-    [
-      encode_varint(timer_kind_ordinal(kind)),
-      encode_varint(scheduled_at),
-      <<if(register, do: 1, else: 0)>>
-    ]
-  end
-
-  defp timer_kind_ordinal(:event_time), do: 0
-  defp timer_kind_ordinal(:processing_time), do: 1
-
   defp decode_option(<<0, rest::binary>>, _item_fun), do: {:ok, nil, rest}
   defp decode_option(<<1, rest::binary>>, item_fun), do: item_fun.(rest)
   defp decode_option(_, _), do: {:error, :bad_option}
-
-  defp encode_option(nil, _item_fun), do: <<0>>
-  defp encode_option(value, item_fun), do: [<<1>>, item_fun.(value)]
 
   defp decode_varint(bin, shift \\ 0, acc \\ 0)
 
@@ -485,23 +373,4 @@ defmodule Flezha.State.Wire do
     do: decode_varint(rest, shift + 7, acc + Bitwise.bsl(byte - 128, shift))
 
   defp decode_varint(_, _, _), do: {:error, :bad_varint}
-
-  defp encode_vec(items, item_fun),
-    do: [encode_varint(length(items)) | Enum.map(items, item_fun)]
-
-  defp encode_bytes(bytes), do: [encode_varint(byte_size(bytes)), bytes]
-
-  defp encode_output(%{channel: channel, key: key, metadata: metadata, payload: payload}) do
-    [
-      encode_bytes(channel),
-      encode_bytes(key),
-      encode_vec(metadata, fn {k, v} -> [encode_bytes(k), encode_bytes(v)] end),
-      encode_bytes(payload)
-    ]
-  end
-
-  defp encode_varint(n) when n < 128, do: <<n>>
-
-  defp encode_varint(n),
-    do: <<Bitwise.bor(Bitwise.band(n, 127), 128), encode_varint(Bitwise.bsr(n, 7))::binary>>
 end

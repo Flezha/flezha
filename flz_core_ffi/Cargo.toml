@@ -92,7 +92,7 @@ rb-sys-env = { version = "0.2", optional = true }
 pyo3-build-config = { version = "0.29", optional = true }
 
 [dev-dependencies]
-flz_core = { path = "../flz_core", features = ["bench-internals"] }
+flz_core = { path = "../flz_core", features = ["bench-internals", "test-support"] }
 # This crate, with its fake controller turned on: the ABI scenario drives the
 # same module `flz-fake-controller` does, so the tests and the binary cannot
 # hold two readings of the wire. The pattern `flz_core` uses for

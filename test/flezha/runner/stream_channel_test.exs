@@ -8,6 +8,7 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
   alias Flezha.Transport.LivenessCounters
   alias FlezhaTest.Helper.MessageTestHelper
   alias FlezhaTest.Helper.NodeTestHelper
+  alias FlezhaTest.Helper.WireEncoders
 
   # async: false: writes Application env; a shared on-disk root; registered runner channels.
 
@@ -601,7 +602,7 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
 
     park = fn offset, reply_to ->
       body =
-        Wire.encode_park_body(%{
+        WireEncoders.encode_park_body(%{
           park_id: "p#{offset}",
           origin_offset: offset,
           channel: "in",
@@ -611,8 +612,8 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
           reply_to: reply_to
         })
 
-      header = Flezha.State.Frame.encode_header(1, 1, 1, 0, <<>>)
-      frame = Wire.encode_frame(Wire.encode_cell_id(rc, "task", "k"), 0, header, body)
+      header = WireEncoders.encode_header(1, 1, 1, 0, <<>>)
+      frame = WireEncoders.encode_frame(Wire.encode_cell_id(rc, "task", "k"), 0, header, body)
       StreamChannel.Records.handle_park_payload(%{runner_id: "r1", identity: "runner-a"}, frame)
     end
 

@@ -108,6 +108,7 @@ fn fold_record(
 
 /// Frame one WAL record as `Flezha.State.WalWriter.encode_record/3` does —
 /// the write side of [`iter_change_log_records`], kept beside it.
+#[cfg(any(test, feature = "test-support"))]
 #[doc(hidden)]
 pub fn frame_record(seq: u64, header: &[u8; 16], body: &[u8]) -> Vec<u8> {
     let mut hasher = crc32fast::Hasher::new();

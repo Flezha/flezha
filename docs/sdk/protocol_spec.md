@@ -1008,8 +1008,8 @@ the poll core's job ([`poll_core.md`](poll_core.md)).
 **Output (secondary streams).** Every plugin-bound emit becomes one frame with
 payload id = the emitting instance's id, the output bytes as the message, and
 metadata = user metadata + `channel` (+ the `flz.*` identity stamps on
-`.keyed()` channels). Outputs are batched into one write syscall where possible
-(`payloader::build_from_binary_into`). An output whose write the stream refuses,
+`.keyed()` channels). Each output is framed by `payloader::build_from_binary` and
+written through `flz_core::state_sink::write`. An output whose write the stream refuses,
 or that finds no stream at all, is held for the next bound one rather than
 dropped — its class says so, and the ring is the one below. On the effectively-once tier
 plugin emits never ride this path: they travel inside the effect record (§11) and
@@ -1047,8 +1047,7 @@ reason `broken_pipe_flood`, re-armed after `FLEZHA_RECONNECT_REQUEST_RETRY_MS`
 every SDK.
 
 **Non-blocking I/O.** Primary sockets are non-blocking and polled through an
-event mechanism (the `flz_core` reader uses `mio`;
-`extract_payload_non_blocking` returns `None` on `WouldBlock`). A wake may
+event mechanism (the `flz_core` reader uses `mio`). A wake may
 carry several frames — drain them all before re-polling. A secondary-stream
 write that returns `WouldBlock` is retried on the next writable event.
 

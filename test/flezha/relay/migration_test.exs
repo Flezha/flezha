@@ -23,6 +23,7 @@ defmodule FlezhaTest.Relay.OverwatchSuspensionTest do
   alias Flezha.Plugin.Extension.Table
   alias Flezha.State.{InputLog, TaskJournal, TestHelpers, WalWriter}
   alias FlezhaTest.OutboxCase
+  alias FlezhaTest.Helper.WireEncoders
 
   setup :set_mimic_global_until_exit
 
@@ -390,7 +391,7 @@ defmodule FlezhaTest.Relay.OverwatchSuspensionTest do
     edge = %{channel: 0, consumer: 1, origin: 1, payload: "kept"}
 
     body =
-      Flezha.State.Wire.encode_effect_body(%{
+      WireEncoders.encode_effect_body(%{
         changes: [],
         outputs: [],
         consumed_offset: 1,
@@ -428,7 +429,7 @@ defmodule FlezhaTest.Relay.OverwatchSuspensionTest do
     ]
 
     body =
-      Flezha.State.Wire.encode_effect_body(%{
+      WireEncoders.encode_effect_body(%{
         changes: [],
         outputs: [],
         consumed_offset: 1,
