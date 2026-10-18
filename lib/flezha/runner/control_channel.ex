@@ -318,9 +318,6 @@ defmodule Flezha.Runner.ControlChannel do
       {:iter_park, %{} = park, _reference_id} ->
         Requests.iter_park(state, park)
 
-      {:relay_exited, %{} = exited, _reference_id} ->
-        Requests.relay_exited(state, exited)
-
       {:update_factories, %{} = update, _reference_id} ->
         Requests.update_factories(state, update)
 
@@ -488,7 +485,6 @@ defmodule Flezha.Runner.ControlChannel do
     :task_commit,
     :iter_commit,
     :iter_park,
-    :relay_exited,
     :update_factories,
     :spawn_steps_request,
     :effect_result,

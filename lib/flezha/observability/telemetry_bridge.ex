@@ -211,8 +211,6 @@ defmodule Flezha.Observability.TelemetryBridge do
     [:flezha, :call, :recovered_unanswered] =>
       {:flezha_call, :flezha_call_recovered_unanswered_total, :metric,
        "A call recovered after a restart was settled without an answer."},
-    [:flezha, :relay, :exited] =>
-      {:flezha_relay, :relay_exited, :event, "A runner reported that a relay's process died."},
     [:flezha, :backoff, :wait] =>
       {:flezha_convergence, :backoff_wait, :metric, "A retry waited before its next attempt."},
     [:flezha, :backoff, :reset] =>

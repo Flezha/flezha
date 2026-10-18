@@ -19,14 +19,12 @@ defmodule FlezhaTest.Runner.ControlChannelBindingTest do
   import FlezhaTest.Helper.MimicGlobal
 
   alias Flezha.Relay.{ClassRegistry, Overwatch}
-  alias Flezha.Runner.{ControlChannel, ControlUnit, StreamChannel, StreamPool}
+  alias Flezha.Runner.{ControlChannel, ControlUnit, StreamChannel}
   alias Flezha.Runner.ControlChannel.Commits
   alias Flezha.Service.HubManager
   alias Flezha.Service.RelayManager
   alias Flezha.State.{Completion, Paths, TaskJournal}
-  alias Flezha.Transport.LivenessCounters
   alias FlezhaTest.Helper.ControlFrameTestHelper
-  alias FlezhaTest.Helper.MessageTestHelper
   alias FlezhaTest.Helper.NodeTestHelper
 
   @ns "ctrl-chan-binding-test"
@@ -53,11 +51,6 @@ defmodule FlezhaTest.Runner.ControlChannelBindingTest do
 
     def handle_cast({:suspend, iter, deadline}, {overwatch, test_pid} = state) do
       send(test_pid, {:suspend_cast, overwatch.id, iter, deadline})
-      {:noreply, state}
-    end
-
-    def handle_cast({:relay_exited, runner_id, reason}, {overwatch, test_pid} = state) do
-      send(test_pid, {:exited_cast, overwatch.id, runner_id, reason})
       {:noreply, state}
     end
   end
@@ -192,21 +185,6 @@ defmodule FlezhaTest.Runner.ControlChannelBindingTest do
     refute_received {:rem_relay, _, _}
   end
 
-  test "KB-632: the owner's exit report reaches the Overwatch its ownership record names",
-       ctx do
-    %{relay_id: op, runner_a: runner_a} = ctx
-    hub_lists_a_departing_copy(op)
-    StreamPool |> stub(:flush_channels, fn _runner_id -> :ok end)
-
-    write_frame(
-      start_channel(runner_a),
-      {:relay_exited, %RunnerCommands.RelayExited{relay_id: op, reason: ":killed"}}
-    )
-
-    assert_receive {:exited_cast, told, ^runner_a, ":killed"}, 1_000
-    assert told == op, "the exit report went to #{inspect(told)}, not the bound Overwatch"
-  end
-
   test "KB-632: the owner's shutdown snapshot reaches the Overwatch its ownership record names",
        ctx do
     %{relay_id: op, runner_a: runner_a} = ctx
@@ -311,54 +289,6 @@ defmodule FlezhaTest.Runner.ControlChannelBindingTest do
 
     assert {response.error.code, journaled?(op)} == {"commit.not_owner", false}
     assert_received {:rem_relay, ^runner_b, ^op}
-  end
-
-  test "the owner's exit report reaches its Overwatch behind a flush of its stream channels",
-       ctx do
-    test_pid = self()
-    %{relay_id: op, runner_a: runner_a} = ctx
-
-    StreamPool
-    |> stub(:flush_channels, fn runner_id ->
-      send(test_pid, {:flushed, runner_id})
-      :ok
-    end)
-
-    channel_a = start_channel(runner_a)
-
-    write_frame(
-      channel_a,
-      {:relay_exited, %RunnerCommands.RelayExited{relay_id: op, reason: ":killed"}}
-    )
-
-    assert_receive {:flushed, ^runner_a}, 1_000
-    assert_receive {:exited_cast, ^op, ^runner_a, ":killed"}, 1_000
-    refute_received {:rem_relay, _, _}
-  end
-
-  test "runner B's exit report for A's instance is refused, counted, and parks nothing", ctx do
-    %{relay_id: op, runner_a: runner_a, runner_b: runner_b} = ctx
-    MessageTestHelper.forward_telemetry([:flezha, :runner, :foreign_frame_refused], :refused)
-    frame = {:relay_exited, %RunnerCommands.RelayExited{relay_id: op, reason: ":killed"}}
-
-    write_frame(ctx.channel_b, frame)
-    write_frame(ctx.channel_b, frame)
-    _ = :sys.get_state(ctx.channel_b)
-
-    assert_received {:refused, %{count: 1},
-                     %{
-                       runner_id: ^runner_b,
-                       owner: ^runner_a,
-                       relay_id: ^op,
-                       kind: :relay_exited
-                     }}
-
-    refute_received {:refused, _, _}
-    assert_received {:rem_relay, ^runner_b, ^op}
-    refute_received {:rem_relay, _, _}
-    rows = LivenessCounters.by_runner(LivenessCounters.snapshot_all().channels)
-    assert get_in(rows, [runner_b, :foreign_frame_refused]) == 2
-    refute_receive {:exited_cast, ^op, _, _}, 200
   end
 
   # The data plane has the same door: a frame naming a relay the sending

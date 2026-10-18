@@ -515,63 +515,6 @@ defmodule Flezha.Relay.Migration do
   end
 
   @doc """
-  Session `runner_id` reports that the process of `relay_id` exited with
-  `reason`: tell its Overwatch, which `park_exited/3` decides for. With no
-  Overwatch on this node there is nothing to rebind.
-
-  Called by `ControlChannel` on the runner's `RelayExited`, with the Overwatch
-  the frame was admitted against as `bound` (see `overwatch/3`).
-  """
-  @spec relay_exited(binary(), binary(), binary(), binary(), pid() | nil) :: :ok
-  def relay_exited(namespace, relay_id, runner_id, reason, bound) do
-    case overwatch(namespace, relay_id, bound) do
-      {:ok, pid} when is_pid(pid) -> GenServer.cast(pid, {:relay_exited, runner_id, reason})
-      _ -> :ok
-    end
-  end
-
-  @doc """
-  Session `runner_id` reports that this instance's process exited with
-  `reason` and that it no longer hosts it. A current report parks the
-  instance, and the convergence loop's un-park rebinds it: it is bound to that
-  session, no bind is in flight, it is neither suspended nor parked already,
-  and no completion is recorded for it. Any other report is stale, or already
-  answered by what is under way, and changes nothing.
-
-  A report that lands while a bind is in flight may be about the incarnation
-  that bind started, which can die before the bind reports, so it is held and
-  judged against the binding `apply_migrate_result/2` adopts.
-  """
-  @spec park_exited(Overwatch.t(), binary(), binary()) :: Overwatch.t()
-  def park_exited(%Overwatch{migrate_task: %{}} = state, runner_id, reason),
-    do: %Overwatch{state | exited_in_flight: {runner_id, reason}}
-
-  def park_exited(
-        %Overwatch{runner_id: runner_id, migrate_task: nil, suspended: false, init_error: nil} =
-          state,
-        runner_id,
-        reason
-      ) do
-    if RelayManager.completed?(Overwatch.relay_class(state)) do
-      state
-    else
-      Logger.warning(
-        "[Overwatch] relay #{state.id} exited on runner #{runner_id}: #{reason}; rebinding"
-      )
-
-      :telemetry.execute(
-        [:flezha, :relay, :exited],
-        %{count: 1},
-        %{namespace: state.namespace, relay_id: state.id, runner_id: runner_id, reason: reason}
-      )
-
-      Lifecycle.park(state, {:relay_exited, reason})
-    end
-  end
-
-  def park_exited(%Overwatch{} = state, _runner_id, _reason), do: state
-
-  @doc """
   Journal the rewind marker, evict, and rehydrate. A rewind is a rebind, not a
   park: no park record, no wake timer, and the rehydrate is unconditional:
   the loop must come back up to undo the iterations the marker unwound even with
@@ -661,7 +604,7 @@ defmodule Flezha.Relay.Migration do
     # stale; the suspension stands, and the tail that was journaled meanwhile
     # (or a stop the wake carried) wakes it again.
     then = carried(state)
-    state = %Overwatch{state | migrate_task: nil, parked_in_flight: false, exited_in_flight: nil}
+    state = %Overwatch{state | migrate_task: nil, parked_in_flight: false}
 
     case then do
       :stop -> state |> wake(:stop) |> elem(1)
@@ -677,24 +620,15 @@ defmodule Flezha.Relay.Migration do
     if carried(state) == :stop, do: ControlUnit.steps_stop(recovered.runner_id, state.id)
 
     # The bound runner's state supersedes a snapshot stored before the bind.
-    %{recovered | migrate_task: nil, snapshot: nil, bound_at: System.system_time(:millisecond)}
-    |> judge_held_exit(state.exited_in_flight)
+    %{recovered | migrate_task: nil, snapshot: nil}
   end
 
   # A failed un-park with input journaled meanwhile tries again at once, as
   # any bind that ends with work owed does.
   def apply_migrate_result(_state, {:park, parked, err}) do
-    %{
-      Lifecycle.park(parked, err)
-      | migrate_task: nil,
-        parked_in_flight: false,
-        exited_in_flight: nil
-    }
+    %{Lifecycle.park(parked, err) | migrate_task: nil, parked_in_flight: false}
     |> rehydrate_if_pending()
   end
-
-  defp judge_held_exit(state, nil), do: state
-  defp judge_held_exit(state, {runner_id, reason}), do: park_exited(state, runner_id, reason)
 
   defp carried(%Overwatch{migrate_task: %{then: then}}), do: then
   defp carried(%Overwatch{}), do: nil

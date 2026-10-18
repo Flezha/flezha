@@ -10,9 +10,9 @@ cli/src/args.rs::scan 64
 cli/src/help.rs 820
 cli/src/rpc.rs::child 59
 flz_core/src/admission.rs::admit_from_cell 53
-flz_core/src/command/mod.rs::classify 63
+flz_core/src/command/mod.rs::classify 59
 flz_core/src/command/mod.rs::handle_command 87
-flz_core/src/control_unit.rs 1056
+flz_core/src/control_unit.rs 1054
 flz_core/src/control_unit.rs::read_loop 70
 flz_core/src/coordinator.rs::heartbeat_metadata 59
 flz_core/src/effect.rs::fold 76
@@ -40,7 +40,7 @@ flz_core/src/routing.rs::redeliver_edge 54
 flz_core/src/routing.rs::route_stream_frame 51
 flz_core/src/state_sink.rs 882
 flz_core/src/steps/resume.rs::resumed_seed 74
-flz_core/src/steps/run.rs 2532
+flz_core/src/steps/run.rs 2530
 flz_core/src/steps/run.rs::act 75
 flz_core/src/steps/run.rs::admit 55
 flz_core/src/steps/run.rs::open_gate 56
@@ -63,7 +63,7 @@ lib/flezha/relay/calls.ex 842
 lib/flezha/relay/class_registry.ex 815
 lib/flezha/relay/handover.ex::absorb 65
 lib/flezha/relay/lifecycle.ex::complete_init 69
-lib/flezha/relay/overwatch.ex 983
+lib/flezha/relay/overwatch.ex 973
 lib/flezha/runner/fleet_manager.ex 950
 lib/flezha/runner/fleet_manager/session.ex::do_handle_runner_disconnect 53
 lib/flezha/runner/stream_channel.ex::init 52

@@ -769,7 +769,6 @@ fn declares_the_steps_class(ctx: *mut FlzContext, controller: &Controller) {
         flz_core::pb::command_request::Command::AddRelay(flz_core::pb::AddRelay {
             relay_id: "wf-1".to_string(),
             factory_id: "abi_steps".to_string(),
-            run: "steps".to_string(),
             ..Default::default()
         }),
     );

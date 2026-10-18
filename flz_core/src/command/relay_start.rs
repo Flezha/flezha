@@ -64,7 +64,6 @@ impl AddRelay {
             expected: self.resume_cell_count as usize + self.effect_result_count as usize,
             owed_inbox: self.inbox_tail_count,
             journal: self.task_journal.as_ref().map(Into::into),
-            dead_letter_turns: self.dead_letter_turns,
         };
         let Some(instance) = runner.start_relay(
             factory_id.to_string(),

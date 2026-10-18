@@ -28,6 +28,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 
 import naming_gate
 import production_code
@@ -298,6 +299,16 @@ def self_test():
     measured = dict(brace_functions("\n".join(lines), ".rs", test_lines))
     if measured != {"ok": 5}:
         problems.append(f"  rust test module: measured {measured}")
+    with tempfile.TemporaryDirectory() as repo:
+        for name in ("kept.rs", "gone.rs"):
+            with open(os.path.join(repo, name), "w", encoding="utf-8") as fh:
+                fh.write("fn f() {}\n")
+        for cmd in (["init", "-q"], ["add", "kept.rs", "gone.rs"]):
+            subprocess.run(["git", "-C", repo, *cmd], check=True, capture_output=True)
+        os.remove(os.path.join(repo, "gone.rs"))
+        listed = production_code.row_files(repo, ["."], untracked=True)
+        if listed != ["kept.rs"]:
+            problems.append(f"  tracked file deleted, not staged: listed {listed}")
     if problems:
         print("check_ceilings self-test FAILED", file=sys.stderr)
         print("\n".join(problems), file=sys.stderr)

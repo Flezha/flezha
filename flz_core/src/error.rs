@@ -138,7 +138,6 @@ codes! {
     CellNotFound => "state.cell_not_found",
     CellEvicted => "state.cell_evicted",
     CellBusy => "state.cell_busy",
-    ApplyNotSupported => "state.apply_not_supported",
     InitValuesInvalidJson => "state.init_values_invalid_json",
     InitValuesNotObject => "state.init_values_not_object",
     SerializeFailed => "state.serialize_failed",

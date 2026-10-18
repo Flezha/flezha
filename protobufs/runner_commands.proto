@@ -5,6 +5,10 @@ package runner_commands;
 
 message CommandRequest {
     string reference_id = 1;
+    // 11 was `CellApplyState`, 20 `RunnerReconnected`, 21 `ReassignRunnerId`
+    // and 38 `RelayExited`: no side sent them.
+    reserved 11, 20, 21, 38;
+    reserved "cell_apply_state", "runner_reconnected", "reassign_runner_id", "relay_exited";
 
     oneof command {
         AssignRunnerId assign_runner_id = 2;
@@ -16,7 +20,6 @@ message CommandRequest {
         CellState cell_state = 8;
         RunnerDisconnect runner_disconnect = 9;
         RelayMessage relay_message = 10;
-        CellApplyState cell_apply_state = 11;
         RunnerShutdownNotification runner_shutdown_notification = 12;
         RunnerShutdownAck runner_shutdown_ack = 13;
         RestoreInitState restore_init_state = 14;
@@ -25,8 +28,6 @@ message CommandRequest {
         CompactCellResponse compact_cell_response = 17;
         CellMailboxStatus cell_mailbox_status = 18;
         Ping ping = 19;
-        RunnerReconnected runner_reconnected = 20;
-        ReassignRunnerId reassign_runner_id = 21;
         RelayCompleted relay_completed = 22;
         StepsStop steps_stop = 23;
         CreditWindowInit credit_window_init = 24;
@@ -43,7 +44,6 @@ message CommandRequest {
         SpawnStepsResponse spawn_steps_response = 35;
         AdminRequest admin_request = 36;
         AdminResponse admin_response = 37;
-        RelayExited relay_exited = 38;
         ConnectRefused connect_refused = 39;
         EffectResult effect_result = 40;
         EffectResultAck effect_result_ack = 41;
@@ -93,9 +93,10 @@ message AddRelay {
     // steps relay's tasklets take it as a flow relay's do, and a steps relay's input
     // is the messages on its entry channels, never this document.
     string init_values = 3;
-    // How the class runs, as its runner announced it: "flow" or "steps".
-    // The class itself decides; the SDK reads its own settings, not this.
-    string run = 4;
+    // 4 was `run`, 12 `dead_letter_turns`: the runner reads its class's own
+    // settings, and every controller parks a failed turn.
+    reserved 4, 12;
+    reserved "run", "dead_letter_turns";
     // Number of persisted Cells the Controller will ship RestoreInitState
     // for on this (re)bind. Non-zero only when re-binding a durable steps relay
     // relay that has WAL state on disk (crash-resume). A durable steps relay
@@ -127,10 +128,6 @@ message AddRelay {
     // only once they have arrived: forwarded after the bind under load, they
     // would otherwise reach a driver that has already parked and be dropped.
     uint32 inbox_tail_count = 11;
-    // The controller parks a failed turn sent as `IterCommit.dead_letter`.
-    // Without it a steps driver ends the instance on a failed turn, because
-    // an older controller would journal the commit and drop the message.
-    bool dead_letter_turns = 12;
     // Effect results the Controller ships as `EffectResults` after this bind:
     // the ones it keeps for the instance's inputs above its floor. A steps
     // driver holds its first Tasklet until they have landed, as it does for
@@ -196,18 +193,6 @@ message RelayMessage {
 message RelayMessageResponse {
     bytes payload = 1;
     Error error = 2;
-}
-
-// Inverse of CellState. Sent by the Controller to a Runner SDK to
-// prime a freshly-spawned Relay's GenServer/struct state from a
-// previously-captured `state_binary`. Round-trips with the same opaque
-// SDK-internal serialization used by CellState. SDKs that do not
-// implement Apply respond with status="error" and an error coded
-// `state.apply_not_supported`.
-message CellApplyState {
-    string relay_id = 1;
-    string factory_id = 2;
-    bytes state_binary = 3;
 }
 
 // Sent by the SDK to the Controller on graceful shutdown (SIGTERM, Drop of
@@ -342,8 +327,7 @@ message IterCommit {
     // loop: the controller parks the message at `consumed_offset` in the
     // dead-letter queue, journals `dead_lettered` instead of `iter_committed`,
     // and only then answers; the driver then undoes the turn and takes the
-    // next message as iteration `iter + 1`. Sent only to a controller that set
-    // `AddRelay.dead_letter_turns`.
+    // next message as iteration `iter + 1`.
     optional DeadLetter dead_letter = 8;
 }
 
@@ -529,29 +513,6 @@ message PingResponse {
     string nonce = 1;
 }
 
-// SDK -> Controller, emitted as the FIRST frame on every newly-established
-// control stream after `handle_reconnect` runs. Preserves the runner's
-// identity across the reconnect so the Controller can compute a binding
-// delta instead of re-issuing every relay. `reason` is one of
-// `control_stream_broken | read_error | write_error | keepalive_timeout
-// | controller_requested`. Old Controllers that do not recognise this
-// variant silently skip it; new SDKs against an old Controller therefore
-// degrade to the pre-change "re-issue everything" behaviour.
-message RunnerReconnected {
-    string previous_id = 1;
-    string new_id = 2;
-    string reason = 3;
-}
-
-// Controller -> SDK. Issued only when the Controller has reassigned the
-// SDK's bindings to a different runner session during the disconnect
-// window (i.e. `bindings_for_runner(previous_id)` is empty). The SDK
-// updates its in-memory `runner_id` in place; subsequent
-// `RunnerReconnected` emissions carry the new id.
-message ReassignRunnerId {
-    string new_id = 1;
-}
-
 // SDK -> Controller. Emitted by an instance when it reaches an exit trigger
 // (chain complete, ctx.complete, loop terminal, duration, or external stop).
 // `status` is "ok" on a steps run's clean completion, "completed" on a flow
@@ -581,15 +542,17 @@ message RelayCompleted {
 // stream attach — grants carry it, and a reconnect re-runs the handshake with
 // a new id so grants in flight for a dead session are discardable by
 // construction. `window_bytes` is the byte budget the SDK may have un-fsynced
-// on the controller; `low_watermark_bytes` is the controller's grant-batching
-// threshold (informational to the SDK). The SDK acknowledges by returning an
+// on the controller. The SDK acknowledges by returning an
 // encoded CreditWindowAck as the CommandResponse raw_data; a pre-credit SDK
 // that does not recognise the variant never acks and keeps the legacy
 // CellMailboxStatus behaviour.
 message CreditWindowInit {
     string stream_id = 1;
     uint64 window_bytes = 2;
-    uint64 low_watermark_bytes = 3;
+    // 3 was `low_watermark_bytes`: the grant-batching threshold stays the
+    // controller's own.
+    reserved 3;
+    reserved "low_watermark_bytes";
 }
 
 // SDK -> Controller, as the CommandResponse raw_data of CreditWindowInit.
@@ -820,17 +783,6 @@ message AdminRequest {
 message AdminResponse {
     string result = 1;
     Error error = 2;
-}
-
-// SDK -> Controller, one-way, over the "control_command" payload_id: the
-// process of relay instance `relay_id` exited abnormally, so the runner
-// no longer hosts it. `reason` renders the exit reason for the log, the
-// telemetry and the park reason; nothing branches on it. The runner sends it
-// again on every new control stream until the Controller answers with
-// `AddRelay` or `RemRelay` for the id.
-message RelayExited {
-    string relay_id = 1;
-    string reason = 2;
 }
 
 // Controller -> SDK: what each tasklet of relay instance `relay_id` is doing,

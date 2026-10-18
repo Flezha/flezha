@@ -25,7 +25,7 @@ fn a_per_input_pass_calls_from_its_last_stage_and_reads_the_outcome_next() {
     let _host = turn_host(mid, Arc::default());
     let mut node = RunnerNode::new("test-ns".to_string());
     let wire = Wire::new();
-    bind_turns(&mut node, &id, "turn-call-1", true, None);
+    bind_turns(&mut node, &id, "turn-call-1", None);
 
     let before = crate::util::wall_now_ms();
     feed(&wire, &node, "turn-call-1", b"hello");

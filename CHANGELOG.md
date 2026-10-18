@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+### Removed: control messages and fields no side used (breaking)
+
+The runner protocol drops what nothing sent or read. A runner whose relay instance dies is
+rebound by the convergence loop as any lost binding is; a failed turn of a `per_input`
+keep-progress loop is dead-lettered, as every controller already asked.
+
+- **BREAKING:** command tags 11 (`CellApplyState`), 20 (`RunnerReconnected`), 21
+  (`ReassignRunnerId`) and 38 (`RelayExited`) are removed from `runner_commands.proto` and
+  reserved, with their messages.
+- **BREAKING:** the fields `AddRelay.run` (4), `AddRelay.dead_letter_turns` (12) and
+  `CreditWindowInit.low_watermark_bytes` (3) are removed and reserved; `:credit_low_watermark_bytes`
+  stays the controller's own setting.
+- **BREAKING:** the handshake init frame no longer carries `factory_ids`; `factories[].id` names
+  each factory.
+- **BREAKING:** the error code `state.apply_not_supported` is removed, with
+  `flz_core::Code::ApplyNotSupported`; `flz_core::steps::Resume` loses `dead_letter_turns`.
+- **BREAKING:** the telemetry event `[:flezha, :relay, :exited]` and its observability signal and
+  hook source `relay_exited` of `flezha_relay` are removed.
+
 ### Changed: every observability source says what it is and what it said recently
 
 `flz observe sources` and `Observability.list_sources/1` now answer each source's description,

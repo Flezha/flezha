@@ -380,7 +380,6 @@ fn a_grant_frees_the_sender_a_compaction_waits_behind() {
     let init = crate::pb::CreditWindowInit {
         stream_id: session.clone(),
         window_bytes: WINDOW,
-        low_watermark_bytes: WINDOW / 2,
     };
     controller.request("ref-init", Command::CreditWindowInit(init));
     assert_eq!(controller.answer("ref-init").status, "success");

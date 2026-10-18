@@ -670,7 +670,6 @@ SDK raises or returns its one error type carrying them.
 | Code | Class | Exit | Message | Hint |
 |---|---|---|---|---|
 | `state.apply_failed` | invalid | 2 | the state could not be applied: {reason} |  |
-| `state.apply_not_supported` | unavailable | 7 | this runner does not apply state to a live relay |  |
 | `state.bad_cell_path` | invalid | 2 | '{path}' is not a Cell path; write it as `<relay>/<tasklet>/<cell_key>` |  |
 | `state.bad_live_path` | invalid | 2 | '{path}' is not a live state path; write it as `<relay>/<tasklet>[/<cell_key>]` |  |
 | `state.cell_busy` | unavailable | 7 | Cell '{cell}' is inside an activation older than {seconds}s |  |

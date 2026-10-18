@@ -369,11 +369,12 @@ resets the strike.
 
 Runner→controller flow control on the state stream is credit-based: park, never drop. On the
 first `cell_state_change` of a stream attach the `StreamChannel` offers
-`CreditWindowInit{stream_id, window_bytes, low_watermark_bytes}` over the control channel
+`CreditWindowInit{stream_id, window_bytes}` over the control channel
 (`:credit_flow_control_enabled` / `FLEZHA_CREDIT_FLOW_CONTROL=false` is the off switch). The
 window is `PersistenceResolver.credit_window_bytes/2` (per-class map, default
 `:wal_high_watermark_bytes`, capped by the namespace's `max_mailbox_bytes_total` quota), the low
-watermark `:credit_low_watermark_bytes` (default half the window), the `stream_id` an opaque
+watermark `:credit_low_watermark_bytes` (default half the window, kept by the controller and never
+sent), the `stream_id` an opaque
 session minted per attach. The SDK answers `CreditWindowAck`; from then on:
 
 - **Debit on receipt** — every frame's wire size passes `CreditLedger.admit/2`; a frame arriving on

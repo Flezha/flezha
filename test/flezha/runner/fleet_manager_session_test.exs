@@ -746,7 +746,6 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
       Map.merge(
         %{
           "namespace" => namespace,
-          "factory_ids" => [],
           "factories" => [],
           "stable_id" => "stand-in-#{System.unique_integer([:positive])}"
         },

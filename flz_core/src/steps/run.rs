@@ -1675,12 +1675,10 @@ impl Decide<'_, '_, '_> {
     }
 
     /// Whether `failure` ends only its turn: a tasklet's failure, not its
-    /// commit's, in a `PerInput` keep-progress loop with no stop asked, bound
-    /// by a controller that parks the turn.
+    /// commit's, in a `PerInput` keep-progress loop with no stop asked.
     fn fails_turn(&self, failure: &Failure) -> bool {
         self.r.spec.each == Each::PerInput
             && self.r.spec.on_failure == OnFailure::KeepProgress
-            && self.s.dead_letter_turns
             && !failure.refused
             && !self.cancelled()
     }

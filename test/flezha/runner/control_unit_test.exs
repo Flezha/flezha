@@ -60,7 +60,6 @@ defmodule FlezhaTest.Runner.ControlUnitAddRelayTest do
     assert_receive {:sent, {:add_relay, add}}, 500
     assert add.resume_cell_count == 0
     assert add.task_journal == journal
-    assert add.dead_letter_turns
   end
 
   test "a bind carries how many effect results it ships", %{runner_id: runner_id} do
@@ -76,7 +75,6 @@ defmodule FlezhaTest.Runner.ControlUnitAddRelayTest do
     assert_receive {:sent, {:add_relay, add}}, 500
     assert add.resume_cell_count == 0
     assert add.task_journal == nil
-    assert add.dead_letter_turns
   end
 end
 
@@ -228,10 +226,8 @@ defmodule FlezhaTest.Runner.ControlUnitPartitionTest do
         relay_id: add.relay_id,
         factory_id: add.factory_id,
         init_values: add.init_values,
-        run: add.run,
         resume_cell_count: add.resume_cell_count,
-        task_journal: add.task_journal,
-        dead_letter_turns: add.dead_letter_turns
+        task_journal: add.task_journal
       })
 
     assert IO.iodata_to_binary(encoded) == IO.iodata_to_binary(reference)

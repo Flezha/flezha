@@ -330,37 +330,30 @@ header straight off the input slice without copying.
 ## 4. Protobuf Command Protocol
 
 Control-plane commands are Protocol Buffers v3 (`proto3`, package
-`runner_commands`). The authoritative definition is
-`protobufs/runner_commands.proto`; the generated Rust module is
+`runner_commands`). The authoritative definition, with every message and
+field this document names, is
+[`protobufs/runner_commands.proto`](../../protobufs/runner_commands.proto); the generated Rust module is
 `flz_core/src/generated/runner_commands.rs`, written by `protobufs/regen.sh`
 (the `proto-fresh` gate fails when it is stale), and the controller's Elixir
 decoder is `Flezha.Runner.CommandsProto` (Protox).
 
 ### Envelope
 
-```protobuf
-message CommandRequest {
-    string reference_id = 1;
-    oneof command { ... }            // one of the 34 variants below
-}
-
-message CommandResponse {
-    string reference_id = 1;         // echoes the request
-    string status = 2;               // "success" | "error"
-    repeated Error errors = 3;       // why, when status is "error" (§10)
-    bytes raw_data = 4;              // command-specific reply payload, often empty
-}
-
-message Error {
-    string code = 1;                 // stable, family.snake (docs/errors.md)
-    string class = 2;                // internal | invalid | unreachable | denied | not_found | conflict | unavailable
-    string message = 3;              // one plain sentence
-    string details_json = 4;         // a JSON object: the facts the message names
-    string hint = 5;                 // the next command, or empty
-}
-```
+A `CommandRequest` carries an opaque `reference_id` and one variant of its
+`command` oneof (below). A `CommandResponse` echoes the request's
+`reference_id` and carries a `status` (`"success"` or `"error"`), the
+`errors` that say why when the status is `"error"` (§10), and `raw_data`, the
+command-specific reply payload, often empty. An `Error` carries a stable
+`code` spelled `family.snake` ([`docs/errors.md`](../errors.md)), its `class`
+(`internal`, `invalid`, `unreachable`, `denied`, `not_found`, `conflict` or
+`unavailable`), one plain `message`, `details_json` (a JSON object of the
+facts the message names) and a `hint` naming the next command, empty when
+there is none.
 
 ### The `command` oneof
+
+Tags 2 to 43 are the 42 tag numbers of the oneof; four of them are reserved
+and never reused.
 
 | Tag | Variant | Direction | Reply |
 |-----|---------|-----------|-------|
@@ -373,17 +366,21 @@ message Error {
 | 8 | `CellState` | C → R | `CommandResponse` (`raw_data` = JSON state; frame metadata `flz.change_seq`) |
 | 9 | `RunnerDisconnect` | C → R | `CommandResponse` |
 | 10 | `RelayMessage` | C → R | `CommandResponse` (`raw_data` = `RelayMessageResponse`) |
-| 11 | `CellApplyState` | C → R | `CommandResponse` (reserved; see §6) |
+| 11 | reserved (was `CellApplyState`) | — | — |
 | 12 | `RunnerShutdownNotification` | R → C | `RunnerShutdownAck` (tag 13) under the same `reference_id` |
 | 13 | `RunnerShutdownAck` | C → R | none |
 | 14 | `RestoreInitState` | C → R | `CommandResponse` (`raw_data` = `RestoreInitStateResponse`, tag 15) |
+| 15 | `RestoreInitStateResponse` | R → C | rides only as `CommandResponse.raw_data` |
 | 16 | `CompactCell` | C → R | `CommandResponse` (`raw_data` = `CompactCellResponse`, tag 17) |
+| 17 | `CompactCellResponse` | R → C | rides only as `CommandResponse.raw_data` |
 | 18 | `CellMailboxStatus` | C → R | none (one-way) |
 | 19 | `Ping` | C → R | `CommandResponse` (`raw_data` = `PingResponse`) |
-| 20, 21 | `RunnerReconnected`, `ReassignRunnerId` | — | reserved; never emitted (§6) |
+| 20 | reserved (was `RunnerReconnected`) | — | — |
+| 21 | reserved (was `ReassignRunnerId`) | — | — |
 | 22 | `RelayCompleted` | R → C | none |
 | 23 | `StepsStop` | C → R | `CommandResponse` |
 | 24 | `CreditWindowInit` | C → R | `CommandResponse` (`raw_data` = `CreditWindowAck`, tag 25) |
+| 25 | `CreditWindowAck` | R → C | rides only as `CommandResponse.raw_data` |
 | 26 | `CreditGrant` | C → R | generic `CommandResponse`, ignored |
 | 27 | `ParkPayloadAck` | C → R | generic `CommandResponse`, ignored |
 | 28 | `TaskCommit` | R → C | `TaskCommitResponse` (tag 29) under the same `reference_id` |
@@ -396,12 +393,12 @@ message Error {
 | 35 | `SpawnStepsResponse` | C → R | none |
 | 36 | `AdminRequest` | R → C | `AdminResponse` (tag 37) under the same `reference_id` |
 | 37 | `AdminResponse` | C → R | none |
-| 38 | `RelayExited` | R → C | none |
+| 38 | reserved (was `RelayExited`) | — | — |
 | 39 | `ConnectRefused` | C → R | none; the controller closes the stream after it |
+| 40 | `EffectResult` | R → C | `EffectResultAck` (tag 41) under the same `reference_id` |
+| 41 | `EffectResultAck` | C → R | none |
+| 42 | `EffectResults` | C → R | `CommandResponse` once the batch is stored |
 | 43 | `TaskletActivity` | C → R | `CommandResponse` (`raw_data` = `TaskletActivityResponse`) |
-
-Tags 15, 17 and 25 are message types that only ever ride as a
-`CommandResponse.raw_data`, never as a `CommandRequest`.
 
 ### Request/response pattern
 
@@ -409,17 +406,16 @@ Tags 15, 17 and 25 are message types that only ever ride as a
   payload id `control_command` and (normally) empty metadata; a runner answers
   under the payload id it received.
 - **Correlation.** `reference_id` is opaque; the runner echoes it in its
-  `CommandResponse`. A runner-initiated request (tags 12, 28, 30, 34) is
-  answered by a controller-initiated `CommandRequest` carrying the same
-  `reference_id`.
-- **Runner-initiated variants.** Tags 12, 22, 28, 30, 32, 33 and 34 travel
-  runner → controller in the same envelope. The controller decodes every
+  `CommandResponse`. A runner-initiated request (tags 12, 28, 30, 34, 36,
+  40) is answered by a controller-initiated `CommandRequest` carrying the
+  same `reference_id`.
+- **Runner-initiated variants.** Tags 12, 22, 28, 30, 32, 33, 34, 36 and 40
+  travel runner → controller in the same envelope. The controller decodes every
   inbound `control_command` frame as a `CommandRequest` first and dispatches a
   recognised runner-initiated tag there; anything else goes to the
   `ControlUnit` as a `CommandResponse`.
 - **Unknown variants.** Both sides skip an unrecognised oneof tag via the
-  decoder's unknown-field handling (a `flz_core` runner treats tags 20 and 21
-  as `NotificationIgnore`).
+  decoder's unknown-field handling.
 - **Reply metadata.** A handler may attach metadata to the reply **frame**
   (`CellState` → `flz.change_seq`).
 
@@ -447,8 +443,7 @@ One frame, payload id `connect_control_channel`, empty metadata, JSON message:
 ```json
 {
   "namespace": "<namespace>",
-  "factory_ids": ["<factory_id>", ...],
-  "factories": [{"id": "<factory_id>", "description": null, "sdk_lang": 1, "kind": "steps"}, ...],
+  "factories": [{"id": "<factory_id>", "description": null, "sdk_lang": 1, "run": "steps"}, ...],
   "stable_id": "<namespace>-<profile_hash8>-<rand6>",
   "incarnation": "<opaque, minted once per process>",
   "namespace_secret": "flzt_<base32>"
@@ -463,16 +458,16 @@ One frame, payload id `connect_control_channel`, empty metadata, JSON message:
   answered with one `ConnectRefused { error }` frame (tag 39) before the
   controller closes the stream, so the runner reports the code (for example
   `runner.namespace_not_proven`) instead of retrying in silence.
-- `factory_ids` / `factories` — every factory the runner currently declares
-  (`factories` adds an optional `description`, the class's `sdk_lang` and its
-  `kind`, `"flow"` or `"steps"`), read at write time so a reconnect
+- `factories` — every factory the runner currently declares, by `id`, with
+  an optional `description`, the class's `sdk_lang` and its `run`, `"flow"`
+  or `"steps"` (a steps class adds `each` and `on_failure`), read at write time so a reconnect
   resyncs post-start defines/removes: the init frame is the resync of record.
   An entry may also carry `api` and `graph`, as `FactoryDecl` does (see
   [ApiEntry](#apientry) and [RelayGraph](#relaygraph)).
   The controller establishes each factory's language and kind from the first
   announcement and places only on a runner announcing both as established; an
-  entry with no kind never places. A start names only the factory, so the kind
-  on `AddRelay` is the announced one.
+  entry with no kind never places. A start names only the factory: the runner
+  runs it as its class declares.
 - `stable_id` — the runner's durable, self-owned identity, present on **every**
   connect (`profile_hash8` hashes the declared factory set order-independently,
   `rand6` is a per-process random suffix). The controller binds relays to
@@ -625,26 +620,18 @@ path is intact.
 
 ### AddRelay
 
-```protobuf
-message AddRelay {
-    string relay_id = 1;
-    string factory_id = 2;
-    string init_values = 3;            // JSON; "" for none
-    string kind = 4;                   // the announced kind: "flow" | "steps"; empty ⇒ "flow"
-    uint32 resume_cell_count = 5;      // RestoreInitState frames to expect on this bind
-    TaskJournalState task_journal = 6; // steps crash-resume state (§11)
-    uint32 partition_index = 7;
-    uint32 partition_count = 8;        // < 2 ⇒ unpartitioned
-    uint32 key_group_from = 9;         // inclusive key-group range, 0..255
-    uint32 key_group_to = 10;
-    uint32 inbox_tail_count = 11;      // input-log records the bind re-forwards
-    bool dead_letter_turns = 12;       // the controller parks a failed turn (IterCommit.dead_letter)
-}
-```
+`AddRelay` carries `relay_id`, `factory_id`, `init_values` (JSON; empty for
+none), `resume_cell_count` (the `RestoreInitState` frames to expect on this
+bind), `task_journal` (steps crash-resume state, §11), the partition identity
+(below), `inbox_tail_count` (the input-log records the bind re-forwards) and
+`effect_result_count` (the effect results shipped as `EffectResults` after the
+bind). Fields 4 and 12 are reserved: the runner runs a class as the class
+declares, and every controller parks a failed turn sent as
+`IterCommit.dead_letter`.
 
 | Field | Value |
 |-------|-------|
-| Behaviour | Create an instance of `factory_id` under `relay_id`. `"flow"`: a flow relay whose non-empty `init_values` JSON is applied as initial state in the tasklet-keyed shape of "Relay state JSON shape" above. `"steps"`: a steps instance, whose run is a pass sheet its events advance, its non-empty `init_values` applied as initial state in the same shape, its input the messages that arrive on its entry channels; a durable instance holds its first tasklet until `resume_cell_count` restores have landed. For either run, while any of its `inbox_tail_count` owed input-log records has not arrived its idle deadline is 60 s instead of its class's `sleep_after` |
+| Behaviour | Create an instance of `factory_id` under `relay_id`. A flow class: a flow relay whose non-empty `init_values` JSON is applied as initial state in the tasklet-keyed shape of "Relay state JSON shape" above. A steps class: a steps instance, whose run is a pass sheet its events advance, its non-empty `init_values` applied as initial state in the same shape, its input the messages that arrive on its entry channels; a durable instance holds its first tasklet until `resume_cell_count` restores and `effect_result_count` effect results have landed. For either run, while any of its `inbox_tail_count` owed input-log records has not arrived its idle deadline is 60 s instead of its class's `sleep_after` |
 | Idempotency | A duplicate `relay_id` (a reconnect re-issue) is answered `success` without re-registering |
 | Reply | `raw_data` = `AddRelayResponse { map<string,string> metadata }` — empty when the class declares nothing |
 | Errors | factory not found; JSON parse / deserialization failure; `PartitionsWithoutPerInputLoop: ...`; `PartitionsWithoutKeyedTasklet: ...` |
@@ -726,37 +713,6 @@ under a 60 s bound, until every Cell writer of the instance owes nothing; an
 entry still held for a stage marker is owed nothing. Field 5 was a `direct_outputs` count and is
 reserved; a runner that still sets it is simply not read.
 
-### RelayExited
-
-`RelayExited { relay_id, reason }` travels runner → controller,
-one-way, when the process of a relay instance of either kind exits
-abnormally: any reason but a clean stop, which a `RemRelay`, a finished
-steps run or a graceful shutdown produce. The runner has already dropped the
-instance, so nothing it reads is routed to the dead process and the next
-`AddRelay` for the id starts a fresh one. `reason` renders the exit reason
-for the log, the telemetry and the park reason; nothing branches on it. The
-runner keeps the report until an `AddRelay` or `RemRelay` names the id,
-and sends it again after every `ConnectSocket` it answers, because a report
-written while no control stream is bound reaches no one.
-
-The controller admits it through the instance's ownership record, as every
-frame naming a relay is: a runner that does not own the instance is told
-`RemRelay` once and nothing else happens. An admitted report first flushes
-the runner's stream channels, so every frame the dead incarnation wrote is read,
-and then reaches the instance's Overwatch, which acts only on a current report:
-the instance is bound to the reporting session, no bind is in flight, it is
-neither suspended nor already parked, and no completion is recorded for it. A
-report that lands while a bind is in flight is held and judged against the
-binding that bind adopts, since the incarnation it started can die first. A
-current report parks the instance with the reason
-`{:relay_exited, reason}`, and the convergence loop rebinds it as it
-un-parks any relay: `AddRelay` with the resume state, the persisted Cells
-restored, then the input log re-forwarded above the confirmed floor. A park
-this report caused counts as repaired only once the rebound instance has stayed
-bound for the stable window, so one that dies on every bind is retried on its
-backoff rung. No runner sends this frame today: the `flz_core` runtime, every
-SDK's, decodes it as a notification it never acts on.
-
 ### CellState
 
 | Field | Value |
@@ -834,14 +790,6 @@ picked during that same walk, keeping the newest `limit` in a bounded heap.
 An older runner that cannot decode the command drops it without a reply, and
 one that predates `cells_of` answers without `cells`.
 
-### CellApplyState
-
-`CellApplyState { relay_id, factory_id, state_binary: bytes }` is
-reserved: the controller never sends it. A `flz_core` runner answers an
-unknown instance with `runtime.relay_not_found` and a known one with
-`status: "error"` and the code `state.apply_not_supported`, the code an SDK
-without apply support MUST return.
-
 ### MigrationSerialization
 
 `MigrationSerialization { relay_id }` serializes the instance's whole state
@@ -894,12 +842,6 @@ the controller's `cross_node_request_timeout` ceiling (10 s).
 enqueued on the Overwatch (not after it is applied) and unconditionally — a
 missing Overwatch (already migrated to a peer controller) still gets an ack so
 the runner can exit.
-
-### RunnerReconnected / ReassignRunnerId
-
-Tags 20 and 21 are defined in the proto but **never emitted**: a reconnect is
-resolved entirely by the re-presented `stable_id` in the handshake (§5). A
-`flz_core` runner drops either variant as a notification if one ever arrives.
 
 ### UpdateFactories
 
@@ -1177,8 +1119,8 @@ Total frame: 32 + 4 + 24 = 60 bytes
 on the wire is that one message: a command reply, `TaskCommitResponse`,
 `IterCommitResponse`, `RelayMessageResponse`, `SpawnStepsResponse`,
 `AdminResponse` and `ConnectRefused`. The receiver branches on `code` (for
-example `runtime.class_not_registered`, `state.cell_key_without_tasklet`,
-`state.apply_not_supported`), never on `message`, which may be reworded.
+example `runtime.class_not_registered`, `state.cell_key_without_tasklet`),
+never on `message`, which may be reworded.
 `class` tells a caller what it can do about it, and `details_json` carries the
 facts the message names. Every code, its class and its message are listed in
 [`../errors.md`](../errors.md).
@@ -1435,22 +1377,14 @@ its parts from `0` again.
 
 ### Control command `RestoreInitState` (controller → runner)
 
-```protobuf
-message RestoreInitState {
-    bytes  cell_id = 1;                // structured cell_id_bytes
-    bytes  snapshot_bytes = 2;           // full State, empty when none
-    bytes  change_log_bytes = 3;         // WAL tail, on-disk framing below
-    bool   has_compensation_intent = 4;  // saga crash-resume markers
-    bool   has_compensation_done = 5;
-    uint64 terminal_seq = 6;             // highest seq the shipped state covers
-    bytes  snapshot_header = 7;          // the snapshot's stored 16-byte header
-}
-message RestoreInitStateResponse {
-    bytes  cell_id = 1;
-    uint64 terminal_seq = 2;
-    bool   migrated = 3;                 // a record was read at an older schema version
-}
-```
+`RestoreInitState` and its reply `RestoreInitStateResponse` are defined in
+[`runner_commands.proto`](../../protobufs/runner_commands.proto). The request names the Cell by its structured
+identity bytes (`cell_id`) and ships its full `snapshot_bytes` (empty when
+none) with the snapshot's stored 16-byte `snapshot_header`, its WAL tail as
+`change_log_bytes`, the saga crash-resume markers `has_compensation_intent` and
+`has_compensation_done`, and `terminal_seq`, the highest seq the shipped state
+covers. The reply echoes `cell_id` and `terminal_seq` and sets `migrated` when
+a record was read at an older schema version.
 
 Each record inside `change_log_bytes` uses the controller's on-disk WAL
 framing, back to back:
@@ -1527,10 +1461,8 @@ it never declared.
 
 ### Control command `CompactCell` (controller → runner)
 
-```protobuf
-message CompactCell          { bytes cell_id = 1; }
-message CompactCellResponse  { bytes cell_id = 1; uint64 snapshot_seq = 2; uint64 snapshot_bytes_size = 3; }
-```
+`CompactCell { cell_id }` is answered with `CompactCellResponse { cell_id,
+snapshot_seq, snapshot_bytes_size }` ([`runner_commands.proto`](../../protobufs/runner_commands.proto)).
 
 Issued when the Cell's un-snapshotted WAL exceeds its compaction trigger
 (`FLEZHA_COMPACT_AFTER_BYTES`, default 8 MiB, overridable per class through
@@ -1544,9 +1476,8 @@ drained state stands at — the writer treats it as a truncation point.
 
 ### Control command `CellMailboxStatus` (controller → runner)
 
-```protobuf
-message CellMailboxStatus { bytes cell_id = 1; string status = 2; }       // "full" | "open"
-```
+`CellMailboxStatus { cell_id, status }` carries `status` `"full"` or
+`"open"` ([`runner_commands.proto`](../../protobufs/runner_commands.proto)).
 
 One-way back-pressure signal for sessions that are **not** credit-speaking
 (an SDK that never acked `CreditWindowInit`, or a controller with
@@ -1557,15 +1488,12 @@ and drops it — its send path is already bounded by the mailbox policies.
 
 ### Control command `CreditWindowInit` (controller → runner)
 
-```protobuf
-message CreditWindowInit {
-    string stream_id = 1;            // opaque credit-session id, fresh per attach
-    uint64 window_bytes = 2;         // un-fsynced byte budget for the stream
-    uint64 low_watermark_bytes = 3;  // the controller's grant-batching threshold
-}
-message CreditWindowAck  { string stream_id = 1; }     // runner → controller, as raw_data
-message CreditGrant      { string stream_id = 1; uint64 bytes = 2; }
-```
+`CreditWindowInit { stream_id, window_bytes }` offers an opaque
+credit-session id, fresh per attach, and the stream's un-fsynced byte budget;
+the runner answers `CreditWindowAck { stream_id }` as `raw_data`, and the
+controller then returns credit as `CreditGrant { stream_id, bytes }`
+([`runner_commands.proto`](../../protobufs/runner_commands.proto)). Field 3 of `CreditWindowInit` is reserved:
+the low watermark grants are batched on is the controller's own.
 
 Offered on the **first** `cell_state_change` frame of a stream attach, so
 the window resolves per Relay from that frame's class
@@ -1582,7 +1510,7 @@ From the ack on, every `cell_state_change` frame debits its full wire size
 before the write; an exhausted window parks the sending thread — park, never
 drop (`credit_parked` in the heartbeat). `CreditGrant` is one-way and minted
 only when appended bytes become durable: on WAL fsync the controller sends one
-batched grant when the un-fsynced buffer falls below `low_watermark_bytes` —
+batched grant when the un-fsynced buffer falls below that low watermark —
 never per record, and a stalled fsync mints nothing. Credit never crosses
 sessions: a reconnect re-runs `CreditWindowInit` with a fresh `stream_id`, and
 a grant for another `stream_id` is discarded. The runner applies
@@ -1594,9 +1522,7 @@ ledger is a protocol violation: the controller sheds it
 
 ### Control command `ParkPayloadAck` (controller → runner)
 
-```protobuf
-message ParkPayloadAck { string park_id = 1; }   // echoes ParkBody.park_id
-```
+`ParkPayloadAck { park_id }` echoes `ParkBody.park_id` ([`runner_commands.proto`](../../protobufs/runner_commands.proto)).
 
 One-way durability ack for a `park_payload` frame, sent only after the DLQ
 entry is fsynced. On receipt the runner wakes the dispatch thread blocked in
@@ -1605,30 +1531,22 @@ receives it keeps the Cell held and re-sends the park — delay, never loss.
 
 ### Control command `AddRelay.task_journal` (controller → runner)
 
-```protobuf
-message TaskHandoffItem   { uint32 channel_id = 1; bytes payload = 2; }   // channel codec bytes of one value
-message TaskCommittedTask {
-    uint32 task_idx = 1; uint32 iter = 2; repeated bytes cells_ran = 3;
-    bool completes = 4; bytes result = 5;          // the tasklet's own `ctx.complete`
-    optional TimerTrigger trigger = 6;             // the firing whose pass this task was the root of
-}
-message TaskEdgeHandoff   { uint32 task_idx = 1; repeated TaskHandoffItem handoff = 2; }
-
-message TaskJournalState {
-    repeated uint32 committed_task_idxs = 1;       // committed inside the in-flight iteration — skipped
-    uint32 iter = 2;                               // the iteration to resume at
-    repeated TaskHandoffItem handoff = 3;          // previous iteration's terminal batch
-    repeated TaskCommittedTask committed_tasks = 4;// every forward commit, for compensation planning
-    optional uint64 consumed_offset = 5;           // input-log offset the last committed iteration consumed; absent = none
-    reserved 6, 7;                                 // where an instance sleeps is not the journal's
-    repeated TaskCommittedTask rewind_undo = 8;    // unwound by a rewind, not yet compensated
-    repeated TaskEdgeHandoff task_handoffs = 9;    // in-flight iteration, per committed task
-    bool   completed = 10;                         // the last committed iteration ended the instance
-    bytes  result = 11;                            // and ended it with this
-    string entry_channel = 12;                     // the chain the last committed iteration ran
-    optional uint64 released_offset = 13;          // highest offset released by a commit or an unread dead letter
-}
-```
+`AddRelay.task_journal` is a `TaskJournalState` ([`runner_commands.proto`](../../protobufs/runner_commands.proto)):
+`committed_task_idxs`, the tasks committed inside the in-flight iteration,
+which are skipped; `iter`, the iteration to resume at; `handoff`, the previous
+iteration's terminal batch, each `TaskHandoffItem` a channel id and the
+channel codec bytes of one value; `committed_tasks`, every forward commit, for
+compensation planning; `consumed_offset`, the input-log offset the last
+committed iteration consumed (absent: none); `rewind_undo`, the tasks a rewind
+unwound and nothing has compensated yet; `task_handoffs`, the handoff of each
+committed task of the in-flight iteration; `completed` and `result`, set when
+the last committed iteration ended the instance, with that result;
+`entry_channel`, the chain the last committed iteration ran; and
+`released_offset`, the highest offset released by a commit or an unread dead
+letter. Fields 6 and 7 are reserved: where an instance sleeps is not the
+journal's. Each `TaskCommittedTask` carries `task_idx`, `iter`, `cells_ran`,
+`completes` and `result` (the tasklet's own `ctx.complete`) and `trigger`,
+the timer firing whose pass the task was the root of.
 
 Present only when the instance has a non-empty task-journal. A resumed instance
 skips `committed_task_idxs`, re-seeds each uncommitted child branch from its
@@ -1653,35 +1571,16 @@ the instance.
 
 ### Control command `TaskCommit` (runner → controller)
 
-```protobuf
-message CommittedCell {
-    bytes cell_id = 1;                // wire identity of a Cell the stage ran
-    optional uint64 seq = 2;          // last effect record it wrote in the stage
-    repeated string channels = 3;     // plugin channels those records wrote on
-    optional uint64 first_seq = 4;    // first effect record it wrote in the stage
-}
-
-message TaskCommit {
-    string relay_id = 1;
-    uint32 task_idx = 2;
-    uint32 iter = 3;                        // 0 for the single-pass chain
-    repeated CommittedCell cells_ran = 4;
-    repeated TaskHandoffItem handoff = 5;
-    reserved 6;
-    bool compensating = 7;                  // undo record, not forward progress
-    bool completes = 8;                     // this tasklet called `ctx.complete`
-    bytes result = 9;                       // with this result
-    optional TimerTrigger trigger = 10;     // on the root stage of a timer-fed pass only
-}
-
-message TimerTrigger {
-    string cell_key = 1;       // the Cell of the stage's tasklet whose timer fired
-    bool event_time = 2;       // the timer's kind: true = event time
-    uint64 scheduled_at = 3;   // its scheduled timestamp
-}
-
-message TaskCommitResponse { string relay_id = 1; uint32 task_idx = 2; Error error = 3; }
-```
+`TaskCommit`, `CommittedCell`, `TimerTrigger` and `TaskCommitResponse` are
+defined in [`runner_commands.proto`](../../protobufs/runner_commands.proto). A `TaskCommit` names `relay_id`,
+`task_idx` and `iter` (0 for the single-pass chain), the `cells_ran`, the
+`handoff`, `compensating` (an undo record, not forward progress), `completes`
+and `result` (the tasklet called `ctx.complete`, with this result) and, on the
+root stage of a timer-fed pass only, the `trigger`: the `cell_key` of the
+stage tasklet's Cell whose timer fired, whether it is an `event_time` timer,
+and its `scheduled_at` timestamp. Field 6 is reserved. The reply
+`TaskCommitResponse` carries `relay_id`, `task_idx` and an `error`, absent on
+success.
 
 Emitted at each tasklet barrier of a **durable structured** steps relay
 instance: tasklet `task_idx` completed forward on `cells_ran` and released
@@ -1762,20 +1661,16 @@ flow relay's do.
 
 ### Control command `IterCommit` (runner → controller)
 
-```protobuf
-message IterCommit {
-    string relay_id = 1;
-    uint32 iter = 2;
-    optional uint64 consumed_offset = 3;    // flz.offset of the input this iteration consumed; absent = none
-    repeated TaskHandoffItem handoff = 4;   // the iteration's terminal batch
-    bool completes = 5;                     // a tasklet of this iteration called `ctx.complete`
-    bytes result = 6;                       // the resolved result the instance ends with
-    string entry_channel = 7;               // the entry channel whose chain the iteration ran
-    optional DeadLetter dead_letter = 8;    // set when the iteration's turn failed
-}
-message DeadLetter { string tasklet = 1; uint32 attempts = 2; string error = 3; string cell_key = 4; }
-message IterCommitResponse { string relay_id = 1; uint32 iter = 2; Error error = 3; }
-```
+`IterCommit`, `DeadLetter` and `IterCommitResponse` are defined in
+[`runner_commands.proto`](../../protobufs/runner_commands.proto). An `IterCommit` names `relay_id` and `iter`,
+the `consumed_offset` (the `flz.offset` of the input the iteration consumed;
+absent: none), the iteration's terminal `handoff`, `completes` and `result` (a
+tasklet of the iteration called `ctx.complete`; the resolved result the
+instance ends with), the `entry_channel` whose chain the iteration ran, and
+`dead_letter`, set when the iteration's turn failed: the `tasklet` whose Cell
+failed, its `attempts`, the author's `error` and the Cell's `cell_key` (empty
+for a declared Cell). The reply `IterCommitResponse` carries `relay_id`,
+`iter` and an `error`, absent on success.
 
 Emitted at each **iteration** boundary of a looping durable structured
 instance, after the last tasklet's `TaskCommit` is acked. A class opts into
@@ -1802,7 +1697,7 @@ a class whose tasklets declare `compensate`. The instance enters iteration
 iteration.
 
 `dead_letter` marks an iteration whose turn failed, in a `per_input` loop
-declaring keep-progress bound with `AddRelay.dead_letter_turns`. The
+declaring keep-progress. The
 controller first parks the message at `consumed_offset`, read from the
 instance's input log, under the `_turn` slot, then appends ONE
 `dead_lettered` entry naming the DLQ entry instead of `iter_committed`, then
@@ -1810,19 +1705,13 @@ acks; a park that fails or does not answer in time is refused as
 `commit.turn_not_parked` and nothing is journaled. After the ack the driver
 undoes the turn's committed tasklets (one `TaskCommit` with `compensating`
 set per tasklet, no done markers) and takes the next message as `iter + 1`.
-A driver bound without `dead_letter_turns` ends the instance on the failure
-instead.
 
 ### Control command `IterPark` (runner → controller)
 
-```protobuf
-message IterPark {
-    string relay_id = 1;
-    uint32 iter = 2;               // the last COMMITTED iteration; 0 for a flow relay
-    uint64 wake_deadline_ms = 3;   // earliest pending processing-time timer; 0 = wake on input only
-    optional uint64 consumed_offset = 4;  // the last message parked unread; absent = none
-}
-```
+`IterPark` ([`runner_commands.proto`](../../protobufs/runner_commands.proto)) names `relay_id`, `iter` (the last
+committed iteration; 0 for a flow relay), `wake_deadline_ms` (the earliest
+pending processing-time timer; 0 wakes on input only) and `consumed_offset`
+(the last message parked unread; absent: none).
 
 An instance of either run whose class sleeps (`durable` `local` or `remote`
 with a `sleep_after`) asks to sleep with this once it has been idle past its

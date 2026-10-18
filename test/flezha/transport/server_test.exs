@@ -167,7 +167,6 @@ defmodule Flezha.Transport.ServerTest do
       connect =
         Jason.encode!(%{
           "namespace" => ns,
-          "factory_ids" => [],
           "factories" => [],
           "stable_id" => "handover-#{System.unique_integer([:positive])}"
         })

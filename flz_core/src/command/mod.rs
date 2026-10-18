@@ -11,7 +11,6 @@ use crate::pb::{CommandRequest, CommandResponse};
 use crate::runner::RunnerNode;
 use crate::{command, ErrorModel};
 
-mod cell_apply_state;
 pub mod cell_state;
 mod cell_status;
 mod compact;
@@ -147,7 +146,6 @@ fn classify(command: Option<Command>) -> Result<CommandActionType, CommandDecode
         Some(Command::CellState(c)) => regular(c),
         Some(Command::RunnerDisconnect(c)) => CommandActionType::RunnerDisconnect(Box::new(c)),
         Some(Command::RelayMessage(c)) => regular(c),
-        Some(Command::CellApplyState(c)) => regular(c),
         Some(Command::RestoreInitState(c)) => regular(c),
         Some(Command::CompactCell(c)) => regular(c),
         Some(Command::CellMailboxStatus(c)) => regular(c),
@@ -159,8 +157,6 @@ fn classify(command: Option<Command>) -> Result<CommandActionType, CommandDecode
         Some(Command::RunnerShutdownNotification(_))
         | Some(Command::RestoreInitStateResponse(_))
         | Some(Command::CompactCellResponse(_))
-        | Some(Command::RunnerReconnected(_))
-        | Some(Command::ReassignRunnerId(_))
         | Some(Command::RelayCompleted(_))
         | Some(Command::CreditWindowAck(_))
         | Some(Command::TaskCommit(_))
@@ -169,7 +165,6 @@ fn classify(command: Option<Command>) -> Result<CommandActionType, CommandDecode
         | Some(Command::UpdateFactories(_))
         | Some(Command::SpawnStepsRequest(_))
         | Some(Command::AdminRequest(_))
-        | Some(Command::RelayExited(_))
         | Some(Command::EffectResult(_))
         // The control reader answers a refusal itself, before the handshake
         // it ends; one arriving later has no session to refuse.
@@ -442,25 +437,6 @@ mod tests {
         match out {
             FrameOutcome::Command(_, ref_id) => assert_eq!(ref_id, "ref-shutdown"),
             FrameOutcome::PeerClosed => panic!("well-formed request must not be PeerClosed"),
-        }
-    }
-
-    #[test]
-    fn an_exit_report_is_a_notification_this_side_only_sends() {
-        let bytes = CommandRequest {
-            reference_id: "ref-exited".to_string(),
-            command: Some(Command::RelayExited(crate::pb::RelayExited {
-                relay_id: "op-1".to_string(),
-                reason: ":killed".to_string(),
-            })),
-        }
-        .encode_to_vec();
-
-        match get_handler("payload", &bytes).expect("an exit report must decode") {
-            FrameOutcome::Command(CommandActionType::NotificationIgnore, ref_id) => {
-                assert_eq!(ref_id, "ref-exited")
-            }
-            other => panic!("an exit report must be ignored, got {:?}", other),
         }
     }
 

@@ -152,10 +152,6 @@ defmodule Flezha.Convergence.Facts do
   @spec kinds() :: %{atom() => map()}
   def kinds(), do: @kinds
 
-  @doc "How long a restarted plugin must stay `:running` before its key resets."
-  @spec stable_uptime_ms() :: pos_integer()
-  def stable_uptime_ms(), do: Durations.get(:plugin_stable_uptime_ms)
-
   @doc "The kinds the loop holds in its map, with their entries."
   @spec holding() :: %{atom() => map()}
   def holding(), do: Map.filter(@kinds, fn {_, e} -> Map.get(e, :holds, false) end)
@@ -323,14 +319,11 @@ defmodule Flezha.Convergence.Facts do
   end
 
   # A park is repaired once the probe sees the relay unparked, and gone
-  # once the probe sees no relay at all. One a runner's exit report caused
-  # also waits until the rebound instance has stayed bound for the window a
-  # restarted plugin must stay up for, so one that dies again on every bind
-  # waits its key's rung rather than being rebound at bind speed.
-  defp repaired?(:relay_parked, ref, args, reality) do
+  # once the probe sees no relay at all.
+  defp repaired?(:relay_parked, ref, _args, reality) do
     case get_in(reality, [:relays, ref]) do
       %{bound_runner: :unknown} -> false
-      %{park_reason: reason} = observed -> is_nil(reason) and stayed_up?(args, observed)
+      %{park_reason: reason} -> is_nil(reason)
       _ -> true
     end
   end
@@ -344,7 +337,7 @@ defmodule Flezha.Convergence.Facts do
         false
 
       %{plugin_uptimes: uptimes} ->
-        Map.get(uptimes, plugin_id, -1) >= stable_uptime_ms()
+        Map.get(uptimes, plugin_id, -1) >= Durations.get(:plugin_stable_uptime_ms)
 
       _ ->
         true
@@ -370,11 +363,6 @@ defmodule Flezha.Convergence.Facts do
   end
 
   defp repaired?(_kind, _target, _args, _reality), do: false
-
-  defp stayed_up?(%{reason: {:relay_exited, _}}, observed),
-    do: (Map.get(observed, :bound_for_ms) || -1) >= stable_uptime_ms()
-
-  defp stayed_up?(_args, _observed), do: true
 
   defp nobody_names?(reality, runner_id) do
     reality

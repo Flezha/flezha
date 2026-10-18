@@ -119,7 +119,7 @@ defmodule FlezhaTest.Runner.StreamChannelCreditTest do
 
       init = establish_credit(ctx)
       assert init.window_bytes == 4_096
-      assert init.low_watermark_bytes == 2_048
+      assert :sys.get_state(ctx.channel).credit.low == 2_048
       assert counters_row(ctx.runner_id, ctx.name).credit_ledger_level == 4_096
     end
 

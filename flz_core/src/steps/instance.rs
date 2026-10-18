@@ -23,14 +23,13 @@ pub(crate) type Value = Arc<dyn Any + Send + Sync>;
 pub(crate) type CellPos = (usize, Option<Arc<str>>);
 
 /// What a bind carries into an instance: the input the controller still owes
-/// it and, for a steps relay, the Cell restores to wait for, the committed
-/// journal, and whether the controller parks a failed turn.
+/// it and, for a steps relay, the Cell restores to wait for and the committed
+/// journal.
 #[derive(Default)]
 pub struct Resume {
     pub expected: usize,
     pub owed_inbox: u32,
     pub journal: Option<JournalResume>,
-    pub dead_letter_turns: bool,
 }
 
 /// An instance's deadline on the poll core's deferred-wake list: `ParkIdle`
@@ -80,7 +79,6 @@ impl StepsRun {
         let released = resume.journal.as_ref().and_then(|j| j.released_offset);
         sheet.taken = sheet.taken.max(released);
         sheet.journal = resume.journal;
-        sheet.dead_letter_turns = resume.dead_letter_turns;
     }
 
     /// Take a message's input-log offset: `false` for one this instance
@@ -132,9 +130,6 @@ pub(crate) struct PassSheet {
     pub(crate) iter: u32,
     /// The bind is complete: the gate may open.
     pub(crate) bound: bool,
-    /// The controller parks a failed turn of a `PerInput` keep-progress loop,
-    /// so the loop goes on past it rather than ending.
-    pub(crate) dead_letter_turns: bool,
     pub(crate) expected: usize,
     pub(crate) restored: usize,
     /// The saga markers the restores shipped back: Cells whose tasklet

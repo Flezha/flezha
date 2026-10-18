@@ -5,7 +5,7 @@ pub struct CommandRequest {
     pub reference_id: ::prost::alloc::string::String,
     #[prost(
         oneof = "command_request::Command",
-        tags = "2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43"
+        tags = "2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 13, 14, 15, 16, 17, 18, 19, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 39, 40, 41, 42, 43"
     )]
     pub command: ::core::option::Option<command_request::Command>,
 }
@@ -31,8 +31,6 @@ pub mod command_request {
         RunnerDisconnect(super::RunnerDisconnect),
         #[prost(message, tag = "10")]
         RelayMessage(super::RelayMessage),
-        #[prost(message, tag = "11")]
-        CellApplyState(super::CellApplyState),
         #[prost(message, tag = "12")]
         RunnerShutdownNotification(super::RunnerShutdownNotification),
         #[prost(message, tag = "13")]
@@ -49,10 +47,6 @@ pub mod command_request {
         CellMailboxStatus(super::CellMailboxStatus),
         #[prost(message, tag = "19")]
         Ping(super::Ping),
-        #[prost(message, tag = "20")]
-        RunnerReconnected(super::RunnerReconnected),
-        #[prost(message, tag = "21")]
-        ReassignRunnerId(super::ReassignRunnerId),
         #[prost(message, tag = "22")]
         RelayCompleted(super::RelayCompleted),
         #[prost(message, tag = "23")]
@@ -85,8 +79,6 @@ pub mod command_request {
         AdminRequest(super::AdminRequest),
         #[prost(message, tag = "37")]
         AdminResponse(super::AdminResponse),
-        #[prost(message, tag = "38")]
-        RelayExited(super::RelayExited),
         #[prost(message, tag = "39")]
         ConnectRefused(super::ConnectRefused),
         #[prost(message, tag = "40")]
@@ -156,10 +148,6 @@ pub struct AddRelay {
     /// is the messages on its entry channels, never this document.
     #[prost(string, tag = "3")]
     pub init_values: ::prost::alloc::string::String,
-    /// How the class runs, as its runner announced it: "flow" or "steps".
-    /// The class itself decides; the SDK reads its own settings, not this.
-    #[prost(string, tag = "4")]
-    pub run: ::prost::alloc::string::String,
     /// Number of persisted Cells the Controller will ship RestoreInitState
     /// for on this (re)bind. Non-zero only when re-binding a durable steps relay
     /// relay that has WAL state on disk (crash-resume). A durable steps relay
@@ -198,11 +186,6 @@ pub struct AddRelay {
     /// would otherwise reach a driver that has already parked and be dropped.
     #[prost(uint32, tag = "11")]
     pub inbox_tail_count: u32,
-    /// The controller parks a failed turn sent as `IterCommit.dead_letter`.
-    /// Without it a steps driver ends the instance on a failed turn, because
-    /// an older controller would journal the commit and drop the message.
-    #[prost(bool, tag = "12")]
-    pub dead_letter_turns: bool,
     /// Effect results the Controller ships as `EffectResults` after this bind:
     /// the ones it keeps for the instance's inputs above its floor. A steps
     /// driver holds its first Tasklet until they have landed, as it does for
@@ -287,21 +270,6 @@ pub struct RelayMessageResponse {
     pub payload: ::prost::alloc::vec::Vec<u8>,
     #[prost(message, optional, tag = "2")]
     pub error: ::core::option::Option<Error>,
-}
-/// Inverse of CellState. Sent by the Controller to a Runner SDK to
-/// prime a freshly-spawned Relay's GenServer/struct state from a
-/// previously-captured `state_binary`. Round-trips with the same opaque
-/// SDK-internal serialization used by CellState. SDKs that do not
-/// implement Apply respond with status="error" and an error coded
-/// `state.apply_not_supported`.
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct CellApplyState {
-    #[prost(string, tag = "1")]
-    pub relay_id: ::prost::alloc::string::String,
-    #[prost(string, tag = "2")]
-    pub factory_id: ::prost::alloc::string::String,
-    #[prost(bytes = "vec", tag = "3")]
-    pub state_binary: ::prost::alloc::vec::Vec<u8>,
 }
 /// Sent by the SDK to the Controller on graceful shutdown (SIGTERM, Drop of
 /// the SDK handle, explicit disconnect()) for each currently-running
@@ -466,8 +434,7 @@ pub struct IterCommit {
     /// loop: the controller parks the message at `consumed_offset` in the
     /// dead-letter queue, journals `dead_lettered` instead of `iter_committed`,
     /// and only then answers; the driver then undoes the turn and takes the
-    /// next message as iteration `iter + 1`. Sent only to a controller that set
-    /// `AddRelay.dead_letter_turns`.
+    /// next message as iteration `iter + 1`.
     #[prost(message, optional, tag = "8")]
     pub dead_letter: ::core::option::Option<DeadLetter>,
 }
@@ -700,33 +667,6 @@ pub struct PingResponse {
     #[prost(string, tag = "1")]
     pub nonce: ::prost::alloc::string::String,
 }
-/// SDK -> Controller, emitted as the FIRST frame on every newly-established
-/// control stream after `handle_reconnect` runs. Preserves the runner's
-/// identity across the reconnect so the Controller can compute a binding
-/// delta instead of re-issuing every relay. `reason` is one of
-/// `control_stream_broken | read_error | write_error | keepalive_timeout
-/// | controller_requested`. Old Controllers that do not recognise this
-/// variant silently skip it; new SDKs against an old Controller therefore
-/// degrade to the pre-change "re-issue everything" behaviour.
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct RunnerReconnected {
-    #[prost(string, tag = "1")]
-    pub previous_id: ::prost::alloc::string::String,
-    #[prost(string, tag = "2")]
-    pub new_id: ::prost::alloc::string::String,
-    #[prost(string, tag = "3")]
-    pub reason: ::prost::alloc::string::String,
-}
-/// Controller -> SDK. Issued only when the Controller has reassigned the
-/// SDK's bindings to a different runner session during the disconnect
-/// window (i.e. `bindings_for_runner(previous_id)` is empty). The SDK
-/// updates its in-memory `runner_id` in place; subsequent
-/// `RunnerReconnected` emissions carry the new id.
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct ReassignRunnerId {
-    #[prost(string, tag = "1")]
-    pub new_id: ::prost::alloc::string::String,
-}
 /// SDK -> Controller. Emitted by an instance when it reaches an exit trigger
 /// (chain complete, ctx.complete, loop terminal, duration, or external stop).
 /// `status` is "ok" on a steps run's clean completion, "completed" on a flow
@@ -755,8 +695,7 @@ pub struct RelayCompleted {
 /// stream attach — grants carry it, and a reconnect re-runs the handshake with
 /// a new id so grants in flight for a dead session are discardable by
 /// construction. `window_bytes` is the byte budget the SDK may have un-fsynced
-/// on the controller; `low_watermark_bytes` is the controller's grant-batching
-/// threshold (informational to the SDK). The SDK acknowledges by returning an
+/// on the controller. The SDK acknowledges by returning an
 /// encoded CreditWindowAck as the CommandResponse raw_data; a pre-credit SDK
 /// that does not recognise the variant never acks and keeps the legacy
 /// CellMailboxStatus behaviour.
@@ -766,8 +705,6 @@ pub struct CreditWindowInit {
     pub stream_id: ::prost::alloc::string::String,
     #[prost(uint64, tag = "2")]
     pub window_bytes: u64,
-    #[prost(uint64, tag = "3")]
-    pub low_watermark_bytes: u64,
 }
 /// SDK -> Controller, as the CommandResponse raw_data of CreditWindowInit.
 /// Echoes the offered `stream_id`; on receipt the controller marks the
@@ -1058,19 +995,6 @@ pub struct AdminResponse {
     pub result: ::prost::alloc::string::String,
     #[prost(message, optional, tag = "2")]
     pub error: ::core::option::Option<Error>,
-}
-/// SDK -> Controller, one-way, over the "control_command" payload_id: the
-/// process of relay instance `relay_id` exited abnormally, so the runner
-/// no longer hosts it. `reason` renders the exit reason for the log, the
-/// telemetry and the park reason; nothing branches on it. The runner sends it
-/// again on every new control stream until the Controller answers with
-/// `AddRelay` or `RemRelay` for the id.
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct RelayExited {
-    #[prost(string, tag = "1")]
-    pub relay_id: ::prost::alloc::string::String,
-    #[prost(string, tag = "2")]
-    pub reason: ::prost::alloc::string::String,
 }
 /// Controller -> SDK: what each tasklet of relay instance `relay_id` is doing,
 /// read on request from figures the data path already keeps. Answered with an

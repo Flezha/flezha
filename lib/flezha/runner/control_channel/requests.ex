@@ -2,7 +2,7 @@ defmodule Flezha.Runner.ControlChannel.Requests do
   @moduledoc """
   The requests a runner's SDK initiates on its control stream: the ones that
   act on one relay (a graceful-shutdown notification, a steps relay
-  completion, an iteration park, an exit report, a durability barrier) and the ones scoped to
+  completion, an iteration park, a durability barrier) and the ones scoped to
   the runner or its namespace (a factory update, a tasklet-requested spawn,
   an admin call). A tasklet's effect result acts on one relay too.
 
@@ -251,30 +251,6 @@ defmodule Flezha.Runner.ControlChannel.Requests do
       with :ok <- TaskJournal.release_unread(relay_id, consumed_offset),
            do: Migration.suspend(namespace, relay_id, iter, park, bound)
     end)
-  end
-
-  @doc """
-  The runner reports that an instance's process exited abnormally and that it
-  no longer hosts it. Tell the instance's Overwatch, which parks it for the
-  convergence loop's rebind when the report is current.
-
-  Off this process, behind a flush of the runner's stream channels: every
-  frame the dead incarnation wrote is read before the rebind restores its
-  Cells, and the flush waits on channels this process does not own.
-  """
-  @spec relay_exited(map(), %RunnerCommands.RelayExited{}) :: :ok
-  def relay_exited(state, %RunnerCommands.RelayExited{} = exited) do
-    %RunnerCommands.RelayExited{relay_id: relay_id, reason: reason} = exited
-    %{namespace: namespace, runner_id: runner_id} = state
-
-    with {:ok, bound} <- Records.admit_to(state, relay_id, :relay_exited) do
-      Task.start(fn ->
-        StreamPool.flush_channels(runner_id)
-        Migration.relay_exited(namespace, relay_id, runner_id, reason, bound)
-      end)
-    end
-
-    :ok
   end
 
   @doc """

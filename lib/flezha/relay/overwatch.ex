@@ -82,9 +82,6 @@ defmodule Flezha.Relay.Overwatch do
     # This node's monotonic ms at process start: a Cell writer's dispatch from
     # before it went to an earlier Overwatch (`Replay.redrive_calls/1`).
     started_mono: nil,
-    # Wall-clock ms at which a bind task's binding was last adopted: how long a
-    # rebound instance has stayed up, for the convergence loop's stable window.
-    bound_at: nil,
     # Liveness counters ref (io_in_received / forwarded / filtered_nil) so a
     # stall can be localised to "WS plugin stopped feeding" vs "relay stopped
     # forwarding to the channel".
@@ -123,9 +120,6 @@ defmodule Flezha.Relay.Overwatch do
     # state is stale by the time it reports, and the journaled tail still
     # owes a wake.
     parked_in_flight: false,
-    # An exit report that landed while a bind task was binding, as
-    # `{runner_id, reason}`: judged once the bind's result is adopted.
-    exited_in_flight: nil,
     # Late-input correction window (ms), declared by the SDK. `nil` = the class
     # never corrects. Gates lateness handling and the event-time-ordered replay.
     correction_window_ms: nil,
@@ -675,10 +669,6 @@ defmodule Flezha.Relay.Overwatch do
   def handle_cast({:suspend, iter, park}, %__MODULE__{} = state) do
     {:noreply, Migration.suspend_at(state, iter, park), :hibernate}
   end
-
-  # The runner reports this instance's process exited.
-  def handle_cast({:relay_exited, runner_id, reason}, %__MODULE__{} = state),
-    do: {:noreply, Migration.park_exited(state, runner_id, reason)}
 
   # Replaces `state.snapshot` with the SDK's final state on graceful shutdown.
   # A handover ships it and the next running migrate seeds from it, until a

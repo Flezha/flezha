@@ -79,7 +79,7 @@ and the fields of its hook:
 | `on_plugin_unhealthy` | a plugin bound to a relay turned from healthy to unhealthy | `plugin`, `relay`, `error` |
 
 A start and a stop are also the relay's own observability events, `relay_started` and
-`relay_stopped` of source `flezha_relay` beside `relay_exited`, so `flz observe tail
+`relay_stopped` of source `flezha_relay`, so `flz observe tail
 flezha_relay` and the exporters show them with no plugin enabled.
 
 No event carries a record's data: a dead letter names its entry, which `flz dlq show` reads

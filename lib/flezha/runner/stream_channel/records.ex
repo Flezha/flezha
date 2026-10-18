@@ -519,11 +519,7 @@ defmodule Flezha.Runner.StreamChannel.Records do
     runner_id = state.runner_id
 
     Task.start(fn ->
-      init = %RunnerCommands.CreditWindowInit{
-        stream_id: session,
-        window_bytes: window,
-        low_watermark_bytes: low
-      }
+      init = %RunnerCommands.CreditWindowInit{stream_id: session, window_bytes: window}
 
       outcome =
         ControlUnit.send_control_await(

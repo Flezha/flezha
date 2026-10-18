@@ -84,7 +84,6 @@ struct FactoryInfo {
 #[derive(Serialize)]
 struct ControlInitMessage {
     namespace: String,
-    factory_ids: Vec<String>,
     factories: Vec<FactoryInfo>,
     /// The runner's stable identity, on every connect; the controller's
     /// binding key.
@@ -588,7 +587,6 @@ fn send_init_msg(
 
     let control_init_message = ControlInitMessage {
         namespace,
-        factory_ids,
         factories,
         stable_id,
         incarnation: crate::persistent_id::incarnation(),

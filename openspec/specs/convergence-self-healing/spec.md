@@ -923,7 +923,7 @@ completion is recorded for it. A report that lands while a bind task is in fligh
 and judged by the same rules against the binding that task's result adopts, because the
 incarnation the bind started can exit before the bind reports. Any other report SHALL change
 nothing. A current report SHALL be
-logged, SHALL emit `[:flezha, :relay, :exited]` naming the namespace, the relay, the runner
+logged, SHALL emit <!-- docs-citation-record:begin -->`[:flezha, :relay, :exited]`<!-- docs-citation-record:end --> naming the namespace, the relay, the runner
 and the reason, and SHALL park the instance through the one park funnel with the reason
 `{:relay_exited, reason}`.
 
@@ -941,7 +941,7 @@ rebound when its key's rung allows and not at once. No new ladder or knob SHALL 
 
 - **GIVEN** a flow instance `X` bound to a live Elixir runner and a running convergence loop
 - **WHEN** the runner reports `RelayExited` for `X`
-- **THEN** `X` SHALL be parked with `{:relay_exited, reason}`, `[:flezha, :relay, :exited]`
+- **THEN** `X` SHALL be parked with `{:relay_exited, reason}`, <!-- docs-citation-record:begin -->`[:flezha, :relay, :exited]`<!-- docs-citation-record:end -->
   SHALL be emitted, the loop SHALL plan `rebind_relay` for `X` on the declaring tick, an
   `AddRelay` for `X` SHALL reach a runner advertising its factory, and `X` SHALL be observed
   bound and unparked afterwards

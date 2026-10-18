@@ -58,11 +58,13 @@ def rows():
 
 def row_files(repo, specs, untracked=False):
     """The row's files, relative to `repo`: tracked, and with `untracked` also
-    the new files git does not ignore."""
+    the new files git does not ignore. A tracked file deleted from the working
+    tree but not staged is not listed: the tree no longer carries it."""
     extra = ["-co", "--exclude-standard"] if untracked else []
     listed = subprocess.run(["git", "-C", repo, "ls-files", "-z", *extra, "--", *specs],
                             capture_output=True, check=True).stdout.decode()
-    return [rel for rel in listed.split("\0") if rel and not EXCLUDE.search(rel)]
+    return [rel for rel in listed.split("\0")
+            if rel and not EXCLUDE.search(rel) and os.path.isfile(os.path.join(repo, rel))]
 
 
 def read_lines(path):

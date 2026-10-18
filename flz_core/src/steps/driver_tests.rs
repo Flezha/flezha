@@ -1020,12 +1020,11 @@ fn turn_class(
     (turn_host(mid, Arc::clone(&undos)), undos)
 }
 
-/// Bind `id` as the controller does, saying whether it parks a failed turn.
+/// Bind `id` as the controller does.
 fn bind_turns(
     node: &mut RunnerNode,
     factory: &str,
     id: &str,
-    dead_letter_turns: bool,
     task_journal: Option<crate::pb::TaskJournalState>,
 ) {
     use crate::command::CommandAction;
@@ -1034,7 +1033,6 @@ fn bind_turns(
         relay_id: id.to_string(),
         factory_id: factory.to_string(),
         task_journal,
-        dead_letter_turns,
         ..Default::default()
     }
     .handle(node, "", &mut errors);
@@ -1122,7 +1120,7 @@ fn a_failed_turn_is_dead_lettered_undone_once_and_the_next_message_is_the_next_i
     let id = format!("turn_dead_letter_{}", std::process::id());
     let (_host, undos) = turn_class(&id, true, "per_input", "keep_progress");
     let mut node = RunnerNode::new("test-ns".to_string());
-    bind_turns(&mut node, &id, "turn-1", true, None);
+    bind_turns(&mut node, &id, "turn-1", None);
     let mut seen = Seen::default();
 
     for (offset, message) in [(0, &b"hello"[..]), (1, b"boom"), (2, b"again")] {
@@ -1182,7 +1180,7 @@ fn a_resume_owing_a_failed_turns_undo_runs_it_once_and_waits() {
         rewind_undo: vec![owed],
         ..Default::default()
     };
-    bind_turns(&mut node, &id, "turn-resume-1", true, Some(journal));
+    bind_turns(&mut node, &id, "turn-resume-1", Some(journal));
     let mut seen = Seen::default();
 
     pump_turns(&rx, "turn-resume-1", &mut seen, never, |s| {
@@ -1209,7 +1207,6 @@ fn ends_on_failure(
     persistent: bool,
     each: &str,
     rollback: &str,
-    dead_letter_turns: bool,
     refuse: impl Fn(&crate::pb::command_request::Command) -> bool,
     messages: &[&[u8]],
 ) -> Seen {
@@ -1218,7 +1215,7 @@ fn ends_on_failure(
     let factory = format!("{id}_{}", std::process::id());
     let (_host, _undos) = turn_class(&factory, persistent, each, rollback);
     let mut node = RunnerNode::new("test-ns".to_string());
-    bind_turns(&mut node, &factory, id, dead_letter_turns, None);
+    bind_turns(&mut node, &factory, id, None);
     let mut seen = Seen::default();
     for (offset, message) in messages.iter().enumerate() {
         feed_at(&node, id, "in", offset as u64, message);
@@ -1229,48 +1226,31 @@ fn ends_on_failure(
 }
 
 /// An instance id, whether its class persists, its loop and rollback modes,
-/// whether its bind parks failed turns, and the messages it is sent.
+/// and the messages it is sent.
 type EndingCase = (
     &'static str,
     bool,
     &'static str,
     &'static str,
-    bool,
     &'static [&'static [u8]],
 );
 
 #[test]
 fn a_failure_the_dead_letter_does_not_cover_still_ends_the_run() {
     use crate::pb::command_request::Command;
-    let cases: [EndingCase; 4] = [
-        ("turn_all", true, "per_input", "undo_all", true, &[b"boom"]),
+    let cases: [EndingCase; 3] = [
+        ("turn_all", true, "per_input", "undo_all", &[b"boom"]),
         (
             "turn_chained",
             false,
             "chained",
             "keep_progress",
-            true,
             &[b"boom"],
         ),
-        (
-            "turn_unflagged",
-            true,
-            "per_input",
-            "keep_progress",
-            false,
-            &[b"boom"],
-        ),
-        (
-            "turn_timer",
-            false,
-            "per_input",
-            "keep_progress",
-            true,
-            &[b"arm"],
-        ),
+        ("turn_timer", false, "per_input", "keep_progress", &[b"arm"]),
     ];
-    for (id, persistent, each, rollback, flag, messages) in cases {
-        let seen = ends_on_failure(id, persistent, each, rollback, flag, never, messages);
+    for (id, persistent, each, rollback, messages) in cases {
+        let seen = ends_on_failure(id, persistent, each, rollback, never, messages);
         assert_eq!(
             seen.done.as_ref().map(|d| d.0.as_str()),
             Some("error"),
@@ -1289,7 +1269,6 @@ fn a_failure_the_dead_letter_does_not_cover_still_ends_the_run() {
         true,
         "per_input",
         "keep_progress",
-        true,
         refuse_stage,
         &[b"hello"],
     );
@@ -1304,7 +1283,6 @@ fn a_failure_the_dead_letter_does_not_cover_still_ends_the_run() {
         true,
         "per_input",
         "keep_progress",
-        true,
         refuse_dead_letter,
         &[b"boom"],
     );
@@ -1319,7 +1297,7 @@ fn a_stop_during_a_turn_ends_it_cancelled() {
     let id = format!("turn_stop_{}", std::process::id());
     let (_host, _undos) = turn_class(&id, true, "per_input", "keep_progress");
     let mut node = RunnerNode::new("test-ns".to_string());
-    bind_turns(&mut node, &id, "turn-stop-1", true, None);
+    bind_turns(&mut node, &id, "turn-stop-1", None);
     let mut seen = Seen::default();
 
     feed_at(&node, "turn-stop-1", "in", 0, b"hello");
@@ -1342,7 +1320,7 @@ fn a_run_that_journals_nothing_parks_its_failed_turn_and_answers_the_next() {
     let (_host, undos) = turn_class(&id, false, "per_input", "keep_progress");
     let mut node = RunnerNode::new("test-ns".to_string());
     let wire = Wire::new();
-    bind_turns(&mut node, &id, "turn-optout-1", true, None);
+    bind_turns(&mut node, &id, "turn-optout-1", None);
 
     feed_call(&wire, &node, "turn-optout-1", b"boom", "w:boom");
     spin_until("the failed turn to be parked", || {
@@ -1396,7 +1374,7 @@ fn a_per_input_pass_answers_its_call_from_its_last_stage() {
     let _host = turn_host(mid, Arc::default());
     let mut node = RunnerNode::new("test-ns".to_string());
     let wire = Wire::new();
-    bind_turns(&mut node, &id, "turn-answer-1", true, None);
+    bind_turns(&mut node, &id, "turn-answer-1", None);
 
     feed_call(&wire, &node, "turn-answer-1", b"hello", "w:one");
     feed(&wire, &node, "turn-answer-1", b"plain");

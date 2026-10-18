@@ -152,7 +152,6 @@ defmodule Flezha.Convergence.Probe do
           factory_id: Map.get(ow, :factory_id),
           parked?: Map.get(ow, :init_error) != nil,
           park_reason: Map.get(ow, :init_error),
-          bound_for_ms: bound_for_ms(ow),
           suspended?: Map.get(ow, :suspended, false),
           running_plugins: running_plugins(ow),
           subscribed_plugins: subscribed_plugins(ow),
@@ -184,7 +183,6 @@ defmodule Flezha.Convergence.Probe do
         factory_id: nil,
         parked?: false,
         park_reason: nil,
-        bound_for_ms: nil,
         suspended?: false,
         running_plugins: [],
         subscribed_plugins: [],
@@ -196,13 +194,6 @@ defmodule Flezha.Convergence.Probe do
       fields
     )
   end
-
-  # How long the instance has been bound since a bind task's binding was
-  # adopted; `nil` when unbound or never rebound.
-  defp bound_for_ms(%{runner_id: runner, bound_at: at}) when is_binary(runner) and is_integer(at),
-    do: System.system_time(:millisecond) - at
-
-  defp bound_for_ms(_ow), do: nil
 
   # The plugin ids that reached `:running` — the ones actually holding their
   # provider's upstream resources. A plugin whose `activate/1` failed is
