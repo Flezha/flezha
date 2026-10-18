@@ -34,6 +34,7 @@ defmodule FlezhaTest.System.SchemaEvolutionE2ETest do
   alias FlezhaTest.Helper.CompactionAssertions, as: CA
   alias FlezhaTest.Helper.MessageTestHelper
   alias FlezhaTest.Helper.NodeTestHelper
+  alias FlezhaTest.Helper.Telemetry
 
   import FlezhaTest.Helper.CreditTestHelper,
     only: [await_seq: 3, wait_for_cell: 3, wait_for_writer: 2]
@@ -76,17 +77,9 @@ defmodule FlezhaTest.System.SchemaEvolutionE2ETest do
 
     relay_id = "evo_#{System.unique_integer([:positive])}"
 
-    parent = self()
-    handler_id = {__MODULE__, :migration, System.unique_integer([:positive])}
-
-    :telemetry.attach(
-      handler_id,
-      [:flezha, :state, :schema_migration],
-      fn _e, _meas, meta, _ -> send(parent, {:migrated, meta}) end,
-      nil
+    Telemetry.capture([:flezha, :state, :schema_migration],
+      as: fn _e, _meas, meta -> {:migrated, meta} end
     )
-
-    on_exit(fn -> :telemetry.detach(handler_id) end)
 
     # v1 accumulates 3 + 4 = 7 and persists it.
     assert {:ok, _} = start(namespace, relay_id, @v1)

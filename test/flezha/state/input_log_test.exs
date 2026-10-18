@@ -13,6 +13,7 @@ defmodule Flezha.State.InputLogTest do
 
   import ExUnit.CaptureLog
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2, wait_until: 3]
+  import FlezhaTest.Helper.MessageTestHelper, only: [collect: 2]
 
   alias Flezha.Relay.Ingest
   alias Flezha.Relay.Overwatch
@@ -20,6 +21,7 @@ defmodule Flezha.State.InputLogTest do
   alias Flezha.Plugin.Extension.Table
   alias Flezha.State.{FsyncBatcher, InputLog, Paths, RecordFrame, Supervisor, TestHelpers}
   alias Flezha.State.InputLog.Sweep
+  alias FlezhaTest.Helper.Telemetry
 
   setup %{base: base} do
     class = "il_" <> uniq()
@@ -225,20 +227,15 @@ defmodule Flezha.State.InputLogTest do
     InputLog.record_consumed(class, {class, "task", "slow"}, 1)
 
     ref = make_ref()
-    parent = self()
 
-    :telemetry.attach(
-      "input-log-frozen-#{inspect(ref)}",
-      [:flezha, :state, :input_log_frozen_watermark],
-      fn _event, measurements, metadata, _ -> send(parent, {ref, measurements, metadata}) end,
-      nil
+    Telemetry.capture([:flezha, :state, :input_log_frozen_watermark],
+      as: fn _event, measurements, metadata -> {ref, measurements, metadata} end
     )
 
     Application.put_env(:flezha, :wal_high_watermark_bytes, 1)
 
     on_exit(fn ->
       Application.delete_env(:flezha, :wal_high_watermark_bytes)
-      :telemetry.detach("input-log-frozen-#{inspect(ref)}")
     end)
 
     # First sweep truncates (watermark newly known); second sees it frozen.
@@ -1044,28 +1041,23 @@ defmodule Flezha.State.InputLogTest do
   end
 
   # Every `:sync` the traced log sent to a pid that had already exited.
-  defp dead_syncs(count \\ 0) do
-    receive do
-      {:trace, _pid, :send_to_non_existing_process, {:sync, _}, _to} -> dead_syncs(count + 1)
-      {:trace, _pid, _event, _message, _to} -> dead_syncs(count)
-    after
-      200 -> count
-    end
+  defp dead_syncs() do
+    dead =
+      collect after: 200 do
+        {:trace, _pid, :send_to_non_existing_process, {:sync, _}, _to} -> true
+        {:trace, _pid, _event, _message, _to} -> false
+      end
+
+    Enum.count(dead, & &1)
   end
 
   defp attach_syncer_died() do
     ref = make_ref()
-    parent = self()
-    handler = "input-log-syncer-died-#{inspect(ref)}"
 
-    :telemetry.attach(
-      handler,
-      [:flezha, :state, :input_log_syncer_died],
-      fn _event, _measurements, metadata, _ -> send(parent, {ref, metadata}) end,
-      nil
+    Telemetry.capture([:flezha, :state, :input_log_syncer_died],
+      as: fn _event, _measurements, metadata -> {ref, metadata} end
     )
 
-    on_exit(fn -> :telemetry.detach(handler) end)
     ref
   end
 end

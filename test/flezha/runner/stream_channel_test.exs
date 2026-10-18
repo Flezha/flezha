@@ -8,6 +8,7 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
   alias Flezha.Transport.LivenessCounters
   alias FlezhaTest.Helper.MessageTestHelper
   alias FlezhaTest.Helper.NodeTestHelper
+  alias FlezhaTest.Helper.Telemetry
   alias FlezhaTest.Helper.WireEncoders
 
   # async: false: writes Application env; a shared on-disk root; registered runner channels.
@@ -38,17 +39,7 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
       :ok = GenServer.call(pid, {:relay_pid_update, "relay_b", [self()]})
       :ok = GenServer.call(pid, {:bind, :ref_x})
 
-      test_pid = self()
-      handler_id = "stall_test_#{System.unique_integer([:positive])}"
-
-      :telemetry.attach(
-        handler_id,
-        [:flezha, :state, :output_stall],
-        stall_forwarder(test_pid),
-        nil
-      )
-
-      on_exit(fn -> :telemetry.detach(handler_id) end)
+      capture_stalls()
 
       send(pid, {:flz_closed, :ref_x, :eof})
       # flush through mailbox
@@ -60,17 +51,7 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
 
     test "{:flz_closed} with empty relay_mapping emits no output_stall telemetry",
          %{pid: pid} do
-      test_pid = self()
-      handler_id = "stall_test_empty_#{System.unique_integer([:positive])}"
-
-      :telemetry.attach(
-        handler_id,
-        [:flezha, :state, :output_stall],
-        stall_forwarder(test_pid),
-        nil
-      )
-
-      on_exit(fn -> :telemetry.detach(handler_id) end)
+      capture_stalls()
 
       :ok = GenServer.call(pid, {:bind, :ref_y})
       send(pid, {:flz_closed, :ref_y, :eof})
@@ -158,17 +139,7 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
 
     test "io_in/3 on nil-ref counts the drop (6.3) instead of silently dropping",
          %{pid: pid, name: name} do
-      test_pid = self()
-      id = "stream-channel-drop-#{System.unique_integer([:positive])}"
-
-      :telemetry.attach(
-        id,
-        [:flezha, :stream, :drop],
-        fn _e, m, md, _ -> send(test_pid, {:drop, m, md}) end,
-        nil
-      )
-
-      on_exit(fn -> :telemetry.detach(id) end)
+      Telemetry.capture([:flezha, :stream, :drop], as: fn _e, m, md -> {:drop, m, md} end)
 
       {:error, :no_stream} = StreamChannel.io_in(name, "p1", {"msg", %{}})
       assert_receive {:drop, %{count: 1}, %{relay_id: "p1"}}
@@ -187,17 +158,7 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
       Application.put_env(:flezha, :io_stream_liveness_threshold_ms, @threshold_ms)
       Application.put_env(:flezha, :io_stream_liveness_interval_ms, 0)
 
-      test_pid = self()
-      id = "io_stale_#{System.unique_integer([:positive])}"
-
-      :telemetry.attach(
-        id,
-        [:flezha, :state, :output_stall],
-        stall_forwarder(test_pid),
-        nil
-      )
-
-      on_exit(fn -> :telemetry.detach(id) end)
+      capture_stalls()
 
       # Heartbeats only arrive on secondary streams; the check is gated to them.
       sec_name = :"#{name}_secondary"
@@ -374,17 +335,7 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
       :ok = GenServer.call(pid, {:relay_pid_update, "cont_op", [self()]})
       :ok = GenServer.call(pid, {:bind, :ref_g})
 
-      test_pid = self()
-      hid = "stall_gate_#{System.unique_integer([:positive])}"
-
-      :telemetry.attach(
-        hid,
-        [:flezha, :state, :output_stall],
-        stall_forwarder(test_pid),
-        nil
-      )
-
-      on_exit(fn -> :telemetry.detach(hid) end)
+      capture_stalls()
 
       send(pid, {:flz_closed, :ref_g, :eof})
       _ = GenServer.call(pid, :stream_ref_status)
@@ -571,12 +522,11 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
   # flag leftovers of other tests' relays mid-refute-window. Forward only
   # this file's instances so the refutes cannot be contaminated.
   @tracked_instances ["relay_a", "relay_b", "cont_op", "bnd_op"]
-  defp stall_forwarder(test_pid) do
-    fn _e, _m, md, _ ->
-      if md.relay_instance in @tracked_instances do
-        send(test_pid, {:output_stall, md.relay_instance})
-      end
-    end
+  defp capture_stalls() do
+    Telemetry.capture([:flezha, :state, :output_stall],
+      filter: &(&1.relay_instance in @tracked_instances),
+      as: fn _e, _m, md -> {:output_stall, md.relay_instance} end
+    )
   end
 
   # fails when: an off-tier park stops telling the Overwatch, once its entry is

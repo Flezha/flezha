@@ -25,6 +25,7 @@ defmodule FlezhaTest.System.StepsFailedTurnE2ETest do
   alias Flezha.State.TaskJournal
   alias FlezhaTest.Helper.DlqFixtures
   alias FlezhaTest.Helper.NodeTestHelper
+  alias FlezhaTest.Helper.Telemetry
 
   @moduletag :steps_failed_turn
   @moduletag timeout: 180_000
@@ -38,19 +39,11 @@ defmodule FlezhaTest.System.StepsFailedTurnE2ETest do
   test "a failed turn is dead-lettered, undone once, and every surface shows it", ctx do
     session = start_session(ctx, "failing_turn_loop_steps")
     %{namespace: namespace, relay_id: relay_id} = session
-    test_pid = self()
-    handler = "failed-turn-#{relay_id}"
 
-    :telemetry.attach(
-      handler,
-      [:flezha, :steps, :turn_dead_lettered],
-      fn _event, _measurements, %{relay_id: ^relay_id} = metadata, _ ->
-        send(test_pid, {:dead_lettered, metadata})
-      end,
-      nil
+    Telemetry.capture([:flezha, :steps, :turn_dead_lettered],
+      filter: &match?(%{relay_id: ^relay_id}, &1),
+      as: fn _event, _measurements, metadata -> {:dead_lettered, metadata} end
     )
-
-    on_exit(fn -> :telemetry.detach(handler) end)
 
     for turn <- ~w(hello boom again), do: send_turn(namespace, relay_id, turn)
     answered!(session, "re:again")

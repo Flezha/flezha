@@ -33,6 +33,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
   alias Flezha.State.Frame
 
   alias FlezhaTest.Helper.DurabilityBackendStub, as: Stub
+  alias FlezhaTest.Helper.Telemetry
   alias FlezhaTest.Helper.WireEncoders
 
   @namespace "ctrl-chan-task-commit-test"
@@ -589,17 +590,10 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
 
     test "parks the message, journals the record naming its entry, acks, then releases", ctx do
       %{inst: inst} = ctx
-      test_pid = self()
-      handler = "dead-lettered-#{inst}"
 
-      :telemetry.attach(
-        handler,
-        [:flezha, :steps, :turn_dead_lettered],
-        fn _e, m, md, _ -> send(test_pid, {:dead_lettered, m, md}) end,
-        nil
+      Telemetry.capture([:flezha, :steps, :turn_dead_lettered],
+        as: fn _e, m, md -> {:dead_lettered, m, md} end
       )
-
-      on_exit(fn -> :telemetry.detach(handler) end)
 
       for {turn, n} <- Enum.with_index(["hello", "boom", "again"]),
           do: {:ok, ^n} = InputLog.append(inst, turn, %{})

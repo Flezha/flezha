@@ -411,6 +411,7 @@ defmodule FlezhaTest.Relay.PartitionGroupRescaleTest do
   use FlezhaTest.Case, fixtures: [:tmp_app_data], async: false
   use Mimic
   import FlezhaTest.Helper.MimicGlobal
+  import FlezhaTest.Helper.MessageTestHelper, only: [collect: 1]
 
   alias Flezha.AuthZ.Quotas
   alias Flezha.Dlq
@@ -475,10 +476,8 @@ defmodule FlezhaTest.Relay.PartitionGroupRescaleTest do
   end
 
   defp drain(tag) do
-    receive do
-      {^tag, value} -> [value | drain(tag)]
-    after
-      0 -> []
+    collect do
+      {^tag, value} -> value
     end
   end
 
@@ -749,10 +748,8 @@ defmodule FlezhaTest.Relay.PartitionGroupRescaleTest do
   end
 
   defp drain_pairs(tag) do
-    receive do
-      {^tag, a, b} -> [{a, b} | drain_pairs(tag)]
-    after
-      0 -> []
+    collect do
+      {^tag, a, b} -> {a, b}
     end
   end
 

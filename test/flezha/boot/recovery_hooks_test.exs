@@ -4,6 +4,7 @@ defmodule Flezha.Boot.RecoveryHooksTest do
 
   alias Flezha.Boot.RecoveryHooks
   alias Flezha.Observability.TelemetryBridge
+  alias FlezhaTest.Helper.Telemetry
 
   setup do
     # The key row defaults this to `false` under `:test`, so auto-restore left
@@ -16,19 +17,7 @@ defmodule Flezha.Boot.RecoveryHooksTest do
   end
 
   test "pre_recovery_replay emits telemetry and returns quickly" do
-    test_pid = self()
-    handler_id = "pre-recovery-replay-test-#{System.unique_integer([:positive])}"
-
-    :telemetry.attach(
-      handler_id,
-      [:flezha, :boot, :pre_recovery_replay],
-      fn event, measurements, metadata, _ ->
-        send(test_pid, {:telemetry, event, measurements, metadata})
-      end,
-      nil
-    )
-
-    on_exit(fn -> :telemetry.detach(handler_id) end)
+    Telemetry.capture([:flezha, :boot, :pre_recovery_replay])
 
     hub_id = :"pre_recovery_replay_test_hub_#{System.unique_integer([:positive])}"
 
@@ -48,19 +37,7 @@ defmodule Flezha.Boot.RecoveryHooksTest do
   end
 
   test "post_recovery_replay emits telemetry" do
-    test_pid = self()
-    handler_id = "recovery-hook-test-#{System.unique_integer([:positive])}"
-
-    :telemetry.attach(
-      handler_id,
-      [:flezha, :boot, :recovery_complete],
-      fn event, measurements, metadata, _ ->
-        send(test_pid, {:telemetry, event, measurements, metadata})
-      end,
-      nil
-    )
-
-    on_exit(fn -> :telemetry.detach(handler_id) end)
+    Telemetry.capture([:flezha, :boot, :recovery_complete])
 
     hub_id = :market_hub
     hook_data = %{child_count: 3, succeeded: 3, failed: 0, reason: :ok}
@@ -84,19 +61,7 @@ defmodule Flezha.Boot.RecoveryHooksTest do
   end
 
   test "reconcile_duplicate alarms with the kept and stopped nodes (D8)" do
-    test_pid = self()
-    handler_id = "reconcile-duplicate-test-#{System.unique_integer([:positive])}"
-
-    :telemetry.attach(
-      handler_id,
-      [:flezha, :boot, :reconcile_duplicate],
-      fn event, measurements, metadata, _ ->
-        send(test_pid, {:telemetry, event, measurements, metadata})
-      end,
-      nil
-    )
-
-    on_exit(fn -> :telemetry.detach(handler_id) end)
+    Telemetry.capture([:flezha, :boot, :reconcile_duplicate])
 
     log =
       ExUnit.CaptureLog.capture_log(fn ->

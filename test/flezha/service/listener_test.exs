@@ -13,6 +13,7 @@ defmodule Flezha.Service.ListenerTest do
   use FlezhaTest.Case, fixtures: [:env], async: false
   use Mimic
   import FlezhaTest.Helper.MimicGlobal
+  import FlezhaTest.Helper.MessageTestHelper, only: [collect: 1, recv_drain: 2]
 
   alias Flezha.Cluster.Directory
   alias Flezha.Relay.PartitionGroup
@@ -441,7 +442,7 @@ defmodule Flezha.Service.ListenerTest do
 
       listening([idle_ms: 200, window_ms: 1_000], counting)
       assert_receive {:outcome, {:ok, :window_closed}}, 2_000
-      idles = drain(:idle, 0)
+      idles = recv_drain(:idle, 0)
       assert idles in 3..5
     end
 
@@ -467,7 +468,7 @@ defmodule Flezha.Service.ListenerTest do
       end
 
       refute_received :idle
-      assert drain_events(pid, 0) == 20
+      assert drain_events(pid) == 20
       Process.exit(pid, :kill)
     end
 
@@ -498,19 +499,5 @@ defmodule Flezha.Service.ListenerTest do
     forward_to(test)
   end
 
-  defp drain(message, count) do
-    receive do
-      ^message -> drain(message, count + 1)
-    after
-      0 -> count
-    end
-  end
-
-  defp drain_events(pid, count) do
-    receive do
-      {:event, ^pid, _} -> drain_events(pid, count + 1)
-    after
-      0 -> count
-    end
-  end
+  defp drain_events(pid), do: length(collect(do: ({:event, ^pid, _} -> pid)))
 end

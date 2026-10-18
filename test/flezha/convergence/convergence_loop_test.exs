@@ -17,6 +17,7 @@ defmodule Flezha.Convergence.LoopTest do
   alias Flezha.Convergence.{Diff, Intent}
   alias Flezha.Convergence.Loop.Progress
   alias Flezha.State.Completion
+  alias FlezhaTest.Helper.Telemetry
   alias FlezhaTest.Helper.WireEncoders
 
   describe "Loop.apply_misbound_streak/2 (B5)" do
@@ -176,17 +177,9 @@ defmodule Flezha.Convergence.LoopTest do
     end
 
     defp watch_ticks() do
-      parent = self()
-      handler = {__MODULE__, :ticks, make_ref()}
-
-      :telemetry.attach(
-        handler,
-        [:flezha, :convergence, :tick],
-        fn _e, _m, meta, _ -> send(parent, {:tick_state, meta.state}) end,
-        nil
+      Telemetry.capture([:flezha, :convergence, :tick],
+        as: fn _e, _m, meta -> {:tick_state, meta.state} end
       )
-
-      on_exit(fn -> :telemetry.detach(handler) end)
     end
 
     # fails when: the parked shape stops being released. The published scenario
@@ -515,23 +508,13 @@ defmodule Flezha.Convergence.LoopTest do
     alias Flezha.Convergence.Loop
 
     setup do
-      parent = self()
       ref = make_ref()
-      handler_id = {__MODULE__, ref}
 
-      :telemetry.attach_many(
-        handler_id,
-        [
-          [:flezha, :convergence, :relay_stuck],
-          [:flezha, :convergence, :intent_mismatch]
-        ],
-        fn event, measurements, metadata, _ ->
-          send(parent, {ref, event, measurements, metadata})
-        end,
-        nil
+      Telemetry.capture(
+        [[:flezha, :convergence, :relay_stuck], [:flezha, :convergence, :intent_mismatch]],
+        as: fn event, measurements, metadata -> {ref, event, measurements, metadata} end
       )
 
-      on_exit(fn -> :telemetry.detach(handler_id) end)
       {:ok, ref: ref}
     end
 

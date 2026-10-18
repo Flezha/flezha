@@ -20,6 +20,7 @@ defmodule Flezha.Plugin.Provider.WebsocketWatchdogTest do
 
   alias Flezha.Plugin.Provider.Websocket
   alias FlezhaTest.Helper.NodeTestHelper
+  alias FlezhaTest.Helper.Telemetry
 
   @post_connect %{"payload" => %{"type" => "text", "message" => "subscribe-frame"}}
 
@@ -48,17 +49,7 @@ defmodule Flezha.Plugin.Provider.WebsocketWatchdogTest do
   end
 
   defp attach_telemetry(event) do
-    parent = self()
-    handler_id = {__MODULE__, event, :erlang.unique_integer([:positive])}
-
-    :telemetry.attach(
-      handler_id,
-      event,
-      fn ^event, meas, meta, _ -> send(parent, {:telemetry, event, meas, meta}) end,
-      nil
-    )
-
-    on_exit(fn -> :telemetry.detach(handler_id) end)
+    Telemetry.capture(event)
   end
 
   defp spawn_dummy do
@@ -501,24 +492,13 @@ defmodule Flezha.Plugin.Provider.WebsocketIdleTimeoutDisabledTest do
   use ExUnit.Case, async: false
 
   alias Flezha.Plugin.Provider.Websocket
+  alias FlezhaTest.Helper.Telemetry
 
   @telemetry_event [:flezha, :plugin, :websocket, :idle_reconnect]
 
   setup do
-    parent = self()
-    handler_id = "test-disabled-#{:erlang.unique_integer([:positive])}"
+    Telemetry.capture(@telemetry_event)
 
-    :ok =
-      :telemetry.attach(
-        handler_id,
-        @telemetry_event,
-        fn event, measurements, metadata, _config ->
-          send(parent, {:telemetry, event, measurements, metadata})
-        end,
-        nil
-      )
-
-    on_exit(fn -> :telemetry.detach(handler_id) end)
     :ok
   end
 

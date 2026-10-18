@@ -36,6 +36,7 @@ defmodule Flezha.State.RunnerRestartRealignTest do
   alias Flezha.State.Wire
   alias Flezha.State.{Metrics, Paths, RecordFrame, Snapshot, Supervisor, TestHelpers, WalWriter}
   alias Flezha.Transport.LivenessCounters
+  alias FlezhaTest.Helper.Telemetry
 
   setup do
     cell_id = TestHelpers.sample_cell_id("realign_" <> uniq())
@@ -44,15 +45,9 @@ defmodule Flezha.State.RunnerRestartRealignTest do
     header = TestHelpers.stub_header()
 
     parent = self()
-    gap_handler = attach([:flezha, :state, :seq_gap], parent, :seq_gap)
-    realign_handler = attach([:flezha, :state, :wal_realign], parent, :wal_realign)
-    stale_handler = attach([:flezha, :state, :stale_writer_refused], parent, :stale_refused)
-
-    on_exit(fn ->
-      :telemetry.detach(gap_handler)
-      :telemetry.detach(realign_handler)
-      :telemetry.detach(stale_handler)
-    end)
+    attach([:flezha, :state, :seq_gap], :seq_gap)
+    attach([:flezha, :state, :wal_realign], :wal_realign)
+    attach([:flezha, :state, :stale_writer_refused], :stale_refused)
 
     %{cell_id: cell_id, writer: writer, header: header, parent: parent}
   end
@@ -258,8 +253,7 @@ defmodule Flezha.State.RunnerRestartRealignTest do
 
     :ok = ClassRegistry.put_overwatch(relay, self(), "exec_owner")
     on_exit(fn -> ClassRegistry.delete(relay) end)
-    foreign = attach([:flezha, :runner, :foreign_frame_refused], ctx.parent, :foreign)
-    on_exit(fn -> :telemetry.detach(foreign) end)
+    attach([:flezha, :runner, :foreign_frame_refused], :foreign)
 
     # A runner the record does not name, resuming from a lower seq base.
     other = "exec_other_" <> uniq()
@@ -325,9 +319,6 @@ defmodule Flezha.State.RunnerRestartRealignTest do
       byte_size(body)::32-big, body::binary, :erlang.crc32(body)::32-big>>
   end
 
-  defp attach(event, parent, tag) do
-    id = {__MODULE__, tag, System.unique_integer([:positive])}
-    :telemetry.attach(id, event, fn _e, meas, meta, _ -> send(parent, {tag, meas, meta}) end, nil)
-    id
-  end
+  defp attach(event, tag),
+    do: Telemetry.capture(event, as: fn _e, meas, meta -> {tag, meas, meta} end)
 end

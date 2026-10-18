@@ -22,6 +22,7 @@ defmodule Flezha.State.GapRecoveryTest do
   alias Flezha.State.Snapshot, as: StateSnapshot
   alias Flezha.State.{Supervisor, TestHelpers, WalWriter}
   alias FlezhaTest.Helper.NodeTestHelper
+  alias FlezhaTest.Helper.Telemetry
 
   setup %{base: base} do
     cell_id = TestHelpers.sample_cell_id("gap_" <> uniq())
@@ -36,17 +37,12 @@ defmodule Flezha.State.GapRecoveryTest do
     :ok = WalWriter.append(writer, 3, header, "c")
 
     parent = self()
-    handler_id = {__MODULE__, :seq_gap, System.unique_integer([:positive])}
 
-    :telemetry.attach(
-      handler_id,
-      [:flezha, :state, :seq_gap],
-      fn _e, meas, meta, _ -> send(parent, {:seq_gap, meas, meta}) end,
-      nil
+    Telemetry.capture([:flezha, :state, :seq_gap],
+      as: fn _e, meas, meta -> {:seq_gap, meas, meta} end
     )
 
     on_exit(fn ->
-      :telemetry.detach(handler_id)
       # Close the writer and drop its fsync mark before deleting the dir,
       # else the app's 5 ms batcher fsyncs a now-missing file and the writer
       # crashes (the resync leaves seq 4/5 dirty and unflushed).

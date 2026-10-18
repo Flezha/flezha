@@ -19,6 +19,7 @@ defmodule Flezha.Config.BackoffSeamTest do
   alias Flezha.Config.Backoff
   alias Flezha.Config.Durations
   alias FlezhaTest.Helper.SourceWalk
+  alias FlezhaTest.Helper.Telemetry
 
   @ladder_seam "lib/flezha/config/backoff.ex"
   @duration_seam "lib/flezha/config/durations.ex"
@@ -246,20 +247,12 @@ defmodule Flezha.Config.BackoffSeamTest do
   # call so a row driven by another test in this async file cannot be read as
   # this one's.
   defp waits(ladder, attempts) do
-    parent = self()
     target = {__MODULE__, ladder, System.unique_integer([:positive])}
-    handler = {:pin, target}
 
-    :telemetry.attach(
-      handler,
-      [:flezha, :backoff, :wait],
-      fn _event, %{delay_ms: ms}, meta, _config ->
-        if meta.target == target, do: send(parent, {:wait, target, ms})
-      end,
-      nil
+    Telemetry.capture([:flezha, :backoff, :wait],
+      filter: &(&1.target == target),
+      as: fn _event, %{delay_ms: ms}, _meta -> {:wait, target, ms} end
     )
-
-    on_exit(fn -> :telemetry.detach(handler) end)
 
     Enum.reduce(1..attempts, Backoff.new(ladder), fn _attempt, table ->
       Backoff.update(table, target, :error, 0)

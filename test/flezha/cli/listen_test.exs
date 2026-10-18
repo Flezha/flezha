@@ -14,6 +14,7 @@ defmodule Flezha.Service.Cli.ListenTest do
   use Mimic
   import ExUnit.CaptureIO
   import FlezhaTest.Helper.MimicGlobal
+  import FlezhaTest.Helper.MessageTestHelper, only: [collect: 1]
 
   alias Flezha.Cluster.Directory
   alias Flezha.Relay.PartitionGroup
@@ -461,10 +462,8 @@ defmodule Flezha.Service.Cli.ListenTest do
   defp stage(frame), do: Process.put(:frames, Process.get(:frames, []) ++ [frame])
 
   defp calls() do
-    receive do
-      {:call, name, detail} -> [{name, detail} | calls()]
-    after
-      0 -> []
+    collect do
+      {:call, name, detail} -> {name, detail}
     end
   end
 end

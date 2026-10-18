@@ -38,6 +38,7 @@ defmodule FlezhaTest.System.DurableFrameE2ETest do
   alias Flezha.State.TestHelpers
   alias FlezhaTest.Helper.CompactionAssertions, as: CA
   alias FlezhaTest.Helper.NodeTestHelper
+  alias FlezhaTest.Helper.Telemetry
 
   @namespace "durable_frame_e2e"
   @factory "store_input"
@@ -131,17 +132,9 @@ defmodule FlezhaTest.System.DurableFrameE2ETest do
     :ok = TestHelpers.corrupt_record_body(path, mid)
     size_before = byte_size(File.read!(path))
 
-    parent = self()
-    handler = {__MODULE__, :refused, System.unique_integer([:positive])}
-
-    :telemetry.attach(
-      handler,
-      [:flezha, :state, :record_frame, :refused],
-      fn _e, measurements, meta, _ -> send(parent, {:refused, measurements, meta}) end,
-      nil
+    Telemetry.capture([:flezha, :state, :record_frame, :refused],
+      as: fn _e, measurements, meta -> {:refused, measurements, meta} end
     )
-
-    on_exit(fn -> :telemetry.detach(handler) end)
 
     log =
       capture_log(fn ->

@@ -18,6 +18,7 @@ defmodule FlezhaTest.OutboxCase do
 
   import ExUnit.Assertions
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
+  import FlezhaTest.Helper.MessageTestHelper, only: [collect: 1]
 
   alias Flezha.Dlq.Store, as: DlqStore
   alias Flezha.Relay.ClassRegistry
@@ -132,15 +133,13 @@ defmodule FlezhaTest.OutboxCase do
   end
 
   # Drains only the trace messages, so the dispatched-output mailbox is intact.
-  def traced_order(acc \\ []) do
-    receive do
+  def traced_order() do
+    collect do
       {:trace, _pid, :call, {DlqStore, :append, [%{origin_offset: offset}]}} ->
-        traced_order([{:park, offset} | acc])
+        {:park, offset}
 
       {:trace, _pid, :call, {InputLog, :record_consumed, [_class, _cell, offset]}} ->
-        traced_order([{:consumed, offset} | acc])
-    after
-      0 -> Enum.reverse(acc)
+        {:consumed, offset}
     end
   end
 

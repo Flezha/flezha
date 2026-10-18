@@ -11,6 +11,7 @@ defmodule FlezhaTest.Helper.CallHarness do
   alias Flezha.Process.CallDelivery
   alias Flezha.State.{Outbox, WriterRegistry}
   alias FlezhaTest.Helper.OverwatchHost, as: Host
+  alias FlezhaTest.Helper.Telemetry
 
   @cell {"gateway", "account", "k"}
   @events [:answered, :timeout, :answer_dropped, :refused, :recovered_unanswered]
@@ -23,18 +24,12 @@ defmodule FlezhaTest.Helper.CallHarness do
   """
   def install do
     test_pid = self()
-    handler = "call-harness-#{System.unique_integer([:positive])}"
 
-    :telemetry.attach_many(
-      handler,
-      for(e <- @events, do: [:flezha, :call, e]),
-      fn [:flezha, :call, event], _measurements, metadata, _ ->
-        send(test_pid, {:call_event, event, metadata})
-      end,
-      nil
+    Telemetry.capture(for(e <- @events, do: [:flezha, :call, e]),
+      as: fn [:flezha, :call, event], _measurements, metadata ->
+        {:call_event, event, metadata}
+      end
     )
-
-    ExUnit.Callbacks.on_exit(fn -> :telemetry.detach(handler) end)
 
     stub(Flezha.Runner.StreamChannel, :io_in, fn _channel, id, payload ->
       send(test_pid, {:channel_got, id, payload})

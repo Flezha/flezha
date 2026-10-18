@@ -16,6 +16,7 @@ defmodule Flezha.Plugin.Installer.LoaderTest do
   alias Flezha.Plugin.Providers
   alias Flezha.TestHelpers.PluginPackage
   alias FlezhaTest.Helper.NodeTestHelper
+  alias FlezhaTest.Helper.Telemetry
 
   setup %{tmp: tmp} do
     root = Path.join(tmp, "plugins")
@@ -248,16 +249,11 @@ defmodule Flezha.Plugin.Installer.LoaderTest do
              PluginPackage.load!(ctx.root, [ctx.example, second])
 
     ref = make_ref()
-    parent = self()
 
-    :telemetry.attach_many(
-      inspect(ref),
-      [[:flezha, :plugin_package, :loaded], [:flezha, :plugin_package, :refused]],
-      fn event, _m, meta, _ -> send(parent, {ref, event, meta}) end,
-      nil
+    Telemetry.capture([[:flezha, :plugin_package, :loaded], [:flezha, :plugin_package, :refused]],
+      as: fn event, _m, meta -> {ref, event, meta} end
     )
 
-    on_exit(fn -> :telemetry.detach(inspect(ref)) end)
     :ok = Loader.announce()
 
     assert_received {^ref, [:flezha, :plugin_package, :loaded],

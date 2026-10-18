@@ -2,6 +2,7 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
   # async: false: writes Application env; a shared on-disk root; the observability registry.
   use ExUnit.Case, async: false
 
+  import FlezhaTest.Helper.MessageTestHelper, only: [flush_all: 0]
   alias Flezha.Dlq.Store, as: DlqStore
   alias Flezha.Observability.{Registry, Signal, TelemetryBridge}
   alias Flezha.Observability.TestSinks.Counting
@@ -26,7 +27,7 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
   end
 
   test "bridged event becomes a signal" do
-    drain_mailbox()
+    flush_all()
 
     :telemetry.execute(
       [:flezha, :state, :wal, :backpressure],
@@ -60,7 +61,7 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
       })
 
     on_exit(fn -> Registry.unregister_sink(ws_sink) end)
-    drain_mailbox()
+    flush_all()
 
     :telemetry.execute(
       [:flezha, :plugin, :websocket, :resubscribe],
@@ -77,7 +78,7 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
   end
 
   test "persistence stall/gap/compaction events are bridged" do
-    drain_mailbox()
+    flush_all()
 
     :telemetry.execute(
       [:flezha, :state, :output_stall],
@@ -138,7 +139,7 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
       })
 
     on_exit(fn -> Registry.unregister_sink(sink) end)
-    drain_mailbox()
+    flush_all()
 
     :telemetry.execute(
       [:flezha, :state, :input_log_syncer_died],
@@ -179,7 +180,7 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
       })
 
     on_exit(fn -> Registry.unregister_sink(sink) end)
-    drain_mailbox()
+    flush_all()
 
     for {event, name} <- [
           dropped: :runner_dropped,
@@ -228,7 +229,7 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
       })
 
     on_exit(fn -> Registry.unregister_sink(conv_sink) end)
-    drain_mailbox()
+    flush_all()
 
     :telemetry.execute(
       [:flezha, :convergence, :relay_stuck],
@@ -276,7 +277,7 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
       })
 
     on_exit(fn -> Registry.unregister_sink(park_sink) end)
-    drain_mailbox()
+    flush_all()
 
     reason = {:plugin_prepare_failed, "exchange_sink", {:provider_refused, "pkg", "sink", :bad}}
     Lifecycle.park(%Overwatch{id: "obs_park_relay", namespace: "default"}, reason)
@@ -307,7 +308,7 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
       })
 
     on_exit(fn -> Registry.unregister_sink(call_sink) end)
-    drain_mailbox()
+    flush_all()
 
     callee = %{namespace: "default", relay_id: "obs_call_relay"}
     entry = %{"channel" => "in"}
@@ -357,7 +358,7 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
     DlqFixtures.isolated_dir(retention_seconds: 0)
     on_exit(fn -> Registry.unregister_sink(dlq_sink) end)
 
-    drain_mailbox()
+    flush_all()
 
     {:ok, _ref} =
       DlqStore.append(%{
@@ -463,7 +464,7 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
         })
 
       on_exit(fn -> Registry.unregister_sink(sink) end)
-      drain_mailbox()
+      flush_all()
       :ok
     end
 
@@ -587,14 +588,6 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
         end
     after
       timeout -> nil
-    end
-  end
-
-  defp drain_mailbox() do
-    receive do
-      _ -> drain_mailbox()
-    after
-      0 -> :ok
     end
   end
 end

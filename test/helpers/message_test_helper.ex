@@ -1,7 +1,8 @@
 defmodule FlezhaTest.Helper.MessageTestHelper do
   @moduledoc """
-  Turns a telemetry event into an ordinary message in the calling process, so a
-  signal can be awaited with `assert_receive`.
+  The calling process's mailbox as a test reads it: a telemetry event turned
+  into an ordinary message, the messages a pattern matches collected in order,
+  and a mailbox emptied.
   """
 
   @doc """
@@ -83,6 +84,57 @@ defmodule FlezhaTest.Helper.MessageTestHelper do
       after
         timeout -> raise "Condition not met within #{timeout}ms"
       end
+    end
+  end
+
+  @doc """
+  Every message one of the clauses matches, in arrival order, each as its
+  clause's body returns it. Stops once no matching message arrives within the
+  `after:` milliseconds (0 by default: only what is already queued). A message
+  no clause matches stays in the mailbox.
+
+      import FlezhaTest.Helper.MessageTestHelper, only: [collect: 1, collect: 2]
+
+      collect do
+        {:counted, signal} -> signal
+      end
+
+      collect after: 100 do
+        {:flz_data, _, _, message, _} -> message
+      end
+  """
+  defmacro collect(opts \\ [], do: clauses) do
+    clauses =
+      Enum.map(clauses, fn {:->, meta, [head, body]} -> {:->, meta, [head, {:ok, body}]} end)
+
+    quote do
+      FlezhaTest.Helper.MessageTestHelper.collect_next(
+        fn timeout ->
+          receive do
+            unquote(clauses)
+          after
+            timeout -> :none
+          end
+        end,
+        Keyword.get(unquote(opts), :after, 0)
+      )
+    end
+  end
+
+  @doc false
+  def collect_next(next, timeout) do
+    case next.(timeout) do
+      {:ok, value} -> [value | collect_next(next, timeout)]
+      :none -> []
+    end
+  end
+
+  @doc "Empty the calling process's mailbox."
+  def flush_all() do
+    receive do
+      _ -> flush_all()
+    after
+      0 -> :ok
     end
   end
 end

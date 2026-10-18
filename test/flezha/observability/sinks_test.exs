@@ -2,6 +2,7 @@ defmodule Flezha.Observability.IntegrationTest do
   # async: false: the observability registry.
   use ExUnit.Case, async: false
 
+  import FlezhaTest.Helper.MessageTestHelper, only: [collect: 1]
   alias Flezha.Observability
   alias Flezha.Observability.{Bus, PubSubSink, Registry, RingBufferSink, Signal}
   alias Flezha.Observability.TestSinks
@@ -123,10 +124,8 @@ defmodule Flezha.Observability.IntegrationTest do
   end
 
   defp drain_signals() do
-    receive do
-      {:flezha_signal, %Signal{} = sig} -> [sig | drain_signals()]
-    after
-      0 -> []
+    collect do
+      {:flezha_signal, %Signal{} = sig} -> sig
     end
   end
 
@@ -383,6 +382,7 @@ defmodule Flezha.Observability.LoggerHandlerTest do
 
   require Logger
 
+  import FlezhaTest.Helper.MessageTestHelper, only: [flush_all: 0]
   alias Flezha.Observability.{Counters, Registry, TestSinks}
   alias Flezha.Observability.LoggerHandler
   alias Flezha.Observability.TestSinks.Counting
@@ -410,7 +410,7 @@ defmodule Flezha.Observability.LoggerHandlerTest do
   end
 
   test "Logger.warning produces a :log signal with rendered message" do
-    drain_mailbox()
+    flush_all()
     Logger.warning("hello-observability")
 
     log_signal =
@@ -444,13 +444,5 @@ defmodule Flezha.Observability.LoggerHandlerTest do
     # Logger should still work after this call.
     Logger.warning("still-alive")
     assert Counters.get(:logger_bridge_failures) >= before_failures
-  end
-
-  defp drain_mailbox() do
-    receive do
-      _ -> drain_mailbox()
-    after
-      0 -> :ok
-    end
   end
 end

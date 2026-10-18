@@ -15,24 +15,13 @@ defmodule Flezha.Plugin.Provider.WebsocketIdleTimeoutTest do
   alias Flezha.Plugin.Provider.Websocket
   alias FlezhaTest.Helper.NodeTestHelper
   alias Flezha.Process.Timer
+  alias FlezhaTest.Helper.Telemetry
 
   @telemetry_event [:flezha, :plugin, :websocket, :idle_reconnect]
 
   setup do
-    parent = self()
-    handler_id = "test-#{:erlang.unique_integer([:positive])}"
+    Telemetry.capture(@telemetry_event)
 
-    :ok =
-      :telemetry.attach(
-        handler_id,
-        @telemetry_event,
-        fn event, measurements, metadata, _config ->
-          send(parent, {:telemetry, event, measurements, metadata})
-        end,
-        nil
-      )
-
-    on_exit(fn -> :telemetry.detach(handler_id) end)
     :ok
   end
 

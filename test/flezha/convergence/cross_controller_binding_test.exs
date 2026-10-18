@@ -6,6 +6,7 @@ defmodule FlezhaTest.Convergence.CrossControllerBinding do
   alias Flezha.State.TestHelpers
   alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.Helper.StepsResumeHarness
+  alias FlezhaTest.Helper.Telemetry
 
   @ns "test_temp_namespace"
 
@@ -37,17 +38,9 @@ defmodule FlezhaTest.Convergence.CrossControllerBinding do
 
     assert bound_runner(op) == peer_runner
 
-    handler = "cross-bind-#{System.unique_integer([:positive])}"
-    test_pid = self()
-
-    :telemetry.attach_many(
-      handler,
-      [[:flezha, :convergence, :heal], [:flezha, :convergence, :tick]],
-      fn event, _measurements, meta, _ -> send(test_pid, {:loop_event, event, meta}) end,
-      nil
+    Telemetry.capture([[:flezha, :convergence, :heal], [:flezha, :convergence, :tick]],
+      as: fn event, _measurements, meta -> {:loop_event, event, meta} end
     )
-
-    on_exit(fn -> :telemetry.detach(handler) end)
 
     # The loop emits each tick's heals before the tick itself, so five ticks
     # received carry every op this loop planned in them, past the misbound streak.

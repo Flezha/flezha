@@ -26,6 +26,8 @@ defmodule FlezhaTest.System.RemedyDrillTest do
   import FlezhaTest.Helper.NodeTestHelper,
     only: [crash_report: 2, wait_until: 2, with_only_logged: 2]
 
+  import FlezhaTest.Helper.MessageTestHelper, only: [collect: 1]
+
   import FlezhaTest.Helper.TierE2EHarness,
     only: [
       boot_runner: 3,
@@ -50,6 +52,7 @@ defmodule FlezhaTest.System.RemedyDrillTest do
   alias Flezha.State.{Commands, TestHelpers, WalWriter, Watchdog, WriterRegistry}
   alias Flezha.Transport.LivenessCounters
   alias FlezhaTest.Fixtures.RelayFixture
+  alias FlezhaTest.Helper.Telemetry
   alias ProcessHub.Service.ProcessRegistry
 
   setup :set_mimic_global_until_exit
@@ -85,7 +88,6 @@ defmodule FlezhaTest.System.RemedyDrillTest do
 
   setup do
     namespace = "remedy_drill_#{System.unique_integer([:positive])}"
-    parent = self()
 
     # BEFORE any hub exists: the cache is cleared so a hub another suite left
     # mid-recovery cannot hold this loop's gate shut, and this namespace's own
@@ -93,8 +95,8 @@ defmodule FlezhaTest.System.RemedyDrillTest do
     # would drop that seed and the gate would exclude every namespace, so the
     # loop would plan nothing at all.
     ConvergenceSnapshot.reset_recovery_states()
-    collect(parent, [:flezha, :convergence, :heal], :heal)
-    collect(parent, [:flezha, :convergence, :tick], :tick)
+    capture_as([:flezha, :convergence, :heal], :heal)
+    capture_as([:flezha, :convergence, :tick], :tick)
 
     on_exit(fn ->
       Application.delete_env(:flezha, :overwatch_ping_fn)
@@ -382,7 +384,7 @@ defmodule FlezhaTest.System.RemedyDrillTest do
     if reason = FlezhaTest.SystemCase.deferral(:pool_wedge) do
       IO.puts("restart_runner: #{reason}")
     else
-      collect(self(), [:flezha, :data_plane, :stall_localized], :verdict)
+      capture_as([:flezha, :data_plane, :stall_localized], :verdict)
 
       {port_a, runner_a} =
         boot_runner(namespace, unique_id_path("drill"),
@@ -551,11 +553,8 @@ defmodule FlezhaTest.System.RemedyDrillTest do
   end
 
   defp flush_ticks() do
-    receive do
-      {:tick, _} -> flush_ticks()
-    after
-      0 -> :ok
-    end
+    _ = collect(do: ({:tick, _} -> :ok))
+    :ok
   end
 
   defp bound_runner(namespace, relay_id) do
@@ -638,16 +637,6 @@ defmodule FlezhaTest.System.RemedyDrillTest do
     end
   end
 
-  defp collect(parent, event, tag) do
-    id = "remedy-drill-#{tag}-#{System.unique_integer([:positive])}"
-
-    :telemetry.attach(
-      id,
-      event,
-      fn _e, meas, meta, _ -> send(parent, {tag, Map.merge(meas, meta)}) end,
-      nil
-    )
-
-    on_exit(fn -> :telemetry.detach(id) end)
-  end
+  defp capture_as(event, tag),
+    do: Telemetry.capture(event, as: fn _e, meas, meta -> {tag, Map.merge(meas, meta)} end)
 end

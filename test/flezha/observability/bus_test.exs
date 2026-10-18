@@ -2,6 +2,7 @@ defmodule Flezha.Observability.BusTest do
   # async: false: the observability registry.
   use ExUnit.Case, async: false
 
+  import FlezhaTest.Helper.MessageTestHelper, only: [collect: 2]
   alias Flezha.Observability.{Bus, Registry, Signal}
   alias Flezha.Observability.TestSinks.{Blocking, Counting, Slow}
 
@@ -342,10 +343,8 @@ defmodule Flezha.Observability.BusTest do
   end
 
   defp drain_counted(timeout_ms) do
-    receive do
-      {:counted, sig} -> [sig | drain_counted(timeout_ms)]
-    after
-      timeout_ms -> []
+    collect after: timeout_ms do
+      {:counted, sig} -> sig
     end
   end
 end

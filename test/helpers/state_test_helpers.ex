@@ -9,6 +9,8 @@ defmodule Flezha.State.TestHelpers do
   that must not be reachable from a release.
   """
 
+  import FlezhaTest.Helper.MessageTestHelper, only: [collect: 1]
+
   alias Flezha.State.Frame
   alias Flezha.State.{FsyncBatcher, Outbox, Paths, Supervisor, WalWriter}
   alias FlezhaTest.Helper.NodeTestHelper
@@ -453,15 +455,12 @@ defmodule Flezha.State.TestHelpers do
       {:trace_delivered, ^pid, ^trace_ref} -> :ok
     end
 
-    {result, traced_file_calls(pid, [])}
+    {result, traced_file_calls(pid)}
   end
 
-  defp traced_file_calls(pid, acc) do
-    receive do
-      {:trace, ^pid, :call, {:file, function, args}} ->
-        traced_file_calls(pid, [{function, args} | acc])
-    after
-      0 -> Enum.reverse(acc)
+  defp traced_file_calls(pid) do
+    collect do
+      {:trace, ^pid, :call, {:file, function, args}} -> {function, args}
     end
   end
 end

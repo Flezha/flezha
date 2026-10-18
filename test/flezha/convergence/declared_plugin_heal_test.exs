@@ -22,6 +22,7 @@ defmodule FlezhaTest.Convergence.DeclaredPluginHealTest do
   use ExUnit.Case
 
   import ExUnit.CaptureLog
+  import FlezhaTest.Helper.MessageTestHelper, only: [collect: 1]
 
   @temp_namespace "test_temp_namespace"
   @test_store_input_factory "store_input"
@@ -189,7 +190,7 @@ defmodule FlezhaTest.Convergence.DeclaredPluginHealTest do
 
       # About seven at `tick_ms`; a declared fact may add a few. The spin this
       # guards against ticks well over a hundred times in the same window.
-      ticks = count_ticks(loop, 0)
+      ticks = count_ticks(loop)
       assert ticks <= 15, "the loop ticked #{ticks} times in #{6 * tick_ms} ms"
     end
 
@@ -286,13 +287,14 @@ defmodule FlezhaTest.Convergence.DeclaredPluginHealTest do
   defp phase(ow, plugin_id),
     do: Table.phase(GenServer.call(ow, :get_overwatch_state).extensions, plugin_id)
 
-  defp count_ticks(loop, n) do
-    receive do
-      {:trace, ^loop, :receive, :tick} -> count_ticks(loop, n + 1)
-      {:trace, ^loop, :receive, _} -> count_ticks(loop, n)
-    after
-      0 -> n
-    end
+  defp count_ticks(loop) do
+    ticks =
+      collect do
+        {:trace, ^loop, :receive, :tick} -> true
+        {:trace, ^loop, :receive, _} -> false
+      end
+
+    Enum.count(ticks, & &1)
   end
 
   defp subscribed_plugin?(ow, plugin_id) do

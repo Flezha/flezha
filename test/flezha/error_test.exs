@@ -2,6 +2,7 @@ defmodule Flezha.ErrorTest do
   use ExUnit.Case, async: true
 
   alias Flezha.Error
+  alias FlezhaTest.Helper.Telemetry
 
   @fixture "test/fixtures/error_rendering.json" |> File.read!() |> Jason.decode!()
 
@@ -38,16 +39,11 @@ defmodule Flezha.ErrorTest do
 
   test "an unmapped reason is uncatalogued, carries the term as text, and says so on telemetry" do
     ref = make_ref()
-    test = self()
 
-    :telemetry.attach(
-      "error-test-#{inspect(ref)}",
-      [:flezha, :error, :uncatalogued],
-      fn _event, _measurements, metadata, _ -> send(test, {ref, metadata}) end,
-      nil
+    Telemetry.capture([:flezha, :error, :uncatalogued],
+      as: fn _event, _measurements, metadata -> {ref, metadata} end
     )
 
-    on_exit(fn -> :telemetry.detach("error-test-#{inspect(ref)}") end)
     Process.put(:flezha_uncatalogued_expected, true)
 
     error = Error.from_reason({:brand_new_reason, %{a: 1}}, "wire.spawn")

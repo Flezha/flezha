@@ -37,6 +37,7 @@ defmodule FlezhaTest.System.HealthVerdictDrillTest do
   alias Flezha.Plugin
   alias Flezha.Service.{Cli, RelayManager, PluginManager}
   alias FlezhaTest.Fixtures.RelayFixture
+  alias FlezhaTest.Helper.Telemetry
 
   require Logger
 
@@ -111,8 +112,7 @@ defmodule FlezhaTest.System.HealthVerdictDrillTest do
   test "every reachable state is produced, and four surfaces report one word", ctx do
     # Attached HERE, not in `setup_all`: the handler sends to the process that
     # attached it, and only the test process reads the mailbox.
-    collect_verdicts(self())
-    on_exit(fn -> :telemetry.detach({__MODULE__, :verdicts}) end)
+    collect_verdicts()
 
     # Ordered, and the order is the point: the rows that kill the runner run
     # last, because every row after them would be reading a fixture with no
@@ -488,12 +488,9 @@ defmodule FlezhaTest.System.HealthVerdictDrillTest do
     end
   end
 
-  defp collect_verdicts(parent) do
-    :telemetry.attach(
-      {__MODULE__, :verdicts},
-      Verdict.event(),
-      fn _event, _measurements, metadata, _config -> send(parent, {:verdict, metadata}) end,
-      nil
+  defp collect_verdicts() do
+    Telemetry.capture(Verdict.event(),
+      as: fn _event, _measurements, metadata -> {:verdict, metadata} end
     )
   end
 

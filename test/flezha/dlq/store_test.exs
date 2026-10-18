@@ -6,6 +6,7 @@ defmodule Flezha.Dlq.StoreTest do
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 3]
 
   alias Flezha.Dlq.Store
+  alias FlezhaTest.Helper.Telemetry
 
   setup %{dlq_dir: dir} do
     name = :"dlq_store_#{System.unique_integer([:positive])}"
@@ -184,19 +185,9 @@ defmodule Flezha.Dlq.StoreTest do
   end
 
   test "retention drops by age with loud telemetry", %{store: store} do
-    handler = :"dlq_test_#{System.unique_integer([:positive])}"
-    parent = self()
-
-    :telemetry.attach(
-      handler,
-      [:flezha, :dlq, :retention_dropped],
-      fn _event, measurements, metadata, _cfg ->
-        send(parent, {:dropped, measurements, metadata})
-      end,
-      nil
+    Telemetry.capture([:flezha, :dlq, :retention_dropped],
+      as: fn _event, measurements, metadata -> {:dropped, measurements, metadata} end
     )
-
-    on_exit(fn -> :telemetry.detach(handler) end)
 
     cfg = Application.get_env(:flezha, :dlq, [])
     Application.put_env(:flezha, :dlq, Keyword.put(cfg, :retention_seconds, 0))

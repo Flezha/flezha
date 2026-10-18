@@ -39,6 +39,7 @@ defmodule FlezhaTest.System.BackoffTableDrillTest do
   alias Flezha.State.Watchdog
   alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.Helper.ProviderPrepare
+  alias FlezhaTest.Helper.Telemetry
   alias FlezhaTest.Helper.WebhookServer
   alias FlezhaTest.Helper.WebsocketServer
 
@@ -335,19 +336,10 @@ defmodule FlezhaTest.System.BackoffTableDrillTest do
   # ---------- observation ----------
 
   defp collect(ladder) do
-    parent = self()
-    id = "backoff-drill-#{ladder}-#{System.unique_integer([:positive])}"
-
-    :telemetry.attach_many(
-      id,
-      [[:flezha, :backoff, :wait], [:flezha, :backoff, :reset]],
-      fn event, measurements, metadata, _ ->
-        if metadata.ladder == ladder, do: send(parent, {:backoff, List.last(event), measurements})
-      end,
-      nil
+    Telemetry.capture([[:flezha, :backoff, :wait], [:flezha, :backoff, :reset]],
+      filter: &(&1.ladder == ladder),
+      as: fn event, measurements, _metadata -> {:backoff, List.last(event), measurements} end
     )
-
-    on_exit(fn -> :telemetry.detach(id) end)
   end
 
   defp drain_waits(_ladder, expected, acc \\ []) do

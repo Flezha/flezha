@@ -21,6 +21,7 @@ defmodule Flezha.AuthZ.QuotaPointsTest do
   alias Flezha.State.PersistenceResolver
   alias Flezha.State.Watchdog
   alias FlezhaTest.Helper.AuthTestHelper
+  alias FlezhaTest.Helper.Telemetry
 
   setup :set_mimic_global_until_exit
 
@@ -190,41 +191,28 @@ defmodule Flezha.AuthZ.QuotaPointsTest do
       File.mkdir_p!(dir)
       File.write!(Path.join(dir, "k1.wal"), :binary.copy(<<0>>, 4_096))
 
-      handler_id = {__MODULE__, make_ref()}
-      test_pid = self()
+      Telemetry.capture([:flezha, :state, :disk_quota_breach],
+        as: fn _event, measurements, metadata -> {:breach, measurements, metadata} end
+      )
 
-      :ok =
-        :telemetry.attach(
-          handler_id,
-          [:flezha, :state, :disk_quota_breach],
-          fn _event, measurements, metadata, _cfg ->
-            send(test_pid, {:breach, measurements, metadata})
-          end,
-          nil
-        )
+      # The alarm is deliberately loud: assert the caller-facing line is the
+      # contract rather than letting it reach the console unasserted.
+      log =
+        capture_log(fn ->
+          :ok = Watchdog.sweep_now()
 
-      try do
-        # The alarm is deliberately loud: assert the caller-facing line is the
-        # contract rather than letting it reach the console unasserted.
-        log =
-          capture_log(fn ->
-            :ok = Watchdog.sweep_now()
+          assert_receive {:breach, %{bytes: bytes, limit: 100}, %{namespace: "team-alarm"}},
+                         2_000
 
-            assert_receive {:breach, %{bytes: bytes, limit: 100}, %{namespace: "team-alarm"}},
-                           2_000
+          assert bytes > 100
+        end)
 
-            assert bytes > 100
-          end)
+      assert log =~ "namespace team-alarm exceeds max_state_bytes"
 
-        assert log =~ "namespace team-alarm exceeds max_state_bytes"
-
-        # Latched: a second sweep with the breach still standing does not
-        # re-alarm.
-        :ok = Watchdog.sweep_now()
-        refute_received {:breach, _, %{namespace: "team-alarm"}}
-      after
-        :telemetry.detach(handler_id)
-      end
+      # Latched: a second sweep with the breach still standing does not
+      # re-alarm.
+      :ok = Watchdog.sweep_now()
+      refute_received {:breach, _, %{namespace: "team-alarm"}}
     end
 
     test "a quota store that exits mid-sweep leaves the Watchdog running", %{

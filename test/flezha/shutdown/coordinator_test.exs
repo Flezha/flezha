@@ -6,7 +6,7 @@ defmodule Flezha.Shutdown.CoordinatorTest do
 
   use Mimic
   import FlezhaTest.Helper.MimicGlobal
-  import FlezhaTest.Helper.MessageTestHelper, only: [become_loop: 0]
+  import FlezhaTest.Helper.MessageTestHelper, only: [become_loop: 0, collect: 1]
 
   alias Flezha.Convergence.Facts
   alias Flezha.Service.HubManager
@@ -382,11 +382,9 @@ defmodule Flezha.Shutdown.CoordinatorTest do
 
   defp detach_telemetry(handler_id), do: :telemetry.detach(handler_id)
 
-  defp drain_telemetry(acc \\ []) do
-    receive do
-      {:telemetry, ev, m, md} -> drain_telemetry([{ev, m, md} | acc])
-    after
-      0 -> Enum.reverse(acc)
+  defp drain_telemetry() do
+    collect do
+      {:telemetry, ev, m, md} -> {ev, m, md}
     end
   end
 end

@@ -39,6 +39,8 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
   import FlezhaTest.Helper.NodeTestHelper,
     only: [claim_tmp_dir: 1, wait_until: 2, with_only_logged: 2]
 
+  import FlezhaTest.Helper.MessageTestHelper, only: [collect: 1]
+
   import FlezhaTest.Helper.TierE2EHarness,
     only: [boot_runner: 3, stop_namespace: 1, unique_id_path: 1]
 
@@ -53,6 +55,7 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
   alias Flezha.Service.RelayManager
   alias Flezha.Service.PluginManager
   alias Flezha.TestHelpers.PluginPackage
+  alias FlezhaTest.Helper.Telemetry
 
   @moduletag timeout: 300_000
 
@@ -227,7 +230,6 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
   test "every declared worker is started at activation and stopped at disable", ctx do
     rows = fixtures(ctx)
     events = collect_phase_events()
-    on_exit(fn -> :telemetry.detach({__MODULE__, :phase}) end)
 
     for {id, provider} <- Providers.all(), not Map.has_key?(@deferred, provider) do
       {fixture, opts} = Map.fetch!(rows, provider)
@@ -566,29 +568,18 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
   defp stringify(value), do: value
 
   defp collect_phase_events do
-    parent = self()
-
-    :telemetry.attach(
-      {__MODULE__, :phase},
-      Table.phase_event(),
-      fn _e, _m, meta, _c -> send(parent, {:phase_event, meta}) end,
-      nil
-    )
+    Telemetry.capture(Table.phase_event(), as: fn _e, _m, meta -> {:phase_event, meta} end)
 
     :ok
   end
 
-  defp phase_events(:ok, plugin_id), do: drain_phase_events(plugin_id, [])
+  defp phase_events(:ok, plugin_id) do
+    phases =
+      collect do
+        {:phase_event, %{plugin_id: ^plugin_id, to: to}} -> {:ok, to}
+        {:phase_event, _other} -> :other
+      end
 
-  defp drain_phase_events(plugin_id, acc) do
-    receive do
-      {:phase_event, %{plugin_id: ^plugin_id, to: to}} ->
-        drain_phase_events(plugin_id, [to | acc])
-
-      {:phase_event, _other} ->
-        drain_phase_events(plugin_id, acc)
-    after
-      0 -> acc
-    end
+    for {:ok, to} <- Enum.reverse(phases), do: to
   end
 end

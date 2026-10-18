@@ -23,6 +23,7 @@ defmodule FlezhaTest.Relay.IngestTest do
   alias FlezhaTest.Helper.OverwatchHost, as: Host
 
   import Host, only: [state: 1, state: 2]
+  import FlezhaTest.Helper.MessageTestHelper, only: [collect: 1]
 
   @ui %{source: :ui, principal: "console@_system"}
 
@@ -430,7 +431,7 @@ defmodule FlezhaTest.Relay.IngestTest do
       assert Enum.map(InputLog.undelivered(inst), &elem(&1, 1)) ==
                ["m0" | Enum.map(records, &elem(&1, 0))]
 
-      syncs = count_syncs(log, 0)
+      syncs = count_syncs(log)
       assert syncs > 0 and syncs < 500, "the batch took #{syncs} log syncs for 500 records"
     end
 
@@ -448,14 +449,15 @@ defmodule FlezhaTest.Relay.IngestTest do
     end
   end
 
-  defp count_syncs(log, count) do
-    receive do
-      {:trace, ^log, :receive, {:"$gen_cast", :fsync}} -> count_syncs(log, count + 1)
-      {:trace, ^log, :receive, {:"$gen_call", _from, :fsync}} -> count_syncs(log, count + 1)
-      {:trace, ^log, :receive, _other} -> count_syncs(log, count)
-    after
-      0 -> count
-    end
+  defp count_syncs(log) do
+    syncs =
+      collect do
+        {:trace, ^log, :receive, {:"$gen_cast", :fsync}} -> true
+        {:trace, ^log, :receive, {:"$gen_call", _from, :fsync}} -> true
+        {:trace, ^log, :receive, _other} -> false
+      end
+
+    Enum.count(syncs, & &1)
   end
 
   describe "the effectively-once journal" do

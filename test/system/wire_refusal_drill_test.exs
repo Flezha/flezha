@@ -27,6 +27,7 @@ defmodule FlezhaTest.System.WireRefusalDrillTest do
   use FlezhaTest.SystemCase, capability: :runner_lifecycle
 
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
+  import FlezhaTest.Helper.MessageTestHelper, only: [collect: 1]
 
   alias Flezha.Relay.Builder
   alias Flezha.Runner.FleetManager
@@ -180,12 +181,12 @@ defmodule FlezhaTest.System.WireRefusalDrillTest do
 
   # The runner's own log, as the harness's port delivered it so far.
   defp count_lines(port, needle) do
-    receive do
-      {^port, {:data, data}} ->
-        length(String.split(IO.iodata_to_binary(data), needle)) - 1 + count_lines(port, needle)
-    after
-      0 -> 0
-    end
+    counts =
+      collect do
+        {^port, {:data, data}} -> length(String.split(IO.iodata_to_binary(data), needle)) - 1
+      end
+
+    Enum.sum(counts)
   end
 
   # A runner that exited but has not been reaped still answers `kill -0`, and

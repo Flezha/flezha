@@ -15,6 +15,7 @@ defmodule FlezhaTest.Helper.FakeStartRegistry do
   """
 
   import Mimic
+  import FlezhaTest.Helper.MessageTestHelper, only: [collect: 1]
 
   alias Flezha.AuthZ.Quotas
   alias Flezha.Partition
@@ -180,11 +181,9 @@ defmodule FlezhaTest.Helper.FakeStartRegistry do
 
   @doc "The builders started since the last drain, in start order."
   @spec started() :: [struct()]
-  def started(acc \\ []) do
-    receive do
-      {:started, builder} -> started([builder | acc])
-    after
-      0 -> Enum.reverse(acc)
+  def started() do
+    collect do
+      {:started, builder} -> builder
     end
   end
 

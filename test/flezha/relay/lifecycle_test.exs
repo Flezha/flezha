@@ -482,6 +482,7 @@ defmodule FlezhaTest.Relay.OverwatchCorrectionRetentionTest do
 
   alias Flezha.Relay.ClassRegistry
   alias Flezha.State.{InputLog, PersistenceResolver}
+  alias FlezhaTest.Helper.Telemetry
 
   setup do
     ClassRegistry.ensure_table()
@@ -489,18 +490,10 @@ defmodule FlezhaTest.Relay.OverwatchCorrectionRetentionTest do
   end
 
   defp attach(event) do
-    parent = self()
     ref = make_ref()
-    handler = {__MODULE__, ref}
 
-    :telemetry.attach(
-      handler,
-      event,
-      fn _e, meas, meta, _ -> send(parent, {ref, meas, meta}) end,
-      nil
-    )
+    Telemetry.capture(event, as: fn _e, meas, meta -> {ref, meas, meta} end)
 
-    on_exit(fn -> :telemetry.detach(handler) end)
     ref
   end
 

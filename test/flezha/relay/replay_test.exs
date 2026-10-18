@@ -185,6 +185,7 @@ defmodule FlezhaTest.Relay.RestoreRefusalTest do
   alias Flezha.State.Restore
   alias Flezha.State.TestHelpers
   alias Flezha.State.WalWriter
+  alias FlezhaTest.Helper.Telemetry
 
   @java 2
 
@@ -242,16 +243,9 @@ defmodule FlezhaTest.Relay.RestoreRefusalTest do
         {:error, sdk_refusal()}
       end)
 
-      :telemetry.attach(
-        "restore-refusal-test",
-        [:flezha, :state, :restore_refused],
-        fn _event, measurements, metadata, pid ->
-          send(pid, {:refused, measurements, metadata})
-        end,
-        self()
+      Telemetry.capture([:flezha, :state, :restore_refused],
+        as: fn _event, measurements, metadata -> {:refused, measurements, metadata} end
       )
-
-      on_exit(fn -> :telemetry.detach("restore-refusal-test") end)
 
       {result, log} = with_log(fn -> Replay.await_restore("runner_1", id) end)
 
@@ -418,6 +412,7 @@ defmodule FlezhaTest.Relay.BindReforwardTest do
   # a global telemetry handler.
   use FlezhaTest.Case, fixtures: [:tmp_app_data, :state_tree], async: false
 
+  import FlezhaTest.Helper.MessageTestHelper, only: [collect: 2]
   alias Flezha.Relay.Ingest
   alias Flezha.Relay.Overwatch
   alias Flezha.Relay.Replay
@@ -428,6 +423,7 @@ defmodule FlezhaTest.Relay.BindReforwardTest do
   alias Flezha.State.TestHelpers
   alias FlezhaTest.Helper.StreamPair
   alias FlezhaTest.Helper.NodeTestHelper
+  alias FlezhaTest.Helper.Telemetry
 
   setup do
     class = "bindfwd_" <> Integer.to_string(System.unique_integer([:positive]))
@@ -442,17 +438,7 @@ defmodule FlezhaTest.Relay.BindReforwardTest do
 
   describe "an unbound stream" do
     test "counts the drop instead of discarding the channel's answer", ctx do
-      test_pid = self()
-      handler = "ow-io-drop-#{System.unique_integer([:positive])}"
-
-      :telemetry.attach(
-        handler,
-        [:flezha, :stream, :drop],
-        fn _e, m, md, _ -> send(test_pid, {:drop, m, md}) end,
-        nil
-      )
-
-      on_exit(fn -> :telemetry.detach(handler) end)
+      Telemetry.capture([:flezha, :stream, :drop], as: fn _e, m, md -> {:drop, m, md} end)
 
       # An empty extension catalog makes the `:on_input` chain fall through to
       # the message passthrough, so a non-nil payload reaches the channel.
@@ -677,11 +663,9 @@ defmodule FlezhaTest.Relay.BindReforwardTest do
   end
 
   # Every frame the stream carried, in order — `[]` when it carried none.
-  defp drain_frames(acc \\ []) do
-    receive do
-      {:flz_data, _, _, message, _} -> drain_frames([message | acc])
-    after
-      100 -> Enum.reverse(acc)
+  defp drain_frames() do
+    collect after: 100 do
+      {:flz_data, _, _, message, _} -> message
     end
   end
 

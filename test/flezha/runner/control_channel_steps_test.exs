@@ -23,6 +23,7 @@ defmodule FlezhaTest.Runner.ControlChannelRelayCompletedTest do
   alias Flezha.State.Completion
   alias FlezhaTest.Helper.ControlFrameTestHelper
   alias FlezhaTest.Helper.NodeTestHelper
+  alias FlezhaTest.Helper.Telemetry
 
   @namespace "ctrl-chan-task-completed-test"
 
@@ -33,21 +34,9 @@ defmodule FlezhaTest.Runner.ControlChannelRelayCompletedTest do
   setup :set_mimic_global_until_exit
 
   setup do
-    test_pid = self()
-    handler_id = "task-completed-test-#{System.unique_integer([:positive])}"
-
     # Every exit trigger emits `:completed`; only a terminal failure also emits
     # `:failed`. Attach both so a test can assert convergence + the result payload.
-    :telemetry.attach_many(
-      handler_id,
-      [[:flezha, :steps, :completed], [:flezha, :steps, :failed]],
-      fn event, measurements, metadata, _ ->
-        send(test_pid, {:telemetry, event, measurements, metadata})
-      end,
-      nil
-    )
-
-    on_exit(fn -> :telemetry.detach(handler_id) end)
+    Telemetry.capture([[:flezha, :steps, :completed], [:flezha, :steps, :failed]])
 
     :ok
   end

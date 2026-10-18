@@ -37,6 +37,7 @@ defmodule FlezhaTest.System.StepsControlFlowE2ETest do
   alias Flezha.State.InputLog
   alias Flezha.State.TaskJournal
   alias FlezhaTest.Helper.NodeTestHelper
+  alias FlezhaTest.Helper.Telemetry
 
   @moduletag :steps_crash_resume
   # A loop, a rewind or a retry ladder runs many turns through a live runner.
@@ -389,19 +390,10 @@ defmodule FlezhaTest.System.StepsControlFlowE2ETest do
 
       on_exit(fn -> cleanup(namespace, relay_id, id_path) end)
 
-      parent = self()
-      handler = {__MODULE__, :rehydrating, relay_id}
-
-      :telemetry.attach(
-        handler,
-        [:flezha, :steps, :rehydrating],
-        fn _e, _meas, meta, _ ->
-          if meta.relay_id == relay_id, do: send(parent, :rehydrating)
-        end,
-        nil
+      Telemetry.capture([:flezha, :steps, :rehydrating],
+        filter: &(&1.relay_id == relay_id),
+        as: fn _e, _meas, _meta -> :rehydrating end
       )
-
-      on_exit(fn -> :telemetry.detach(handler) end)
 
       {_port, _exec} =
         boot_runner(namespace, ctx, id_path,

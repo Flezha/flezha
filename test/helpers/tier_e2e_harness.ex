@@ -11,6 +11,8 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
   import ExUnit.Assertions
   import ExUnit.Callbacks, only: [on_exit: 1, start_supervised!: 1]
 
+  import FlezhaTest.Helper.MessageTestHelper, only: [collect: 1]
+
   import FlezhaTest.Helper.NodeTestHelper,
     only: [crash_report: 1, wait_until: 2, with_only_logged: 2]
 
@@ -391,11 +393,12 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
 
   @doc "Consume and return every forwarded output, in arrival order."
   def drain_outputs(acc \\ []) do
-    receive do
-      {:message_forward, msg, md} -> drain_outputs([{to_string(msg), md} | acc])
-    after
-      0 -> Enum.reverse(acc)
-    end
+    outputs =
+      collect do
+        {:message_forward, msg, md} -> {to_string(msg), md}
+      end
+
+    Enum.reverse(acc, outputs)
   end
 
   @doc """

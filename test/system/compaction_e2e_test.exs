@@ -33,6 +33,7 @@ defmodule FlezhaTest.System.CompactionE2ETest do
   alias Flezha.State.Watchdog
   alias FlezhaTest.Helper.CompactionAssertions, as: CA
   alias FlezhaTest.Helper.NodeTestHelper
+  alias FlezhaTest.Helper.Telemetry
 
   @namespace "compaction_e2e"
   @factory "store_input"
@@ -93,17 +94,9 @@ defmodule FlezhaTest.System.CompactionE2ETest do
     assert wal_before > 0, "precondition: the Cell's WAL must hold records before compaction"
     assert CA.snapshot_files(cell_id) == [], "precondition: no snapshot file exists yet"
 
-    parent = self()
-    done_id = {__MODULE__, :compaction_completed, System.unique_integer([:positive])}
-
-    :telemetry.attach(
-      done_id,
-      [:flezha, :state, :compaction_completed],
-      fn _e, _meas, meta, _ -> send(parent, {:compaction_completed, meta}) end,
-      nil
+    Telemetry.capture([:flezha, :state, :compaction_completed],
+      as: fn _e, _meas, meta -> {:compaction_completed, meta} end
     )
-
-    on_exit(fn -> :telemetry.detach(done_id) end)
 
     # Arm the age trigger low and force a sweep with the Cell's oldest
     # un-snapshotted record already past it.

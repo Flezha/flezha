@@ -22,21 +22,13 @@ defmodule FlezhaTest.Runner.ControlChannelLivenessTest do
 
   alias Flezha.Runner.ControlChannel
   alias FlezhaTest.Helper.NodeTestHelper
+  alias FlezhaTest.Helper.Telemetry
 
   setup do
-    test_pid = self()
-    handler_id = "liveness-test-#{System.unique_integer([:positive])}"
-
-    :telemetry.attach(
-      handler_id,
-      [:flezha, :runner, :liveness_timeout],
-      fn _event, measurements, metadata, _ ->
-        send(test_pid, {:liveness_timeout, measurements, metadata})
-      end,
-      nil
+    Telemetry.capture([:flezha, :runner, :liveness_timeout],
+      as: fn _event, measurements, metadata -> {:liveness_timeout, measurements, metadata} end
     )
 
-    on_exit(fn -> :telemetry.detach(handler_id) end)
     :ok
   end
 

@@ -18,6 +18,7 @@ defmodule FlezhaTest.Service.CallsTest do
   alias Flezha.State.{Outbox, TestHelpers, WriterRegistry}
   alias FlezhaTest.Helper.FakeStartRegistry
   alias FlezhaTest.Helper.FakeStartRegistry.Instance
+  alias FlezhaTest.Helper.Telemetry
 
   @ns "calls-delivery-test"
   @caller %{source: :sdk, principal: "runner@" <> @ns, namespace: @ns}
@@ -209,16 +210,10 @@ defmodule FlezhaTest.Service.CallsTest do
     # and each confirmation to the answer's Cell as the writer's own cast.
     defp observe_answer(cell) do
       test_pid = self()
-      handler = "calls-test-#{System.unique_integer([:positive])}"
 
-      :telemetry.attach(
-        handler,
-        [:flezha, :call, :answer_dropped],
-        fn _event, _m, metadata, _ -> send(test_pid, {:answer_dropped, metadata}) end,
-        nil
+      Telemetry.capture([:flezha, :call, :answer_dropped],
+        as: fn _event, _m, metadata -> {:answer_dropped, metadata} end
       )
-
-      on_exit(fn -> :telemetry.detach(handler) end)
 
       stub(WriterRegistry, :lookup, fn
         ^cell -> {:ok, test_pid}

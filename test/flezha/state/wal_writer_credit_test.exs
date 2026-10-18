@@ -9,7 +9,7 @@ defmodule Flezha.State.WalWriterCreditTest do
 
   use FlezhaTest.Case, fixtures: [:tmp_app_data, :env], async: false
 
-  import FlezhaTest.Helper.MessageTestHelper, only: [become_loop: 0]
+  import FlezhaTest.Helper.MessageTestHelper, only: [become_loop: 0, collect: 2]
   use Mimic
   import FlezhaTest.Helper.MimicGlobal
 
@@ -46,11 +46,12 @@ defmodule Flezha.State.WalWriterCreditTest do
   defp sync(pid), do: WalWriter.last_persisted_seq(pid)
 
   defp drain_credit_reports() do
-    receive do
-      {:credit_drained, _, _, _} -> drain_credit_reports()
-    after
-      200 -> :ok
-    end
+    _ =
+      collect after: 200 do
+        {:credit_drained, _, _, _} -> :ok
+      end
+
+    :ok
   end
 
   test "written bytes are reported on fsync, tagged with the debiting session and the Cell",

@@ -22,9 +22,11 @@ defmodule Flezha.Process.StepsCallDrillTest do
   # abnormal exit at error level.
   @moduletag :capture_log
 
+  import FlezhaTest.Helper.MessageTestHelper, only: [collect: 1]
   alias Flezha.Process.Timer
   alias Flezha.Process.Watch
   alias Flezha.SDK.SafeCall
+  alias FlezhaTest.Helper.Telemetry
 
   defmodule Callee do
     @moduledoc false
@@ -48,16 +50,11 @@ defmodule Flezha.Process.StepsCallDrillTest do
 
   setup do
     ref = make_ref()
-    parent = self()
 
-    :telemetry.attach(
-      "drill-#{inspect(ref)}",
-      [:flezha, :convergence, :safe_call],
-      fn _event, _measure, meta, _cfg -> send(parent, {:safe_call, ref, meta}) end,
-      nil
+    Telemetry.capture([:flezha, :convergence, :safe_call],
+      as: fn _event, _measure, meta -> {:safe_call, ref, meta} end
     )
 
-    on_exit(fn -> :telemetry.detach("drill-#{inspect(ref)}") end)
     {:ok, event: ref}
   end
 
@@ -219,11 +216,9 @@ defmodule Flezha.Process.StepsCallDrillTest do
     if len > 0, do: :ok, else: await_mailbox(remaining - 1)
   end
 
-  defp flush_mailbox(acc \\ []) do
-    receive do
-      msg -> flush_mailbox([msg | acc])
-    after
-      0 -> Enum.reverse(acc)
+  defp flush_mailbox() do
+    collect do
+      msg -> msg
     end
   end
 end

@@ -25,6 +25,7 @@ defmodule FlezhaTest.Plugin.SharedMultinodeTest do
   alias FlezhaTest.Helper.WebsocketServer
 
   import NodeTestHelper, only: [with_only_logged: 2]
+  import FlezhaTest.Helper.MessageTestHelper, only: [collect: 1]
 
   @moduletag :multi_node
   @namespace "default"
@@ -140,12 +141,9 @@ defmodule FlezhaTest.Plugin.SharedMultinodeTest do
   end
 
   # Every connection event the server reported, in the order it reported them.
-  defp connection_events(acc \\ []) do
-    receive do
-      {kind, socket} when kind in [:ws_open, :ws_closed] ->
-        connection_events([{kind, socket} | acc])
-    after
-      0 -> Enum.reverse(acc)
+  defp connection_events() do
+    collect do
+      {kind, socket} when kind in [:ws_open, :ws_closed] -> {kind, socket}
     end
   end
 

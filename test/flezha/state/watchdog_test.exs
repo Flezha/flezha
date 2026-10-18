@@ -27,6 +27,7 @@ defmodule Flezha.State.WatchdogTest do
   alias Flezha.State.{Recovery, Supervisor, TestHelpers, WalWriter, Watchdog}
   alias Flezha.State.WriterRegistry
   alias FlezhaTest.Helper.DurabilityBackendStub
+  alias FlezhaTest.Helper.Telemetry
 
   @stall_ms 20
   @compaction_ms 20
@@ -68,17 +69,7 @@ defmodule Flezha.State.WatchdogTest do
   # the test's own process, so one helper serves a setup watcher and a per-test
   # one alike.
   defp forward_state_event(event) do
-    parent = self()
-    id = {__MODULE__, event, System.unique_integer([:positive])}
-
-    :telemetry.attach(
-      id,
-      [:flezha, :state, event],
-      fn _e, meas, meta, _ -> send(parent, {event, meas, meta}) end,
-      nil
-    )
-
-    on_exit(fn -> :telemetry.detach(id) end)
+    Telemetry.capture([:flezha, :state, event], as: fn _e, meas, meta -> {event, meas, meta} end)
   end
 
   defp live_writer(suffix, header) do

@@ -26,6 +26,7 @@ defmodule FlezhaTest.System.CallResponseE2ETest do
   alias Flezha.Service.{Listener, Relay, RelayManager}
   alias Flezha.State.TaskJournal
   alias FlezhaTest.Helper.NodeTestHelper
+  alias FlezhaTest.Helper.Telemetry
 
   @moduletag timeout: 300_000
 
@@ -60,19 +61,11 @@ defmodule FlezhaTest.System.CallResponseE2ETest do
 
   test "the path the input took answers, and nothing is dropped as answered", ctx do
     split = start(ctx.namespace, "call_split", :flow)
-    test_pid = self()
-    handler = "call-split-#{split}"
 
-    :telemetry.attach(
-      handler,
-      [:flezha, :call, :answer_dropped],
-      fn _event, _measurements, %{relay_id: ^split, reason: reason}, _ ->
-        send(test_pid, {:dropped, reason})
-      end,
-      nil
+    Telemetry.capture([:flezha, :call, :answer_dropped],
+      filter: &match?(%{relay_id: ^split, reason: _}, &1),
+      as: fn _event, _measurements, %{reason: reason} -> {:dropped, reason} end
     )
-
-    on_exit(fn -> :telemetry.detach(handler) end)
 
     assert {:ok, "refused:no-thanks", _} = call(ctx.namespace, split, "no-thanks")
     assert {:ok, "accepted:yes", _} = call(ctx.namespace, split, "yes")

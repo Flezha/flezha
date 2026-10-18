@@ -18,23 +18,18 @@ defmodule FlezhaTest.Relay.CallsTest do
   alias Flezha.State.{Completion, InputLog, TestHelpers, WriterRegistry}
   alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.Helper.OverwatchHost, as: Host
+  alias FlezhaTest.Helper.Telemetry
 
   @callee %{namespace: "default", relay_id: "callee"}
 
   setup do
-    test_pid = self()
-    handler = "calls-test-#{System.unique_integer([:positive])}"
-
-    :telemetry.attach_many(
-      handler,
+    Telemetry.capture(
       for(e <- [:answered, :timeout, :answer_dropped, :refused], do: [:flezha, :call, e]),
-      fn [:flezha, :call, event], measurements, metadata, _ ->
-        send(test_pid, {:call_event, event, measurements, metadata})
-      end,
-      nil
+      as: fn [:flezha, :call, event], measurements, metadata ->
+        {:call_event, event, measurements, metadata}
+      end
     )
 
-    on_exit(fn -> :telemetry.detach(handler) end)
     :ok
   end
 

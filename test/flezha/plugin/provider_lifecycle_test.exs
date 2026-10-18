@@ -14,6 +14,7 @@ defmodule Flezha.Plugin.ProviderLifecycleTest do
 
   use FlezhaTest.Case, fixtures: [:tmp_dir, :env], async: false
 
+  import FlezhaTest.Helper.MessageTestHelper, only: [collect: 1]
   alias Flezha.Plugin
   alias Flezha.Plugin.Extension.Ctx
   alias Flezha.Plugin.Extension.Table
@@ -24,6 +25,7 @@ defmodule Flezha.Plugin.ProviderLifecycleTest do
   alias Flezha.Plugin.ProviderBehaviour.Options, as: ProviderOptions
   alias Flezha.TestHelpers.PluginPackage
 
+  alias FlezhaTest.Helper.Telemetry
   alias __MODULE__.ConformanceWorker
 
   @catalog Host.build_catalog(
@@ -515,26 +517,15 @@ defmodule Flezha.Plugin.ProviderLifecycleTest do
 
   defp attach_phase_events do
     ref = make_ref()
-    parent = self()
 
-    :telemetry.attach(
-      "drill-#{inspect(ref)}",
-      Table.phase_event(),
-      fn _event, _measure, meta, _config -> send(parent, {ref, meta}) end,
-      nil
-    )
+    Telemetry.capture(Table.phase_event(), as: fn _event, _measure, meta -> {ref, meta} end)
 
-    on_exit(fn -> :telemetry.detach("drill-#{inspect(ref)}") end)
     ref
   end
 
-  defp collect_phase_events(ref), do: collect_phase_events(ref, [])
-
-  defp collect_phase_events(ref, acc) do
-    receive do
-      {^ref, meta} -> collect_phase_events(ref, [{meta.to, meta.reason} | acc])
-    after
-      0 -> Enum.reverse(acc)
+  defp collect_phase_events(ref) do
+    collect do
+      {^ref, meta} -> {meta.to, meta.reason}
     end
   end
 
