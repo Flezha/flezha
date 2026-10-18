@@ -5,7 +5,7 @@ defmodule Mix.Tasks.Flezha.Catalogue do
   Writes `cli/catalogue.json`, the catalogue of every published operation
   (`Flezha.Service.catalogue/0`), which `flz` embeds: `flz help --json` prints
   it, and the CLI's tests hold every door call `flz` sends to it. The file is
-  generated and never edited by hand: `test/flezha/api/catalogue_test.exs`
+  generated and never edited by hand: `test/flezha/cli/catalogue_test.exs`
   fails when the committed file differs from a fresh generation.
 
       mix flezha.catalogue

@@ -1,4 +1,4 @@
-defmodule FlezhaTest.Plugin.FilterTest do
+defmodule FlezhaTest.Plugin.Provider.FilterTest do
   alias Flezha.Plugin.Extension.Ctx
   alias Flezha.Plugin.Provider.Filter
 

@@ -202,6 +202,21 @@ mod tests {
 
     use super::*;
 
+    /// `acquire(frame_len)` on a thread of its own; the receiver hears once
+    /// it returns.
+    fn acquire_on_thread(
+        w: &Arc<CreditWindow>,
+        frame_len: usize,
+    ) -> (thread::JoinHandle<()>, mpsc::Receiver<()>) {
+        let (tx, rx) = mpsc::channel();
+        let w = Arc::clone(w);
+        let sender = thread::spawn(move || {
+            w.acquire(frame_len);
+            tx.send(()).unwrap();
+        });
+        (sender, rx)
+    }
+
     // Each test uses its OWN CreditWindow instance — the process-global
     // window stays disarmed, so concurrently-running flusher/sink tests
     // whose send path passes through `credit::acquire` are never metered
@@ -222,14 +237,7 @@ mod tests {
         assert_eq!(w.available_bytes(), 40);
 
         let parked_before = credit_parked();
-        let (tx, rx) = mpsc::channel();
-        let sender = {
-            let w = Arc::clone(&w);
-            thread::spawn(move || {
-                w.acquire(60); // only 40 available -> parks
-                tx.send(()).unwrap();
-            })
-        };
+        let (sender, rx) = acquire_on_thread(&w, 60); // only 40 available -> parks
 
         assert!(
             rx.recv_timeout(Duration::from_millis(200)).is_err(),
@@ -271,14 +279,7 @@ mod tests {
         assert_eq!(w.available_bytes(), -150);
 
         // Next frame parks until the window is fully replenished.
-        let (tx, rx) = mpsc::channel();
-        let sender = {
-            let w = Arc::clone(&w);
-            thread::spawn(move || {
-                w.acquire(10);
-                tx.send(()).unwrap();
-            })
-        };
+        let (sender, rx) = acquire_on_thread(&w, 10);
         assert!(rx.recv_timeout(Duration::from_millis(200)).is_err());
         w.grant("s1", 250); // caps at window_bytes
         rx.recv_timeout(Duration::from_secs(2))
@@ -293,14 +294,7 @@ mod tests {
         w.arm("s1".to_string(), 10);
         w.acquire(10);
 
-        let (tx, rx) = mpsc::channel();
-        let sender = {
-            let w = Arc::clone(&w);
-            thread::spawn(move || {
-                w.acquire(10);
-                tx.send(()).unwrap();
-            })
-        };
+        let (sender, rx) = acquire_on_thread(&w, 10);
         assert!(rx.recv_timeout(Duration::from_millis(200)).is_err());
         w.disarm();
         rx.recv_timeout(Duration::from_secs(2))

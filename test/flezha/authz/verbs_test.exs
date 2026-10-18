@@ -4,7 +4,7 @@ defmodule Flezha.AuthZ.VerbsTest do
   because each clause here fails naming it: a published function that binds
   no row, a row naming an action the policy lacks, an action no row names, and
   a gated row that serves an unbound caller or reads its row before refusing.
-  That no surface binds a row of its own is `Flezha.Api.CatalogueTest`'s.
+  That no surface binds a row of its own is `Flezha.Service.Cli.CatalogueTest`'s.
   """
   # async: false: the auth stores are singletons and the posture is flipped.
   use FlezhaTest.Case, fixtures: [], async: false

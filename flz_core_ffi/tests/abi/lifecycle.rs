@@ -411,16 +411,7 @@ fn header_for(format_id: u8, schema_version: u32, body: &[u8]) -> [u8; 16] {
 }
 
 fn wal_record(seq: u64, format_id: u8, body: &[u8]) -> Vec<u8> {
-    let header = header_for(format_id, 2, body);
-    let mut framed = Vec::new();
-    framed.extend_from_slice(&seq.to_be_bytes());
-    framed.extend_from_slice(&((16 + body.len()) as u32).to_be_bytes());
-    framed.extend_from_slice(&header);
-    framed.extend_from_slice(body);
-    let mut crc_input = header.to_vec();
-    crc_input.extend_from_slice(body);
-    framed.extend_from_slice(&crc32fast::hash(&crc_input).to_be_bytes());
-    framed
+    flz_core::restore::frame_record(seq, &header_for(format_id, 2, body), body)
 }
 
 fn restores_from_a_snapshot_and_a_wal(ctx: *mut FlzContext, controller: &Controller) {

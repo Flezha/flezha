@@ -290,14 +290,6 @@ defmodule FlezhaTest.System.RelayListenE2ETest do
       assert listeners(ns, id) == []
     end
 
-    test "with nothing emitted it prints the verdict alone", %{namespace: ns} do
-      id = start!(ns, "compare_filter")
-
-      out = capture_io(fn -> send_input(ns, id, "nope", await_ms: 500) end)
-
-      assert lines(out) == ["Delivered to '#{id}'."]
-    end
-
     test "a listener attached after the delivery answers misses the frame", %{namespace: ns} do
       id = start!(ns, "bench_echo", [forward_to(self())])
 

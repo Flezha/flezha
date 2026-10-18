@@ -513,7 +513,6 @@ dependencies = [
 name = "flz_core_ffi"
 version = "0.1.0"
 dependencies = [
- "crc32fast",
  "criterion",
  "crossbeam",
  "dashmap",

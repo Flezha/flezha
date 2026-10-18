@@ -1,4 +1,4 @@
-defmodule Flezha.Api.CatalogueTest do
+defmodule Flezha.Service.Cli.CatalogueTest do
   @moduledoc """
   The catalogue of published operations is built from each binding's own
   declaration, so these tests hold the declarations to the functions they

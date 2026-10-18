@@ -47,7 +47,7 @@ neither an operation that is not `remote` nor one that streams. `Flezha.Service.
 catalogue from those declarations; the door resolves an operation's name
 (`"Dlq.list"`) through it and converts the JSON arguments by its rows.
 `mix flezha.catalogue` writes the copy `flz` embeds, `cli/catalogue.json`, which
-`flz help --json` prints and `test/flezha/api/catalogue_test.exs` holds to the code.
+`flz help --json` prints and `test/flezha/cli/catalogue_test.exs` holds to the code.
 
 A provider's options are described in the same vocabulary: `Fleet.provider/2`
 answers `options`, one entry per option a user can write, read from the provider's

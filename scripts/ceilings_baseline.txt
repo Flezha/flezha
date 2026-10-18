@@ -12,7 +12,6 @@ cli/src/rpc.rs::child 59
 flz_core/src/admission.rs::admit_from_cell 53
 flz_core/src/command/mod.rs::classify 59
 flz_core/src/command/mod.rs::handle_command 87
-flz_core/src/control_unit.rs 1054
 flz_core/src/control_unit.rs::read_loop 70
 flz_core/src/coordinator.rs::heartbeat_metadata 59
 flz_core/src/effect.rs::fold 76
@@ -38,7 +37,6 @@ flz_core/src/routing.rs 831
 flz_core/src/routing.rs::enter_channel 53
 flz_core/src/routing.rs::redeliver_edge 54
 flz_core/src/routing.rs::route_stream_frame 51
-flz_core/src/state_sink.rs 882
 flz_core/src/steps/resume.rs::resumed_seed 74
 flz_core/src/steps/run.rs 2530
 flz_core/src/steps/run.rs::act 75
@@ -56,7 +54,6 @@ flz_nif/src/driver/mod.rs::handle_command 53
 flz_nif/src/driver/quic.rs::accept_streams 58
 flz_transport/src/transport/quic.rs 842
 flz_transport/src/transport/quic_pair_tests.rs::serve 64
-flz_transport/src/utility/socket_dir.rs 824
 lib/flezha/observability/counter_table.ex::__using__ 107
 lib/flezha/plugin/provider_behaviour.ex 818
 lib/flezha/relay/calls.ex 842

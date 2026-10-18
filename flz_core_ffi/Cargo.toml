@@ -100,7 +100,6 @@ flz_core = { path = "../flz_core", features = ["bench-internals", "test-support"
 flz_core_ffi = { path = ".", features = ["fake-controller"] }
 criterion.workspace = true
 prost.workspace = true
-crc32fast.workspace = true
 
 [[bin]]
 name = "flz-fake-controller"
