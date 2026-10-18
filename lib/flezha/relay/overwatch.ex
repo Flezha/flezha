@@ -521,7 +521,7 @@ defmodule Flezha.Relay.Overwatch do
     {:reply, state.effectively_once, state}
   end
 
-  # Blocking ingest for source adapters, which act on "accepted" vs "parked" and
+  # Blocking ingest for source adapters, which act on "accepted" vs "halted" and
   # nothing finer — the same path as the confirming entry point below, reported
   # coarsely.
   @impl true
@@ -533,7 +533,7 @@ defmodule Flezha.Relay.Overwatch do
   # Confirming ingest (`relay-to-relay-messaging`): the same single
   # pre-delivery path as the `{:io_in, _, _}` cast, answering what happened so a
   # forwarding sink can tell "done" from "retry". The cast keeps its
-  # fire-and-forget shape, including its silent drop for a parked relay.
+  # fire-and-forget shape, including its silent drop for a halted relay.
   @impl true
   def handle_call({:ingest, _message, _metadata}, _from, %__MODULE__{init_error: reason} = state)
       when reason != nil do
@@ -584,15 +584,15 @@ defmodule Flezha.Relay.Overwatch do
   # handle_cast
   # ---------------------------------------------------------------
 
-  # Parked: drop ingress casts. A sender that needs the payload held rather than
+  # Halted: drop ingress casts. A sender that needs the payload held rather than
   # dropped uses the confirming entry point, which answers `{:error, :not_ready}`
   # instead. The drop is silent to the sender by contract but never unrecorded:
-  # `parked_drops` is the only handle a cast-based source's loss has while the
-  # relay stays parked.
+  # `halted_drops` is the only handle a cast-based source's loss has while the
+  # relay stays halted.
   @impl true
   def handle_cast({:io_in, _message, _metadata}, %__MODULE__{init_error: reason} = state)
       when reason != nil do
-    LivenessCounters.bump_relay(state.liveness_ref, :parked_drops)
+    LivenessCounters.bump_relay(state.liveness_ref, :halted_drops)
     {:noreply, state}
   end
 
@@ -610,7 +610,7 @@ defmodule Flezha.Relay.Overwatch do
   # took — so an output no delivery-guaranteed sink took is complete the moment
   # the chain has had it, filtered included.
   # A migrate task binds the plugins on its own copy of this state, so an
-  # output of the instance it woke or un-parked waits for that binding to be
+  # output of the instance it woke or rebound waits for that binding to be
   # adopted rather than meet a plugin table the bind has not brought up (a
   # sleeper rediscovered at boot has none running). An instance moved while it
   # was running still has its table up, and its output is not held: a run that
@@ -708,9 +708,9 @@ defmodule Flezha.Relay.Overwatch do
   # handle_info
   # ---------------------------------------------------------------
 
-  # Parked: not serving, and the un-park's own bind re-forwards the tail. A
-  # re-forward here would push input at the runner the relay is parked away
-  # from — the same reason the ingress cast is dropped while parked.
+  # Halted: not serving, and the rebind's own bind re-forwards the tail. A
+  # re-forward here would push input at the runner the relay is halted away
+  # from — the same reason the ingress cast is dropped while halted.
   @impl true
   def handle_info({:stream_bound, _channel}, %__MODULE__{init_error: reason} = state)
       when reason != nil do
@@ -728,11 +728,11 @@ defmodule Flezha.Relay.Overwatch do
   end
 
   # A bind-time restore the SDK refused, reported from the off-process replay.
-  # The Cell's durable state never reached the runner, so the relay parks
+  # The Cell's durable state never reached the runner, so the relay halts
   # rather than serving from empty state; the convergence loop rebinds it.
   @impl true
   def handle_info({:restore_refused, reason}, %__MODULE__{} = state) do
-    {:noreply, Lifecycle.park(state, {:restore_refused, reason})}
+    {:noreply, Lifecycle.halt(state, {:restore_refused, reason})}
   end
 
   @impl true

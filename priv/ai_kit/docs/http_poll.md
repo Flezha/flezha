@@ -153,7 +153,7 @@ deterministic.
 For a poller of its own relay, injection is `GenServer.call(overwatch, {:ingest, body, %{"channel" => entry_channel}})`,
 where `entry_channel` is the name `channel` or `channel_in` resolved to when the plugin was
 enabled. It is never the fire-and-forget `:io_in` cast, which drops silently in ordinary
-states: a parked relay, an unbound stream, a failed durable input-log append. A refused
+states: a halted relay, an unbound stream, a failed durable input-log append. A refused
 or not-ready ingest is a failure like any other: it counts toward health and leaves the
 hash alone, so the next poll re-offers the same content. `{:ok, :absorbed}` (a duplicate the relay
 already holds) and `{:ok, :suspended}` (journaled, delivered on wake) both count as

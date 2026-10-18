@@ -179,7 +179,7 @@ defmodule Flezha.Observability.HookSink do
   defp forget(state, id), do: %{state | failed: MapSet.delete(state.failed, id)}
 
   # The judge wraps what it read; the code is the cause's.
-  defp cause({:parked, reason}), do: reason
+  defp cause({:halted, reason}), do: reason
   defp cause({:plugin_unhealthy, reason}), do: reason
   defp cause(reason), do: reason
 

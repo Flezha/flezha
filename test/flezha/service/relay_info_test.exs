@@ -132,8 +132,8 @@ defmodule FlezhaTest.Service.RelayInfoTest do
     assert proc["run"] == "flow"
   end
 
-  # `Lifecycle.park/2` stores the failure reason in `init_error` and leaves the
-  # Overwatch alive, so a parked relay is still listed and still readable.
+  # `Lifecycle.halt/2` stores the failure reason in `init_error` and leaves the
+  # Overwatch alive, so a halted relay is still listed and still readable.
   defp parked_state(reason \\ {:no_runner, "exec1"}),
     do: Map.put(steps_state(0), :init_error, reason)
 
@@ -143,7 +143,7 @@ defmodule FlezhaTest.Service.RelayInfoTest do
   defp observed(state) do
     %{
       bound_runner: state.runner_id,
-      parked?: Map.get(state, :init_error) != nil,
+      halted?: Map.get(state, :init_error) != nil,
       suspended?: Map.get(state, :suspended, false)
     }
   end
@@ -166,7 +166,7 @@ defmodule FlezhaTest.Service.RelayInfoTest do
     }
   end
 
-  test "json output reports a parked relay as parked, not running" do
+  test "json output reports a halted relay as halted, not running" do
     stub_one(parked_state())
 
     out =
@@ -174,15 +174,15 @@ defmodule FlezhaTest.Service.RelayInfoTest do
 
     %{"relays" => [proc]} = Jason.decode!(out)
 
-    assert proc["phase"] == "parked"
+    assert proc["phase"] == "halted"
   end
 
-  test "text output reports a parked relay as parked, not running" do
+  test "text output reports a halted relay as halted, not running" do
     stub_one(parked_state())
 
     out = capture_io(fn -> Cli.call("Relay.info", Jason.encode!([@namespace]), []) end)
 
-    assert out =~ "Phase: parked"
+    assert out =~ "Phase: halted"
     refute out =~ "Phase: running"
   end
 
@@ -197,12 +197,12 @@ defmodule FlezhaTest.Service.RelayInfoTest do
     assert proc["phase"] == "suspended"
   end
 
-  test "info and the loop's verdict record agree about one parked relay" do
+  test "info and the loop's verdict record agree about one halted relay" do
     state = parked_state()
     stub_one(state)
 
     health = judged(state)
-    assert health[{:relay, {@namespace, "op-1"}}].state == :parked
+    assert health[{:relay, {@namespace, "op-1"}}].state == :halted
 
     Snapshot.publish(Map.put(Snapshot.current(), :relay_health, health))
 
@@ -211,12 +211,12 @@ defmodule FlezhaTest.Service.RelayInfoTest do
 
     %{"relays" => [proc]} = Jason.decode!(out)
 
-    assert proc["health"] == "parked"
-    assert proc["phase"] == "parked"
+    assert proc["health"] == "halted"
+    assert proc["phase"] == "halted"
 
     text = capture_io(fn -> Cli.call("Relay.info", Jason.encode!([@namespace]), []) end)
-    assert text =~ "Health: parked"
-    assert text =~ "Phase: parked"
+    assert text =~ "Health: halted"
+    assert text =~ "Phase: halted"
   end
 
   # A bind that found no runner records its outcome the way a park does, but the
@@ -258,7 +258,7 @@ defmodule FlezhaTest.Service.RelayInfoTest do
     text = capture_io(fn -> Cli.call("Relay.info", Jason.encode!([@namespace]), []) end)
     assert text =~ "Health: unbound"
     assert text =~ "Phase: unbound"
-    refute text =~ "parked"
+    refute text =~ "halted"
   end
 
   # fails when: `info` shows the raw verdict while the loop is still inside its
@@ -312,7 +312,7 @@ defmodule FlezhaTest.Service.RelayInfoTest do
     %{"relays" => [proc]} = Jason.decode!(out)
 
     assert proc["health"] == "unknown"
-    assert proc["phase"] == "parked"
+    assert proc["phase"] == "halted"
   end
 
   test "a finished steps relay is surfaced from its completion record" do

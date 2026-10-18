@@ -125,7 +125,7 @@ defmodule FlezhaTest.System.HealthVerdictDrillTest do
       {{:relay, :unknown}, &row_unknown/1},
       {{:relay, :degraded}, &row_degraded/1},
       {{:plugin, :degraded}, &row_plugin_degraded/1},
-      {{:relay, :parked}, &row_parked/1},
+      {{:relay, :halted}, &row_halted/1},
       {{:relay, :failed}, &row_failed/1},
       {{:runner, :failed}, &row_runner_failed/1}
     ]
@@ -175,27 +175,27 @@ defmodule FlezhaTest.System.HealthVerdictDrillTest do
   end
 
   # The bind-time restore the SDK refused — the message `Relay.Replay`
-  # sends and the one path that parks a relay.
-  defp row_parked(ctx) do
-    id = start_relay(ctx, "parked")
+  # sends and the one path that halts a relay.
+  defp row_halted(ctx) do
+    id = start_relay(ctx, "halted")
     {:ok, pid} = RelayManager.get_relay_pid(ctx.namespace, id)
 
-    repark = fn -> repark(ctx, id, pid) end
+    rehalt = fn -> rehalt(ctx, id, pid) end
 
-    assert repark.() == :ok
-    assert_surfaces(ctx, id, :parked, "degraded", refresh: repark, reason: "parked")
+    assert rehalt.() == :ok
+    assert_surfaces(ctx, id, :halted, "degraded", refresh: rehalt, reason: "halted")
   end
 
-  # The park the loop is actively healing has to be re-declared before each
+  # The halt the loop is actively healing has to be re-declared before each
   # read, or the row would be asserting a state the loop has already cleared.
-  # The park ticks the loop at once, and that one tick publishes the record and
-  # heals the park, so the read waits for the record: a read that comes first
+  # The halt ticks the loop at once, and that one tick publishes the record and
+  # heals the halt, so the read waits for the record: a read that comes first
   # sees the old one, and the tick it then asks for lands after the heal.
-  defp repark(ctx, id, pid) do
+  defp rehalt(ctx, id, pid) do
     if is_nil(:sys.get_state(pid).init_error) do
       send(pid, {:restore_refused, :drill})
       wait_until(fn -> not is_nil(:sys.get_state(pid).init_error) end, 5_000)
-      wait_until(fn -> record_state(ctx, id) == :parked end, 10_000)
+      wait_until(fn -> record_state(ctx, id) == :halted end, 10_000)
     end
 
     :ok
@@ -315,7 +315,7 @@ defmodule FlezhaTest.System.HealthVerdictDrillTest do
 
   # The endpoint word AND the row's own reason: a fleet degraded by an earlier
   # row would satisfy the word on its own, so the reason is what proves THIS
-  # subject reached the kubelet's answer. That is the 08-18 shape — a parked
+  # subject reached the kubelet's answer. That is the 08-18 shape — a halted
   # relay the health map knew about and `/healthz` never heard of.
   defp assert_healthz(ctx, id, state, word, refresh, reason) do
     assert wait_until(

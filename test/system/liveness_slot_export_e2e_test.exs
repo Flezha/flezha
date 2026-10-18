@@ -58,7 +58,7 @@ defmodule FlezhaTest.System.LivenessSlotExportE2ETest do
     # Driven by the scenario that owns the mechanism.
     nil_drops: "test/flezha/relay/ingest_test.exs",
     filtered_nil: "test/flezha/relay/ingest_test.exs",
-    parked_drops: "test/flezha/relay/ingest_test.exs",
+    halted_drops: "test/flezha/relay/ingest_test.exs",
     bytes_in: "test/flezha/relay/ingest_test.exs",
     bytes_filtered: "test/flezha/relay/ingest_test.exs",
     bytes_forwarded: "test/flezha/relay/ingest_test.exs",

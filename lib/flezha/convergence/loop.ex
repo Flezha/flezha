@@ -194,7 +194,7 @@ defmodule Flezha.Convergence.Loop do
 
   defp release(%State{} = state, _kind, _target, _what, _now), do: state
 
-  # Every relay in `namespace` whose next step is a binding — parked,
+  # Every relay in `namespace` whose next step is a binding — halted,
   # unbound, or misbound to a runner that is gone — with the factory the judge
   # read for it, so the release path and the Diff agree on who is waiting.
   #

@@ -125,7 +125,7 @@ defmodule Flezha.Convergence.DiffTest do
     end
 
     test "a parked or a suspended relay yields neither missing nor extra" do
-      for gate <- [%{parked?: true}, %{suspended?: true}] do
+      for gate <- [%{halted?: true}, %{suspended?: true}] do
         observed =
           Map.merge(%{running_plugins: [], subscribed_plugins: ["src", "stray"]}, gate)
 
@@ -366,7 +366,7 @@ defmodule Flezha.Convergence.DiffTest do
       reality = %{
         active_runners: %{ns: MapSet.new(["e"])},
         relays: %{
-          {:ns, "r"} => %{bound_runner: "e", pid: self(), parked?: true, running_plugins: []}
+          {:ns, "r"} => %{bound_runner: "e", pid: self(), halted?: true, running_plugins: []}
         },
         stalled_relays: MapSet.new()
       }
@@ -632,11 +632,11 @@ defmodule Flezha.Convergence.DiffTest do
     end
 
     test "a parked relay rebinds on the parked ladder, cutting a dead transport first" do
-      # The verdict rides the fact: `Lifecycle.park/2` classifies its own
+      # The verdict rides the fact: `Lifecycle.halt/2` classifies its own
       # failure reason, so the Planner reads it rather than re-deriving it.
       dead =
         %Diff{
-          parked_relays: [
+          halted_relays: [
             {{:ns, "r"}, %{reason: {:ping_failed, :closed}, transport: :dead}, "e1"}
           ]
         }
@@ -646,14 +646,14 @@ defmodule Flezha.Convergence.DiffTest do
                %{primitive: :rebind_relay, target: "r"} = rebind
              ] = Planner.plan(dead, Backoff.new(:heal))
 
-      assert Planner.key(rebind) == {:parked, "r"}
+      assert Planner.key(rebind) == {:halted, "r"}
       assert Planner.ladder?(rebind)
 
       # A timed-out ping is a busy runner: retried, and cut only once the
       # parked ladder has walked two rungs.
       busy =
         %Diff{
-          parked_relays: [
+          halted_relays: [
             {{:ns, "r"}, %{reason: {:ping_failed, :timeout}, transport: :busy}, "e1"}
           ]
         }
@@ -668,7 +668,7 @@ defmodule Flezha.Convergence.DiffTest do
 
       walked =
         Enum.reduce(1..2, Backoff.new(:heal), fn _, b ->
-          Backoff.update(b, {:parked, "r"}, :error, long_ago)
+          Backoff.update(b, {:halted, "r"}, :error, long_ago)
         end)
 
       assert [%{primitive: :reset_control_channel, target: "e1"}, %{primitive: :rebind_relay}] =

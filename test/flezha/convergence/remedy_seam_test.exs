@@ -157,21 +157,21 @@ defmodule Flezha.Convergence.RemedySeamTest do
 
     test "a stub executor answering :ok leaves a parked ladder armed until the park is observed gone" do
       stub(Probe, :snapshot, fn ->
-        reality(%{parked?: true, park_reason: {:ping_failed, :timeout}})
+        reality(%{halted?: true, halt_reason: {:ping_failed, :timeout}})
       end)
 
       :ok = Loop.tick_now()
 
       backoff = :sys.get_state(Loop).backoff
-      assert Backoff.attempt(backoff, {:parked, "op"}) == 1, "the parked rung did not advance"
-      assert Map.has_key?(:sys.get_state(Loop).facts, {:relay_parked, {:ns, "op"}})
+      assert Backoff.attempt(backoff, {:halted, "op"}) == 1, "the halted rung did not advance"
+      assert Map.has_key?(:sys.get_state(Loop).facts, {:relay_halted, {:ns, "op"}})
 
       # Repaired: the probe sees it unparked, the fact goes and the key resets.
-      stub(Probe, :snapshot, fn -> reality(%{parked?: false, park_reason: nil}) end)
+      stub(Probe, :snapshot, fn -> reality(%{halted?: false, halt_reason: nil}) end)
       :ok = Loop.tick_now()
 
-      assert Backoff.attempt(:sys.get_state(Loop).backoff, {:parked, "op"}) == 0
-      refute Map.has_key?(:sys.get_state(Loop).facts, {:relay_parked, {:ns, "op"}})
+      assert Backoff.attempt(:sys.get_state(Loop).backoff, {:halted, "op"}) == 0
+      refute Map.has_key?(:sys.get_state(Loop).facts, {:relay_halted, {:ns, "op"}})
     end
 
     test "an inline op resets its key on its own :ok" do
@@ -197,8 +197,8 @@ defmodule Flezha.Convergence.RemedySeamTest do
   }
   @rule_samples %{
     misbound_relays: %Diff{misbound_relays: [{{:ns, "r"}, "e_dead", :probe}]},
-    parked_relays: %Diff{
-      parked_relays: [
+    halted_relays: %Diff{
+      halted_relays: [
         {{:ns, "r"}, %{reason: {:ping_failed, :closed}, transport: :dead}, "e1"}
       ]
     },

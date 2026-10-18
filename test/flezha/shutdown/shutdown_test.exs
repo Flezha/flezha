@@ -147,8 +147,8 @@ defmodule Flezha.ShutdownTest do
             pid: self(),
             bound_runner: "e1",
             factory_id: "f",
-            parked?: true,
-            park_reason: :x
+            halted?: true,
+            halt_reason: :x
           },
           {:ns, "stale"} => %{
             pid: self(),
@@ -168,7 +168,7 @@ defmodule Flezha.ShutdownTest do
 
       assert delta.draining
       assert delta.misbound_relays == [] and delta.unbound_relays == []
-      assert delta.parked_relays == [] and delta.stale_tags == []
+      assert delta.halted_relays == [] and delta.stale_tags == []
       assert Planner.plan(delta, Backoff.new(:heal)) == []
 
       # The same reality with no drain plans every binding.

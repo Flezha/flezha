@@ -102,26 +102,26 @@ Each controller node SHALL advertise into a cluster-replicated directory which n
 
 ### Requirement: `flz relay info` SHALL report the relay's phase and the loop's health verdict
 
-`flz relay info` SHALL report each live relay's lifecycle phase as one of `running`, `suspended`, `unbound` or `parked`, and its health as the state of the one verdict record the convergence loop publishes for it, both read from that record — the phase is the record's own fact, read from the relay's state, and the health is the record's state, one of `healthy`, `degraded`, `failed`, `unbound`, `parked`, `suspended` or `unknown`, except that a `failed` or `unbound` record SHALL read `recovering` while the convergence loop is inside the unmet-intent grace `/healthz` weighs it against, and its own word past it. It SHALL report `parked` — never `running` — for a relay the Controller has parked, whatever the park reason, and `unbound` — never `running` and never `parked` — for a relay that holds no runner binding at all. Phase SHALL be derived in the same order as health: suspended first, then unbound, then parked, so the two words cannot describe one relay differently. `flz relay list`, `flz cluster status`, the published `Flezha.Service.Relay.relay_rows/2` and `/healthz` SHALL read the same record, and every one of them except `/healthz`, which folds the records, SHALL show it through the same `recovering` rule, so no two user surfaces describe one relay in contradictory words. `info` SHALL NOT derive a phase or a health verdict of its own, and no surface SHALL keep a second vocabulary or a second rank order: the worst row of a listing is chosen by the record module's one rank. Both the text and the JSON rendering SHALL carry both fields. A finished steps relay, surfaced from its retained completion record rather than from a live Overwatch, SHALL keep reporting phase `finished`.
+`flz relay info` SHALL report each live relay's lifecycle phase as one of `running`, `suspended`, `unbound` or `halted`, and its health as the state of the one verdict record the convergence loop publishes for it, both read from that record — the phase is the record's own fact, read from the relay's state, and the health is the record's state, one of `healthy`, `degraded`, `failed`, `unbound`, `halted`, `suspended` or `unknown`, except that a `failed` or `unbound` record SHALL read `recovering` while the convergence loop is inside the unmet-intent grace `/healthz` weighs it against, and its own word past it. It SHALL report `halted` — never `running` — for a relay the Controller has halted, whatever the halt reason, and `unbound` — never `running` and never `halted` — for a relay that holds no runner binding at all. Phase SHALL be derived in the same order as health: suspended first, then unbound, then halted, so the two words cannot describe one relay differently. `flz relay list`, `flz cluster status`, the published `Flezha.Service.Relay.relay_rows/2` and `/healthz` SHALL read the same record, and every one of them except `/healthz`, which folds the records, SHALL show it through the same `recovering` rule, so no two user surfaces describe one relay in contradictory words. `info` SHALL NOT derive a phase or a health verdict of its own, and no surface SHALL keep a second vocabulary or a second rank order: the worst row of a listing is chosen by the record module's one rank. Both the text and the JSON rendering SHALL carry both fields. A finished steps relay, surfaced from its retained completion record rather than from a live Overwatch, SHALL keep reporting phase `finished`.
 
-#### Scenario: A parked relay is not reported as running
+#### Scenario: A halted relay is not reported as running
 
-- **WHEN** the user runs `flz relay info` for a namespace holding a relay the Controller has parked
-- **THEN** the text and the JSON rendering SHALL both report its phase as `parked`, and neither SHALL report `running`
+- **WHEN** the user runs `flz relay info` for a namespace holding a relay the Controller has halted
+- **THEN** the text and the JSON rendering SHALL both report its phase as `halted`, and neither SHALL report `running`
 
-#### Scenario: A relay holding no binding is reported unbound, not parked
+#### Scenario: A relay holding no binding is reported unbound, not halted
 
 - **WHEN** the user runs `flz relay info` for a declared relay whose bind found no runner, so it is held alive with no binding, past the unmet-intent grace
-- **THEN** the text and the JSON rendering SHALL both report its phase as `unbound` and its health as `unbound`, and neither SHALL report `running` or `parked`
+- **THEN** the text and the JSON rendering SHALL both report its phase as `unbound` and its health as `unbound`, and neither SHALL report `running` or `halted`
 
-#### Scenario: A park that named a runner is still parked
+#### Scenario: A halt that named a runner is still halted
 
-- **WHEN** a relay parked after a failed initialisation on a runner it had already resolved
-- **THEN** its phase SHALL be reported `parked`, because it holds that runner's binding
+- **WHEN** a relay halted after a failed initialisation on a runner it had already resolved
+- **THEN** its phase SHALL be reported `halted`, because it holds that runner's binding
 
 #### Scenario: A suspended instance is still suspended
 
-- **WHEN** a durable steps instance evicted at a committed iteration boundary also carries a park reason
+- **WHEN** a durable steps instance evicted at a committed iteration boundary also carries a halt reason
 - **THEN** its phase SHALL be reported `suspended`, the phase the convergence loop classifies it under
 
 #### Scenario: The health reported is the loop's own verdict

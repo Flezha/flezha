@@ -149,12 +149,12 @@ defmodule FlezhaTest.Relay.OverwatchRetryTest do
     assert_receive {:ping_attempt, 1}, 2_000
     refute_received {:ping_attempt, 2}
 
-    assert_receive {:declare, :relay_parked, {@namespace, "one_attempt_relay"},
+    assert_receive {:declare, :relay_halted, {@namespace, "one_attempt_relay"},
                     %{reason: {:ping_failed, :timeout}}},
                    2_000
   end
 
-  test "6.4 a parked relay un-parks via runner_migrate: pings, starts, clears init_error, activates plugins",
+  test "6.4 a halted relay rebinds via runner_migrate: pings, starts, clears init_error, activates plugins",
        %{test_pid: test_pid, ets: ets} do
     # Start the relay so the readiness gate passes but the START ping fails,
     # parking it (alive, init_error set). Started directly (not via
@@ -282,16 +282,16 @@ defmodule FlezhaTest.Relay.OverwatchRetryTest do
       reason =
         {:plugin_prepare_failed, "orphan", {:provider_refused, "pkg", "orphan_provider", :bad}}
 
-      Telemetry.capture([:flezha, :relay, :parked],
-        as: :parked,
+      Telemetry.capture([:flezha, :relay, :halted],
+        as: :halted,
         filter: &(Map.get(&1, :relay_id) == id)
       )
 
       state = %Overwatch{id: id, namespace: @namespace}
 
-      assert %Overwatch{init_error: ^reason} = Lifecycle.park(state, reason)
+      assert %Overwatch{init_error: ^reason} = Lifecycle.halt(state, reason)
 
-      assert_receive {:parked, %{count: 1}, meta}
+      assert_receive {:halted, %{count: 1}, meta}
       assert meta.namespace == @namespace
       assert meta.reason == reason
       assert meta.plugin_id == "orphan"
@@ -300,16 +300,16 @@ defmodule FlezhaTest.Relay.OverwatchRetryTest do
     test "a park with no plugin behind it is reported too, and claims no plugin id" do
       id = "park-other-#{System.unique_integer([:positive])}"
 
-      Telemetry.capture([:flezha, :relay, :parked],
-        as: :parked,
+      Telemetry.capture([:flezha, :relay, :halted],
+        as: :halted,
         filter: &(Map.get(&1, :relay_id) == id)
       )
 
       state = %Overwatch{id: id, namespace: @namespace}
 
-      assert %Overwatch{} = Lifecycle.park(state, {:restore_refused, :sdk_refused})
+      assert %Overwatch{} = Lifecycle.halt(state, {:restore_refused, :sdk_refused})
 
-      assert_receive {:parked, %{count: 1}, meta}
+      assert_receive {:halted, %{count: 1}, meta}
       assert meta.reason == {:restore_refused, :sdk_refused}
       assert meta.plugin_id == nil
     end
@@ -405,7 +405,7 @@ defmodule FlezhaTest.Relay.OverwatchRetryTest do
 
       # The migrate task runs `complete_init`, the full init, which pings the
       # runner.
-      assert_receive {:migrate_task_result, ^task, {:park, _, {:ping_failed, :no_runner}}}, 2_000
+      assert_receive {:migrate_task_result, ^task, {:halt, _, {:ping_failed, :no_runner}}}, 2_000
     end
 
     # fails when: holding replaces a crash loop with a stall — the relay

@@ -91,7 +91,7 @@ line a person can read), and:
   a partition rescale: `relay`, `factory`;
 - `on_relay_stopped`, after a deliberate stop or a completion, and not for a partition
   rescale: `relay`, `reason` (`stopped` or `completed`);
-- `on_relay_failed`, when the relay's health reads parked or failed (its runner is
+- `on_relay_failed`, when the relay's health reads halted or failed (its runner is
   lost), once until it reads healthy, degraded or suspended again, is stopped from its own
   controller or is placed on another controller, so neither a park retry nor an unknown or
   unbound read between two failed ones repeats it:

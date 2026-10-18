@@ -196,7 +196,7 @@ On each tick the convergence snapshot SHALL compare the live intended set agains
 
 ### Requirement: /healthz never lies
 
-The `/healthz` HTTP endpoint MUST derive `bound_relays`, `producing_relays`, `unknown_relays`, recovery state, the intent-mismatch list, the current data-plane fabric verdict, and sensor freshness from a single `Convergence.Snapshot.current/0` reader, and the per-relay and per-plugin words it folds MUST be the verdict records that snapshot carries. It MUST NOT compute these from independent paths, and it MUST NOT judge: the fold from records to one endpoint word is one ordered table owned by the verdict record module, and the endpoint renders its result. `producing_relays` MUST be the count of relay records whose state is `healthy` — an IDLE relay counts as producing, a STUCK relay does not — and `bound_relays` the count of records that are neither `unbound`, `failed` nor `unknown` and not suspended, so a dead binding is never counted as bound. It returns `200 healthy` (every relay record `healthy`, `suspended` or `unknown`; the body carries `unknown_relays`), `200 degraded` (any relay record `degraded` or `parked`, any relay `unbound` or `failed` past the unmet-intent grace, any plugin record `degraded`, non-empty intent mismatch, `sensor_stale`, or an RPO breach — the body's reason joins the records' reasons, e.g. `dead_runner+parked+plugin_unhealthy`), `200 recovering`/`restoring_registry` (planned recovery, a gapped tick, a relay `unbound` or `failed` inside the unmet-intent grace, or a pending restore — kubelet MUST NOT restart), or `503 unhealthy` ONLY on an authoritative dead-loop (`tick_stale`), `recovery_failed`, or a persistent controller-fabric data-plane wedge (a `driver` record `degraded` with a wedged layer — `driver_loop_frozen` or `nif_queue_backing_up` — sustained for `FLEZHA_FABRIC_503_POLLS` consecutive classifier polls — default 3, `0` disables the fabric 503 — reason `data_plane_fabric_wedged` naming the layer). BEAM-remediable verdicts MUST NOT produce `503` — they are healed by the convergence pipeline and surface as `degraded`. An `unknown` record MUST NOT degrade the endpoint: an uncertain probe never escalates. An empty intended set MUST NOT short-circuit to `200 healthy` while durable evidence of intent exists.
+The `/healthz` HTTP endpoint MUST derive `bound_relays`, `producing_relays`, `unknown_relays`, recovery state, the intent-mismatch list, the current data-plane fabric verdict, and sensor freshness from a single `Convergence.Snapshot.current/0` reader, and the per-relay and per-plugin words it folds MUST be the verdict records that snapshot carries. It MUST NOT compute these from independent paths, and it MUST NOT judge: the fold from records to one endpoint word is one ordered table owned by the verdict record module, and the endpoint renders its result. `producing_relays` MUST be the count of relay records whose state is `healthy` — an IDLE relay counts as producing, a STUCK relay does not — and `bound_relays` the count of records that are neither `unbound`, `failed` nor `unknown` and not suspended, so a dead binding is never counted as bound. It returns `200 healthy` (every relay record `healthy`, `suspended` or `unknown`; the body carries `unknown_relays`), `200 degraded` (any relay record `degraded` or `halted`, any relay `unbound` or `failed` past the unmet-intent grace, any plugin record `degraded`, non-empty intent mismatch, `sensor_stale`, or an RPO breach — the body's reason joins the records' reasons, e.g. `dead_runner+halted+plugin_unhealthy`), `200 recovering`/`restoring_registry` (planned recovery, a gapped tick, a relay `unbound` or `failed` inside the unmet-intent grace, or a pending restore — kubelet MUST NOT restart), or `503 unhealthy` ONLY on an authoritative dead-loop (`tick_stale`), `recovery_failed`, or a persistent controller-fabric data-plane wedge (a `driver` record `degraded` with a wedged layer — `driver_loop_frozen` or `nif_queue_backing_up` — sustained for `FLEZHA_FABRIC_503_POLLS` consecutive classifier polls — default 3, `0` disables the fabric 503 — reason `data_plane_fabric_wedged` naming the layer). BEAM-remediable verdicts MUST NOT produce `503` — they are healed by the convergence pipeline and surface as `degraded`. An `unknown` record MUST NOT degrade the endpoint: an uncertain probe never escalates. An empty intended set MUST NOT short-circuit to `200 healthy` while durable evidence of intent exists.
 
 The fabric arm of that guarantee needs a NIF driver to judge, and **the scope MUST be stated wherever the guarantee is**. Both server drivers, UDS and QUIC, produce the self-report the fabric verdicts are computed from, so a controller on either transport is covered and its `/healthz` is evidence about the data plane. The endpoint's own documentation and the classifier's driver clauses MUST state which transports carry a driver.
 
@@ -256,7 +256,7 @@ The fabric arm of that guarantee needs a NIF driver to judge, and **the scope MU
 
 - **GIVEN** a relay the Controller has parked, whatever the park reason
 - **WHEN** `/healthz` is queried
-- **THEN** the status is `200 degraded` with `parked` among the joined reasons, and never `200 healthy`
+- **THEN** the status is `200 degraded` with `halted` among the joined reasons, and never `200 healthy`
 
 #### Scenario: a relay whose runner is absent is recovering, then degraded
 
@@ -588,7 +588,7 @@ process it starts SHALL stop when the Overwatch stops, killed or not, so no bind
 Overwatch that owns it; the
 Overwatch publishes the registry tag and the route when the task reports a bound
 state, and parks the relay with the attempt's reason when it reports a
-failure, so the failure is declared to the loop and rebound on the `{:parked, id}`
+failure, so the failure is declared to the loop and rebound on the `{:halted, id}`
 ladder. There SHALL be no synchronous running-migrate path beside the task, no
 snapshot-seeded `AddRelay`, and no restore dispatched by the heal after the
 bind: the bind restores the persisted Cells and delivers the inbox tail itself.
@@ -672,7 +672,7 @@ runner restarting repeatedly is visible rather than mysterious.
 
 ### Requirement: A park is an outcome declared to the loop, never a primitive
 
-A park SHALL be declared to the convergence loop by the one park funnel (`Flezha.Relay.Lifecycle.park/2`) as the fact `{:relay_parked, namespace, relay_id, reason}`, and SHALL NOT be a heal primitive: nothing is repaired by a park, it is what a failed repair leaves behind. The Diff SHALL report parked relays apart from unbound ones, with the reason, and the Planner SHALL answer with `rebind_relay` on the `{:parked, relay_id}` key — eligible at the declaring tick, then on the loop's table — planning `reset_control_channel` for the runner first when the reason is a dead-transport ping failure, and only once the parked key has walked two rungs when the reason is a timeout. A bind SHALL be one attempt; the un-park task reports its outcome to the Overwatch and decides nothing.
+A halt SHALL be declared to the convergence loop by the one halt funnel (`Flezha.Relay.Lifecycle.halt/2`) as the fact `{:relay_halted, namespace, relay_id, reason}`, and SHALL NOT be a heal primitive: nothing is repaired by a halt, it is what a failed repair leaves behind. The Diff SHALL report halted relays apart from unbound ones, with the reason, and the Planner SHALL answer with `rebind_relay` on the `{:halted, relay_id}` key — eligible at the declaring tick, then on the loop's table — planning `reset_control_channel` for the runner first when the reason is a dead-transport ping failure, and only once the halted key has walked two rungs when the reason is a timeout. A bind SHALL be one attempt; the rebind task reports its outcome to the Overwatch and decides nothing.
 
 A runner connecting in a namespace SHALL release the cooldown keys of every relay in that namespace which is waiting for a runner, whatever phase it is in: parked, unbound, and misbound to a runner that is gone. The released set SHALL be **derived** from the same `Planner.key/1` that produced the op, never from a hand-written list of key shapes, so a rebind planned under a new reason cannot silently escape the release.
 
@@ -681,7 +681,7 @@ The release SHALL be guarded so that a runner which cannot serve a relay does no
 #### Scenario: A failed bind parks once and is retried by the loop
 - **GIVEN** a relay whose one bind attempt fails with a timeout-class reason
 - **WHEN** the Overwatch parks it
-- **THEN** `{:relay_parked, ns, id, reason}` SHALL reach the loop, the loop SHALL tick at once and plan `rebind_relay` for it under the `{:parked, id}` key, and no retry SHALL run inside the Overwatch
+- **THEN** `{:relay_halted, ns, id, reason}` SHALL reach the loop, the loop SHALL tick at once and plan `rebind_relay` for it under the `{:halted, id}` key, and no retry SHALL run inside the Overwatch
 
 #### Scenario: A dead transport is cut before the relay is placed on it
 - **GIVEN** a relay parked because its bind's ping reported a dead transport
@@ -689,7 +689,7 @@ The release SHALL be guarded so that a runner which cannot serve a relay does no
 - **THEN** it SHALL plan `reset_control_channel` for the runner before `rebind_relay` for the relay
 
 #### Scenario: A busy runner is retried, then cut
-- **GIVEN** a relay parked with a timeout reason whose `{:parked, id}` key has walked two rungs
+- **GIVEN** a relay halted with a timeout reason whose `{:halted, id}` key has walked two rungs
 - **WHEN** the fault persists into the next eligible tick
 - **THEN** the plan SHALL carry `reset_control_channel` for its runner; a first timeout SHALL NOT cut the channel
 
@@ -764,13 +764,13 @@ covered by both with no test edit.
 
 The convergence loop SHALL mint, on every tick, exactly one verdict record per health
 subject — a runner, a relay, a plugin, a channel or a driver — carrying the subject,
-one state of a closed vocabulary (`healthy`, `degraded`, `failed`, `unbound`, `parked`,
+one state of a closed vocabulary (`healthy`, `degraded`, `failed`, `unbound`, `halted`,
 `suspended`, `unknown`), the reason, the subject's own lifecycle phase as a fact never
 derived from the state, the monotonic instant the state was first minted, the named
 threshold it was judged by, and the raw facts it was judged from. Every state SHALL
 name one owner of the next step and no two states SHALL share an owner: `healthy`
 nobody, `degraded` the loop in place, `failed` the loop by rebinding, `unbound` the loop
-by binding, `parked` a user or a plugin fix, `suspended` nobody until the committed
+by binding, `halted` a user or a plugin fix, `suspended` nobody until the committed
 boundary, `unknown` the next tick. The states a subject kind can reach SHALL be declared
 and tested: a plugin and a driver reach `healthy`, `degraded` and `unknown`; a channel
 and a runner add `failed`; a relay reaches all seven.

@@ -211,8 +211,8 @@ The mapping SHALL also name, in the other direction, every mapped event nothing 
 - **THEN** a signal for it SHALL appear on the bus, mapped from the detector table's declaration, and the bridge module's hand-kept half SHALL hold no line for it
 
 #### Scenario: A verdict transition is bridged
-- **WHEN** a relay's verdict record changes state from `healthy` to `parked`
-- **THEN** a signal named `verdict` sourced from the health seam SHALL appear on the bus with metadata `kind: :relay`, the relay id, `state: :parked` and the park reason, and no signal SHALL appear while the state holds
+- **WHEN** a relay's verdict record changes state from `healthy` to `halted`
+- **THEN** a signal named `verdict` sourced from the health seam SHALL appear on the bus with metadata `kind: :relay`, the relay id, `state: :halted` and the halt reason, and no signal SHALL appear while the state holds
 
 #### Scenario: An event nobody bridges fails the suite
 - **WHEN** a `:telemetry.execute` of a `[:flezha, ...]` event is added to the controller and the event is neither a key of the merged mapping nor a member of the unexported list

@@ -67,7 +67,7 @@ defmodule FlezhaTest.Service.RelayDiagnoseTest do
     }
 
     reality = %{
-      relays: %{{@namespace, "op-1"} => Map.merge(%{parked?: false, suspended?: false}, observed)},
+      relays: %{{@namespace, "op-1"} => Map.merge(%{halted?: false, suspended?: false}, observed)},
       active_runners: %{@namespace => MapSet.new(roster)}
     }
 
@@ -197,7 +197,7 @@ defmodule FlezhaTest.Service.RelayDiagnoseTest do
       publish_judged(%{bound_runner: "exec1", suspended?: true})
 
       assert %{"verdict" => "ok", "findings" => [asleep]} = answer()
-      assert asleep["code"] == "diagnose.asleep"
+      assert asleep["code"] == "diagnose.suspended"
       assert asleep["message"] =~ "is suspended at a committed boundary"
       assert asleep["message"] =~ "the next message wakes it on a runner"
     end
@@ -217,7 +217,7 @@ defmodule FlezhaTest.Service.RelayDiagnoseTest do
       stub(Flezha.Cluster.Directory, :factory_nodes, fn @namespace, "orders" -> [:other@host] end)
       publish_judged(%{bound_runner: "exec1", suspended?: true})
 
-      assert %{"verdict" => "ok", "findings" => [%{"code" => "diagnose.asleep"}]} = answer()
+      assert %{"verdict" => "ok", "findings" => [%{"code" => "diagnose.suspended"}]} = answer()
     end
 
     test "a suspended relay the serving runners cannot take is a mismatch" do
@@ -228,11 +228,11 @@ defmodule FlezhaTest.Service.RelayDiagnoseTest do
     end
 
     test "a parked relay is a warning naming why" do
-      publish_reason(:parked, {:parked, {:no_runner, "exec1"}})
+      publish_reason(:halted, {:halted, {:no_runner, "exec1"}})
 
       answer = answer()
       assert answer["verdict"] == "warning"
-      assert finding(answer, "diagnose.parked")["details"]["reason"] =~ "exec1"
+      assert finding(answer, "diagnose.halted")["details"]["reason"] =~ "exec1"
     end
 
     test "a wedge, a stall and a stuck relay are each a problem of their own" do

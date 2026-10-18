@@ -96,7 +96,7 @@ defmodule Flezha.Service.Cli.PartitionTest do
 
       assert group.([:healthy, :recovering]) == :recovering
       assert group.([:degraded, :recovering]) == :recovering
-      assert group.([:recovering, :parked]) == :parked
+      assert group.([:recovering, :halted]) == :halted
     end
 
     test "leaves ungrouped relays untouched" do

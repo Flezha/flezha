@@ -74,7 +74,7 @@ and the fields of its hook:
 | --- | --- | --- |
 | `on_relay_started` | a deliberate start (a user, a schedule, a tasklet or the admin SDK) has declared the relay and it runs; not a restart, a move, a wake or a partition rescale | `relay`, `factory` |
 | `on_relay_stopped` | a deliberate stop or a completion; not a partition rescale. `controller` is the one that ran the stop | `relay`, `reason` (`stopped` or `completed`) |
-| `on_relay_failed` | the relay's health turned parked, or failed because its runner was lost; once, until it is healthy again or stopped | `relay`, `error` (an error code) |
+| `on_relay_failed` | the relay's health turned halted, or failed because its runner was lost; once, until it is healthy again or stopped | `relay`, `error` (an error code) |
 | `on_dead_letter` | a record was newly dead-lettered | `relay`, `entry` (the DLQ entry, as `flz dlq show` takes it), `channel`, `error` |
 | `on_plugin_unhealthy` | a plugin bound to a relay turned from healthy to unhealthy | `plugin`, `relay`, `error` |
 

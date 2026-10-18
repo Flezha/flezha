@@ -214,16 +214,15 @@ SDK raises or returns its one error type carrying them.
 
 | Code | Class | Exit | Message | Hint |
 |---|---|---|---|---|
-| `diagnose.asleep` | unavailable | 7 | relay '{relay}' is suspended at a committed boundary; the next message wakes it on a runner |  |
 | `diagnose.data_plane_wedge` | unavailable | 7 | relay '{relay}' has had its data plane wedged at the {layer} layer for {seconds}s | `restart the runner it is bound to: flz runner list --namespace {namespace}` |
 | `diagnose.dead_letters` | conflict | 6 | relay '{relay}' has dead letters: {count}, the newest {newest_s}s old | `flz dlq list {class}` |
 | `diagnose.finished` | conflict | 6 | relay '{relay}' finished as {status} |  |
+| `diagnose.halted` | conflict | 6 | relay '{relay}' has been halted for {seconds}s: {reason} | `fix the cause named here; the controller retries the bind on its own, with a growing delay` |
 | `diagnose.healthy` | unavailable | 7 | relay '{relay}' is healthy, bound to runner '{runner}' on controller {node} |  |
 | `diagnose.inputs_stuck` | unavailable | 7 | {count} inputs wait in relay '{relay}''s input log, and its watermark has not moved since the last sweep while the log grew to {size_bytes} bytes | `act on the other findings, or restart the runner: flz runner list --namespace {namespace}` |
 | `diagnose.inputs_waiting` | unavailable | 7 | {count} inputs wait in relay '{relay}''s input log; a count that grows while nothing else changes means it is stuck |  |
 | `diagnose.no_runner` | unavailable | 7 | no connected runner announces factory '{factory}', so relay '{relay}' has nowhere to run | `start a runner that defines '{factory}', then check it with flz runner list --namespace {namespace}` |
 | `diagnose.output_stall` | unavailable | 7 | relay '{relay}' has had its outputs unread for {seconds}s | `a listener or output plugin downstream is not reading: flz plugin list --namespace {namespace}` |
-| `diagnose.parked` | conflict | 6 | relay '{relay}' has been parked for {seconds}s: {reason} | `fix the cause named here; the controller retries the bind on its own, with a growing delay` |
 | `diagnose.plugin_disabled` | unavailable | 7 | plugin '{plugin}' bound to relay '{relay}' is disabled; its guaranteed outputs are held until a plugin of that name is enabled again |  |
 | `diagnose.plugin_missing` | not_found | 5 | plugin '{plugin}' bound to relay '{relay}' needs provider {provider}, which is not installed on controller {node} | `install its package on that controller: flz plugin list --installed` |
 | `diagnose.plugin_unhealthy` | unavailable | 7 | plugin '{plugin}' ({provider}) bound to relay '{relay}' is unhealthy: {reason} | `flz plugin list --namespace {namespace}` |
@@ -231,6 +230,7 @@ SDK raises or returns its one error type carrying them.
 | `diagnose.runner_disconnected` | unreachable | 3 | relay '{relay}' is bound to runner '{runner}', which has been gone for {seconds}s | `check the runner's process and its log, then flz runner list --namespace {namespace}` |
 | `diagnose.runner_mismatch` | conflict | 6 | runners announce factory '{factory}', but none can take relay '{relay}': {reason} | `flz runner list --namespace {namespace}` |
 | `diagnose.stuck` | unavailable | 7 | relay '{relay}' takes input but has not moved forward for {seconds}s ({detail}) | `restart the runner it is bound to: flz runner list --namespace {namespace}` |
+| `diagnose.suspended` | unavailable | 7 | relay '{relay}' is suspended at a committed boundary; the next message wakes it on a runner |  |
 | `diagnose.unbound` | unavailable | 7 | relay '{relay}' has had no runner bound for {seconds}s, although a runner can take it | `flz relay info --namespace {namespace}` |
 | `diagnose.unknown` | unavailable | 7 | the controller has not judged relay '{relay}' yet | `try again in a few seconds: flz relay diagnose {relay} --namespace {namespace}` |
 | `diagnose.unread` | unavailable | 7 | relay '{relay}' did not answer for its own state ({live_read}), so these findings come from the controller's last verdict alone | `try again in a few seconds: flz relay diagnose {relay} --namespace {namespace}` |

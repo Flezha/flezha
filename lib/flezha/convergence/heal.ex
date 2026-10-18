@@ -18,7 +18,7 @@ defmodule Flezha.Convergence.Heal do
   `:ok | :error` so the Loop can drive `Backoff`.
 
     * `rebind_relay` — migrate a relay tagged to a dead/wrong runner (or
-      not yet bound, or parked) onto an available one through the full bind:
+      not yet bound, or halted) onto an available one through the full bind:
       resume state, the durable Cells restored, the input log's tail
       re-forwarded, then the registry tag and the route published.
     * `resync_runner` — re-run the `RestoreInitState` handshake for a
@@ -43,7 +43,7 @@ defmodule Flezha.Convergence.Heal do
       evict, reconnect, take work, wedge.
     * `reset_control_channel` — the controller-side reconnect request: clear a
       runner's `stream_ref` so its next data stream claims the channel, planned
-      from a park whose bind reported the transport dead.
+      from a halt whose bind reported the transport dead.
     * `publish_binding` — re-write a relay's durable row and route from
       the runner its Overwatch is bound to, planned from a registry write that
       named a stale runner.
@@ -243,7 +243,7 @@ defmodule Flezha.Convergence.Heal do
   # Migrate a relay bound to a dead/wrong runner onto an available one.
   # The Overwatch runs the bind in its own task and publishes the binding, the
   # registry tag and the target runner's route once it lands; a bind that
-  # fails parks the relay for the next tick under Backoff.
+  # fails halts the relay for the next tick under Backoff.
   defp rebind_relay(%{namespace: namespace, target: relay_id} = op, pid) do
     with {:ok, %{factory_id: factory, runner_id: prev}} <- Probe.overwatch(pid),
          true <- factory != nil,
@@ -277,10 +277,10 @@ defmodule Flezha.Convergence.Heal do
   # time): re-reading the authoritative set here stops a detection slip from
   # churning a healthy relay. An op whose reason PROVED the target is not
   # producing is never skipped — that guard protects the healthy, and this
-  # target is not — and neither is a parked one, whose runner is exactly the
+  # target is not — and neither is a halted one, whose runner is exactly the
   # one its bind failed on.
   defp skip_rebind?(_namespace, _factory, prev, _op) when prev in [nil, ""], do: false
-  defp skip_rebind?(_namespace, _factory, _prev, %{args: %{reason: :parked}}), do: false
+  defp skip_rebind?(_namespace, _factory, _prev, %{args: %{reason: :halted}}), do: false
 
   defp skip_rebind?(namespace, factory, prev, op) do
     not Planner.proved_wedged?(op) and

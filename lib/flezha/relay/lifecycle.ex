@@ -1,10 +1,10 @@
 defmodule Flezha.Relay.Lifecycle do
   @moduledoc """
-  The relay bind state machine: unbound → binding → bound, or parked.
+  The relay bind state machine: unbound → binding → bound, or halted.
 
-  A bind is ONE attempt: a failure parks the relay with the attempt's
-  reason, and the park is declared to the convergence loop, which drives the
-  un-park on its own table. Bind and the SDK start are one module because they
+  A bind is ONE attempt: a failure halts the relay with the attempt's
+  reason, and the halt is declared to the convergence loop, which drives the
+  rebind on its own table. Bind and the SDK start are one module because they
   are one cycle: a bind cancels the wake timer a suspension left behind and
   re-forwards its input log's tail, and the bind task every move runs re-enters
   `complete_init/5`.
@@ -70,8 +70,8 @@ defmodule Flezha.Relay.Lifecycle do
           {:ok, new_state} ->
             {:noreply, publish_rebind(new_state, stale_runner_id)}
 
-          {:error, reason, parked} ->
-            {:noreply, park(parked, reason)}
+          {:error, reason, halted} ->
+            {:noreply, halt(halted, reason)}
         end
 
       # `:unavailable` (FleetManager never answered) defers exactly like
@@ -201,9 +201,9 @@ defmodule Flezha.Relay.Lifecycle do
          # Before anything re-runs: the kept effect results reach the runner
          # ahead of the restores and the input tail.
          :ok <- Replay.ship_effect_results(state, Keyword.get(relay.opts, :effect_results, [])),
-         # BEFORE the restore: a refused restore parks the relay, so a
+         # BEFORE the restore: a refused restore halts the relay, so a
          # correction running after it would never run at all — the factory
-         # would park every attempt at its wrong language forever.
+         # would halt every attempt at its wrong language forever.
          _ =
            Restore.establish_sdk_lang_from_state(
              state.namespace,
@@ -220,7 +220,7 @@ defmodule Flezha.Relay.Lifecycle do
          state = Replay.reforward_undelivered_tail(state) do
       record_and_replay(state, relay, declarations, correction_window_ms)
     else
-      {:error, reason, %Overwatch{} = parked} -> {:error, reason, parked}
+      {:error, reason, %Overwatch{} = halted} -> {:error, reason, halted}
       {:error, reason} -> {:error, reason, state}
     end
   end
@@ -298,8 +298,8 @@ defmodule Flezha.Relay.Lifecycle do
     as: :release_relay
 
   # A refused restore is not a cold start: the durable state never reached the
-  # runner, so the relay parks rather than folding new inputs onto empty
-  # state. Rides the existing parked-error contract, so `bind/3` needs no new
+  # runner, so the relay halts rather than folding new inputs onto empty
+  # state. Rides the existing halted-error contract, so `bind/3` needs no new
   # failure arm.
   defp awaited_restore(state) do
     with true <- Replay.awaited_restore?(state),
@@ -376,7 +376,7 @@ defmodule Flezha.Relay.Lifecycle do
   # The one attempt. An awaited runner is re-resolved first so a runner that
   # came online since the bind was awaited is the one used, and bound before the
   # attempt so the ownership record names the runner told to start; the state
-  # carries the runner the attempt was made on either way, so a park names it.
+  # carries the runner the attempt was made on either way, so a halt names it.
   defp start_once(%Overwatch{} = state, relay, owner, placement) do
     runner_id =
       case placement do
@@ -396,7 +396,7 @@ defmodule Flezha.Relay.Lifecycle do
   end
 
   # `:start_relay` is only issued AFTER the ping confirms the round trip
-  # works. A ping failure parks the relay with its reason; whether the
+  # works. A ping failure halts the relay with its reason; whether the
   # runner's channel is then cut is the loop's decision, read off the reason
   # through `transport_verdict/1`.
   @doc false
@@ -414,7 +414,7 @@ defmodule Flezha.Relay.Lifecycle do
   end
 
   @doc """
-  What a park's reason says about the runner's transport: `:dead` when the
+  What a halt's reason says about the runner's transport: `:dead` when the
   bind's ping reported the transport gone, `:busy` when it merely timed out,
   `nil` when the reason is not a ping failure at all. A busy runner shows up
   as a timeout in three shapes: the ping's own, the ControlUnit's call into a
@@ -488,33 +488,33 @@ defmodule Flezha.Relay.Lifecycle do
     :ok
   end
 
-  # Transition the Overwatch into the parked-error state: store the failure
+  # Transition the Overwatch into the halted-error state: store the failure
   # reason and stay alive (no `:stop`, no supervisor restart).
   #
-  # Plugins remain in `:prepared` so no upstream I/O fires while parked. A park
+  # Plugins remain in `:prepared` so no upstream I/O fires while halted. A halt
   # is an outcome, not a remedy: it is declared to the convergence loop, which
-  # drives the un-park (`runner_migrate`) on the `{:parked, id}` ladder of its
+  # drives the rebind (`runner_migrate`) on the `{:halted, id}` ladder of its
   # own table and cuts the runner's channel first when the reason says the
   # transport is dead.
   #
-  # Every park funnels through here, so it is the one point that can report and
-  # declare one. The reason rides the event whole: a plugin park's already names
+  # Every halt funnels through here, so it is the one point that can report and
+  # declare one. The reason rides the event whole: a plugin halt's already names
   # both the plugin and its provider module.
-  @spec park(Overwatch.t(), term()) :: Overwatch.t()
-  def park(%Overwatch{} = state, reason) do
+  @spec halt(Overwatch.t(), term()) :: Overwatch.t()
+  def halt(%Overwatch{} = state, reason) do
     Facts.declare(
-      {:relay_parked, {state.namespace, state.id},
+      {:relay_halted, {state.namespace, state.id},
        %{reason: reason, transport: transport_verdict(reason)}}
     )
 
     :telemetry.execute(
-      [:flezha, :relay, :parked],
+      [:flezha, :relay, :halted],
       %{count: 1},
       %{
         namespace: state.namespace,
         relay_id: state.id,
         reason: reason,
-        plugin_id: parking_plugin(reason)
+        plugin_id: halting_plugin(reason)
       }
     )
 
@@ -526,9 +526,9 @@ defmodule Flezha.Relay.Lifecycle do
   # beside the convergence loop's own rebind ladder, and a runnerless namespace
   # would crash-loop every `overwatch_runner_wait_ms` for ever.
   #
-  # Not `park/2`: a park declares an `{:relay_parked, …}` fact the Diff never
+  # Not `halt/2`: a halt declares an `{:relay_halted, …}` fact the Diff never
   # consumes for a relay it classifies unbound, and would report the
-  # relay parked while every health surface calls it unbound.
+  # relay halted while every health surface calls it unbound.
   #
   # The recorded runner goes with it. A runner id baked into the cspec by a
   # previous boot is not a binding, and keeping one makes the judge call the
@@ -536,10 +536,10 @@ defmodule Flezha.Relay.Lifecycle do
   defp hold_unbound(%Overwatch{} = state, reason),
     do: %{state | runner_id: nil, init_error: {:runner_not_ready, reason}}
 
-  # A park a plugin caused names that plugin; every other reason carries `nil`
+  # A halt a plugin caused names that plugin; every other reason carries `nil`
   # rather than claim a plugin id it does not have.
-  defp parking_plugin({:plugin_prepare_failed, plugin_id, _reason}), do: plugin_id
-  defp parking_plugin(_reason), do: nil
+  defp halting_plugin({:plugin_prepare_failed, plugin_id, _reason}), do: plugin_id
+  defp halting_plugin(_reason), do: nil
 
   defp runner_wait_ms,
     do: Durations.get(:overwatch_runner_wait_ms)

@@ -39,13 +39,13 @@ defmodule Flezha.Service.Relay.Diagnose do
     stuck: :problem,
     plugin_missing: :problem,
     plugin_unhealthy: :problem,
-    parked: :warning,
+    halted: :warning,
     dead_letters: :warning,
     inputs_stuck: :warning,
     unread: :warning,
     healthy: :note,
     rebinding: :note,
-    asleep: :note,
+    suspended: :note,
     finished: :note,
     inputs_waiting: :note,
     plugin_disabled: :note,
@@ -56,10 +56,10 @@ defmodule Flezha.Service.Relay.Diagnose do
   # binding findings are refined by the runners the factory has.
   @reasons %{
     unobserved: :unknown,
-    evicted_at_boundary: :asleep,
+    evicted_at_boundary: :suspended,
     no_binding: :unbound,
     dead_runner: :runner_disconnected,
-    parked: :parked,
+    halted: :halted,
     wedged: :data_plane_wedge,
     stalled: :output_stall,
     stuck: :stuck,
@@ -197,7 +197,7 @@ defmodule Flezha.Service.Relay.Diagnose do
   # An unbound, orphaned or suspended relay is first a question of who could
   # take it: a suspended one wakes on its next message only onto a runner.
   defp binding(code, namespace, verdict, state)
-       when code in [:unbound, :runner_disconnected, :asleep] do
+       when code in [:unbound, :runner_disconnected, :suspended] do
     factory = state |> Map.get(:builder, %{}) |> Map.get(:factory_id)
 
     case factory && FleetManager.placement_refusal(namespace, factory) do
@@ -228,7 +228,7 @@ defmodule Flezha.Service.Relay.Diagnose do
     details =
       case {code, reason} do
         {:runner_disconnected, _} -> %{runner: Map.get(state, :runner_id), seconds: seconds}
-        {:parked, {:parked, why}} -> %{seconds: seconds, reason: text(why)}
+        {:halted, {:halted, why}} -> %{seconds: seconds, reason: text(why)}
         {:data_plane_wedge, {:wedged, layer}} -> %{layer: layer, seconds: seconds}
         {:stuck, {:stuck, detail}} -> %{detail: detail, seconds: seconds}
         {:plugin_unhealthy, {_, plugin, why}} -> plugin_details(state, plugin, why)

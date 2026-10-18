@@ -597,7 +597,7 @@ defmodule FlezhaTest.Relay.IngestTest do
 
     row = Enum.find(LivenessCounters.snapshot_all().relays, &(&1.relay_id == inst))
 
-    assert row[:parked_drops] == 2
+    assert row[:halted_drops] == 2
     assert row[:io_in_received] == 0, "a dropped cast was never received for processing"
   end
 end

@@ -15,22 +15,22 @@ defmodule Flezha.Convergence.Verdict do
     * `:degraded` — the loop, in place (restart the plugin, resync the runner)
     * `:failed` — the loop, by rebinding: the runner is gone
     * `:unbound` — the loop, by binding
-    * `:parked` — a user or a plugin fix; the loop does not touch it
+    * `:halted` — a user or a plugin fix; the loop only retries its bind
     * `:suspended` — nobody until the committed boundary; planned, not a fault
     * `:unknown` — the next tick; an uncertain probe escalates nothing
 
   `rank/1` is the one order every listing sorts by (`healthy < unknown <
-  suspended < degraded < recovering < unbound < failed < parked`, where
+  suspended < degraded < recovering < unbound < failed < halted`, where
   `recovering` is the word `listed_state/2` shows for an `:unbound` or
   `:failed` record inside its grace), and `fold/2` is the one
   table `/healthz` folds records into an endpoint word — so no surface keeps a
   second vocabulary or a second rank.
   """
 
-  @states [:healthy, :degraded, :failed, :unbound, :parked, :suspended, :unknown]
+  @states [:healthy, :degraded, :failed, :unbound, :halted, :suspended, :unknown]
   @kinds [:runner, :relay, :plugin, :channel, :driver]
 
-  # The one order. `:parked` is worst because it is the only state whose remedy
+  # The one order. `:halted` is worst because it is the only state whose remedy
   # nobody in the system owns, and `:unknown` sits just above `:healthy`
   # because an uncertain probe must never outrank a fault somebody read.
   # `:recovering` ranks where the states it stands for do, below a record
@@ -43,7 +43,7 @@ defmodule Flezha.Convergence.Verdict do
     recovering: 4,
     unbound: 5,
     failed: 6,
-    parked: 7
+    halted: 7
   }
 
   # The relay states the loop is (re)binding: `recovering` inside the
@@ -69,12 +69,12 @@ defmodule Flezha.Convergence.Verdict do
 
   @type kind :: :runner | :relay | :plugin | :channel | :driver
   @type state ::
-          :healthy | :degraded | :failed | :unbound | :parked | :suspended | :unknown
+          :healthy | :degraded | :failed | :unbound | :halted | :suspended | :unknown
   @type phase ::
           :running
           | :suspended
           | :unbound
-          | :parked
+          | :halted
           | :finished
           | :prepared
           | :active
@@ -171,7 +171,7 @@ defmodule Flezha.Convergence.Verdict do
     cond do
       suspended?(observed) -> :suspended
       observed? and unbound?(observed) -> :unbound
-      parked?(observed) -> :parked
+      halted?(observed) -> :halted
       observed? -> :running
       true -> nil
     end
@@ -188,7 +188,7 @@ defmodule Flezha.Convergence.Verdict do
 
   defp unbound?(o), do: is_nil(Map.get(o, :bound_runner, Map.get(o, :runner_id, :absent)))
 
-  defp parked?(o), do: Map.get(o, :parked?, false) or not is_nil(Map.get(o, :init_error))
+  defp halted?(o), do: Map.get(o, :halted?, false) or not is_nil(Map.get(o, :init_error))
 
   @doc """
   Execute `[:flezha, :health, :verdict]` for every subject whose state changed
@@ -227,16 +227,16 @@ defmodule Flezha.Convergence.Verdict do
   @doc """
   What a transition from `previous` (`nil` for a subject not judged before) to
   `state` tells a controller plugin: `:relay_failed` when a relay reads
-  parked or failed, `:relay_recovered` when it reads healthy, degraded or
+  halted or failed, `:relay_recovered` when it reads healthy, degraded or
   suspended again, `:plugin_unhealthy` when a plugin turns from healthy to
   degraded, and `nil` for every other change. A relay read `:unknown` or
-  `:unbound` between two failed reads, as an un-park's rebind leaves it, has
+  `:unbound` between two failed reads, as a halted relay's rebind leaves it, has
   neither failed again nor recovered, so a reader that remembers the failure it
   announced announces it once.
   """
   @spec turn(kind(), state() | nil, state()) ::
           :relay_failed | :relay_recovered | :plugin_unhealthy | nil
-  def turn(:relay, _previous, state) when state in [:parked, :failed], do: :relay_failed
+  def turn(:relay, _previous, state) when state in [:halted, :failed], do: :relay_failed
 
   def turn(:relay, _previous, state) when state in [:healthy, :degraded, :suspended],
     do: :relay_recovered
@@ -431,7 +431,7 @@ defmodule Flezha.Convergence.Verdict do
   defp reason_word(%__MODULE__{subject: {:plugin, _}, state: :degraded, reason: reason}),
     do: plugin_word(reason)
 
-  defp reason_word(%__MODULE__{state: :parked}), do: "parked"
+  defp reason_word(%__MODULE__{state: :halted}), do: "halted"
   defp reason_word(%__MODULE__{state: :failed}), do: "dead_runner"
   defp reason_word(%__MODULE__{state: :unbound}), do: "relays_unbound"
 

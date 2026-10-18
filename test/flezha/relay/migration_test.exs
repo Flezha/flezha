@@ -284,7 +284,7 @@ defmodule FlezhaTest.Relay.OverwatchSuspensionTest do
   # outliving its test and landing on the next test's instance-pinned stub
   # carrying this test's id.
   defp await_migrate_task(%Overwatch{migrate_task: %{pid: pid}}) do
-    assert_receive {:migrate_task_result, ^pid, {:park, _parked, {:ping_failed, _}}}, 2_000
+    assert_receive {:migrate_task_result, ^pid, {:halt, _parked, {:ping_failed, _}}}, 2_000
     :ok
   end
 
@@ -986,7 +986,7 @@ defmodule FlezhaTest.Relay.OverwatchAsyncMigrateTest do
     assert moving.runner_id == "runner_a", "the binding moves only once the bind lands"
 
     assert_receive {:migrate_task_result, ^task,
-                    {:park, _parked, {:ping_failed, :no_control_unit}}},
+                    {:halt, _parked, {:ping_failed, :no_control_unit}}},
                    2_000
 
     assert_received {:pinged, "runner_b"}
@@ -1040,7 +1040,7 @@ defmodule FlezhaTest.Relay.OverwatchAsyncMigrateTest do
 
     restarted = Migration.session_replaced(state, "runner_a", "runner_b", :restarted)
     assert %{pid: task} = restarted.migrate_task
-    assert_receive {:migrate_task_result, ^task, {:park, _, {:ping_failed, _}}}, 2_000
+    assert_receive {:migrate_task_result, ^task, {:halt, _, {:ping_failed, _}}}, 2_000
 
     assert Migration.session_replaced(state, "runner_x", "runner_b", :restarted) == state
     assert Migration.session_replaced(restarted, "runner_a", "runner_c", :restarted) == restarted

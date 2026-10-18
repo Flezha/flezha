@@ -325,7 +325,7 @@ defmodule Mix.Tasks.Bench.Steps.Run do
 
       IO.puts(
         "  [status] #{st.out.seen}/#{st.out.expected} replies, #{round(rate)}/s, dup=#{st.out.duplicates} " <>
-          "parked=#{st.suspended} rehydrated=#{st.rehydrating} | state #{Tally.state_dir_summary(@namespace)} | " <>
+          "suspended=#{st.suspended} rehydrated=#{st.rehydrating} | state #{Tally.state_dir_summary(@namespace)} | " <>
           "fsync p99 #{Tally.fsync_p99_ms()} ms | beam #{mib(:erlang.memory(:total))} MiB, #{length(Process.list())} procs"
       )
 

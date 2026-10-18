@@ -65,10 +65,10 @@ defmodule Flezha.Convergence.Facts do
       grace: true,
       tick: :now
     },
-    relay_parked: %{
+    relay_halted: %{
       holds: true,
-      diff: :parked_relays,
-      reason: :parked,
+      diff: :halted_relays,
+      reason: :halted,
       reset: :evidence,
       grace: false,
       tick: :now
@@ -238,7 +238,7 @@ defmodule Flezha.Convergence.Facts do
   keys per `{relay, plugin}`.
   """
   @spec key({atom(), term()}) :: {atom(), term()} | nil
-  def key({:relay_parked, {_ns, id}}), do: {:parked, id}
+  def key({:relay_halted, {_ns, id}}), do: {:halted, id}
   def key({:plugin_down, {_ns, id, plugin_id}}), do: {:restart_plugin, {id, plugin_id}}
 
   def key({kind, target}) do
@@ -282,8 +282,8 @@ defmodule Flezha.Convergence.Facts do
 
     facts =
       Enum.reduce(observed, Map.new(kept), fn
-        {ref, %{park_reason: reason}}, acc when not is_nil(reason) ->
-          Map.put_new(acc, {:relay_parked, ref}, %{at: now, args: %{reason: reason}})
+        {ref, %{halt_reason: reason}}, acc when not is_nil(reason) ->
+          Map.put_new(acc, {:relay_halted, ref}, %{at: now, args: %{reason: reason}})
 
         _, acc ->
           acc
@@ -318,12 +318,12 @@ defmodule Flezha.Convergence.Facts do
     end)
   end
 
-  # A park is repaired once the probe sees the relay unparked, and gone
+  # A halt is repaired once the probe sees the relay running again, and gone
   # once the probe sees no relay at all.
-  defp repaired?(:relay_parked, ref, _args, reality) do
+  defp repaired?(:relay_halted, ref, _args, reality) do
     case get_in(reality, [:relays, ref]) do
       %{bound_runner: :unknown} -> false
-      %{park_reason: reason} -> is_nil(reason)
+      %{halt_reason: reason} -> is_nil(reason)
       _ -> true
     end
   end

@@ -182,7 +182,7 @@ to are specified in
 payload needs no further delivery; a deterministic filter would filter the
 retry too. A suspended target is a success, not an outage: the payload is
 durable in its input log and the append itself wakes it. The plain
-`{:io_in, _, _}` cast keeps its silent drop for a parked relay; a sender
+`{:io_in, _, _}` cast keeps its silent drop for a halted relay; a sender
 that needs the payload held uses the confirming path.
 
 ## `:on_message` or `:on_output` forward?

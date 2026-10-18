@@ -1113,7 +1113,7 @@ The exit code is `flz`'s for the class ([errors](../../errors.md)).
 | `call.absorbed` | conflict (6) | the input was dropped as a duplicate, or an `on_input` hook filtered it out |
 | `call.not_accepted` | conflict (6) | a `once` or `chained` steps instance has already taken its input; nothing is journaled |
 | `call.busy` | unavailable (7) | the relay already owes `call_pending_max` answers; nothing is taken in |
-| `call.unavailable` | unavailable (7) | the relay is parked or not ready, its durable append was refused, or its Overwatch went away |
+| `call.unavailable` | unavailable (7) | the relay is halted or not ready, its durable append was refused, or its Overwatch went away |
 | `call.target_unkeyed` | invalid (2) | a partition group was called with no key; `details.members` |
 | `relay.factory_mismatch` | conflict (6) | a factory call named an instance of another factory; nothing is delivered |
 | `topology.channel_ends_twice` | invalid (2) | a channel declares two plugin ends (raised when the relay is declared) |

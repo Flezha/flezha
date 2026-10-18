@@ -268,5 +268,5 @@ Plugin signals bound to trade_watcher.
   it can be handed to an output plugin again, unless the output plugin honours `effectively_once`; its
   catalogue page says which.
 - **A shared copy does not wait.** A shared HTTP poll hands each relay the content
-  without waiting for it, so a parked relay loses that content until it changes. A
+  without waiting for it, so a halted relay loses that content until it changes. A
   relay whose input is durable runs its own copy instead.

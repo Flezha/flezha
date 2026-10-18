@@ -37,9 +37,9 @@ defmodule Flezha.Convergence.Planner do
   # crashing plugin must never throttle its siblings' starts.
   @plugin_primitives [:start_plugin, :stop_plugin, :restart_plugin]
 
-  # A parked relay whose bind's ping merely timed out is a busy runner:
+  # A halted relay whose bind's ping merely timed out is a busy runner:
   # its channel is live and carries every other instance on it, so the
-  # channel is cut only once the parked ladder has walked this many rungs.
+  # channel is cut only once the halted ladder has walked this many rungs.
   @busy_runner_cut_at 2
 
   # Every `%Diff{}` field a rule reads, and the primitives that rule can plan.
@@ -48,7 +48,7 @@ defmodule Flezha.Convergence.Planner do
   # planned twice fails there by name.
   @rules [
     misbound_relays: [:evict_runner, :rebind_relay],
-    parked_relays: [:reset_control_channel, :rebind_relay],
+    halted_relays: [:reset_control_channel, :rebind_relay],
     data_plane_wedge: [:restart_runner, :evict_runner, :resync_runner, :rebind_relay],
     unbound_relays: [:rebind_relay],
     resync_cells: [:resync_runner],
@@ -98,7 +98,7 @@ defmodule Flezha.Convergence.Planner do
     %Diff{
       unbound_relays: [ref],
       misbound_relays: for(r <- Facts.reasons_for(Diff.waiting_fields()), do: {ref, nil, r}),
-      parked_relays: [{ref, %{}, nil}]
+      halted_relays: [{ref, %{}, nil}]
     }
     |> waiting_ops()
     |> Enum.map(&key/1)
@@ -250,17 +250,17 @@ defmodule Flezha.Convergence.Planner do
     |> Enum.map(&op(:evict_runner, nil, &1, %{}))
   end
 
-  # A parked relay's bind reported its runner's transport dead: cut the
+  # A halted relay's bind reported its runner's transport dead: cut the
   # channel before anything is placed on it. A ping that merely timed out says
   # the runner is busy — its channel is live and carries every other instance
-  # on it — so it is retried, and cut only once the parked ladder has walked
+  # on it — so it is retried, and cut only once the halted ladder has walked
   # `@busy_runner_cut_at` rungs. The verdict rides the fact: the bind that
   # failed is what knows what its own failure meant.
-  defp reset_ops(%Diff{parked_relays: parked}, backoff) do
-    parked
+  defp reset_ops(%Diff{halted_relays: halted}, backoff) do
+    halted
     |> Enum.filter(fn {{_ns, id}, args, runner} ->
       is_binary(runner) and
-        cut_channel?(args[:transport], Backoff.attempt(backoff, {:parked, id}))
+        cut_channel?(args[:transport], Backoff.attempt(backoff, {:halted, id}))
     end)
     |> Enum.map(fn {{ns, id}, _args, runner} ->
       op(:reset_control_channel, ns, runner, %{relay_id: id})
@@ -278,13 +278,13 @@ defmodule Flezha.Convergence.Planner do
         op(:rebind_relay, ns, rid, reasoned(reason))
       end)
 
-    # A parked relay binds via the same rebind primitive on the
-    # `{:parked, id}` ladder: it resolves a runner and sends `:runner_migrate`,
-    # which un-parks it; the outcome is only visible later, when the probe sees
+    # A halted relay binds via the same rebind primitive on the
+    # `{:halted, id}` ladder: it resolves a runner and sends `:runner_migrate`,
+    # which rebinds it; the outcome is only visible later, when the probe sees
     # it bound.
-    unpark =
-      Enum.map(d.parked_relays, fn {{ns, rid}, args, _runner} ->
-        op(:rebind_relay, ns, rid, %{reason: :parked, park: args[:reason]})
+    unhalt =
+      Enum.map(d.halted_relays, fn {{ns, rid}, args, _runner} ->
+        op(:rebind_relay, ns, rid, %{reason: :halted, halt: args[:reason]})
       end)
 
     # Unbound relays bind via the same rebind primitive too.
@@ -293,7 +293,7 @@ defmodule Flezha.Convergence.Planner do
         op(:rebind_relay, ns, rid, %{})
       end)
 
-    rebind ++ unpark ++ start
+    rebind ++ unhalt ++ start
   end
 
   # A probe-observed misbound keys on its primitive; a declared disconnect keys

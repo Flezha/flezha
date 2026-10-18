@@ -236,7 +236,7 @@ defmodule Flezha.Runner.ControlChannel.Requests do
     deadline = if wake_deadline_ms == 0, do: nil, else: wake_deadline_ms
 
     :telemetry.execute(
-      [:flezha, :steps, :parked],
+      [:flezha, :steps, :suspend_requested],
       %{count: 1},
       %{namespace: state.namespace, relay_id: relay_id, iter: iter}
     )

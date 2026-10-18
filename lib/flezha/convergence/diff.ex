@@ -4,7 +4,7 @@ defmodule Flezha.Convergence.Diff do
   reality, and this tick's verdict records into a structured `Delta`
   enumerating every invariant violation. The records are the health input in
   place of an open signals map: the binding classification reads a record's
-  `state` and `reason`, never `bound_runner`/`parked?`/`suspended?` of its own,
+  `state` and `reason`, never `bound_runner`/`halted?`/`suspended?` of its own,
   and a `driver` record is planned for by nobody — `/healthz` owns it. This is NOT a per-failure-mode dispatch: each `Delta` field
   corresponds to one invariant, every declared kind is consumed by exactly one
   field, and all catalogue rows reduce to populating these fields.
@@ -35,7 +35,7 @@ defmodule Flezha.Convergence.Diff do
   @type t :: %__MODULE__{
           unbound_relays: [relay_ref()],
           misbound_relays: [{relay_ref(), binary(), misbound_reason()}],
-          parked_relays: [{relay_ref(), map(), binary() | nil}],
+          halted_relays: [{relay_ref(), map(), binary() | nil}],
           stalled_relays: [relay_ref()],
           resync_cells: [{tuple(), binary(), atom()}],
           missing_plugins: [{relay_ref(), binary(), map()}],
@@ -50,7 +50,7 @@ defmodule Flezha.Convergence.Diff do
 
   defstruct unbound_relays: [],
             misbound_relays: [],
-            parked_relays: [],
+            halted_relays: [],
             stalled_relays: [],
             resync_cells: [],
             missing_plugins: [],
@@ -69,7 +69,7 @@ defmodule Flezha.Convergence.Diff do
   @healable_fields [
     :unbound_relays,
     :misbound_relays,
-    :parked_relays,
+    :halted_relays,
     :stalled_relays,
     :resync_cells,
     :missing_plugins,
@@ -86,14 +86,14 @@ defmodule Flezha.Convergence.Diff do
   @waiting_fields [
     :unbound_relays,
     :misbound_relays,
-    :parked_relays
+    :halted_relays
   ]
 
   # The verdict states `classify/6` answers with a binding: never bound, bound
   # to a runner that is gone, or left behind by a bind that failed. Declared
   # beside the classification that produces them so the two cannot drift, and
   # held to it by the seam test.
-  @awaiting_binding [:unbound, :failed, :parked]
+  @awaiting_binding [:unbound, :failed, :halted]
 
   # The fields a binding op is planned from — the waiting ones, and the row
   # re-publish that follows a placement. While this node drains they are
@@ -117,7 +117,7 @@ defmodule Flezha.Convergence.Diff do
     placement = Map.get(reality, :placement, %{})
     verdict = wedge_verdict(verdicts)
 
-    {unbound, misbound, parked} =
+    {unbound, misbound, halted} =
       binding_divergence(declared, observed, verdicts, placement, facts)
 
     {missing, not_started, extra, unhealthy} = plugin_divergence(declared, observed)
@@ -125,7 +125,7 @@ defmodule Flezha.Convergence.Diff do
     %__MODULE__{
       unbound_relays: Enum.reverse(unbound),
       misbound_relays: Enum.reverse(misbound),
-      parked_relays: Enum.reverse(parked),
+      halted_relays: Enum.reverse(halted),
       stalled_relays: stalled_refs(declared, verdicts),
       resync_cells: resync_cells(facts, observed),
       missing_plugins: missing,
@@ -147,11 +147,11 @@ defmodule Flezha.Convergence.Diff do
   end
 
   # The per-relay binding classification, the sibling of `plugin_divergence/2`:
-  # one pass over the declared set answering `{unbound, misbound, parked}`.
+  # one pass over the declared set answering `{unbound, misbound, halted}`.
   defp binding_divergence(declared, observed, verdicts, placement, facts) do
     disconnected = disconnected_runners(facts)
 
-    Enum.reduce(declared, {[], [], []}, fn %{namespace: ns, relay_id: rid}, {unb, mis, park} ->
+    Enum.reduce(declared, {[], [], []}, fn %{namespace: ns, relay_id: rid}, {unb, mis, halt} ->
       ref = {ns, rid}
 
       case classify(
@@ -162,10 +162,10 @@ defmodule Flezha.Convergence.Diff do
              facts,
              disconnected
            ) do
-        :skip -> {unb, mis, park}
-        {:unbound, entry} -> {[entry | unb], mis, park}
-        {:misbound, entry} -> {unb, [entry | mis], park}
-        {:parked, entry} -> {unb, mis, [entry | park]}
+        :skip -> {unb, mis, halt}
+        {:unbound, entry} -> {[entry | unb], mis, halt}
+        {:misbound, entry} -> {unb, [entry | mis], halt}
+        {:halted, entry} -> {unb, mis, [entry | halt]}
       end
     end)
   end
@@ -194,11 +194,11 @@ defmodule Flezha.Convergence.Diff do
       %Verdict{state: :suspended} ->
         :skip
 
-      # Parked: a failed repair's outcome, reported apart from unbound so the
-      # Planner keys it, carrying what the park declared — its reason and
+      # Halted: a failed repair's outcome, reported apart from unbound so the
+      # Planner keys it, carrying what the halt declared — its reason and
       # what that reason says about the runner's transport.
-      %Verdict{state: :parked} ->
-        {:parked, {ref, park_args(facts, ref, observed_relay), normalize_runner(bound)}}
+      %Verdict{state: :halted} ->
+        {:halted, {ref, halt_args(facts, ref, observed_relay), normalize_runner(bound)}}
 
       %Verdict{state: :unbound} ->
         classify_bindable(ref, nil, observed_relay, placement)
@@ -242,13 +242,13 @@ defmodule Flezha.Convergence.Diff do
     MapSet.new(Facts.targets(facts, :runner_disconnected))
   end
 
-  # What the park declared, or — for one the loop was never told about (a park
+  # What the halt declared, or — for one the loop was never told about (a halt
   # from before this loop started) — the reason the probe read, with no
   # transport verdict: nothing may be cut on a reason nobody classified.
-  defp park_args(facts, ref, observed_relay) do
-    case Facts.args(facts, :relay_parked, ref) do
+  defp halt_args(facts, ref, observed_relay) do
+    case Facts.args(facts, :relay_halted, ref) do
       %{} = args -> args
-      nil -> %{reason: Map.get(observed_relay, :park_reason) || :observed, transport: nil}
+      nil -> %{reason: Map.get(observed_relay, :halt_reason) || :observed, transport: nil}
     end
   end
 
@@ -391,12 +391,12 @@ defmodule Flezha.Convergence.Diff do
 
   # A live pid that is not running: a suspended steps instance released
   # its plugins with its runner and the rehydrating bind replays them; a
-  # parked one (init failed) activates them on its un-park. Neither has
+  # halted one (init failed) activates them when it is rebound. Neither has
   # anything to heal until then.
   defp plugins_diffable?(observed_relay) do
     is_pid(Map.get(observed_relay, :pid)) and
       not Map.get(observed_relay, :suspended?, false) and
-      not Map.get(observed_relay, :parked?, false)
+      not Map.get(observed_relay, :halted?, false)
   end
 
   # I2: a relay's declared plugin set (durable cspec) vs the set actually

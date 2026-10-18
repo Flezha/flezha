@@ -2,7 +2,7 @@ defmodule Mix.Tasks.Bench.Steps.Scenarios do
   @moduledoc """
   The four scenarios and the spawners they drive: `chain` (spawn to completion),
   `turns` (iteration commits on a live loop), `sleep` (park, then wake storms)
-  and `sleep-boot` (rehydrate a parked population at boot).
+  and `sleep-boot` (rehydrate a suspended population at boot).
 
   Each sets its fleet up, drives `Mix.Tasks.Bench.Steps.Run`'s state machine,
   and reports. Takes `cfg` as a plain map and names no other part of the task.
@@ -170,7 +170,7 @@ defmodule Mix.Tasks.Bench.Steps.Scenarios do
   defp park_then_warm_turn(cfg, st, ids, n) do
     IO.puts("  waiting for the #{n} loops to park (idle #{cfg.sleep_after_ms} ms)...")
     st = Run.collect(st, &(&1.suspended >= n), cfg.sleep_after_ms + 30_000)
-    IO.puts("  #{st.suspended} parked")
+    IO.puts("  #{st.suspended} suspended")
 
     IO.puts("Warmup: one turn per loop (excluded)...")
     st = %{st | suspended: 0}
@@ -194,7 +194,7 @@ defmodule Mix.Tasks.Bench.Steps.Scenarios do
           {"integrity",
            "#{st.out.duplicates} dup, #{missing} missing, #{st.out.foreign} foreign"},
           {"parks / wakes",
-           "#{st.suspended} parked, #{st.rehydrating} rehydrated during the turns"},
+           "#{st.suspended} suspended, #{st.rehydrating} rehydrated during the turns"},
           {"commits",
            "#{c1.task - c0.task} task (#{Report.decimal((c1.task - c0.task) / max(measured, 1), 2)}/turn), #{c1.iter - c0.iter} iter (#{Report.decimal((c1.iter - c0.iter) / max(measured, 1), 2)}/turn) → #{Report.decimal(Run.rate(c1.task - c0.task, window))} task commits/s; failed=#{c1.failed - c0.failed}"}
         ] ++
@@ -386,7 +386,7 @@ defmodule Mix.Tasks.Bench.Steps.Scenarios do
     unless st.stalled do
       IO.puts("Waiting for all #{n} to park again...")
       st = Run.collect(st, &(&1.suspended >= n), cfg.sleep_after_ms + 60_000)
-      IO.puts("  #{st.suspended} parked; #{st.out.seen - n} extra replies meanwhile")
+      IO.puts("  #{st.suspended} suspended; #{st.out.seen - n} extra replies meanwhile")
       if cfg.wake_after_ms && not st.stalled, do: timer_wake_storm(cfg, st, n)
     end
   end

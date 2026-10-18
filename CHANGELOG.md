@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Changed: a relay a fault stopped is `halted`, and a planned sleep is `suspended` everywhere (breaking)
+
+"Parked" named both a relay stopped by a fault and, in places, a relay asleep at a committed
+boundary, while the diagnosis called the sleep "asleep". Each state now has one word.
+
+- **BREAKING:** the verdict state and phase `parked` is `halted`, in `flz relay info`,
+  `flz relay list`, `relay_rows/2`, `/healthz` reasons and the verdict signal.
+- **BREAKING:** the diagnosis codes `diagnose.parked` and `diagnose.asleep` are
+  `diagnose.halted` and `diagnose.suspended`.
+- **BREAKING:** the event `[:flezha, :relay, :parked]` is `[:flezha, :relay, :halted]`, its
+  metric `relay_parked_total` is `relay_halted_total`, and the counter `parked_drops`
+  (`relay_parked_drops`) is `halted_drops` (`relay_halted_drops`).
+- **BREAKING:** the event a runner's iteration park emits, `[:flezha, :steps, :parked]`, is
+  `[:flezha, :steps, :suspend_requested]`; it was described as a failure, which it is not.
+- The runner protocol's `IterPark` frame and the durable park record keep their names.
+
 ### Changed: the docs live in `docs/public/` and `docs/internal/` (breaking for links)
 
 Every page of the published site moves to `docs/public/` under its old sub-path, and every

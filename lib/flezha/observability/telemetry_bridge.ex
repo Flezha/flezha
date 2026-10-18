@@ -193,11 +193,11 @@ defmodule Flezha.Observability.TelemetryBridge do
        "The HTTP queue was full and requests were dropped."},
     [:flezha, :plugin, :phase] =>
       {:flezha_plugin, :phase, :event, "A plugin entered or left a lifecycle phase."},
-    [:flezha, :relay, :parked] =>
-      {:flezha_relay, :relay_parked_total, :metric, "A relay was parked after a failure."},
+    [:flezha, :relay, :halted] =>
+      {:flezha_relay, :relay_halted_total, :metric, "A relay was halted after a failure."},
     [:flezha, :steps, :turn_dead_lettered] =>
       {:flezha_steps, :flezha_steps_turns_dead_lettered_total, :metric,
-       "A steps session's turn failed and was parked; the session goes on."},
+       "A steps session's turn failed and became a dead letter; the session goes on."},
     [:flezha, :call, :answered] =>
       {:flezha_call, :flezha_call_answer_duration, :metric,
        "A call was answered; how long it took."},
@@ -358,7 +358,7 @@ defmodule Flezha.Observability.TelemetryBridge do
     flezha_state: {:storage, "Each Cell's write-ahead log: writes, compaction and repairs."},
     flezha_durability:
       {:storage, "Copies of relay state shipped to and restored from remote storage."},
-    flezha_relay: {:relays, "Relays starting, stopping, parking and exiting."},
+    flezha_relay: {:relays, "Relays starting, stopping, halting and exiting."},
     flezha_runner: {:relays, "Runner sessions: connects, disconnects, drops and refusals."},
     flezha_call: {:relays, "Calls to relays: answers, timeouts and refusals."},
     flezha_steps: {:relays, "Steps sessions and their failed turns."},

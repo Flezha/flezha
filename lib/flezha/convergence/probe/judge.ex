@@ -167,8 +167,8 @@ defmodule Flezha.Convergence.Probe.Judge do
       not live?(facts) ->
         {:failed, :dead_runner}
 
-      Map.get(facts, :parked?, false) ->
-        {:parked, {:parked, Map.get(facts, :park_reason)}}
+      Map.get(facts, :halted?, false) ->
+        {:halted, {:halted, Map.get(facts, :halt_reason)}}
 
       true ->
         degraded_or_healthy(facts)

@@ -24,17 +24,18 @@ defmodule Flezha.Convergence.Probe.Table do
   @detectors [
     %{id: :binding, kind: :relay, facts: &Readers.binding/1, events: []},
     %{
-      id: :park,
+      id: :halt,
       kind: :relay,
-      facts: &Readers.park/1,
-      events: [{[:flezha, :relay, :parked], "A relay was parked after a failure."}]
+      facts: &Readers.halt/1,
+      events: [{[:flezha, :relay, :halted], "A relay was halted after a failure."}]
     },
     %{
       id: :suspension,
       kind: :relay,
       facts: &Readers.suspension/1,
       events: [
-        {[:flezha, :steps, :parked], "A steps relay was parked after a failure."},
+        {[:flezha, :steps, :suspend_requested],
+         "A steps relay's runner asked to suspend it at a committed boundary."},
         {[:flezha, :steps, :suspended], "A steps relay stopped at a committed boundary."},
         {[:flezha, :steps, :failed], "A steps relay failed."}
       ]

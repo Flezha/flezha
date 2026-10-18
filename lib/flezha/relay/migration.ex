@@ -561,7 +561,7 @@ defmodule Flezha.Relay.Migration do
   # Run `complete_init/5` on `runner_id` in a task so a slow bind never blocks
   # the Overwatch. The task is linked to the Overwatch, so a killed Overwatch
   # takes its bind with it and no second bind outlives it. It reports its
-  # outcome and decides nothing: a failure is a park the Overwatch declares.
+  # outcome and decides nothing: a failure is a halt the Overwatch declares.
   # `then` is what a wake carries (`apply_migrate_result/2`).
   defp start_bind(%Overwatch{} = state, runner_id, then) do
     relay = bind_relay(state)
@@ -572,7 +572,7 @@ defmodule Flezha.Relay.Migration do
         result =
           case Lifecycle.complete_init(state, runner_id, relay, parent, :pinned) do
             {:ok, recovered} -> {:bound, recovered}
-            {:error, err, parked} -> {:park, parked, err}
+            {:error, err, halted} -> {:halt, halted, err}
           end
 
         send(parent, {:migrate_task_result, self(), result})
@@ -588,15 +588,15 @@ defmodule Flezha.Relay.Migration do
   """
   @spec bind_task_exited(Overwatch.t(), term()) :: Overwatch.t()
   def bind_task_exited(%Overwatch{} = state, reason),
-    do: apply_migrate_result(state, {:park, state, {:bind_task_exit, reason}})
+    do: apply_migrate_result(state, {:halt, state, {:bind_task_exit, reason}})
 
   @doc """
   Fold a bind task's result back into the state.
 
   `complete_init/5` ran inside the task, whose `self()` is not the Overwatch
   process, so the binding is published here — the one point every move
-  funnels through: an un-park, a wake, a `runner_migrate` and a restarted
-  runner.
+  funnels through: a halted relay's rebind, a wake, a `runner_migrate` and a
+  restarted runner.
   """
   @spec apply_migrate_result(Overwatch.t(), tuple()) :: Overwatch.t()
   def apply_migrate_result(%Overwatch{parked_in_flight: true} = state, {:bound, _recovered}) do
@@ -613,7 +613,7 @@ defmodule Flezha.Relay.Migration do
   end
 
   def apply_migrate_result(state, {:bound, recovered}) do
-    Logger.info("[Overwatch] relay #{state.id} un-parked onto runner #{recovered.runner_id}")
+    Logger.info("[Overwatch] relay #{state.id} bound onto runner #{recovered.runner_id}")
 
     Lifecycle.publish_binding(recovered, state.runner_id)
 
@@ -623,10 +623,10 @@ defmodule Flezha.Relay.Migration do
     %{recovered | migrate_task: nil, snapshot: nil}
   end
 
-  # A failed un-park with input journaled meanwhile tries again at once, as
-  # any bind that ends with work owed does.
-  def apply_migrate_result(_state, {:park, parked, err}) do
-    %{Lifecycle.park(parked, err) | migrate_task: nil, parked_in_flight: false}
+  # A failed bind with input journaled meanwhile tries again at once, as any
+  # bind that ends with work owed does.
+  def apply_migrate_result(_state, {:halt, halted, err}) do
+    %{Lifecycle.halt(halted, err) | migrate_task: nil, parked_in_flight: false}
     |> rehydrate_if_pending()
   end
 

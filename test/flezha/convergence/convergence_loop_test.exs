@@ -188,17 +188,17 @@ defmodule Flezha.Convergence.LoopTest do
     # that goes through the judge.
     test "a parked relay is released by the same path" do
       stub(Probe, :snapshot, fn ->
-        reality(%{parked?: true, park_reason: {:ping_failed, :timeout}, bound_runner: @fresh})
+        reality(%{halted?: true, halt_reason: {:ping_failed, :timeout}, bound_runner: @fresh})
       end)
 
       :ok = Loop.tick_now()
-      assert attempt({:parked, "op"}) == 1, "the parked rebind did not walk a rung"
+      assert attempt({:halted, "op"}) == 1, "the halted rebind did not walk a rung"
       observe_heals(:unmet)
 
       connect(@fresh)
 
       assert_receive {:healed, :rebind_relay}, 1_000
-      assert attempt({:parked, "op"}) == 0
+      assert attempt({:halted, "op"}) == 0
     end
 
     # A rung already walked, eligible again: what a rebind that finds no runner
@@ -226,7 +226,7 @@ defmodule Flezha.Convergence.LoopTest do
       %Diff{
         unbound_relays: [ref],
         misbound_relays: Enum.map(reasons, &{ref, "e_dead", &1}),
-        parked_relays: [{ref, %{reason: :timeout}, "e_dead"}]
+        halted_relays: [{ref, %{reason: :timeout}, "e_dead"}]
       }
     end
 

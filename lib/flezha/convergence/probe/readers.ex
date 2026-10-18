@@ -48,15 +48,15 @@ defmodule Flezha.Convergence.Probe.Readers do
     end)
   end
 
-  @doc "Whether `Lifecycle.park/2` left a reason on the Overwatch, and which."
-  @spec park(context()) :: [Fact.t()]
-  def park(ctx) do
+  @doc "Whether `Lifecycle.halt/2` left a reason on the Overwatch, and which."
+  @spec halt(context()) :: [Fact.t()]
+  def halt(ctx) do
     per_relay(ctx, fn ref, key, observed ->
       fact(
         %{
-          parked?: Map.get(observed || %{}, :parked?, false),
-          park_reason: Map.get(observed || %{}, :park_reason),
-          park_args: Facts.args(ctx.signals[:facts] || %{}, :relay_parked, key)
+          halted?: Map.get(observed || %{}, :halted?, false),
+          halt_reason: Map.get(observed || %{}, :halt_reason),
+          halt_args: Facts.args(ctx.signals[:facts] || %{}, :relay_halted, key)
         },
         ref
       )
@@ -130,14 +130,14 @@ defmodule Flezha.Convergence.Probe.Readers do
   end
 
   # A plugin set is readable only on a relay the probe actually reached
-  # and that is neither suspended nor parked: a suspended instance released its
+  # and that is neither suspended nor halted: a suspended instance released its
   # plugins with its runner, and there is nothing there to be unhealthy.
   defp plugin_readable?(nil), do: false
 
   defp plugin_readable?(observed) do
     Map.get(observed, :bound_runner) not in [nil, :unknown] and
       not Map.get(observed, :suspended?, false) and
-      not Map.get(observed, :parked?, false)
+      not Map.get(observed, :halted?, false)
   end
 
   @doc """

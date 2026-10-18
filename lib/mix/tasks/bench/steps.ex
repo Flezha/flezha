@@ -32,7 +32,7 @@ defmodule Mix.Tasks.Bench.Steps do
       and measure the reply. `--duration S` sizes `-m` from the rate.
       `--kill-runner-at S` SIGKILLs one runner S seconds into the turns.
     * `sleep` — spawn `-n` loops, one turn each, wait until every instance has
-      parked; report the controller's resting cost per sleeper and the
+      suspended; report the controller's resting cost per sleeper and the
       convergence tick time, then a message wake storm (one turn to every
       sleeper at once) and, with `--wake-after-ms`, a timer wake storm.
       `--keep` leaves the namespace on disk for `sleep-boot`.
@@ -86,7 +86,7 @@ defmodule Mix.Tasks.Bench.Steps do
     if cfg.scenario != :sleep_boot, do: Fleet.reset_namespace(Run.namespace())
 
     # The handler is attached before the controller boots so a sleeper restored
-    # during boot (`sleep-boot`) is counted like one that parked at run time.
+    # during boot (`sleep-boot`) is counted like one that suspended at run time.
     Mix.Task.run("loadpaths")
     {:ok, _} = Application.ensure_all_started(:telemetry)
     :ets.new(Run.waiters(), [:named_table, :public, read_concurrency: true])

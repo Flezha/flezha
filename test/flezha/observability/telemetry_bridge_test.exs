@@ -265,8 +265,8 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
     assert mismatch.metadata[:relays] == ["btc_feed", "eth_feed"]
   end
 
-  test "a relay park reaches the bus from the real lifecycle call site" do
-    park_sink = :"obs_tbridge_park_sink_#{:erlang.unique_integer([:positive])}"
+  test "a relay halt reaches the bus from the real lifecycle call site" do
+    park_sink = :"obs_tbridge_halt_sink_#{:erlang.unique_integer([:positive])}"
     ref = :counters.new(1, [:atomics])
 
     {:ok, _pid} =
@@ -280,18 +280,18 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
     flush_all()
 
     reason = {:plugin_prepare_failed, "exchange_sink", {:provider_refused, "pkg", "sink", :bad}}
-    Lifecycle.park(%Overwatch{id: "obs_park_relay", namespace: "default"}, reason)
+    Lifecycle.halt(%Overwatch{id: "obs_halt_relay", namespace: "default"}, reason)
 
     parked =
       receive_until(
-        fn s -> s.source == :flezha_relay and s.name == :relay_parked_total end,
+        fn s -> s.source == :flezha_relay and s.name == :relay_halted_total end,
         500
       )
 
     assert parked
     assert parked.kind == :metric
     assert parked.measurements[:count] == 1
-    assert parked.metadata[:relay_id] == "obs_park_relay"
+    assert parked.metadata[:relay_id] == "obs_halt_relay"
     assert parked.metadata[:plugin_id] == "exchange_sink"
     assert parked.metadata[:reason] == reason
   end

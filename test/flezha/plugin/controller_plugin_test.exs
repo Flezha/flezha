@@ -399,7 +399,7 @@ defmodule FlezhaTest.Plugin.ControllerPluginTest do
     test "a park read unknown or unbound for a tick between is one failure until it recovers" do
       {:ok, _} = notify(["on_relay_failed"])
       subject = {:relay, {@namespace, "flaky_op"}}
-      reason = {:parked, {:plugin_prepare_failed, "p", :boom}}
+      reason = {:halted, {:plugin_prepare_failed, "p", :boom}}
       read = &Verdict.new(subject, &1, reason: reason, facts: %{node: node()})
 
       # The ticks the loop would judge, through the function the loop calls.
@@ -411,11 +411,11 @@ defmodule FlezhaTest.Plugin.ControllerPluginTest do
         end)
       end
 
-      tick.([:healthy, :parked, :unknown, :parked, :unbound, :parked])
+      tick.([:healthy, :halted, :unknown, :halted, :unbound, :halted])
       assert_receive {:hook, %{hook: :on_relay_failed, relay: "flaky_op"}, _}, 2_000
       refute_receive {:hook, %{hook: :on_relay_failed}, _}, 300
 
-      tick.([:parked, :healthy, :parked])
+      tick.([:halted, :healthy, :halted])
       assert_receive {:hook, %{hook: :on_relay_failed, relay: "flaky_op"}, _}, 2_000
       refute_receive {:hook, %{hook: :on_relay_failed}, _}, 300
     end
@@ -423,7 +423,7 @@ defmodule FlezhaTest.Plugin.ControllerPluginTest do
     test "a relay failed here, then placed on another controller and parked here again, is announced again" do
       {:ok, _} = notify(["on_relay_failed"])
       subject = {:relay, {@namespace, "moved_op"}}
-      here = {:parked, {:plugin_prepare_failed, "p", :boom}}
+      here = {:halted, {:plugin_prepare_failed, "p", :boom}}
 
       read = fn {state, node, reason} ->
         Verdict.new(subject, state, reason: reason, facts: %{node: node})
@@ -433,11 +433,11 @@ defmodule FlezhaTest.Plugin.ControllerPluginTest do
       # which this one does not announce), rebound, and parked here again.
       Enum.reduce(
         [
-          {:parked, node(), here},
+          {:halted, node(), here},
           {:unbound, nil, nil},
-          {:parked, :other@host, {:parked, :elsewhere}},
+          {:halted, :other@host, {:halted, :elsewhere}},
           {:unbound, nil, nil},
-          {:parked, node(), here}
+          {:halted, node(), here}
         ],
         %{},
         fn read_as, previous ->

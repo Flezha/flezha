@@ -60,10 +60,10 @@ dead letters SHALL be read only when the relay runs on the controller that answe
 - **THEN** the verdict is `ok`, with `diagnose.healthy` and a `diagnose.plugin_disabled` note
   saying the plugin is disabled and its guaranteed outputs are held
 
-#### Scenario: Asleep is not a problem
+#### Scenario: Suspended is not a problem
 
 - **WHEN** a suspended relay that a connected runner can take is diagnosed
-- **THEN** the verdict is `ok` with a `diagnose.asleep` note saying it is suspended at a
+- **THEN** the verdict is `ok` with a `diagnose.suspended` note saying it is suspended at a
   committed boundary and the next message wakes it on a runner
 
 #### Scenario: A suspended relay nothing can run is a problem
@@ -71,7 +71,7 @@ dead letters SHALL be read only when the relay runs on the controller that answe
 - **WHEN** a suspended relay is diagnosed and no connected runner on any node announces its
   factory
 - **THEN** the verdict is `problem` with `diagnose.no_runner` naming the factory, and no
-  `diagnose.asleep` note
+  `diagnose.suspended` note
 - **AND** when runners announce the factory but none can take the relay, the finding is
   `diagnose.runner_mismatch` with the reason
 

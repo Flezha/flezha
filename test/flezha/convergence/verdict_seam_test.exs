@@ -42,8 +42,6 @@ defmodule Flezha.Convergence.VerdictSeamTest do
     "lib/flezha/service/relay/diagnose.ex" =>
       "reads the relay and plugin records' states to name a finding, mints none",
     # facts in another sense
-    "lib/flezha/runner/control_channel/requests.ex" =>
-      "`:failed`/`:parked` are steps EVENT segments",
     "lib/flezha/plugin/provider/http_poll/poll_worker.ex" =>
       "`:failed` is an event segment; `:suspended` is a poll outcome journaled for wake",
     "lib/flezha/cli/state.ex" =>
@@ -52,9 +50,9 @@ defmodule Flezha.Convergence.VerdictSeamTest do
       "both are call refusals naming a lifecycle fact the caller asked against",
     "lib/flezha/observability/telemetry_bridge.ex" => "event NAMES, never verdicts",
     "lib/flezha/convergence/loop.ex" =>
-      "`{:parked, id}` is a backoff key; `:unknown` is the unreadable-roster sentinel",
+      "`{:halted, id}` is a backoff key; `:unknown` is the unreadable-roster sentinel",
     "lib/flezha/convergence/facts.ex" =>
-      "`:parked` is a declared fact kind; `:unknown` is the unreadable-read sentinel",
+      "`:halted` is a declared fact reason; `:unknown` is the unreadable-read sentinel",
     "lib/flezha/plugin/provider_behaviour.ex" =>
       "`:failed` is a declared PROVIDER TELEMETRY verb (shipped/retried/failed/overflowed), " <>
         "not a health state; `:healthy` is the provider probe's own verdict type"
@@ -203,31 +201,31 @@ defmodule Flezha.Convergence.VerdictSeamTest do
       assert records[{:runner, "gone"}].reason == :dead_runner
     end
 
-    test "a parked relay is parked, with its reason and its phase" do
+    test "a halted relay is halted, with its reason and its phase" do
       records =
         judged(
-          one("parked", bound_runner: "e1", parked?: true, park_reason: :boom),
+          one("halted", bound_runner: "e1", halted?: true, halt_reason: :boom),
           MapSet.new(["e1"])
         )
 
-      record = records[{:relay, {"ns", "parked"}}]
+      record = records[{:relay, {"ns", "halted"}}]
 
-      assert record.state == :parked
-      assert record.reason == {:parked, :boom}
-      assert record.phase == :parked
+      assert record.state == :halted
+      assert record.reason == {:halted, :boom}
+      assert record.phase == :halted
     end
 
     # fails when: phase and state derive in different orders. A relay held
     # after a bind that found no runner carries an `init_error`, which the probe
-    # reports as `parked?` — so a phase derivation that tests parked before the
-    # binding reports `parked` while the judge reports `unbound`.
+    # reports as `halted?` — so a phase derivation that tests halted before the
+    # binding reports `halted` while the judge reports `unbound`.
     test "a relay held after a bind that found no runner is unbound in both words" do
       records =
         judged(
           one("held",
             bound_runner: nil,
-            parked?: true,
-            park_reason: {:runner_not_ready, :timeout}
+            halted?: true,
+            halt_reason: {:runner_not_ready, :timeout}
           ),
           MapSet.new(["e1"])
         )
@@ -239,10 +237,10 @@ defmodule Flezha.Convergence.VerdictSeamTest do
       assert record.phase == :unbound
     end
 
-    test "a suspended instance is suspended, and a park reason does not change that" do
+    test "a suspended instance is suspended, and a halt reason does not change that" do
       records =
         judged(
-          one("suspended", bound_runner: nil, suspended?: true, parked?: true),
+          one("suspended", bound_runner: nil, suspended?: true, halted?: true),
           MapSet.new(["e1"])
         )
 
@@ -347,10 +345,10 @@ defmodule Flezha.Convergence.VerdictSeamTest do
   end
 
   describe "the /healthz fold" do
-    test "a parked relay is degraded at once, never healthy" do
-      {status, body} = Verdict.fold(fixture_records(:parked), %{})
+    test "a halted relay is degraded at once, never healthy" do
+      {status, body} = Verdict.fold(fixture_records(:halted), %{})
       assert status == :degraded
-      assert body.reason =~ "parked"
+      assert body.reason =~ "halted"
       assert Verdict.http_status(status) == 200
     end
 
@@ -418,7 +416,7 @@ defmodule Flezha.Convergence.VerdictSeamTest do
     do: Keyword.keyword?(pairs) and Keyword.has_key?(pairs, :relay_health)
 
   defp atoms(file) do
-    ~r/:(healthy|degraded|failed|unbound|parked|suspended|unknown)\b/
+    ~r/:(healthy|degraded|failed|unbound|halted|suspended|unknown)\b/
     |> Regex.scan(SourceWalk.read(file))
     |> MapSet.new(fn [_, atom] -> String.to_existing_atom(atom) end)
   end
@@ -435,7 +433,7 @@ defmodule Flezha.Convergence.VerdictSeamTest do
   end
 
   defp one(id, observed) do
-    %{{"ns", id} => Enum.into(observed, %{bound_runner: nil, suspended?: false, parked?: false})}
+    %{{"ns", id} => Enum.into(observed, %{bound_runner: nil, suspended?: false, halted?: false})}
   end
 
   defp context_for(observed, roster, signals, plugins) do
@@ -466,7 +464,7 @@ defmodule Flezha.Convergence.VerdictSeamTest do
       {"ns", "degraded"} => obs(bound_runner: "e1", running_plugins: [], subscribed_plugins: []),
       {"ns", "failed"} => obs(bound_runner: "gone"),
       {"ns", "unbound"} => obs(bound_runner: nil),
-      {"ns", "parked"} => obs(bound_runner: "e1", parked?: true),
+      {"ns", "halted"} => obs(bound_runner: "e1", halted?: true),
       {"ns", "suspended"} => obs(bound_runner: "e1", suspended?: true),
       {"ns", "unknown"} => obs(bound_runner: :unknown),
       {"ns", "plugged"} =>
@@ -577,7 +575,7 @@ defmodule Flezha.Convergence.VerdictSeamTest do
     Enum.into(fields, %{
       bound_runner: nil,
       suspended?: false,
-      parked?: false,
+      halted?: false,
       running_plugins: [],
       subscribed_plugins: [],
       down_plugins: %{},
@@ -589,10 +587,10 @@ defmodule Flezha.Convergence.VerdictSeamTest do
     context_for(one("fixture", bound_runner: "e1"), MapSet.new(["e1"]), %{}, [])
   end
 
-  defp fixture_records(:parked),
+  defp fixture_records(:halted),
     do: %{
       {:relay, {"ns", "p"}} =>
-        Verdict.new({:relay, {"ns", "p"}}, :parked, reason: {:parked, :boom}, phase: :parked)
+        Verdict.new({:relay, {"ns", "p"}}, :halted, reason: {:halted, :boom}, phase: :halted)
     }
 
   defp fixture_records(:failed),
