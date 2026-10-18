@@ -339,6 +339,7 @@ defmodule Flezha.Plugin.Provider.WebsocketReconcileLiveTest do
   alias Flezha.Plugin.Provider.Websocket
   alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.Helper.ProviderPrepare
+  alias FlezhaTest.Helper.WebhookServer
   alias FlezhaTest.Helper.WebsocketServer
 
   @moduletag :capture_log
@@ -421,58 +422,13 @@ defmodule Flezha.Plugin.Provider.WebsocketReconcileLiveTest do
 
   ## ---------- subscription source ----------
 
-  defp start_origin(items) do
-    {:ok, listen} =
-      :gen_tcp.listen(0, [:binary, packet: :raw, active: false, reuseaddr: true, backlog: 16])
+  defp start_origin(items), do: WebhookServer.start([items_answer(items)])
 
-    {:ok, port} = :inet.port(listen)
-    {:ok, agent} = Agent.start(fn -> %{items: items, version: 1} end)
+  defp set_items(origin, items), do: WebhookServer.set(origin, [items_answer(items)])
 
-    acceptor = spawn(fn -> origin_accept_loop(listen, agent) end)
-
-    on_exit(fn ->
-      if Process.alive?(acceptor), do: Process.exit(acceptor, :kill)
-      :gen_tcp.close(listen)
-    end)
-
-    %{port: port, agent: agent}
-  end
-
-  defp set_items(origin, items) do
-    Agent.update(origin.agent, fn s -> %{s | items: items, version: s.version + 1} end)
-  end
-
-  defp origin_accept_loop(listen, agent) do
-    case :gen_tcp.accept(listen) do
-      {:ok, socket} ->
-        spawn(fn -> origin_serve(socket, agent) end)
-        origin_accept_loop(listen, agent)
-
-      {:error, _closed} ->
-        :ok
-    end
-  end
-
-  defp origin_serve(socket, agent) do
-    case :gen_tcp.recv(socket, 0, 5_000) do
-      {:ok, _request} ->
-        state = Agent.get(agent, & &1)
-        body = Jason.encode!(%{"version" => state.version, "items" => state.items})
-
-        :gen_tcp.send(socket, [
-          "HTTP/1.1 200 OK\r\n",
-          "Content-Type: application/json\r\n",
-          "Content-Length: ",
-          Integer.to_string(byte_size(body)),
-          "\r\nConnection: close\r\n\r\n",
-          body
-        ])
-
-        :gen_tcp.close(socket)
-
-      {:error, _} ->
-        :ok
-    end
+  defp items_answer(items) do
+    headers = [{"content-type", "application/json"}, {"connection", "close"}]
+    {200, headers, Jason.encode!(%{"items" => items})}
   end
 end
 

@@ -40,8 +40,8 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
   alias FlezhaTest.Helper.AuthTestHelper
   alias FlezhaTest.Helper.ControlFrameTestHelper
   alias FlezhaTest.Helper.HubRegistryTestHelper
-  alias FlezhaTest.Helper.MessageTestHelper
   alias FlezhaTest.Helper.NodeTestHelper
+  alias FlezhaTest.Helper.Telemetry
 
   @namespace "reconnect-binding-test"
   @factory "do_nothing"
@@ -289,7 +289,7 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
       # refuses to start and takes the tree with it.
       too_long = Path.join(System.tmp_dir!(), String.duplicate("d", 70))
       on_exit(TestHelpers.override_env(:socket_files_path, too_long))
-      MessageTestHelper.forward_telemetry([:flezha, :transport, :connect_rejected], :rejected)
+      Telemetry.capture([:flezha, :transport, :connect_rejected], as: :rejected)
 
       log = socket_connect_log(ns)
 
@@ -314,7 +314,7 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
     test "is refused naming the hub start's own error", %{ns: ns} do
       start_error = {:shutdown, {:failed_to_start_child, :hub_under_test, :enospc}}
       stub_hub_start(ns, fn -> {:error, start_error} end)
-      MessageTestHelper.forward_telemetry([:flezha, :transport, :connect_rejected], :rejected)
+      Telemetry.capture([:flezha, :transport, :connect_rejected], as: :rejected)
 
       log = socket_connect_log(ns)
 
@@ -353,7 +353,7 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
         {:ok, %{namespace: claimed, credential: payload["credential"]}}
       end)
 
-      MessageTestHelper.forward_telemetry([:flezha, :transport, :connect_rejected], :rejected)
+      Telemetry.capture([:flezha, :transport, :connect_rejected], as: :rejected)
 
       %{ns: namespace, identity: "pinned-#{System.unique_integer([:positive])}"}
     end
@@ -458,10 +458,10 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
       namespace = "drop-#{System.unique_integer([:positive])}"
       on_exit(fn -> FleetManager.stop_namespace(namespace) end)
 
-      MessageTestHelper.forward_telemetry([:flezha, :transport, :connect_rejected], :rejected)
+      Telemetry.capture([:flezha, :transport, :connect_rejected], as: :rejected)
 
       for event <- [:dropped, :readmitted, :drop_refused],
-          do: MessageTestHelper.forward_telemetry([:flezha, :runner, event], event)
+          do: Telemetry.capture([:flezha, :runner, event], as: event)
 
       %{ns: namespace, identity: "dropped-#{System.unique_integer([:positive])}"}
     end

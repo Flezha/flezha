@@ -5,9 +5,9 @@ defmodule FlezhaQuicTest do
   alias Flezha.Service.RelayManager
   alias Flezha.State.Paths
   alias FlezhaTest.Fixtures.RelayFixture
-  alias FlezhaTest.Helper.MessageTestHelper
   alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.Helper.RelayTestHelper
+  alias FlezhaTest.Helper.Telemetry
 
   use ExUnit.Case
   use Flezha.Constant
@@ -138,7 +138,7 @@ defmodule FlezhaQuicTest do
     refused_namespace = "quic_refused_namespace"
     EventManager.add_handler(:runner_connected_event)
 
-    MessageTestHelper.forward_telemetry([:flezha, :transport, :connect_rejected], :refused)
+    Telemetry.capture([:flezha, :transport, :connect_rejected], as: :refused)
 
     {:ok, current_path} = :file.get_cwd()
 

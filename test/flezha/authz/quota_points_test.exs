@@ -192,7 +192,7 @@ defmodule Flezha.AuthZ.QuotaPointsTest do
       File.write!(Path.join(dir, "k1.wal"), :binary.copy(<<0>>, 4_096))
 
       Telemetry.capture([:flezha, :state, :disk_quota_breach],
-        as: fn _event, measurements, metadata -> {:breach, measurements, metadata} end
+        as: :breach
       )
 
       # The alarm is deliberately loud: assert the caller-facing line is the

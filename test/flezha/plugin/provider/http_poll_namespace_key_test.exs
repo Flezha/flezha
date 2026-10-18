@@ -20,11 +20,11 @@ defmodule Flezha.Plugin.Provider.HttpPollNamespaceKeyTest do
     {:ok, opts_b} = prepare(origin_b, host_b)
 
     {:ok, pid_a} = ProviderPrepare.activate(HttpPoll, opts_a)
-    stop_on_exit(pid_a)
+    await_stop_on_exit(pid_a)
     assert {"from-a", _} = take_ingest()
 
     {:ok, pid_b} = ProviderPrepare.activate(HttpPoll, opts_b)
-    if pid_b != pid_a, do: stop_on_exit(pid_b)
+    if pid_b != pid_a, do: await_stop_on_exit(pid_b)
 
     %{opts_a: opts_a, pid_a: pid_a, pid_b: pid_b, origin_b: origin_b}
   end

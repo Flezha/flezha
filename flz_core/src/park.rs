@@ -559,18 +559,15 @@ mod tests {
         let parked = std::thread::spawn(move || {
             park_tier_off(b"moved", "moved/tasklet/key", None, None, entry, &*parking);
         });
-        while sends.load(Ordering::SeqCst) == 0 {
-            std::thread::yield_now();
-        }
+        crate::test_support::spin_until("the first park send", || sends.load(Ordering::SeqCst) > 0);
 
         relay.shutdown_background_threads();
-        let woken = std::time::Instant::now();
-        while !parked.is_finished() && woken.elapsed() < ACK_RESEND_INTERVAL / 2 {
-            std::thread::sleep(Duration::from_millis(5));
-        }
-
         assert!(
-            parked.is_finished(),
+            crate::test_support::wait_until(
+                ACK_RESEND_INTERVAL / 2,
+                Duration::from_millis(5),
+                || parked.is_finished()
+            ),
             "the park still waits on a relay that is gone"
         );
         assert_eq!(

@@ -123,16 +123,12 @@ fn queued_messages(instance: &RelayInstance) -> Vec<Queued> {
 /// The offset a park released, once the off-thread park has landed.
 fn parked_offset(instance: &RelayInstance) -> Option<u64> {
     let run = instance.steps.as_ref().expect("a steps instance");
-    let deadline = std::time::Instant::now() + Duration::from_secs(10);
-    loop {
-        if let Some(offset) = run.sheet().parked_offset {
-            return Some(offset);
-        }
-        if std::time::Instant::now() >= deadline {
-            return None;
-        }
-        std::thread::sleep(Duration::from_millis(5));
-    }
+    let mut offset = None;
+    crate::test_support::wait_until(Duration::from_secs(10), Duration::from_millis(5), || {
+        offset = run.sheet().parked_offset;
+        offset.is_some()
+    });
+    offset
 }
 
 /// A steps relay whose one entry channel parses: `poison` is refused, anything

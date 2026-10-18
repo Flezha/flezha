@@ -15,6 +15,8 @@ defmodule FlezhaTest.Handover do
   alias FlezhaTest.Helper.RelayTestHelper
   alias ProcessHub.Constant.Hook
 
+  import FlezhaTest.Helper.MessageTestHelper, only: [collect: 1]
+
   use ExUnit.Case
   use Flezha.Constant
 
@@ -544,7 +546,7 @@ defmodule FlezhaTest.Handover do
       15_000
     )
 
-    MessageTestHelper.flush(:hook_pstartup_recv)
+    collect(do: (:hook_pstartup_recv -> :ok))
 
     # The tag converges when the registry row moves; the destination Overwatch
     # still has to finish binding and take the handover before it can answer for

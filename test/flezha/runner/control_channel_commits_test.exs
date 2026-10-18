@@ -592,7 +592,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
       %{inst: inst} = ctx
 
       Telemetry.capture([:flezha, :steps, :turn_dead_lettered],
-        as: fn _e, m, md -> {:dead_lettered, m, md} end
+        as: :dead_lettered
       )
 
       for {turn, n} <- Enum.with_index(["hello", "boom", "again"]),

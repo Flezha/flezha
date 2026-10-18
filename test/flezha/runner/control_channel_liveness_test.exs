@@ -26,7 +26,7 @@ defmodule FlezhaTest.Runner.ControlChannelLivenessTest do
 
   setup do
     Telemetry.capture([:flezha, :runner, :liveness_timeout],
-      as: fn _event, measurements, metadata -> {:liveness_timeout, measurements, metadata} end
+      as: :liveness_timeout
     )
 
     :ok

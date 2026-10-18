@@ -27,9 +27,9 @@ defmodule Flezha.Transport.ServerTest do
   alias Flezha.Transport.Native
   alias Flezha.Transport.Server
   alias FlezhaTest.Helper.ControlFrameTestHelper
-  alias FlezhaTest.Helper.MessageTestHelper
   alias FlezhaTest.Helper.MimicGlobal
   alias FlezhaTest.Helper.NodeTestHelper
+  alias FlezhaTest.Helper.Telemetry
 
   defp connect_frame(stream_id \\ 0) do
     message = Jason.encode!(%{"namespace" => "default", "factories" => []})
@@ -37,7 +37,7 @@ defmodule Flezha.Transport.ServerTest do
   end
 
   defp attach_rejected_handler() do
-    MessageTestHelper.forward_telemetry([:flezha, :transport, :connect_rejected], :rejected)
+    Telemetry.capture([:flezha, :transport, :connect_rejected], as: :rejected)
   end
 
   describe "stream correlation" do

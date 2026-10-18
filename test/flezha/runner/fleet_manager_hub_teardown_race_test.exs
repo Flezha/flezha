@@ -20,8 +20,8 @@ defmodule FlezhaTest.Runner.FleetManagerHubTeardownRaceTest do
   alias Flezha.Identificator
   alias Flezha.Service.HubManager
   alias Flezha.Service.HubManager.Lifecycle
-  alias FlezhaTest.Helper.MessageTestHelper
   alias FlezhaTest.Helper.NodeTestHelper
+  alias FlezhaTest.Helper.Telemetry
 
   test "recovery-hook registration racing the hub teardown refuses instead of exiting its caller" do
     ns = "ki178_race_#{System.unique_integer([:positive])}"
@@ -49,7 +49,7 @@ defmodule FlezhaTest.Runner.FleetManagerHubTeardownRaceTest do
     :ok = :sys.suspend(hub_pid)
 
     test = self()
-    MessageTestHelper.forward_telemetry([:flezha, :hub, :unavailable], :hub_unavailable)
+    Telemetry.capture([:flezha, :hub, :unavailable], as: :hub_unavailable)
 
     {caller, caller_ref} =
       spawn_monitor(fn ->

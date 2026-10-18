@@ -11,9 +11,16 @@ defmodule FlezhaTest.Helper.Telemetry do
       assert_receive {:telemetry, [:flezha, :plugin, :http_push, :shipped], meas, meta}
 
   `capture/2` takes one event or a list of them. `:as` shapes the message the
-  test receives — it is given the event, the measurements and the metadata —
-  and `:filter` is asked about the metadata before anything is sent, so a test
-  waiting on one plugin's events is not woken by another's.
+  test receives: a function is given the event, the measurements and the
+  metadata, and any other term is a tag, sent as `{tag, measurements, metadata}`.
+
+      Telemetry.capture([:flezha, :stream, :drop], as: :drop)
+      assert_receive {:drop, %{count: 1}, _meta}
+
+  A handler fires for an event executed in any process, so a test that shares
+  the VM with others passes `:filter`, a predicate on the metadata asked before
+  anything is sent. It runs in the emitting process: a raise there detaches the
+  handler and the test goes deaf.
   """
 
   @type event :: [atom()]
@@ -24,7 +31,7 @@ defmodule FlezhaTest.Helper.Telemetry do
     events = normalise(events)
     test_pid = self()
     handler_id = {__MODULE__, events, System.unique_integer([:positive])}
-    shape = Keyword.get(opts, :as, &default_shape/3)
+    shape = opts |> Keyword.get(:as, &default_shape/3) |> shape()
     filter = Keyword.get(opts, :filter, fn _meta -> true end)
 
     :ok =
@@ -39,6 +46,9 @@ defmodule FlezhaTest.Helper.Telemetry do
 
     ExUnit.Callbacks.on_exit(fn -> :telemetry.detach(handler_id) end)
   end
+
+  defp shape(shape) when is_function(shape, 3), do: shape
+  defp shape(tag), do: fn _event, measurements, metadata -> {tag, measurements, metadata} end
 
   defp default_shape(event, measurements, metadata),
     do: {:telemetry, event, measurements, metadata}

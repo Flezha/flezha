@@ -7,6 +7,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use flz_core::schema;
+use flz_core::test_support::wait_until;
 use flz_core_ffi::fake_controller::shutdown_notification;
 use flz_core_ffi::*;
 
@@ -24,11 +25,12 @@ pub(crate) fn shutdown_ships_state_then_wakes_the_poller(
     let host = thread::spawn(move || serve_until_shutdown(ctx_addr as *mut FlzContext));
     // The poller stays blocked for as long as it is watched; shutdown is what
     // frees it.
-    let watched = Instant::now();
-    while watched.elapsed() < Duration::from_millis(100) {
-        assert!(!host.is_finished(), "the poller returned before shutdown");
-        thread::yield_now();
-    }
+    assert!(
+        !wait_until(Duration::from_millis(100), Duration::ZERO, || {
+            host.is_finished()
+        }),
+        "the poller returned before shutdown"
+    );
     let connections = controller.accepted();
     unsafe { flz_core_shutdown(ctx) };
 
@@ -60,15 +62,12 @@ pub(crate) fn shutdown_ships_state_then_wakes_the_poller(
     );
     // Only after the poller has been woken, and briefly: a stopping runner
     // that re-registered would be handed work it will never do.
-    let watched = Instant::now();
-    while watched.elapsed() < Duration::from_millis(100) {
-        assert_eq!(
-            controller.accepted(),
-            connections,
-            "a stopping runner must not open a new control connection"
-        );
-        thread::yield_now();
-    }
+    assert!(
+        !wait_until(Duration::from_millis(100), Duration::ZERO, || {
+            controller.accepted() != connections
+        }),
+        "a stopping runner must not open a new control connection"
+    );
 
     // Shut down for the life of the process: a later start, a local run's
     // included, is refused by name rather than handed a dead core.

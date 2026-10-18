@@ -25,8 +25,8 @@ defmodule FlezhaTest.Relay.OverwatchRetryTest do
   alias Flezha.Service.RelayManager
   alias Flezha.State.TestHelpers
   alias FlezhaTest.Helper.FleetStateHelper
-  alias FlezhaTest.Helper.MessageTestHelper
   alias FlezhaTest.Helper.NodeTestHelper
+  alias FlezhaTest.Helper.Telemetry
 
   import FlezhaTest.Helper.MessageTestHelper, only: [become_loop: 0]
 
@@ -282,10 +282,9 @@ defmodule FlezhaTest.Relay.OverwatchRetryTest do
       reason =
         {:plugin_prepare_failed, "orphan", {:provider_refused, "pkg", "orphan_provider", :bad}}
 
-      MessageTestHelper.forward_telemetry(
-        [:flezha, :relay, :parked],
-        :parked,
-        &(Map.get(&1, :relay_id) == id)
+      Telemetry.capture([:flezha, :relay, :parked],
+        as: :parked,
+        filter: &(Map.get(&1, :relay_id) == id)
       )
 
       state = %Overwatch{id: id, namespace: @namespace}
@@ -301,10 +300,9 @@ defmodule FlezhaTest.Relay.OverwatchRetryTest do
     test "a park with no plugin behind it is reported too, and claims no plugin id" do
       id = "park-other-#{System.unique_integer([:positive])}"
 
-      MessageTestHelper.forward_telemetry(
-        [:flezha, :relay, :parked],
-        :parked,
-        &(Map.get(&1, :relay_id) == id)
+      Telemetry.capture([:flezha, :relay, :parked],
+        as: :parked,
+        filter: &(Map.get(&1, :relay_id) == id)
       )
 
       state = %Overwatch{id: id, namespace: @namespace}
@@ -492,7 +490,7 @@ defmodule FlezhaTest.Relay.OverwatchCorrectionRetentionTest do
   defp attach(event) do
     ref = make_ref()
 
-    Telemetry.capture(event, as: fn _e, meas, meta -> {ref, meas, meta} end)
+    Telemetry.capture(event, as: ref)
 
     ref
   end

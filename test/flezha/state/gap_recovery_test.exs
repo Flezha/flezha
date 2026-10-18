@@ -38,7 +38,7 @@ defmodule Flezha.State.GapRecoveryTest do
     parent = self()
 
     Telemetry.capture([:flezha, :state, :seq_gap],
-      as: fn _e, meas, meta -> {:seq_gap, meas, meta} end
+      as: :seq_gap
     )
 
     on_exit(fn ->

@@ -29,8 +29,8 @@ defmodule FlezhaTest.Transport.QuicNamespaceProofTest do
   alias Flezha.Service.PortPilot
   alias Flezha.Transport.Stream, as: TStream
   alias FlezhaTest.Helper.AuthTestHelper
-  alias FlezhaTest.Helper.MessageTestHelper
   alias FlezhaTest.Helper.NodeTestHelper
+  alias FlezhaTest.Helper.Telemetry
 
   @ns_a "quic-cred-orders"
   @ns_b "quic-cred-payments"
@@ -81,7 +81,7 @@ defmodule FlezhaTest.Transport.QuicNamespaceProofTest do
   end
 
   test "a QUIC runner holding another namespace's credential is refused" do
-    MessageTestHelper.forward_telemetry([:flezha, :transport, :connect_rejected], :rejected)
+    Telemetry.capture([:flezha, :transport, :connect_rejected], as: :rejected)
 
     port = dial_quic(@ns_a, [{"FLEZHA_NAMESPACE_SECRET", secret(@ns_b)}])
 

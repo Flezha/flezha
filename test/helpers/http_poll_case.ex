@@ -25,7 +25,13 @@ defmodule FlezhaTest.HttpPollCase do
       import FlezhaTest.HttpPollCase
 
       import FlezhaTest.Helper.ProviderPrepare,
-        only: [take_ingest: 0, take_ingest: 1, take_ingest: 2, refute_ingest: 0]
+        only: [
+          take_ingest: 0,
+          take_ingest: 1,
+          take_ingest: 2,
+          refute_ingest: 0,
+          await_stop_on_exit: 1
+        ]
 
       @channel FlezhaTest.HttpPollCase.channel()
     end
@@ -66,7 +72,7 @@ defmodule FlezhaTest.HttpPollCase do
   def start_poller(origin, extra \\ %{}) do
     {:ok, opts} = prepare(origin, extra)
     {:ok, poller} = start_worker(opts)
-    stop_on_exit(poller)
+    ProviderPrepare.await_stop_on_exit(poller)
     poller
   end
 
@@ -95,11 +101,6 @@ defmodule FlezhaTest.HttpPollCase do
       &Process.alive?/1
     )
   end
-
-  def probe(poller), do: PollWorker.probe(poller)
-
-  @doc "Settle the poller's own exit when the test ends; it stops with its host."
-  def stop_on_exit(poller), do: ProviderPrepare.await_stop_on_exit(poller)
 
   # ---------- fake HTTP origin ----------
 

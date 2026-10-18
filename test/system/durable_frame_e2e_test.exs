@@ -133,7 +133,7 @@ defmodule FlezhaTest.System.DurableFrameE2ETest do
     size_before = byte_size(File.read!(path))
 
     Telemetry.capture([:flezha, :state, :record_frame, :refused],
-      as: fn _e, measurements, meta -> {:refused, measurements, meta} end
+      as: :refused
     )
 
     log =

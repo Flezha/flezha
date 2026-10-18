@@ -32,7 +32,6 @@ defmodule FlezhaTest.System.SchemaEvolutionE2ETest do
   alias Flezha.State.TestHelpers
   alias Flezha.State.Watchdog
   alias FlezhaTest.Helper.CompactionAssertions, as: CA
-  alias FlezhaTest.Helper.MessageTestHelper
   alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.Helper.Telemetry
 
@@ -158,10 +157,7 @@ defmodule FlezhaTest.System.SchemaEvolutionE2ETest do
     :ok = RelayManager.stop_relay(namespace, relay_id, preserve_state: true)
 
     # The bind-time restore's verdict is what the guard produces; wait for it.
-    MessageTestHelper.forward_telemetry(
-      [:flezha, :state, :restore_refused],
-      :refused
-    )
+    Telemetry.capture([:flezha, :state, :restore_refused], as: :refused)
 
     # Placement only: `start/3`'s residency wait would raise on the very outcome
     # this scenario proves, since a refused restore never makes the Cell

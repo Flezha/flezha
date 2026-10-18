@@ -15,7 +15,7 @@ defmodule FlezhaTest.Plugin.Extension.PhaseTest do
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Plugin.Host
   alias Flezha.Plugin.ProviderBehaviour
-  alias FlezhaTest.Helper.MessageTestHelper
+  alias FlezhaTest.Helper.Telemetry
 
   use ExUnit.Case, async: true
 
@@ -350,10 +350,9 @@ defmodule FlezhaTest.Plugin.Extension.PhaseTest do
     setup do
       id = "fail_open_#{System.unique_integer([:positive])}"
 
-      MessageTestHelper.forward_telemetry(
-        ProviderBehaviour.fail_open_event(),
-        :fail_open,
-        &(Map.get(&1, :plugin_id) == id)
+      Telemetry.capture(ProviderBehaviour.fail_open_event(),
+        as: :fail_open,
+        filter: &(Map.get(&1, :plugin_id) == id)
       )
 
       %{plugin_id: id}

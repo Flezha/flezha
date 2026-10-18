@@ -244,7 +244,7 @@ defmodule FlezhaTest.Relay.RestoreRefusalTest do
       end)
 
       Telemetry.capture([:flezha, :state, :restore_refused],
-        as: fn _event, measurements, metadata -> {:refused, measurements, metadata} end
+        as: :refused
       )
 
       {result, log} = with_log(fn -> Replay.await_restore("runner_1", id) end)
@@ -438,7 +438,7 @@ defmodule FlezhaTest.Relay.BindReforwardTest do
 
   describe "an unbound stream" do
     test "counts the drop instead of discarding the channel's answer", ctx do
-      Telemetry.capture([:flezha, :stream, :drop], as: fn _e, m, md -> {:drop, m, md} end)
+      Telemetry.capture([:flezha, :stream, :drop], as: :drop)
 
       # An empty extension catalog makes the `:on_input` chain fall through to
       # the message passthrough, so a non-nil payload reaches the channel.

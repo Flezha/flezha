@@ -186,7 +186,7 @@ defmodule Flezha.Dlq.StoreTest do
 
   test "retention drops by age with loud telemetry", %{store: store} do
     Telemetry.capture([:flezha, :dlq, :retention_dropped],
-      as: fn _event, measurements, metadata -> {:dropped, measurements, metadata} end
+      as: :dropped
     )
 
     cfg = Application.get_env(:flezha, :dlq, [])

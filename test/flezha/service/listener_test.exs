@@ -13,7 +13,7 @@ defmodule Flezha.Service.ListenerTest do
   use FlezhaTest.Case, fixtures: [:env], async: false
   use Mimic
   import FlezhaTest.Helper.MimicGlobal
-  import FlezhaTest.Helper.MessageTestHelper, only: [collect: 1, recv_drain: 2]
+  import FlezhaTest.Helper.MessageTestHelper, only: [collect: 1]
 
   alias Flezha.Cluster.Directory
   alias Flezha.Relay.PartitionGroup
@@ -442,7 +442,7 @@ defmodule Flezha.Service.ListenerTest do
 
       listening([idle_ms: 200, window_ms: 1_000], counting)
       assert_receive {:outcome, {:ok, :window_closed}}, 2_000
-      idles = recv_drain(:idle, 0)
+      idles = length(collect(do: (:idle -> :idle)))
       assert idles in 3..5
     end
 

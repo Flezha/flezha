@@ -45,9 +45,9 @@ defmodule Flezha.State.RunnerRestartRealignTest do
     header = TestHelpers.stub_header()
 
     parent = self()
-    attach([:flezha, :state, :seq_gap], :seq_gap)
-    attach([:flezha, :state, :wal_realign], :wal_realign)
-    attach([:flezha, :state, :stale_writer_refused], :stale_refused)
+    Telemetry.capture([:flezha, :state, :seq_gap], as: :seq_gap)
+    Telemetry.capture([:flezha, :state, :wal_realign], as: :wal_realign)
+    Telemetry.capture([:flezha, :state, :stale_writer_refused], as: :stale_refused)
 
     %{cell_id: cell_id, writer: writer, header: header, parent: parent}
   end
@@ -253,7 +253,7 @@ defmodule Flezha.State.RunnerRestartRealignTest do
 
     :ok = ClassRegistry.put_overwatch(relay, self(), "exec_owner")
     on_exit(fn -> ClassRegistry.delete(relay) end)
-    attach([:flezha, :runner, :foreign_frame_refused], :foreign)
+    Telemetry.capture([:flezha, :runner, :foreign_frame_refused], as: :foreign)
 
     # A runner the record does not name, resuming from a lower seq base.
     other = "exec_other_" <> uniq()
@@ -314,7 +314,4 @@ defmodule Flezha.State.RunnerRestartRealignTest do
     <<byte_size(pid_bytes)::16-big, pid_bytes::binary, seq::64-big, header::binary,
       byte_size(body)::32-big, body::binary, :erlang.crc32(body)::32-big>>
   end
-
-  defp attach(event, tag),
-    do: Telemetry.capture(event, as: fn _e, meas, meta -> {tag, meas, meta} end)
 end

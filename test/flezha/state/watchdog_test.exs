@@ -69,7 +69,7 @@ defmodule Flezha.State.WatchdogTest do
   # the test's own process, so one helper serves a setup watcher and a per-test
   # one alike.
   defp forward_state_event(event) do
-    Telemetry.capture([:flezha, :state, event], as: fn _e, meas, meta -> {event, meas, meta} end)
+    Telemetry.capture([:flezha, :state, event], as: event)
   end
 
   defp live_writer(suffix, header) do

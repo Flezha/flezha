@@ -229,7 +229,7 @@ defmodule Flezha.State.InputLogTest do
     ref = make_ref()
 
     Telemetry.capture([:flezha, :state, :input_log_frozen_watermark],
-      as: fn _event, measurements, metadata -> {ref, measurements, metadata} end
+      as: ref
     )
 
     Application.put_env(:flezha, :wal_high_watermark_bytes, 1)

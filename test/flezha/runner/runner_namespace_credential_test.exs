@@ -21,8 +21,8 @@ defmodule FlezhaTest.Runner.RunnerNamespaceCredentialTest do
   alias Flezha.AuthZ.TokenStore
   alias Flezha.Runner.FleetManager
   alias FlezhaTest.Helper.AuthTestHelper
-  alias FlezhaTest.Helper.MessageTestHelper
   alias FlezhaTest.Helper.NodeTestHelper
+  alias FlezhaTest.Helper.Telemetry
 
   @ns_a "cred-orders"
   @ns_b "cred-payments"
@@ -52,7 +52,7 @@ defmodule FlezhaTest.Runner.RunnerNamespaceCredentialTest do
   end
 
   test "a runner presenting another namespace's credential is refused", %{secret_b: secret_b} do
-    MessageTestHelper.forward_telemetry([:flezha, :transport, :connect_rejected], :rejected)
+    Telemetry.capture([:flezha, :transport, :connect_rejected], as: :rejected)
 
     # The runner names `@ns_a` and holds `@ns_b`'s credential: it never connects,
     # so the refusal is read off the counted signal rather than off a session.

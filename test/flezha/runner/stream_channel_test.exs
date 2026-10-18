@@ -139,7 +139,7 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
 
     test "io_in/3 on nil-ref counts the drop (6.3) instead of silently dropping",
          %{pid: pid, name: name} do
-      Telemetry.capture([:flezha, :stream, :drop], as: fn _e, m, md -> {:drop, m, md} end)
+      Telemetry.capture([:flezha, :stream, :drop], as: :drop)
 
       {:error, :no_stream} = StreamChannel.io_in(name, "p1", {"msg", %{}})
       assert_receive {:drop, %{count: 1}, %{relay_id: "p1"}}
@@ -477,7 +477,7 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
     test "another runner's output is refused, counted every time and reported once",
          %{pid: pid, class: class} do
       :ok = ClassRegistry.put_overwatch(class, self(), "runner_a")
-      MessageTestHelper.forward_telemetry([:flezha, :runner, :foreign_frame_refused], :refused)
+      Telemetry.capture([:flezha, :runner, :foreign_frame_refused], as: :refused)
 
       send(pid, {:flz_data, :ref, class, "forged-1", %{}})
       send(pid, {:flz_data, :ref, class, "forged-2", %{}})
@@ -503,7 +503,7 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
 
     test "an output for a relay nobody records is the counted unrouted drop",
          %{pid: pid, class: class} do
-      MessageTestHelper.forward_telemetry([:flezha, :stream, :drop], :drop)
+      Telemetry.capture([:flezha, :stream, :drop], as: :drop)
 
       send(pid, {:flz_data, :ref, class, "unrouted", %{}})
       _ = GenServer.call(pid, :stream_ref_status)
