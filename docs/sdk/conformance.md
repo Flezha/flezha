@@ -93,6 +93,7 @@ Each SDK's test app carries `test/apps/<sdk>_runner/conformance.json`:
 | `toolchain` | The shell command that prints this SDK's toolchain version, e.g. `rustc --version` |
 | `deferred` | Capabilities this SDK does not carry, by name |
 | `fixtures` | Factory ids the app registers, grouped by capability |
+| `reference_only` | Optional. Demo relays the app also registers that no capability drives, such as the reference's `showcase`; the smoke tier's live factory check accepts them beside `fixtures` |
 | `docs` | The page documenting this SDK's scope, which must point back here |
 
 Two profiles, two spawners, one file: the e2e harness renders `test` and

@@ -520,6 +520,9 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
   @doc "`runtime`'s fixture ids by capability (string keys, as declared)."
   def fixtures(runtime \\ runtime()), do: manifest(runtime)["fixtures"]
 
+  @doc "Demo relays `runtime` registers that no capability drives (none when not declared)."
+  def reference_only(runtime \\ runtime()), do: Map.get(manifest(runtime), "reference_only", [])
+
   defp capability_atoms(runtime, names) do
     Enum.map(names, fn name ->
       Enum.find(@capabilities, &(Atom.to_string(&1) == name)) ||

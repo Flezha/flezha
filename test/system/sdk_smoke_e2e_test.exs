@@ -10,8 +10,9 @@ defmodule FlezhaTest.System.SdkSmokeE2ETest do
   end-to-end data flow, `PipeToRelay` routing, migration, reconnect after a
   disconnect — plus the two assertions that make the manifest binding: the
   factory ids the controller lists for a fresh runner equal the union of the
-  manifest's `fixtures`, and each declaration the controller decodes equals its
-  committed golden under `test/fixtures/declarations/`.
+  manifest's `fixtures` and `reference_only`, and each declaration the
+  controller decodes equals its committed golden under
+  `test/fixtures/declarations/`.
 
   Regenerate the goldens with `FLEZHA_E2E_SNAPSHOT=update` under the reference
   runtime (`rust`); any other runtime refuses. See `docs/sdk/conformance.md`.
@@ -85,6 +86,7 @@ defmodule FlezhaTest.System.SdkSmokeE2ETest do
           NodeTestHelper.fixtures()
           |> Map.values()
           |> List.flatten()
+          |> Enum.concat(NodeTestHelper.reference_only())
           |> MapSet.new()
 
         assert MapSet.difference(declared, live_ids) |> MapSet.to_list() == [],
