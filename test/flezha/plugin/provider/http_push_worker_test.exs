@@ -61,7 +61,8 @@ defmodule FlezhaTest.Plugin.Provider.HttpPushWorkerTest do
   defp out(opts, body, metadata \\ %{"channel" => "out"}),
     do: HttpPush.on_output(%Ctx.IO{message: body, metadata: metadata}, opts)
 
-  defp guaranteed(cell, seq, extra \\ %{}), do: ProviderPrepare.guaranteed_metadata(cell, seq, extra)
+  defp guaranteed(cell, seq, extra \\ %{}),
+    do: ProviderPrepare.guaranteed_metadata(cell, seq, extra)
 
   defp header(headers, name) do
     Enum.find_value(String.split(headers, "\n"), fn line ->

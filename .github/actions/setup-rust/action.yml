@@ -8,7 +8,7 @@ description: >
 # `group_imports` and `ignore`, all nightly-only, so the format gate asks for
 # `channel: nightly` and gets the pinned date. Pin the date so style decisions
 # do not drift with nightly bumps; bump it in the manifest alongside
-# rustfmt.toml and the same pin in scripts/format-apply.sh.
+# rustfmt.toml. scripts/format-apply.sh reads the same row.
 
 inputs:
   channel:

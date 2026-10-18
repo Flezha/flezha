@@ -485,12 +485,7 @@ end
         if main([]) != 1:
             failures.append("a baseline entry the tree no longer holds did not fail the gate")
 
-    if failures:
-        print("check-layer-direction self-test FAILED", file=sys.stderr)
-        for line in failures:
-            print(f"  {line}", file=sys.stderr)
-        return 1
-    print("check-layer-direction self-test OK")
-    return 0
+    return naming_gate.self_test_verdict("check-layer-direction",
+                                         [f"  {line}" for line in failures])
 sys.exit(main(sys.argv[1:]))
 PY

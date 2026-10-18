@@ -182,12 +182,8 @@ def self_test():
                for name, (delta, _, *notes) in cases.items()}
     problems = [f"  {name}: got {answers[name]}, expected {want}"
                 for name, (_, want, *_) in cases.items() if answers[name] != want]
-    if problems:
-        print("check-openspec-scenarios self-test FAILED", file=sys.stderr)
-        print("\n".join(problems), file=sys.stderr)
-        return naming_gate.FINDING
-    print(f"check-openspec-scenarios self-test OK ({len(cases)} cases)")
-    return naming_gate.OK
+    return naming_gate.self_test_verdict("check-openspec-scenarios", problems,
+                                         f" ({len(cases)} cases)")
 
 
 argv = sys.argv[1:]

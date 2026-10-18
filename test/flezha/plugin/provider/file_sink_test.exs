@@ -84,7 +84,9 @@ defmodule Flezha.Plugin.Provider.FileSinkTest do
       {opts, sink} = start_sink(Map.merge(@held_retry, %{linger_ms: 60_000, max_batch: 3}))
       fail_next_write(sink, file)
 
-      for seq <- 1..3, do: release(opts, "r#{seq}", ProviderPrepare.guaranteed_metadata(owner, seq))
+      for seq <- 1..3,
+          do: release(opts, "r#{seq}", ProviderPrepare.guaranteed_metadata(owner, seq))
+
       assert wait_until(fn -> WriteWorker.stats(sink).consecutive_failures == 1 end, 2_000)
 
       # What a write that failed part-way leaves behind, with a descriptor too
@@ -337,7 +339,9 @@ defmodule Flezha.Plugin.Provider.FileSinkTest do
     test "a roll becomes one object, and its holds wait for the sidecar", %{s3: s3} do
       owner = owner()
       {opts, sink} = start_sink(rename(%{roll_after_ms: 60_000}))
-      for seq <- 1..2, do: release(opts, "r#{seq}", ProviderPrepare.guaranteed_metadata(owner, seq))
+
+      for seq <- 1..2,
+          do: release(opts, "r#{seq}", ProviderPrepare.guaranteed_metadata(owner, seq))
 
       assert wait_until(fn -> :sys.get_state(sink).roll.bytes == 6 end, 2_000)
       assert keys(s3, "out") == []

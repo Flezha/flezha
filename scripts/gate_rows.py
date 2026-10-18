@@ -340,10 +340,6 @@ def _rust():
         _bar("rust-clippy", "rust", "cargo", "clippy", "--quiet", "--workspace", "--all-targets",
              "--features", "flezha_runner/bench-internals,flezha_runner/testing",
              "--", "-D", "warnings"),
-        *(_bar(f"rust-fmt-{os.path.basename(os.path.dirname(manifest)) or 'rust'}", "rust",
-               "cargo", "+nightly-2026-05-07", "fmt", "--manifest-path", manifest, "--", "--check")
-          for manifest in ("sdk/rust/Cargo.toml", "sdk/rust/macros/Cargo.toml",
-                           "sdk/rust/test_app/Cargo.toml")),
         _bar("sdk-fake-controller", "rust", "cargo", "build", "--quiet", "-p", "flz_core_ffi",
              "--features", "fake-controller", "--bin", "flz-fake-controller", stderr_ok=True),
         _smoke("rust-smoke", "rust", "sdk/rust", f"{ROOT}/target/debug/rust_runner", "smoke"),

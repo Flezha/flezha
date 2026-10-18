@@ -23,6 +23,7 @@ format and the rule that goes with it: `load_baseline`.
 """
 
 import contextlib
+import io
 import os
 import re
 import shutil
@@ -291,6 +292,17 @@ def report(failures, *, headline, hint, noun="finding(s)", ok_message=None):
     return FINDING
 
 
+def self_test_verdict(name, problems, detail=""):
+    """Print a self-test's verdict, its indented `problems` under it when it
+    failed, and return its exit code."""
+    if problems:
+        print(f"{name} self-test FAILED", file=sys.stderr)
+        print("\n".join(problems), file=sys.stderr)
+        return FINDING
+    print(f"{name} self-test OK{detail}")
+    return OK
+
+
 def pattern_check(patterns, allowlist=()):
     """A `check` that flags any line still matching `patterns` once the
     allowlist rules in scope for the file have been erased from it. The
@@ -333,45 +345,8 @@ def walk(*, check, headline, hint, ok_message, pathspec=(), path_filter=None,
     failures = []
     unclosed = []
     listing = disk_files(roots) if source == "disk" else tracked_files(pathspec, carried=True)
-    # A file reached through a tracked symlink is the file its submodule
-    # carries; judged once, under the name met first.
-    seen = set()
-    for rel in listing:
-        real = os.path.realpath(rel)
-        if real in seen:
-            continue
-        seen.add(real)
-        if rel in self_files or "/dist/" in rel:
-            continue
-        if path_filter and not path_filter(rel):
-            continue
-        if os.path.splitext(rel)[1] in BINARY_EXT:
-            continue
-        try:
-            with open(rel, encoding="utf-8") as fh:
-                text = fh.read()
-        except (UnicodeDecodeError, OSError):
-            continue
-        if prefilter and not prefilter(text):
-            continue
-        # The line a still-open record block was opened on, 0 outside a block.
-        in_record = 0
-        for lineno, line in enumerate(text.split("\n"), 1):
-            # A migration record MENTIONS the retired names rather than using
-            # them. Delimited explicitly so the exemption is greppable and
-            # scoped to the block, instead of blinding the whole file. A line
-            # carrying both markers is a whole record: it exempts itself and
-            # leaves the surrounding block state alone.
-            opens = begin is not None and begin in line
-            closes = end is not None and end in line
-            if opens or closes:
-                if opens != closes:
-                    in_record = lineno if opens else 0
-                continue
-            if in_record:
-                continue
-            for message in check(rel, line):
-                failures.append((rel, lineno, message))
+    for rel, text in _texts(listing, self_files, path_filter, prefilter):
+        in_record = _scan(rel, text, check, begin, end, failures)
         if in_record:
             unclosed.append((rel, in_record))
 
@@ -386,6 +361,52 @@ def walk(*, check, headline, hint, ok_message, pathspec=(), path_filter=None,
         headline=headline, hint=hint, noun=noun,
         ok_message=None if unclosed else ok_message)
     return found_code or unclosed_code
+
+
+def _texts(listing, self_files, path_filter, prefilter):
+    """(rel, text) of each listed file a walk judges: its own and binary files
+    aside, and only what `path_filter` and `prefilter` accept."""
+    # A file reached through a tracked symlink is the file its submodule
+    # carries; judged once, under the name met first.
+    seen = set()
+    for rel in listing:
+        real = os.path.realpath(rel)
+        if real in seen:
+            continue
+        seen.add(real)
+        if (rel in self_files or "/dist/" in rel or (path_filter and not path_filter(rel))
+                or os.path.splitext(rel)[1] in BINARY_EXT):
+            continue
+        try:
+            with open(rel, encoding="utf-8") as fh:
+                text = fh.read()
+        except (UnicodeDecodeError, OSError):
+            continue
+        if not prefilter or prefilter(text):
+            yield rel, text
+
+
+def _scan(rel, text, check, begin, end, failures):
+    """Append `(rel, lineno, message)` for each line `check` flags outside a
+    record block; return the line a block left open was opened on, else 0."""
+    in_record = 0
+    for lineno, line in enumerate(text.split("\n"), 1):
+        # A migration record MENTIONS the retired names rather than using
+        # them. Delimited explicitly so the exemption is greppable and
+        # scoped to the block, instead of blinding the whole file. A line
+        # carrying both markers is a whole record: it exempts itself and
+        # leaves the surrounding block state alone.
+        opens = begin is not None and begin in line
+        closes = end is not None and end in line
+        if opens or closes:
+            if opens != closes:
+                in_record = lineno if opens else 0
+            continue
+        if in_record:
+            continue
+        for message in check(rel, line):
+            failures.append((rel, lineno, message))
+    return in_record
 
 
 def select(spec, table=GATES):
@@ -522,10 +543,8 @@ def _judge(row, status, out, err):
             return "NOT RUN", "unavailable", f"{label} — see its own summary above"
         if status == NO_ANSWER:
             return "NO ANSWER", "errored", f"{label} — see its own summary above"
-        if status == FINDING:
-            return "FAIL", "failed", label
-        return "NO ANSWER", "errored", f"{label} — exit {status}"
-    if finding == "status:any":
+        matched = status == FINDING
+    elif finding == "status:any":
         matched = True
     elif finding.startswith("status:"):
         matched = status in {int(code) for code in finding[len("status:"):].split(",")}
@@ -597,8 +616,6 @@ def _contract_self_test():
     tool is absent, or that runs past its time limit, must leave the loop
     running, because ending it is the defect this contract removed.
     """
-    import io
-
     rows = {name: {"id": name, **row} for name, (row, _, _) in _OUTCOMES.items()}
     problems = []
     for name, (_, bucket, status) in _OUTCOMES.items():
@@ -625,20 +642,13 @@ def _contract_self_test():
     if pair != FINDING:
         problems.append(f"  precedence: got {pair}, expected {FINDING}")
     problems += _runner_problems(rows)
-
-    if problems:
-        print("naming_gate exit-contract self-test FAILED", file=sys.stderr)
-        print("\n".join(problems), file=sys.stderr)
-        return 1
-    print(f"naming_gate exit-contract self-test OK ({len(_OUTCOMES)} outcomes)")
-    return 0
+    return self_test_verdict("naming_gate exit-contract", problems,
+                             f" ({len(_OUTCOMES)} outcomes)")
 
 
 def _runner_problems(rows):
     """The row behind a timed-out one still runs, `--logs` files a noisy row's
     output and verdict, and a `groups` row stands for its rows once each."""
-    import io
-
     problems = []
     with contextlib.redirect_stdout(out := io.StringIO()):
         run_gates([rows["timed-out"], rows["clean"]])
@@ -701,13 +711,7 @@ def _registry_self_test():
                 problems.append(f"  {spec}: selects no gate")
         except KeyError as exc:
             problems.append(f"  {spec}: {exc}")
-
-    if problems:
-        print("naming_gate registry self-test FAILED", file=sys.stderr)
-        print("\n".join(problems), file=sys.stderr)
-        return 1
-    print(f"naming_gate registry self-test OK ({len(GATES)} gates declared)")
-    return 0
+    return self_test_verdict("naming_gate registry", problems, f" ({len(GATES)} gates declared)")
 
 
 def _self_test():
@@ -716,8 +720,6 @@ def _self_test():
     `walk` reads `git ls-files`, so the fixtures live in a throwaway git tree.
     Each fixture pairs a body with the lines the walk is expected to flag.
     """
-    import io
-
     tag = "selftest-record"
     cases = {
         # Both markers on one line are a whole record: it exempts its own line,

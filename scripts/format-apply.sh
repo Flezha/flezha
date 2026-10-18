@@ -127,11 +127,10 @@ else
   elixir=()
 fi
 
-# The nightly is pinned to the one .github/workflows/format.yml installs.
+# The nightly .github/workflows/format.yml installs, from .github/toolchains.json.
 # rustfmt.toml's `imports_granularity`, `group_imports` and `ignore` are
-# nightly-only options, and two nightlies are two style opinions; bump this
-# with the CI workflow and rustfmt.toml together, as rust-toolchain.toml says.
-RUST_NIGHTLY=nightly-2026-05-07
+# nightly-only options, and two nightlies are two style opinions.
+RUST_NIGHTLY=$(scripts/manifest_pin.sh .github/toolchains.json rust_nightly) || exit 3
 
 # Write mode formats only the Rust files this tree and its submodules changed
 # against HEAD, or added and not ignored: `cargo fmt --all` would also rewrite

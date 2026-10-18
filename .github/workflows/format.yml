@@ -42,9 +42,9 @@ jobs:
 
       # Nightly rustfmt is required because rustfmt.toml uses
       # `imports_granularity`, `group_imports`, and `ignore` — all
-      # nightly-only. The date is pinned in .github/toolchains.json; bump it
-      # there alongside rustfmt.toml and the same pin in
-      # scripts/format-apply.sh. No cargo cache: nothing here compiles.
+      # nightly-only. The date is pinned in .github/toolchains.json, which
+      # scripts/format-apply.sh reads too; bump it there alongside
+      # rustfmt.toml. No cargo cache: nothing here compiles.
       - name: Install Rust nightly (rustfmt)
         uses: ./.github/actions/setup-rust
         with:
