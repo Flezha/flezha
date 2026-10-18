@@ -18,6 +18,12 @@ boundary, while the diagnosis called the sleep "asleep". Each state now has one 
   `[:flezha, :steps, :suspend_requested]`; it was described as a failure, which it is not.
 - The runner protocol's `IterPark` frame and the durable park record keep their names.
 
+### Fixed: a suspended relay sent a message while no runner served it wakes when one connects
+
+The message was kept in its input log, but nothing woke the relay once a runner of its factory
+connected, so it waited for the next message or its timer. A connecting runner now asks each
+suspended relay it can take to wake if work is owed.
+
 ### Changed: the docs live in `docs/public/` and `docs/internal/` (breaking for links)
 
 Every page of the published site moves to `docs/public/` under its old sub-path, and every

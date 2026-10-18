@@ -296,8 +296,8 @@ defmodule Flezha.Relay.Migration do
   def wake(%Overwatch{} = state, then) do
     case RelayManager.assign_runner(state.namespace, state.factory_id, state.id) do
       nil ->
-        # No runner to rehydrate onto: stay suspended. The next input (or the
-        # convergence tick that brings a runner up) tries again.
+        # No runner to rehydrate onto: stay suspended. The next input, the
+        # wake timer, or a runner of its factory connecting tries again.
         Logger.warning("[Overwatch] no active runner to rehydrate suspended relay #{state.id}")
 
         {{:error, :no_runner}, state}

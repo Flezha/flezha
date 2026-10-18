@@ -27,6 +27,7 @@ defmodule Flezha.Convergence.Loop do
   alias Flezha.Convergence.Loop.{Liveness, Progress, State, Summary}
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.EventManager
+  alias Flezha.Service.HubManager
 
   require Logger
 
@@ -176,7 +177,9 @@ defmodule Flezha.Convergence.Loop do
 
   defp release(%State{} = state, :runner_connected, {namespace, runner_id}, _what, now) do
     waiting = waiting_relays(state, namespace)
-    servable = servable_factories(namespace, runner_id, waiting)
+    sleeping = sleeping_relays(state, namespace)
+    servable = servable_factories(namespace, runner_id, Map.merge(waiting, sleeping))
+    wake_sleepers(namespace, sleeping, servable)
 
     backoff =
       Enum.reduce(waiting, state.backoff, fn {id, factory}, acc ->
@@ -193,6 +196,25 @@ defmodule Flezha.Convergence.Loop do
   end
 
   defp release(%State{} = state, _kind, _target, _what, _now), do: state
+
+  # Every suspended relay in `namespace`, with its factory. One sent a message
+  # while no runner could take it keeps the message journaled, and only the
+  # next message or its timer would wake it otherwise.
+  defp sleeping_relays(%State{} = state, namespace) do
+    for {{:relay, {ns, id}}, %Verdict{state: :suspended, facts: facts}} <- state.verdicts,
+        ns == namespace,
+        into: %{},
+        do: {id, Map.get(facts, :factory_id)}
+  end
+
+  # A cast, so a slow Overwatch never holds the loop; the Overwatch wakes only
+  # when its log owes input or its timer has passed.
+  defp wake_sleepers(namespace, sleeping, servable) do
+    for {id, factory} <- sleeping,
+        release?(factory, servable),
+        {:ok, pid} <- [HubManager.get_pid(namespace, id)],
+        do: GenServer.cast(pid, :rehydrate_if_pending)
+  end
 
   # Every relay in `namespace` whose next step is a binding — halted,
   # unbound, or misbound to a runner that is gone — with the factory the judge

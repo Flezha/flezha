@@ -201,6 +201,35 @@ defmodule Flezha.Convergence.LoopTest do
       assert attempt({:halted, "op"}) == 0
     end
 
+    # fails when: a runner connecting releases only the relays waiting for a
+    # binding. A suspended relay sent a message while nothing could run it
+    # keeps the message journaled, and only the next message or its timer
+    # would wake it, with a capable runner already there.
+    test "a suspended relay of a factory the runner serves is asked to wake if work is owed" do
+      sleeping_relay()
+
+      connect(@fresh)
+
+      assert_receive {:"$gen_cast", :rehydrate_if_pending}, 1_000
+    end
+
+    test "a suspended relay of a factory the runner does not serve stays asleep" do
+      stub(FleetManager, :factories_for_runner, fn _ns, _runner -> MapSet.new(["other"]) end)
+      sleeping_relay()
+
+      connect(@fresh)
+
+      refute_receive {:"$gen_cast", :rehydrate_if_pending}, 200
+    end
+
+    defp sleeping_relay() do
+      test_pid = self()
+      stub(Probe, :snapshot, fn -> reality(%{suspended?: true, bound_runner: nil}) end)
+      stub(HubManager, :get_pid, fn :ns, "op" -> {:ok, test_pid} end)
+      :ok = Loop.tick_now()
+      assert :sys.get_state(Loop).verdicts[{:relay, {:ns, "op"}}].state == :suspended
+    end
+
     # A rung already walked, eligible again: what a rebind that finds no runner
     # must leave exactly as it is.
     defp seed_rung(key, attempt) do
