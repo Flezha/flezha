@@ -2,7 +2,7 @@
   "operations": [
     {
       "name": "AuditLog.list_files",
-      "doc": "The audit log's files: name, first and last record time, record count, size and digest.",
+      "doc": "The audit log's files, each with its record times and digest.",
       "action": "audit.read",
       "remote": true,
       "stream": false,
@@ -10,7 +10,7 @@
     },
     {
       "name": "AuditLog.read",
-      "doc": "The records of one audit file that match `params`, in the caller's namespace.",
+      "doc": "The records of one audit file that match `params`.",
       "action": "audit.read",
       "remote": true,
       "stream": false,
@@ -89,7 +89,7 @@
     },
     {
       "name": "Controller.boot_status",
-      "doc": "The readiness verdict and every precondition behind it, then the recovery state and persistent-registry row count of each running namespace the caller may see (`Flezha.AuthZ.Namespace.visible/3`).",
+      "doc": "The readiness verdict and every precondition behind it.",
       "action": "public",
       "remote": true,
       "stream": false,
@@ -97,7 +97,7 @@
     },
     {
       "name": "Controller.cluster_status",
-      "doc": "The cluster as `namespace` sees it: its nodes, each one's relay count and recovery state, the unplaced relays and the relays' health.",
+      "doc": "The cluster as `namespace` sees it: nodes, relays and health.",
       "action": "relay.list",
       "remote": true,
       "stream": false,
@@ -219,7 +219,7 @@
     },
     {
       "name": "Controller.status",
-      "doc": "The controller's status: its node and its monotonic clock, its shutdown state and settings, its durability, its state root and the folder file plugins may use.",
+      "doc": "The controller's status: node, clock, shutdown and durability.",
       "action": "controller.status",
       "remote": true,
       "stream": false,
@@ -289,7 +289,7 @@
     },
     {
       "name": "Dlq.replay",
-      "doc": "Re-dispatch a parked payload to its relay through the ordinary input path.",
+      "doc": "Re-dispatch a parked payload to its relay.",
       "action": "dlq.replay",
       "remote": true,
       "stream": false,
@@ -328,7 +328,7 @@
     },
     {
       "name": "Fleet.drop_runner",
-      "doc": "Drop the runner `runner_id` serving `namespace`, wherever in the cluster it is connected.",
+      "doc": "Drop the runner `runner_id` serving `namespace`.",
       "action": "runner.drop",
       "remote": true,
       "stream": false,
@@ -364,7 +364,7 @@
     },
     {
       "name": "Fleet.factories",
-      "doc": "The factories declared in `namespace`, each with the `runners` that can place it, so a listing needs no `runners_for_factory/3` call per factory.",
+      "doc": "The factories declared in `namespace`, with their runners.",
       "action": "relay.list",
       "remote": true,
       "stream": false,
@@ -394,7 +394,7 @@
     },
     {
       "name": "Fleet.installed_plugins",
-      "doc": "Every plugin package this controller loaded or refused at boot, and what its plugin root holds since.",
+      "doc": "Every plugin package this controller loaded or refused at boot.",
       "action": "plugin.list",
       "remote": true,
       "stream": false,
@@ -402,7 +402,7 @@
     },
     {
       "name": "Fleet.provider",
-      "doc": "One plugin provider's help text, its plugin type, whether it feeds a relay (`feeds`), the hooks it supports and its options as typed rows.",
+      "doc": "One plugin provider's help text, type, hooks and options.",
       "action": "plugin.info",
       "remote": true,
       "stream": false,
@@ -417,7 +417,7 @@
     },
     {
       "name": "Fleet.providers",
-      "doc": "Every plugin provider this controller can enable, with its module, its type and `feeds` (whether it injects records into a relay, as its declaration says), and how many plugin packages it refused at boot.",
+      "doc": "Every plugin provider this controller can enable.",
       "action": "plugin.list",
       "remote": true,
       "stream": false,
@@ -425,7 +425,7 @@
     },
     {
       "name": "Fleet.readmit_runner",
-      "doc": "Lift the drop mark on the runner `stable_id` in `namespace` on every controller, so the dropped process is admitted on its next retry.",
+      "doc": "Lift the drop mark on the runner `stable_id` in `namespace`.",
       "action": "runner.drop",
       "remote": true,
       "stream": false,
@@ -461,7 +461,7 @@
     },
     {
       "name": "Fleet.runners",
-      "doc": "Every runner serving `namespace`, anywhere in the cluster, one row each: `id`, the `node` holding its session, `connected_at` (unix seconds), the runner's OS `pid` where its transport says, `silent_ms` since the controller last heard from it, and `late?` once that silence shows a missed keepalive (`FleetManager.global_runner_rows/1`).",
+      "doc": "Every runner serving `namespace`, anywhere in the cluster.",
       "action": "relay.list",
       "remote": true,
       "stream": false,
@@ -512,7 +512,7 @@
     },
     {
       "name": "Namespace.bind_role",
-      "doc": "Bind `principal` to `role` in `namespace`, answering the identity's binding after it.",
+      "doc": "Bind `principal` to `role` in `namespace`.",
       "action": "authz.role_bind",
       "remote": false,
       "stream": false,
@@ -539,7 +539,7 @@
     },
     {
       "name": "Namespace.bootstrap",
-      "doc": "Claim the first admin with the one-time bootstrap token, answering the principal bound as `admin@_system` and, when one was minted for it, its token, shown this once.",
+      "doc": "Claim the first admin with the one-time bootstrap token.",
       "action": "public",
       "remote": false,
       "stream": false,
@@ -554,7 +554,7 @@
     },
     {
       "name": "Namespace.create",
-      "doc": "Create the namespace `name`, with `opts[:quotas]` its ceilings that differ from the defaults.",
+      "doc": "Create the namespace `name`.",
       "action": "authz.namespace_create",
       "remote": true,
       "stream": false,
@@ -576,7 +576,7 @@
     },
     {
       "name": "Namespace.delete",
-      "doc": "Delete the namespace `name` and the quota counters keyed on it, refused while any relay or runner is still attached to it, naming them.",
+      "doc": "Delete the namespace `name` and the quota counters keyed on it.",
       "action": "authz.namespace_delete",
       "remote": false,
       "stream": false,
@@ -606,7 +606,7 @@
     },
     {
       "name": "Namespace.issue_token",
-      "doc": "Issue a token for `principal` holding `role` in `namespace`, answering its id and the token itself, shown this once.",
+      "doc": "Issue a token for `principal` holding `role` in `namespace`.",
       "action": "authz.token_issue",
       "remote": false,
       "stream": false,
@@ -648,7 +648,7 @@
     },
     {
       "name": "Namespace.list_roles",
-      "doc": "The role bindings the caller may see, one per identity: every binding for `admin@_system`, otherwise those of the caller's own namespace.",
+      "doc": "The role bindings the caller may see, one per identity.",
       "action": "authz.role_list",
       "remote": true,
       "stream": false,
@@ -707,7 +707,7 @@
     },
     {
       "name": "Namespace.roles",
-      "doc": "The role bindings that reach `name`, including the ones bound cluster-wide.",
+      "doc": "The role bindings that reach `name`, cluster-wide ones included.",
       "action": "authz.role_list",
       "remote": true,
       "stream": false,
@@ -745,7 +745,7 @@
     },
     {
       "name": "Namespace.tokens",
-      "doc": "The tokens the caller may see, one row each: its id, principal, role, namespace, label and whether it is active, revoked or expired, with `created_at`, `expires_at` (unix seconds, or `:never`), `revoked_at` (unix seconds, or nil) and `created_by`, the principal that issued it.",
+      "doc": "The tokens the caller may see, one row each.",
       "action": "authz.token_list",
       "remote": true,
       "stream": false,
@@ -753,7 +753,7 @@
     },
     {
       "name": "Namespace.unbind_role",
-      "doc": "Unbind `role` from `principal`, or the principal's whole binding when `role` is absent or empty: the one-command revocation for an identity that is compromised or retired, which can only take rights away.",
+      "doc": "Unbind `role` from `principal`, or the principal's whole binding.",
       "action": "authz.role_unbind",
       "remote": false,
       "stream": false,
@@ -821,7 +821,7 @@
     },
     {
       "name": "Observability.list_sources",
-      "doc": "Every registered observability source, its status, and what it said recently: `recent` holds the ring buffer's `window_ms` and, per signal name the caller may read, how many the buffer holds and the age of the newest in milliseconds.",
+      "doc": "Every registered observability source and what it said recently.",
       "action": "observability.query",
       "remote": true,
       "stream": false,
@@ -829,7 +829,7 @@
     },
     {
       "name": "Observability.query",
-      "doc": "The signals the ring buffer holds for `params.source`, in the caller's namespace.",
+      "doc": "The signals the ring buffer holds for `params.source`.",
       "action": "observability.query",
       "remote": true,
       "stream": false,
@@ -889,7 +889,7 @@
     },
     {
       "name": "PluginManager.bind",
-      "doc": "Bind `fields[:relay_id]` to the plugin `name` with `:hooks` and `:channel`.",
+      "doc": "Bind `fields[:relay_id]` to the plugin `name`.",
       "action": "plugin.enable",
       "remote": true,
       "stream": false,
@@ -911,7 +911,7 @@
     },
     {
       "name": "PluginManager.disable",
-      "doc": "Disable the plugin `name`: every running copy stops, every binding stays.",
+      "doc": "Disable the plugin `name`: every running copy stops.",
       "action": "plugin.disable",
       "remote": true,
       "stream": false,
@@ -933,7 +933,7 @@
     },
     {
       "name": "PluginManager.enable",
-      "doc": "Enable the plugin `name` built from `fields` (`:provider`, `:opts`, `:namespace`, `:single`, and `:relay_id`, `:hooks` and `:channel` to bind in the same call), answering how it was enabled and the controllers holding the namespace that lack its provider: the plugin does not run there.",
+      "doc": "Enable the plugin `name` built from `fields`.",
       "action": "plugin.enable",
       "remote": true,
       "stream": false,
@@ -955,7 +955,7 @@
     },
     {
       "name": "PluginManager.enabled",
-      "doc": "Every plugin enabled in `namespace`, as `list/1` answers for the caller's own.",
+      "doc": "Every plugin enabled in `namespace`.",
       "action": "plugin.list",
       "remote": true,
       "stream": false,
@@ -978,7 +978,7 @@
     },
     {
       "name": "PluginManager.unbind",
-      "doc": "Unbind `fields[:relay_id]` from the plugin `name`, which stays enabled.",
+      "doc": "Unbind `fields[:relay_id]` from the plugin `name`.",
       "action": "plugin.disable",
       "remote": true,
       "stream": false,
@@ -1000,7 +1000,7 @@
     },
     {
       "name": "PluginManager.update",
-      "doc": "Change the plugin `name`'s options (`:opts`) and a controller plugin's `:hooks`, in place when every changed option is live, otherwise by restarting every running copy.",
+      "doc": "Change the options and hooks of the plugin `name`.",
       "action": "plugin.enable",
       "remote": true,
       "stream": false,
@@ -1022,7 +1022,7 @@
     },
     {
       "name": "Relay.activity",
-      "doc": "What each tasklet of `relay_id` is doing, as the runner hosting it counts them: its live Cells, the items queued in total and in the deepest Cell, and the totals of items admitted, blocked waits and items dropped.",
+      "doc": "What each tasklet of `relay_id` is doing, as its runner counts it.",
       "action": "relay.list",
       "remote": true,
       "stream": false,
@@ -1050,7 +1050,7 @@
     },
     {
       "name": "Relay.api",
-      "doc": "The factories announced in `namespace`, each with its description and its API: one entry per entry channel, with its format, whether it answers and in which format, its description, its schemas and its MCP tool name.",
+      "doc": "The factories announced in `namespace`, with their APIs.",
       "action": "relay.list",
       "remote": true,
       "stream": false,
@@ -1072,7 +1072,7 @@
     },
     {
       "name": "Relay.call",
-      "doc": "Call `relay_id` with `message` and wait for its answer: the first output it caused on a sink, as `{:ok, payload, %{\"channel\" => channel}}`, or a coded error saying why none came.",
+      "doc": "Call `relay_id` with `message` and wait for its answer.",
       "action": "relay.send",
       "remote": true,
       "stream": false,
@@ -1112,7 +1112,7 @@
     },
     {
       "name": "Relay.call_channel",
-      "doc": "Call the entry channel `channel` of `relay_id` with `value`, encoded by the relay's API: any JSON value for a `json` channel, a string for `text`, base64 for `bytes`, `msgpack` and `custom`.",
+      "doc": "Call the entry channel `channel` of `relay_id` with `value`.",
       "action": "relay.send",
       "remote": true,
       "stream": false,
@@ -1181,7 +1181,7 @@
     },
     {
       "name": "Relay.diagnose",
-      "doc": "What is wrong with `relay_id` and what to do about it: a `verdict` of `ok`, `warning` or `problem`, and the findings that explain it, each a catalogued `diagnose.*` code with its message, details and hint.",
+      "doc": "What is wrong with `relay_id` and what to do about it.",
       "action": "relay.list",
       "remote": true,
       "stream": false,
@@ -1202,7 +1202,7 @@
     },
     {
       "name": "Relay.graph",
-      "doc": "The graph of `relay_id`'s factory as the runner hosting it announces it (the latest announcement while it has no runner): every channel with its kind, producer, consumers, plugin end, call target and overflow, and every tasklet with its cell mode, cell keys and mailbox capacity.",
+      "doc": "The graph of `relay_id`'s factory, as its runner announces it.",
       "action": "relay.list",
       "remote": true,
       "stream": false,
@@ -1223,7 +1223,7 @@
     },
     {
       "name": "Relay.info",
-      "doc": "Every relay in `namespace` as its Overwatch reports it, every finished one still inside its retention window, and every partition group with its key-group coverage.",
+      "doc": "Every relay in `namespace` as its Overwatch reports it.",
       "action": "relay.list",
       "remote": true,
       "stream": false,
@@ -1238,7 +1238,7 @@
     },
     {
       "name": "Relay.list",
-      "doc": "The relays in `namespace`, one row each with its health, runner, node and, for a partition group, its width and members.",
+      "doc": "The relays in `namespace`, one row each.",
       "action": "relay.list",
       "remote": true,
       "stream": false,
@@ -1253,7 +1253,7 @@
     },
     {
       "name": "Relay.list_namespaces",
-      "doc": "The namespaces in the durable catalog that the caller may be shown (its own, or all of them for an admin in `_system`), each with whether this controller runs a hub for it.",
+      "doc": "The namespaces in the durable catalog the caller may be shown.",
       "action": "relay.list",
       "remote": true,
       "stream": false,
@@ -1276,7 +1276,7 @@
     },
     {
       "name": "Relay.listen",
-      "doc": "Hand every frame `relay_id` emits (with its parts and dead-letter notices), or ingests when `direction` is `input`, to the context's `:emit`, until the window closes, the caller goes away or the relay ends.",
+      "doc": "Hand every frame `relay_id` emits to the context's `:emit`.",
       "action": "relay.listen",
       "remote": true,
       "stream": true,
@@ -1353,7 +1353,7 @@
     },
     {
       "name": "Relay.partition_groups",
-      "doc": "The partition groups `rows` describe: group, declared width, members and key-group coverage.",
+      "doc": "The partition groups `rows` describe.",
       "action": "public",
       "remote": true,
       "stream": false,
@@ -1413,7 +1413,7 @@
     },
     {
       "name": "Relay.replay",
-      "doc": "Re-run a Cell's retained inputs from a point in the past through the current code: rewind the Cell to `from` (a WAL seq, or an ISO 8601 time), bump the epoch, and replay the input log forward, so a conforming keyed output plugin overwrites the stale rows by natural key.",
+      "doc": "Re-run a Cell's retained inputs from a point in the past.",
       "action": "relay.replay",
       "remote": true,
       "stream": false,
@@ -1455,7 +1455,7 @@
     },
     {
       "name": "Relay.send",
-      "doc": "Inject `message` into `relay_id`'s input stream, blocking for the confirming verdict so a parked or absent target is reported rather than silently dropped.",
+      "doc": "Inject `message` into `relay_id`'s input stream.",
       "action": "relay.send",
       "remote": true,
       "stream": false,
@@ -1496,7 +1496,7 @@
     },
     {
       "name": "Relay.start",
-      "doc": "Start `relay` in `namespace`, answering the id it runs under and whether this call started it (`:started`) or found a live instance already holding the id it named (`:already_running`).",
+      "doc": "Start `relay` in `namespace`, answering the id it runs under.",
       "action": "relay.start",
       "remote": true,
       "stream": false,
@@ -1517,7 +1517,7 @@
     },
     {
       "name": "Relay.stop",
-      "doc": "Stop `relay_id` in `namespace`, or every member of the partition group it names.",
+      "doc": "Stop `relay_id` in `namespace`, or a whole partition group.",
       "action": "relay.stop",
       "remote": true,
       "stream": false,
@@ -1538,7 +1538,7 @@
     },
     {
       "name": "Schedule.add",
-      "doc": "Store a schedule from `fields` (`name`, `cron`, `timezone`, `factory_id`, `namespace`, `init_values`, `text`, `channel`, `plugins`) and assert it on the hub, so it starts firing.",
+      "doc": "Store a schedule from `fields` and assert it on the hub.",
       "action": "schedule.add",
       "remote": true,
       "stream": false,
@@ -1568,7 +1568,7 @@
     },
     {
       "name": "Schedule.list",
-      "doc": "Every stored schedule, by name, each with what the hub holds for it: the node that fires it, its last fire and that fire's result, when it fires next, in UTC, and `dormant?`.",
+      "doc": "Every stored schedule, by name, with what the hub holds for it.",
       "action": "schedule.list",
       "remote": true,
       "stream": false,
@@ -1618,7 +1618,7 @@
     },
     {
       "name": "Schedule.remove",
-      "doc": "Forget the schedule `name` and retract it from the hub, so it stops firing.",
+      "doc": "Forget the schedule `name` and retract it from the hub.",
       "action": "schedule.remove",
       "remote": true,
       "stream": false,
@@ -1648,7 +1648,7 @@
     },
     {
       "name": "Schedule.run",
-      "doc": "Fire the schedule `name` once, now, judged as a start where its instance starts.",
+      "doc": "Fire the schedule `name` once, now.",
       "action": "relay.start",
       "remote": true,
       "stream": false,
@@ -1671,7 +1671,7 @@
     },
     {
       "name": "Steps.cells",
-      "doc": "One row per Cell of `relay_class` with persisted state: its WAL and snapshot sequences, WAL size and the writer's counters.",
+      "doc": "One row per Cell of `relay_class` with persisted state.",
       "action": "state.list",
       "remote": true,
       "stream": false,
@@ -1738,7 +1738,7 @@
     },
     {
       "name": "Steps.consumed_offset",
-      "doc": "The input-log offset the instance's last iteration consumed, `nil` for none.",
+      "doc": "The input-log offset the instance's last iteration consumed.",
       "action": "state.records",
       "remote": true,
       "stream": false,
@@ -1753,7 +1753,7 @@
     },
     {
       "name": "Steps.delete",
-      "doc": "Hard-delete one Cell's persisted state: WAL, snapshots and outbox dedup.",
+      "doc": "Hard-delete one Cell's persisted state.",
       "action": "state.delete",
       "remote": true,
       "stream": false,
@@ -1768,7 +1768,7 @@
     },
     {
       "name": "Steps.inbox",
-      "doc": "An instance's durable input log, for a flow relay on the effectively-once tier and a durable steps relay alike: every retained record with its offset, whether it is at or below the instance's floor (consumed), its size and channel.",
+      "doc": "An instance's durable input log, record by record.",
       "action": "state.records",
       "remote": true,
       "stream": false,
@@ -1783,7 +1783,7 @@
     },
     {
       "name": "Steps.journal",
-      "doc": "One instance's task journal in append order, the leaf tasklets that define \"done\" for it, and whether the in-flight iteration has committed every leaf.",
+      "doc": "One instance's task journal, in append order.",
       "action": "state.records",
       "remote": true,
       "stream": false,
@@ -1798,7 +1798,7 @@
     },
     {
       "name": "Steps.last_offset",
-      "doc": "The last offset written to the instance's input log, `-1` when it has none.",
+      "doc": "The last offset written to the instance's input log.",
       "action": "state.records",
       "remote": true,
       "stream": false,
@@ -1813,7 +1813,7 @@
     },
     {
       "name": "Steps.outbox",
-      "doc": "One Cell's outbox: durable seq, flush cursor, epoch, undispatched lag, the entries a steps Cell holds until its stage commits, and the relay's input-log min-watermark.",
+      "doc": "One Cell's outbox, with its cursors, epoch and lag.",
       "action": "state.records",
       "remote": true,
       "stream": false,
@@ -1871,7 +1871,7 @@
     },
     {
       "name": "Steps.rewind",
-      "doc": "Rewind `relay_class` in `namespace` to the committed iteration `to_iter`.",
+      "doc": "Rewind `relay_class` in `namespace` to iteration `to_iter`.",
       "action": "relay.rewind",
       "remote": true,
       "stream": false,
@@ -1899,7 +1899,7 @@
     },
     {
       "name": "Steps.rotate",
-      "doc": "Force a compaction of one Cell by dispatching a `CompactCell` to its runner.",
+      "doc": "Force a compaction of one Cell.",
       "action": "state.rotate",
       "remote": true,
       "stream": false,
@@ -1914,7 +1914,7 @@
     },
     {
       "name": "Steps.set_retention",
-      "doc": "Retain `relay_class`'s write-ahead history for `hours`, in this controller's memory: it lasts until the next boot unless the runtime configuration says so too.",
+      "doc": "Retain `relay_class`'s write-ahead history for `hours`.",
       "action": "state.retention",
       "remote": true,
       "stream": false,
@@ -1936,7 +1936,7 @@
     },
     {
       "name": "Steps.state_get",
-      "doc": "The CURRENT in-memory state of one live Cell, or of one tasklet's Cells, as JSON, with the change sequence it was read at.",
+      "doc": "The CURRENT in-memory state of live Cells, as JSON.",
       "action": "state.get",
       "remote": true,
       "stream": false,
@@ -1959,7 +1959,7 @@
     },
     {
       "name": "Steps.time_travel",
-      "doc": "One Cell's state as of `target` (a WAL seq, or an ISO 8601 time), replayed from its write-ahead log: the seq it resolves to, and the snapshot and change log bytes behind it.",
+      "doc": "One Cell's state as of `target`, from its write-ahead log.",
       "action": "state.at",
       "remote": true,
       "stream": false,
@@ -1980,7 +1980,7 @@
     },
     {
       "name": "Steps.undelivered",
-      "doc": "The input-log records above the instance's floor: what it has not consumed yet.",
+      "doc": "The input-log records above the instance's floor.",
       "action": "state.records",
       "remote": true,
       "stream": false,

@@ -60,9 +60,10 @@ defmodule Flezha.Service.Relay do
   # ---------- Reads ----------
 
   @doc """
-  The namespaces in the durable catalog that the caller may be shown (its own,
-  or all of them for an admin in `_system`), each with whether this controller
-  runs a hub for it.
+  The namespaces in the durable catalog the caller may be shown.
+
+  That is its own, or all of them for an admin in `_system`, each with whether
+  this controller runs a hub for it.
 
   Reading the running hub set alone left a namespace created a moment earlier
   invisible until something connected to it, and reported one that had been
@@ -90,10 +91,12 @@ defmodule Flezha.Service.Relay do
   end
 
   @doc """
-  The relays in `namespace`, one row each with its health, runner, node and,
-  for a partition group, its width and members. A group is one row, exactly as
-  healthy as its sickest member: an aggregate that rounded up would hide the
-  one partition that stopped serving its keys.
+  The relays in `namespace`, one row each.
+
+  Each row holds its health, runner, node and, for a partition group, its width
+  and members. A group is one row, exactly as healthy as its sickest member: an
+  aggregate that rounded up would hide the one partition that stopped serving
+  its keys.
   """
   @spec list(String.t(), caller_context()) :: {:ok, [map()]} | {:error, term()}
   verb list(namespace, caller_context), verb: :list_relays, args: [namespace: @namespace] do
@@ -103,9 +106,10 @@ defmodule Flezha.Service.Relay do
   end
 
   @doc """
-  Every relay in `namespace` as its Overwatch reports it, every finished
-  one still inside its retention window, and every partition group with its
-  key-group coverage.
+  Every relay in `namespace` as its Overwatch reports it.
+
+  It also answers every finished one still inside its retention window, and
+  every partition group with its key-group coverage.
   """
   @spec info(String.t(), caller_context()) :: {:ok, map()} | {:error, term()}
   verb info(namespace, caller_context), verb: :relay_info, args: [namespace: @namespace] do
@@ -113,11 +117,13 @@ defmodule Flezha.Service.Relay do
   end
 
   @doc """
-  What is wrong with `relay_id` and what to do about it: a `verdict` of `ok`,
-  `warning` or `problem`, and the findings that explain it, each a catalogued
-  `diagnose.*` code with its message, details and hint. Read from the facts
-  the controller already keeps; it changes nothing. Dead letters' error texts
-  are shown only to a caller that may also list dead letters (`dlq.list`).
+  What is wrong with `relay_id` and what to do about it.
+
+  Answers a `verdict` of `ok`, `warning` or `problem`, and the findings that
+  explain it, each a catalogued `diagnose.*` code with its message, details and
+  hint. Read from the facts the controller already keeps; it changes nothing.
+  Dead letters' error texts are shown only to a caller that may also list dead
+  letters (`dlq.list`).
   """
   @spec diagnose(String.t(), String.t(), caller_context()) :: {:ok, map()} | {:error, term()}
   verb diagnose(namespace, relay_id, caller_context),
@@ -160,8 +166,9 @@ defmodule Flezha.Service.Relay do
   end
 
   @doc """
-  The partition groups `rows` describe: group, declared width, members and
-  key-group coverage.
+  The partition groups `rows` describe.
+
+  Each answers its group, declared width, members and key-group coverage.
 
   The report, not the row: `list/2` collapses the same rows into one row per
   group.
@@ -205,13 +212,14 @@ defmodule Flezha.Service.Relay do
   end
 
   @doc """
-  What each tasklet of `relay_id` is doing, as the runner hosting it counts
-  them: its live Cells, the items queued in total and in the deepest Cell, and
-  the totals of items admitted, blocked waits and items dropped. A figure the
-  runner does not keep is `nil`, never zero. Totals rise for the life of one
-  instance; a different `instance_seq` or `runner` means they started again.
-  `queued` is approximate while items arrive. A partition group is read one
-  member at a time.
+  What each tasklet of `relay_id` is doing, as its runner counts it.
+
+  The runner hosting the relay counts, per tasklet, its live Cells, the items
+  queued in total and in the deepest Cell, and the totals of items admitted,
+  blocked waits and items dropped. A figure the runner does not keep is `nil`,
+  never zero. Totals rise for the life of one instance; a different
+  `instance_seq` or `runner` means they started again. `queued` is approximate
+  while items arrive. A partition group is read one member at a time.
 
   `opts` carries `cells_of`, a tasklet whose Cells are answered as well under
   `cells`, and `limit`, at most how many (default 50, at most 500): the most
@@ -283,9 +291,10 @@ defmodule Flezha.Service.Relay do
   # ---------- Mutations ----------
 
   @doc """
-  Start `relay` in `namespace`, answering the id it runs under and whether
-  this call started it (`:started`) or found a live instance already holding
-  the id it named (`:already_running`).
+  Start `relay` in `namespace`, answering the id it runs under.
+
+  The answer also says whether this call started it (`:started`) or found a live
+  instance already holding the id it named (`:already_running`).
 
   `relay` is a `Flezha.Relay.Builder` or the named fields to build one
   from, so a consumer that reached the controller over a wire never has to put
@@ -326,9 +335,11 @@ defmodule Flezha.Service.Relay do
   end
 
   @doc """
-  Stop `relay_id` in `namespace`, or every member of the partition group it
-  names. A steps relay is stopped cooperatively: it finishes its in-flight
-  work, then completes as cancelled and is removed.
+  Stop `relay_id` in `namespace`, or a whole partition group.
+
+  When `relay_id` names a partition group, every member stops. A steps relay is
+  stopped cooperatively: it finishes its in-flight work, then completes as
+  cancelled and is removed.
   """
   @spec stop(String.t(), String.t(), caller_context()) :: {:ok, map()} | {:error, term()}
   verb stop(namespace, relay_id, caller_context),
@@ -343,15 +354,14 @@ defmodule Flezha.Service.Relay do
   end
 
   @doc """
-  Inject `message` into `relay_id`'s input stream, blocking for the
-  confirming verdict so a parked or absent target is reported rather than
-  silently dropped.
+  Inject `message` into `relay_id`'s input stream.
 
-  `channel` names the input channel; `""` is none. `opts[:key]` names the
-  member of a partition group that takes it, and `opts[:msg_id]` is the
-  message's id, stamped as `flz.msg_id` so a relay whose input log still
-  holds that id absorbs the repeat. The answer names the relay that
-  took it and the relay's own verdict: `:delivered`, `:absorbed` for a
+  It blocks for the confirming verdict, so a halted or absent target is reported
+  rather than silently dropped. `channel` names the input channel; `""` is none.
+  `opts[:key]` names the member of a partition group that takes it, and
+  `opts[:msg_id]` is the message's id, stamped as `flz.msg_id` so a relay whose
+  input log still holds that id absorbs the repeat. The answer names the relay
+  that took it and the relay's own verdict: `:delivered`, `:absorbed` for a
   duplicate, or `:suspended` for one journaled until the instance wakes.
   """
   @spec send(String.t(), String.t(), binary(), String.t(), keyword(), caller_context()) ::
@@ -383,9 +393,11 @@ defmodule Flezha.Service.Relay do
   end
 
   @doc """
-  Call `relay_id` with `message` and wait for its answer: the first output
-  it caused on a sink, as `{:ok, payload, %{"channel" => channel}}`, or a
-  coded error saying why none came.
+  Call `relay_id` with `message` and wait for its answer.
+
+  The answer is the first output it caused on a sink, as
+  `{:ok, payload, %{"channel" => channel}}`, or a coded error saying why none
+  came.
 
   `opts` carries `deadline_ms` (required, a positive integer),
   `answer_channel`, the channel whose output answers, and `key`, the key whose
@@ -435,10 +447,12 @@ defmodule Flezha.Service.Relay do
   end
 
   @doc """
-  The factories announced in `namespace`, each with its description and its
-  API: one entry per entry channel, with its format, whether it answers and
-  in which format, its description, its schemas and its MCP tool name. With
-  `relay_id`, only that relay's factory, as the runner hosting it announced it.
+  The factories announced in `namespace`, with their APIs.
+
+  Each comes with its description and its API: one entry per entry channel, with
+  its format, whether it answers and in which format, its description, its
+  schemas and its MCP tool name. With `relay_id`, only that relay's factory, as
+  the runner hosting it announced it.
   """
   @spec api(String.t(), String.t(), caller_context()) :: {:ok, [map()]} | {:error, term()}
   verb api(namespace, relay_id \\ "", caller_context),
@@ -464,8 +478,10 @@ defmodule Flezha.Service.Relay do
   end
 
   @doc """
-  The graph of `relay_id`'s factory as the runner hosting it announces it (the
-  latest announcement while it has no runner): every channel with its kind,
+  The graph of `relay_id`'s factory, as its runner announces it.
+
+  The runner hosting the relay announces it; while the relay has no runner, the
+  latest announcement answers. The graph holds every channel with its kind,
   producer, consumers, plugin end, call target and overflow, and every tasklet
   with its cell mode, cell keys and mailbox capacity. A runner that announced
   none answers `graph: nil` with the reason `not_announced`; `disagree` is true
@@ -484,11 +500,13 @@ defmodule Flezha.Service.Relay do
   end
 
   @doc """
-  Call the entry channel `channel` of `relay_id` with `value`, encoded by the
-  relay's API: any JSON value for a `json` channel, a string for `text`, base64
-  for `bytes`, `msgpack` and `custom`. A channel that answers is called and its
-  answer decoded by the answer's format, as `%{answer, answer_codec}`; one that
-  does not is sent to, answering `%{accepted: true}`.
+  Call the entry channel `channel` of `relay_id` with `value`.
+
+  `value` is encoded by the relay's API: any JSON value for a `json` channel, a
+  string for `text`, base64 for `bytes`, `msgpack` and `custom`. A channel that
+  answers is called and its answer decoded by the answer's format, as
+  `%{answer, answer_codec}`; one that does not is sent to, answering
+  `%{accepted: true}`.
 
   `opts` carries `deadline_ms` (default 30000), `answer_channel`, `key`, and
   `payload`: `text` or `base64` when `value` is the payload itself, sent
@@ -566,11 +584,13 @@ defmodule Flezha.Service.Relay do
   defp deadline(written), do: Steps.invalid_number("deadline_ms", written)
 
   @doc """
-  Hand every frame `relay_id` emits (with its parts and dead-letter
-  notices), or ingests when `direction` is `input`, to the context's `:emit`,
-  until the window closes, the caller goes away or the relay ends. With
-  `direction` `calls` it hands each call the relay takes, `{:call, request,
-  metadata}`, and then how that call ended: `{:answered, answer, metadata}`,
+  Hand every frame `relay_id` emits to the context's `:emit`.
+
+  Each frame carries its parts and dead-letter notices; when `direction` is
+  `input`, the frames it ingests are handed instead. They are handed until the
+  window closes, the caller goes away or the relay ends. With `direction`
+  `calls` it hands each call the relay takes, `{:call, request, metadata}`, and
+  then how that call ended: `{:answered, answer, metadata}`,
   `{:timed_out, error, metadata}` or `{:refused, error, metadata}`, each
   carrying the call's `flz.call_id`. With `direction` `tally` it hands, about
   once per `tally_ms`, `{:tally, totals, %{read_at_ms:, epochs:}}`: how many
@@ -619,11 +639,12 @@ defmodule Flezha.Service.Relay do
   end
 
   @doc """
-  Re-run a Cell's retained inputs from a point in the past through the
-  current code: rewind the Cell to `from` (a WAL seq, or an ISO 8601 time),
-  bump the epoch, and replay the input log forward, so a conforming keyed output plugin
-  overwrites the stale rows by natural key. A Cell of a steps relay is
-  refused before anything is rewound.
+  Re-run a Cell's retained inputs from a point in the past.
+
+  They run through the current code: rewind the Cell to `from` (a WAL seq, or an
+  ISO 8601 time), bump the epoch, and replay the input log forward, so a
+  conforming keyed output plugin overwrites the stale rows by natural key. A
+  Cell of a steps relay is refused before anything is rewound.
   """
   @spec replay(String.t(), String.t(), String.t(), caller_context()) ::
           {:ok, map()} | {:error, term()}

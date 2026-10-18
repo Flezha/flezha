@@ -47,11 +47,12 @@ defmodule Flezha.Service.Controller do
   # ---------- Reads ----------
 
   @doc """
-  The readiness verdict and every precondition behind it, then the recovery
-  state and persistent-registry row count of each running namespace the
-  caller may see (`Flezha.AuthZ.Namespace.visible/3`). The verb is public, so
-  a caller with no identity gets the verdict and only `_system`'s row.
-  Answers at once; `boot_await/2` waits.
+  The readiness verdict and every precondition behind it.
+
+  It also answers the recovery state and persistent-registry row count of each
+  running namespace the caller may see (`Flezha.AuthZ.Namespace.visible/3`). The
+  verb is public, so a caller with no identity gets the verdict and only
+  `_system`'s row. Answers at once; `boot_await/2` waits.
   """
   @spec boot_status(caller_context()) :: {:ok, map()} | {:error, term()}
   verb boot_status(caller_context) do
@@ -92,9 +93,10 @@ defmodule Flezha.Service.Controller do
   end
 
   @doc """
-  The controller's status: its node and its monotonic clock, its shutdown
-  state and settings, its durability, its state root and the folder file
-  plugins may use.
+  The controller's status: node, clock, shutdown and durability.
+
+  In full: its node and its monotonic clock, its shutdown state and settings,
+  its durability, its state root and the folder file plugins may use.
 
   `monotonic_us` is the node's `System.monotonic_time(:microsecond)`, the clock
   observability signals are stamped with, so a consumer on another node can age
@@ -120,8 +122,10 @@ defmodule Flezha.Service.Controller do
   end
 
   @doc """
-  The cluster as `namespace` sees it: its nodes, each one's relay count and
-  recovery state, the unplaced relays and the relays' health.
+  The cluster as `namespace` sees it: nodes, relays and health.
+
+  Each node comes with its relay count and recovery state, beside the unplaced
+  relays and the relays' health.
   """
   @spec cluster_status(String.t(), caller_context()) :: {:ok, map()} | {:error, term()}
   verb cluster_status(namespace, caller_context),

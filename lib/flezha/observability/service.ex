@@ -95,7 +95,11 @@ defmodule Flezha.Service.Observability do
 
   # ---------- Reads ----------
 
-  @doc "The signals the ring buffer holds for `params.source`, in the caller's namespace."
+  @doc """
+  The signals the ring buffer holds for `params.source`.
+
+  Only the signals of the caller's namespace are answered.
+  """
   @spec query(query_params() | keyword(), caller_context()) ::
           {:ok, [Signal.t()]} | {:error, term()}
   verb query(params, caller_context),
@@ -125,10 +129,12 @@ defmodule Flezha.Service.Observability do
   end
 
   @doc """
-  Every registered observability source, its status, and what it said
-  recently: `recent` holds the ring buffer's `window_ms` and, per signal name
-  the caller may read, how many the buffer holds and the age of the newest in
-  milliseconds. `recent` is `nil` when the ring buffer is not running.
+  Every registered observability source and what it said recently.
+
+  Each comes with its status, and `recent` holds the ring buffer's `window_ms`
+  and, per signal name the caller may read, how many the buffer holds and the
+  age of the newest in milliseconds. `recent` is `nil` when the ring buffer is
+  not running.
   """
   @spec list_sources(caller_context()) :: {:ok, [map()]} | {:error, term()}
   verb list_sources(caller_context), verb: :observability_sources do

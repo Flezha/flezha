@@ -101,14 +101,13 @@ defmodule Flezha.Service.Dlq do
   end
 
   @doc """
-  Re-dispatch a parked payload to its relay through the ordinary input
-  path.
+  Re-dispatch a parked payload to its relay.
 
-  A clean replay removes the entry; a failing one re-parks it with `generation`
-  incremented, which the store correlates on content identity. Replay identity
-  is fresh by construction: the re-drive enters as a NEW input, so a tier-on
-  invocation records fresh WAL seqs and downstream sinks see new `flz.seq`
-  under the current epoch.
+  It goes through the ordinary input path. A clean replay removes the entry; a
+  failing one re-parks it with `generation` incremented, which the store
+  correlates on content identity. Replay identity is fresh by construction: the
+  re-drive enters as a NEW input, so a tier-on invocation records fresh WAL seqs
+  and downstream sinks see new `flz.seq` under the current epoch.
   """
   @spec replay(String.t(), caller_context()) :: {:ok, replay_outcome()} | {:error, term()}
   verb replay(entry_ref, caller_context),

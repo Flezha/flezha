@@ -36,9 +36,10 @@ defmodule Flezha.Service.Schedule do
   @schedule_name [type: :string, doc: "The schedule's name."]
 
   @doc """
-  Every stored schedule, by name, each with what the hub holds for it: the
-  node that fires it, its last fire and that fire's result, when it fires
-  next, in UTC, and `dormant?`. The next fire is the slot the job is armed
+  Every stored schedule, by name, with what the hub holds for it.
+
+  That is the node that fires it, its last fire and that fire's result, when it
+  fires next, in UTC, and `dormant?`. The next fire is the slot the job is armed
   for, `nil` while it is dormant; only an entry with no job answering has it
   computed from the cron.
   """
@@ -60,12 +61,14 @@ defmodule Flezha.Service.Schedule do
   end
 
   @doc """
-  Store a schedule from `fields` (`name`, `cron`, `timezone`, `factory_id`,
-  `namespace`, `init_values`, `text`, `channel`, `plugins`) and assert it on
-  the hub, so it starts firing. A factory a connected runner announces as a
-  stream is refused, and the plugin specs are checked now rather than at the
-  first fire. Answers the entry, when it fires next, and whether its factory
-  has a live runner yet: firings fail until one connects.
+  Store a schedule from `fields` and assert it on the hub.
+
+  `fields` holds `name`, `cron`, `timezone`, `factory_id`, `namespace`,
+  `init_values`, `text`, `channel` and `plugins`. Once asserted, the schedule
+  starts firing. A factory a connected runner announces as a stream is refused,
+  and the plugin specs are checked now rather than at the first fire. Answers
+  the entry, when it fires next, and whether its factory has a live runner yet:
+  firings fail until one connects.
   """
   @spec add(keyword() | map(), caller_context()) :: {:ok, map()} | {:error, term()}
   verb add(fields, caller_context),
@@ -96,7 +99,11 @@ defmodule Flezha.Service.Schedule do
     end
   end
 
-  @doc "Forget the schedule `name` and retract it from the hub, so it stops firing."
+  @doc """
+  Forget the schedule `name` and retract it from the hub.
+
+  It stops firing.
+  """
   @spec remove(String.t(), caller_context()) :: :ok | {:error, term()}
   verb remove(name, caller_context), verb: :schedule_remove, args: [name: @schedule_name] do
     # Store first: retracting first would let the periodic re-assert sweep
@@ -108,9 +115,10 @@ defmodule Flezha.Service.Schedule do
   end
 
   @doc """
-  Fire the schedule `name` once, now, judged as a start where its instance
-  starts. Hub-free, so a manual fire works on any node whether or not the
-  schedule hub is up.
+  Fire the schedule `name` once, now.
+
+  It is judged as a start where its instance starts. Hub-free, so a manual fire
+  works on any node whether or not the schedule hub is up.
   """
   @spec run(String.t(), caller_context()) :: {:ok, map()} | {:error, term()}
   verb run(name, caller_context),

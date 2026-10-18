@@ -39,13 +39,22 @@ defmodule Flezha.Service.AuditLog do
 
   # ---------- Public API ----------
 
-  @doc "The audit log's files: name, first and last record time, record count, size and digest."
+  @doc """
+  The audit log's files, each with its record times and digest.
+
+  Each row holds the file's name, first and last record time, record count, size
+  and digest.
+  """
   @spec list_files(caller_context()) :: {:ok, [map()]} | {:error, term()}
   verb list_files(caller_context), verb: :audit_list do
     with :ok <- check_enabled(), do: {:ok, Writer.catalog()}
   end
 
-  @doc "The records of one audit file that match `params`, in the caller's namespace."
+  @doc """
+  The records of one audit file that match `params`.
+
+  Only the records of the caller's namespace are answered.
+  """
   @spec read(read_params() | keyword(), caller_context()) :: {:ok, [map()]} | {:error, term()}
   verb read(params, caller_context),
     verb: :audit_read,
