@@ -207,10 +207,13 @@ def breakers(files):
 
 
 def cycles():
+    return parse_cycles(subprocess.run(["mix", "xref", "graph", "--format", "cycles"],
+                                       capture_output=True, text=True, check=True).stdout)
+
+
+def parse_cycles(out):
     """{"xref cycles": n, "xref largest": files in the largest}; a member annotated
     (compile) or (export) is counted."""
-    out = subprocess.run(["mix", "xref", "graph", "--format", "cycles"], capture_output=True,
-                         text=True, check=True).stdout
     count = re.search(r"^(\d+) cycles? found", out, re.M)
     blocks = re.split(r"^Cycle of length \d+.*$", out, flags=re.M)[1:]
     largest = max((len(re.findall(r"^\s+\S+\.exs?\b", block, re.M)) for block in blocks), default=0)
@@ -294,6 +297,11 @@ def self_test():
             problems.append(f"  {name}: {len(findings)} finding(s), {len(recorded - hits)} stale")
     lines = ["fn ok() {", *["    x();"] * 3, "}", "#[cfg(test)]", "mod tests {",
              "    fn long() {", *["        y();"] * 60, "    }", "}"]
+    xref = ("2 cycles found. Showing them in decreasing size:\n\nCycle of length 3 (1 compile):\n\n"
+            "    lib/a.ex\n    lib/b.ex (compile)\n    lib/c.ex (export)\n\n"
+            "Cycle of length 2:\n\n    lib/d.ex\n    lib/e.ex\n")
+    if (parsed := parse_cycles(xref)) != {"xref cycles": 2, "xref largest": 3}:
+        problems.append(f"  annotated cycle members: parsed {parsed}")
     test_lines, _ = production_code.scan_rust(lines)
     measured = dict(brace_functions("\n".join(lines), ".rs", test_lines))
     if measured != {"ok": 5}:

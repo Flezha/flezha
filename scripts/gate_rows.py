@@ -198,13 +198,13 @@ def _bar(row_id, group, *argv, **opts):
             "finding": "status:any", **opts}
 
 
-def _mix_test(row_id, group, *args, env=None):
+def _mix_test(row_id, group, *args, env=None, **opts):
     """A core `mix test` row, recording per-test timings beside the usual output."""
     timing = os.path.join(tempfile.gettempdir(), f"flezha_timing_{row_id}.tsv")
     return _bar(row_id, group, "mix", "test", "--warnings-as-errors",
                 "--formatter", "ExUnit.CLIFormatter",
                 "--formatter", "FlezhaTest.Helper.TimingFormatter", *args,
-                env={**(env or {}), "TIMING_OUT": timing})
+                env={**(env or {}), "TIMING_OUT": timing}, **opts)
 
 
 def _deps_compile(name, group, cwd, *envs):
@@ -234,7 +234,10 @@ def _e2e_smoke(runtime, env=None):
 
 
 def _core():
-    rows = [*_deps_compile("core", "core", None, "dev", "test"),
+    # On a cold `_build` the first quiet row would also compile, and judge, the
+    # third-party dependencies, so a selection names `@deps` ahead of it.
+    rows = [{"id": "core-deps", "group": "core", "groups": "@deps"},
+            *_deps_compile("core", "deps", None, "dev", "test"),
             _bar("core-compile", "core", "mix", "compile", "--warnings-as-errors"),
             _bar("core-compile-test", "core", "mix", "compile", "--warnings-as-errors",
                  env={"MIX_ENV": "test"}),
@@ -257,6 +260,10 @@ def _core():
     return rows
 
 
+# Builds the prod release itself and drives no runner: one row, not one per runtime.
+PACKAGE_RELEASE = "test/system/plugin_package_release_test.exs"
+
+
 def _e2e(runtime):
     """The `:system` tier under one runtime, in shards of six files."""
     group = f"e2e-{runtime}"
@@ -264,10 +271,7 @@ def _e2e(runtime):
     rows = [_bar("e2e-prep-elixir-deps", group, "mix", "deps.get", cwd=app, stderr_ok=True),
             *_deps_compile("e2e-prep-elixir", group, app, "dev")] if runtime == "elixir" else []
     rows.append(_build(f"e2e-prep-{runtime}", group, runtime))
-    # The plugin package release test runs the prod release in _build/prod/rel,
-    # which no row builds.
-    system = [path for path in _files("test/system/*_test.exs")
-              if not path.endswith("plugin_package_release_test.exs")]
+    system = [path for path in _files("test/system/*_test.exs") if path != PACKAGE_RELEASE]
     for start in range(0, len(system), 6):
         rows.append(_mix_test(f"e2e-{runtime}-{start // 6 + 1}", group, "--include", "system",
                               *system[start:start + 6], env={"FLEZHA_E2E_RUNTIME": runtime}))
@@ -485,6 +489,8 @@ GATES += (
     # The one scenario that places two runtimes in a run (rust and java).
     _mix_test("e2e-interop", "e2e-java", "--include", "system", "--include", "interop",
               "test/system/cross_sdk_placement_e2e_test.exs", env={"FLEZHA_E2E_RUNTIME": "java"}),
+    _mix_test("e2e-plugin-package-release", "e2e-rust", "--include", "system", PACKAGE_RELEASE,
+              env={"FLEZHA_E2E_RUNTIME": "rust"}, timeout=1800),
     *_plugins(), *_rust(), *_sdk_java(), *_sdk_node(), *_sdk_python(), *_sdk_ruby(),
     *_sdk_php(), *_sdk_elixir(),
     _bar("ledgers", "ledgers", "python3", "docs/known-bugs.py", "check"),
@@ -498,12 +504,17 @@ GATES += (
     # The controller images' size budgets (docker/prod/README.md), measured on
     # images built before the row runs; the table also goes to a CI step summary.
     _bar("image-size", "docker", "bash", "-c", IMAGE_SIZE),
+    # The prost generator is its own workspace, outside the whole-workspace check.
+    _bar("prost-gen-fmt", "format", "bash", "-c",
+         'n=$(scripts/manifest_pin.sh .github/toolchains.json rust_nightly) || exit 255; '
+         'cargo +"$n" fmt --manifest-path protobufs/prost_gen/Cargo.toml -- --check',
+         finding="says:Diff in "),
     # What an item is committed on: the specs, the naming gates, a warnings-as-
     # errors compile and the AI kit's freshness (a docs page edited without
     # `mix docs` leaves its kit copy stale).
     _bar("openspec-validate", "item", "openspec", "validate", "--specs", "--strict",
          stderr_ok=True),
-    {"id": "item", "group": "item", "groups": "@naming,core-compile"},
+    {"id": "item", "group": "item", "groups": "@naming,@deps,core-compile"},
     _mix_test("ai-kit", "item", "test/mix/tasks/flezha_ai_kit_test.exs",
               "test/flezha/mcp/knowledge_test.exs"),
     {"id": "clean", "group": "clean",

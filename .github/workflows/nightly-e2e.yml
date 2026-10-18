@@ -145,14 +145,15 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libclang-dev
 
       - name: The system and multi-node tiers under this runtime
-        # The warnings-as-errors compile and the reference runner every case
-        # boots, then the rows of `@e2e-<runtime>` in scripts/gate_rows.py (the
-        # runtime's runner built by its manifest, the `:system` files in shards
-        # of six, and on java the cross-SDK interop scenario) and the
+        # The third-party dependencies, the warnings-as-errors compile and the
+        # reference runner every case boots, then the rows of `@e2e-<runtime>`
+        # in scripts/gate_rows.py (the runtime's runner built by its manifest,
+        # the `:system` files in shards of six, on rust the plugin package
+        # release test and on java the cross-SDK interop scenario) and the
         # multi-node tier.
         run: |
           python3 scripts/naming_gate.py \
-            --run core-compile,core-prep-runner,@e2e-${{ matrix.runtime }},e2e-multi-node
+            --run @deps,core-compile,core-prep-runner,@e2e-${{ matrix.runtime }},e2e-multi-node
 
       - name: Upload the conformance report
         if: always()

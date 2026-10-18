@@ -178,6 +178,7 @@ defmodule Mix.Tasks.Bench.Fleet do
 
   Returns `:built`, `:skipped` or `:none` so the run can report which — an
   artifact that exists tells the reader nothing about whether it is current.
+  A manifest without a `build.test` raises: a test run has no report to say so.
   """
   @spec ensure_built(atom(), :bench | :test) :: :built | :skipped | :none
   def ensure_built(runtime, profile \\ :bench) do
@@ -187,6 +188,10 @@ defmodule Mix.Tasks.Bench.Fleet do
       profile == :bench and Config.get(:bench_skip_build) ->
         IO.puts("Skipping the #{runtime} bench build (FLEZHA_BENCH_SKIP_BUILD)")
         :skipped
+
+      is_nil(command) and profile == :test ->
+        raise "the #{runtime} conformance manifest declares no build.test; every test run " <>
+                "builds its runner first, so nothing may run against an artifact left from before"
 
       is_nil(command) ->
         :none

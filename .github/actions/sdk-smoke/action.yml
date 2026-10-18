@@ -28,6 +28,10 @@ runs:
     - name: Install protoc
       uses: ./.github/actions/setup-protoc
 
+    - name: Compile the third-party dependencies
+      shell: bash
+      run: python3 scripts/naming_gate.py --run @deps
+
     - name: Build the testnet bundle
       if: inputs.testnet == 'true'
       shell: bash

@@ -489,11 +489,10 @@ def _stop(proc):
 def run_gate(row, report, logs=None):
     """Run one declared gate and file its outcome under this contract.
 
-    `report` is the three lists `run_gates` prints. Returns nothing: the verdict
-    is the lists, because a gate that could not run must not end the loop. That
-    rule is the whole point — testing every tool before running any check is
-    what let one absent formatter hide six unformatted languages, and only the
-    install hint survived from it. With `logs` the output goes to `<id>.log`
+    `report` is the three lists `run_gates` prints, and the only verdict: a gate
+    whose tool is absent or whose command cannot start must not end the loop.
+    Testing every tool before running any check is what let one absent formatter
+    hide six unformatted languages. With `logs` the output goes to `<id>.log`
     (stderr also to `<id>.err`) there, and each verdict to `summary.txt`.
     """
     label = row["id"]
@@ -507,7 +506,10 @@ def run_gate(row, report, logs=None):
         verdict = ("NOT RUN", None, None)
     else:
         print(f"==> {label}", flush=True)
-        verdict = _judge(row, *_execute(row, logs))
+        try:
+            verdict = _judge(row, *_execute(row, logs))
+        except OSError as exc:
+            verdict = ("NO ANSWER", "errored", f"{label} — could not start: {exc}")
     word, bucket, entry = verdict
     if bucket:
         report[bucket].append(entry)
@@ -602,6 +604,8 @@ _OUTCOMES = {
     "stray-stderr": ({"quiet": True, "argv": _sh("echo oops >&2")}, "failed", FINDING),
     "timed-out": ({"timeout": 1, "argv": _sh("echo started; sleep 30")}, "errored", NO_ANSWER),
     "plain-tool": ({"finding": "status:any", "argv": _sh("echo red; exit 2")}, "failed", FINDING),
+    "unstartable": ({"argv": ["flezha-no-such-command"]}, "errored", NO_ANSWER),
+    "no-cwd": ({"cwd": "flezha-no-such-dir", "argv": _sh("echo x")}, "errored", NO_ANSWER),
 }
 
 
@@ -631,16 +635,13 @@ def _contract_self_test():
             problems.append(f"  {name}: run_gates returned {got}, expected {status}")
 
     # Several at once: an unanswered check outranks a finding, which outranks a
-    # missing tool, because until a check runs the silence behind it means
-    # nothing.
-    with contextlib.redirect_stdout(io.StringIO()):
-        worst = run_gates([rows["absent-tool"], rows["finding"], rows["crashed"]])
-    if worst != NO_ANSWER:
-        problems.append(f"  precedence: got {worst}, expected {NO_ANSWER}")
-    with contextlib.redirect_stdout(io.StringIO()):
-        pair = run_gates([rows["absent-tool"], rows["finding"]])
-    if pair != FINDING:
-        problems.append(f"  precedence: got {pair}, expected {FINDING}")
+    # missing tool, because until a check runs the silence behind it means nothing.
+    for names, want in ((("absent-tool", "finding", "crashed"), NO_ANSWER),
+                        (("absent-tool", "finding"), FINDING)):
+        with contextlib.redirect_stdout(io.StringIO()):
+            got = run_gates([rows[name] for name in names])
+        if got != want:
+            problems.append(f"  precedence {names}: got {got}, expected {want}")
     problems += _runner_problems(rows)
     return self_test_verdict("naming_gate exit-contract", problems,
                              f" ({len(_OUTCOMES)} outcomes)")

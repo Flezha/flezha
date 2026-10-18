@@ -38,16 +38,8 @@ jobs:
       - name: mix compile
         run: MIX_ENV=prod mix compile
 
-      - name: Build ${{ matrix.runtime }} compute engine
-        run: |
-          if [[ "${{ matrix.runtime }}" == "rust" ]]; then
-            cargo build --release -p rust_runner
-            cargo build -p rust_runner
-          else
-            mvn -B -q -f test/apps/java_runner/pom.xml -DskipTests package
-          fi
-
       - name: Run mix bench — ${{ matrix.runtime }} / ${{ matrix.transport }}
+        # `mix bench` builds the runner with its manifest's `build.bench` first.
         env:
           FLEZHA_TRANSPORT: ${{ matrix.transport }}
         run: |
