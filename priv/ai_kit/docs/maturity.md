@@ -69,25 +69,25 @@ that has sat here for a long time is visible on every run.
 The gate reads only files git tracks: this repository's `README.md`, `CHANGELOG.md` and
 `docs/`, and the `README.md` of each SDK's repository under `sdk/`. It judges no page
 outside them. The Ruby and PHP SDKs carry no package README yet, so their tier is stated on
-their pages under `docs/sdk/` and nowhere else.
+their pages under `docs/internal/sdk/` and nowhere else.
 
 ## Experimental features
 
 | id | feature | status | marked | promise | surfaces | announced-by |
 |---|---|---|---|---|---|---|
-| <a id="quic"></a>quic | The QUIC transport, between a runner and a controller. The Unix domain socket transport is the default and is stable. | experimental | 2026-09-10 | Its settings and behaviour may change drastically, and it may be removed, without a compatibility break. Until it graduates, it is far less exercised than the socket transport. | `CHANGELOG.md`, `docs/configuration/environment_variables.md`, `docs/configuration/application_env.md`, `docs/configuration/runner_environment.md`, `docs/topics/deploying/connecting_a_runner.md`, `docs/topics/core/authorization.md`, `docs/topics/deploying/deploying_a_controller.md`, `docs/sdk/protocol_spec.md` | `lib/flezha/transport/server.ex` `listen(:quic)`, the controller's QUIC listener; `flz_transport/src/transport/config.rs` `get_transport_type`, the transport selection the Rust, Java, Node, Python, Ruby, PHP and Elixir runners and the `flz` CLI reach |
+| <a id="quic"></a>quic | The QUIC transport, between a runner and a controller. The Unix domain socket transport is the default and is stable. | experimental | 2026-09-10 | Its settings and behaviour may change drastically, and it may be removed, without a compatibility break. Until it graduates, it is far less exercised than the socket transport. | `CHANGELOG.md`, `docs/public/configuration/environment_variables.md`, `docs/public/configuration/application_env.md`, `docs/public/configuration/runner_environment.md`, `docs/public/topics/deploying/connecting_a_runner.md`, `docs/public/topics/core/authorization.md`, `docs/public/topics/deploying/deploying_a_controller.md`, `docs/internal/sdk/protocol_spec.md` | `lib/flezha/transport/server.ex` `listen(:quic)`, the controller's QUIC listener; `flz_transport/src/transport/config.rs` `get_transport_type`, the transport selection the Rust, Java, Node, Python, Ruby, PHP and Elixir runners and the `flz` CLI reach |
 
 ## SDK support tiers
 
 | sdk | tier | promise | surfaces |
 |---|---|---|---|
-| <a id="sdk-rust"></a>rust | 1 | Run by the maintainer in a live deployment. Passes the full conformance run in CI and is permanently supported. | `sdk/rust/README.md`, `docs/sdk/rust_relay_architecture.md` |
-| <a id="sdk-java"></a>java | 1 | Run by the maintainer in a live deployment. Passes the full conformance run in CI and is permanently supported. | `sdk/java/README.md`, `docs/sdk/java_sdk.md` |
-| <a id="sdk-elixir"></a>elixir | 1 | Run by the maintainer in a live deployment. Passes the full conformance run in CI and is permanently supported. | `sdk/elixir/README.md`, `docs/sdk/elixir_sdk.md` |
-| <a id="sdk-node"></a>node | 2 | Passes the full conformance run in CI exactly as tier 1 does, with every capability present, and is permanently supported. Not yet run by the maintainer in a live deployment. | `sdk/node/README.md`, `docs/sdk/node_sdk.md` |
-| <a id="sdk-python"></a>python | 2 | Passes the full conformance run in CI exactly as tier 1 does, with every capability present, and is permanently supported. Not yet run by the maintainer in a live deployment. | `sdk/python/README.md`, `docs/sdk/python_sdk.md` |
-| <a id="sdk-ruby"></a>ruby | 2 | Passes the full conformance run in CI exactly as tier 1 does, with every capability present, and is permanently supported. Not yet run by the maintainer in a live deployment. | `docs/sdk/ruby_sdk.md` |
-| <a id="sdk-php"></a>php | 2 | Passes the full conformance run in CI exactly as tier 1 does, with every capability present but `local_send`, which its single-threaded serving defers, and is permanently supported. Not yet run by the maintainer in a live deployment. | `docs/sdk/php_sdk.md` |
+| <a id="sdk-rust"></a>rust | 1 | Run by the maintainer in a live deployment. Passes the full conformance run in CI and is permanently supported. | `sdk/rust/README.md`, `docs/internal/sdk/rust_relay_architecture.md` |
+| <a id="sdk-java"></a>java | 1 | Run by the maintainer in a live deployment. Passes the full conformance run in CI and is permanently supported. | `sdk/java/README.md`, `docs/internal/sdk/java_sdk.md` |
+| <a id="sdk-elixir"></a>elixir | 1 | Run by the maintainer in a live deployment. Passes the full conformance run in CI and is permanently supported. | `sdk/elixir/README.md`, `docs/internal/sdk/elixir_sdk.md` |
+| <a id="sdk-node"></a>node | 2 | Passes the full conformance run in CI exactly as tier 1 does, with every capability present, and is permanently supported. Not yet run by the maintainer in a live deployment. | `sdk/node/README.md`, `docs/internal/sdk/node_sdk.md` |
+| <a id="sdk-python"></a>python | 2 | Passes the full conformance run in CI exactly as tier 1 does, with every capability present, and is permanently supported. Not yet run by the maintainer in a live deployment. | `sdk/python/README.md`, `docs/internal/sdk/python_sdk.md` |
+| <a id="sdk-ruby"></a>ruby | 2 | Passes the full conformance run in CI exactly as tier 1 does, with every capability present, and is permanently supported. Not yet run by the maintainer in a live deployment. | `docs/internal/sdk/ruby_sdk.md` |
+| <a id="sdk-php"></a>php | 2 | Passes the full conformance run in CI exactly as tier 1 does, with every capability present but `local_send`, which its single-threaded serving defers, and is permanently supported. Not yet run by the maintainer in a live deployment. | `docs/internal/sdk/php_sdk.md` |
 
 ## Changing this record
 

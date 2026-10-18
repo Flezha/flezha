@@ -15,7 +15,7 @@ defmodule FlezhaTest.System.SdkSmokeE2ETest do
   `test/fixtures/declarations/`.
 
   Regenerate the goldens with `FLEZHA_E2E_SNAPSHOT=update` under the reference
-  runtime (`rust`); any other runtime refuses. See `docs/sdk/conformance.md`.
+  runtime (`rust`); any other runtime refuses. See `docs/internal/sdk/conformance.md`.
   """
 
   use FlezhaTest.SystemCase, capability: :runner_lifecycle

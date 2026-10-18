@@ -44,7 +44,7 @@ The same building blocks carry many shapes of data processing:
 - **Plugins** connect relays to the outside world (files, HTTP, Kafka,
   Postgres, RabbitMQ and more) without changing their code.
 
-[What is Flezha](docs/getting_started/what_is_flezha.md) explains the pieces in
+[What is Flezha](docs/public/getting_started/what_is_flezha.md) explains the pieces in
 more detail.
 
 ## A look at the code
@@ -92,9 +92,9 @@ The same echo exists in every SDK, under `sdk/<language>/examples/echo`.
 ## Get started
 
 To start a project of your own, `flz template create <language> <dir>` writes a small,
-tested one in any of the seven languages ([Template commands](docs/topics/cli/template_commands.md)).
-[Up and running](docs/getting_started/up_and_running.md) builds the echo by hand, and the
-[tutorials](docs/tutorials/tutorials.md) then build two larger example applications step by step.
+tested one in any of the seven languages ([Template commands](docs/public/topics/cli/template_commands.md)).
+[Up and running](docs/public/getting_started/up_and_running.md) builds the echo by hand, and the
+[tutorials](docs/public/tutorials/tutorials.md) then build two larger example applications step by step.
 
 ## Working with AI
 
@@ -104,19 +104,19 @@ runtime for AI services.
 - **For AI assistants.** `flz mcp` is an MCP server an assistant adds with one
   command: it gives the assistant the working rules and the current SDK form for its
   language before any controller runs, and then the controller's operations with a
-  token of its own ([`docs/topics/core/mcp_server.md`](docs/topics/core/mcp_server.md)).
+  token of its own ([`docs/public/topics/core/mcp_server.md`](docs/public/topics/core/mcp_server.md)).
   A controller on another machine serves the same over HTTP
-  ([`docs/plugins/http_api.md`](docs/plugins/http_api.md)). Your relays are tools too:
+  ([`docs/public/plugins/http_api.md`](docs/public/plugins/http_api.md)). Your relays are tools too:
   each described entry channel is one an agent can call
-  ([`docs/topics/core/sending_and_calling.md`](docs/topics/core/sending_and_calling.md)).
+  ([`docs/public/topics/core/sending_and_calling.md`](docs/public/topics/core/sending_and_calling.md)).
   Every error carries a stable code and a hint for the next step
-  ([`docs/errors.md`](docs/errors.md)), every `flz` command can answer in JSON, the
+  ([`docs/public/errors.md`](docs/public/errors.md)), every `flz` command can answer in JSON, the
   documentation ships an `llms.txt` map to its pages in Markdown, and local mode tries a
   change in seconds.
 - **For AI services.** Each conversation runs as its own session with its own
   state; answers stream while they are written, a turn can be taken back, and a
   crash does not end the conversation. Your code calls the model SDK or agent
-  framework you already use. [The agentdesk tutorial](docs/tutorials/agentdesk/agentdesk.md)
+  framework you already use. [The agentdesk tutorial](docs/public/tutorials/agentdesk/agentdesk.md)
   builds one.
 
 <!-- TODO: AI plugins, for example a model-call plugin (one place for provider keys,
@@ -127,11 +127,11 @@ Decide which ones, then specify each in OpenSpec. -->
 
 | Where to go | What you find |
 |---|---|
-| [Getting started](docs/getting_started/what_is_flezha.md) | What Flezha is, its pieces, and what it is for |
-| [Up and running](docs/getting_started/up_and_running.md) | The echo built by hand: a controller, your own runner and a relay |
-| [Tutorials](docs/tutorials/tutorials.md) | Two example applications: a trading desk on a demo exchange, and AI agent sessions |
+| [Getting started](docs/public/getting_started/what_is_flezha.md) | What Flezha is, its pieces, and what it is for |
+| [Up and running](docs/public/getting_started/up_and_running.md) | The echo built by hand: a controller, your own runner and a relay |
+| [Tutorials](docs/public/tutorials/tutorials.md) | Two example applications: a trading desk on a demo exchange, and AI agent sessions |
 | [Documentation index](docs/README.md) | Every topic page, the configuration reference, the plugins and the SDKs |
-| [Errors](docs/errors.md) | Every error code and what to do about it |
+| [Errors](docs/public/errors.md) | Every error code and what to do about it |
 
 ## SDKs
 
@@ -150,10 +150,10 @@ Each one is also a git submodule of this repository, under `sdk/<language>`.
 ## Contributing
 
 Contributions are welcome, and each one needs a signed [CLA](CLA.md).
-[Contributing](docs/contributing/contributing.md) has the rules, and the pages
-next to it cover [setting up a checkout](docs/contributing/setting_up.md),
-[running the tests](docs/contributing/testing.md) and the
-[code standards](docs/contributing/code_standards.md). Report security issues
+[Contributing](docs/public/contributing/contributing.md) has the rules, and the pages
+next to it cover [setting up a checkout](docs/public/contributing/setting_up.md),
+[running the tests](docs/public/contributing/testing.md) and the
+[code standards](docs/public/contributing/code_standards.md). Report security issues
 privately, as [SECURITY.md](SECURITY.md) describes.
 
 ## License
@@ -170,7 +170,7 @@ files, publish those modifications. Your own files never inherit either
 license. [`REUSE.toml`](REUSE.toml) holds the per-path map, and CI checks it.
 
 Flezha is provided "AS IS", without warranty of any kind (MPL-2.0 §6-7,
-Apache-2.0 §7-8). Read [Durability](docs/topics/core/durability.md) before
+Apache-2.0 §7-8). Read [Durability](docs/public/topics/core/durability.md) before
 trusting it with data. The licenses grant no trademark rights: a fork, derived
 work or hosted service must not use the name "Flezha" or one confusingly similar.
 Third-party components in binary distributions are listed in

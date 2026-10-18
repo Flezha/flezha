@@ -307,7 +307,7 @@ defmodule Flezha.Plugin.ProviderBehaviour.Options do
 
   @doc """
   `module`'s public option rows as the Markdown table its page under
-  `docs/plugins/` carries. Rendered from the declaration, and gated against the
+  `docs/public/plugins/` carries. Rendered from the declaration, and gated against the
   page by the conformance test, so a documented key that is not a row, a row
   that is not documented and a default that differs each fail the suite.
   """

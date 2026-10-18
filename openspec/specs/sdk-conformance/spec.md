@@ -155,7 +155,7 @@ An untagged ExUnit module SHALL run under plain `mix test` — on every pull req
 
 ### Requirement: Rolling out a new SDK is enforced by the gate, not remembered
 
-The first pull request that adds a directory `test/apps/<sdk>_runner/` SHALL NOT pass `mix test` until, in that same pull request: the directory carries a manifest that accounts for every vocabulary capability and defers none of the required set; the manifest's non-deferred fixture sets equal the reference's; the manifest's `runtime` is a `workflow_dispatch` option of `nightly-e2e.yml`; and the manifest's `docs` page exists and points at the manifest. The suite SHALL then admit the SDK with no change to `test/helpers/`, `test/system/`, `test/test_helper.exs`, the formatter or the gate. The reverse direction SHALL hold with the same mechanism: a change that adds a vocabulary capability, a reference fixture, a required capability or a declaration snapshot SHALL fail the gate or the smoke tier for every existing SDK that neither carries the addition nor defers it by name in its manifest, so a lockstep omission is a red PR, not a backlog item. The documentation section "Adding an SDK to the conformance suite" SHALL list exactly the items the gate enforces, followed by the items it cannot (the SDK's own unit-test workflow, `docs/sdk/naming_conventions.md` compliance, the dev note and its `CLAUDE.md` index line), and SHALL be the path every gate failure names.
+The first pull request that adds a directory `test/apps/<sdk>_runner/` SHALL NOT pass `mix test` until, in that same pull request: the directory carries a manifest that accounts for every vocabulary capability and defers none of the required set; the manifest's non-deferred fixture sets equal the reference's; the manifest's `runtime` is a `workflow_dispatch` option of `nightly-e2e.yml`; and the manifest's `docs` page exists and points at the manifest. The suite SHALL then admit the SDK with no change to `test/helpers/`, `test/system/`, `test/test_helper.exs`, the formatter or the gate. The reverse direction SHALL hold with the same mechanism: a change that adds a vocabulary capability, a reference fixture, a required capability or a declaration snapshot SHALL fail the gate or the smoke tier for every existing SDK that neither carries the addition nor defers it by name in its manifest, so a lockstep omission is a red PR, not a backlog item. The documentation section "Adding an SDK to the conformance suite" SHALL list exactly the items the gate enforces, followed by the items it cannot (the SDK's own unit-test workflow, `docs/internal/sdk/naming_conventions.md` compliance, the dev note and its `CLAUDE.md` index line), and SHALL be the path every gate failure names.
 
 Where this requirement names a document, it SHALL name the path that document occupies. A specification naming a file the repository does not carry is read and acted on by whoever is following it, and cannot be caught by compilation, by the suite, or by the naming gates, which police retired identifiers rather than paths.
 
@@ -177,7 +177,7 @@ Where this requirement names a document, it SHALL name the path that document oc
 
 #### Scenario: The requirement's own documentation path resolves
 - **WHEN** the paths this requirement names are resolved against the repository
-- **THEN** each SHALL exist, and the naming-conventions page SHALL be the one `docs/sdk/conformance.md`'s "Adding an SDK to the conformance suite" section links
+- **THEN** each SHALL exist, and the naming-conventions page SHALL be the one `docs/internal/sdk/conformance.md`'s "Adding an SDK to the conformance suite" section links
 
 ### Requirement: The live factory set matches the manifest
 
@@ -281,7 +281,7 @@ A test app SHALL NOT read `FLEZHA_QUIC_ADDRESS`; the harness renders `FLEZHA_QUI
 
 ### Requirement: Every run produces a conformance report
 
-When `FLEZHA_E2E_RUNTIME` is set or any `:system` test ran, the suite's formatter SHALL print, at suite end, the runtime and a table of every vocabulary capability with its outcome — `pass`, `fail`, `deferred`, `transport-skipped` or `untested` — and SHALL write the same table as JSON to the path in `CONFORMANCE_OUT` when set. The nightly SHALL upload that file per runtime. `docs/architecture/runner.md` SHALL NOT carry a hand-maintained per-SDK capability table; it SHALL point at the manifests and the report.
+When `FLEZHA_E2E_RUNTIME` is set or any `:system` test ran, the suite's formatter SHALL print, at suite end, the runtime and a table of every vocabulary capability with its outcome — `pass`, `fail`, `deferred`, `transport-skipped` or `untested` — and SHALL write the same table as JSON to the path in `CONFORMANCE_OUT` when set. The nightly SHALL upload that file per runtime. `docs/public/architecture/runner.md` SHALL NOT carry a hand-maintained per-SDK capability table; it SHALL point at the manifests and the report.
 
 #### Scenario: The report answers "is this SDK working"
 - **WHEN** `FLEZHA_E2E_RUNTIME=java CONFORMANCE_OUT=java.json mix test --include system` completes
@@ -615,11 +615,11 @@ row per tier, and every other reader SHALL derive from that table rather than
 restate it. A row SHALL carry the tier's tag, where it runs (`:default`,
 `:pull_request`, `:nightly`, `:sdk_workflow` or `:manual`), the workflow that
 runs it, the services it needs, the transports it covers, and the anchor in
-`docs/sdk/conformance.md` that documents it. `test/test_helper.exs` SHALL derive
+`docs/internal/sdk/conformance.md` that documents it. `test/test_helper.exs` SHALL derive
 its `exclude:` list from the table and SHALL NOT hold a hand-written list.
 
 A gate SHALL fail when a tier tag named in `test/`, `.github/`, `scripts/` or
-`docs/sdk/conformance.md` is not a declared row; when a declared row names no
+`docs/internal/sdk/conformance.md` is not a declared row; when a declared row names no
 workflow and is not `:manual` with a written reason; or when a row's
 documentation anchor does not resolve. A tag that selects nothing anywhere SHALL
 be declared as a tier or removed.
@@ -787,7 +787,7 @@ The refusal table SHALL carry one row per short-form refusal with the step `shor
 #### Scenario: A short-form row's name is checked against the contract, not the core
 
 - **WHEN** the refusal table carries a row named `topology.short_form_with_topology` with `needs` `shorthand`
-- **THEN** `topology_check_test.exs` passes without an issue variant of that name, and fails if `docs/sdk/authoring_contract.md` §5 does not list the name
+- **THEN** `topology_check_test.exs` passes without an issue variant of that name, and fails if `docs/internal/sdk/authoring_contract.md` §5 does not list the name
 
 ### Requirement: A keyed steps tasklet is a fixture every manifest carries
 

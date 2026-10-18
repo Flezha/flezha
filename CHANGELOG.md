@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Changed: the docs live in `docs/public/` and `docs/internal/` (breaking for links)
+
+Every page of the published site moves to `docs/public/` under its old sub-path, and every
+other page to `docs/internal/` (`docs/internals/state_persistence.md` becomes
+`docs/internal/state_persistence.md`). The published HTML pages keep their names.
+
+- **BREAKING:** every `github.com/flezha/flezha/blob/main/docs/...` link changes path; no
+  redirect or copy of an old path is kept.
+- The paths `flz` help, the QUIC notice and the durability warning print follow the move.
+
 ### Removed: code only tests used, and settings nothing reads (breaking)
 
 Functions no production path called leave the public surface; the ones tests need now live in

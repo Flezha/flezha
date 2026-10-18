@@ -785,7 +785,7 @@ Per-Cell durable state SHALL live at `state/{relay_class}/{tasklet_id}/{cell_key
 - **THEN** the filename MUST name the Tasklet level
 
 ### Requirement: The architecture documentation states the model as a diagram
-`docs/architecture/overview.md` SHALL carry a diagram of the containment model — Controller and Runner above, then Relay, then Tasklet, then Cell, with Channels as the edges between Tasklets — and SHALL show the three cell modes and what distinguishes them.
+`docs/public/architecture/overview.md` SHALL carry a diagram of the containment model — Controller and Runner above, then Relay, then Tasklet, then Cell, with Channels as the edges between Tasklets — and SHALL show the three cell modes and what distinguishes them.
 
 #### Scenario: The diagram shows containment
 - **WHEN** a reader opens the architecture documentation
@@ -797,7 +797,7 @@ Per-Cell durable state SHALL live at `state/{relay_class}/{tasklet_id}/{cell_key
 
 ### Requirement: Entry-edge mailbox-full handling and the shared wire reader
 
-The SDK's wire-reader thread (the per-stream loop in `command/streams_connect.rs`) services every Relay sharing one physical connection. Under the default entry-channel policy (`Block`), a push into a full consumer mailbox SHALL park the wire-reader thread until the consumer drains an item; the frame SHALL NOT be discarded. While parked, the reader SHALL NOT run the saturated Relay's tasklets itself, and sibling Relays on the same connection SHALL NOT receive new frames until the parked push completes. The SDK SHALL document this co-tenancy cost in `docs/sdk/rust_relay_architecture.md` and `docs/sdk/protocol_spec.md`.
+The SDK's wire-reader thread (the per-stream loop in `command/streams_connect.rs`) services every Relay sharing one physical connection. Under the default entry-channel policy (`Block`), a push into a full consumer mailbox SHALL park the wire-reader thread until the consumer drains an item; the frame SHALL NOT be discarded. While parked, the reader SHALL NOT run the saturated Relay's tasklets itself, and sibling Relays on the same connection SHALL NOT receive new frames until the parked push completes. The SDK SHALL document this co-tenancy cost in `docs/internal/sdk/rust_relay_architecture.md` and `docs/internal/sdk/protocol_spec.md`.
 
 Under a declared drop policy (`.on_full(OverflowPolicy::DropNewest)` or `DropOldest`) the wire-reader thread SHALL NOT block on a full mailbox: the frame's typed payload SHALL be discarded (or the oldest item evicted) per the policy, and the loop SHALL immediately attempt to read the next frame from the wire.
 

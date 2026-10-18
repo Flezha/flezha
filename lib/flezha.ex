@@ -8,8 +8,8 @@ defmodule Flezha do
   in Rust, Java, and others. It supports clustered relays with hot-swap
   migration and a single auto-restore-on-boot mechanism — ProcessHub's
   durable registry persists relay specs, and per-Cell WAL/snapshot
-  files persist progress (see `docs/topics/core/running_and_testing.md` and
-  `docs/internals/state_persistence.md`).
+  files persist progress (see `docs/public/topics/core/running_and_testing.md` and
+  `docs/internal/state_persistence.md`).
   """
 
   defdelegate start_relay(namespace, relay), to: RelayManager

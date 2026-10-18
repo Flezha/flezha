@@ -482,5 +482,5 @@ sub-key, not the pair, or the guard above refuses the first record.
 - [`websocket_subscription`](../../plugins/websocket_subscription.md),
   [`http_poll`](../../plugins/http_poll.md),
   [`relay_forward`](../../plugins/relay_forward.md)
-- [Errors](../../errors.md), [Glossary](https://github.com/flezha/flezha/blob/main/docs/glossary.md): partition, key group, group
+- [Errors](../../errors.md), [Glossary](https://github.com/flezha/flezha/blob/main/docs/internal/glossary.md): partition, key group, group
 - Tutorial: [watch the trades](tutorials/watch_the_trades.html)

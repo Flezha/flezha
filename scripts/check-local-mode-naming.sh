@@ -62,7 +62,7 @@ SURFACE = (
     "sdk/php/src/LocalRelay.php",
     "sdk/php/src/LocalOutput.php",
     "sdk/php/examples/E07_LocalMode.php",
-    "docs/topics/core/running_and_testing.md",
+    "docs/public/topics/core/running_and_testing.md",
 )
 
 TESTING = r"[Tt]est|TEST|[Tt]esting|TESTING|[Hh]arness|HARNESS|[Mm]ock|MOCK|[Ff]ake|FAKE|[Ss]tub|STUB|[Dd]ummy|DUMMY|[Ss]ample|SAMPLE"

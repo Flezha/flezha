@@ -28,7 +28,7 @@ defmodule FlezhaTest.SdkConformance.GateTest do
   @apps_root "test/apps"
   @system_dir "test/system"
   @nightly ".github/workflows/nightly-e2e.yml"
-  @docs_section "docs/sdk/conformance.md § Adding an SDK to the conformance suite"
+  @docs_section "docs/internal/sdk/conformance.md § Adding an SDK to the conformance suite"
 
   # The environment contract every SDK's connect path reads, pinned as data the
   # way declaration keys are. `flz_transport` pins its own constants against

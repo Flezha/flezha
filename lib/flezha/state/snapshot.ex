@@ -2,7 +2,7 @@ defmodule Flezha.State.Snapshot do
   @moduledoc """
   Snapshot file lifecycle: write `.tmp`, fsync, atomically rename, then truncate
   the WAL up to the snapshot's seq. The on-disk format is in
-  `docs/internals/state_persistence.md`.
+  `docs/internal/state_persistence.md`.
 
   The sequence has three failure windows, and no boot-time reconciliation step
   is required for any of them:

@@ -9,7 +9,7 @@
 # assert no SDK and no test app honours a retired name.
 #
 # Adding a variable: teach `flz_transport`, add it here, and account for it in
-# every SDK — one change, every SDK (docs/architecture/runner.md).
+# every SDK — one change, every SDK (docs/public/architecture/runner.md).
 #
 # Columns are whitespace-separated: `kind`, then the value(s) for that kind.
 

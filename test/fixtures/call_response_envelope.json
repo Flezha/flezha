@@ -5,7 +5,7 @@
     "string; its `call` is the call id, which no SDK's Response exposes. `expect` names the decoded",
     "fields: `request` and `value` are the bytes in base64 (an SDK decodes them with the call end's",
     "codecs; these cases are read raw), `ok` is the result's kind, and an error case names its code,",
-    "class and message. The error object is the error model's own document (`docs/errors.md`)."
+    "class and message. The error object is the error model's own document (`docs/public/errors.md`)."
   ],
   "cases": [
     {

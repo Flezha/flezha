@@ -7,7 +7,7 @@ defmodule Flezha.Plugin.Provider.File do
   What both directions share lives here: the preparation that resolves a
   plugin's `path` inside `FLEZHA_FILE_PLUGIN_ROOT`, a folder or an `s3://`
   bucket prefix, whose rules are its storage's (`File.Storage`). The contract,
-  the options and the limits are `docs/plugins/file.md`.
+  the options and the limits are `docs/public/plugins/file.md`.
   """
 
   alias Flezha.Plugin.Provider.File.Storage
@@ -38,7 +38,7 @@ defmodule Flezha.Plugin.Provider.File do
     re-delivers, never skips.
 
     Required: `path` and an entry channel, written `channel` or `channel_in`;
-    the rest: `docs/plugins/file.md`.
+    the rest: `docs/public/plugins/file.md`.
     """
 
     alias Flezha.Plugin.Extension.Ctx
@@ -205,7 +205,7 @@ defmodule Flezha.Plugin.Provider.File do
     written once. Under an S3 root `path` is a key prefix, `rename` is the only
     layout, and the open roll is held in memory.
 
-    Required: `path`; the rest: `docs/plugins/file.md`.
+    Required: `path`; the rest: `docs/public/plugins/file.md`.
     """
 
     alias Flezha.Plugin.Extension.Ctx

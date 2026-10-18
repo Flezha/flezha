@@ -402,7 +402,7 @@ envelope is read until its response ends. A stream past that SHALL be answered 5
 
 ### Requirement: The plugin's option table SHALL be documented in the Flezha repository
 
-`docs/plugins/http_server.md` in the Flezha repository SHALL be the plugin's user reference,
+`docs/public/plugins/http_server.md` in the Flezha repository SHALL be the plugin's user reference,
 and SHALL carry the provider's option table between the `provider-options` markers exactly as
 `Flezha.Plugin.ProviderBehaviour.Options.render_options_table/1` renders it from the
 provider's declaration. A test in the plugin repository SHALL fail when the two differ.

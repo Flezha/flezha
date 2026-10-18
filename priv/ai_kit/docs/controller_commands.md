@@ -399,7 +399,7 @@ EXIT CODES:
         (reset.confirmation_required), conflicting flags, or a path it refuses
         to clear, such as the app_data root itself (reset.path_refused)
     6   Refused: the Controller is up (reset.controller_running)
-    Every code is listed in docs/errors.md.
+    Every code is listed in docs/public/errors.md.
 
 EXAMPLES:
     flz reset                          # plan only, exit 2

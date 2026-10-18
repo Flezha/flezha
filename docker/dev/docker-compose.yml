@@ -12,7 +12,7 @@ services:
       context: ../../
       dockerfile: docker/dev/Dockerfile.toolchain
     container_name: flezha_controller_dev
-    # Graceful shutdown — see docs/topics/deploying/deploying_a_controller.md.
+    # Graceful shutdown — see docs/public/topics/deploying/deploying_a_controller.md.
     stop_signal: SIGTERM
     stop_grace_period: 75s
     environment:

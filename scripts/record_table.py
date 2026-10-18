@@ -1,7 +1,8 @@
 """Reading a published record: a markdown table found by its header row.
 
 The publication-readiness and feature-maturity gates each judge a table in a
-document under `docs/publishing/`. A table is found by its header rather than
+publishing document (`docs/internal/publishing/readiness.md`,
+`docs/public/publishing/maturity.md`). A table is found by its header rather than
 by position, because a record may carry more than one table and a gate that
 took "the first table" would silently read the wrong one the day someone
 reorders the document.

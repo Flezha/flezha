@@ -45,7 +45,7 @@ defmodule Flezha.Mcp.KnowledgeTest do
 
   test "a page is served by the name the map links, with or without .md" do
     assert {:text, page} = Knowledge.call("Flezha.docs", ["running_and_testing.md"])
-    assert page == File.read!("docs/topics/core/running_and_testing.md")
+    assert page == File.read!("docs/public/topics/core/running_and_testing.md")
     assert {:text, ^page} = Knowledge.call("Flezha.docs", ["running_and_testing"])
   end
 

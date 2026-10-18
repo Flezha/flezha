@@ -280,12 +280,12 @@ repository SHALL use it in another sense.
 
 #### Scenario: The glossary and the CLI use the vocabulary
 
-- **WHEN** `docs/glossary.md` and every `flz relay` help screen are read
+- **WHEN** `docs/internal/glossary.md` and every `flz relay` help screen are read
 - **THEN** each SHALL describe a relay by its run and its durability, and neither SHALL name a kind
 
 #### Scenario: A newcomer reads what a relay is
 
-- **WHEN** `README.md`, `docs/getting_started/what_is_flezha.md` and the glossary's Relay entry are read
+- **WHEN** `README.md`, `docs/public/getting_started/what_is_flezha.md` and the glossary's Relay entry are read
 - **THEN** each SHALL introduce a relay as a processing unit that works like a worker, keeping its own state, before using the word on its own
 
 #### Scenario: The word has one sense

@@ -5,7 +5,7 @@ defmodule Flezha.Api.ConsumerSurfaceTest do
   compiler sees both sides and a rename here compiles clean in both trees,
   failing only on a user's machine.
 
-  `docs/api/consumers/flezha_ui.txt` records what the console calls, and this
+  `docs/internal/api/consumers/flezha_ui.txt` records what the console calls, and this
   test resolves every line of it against this tree's real exports. The break is
   caused here, so it is reported here, in the run that causes it.
 
@@ -20,8 +20,8 @@ defmodule Flezha.Api.ConsumerSurfaceTest do
 
   alias FlezhaTest.Helper.RpcSurface
 
-  @manifest "docs/api/consumers/flezha_ui.txt"
-  @published "docs/api/consumers/published.txt"
+  @manifest "docs/internal/api/consumers/flezha_ui.txt"
+  @published "docs/internal/api/consumers/published.txt"
   @generator "scripts/consumer_surface.py"
 
   # The only two published names callable before a caller holds a context,

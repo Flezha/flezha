@@ -6,10 +6,10 @@ request.
 
 The rules and the practical guides are in the documentation:
 
-- [Contributing](docs/contributing/contributing.md): the rules a contribution follows
-- [Setting up a checkout](docs/contributing/setting_up.md)
-- [Running the tests](docs/contributing/testing.md)
-- [Code standards](docs/contributing/code_standards.md)
-- [Releasing](docs/contributing/releasing.md)
+- [Contributing](docs/public/contributing/contributing.md): the rules a contribution follows
+- [Setting up a checkout](docs/public/contributing/setting_up.md)
+- [Running the tests](docs/public/contributing/testing.md)
+- [Code standards](docs/public/contributing/code_standards.md)
+- [Releasing](docs/public/contributing/releasing.md)
 
 Do not open a public issue for a security problem: see [SECURITY.md](SECURITY.md).

@@ -266,8 +266,8 @@ rule rather than a copy of it, so data a caller may not read never leaves the co
 
 ### Requirement: Every call the console makes SHALL be on the published surface
 
-Every entry of `docs/api/consumers/flezha_ui.txt` SHALL be a function listed in
-`docs/api/consumers/published.txt` or one of the two context-free reads, and the consumer-surface
+Every entry of `docs/internal/api/consumers/flezha_ui.txt` SHALL be a function listed in
+`docs/internal/api/consumers/published.txt` or one of the two context-free reads, and the consumer-surface
 test SHALL assert it; its record of console calls known not to resolve SHALL be empty.
 
 #### Scenario: The record is checked against the surface

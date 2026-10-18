@@ -659,13 +659,13 @@ Rules every SDK shares:
 In Java the tasklet is named after the `id`, so a short form needs no
 `@Tasklet.Spec`; it carries one only for settings, and then its `name` must
 equal the `id` or registration fails with `ShortFormNameMismatch`. The SDK
-reference pages have each SDK's rules: [Java](https://github.com/flezha/flezha/blob/main/docs/sdk/java_sdk.md#the-short-form),
-[Rust](https://github.com/flezha/flezha/blob/main/docs/sdk/rust_relay_architecture.md#the-short-form),
-[Node](https://github.com/flezha/flezha/blob/main/docs/sdk/node_sdk.md#the-short-form),
-[Python](https://github.com/flezha/flezha/blob/main/docs/sdk/python_sdk.md#the-short-form),
-[Ruby](https://github.com/flezha/flezha/blob/main/docs/sdk/ruby_sdk.md#the-short-form),
-[PHP](https://github.com/flezha/flezha/blob/main/docs/sdk/php_sdk.md#the-short-form) and
-[Elixir](https://github.com/flezha/flezha/blob/main/docs/sdk/elixir_sdk.md#the-short-form).
+reference pages have each SDK's rules: [Java](https://github.com/flezha/flezha/blob/main/docs/internal/sdk/java_sdk.md#the-short-form),
+[Rust](https://github.com/flezha/flezha/blob/main/docs/internal/sdk/rust_relay_architecture.md#the-short-form),
+[Node](https://github.com/flezha/flezha/blob/main/docs/internal/sdk/node_sdk.md#the-short-form),
+[Python](https://github.com/flezha/flezha/blob/main/docs/internal/sdk/python_sdk.md#the-short-form),
+[Ruby](https://github.com/flezha/flezha/blob/main/docs/internal/sdk/ruby_sdk.md#the-short-form),
+[PHP](https://github.com/flezha/flezha/blob/main/docs/internal/sdk/php_sdk.md#the-short-form) and
+[Elixir](https://github.com/flezha/flezha/blob/main/docs/internal/sdk/elixir_sdk.md#the-short-form).
 
 ## Concurrency per language
 
@@ -795,6 +795,6 @@ runs, the controller's own BEAM included.
 - [`streams.md`](streams.md) and [`workflows.md`](workflows.md): the two ways a relay runs.
 - [`connecting_a_runner.md`](../deploying/connecting_a_runner.md): reaching the controller, running a runner as a service.
 - [`running_and_testing.md`](running_and_testing.md): starting relays from a factory.
-- [`../../glossary.md`](https://github.com/flezha/flezha/blob/main/docs/glossary.md): every term in one place.
-- [`../../sdk/authoring_contract.md`](https://github.com/flezha/flezha/blob/main/docs/sdk/authoring_contract.md): what every SDK guarantees.
+- [`../../../internal/glossary.md`](https://github.com/flezha/flezha/blob/main/docs/internal/glossary.md): every term in one place.
+- [`../../../internal/sdk/authoring_contract.md`](https://github.com/flezha/flezha/blob/main/docs/internal/sdk/authoring_contract.md): what every SDK guarantees.
 - Up and running: [Write the echo runner](../../getting_started/up_and_running.md#write-the-echo-runner) builds the echo.

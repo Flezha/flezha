@@ -36,7 +36,7 @@ ERRORS:
     `hint:` line when there is a next command, or under --json as one
     {"error": {"code", "class", "message", "details", "hint"}} line. The exit
     code follows the class: 1 internal, 2 invalid, 3 unreachable, 4 denied,
-    5 not_found, 6 conflict, 7 unavailable. Every code is in docs/errors.md.
+    5 not_found, 6 conflict, 7 unavailable. Every code is in docs/public/errors.md.
 
 Use 'flz <COMMAND> help' for more information on a specific command.
 

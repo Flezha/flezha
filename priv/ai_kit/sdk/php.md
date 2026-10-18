@@ -76,7 +76,7 @@ entry then.
 
 [`docs/guides/runner_deployment.md`](../../../../docs/guides/runner_deployment.md)
 walks through what each of the three parts is and why the split is the way it
-is. [`docs/sdk/php_sdk.md`](../../../../docs/sdk/php_sdk.md) covers the rest of the
+is. [`docs/internal/sdk/php_sdk.md`](../../../../docs/internal/sdk/php_sdk.md) covers the rest of the
 SDK, including the threaded executor.
 ````
 
@@ -144,7 +144,7 @@ $runner = Flezha::createRunner($argv[1] ?? 'default')
 // PHP has no threads: the message is processed once `awaitTermination()` below
 // starts serving.
 //
-// docs/topics/core/sending_and_calling.md covers sending. An enforced
+// docs/public/topics/core/sending_and_calling.md covers sending. An enforced
 // controller refuses all of it until `flz role bind runner@default app default`.
 
 $runner->awaitTermination();

@@ -49,7 +49,7 @@ defmodule Flezha.Transport.Server do
 
   @quic_experimental "[Transport.Server] the QUIC transport is experimental: its settings and " <>
                        "behaviour may change drastically or it may be removed without a " <>
-                       "compatibility break. See docs/publishing/maturity.md#quic"
+                       "compatibility break. See docs/public/publishing/maturity.md#quic"
 
   def start_link(opts) do
     transport = Keyword.fetch!(opts, :transport)

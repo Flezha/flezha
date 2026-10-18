@@ -312,7 +312,7 @@ defmodule FlezhaTest.System.TopologyRefusalE2ETest do
 
     assert status == 0 or File.exists?(path),
            "#{runtime}'s test app must answer --conformance-report; " <>
-             "see docs/sdk/conformance.md § Adding an SDK"
+             "see docs/internal/sdk/conformance.md § Adding an SDK"
 
     path |> File.read!() |> Jason.decode!()
   end

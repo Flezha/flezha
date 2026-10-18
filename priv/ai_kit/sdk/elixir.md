@@ -14,7 +14,7 @@ way your own project would.
 It is a runner of its own, a separate BEAM node that connects to a controller
 over its socket. Code running inside the controller's own node is the other way
 to run the SDK, described in
-[`docs/sdk/elixir_sdk.md`](../../../../docs/sdk/elixir_sdk.md).
+[`docs/internal/sdk/elixir_sdk.md`](../../../../docs/internal/sdk/elixir_sdk.md).
 
 Three files, one for each part the guides describe:
 
@@ -123,7 +123,7 @@ defmodule Echo.Application do
     #
     # {:ok, _} = Flezha.SDK.send(runner, "my_echo", "hello world", "in", msg_id: "hello-1")
     #
-    # docs/topics/core/sending_and_calling.md covers sending. An
+    # docs/public/topics/core/sending_and_calling.md covers sending. An
     # enforced controller refuses all of it until
     # `flz role bind runner@default app default`.
 

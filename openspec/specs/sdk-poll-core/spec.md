@@ -689,7 +689,7 @@ The reason is one mechanism: after a proper sleep the only duty a per-instance t
 have is to hold a stage number, and a mechanism whose sole purpose is to hold one number beside
 the mechanism every flow relay runs on is a parallel implementation. `sdk/rust/benches/steps_scaling.rs`
 stays as the regression gate: after this change ten thousand awake instances SHALL NOT cost more
-resident memory than the envelope recorded in `docs/resilience/steps_relay.md`, and a
+resident memory than the envelope recorded in `docs/internal/resilience/steps_relay.md`, and a
 population waiting in any state SHALL consume no measurable CPU, because no wait polls.
 
 #### Scenario: A waiting population costs no CPU

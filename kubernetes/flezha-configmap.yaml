@@ -12,7 +12,7 @@ metadata:
     app.kubernetes.io/component: controller
 data:
   # A prod release refuses to boot with this unset. `none` is local-only;
-  # see docs/topics/deploying/deploying_a_controller.md before changing it.
+  # see docs/public/topics/deploying/deploying_a_controller.md before changing it.
   FLEZHA_DURABILITY_BACKEND: "none"
   FLEZHA_TRANSPORT: "uds"
   FLEZHA_CLUSTER_DISCOVERY: "k8s_pod_discovery"
@@ -67,5 +67,5 @@ data:
   # override seam: no rebuild and no mounted file, and it wins over the
   # release's own vm.args. A flag the VM does not accept refuses the boot with
   # the reason on stderr, so a typo here crash-loops the pod rather than being
-  # ignored. Unset by default. See docs/configuration/vm_arguments.md.
+  # ignored. Unset by default. See docs/public/configuration/vm_arguments.md.
   # ERL_FLAGS: "+S 4:4"

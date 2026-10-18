@@ -105,9 +105,9 @@ defmodule Flezha.ErrorCatalogueTest do
     end
   end
 
-  test "docs/errors.md is the fresh generation of the catalogue" do
-    assert File.read!("docs/errors.md") == Mix.Tasks.Flezha.ErrorsDoc.render(),
-           "docs/errors.md is stale: run `mix flezha.errors_doc`"
+  test "docs/public/errors.md is the fresh generation of the catalogue" do
+    assert File.read!("docs/public/errors.md") == Mix.Tasks.Flezha.ErrorsDoc.render(),
+           "docs/public/errors.md is stale: run `mix flezha.errors_doc`"
   end
 
   defp problems(code, entry, classes) do

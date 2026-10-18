@@ -1,0 +1,146 @@
+# The controller's published consumer surface.
+#
+# Every function here takes a Flezha.Service.CallerContext as its LAST argument,
+# authorizes through it before any effect, and answers data rather than text
+# formatted for a terminal. A consumer of this controller calls these and
+# nothing else; docs/internal/api/consumers/flezha_ui.txt records what one consumer
+# actually calls, and every call recorded there is on this list.
+#
+# Hand-maintained, and test/flezha/api/consumer_surface_test.exs holds it to
+# three things: every line resolves against this tree, every line is on `Flezha`
+# or a `Flezha.Service.*` module, and a name is retired only together with the
+# manifests that spell it.
+#
+# TWO NAMES ARE CALLABLE WITHOUT A CONTEXT, AND ONLY TWO. A consumer verifies a
+# token and reads the enforcement posture BEFORE it holds a context, because
+# their answers are what a context is built from; they cannot be authorized by
+# the thing they bootstrap. Both are read-only. Nothing else may join them.
+#
+#   Flezha.AuthZ.TokenStore.verify/1
+#   Flezha.AuthZ.enforcement_posture/0
+#
+# One public function on the modules below is NOT on this surface, because it
+# takes no context and no consumer calls it:
+# `Flezha.Service.Controller.local_recovery_snapshot/1` is the remote half of
+# one fan-out.
+Flezha.Service.AuditLog.list_files/1
+Flezha.Service.AuditLog.read/2
+Flezha.Service.AuditLog.rotate/1
+Flezha.Service.AuditLog.stats/1
+Flezha.Service.AuditLog.tail/2
+Flezha.Service.AuditLog.unsubscribe/2
+Flezha.Service.Controller.boot_await/2
+Flezha.Service.Controller.boot_status/1
+Flezha.Service.Controller.cluster_status/2
+Flezha.Service.Controller.durability_backend/1
+Flezha.Service.Controller.durability_breaches/1
+Flezha.Service.Controller.durability_posture/1
+Flezha.Service.Controller.durability_status/1
+Flezha.Service.Controller.hub_id/2
+Flezha.Service.Controller.liveness_counters/1
+Flezha.Service.Controller.mem_top/1
+Flezha.Service.Controller.recovery_per_node/3
+Flezha.Service.Controller.recovery_state/2
+Flezha.Service.Controller.shutdown_status/1
+Flezha.Service.Controller.status/1
+Flezha.Service.Controller.stop/2
+Flezha.Service.Dlq.drop/2
+Flezha.Service.Dlq.get/2
+Flezha.Service.Dlq.list/2
+Flezha.Service.Dlq.replay/2
+Flezha.Service.Dlq.stats/1
+Flezha.Service.Dlq.tasklets/2
+Flezha.Service.Fleet.drop_runner/3
+Flezha.Service.Fleet.dropped_runners/2
+Flezha.Service.Fleet.factories/2
+Flezha.Service.Fleet.hub_nodes/2
+Flezha.Service.Fleet.installed_plugins/1
+Flezha.Service.Fleet.provider/2
+Flezha.Service.Fleet.providers/1
+Flezha.Service.Fleet.readmit_runner/3
+Flezha.Service.Fleet.runner_caller_context/2
+Flezha.Service.Fleet.runners/2
+Flezha.Service.Fleet.runners_for_factory/3
+Flezha.Service.Fleet.runners_on_this_node/2
+Flezha.Service.Namespace.bind_role/4
+Flezha.Service.Namespace.bootstrap/2
+Flezha.Service.Namespace.create/3
+Flezha.Service.Namespace.delete/2
+Flezha.Service.Namespace.get/2
+Flezha.Service.Namespace.issue_token/5
+Flezha.Service.Namespace.list/1
+Flezha.Service.Namespace.list_roles/1
+Flezha.Service.Namespace.quota/3
+Flezha.Service.Namespace.quota_kinds/1
+Flezha.Service.Namespace.revoke_token/2
+Flezha.Service.Namespace.roles/2
+Flezha.Service.Namespace.set_quotas/3
+Flezha.Service.Namespace.tokens/1
+Flezha.Service.Namespace.unbind_role/3
+Flezha.Service.Namespace.whoami/1
+Flezha.Service.Observability.disable_source/2
+Flezha.Service.Observability.enable_source/2
+Flezha.Service.Observability.list_sinks/1
+Flezha.Service.Observability.list_sources/1
+Flezha.Service.Observability.query/2
+Flezha.Service.Observability.subscribe/2
+Flezha.Service.Observability.tail/2
+Flezha.Service.Observability.unsubscribe/2
+Flezha.Service.Relay.activity/4
+Flezha.Service.Relay.api/3
+Flezha.Service.Relay.call/6
+Flezha.Service.Relay.call_channel/6
+Flezha.Service.Relay.cell_state/4
+Flezha.Service.Relay.diagnose/3
+Flezha.Service.Relay.graph/3
+Flezha.Service.Relay.info/2
+Flezha.Service.Relay.list/2
+Flezha.Service.Relay.list_namespaces/1
+Flezha.Service.Relay.list_relays/2
+Flezha.Service.Relay.listen/5
+Flezha.Service.Relay.relay_plugins/2
+Flezha.Service.Relay.relay_rows/2
+Flezha.Service.Relay.overwatch_state/3
+Flezha.Service.Relay.partition_coverage/2
+Flezha.Service.Relay.partition_groups/2
+Flezha.Service.Relay.registry/2
+Flezha.Service.Relay.replay/4
+Flezha.Service.Relay.run_known?/2
+Flezha.Service.Relay.send/6
+Flezha.Service.Relay.start/3
+Flezha.Service.Relay.stop/3
+Flezha.Service.PluginManager.bind/3
+Flezha.Service.PluginManager.disable/3
+Flezha.Service.PluginManager.enable/3
+Flezha.Service.PluginManager.enabled/2
+Flezha.Service.PluginManager.list/1
+Flezha.Service.PluginManager.unbind/3
+Flezha.Service.PluginManager.update/3
+Flezha.Service.Schedule.add/2
+Flezha.Service.Schedule.assert_entry/2
+Flezha.Service.Schedule.list/1
+Flezha.Service.Schedule.next_fire/4
+Flezha.Service.Schedule.parse_cron/2
+Flezha.Service.Schedule.remove/2
+Flezha.Service.Schedule.retract/2
+Flezha.Service.Schedule.run/2
+Flezha.Service.Schedule.statuses/1
+Flezha.Service.Steps.cells/2
+Flezha.Service.Steps.committed_iterations/2
+Flezha.Service.Steps.completed_retention_hours/3
+Flezha.Service.Steps.completion/2
+Flezha.Service.Steps.consumed_offset/2
+Flezha.Service.Steps.delete/2
+Flezha.Service.Steps.inbox/2
+Flezha.Service.Steps.journal/2
+Flezha.Service.Steps.last_offset/2
+Flezha.Service.Steps.relay_classes/1
+Flezha.Service.Steps.outbox/2
+Flezha.Service.Steps.rescale/5
+Flezha.Service.Steps.rewind/4
+Flezha.Service.Steps.rotate/2
+Flezha.Service.Steps.set_retention/3
+Flezha.Service.Steps.state_get/2
+Flezha.Service.Steps.state_metrics/1
+Flezha.Service.Steps.time_travel/3
+Flezha.Service.Steps.undelivered/2

@@ -39,7 +39,7 @@ sys.path.insert(0, "scripts")
 import naming_gate
 import record_table
 
-RECORD = "docs/publishing/readiness.md"
+RECORD = "docs/internal/publishing/readiness.md"
 
 COLUMNS = ("id", "class", "door", "rule", "check", "owner", "settled-by")
 

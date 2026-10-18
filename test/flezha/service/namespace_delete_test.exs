@@ -54,7 +54,7 @@ defmodule Flezha.Service.NamespaceDeleteTest do
 
     assert error.details["relays"] == ["candles"]
 
-    # The text `docs/topics/core/namespaces.md` prints under "Delete a namespace".
+    # The text `docs/public/topics/core/namespaces.md` prints under "Delete a namespace".
     assert Flezha.Error.render(error, :text) ==
              "error: namespace 'trading' still has relays [candles] and runners " <>
                "[trading-runner-1] attached; stop them before deleting it (namespace.in_use)\n" <>

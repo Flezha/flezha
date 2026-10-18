@@ -196,7 +196,7 @@ This resolution SHALL live in one shared helper — `cli/src/args.rs`, `app_data
 - `1` (internal) — a filesystem error, before any action (e.g. `app_data/` exists but is unreadable, `reset.path_unreadable`) or during the walk after some roots were cleared (`reset.partial`, the cleared roots and the offending path in details).
 - `6` (conflict) — the Controller is up (`reset.controller_running`).
 
-The codes SHALL be documented in `flz reset --help` output, pointing at `docs/errors.md`.
+The codes SHALL be documented in `flz reset --help` output, pointing at `docs/public/errors.md`.
 
 #### Scenario: Partial failure during walk
 

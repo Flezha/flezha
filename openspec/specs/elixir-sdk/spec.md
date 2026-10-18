@@ -229,7 +229,7 @@ The Elixir SDK SHALL carry `schema_evolution` through the core. A Tasklet's `sch
 
 The Elixir SDK SHALL let a tasklet request spawn-or-deliver of a steps instance in its
 own namespace with one call, under the contract the other SDKs implement
-(`docs/topics/core/workflows.md`). `Flezha.SDK.Ctx.spawn_steps/4` SHALL take a steps factory id, a binary
+(`docs/public/topics/core/workflows.md`). `Flezha.SDK.Ctx.spawn_steps/4` SHALL take a steps factory id, a binary
 payload and a keyword list of options defaulting to `[]`, whose keys are `id:` (an instance id)
 and `if_running:` (`:deliver` or `:error`, `:deliver` when an `id:` is given without it). The call
 SHALL make the core's spawn request from the invocation's live activation and return a handle

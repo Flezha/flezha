@@ -24,7 +24,7 @@ The file `flz_transport/errors.json` SHALL be the only definition of the codes. 
 #### Scenario: One definition
 
 - **WHEN** the source tree is searched for the text of a catalogued message template
-- **THEN** it SHALL be found in `flz_transport/errors.json` and the generated `docs/errors.md` only
+- **THEN** it SHALL be found in `flz_transport/errors.json` and the generated `docs/public/errors.md` only
 
 #### Scenario: The catalogue is internally consistent
 
@@ -77,12 +77,12 @@ A networked caller SHALL NOT read what the controller made of its own state: a d
 
 ### Requirement: The catalogue SHALL be published as a generated page
 
-`docs/errors.md` SHALL be generated from the catalogue and list every code with its class, exit code, message and hint, grouped by family. It SHALL also give the class table and the JSON schema. A gate SHALL fail when the committed page differs from a fresh generation.
+`docs/public/errors.md` SHALL be generated from the catalogue and list every code with its class, exit code, message and hint, grouped by family. It SHALL also give the class table and the JSON schema. A gate SHALL fail when the committed page differs from a fresh generation.
 
 #### Scenario: The page follows the catalogue
 
 - **WHEN** a code is added to the catalogue and the page is not regenerated
-- **THEN** the docs gate SHALL fail naming `docs/errors.md`
+- **THEN** the docs gate SHALL fail naming `docs/public/errors.md`
 
 ### Requirement: The class SHALL decide the exit code
 

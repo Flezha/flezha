@@ -13,7 +13,7 @@ defmodule Flezha.Plugin.Provider.HookWebhook do
 
   Options are checked with the HTTP poll provider's rules
   (`Flezha.Plugin.Provider.HttpFetch`) and open no connection. Rest:
-  `docs/plugins/hook_webhook.md`.
+  `docs/public/plugins/hook_webhook.md`.
   """
 
   alias Flezha.Plugin.Provider.HttpFetch

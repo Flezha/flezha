@@ -6,7 +6,7 @@ defmodule Flezha.State.PersistenceResolver do
   row's own default.
 
   One resolver per key, each named for the key it resolves. The keys and their
-  defaults are `docs/internals/state_persistence.md`'s configuration table,
+  defaults are `docs/internal/state_persistence.md`'s configuration table,
   which is the one place they are enumerated; the module's job is the
   precedence, not the catalogue.
 

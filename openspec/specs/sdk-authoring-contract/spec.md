@@ -530,7 +530,7 @@ requirement by one conformance run over every row, not by a set of tests of its 
   acknowledgement granularity and judges its preconditions, with no per-SDK helper doing so
 
 ### Requirement: Short-form refusals carry one name per refusal in every SDK
-The three short-form refusals SHALL be named `topology.short_form_with_topology`, `topology.output_without_type` and `topology.duplicate_factory_id` in every SDK, and the name SHALL be the code the author reads: in the compile error text in Rust, Java and an Elixir `use` declaration, and as the `code` of the SDK's one error type in Python, Node, Ruby, PHP and an Elixir registration. The names SHALL be listed in `docs/sdk/authoring_contract.md` §5, which the conformance check reads as the source of the row names.
+The three short-form refusals SHALL be named `topology.short_form_with_topology`, `topology.output_without_type` and `topology.duplicate_factory_id` in every SDK, and the name SHALL be the code the author reads: in the compile error text in Rust, Java and an Elixir `use` declaration, and as the `code` of the SDK's one error type in Python, Node, Ruby, PHP and an Elixir registration. The names SHALL be listed in `docs/internal/sdk/authoring_contract.md` §5, which the conformance check reads as the source of the row names.
 
 `SinkWithoutId`, `SinkWithoutKind` and `ShorthandKeyWithoutSink` SHALL NOT exist. A short form's identity is a relay's factory id, which every relay has always been required to carry, so the first is the full form's own rule; the kind is the entry point's name, so the second is unrepresentable; and `input` and `codec` are meaningful with no `output`, so the third refuses nothing.
 

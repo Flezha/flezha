@@ -45,7 +45,7 @@ release stage and the builder:
 
 What the container does when it starts and stops, what to mount, Compose, `flz` in
 the container, and VM flags:
-[`docs/topics/deploying/docker.md`](../../docs/topics/deploying/docker.md).
+[`docs/public/topics/deploying/docker.md`](../../docs/public/topics/deploying/docker.md).
 
 ## Image size budget
 
@@ -130,4 +130,4 @@ Three ways to give a container its packages:
 - **Bake a derived image**: `FROM flezha/flezha:<version>` and `COPY *.fpz
   /flezha/app_data/plugins/`, run with no volume over that directory.
 
-[`docs/topics/plugins/installing_plugins.md`](../../docs/topics/plugins/installing_plugins.md) covers statuses, errors and signing.
+[`docs/public/topics/plugins/installing_plugins.md`](../../docs/public/topics/plugins/installing_plugins.md) covers statuses, errors and signing.

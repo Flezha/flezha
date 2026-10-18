@@ -14,7 +14,7 @@ defmodule Flezha.Plugin.Provider.HttpPoll do
   reports `{:unhealthy, {:poll_idle, age_ms}}`; `0` means three `:interval_ms`.
 
   Required opts `:url` and an entry channel, written `:channel` or `:channel_in`;
-  the rest: `docs/plugins/http_poll.md`.
+  the rest: `docs/public/plugins/http_poll.md`.
   """
 
   alias Flezha.Config.Durations

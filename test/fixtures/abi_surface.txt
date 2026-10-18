@@ -10,7 +10,7 @@
 #
 # Adding an entry point: teach `flz_core_ffi/src/lib.rs` or `local.rs`, add it
 # here, and declare it in every host binding that spells the surface: one
-# change, every SDK (docs/architecture/runner.md).
+# change, every SDK (docs/public/architecture/runner.md).
 flz_core_abandon
 flz_core_admin_call
 flz_core_buf_free

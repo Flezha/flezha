@@ -184,7 +184,7 @@ defmodule Flezha.Api.ServiceSurfaceTest do
             do: {module, fun, length(args) + 1}
 
       surface =
-        "docs/api/consumers/published.txt"
+        "docs/internal/api/consumers/published.txt"
         |> RpcSurface.manifest()
         |> Enum.map(fn {module, fun, arity, _where} -> {module, fun, arity} end)
         |> Enum.reject(fn {module, _fun, _arity} -> module in @own_suites end)

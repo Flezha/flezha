@@ -6,8 +6,8 @@ What the tutorials, the topic pages and the glossary teach about relays: one rel
 ### Requirement: The guides SHALL name no relay kind
 
 The tutorial and topic pages SHALL describe how a relay runs by its settings, in flow or in
-steps. No page under `docs/tutorials/` or `docs/topics/`, and neither `docs/glossary.md` nor
-`docs/getting_started/what_is_flezha.md`, SHALL describe a relay as bounded or unbounded,
+steps. No page under `docs/public/tutorials/` or `docs/public/topics/`, and neither `docs/internal/glossary.md` nor
+`docs/public/getting_started/what_is_flezha.md`, SHALL describe a relay as bounded or unbounded,
 or as a kind.
 
 #### Scenario: A grep over the guides finds no kind word about a relay
@@ -40,12 +40,12 @@ retired setting, a retired builder call or a retired environment variable.
 
 #### Scenario: The workflow example declares steps in every tab
 
-- **WHEN** the "As a workflow" section of `docs/configuration/relay_settings.md` and the Part 2 tutorial page that places orders are read
+- **WHEN** the "As a workflow" section of `docs/public/configuration/relay_settings.md` and the Part 2 tutorial page that places orders are read
 - **THEN** each of their seven language tabs SHALL declare the order executor's run as steps, with its loop shape and failure mode, in that SDK's settled form, and none SHALL name a retired class or flag
 
 #### Scenario: The durability page shows the ladder once
 
-- **WHEN** `docs/topics/core/durability.md` is read
+- **WHEN** `docs/public/topics/core/durability.md` is read
 - **THEN** it SHALL carry one table naming the three durability levels and the flow run's duplicate rule beside them, and SHALL carry no retired persistence, tier or sync setting
 
 #### Scenario: A grep over the guides finds no retired setting
@@ -55,12 +55,12 @@ retired setting, a retired builder call or a retired environment variable.
 
 ### Requirement: Part 3 SHALL build the session in steps and reach it from the gateway with a call
 
-The Part 3 tutorial under `docs/tutorials/agentdesk/` SHALL build the session as a relay
+The Part 3 tutorial under `docs/public/tutorials/agentdesk/` SHALL build the session as a relay
 that runs in steps, one pass per turn, started and driven from the CLI, and SHALL let the
 reader watch an idle session sleep. It SHALL run the gateway in flow, SHALL have the gateway
 call the user's session, and SHALL keep each user's daily token budget on the gateway in state
 keyed by user, fed by the token count the call's Response carries.
-`docs/topics/core/sessions.md` and `docs/topics/core/sending_and_calling.md` SHALL teach
+`docs/public/topics/core/sessions.md` and `docs/public/topics/core/sending_and_calling.md` SHALL teach
 the session and `call` with excerpts of the same example.
 
 #### Scenario: The tutorial shows a session sleeping
@@ -80,7 +80,7 @@ the session and `call` with excerpts of the same example.
 
 ### Requirement: The glossary SHALL define run, durable and steps
 
-`docs/glossary.md` SHALL define how a relay runs (flow or steps), where its work is
+`docs/internal/glossary.md` SHALL define how a relay runs (flow or steps), where its work is
 kept (memory, the controller's disk, the remote copy), and what steps add (pass, stage,
 journal, undo, rewind, the loop shapes).
 

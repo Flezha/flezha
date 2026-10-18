@@ -6,10 +6,10 @@ defmodule Flezha.Plugin.Provider.Postgres do
 
   That single transaction is the guarantee: effectively-once into the DB for
   tier relays, plain inserts for everything else. See
-  `docs/resilience/data_durability.md` "Delivery semantics".
+  `docs/internal/resilience/data_durability.md` "Delivery semantics".
 
   Required opts `:database` and `:username`; the rest, with their defaults, are
-  the option rows below and `docs/plugins/postgres_output.md`.
+  the option rows below and `docs/public/plugins/postgres_output.md`.
   """
 
   alias Flezha.Plugin.Extension.Ctx

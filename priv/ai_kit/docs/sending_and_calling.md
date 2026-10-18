@@ -1279,5 +1279,5 @@ start-up. A relay call to a sleeping session, from the input reaching the gatewa
 - [Authorization](authorization.md), [MCP server](mcp_server.md).
 - [`relay_commands.md`](../cli/relay_commands.md): `flz relay send`, `call` and their options.
 - [HTTP API plugin](../../plugins/http_api.md), [HTTP server plugin](../../plugins/http_server.md).
-- [Errors](../../errors.md), [Glossary](https://github.com/flezha/flezha/blob/main/docs/glossary.md): call, answer channel, Response.
+- [Errors](../../errors.md), [Glossary](https://github.com/flezha/flezha/blob/main/docs/internal/glossary.md): call, answer channel, Response.
 - Tutorial: [call the session](tutorials/call_the_session.html).

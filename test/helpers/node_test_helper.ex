@@ -399,7 +399,7 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
   #
   # The capability vocabulary: what a `test/system` module declares through
   # `FlezhaTest.SystemCase` and what a manifest carries or defers. One entry per
-  # row of the runner matrix in `docs/architecture/runner.md`.
+  # row of the runner matrix in `docs/public/architecture/runner.md`.
   @capabilities [
     :runner_lifecycle,
     :connect_discovery,

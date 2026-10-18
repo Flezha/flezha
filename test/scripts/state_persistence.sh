@@ -2,7 +2,7 @@
 # Per-Cell state-persistence smoke test (engagement-only).
 #
 # Verifies the data-plane half of the `relay-state-persistence`
-# contract (see `docs/internals/state_persistence.md`): with a relay
+# contract (see `docs/internal/state_persistence.md`): with a relay
 # running, plugins attached, and inputs flowing, the controller writes
 # WAL files under the namespaced layout
 # `app_data/state/<namespace>/<relay_class>/<tasklet_id>/<cell_key>.wal`

@@ -58,7 +58,7 @@ defmodule FlezhaTest.SdkConformance.TopologyCheckTest do
   # The authoring contract's §5, which lists the short-form refusal names. A row
   # whose `needs` starts with `shorthand` refuses something the core never sees,
   # so it is judged against this file instead of the issue vocabulary.
-  @contract "docs/sdk/authoring_contract.md"
+  @contract "docs/internal/sdk/authoring_contract.md"
 
   describe "the vocabulary and the fixture are one set" do
     test "every refusal the core can raise has a row, and every row names one" do

@@ -512,7 +512,7 @@ guaranteed records.
 
 ### Requirement: Every documented producer option is implemented
 
-Each option the producer documents — in its `@moduledoc` parameter table, its struct, or `docs/plugins/kafka_producer.md` — SHALL be read by the implementation and SHALL affect behaviour as documented. An option that is carried but never read, or documented but absent, SHALL be removed from the documented surface rather than left inert.
+Each option the producer documents — in its `@moduledoc` parameter table, its struct, or `docs/public/plugins/kafka_producer.md` — SHALL be read by the implementation and SHALL affect behaviour as documented. An option that is carried but never read, or documented but absent, SHALL be removed from the documented surface rather than left inert.
 
 A silently inert option is a correctness hazard: a runner sets it to express a durability or routing intent, observes no error, and reasonably concludes the intent took effect.
 
@@ -522,7 +522,7 @@ A silently inert option is a correctness hazard: a runner sets it to express a d
 - **THEN** `:partitioner` SHALL either select the destination partition as documented, or be absent from both the struct and the documented option table
 
 #### Scenario: A documented metadata override exists or is not documented
-- **GIVEN** `docs/plugins/kafka_producer.md` documents a per-message `kafka_msg_partition` metadata override while the partition is fixed from worker state
+- **GIVEN** `docs/public/plugins/kafka_producer.md` documents a per-message `kafka_msg_partition` metadata override while the partition is fixed from worker state
 - **WHEN** the producer's documented surface is reconciled
 - **THEN** the override SHALL either route the record to the named partition, or be absent from the documentation
 

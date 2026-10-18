@@ -45,7 +45,7 @@ flowchart LR
 | relay plugin | one or more relays | on each controller where a relay bound to it runs, and nowhere else; stops when no bound relay runs there, and stays enabled |
 | controller plugin | no relay | on every controller that holds its namespace, from its enable until it is disabled; it never stops for want of relays |
 
-Every catalogue page in [`docs/plugins/`](https://github.com/flezha/flezha/tree/main/docs/plugins) says which type a plugin is. A
+Every catalogue page in [`docs/public/plugins/`](https://github.com/flezha/flezha/tree/main/docs/public/plugins) says which type a plugin is. A
 controller plugin is enabled with its hooks and is told what happened through them;
 [`hooks.md`](hooks.md) covers it. The other pages of this section are
 about relay plugins.

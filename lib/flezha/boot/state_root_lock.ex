@@ -3,7 +3,7 @@ defmodule Flezha.Boot.StateRootLock do
   This controller's exclusive claim on its state root.
 
   Several controllers may share a host, each owning its own directory tree
-  (`docs/topics/deploying/deploying_a_controller.md`). Two of them sharing one state root are two
+  (`docs/public/topics/deploying/deploying_a_controller.md`). Two of them sharing one state root are two
   unsynchronised writers over the same cell WAL trees, and until this claim
   nothing but configuration kept them apart — a shape reached by copying a unit
   file and forgetting one variable.

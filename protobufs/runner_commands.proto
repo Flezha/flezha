@@ -52,7 +52,7 @@ message CommandRequest {
     }
 }
 
-// A failure in the error model's one shape (docs/errors.md): a stable `code`
+// A failure in the error model's one shape (docs/public/errors.md): a stable `code`
 // spelled family.snake, its `class`, a plain `message`, the `details` that
 // message names as a JSON object (the encoding `AdminRequest.args` uses), and
 // a `hint` naming the next command, empty when there is none.

@@ -126,7 +126,7 @@ Every bench task SHALL decide which `--runtime` values it accepts by reading the
 
 ### Requirement: A series' settling SHALL be stated per instrument, and a floor SHALL NOT be computed from a series containing its own warm-up
 
-`docs/operations/benchmarking.md` SHALL state, for each bench instrument, whether that instrument's first run of a series is a result, and SHALL record the measurement that establishes it. A floor, a comparison or a regression verdict SHALL be computed from plateau samples only, and the number of plateau samples SHALL be reported beside the figure, as SHALL the number of runs discarded before the plateau.
+`docs/internal/operations/benchmarking.md` SHALL state, for each bench instrument, whether that instrument's first run of a series is a result, and SHALL record the measurement that establishes it. A floor, a comparison or a regression verdict SHALL be computed from plateau samples only, and the number of plateau samples SHALL be reported beside the figure, as SHALL the number of runs discarded before the plateau.
 
 The rule SHALL be stated per instrument rather than per machine, because it was measured to differ between instruments on one box: five consecutive runs of one identical arm of `mix bench.steps --scenario chain` read a 303 % spread with run 1 at roughly four times the plateau, while the same five-run series on `mix bench.extension` put run 1 within 3.6 % of its plateau.
 

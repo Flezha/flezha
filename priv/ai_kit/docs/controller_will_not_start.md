@@ -98,7 +98,7 @@ in any of them.
 
 Two controllers on one machine is supported, and needs four things separated:
 `FLEZHA_NODE_NAME`, `FLEZHA_SOCKET_FILES_PATH`, `FLEZHA_STATE_DIR` and
-`FLEZHA_PROCESS_HUB_REGISTRY_ROOT`. `docs/topics/deploying/deploying_a_controller.md`
+`FLEZHA_PROCESS_HUB_REGISTRY_ROOT`. `docs/public/topics/deploying/deploying_a_controller.md`
 has the full list.
 
 ## See also

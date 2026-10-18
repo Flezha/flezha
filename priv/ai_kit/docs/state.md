@@ -75,7 +75,7 @@ new keys past it are dropped). An idle dynamic cell can be evicted after
   one end of a collection, keeps each record one entry long. Recording a whole
   growing collection on every message makes every record as large as the
   collection. The usual shapes are in
-  [the authoring contract](https://github.com/flezha/flezha/blob/main/docs/sdk/authoring_contract.md#31-keyed-and-collection-changes).
+  [the authoring contract](https://github.com/flezha/flezha/blob/main/docs/internal/sdk/authoring_contract.md#31-keyed-and-collection-changes).
 - **Coalescing is opt-in.** A change that declares a `coalesce_key`
   (`coalesceKey`) collapses with the other changes sharing that key within one
   flush window, keeping the most recent. That suits "the current value of X",
@@ -352,7 +352,7 @@ listed on each SDK's reference page. When the class's tasklets declare
 different `compact_after_bytes`, the smallest one applies. How to change a
 state or change type after it has been deployed, with `migrate_state` and
 `migrate_change`, is in
-[the authoring contract](https://github.com/flezha/flezha/blob/main/docs/sdk/authoring_contract.md#30-changing-a-state-or-change-type-after-it-has-been-deployed).
+[the authoring contract](https://github.com/flezha/flezha/blob/main/docs/internal/sdk/authoring_contract.md#30-changing-a-state-or-change-type-after-it-has-been-deployed).
 
 ## Java: how state is encoded
 
@@ -417,6 +417,6 @@ stated, not checked by a tool.
 - [`workflows.md`](workflows.md): why a step keeps its undo handle in state.
 - [`durability.md`](durability.md): what each `durable` level keeps through a crash.
 - [`timers.md`](timers.md), [`partitioning.md`](partitioning.md).
-- [`../../sdk/state_persistence.md`](https://github.com/flezha/flezha/blob/main/docs/sdk/state_persistence.md): how the SDKs carry it out.
-- [`../../sdk/authoring_contract.md`](https://github.com/flezha/flezha/blob/main/docs/sdk/authoring_contract.md): changing a deployed state type.
+- [`../../../internal/sdk/state_persistence.md`](https://github.com/flezha/flezha/blob/main/docs/internal/sdk/state_persistence.md): how the SDKs carry it out.
+- [`../../../internal/sdk/authoring_contract.md`](https://github.com/flezha/flezha/blob/main/docs/internal/sdk/authoring_contract.md): changing a deployed state type.
 - Tutorial: [`watch_the_trades.md`](tutorials/watch_the_trades.html) builds `track_prices`.

@@ -1,4 +1,4 @@
-"""The size ceilings of docs/contributing/code_standards.md, measured: no
+"""The size ceilings of docs/public/contributing/code_standards.md, measured: no
 production file over 800 lines, no function over 50, and the controller's
 compile cycles (`mix xref graph --format cycles`: how many, and how many files
 the largest holds).

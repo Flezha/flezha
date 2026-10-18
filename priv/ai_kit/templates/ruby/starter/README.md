@@ -14,7 +14,7 @@ released version, the way your own project does. It needs Ruby 3.3 or later.
 ## Run it
 
 You need a controller running and reachable, as
-[Start the controller](https://github.com/flezha/flezha/blob/main/docs/getting_started/up_and_running.md#start-the-controller)
+[Start the controller](https://github.com/flezha/flezha/blob/main/docs/public/getting_started/up_and_running.md#start-the-controller)
 starts one. From this folder, install the SDK, run the test and start the
 runner:
 

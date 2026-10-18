@@ -2,11 +2,11 @@
 
 ## Purpose
 
-Defines the Java SDK for Flezha compute engines: the public authoring API and the Relay / Tasklet / Cell runtime, hosted on the shared poll core through the `FlzCore` JNI binding over `flz_core_ffi`. Conforms to `docs/sdk/protocol_spec.md` and `docs/sdk/poll_core.md`.
+Defines the Java SDK for Flezha compute engines: the public authoring API and the Relay / Tasklet / Cell runtime, hosted on the shared poll core through the `FlzCore` JNI binding over `flz_core_ffi`. Conforms to `docs/internal/sdk/protocol_spec.md` and `docs/internal/sdk/poll_core.md`.
 ## Requirements
 ### Requirement: Java SDK Entry Point
 
-The Java SDK SHALL provide `com.flezha.sdk.Flezha.createRunner(String namespace)` as the single entry point, returning a concrete `FlezhaRunner` directly; there SHALL be no separate `RunnerBuilder` type. Creating a runner SHALL NOT connect, claim the process singleton slot, or spawn any thread. Calling `.start()` on the runner MUST connect to the controller's control socket, send the handshake init message per `docs/sdk/protocol_spec.md` §5.2 carrying the runner's currently-declared factories under `factories` (possibly empty), wait for `AssignRunnerId`, and return `this` for chaining. The started runner SHALL expose `getNamespace()` (replacing `getId()`) and `getRelays()` (a snapshot of currently-spawned Relay instances keyed by what the wire calls `relay_id`). `.run()` SHALL be sugar for `.start()` followed by `awaitTermination()`, never an independent implementation.
+The Java SDK SHALL provide `com.flezha.sdk.Flezha.createRunner(String namespace)` as the single entry point, returning a concrete `FlezhaRunner` directly; there SHALL be no separate `RunnerBuilder` type. Creating a runner SHALL NOT connect, claim the process singleton slot, or spawn any thread. Calling `.start()` on the runner MUST connect to the controller's control socket, send the handshake init message per `docs/internal/sdk/protocol_spec.md` §5.2 carrying the runner's currently-declared factories under `factories` (possibly empty), wait for `AssignRunnerId`, and return `this` for chaining. The started runner SHALL expose `getNamespace()` (replacing `getId()`) and `getRelays()` (a snapshot of currently-spawned Relay instances keyed by what the wire calls `relay_id`). `.run()` SHALL be sugar for `.start()` followed by `awaitTermination()`, never an independent implementation.
 
 #### Scenario: Successful connection on a created runner
 - **WHEN** an SDK user calls `Flezha.createRunner("my_app").registerFactory(MarketRelay.class).start()` with the controller running

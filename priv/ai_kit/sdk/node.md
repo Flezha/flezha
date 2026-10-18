@@ -67,7 +67,7 @@ is. Once the package is published, the step goes away.
 
 [`docs/guides/runner_deployment.md`](../../../../docs/guides/runner_deployment.md)
 walks through what each of the three parts is and why the split is the way it
-is. [`docs/sdk/node_sdk.md`](../../../../docs/sdk/node_sdk.md) covers the rest of
+is. [`docs/internal/sdk/node_sdk.md`](../../../../docs/internal/sdk/node_sdk.md) covers the rest of
 the SDK.
 ````
 
@@ -176,6 +176,6 @@ await runner.run(); // connects to the controller
 // await control.bindPlugin('writer', 'my_echo', { hooks: [['on_output', {}]] });
 // await runner.send('my_echo', 'hello world', 'in', { msgId: 'hello-1' });
 //
-// docs/topics/core/sending_and_calling.md covers sending. An enforced
+// docs/public/topics/core/sending_and_calling.md covers sending. An enforced
 // controller refuses all of it until `flz role bind runner@default app default`.
 ````

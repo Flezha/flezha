@@ -146,14 +146,14 @@ requires an id for it.
 
 ### Requirement: The documentation SHALL state the retry danger of a start without an id
 
-`docs/topics/core/running_and_testing.md`, the `flz relay start` help screen and `docs/topics/core/namespaces.md` SHALL
+`docs/public/topics/core/running_and_testing.md`, the `flz relay start` help screen and `docs/public/topics/core/namespaces.md` SHALL
 state, next to the start call, that a start without an id retried after a lost reply starts a second relay, that a second
 flow relay runs until it is stopped, and that passing an id prevents it. The dangers of a spawn without an
 id are documented by the spawn capability.
 
 #### Scenario: The CLI and administration pages state the retry danger
 
-- **WHEN** a reader opens `docs/topics/core/running_and_testing.md`, `flz relay start --help` or `docs/topics/core/namespaces.md`
+- **WHEN** a reader opens `docs/public/topics/core/running_and_testing.md`, `flz relay start --help` or `docs/public/topics/core/namespaces.md`
 - **THEN** each SHALL state that a retried start without an id starts a second relay and that
   passing an id prevents it
 

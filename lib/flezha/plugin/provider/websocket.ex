@@ -12,7 +12,7 @@ defmodule Flezha.Plugin.Provider.Websocket do
   `Websocket.Subscription`.
 
   Required opts: `:uri`. Everything else, the subscription source and the
-  telemetry events: `docs/plugins/websocket_subscription.md`.
+  telemetry events: `docs/public/plugins/websocket_subscription.md`.
   """
 
   alias Flezha.Config.Durations

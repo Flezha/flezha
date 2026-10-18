@@ -84,7 +84,7 @@ the interval closes on whichever comes first of `every` inputs or
 `max_delay_ms`, so an output waits up to `max_delay_ms` longer, and the
 relay writes one log record per interval instead of one per input. Leave it
 out for the lowest latency
-([`operations/benchmarking.md`](https://github.com/flezha/flezha/blob/main/docs/operations/benchmarking.md)
+([`operations/benchmarking.md`](https://github.com/flezha/flezha/blob/main/docs/internal/operations/benchmarking.md)
 shows how the numbers trade).
 
 ## Flow or steps
@@ -302,11 +302,11 @@ A few spellings differ from the tree's names:
   `{:checkpoint, every: n, max_delay_ms: ms, outputs: :at_checkpoint}`.
 
 The SDK reference pages list each SDK's whole spelling:
-[Java](https://github.com/flezha/flezha/blob/main/docs/sdk/java_sdk.md#the-settings-tree),
-[Node](https://github.com/flezha/flezha/blob/main/docs/sdk/node_sdk.md), [Python](https://github.com/flezha/flezha/blob/main/docs/sdk/python_sdk.md#class-settings),
-[Ruby](https://github.com/flezha/flezha/blob/main/docs/sdk/ruby_sdk.md#class-settings),
-[PHP](https://github.com/flezha/flezha/blob/main/docs/sdk/php_sdk.md#class-settings) and
-[Elixir](https://github.com/flezha/flezha/blob/main/docs/sdk/elixir_sdk.md#the-settings-tree).
+[Java](https://github.com/flezha/flezha/blob/main/docs/internal/sdk/java_sdk.md#the-settings-tree),
+[Node](https://github.com/flezha/flezha/blob/main/docs/internal/sdk/node_sdk.md), [Python](https://github.com/flezha/flezha/blob/main/docs/internal/sdk/python_sdk.md#class-settings),
+[Ruby](https://github.com/flezha/flezha/blob/main/docs/internal/sdk/ruby_sdk.md#class-settings),
+[PHP](https://github.com/flezha/flezha/blob/main/docs/internal/sdk/php_sdk.md#class-settings) and
+[Elixir](https://github.com/flezha/flezha/blob/main/docs/internal/sdk/elixir_sdk.md#the-settings-tree).
 
 ## How the tree is checked
 

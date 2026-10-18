@@ -14,7 +14,7 @@ defmodule Flezha.Plugin.Provider.RelayForward do
   retry-until-confirmed across the two is effectively-once. Without an outbox
   it is at-least-once.
 
-  Required opt `:target_relay_id`; rest: `docs/plugins/relay_forward.md`.
+  Required opt `:target_relay_id`; rest: `docs/public/plugins/relay_forward.md`.
   """
 
   alias Flezha.Dlq.Entry, as: DlqEntry

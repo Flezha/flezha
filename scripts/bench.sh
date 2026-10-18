@@ -44,7 +44,7 @@
 #     event loop, the default). It is inherited by the runner, and the bench
 #     header reports which one a number was taken under.
 #
-# Full reference: docs/operations/benchmarking.md
+# Full reference: docs/internal/operations/benchmarking.md
 set -e
 
 RUNTIME="rust"

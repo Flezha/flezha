@@ -6,7 +6,7 @@ defmodule FlezhaTest.Tiers do
   A tier is a slice of the suite that plain `mix test` does not run. Before this
   table a tier was edited into four places by hand: the exclude list in
   `test/test_helper.exs`, an `--include` line in a workflow, a paragraph in
-  `docs/sdk/conformance.md` and the tag itself. Three of the nine tiers never
+  `docs/internal/sdk/conformance.md` and the tag itself. Three of the nine tiers never
   reached the document and six were run by no workflow at all, so a tier nothing
   runs looked exactly like a tier that runs nightly.
 
@@ -33,7 +33,7 @@ defmodule FlezhaTest.Tiers do
       own.
     * `:needs` - what a host must have before the tier can run.
     * `:transports` - the transports the tier covers.
-    * `:doc` - the anchor in `docs/sdk/conformance.md` that describes it.
+    * `:doc` - the anchor in `docs/internal/sdk/conformance.md` that describes it.
     * `:self_skip` - the tier skips itself unless its own tag is included. An
       ExUnit include BEATS an exclude, so `--include system` would otherwise run
       `:interop` however it is excluded.

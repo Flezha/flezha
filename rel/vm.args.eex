@@ -3,7 +3,7 @@
 ## Customize: https://www.erlang.org/doc/man/erl.html
 ## -mode/-name/-sname/-setcookie are configured via env vars, do not set them here
 ##
-## Every flag below is documented in docs/configuration.md under "Erlang VM
+## Every flag below is documented in docs/public/configuration.md under "Erlang VM
 ## arguments", and scripts/check-vm-args.sh fails when the two disagree.
 ## Override any of them with ERL_FLAGS in the environment, which is read after
 ## this file. ELIXIR_ERL_OPTIONS is read before it and cannot override one.
@@ -12,7 +12,7 @@
 ## default over paired rounds of the regression bench: 21% less CPU for the same
 ## run, with no throughput difference either window could resolve. `none` saves
 ## barely more (22%) and costs four times the setup latency, and spinning HARDER
-## measured 33% more CPU and no faster. docs/configuration.md carries the table.
+## measured 33% more CPU and no faster. docs/public/configuration.md carries the table.
 +sbwt short
 +sbwtdcpu short
 +sbwtdio short

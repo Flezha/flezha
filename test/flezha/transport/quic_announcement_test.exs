@@ -1,6 +1,6 @@
 defmodule Flezha.Transport.QuicAnnouncementTest do
   @moduledoc """
-  The QUIC transport is experimental (`docs/publishing/maturity.md#quic`), and
+  The QUIC transport is experimental (`docs/public/publishing/maturity.md#quic`), and
   each process that switches it on says so once: the controller when its QUIC
   listener starts, however many runners connect, and a runner when it selects
   QUIC, however often it reconnects. A UDS or in-node transport says nothing.
@@ -69,7 +69,7 @@ defmodule Flezha.Transport.QuicAnnouncementTest do
         end)
 
       assert NodeTestHelper.occurrences(log, @controller) == 1
-      assert log =~ "docs/publishing/maturity.md#quic"
+      assert log =~ "docs/public/publishing/maturity.md#quic"
 
       for port <- ports do
         out = NodeTestHelper.read_port(port, &String.contains?(&1, @runner))

@@ -1466,7 +1466,7 @@ baselined breaker that grew, SHALL be a finding; a baselined breaker that is gon
 be a finding until the baseline is lowered to match, so the baseline only shrinks. The two cycle
 numbers SHALL only fall, and every member `mix xref` names SHALL be counted, a member annotated
 `(compile)` or `(export)` included. CI SHALL also run `cargo clippy --workspace --all-targets` with warnings
-denied, which is the reading `docs/contributing/code_standards.md` names for cognitive complexity.
+denied, which is the reading `docs/public/contributing/code_standards.md` names for cognitive complexity.
 
 #### Scenario: A new file over the ceiling fails
 

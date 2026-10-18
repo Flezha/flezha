@@ -8,7 +8,7 @@ defmodule Flezha.State.TaskJournal do
   `FsyncBatcher` path under the reserved identity `Paths.journal_id/1`. Each
   record's change-bytes carry one typed journal entry and its header the
   instance epoch and the entry's identity, which a commit barrier dedups on. The
-  entry types and payload layouts are in `docs/internals/state_persistence.md`.
+  entry types and payload layouts are in `docs/internal/state_persistence.md`.
 
   A stage entry names, for each Cell it ran, the effect records the Cell wrote
   in the stage; those records carry the stage's state and output, and their

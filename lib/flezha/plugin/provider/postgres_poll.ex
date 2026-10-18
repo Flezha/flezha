@@ -16,7 +16,7 @@ defmodule Flezha.Plugin.Provider.PostgresPoll do
   One cursor per binding: not shareable, and refused on a partitioned relay,
   whose members a row's key decides between. Required: the connection's
   `database` and `username`, `table`, `id_column` and an entry channel; the
-  rest: `docs/plugins/postgres_poll.md`.
+  rest: `docs/public/plugins/postgres_poll.md`.
   """
 
   alias Flezha.Plugin.Extension.Ctx

@@ -1,8 +1,8 @@
 defmodule Mix.Tasks.Flezha.ErrorsDoc do
-  @shortdoc "Generate docs/errors.md from the error catalogue"
+  @shortdoc "Generate docs/public/errors.md from the error catalogue"
 
   @moduledoc """
-  Writes `docs/errors.md`, the published list of every error code, from
+  Writes `docs/public/errors.md`, the published list of every error code, from
   `flz_transport/errors.json`. The page is generated and never edited by hand:
   `test/flezha/error_catalogue_test.exs` fails when the committed page differs
   from a fresh generation.
@@ -12,7 +12,7 @@ defmodule Mix.Tasks.Flezha.ErrorsDoc do
 
   use Mix.Task
 
-  @path "docs/errors.md"
+  @path "docs/public/errors.md"
 
   @impl Mix.Task
   def run(_args) do

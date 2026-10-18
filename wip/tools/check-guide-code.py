@@ -17,7 +17,7 @@ Exit status 1 when anything is reported.
 
 --budget prints each page's visible lines: non-blank lines outside tab blocks plus
 the longest tab of each block, what a reader sees with one language selected. A page
-under docs/tutorials/ over BUDGET fails.
+under docs/public/tutorials/ over BUDGET fails.
 
 --basenames fails when two extras of mix.exs share a basename, since ExDoc names
 each page after its basename.
@@ -72,7 +72,7 @@ def budget(pages):
     over = 0
     for page in pages:
         count = visible_lines(page)
-        limited = "docs/tutorials/" in str(pathlib.Path(page).resolve())
+        limited = "docs/public/tutorials/" in str(pathlib.Path(page).resolve())
         flag = " OVER" if limited and count > BUDGET else ""
         over += bool(flag)
         print(f"{count:5} {page}{flag}")

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Walk the getting-started pages (docs/getting_started: up_and_running,
+# Walk the getting-started pages (docs/public/getting_started: up_and_running,
 # connect_a_plugin, stop_and_clean_up) for one SDK's echo example, against the
 # private controller `env.sh up <sdk>` started with authorization off, as those
 # pages run it:

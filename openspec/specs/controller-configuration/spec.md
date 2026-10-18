@@ -43,7 +43,7 @@ literal fallback, no environment SHALL skip the row so that a reader's own liter
 and a per-environment value SHALL be declared on the row rather than in a per-environment
 config file. Where a knob is read by two roles with different needs, the row SHALL declare
 one default per role and the documentation SHALL state both. Every table in
-`docs/configuration/*.md`, `docs/operations/*.md` and `docs/internals/*.md` that restates a
+`docs/public/configuration/*.md`, `docs/internal/operations/*.md` and `docs/internal/*.md` that restates a
 default SHALL render the row's default, and the seam test SHALL fail on a default column that does
 not.
 
@@ -55,7 +55,7 @@ not.
 
 #### Scenario: A documented default that drifts from the row fails the gate
 
-- **WHEN** `docs/configuration/environment_variables.md` states `FLEZHA_HEALTHZ_PORT` defaults to `9570` while the
+- **WHEN** `docs/public/configuration/environment_variables.md` states `FLEZHA_HEALTHZ_PORT` defaults to `9570` while the
   row's default is `9569`
 - **THEN** the seam test fails naming the document line and the row
 

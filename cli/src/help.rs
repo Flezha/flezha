@@ -198,7 +198,7 @@ EXIT CODES:
     4   Refused for want of a token or a role (authz.*)
     7   Partial drain: the timeout elapsed with Relays still local
         (shutdown.partial_drain)
-    Every code is listed in docs/errors.md."#;
+    Every code is listed in docs/public/errors.md."#;
 
 pub(crate) const CONTROLLER: Help = r#"flz controller - Controller management commands
 
@@ -262,7 +262,7 @@ ERRORS:
     `hint:` line when there is a next command, or under --json as one
     {"error": {"code", "class", "message", "details", "hint"}} line. The exit
     code follows the class: 1 internal, 2 invalid, 3 unreachable, 4 denied,
-    5 not_found, 6 conflict, 7 unavailable. Every code is in docs/errors.md.
+    5 not_found, 6 conflict, 7 unavailable. Every code is in docs/public/errors.md.
 
 Use 'flz <COMMAND> help' for more information on a specific command.
 
@@ -674,7 +674,7 @@ EXIT CODES:
         (reset.confirmation_required), conflicting flags, or a path it refuses
         to clear, such as the app_data root itself (reset.path_refused)
     6   Refused: the Controller is up (reset.controller_running)
-    Every code is listed in docs/errors.md.
+    Every code is listed in docs/public/errors.md.
 
 EXAMPLES:
     flz reset                          # plan only, exit 2

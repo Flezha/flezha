@@ -2,7 +2,7 @@ defmodule Flezha.State.DurabilityTier do
   @moduledoc """
   Ships flezha's durable artifacts to a remote backend so a controller that dies
   **with its disk** is recoverable. See
-  `docs/resilience/data_durability.md`.
+  `docs/internal/resilience/data_durability.md`.
 
   Local files are the copy a controller runs from: a class at `durable: local` gates every
   acknowledgement on local fsync alone, one at `durable: remote` also on the
@@ -243,7 +243,7 @@ defmodule Flezha.State.DurabilityTier do
       FLEZHA_DURABILITY_BACKEND=none       # explicit opt-out: the local disk is
                                            # the only copy, and that is accepted
 
-    Defaulting to none. See docs/configuration/environment_variables.md for
+    Defaulting to none. See docs/public/configuration/environment_variables.md for
     the backend options.
     """
   end
@@ -268,7 +268,7 @@ defmodule Flezha.State.DurabilityTier do
       raise "FLEZHA_DURABILITY_BACKEND selects #{inspect(module)}, which cannot " <>
               "work without #{Enum.map_join(missing, ", ", &naming/1)}. Set what is " <>
               "missing, or set FLEZHA_DURABILITY_BACKEND=none to accept local-only " <>
-              "durability. See docs/configuration/environment_variables.md."
+              "durability. See docs/public/configuration/environment_variables.md."
     end
   end
 

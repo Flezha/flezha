@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: MPL-2.0
 #
-# The feature-maturity gate. Keeps docs/publishing/maturity.md and the tree
+# The feature-maturity gate. Keeps docs/public/publishing/maturity.md and the tree
 # agreeing, in both directions:
 #
 #   - both tables parse, every row carries its fields, ids are unique;
@@ -34,7 +34,7 @@ sys.path.insert(0, "scripts")
 import naming_gate
 import record_table
 
-RECORD = "docs/publishing/maturity.md"
+RECORD = "docs/public/publishing/maturity.md"
 ENTRY_COLUMNS = ("id", "feature", "status", "marked", "promise", "surfaces", "announced-by")
 TIER_COLUMNS = ("sdk", "tier", "promise", "surfaces")
 TIER_2_PROMISES = ("full conformance run", "permanently supported")

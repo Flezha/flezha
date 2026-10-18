@@ -736,7 +736,7 @@ defmodule Flezha.Config.Keys do
   def env_name(name), do: fetch!(name).env
 
   @doc """
-  The default as a user reads it in the `docs/configuration/` pages — the one
+  The default as a user reads it in the `docs/public/configuration/` pages — the one
   rendering, so a document and a row cannot disagree about a value's spelling.
   """
   @spec render_default(name() | row()) :: binary()

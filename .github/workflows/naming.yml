@@ -44,7 +44,7 @@ name: Naming
 #
 # check-publish-readiness is the publication gate, and it is the one gate here
 # that is split in two. Its SHAPE arm is the row below: it judges that every
-# entry in docs/publishing/readiness.md parses and carries a class, a door, a
+# entry in docs/internal/publishing/readiness.md parses and carries a class, a door, a
 # rule, a check and an owner, that ids are unique, and that a settled entry
 # names its evidence. It is green from the first commit. Its CONTENT arm judges
 # that every BLOCKING entry is settled, and is deliberately NOT in this group:

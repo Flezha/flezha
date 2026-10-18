@@ -38,7 +38,7 @@ up empty and waits for SDK clients to reissue `AddRelay` and
 
 Set `FLEZHA_AUTO_RESTORE_ENABLED=false` to disable the boot-time replay while
 still persisting registry mutations. See
-[`../docs/topics/core/running_and_testing.md`](../docs/topics/core/running_and_testing.md)
+[`../docs/public/topics/core/running_and_testing.md`](../docs/public/topics/core/running_and_testing.md)
 for the recovery contract and its one tolerated loss, and
-[`../docs/internals/state_persistence.md`](../docs/internals/state_persistence.md)
+[`../docs/internal/state_persistence.md`](../docs/internal/state_persistence.md)
 for the on-disk layout.

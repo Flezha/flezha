@@ -74,7 +74,7 @@ Once the package is published, the step goes away.
 
 [`docs/guides/runner_deployment.md`](../../../../docs/guides/runner_deployment.md)
 walks through what each of the three parts is and why the split is the way it
-is. [`docs/sdk/python_sdk.md`](../../../../docs/sdk/python_sdk.md) covers the
+is. [`docs/internal/sdk/python_sdk.md`](../../../../docs/internal/sdk/python_sdk.md) covers the
 rest of the SDK. [`examples/echo_deployment`](../echo_deployment)
 starts a controller and this runner together with Docker.
 ````
@@ -168,7 +168,7 @@ def main() -> None:
     # control.bind_plugin("writer", "my_echo", hooks=[["on_output", {}]])
     # runner.send("my_echo", "hello world", "in", msg_id="hello-1")
     #
-    # docs/topics/core/sending_and_calling.md covers sending. An enforced
+    # docs/public/topics/core/sending_and_calling.md covers sending. An enforced
     # controller refuses all of it until `flz role bind runner@default app default`.
 
     # Blocks until shutdown: a SIGTERM, or standard input closing.

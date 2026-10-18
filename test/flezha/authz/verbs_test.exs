@@ -12,7 +12,7 @@ defmodule Flezha.AuthZ.VerbsTest do
   alias Flezha.AuthZ.{Action, Policy, Verb, Verbs}
   alias FlezhaTest.Helper.{AuthTestHelper, RpcSurface}
 
-  @published "docs/api/consumers/published.txt"
+  @published "docs/internal/api/consumers/published.txt"
   @unbound %{source: :ui}
   @viewer %{source: :ui, principal: "vw@_system", role: :viewer, namespace: "_system"}
 

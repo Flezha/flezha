@@ -145,7 +145,7 @@ mount. Those are:
 
 The socket directory is one of the paths a runner can also discover on its own,
 through the ladder in
-[`../docs/configuration/files_and_sockets.md`](../docs/configuration/files_and_sockets.md#the-socket-directory-ladder).
+[`../docs/public/configuration/files_and_sockets.md`](../docs/public/configuration/files_and_sockets.md#the-socket-directory-ladder).
 These manifests need no change for that: both the DaemonSet and
 `service-template.yaml` set `FLEZHA_SOCKET_FILES_PATH` explicitly, which is the
 ladder's first rung and wins outright — a default moving underneath them
@@ -201,7 +201,7 @@ A DaemonSet is one pod per node by construction, so every controller here has th
 node's `/var/lib/flezha` to itself and none of the co-location variables need
 per-instance values. Running several controllers on one machine is a bare-metal and
 Docker arrangement; the variable set each instance must own is in
-[Several controllers on one machine](../docs/topics/deploying/deploying_a_controller.md#several-controllers-on-one-machine). A second pod landing on a node — a
+[Several controllers on one machine](../docs/public/topics/deploying/deploying_a_controller.md#several-controllers-on-one-machine). A second pod landing on a node — a
 mis-scaled Deployment beside the DaemonSet, or two DaemonSets sharing one `hostPath`
 — refuses to boot rather than sharing the state root, naming the process that holds
 it.
@@ -255,7 +255,7 @@ Every entry is a path inside the container or an `https://` URL the pods can rea
 verified against the operating system's CA store. Nothing is published before
 go-live, so serve the archive from a host of your own, or mount it: a ConfigMap
 holding the archive under `binaryData`, mounted read-only at `/pkgs`, is named as
-`/pkgs/<file>.fpz#sha256=<hex>`. `docs/topics/plugins/installing_plugins.md` covers building a
+`/pkgs/<file>.fpz#sha256=<hex>`. `docs/public/topics/plugins/installing_plugins.md` covers building a
 package with the `plugin-builder` image, statuses, errors and signing.
 
 ## Logs

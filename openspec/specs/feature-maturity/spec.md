@@ -9,7 +9,7 @@ agreeing.
 ## Requirements
 ### Requirement: The project SHALL publish one record naming every part that is not settled, and nothing else
 
-The repository SHALL carry one published maturity record, `docs/publishing/maturity.md`,
+The repository SHALL carry one published maturity record, `docs/public/publishing/maturity.md`,
 holding two tables: the experimental entries, and the support tier of each SDK. A feature
 the record does not name is stable. The record is the only declaration of either fact:
 every other surface that states one of them SHALL agree with the record, and no second
@@ -164,7 +164,7 @@ is never read as covering documentation it cannot see.
 
 #### Scenario: The configuration reference marks the QUIC settings
 
-- **WHEN** a page under `docs/configuration/` is read
+- **WHEN** a page under `docs/public/configuration/` is read
 - **THEN** each row for a setting that selects or configures the QUIC transport SHALL carry
   the QUIC entry's marker
 

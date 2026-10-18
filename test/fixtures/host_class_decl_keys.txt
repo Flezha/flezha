@@ -15,7 +15,7 @@
 # `deny_unknown_fields`.
 #
 # Adding a key: teach the core, add it here, teach the Rust, Java, Node, Ruby,
-# PHP, Python and Elixir builders — one change, every SDK (docs/architecture/runner.md).
+# PHP, Python and Elixir builders — one change, every SDK (docs/public/architecture/runner.md).
 class.factory_id
 class.description
 class.max_duration_ms

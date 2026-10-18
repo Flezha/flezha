@@ -1,6 +1,6 @@
 # Which tags plain `mix test` skips is `FlezhaTest.Tiers`, one row per tier: the
 # tag, the steps relay that runs it or the reason a person has to, what a host
-# needs first, and the anchor in `docs/sdk/conformance.md` that describes it.
+# needs first, and the anchor in `docs/internal/sdk/conformance.md` that describes it.
 # That table is the one place a tier is declared; this file only reads it.
 #
 # One rule the table cannot express and every reader needs: an ExUnit include

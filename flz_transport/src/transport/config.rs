@@ -56,7 +56,7 @@ pub fn would_overflow_write_buffer(buffered: usize, incoming: usize, cap: usize)
 /// own, so a `tracing` event would reach nobody in most runners.
 pub const QUIC_EXPERIMENTAL_NOTICE: &str = "[flezha] the QUIC transport is experimental: its \
 settings and behaviour may change drastically or it may be removed without a compatibility \
-break. See docs/publishing/maturity.md#quic";
+break. See docs/public/publishing/maturity.md#quic";
 
 static QUIC_NOTICES: AtomicU64 = AtomicU64::new(0);
 
@@ -297,7 +297,7 @@ mod tests {
             assert_eq!(transport_type(Some("quic")), TransportType::Quic);
         }
         assert_eq!(QUIC_NOTICES.load(Ordering::Relaxed), 1);
-        assert!(QUIC_EXPERIMENTAL_NOTICE.contains("docs/publishing/maturity.md#quic"));
+        assert!(QUIC_EXPERIMENTAL_NOTICE.contains("docs/public/publishing/maturity.md#quic"));
     }
 
     // The shared count rule is what the byte knobs take, tested where it is

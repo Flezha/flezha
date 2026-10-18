@@ -153,7 +153,7 @@ If the SIGTERM install or the `erl_signal_server` registration fails, the Signal
 
 ### Requirement: `Application.prep_stop/1` SHALL await the shutdown coordinator
 
-`Flezha.Application.prep_stop/1` SHALL call `Flezha.Shutdown.Coordinator.shutdown(:prep_stop)` and SHALL block until the coordinator returns or its bounded timeout elapses. The coordinator's bounded timeout (`graceful_shutdown_timeout_ms`) is itself bounded by the OTP shutdown timeout for `Flezha.Application` — users MUST size both knobs together (documented in `docs/topics/deploying/deploying_a_controller.md`). The previous synchronous `Flezha.Service.HubManager.stop_hub_manager()` call SHALL be removed from `prep_stop/1` and SHALL be issued from inside the coordinator's drain phase instead.
+`Flezha.Application.prep_stop/1` SHALL call `Flezha.Shutdown.Coordinator.shutdown(:prep_stop)` and SHALL block until the coordinator returns or its bounded timeout elapses. The coordinator's bounded timeout (`graceful_shutdown_timeout_ms`) is itself bounded by the OTP shutdown timeout for `Flezha.Application` — users MUST size both knobs together (documented in `docs/public/topics/deploying/deploying_a_controller.md`). The previous synchronous `Flezha.Service.HubManager.stop_hub_manager()` call SHALL be removed from `prep_stop/1` and SHALL be issued from inside the coordinator's drain phase instead.
 
 When `:flezha, :graceful_shutdown_enabled` is `false`, `prep_stop/1` SHALL fall back to the legacy direct call `Flezha.Service.HubManager.stop_hub_manager()` (today's behaviour).
 
@@ -222,7 +222,7 @@ The controller SHALL expose two configuration knobs, readable from both `config/
 - `:flezha, :graceful_shutdown_enabled` — boolean, default `true`. Env: `FLEZHA_GRACEFUL_SHUTDOWN_ENABLED` (truthy values: `1, true, yes, on`; falsy: `0, false, no, off`; case-insensitive).
 - `:flezha, :graceful_shutdown_timeout_ms` — positive integer, default `60_000`. Env: `FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS`. The default SHALL be declared once, as the `graceful_shutdown_timeout_ms` row of `Flezha.Config.Durations`; `runtime.exs` translates the env name and carries no default of its own.
 
-`kubernetes/flezha-configmap.yaml` SHALL declare the timeout knob so that the BEAM and the entrypoint shell read it from one place. The DaemonSet's `terminationGracePeriodSeconds` and the docker-compose `stop_grace_period` SHALL be set 15 seconds longer than `FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS / 1000` to leave headroom for finalise and supervision-tree shutdown — users changing one MUST change the others. The pairing SHALL be a derived row of the same table (`orchestrator_grace_ms`, the timeout plus 15 s of headroom) and a test SHALL read the DaemonSet and both compose files and fail when either departs from it. The pairing is documented in `docs/topics/deploying/deploying_a_controller.md`.
+`kubernetes/flezha-configmap.yaml` SHALL declare the timeout knob so that the BEAM and the entrypoint shell read it from one place. The DaemonSet's `terminationGracePeriodSeconds` and the docker-compose `stop_grace_period` SHALL be set 15 seconds longer than `FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS / 1000` to leave headroom for finalise and supervision-tree shutdown — users changing one MUST change the others. The pairing SHALL be a derived row of the same table (`orchestrator_grace_ms`, the timeout plus 15 s of headroom) and a test SHALL read the DaemonSet and both compose files and fail when either departs from it. The pairing is documented in `docs/public/topics/deploying/deploying_a_controller.md`.
 
 #### Scenario: Default boot has graceful shutdown enabled
 
@@ -314,7 +314,7 @@ Every controller service entry in `docker/prod/docker-compose.yml`, `docker/dev/
 - `stop_signal: SIGTERM` (explicit; equals docker's default — documents intent)
 - `stop_grace_period: 75s` (matches the k8s default; docker-compose default is 10 s, far too short)
 
-Users tuning `FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS` away from `60000` SHALL update `stop_grace_period` to `(FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS / 1000) + 15s`. Documented in `docs/topics/deploying/deploying_a_controller.md`.
+Users tuning `FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS` away from `60000` SHALL update `stop_grace_period` to `(FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS / 1000) + 15s`. Documented in `docs/public/topics/deploying/deploying_a_controller.md`.
 
 #### Scenario: `docker compose stop` allows graceful shutdown to complete
 

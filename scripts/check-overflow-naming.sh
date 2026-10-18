@@ -89,7 +89,7 @@ ALLOWED = [
 # is the observability bus's own policy. The producer's code is the plugin
 # package's.
 KAFKA_SCOPE = (
-    "docs/plugins/kafka_producer.md",
+    "docs/public/plugins/kafka_producer.md",
     "openspec/specs/kafka-producer-plugin/",
 )
 KAFKA_POLICY = [re.compile(p) for p in (

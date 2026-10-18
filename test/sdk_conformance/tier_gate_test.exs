@@ -5,7 +5,7 @@ defmodule FlezhaTest.SdkConformance.TierGateTest do
   A tier is a slice of the suite plain `mix test` does not run.
   `FlezhaTest.Tiers` declares one; `test/test_helper.exs` derives `exclude:`
   from it; a workflow, a script, a module's own moduledoc and
-  `docs/sdk/conformance.md` each select one by name. Before the table those
+  `docs/internal/sdk/conformance.md` each select one by name. Before the table those
   five places were edited by hand, and they disagreed: three of nine tiers were
   in no document, six were run by no workflow, and ten tag names shaped like
   selectors selected nothing at all.
@@ -21,12 +21,12 @@ defmodule FlezhaTest.SdkConformance.TierGateTest do
   alias FlezhaTest.Tiers
 
   @system_dir "test/system"
-  @docs_section "docs/sdk/conformance.md § The test tiers"
+  @docs_section "docs/internal/sdk/conformance.md § The test tiers"
 
-  # The four places a tier is selected from. `docs/sdk/conformance.md` is in the
+  # The four places a tier is selected from. `docs/internal/sdk/conformance.md` is in the
   # list because a documented command a reader copies is as much a reader of a
   # tier name as a workflow is.
-  @tier_selector_roots ["test", ".github", "scripts", "docs/sdk/conformance.md"]
+  @tier_selector_roots ["test", ".github", "scripts", "docs/internal/sdk/conformance.md"]
 
   # This file spells the shapes it looks for, as data.
   @tier_self "test/sdk_conformance/tier_gate_test.exs"
@@ -107,14 +107,14 @@ defmodule FlezhaTest.SdkConformance.TierGateTest do
     # generated from it: a document a reader edits by hand is where a tier
     # stopped being described, so the check is that every row reaches the page.
     test "every declared tier points at a section of the conformance page that names it" do
-      page = File.read!("docs/sdk/conformance.md")
+      page = File.read!("docs/internal/sdk/conformance.md")
 
       for tier <- Tiers.all() do
         assert String.contains?(page, tier.doc),
                "#{tier.tag} names the section #{inspect(tier.doc)}, which conformance.md lacks"
 
         assert String.contains?(page, "`:#{tier.tag}`"),
-               "#{tier.tag} is declared and docs/sdk/conformance.md never names it"
+               "#{tier.tag} is declared and docs/internal/sdk/conformance.md never names it"
       end
     end
 
@@ -125,7 +125,7 @@ defmodule FlezhaTest.SdkConformance.TierGateTest do
     # proven only nightly" cannot go stale in silence.
     test "the published blocks-merge column is the derived one" do
       rows =
-        "docs/sdk/conformance.md"
+        "docs/internal/sdk/conformance.md"
         |> File.read!()
         |> String.split("\n")
         |> Enum.flat_map(fn line ->

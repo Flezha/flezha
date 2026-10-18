@@ -1,6 +1,6 @@
 //! The per-process drain thread and the wire frames it builds: every linger
 //! tick it drains each registered Cell's buffer into `cell_state_change`
-//! / `cell_effect_record` frames (layout in `docs/sdk/state_persistence.md`)
+//! / `cell_effect_record` frames (layout in `docs/internal/sdk/state_persistence.md`)
 //! and ships them through the state sink. The invariant: a change leaves its
 //! buffer exactly once, under a seq fetched from the Cell's own counter, so
 //! a background drain and an inline flush never gap or duplicate.

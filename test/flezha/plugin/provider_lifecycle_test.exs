@@ -426,15 +426,15 @@ defmodule Flezha.Plugin.ProviderLifecycleTest do
 
   defp page_for(provider) do
     case provider do
-      Flezha.Plugin.Provider.Postgres -> "docs/plugins/postgres_output.md"
-      Flezha.Plugin.Provider.HttpPoll -> "docs/plugins/http_poll.md"
-      Flezha.Plugin.Provider.Websocket -> "docs/plugins/websocket_subscription.md"
-      Flezha.Plugin.Provider.RelayForward -> "docs/plugins/relay_forward.md"
-      Flezha.Plugin.Provider.File.Source -> "docs/plugins/file.md"
-      Flezha.Plugin.Provider.File.Sink -> "docs/plugins/file.md"
-      Flezha.Plugin.Provider.HookWebhook -> "docs/plugins/hook_webhook.md"
-      Flezha.Plugin.Provider.HttpPush -> "docs/plugins/http_push.md"
-      Flezha.Plugin.Provider.PostgresPoll -> "docs/plugins/postgres_poll.md"
+      Flezha.Plugin.Provider.Postgres -> "docs/public/plugins/postgres_output.md"
+      Flezha.Plugin.Provider.HttpPoll -> "docs/public/plugins/http_poll.md"
+      Flezha.Plugin.Provider.Websocket -> "docs/public/plugins/websocket_subscription.md"
+      Flezha.Plugin.Provider.RelayForward -> "docs/public/plugins/relay_forward.md"
+      Flezha.Plugin.Provider.File.Source -> "docs/public/plugins/file.md"
+      Flezha.Plugin.Provider.File.Sink -> "docs/public/plugins/file.md"
+      Flezha.Plugin.Provider.HookWebhook -> "docs/public/plugins/hook_webhook.md"
+      Flezha.Plugin.Provider.HttpPush -> "docs/public/plugins/http_push.md"
+      Flezha.Plugin.Provider.PostgresPoll -> "docs/public/plugins/postgres_poll.md"
       _ -> nil
     end
   end

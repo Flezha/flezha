@@ -6,7 +6,7 @@ TBD - created by archiving change add-php-sdk. Update Purpose after archive.
 ### Requirement: PHP SDK entry point and runner lifecycle
 The PHP SDK SHALL expose a runner handle created by `Flezha::createRunner(string $namespace)`, carrying declaration and lifecycle on one object, with `registerFactory()` registering a relay class of either run (the run is read from its `#[Relay]`), `unregisterFactory()` as its inverse, `executor()` selecting the concurrency adapter, `start()` connecting, `awaitTermination()` blocking, and `run()` as `start()` + `awaitTermination()`.
 
-The runner SHALL map onto the ABI lifecycle `flz_core_context_new(SCHEMA_VERSION)` → `flz_core_declare_class` per class → `flz_core_start(namespace)` → poll/complete → `flz_core_shutdown` → `flz_core_context_free`. Naming SHALL follow `docs/sdk/naming_conventions.md`, matching the Rust and Java surfaces.
+The runner SHALL map onto the ABI lifecycle `flz_core_context_new(SCHEMA_VERSION)` → `flz_core_declare_class` per class → `flz_core_start(namespace)` → poll/complete → `flz_core_shutdown` → `flz_core_context_free`. Naming SHALL follow `docs/internal/sdk/naming_conventions.md`, matching the Rust and Java surfaces.
 
 #### Scenario: A declared flow relay connects and is placed
 - **WHEN** a script calls `Flezha::createRunner('trading')->registerFactory(OrderTotals::class)->run()` against a live controller

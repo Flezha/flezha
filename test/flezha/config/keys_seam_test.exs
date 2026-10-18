@@ -221,7 +221,7 @@ defmodule Flezha.Config.KeysSeamTest do
       understated =
         for row <- per_reader,
             {where, var, field} <- documented_defaults(),
-            String.starts_with?(where, "docs/configuration"),
+            String.starts_with?(where, "docs/public/configuration"),
             var == row.env,
             side <- Keyword.values(row.default),
             not String.contains?(field, to_string(side)),

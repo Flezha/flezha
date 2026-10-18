@@ -703,7 +703,7 @@ The "missing required", "below the minimum", "above the maximum" and "invalid
 value" refusals SHALL be rendered by one builder from the rows, and a
 provider's cross-field rule SHALL answer the same `{:error, binary()}` shape.
 A test SHALL render every provider's option table from its declaration and
-assert the provider's page under `docs/plugins/` carries it, so a documented
+assert the provider's page under `docs/public/plugins/` carries it, so a documented
 key that is not a row, a row that is not documented, and a default that differs
 between the two each fail the suite.
 

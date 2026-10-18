@@ -57,7 +57,7 @@ clock) SHALL stay as they are.
 
 #### Scenario: The retired codes are gone from the catalogue
 
-- **WHEN** `flz_transport/errors.json` and the regenerated `docs/errors.md` are read
+- **WHEN** `flz_transport/errors.json` and the regenerated `docs/public/errors.md` are read
 - **THEN** none of the ten retired codes SHALL be present, and `topology.effectively_once_without_persistence` SHALL be
 
 #### Scenario: The one exception is refused by name

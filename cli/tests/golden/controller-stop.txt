@@ -20,4 +20,4 @@ EXIT CODES:
     4   Refused for want of a token or a role (authz.*)
     7   Partial drain: the timeout elapsed with Relays still local
         (shutdown.partial_drain)
-    Every code is listed in docs/errors.md.
+    Every code is listed in docs/public/errors.md.

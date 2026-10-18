@@ -13,7 +13,7 @@ defmodule Flezha.Plugin.Provider.HttpPush do
   Options are checked with the HTTP poll provider's rules
   (`Flezha.Plugin.Provider.HttpFetch`), plus the headers a request sets itself
   and the ones it could not carry, and open no connection. Rest:
-  `docs/plugins/http_push.md`.
+  `docs/public/plugins/http_push.md`.
   """
 
   alias Flezha.Plugin.Extension.Ctx

@@ -5,7 +5,7 @@ defmodule Flezha.State.TaskJournal.Codec do
 
   One entry point each way — `encode_entry/4` and `decode_entry/3` — over the
   change-bytes of one WAL record. The layouts are in
-  `docs/internals/state_persistence.md`; this module is their only
+  `docs/internal/state_persistence.md`; this module is their only
   implementation, and `Flezha.State.TaskJournal` reads its numbering rather than
   keeping a second copy.
 
