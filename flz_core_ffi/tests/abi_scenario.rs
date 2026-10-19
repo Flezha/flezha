@@ -29,6 +29,8 @@ mod lifecycle;
 mod notice;
 #[path = "abi/part.rs"]
 mod part;
+#[path = "abi/session.rs"]
+mod session;
 #[path = "abi/settings.rs"]
 mod settings;
 #[path = "abi/shape.rs"]

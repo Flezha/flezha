@@ -61,15 +61,16 @@ children = [{Flezha.SDK, namespace: "my_namespace", relays: [MyRelay]}]
   `{:error, %Flezha.SDK.Error{code: "topology.no_relay_exported"}}`. The class's declaration
   is judged by `flz_core` there and then, the check every SDK's builder meets, so a refusal
   carries the core's `topology.*` code with every issue in `details.issues`.
-- `register_factory/2` / `unregister_factory/2` work before and after `start/1`; removing a
-  type with live instances refuses `runtime.relay_type_in_use`, naming the factory id and the
-  live count. A class declared after `start/1` reaches the controller at the runner's next
-  connect.
+- `register_factory/2` / `unregister_factory/2` work before and after `start/1`; after it,
+  the core sends the controller the full factory set, and refuses to remove a type with live
+  instances on this runner with `runtime.relay_type_in_use`, naming the factory id and the
+  live count.
 - `start/1` claims the process-wide runner slot (loser: `runtime.runner_already_running`)
   and connects; a refused connect is answered at the call with the controller's code, such as
   `runner.namespace_not_proven`, and leaves nothing behind, so a supervisor may start the
-  runner again; so does a connect no controller confirmed in time
-  (`runtime.connect_unconfirmed`). `run/1` = `start/1` + `await_termination/1`.
+  runner again; so does a connect no controller confirmed within the start wait
+  (`runtime.connect_unconfirmed`), `FLEZHA_RUNNER_START_WAIT_MS` or
+  `config :flezha_sdk, runner_start_wait_ms: ...`, which the SDK hands to the core. `run/1` = `start/1` + `await_termination/1`.
 - A runner runs **once per BEAM**, because `flz_core` is process-wide. `close/1` ships each
   relay's state and ends the session; a later start in the node, a local run's included, is
   refused as `runtime.core_shut_down`. So is the restart after a runner crash: the failure reaches the

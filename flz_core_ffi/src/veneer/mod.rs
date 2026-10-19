@@ -102,6 +102,8 @@ pub const SURFACE: &[Entry] = surface![
     (set_log_callback, false, CAbi),
     (take_notices, false, Every),
     (declare_class, false, Every),
+    // After start, for the coordinator's live-instance check.
+    (undeclare_class, true, Every),
     (check_class, false, Every),
     (start, true, Every),
     (start_with, true, CAbi),
@@ -120,7 +122,7 @@ pub const SURFACE: &[Entry] = surface![
     (complete, true, Every),
     (abandon, false, Every),
     (shutdown, false, Every),
-    (watch_stdin_eof, false, Glue),
+    (watch_stdin_eof, false, Every),
     (spawn_request, false, Every),
     // With a nonzero timeout. A read with a timeout of 0 never waits, so a
     // host may make that one on any thread.
@@ -344,13 +346,19 @@ pub fn shutdown(ctx: CtxPtr) {
 /// Ask the core to watch standard input and end the process on end of file.
 /// The watch is the core's, on a thread no host's virtual machine owns, so a
 /// host carries no reader of descriptor 0 of its own.
-pub fn watch_stdin_eof(grace_ms: u32) {
-    crate::flz_core_watch_stdin_eof(grace_ms)
+pub fn watch_stdin_eof() {
+    crate::flz_core_watch_stdin_eof()
 }
 
 pub fn declare_class(ctx: CtxPtr, json: &[u8]) -> Result<(), Refusal> {
     let status = unsafe { crate::flz_core_declare_class(ctx.get(), json.as_ptr(), json.len()) };
     verdict(ctx, status)
+}
+
+pub fn undeclare_class(ctx: CtxPtr, factory_id: &CStr) -> Result<(), Refusal> {
+    verdict(ctx, unsafe {
+        crate::flz_core_undeclare_class(ctx.get(), factory_id.as_ptr())
+    })
 }
 
 /// Ask for a declaration's verdict without registering it. `Ok` carries the

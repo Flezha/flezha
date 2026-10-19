@@ -286,19 +286,76 @@ fn terminal_exit() -> &'static Mutex<Option<String>> {
 /// orchestrator restarts it, distinct so the logs tell it from a crash.
 pub const TERMINAL_EXIT_CODE: i32 = 70;
 
-/// Run the graceful shutdown and exit NON-ZERO at the controller's order —
-/// the convergence ladder's last rung, since a wedged process that stays
-/// placeable wedges again and only the orchestrator restarts a failure.
-/// Called after the disconnect response is on the wire.
-pub fn exit_terminally(reason: &str) -> ! {
-    say(&format!(
-        "[flezha] controller ordered a terminal disconnect (reason={reason}); exiting \
-         {TERMINAL_EXIT_CODE} so the orchestrator restarts this runner"
-    ));
-    // A no-op when the caller already shipped state — the bridge latches.
+/// How a runner ends. Every end runs the registered bridge's shutdown first,
+/// so each relay's final state ships whichever way the runner goes.
+#[derive(Debug, Default)]
+pub struct Exit {
+    /// Said to standard error first, straight rather than through a notice
+    /// hook: a queue or a process send would be lost to the `_exit` after it.
+    pub why: Option<String>,
+    /// Stop the host's pollers, then give a healthy runner this long to finish
+    /// what it holds; `None` leaves the pollers running.
+    pub wait: Option<Duration>,
+    /// End the process with this status, running no exit handler; `None`
+    /// returns.
+    pub code: Option<i32>,
+    /// End the runner's session, so it does not reconnect behind a host that
+    /// has stopped.
+    pub abandon: bool,
+}
+
+impl Exit {
+    /// The controller's order: exit non-zero, the convergence ladder's last
+    /// rung, since a wedged process that stays placeable wedges again and only
+    /// the orchestrator restarts a failure.
+    pub fn terminal(reason: &str) -> Self {
+        Exit {
+            why: Some(format!(
+                "controller ordered a terminal disconnect (reason={reason}); exiting \
+                 {TERMINAL_EXIT_CODE} so the orchestrator restarts this runner"
+            )),
+            wait: Some(Duration::ZERO),
+            code: Some(TERMINAL_EXIT_CODE),
+            abandon: false,
+        }
+    }
+
+    /// A termination signal or a closed standard input: drain within the
+    /// grace, then exit 0. One end for both, so a runner cannot drain
+    /// differently for one than for the other.
+    fn drained(what: &str) -> Self {
+        Exit {
+            why: Some(format!("{what}; draining")),
+            wait: Some(SIGTERM_GRACE),
+            code: Some(0),
+            abandon: false,
+        }
+    }
+}
+
+/// End the runner as `exit` says: the one sequence every end composes.
+pub fn exit(exit: Exit) {
+    if let Some(why) = &exit.why {
+        say(&format!("[flezha] {why}"));
+    }
     run_active_graceful_shutdown();
-    crate::poll_core::global().shutdown();
-    end_process(TERMINAL_EXIT_CODE)
+    if let Some(wait) = exit.wait {
+        let core = crate::poll_core::global();
+        core.shutdown();
+        // A healthy runner finishes what it is holding and its pollers leave on
+        // the core's word; one that has not by the deadline is ended, because
+        // nothing is left that could.
+        let deadline = std::time::Instant::now() + wait;
+        while core.outstanding_count() > 0 && std::time::Instant::now() < deadline {
+            thread::sleep(DRAIN_POLL_INTERVAL);
+        }
+    }
+    if exit.abandon {
+        crate::runner::coordinator_send(crate::runner::RunnerMessage::Abandon);
+    }
+    if let Some(code) = exit.code {
+        end_process(code)
+    }
 }
 
 /// Run the registered bridge's shutdown, if any; the bridge's latch makes a
@@ -313,7 +370,7 @@ pub fn run_active_graceful_shutdown() {
 /// What a healthy runner has to drain in once SIGTERM has been observed. Small
 /// beside a container's grace period, and the same budget a closed standard
 /// input gives, because both end the same way.
-const SIGTERM_GRACE_MS: u32 = 5_000;
+const SIGTERM_GRACE: Duration = Duration::from_secs(5);
 
 /// Poll interval for a standard input the host runtime has made non-blocking,
 /// and for the drain the exit waits on.
@@ -328,9 +385,8 @@ const DRAIN_POLL_INTERVAL: Duration = Duration::from_millis(20);
 /// observe that is the host's event loop — which is exactly the thread a
 /// compute-bound handler holds. A runner whose only loop is wedged would then
 /// be unstoppable without a signal, so the watch runs beside
-/// [`install_sigterm_handler`] and reaches the exit the same way: through
-/// [`run_active_graceful_shutdown`], on a thread no host's virtual machine
-/// owns.
+/// [`install_sigterm_handler`] and ends the runner the same way, with the same
+/// grace, on a thread no host's virtual machine owns.
 ///
 /// A read ERROR is not end of file. Standard input is non-blocking whenever the
 /// runtime has taken an interest in it — which it has the moment a worker
@@ -338,17 +394,14 @@ const DRAIN_POLL_INTERVAL: Duration = Duration::from_millis(20);
 /// Conflating that with end of file shuts the runner down a few hundred
 /// milliseconds after it connects, every time. Only a genuine end of file, or a
 /// descriptor that has gone away, ends the watch.
-///
-/// A healthy runner has `grace_ms` to drain and exit on its own; one that has
-/// not exited by then is ended, because nothing is left that could.
-pub fn watch_stdin_eof(grace_ms: u32) {
+pub fn watch_stdin_eof() {
     static WATCHING: Once = Once::new();
     WATCHING.call_once(|| {
         if let Err(e) = thread::Builder::new()
             .name("flz-stdin-eof".into())
-            .spawn(move || {
+            .spawn(|| {
                 wait_for_stdin_eof();
-                end_gracefully("standard input reached end of file", grace_ms);
+                exit(Exit::drained("standard input reached end of file"));
             })
         {
             flz_transport::notice!(
@@ -358,26 +411,6 @@ pub fn watch_stdin_eof(grace_ms: u32) {
             );
         }
     });
-}
-
-/// The one exit both facts lead to: ship every relay's final state, tell
-/// the host's pollers to stop so its own workers drain, give a healthy runner
-/// `grace_ms` to finish, then end. A host needs no thread and no callback of
-/// its own for either, so a runner cannot drain differently for one than for
-/// the other.
-fn end_gracefully(what: &str, grace_ms: u32) -> ! {
-    say(&format!("[flezha] {what}; draining"));
-    run_active_graceful_shutdown();
-    let core = crate::poll_core::global();
-    core.shutdown();
-    // A healthy runner finishes what it is holding and its pollers leave on
-    // the core's word; one that has not by the deadline is ended, because
-    // nothing is left that could.
-    let deadline = std::time::Instant::now() + Duration::from_millis(u64::from(grace_ms));
-    while core.outstanding_count() > 0 && std::time::Instant::now() < deadline {
-        thread::sleep(DRAIN_POLL_INTERVAL);
-    }
-    end_process(0)
 }
 
 /// End the process at once, without running the exit handlers.
@@ -437,7 +470,7 @@ fn install_sigterm_handler() {
             Ok(mut signals) => {
                 thread::spawn(move || {
                     if signals.forever().next().is_some() {
-                        end_gracefully("termination signal received", SIGTERM_GRACE_MS);
+                        exit(Exit::drained("termination signal received"));
                     }
                 });
             }
@@ -598,6 +631,27 @@ mod tests {
             Some(0),
             "the exit ran an exit handler: {}",
             child.status
+        );
+    }
+
+    #[test]
+    fn a_terminal_exit_says_why_past_a_notice_hook() {
+        let Some(child) = crate::test_support::run_alone(
+            "shutdown::tests::a_terminal_exit_says_why_past_a_notice_hook",
+        ) else {
+            flz_transport::notice::set_hook(Box::new(|_, _, _| {}));
+            exit(Exit::terminal("wedged"));
+            unreachable!("a terminal exit returned");
+        };
+
+        assert_eq!(child.status.code(), Some(TERMINAL_EXIT_CODE));
+        let stderr = String::from_utf8_lossy(&child.stderr);
+        assert!(
+            stderr.contains(
+                "[flezha] controller ordered a terminal disconnect (reason=wedged); exiting 70 \
+                 so the orchestrator restarts this runner\n"
+            ),
+            "the reason did not reach standard error: {stderr}"
         );
     }
 

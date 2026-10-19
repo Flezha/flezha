@@ -561,6 +561,12 @@ not per thread. Two consequences for the script you write:
 `Runner::run()` takes the attachment the bootstrap left and serves against it;
 nothing in your script changes between the two paths.
 
+Each thread serves the classes registered before start, so a
+`registerFactory` or `unregisterFactory` after start would reach the calling
+thread alone: under `SwooleExecutor` both are refused with
+`runtime.executor_unavailable`. Under `SyncExecutor` a change after start is
+declared to the running core and served at once.
+
 ### Writing your own
 
 Implement `Executor`. That is the whole contract, and it is the same seam an

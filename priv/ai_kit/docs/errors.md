@@ -571,13 +571,12 @@ SDK raises or returns its one error type carrying them.
 | `runtime.class_not_registered` | not_found | 5 | no relay class is registered as '{factory}' on this runner |  |
 | `runtime.command_crashed` | internal | 1 | the runner failed while answering the command: {reason} |  |
 | `runtime.completion_too_many_effects` | invalid | 2 | the completion carries more effects than the activation had items |  |
-| `runtime.connect_unconfirmed` | unreachable | 3 | the controller connect was not confirmed within {seconds}s |  |
+| `runtime.connect_unconfirmed` | unreachable | 3 | the controller connect was not confirmed within {wait_ms} ms (FLEZHA_RUNNER_START_WAIT_MS) |  |
 | `runtime.core_in_use` | conflict | 6 | another runner or local run is live in this process: its core serves one at a time |  |
 | `runtime.core_shut_down` | unavailable | 7 | this process's core was shut down: no runner or local run starts on it again in this process |  |
 | `runtime.edge_closure_panicked` | internal | 1 | the edge {closure} panicked: {reason} |  |
 | `runtime.event_time_timer_without_event_time_clock` | invalid | 2 | tasklet '{tasklet}' declared clock '{clock}'; an event-time timer needs an event-time clock |  |
 | `runtime.executor_unavailable` | unavailable | 7 | the {executor} executor cannot run here: {reason} |  |
-| `runtime.factory_in_service` | conflict | 6 | '{module}' cannot be unregistered, because a running runner cannot stop serving a started declaration |  |
 | `runtime.factory_run_mismatch` | conflict | 6 | factory '{factory}' is registered as a {declared} class, and the controller started it as {run} |  |
 | `runtime.forked_process` | invalid | 2 | the core was started in process {owner} and this is process {pid}; fork does not carry the core's threads, so start the core in each child |  |
 | `runtime.hook_missing` | invalid | 2 | tasklet '{tasklet}' {action}, and declares no {hook} to handle it |  |

@@ -341,6 +341,15 @@ fn check_class(json: RString) -> Result<String, Error> {
 
 /// Connect to the controller and start the runner loop. Blocking: the ABI call
 /// waits up to ten seconds for the connect confirmation.
+/// Undeclare a class; after start, waits for the runner's live-instance check.
+fn undeclare_class(factory_id: String) -> Result<(), Error> {
+    let ruby = ruby();
+    let ctx = context(&ruby)?;
+    let refused = |r| raise(&ruby, r);
+    let factory_id = veneer::c_string("factory id", &factory_id).map_err(refused)?;
+    without_gvl(move || veneer::undeclare_class(ctx, &factory_id)).map_err(refused)
+}
+
 fn start(namespace: String) -> Result<(), Error> {
     let ruby = ruby();
     let ctx = context(&ruby)?;
@@ -465,10 +474,10 @@ fn shutdown() -> Result<(), Error> {
 
 /// Watch standard input and end the process on end of file, on the core's own
 /// thread. The host reads descriptor 0 nowhere.
-fn watch_stdin_eof(grace_ms: u32) -> Result<(), Error> {
+fn watch_stdin_eof() -> Result<(), Error> {
     let ruby = ruby();
     context(&ruby)?;
-    veneer::watch_stdin_eof(grace_ms);
+    veneer::watch_stdin_eof();
     Ok(())
 }
 
@@ -668,6 +677,7 @@ pub fn init(ruby: &Ruby) -> Result<(), Error> {
     native.define_module_function("context_new", function!(context_new, 1))?;
     native.define_module_function("context_free", function!(context_free, 0))?;
     native.define_module_function("declare_class", function!(declare_class, 1))?;
+    native.define_module_function("undeclare_class", function!(undeclare_class, 1))?;
     native.define_module_function("check_class", function!(check_class, 1))?;
     native.define_module_function("start", function!(start, 1))?;
     native.define_module_function("local_start", function!(local_start, 2))?;
@@ -681,7 +691,7 @@ pub fn init(ruby: &Ruby) -> Result<(), Error> {
     native.define_module_function("complete", function!(complete, 1))?;
     native.define_module_function("abandon", function!(abandon, 1))?;
     native.define_module_function("shutdown", function!(shutdown, 0))?;
-    native.define_module_function("watch_stdin_eof", function!(watch_stdin_eof, 1))?;
+    native.define_module_function("watch_stdin_eof", function!(watch_stdin_eof, 0))?;
     native.define_module_function("spawn_request", function!(spawn_request, 7))?;
     native.define_module_function("spawn_result", function!(spawn_result, 2))?;
     native.define_module_function("part", function!(part, 3))?;

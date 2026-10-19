@@ -314,9 +314,6 @@ fn decode_frame(payload_id: &str, message: &[u8]) -> Option<(CommandActionType, 
     }
 }
 
-/// After the disconnect ack is written: a terminal disconnect ships its
-/// state first (the notifications ride this channel), then only the write
-/// half closes so the ack lands before the peer sees the close.
 /// Write an encoded reply, logging a frame that could not be built or written.
 fn respond_with(stream: &FlezhaStream, frame: std::io::Result<Vec<u8>>) {
     if let Err(e) = frame.and_then(|reply| write_reply(stream, reply)) {
@@ -331,6 +328,9 @@ fn write_reply(stream: &FlezhaStream, reply: Vec<u8>) -> std::io::Result<()> {
     crate::state_sink::write(crate::state_sink::Class::Control, Some(stream), reply).refused()
 }
 
+/// After the disconnect ack is written: a terminal disconnect ships its
+/// state first (the notifications ride this channel), then only the write
+/// half closes so the ack lands before the peer sees the close.
 fn finish_disconnect(stream: &FlezhaStream) {
     let terminal = crate::shutdown::take_terminal_exit();
     if terminal.is_some() {
@@ -338,7 +338,7 @@ fn finish_disconnect(stream: &FlezhaStream) {
     }
     let _ = stream.shutdown(Shutdown::Write);
     if let Some(reason) = terminal {
-        crate::shutdown::exit_terminally(&reason);
+        crate::shutdown::exit(crate::shutdown::Exit::terminal(&reason));
     }
 }
 

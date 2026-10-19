@@ -10,6 +10,7 @@ runner in the controller's own BEAM can be given its own values.
 What each variable does is below; the type and default of every one is in
 [Every variable](#every-variable), generated from the configuration table.
 
+- `FLEZHA_RUNNER_START_WAIT_MS`: How long a runner's start waits for the controller to confirm or refuse its connect; past it the start fails with `runtime.connect_unconfirmed` and leaves no runner dialling. `0` waits for ever. The Elixir SDK reads it as `config :flezha_sdk, runner_start_wait_ms: ...` too and hands it to the core. Default: `10000` (10 s).
 - `FLEZHA_RUNNER_ID_PATH`: The durable stable identity; an unwritable path degrades to a fresh per-boot id with one warning, never a refusal.
 - `FLEZHA_MAILBOX_CAPACITY`: The per-Cell mailbox bound, read today by the Elixir, Java and Rust SDKs; a Tasklet that overrides `mailbox_capacity()` wins over it. The range is `1..1_048_576`.
 - `FLEZHA_SOCKET_FILES_PATH`: Read through the `flz_transport` path helper, which every SDK reaches. Default: resolved by the [socket-directory ladder](files_and_sockets.md#the-socket-directory-ladder).
@@ -82,6 +83,7 @@ What each variable does is below; the type and default of every one is in
 | `FLEZHA_RELEASE_BASE_URL` | string | unset |
 | `FLEZHA_RUBY_EXECUTOR` | string | unset |
 | `FLEZHA_RUNNER_ID_PATH` | path | `/var/lib/flezha-runner/id` |
+| `FLEZHA_RUNNER_START_WAIT_MS` | ms | `10000` |
 | `FLEZHA_SDK_BUILD_NIF` | bool | `false` |
 | `FLEZHA_SEND_GATE_HIGH_WATER` | int | unset |
 | `FLEZHA_SEND_GATE_LOW_WATER` | int | unset |

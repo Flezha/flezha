@@ -5,7 +5,8 @@ defmodule FlezhaTest.System.StateFreshnessE2ETest do
   Spins up a real runner subprocess for the run's selected runtime, registers
   a relay (the controller takes no periodic snapshot, so the only path
   to populate `Overwatch.state.snapshot` is the SDK's shutdown notification), then sends SIGTERM to the OS pid and asserts
-  the controller's snapshot is populated within the 2 s ack window.
+  the controller's snapshot is populated within the 2 s ack window and the
+  runner exits 0.
 
   Tagged `:system` so it stays out of the default `mix test` budget —
   it boots a real SDK subprocess, which can be slow on cold caches. Run via:
@@ -48,7 +49,9 @@ defmodule FlezhaTest.System.StateFreshnessE2ETest do
   end
 
   test "SIGTERM to the runner populates Overwatch.state.snapshot via RunnerShutdownNotification" do
-    {port, ce_id} = NodeTestHelper.start_runner_port(@namespace, transport: :uds)
+    {port, ce_id} =
+      NodeTestHelper.start_runner_port(@namespace, transport: :uds, port_opts: [:exit_status])
+
     on_exit(fn -> NodeTestHelper.ensure_port_dead(port) end)
 
     {:os_pid, os_pid} = :erlang.port_info(port, :os_pid)
@@ -133,6 +136,10 @@ defmodule FlezhaTest.System.StateFreshnessE2ETest do
            "graceful-shutdown snapshot did not include all sent inputs.\n" <>
              "  sent:     #{inspect(inputs_sent)}\n" <>
              "  received: #{inspect(received_inputs)}"
+
+    # The core drains and ends the process, whatever the runtime's own signal
+    # handling would have done: a JVM left to it exits 143.
+    assert_receive {^port, {:exit_status, 0}}, 10_000
   end
 
   defp wait_for_snapshot(overwatch_pid, timeout_ms) do

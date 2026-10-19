@@ -271,10 +271,27 @@ An SDK other than Rust reaches the kernel through `flz_core_ffi`
    `flz_core_init_error` names both versions, before any connection to the
    controller.
 2. `flz_core_declare_class`, once per class, with the complete class as JSON.
-3. `flz_core_start(namespace)`.
+3. `flz_core_start(namespace)`, which waits for the controller's answer for
+   `FLEZHA_RUNNER_START_WAIT_MS` (10 s by default, `0` for ever) and fails with
+   `runtime.connect_unconfirmed` past it, leaving no runner dialling. A host
+   whose runtime keeps its own copy of the environment hands the connection
+   settings, the wait among them, to `flz_core_start_with` instead.
 4. `flz_core_poll` and `flz_core_complete` (or `flz_core_abandon`), from any
    thread. A host that can starve also calls `flz_core_wait_starvation`.
+   `flz_core_declare_class` and `flz_core_undeclare_class` stay legal: after
+   start the core sends the controller the runner's full factory set, and the
+   runner's coordinator refuses to undeclare a class while instances of it
+   live (`runtime.relay_type_in_use`), checked in line with the controller's
+   binds.
 5. `flz_core_shutdown`, then `flz_core_context_free`.
+
+The session behind these calls is `flz_core::session::Session`, the one the
+Rust SDK's `FlezhaRunner` wraps too, so the start wait and the rule for a
+factory change after start are the same in every SDK. Every way a runner ends
+(a termination signal, end of file on standard input that
+`flz_core_watch_stdin_eof` watches, a controller's terminal disconnect, a
+host's shutdown) runs one sequence, `flz_core::shutdown::exit`: ship each
+relay's state, stop the pollers, drain within the grace and exit.
 
 The class declaration is complete: the channel graph, cell modes, clocks, the
 settings tree, the record header's language byte, and the steps facts. Its
@@ -302,6 +319,12 @@ The surface you write against (tasklets, the graph builder), the state and
 channel codecs, how the poll loop fits the language's concurrency, errors in
 the language's own style, and the test harness. This is the code that should
 feel native.
+
+What a host keeps beside that is small: a registry its executor serves from,
+which a factory change after start updates as it tells the core, and handing
+SIGTERM and SIGINT to the core where its runtime would end the process first
+(Ruby, Node and Java replace that default handler before the core starts; one
+the application installed stays).
 
 Two places remain where the in-process Rust SDK runs its own code on a core
 thread, and an FFI host never does: `TypedBuffer<S>` serializes changes on the

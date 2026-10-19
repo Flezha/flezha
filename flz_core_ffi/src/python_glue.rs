@@ -426,6 +426,14 @@ impl Core {
 
     /// Connect to the controller and start the runner loop. Blocking: the ABI
     /// call waits up to ten seconds for the connect confirmation.
+    /// Undeclare a class; after start, waits for the runner's live-instance
+    /// check.
+    fn undeclare_class(&self, py: Python<'_>, factory_id: &str) -> PyResult<()> {
+        let ctx = self.ptr()?;
+        let factory_id = veneer::c_string("factory id", factory_id)?;
+        Ok(py.detach(move || veneer::undeclare_class(ctx, &factory_id))?)
+    }
+
     fn start(&self, py: Python<'_>, namespace: &str) -> PyResult<()> {
         let ctx = self.ptr()?;
         let namespace = veneer::c_string("namespace", namespace)?;
@@ -537,9 +545,9 @@ impl Core {
 
     /// Watch standard input and end the process on end of file, on the core's
     /// own thread. The host reads descriptor 0 nowhere.
-    fn watch_stdin_eof(&self, grace_ms: u32) -> PyResult<()> {
+    fn watch_stdin_eof(&self) -> PyResult<()> {
         self.ptr()?;
-        veneer::watch_stdin_eof(grace_ms);
+        veneer::watch_stdin_eof();
         Ok(())
     }
 

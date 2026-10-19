@@ -75,13 +75,14 @@ pub fn record_notices() {
     flz_core_set_log_callback(Some(noted));
 }
 
+/// Every notice recorded since [`record_notices`].
+pub fn notices() -> Vec<String> {
+    NOTICES.lock().unwrap().clone()
+}
+
 /// Whether a recorded notice starts with `prefix`.
 pub fn noticed(prefix: &str) -> bool {
-    NOTICES
-        .lock()
-        .unwrap()
-        .iter()
-        .any(|n| n.starts_with(prefix))
+    notices().iter().any(|n| n.starts_with(prefix))
 }
 
 /// Poll through the ABI, panicking on error; returns (status, decoded).

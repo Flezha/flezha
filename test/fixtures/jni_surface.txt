@@ -14,6 +14,7 @@
 schemaVersion|flz_core_schema_version
 contextNew|flz_core_context_new
 declareClass|flz_core_declare_class
+undeclareClass|flz_core_undeclare_class
 checkClass|flz_core_check_class
 start|flz_core_start
 localStart|flz_core_local_start
@@ -39,4 +40,5 @@ relays|flz_core_relays
 monotonicNanos|flz_core_monotonic_nanos
 takeNotices|flz_core_take_notices
 shutdown|flz_core_shutdown
+watchStdinEof|flz_core_watch_stdin_eof
 contextFree|flz_core_context_free

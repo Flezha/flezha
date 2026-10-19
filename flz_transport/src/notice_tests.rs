@@ -12,7 +12,7 @@ const TARGET: &str = "flz_transport::notice::tests";
 /// child's `[flezha]` lines of standard error outside, once it passed.
 fn flezha_stderr_of_child(name: &str) -> Option<Vec<String>> {
     const CHILD: &str = "FLZ_NOTICE_TEST_CHILD";
-    if std::env::var_os(CHILD).is_some() {
+    if crate::env::env_raw(CHILD).is_some() {
         return None;
     }
     let out = std::process::Command::new(std::env::current_exe().unwrap())

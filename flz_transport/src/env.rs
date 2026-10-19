@@ -35,6 +35,7 @@ pub const CONNECT_SETTINGS: &[(&str, &str)] = &[
     ("quic_client_cert", "FLEZHA_QUIC_CLIENT_CERT"),
     ("quic_client_key", "FLEZHA_QUIC_CLIENT_KEY"),
     ("namespace_secret", "FLEZHA_NAMESPACE_SECRET"),
+    ("start_wait_ms", "FLEZHA_RUNNER_START_WAIT_MS"),
 ];
 
 /// The settings the host handed over, keyed by variable name.

@@ -23,7 +23,7 @@ use crate::harness::{last_document, last_error, Controller};
 
 const CHILD: &str = "FLZ_ABI_SETTINGS_CHILD";
 
-fn in_child(test: &str) {
+pub(crate) fn in_child(test: &str) {
     let status = Command::new(std::env::current_exe().expect("the test binary"))
         .args(["--exact", test, "--nocapture"])
         .env(CHILD, "1")

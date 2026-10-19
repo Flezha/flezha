@@ -62,6 +62,7 @@ pub mod routing;
 #[doc(hidden)]
 pub mod runner;
 pub mod schema;
+pub mod session;
 #[doc(hidden)]
 pub mod shutdown;
 pub mod spawn;

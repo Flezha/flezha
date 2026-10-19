@@ -471,9 +471,9 @@ pub fn stop_host<'a>(env: &'a Env) -> Result<Object<'a>> {
 /// exactly the thread a compute-bound handler holds. The core's thread owns
 /// neither, and it reaches the exit the same way SIGTERM does.
 #[napi]
-pub fn watch_stdin_eof(grace_ms: u32) -> Result<()> {
+pub fn watch_stdin_eof() -> Result<()> {
     context()?;
-    crate::veneer::watch_stdin_eof(grace_ms);
+    crate::veneer::watch_stdin_eof();
     Ok(())
 }
 
@@ -593,7 +593,9 @@ pub(crate) fn set_log_callback(callback: Option<Function<JsLogLine, ()>>) -> Res
     let previous = std::mem::replace(&mut *LOGGER.lock().unwrap_or_else(|p| p.into_inner()), next);
     drop(previous);
     if hooked {
-        notice::set_hook(Box::new(|level, _target, text| log_line(level as i32, text)));
+        notice::set_hook(Box::new(|level, _target, text| {
+            log_line(level as i32, text)
+        }));
     } else {
         notice::clear_hook();
     }

@@ -519,9 +519,3 @@ everywhere in one change.
 - **Declarative routing keys and edge transforms** — evaluating a key spec or a
   simple transform in Rust so the common path never enters Python at all. The
   largest remaining performance lever; owed to `sdk-declarative-keys`.
-- **Post-start factory resync to a live controller.** `register_factory` after
-  `start()` reaches the core immediately and the controller at the next bind,
-  because the ABI has no entry point that ships `UpdateFactories` or retracts a
-  declaration — only the in-process Rust host, which owns the runner channel
-  directly, can notify a live controller. Java carries the same gap; owed to
-  `sdk-abi-factory-resync`.

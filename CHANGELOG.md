@@ -2,6 +2,37 @@
 
 ## Unreleased
 
+### Changed: one runner session, one start wait, one exit, in every SDK
+
+Each SDK built its own start, post-start factory change and exit around the core, and they
+drifted: the Rust SDK waited for ever for the controller, the C ABI ten seconds, the Elixir
+SDK fifteen; a factory registered after start reached the controller from Rust only, and was
+silently inert in Ruby and PHP. All seven now drive one session in `flz_core`.
+
+- **BREAKING:** every runner's start waits `FLEZHA_RUNNER_START_WAIT_MS` (default 10 000,
+  `0` waits for ever) for the controller's answer and then fails with
+  `runtime.connect_unconfirmed`, leaving no runner dialling. The Rust SDK's `start()` used to
+  wait for ever and gains `FlezhaError::ConnectUnconfirmed { wait_ms }`; the Elixir SDK reads
+  the wait (or `config :flezha_sdk, runner_start_wait_ms:`) and hands it to the core.
+- **BREAKING:** `runtime.connect_unconfirmed` names the wait in `wait_ms` (it was `seconds`).
+- A factory registered or unregistered after start reaches the controller from every SDK as
+  `UpdateFactories`, and the SDK's executor serves the change: Ruby and PHP declare it to the
+  running core (KB-444), and Node, Ruby and PHP stop serving a removed one. Unregistering a
+  factory with live instances on the runner is refused with `runtime.relay_type_in_use` by
+  the core's coordinator, in line with the controller's binds.
+- Under PHP's `SwooleExecutor` a factory registered or unregistered after start is refused
+  with `runtime.executor_unavailable`: each thread serves the classes registered before start.
+- **BREAKING:** `runtime.factory_in_service` is gone: Ruby, Node and PHP no longer refuse an
+  unregister after start. Node's `unregisterFactory` after `run()` waits for the core's check.
+- **BREAKING:** the C ABI gains `flz_core_undeclare_class(ctx, factory_id)`, and
+  `flz_core_watch_stdin_eof()` takes no grace: it drains within the SIGTERM handler's. The
+  start settings of `flz_core_start_with` accept `start_wait_ms`. A start refused or
+  unconfirmed may be retried on the same context.
+- **BREAKING (Java):** SIGTERM and SIGINT are the core's, as in Ruby and Node: the runner
+  ships its state and exits 0 instead of 143, and the application's own JVM shutdown hooks no
+  longer run on them. A signal handler the application installed before `start()` is kept.
+  JNI gains `undeclareClass` and `watchStdinEof`.
+
 ### Changed: the core's notices reach each SDK's own log
 
 A retry, a reconnect, a refused connect, the local-mode banner and every other line the core

@@ -58,6 +58,17 @@ defmodule FlezhaTest.System.EmbeddedRunnerE2ETest do
       do: c |> input("in", codec: :text) |> key_by(& &1) |> into(Tally) |> output("out")
   end
 
+  defmodule Later do
+    @moduledoc false
+    @behaviour Flezha.SDK.Relay
+    import Flezha.SDK.Channels
+
+    def factory_id, do: "embedded_later"
+
+    def channels(c),
+      do: c |> input("in", codec: :text) |> key_by(& &1) |> into(Tally) |> output("out")
+  end
+
   setup do
     _ = AuthTestHelper.setup_auth_stores(prefix: "flz_embedded_runner", claim: true)
     assert AuthZ.enforcement_posture() == :enforced
@@ -128,6 +139,26 @@ defmodule FlezhaTest.System.EmbeddedRunnerE2ETest do
     {:ok, raw, ^runner_id} = RelayManager.get_tasklet_activity(@ns, relay, %{})
     %{rows: [row]} = RunnerCommands.TaskletActivityResponse.decode!(raw)
     assert %{tasklet: "embedded_tally", cells: 2, admitted_total: 3} = row
+
+    # A factory change after start reaches the controller through the core,
+    # and the core keeps a factory one of its instances still runs.
+    advertised = fn ids ->
+      NodeTestHelper.wait_until(
+        fn -> FleetManager.factories_for_runner(@ns, runner_id) == MapSet.new(ids) end,
+        15_000
+      )
+    end
+
+    runner = Flezha.SDK.register_factory(runner, Later)
+    assert advertised.(~w(embedded_tally embedded_later))
+    runner = Flezha.SDK.unregister_factory(runner, Later)
+    assert advertised.(~w(embedded_tally))
+
+    assert {:error, %Flezha.SDK.Error{code: "runtime.relay_type_in_use"} = in_use} =
+             Flezha.SDK.unregister_factory(runner, Embedded)
+
+    assert in_use.details["live_instances"] == 1
+    assert advertised.(~w(embedded_tally))
 
     :ok = Flezha.SDK.close(runner)
 

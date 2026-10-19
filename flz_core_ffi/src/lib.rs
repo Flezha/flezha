@@ -50,14 +50,13 @@ pub mod veneer;
 
 use std::collections::HashMap;
 use std::ffi::{c_char, CStr, CString};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, RwLock, TryLockError};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, TryLockError};
 use std::time::Duration;
 
 use dashmap::DashMap;
 pub use error::Error;
 use flz_core::poll_core::{EngineActivation, Polled, Starvation};
-use flz_core::runner::{ClientResponseMessage, RunnerMessage};
 use flz_core::spawn::{IfRunning, SpawnHandle, SpawnOptions};
 use flz_core::{schema, ErrorModel};
 /// The local-mode entry points, exported from the crate root like every other
@@ -127,8 +126,7 @@ struct Outstanding {
 pub struct FlzContext {
     outstanding: DashMap<u64, Outstanding>,
     last_error: Mutex<Option<CString>>,
-    started: AtomicBool,
-    declared: Arc<RwLock<Vec<String>>>,
+    session: flz_core::session::Session,
     /// The local run this context drives and the channel its sinks release
     /// onto, when it has one. A started context dials a controller and never
     /// holds one; the two are alternatives.
@@ -139,9 +137,6 @@ pub struct FlzContext {
     /// The spawn handles of every outstanding activation, by number.
     spawns: DashMap<u64, Arc<Mutex<SpawnHandle>>>,
     last_spawn: AtomicU64,
-    /// The started runner's message channel, which `flz_core_shutdown` ends
-    /// the session through.
-    session: Mutex<Option<crossbeam::channel::Sender<RunnerMessage>>>,
 }
 
 /// Where a registered sink's releases go: the host takes them back through
@@ -264,13 +259,11 @@ pub extern "C" fn flz_core_context_new(shim_schema_version: u32) -> *mut FlzCont
     Box::into_raw(Box::new(FlzContext {
         outstanding: DashMap::new(),
         last_error: Mutex::new(None),
-        started: AtomicBool::new(false),
-        declared: Arc::new(RwLock::new(Vec::new())),
+        session: Default::default(),
         local: Mutex::new(None),
         local_outputs: Mutex::new(None),
         spawns: DashMap::new(),
         last_spawn: AtomicU64::new(0),
-        session: Mutex::new(None),
     }))
 }
 
@@ -364,23 +357,40 @@ pub unsafe extern "C" fn flz_core_declare_class(
         return FLZ_ERR;
     };
     let bytes = std::slice::from_raw_parts(json, json_len);
-    let factory_id = match serde_json::from_slice::<serde_json::Value>(bytes) {
-        Ok(v) => v
-            .get("factory_id")
-            .and_then(|f| f.as_str())
-            .map(str::to_string),
-        Err(_) => None,
+    let factory_id = serde_json::from_slice::<serde_json::Value>(bytes)
+        .ok()
+        .and_then(|v| v.get("factory_id")?.as_str().map(str::to_string))
+        .unwrap_or_default();
+    let register = || flz_core::host::register_host_class_json(bytes).map_err(Error::from);
+    match ctx.session.declare(&factory_id, register) {
+        Ok(()) => FLZ_OK,
+        Err(refusal) => ctx.fail(refusal),
+    }
+}
+
+/// Undeclare the class registered under `factory_id`, the inverse of
+/// [`flz_core_declare_class`]. After start the runner's coordinator checks for
+/// live instances, serialized with the controller's binds, and refuses with
+/// `runtime.relay_type_in_use` while any exist; otherwise the controller is
+/// sent the remaining factory set. Blocks for that round trip.
+///
+/// # Safety
+/// `ctx` must be live; `factory_id` must be a NUL-terminated string.
+#[no_mangle]
+pub unsafe extern "C" fn flz_core_undeclare_class(
+    ctx: *mut FlzContext,
+    factory_id: *const c_char,
+) -> i32 {
+    let Some(ctx) = ctx.as_mut() else {
+        return FLZ_ERR;
     };
-    if let Err(e) = flz_core::host::register_host_class_json(bytes) {
-        return ctx.fail(e.into());
+    let Ok(factory_id) = CStr::from_ptr(factory_id).to_str() else {
+        return ctx.fail(Error::Utf8("factory_id"));
+    };
+    match ctx.session.undeclare(factory_id) {
+        Ok(()) => FLZ_OK,
+        Err(refusal) => ctx.fail(refusal.into()),
     }
-    if let Some(factory_id) = factory_id {
-        ctx.declared
-            .write()
-            .unwrap_or_else(|p| p.into_inner())
-            .push(factory_id);
-    }
-    FLZ_OK
 }
 
 /// Judge a host class declaration without registering it: the read-only half
@@ -441,7 +451,7 @@ pub unsafe extern "C" fn flz_core_start(ctx: *mut FlzContext, namespace: *const 
     let Ok(namespace) = CStr::from_ptr(namespace).to_str() else {
         return ctx.fail(Error::Utf8("namespace"));
     };
-    start_runner(ctx, namespace, None)
+    start_runner(ctx, namespace, Vec::new())
 }
 
 /// [`flz_core_start`], with the connection settings handed over as a JSON
@@ -474,7 +484,7 @@ pub unsafe extern "C" fn flz_core_start_with(
         std::slice::from_raw_parts(settings, settings_len)
     };
     match connect_settings(settings) {
-        Ok(handed_over) => start_runner(ctx, namespace, Some(handed_over)),
+        Ok(handed_over) => start_runner(ctx, namespace, handed_over),
         Err(refusal) => ctx.fail(refusal),
     }
 }
@@ -506,43 +516,15 @@ fn connect_settings(bytes: &[u8]) -> Result<Vec<(&'static str, String)>, Error> 
 fn start_runner(
     ctx: &mut FlzContext,
     namespace: &str,
-    handed_over: Option<Vec<(&'static str, String)>>,
+    handed_over: Vec<(&'static str, String)>,
 ) -> i32 {
     if flz_core::poll_core::global().is_shut_down() {
         return ctx.fail(Error::ShutDown);
     }
-    if ctx.started.swap(true, Ordering::AcqRel) {
-        return ctx.fail(Error::AlreadyStarted);
+    match ctx.session.start(namespace, handed_over) {
+        Ok(()) => FLZ_OK,
+        Err(refusal) => ctx.fail(refusal.into()),
     }
-    // A plain start clears what an earlier start in this process handed over.
-    flz_transport::env::hand_over_connect_settings(handed_over.unwrap_or_default());
-    let (otx, orx) = crossbeam::channel::unbounded::<RunnerMessage>();
-    let abandon = otx.clone();
-    let (confirm_tx, confirm_rx) = crossbeam::channel::unbounded::<ClientResponseMessage>();
-    let bridge = flz_core::shutdown::ShutdownBridge::new();
-    flz_core::shutdown::register_bridge(Arc::clone(&bridge));
-    let _runner = flz_core::runner::start(
-        namespace.to_string(),
-        Arc::clone(&ctx.declared),
-        (otx, orx),
-        confirm_tx,
-        bridge,
-    );
-    let refused = match confirm_rx.recv_timeout(Duration::from_secs(error::CONNECT_CONFIRM_SECS)) {
-        Ok(ClientResponseMessage::ConnectRefused(refusal)) => {
-            flz_core::Error::Connect(refusal).into()
-        }
-        Ok(_) => {
-            *ctx.session.lock().unwrap_or_else(|p| p.into_inner()) = Some(abandon);
-            return FLZ_OK;
-        }
-        Err(_) => Error::ConnectUnconfirmed,
-    };
-    // A failed start leaves no runner behind: the host may start again in
-    // this process.
-    flz_core::control_unit::abandon_starts();
-    let _ = abandon.send(RunnerMessage::Abandon);
-    ctx.fail(refused)
 }
 
 /// Block for up to `timeout_ms` for one activation. On
@@ -678,25 +660,22 @@ pub unsafe extern "C" fn flz_core_abandon(ctx: *mut FlzContext, token: u64) -> i
 /// which needs the caller's loops still polling, so the sequence runs on its
 /// own thread and the core reports shutting down only once it is done. That
 /// thread reads nothing of `ctx`, so freeing the context cannot race it. The
-/// runner loop is not told anything: a stopping runner that reconnected would
-/// be handed work it will never do, and the loop ends with the process.
+/// session ends last: a stopping runner that reconnected would be handed work
+/// it will never do.
 ///
 /// # Safety
 /// `ctx` must be live.
 #[no_mangle]
 pub unsafe extern "C" fn flz_core_shutdown(ctx: *mut FlzContext) {
-    let Some(ctx) = ctx.as_ref() else {
+    if ctx.is_null() {
         return;
-    };
-    // The session ends once its state is shipped, so a host whose process
-    // outlives the runner leaves no connection behind.
-    let session = ctx.session.lock().unwrap_or_else(|p| p.into_inner()).take();
-    let sequence = move || {
-        flz_core::shutdown::run_active_graceful_shutdown();
-        flz_core::poll_core::global().shutdown();
-        if let Some(session) = session {
-            let _ = session.send(RunnerMessage::Abandon);
-        }
+    }
+    let sequence = || {
+        flz_core::shutdown::exit(flz_core::shutdown::Exit {
+            wait: Some(Duration::ZERO),
+            abandon: true,
+            ..Default::default()
+        })
     };
     if std::thread::Builder::new()
         .name("flz-shutdown".into())
@@ -716,13 +695,12 @@ pub unsafe extern "C" fn flz_core_shutdown(ctx: *mut FlzContext) {
 /// exactly the thread a compute-bound handler holds. One call installs the
 /// core's watch, so no host reads descriptor 0 itself and the rule "a read
 /// error is not end of file" is written once rather than once per host. The
-/// watch reaches the exit through the same registered bridge the SIGTERM
-/// handler does, and a healthy runner has `grace_ms` to drain first.
+/// watch ends the runner as the SIGTERM handler does, with the same grace.
 ///
 /// Idempotent: the second call installs nothing.
 #[no_mangle]
-pub extern "C" fn flz_core_watch_stdin_eof(grace_ms: u32) {
-    flz_core::shutdown::watch_stdin_eof(grace_ms);
+pub extern "C" fn flz_core_watch_stdin_eof() {
+    flz_core::shutdown::watch_stdin_eof();
 }
 
 /// Ask for a steps instance from the live activation `token`: start

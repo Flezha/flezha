@@ -348,9 +348,19 @@ pub fn check_class(json: Buffer) -> Result<Buffer> {
     }
 }
 
+/// Undeclare a class. Asynchronous: after start it waits for the runner's
+/// live-instance check, off the event loop.
+#[napi(ts_return_type = "Promise<void>")]
+pub fn undeclare_class<'a>(env: &'a Env, factory_id: String) -> Result<Object<'a>> {
+    let factory_id = veneer::c_string("factory id", &factory_id)?;
+    off_loop(env, context()?, move |ctx| {
+        Ok(veneer::undeclare_class(ctx, &factory_id)?)
+    })
+}
+
 /// Connect to the controller and start the runner loop. Asynchronous: the ABI
-/// call waits up to ten seconds for the connect confirmation, which is ten
-/// seconds an event loop may not spend inside native code.
+/// call waits for the connect confirmation, up to `FLEZHA_RUNNER_START_WAIT_MS`,
+/// which is time an event loop may not spend inside native code.
 #[napi(ts_return_type = "Promise<void>")]
 pub fn start<'a>(env: &'a Env, namespace: String) -> Result<Object<'a>> {
     let namespace = veneer::c_string("namespace", &namespace)?;

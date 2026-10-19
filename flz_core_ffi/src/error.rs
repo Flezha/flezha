@@ -22,10 +22,10 @@ pub enum Error {
     /// A spawn that reached no instance: the controller's refusal, or the
     /// core's own timeout or missing control plane.
     Spawn(flz_core::spawn::SpawnError),
-    AlreadyStarted,
+    /// The session's refusal: a start, or a factory declared or undeclared.
+    Session(flz_core::session::SessionError),
     /// A local-mode call on a context that holds no local run.
     NoLocalRun,
-    ConnectUnconfirmed,
     /// A start after this process's core was shut down.
     ShutDown,
     /// A connection setting the host handed over that the core does not
@@ -46,9 +46,6 @@ pub enum Error {
     },
 }
 
-/// How long `flz_core_start` waits for the runner's connect confirmation.
-pub const CONNECT_CONFIRM_SECS: u64 = 10;
-
 impl ErrorModel for Error {
     fn to_error(&self) -> FlezhaError {
         match self {
@@ -67,11 +64,8 @@ impl ErrorModel for Error {
                 Code::SpawnHandleReleased.with([("handle", (*handle).into())])
             }
             Error::Spawn(error) => error.to_error(),
-            Error::AlreadyStarted => Code::RunnerAlreadyRunning.with([]),
+            Error::Session(error) => error.to_error(),
             Error::NoLocalRun => Code::NoLocalRun.with([]),
-            Error::ConnectUnconfirmed => {
-                Code::ConnectUnconfirmed.with([("seconds", CONNECT_CONFIRM_SECS.into())])
-            }
             Error::ShutDown => Code::CoreShutDown.with([]),
             Error::ConnectSetting { setting, reason } => Code::InvalidConnectSetting.with([
                 ("setting", setting.as_str().into()),
@@ -97,6 +91,12 @@ impl std::error::Error for Error {}
 impl From<flz_core::Error> for Error {
     fn from(error: flz_core::Error) -> Self {
         Error::Core(error)
+    }
+}
+
+impl From<flz_core::session::SessionError> for Error {
+    fn from(error: flz_core::session::SessionError) -> Self {
+        Error::Session(error)
     }
 }
 
@@ -134,9 +134,15 @@ mod tests {
                 Error::Spawn(flz_core::spawn::SpawnError::Timeout),
                 "spawn.timeout",
             ),
-            (Error::AlreadyStarted, "runtime.runner_already_running"),
+            (
+                Error::from(flz_core::session::SessionError::AlreadyStarted),
+                "runtime.runner_already_running",
+            ),
             (Error::NoLocalRun, "runtime.no_local_run"),
-            (Error::ConnectUnconfirmed, "runtime.connect_unconfirmed"),
+            (
+                Error::from(flz_core::session::SessionError::Unconfirmed { wait_ms: 10_000 }),
+                "runtime.connect_unconfirmed",
+            ),
             (Error::ShutDown, "runtime.core_shut_down"),
             (
                 Error::ConnectSetting {

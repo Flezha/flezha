@@ -845,7 +845,7 @@ the runner can exit.
 `UpdateFactories { repeated FactoryDecl factories }` (`FactoryDecl { id,
 description, sdk_lang, run, each, on_failure, api, graph }`, the same keys as the init frame's entries)
 travels runner → controller, fire-and-forget, after a
-post-start define/remove on the runner handle, carrying the runner's **full**
+post-start define/remove in any SDK (the core's session sends it), carrying the runner's **full**
 current factory set. Full-set semantics make it idempotent: `FleetManager`
 replaces the runner's stored list (remove-then-store), scoped to the sender; an
 empty set is legal and leaves the runner connected with zero placeable

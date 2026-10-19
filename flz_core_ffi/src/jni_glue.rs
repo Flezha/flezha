@@ -212,6 +212,21 @@ pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_declareClass(
     report(&mut env, outcome);
 }
 
+/// Undeclare one host class; after start, waits for the runner's
+/// live-instance check. Throws the refusal.
+#[no_mangle]
+pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_undeclareClass(
+    mut env: JNIEnv,
+    _class: JClass,
+    ctx: jlong,
+    factory_id: JString,
+) {
+    let ctx = ctx_of(ctx);
+    let outcome = c_string(&mut env, "factory id", &factory_id)
+        .and_then(|factory_id| veneer::undeclare_class(ctx, &factory_id));
+    report(&mut env, outcome);
+}
+
 /// Judge a host class declaration without registering it: the derived
 /// declaration's JSON bytes, or a throw whose `details.issues` names every
 /// refusal.
@@ -653,6 +668,16 @@ pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_shutdown(
     ctx: jlong,
 ) {
     veneer::shutdown(ctx_of(ctx));
+}
+
+/// Watch standard input and end the process on end of file, on the core's own
+/// thread, as the SIGTERM handler ends it.
+#[no_mangle]
+pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_watchStdinEof(
+    _env: JNIEnv,
+    _class: JClass,
+) {
+    veneer::watch_stdin_eof();
 }
 
 /// Destroy the context.
