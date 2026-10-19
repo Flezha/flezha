@@ -9,7 +9,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut config = prost_build::Config::new();
     config.out_dir(out_dir);
     // The connect frame writes these as JSON under their field names.
-    for message in ["ApiEntry", "RelayGraph", "GraphChannel", "GraphTasklet"] {
+    for message in [
+        "FactoryDecl",
+        "ApiEntry",
+        "RelayGraph",
+        "GraphChannel",
+        "GraphTasklet",
+    ] {
         config.type_attribute(
             format!(".runner_commands.{message}"),
             "#[derive(serde::Serialize)]",

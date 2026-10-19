@@ -7,7 +7,7 @@ defmodule FlezhaTest.Helper.DeclarationSnapshot do
   tier, which pins only the identity stamps a keyed sink's output carries
   (`keyed_output_stamps`).
 
-  The mechanism: bind the factory with `ClassRegistry.decode_declarations/1`
+  The mechanism: bind the factory with `ClassRegistry.decode_declarations/3`
   intercepted and compare the raw metadata map the controller decoded. The stub
   delegates, so the bind itself is unchanged and the assertion is about what
   crossed the wire, not about what a test rebuilt.
@@ -62,9 +62,9 @@ defmodule FlezhaTest.Helper.DeclarationSnapshot do
   def assert_matches_golden(namespace, factory, kind, unique) do
     parent = self()
 
-    Mimic.stub(ClassRegistry, :decode_declarations, fn raw ->
+    Mimic.stub(ClassRegistry, :decode_declarations, fn raw, namespace, factory_id ->
       send(parent, {:declaration_metadata, decoded_metadata(raw)})
-      Mimic.call_original(ClassRegistry, :decode_declarations, [raw])
+      Mimic.call_original(ClassRegistry, :decode_declarations, [raw, namespace, factory_id])
     end)
 
     MimicGlobal.set_mimic_global_until_exit()
@@ -111,7 +111,7 @@ defmodule FlezhaTest.Helper.DeclarationSnapshot do
     end
   end
 
-  # The same wire form `ClassRegistry.decode_declarations/1` reads, kept raw so
+  # The same wire form `ClassRegistry.decode_declarations/3` reads, kept raw so
   # a key an SDK adds, drops or spells differently is a diff.
   defp decoded_metadata(raw) when is_binary(raw) and raw != "" do
     case RunnerCommands.AddRelayResponse.decode(raw) do

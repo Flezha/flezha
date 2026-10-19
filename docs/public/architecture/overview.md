@@ -348,10 +348,12 @@ sequenceDiagram
 run, how many cell restores will follow, a steps relay's task-journal
 position, and, for a partition member, its index, the group size and the
 key-group range it owns. The response carries the class's settings as a map of
-strings, read in one place, `Flezha.Relay.ClassRegistry.decode_declarations/1`:
-`run`, `each`, `on_failure`, `durable`, `sleep_after_ms`, `max_duration_ms`,
-`exactly`, `ack`, `correction_ms`, `compact_after_bytes`, `compensable_tasks`,
-`leaf_tasks` and `keyed`. A missing key takes its default. `keyed` is sent
+strings, read in one place, `Flezha.Relay.ClassRegistry.decode_declarations/3`:
+`durable`, `sleep_after_ms`, `max_duration_ms`, `exactly`, `ack`,
+`correction_ms`, `compact_after_bytes`, `compensable_tasks`, `leaf_tasks` and
+`keyed`. How the class runs, and a steps class's `each` and `on_failure`, come
+from the factory's announcement instead, which the controller established
+when the runner connected. A missing key takes its default. `keyed` is sent
 only when it is false: such a class cannot be partitioned, and the controller
 uses that to refuse a partitioned start. Every SDK builds this
 map in the core, so a Java class and a Rust class with the same settings send

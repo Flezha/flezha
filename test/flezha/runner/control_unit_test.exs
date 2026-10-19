@@ -333,7 +333,9 @@ defmodule FlezhaTest.Runner.AddRelayResponseTest do
 
   alias Flezha.Relay.ClassRegistry
 
-  defp declarations(metadata), do: ClassRegistry.decode_declarations(encode(metadata))
+  defp declarations(metadata), do: decode(encode(metadata))
+
+  defp decode(raw), do: ClassRegistry.decode_declarations(raw, "add_relay_response", "unannounced")
 
   test "tier declaration in the response metadata resolves true" do
     assert declarations(%{"exactly" => "effectively_once"}).effectively_once
@@ -346,7 +348,7 @@ defmodule FlezhaTest.Runner.AddRelayResponseTest do
 
   test "empty raw_data (pre-tier or Java runner) resolves the defaults" do
     for raw <- ["", nil] do
-      assert ClassRegistry.decode_declarations(raw) == %{
+      assert decode(raw) == %{
                run: :flow,
                each: nil,
                on_failure: nil,
@@ -366,7 +368,7 @@ defmodule FlezhaTest.Runner.AddRelayResponseTest do
   end
 
   test "undecodable raw_data resolves the defaults" do
-    assert ClassRegistry.decode_declarations(<<255, 255, 255, 1>>) == %{
+    assert decode(<<255, 255, 255, 1>>) == %{
              run: :flow,
              each: nil,
              on_failure: nil,
@@ -443,15 +445,19 @@ defmodule FlezhaTest.Runner.AddRelayResponseTest do
     assert declarations(%{"other" => "x"}).compensable_tasks == nil
   end
 
-  test "a steps relay's run and loop shape resolve to atoms, and anything else to none" do
-    assert declarations(%{"run" => "steps"}).run == :steps
-    assert declarations(%{"run" => "bounded"}).run == :flow
-    assert declarations(%{"on_failure" => "keep_progress"}).on_failure == :keep_progress
-    assert declarations(%{"each" => "per_input"}).each == :per_input
-    assert declarations(%{"each" => "once"}).each == :once
-    assert declarations(%{"each" => "chained"}).each == :chained
-    assert declarations(%{"each" => "sometimes"}).each == nil
-    assert declarations(%{"other" => "x"}).each == nil
+  test "a steps relay's run, loop shape and failure mode are its factory's established ones" do
+    namespace = "add_relay_response_#{System.unique_integer([:positive])}"
+    on_exit(fn -> ClassRegistry.delete_established(namespace, "loop") end)
+    raw = encode(%{"run" => "steps", "each" => "once", "on_failure" => "keep_progress"})
+
+    assert %{run: :flow, each: nil, on_failure: nil} =
+             ClassRegistry.decode_declarations(raw, namespace, "loop")
+
+    for {attribute, value} <- [run: :steps, each: :per_input, on_failure: :undo_all],
+        do: ClassRegistry.put_established(namespace, "loop", attribute, value)
+
+    assert %{run: :steps, each: :per_input, on_failure: :undo_all} =
+             ClassRegistry.decode_declarations(raw, namespace, "loop")
   end
 
   test "leaf positions resolve to a list — the tree's completion rule" do

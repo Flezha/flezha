@@ -59,32 +59,9 @@ pub fn abandon_starts() {
 type ControlConn = (ConnectAnswered, Arc<FlezhaStream>, Option<Arc<QuicClient>>);
 
 #[derive(Serialize)]
-struct FactoryInfo {
-    id: String,
-    description: Option<String>,
-    /// The class's declared language, from the registry; `0` for a factory
-    /// with no class, which the controller refuses to place.
-    sdk_lang: u8,
-    /// `"flow"` or `"steps"`, from the registry; empty for a factory with no
-    /// class.
-    run: String,
-    /// A steps class's loop shape and failure mode; empty for flow.
-    #[serde(skip_serializing_if = "String::is_empty")]
-    each: String,
-    #[serde(skip_serializing_if = "String::is_empty")]
-    on_failure: String,
-    /// The factory's API, as `FactoryDecl.api` carries it.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    api: Vec<crate::pb::ApiEntry>,
-    /// The class's graph, as `FactoryDecl.graph` carries it.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    graph: Option<crate::pb::RelayGraph>,
-}
-
-#[derive(Serialize)]
 struct ControlInitMessage {
     namespace: String,
-    factories: Vec<FactoryInfo>,
+    factories: Vec<crate::pb::FactoryDecl>,
     /// The runner's stable identity, on every connect; the controller's
     /// binding key.
     stable_id: String,
@@ -561,22 +538,7 @@ fn send_init_msg(
     stream_clone: Arc<FlezhaStream>,
 ) -> io::Result<()> {
     let factory_ids: Vec<String> = declared.read().unwrap().clone();
-    let factories: Vec<FactoryInfo> = factory_ids
-        .iter()
-        .map(|id| {
-            let decl = crate::relay::registry::advertised_for_factory(id);
-            FactoryInfo {
-                id: decl.id,
-                description: (!decl.description.is_empty()).then_some(decl.description),
-                sdk_lang: decl.sdk_lang as u8,
-                run: decl.run,
-                each: decl.each,
-                on_failure: decl.on_failure,
-                api: decl.api,
-                graph: decl.graph,
-            }
-        })
-        .collect();
+    let factories = crate::relay::registry::advertised(&factory_ids);
 
     // Loaded once per process (cached); the controller binds relays to it.
     let stable_id = crate::persistent_id::stable_id(&namespace, &factory_ids);

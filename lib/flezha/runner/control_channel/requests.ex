@@ -24,6 +24,7 @@ defmodule Flezha.Runner.ControlChannel.Requests do
   alias Flezha.Relay.Migration
   alias Flezha.Runner.ControlChannel.Commits
   alias Flezha.Runner.FleetManager
+  alias Flezha.Runner.FleetManager.Factories
   alias Flezha.Runner.FleetManager.Session
   alias Flezha.Runner.StreamChannel.Records
   alias Flezha.Runner.StreamPool
@@ -274,32 +275,9 @@ defmodule Flezha.Runner.ControlChannel.Requests do
   """
   @spec update_factories(map(), %RunnerCommands.UpdateFactories{}) :: :ok
   def update_factories(state, %RunnerCommands.UpdateFactories{factories: factories}) do
-    factories =
-      Enum.map(factories, fn %RunnerCommands.FactoryDecl{
-                               id: id,
-                               description: description,
-                               sdk_lang: sdk_lang,
-                               run: run,
-                               each: each,
-                               on_failure: on_failure,
-                               api: api,
-                               graph: graph
-                             } ->
-        %{
-          "id" => id,
-          "description" => if(description == "", do: nil, else: description),
-          "sdk_lang" => sdk_lang,
-          "run" => run,
-          "each" => each,
-          "on_failure" => on_failure,
-          "api" => Enum.map(api, &string_keyed/1),
-          "graph" => graph(graph)
-        }
-      end)
-
     GenServer.cast(
       FleetManager,
-      {:sync_factories, state.namespace, state.runner_id, factories}
+      {:sync_factories, state.namespace, state.runner_id, Factories.announced(factories)}
     )
   end
 
@@ -469,20 +447,6 @@ defmodule Flezha.Runner.ControlChannel.Requests do
 
     :ok
   end
-
-  # The JSON shape the connect frame carries an API entry and a graph in, so
-  # both announcements reach the factory table alike.
-  defp graph(nil), do: nil
-
-  defp graph(%RunnerCommands.RelayGraph{channels: channels, tasklets: tasklets}),
-    do: %{
-      "channels" => Enum.map(channels, &string_keyed/1),
-      "tasklets" => Enum.map(tasklets, &string_keyed/1)
-    }
-
-  defp string_keyed(message),
-    do:
-      message |> Map.from_struct() |> Map.new(fn {key, value} -> {Atom.to_string(key), value} end)
 
   # An unrecognised policy reads as the default: a requester on a newer SDK
   # must never have its payload silently refused by an older controller.

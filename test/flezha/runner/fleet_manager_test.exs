@@ -492,43 +492,49 @@ defmodule FlezhaTest.Runner.FleetManagerSdkLangTest do
       assert FleetManager.factory_run(ns, id) == {:error, {:run, :flow}}
     end
 
-    test "a runner announcing another steps shape is reported as a run conflict and never placed",
-         %{namespace: ns} do
-      id = factory("loop")
-      forget(ns, [id])
-      FleetStateHelper.seed(ns, %{"r1" => [], "r2" => []})
+    for {attribute, established, advertised} <- [
+          {:each, :once, :chained},
+          {:on_failure, :undo_all, :keep_progress}
+        ] do
+      test "a runner announcing another #{attribute} is reported as a run conflict and never placed",
+           %{namespace: ns} do
+        attribute = unquote(attribute)
+        id = factory("loop")
+        forget(ns, [id])
+        FleetStateHelper.seed(ns, %{"r1" => [], "r2" => []})
 
-      steps =
-        &%{
-          "id" => id,
-          "sdk_lang" => @rust,
-          "run" => "steps",
-          "each" => &1,
-          "on_failure" => "undo_all"
-        }
+        steps = fn value ->
+          %{"id" => id, "sdk_lang" => @rust, "run" => "steps", "each" => "once"}
+          |> Map.put("on_failure", "undo_all")
+          |> Map.put(Atom.to_string(attribute), Atom.to_string(value))
+        end
 
-      once = "steps (each: once, on_failure: undo_all)"
-      chained = "steps (each: chained, on_failure: undo_all)"
-      GenServer.cast(FleetManager, {:sync_factories, ns, "r1", [steps.("once")]})
-      event = [:flezha, :runner, :factory_run_conflict]
-      ref = :telemetry_test.attach_event_handlers(self(), [event])
+        :ok = FleetStateHelper.announce(ns, "r1", [steps.(unquote(established))])
+        assert ClassRegistry.established(ns, id, attribute) == unquote(established)
+        event = [:flezha, :runner, :factory_run_conflict]
+        ref = :telemetry_test.attach_event_handlers(self(), [event])
 
-      log =
-        ExUnit.CaptureLog.capture_log(fn ->
-          GenServer.cast(FleetManager, {:sync_factories, ns, "r2", [steps.("chained")]})
-          {:ok, _} = FleetManager.list_factories(ns)
-        end)
+        log =
+          ExUnit.CaptureLog.capture_log(fn ->
+            :ok = FleetStateHelper.announce(ns, "r2", [steps.(unquote(advertised))])
+          end)
 
-      assert log =~ "r2"
-      assert log =~ "to run as #{chained}"
+        assert log =~ "r2 on #{ns} advertises factory #{id} with #{attribute} #{unquote(advertised)}"
 
-      assert_received {^event, ^ref, %{count: 1},
-                       %{factory: ^id, established: ^once, advertised: ^chained}}
+        assert_received {^event, ^ref, %{count: 1},
+                         %{
+                           factory: ^id,
+                           established: unquote(established),
+                           advertised: unquote(advertised)
+                         }}
 
-      assert FleetManager.runners_for_factory(ns, id) == ["r1"]
+        assert FleetManager.runners_for_factory(ns, id) == ["r1"]
 
-      :ok = FleetStateHelper.sync(ns, "r1", [])
-      assert FleetManager.placement_refusal(ns, id) == {:run, once}
+        :ok = FleetStateHelper.sync(ns, "r1", [])
+
+        assert FleetManager.placement_refusal(ns, id) ==
+                 {:run, "steps (#{attribute}: #{unquote(established)})"}
+      end
     end
 
     test "a runner announcing no run never places", %{namespace: ns} do
@@ -586,6 +592,7 @@ defmodule FlezhaTest.Runner.FleetManagerSyncFactoriesTest do
   `FleetManagerGhostTest`.
   """
 
+  alias Flezha.Runner.ControlChannel.Requests
   alias Flezha.Runner.FleetManager
   alias Flezha.Runner.FleetManager.Factories
   alias Flezha.Service.HubManager
@@ -621,6 +628,46 @@ defmodule FlezhaTest.Runner.FleetManagerSyncFactoriesTest do
   defp factory_ids do
     {:ok, factories} = FleetManager.list_factories(@namespace)
     Enum.map(factories, & &1.id)
+  end
+
+  test "both announcement forms reach one reader, and a blank description never overwrites one" do
+    on_exit(fn -> FleetStateHelper.forget_established(@namespace, ["told", "untold"]) end)
+    seed(%{"r1" => [], "r2" => [], "r3" => []})
+
+    # The connect frame's serde form of a `FactoryDecl`, and the decoded one.
+    json = %{
+      "id" => "told",
+      "description" => "",
+      "sdk_lang" => 1,
+      "run" => "steps",
+      "each" => "once",
+      "on_failure" => "undo_all",
+      "api" => [],
+      "graph" => nil
+    }
+
+    decl = %RunnerCommands.FactoryDecl{
+      id: "told",
+      sdk_lang: 1,
+      run: "steps",
+      each: "once",
+      on_failure: "undo_all"
+    }
+
+    :ok = FleetStateHelper.announce(@namespace, "r1", [%{json | "description" => "the first"}])
+    :ok = FleetStateHelper.announce(@namespace, "r2", [json, %{json | "id" => "untold"}])
+    Requests.update_factories(
+      %{namespace: @namespace, runner_id: "r3"},
+      %RunnerCommands.UpdateFactories{factories: [decl]}
+    )
+
+    {:ok, rows} = FleetManager.list_factories(@namespace)
+    assert Enum.map(rows, &{&1.id, &1.description}) == [{"told", "the first"}, {"untold", nil}]
+
+    adverts = :sys.get_state(FleetManager).namespace_factories[@namespace]["told"].adverts
+    [from_json, from_decl] = Enum.map(["r2", "r3"], &Map.delete(adverts[&1], :announced_at))
+    assert from_json == from_decl
+    assert %{run: :steps, each: :once, on_failure: :undo_all} = from_decl
   end
 
   test "full-set replacement drops removed factories and adds new ones" do

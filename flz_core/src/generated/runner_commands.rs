@@ -739,6 +739,7 @@ pub struct ParkPayloadAck {
 /// One declared relay factory: the controller-facing factory id plus a
 /// human-readable description, mirroring the connect init frame's factory
 /// entries.
+#[derive(serde::Serialize)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct FactoryDecl {
     #[prost(string, tag = "1")]

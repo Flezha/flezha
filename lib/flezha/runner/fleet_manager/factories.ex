@@ -22,7 +22,7 @@ defmodule Flezha.Runner.FleetManager.Factories do
   # The value of each established attribute that says nothing: an
   # advertisement carrying it never places, since the runner most likely to be
   # untagged is the one most likely to be mismatched.
-  @unspecified %{sdk_lang: 0, run: nil, shape: nil}
+  @unspecified %{sdk_lang: 0, run: nil, each: nil, on_failure: nil}
 
   def store_factories(state, namespace, runner_id, factories) do
     ns_factories = Map.get(state.namespace_factories, namespace, %{})
@@ -36,7 +36,8 @@ defmodule Flezha.Runner.FleetManager.Factories do
         advert = %{
           sdk_lang: advertised_lang(factory),
           run: advertised_run(namespace, runner_id, factory),
-          shape: advertised_shape(factory)
+          each: advertised_step(factory, "each", [:once, :per_input, :chained]),
+          on_failure: advertised_step(factory, "on_failure", [:undo_all, :keep_progress])
         }
 
         # Stored even when it conflicts, so user tooling can see the
@@ -56,13 +57,26 @@ defmodule Flezha.Runner.FleetManager.Factories do
           })
 
         Map.put(acc, factory_id, %{
-          description: factory["description"] || existing.description,
+          description: blank_nil(factory["description"]) || existing.description,
           adverts: Map.put(existing.adverts, runner_id, advert)
         })
       end)
 
     put_in(state, [:namespace_factories, namespace], ns_factories)
   end
+
+  @doc """
+  Decoded `UpdateFactories` entries in the form the connect frame carries
+  them, the same fields under the same string keys, so both frames reach
+  `store_factories/4` alike.
+  """
+  @spec announced(term()) :: term()
+  def announced(%_{} = message),
+    do:
+      Map.new(Map.from_struct(message), fn {key, value} -> {to_string(key), announced(value)} end)
+
+  def announced(values) when is_list(values), do: Enum.map(values, &announced/1)
+  def announced(value), do: value
 
   def remove_ce_factories(state, namespace, runner_id) do
     ns_factories = Map.get(state.namespace_factories, namespace, %{})
@@ -93,7 +107,8 @@ defmodule Flezha.Runner.FleetManager.Factories do
   end
 
   # The one constructor for a stored factory entry: its description and, per
-  # advertising runner, what that runner announced (`%{sdk_lang:, run:}`).
+  # advertising runner, what that runner announced (its placement attributes,
+  # API and graph).
   # Total on an older entry: a `KeyError` here would take the whole
   # FleetManager down over a shape question, and every placement lookup with it.
   def factory_entry(nil), do: %{description: nil, adverts: %{}}
@@ -249,13 +264,12 @@ defmodule Flezha.Runner.FleetManager.Factories do
     end
   end
 
-  # A steps run's loop shape and failure mode, as one value a run conflict can
-  # name; nothing for a flow, or for a steps entry that names neither.
-  defp advertised_shape(%{"run" => "steps", "each" => each, "on_failure" => on_failure})
-       when each not in [nil, ""] and on_failure not in [nil, ""],
-       do: "steps (each: #{each}, on_failure: #{on_failure})"
+  # A steps run's `key` (its loop shape or failure mode) among the `known`
+  # values; nothing for a flow, or for a value the controller does not know.
+  defp advertised_step(%{"run" => "steps"} = factory, key, known),
+    do: Enum.find(known, &(Atom.to_string(&1) == factory[key]))
 
-  defp advertised_shape(_factory), do: @unspecified.shape
+  defp advertised_step(_factory, _key, _known), do: nil
 
   # An advertisement establishes the factory's `attribute` if nothing has yet,
   # and is reported when it disagrees. The one place either is RECORDED, so
@@ -300,11 +314,11 @@ defmodule Flezha.Runner.FleetManager.Factories do
         meta
       )
 
-  defp report_conflict(attribute, meta) when attribute in [:run, :shape],
+  defp report_conflict(attribute, meta),
     do:
       conflict(
         :factory_run_conflict,
-        "to run as",
+        if(attribute == :run, do: "to run as", else: "with #{attribute}"),
         "every instance of a factory runs the one way its class declares",
         meta
       )
@@ -409,8 +423,8 @@ defmodule Flezha.Runner.FleetManager.Factories do
   def placement(state, namespace, factory_id) do
     {info, candidates} = advertising_runners(state, namespace, factory_id)
 
-    Enum.reduce_while([:sdk_lang, :run, :shape], {:ok, candidates}, fn attribute,
-                                                                       {:ok, runners} ->
+    Enum.reduce_while([:sdk_lang, :run, :each, :on_failure], {:ok, candidates}, fn attribute,
+                                                                                   {:ok, runners} ->
       verdict = established(namespace, factory_id, attribute, info, candidates)
       narrowed = narrow(runners, info, attribute, verdict)
 
@@ -424,7 +438,9 @@ defmodule Flezha.Runner.FleetManager.Factories do
     do: MapSet.filter(runners, &(get_in(info.adverts, [&1, attribute]) == established))
 
   # A flow, or a steps run that named no shape, decides nothing about it.
-  defp narrow(runners, _info, :shape, :none), do: runners
+  defp narrow(runners, _info, attribute, :none) when attribute in [:each, :on_failure],
+    do: runners
+
   defp narrow(_runners, _info, _attribute, _undecided), do: MapSet.new()
 
   # The factories `runner_id` advertises in `namespace`, at any language or

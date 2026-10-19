@@ -181,18 +181,15 @@ defmodule Flezha.Relay.Lifecycle do
          # The class's SDK-side declarations ride the AddRelay response;
          # resolve them BEFORE plugin activation so source adapters pick the
          # tier ingest mode (blocking call) from the env.
-         %{
-           effectively_once: effectively_once,
-           correction_window_ms: correction_window_ms,
-           sleep_after_ms: sleep_after_ms
-         } = declarations = ClassRegistry.decode_declarations(add_relay_raw),
+         declarations =
+           ClassRegistry.decode_declarations(add_relay_raw, state.namespace, relay.factory_id),
          :ok <- refuse_remote_without_backend(declarations, relay.factory_id),
          state =
            %{
              state
-             | effectively_once: effectively_once,
-               correction_window_ms: correction_window_ms,
-               sleeps: sleep_after_ms != nil,
+             | effectively_once: declarations.effectively_once,
+               correction_window_ms: declarations.correction_window_ms,
+               sleeps: declarations.sleep_after_ms != nil,
                settings:
                  Map.take(declarations, [:run, :each, :on_failure, :durable, :sleep_after_ms])
            }
@@ -218,7 +215,7 @@ defmodule Flezha.Relay.Lifecycle do
          # order at the SDK), whether this bind is a fresh start, a crash
          # resume, a migration or a rehydrate.
          state = Replay.reforward_undelivered_tail(state) do
-      record_and_replay(state, relay, declarations, correction_window_ms)
+      record_and_replay(state, relay, declarations)
     else
       {:error, reason, %Overwatch{} = halted} -> {:error, reason, halted}
       {:error, reason} -> {:error, reason, state}
@@ -250,7 +247,7 @@ defmodule Flezha.Relay.Lifecycle do
   # Everything a started relay owes once its state is restored and its tail
   # re-forwarded: its plugins, the class facts the State subsystem reads and
   # the retention floors the declaration raised.
-  defp record_and_replay(state, relay, declarations, correction_window_ms) do
+  defp record_and_replay(state, relay, %{correction_window_ms: window} = declarations) do
     # A plugin that fails to come up stays `:prepared`, which the convergence
     # loop diffs as missing and heals under backoff, so the bind does not fail
     # on it.
@@ -272,8 +269,8 @@ defmodule Flezha.Relay.Lifecycle do
     # The declaration is durable now, so the retention floors it needs resolve
     # from it. Announce any it had to raise — a one-line declaration must not
     # commit the controller to disk silently.
-    if correction_window_ms do
-      PersistenceResolver.announce_derived_retention(relay_class, correction_window_ms)
+    if window do
+      PersistenceResolver.announce_derived_retention(relay_class, window)
     end
 
     # This node runs the relay now, which is what entitles it to take over

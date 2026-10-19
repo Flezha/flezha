@@ -155,8 +155,9 @@ fn partition_refusal(
 }
 
 /// The class's settings and declarations as `AddRelayResponse` metadata;
-/// empty bytes for a class that never registered. The run and the durability
-/// always ride; a member rides only when its parent is chosen.
+/// empty bytes for a class that never registered. The durability always
+/// rides; a member rides only when its parent is chosen. The run and a steps
+/// run's shape ride the factory's announcement instead.
 fn metadata_response(class: Option<&RelayTopology>) -> Vec<u8> {
     let mut metadata = std::collections::HashMap::new();
     if let Some(topology) = class {
@@ -179,20 +180,13 @@ fn metadata_response(class: Option<&RelayTopology>) -> Vec<u8> {
     AddRelayResponse { metadata }.encode_to_vec()
 }
 
-/// What a steps class declares: its loop shape (only a `per_input` loop
-/// partitions) and failure mode, the compensable positions (a rewind may only
+/// What a steps class declares: the compensable positions (a rewind may only
 /// unwind those) and the leaves (the relay is done when all committed).
 fn steps_metadata(
     topology: &RelayTopology,
     spec: &StepsSpec,
     metadata: &mut HashMap<String, String>,
 ) {
-    metadata.insert("run".to_string(), "steps".to_string());
-    metadata.insert("each".to_string(), spec.each.as_str().to_string());
-    metadata.insert(
-        "on_failure".to_string(),
-        spec.on_failure.as_str().to_string(),
-    );
     metadata.insert(
         "compensable_tasks".to_string(),
         declared_tasks(spec, |node| {
@@ -215,7 +209,6 @@ fn steps_metadata(
 fn flow_metadata(topology: &RelayTopology, metadata: &mut HashMap<String, String>) {
     use crate::relay::topology::BeyondWindowPolicy;
 
-    metadata.insert("run".to_string(), "flow".to_string());
     if topology.effectively_once {
         metadata.insert("exactly".to_string(), "effectively_once".to_string());
     }
@@ -260,8 +253,8 @@ fn declared_tasks(spec: &StepsSpec, select: impl Fn(usize) -> bool) -> String {
 
 #[cfg(test)]
 mod metadata_tests {
-    //! The `AddRelayResponse` metadata is the controller's only view of
-    //! what a class declared; a class nothing is known of encodes to zero
+    //! The `AddRelayResponse` metadata is the controller's view of what a
+    //! class declared beyond its announcement; a class nothing is known of encodes to zero
     //! bytes.
 
     use super::{metadata_response, AddRelayResponse, Message};
@@ -321,15 +314,15 @@ mod metadata_tests {
                 sleeps.get("sleep_after_ms").map(String::as_str),
                 Some("2000")
             );
-            assert_eq!(
-                sleeps.get("run").map(String::as_str),
-                Some(run.trim_matches('"'))
+            assert!(
+                !sleeps.contains_key("run"),
+                "the run rides the factory's announcement"
             );
         }
     }
 
     #[test]
-    fn a_steps_declaring_nothing_extra_ships_its_run_and_its_graph() {
+    fn a_steps_declaring_nothing_extra_ships_its_durability_and_its_positions() {
         let id = format!("meta_plain_{}", std::process::id());
         register_steps(&id, r#"{"local":{"sleep_after":false}}"#);
 
@@ -338,10 +331,7 @@ mod metadata_tests {
             vec![
                 ("compensable_tasks".to_string(), String::new()),
                 ("durable".to_string(), "local".to_string()),
-                ("each".to_string(), "once".to_string()),
                 ("leaf_tasks".to_string(), "0".to_string()),
-                ("on_failure".to_string(), "undo_all".to_string()),
-                ("run".to_string(), "steps".to_string()),
             ]
         );
         assert!(metadata_response(
@@ -474,15 +464,6 @@ mod partition_tests {
         crate::host::register_host_class_json(json.as_bytes()).expect("class registers");
     }
 
-    fn declared_each(id: &str) -> Option<String> {
-        let encoded = super::metadata_response(crate::relay::registry::get_class(id).as_deref());
-        AddRelayResponse::decode(encoded.as_slice())
-            .expect("decodes")
-            .metadata
-            .get("each")
-            .cloned()
-    }
-
     #[test]
     fn a_steps_that_reads_one_message_is_refused_before_the_keyless_arm() {
         for each in ["once", "chained"] {
@@ -496,7 +477,6 @@ mod partition_tests {
             assert_eq!(details["factory"], id.as_str());
             assert_eq!(details["each"], each);
             assert_eq!(details["partitions"], 2);
-            assert_eq!(declared_each(&id).as_deref(), Some(each));
 
             let mut single = partitioned(&id, 2);
             single.partition_count = 0;
@@ -509,7 +489,6 @@ mod partition_tests {
         let keyed = format!("part_steps_keyed_{}", std::process::id());
         register_steps(&keyed, "dynamic", "per_input");
         assert!(partition_refusal(&partitioned(&keyed, 2), &class_of(&keyed), &keyed).is_none());
-        assert_eq!(declared_each(&keyed).as_deref(), Some("per_input"));
 
         let keyless = format!("part_steps_keyless_{}", std::process::id());
         register_steps(&keyless, "single", "per_input");

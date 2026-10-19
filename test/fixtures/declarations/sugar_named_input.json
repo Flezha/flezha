@@ -1,5 +1,4 @@
 {
   "durable": "local",
-  "keyed": "false",
-  "run": "flow"
+  "keyed": "false"
 }

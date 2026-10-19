@@ -251,7 +251,7 @@ defmodule Flezha.Runner.FleetManager do
           | {:language, byte()}
           | :ambiguous_run
           | :no_run_declared
-          | {:run, :flow | :steps}
+          | {:run, :flow | :steps | String.t()}
   def placement_refusal(namespace, factory_id, timeout \\ Durations.get(:runner_lookup_ms)) do
     GenServer.call(__MODULE__, {:placement_refusal, namespace, factory_id}, timeout)
   end
@@ -829,10 +829,9 @@ defmodule Flezha.Runner.FleetManager do
   defp refusal(:sdk_lang, :ambiguous), do: :ambiguous_language
   defp refusal(:sdk_lang, :none), do: :no_language_declared
   defp refusal(:run, {:ok, run}), do: {:run, run}
-  defp refusal(:run, :ambiguous), do: :ambiguous_run
   defp refusal(:run, :none), do: :no_run_declared
-  defp refusal(:shape, {:ok, shape}), do: {:run, shape}
-  defp refusal(:shape, :ambiguous), do: :ambiguous_run
+  defp refusal(_shape, :ambiguous), do: :ambiguous_run
+  defp refusal(shape, {:ok, value}), do: {:run, "steps (#{shape}: #{value})"}
 
   # The run a listed factory is established at, `nil` while nothing decides it.
   defp run_of(state, namespace, factory_id) do

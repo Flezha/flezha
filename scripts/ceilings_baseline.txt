@@ -55,11 +55,11 @@ flz_transport/src/transport/quic_pair_tests.rs::serve 64
 lib/flezha/observability/counter_table.ex::__using__ 107
 lib/flezha/plugin/provider_behaviour.ex 807
 lib/flezha/relay/calls.ex 842
-lib/flezha/relay/class_registry.ex 815
+lib/flezha/relay/class_registry.ex 810
 lib/flezha/relay/handover.ex::absorb 65
-lib/flezha/relay/lifecycle.ex::complete_init 69
+lib/flezha/relay/lifecycle.ex::complete_init 66
 lib/flezha/relay/overwatch.ex 973
-lib/flezha/runner/fleet_manager.ex 950
+lib/flezha/runner/fleet_manager.ex 949
 lib/flezha/runner/fleet_manager/session.ex::do_handle_runner_disconnect 53
 lib/flezha/runner/stream_channel.ex::init 52
 lib/flezha/service/plugin_manager.ex 879

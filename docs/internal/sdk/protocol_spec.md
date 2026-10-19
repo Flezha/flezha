@@ -443,7 +443,8 @@ One frame, payload id `connect_control_channel`, empty metadata, JSON message:
 ```json
 {
   "namespace": "<namespace>",
-  "factories": [{"id": "<factory_id>", "description": null, "sdk_lang": 1, "run": "steps"}, ...],
+  "factories": [{"id": "<factory_id>", "description": "", "sdk_lang": 1, "run": "steps",
+                 "each": "once", "on_failure": "undo_all", "api": [], "graph": null}, ...],
   "stable_id": "<namespace>-<profile_hash8>-<rand6>",
   "incarnation": "<opaque, minted once per process>",
   "namespace_secret": "flzt_<base32>"
@@ -458,15 +459,18 @@ One frame, payload id `connect_control_channel`, empty metadata, JSON message:
   answered with one `ConnectRefused { error }` frame (tag 39) before the
   controller closes the stream, so the runner reports the code (for example
   `runner.namespace_not_proven`) instead of retrying in silence.
-- `factories` — every factory the runner currently declares, by `id`, with
-  an optional `description`, the class's `sdk_lang` and its `run`, `"flow"`
-  or `"steps"` (a steps class adds `each` and `on_failure`), read at write time so a reconnect
-  resyncs post-start defines/removes: the init frame is the resync of record.
-  An entry may also carry `api` and `graph`, as `FactoryDecl` does (see
-  [ApiEntry](#apientry) and [RelayGraph](#relaygraph)).
-  The controller establishes each factory's language and kind from the first
-  announcement and places only on a runner announcing both as established; an
-  entry with no kind never places. A start names only the factory: the runner
+- `factories` — every factory the runner currently declares, each a
+  [`FactoryDecl`](#updatefactories) serialized under its field names: `id`,
+  `description` (`""` for none), the class's `sdk_lang`, its `run` (`"flow"`
+  or `"steps"`), a steps class's `each` and `on_failure` (`""` for a flow),
+  `api` (`[]` for none) and `graph` (`null` for none). It is read at write
+  time so a reconnect resyncs post-start defines/removes: the init frame is
+  the resync of record. The controller reads these entries and
+  `UpdateFactories` with one reader, which takes `""` and an absent value
+  alike, so a blank `description` never replaces another runner's.
+  The controller establishes each factory's language, run, `each` and
+  `on_failure` from the first announcement and places only on a runner
+  announcing them as established; an entry with no run never places. A start names only the factory: the runner
   runs it as its class declares.
 - `stable_id` — the runner's durable, self-owned identity, present on **every**
   connect (`profile_hash8` hashes the declared factory set order-independently,
@@ -636,16 +640,16 @@ declares, and every controller parks a failed turn sent as
 
 `AddRelayResponse.metadata` carries the class's SDK-side declarations so
 the controller resolves per-class capabilities without a parallel config
-channel (absent/undecodable ⇒ every default):
+channel (absent/undecodable ⇒ every default). How the class runs, and a steps
+class's `each` and `on_failure`, are not among them: they ride the factory's
+announcement (`FactoryDecl`), and the controller reads them from the
+factory's established record:
 
 | Key | Value | Meaning |
 |-----|-------|---------|
-| `run` | `"flow"` / `"steps"` | how the class runs |
 | `durable` | `"memory"` / `"local"` / `"remote"` | where an instance keeps its work; `remote` withholds barrier acks until the remote backend holds them |
 | `sleep_after_ms` | ms | how long an idle instance waits before it sleeps (absent: it never sleeps) |
 | `max_duration_ms` | ms | the wall-clock stop, when the class declares one |
-| `each` | `"once"` / `"per_input"` / `"chained"` | steps only: how the class repeats; only `per_input` partitions |
-| `on_failure` | `"undo_all"` / `"keep_progress"` | steps only: what a failed iteration undoes |
 | `exactly` | `"effectively_once"` | flow only: the class runs on the effectively-once tier |
 | `keyed` | `"false"` | flow class with no keyed entry-fed tasklet (sent only when false) |
 | `correction_ms` | ms | late-input correction window |
@@ -843,7 +847,7 @@ the runner can exit.
 ### UpdateFactories
 
 `UpdateFactories { repeated FactoryDecl factories }` (`FactoryDecl { id,
-description, sdk_lang, run, each, on_failure, api, graph }`, the same keys as the init frame's entries)
+description, sdk_lang, run, each, on_failure, api, graph }`, the struct whose serde form is each init frame entry)
 travels runner → controller, fire-and-forget, after a
 post-start define/remove in any SDK (the core's session sends it), carrying the runner's **full**
 current factory set. Full-set semantics make it idempotent: `FleetManager`

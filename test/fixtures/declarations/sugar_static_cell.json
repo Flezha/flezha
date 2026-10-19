@@ -1,4 +1,3 @@
 {
-  "durable": "local",
-  "run": "flow"
+  "durable": "local"
 }

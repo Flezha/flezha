@@ -32,6 +32,12 @@ pub fn class_factory_ids() -> Vec<&'static str> {
     CLASS_REGISTRY.read().unwrap().keys().copied().collect()
 }
 
+/// The announcement of every factory in `ids`, which the connect frame and
+/// `UpdateFactories` both carry.
+pub fn advertised(ids: &[String]) -> Vec<crate::pb::FactoryDecl> {
+    ids.iter().map(|id| advertised_for_factory(id)).collect()
+}
+
 /// What a runner advertises for `factory_id`: the class's SDK language, how
 /// it runs, what it is for, its API and its graph. An undeclared factory answers
 /// [`crate::header::SDK_LANG_UNSPECIFIED`] and an empty run, which the

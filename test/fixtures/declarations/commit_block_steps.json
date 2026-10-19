@@ -1,9 +1,6 @@
 {
   "compensable_tasks": "",
   "durable": "local",
-  "each": "once",
   "leaf_tasks": "1",
-  "on_failure": "undo_all",
-  "run": "steps",
   "sleep_after_ms": "21600000"
 }

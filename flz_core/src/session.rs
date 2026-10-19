@@ -203,13 +203,9 @@ impl Session {
         let Some(live) = started.as_ref() else {
             return;
         };
-        let factories = self
-            .declared
-            .read()
-            .unwrap_or_else(PoisonError::into_inner)
-            .iter()
-            .map(|id| crate::relay::registry::advertised_for_factory(id))
-            .collect();
+        let factories = crate::relay::registry::advertised(
+            &self.declared.read().unwrap_or_else(PoisonError::into_inner),
+        );
         let _ = live.runner_tx.send(RunnerMessage::control_request(
             format!("update-factories-{}", crate::util::nonce_suffix()),
             pb::command_request::Command::UpdateFactories(pb::UpdateFactories { factories }),

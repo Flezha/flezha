@@ -37,6 +37,7 @@ defmodule Flezha.Relay.ClassRegistry do
   @persistence_off_sidecar "persistence_off"
   @sleep_sidecar "sleep_after_ms"
   @parked_sidecar "parked"
+  @established [:sdk_lang, :run, :each, :on_failure]
 
   # Every per-class SDK declaration, keyed `{relay_class, key}` in the ETS
   # table. `delete/1` evicts them all, so a class that rebinds without a
@@ -94,9 +95,12 @@ defmodule Flezha.Relay.ClassRegistry do
   @typedoc "How a class runs: in flow, or in steps."
   @type run :: :flow | :steps
 
+  @typedoc "What a factory's announcement establishes."
+  @type established :: :sdk_lang | :run | :each | :on_failure
+
   @typedoc """
   A class's settings and SDK-side declarations, as resolved from the
-  `AddRelay` response.
+  `AddRelay` response and its factory's announcement.
 
   `compensable_tasks` is the chain positions whose tasklet declares a `compensate`
   hook, or `nil` when the class declares nothing (a flow relay, or a Java runner) —
@@ -131,21 +135,23 @@ defmodule Flezha.Relay.ClassRegistry do
 
   @doc """
   Resolve a class's settings and SDK-side declarations from the `AddRelay`
-  response raw_data, an `AddRelayResponse` metadata map. The one place the
-  wire form is decoded; `put_declarations/2` is the one place it is persisted.
-  A new declared capability is added in those two and nowhere else. The sleep
-  interval's default is the class's, announced by its SDK: a class that
-  announces none never sleeps.
+  response raw_data, an `AddRelayResponse` metadata map, and its run, loop
+  shape and failure mode from what `factory_id`'s announcement established in
+  `namespace`. The one place
+  the wire form is decoded; `put_declarations/2` is the one place it is
+  persisted. A new declared capability is added in those two and nowhere
+  else. The sleep interval's default is the class's, announced by its SDK: a
+  class that announces none never sleeps.
   """
-  @spec decode_declarations(binary() | nil) :: declarations()
-  def decode_declarations(raw_data) do
+  @spec decode_declarations(binary() | nil, binary(), binary()) :: declarations()
+  def decode_declarations(raw_data, namespace, factory_id) do
     metadata = decode_metadata(raw_data)
     durable = parse_durable(Map.get(metadata, "durable"))
 
     %{
-      run: if(Map.get(metadata, "run") == "steps", do: :steps, else: :flow),
-      each: parse_each(Map.get(metadata, "each")),
-      on_failure: parse_on_failure(Map.get(metadata, "on_failure")),
+      run: established(namespace, factory_id, :run) || :flow,
+      each: established(namespace, factory_id, :each),
+      on_failure: established(namespace, factory_id, :on_failure),
       durable: durable,
       sleep_after_ms: parse_window(Map.get(metadata, "sleep_after_ms")),
       max_duration_ms: parse_window(Map.get(metadata, "max_duration_ms")),
@@ -170,15 +176,6 @@ defmodule Flezha.Relay.ClassRegistry do
   end
 
   defp decode_metadata(_raw_data), do: %{}
-
-  defp parse_each("once"), do: :once
-  defp parse_each("per_input"), do: :per_input
-  defp parse_each("chained"), do: :chained
-  defp parse_each(_raw), do: nil
-
-  defp parse_on_failure("undo_all"), do: :undo_all
-  defp parse_on_failure("keep_progress"), do: :keep_progress
-  defp parse_on_failure(_raw), do: nil
 
   # A class that announces nothing keeps its work locally, as the tree's
   # default does.
@@ -205,14 +202,14 @@ defmodule Flezha.Relay.ClassRegistry do
 
   @doc """
   Persist every SDK-declared capability for `relay_class`, as decoded from
-  the `AddRelay` response by `decode_declarations/1`.
+  the `AddRelay` response by `decode_declarations/3`.
 
   Each rides an ETS entry plus a durable sidecar, so a process-less `Retention`
   sweep — or a bind that happens while the instance is suspended — resolves it
   with no runner to ask. A declaration a class drops is cleared on its next
   bind, so the sidecar never outlives the claim.
 
-  Together with `decode_declarations/1` this is the whole recipe for a new
+  Together with `decode_declarations/3` this is the whole recipe for a new
   SDK-declared capability: decode it there, persist it here.
   """
   @spec put_declarations(binary(), map()) :: :ok
@@ -346,7 +343,8 @@ defmodule Flezha.Relay.ClassRegistry do
   @doc """
   Record the **established** value of `attribute` for `factory_id` in
   `namespace` — the one value every runner of that factory there must
-  advertise: its SDK language (`:sdk_lang`) and how it runs (`:run`).
+  advertise: its SDK language (`:sdk_lang`), how it runs (`:run`) and a
+  steps run's loop shape (`:each`) and failure mode (`:on_failure`).
 
   Scoped by namespace as well as factory, because a factory id names a class
   within a deployment, not across the cluster: the test fleet alone gives the
@@ -355,13 +353,12 @@ defmodule Flezha.Relay.ClassRegistry do
 
   In-memory only, like `put_partitioning/2`: the durable header re-establishes the
   language at the next bind (`establish_sdk_lang_from_state/3`), the next
-  advertisement re-establishes both, and the SDK's own refusal is the backstop
+  advertisement re-establishes them all, and the SDK's own refusal is the backstop
   either way — so a restarted controller simply learns again.
   """
-  @spec put_established(binary(), binary(), :sdk_lang | :run | :shape, term()) :: :ok
+  @spec put_established(binary(), binary(), established(), term()) :: :ok
   def put_established(namespace, factory_id, attribute, value)
-      when is_binary(namespace) and is_binary(factory_id) and
-             attribute in [:sdk_lang, :run, :shape] do
+      when is_binary(namespace) and is_binary(factory_id) and attribute in @established do
     ensure_table()
     :ets.insert(@table, {{namespace, factory_id, attribute}, value})
     :ok
@@ -371,7 +368,7 @@ defmodule Flezha.Relay.ClassRegistry do
   `factory_id`'s established `attribute` in `namespace`, or `nil` when none is
   established yet.
   """
-  @spec established(binary(), binary(), :sdk_lang | :run | :shape) :: term()
+  @spec established(binary(), binary(), established()) :: term()
   def established(namespace, factory_id, attribute)
       when is_binary(namespace) and is_binary(factory_id) do
     case ets_lookup({namespace, factory_id, attribute}) do
@@ -393,9 +390,7 @@ defmodule Flezha.Relay.ClassRegistry do
   def delete_established(namespace, factory_id)
       when is_binary(namespace) and is_binary(factory_id) do
     if :ets.whereis(@table) != :undefined do
-      :ets.delete(@table, {namespace, factory_id, :sdk_lang})
-      :ets.delete(@table, {namespace, factory_id, :run})
-      :ets.delete(@table, {namespace, factory_id, :shape})
+      Enum.each(@established, &:ets.delete(@table, {namespace, factory_id, &1}))
     end
 
     :ok

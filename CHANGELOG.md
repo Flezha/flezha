@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### Changed: one factory announcement
+
+The connect frame described each factory with a struct of its own, `UpdateFactories` with
+`FactoryDecl`, and the controller read the two through a converter; the `AddRelay` response
+repeated the run. Both frames now carry `FactoryDecl`, read by one controller reader.
+
+- **BREAKING:** the connect frame's `factories` entries are `FactoryDecl` under its field
+  names, every key present: `description`, `each` and `on_failure` are `""` for none (the
+  description was `null`), `api` is `[]` and `graph` is `null`. Controllers and runners
+  upgrade together.
+- **BREAKING:** `AddRelayResponse.metadata` no longer carries `run`, `each` or
+  `on_failure`. The controller takes them from what the factory's announcement
+  established, and reports a runner announcing another `each` or `on_failure` as a
+  `factory_run_conflict` naming that attribute.
+- A runner announcing a factory with an empty description no longer blanks the description
+  another runner gave it.
+
 ### Changed: one runner session, one start wait, one exit, in every SDK
 
 Each SDK built its own start, post-start factory change and exit around the core, and they

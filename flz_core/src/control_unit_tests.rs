@@ -338,6 +338,17 @@ fn handshake_presents_the_namespace_secret_only_when_one_is_set() {
     );
 }
 
+// The connect frame and `UpdateFactories` announce one struct in one form.
+#[test]
+fn the_handshake_announces_each_factory_as_its_factory_decl() {
+    let _guard = env_test_guard();
+
+    let (_payload_id, json) = handshake(false);
+    let frame: serde_json::Value = serde_json::from_str(&json).unwrap();
+    let decl = crate::relay::registry::advertised_for_factory("probe");
+    assert_eq!(frame["factories"], serde_json::json!([decl]));
+}
+
 // A reconnect (itx == None) must STILL present the stable id — identity is
 // re-presented every connect so the controller can swap the binding.
 #[test]

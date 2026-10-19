@@ -3,6 +3,5 @@
   "correction_ms": "600000",
   "durable": "local",
   "exactly": "effectively_once",
-  "keyed": "false",
-  "run": "flow"
+  "keyed": "false"
 }
