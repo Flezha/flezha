@@ -170,6 +170,7 @@ impl CreditWindow {
         }
     }
 
+    #[cfg(test)]
     pub fn current_session(&self) -> Option<String> {
         self.state
             .lock()
@@ -178,6 +179,7 @@ impl CreditWindow {
             .clone()
     }
 
+    #[cfg(test)]
     pub fn available_bytes(&self) -> i64 {
         self.state
             .lock()

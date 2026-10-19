@@ -7,9 +7,6 @@ defmodule Flezha.Runner.Admission.NotShuttingDown do
   require Logger
 
   @impl true
-  def phase, do: :caller
-
-  @impl true
   def check(%{namespace: namespace}, _context) do
     with {:error, :shutting_down} = refusal <- Shutdown.admit(:namespace, namespace) do
       Logger.info("[shutdown] rejecting runner connect attempt for namespace=#{namespace}")

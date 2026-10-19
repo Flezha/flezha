@@ -12,12 +12,12 @@ defmodule Flezha.Runner.Admission do
   alias Flezha.AuthZ.RunnerProof
   alias Flezha.Runner.Admission.{IdentityPin, NotDropped, NotShuttingDown, Quota}
 
-  @checks [RunnerProof, NotShuttingDown, Quota, IdentityPin, NotDropped]
+  @checks %{caller: [RunnerProof, NotShuttingDown, Quota], manager: [IdentityPin, NotDropped]}
 
   @spec run(:caller | :manager, map(), map()) :: {:ok, map()} | {:error, term()}
   def run(phase, connect, context) do
     @checks
-    |> Enum.filter(&(&1.phase() == phase))
+    |> Map.fetch!(phase)
     |> Enum.reduce_while({:ok, connect}, fn check, {:ok, connect} ->
       case check.check(connect, context) do
         :ok -> {:cont, {:ok, connect}}

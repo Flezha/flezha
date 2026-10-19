@@ -1,44 +1,20 @@
 //! The monotonic anchor, env parsing, lock poison recovery, big-endian reads
 //! and nonces; not a stable surface.
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{LazyLock, Mutex, MutexGuard};
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Instant, SystemTime};
 
 /// One origin for every monotonic stamp in the process.
 static MONOTONIC_ANCHOR: LazyLock<Instant> = LazyLock::new(Instant::now);
 
-/// The [`Instant`] every monotonic stamp is measured from.
-pub fn monotonic_anchor() -> Instant {
-    *MONOTONIC_ANCHOR
-}
-
-/// Nanoseconds since [`monotonic_anchor`].
+/// Nanoseconds since the process's monotonic anchor.
 pub fn monotonic_nanos() -> u64 {
     MONOTONIC_ANCHOR.elapsed().as_nanos() as u64
 }
 
-/// Milliseconds since [`monotonic_anchor`]; signed as the atomic it feeds.
+/// Milliseconds since the monotonic anchor; signed as the atomic it feeds.
 pub fn monotonic_ms() -> i64 {
     MONOTONIC_ANCHOR.elapsed().as_millis() as i64
-}
-
-const SLEEP_POLL_CHUNK: Duration = Duration::from_millis(200);
-
-/// Sleep `duration`, waking every [`SLEEP_POLL_CHUNK`] to observe `stop`;
-/// `false` when `stop` cut it short.
-pub fn sleep_interruptible(duration: Duration, stop: Option<&AtomicBool>) -> bool {
-    let deadline = Instant::now() + duration;
-    loop {
-        if stop.is_some_and(|flag| flag.load(Ordering::Acquire)) {
-            return false;
-        }
-        let now = Instant::now();
-        if now >= deadline {
-            return true;
-        }
-        std::thread::sleep(SLEEP_POLL_CHUNK.min(deadline - now));
-    }
 }
 
 /// The environment readers, re-exported so a crate above this one reaches one

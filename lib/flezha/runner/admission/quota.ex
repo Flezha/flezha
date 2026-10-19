@@ -13,9 +13,6 @@ defmodule Flezha.Runner.Admission.Quota do
   require Logger
 
   @impl true
-  def phase, do: :caller
-
-  @impl true
   def check(%{namespace: namespace, transport: transport}, _context) do
     runner_ctx = Session.runner_caller_context(namespace)
 

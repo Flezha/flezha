@@ -84,13 +84,7 @@ impl ErrorModel for SessionError {
     }
 }
 
-impl std::fmt::Display for SessionError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.to_error().message)
-    }
-}
-
-impl std::error::Error for SessionError {}
+flz_transport::model_error!(SessionError);
 
 /// One runner's session. The runner thread serializes `declared` into every
 /// connect and reconnect init frame, the resync of record. `started` holds the

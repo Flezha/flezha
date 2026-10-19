@@ -51,13 +51,7 @@ impl ErrorModel for AdminError {
     }
 }
 
-impl std::fmt::Display for AdminError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.to_error().message)
-    }
-}
-
-impl std::error::Error for AdminError {}
+flz_transport::model_error!(AdminError);
 
 /// Run `verb` with `args`, a JSON array of the call's arguments other than the
 /// namespace. Answers the published function's own result as JSON.

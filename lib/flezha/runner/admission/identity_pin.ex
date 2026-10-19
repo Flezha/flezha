@@ -18,9 +18,6 @@ defmodule Flezha.Runner.Admission.IdentityPin do
   require Logger
 
   @impl true
-  def phase, do: :manager
-
-  @impl true
   def check(%{stable_id: stable_id, credential: credential}, %{state: state})
       when is_binary(stable_id) and is_binary(credential) do
     if held_elsewhere?(state, stable_id, credential) do

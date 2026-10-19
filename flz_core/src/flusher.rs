@@ -265,7 +265,7 @@ impl CellFlusher {
     }
 
     /// One synchronous drain pass, for tests.
-    #[doc(hidden)]
+    #[cfg(test)]
     pub fn drain_now_for_tests(&self) {
         self.drain_pass();
     }

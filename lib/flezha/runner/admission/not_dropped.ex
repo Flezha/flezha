@@ -13,9 +13,6 @@ defmodule Flezha.Runner.Admission.NotDropped do
   alias Flezha.Runner.DropMarks
 
   @impl true
-  def phase, do: :manager
-
-  @impl true
   def check(%{namespace: namespace, stable_id: stable_id} = connect, %{stream_ref: stream_ref})
       when is_binary(stable_id) do
     connecting = connect.incarnation

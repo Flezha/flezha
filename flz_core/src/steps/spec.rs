@@ -361,10 +361,4 @@ impl BuildStepsError {
     }
 }
 
-impl std::fmt::Display for BuildStepsError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.to_error().message)
-    }
-}
-
-impl std::error::Error for BuildStepsError {}
+flz_transport::model_error!(BuildStepsError);

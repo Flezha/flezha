@@ -183,6 +183,21 @@ pub trait ErrorModel {
     }
 }
 
+/// `Display` as the catalogue message, and `std::error::Error`, for each
+/// [`ErrorModel`] type named.
+#[macro_export]
+macro_rules! model_error {
+    ($($error:ty),+ $(,)?) => {$(
+        impl ::std::fmt::Display for $error {
+            fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+                f.write_str(&$crate::errors::ErrorModel::to_error(self).message)
+            }
+        }
+
+        impl ::std::error::Error for $error {}
+    )+};
+}
+
 impl FlezhaError {
     /// The error `code` names, its templates filled from `details`. A code the
     /// catalogue does not know becomes `internal.uncatalogued`, carrying the

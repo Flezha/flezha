@@ -463,13 +463,9 @@ pub fn stop_host<'a>(env: &'a Env) -> Result<Object<'a>> {
     Ok(promise)
 }
 
-/// Ask the core to watch standard input and end the process on end of file.
-///
-/// The watch itself is `flz_core::shutdown::watch_stdin_eof`, reached through
-/// the ABI: a conformance harness stops a runner by closing its pipes rather
-/// than by signalling it, and the thread that would notice is the event loop —
-/// exactly the thread a compute-bound handler holds. The core's thread owns
-/// neither, and it reaches the exit the same way SIGTERM does.
+/// Ask the core to watch standard input and end the process on end of file, on
+/// a thread of its own rather than the event loop a compute-bound handler may
+/// hold (`flz_core::shutdown::watch_stdin_eof` says why).
 #[napi]
 pub fn watch_stdin_eof() -> Result<()> {
     context()?;

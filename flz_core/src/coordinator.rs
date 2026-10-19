@@ -233,10 +233,6 @@ impl RunnerNode {
         }
     }
 
-    pub fn _get_namespace(&self) -> String {
-        self._namespace.clone()
-    }
-
     pub fn get_io_streams(&self) -> IoStreams {
         Arc::clone(&self.shared_io_streams)
     }

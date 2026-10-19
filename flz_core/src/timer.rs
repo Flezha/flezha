@@ -292,6 +292,7 @@ pub struct TimerCounters {
     pub refused_total: AtomicU64,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TimerCountersView {
     pub tasklet: &'static str,
@@ -321,6 +322,7 @@ pub fn counters_for(tasklet: &'static str) -> Arc<TimerCounters> {
     )
 }
 
+#[cfg(test)]
 pub fn counters_snapshot() -> Vec<TimerCountersView> {
     let mut out: Vec<TimerCountersView> = registry()
         .iter()

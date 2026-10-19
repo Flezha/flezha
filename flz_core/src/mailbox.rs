@@ -172,11 +172,12 @@ impl Waiters {
         }
     }
 
+    #[cfg(test)]
     pub fn wait_for_room<P: Send + 'static>(&self, mailbox: &Mailbox<P>) {
         self.wait_for_room_until(mailbox, None);
     }
 
-    /// [`wait_for_room`](Self::wait_for_room) with a steps park, so a lost
+    /// [`wait_for_room_until`](Self::wait_for_room_until) with a steps park, so a lost
     /// wake degrades to a retry loop rather than a silent freeze.
     pub fn wait_for_room_timeout<P: Send + 'static>(
         &self,
@@ -226,6 +227,7 @@ impl Waiters {
     }
 
     /// Approximate under contention; diagnostics only.
+    #[cfg(test)]
     pub fn waiter_count(&self) -> usize {
         self.waiters.lock().map(|d| d.len()).unwrap_or(0)
     }

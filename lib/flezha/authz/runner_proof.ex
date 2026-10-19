@@ -55,9 +55,6 @@ defmodule Flezha.AuthZ.RunnerProof do
   @type t :: %{namespace: binary(), credential: binary() | nil}
 
   @impl true
-  def phase, do: :caller
-
-  @impl true
   def check(%{namespace: claimed, transport: transport} = connect, context) do
     with {:ok, proof} <- prove(context.stream_ref, claimed, context.init_payload, transport),
          do: {:ok, Map.merge(connect, proof)}

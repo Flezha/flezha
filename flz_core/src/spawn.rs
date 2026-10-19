@@ -148,13 +148,7 @@ impl ErrorModel for SpawnError {
     }
 }
 
-impl std::fmt::Display for SpawnError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.to_error().message)
-    }
-}
-
-impl std::error::Error for SpawnError {}
+flz_transport::model_error!(SpawnError);
 
 /// The ack a controller's spawn reply wakes its handle with. The reply reports
 /// two values through a channel that carries one string, and an outcome word

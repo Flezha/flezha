@@ -238,13 +238,7 @@ fn transport_code(refusal: &flz_transport::Error) -> Code {
     }
 }
 
-impl std::fmt::Display for Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.to_error().message)
-    }
-}
-
-impl std::error::Error for Error {}
+flz_transport::model_error!(Error);
 
 impl From<flz_transport::Error> for Error {
     fn from(refusal: flz_transport::Error) -> Self {

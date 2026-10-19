@@ -128,16 +128,10 @@ pub unsafe extern "C" fn flz_core_shutdown(ctx: *mut FlzContext) {
 }
 
 /// Watch standard input and end the process when it reaches end of file, on a
-/// thread the core owns.
-///
-/// A conformance harness stops a runner by closing its pipes rather than by
-/// signalling it, and the thread that would notice is the host's own loop —
-/// exactly the thread a compute-bound handler holds. One call installs the
-/// core's watch, so no host reads descriptor 0 itself and the rule "a read
-/// error is not end of file" is written once rather than once per host. The
-/// watch ends the runner as the SIGTERM handler does, with the same grace.
-///
-/// Idempotent: the second call installs nothing.
+/// thread the core owns, so no host reads descriptor 0 itself
+/// ([`flz_core::shutdown::watch_stdin_eof`] says why). The watch ends the runner
+/// as the SIGTERM handler does, with the same grace. Idempotent: the second
+/// call installs nothing.
 #[no_mangle]
 pub extern "C" fn flz_core_watch_stdin_eof() {
     flz_core::shutdown::watch_stdin_eof();
