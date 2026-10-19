@@ -5,11 +5,10 @@
 //! operation it calls, or its own `about`), its usage line and its options,
 //! each option described by its own `doc` where the CLI answers for it, or
 //! else by the operation's argument of the same name. A command's screen lists
-//! its verbs the same way. Columns are
-//! computed here; what is written by hand is only each screen's notes
-//! (`notes.rs`): examples and what only the CLI knows. `cli/tests/golden/`
-//! holds every screen captured from the binary, which is what proves a change
-//! to a row, a description or this renderer is deliberate.
+//! its verbs the same way. Only each screen's notes (`notes.rs`) are written by
+//! hand: examples and what only the CLI knows. `cli/tests/golden/` holds every
+//! screen captured from the binary, which proves a change to a row, a
+//! description or this renderer is deliberate.
 
 use std::sync::OnceLock;
 
@@ -95,16 +94,11 @@ fn option_text(verb: &Verb, spec: &OptSpec) -> &'static str {
 
 /// What `--help` on one verb prints.
 pub(crate) fn verb_screen(cmd: &Command, verb: &Verb) -> String {
-    let declared = verb
+    let rows: Vec<(String, &str)> = verb
         .options
         .iter()
-        .map(|spec| (spec, option_text(verb, spec)));
-    let universal = UNIVERSAL
-        .iter()
-        .map(|spec| (spec, spec.doc.unwrap_or_default()));
-    let rows: Vec<(String, &str)> = declared
-        .chain(universal)
-        .map(|(spec, text)| (spec.spelling(), text))
+        .chain(UNIVERSAL)
+        .map(|spec| (spec.spelling(), option_text(verb, spec)))
         .collect();
 
     let screen = format!(
@@ -225,6 +219,26 @@ mod tests {
             .collect();
 
         assert!(unknown.is_empty(), "{}", unknown.join("\n"));
+    }
+
+    /// fails when: a verb row declares no positional and no option yet calls
+    /// an operation that requires an argument, which the verb could then only
+    /// read by hand.
+    #[test]
+    fn a_verb_that_declares_nothing_calls_nothing_that_needs_an_argument() {
+        let undeclared: Vec<String> = leaf_rows()
+            .into_iter()
+            .filter(|(_, verb)| verb.positionals.is_empty() && verb.options.is_empty())
+            .flat_map(|(cmd, verb)| verb.calls.iter().map(move |call| (cmd, verb, call)))
+            .filter(|(_, _, call)| {
+                operation(call)
+                    .and_then(|op| op["args"].as_array())
+                    .is_some_and(|args| args.iter().any(|arg| arg["required"] == true))
+            })
+            .map(|(cmd, verb, call)| format!("{} {} calls {}", cmd.path, verb.name, call))
+            .collect();
+
+        assert!(undeclared.is_empty(), "{}", undeclared.join("\n"));
     }
 
     /// fails when: a verb has no description, because it calls no operation

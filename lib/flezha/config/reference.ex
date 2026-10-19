@@ -1,92 +1,66 @@
 defmodule Flezha.Config.Reference do
   @moduledoc """
-  The configuration reference as the published pages print it: a view over the
-  rows of `Flezha.Config.Keys`, as `Flezha.Config.Durations` is.
-
-  `render_table/1` renders one group of rows as a Markdown table of name, type
-  and default, sorted by name. A page carries each group between
-  `<!-- config-keys:begin <group> -->` and `<!-- config-keys:end -->`, and a
-  test holds the block equal to its rendering, so a row and its page cannot
-  disagree. What a knob is for stays prose on the page.
+  The configuration reference the published pages print, a view over the rows of
+  `Flezha.Config.Keys`. A page holds each group's `render_table/1` between
+  `<!-- config-keys:begin <group> -->` and `<!-- config-keys:end -->`, and a test
+  holds the block equal to it; what a knob is for stays prose on the page.
   """
 
   alias Flezha.Config.Keys
 
   @type group :: :environment | :application_env | :runner | :build
 
-  @runner_runtimes [:elixir_sdk, :rust, :java, :node, :python, :ruby, :php]
-
-  @doc "The Markdown table of `group`'s rows, ending in a newline."
+  @doc "The Markdown table of `group`'s rows, sorted by name, ending in a newline."
   @spec render_table(group()) :: binary()
   def render_table(group) do
-    lines =
-      for row <-
-            Keys.rows()
-            |> Map.values()
-            |> Enum.filter(&member?(group, &1))
-            |> Enum.sort_by(&name(group, &1)),
-          do: "| `#{name(group, row)}` | #{type(group, row.type)} | #{default(group, row)} |"
+    rows = Keys.rows() |> Map.values() |> Enum.filter(&member?(group, &1))
+    head = if group == :application_env, do: "Key", else: "Variable"
 
-    Enum.join(["| #{heading(group)} | Type | Default |", "|---|---|---|" | lines], "\n") <> "\n"
+    for row <- Enum.sort_by(rows, &name(group, &1)),
+        into: "| #{head} | Type | Default |\n|---|---|---|\n",
+        do: "| `#{name(group, row)}` | #{type(group, row.type)} | #{default(group, row)} |\n"
   end
 
-  defp member?(:environment, row), do: row.env != nil and :controller in row.runtimes
   defp member?(:application_env, row), do: row.key != nil
+  defp member?(:environment, row), do: reads?(row, [:controller])
 
   defp member?(:runner, row),
-    do: row.env != nil and Enum.any?(row.runtimes, &(&1 in @runner_runtimes))
+    do: reads?(row, [:elixir_sdk, :rust, :java, :node, :python, :ruby, :php])
 
-  defp member?(:build, row),
-    do: row.env != nil and Enum.any?(row.runtimes, &(&1 in [:build, :shell]))
+  defp member?(:build, row), do: reads?(row, [:build, :shell])
 
-  defp heading(:application_env), do: "Key"
-  defp heading(_group), do: "Variable"
-
-  defp name(:application_env, row), do: key_name(row.key)
-  defp name(_group, row), do: row.env
+  defp reads?(row, runtimes), do: row.env && Enum.any?(row.runtimes, &(&1 in runtimes))
 
   # A keyword-list key is shown as `:parent[:child]`.
-  defp key_name(key) when is_atom(key), do: inspect(key)
-
-  defp key_name(key) do
-    [root | path] = Tuple.to_list(key)
+  defp name(:application_env, %{key: key}) do
+    [root | path] = if is_tuple(key), do: Tuple.to_list(key), else: [key]
     inspect(root) <> Enum.map_join(path, &"[#{inspect(&1)}]")
   end
 
-  defp type(:application_env, {:custom, :days_to_seconds}), do: "seconds"
-  defp type(_group, type), do: type(type)
+  defp name(_group, row), do: row.env
 
-  defp type({:enum, values}), do: "one of " <> Enum.map_join(values, ", ", &"`#{&1}`")
-  defp type({:list, of}), do: "list of " <> type(of)
-  defp type({:custom, :days_to_seconds}), do: "days"
-  defp type({:custom, :pem_files}), do: "PEM file paths"
-  defp type(type), do: to_string(type)
+  defp type(:application_env, {:custom, :days_to_seconds}), do: "seconds"
+  defp type(_group, {:enum, values}), do: "one of " <> Enum.map_join(values, ", ", &"`#{&1}`")
+  defp type(group, {:list, of}), do: "list of " <> type(group, of)
+  defp type(_group, {:custom, :days_to_seconds}), do: "days"
+  defp type(_group, {:custom, :pem_files}), do: "PEM file paths"
+  defp type(_group, type), do: to_string(type)
 
   # The application env holds what the boot made of a variable: seconds where
-  # the variable is days, and a term rather than its text.
-  defp default(:application_env, %{type: {:custom, :days_to_seconds}, default: seconds}),
-    do: "`#{seconds}`"
+  # the variable is days, and a term (maps sorted, as OTP orders a small map's
+  # atom keys by when each atom was made) rather than its text.
+  defp default(:application_env, %{type: {:custom, :days_to_seconds}, default: s}), do: "`#{s}`"
 
-  # Sorted: OTP orders a small map's atom keys by when each atom was made.
   defp default(:application_env, %{type: :term, default: value}) when value != nil,
     do: "`#{inspect(value, custom_options: [sort_maps: true])}`"
 
   # A value is code; "unset", "derived" and the like are words.
-  defp default(_group, %{default: d} = row)
-       when d == nil or (is_tuple(d) and elem(d, 0) == :late),
-       do: render_default(row)
+  defp default(_group, %{default: d} = row) when d == nil or elem(d, 0) == :late,
+    do: render_default(row)
 
-  defp default(_group, row) do
-    case render_default(row) do
-      "" -> ~s(`""`)
-      text -> "`#{text}`"
-    end
-  end
+  defp default(_group, row), do: "`#{with "" <- render_default(row), do: ~s("")}`"
 
-  @doc """
-  The default as a user reads it in the configuration pages: the one rendering,
-  so a page and a row cannot disagree about a value's spelling.
-  """
+  @doc "The default as the configuration pages spell it, so a page and a row agree."
   @spec render_default(Keys.row()) :: binary()
   def render_default(%{default: {:late, _}}), do: "derived at boot"
   def render_default(%{default: {:env, var, _}}), do: var

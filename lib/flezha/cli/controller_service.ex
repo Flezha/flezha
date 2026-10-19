@@ -47,12 +47,11 @@ defmodule Flezha.Service.Controller do
   # ---------- Reads ----------
 
   @doc """
-  The readiness verdict and every precondition behind it.
-
-  It also answers the recovery state and persistent-registry row count of each
-  running namespace the caller may see (`Flezha.AuthZ.Namespace.visible/3`). The
-  verb is public, so a caller with no identity gets the verdict and only
-  `_system`'s row. Answers at once; `boot_await/2` waits.
+  The readiness verdict and every precondition behind it. It also answers the
+  recovery state and persistent-registry row count of each running namespace the
+  caller may see (`Flezha.AuthZ.Namespace.visible/3`). The verb is public, so a
+  caller with no identity gets the verdict and only `_system`'s row. Answers at
+  once; `boot_await/2` waits.
   """
   @spec boot_status(caller_context()) :: {:ok, map()} | {:error, term()}
   verb boot_status(caller_context) do
@@ -73,10 +72,9 @@ defmodule Flezha.Service.Controller do
   end
 
   @doc """
-  Wait until the readiness verdict is `:ready`, or the timeout passes.
-
-  The timeout is `timeout_ms`. A timeout of zero evaluates the verdict once,
-  which is what the image `HEALTHCHECK` runs.
+  Wait until the controller is ready, or the timeout passes. The timeout is
+  `timeout_ms`. A timeout of zero evaluates the verdict once, which is what the
+  image `HEALTHCHECK` runs.
   """
   @spec boot_await(non_neg_integer(), caller_context()) :: {:ok, atom()} | {:error, term()}
   verb boot_await(timeout_ms, caller_context),
@@ -94,10 +92,9 @@ defmodule Flezha.Service.Controller do
   end
 
   @doc """
-  The controller's status: node, clock, shutdown and durability.
-
-  In full: its node and its monotonic clock, its shutdown state and settings,
-  its durability, its state root and the folder file plugins may use.
+  The controller's status: node, clock, shutdown and durability. In full: its
+  node and its monotonic clock, its shutdown state and settings, its durability,
+  its state root and the folder file plugins may use.
 
   `monotonic_us` is the node's `System.monotonic_time(:microsecond)`, the clock
   observability signals are stamped with, so a consumer on another node can age
@@ -123,10 +120,9 @@ defmodule Flezha.Service.Controller do
   end
 
   @doc """
-  The cluster as `namespace` sees it: nodes, relays and health.
-
-  Each node comes with its relay count and recovery state, beside the unplaced
-  relays and the relays' health.
+  The cluster as one namespace sees it: nodes, relays and health. Each node
+  comes with its relay count and recovery state, beside the unplaced relays and
+  the relays' health.
   """
   @spec cluster_status(String.t(), caller_context()) :: {:ok, map()} | {:error, term()}
   verb cluster_status(namespace, caller_context),

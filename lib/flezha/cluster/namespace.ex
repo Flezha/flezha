@@ -86,10 +86,8 @@ defmodule Flezha.Service.Namespace do
   end
 
   @doc """
-  The role bindings the caller may see, one per identity.
-
-  `admin@_system` sees every binding; any other caller sees those of its own
-  namespace.
+  The role bindings the caller may see, one per identity. `admin@_system` sees
+  every binding; any other caller sees those of its own namespace.
   """
   @spec list_roles(caller_context()) :: {:ok, [map()]} | {:error, term()}
   verb list_roles(caller_context), verb: :role_list do
@@ -114,12 +112,11 @@ defmodule Flezha.Service.Namespace do
   end
 
   @doc """
-  The tokens the caller may see, one row each.
-
-  Each row holds its id, principal, role, namespace, label and whether it is
-  active, revoked or expired, with `created_at`, `expires_at` (unix seconds, or
-  `:never`), `revoked_at` (unix seconds, or nil) and `created_by`, the principal
-  that issued it. Never the token itself.
+  The tokens the caller may see, one row each. Each row holds its id, principal,
+  role, namespace, label and whether it is active, revoked or expired, with
+  `created_at`, `expires_at` (unix seconds, or `:never`), `revoked_at` (unix
+  seconds, or nil) and `created_by`, the principal that issued it. Never the
+  token itself.
   """
   @spec tokens(caller_context()) :: {:ok, [map()]} | {:error, term()}
   verb tokens(caller_context), verb: :token_list do
@@ -129,11 +126,7 @@ defmodule Flezha.Service.Namespace do
 
   # ---------- Mutations ----------
 
-  @doc """
-  Create the namespace `name`.
-
-  `opts[:quotas]` holds its ceilings that differ from the defaults.
-  """
+  @doc "Create a namespace. `opts[:quotas]` holds its ceilings that differ from the defaults."
   @spec create(String.t(), keyword(), caller_context()) :: {:ok, map()} | {:error, term()}
   verb create(name, opts, caller_context) when is_binary(name),
     verb: :namespace_create,
@@ -151,9 +144,8 @@ defmodule Flezha.Service.Namespace do
   end
 
   @doc """
-  Delete the namespace `name` and the quota counters keyed on it.
-
-  It is refused while any relay or runner is still attached to it, naming them.
+  Delete a namespace and the quota counters keyed on it. It is refused while any
+  relay or runner is still attached to it, naming them.
   """
   @spec delete(String.t(), caller_context()) :: :ok | {:error, term()}
   verb delete(name, caller_context) when is_binary(name),
@@ -177,10 +169,9 @@ defmodule Flezha.Service.Namespace do
   end
 
   @doc """
-  Claim the first admin with the one-time bootstrap token.
-
-  Answers the principal bound as `admin@_system` and, when one was minted for
-  it, its token, shown this once.
+  Claim the first admin with the one-time bootstrap token. Answers the principal
+  bound as `admin@_system` and, when one was minted for it, its token, shown
+  this once.
   """
   @spec bootstrap(String.t(), caller_context()) :: {:ok, map()} | {:error, term()}
   verb bootstrap(token, caller_context) when is_binary(token),
@@ -190,10 +181,9 @@ defmodule Flezha.Service.Namespace do
   end
 
   @doc """
-  Issue a token for `principal` holding `role` in `namespace`.
-
-  Answers its id and the token itself, shown this once. `opts` carries `ttl`, in
-  seconds or `"never"`, and `label`.
+  Issue a token for a principal holding a role in a namespace. Answers its id
+  and the token itself, shown this once. `opts` carries `ttl`, in seconds or
+  `"never"`, and `label`.
   """
   @spec issue_token(String.t(), String.t(), String.t(), keyword(), caller_context()) ::
           {:ok, map()} | {:error, term()}
@@ -217,7 +207,7 @@ defmodule Flezha.Service.Namespace do
     end
   end
 
-  @doc "Revoke the token whose id starts with `token_id`."
+  @doc "Revoke the token whose id starts with the given prefix."
   @spec revoke_token(String.t(), caller_context()) :: {:ok, map()} | {:error, term()}
   verb revoke_token(token_id, caller_context),
     verb: :token_revoke,
@@ -227,11 +217,7 @@ defmodule Flezha.Service.Namespace do
          do: {:ok, token_row(entry)}
   end
 
-  @doc """
-  Bind `principal` to `role` in `namespace`.
-
-  Answers the identity's binding after it.
-  """
+  @doc "Bind a principal to a role in a namespace. Answers the identity's binding after it."
   @spec bind_role(String.t(), String.t(), String.t(), caller_context()) ::
           {:ok, map()} | {:error, term()}
   verb bind_role(principal, role, namespace, caller_context),
@@ -250,11 +236,9 @@ defmodule Flezha.Service.Namespace do
   end
 
   @doc """
-  Unbind `role` from `principal`, or the principal's whole binding.
-
-  The whole binding goes when `role` is absent or empty: the one-command
-  revocation for an identity that is compromised or retired, which can only take
-  rights away.
+  Unbind a role from a principal, or the principal's whole binding. The whole
+  binding goes when `role` is absent or empty: the one-command revocation for an
+  identity that is compromised or retired, which can only take rights away.
   """
   @spec unbind_role(String.t(), String.t() | nil, caller_context()) ::
           {:ok, map()} | {:error, term()}

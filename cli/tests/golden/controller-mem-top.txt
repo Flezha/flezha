@@ -16,5 +16,3 @@ OUTPUT (default text format):
     ETS tables sorted by :ets.info(tab, :memory) (bytes).
     DETS files under app_data/process_hub/ sorted by file size.
     :recon_alloc.memory(:allocated_types) allocator breakdown.
-
-    With --json, a single JSON document for machine consumption.

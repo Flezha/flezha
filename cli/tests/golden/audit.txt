@@ -5,7 +5,7 @@ USAGE:
 
 COMMANDS:
     list    The audit log's files, each with its record times and digest.
-    read    The records of one audit file that match `params`.
+    read    The records of one audit file that match the given filters.
     tail    Stream every audit record the caller may read as it is written.
     stats   The audit log's operational snapshot.
     rotate  Close the current audit file and start a new one.

@@ -6,7 +6,7 @@ USAGE:
 COMMANDS:
     sources  Every registered observability source and what it said recently.
     sinks    Every registered observability sink.
-    tail     Stream the live signals of `source` that the caller may see.
-    enable   Enable the source `name`.
-    disable  Disable the source `name`.
+    tail     Stream the live signals of one source that the caller may see.
+    enable   Enable an observability source.
+    disable  Disable an observability source.
     help     Show this help message.

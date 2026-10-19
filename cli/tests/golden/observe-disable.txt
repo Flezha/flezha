@@ -1,4 +1,4 @@
-flz observe disable - Disable the source `name`.
+flz observe disable - Disable an observability source.
 
 Usage: flz observe disable <source>
 

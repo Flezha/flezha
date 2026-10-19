@@ -1,4 +1,4 @@
-flz relay start - Start `relay` in `namespace`, answering the id it runs under.
+flz relay start - Start a relay in a namespace, answering the id it runs under.
 
 Usage: flz relay start <factory_id> [--id | -i <id>] [--namespace | -n <namespace>] [--init-values <json>] [--text | -t <payload>] [--channel | -c <ch>] [--plugins <json-array>] [--partitions <N>]
 
@@ -8,7 +8,8 @@ OPTIONS:
     --init-values <json>          The state the relay starts with, keyed by
                                   tasklet name.
     --text | -t <payload>         The payload, sent as written.
-    --channel | -c <ch>           The entry channel the first message names.
+    --channel | -c <ch>           The entry channel the first message names
+                                  (default: the first declared).
     --plugins <json-array>        Plugins to bind at start, enabling each named
                                   with a provider when it is not enabled yet.
     --partitions <N>              Start this many partition members as one
@@ -46,9 +47,8 @@ INIT VALUES:
     relay's tasklets take the document as state the same way.
 
 FIRST MESSAGE:
-    --text is the instance's first input, on the entry channel --channel
-    names or the first declared one, whichever way it runs; a steps one started
-    without it waits for `flz relay send`. --channel needs --text.
+    --text is the instance's first input, whichever way it runs; a steps one
+    started without it waits for `flz relay send`. --channel needs --text.
 
 EXAMPLES:
     flz relay start do_nothing

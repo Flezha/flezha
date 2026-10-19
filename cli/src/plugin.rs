@@ -34,19 +34,19 @@ pub(crate) const TABLE: Command = Command {
             .reading(&[SINGLE])
             .open()
             .calls(&["PluginManager.enable"]),
-        Verb::new("bind", |read| named(read, "PluginManager.bind"))
+        Verb::new("bind", named)
             .taking(NAME)
             .open()
             .calls(&["PluginManager.bind"]),
-        Verb::new("unbind", |read| named(read, "PluginManager.unbind"))
+        Verb::new("unbind", named)
             .taking(NAME)
             .open()
             .calls(&["PluginManager.unbind"]),
-        Verb::new("update", |read| named(read, "PluginManager.update"))
+        Verb::new("update", named)
             .taking(NAME)
             .open()
             .calls(&["PluginManager.update"]),
-        Verb::new("disable", |read| named(read, "PluginManager.disable"))
+        Verb::new("disable", named)
             .taking(NAME)
             .open()
             .calls(&["PluginManager.disable"]),
@@ -112,9 +112,9 @@ fn handle_enable(read: &Reading) {
 /// The verbs that name a plugin and carry its fields: the plain options, the
 /// `X<key>=<value>` settings as `opts`, and the `--hook` families as `hooks`.
 /// A verb refuses a field it does not read, so each carries all of them.
-fn named(read: &Reading, name: &str) {
+fn named(read: &Reading) {
     rpc::door(
-        name,
+        read.operation(),
         &[
             Value::from(read.pos(NAME[0].name)),
             Value::Object(fields(read.rest())),
@@ -166,9 +166,9 @@ fn handle_help(read: &Reading) {
 
 fn handle_list(read: &Reading) {
     if read.switch(INSTALLED.long) {
-        rpc::bare(read, "Fleet.installed_plugins");
+        rpc::door("Fleet.installed_plugins", &[], &[], read);
     } else if read.switch(PROVIDERS.long) {
-        rpc::bare(read, "Fleet.providers");
+        rpc::door("Fleet.providers", &[], &[], read);
     } else {
         rpc::door("PluginManager.enabled", &[rpc::namespace(read)], &[], read);
     }

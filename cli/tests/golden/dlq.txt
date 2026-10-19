@@ -5,10 +5,7 @@ USAGE:
 
 COMMANDS:
     list    Parked entries, nearest-to-expiry first.
-    show    One entry and its payload bytes, or `nil` bytes when it carries
-            none.
+    show    One parked entry, with its payload bytes if it carries any.
     replay  Re-dispatch a parked payload to its relay.
     drop    Discard a parked entry and its payload.
     help    Show this help message.
-
-Identity for gated verbs rides `--token <token>` or the FLEZHA_TOKEN env var.

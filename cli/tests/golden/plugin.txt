@@ -4,13 +4,13 @@ USAGE:
     flz plugin <COMMAND>
 
 COMMANDS:
-    enable     Enable the plugin `name` built from `fields`.
-    bind       Bind `fields[:relay_id]` to the plugin `name`.
-    unbind     Unbind `fields[:relay_id]` from the plugin `name`.
-    update     Change the options and hooks of the plugin `name`.
-    disable    Disable the plugin `name`: every running copy stops.
+    enable     Enable a plugin from its provider and options.
+    bind       Bind a relay to a plugin.
+    unbind     Unbind a relay from a plugin.
+    update     Change the options and hooks of a plugin.
+    disable    Disable a plugin: every running copy stops.
     help       One plugin provider's help text, type, hooks and options.
-    list       Every plugin enabled in `namespace`.
+    list       Every plugin enabled in a namespace.
     install    Place a plugin package (.fpz) from a path or an https:// URL.
     uninstall  Remove an installed plugin package.
     sync       Make the plugin root hold exactly the packages FLEZHA_PLUGINS
@@ -43,8 +43,7 @@ HOOKS:
     A hook is a point at which the relay calls its plugin, named by the
     callback the provider defines: on_input sends every payload the relay
     ingests, on_output every payload it emits, on_interval runs on a timer.
-    `flz plugin help <provider_id>` lists the hooks a provider has. A hook
-    belongs to a binding.
+    A hook belongs to a binding.
 
     `--hook=<name>` names one and may be repeated. A hook's sub-options follow
     it as `--<name>.<key>=<value>`. on_interval has no default interval, so

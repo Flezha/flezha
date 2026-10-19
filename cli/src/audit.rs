@@ -22,7 +22,7 @@ pub(crate) const TABLE: Command = Command {
     title: "Durable audit log inspection.",
     notes: None,
     verbs: &[
-        Verb::new("list", |read| rpc::bare(read, "AuditLog.list_files"))
+        Verb::new("list", rpc::bare)
             .calls(&["AuditLog.list_files"])
             .help_word(),
         Verb::new("read", handle_read)
@@ -36,10 +36,10 @@ pub(crate) const TABLE: Command = Command {
             .calls(&["AuditLog.tail"])
             .notes(help::AUDIT_TAIL)
             .help_word(),
-        Verb::new("stats", |read| rpc::bare(read, "AuditLog.stats"))
+        Verb::new("stats", rpc::bare)
             .calls(&["AuditLog.stats"])
             .help_word(),
-        Verb::new("rotate", |read| rpc::bare(read, "AuditLog.rotate"))
+        Verb::new("rotate", rpc::bare)
             .calls(&["AuditLog.rotate"])
             .help_word(),
     ],

@@ -4,11 +4,9 @@ USAGE:
     flz runner <COMMAND>
 
 COMMANDS:
-    list     Every runner serving `namespace`, anywhere in the cluster.
+    list     Every runner serving a namespace, anywhere in the cluster.
     check    Report whether a runner on this host can reach a controller.
-    drop     Drop the runner `runner_id` serving `namespace`.
-    dropped  The drop marks standing in `namespace`, oldest first.
-    readmit  Lift the drop mark on the runner `stable_id` in `namespace`.
+    drop     Drop one runner serving a namespace.
+    dropped  The drop marks standing in a namespace, oldest first.
+    readmit  Lift the drop mark on a runner in a namespace.
     help     Show this help message.
-
-Use 'flz runner <COMMAND> --help' for more information on a specific command.

@@ -25,7 +25,8 @@ pub(crate) const CHANNEL: OptSpec = OptSpec::text("--channel", "-c", "<ch>");
 /// `--channel` where it names the first message's channel, on a start and on
 /// every firing of a schedule; `send` and `call` take its text from their
 /// operation's argument.
-pub(crate) const FIRST_CHANNEL: OptSpec = CHANNEL.doc("The entry channel the first message names.");
+pub(crate) const FIRST_CHANNEL: OptSpec =
+    CHANNEL.doc("The entry channel the first message names (default: the first declared).");
 const TO_ITERATION: OptSpec = OptSpec::number("--to-iteration", "--to-iteration", "<N>")
     .required()
     .doc("The committed iteration to rewind to.");
@@ -94,20 +95,18 @@ pub(crate) const TABLE: Command = Command {
             .taking(RELAY_ID)
             .reading(&[NAMESPACE])
             .calls(&["Relay.cell_state"]),
-        Verb::new("list", |read| {
-            rpc::scoped_read(read, "Relay.list", Some("relays"))
-        })
-        .reading(&[NAMESPACE])
-        .calls(&["Relay.list"]),
+        Verb::new("list", |read| rpc::scoped_read(read, Some("relays")))
+            .reading(&[NAMESPACE])
+            .calls(&["Relay.list"]),
         Verb::new("info", handle_info)
             .taking(&[Positional::optional("<relay_id>")])
             .reading(&[NAMESPACE])
             .calls(&["Relay.info", "Relay.api"]),
-        Verb::new("diagnose", |read| relay_door("Relay.diagnose", read))
+        Verb::new("diagnose", relay_door)
             .taking(RELAY_ID)
             .reading(&[NAMESPACE])
             .calls(&["Relay.diagnose"]),
-        Verb::new("graph", |read| relay_door("Relay.graph", read))
+        Verb::new("graph", relay_door)
             .taking(RELAY_ID)
             .reading(&[NAMESPACE])
             .calls(&["Relay.graph"]),
@@ -269,7 +268,7 @@ fn handle_scale(read: &Reading) {
 
 fn handle_stop(read: &Reading) {
     rpc::progress_line(read, "Stopping relay...");
-    relay_door("Relay.stop", read);
+    relay_door(read);
     rpc::progress_line(read, "Relay stopped successfully.");
 }
 
@@ -301,7 +300,7 @@ fn handle_info(read: &Reading) {
             &[],
             read,
         ),
-        None => rpc::scoped_read(read, "Relay.info", Some("relay information")),
+        None => rpc::scoped_read(read, Some("relay information")),
     }
 }
 
@@ -408,9 +407,10 @@ fn relay_id(read: &Reading) -> Value {
     Value::from(read.pos(RELAY_ID[0].name))
 }
 
-/// A function taking the namespace and the one relay the verb names.
-fn relay_door(function: &str, read: &Reading) {
-    rpc::door(function, &[rpc::namespace(read), relay_id(read)], &[], read);
+/// The row's operation, taking the namespace and the one relay the verb names.
+fn relay_door(read: &Reading) {
+    let args = [rpc::namespace(read), relay_id(read)];
+    rpc::door(read.operation(), &args, &[], read);
 }
 
 /// `flz relay rewind <instance> --to-iteration N` — take a steps loop back

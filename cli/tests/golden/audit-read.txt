@@ -1,4 +1,4 @@
-flz audit read - The records of one audit file that match `params`.
+flz audit read - The records of one audit file that match the given filters.
 
 Usage: flz audit read <file> [--source <source>] [--name <name>] [--since <microseconds>] [--until <microseconds>] [--limit <count>]
 

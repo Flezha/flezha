@@ -16,9 +16,7 @@ Break-glass needs write access to app_data/auth/ and nothing else, which is
 already enough to stop the controller: a claim against a running controller
 therefore grants no authority filesystem access does not already carry. It
 unbinds every admin@_system and revokes its _system admin tokens before binding
-the new admin, and it is audited as a recovery.
-
-Identity for gated verbs rides `--token <token>` or the FLEZHA_TOKEN env var."#;
+the new admin, and it is audited as a recovery."#;
 
 pub(crate) const BOOT: Help = r#"`await` also waits, inside the same timeout, for a controller it cannot reach
 yet, such as one started as a daemon a moment ago. Once reached, the
@@ -39,17 +37,9 @@ pub(crate) const CONTROLLER_MEM_TOP: Help = r#"OUTPUT (default text format):
 
     ETS tables sorted by :ets.info(tab, :memory) (bytes).
     DETS files under app_data/process_hub/ sorted by file size.
-    :recon_alloc.memory(:allocated_types) allocator breakdown.
+    :recon_alloc.memory(:allocated_types) allocator breakdown."#;
 
-    With --json, a single JSON document for machine consumption."#;
-
-pub(crate) const CONTROLLER_START: Help = r#"AVAILABLE MODES:
-    attached          Start in attached mode (default)
-    daemon            Start as daemon
-    attached_iex      Start in attached IEx mode
-    daemon_iex        Start as daemon with IEx
-
-EXAMPLES:
+pub(crate) const CONTROLLER_START: Help = r#"EXAMPLES:
     flz controller start
     flz controller start --mode daemon
     flz controller start -m attached_iex"#;
@@ -79,21 +69,13 @@ EXIT CODES:
     3   Controller not reachable (controller.unreachable)
     4   Refused for want of a token or a role (authz.*)
     7   Partial drain: the timeout elapsed with Relays still local
-        (shutdown.partial_drain)
-    Every code is listed in docs/public/errors.md."#;
-
-pub(crate) const CONTROLLER: Help =
-    r#"Use 'flz controller <COMMAND> --help' for more information on a specific command."#;
-
-pub(crate) const DLQ: Help =
-    r#"Identity for gated verbs rides `--token <token>` or the FLEZHA_TOKEN env var."#;
+        (shutdown.partial_drain)"#;
 
 pub(crate) const FLZ: Help = r#"OUTPUT FORMAT:
-    Every verb takes --json, or the same request spelled --output json / -o json.
-    A verb that reaches a controller answers it as JSON whether it reads or
-    acts: the JSON its operation answers on every surface. Any other format is
-    refused. `flz help --json` prints every such operation, as data, with no
-    controller running.
+    Under --json a verb that reaches a controller answers as JSON whether it
+    reads or acts: the JSON its operation answers on every surface. Any other
+    format is refused. `flz help --json` prints every such operation, as data,
+    with no controller running.
 
 ERRORS:
     A failure is written on stderr as `error: <message> (<code>)`, with a
@@ -101,8 +83,6 @@ ERRORS:
     {"error": {"code", "class", "message", "details", "hint"}} line. The exit
     code follows the class: 1 internal, 2 invalid, 3 unreachable, 4 denied,
     5 not_found, 6 conflict, 7 unavailable. Every code is in docs/public/errors.md.
-
-Use 'flz <COMMAND> help' for more information on a specific command.
 
 EXAMPLES:
     flz controller start
@@ -128,9 +108,7 @@ EXAMPLES:
 pub(crate) const NAMESPACE: Help = r#"create and set-quota take each quota as --X<quota>=<value>.
 
 Quota fields: max_relays, max_cells_per_relay, max_mailbox_bytes_total,
-              max_message_rate_per_second, max_state_bytes, max_runners
-
-Identity for gated verbs rides `--token <token>` or the FLEZHA_TOKEN env var."#;
+              max_message_rate_per_second, max_state_bytes, max_runners"#;
 
 pub(crate) const OBSERVE_SINKS: Help =
     r#"Prints one row per registered sink (name, module, overflow, watermark)."#;
@@ -169,9 +147,8 @@ INIT VALUES:
     relay's tasklets take the document as state the same way.
 
 FIRST MESSAGE:
-    --text is the instance's first input, on the entry channel --channel
-    names or the first declared one, whichever way it runs; a steps one started
-    without it waits for `flz relay send`. --channel needs --text.
+    --text is the instance's first input, whichever way it runs; a steps one
+    started without it waits for `flz relay send`. --channel needs --text.
 
 EXAMPLES:
     flz relay start do_nothing
@@ -235,24 +212,17 @@ EXAMPLES:
     flz relay call slow --text x --timeout 100"#;
 
 pub(crate) const RELAY: Help = r#"EXAMPLES:
-    flz relay start candles --id ohlc --partitions 3
     flz relay scale ohlc 5
     flz relay send orchestrator --text '{"task":"refactor"}'
     flz relay send my_echo --text 'hello world' --await 2000
     flz relay send prices --key EURUSD --text x
     flz relay send orders --text x --msg-id orders/0/41
-    flz relay call echo --text hello
     flz relay diagnose orders-eu
     flz relay graph orders-eu
     flz relay activity orders-eu
     flz relay activity orders-eu --cells book --limit 10
-    flz relay listen my_echo --duration-ms 10000
     flz relay rewind chat-1 --to-iteration 3
-    flz relay replay candles/aggregate/BTC --from 1720000000000
-
-Use 'flz relay <COMMAND> --help' for more information on a specific command.
-
-Identity for gated verbs rides `--token <token>` or the FLEZHA_TOKEN env var."#;
+    flz relay replay candles/aggregate/BTC --from 1720000000000"#;
 
 pub(crate) const PLUGIN: Help = r#"PLUGINS:
     A plugin has a name of its own in its namespace and is enabled once, with
@@ -281,8 +251,7 @@ HOOKS:
     A hook is a point at which the relay calls its plugin, named by the
     callback the provider defines: on_input sends every payload the relay
     ingests, on_output every payload it emits, on_interval runs on a timer.
-    `flz plugin help <provider_id>` lists the hooks a provider has. A hook
-    belongs to a binding.
+    A hook belongs to a binding.
 
     `--hook=<name>` names one and may be repeated. A hook's sub-options follow
     it as `--<name>.<key>=<value>`. on_interval has no default interval, so
@@ -313,22 +282,9 @@ EXAMPLES:
     flz plugin disable trades"#;
 
 pub(crate) const RESET: Help = r#"DESCRIPTION:
-    Clears the contents of the Controller's durable on-disk state so the
-    next boot starts from a clean slate. Clears nothing while the
-    Controller is up; stop it first with `flz controller stop`.
-
     By default clears:
         app_data/state/         (per-Cell WAL/snapshot/outbox)
         app_data/process_hub/   (ProcessHub durable registry)
-
-    Opt-in clears (off by default):
-        app_data/certs/         (--include-certs)
-        app_data/dlq/           (--include-dlq)
-        app_data/schedules/     (--include-schedules)
-        app_data/auth/          (--include-auth)
-        app_data/audit/         (--include-audit)
-        app_data/plugins/       (--include-plugins)
-        <socket directory>      (--include-sockets)
 
     Clearing app_data/auth/ removes every token (runner credentials
     included), every role binding and every namespace but _system. With
@@ -360,7 +316,6 @@ EXIT CODES:
         (reset.confirmation_required), conflicting flags, or a path it refuses
         to clear, such as the app_data root itself (reset.path_refused)
     6   Refused: the Controller is up (reset.controller_running)
-    Every code is listed in docs/public/errors.md.
 
 EXAMPLES:
     flz reset                          # plan only, exit 2
@@ -370,26 +325,17 @@ EXAMPLES:
     flz reset --yes --json             # machine-readable output"#;
 
 pub(crate) const ROLE: Help = r#"A principal holds a set of roles in one namespace, and an action is allowed
-when any of them grants it. A bind naming another namespace is refused.
+when any of them grants it. A bind naming another namespace is refused."#;
 
-Identity for these verbs rides `--token <token>` or the FLEZHA_TOKEN env var."#;
-
-pub(crate) const RUNNER: Help =
-    r#"Use 'flz runner <COMMAND> --help' for more information on a specific command."#;
-
-pub(crate) const SCHEDULE: Help = r#"add stores a durable schedule of a steps factory; a factory a connected runner
-announced as flow is refused. --init-values is the state every fired instance
-starts with; --text is the first message it receives, on the entry channel
---channel names or the first declared one. run fires one instance at once with
-the stored config, judged as relay.start in the schedule's namespace.
+pub(crate) const SCHEDULE: Help = r#"add refuses a factory a connected runner announced as flow. run fires one
+instance at once with the stored config, judged as relay.start in the
+schedule's namespace.
 
 EXAMPLES:
     flz schedule add digest --cron "0 8 * * *" --tz Europe/Tallinn --factory ai_digest
     flz schedule add nightly --cron "0 2 * * *" --tz UTC --factory report --text '{"day":"today"}' --channel requests
     flz schedule list
-    flz schedule run digest
-
-Identity for gated verbs rides `--token <token>` or the FLEZHA_TOKEN env var."#;
+    flz schedule run digest"#;
 
 pub(crate) const STATE: Help = r#"EXAMPLES:
     flz state get MarketRelay/OhlcTasklet/M1
@@ -419,6 +365,4 @@ pub(crate) const TOKEN: Help = r#"A `runner` token is the credential a runner co
 with. It never expires and `--ttl` is refused for it: the holder is an
 unattended process, and a credential that lapses fails it at a restart. A
 namespace may hold several at once, so a rotation is issue, roll the fleet,
-revoke the old one; revoking one closes the sessions it authenticated.
-
-Identity for these verbs rides `--token <token>` or the FLEZHA_TOKEN env var."#;
+revoke the old one; revoking one closes the sessions it authenticated."#;

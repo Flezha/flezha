@@ -50,11 +50,7 @@ defmodule Flezha.Service.Dlq do
 
   # ---------- Reads ----------
 
-  @doc """
-  Parked entries, nearest-to-expiry first.
-
-  A `relay_class` of `nil` reads every class.
-  """
+  @doc "Parked entries, nearest-to-expiry first. A `relay_class` of `nil` reads every class."
   @spec list(String.t() | nil, caller_context()) :: {:ok, [entry()]} | {:error, term()}
   verb list(relay_class, caller_context),
     verb: :dlq_list,
@@ -63,7 +59,7 @@ defmodule Flezha.Service.Dlq do
     {:ok, Store.list(relay_class)}
   end
 
-  @doc "One entry and its payload bytes, or `nil` bytes when it carries none."
+  @doc "One parked entry, with its payload bytes if it carries any."
   @spec get(String.t(), caller_context()) ::
           {:ok, entry(), binary() | nil} | {:error, term()}
   verb get(entry_ref, caller_context),
@@ -105,13 +101,12 @@ defmodule Flezha.Service.Dlq do
   end
 
   @doc """
-  Re-dispatch a parked payload to its relay.
-
-  It goes through the ordinary input path. A clean replay removes the entry; a
-  failing one re-parks it with `generation` incremented, which the store
-  correlates on content identity. Replay identity is fresh by construction: the
-  re-drive enters as a NEW input, so a tier-on invocation records fresh WAL seqs
-  and downstream sinks see new `flz.seq` under the current epoch.
+  Re-dispatch a parked payload to its relay. It goes through the ordinary input
+  path. A clean replay removes the entry; a failing one re-parks it with
+  `generation` incremented, which the store correlates on content identity.
+  Replay identity is fresh by construction: the re-drive enters as a NEW input,
+  so a tier-on invocation records fresh WAL seqs and downstream sinks see new
+  `flz.seq` under the current epoch.
   """
   @spec replay(String.t(), caller_context()) :: {:ok, replay_outcome()} | {:error, term()}
   verb replay(entry_ref, caller_context),

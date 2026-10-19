@@ -2,37 +2,31 @@ use serde_json::Value;
 
 use crate::args::{Positional, Reading};
 use crate::dispatch::{Command, Missing, Verb};
-use crate::{help, rpc};
+use crate::rpc;
 
 const ENTRY_REF: &[Positional] = &[Positional::required("<relay/tasklet/entry-id>")];
 
 pub(crate) const TABLE: Command = Command {
     path: "flz dlq",
     title: "Dead-letter queue: parked poison payloads (retry budget exhausted).",
-    notes: Some(help::DLQ),
+    notes: None,
     verbs: &[
         Verb::new("list", handle_list)
             .taking(&[Positional::optional("<relay_class>")])
             .strict()
             .calls(&["Dlq.list"]),
-        Verb::new("show", |read| {
-            rpc::one_arg(read, ENTRY_REF[0].name, "Dlq.get")
-        })
-        .taking(ENTRY_REF)
-        .strict()
-        .calls(&["Dlq.get"]),
-        Verb::new("replay", |read| {
-            rpc::one_arg(read, ENTRY_REF[0].name, "Dlq.replay")
-        })
-        .taking(ENTRY_REF)
-        .strict()
-        .calls(&["Dlq.replay"]),
-        Verb::new("drop", |read| {
-            rpc::one_arg(read, ENTRY_REF[0].name, "Dlq.drop")
-        })
-        .taking(ENTRY_REF)
-        .strict()
-        .calls(&["Dlq.drop"]),
+        Verb::new("show", rpc::one_arg)
+            .taking(ENTRY_REF)
+            .strict()
+            .calls(&["Dlq.get"]),
+        Verb::new("replay", rpc::one_arg)
+            .taking(ENTRY_REF)
+            .strict()
+            .calls(&["Dlq.replay"]),
+        Verb::new("drop", rpc::one_arg)
+            .taking(ENTRY_REF)
+            .strict()
+            .calls(&["Dlq.drop"]),
     ],
     missing: Missing::Refuse,
     unknown_prints_help: false,

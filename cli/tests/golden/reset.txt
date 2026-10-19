@@ -28,22 +28,9 @@ OPTIONS:
     --json                   The same as --output json.
 
 DESCRIPTION:
-    Clears the contents of the Controller's durable on-disk state so the
-    next boot starts from a clean slate. Clears nothing while the
-    Controller is up; stop it first with `flz controller stop`.
-
     By default clears:
         app_data/state/         (per-Cell WAL/snapshot/outbox)
         app_data/process_hub/   (ProcessHub durable registry)
-
-    Opt-in clears (off by default):
-        app_data/certs/         (--include-certs)
-        app_data/dlq/           (--include-dlq)
-        app_data/schedules/     (--include-schedules)
-        app_data/auth/          (--include-auth)
-        app_data/audit/         (--include-audit)
-        app_data/plugins/       (--include-plugins)
-        <socket directory>      (--include-sockets)
 
     Clearing app_data/auth/ removes every token (runner credentials
     included), every role binding and every namespace but _system. With
@@ -75,7 +62,6 @@ EXIT CODES:
         (reset.confirmation_required), conflicting flags, or a path it refuses
         to clear, such as the app_data root itself (reset.path_refused)
     6   Refused: the Controller is up (reset.controller_running)
-    Every code is listed in docs/public/errors.md.
 
 EXAMPLES:
     flz reset                          # plan only, exit 2

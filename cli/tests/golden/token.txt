@@ -4,8 +4,8 @@ USAGE:
     flz token <COMMAND>
 
 COMMANDS:
-    issue   Issue a token for `principal` holding `role` in `namespace`.
-    revoke  Revoke the token whose id starts with `token_id`.
+    issue   Issue a token for a principal holding a role in a namespace.
+    revoke  Revoke the token whose id starts with the given prefix.
     list    The tokens the caller may see, one row each.
     help    Show this help message.
 
@@ -14,5 +14,3 @@ with. It never expires and `--ttl` is refused for it: the holder is an
 unattended process, and a credential that lapses fails it at a restart. A
 namespace may hold several at once, so a rotation is issue, roll the fleet,
 revoke the old one; revoking one closes the sessions it authenticated.
-
-Identity for these verbs rides `--token <token>` or the FLEZHA_TOKEN env var.

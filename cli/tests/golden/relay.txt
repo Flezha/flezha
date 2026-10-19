@@ -4,39 +4,32 @@ USAGE:
     flz relay <COMMAND>
 
 COMMANDS:
-    start     Start `relay` in `namespace`, answering the id it runs under.
-    scale     Rescale the partition group `group_id` in `namespace` to `target`.
-    stop      Stop `relay_id` in `namespace`, or a whole partition group.
+    start     Start a relay in a namespace, answering the id it runs under.
+    scale     Rescale a partition group in a namespace to a new size.
+    stop      Stop a relay in a namespace, or a whole partition group.
     state     A relay's live state, as JSON, and the change sequence it was read
               at.
-    list      The relays in `namespace`, one row each.
-    info      Every relay in `namespace` as its Overwatch reports it.
-    diagnose  What is wrong with `relay_id` and what to do about it.
-    graph     The graph of `relay_id`'s factory, as its runner announces it.
-    activity  What each tasklet of `relay_id` is doing, as its runner counts it.
-    listen    Stream every frame `relay_id` emits, or what `direction` names.
-    send      Inject `message` into `relay_id`'s input stream.
-    call      Call the entry channel `channel` of `relay_id` with `value`.
-    rewind    Rewind `relay_class` in `namespace` to iteration `to_iter`.
+    list      The relays in a namespace, one row each.
+    info      Every relay in a namespace as its Overwatch reports it.
+    diagnose  What is wrong with a relay and what to do about it.
+    graph     The graph of a relay's factory, as its runner announces it.
+    activity  What each tasklet of a relay is doing, as its runner counts it.
+    listen    Stream every frame a relay emits, or those of one direction.
+    send      Inject a message into a relay's input stream.
+    call      Call an entry channel of a relay with a value.
+    rewind    Rewind a relay class in a namespace to an earlier iteration.
     replay    Re-run a Cell's retained inputs from a point in the past.
     help      Show this help message.
 
 EXAMPLES:
-    flz relay start candles --id ohlc --partitions 3
     flz relay scale ohlc 5
     flz relay send orchestrator --text '{"task":"refactor"}'
     flz relay send my_echo --text 'hello world' --await 2000
     flz relay send prices --key EURUSD --text x
     flz relay send orders --text x --msg-id orders/0/41
-    flz relay call echo --text hello
     flz relay diagnose orders-eu
     flz relay graph orders-eu
     flz relay activity orders-eu
     flz relay activity orders-eu --cells book --limit 10
-    flz relay listen my_echo --duration-ms 10000
     flz relay rewind chat-1 --to-iteration 3
     flz relay replay candles/aggregate/BTC --from 1720000000000
-
-Use 'flz relay <COMMAND> --help' for more information on a specific command.
-
-Identity for gated verbs rides `--token <token>` or the FLEZHA_TOKEN env var.

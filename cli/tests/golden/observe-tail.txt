@@ -1,4 +1,4 @@
-flz observe tail - Stream the live signals of `source` that the caller may see.
+flz observe tail - Stream the live signals of one source that the caller may see.
 
 Usage: flz observe tail <source> [--duration-ms <milliseconds>]
 

@@ -6,7 +6,7 @@ use serde_json::Value;
 
 use crate::args::{Positional, Reading, NAMESPACE};
 use crate::dispatch::{Command, Missing, Verb};
-use crate::{help, rpc};
+use crate::rpc;
 
 const RUNNER_ID: &[Positional] = &[Positional::required("<runner_id>")];
 const STABLE_ID: &[Positional] = &[Positional::required("<stable_id>")];
@@ -14,7 +14,7 @@ const STABLE_ID: &[Positional] = &[Positional::required("<stable_id>")];
 pub(crate) const TABLE: Command = Command {
     path: "flz runner",
     title: "Runner management commands.",
-    notes: Some(help::RUNNER),
+    notes: None,
     verbs: &[
         Verb::new("list", handle_list)
             .reading(&[NAMESPACE])
@@ -26,7 +26,7 @@ pub(crate) const TABLE: Command = Command {
             .reading(&[NAMESPACE])
             .calls(&["Fleet.drop_runner"]),
         Verb::new("dropped", |read| {
-            rpc::scoped_read(read, "Fleet.dropped_runners", Some("dropped runners"))
+            rpc::scoped_read(read, Some("dropped runners"))
         })
         .reading(&[NAMESPACE])
         .calls(&["Fleet.dropped_runners"]),
@@ -40,7 +40,7 @@ pub(crate) const TABLE: Command = Command {
 };
 
 fn handle_list(read: &Reading) {
-    rpc::scoped_read(read, "Fleet.runners", Some("runners"));
+    rpc::scoped_read(read, Some("runners"));
 }
 
 /// `flz runner drop <runner_id>`: close the runner's session and refuse its

@@ -5,8 +5,8 @@ USAGE:
 
 COMMANDS:
     list       The namespaces in the durable catalog the caller may be shown.
-    create     Create the namespace `name`.
-    delete     Delete the namespace `name` and the quota counters keyed on it.
+    create     Create a namespace.
+    delete     Delete a namespace and the quota counters keyed on it.
     show       One namespace record.
     set-quota  Replace the namespace's quota overrides.
     help       Show this help message.
@@ -15,5 +15,3 @@ create and set-quota take each quota as --X<quota>=<value>.
 
 Quota fields: max_relays, max_cells_per_relay, max_mailbox_bytes_total,
               max_message_rate_per_second, max_state_bytes, max_runners
-
-Identity for gated verbs rides `--token <token>` or the FLEZHA_TOKEN env var.

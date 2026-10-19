@@ -18,5 +18,3 @@ already enough to stop the controller: a claim against a running controller
 therefore grants no authority filesystem access does not already carry. It
 unbinds every admin@_system and revokes its _system admin tokens before binding
 the new admin, and it is audited as a recovery.
-
-Identity for gated verbs rides `--token <token>` or the FLEZHA_TOKEN env var.

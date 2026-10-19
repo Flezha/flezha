@@ -1,4 +1,4 @@
-flz observe enable - Enable the source `name`.
+flz observe enable - Enable an observability source.
 
 Usage: flz observe enable <source>
 

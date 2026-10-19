@@ -1,4 +1,4 @@
-flz relay call - Call the entry channel `channel` of `relay_id` with `value`.
+flz relay call - Call an entry channel of a relay with a value.
 
 Usage: flz relay call <relay_id> [--text | -t <payload>] [--arg <name=value>] [--channel | -c <ch>] [--answer-channel <ch>] [--key <key>] [--timeout <ms>] [--namespace | -n <namespace>]
 

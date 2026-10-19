@@ -27,12 +27,10 @@ pub(crate) const TABLE: Command = Command {
             ])
             .reading(&[TTL])
             .calls(&["Namespace.issue_token"]),
-        Verb::new("revoke", |read| {
-            rpc::one_arg(read, "<token-id>", "Namespace.revoke_token")
-        })
-        .taking(&[Positional::required("<token-id>")])
-        .calls(&["Namespace.revoke_token"]),
-        Verb::new("list", |read| rpc::bare(read, "Namespace.tokens")).calls(&["Namespace.tokens"]),
+        Verb::new("revoke", rpc::one_arg)
+            .taking(&[Positional::required("<token-id>")])
+            .calls(&["Namespace.revoke_token"]),
+        Verb::new("list", rpc::bare).calls(&["Namespace.tokens"]),
     ],
     missing: Missing::Screen,
     unknown_prints_help: false,

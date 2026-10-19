@@ -331,6 +331,7 @@ type Slots = Vec<(&'static str, Option<String>)>;
 /// it declared it carries.
 pub(crate) struct Reading {
     usage: String,
+    calls: &'static [&'static str],
     positionals: Slots,
     options: Slots,
     rest: Vec<String>,
@@ -343,11 +344,14 @@ impl Reading {
         self.maybe_pos(name).unwrap_or_default()
     }
 
-    /// The positional in the slot at `index`, for the verbs that share a
-    /// handler and name the same slot differently — `flz state list` calls it
-    /// a relay class and `flz state inbox` an instance.
+    /// The positional in the slot at `index`, for a handler several rows share.
     pub(crate) fn positional_at(&self, index: usize) -> &str {
         self.positionals[index].1.as_deref().unwrap_or_default()
+    }
+
+    /// The operation the verb's row names first, which a shared handler sends.
+    pub(crate) fn operation(&self) -> &'static str {
+        self.calls[0]
     }
 
     pub(crate) fn maybe_pos(&self, name: &str) -> Option<&str> {
@@ -507,6 +511,7 @@ pub(crate) fn read(
     if asked_help || written(&options, HELP.long).is_some() {
         return Ok(Reading {
             usage,
+            calls: verb.calls,
             positionals: verb
                 .positionals
                 .iter()
@@ -527,6 +532,7 @@ pub(crate) fn read(
 
     Ok(Reading {
         usage,
+        calls: verb.calls,
         positionals,
         options,
         rest,

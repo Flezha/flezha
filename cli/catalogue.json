@@ -10,7 +10,7 @@
     },
     {
       "name": "AuditLog.read",
-      "doc": "The records of one audit file that match `params`.",
+      "doc": "The records of one audit file that match the given filters.",
       "action": "audit.read",
       "remote": true,
       "stream": false,
@@ -72,7 +72,7 @@
     },
     {
       "name": "Controller.boot_await",
-      "doc": "Wait until the readiness verdict is `:ready`, or the timeout passes.",
+      "doc": "Wait until the controller is ready, or the timeout passes.",
       "action": "public",
       "remote": true,
       "stream": true,
@@ -97,7 +97,7 @@
     },
     {
       "name": "Controller.cluster_status",
-      "doc": "The cluster as `namespace` sees it: nodes, relays and health.",
+      "doc": "The cluster as one namespace sees it: nodes, relays and health.",
       "action": "relay.list",
       "remote": true,
       "stream": false,
@@ -258,7 +258,7 @@
     },
     {
       "name": "Dlq.get",
-      "doc": "One entry and its payload bytes, or `nil` bytes when it carries none.",
+      "doc": "One parked entry, with its payload bytes if it carries any.",
       "action": "dlq.show",
       "remote": true,
       "stream": false,
@@ -328,7 +328,7 @@
     },
     {
       "name": "Fleet.drop_runner",
-      "doc": "Drop the runner `runner_id` serving `namespace`.",
+      "doc": "Drop one runner serving a namespace.",
       "action": "runner.drop",
       "remote": true,
       "stream": false,
@@ -349,7 +349,7 @@
     },
     {
       "name": "Fleet.dropped_runners",
-      "doc": "The drop marks standing in `namespace`, oldest first.",
+      "doc": "The drop marks standing in a namespace, oldest first.",
       "action": "relay.list",
       "remote": true,
       "stream": false,
@@ -425,7 +425,7 @@
     },
     {
       "name": "Fleet.readmit_runner",
-      "doc": "Lift the drop mark on the runner `stable_id` in `namespace`.",
+      "doc": "Lift the drop mark on a runner in a namespace.",
       "action": "runner.drop",
       "remote": true,
       "stream": false,
@@ -461,7 +461,7 @@
     },
     {
       "name": "Fleet.runners",
-      "doc": "Every runner serving `namespace`, anywhere in the cluster.",
+      "doc": "Every runner serving a namespace, anywhere in the cluster.",
       "action": "relay.list",
       "remote": true,
       "stream": false,
@@ -512,7 +512,7 @@
     },
     {
       "name": "Namespace.bind_role",
-      "doc": "Bind `principal` to `role` in `namespace`.",
+      "doc": "Bind a principal to a role in a namespace.",
       "action": "authz.role_bind",
       "remote": false,
       "stream": false,
@@ -554,7 +554,7 @@
     },
     {
       "name": "Namespace.create",
-      "doc": "Create the namespace `name`.",
+      "doc": "Create a namespace.",
       "action": "authz.namespace_create",
       "remote": true,
       "stream": false,
@@ -576,7 +576,7 @@
     },
     {
       "name": "Namespace.delete",
-      "doc": "Delete the namespace `name` and the quota counters keyed on it.",
+      "doc": "Delete a namespace and the quota counters keyed on it.",
       "action": "authz.namespace_delete",
       "remote": false,
       "stream": false,
@@ -606,7 +606,7 @@
     },
     {
       "name": "Namespace.issue_token",
-      "doc": "Issue a token for `principal` holding `role` in `namespace`.",
+      "doc": "Issue a token for a principal holding a role in a namespace.",
       "action": "authz.token_issue",
       "remote": false,
       "stream": false,
@@ -692,7 +692,7 @@
     },
     {
       "name": "Namespace.revoke_token",
-      "doc": "Revoke the token whose id starts with `token_id`.",
+      "doc": "Revoke the token whose id starts with the given prefix.",
       "action": "authz.token_revoke",
       "remote": false,
       "stream": false,
@@ -753,7 +753,7 @@
     },
     {
       "name": "Namespace.unbind_role",
-      "doc": "Unbind `role` from `principal`, or the principal's whole binding.",
+      "doc": "Unbind a role from a principal, or the principal's whole binding.",
       "action": "authz.role_unbind",
       "remote": false,
       "stream": false,
@@ -783,7 +783,7 @@
     },
     {
       "name": "Observability.disable_source",
-      "doc": "Disable the source `name`.",
+      "doc": "Disable an observability source.",
       "action": "observability.disable_source",
       "remote": true,
       "stream": false,
@@ -798,7 +798,7 @@
     },
     {
       "name": "Observability.enable_source",
-      "doc": "Enable the source `name`.",
+      "doc": "Enable an observability source.",
       "action": "observability.enable_source",
       "remote": true,
       "stream": false,
@@ -859,7 +859,7 @@
     },
     {
       "name": "Observability.tail",
-      "doc": "Stream the live signals of `source` that the caller may see.",
+      "doc": "Stream the live signals of one source that the caller may see.",
       "action": "observability.subscribe",
       "remote": true,
       "stream": true,
@@ -889,7 +889,7 @@
     },
     {
       "name": "PluginManager.bind",
-      "doc": "Bind `fields[:relay_id]` to the plugin `name`.",
+      "doc": "Bind a relay to a plugin.",
       "action": "plugin.enable",
       "remote": true,
       "stream": false,
@@ -911,7 +911,7 @@
     },
     {
       "name": "PluginManager.disable",
-      "doc": "Disable the plugin `name`: every running copy stops.",
+      "doc": "Disable a plugin: every running copy stops.",
       "action": "plugin.disable",
       "remote": true,
       "stream": false,
@@ -933,7 +933,7 @@
     },
     {
       "name": "PluginManager.enable",
-      "doc": "Enable the plugin `name` built from `fields`.",
+      "doc": "Enable a plugin from its provider and options.",
       "action": "plugin.enable",
       "remote": true,
       "stream": false,
@@ -955,7 +955,7 @@
     },
     {
       "name": "PluginManager.enabled",
-      "doc": "Every plugin enabled in `namespace`.",
+      "doc": "Every plugin enabled in a namespace.",
       "action": "plugin.list",
       "remote": true,
       "stream": false,
@@ -978,7 +978,7 @@
     },
     {
       "name": "PluginManager.unbind",
-      "doc": "Unbind `fields[:relay_id]` from the plugin `name`.",
+      "doc": "Unbind a relay from a plugin.",
       "action": "plugin.disable",
       "remote": true,
       "stream": false,
@@ -1000,7 +1000,7 @@
     },
     {
       "name": "PluginManager.update",
-      "doc": "Change the options and hooks of the plugin `name`.",
+      "doc": "Change the options and hooks of a plugin.",
       "action": "plugin.enable",
       "remote": true,
       "stream": false,
@@ -1022,7 +1022,7 @@
     },
     {
       "name": "Relay.activity",
-      "doc": "What each tasklet of `relay_id` is doing, as its runner counts it.",
+      "doc": "What each tasklet of a relay is doing, as its runner counts it.",
       "action": "relay.list",
       "remote": true,
       "stream": false,
@@ -1050,7 +1050,7 @@
     },
     {
       "name": "Relay.api",
-      "doc": "The factories announced in `namespace`, with their APIs.",
+      "doc": "The factories announced in a namespace, with their APIs.",
       "action": "relay.list",
       "remote": true,
       "stream": false,
@@ -1112,7 +1112,7 @@
     },
     {
       "name": "Relay.call_channel",
-      "doc": "Call the entry channel `channel` of `relay_id` with `value`.",
+      "doc": "Call an entry channel of a relay with a value.",
       "action": "relay.send",
       "remote": true,
       "stream": false,
@@ -1181,7 +1181,7 @@
     },
     {
       "name": "Relay.diagnose",
-      "doc": "What is wrong with `relay_id` and what to do about it.",
+      "doc": "What is wrong with a relay and what to do about it.",
       "action": "relay.list",
       "remote": true,
       "stream": false,
@@ -1202,7 +1202,7 @@
     },
     {
       "name": "Relay.graph",
-      "doc": "The graph of `relay_id`'s factory, as its runner announces it.",
+      "doc": "The graph of a relay's factory, as its runner announces it.",
       "action": "relay.list",
       "remote": true,
       "stream": false,
@@ -1223,7 +1223,7 @@
     },
     {
       "name": "Relay.info",
-      "doc": "Every relay in `namespace` as its Overwatch reports it.",
+      "doc": "Every relay in a namespace as its Overwatch reports it.",
       "action": "relay.list",
       "remote": true,
       "stream": false,
@@ -1238,7 +1238,7 @@
     },
     {
       "name": "Relay.list",
-      "doc": "The relays in `namespace`, one row each.",
+      "doc": "The relays in a namespace, one row each.",
       "action": "relay.list",
       "remote": true,
       "stream": false,
@@ -1276,7 +1276,7 @@
     },
     {
       "name": "Relay.listen",
-      "doc": "Stream every frame `relay_id` emits, or what `direction` names.",
+      "doc": "Stream every frame a relay emits, or those of one direction.",
       "action": "relay.listen",
       "remote": true,
       "stream": true,
@@ -1455,7 +1455,7 @@
     },
     {
       "name": "Relay.send",
-      "doc": "Inject `message` into `relay_id`'s input stream.",
+      "doc": "Inject a message into a relay's input stream.",
       "action": "relay.send",
       "remote": true,
       "stream": false,
@@ -1496,7 +1496,7 @@
     },
     {
       "name": "Relay.start",
-      "doc": "Start `relay` in `namespace`, answering the id it runs under.",
+      "doc": "Start a relay in a namespace, answering the id it runs under.",
       "action": "relay.start",
       "remote": true,
       "stream": false,
@@ -1517,7 +1517,7 @@
     },
     {
       "name": "Relay.stop",
-      "doc": "Stop `relay_id` in `namespace`, or a whole partition group.",
+      "doc": "Stop a relay in a namespace, or a whole partition group.",
       "action": "relay.stop",
       "remote": true,
       "stream": false,
@@ -1538,7 +1538,7 @@
     },
     {
       "name": "Schedule.add",
-      "doc": "Store a schedule from `fields` and assert it on the hub.",
+      "doc": "Store a schedule and assert it on the hub.",
       "action": "schedule.add",
       "remote": true,
       "stream": false,
@@ -1618,7 +1618,7 @@
     },
     {
       "name": "Schedule.remove",
-      "doc": "Forget the schedule `name` and retract it from the hub.",
+      "doc": "Forget a schedule and retract it from the hub.",
       "action": "schedule.remove",
       "remote": true,
       "stream": false,
@@ -1648,7 +1648,7 @@
     },
     {
       "name": "Schedule.run",
-      "doc": "Fire the schedule `name` once, now.",
+      "doc": "Fire a schedule once, now.",
       "action": "relay.start",
       "remote": true,
       "stream": false,
@@ -1671,7 +1671,7 @@
     },
     {
       "name": "Steps.cells",
-      "doc": "One row per Cell of `relay_class` with persisted state.",
+      "doc": "One row per Cell of a relay class with persisted state.",
       "action": "state.list",
       "remote": true,
       "stream": false,
@@ -1836,7 +1836,7 @@
     },
     {
       "name": "Steps.rescale",
-      "doc": "Rescale the partition group `group_id` in `namespace` to `target`.",
+      "doc": "Rescale a partition group in a namespace to a new size.",
       "action": "relay.scale",
       "remote": true,
       "stream": false,
@@ -1871,7 +1871,7 @@
     },
     {
       "name": "Steps.rewind",
-      "doc": "Rewind `relay_class` in `namespace` to iteration `to_iter`.",
+      "doc": "Rewind a relay class in a namespace to an earlier iteration.",
       "action": "relay.rewind",
       "remote": true,
       "stream": false,
@@ -1914,7 +1914,7 @@
     },
     {
       "name": "Steps.set_retention",
-      "doc": "Retain `relay_class`'s write-ahead history for `hours`.",
+      "doc": "Set how long a relay class keeps its write-ahead history.",
       "action": "state.retention",
       "remote": true,
       "stream": false,
@@ -1959,7 +1959,7 @@
     },
     {
       "name": "Steps.time_travel",
-      "doc": "One Cell's state as of `target`, from its write-ahead log.",
+      "doc": "One Cell's state at a past point, from its write-ahead log.",
       "action": "state.at",
       "remote": true,
       "stream": false,

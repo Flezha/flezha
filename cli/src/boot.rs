@@ -19,7 +19,7 @@ pub(crate) const TABLE: Command = Command {
     title: "Boot/recovery commands.",
     notes: Some(help::BOOT),
     verbs: &[
-        Verb::new("status", handle_status).calls(&["Controller.boot_status"]),
+        Verb::new("status", rpc::bare).calls(&["Controller.boot_status"]),
         Verb::new("await", handle_await)
             .reading(&[TIMEOUT])
             .strict()
@@ -28,10 +28,6 @@ pub(crate) const TABLE: Command = Command {
     missing: Missing::Refuse,
     unknown_prints_help: false,
 };
-
-fn handle_status(read: &Reading) {
-    rpc::bare(read, "Controller.boot_status");
-}
 
 const DEFAULT_TIMEOUT_MS: u64 = 60_000;
 

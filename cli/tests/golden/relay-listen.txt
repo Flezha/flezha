@@ -1,4 +1,4 @@
-flz relay listen - Stream every frame `relay_id` emits, or what `direction` names.
+flz relay listen - Stream every frame a relay emits, or those of one direction.
 
 Usage: flz relay listen <relay_id> [--input] [--calls] [--tally] [--duration-ms <milliseconds>] [--namespace | -n <namespace>]
 

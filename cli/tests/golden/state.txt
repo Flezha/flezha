@@ -5,10 +5,10 @@ USAGE:
 
 COMMANDS:
     get        The CURRENT in-memory state of live Cells, as JSON.
-    list       One row per Cell of `relay_class` with persisted state.
-    at         One Cell's state as of `target`, from its write-ahead log.
+    list       One row per Cell of a relay class with persisted state.
+    at         One Cell's state at a past point, from its write-ahead log.
     rotate     Force a compaction of one Cell.
-    retention  Retain `relay_class`'s write-ahead history for `hours`.
+    retention  Set how long a relay class keeps its write-ahead history.
     delete     Hard-delete one Cell's persisted state.
     outbox     One Cell's outbox, with its cursors, epoch and lag.
     journal    One instance's task journal, in append order.

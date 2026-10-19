@@ -25,7 +25,7 @@ const FORCE: OptSpec = OptSpec::switch("--force", "--force")
 pub(crate) const TABLE: Command = Command {
     path: "flz controller",
     title: "Controller management commands.",
-    notes: Some(help::CONTROLLER),
+    notes: None,
     verbs: &[
         Verb::new("start", handle_start)
             .reading(&[MODE])
@@ -37,11 +37,11 @@ pub(crate) const TABLE: Command = Command {
             .calls(&["Controller.stop"])
             .notes(help::CONTROLLER_STOP)
             .help_word(),
-        Verb::new("status", |read| rpc::bare(read, "Controller.status"))
+        Verb::new("status", rpc::bare)
             .calls(&["Controller.status"])
             .notes(help::CONTROLLER_STATUS)
             .help_word(),
-        Verb::new("mem-top", |read| rpc::bare(read, "Controller.mem_top"))
+        Verb::new("mem-top", rpc::bare)
             .calls(&["Controller.mem_top"])
             .notes(help::CONTROLLER_MEM_TOP)
             .help_word(),

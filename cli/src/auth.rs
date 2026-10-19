@@ -18,8 +18,7 @@ pub(crate) const TABLE: Command = Command {
         Verb::new("bootstrap", handle_bootstrap)
             .taking(&[Positional::required("<token>")])
             .calls(&["Namespace.bootstrap"]),
-        Verb::new("whoami", |read| rpc::bare(read, "Namespace.whoami"))
-            .calls(&["Namespace.whoami"]),
+        Verb::new("whoami", rpc::bare).calls(&["Namespace.whoami"]),
         Verb::new("rebootstrap", handle_rebootstrap)
             .reading(&[APP_DATA_ROOT])
             .about("Break-glass: recover a lost admin@_system."),

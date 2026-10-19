@@ -32,12 +32,11 @@ defmodule Flezha.Service.Fleet do
   @type caller_context :: CallerContext.t()
 
   @doc """
-  Every runner serving `namespace`, anywhere in the cluster.
-
-  One row each: `id`, the `node` holding its session, `connected_at` (unix
-  seconds), the runner's OS `pid` where its transport says, `silent_ms` since
-  the controller last heard from it, and `late?` once that silence shows a
-  missed keepalive (`FleetManager.global_runner_rows/1`).
+  Every runner serving a namespace, anywhere in the cluster. One row each: `id`,
+  the `node` holding its session, `connected_at` (unix seconds), the runner's OS
+  `pid` where its transport says, `silent_ms` since the controller last heard
+  from it, and `late?` once that silence shows a missed keepalive
+  (`FleetManager.global_runner_rows/1`).
   """
   @spec runners(String.t(), caller_context()) :: {:ok, [map()]} | {:error, term()}
   verb runners(namespace, caller_context), verb: :list_runners, args: [namespace: @namespace] do
@@ -58,17 +57,15 @@ defmodule Flezha.Service.Fleet do
   end
 
   @doc """
-  Drop the runner `runner_id` serving `namespace`.
-
-  It is dropped wherever in the cluster it is connected. Places a drop mark on
-  the runner's process and closes its session without telling it to stop: its
-  relays are re-placed at once, and every controller refuses the same process
-  (`runner.dropped`) until a different one of the same runner connects or the
-  mark is lifted with `readmit_runner/3`. Answers the mark: the runner's stable
-  id and incarnation, the process id where the transport can say, the node it
-  was on, and when and by whom it was dropped. A runner that presents no stable
-  identity or incarnation cannot be recognised again and is refused with
-  `runner.untrackable`.
+  Drop one runner serving a namespace. It is dropped wherever in the cluster it
+  is connected. Places a drop mark on the runner's process and closes its
+  session without telling it to stop: its relays are re-placed at once, and
+  every controller refuses the same process (`runner.dropped`) until a different
+  one of the same runner connects or the mark is lifted with `readmit_runner/3`.
+  Answers the mark: the runner's stable id and incarnation, the process id where
+  the transport can say, the node it was on, and when and by whom it was
+  dropped. A runner that presents no stable identity or incarnation cannot be
+  recognised again and is refused with `runner.untrackable`.
   """
   @spec drop_runner(String.t(), String.t(), caller_context()) :: {:ok, map()} | {:error, term()}
   verb drop_runner(namespace, runner_id, caller_context),
@@ -97,10 +94,9 @@ defmodule Flezha.Service.Fleet do
   end
 
   @doc """
-  Lift the drop mark on the runner `stable_id` in `namespace`.
-
-  The mark is lifted on every controller, so the dropped process is admitted on
-  its next retry. Answers the lifted mark.
+  Lift the drop mark on a runner in a namespace. The mark is lifted on every
+  controller, so the dropped process is admitted on its next retry. Answers the
+  lifted mark.
   """
   @spec readmit_runner(String.t(), String.t(), caller_context()) ::
           {:ok, map()} | {:error, term()}
@@ -114,7 +110,7 @@ defmodule Flezha.Service.Fleet do
     DropMarks.clear(call.namespace, stable_id)
   end
 
-  @doc "The drop marks standing in `namespace`, oldest first."
+  @doc "The drop marks standing in a namespace, oldest first."
   @spec dropped_runners(String.t(), caller_context()) :: {:ok, [map()]} | {:error, term()}
   verb dropped_runners(namespace, caller_context),
     verb: :list_runners,
@@ -133,10 +129,9 @@ defmodule Flezha.Service.Fleet do
   end
 
   @doc """
-  The factories declared in `namespace`, with their runners.
-
-  Each carries the `runners` that can place it, so a listing needs no
-  `runners_for_factory/3` call per factory.
+  The factories declared in `namespace`, with their runners. Each carries the
+  `runners` that can place it, so a listing needs no `runners_for_factory/3`
+  call per factory.
   """
   @spec factories(String.t(), caller_context()) :: {:ok, [term()]} | {:error, term()}
   verb factories(namespace, caller_context), verb: :list_runners, args: [namespace: @namespace] do
@@ -158,9 +153,8 @@ defmodule Flezha.Service.Fleet do
   end
 
   @doc """
-  Every plugin package this controller loaded or refused at boot.
-
-  It also lists what the controller's plugin root holds since boot.
+  Every plugin package this controller loaded or refused at boot. It also lists
+  what the controller's plugin root holds since boot.
   """
   @spec installed_plugins(caller_context()) :: {:ok, [map()]} | {:error, term()}
   verb installed_plugins(caller_context), verb: :list_installed_plugins do
@@ -168,11 +162,10 @@ defmodule Flezha.Service.Fleet do
   end
 
   @doc """
-  Every plugin provider this controller can enable.
-
-  Each comes with its module, its type and `feeds` (whether it injects records
-  into a relay, as its declaration says). The answer also counts the plugin
-  packages the controller refused at boot.
+  Every plugin provider this controller can enable. Each comes with its module,
+  its type and `feeds` (whether it injects records into a relay, as its
+  declaration says). The answer also counts the plugin packages the controller
+  refused at boot.
   """
   @spec providers(caller_context()) :: {:ok, map()} | {:error, term()}
   verb providers(caller_context), verb: :plugin_list do
@@ -184,10 +177,9 @@ defmodule Flezha.Service.Fleet do
   end
 
   @doc """
-  One plugin provider's help text, type, hooks and options.
-
-  It answers the provider's help text, its plugin type, whether it feeds a relay
-  (`feeds`), the hooks it supports and its options as typed rows.
+  One plugin provider's help text, type, hooks and options. It answers the
+  provider's help text, its plugin type, whether it feeds a relay (`feeds`), the
+  hooks it supports and its options as typed rows.
 
   `options` holds one map per public option, in declaration order: `name`,
   `type`, `required` and `doc`, and `default`, `values`, `min`, `max`, `live` and

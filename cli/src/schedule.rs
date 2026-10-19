@@ -18,6 +18,11 @@ const PLUGINS: OptSpec = OptSpec::text("--plugins", "-p", "<json>").doc(
     "The same array as `relay start --plugins`; each firing binds its instance to the plugins it names.",
 );
 
+const FIRED_STATE: OptSpec =
+    INIT_VALUES.doc("The state every fired instance starts with, keyed by tasklet name.");
+const FIRST_MESSAGE: OptSpec =
+    TEXT.doc("The first message every fired instance receives, sent as written.");
+
 const NAME: &[Positional] = &[Positional::required("<name>")];
 
 pub(crate) const TABLE: Command = Command {
@@ -32,24 +37,20 @@ pub(crate) const TABLE: Command = Command {
                 TZ,
                 FACTORY,
                 NAMESPACE,
-                INIT_VALUES,
-                TEXT,
+                FIRED_STATE,
+                FIRST_MESSAGE,
                 FIRST_CHANNEL,
                 PLUGINS,
             ])
             .strict()
             .calls(&["Schedule.add"]),
-        Verb::new("list", |read| rpc::bare(read, "Schedule.list")).calls(&["Schedule.list"]),
-        Verb::new("remove", |read| {
-            rpc::one_arg(read, NAME[0].name, "Schedule.remove")
-        })
-        .taking(NAME)
-        .calls(&["Schedule.remove"]),
-        Verb::new("run", |read| {
-            rpc::one_arg(read, NAME[0].name, "Schedule.run")
-        })
-        .taking(NAME)
-        .calls(&["Schedule.run"]),
+        Verb::new("list", rpc::bare).calls(&["Schedule.list"]),
+        Verb::new("remove", rpc::one_arg)
+            .taking(NAME)
+            .calls(&["Schedule.remove"]),
+        Verb::new("run", rpc::one_arg)
+            .taking(NAME)
+            .calls(&["Schedule.run"]),
     ],
     missing: Missing::Screen,
     unknown_prints_help: false,

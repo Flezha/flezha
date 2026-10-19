@@ -27,11 +27,10 @@ COMMANDS:
     help        Show this help message, or with --json every operation as data.
 
 OUTPUT FORMAT:
-    Every verb takes --json, or the same request spelled --output json / -o json.
-    A verb that reaches a controller answers it as JSON whether it reads or
-    acts: the JSON its operation answers on every surface. Any other format is
-    refused. `flz help --json` prints every such operation, as data, with no
-    controller running.
+    Under --json a verb that reaches a controller answers as JSON whether it
+    reads or acts: the JSON its operation answers on every surface. Any other
+    format is refused. `flz help --json` prints every such operation, as data,
+    with no controller running.
 
 ERRORS:
     A failure is written on stderr as `error: <message> (<code>)`, with a
@@ -39,8 +38,6 @@ ERRORS:
     {"error": {"code", "class", "message", "details", "hint"}} line. The exit
     code follows the class: 1 internal, 2 invalid, 3 unreachable, 4 denied,
     5 not_found, 6 conflict, 7 unavailable. Every code is in docs/public/errors.md.
-
-Use 'flz <COMMAND> help' for more information on a specific command.
 
 EXAMPLES:
     flz controller start

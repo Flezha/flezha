@@ -5,7 +5,7 @@ USAGE:
 
 COMMANDS:
     status  The readiness verdict and every precondition behind it.
-    await   Wait until the readiness verdict is `:ready`, or the timeout passes.
+    await   Wait until the controller is ready, or the timeout passes.
     help    Show this help message.
 
 `await` also waits, inside the same timeout, for a controller it cannot reach

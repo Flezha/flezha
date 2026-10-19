@@ -26,8 +26,7 @@ pub(crate) const TABLE: Command = Command {
                 Positional::optional(ROLE),
             ])
             .calls(&["Namespace.unbind_role"]),
-        Verb::new("list", |read| rpc::bare(read, "Namespace.list_roles"))
-            .calls(&["Namespace.list_roles"]),
+        Verb::new("list", rpc::bare).calls(&["Namespace.list_roles"]),
     ],
     missing: Missing::Screen,
     unknown_prints_help: false,

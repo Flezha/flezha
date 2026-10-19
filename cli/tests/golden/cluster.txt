@@ -4,7 +4,7 @@ USAGE:
     flz cluster <COMMAND>
 
 COMMANDS:
-    status  The cluster as `namespace` sees it: nodes, relays and health.
+    status  The cluster as one namespace sees it: nodes, relays and health.
     help    Show this help message.
 
 EXAMPLES:

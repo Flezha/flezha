@@ -368,10 +368,10 @@ pub(crate) fn namespace(read: &Reading) -> Value {
 }
 
 /// The read verbs — a namespace, an output format, a progress line only text
-/// mode prints, and one operation taking the namespace. `progress` names what
-/// is being fetched; `None` prints no line, which is what `flz cluster status`
-/// does.
-pub(crate) fn scoped_read(read: &Reading, name: &str, progress: Option<&str>) {
+/// mode prints, and the row's operation taking the namespace. `progress` names
+/// what is being fetched; `None` prints no line, which is what `flz cluster
+/// status` does.
+pub(crate) fn scoped_read(read: &Reading, progress: Option<&str>) {
     let namespace = namespace(read);
 
     if let Some(noun) = progress {
@@ -382,7 +382,7 @@ pub(crate) fn scoped_read(read: &Reading, name: &str, progress: Option<&str>) {
         );
     }
 
-    door(name, &[namespace], &[], read);
+    door(read.operation(), &[namespace], &[], read);
 }
 
 /// A line that says what `flz` is about to do, printed in text mode only: under
@@ -407,16 +407,17 @@ pub(crate) fn window(read: &Reading) -> Opt<'static> {
 }
 
 /// The verbs that name one thing and do one thing to it: a dead-letter entry,
-/// a Cell path, a schedule, a plugin, a namespace, an observability source.
-/// They differ in the slot's name and in nothing else.
-pub(crate) fn one_arg(read: &Reading, slot: &str, name: &str) {
-    door(name, &[Value::from(read.pos(slot))], &[], read);
+/// a Cell path, a schedule, a namespace, an observability source. Each sends
+/// its row's operation with its one positional.
+pub(crate) fn one_arg(read: &Reading) {
+    let args = [Value::from(read.positional_at(0))];
+    door(read.operation(), &args, &[], read);
 }
 
-/// The verbs that take nothing but the options every call carries: the authz
-/// list and identity reads, `flz audit stats`, `flz controller status`.
-pub(crate) fn bare(read: &Reading, name: &str) {
-    door(name, &[], &[], read);
+/// The verbs that send their row's operation with nothing but the options every
+/// call carries: the authz list and identity reads, `flz controller status`.
+pub(crate) fn bare(read: &Reading) {
+    door(read.operation(), &[], &[], read);
 }
 
 /// A `Command` for the sibling `flzvm`, for the three verbs that read its

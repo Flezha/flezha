@@ -83,10 +83,9 @@ defmodule Flezha.Service.Steps do
   end
 
   @doc """
-  One instance's task journal, in append order.
-
-  With it come the leaf tasklets that define "done" for it, and whether the
-  in-flight iteration has committed every leaf.
+  One instance's task journal, in append order. With it come the leaf tasklets
+  that define "done" for it, and whether the in-flight iteration has committed
+  every leaf.
   """
   @spec journal(String.t(), caller_context()) :: {:ok, map()} | {:error, term()}
   verb journal(instance_id, caller_context),
@@ -105,11 +104,7 @@ defmodule Flezha.Service.Steps do
     {:ok, TaskJournal.committed_iterations(instance_id)}
   end
 
-  @doc """
-  The input-log offset the instance's last iteration consumed.
-
-  It is `nil` when it consumed none.
-  """
+  @doc "The input-log offset the instance's last iteration consumed. It is `nil` for none."
   @spec consumed_offset(String.t(), caller_context()) :: {:ok, term()} | {:error, term()}
   verb consumed_offset(instance_id, caller_context),
     verb: :state_journal,
@@ -118,11 +113,7 @@ defmodule Flezha.Service.Steps do
     {:ok, TaskJournal.consumed_offset(instance_id)}
   end
 
-  @doc """
-  The input-log records above the instance's floor.
-
-  They are what it has not consumed yet.
-  """
+  @doc "The input-log records above the instance's floor. They are what it has not consumed yet."
   @spec undelivered(String.t(), caller_context()) :: {:ok, [term()]} | {:error, term()}
   verb undelivered(instance_id, caller_context),
     verb: :state_inbox,
@@ -136,11 +127,7 @@ defmodule Flezha.Service.Steps do
     end
   end
 
-  @doc """
-  The last offset written to the instance's input log.
-
-  It is `-1` when it has none.
-  """
+  @doc "The last offset written to the instance's input log. It is `-1` when it has none."
   @spec last_offset(String.t(), caller_context()) :: {:ok, term()} | {:error, term()}
   verb last_offset(instance_id, caller_context),
     verb: :state_inbox,
@@ -156,11 +143,9 @@ defmodule Flezha.Service.Steps do
   end
 
   @doc """
-  One Cell's state as of `target`, from its write-ahead log.
-
-  `target` is a WAL seq, or an ISO 8601 time. The state is replayed from the
-  log, answering the seq it resolves to, and the snapshot and change log bytes
-  behind it.
+  One Cell's state at a past point, from its write-ahead log. `target` is a WAL
+  seq, or an ISO 8601 time. The state is replayed from the log, answering the
+  seq it resolves to, and the snapshot and change log bytes behind it.
   """
   @spec time_travel(String.t(), String.t(), caller_context()) :: {:ok, map()} | {:error, term()}
   verb time_travel(cell, target, caller_context),
@@ -182,13 +167,11 @@ defmodule Flezha.Service.Steps do
   end
 
   @doc """
-  The CURRENT in-memory state of live Cells, as JSON.
-
-  It reads one live Cell, or one tasklet's Cells, with the change sequence it
-  was read at. It includes changes applied but not yet flushed, so it is at or
-  ahead of the durable state. A Cell that is not held in memory is refused
-  naming why, never served from the durable store, which is what `time_travel/3`
-  is for.
+  The CURRENT in-memory state of live Cells, as JSON. It reads one live Cell, or
+  one tasklet's Cells, with the change sequence it was read at. It includes
+  changes applied but not yet flushed, so it is at or ahead of the durable
+  state. A Cell that is not held in memory is refused naming why, never served
+  from the durable store, which is what `time_travel/3` is for.
   """
   @spec state_get(String.t(), caller_context()) :: {:ok, map()} | {:error, term()}
   verb state_get(path, caller_context),
@@ -205,10 +188,8 @@ defmodule Flezha.Service.Steps do
   end
 
   @doc """
-  One row per Cell of `relay_class` with persisted state.
-
-  Each row holds its WAL and snapshot sequences, WAL size and the writer's
-  counters.
+  One row per Cell of a relay class with persisted state. Each row holds its WAL
+  and snapshot sequences, WAL size and the writer's counters.
 
   `history_retention_hours` is how long the class's write-ahead history is
   kept, the value `set_retention/3` changes.
@@ -243,12 +224,10 @@ defmodule Flezha.Service.Steps do
   end
 
   @doc """
-  One Cell's outbox, with its cursors, epoch and lag.
-
-  It answers the durable seq, flush cursor, epoch, undispatched lag, the entries
-  a steps Cell holds until its stage commits, and the relay's input-log
-  min-watermark. The lag and the held count are `nil` while the Cell's writer is
-  not running.
+  One Cell's outbox, with its cursors, epoch and lag. It answers the durable
+  seq, flush cursor, epoch, undispatched lag, the entries a steps Cell holds
+  until its stage commits, and the relay's input-log min-watermark. The lag and
+  the held count are `nil` while the Cell's writer is not running.
   """
   @spec outbox(String.t(), caller_context()) :: {:ok, map()} | {:error, term()}
   verb outbox(cell, caller_context),
@@ -273,11 +252,10 @@ defmodule Flezha.Service.Steps do
   end
 
   @doc """
-  An instance's durable input log, record by record.
-
-  It covers a flow relay on the effectively-once tier and a durable steps relay
-  alike: every retained record with its offset, whether it is at or below the
-  instance's floor (consumed), its size and channel.
+  An instance's durable input log, record by record. It covers a flow relay on
+  the effectively-once tier and a durable steps relay alike: every retained
+  record with its offset, whether it is at or below the instance's floor
+  (consumed), its size and channel.
   """
   @spec inbox(String.t(), caller_context()) :: {:ok, map()} | {:error, term()}
   verb inbox(instance_id, caller_context),
@@ -308,7 +286,7 @@ defmodule Flezha.Service.Steps do
 
   # ---------- Mutations ----------
 
-  @doc "Rescale the partition group `group_id` in `namespace` to `target`."
+  @doc "Rescale a partition group in a namespace to a new size."
   @spec rescale(String.t(), String.t(), pos_integer(), keyword(), caller_context()) ::
           term() | {:error, term()}
   verb rescale(namespace, group_id, target, opts, caller_context),
@@ -323,9 +301,8 @@ defmodule Flezha.Service.Steps do
   end
 
   @doc """
-  Rewind `relay_class` in `namespace` to iteration `to_iter`.
-
-  `to_iter` must be an iteration the instance has committed. Answers
+  Rewind a relay class in a namespace to an earlier iteration. `to_iter` must be
+  an iteration the instance has committed. Answers
   `{:error, {:relay_not_running, relay_class}}` rather than resolving a pid for
   the caller to carry, and
   `{:error, {:uncommitted_iteration, to_iter, committed}}` when `to_iter` is not
@@ -349,11 +326,7 @@ defmodule Flezha.Service.Steps do
     end
   end
 
-  @doc """
-  Force a compaction of one Cell.
-
-  It dispatches a `CompactCell` to the Cell's runner.
-  """
+  @doc "Force a compaction of one Cell. It dispatches a `CompactCell` to the Cell's runner."
   @spec rotate(String.t(), caller_context()) :: {:ok, map()} | {:error, term()}
   verb rotate(cell, caller_context),
     verb: :state_rotate,
@@ -366,10 +339,8 @@ defmodule Flezha.Service.Steps do
   end
 
   @doc """
-  Hard-delete one Cell's persisted state.
-
-  That is its WAL, snapshots and outbox dedup. Deleting a Cell with no state on
-  disk still succeeds.
+  Hard-delete one Cell's persisted state. That is its WAL, snapshots and outbox
+  dedup. Deleting a Cell with no state on disk still succeeds.
   """
   @spec delete(String.t(), caller_context()) :: {:ok, map()} | {:error, term()}
   verb delete(cell, caller_context),
@@ -382,10 +353,9 @@ defmodule Flezha.Service.Steps do
   end
 
   @doc """
-  Retain `relay_class`'s write-ahead history for `hours`.
-
-  The setting is held in this controller's memory: it lasts until the next boot
-  unless the runtime configuration says so too.
+  Set how long a relay class keeps its write-ahead history. The setting is held
+  in this controller's memory: it lasts until the next boot unless the runtime
+  configuration says so too.
   """
   @spec set_retention(String.t(), non_neg_integer(), caller_context()) ::
           {:ok, map()} | {:error, term()}

@@ -9,5 +9,3 @@ COMMANDS:
     status   The controller's status: node, clock, shutdown and durability.
     mem-top  One snapshot of the controller's memory hot spots.
     help     Show this help message.
-
-Use 'flz controller <COMMAND> --help' for more information on a specific command.

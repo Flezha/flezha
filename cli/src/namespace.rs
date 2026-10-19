@@ -17,16 +17,12 @@ pub(crate) const TABLE: Command = Command {
             .taking(NAME)
             .open()
             .calls(&["Namespace.create"]),
-        Verb::new("delete", |read| {
-            rpc::one_arg(read, NAME[0].name, "Namespace.delete")
-        })
-        .taking(NAME)
-        .calls(&["Namespace.delete"]),
-        Verb::new("show", |read| {
-            rpc::one_arg(read, NAME[0].name, "Namespace.get")
-        })
-        .taking(NAME)
-        .calls(&["Namespace.get"]),
+        Verb::new("delete", rpc::one_arg)
+            .taking(NAME)
+            .calls(&["Namespace.delete"]),
+        Verb::new("show", rpc::one_arg)
+            .taking(NAME)
+            .calls(&["Namespace.get"]),
         Verb::new("set-quota", handle_set_quota)
             .taking(NAME)
             .open()
@@ -40,7 +36,7 @@ pub(crate) const TABLE: Command = Command {
 /// scope, so `rpc::scoped_read`'s shape does not fit it.
 fn handle_list(read: &Reading) {
     rpc::progress_line(read, "Fetching namespaces...");
-    rpc::bare(read, "Relay.list_namespaces");
+    rpc::bare(read);
 }
 
 fn handle_create(read: &Reading) {

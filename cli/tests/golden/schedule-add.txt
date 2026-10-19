@@ -1,0 +1,22 @@
+flz schedule add - Store a schedule and assert it on the hub.
+
+Usage: flz schedule add <name> --cron <expr> --tz <iana> --factory <factory_id> [--namespace | -n <namespace>] [--init-values <json>] [--text | -t <payload>] [--channel | -c <ch>] [--plugins | -p <json>]
+
+OPTIONS:
+    --cron <expr>                 The cron expression it fires on.
+    --tz <iana>                   The IANA time zone the expression is read in.
+    --factory <factory_id>        The steps factory each firing starts.
+    --namespace | -n <namespace>  The namespace (default: default).
+    --init-values <json>          The state every fired instance starts with,
+                                  keyed by tasklet name.
+    --text | -t <payload>         The first message every fired instance
+                                  receives, sent as written.
+    --channel | -c <ch>           The entry channel the first message names
+                                  (default: the first declared).
+    --plugins | -p <json>         The same array as `relay start --plugins`;
+                                  each firing binds its instance to the plugins
+                                  it names.
+    --token <token>               The caller's token (default: FLEZHA_TOKEN).
+    --help | -h                   Print this help.
+    --output | -o text|json       Output format (default: text).
+    --json                        The same as --output json.

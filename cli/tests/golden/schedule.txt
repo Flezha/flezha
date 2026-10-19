@@ -4,22 +4,18 @@ USAGE:
     flz schedule <COMMAND>
 
 COMMANDS:
-    add     Store a schedule from `fields` and assert it on the hub.
+    add     Store a schedule and assert it on the hub.
     list    Every stored schedule, by name, with what the hub holds for it.
-    remove  Forget the schedule `name` and retract it from the hub.
-    run     Fire the schedule `name` once, now.
+    remove  Forget a schedule and retract it from the hub.
+    run     Fire a schedule once, now.
     help    Show this help message.
 
-add stores a durable schedule of a steps factory; a factory a connected runner
-announced as flow is refused. --init-values is the state every fired instance
-starts with; --text is the first message it receives, on the entry channel
---channel names or the first declared one. run fires one instance at once with
-the stored config, judged as relay.start in the schedule's namespace.
+add refuses a factory a connected runner announced as flow. run fires one
+instance at once with the stored config, judged as relay.start in the
+schedule's namespace.
 
 EXAMPLES:
     flz schedule add digest --cron "0 8 * * *" --tz Europe/Tallinn --factory ai_digest
     flz schedule add nightly --cron "0 2 * * *" --tz UTC --factory report --text '{"day":"today"}' --channel requests
     flz schedule list
     flz schedule run digest
-
-Identity for gated verbs rides `--token <token>` or the FLEZHA_TOKEN env var.
