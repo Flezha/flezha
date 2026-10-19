@@ -27,7 +27,7 @@ pub use run::{
 };
 pub(crate) use run::{
     committed_firings, crossed, deadline_due, firing_assembled, firing_promoted, firings_joined,
-    held_removals, hold_removal, items_dropped, pass_dead, reap_holds,
+    held_removals, hold_arm, hold_removal, items_dropped, pass_dead, reap_holds,
 };
 
 pub use crate::relay::settings::{Each, OnFailure};

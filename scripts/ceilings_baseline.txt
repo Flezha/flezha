@@ -37,8 +37,8 @@ flz_core/src/routing.rs::enter_channel 53
 flz_core/src/routing.rs::redeliver_edge 54
 flz_core/src/routing.rs::route_stream_frame 51
 flz_core/src/steps/resume.rs::resumed_seed 74
-flz_core/src/steps/run.rs 2530
-flz_core/src/steps/run.rs::act 75
+flz_core/src/steps/run.rs 2525
+flz_core/src/steps/run.rs::act 73
 flz_core/src/steps/run.rs::admit 55
 flz_core/src/steps/run.rs::open_gate 56
 flz_core/src/steps/run.rs::resolve_failure 51

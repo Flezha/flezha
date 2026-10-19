@@ -9,6 +9,8 @@ use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 
+use flz_transport::transport::FlezhaStream;
+
 use super::compensation::{CellRun, RecordSpan, StageRecord};
 use super::StepsError;
 use crate::cell::{CellItem, CellSlot};
@@ -176,6 +178,16 @@ pub(crate) struct PassSheet {
     pub(crate) unadmitted: VecDeque<Release>,
 }
 
+impl PassSheet {
+    /// `node`'s stage in the pass in flight, while it is running.
+    pub(crate) fn running(&mut self, node: usize) -> Option<&mut Stage> {
+        self.pass
+            .as_mut()
+            .and_then(|pass| pass.stages.get_mut(&node))
+            .filter(|stage| stage.state == StageState::Running)
+    }
+}
+
 /// One item on its way into a Cell: the stage it belongs to, the Cell, and
 /// the producing Cell whose holdback takes it when the mailbox is full
 /// (`None` for a message's item and a journal re-seed). A host value bound
@@ -320,6 +332,10 @@ pub(crate) struct Failure {
     pub(crate) refused: bool,
 }
 
+/// A processing-time registration waiting to be armed: the Cell, the due time
+/// and the connection its firing rides.
+pub(crate) type HeldArm = (Arc<CellSlot>, u64, Arc<FlezhaStream>);
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum StageState {
     Running,
@@ -338,6 +354,9 @@ pub(crate) struct Stage {
     /// An event-time firing the stage owes before its Cell's assembly has
     /// generated it.
     pub(crate) claim: Option<FiringKey>,
+    /// Processing-time timers its items registered, off the wake list until
+    /// the stage is done.
+    pub(crate) arms: Vec<HeldArm>,
 }
 
 impl Stage {
@@ -348,7 +367,28 @@ impl Stage {
             cells: BTreeMap::new(),
             held: BTreeMap::new(),
             claim: None,
+            arms: Vec::new(),
         }
+    }
+
+    /// Hold a registration its item made until the stage is done, so the timer
+    /// never comes due inside the stage and joins it, and drop a held one a
+    /// cancel names; `true` when `op` was held, `false` for a cancel, which is
+    /// still disarmed.
+    pub(crate) fn hold(
+        &mut self,
+        slot: &Arc<CellSlot>,
+        op: &TimerOp,
+        stream: &Arc<FlezhaStream>,
+    ) -> bool {
+        let at = op.scheduled_at;
+        if !op.register {
+            self.arms
+                .retain(|(cell, due, _)| *due != at || !Arc::ptr_eq(cell, slot));
+            return false;
+        }
+        self.arms.push((Arc::clone(slot), at, Arc::clone(stream)));
+        true
     }
 }
 

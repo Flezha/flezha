@@ -19,8 +19,8 @@ use super::compensation::{
 };
 use super::instance::{
     AfterUndo, Attempt, Barrier, BarrierFor, Carry, CellPos, Deadline, Failure, Firing, FiringKey,
-    Message, MidResume, Pass, PassOrigin, PassSheet, Phase, Release, Stage, StageState, StepsRun,
-    Trigger, Undo, UndoStep, Value,
+    HeldArm, Message, MidResume, Pass, PassOrigin, PassSheet, Phase, Release, Stage, StageState,
+    StepsRun, Trigger, Undo, UndoStep, Value,
 };
 use super::resume::{carried_channel, journaled_stages, resumed_seed, seed_from_journal, Seed};
 use super::spec::{Chain, StepsSpec};
@@ -440,6 +440,20 @@ pub(crate) fn hold_removal(slot: &Arc<CellSlot>, op: TimerOp) -> bool {
                 .push(op)
         });
         held = true;
+    });
+    held
+}
+
+/// Hand a steps relay Cell's processing-time op to its tasklet's running
+/// stage ([`Stage::hold`]); `false` when none runs.
+pub(crate) fn hold_arm(slot: &Arc<CellSlot>, op: &TimerOp, stream: &Arc<FlezhaStream>) -> bool {
+    let mut held = false;
+    with_cell(slot, |r, node, _| {
+        r.decide(|d| {
+            held = d
+                .running_stage(node)
+                .is_some_and(|s| s.hold(slot, op, stream))
+        })
     });
     held
 }
@@ -1173,11 +1187,7 @@ impl Decide<'_, '_, '_> {
         if self.r.run.pass_dead.load(Ordering::Acquire) {
             return None;
         }
-        self.s
-            .pass
-            .as_mut()
-            .and_then(|pass| pass.stages.get_mut(&node))
-            .filter(|stage| stage.state == StageState::Running)
+        self.s.running(node)
     }
 
     /// Where a due firing goes: back to the caller when it runs now, owed by
@@ -1336,13 +1346,7 @@ impl Decide<'_, '_, '_> {
             removals,
             failure,
         } = attempt;
-        let Some(stage) = self
-            .s
-            .pass
-            .as_mut()
-            .and_then(|pass| pass.stages.get_mut(&node))
-            .filter(|stage| stage.state == StageState::Running)
-        else {
+        let Some(stage) = self.s.running(node) else {
             return;
         };
         // A Cell whose tasklet ran to its end is recorded, so it is undone
@@ -1369,13 +1373,7 @@ impl Decide<'_, '_, '_> {
     }
 
     fn crossed(&mut self, node: usize, items: Result<Vec<Release>, String>) {
-        let Some(stage) = self
-            .s
-            .pass
-            .as_mut()
-            .and_then(|pass| pass.stages.get_mut(&node))
-            .filter(|stage| stage.state == StageState::Running)
-        else {
+        let Some(stage) = self.s.running(node) else {
             return;
         };
         match items {
@@ -1397,17 +1395,12 @@ impl Decide<'_, '_, '_> {
     }
 
     fn owe_less(&mut self, node: usize, count: usize) {
-        let Some(stage) = self
-            .s
-            .pass
-            .as_mut()
-            .and_then(|pass| pass.stages.get_mut(&node))
-            .filter(|stage| stage.state == StageState::Running)
-        else {
+        let Some(stage) = self.s.running(node) else {
             return;
         };
         stage.owed = stage.owed.saturating_sub(count);
         if stage.owed == 0 {
+            self.fx.arms.append(&mut stage.arms);
             self.stage_done(node);
         }
     }
@@ -2189,6 +2182,8 @@ struct Effects {
     start: Option<Source>,
     /// Firing removals a stage's commit made durable, per Cell.
     removals: Vec<(Arc<CellSlot>, Vec<TimerOp>)>,
+    /// Timers a stage that is done held off the wake list.
+    arms: Vec<HeldArm>,
     /// Cells whose next assembly generates a firing their stage claimed.
     ready: Vec<Arc<CellSlot>>,
     /// Park at this iteration, naming this offset parked unread.
@@ -2211,6 +2206,7 @@ impl Run<'_> {
             run_undo,
             start,
             removals,
+            arms,
             ready,
             park,
         } = fx;
@@ -2243,6 +2239,9 @@ impl Run<'_> {
         for (deadline, due) in arm {
             core.arm_instance(self.weak(), self.inst.seq, deadline, due);
         }
+        for (slot, at, stream) in arms {
+            core.arm_timer(&slot, at, stream);
+        }
         self.admit(admit);
         for slot in ready {
             if slot.mailbox.claim_inflight() {
@@ -2256,13 +2255,7 @@ impl Run<'_> {
             self.park_message(parked);
         }
         if let Some((status, error, result)) = completed {
-            self.log_dropped_timers();
-            crate::runner::emit_relay_completed(
-                self.inst.instance_id.to_string(),
-                status,
-                error,
-                result,
-            );
+            self.emit_completed(status, error, result);
         }
         if let Some((slot, outputs, offset)) = run_undo {
             self.run_undo(slot, outputs, offset);
@@ -2272,9 +2265,9 @@ impl Run<'_> {
         }
     }
 
-    /// An ended instance's pending timers go with its Cells, as a flow relay's
-    /// do on removal; the completion record says nothing of them.
-    fn log_dropped_timers(&self) {
+    /// The run's completion. An ended instance's pending timers go with its
+    /// Cells, as a flow relay's do on removal; the record says nothing of them.
+    fn emit_completed(&self, status: String, error: String, result: Vec<u8>) {
         let pending: usize = self
             .inst
             .all_slots()
@@ -2289,6 +2282,8 @@ impl Run<'_> {
                 "steps ended; its pending timers are dropped with its cells"
             );
         }
+        let id = self.inst.instance_id.to_string();
+        crate::runner::emit_relay_completed(id, status, error, result);
     }
 
     /// Build a barrier's frame (the journal codecs run here), register its

@@ -355,10 +355,14 @@ pub fn timers_armed() -> usize {
 // ------------------------------------------------ arming from committed ops
 
 /// Reflect committed timer ops onto the wake list; event-time timers need
-/// nothing here.
+/// nothing here. A registration a steps relay stage's item made waits on that
+/// stage instead, so the timer never comes due inside the stage that set it.
 pub fn apply_ops(slot: &Arc<CellSlot>, ops: &[TimerOp], stream: &Arc<FlezhaStream>) {
     let core = crate::poll_core::global();
     for op in ops.iter().filter(|op| op.kind == TimerKind::ProcessingTime) {
+        if slot.topology.steps.is_some() && crate::steps::hold_arm(slot, op, stream) {
+            continue;
+        }
         if op.register {
             core.arm_timer(slot, op.scheduled_at, Arc::clone(stream));
         } else {
@@ -437,7 +441,12 @@ pub fn rearm_restored(slot: &Arc<CellSlot>) {
         );
         return;
     };
-    apply_ops(slot, &ops, &stream);
+    // Armed at once, not held: a timer set in an earlier pass joins a stage
+    // that is running.
+    let core = crate::poll_core::global();
+    for op in ops {
+        core.arm_timer(slot, op.scheduled_at, Arc::clone(&stream));
+    }
 }
 
 /// A firing whose stage committed before the crash, while its removal was

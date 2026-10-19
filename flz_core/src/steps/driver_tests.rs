@@ -15,10 +15,13 @@ use crossbeam::channel::{unbounded, Receiver};
 use flz_transport::service::payloader;
 use flz_transport::transport::FlezhaStream;
 
+use crate::cell::{CellItem, CellSlot};
 use crate::host::{apply_result, HostPayload};
 use crate::poll_core::{EnginePayload, Polled};
 use crate::runner::{RunnerMessage, RunnerNode};
+use crate::steps::instance::{PassOrigin, Phase};
 use crate::test_support::{capture_parks, host_class, spin_until, stream_pair};
+use crate::timer::{TimerKind, TimerOp};
 use crate::{schema, state_sink, ErrorModel};
 
 mod call;
@@ -55,9 +58,7 @@ impl FakeHost {
                     match core.poll(Duration::from_millis(20)) {
                         Polled::Activation(act) => {
                             let outcome = respond(&act.payload, &applied);
-                            let token = act.token;
-                            apply_result(core, act, schema::ActivationResult { token, outcome })
-                                .expect("the poll core takes the answer");
+                            reply(act, outcome);
                         }
                         Polled::Timeout => {}
                         Polled::ShuttingDown => return,
@@ -542,22 +543,7 @@ fn keyed_host(mid: u32, crossings: Arc<Crossings>, refuse: bool) -> FakeHost {
     FakeHost::answering(move |payload, _| match payload {
         EnginePayload::Prepare(crossing) => {
             crossings.0.lock().unwrap().push(crossing.entries.len());
-            schema::ActivationOutcome::Prepared(
-                crossing
-                    .entries
-                    .iter()
-                    .map(|entry| match refuse {
-                        true => Err(schema::WorkError {
-                            message: "no key for that".to_string(),
-                            non_retryable: true,
-                        }),
-                        false => Ok(schema::PrepareAnswer {
-                            keys: vec![String::from_utf8_lossy(&entry.bytes).to_string()],
-                            event_time: None,
-                        }),
-                    })
-                    .collect(),
-            )
+            keyed_by_bytes(crossing, refuse)
         }
         EnginePayload::Work { slot, items } => schema::ActivationOutcome::Work(
             items
@@ -576,6 +562,29 @@ fn keyed_host(mid: u32, crossings: Arc<Crossings>, refuse: bool) -> FakeHost {
             non_retryable: true,
         }),
     })
+}
+
+/// Each payload's own bytes as its key, or `refuse` for every one.
+fn keyed_by_bytes(
+    crossing: &crate::host::PrepareCrossing,
+    refuse: bool,
+) -> schema::ActivationOutcome {
+    schema::ActivationOutcome::Prepared(
+        crossing
+            .entries
+            .iter()
+            .map(|entry| match refuse {
+                true => Err(schema::WorkError {
+                    message: "no key for that".to_string(),
+                    non_retryable: true,
+                }),
+                false => Ok(schema::PrepareAnswer {
+                    keys: vec![String::from_utf8_lossy(&entry.bytes).to_string()],
+                    event_time: None,
+                }),
+            })
+            .collect(),
+    )
 }
 
 fn keyed_effect(slot: &crate::cell::CellSlot, mid: u32, bytes: &[u8]) -> schema::ItemEffect {
@@ -906,6 +915,165 @@ fn a_host_steps_tasklets_timer_fires_into_a_pass_of_its_own() {
         outputs(&wire, "host-timer-1", 2),
         [b"arm".to_vec(), b"fired".to_vec()],
         "the firing ran with no second message"
+    );
+}
+
+/// Serves [`keyed_json`] as a `per_input` loop on the test's own thread, so
+/// a due timer is promoted only where the test polls: `k1`'s `a` registers
+/// a timer already due, and cancels it too when `cancel` is set, `b` is held
+/// unanswered, and a firing records the origin of the pass it runs in.
+#[derive(Default)]
+struct OwnTimerHost {
+    mid: u32,
+    cancel: bool,
+    armed: bool,
+    held: Option<crate::poll_core::EngineActivation>,
+    origins: Vec<PassOrigin>,
+}
+
+impl OwnTimerHost {
+    fn serve_until(&mut self, done: impl Fn(&Self) -> bool) {
+        let core = crate::poll_core::global();
+        while !done(self) {
+            let Polled::Activation(act) = core.poll(Duration::from_secs(5)) else {
+                panic!("the run handed out nothing more");
+            };
+            match self.answer(&act.payload) {
+                Some(outcome) => reply(act, outcome),
+                None => self.held = Some(act),
+            }
+        }
+    }
+
+    fn answer(&mut self, payload: &EnginePayload) -> Option<schema::ActivationOutcome> {
+        match payload {
+            EnginePayload::Prepare(crossing) => Some(keyed_by_bytes(crossing, false)),
+            EnginePayload::Work { slot, items } => self
+                .settle(slot, &items[0].item)
+                .map(|settled| schema::ActivationOutcome::Work(vec![settled])),
+            _ => panic!("an activation the run never asks for"),
+        }
+    }
+
+    fn settle(&mut self, slot: &CellSlot, item: &CellItem) -> Option<schema::ItemEffect> {
+        let CellItem::Input(input) = item else {
+            let inst = slot.instance.upgrade().expect("a live instance");
+            let sheet = inst.steps.as_ref().expect("a steps run").sheet();
+            self.origins
+                .extend(sheet.pass.as_ref().map(|pass| pass.origin.clone()));
+            return Some(effect(schema::Verdict::Ok, b"fired"));
+        };
+        let mut settled = keyed_effect(slot, self.mid, &host_bytes(&input.value));
+        match slot.cell_key.as_deref() {
+            Some("b") => return None,
+            Some(_) => {
+                self.armed = true;
+                let (kind, due) = (TimerKind::ProcessingTime, crate::util::wall_now_ms() - 1);
+                settled.timers = vec![TimerOp::register(kind, due)];
+                if self.cancel {
+                    settled.timers.push(TimerOp::cancel(kind, due));
+                }
+            }
+            None => {}
+        }
+        Some(settled)
+    }
+}
+
+/// [`keyed_json`] as a `per_input` loop, registered under `name`, and its host.
+fn own_timer_class(name: &str) -> (String, OwnTimerHost) {
+    let id = format!("{name}_{}", std::process::id());
+    let json = keyed_json(&id, 1).replace(
+        r#""run":"steps""#,
+        r#""run":{"steps":{"each":"per_input"}}"#,
+    );
+    crate::host::register_host_class_json(json.as_bytes()).expect("class registers");
+    let mid = crate::relay::registry::get_class(&id)
+        .and_then(|topology| topology.lookup_channel_id("mid"))
+        .expect("the class declares `mid`");
+    let host = OwnTimerHost {
+        mid,
+        ..Default::default()
+    };
+    (id, host)
+}
+
+fn reply(act: crate::poll_core::EngineActivation, outcome: schema::ActivationOutcome) {
+    let token = act.token;
+    apply_result(
+        crate::poll_core::global(),
+        act,
+        schema::ActivationResult { token, outcome },
+    )
+    .expect("the poll core takes the answer");
+}
+
+#[test]
+fn a_timer_its_own_stage_set_fires_in_a_pass_of_its_own_after_that_stage_commits() {
+    let _env = crate::runner::env_test_guard();
+    let (tx, _rx) = unbounded::<RunnerMessage>();
+    crate::runner::install_reconnect_trigger(tx);
+    let (id, mut host) = own_timer_class("host_steps_own_timer");
+    let mid = host.mid;
+    let mut node = RunnerNode::new("test-ns".to_string());
+    let wire = Wire::new();
+    assert!(start(&mut node, &id, "host-own-timer-1", "", 0).is_empty());
+
+    feed(&wire, &node, "host-own-timer-1", b"a,b");
+    host.serve_until(|host| host.armed && host.held.is_some());
+    crate::poll_core::global().promote_due_wakes();
+    let b = host.held.take().expect("`b` is held");
+    let EnginePayload::Work { slot, .. } = &b.payload else {
+        unreachable!("`b` is a work activation")
+    };
+    let settled = keyed_effect(slot, mid, b"b");
+    reply(b, schema::ActivationOutcome::Work(vec![settled]));
+    host.serve_until(|host| !host.origins.is_empty());
+
+    let mut outs = outputs(&wire, "host-own-timer-1", 3);
+    outs.sort();
+    assert_eq!(
+        outs,
+        [b"fired".to_vec(), b"k:a:a".to_vec(), b"k:b:b".to_vec()]
+    );
+    assert!(
+        matches!(host.origins.as_slice(), [PassOrigin::Timer { node: 1, .. }]),
+        "the firing joined the stage that set it: {:?}",
+        host.origins
+    );
+}
+
+#[test]
+fn a_timer_its_own_stage_set_and_cancelled_never_fires() {
+    let _env = crate::runner::env_test_guard();
+    let (tx, _rx) = unbounded::<RunnerMessage>();
+    crate::runner::install_reconnect_trigger(tx);
+    let (id, host) = own_timer_class("host_steps_own_timer_cancel");
+    let mut host = OwnTimerHost {
+        cancel: true,
+        ..host
+    };
+    let mut node = RunnerNode::new("test-ns".to_string());
+    let wire = Wire::new();
+    assert!(start(&mut node, &id, "host-own-cancel-1", "", 0).is_empty());
+
+    feed(&wire, &node, "host-own-cancel-1", b"a");
+    host.serve_until(|host| host.armed);
+    assert_eq!(outputs(&wire, "host-own-cancel-1", 1), [b"k:a:a".to_vec()]);
+    crate::poll_core::global().promote_due_wakes();
+
+    let inst = node
+        .get_relay("host-own-cancel-1")
+        .expect("a live instance");
+    let sheet = inst.steps.as_ref().expect("a steps run").sheet();
+    assert_eq!(
+        (
+            sheet.phase,
+            sheet.iter,
+            sheet.pass.as_ref().map(|p| p.origin.clone())
+        ),
+        (Phase::Waiting, 1, None),
+        "the cancelled timer opened a pass"
     );
 }
 

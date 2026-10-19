@@ -107,8 +107,10 @@ step by step:
   that tasklet's chain and commit step by step, as a message's pass does from the entry channel.
 - **It joins or waits.** A firing whose tasklet's step is running in the current pass joins that
   step. Any other firing waits in the instance's queue beside messages, in arrival order, and
-  opens its own pass at the next committed boundary. A `chained` loop's carried value waits
-  behind a queued firing, so a loop that feeds itself never starves a timer.
+  opens its own pass at the next committed boundary. A processing-time timer a step sets never
+  joins that step: it is armed once the step has finished its work, so one due sooner fires a
+  little late, in a pass of its own. A `chained` loop's carried value waits behind a queued
+  firing, so a loop that feeds itself never starves a timer.
 - **The removal is durable when the step commits.** A served firing stays pending until the step
   that ran it commits. A crash before the pass's root commits fires the timer again into a new
   pass; a crash after it does not. A relay that journals nothing commits the removal with
@@ -118,9 +120,9 @@ step by step:
   fires into a new pass. Event-time timers need an input, and an input wakes the instance
   anyway.
 - **Timers end with the instance.** When an instance completes, fails, is stopped or ends its
-  `once` pass, its cells and their pending timers are removed. A `once` instance's timer
-  therefore fires only while its own step is still running; to wait on a timer after the last
-  step, run the relay `each: per_input`.
+  `once` pass, its cells and their pending timers are removed. A `once` instance therefore never
+  fires a processing-time timer one of its steps sets, since the instance ends with that pass;
+  to wait on a timer, run the relay `each: per_input`.
 - **An `on_timer` failure is a tasklet failure**: it climbs the retry ladder and, once retries
   are spent, the relay's failure rule applies (its rollback, for example).
 
