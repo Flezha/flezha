@@ -171,13 +171,8 @@ fn assert_a_fresh_start_does_not_wait(
 ) {
     let (itx, _irx) = unbounded();
     let started = Instant::now();
-    let conn = control_unit::open(
-        "kb111_ns".to_string(),
-        declared(),
-        Arc::new(Mutex::new(itx)),
-        otx.clone(),
-    )
-    .expect("a start nobody abandoned connects");
+    let conn = control_unit::open("kb111_ns".to_string(), declared(), itx, otx.clone())
+        .expect("a start nobody abandoned connects");
     let waited = started.elapsed();
     await_reconnect(orx);
     drop(conn);
@@ -287,14 +282,8 @@ fn a_refused_session_backs_the_reconnect_ladder_off() {
 fn an_abandoned_start_stops_retrying(otx: &Arc<Mutex<Sender<RunnerMessage>>>) {
     let (itx, _irx) = unbounded();
     let otx = otx.clone();
-    let starting = thread::spawn(move || {
-        control_unit::open(
-            "kb111_ns".to_string(),
-            declared(),
-            Arc::new(Mutex::new(itx)),
-            otx,
-        )
-    });
+    let starting =
+        thread::spawn(move || control_unit::open("kb111_ns".to_string(), declared(), itx, otx));
     thread::sleep(Duration::from_millis(300));
     assert!(
         !starting.is_finished(),

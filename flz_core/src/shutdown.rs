@@ -11,7 +11,7 @@ use std::sync::{mpsc, Arc, Mutex, Once, OnceLock};
 use std::thread;
 use std::time::Duration;
 
-use flz_transport::notice::say;
+use flz_transport::notice::{say, Level};
 use flz_transport::transport::FlezhaStream;
 
 use crate::pb;
@@ -280,9 +280,10 @@ pub const TERMINAL_EXIT_CODE: i32 = 70;
 /// so each relay's final state ships whichever way the runner goes.
 #[derive(Debug, Default)]
 pub struct Exit {
-    /// Said to standard error first, straight rather than through a notice
-    /// hook: a queue or a process send would be lost to the `_exit` after it.
-    pub why: Option<String>,
+    /// Said to standard error first at its level, straight rather than
+    /// through a notice hook: a queue or a process send would be lost to the
+    /// `_exit` after it.
+    pub why: Option<(Level, String)>,
     /// Stop the host's pollers, then give a healthy runner this long to finish
     /// what it holds; `None` leaves the pollers running.
     pub wait: Option<Duration>,
@@ -300,9 +301,12 @@ impl Exit {
     /// the orchestrator restarts a failure.
     pub fn terminal(reason: &str) -> Self {
         Exit {
-            why: Some(format!(
-                "controller ordered a terminal disconnect (reason={reason}); exiting \
-                 {TERMINAL_EXIT_CODE} so the orchestrator restarts this runner"
+            why: Some((
+                Level::Warn,
+                format!(
+                    "controller ordered a terminal disconnect (reason={reason}); exiting \
+                     {TERMINAL_EXIT_CODE} so the orchestrator restarts this runner"
+                ),
             )),
             wait: Some(Duration::ZERO),
             code: Some(TERMINAL_EXIT_CODE),
@@ -315,7 +319,7 @@ impl Exit {
     /// differently for one than for the other.
     fn drained(what: &str) -> Self {
         Exit {
-            why: Some(format!("{what}; draining")),
+            why: Some((Level::Info, format!("{what}; draining"))),
             wait: Some(SIGTERM_GRACE),
             code: Some(0),
             abandon: false,
@@ -325,8 +329,8 @@ impl Exit {
 
 /// End the runner as `exit` says: the one sequence every end composes.
 pub fn exit(exit: Exit) {
-    if let Some(why) = &exit.why {
-        say(&format!("[flezha] {why}"));
+    if let Some((level, why)) = &exit.why {
+        say(*level, why);
     }
     run_active_graceful_shutdown();
     if let Some(wait) = exit.wait {
@@ -637,8 +641,8 @@ mod tests {
         let stderr = String::from_utf8_lossy(&child.stderr);
         assert!(
             stderr.contains(
-                "[flezha] controller ordered a terminal disconnect (reason=wedged); exiting 70 \
-                 so the orchestrator restarts this runner\n"
+                "[flezha] warning: controller ordered a terminal disconnect (reason=wedged); \
+                 exiting 70 so the orchestrator restarts this runner\n"
             ),
             "the reason did not reach standard error: {stderr}"
         );

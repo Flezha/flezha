@@ -11,7 +11,9 @@ use flz_core::test_support::wait_until;
 use flz_core_ffi::fake_controller::shutdown_notification;
 use flz_core_ffi::*;
 
-use crate::harness::{abi_complete_mapped, abi_poll, last_document, Controller, Demanded};
+use crate::harness::{
+    abi_complete_mapped, abi_poll, last_document, last_error, Controller, Demanded,
+};
 
 /// `flz_core_shutdown` ships every live Cell's state as a
 /// `RunnerShutdownNotification` before the core reports shutting down: the
@@ -59,6 +61,15 @@ pub(crate) fn shutdown_ships_state_then_wakes_the_poller(
     assert!(
         waited < Duration::from_secs(5),
         "shutdown must wake promptly, waited {waited:?}"
+    );
+    // The context's session ended with the shutdown: a host's cleanup
+    // undeclare unregisters locally, live instance or not.
+    let factory = CString::new("abi_eff").unwrap();
+    assert_eq!(
+        unsafe { flz_core_undeclare_class(ctx, factory.as_ptr()) },
+        FLZ_OK,
+        "{}",
+        last_error(ctx)
     );
     // Only after the poller has been woken, and briefly: a stopping runner
     // that re-registered would be handed work it will never do.

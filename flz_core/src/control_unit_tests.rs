@@ -17,7 +17,7 @@ fn connect(
         "test_ns".to_string(),
         Arc::new(RwLock::new(vec!["probe".to_string()])),
         stream,
-        itx.map(|itx| Arc::new(Mutex::new(itx))),
+        itx,
         Arc::new(Mutex::new(otx)),
     )
 }

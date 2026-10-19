@@ -8,11 +8,10 @@ use std::time::{Duration, Instant};
 use flz_transport::transport::FlezhaStream;
 use prost::Message;
 
-use crate::pb::control_frame::Frame;
-use crate::pb::{CommandResponse, ControlFrame};
-
 #[cfg(test)]
 use crate::mailbox::Mailbox;
+use crate::pb::control_frame::Frame;
+use crate::pb::{CommandResponse, ControlFrame};
 
 /// Poll `done` every `interval` (a yield when zero) until it holds, or `false`
 /// once `timeout` has passed. The one polling loop of the Rust tests.
@@ -208,9 +207,7 @@ pub(crate) mod host_class {
                 .map(|k| format!("\"{k}\""))
                 .collect::<Vec<_>>()
                 .join(",");
-            format!(
-                r#"{{"name":"p0","cell_keys":[{key_list}],"cells_for_overridden":true}}"#
-            )
+            format!(r#"{{"name":"p0","cell_keys":[{key_list}],"cells_for_overridden":true}}"#)
         };
         let tasks = std::iter::once(p0)
             .chain(

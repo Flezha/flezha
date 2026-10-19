@@ -466,6 +466,29 @@ defmodule FlezhaTest.Runner.FleetManagerSdkLangTest do
       assert {:ok, [%{id: ^id, run: :steps}]} = FleetManager.list_factories(ns)
     end
 
+    test "a bind reads the run, loop shape and failure mode as placement does once the record is gone",
+         %{namespace: ns} do
+      id = factory("advertised_loop")
+      forget(ns, [id])
+      FleetStateHelper.seed(ns, %{"r1" => []})
+
+      steps = %{
+        "id" => id,
+        "sdk_lang" => @rust,
+        "run" => "steps",
+        "each" => "chained",
+        "on_failure" => "keep_progress"
+      }
+
+      :ok = FleetStateHelper.announce(ns, "r1", [steps])
+      # The record's table is recreated empty when its owner restarts.
+      ClassRegistry.delete_established(ns, id)
+      assert FleetManager.runners_for_factory(ns, id) == ["r1"]
+
+      assert FleetManager.established(ns, id, [:run, :each, :on_failure]) ==
+               %{run: :steps, each: :chained, on_failure: :keep_progress}
+    end
+
     test "a runner announcing the other run is stored, logged and never placed",
          %{namespace: ns} do
       id = factory("prices")

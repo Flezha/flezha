@@ -104,10 +104,10 @@ pub enum RunnerMessage {
         command: Box<crate::pb::command_request::Command>,
     },
     /// A post-start remove, on the loop so the live-instance check is
-    /// serialized with `AddRelay`; answered by
-    /// [`ClientResponseMessage::RemoveFactoryResult`].
+    /// serialized with `AddRelay`; answered on its own [`RemovalReply`].
     RemoveFactory {
         factory_id: String,
+        reply: RemovalReply,
     },
     /// The host gave up on the start that spawned this coordinator, refused
     /// or unconfirmed: it must not reconnect behind the host's back, where a
@@ -140,9 +140,31 @@ pub enum ClientResponseMessage {
     RunnerIdConfirmation,
     /// The controller refused the starting runner's connect.
     ConnectRefused(flz_transport::errors::FlezhaError),
-    /// `Err(n)`: `n` live instances exist and the class stays defined.
-    RemoveFactoryResult(Result<(), usize>),
 }
+
+/// An answer owed once, to whichever side claims it first: the one that will
+/// answer, or a caller that stopped waiting and so must not be acted for.
+#[derive(Clone)]
+pub struct Owed<T>(Arc<Mutex<Option<T>>>);
+
+impl<T> Owed<T> {
+    pub fn new(owed: Option<T>) -> Self {
+        Owed(Arc::new(Mutex::new(owed)))
+    }
+
+    pub fn claim(&self) -> Option<T> {
+        self.0.lock().unwrap_or_else(|p| p.into_inner()).take()
+    }
+
+    pub fn is_claimed(&self) -> bool {
+        self.0.lock().unwrap_or_else(|p| p.into_inner()).is_none()
+    }
+}
+
+/// One removal's answer: `Err(n)` when `n` live instances keep the class
+/// defined. The coordinator claims it before it applies the removal, so a
+/// removal is never applied behind a caller that was told it failed.
+pub type RemovalReply = Owed<Sender<Result<(), usize>>>;
 
 pub use crate::coordinator::{bound, live_instance, start, BoundRelays, RunnerNode};
 pub use crate::routing::RelayDispatchHandle;

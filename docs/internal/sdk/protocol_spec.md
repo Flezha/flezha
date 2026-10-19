@@ -653,8 +653,9 @@ declares, and every controller parks a failed turn sent as
 the controller resolves per-class capabilities without a parallel config
 channel (absent/undecodable ⇒ every default). How the class runs, and a steps
 class's `each` and `on_failure`, are not among them: they ride the factory's
-announcement (`FactoryDecl`), and the controller reads them from the
-factory's established record:
+announcement (`FactoryDecl`), and the controller reads them as placement
+does: the factory's established record, else its runners' unanimous
+announcements:
 
 | Key | Value | Meaning |
 |-----|-------|---------|

@@ -98,16 +98,18 @@ fn start_runner(
 /// which needs the caller's loops still polling, so the sequence runs on its
 /// own thread and the core reports shutting down only once it is done. That
 /// thread reads nothing of `ctx`, so freeing the context cannot race it. The
-/// session ends last: a stopping runner that reconnected would be handed work
-/// it will never do.
+/// context's session ends at once, so a host's cleanup undeclare unregisters
+/// locally; the runner loop is abandoned last: a stopping runner that
+/// reconnected would be handed work it will never do.
 ///
 /// # Safety
 /// `ctx` must be live.
 #[no_mangle]
 pub unsafe extern "C" fn flz_core_shutdown(ctx: *mut FlzContext) {
-    if ctx.is_null() {
+    let Some(ctx) = ctx.as_ref() else {
         return;
-    }
+    };
+    ctx.session.end();
     let sequence = || {
         flz_core::shutdown::exit(flz_core::shutdown::Exit {
             wait: Some(Duration::ZERO),

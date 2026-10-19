@@ -274,8 +274,14 @@ mod overflow_literal_tests {
             parse(r#""drop_nothing""#).unwrap(),
             OverflowPolicy::DropNothing
         );
-        assert_eq!(parse(r#""drop_newest""#).unwrap(), OverflowPolicy::DropNewest);
-        assert_eq!(parse(r#""drop_oldest""#).unwrap(), OverflowPolicy::DropOldest);
+        assert_eq!(
+            parse(r#""drop_newest""#).unwrap(),
+            OverflowPolicy::DropNewest
+        );
+        assert_eq!(
+            parse(r#""drop_oldest""#).unwrap(),
+            OverflowPolicy::DropOldest
+        );
     }
 
     #[test]

@@ -21,23 +21,7 @@ BENIGN = re.compile(
     r"|^test \S+ \.\.\. ok$"
     # php-cs-fixer's banner and progress bar, written to stderr on every run.
     r'|^PHP CS Fixer [0-9.]+ .* by |^PHP runtime: [0-9.]+$|^Loaded config \S+ from ".*"\.$'
-    r"|^\s*[0-9]+/[0-9]+ \[[▓░]+\]\s+[0-9]+%$"
-    # KB-854: core notices the hosts cannot capture yet; goes when the S-3 core notice hook lands.
-    r"|^\[flezha\] (?:warning: |error: )?(LOCAL MODE: state is held in memory and NOTHING is durable — no write-ahead log, "
-    r"no snapshots, no dead-letter queue\. Everything this run computes is gone when the process exits\. "
-    r"Durability, plugins, placement and migration, the dead-letter queue, observability export, authz and "
-    r"multi-runner scale all need a controller\."
-    r"|tasklet \S+ attempt [0-9]+/[0-9]+ failed \(retrying in [0-9]+ ms\): .+"
-    r"|control socket absent at /\S+ \(from \$FLEZHA_SOCKET_FILES_PATH\); walked /\S+\. "
-    r"Fix: start the controller, or wait for it to finish booting"
-    r"|Connection attempt [0-9]+ failed: the runner could not reach a controller: "
-    r"control socket /\S+: No such file or directory \(os error 2\)"
-    r"|Control channel attempt [0-9]+ in [0-9.]+m?s\.\.\.|Connected after [0-9]+ attempts"
-    r"|the controller refused the connect: error: the runner proved no namespace: it presented no runner "
-    r"credential, or one this controller does not know \(runner\.namespace_not_proven\)"
-    r"|the controller refused the connect: error: refused by the test \(runner\.namespace_not_proven\)"
-    r"|RunnerShutdownAck timeout for (dyn-1|abi_probe))$"
-    r"|^hint: flz token issue runner@<namespace> <namespace> runner --ttl never$")
+    r"|^\s*[0-9]+/[0-9]+ \[[▓░]+\]\s+[0-9]+%$")
 # pyright's notice that a newer release exists: it says nothing about the code.
 UPDATE_NOTICE = re.compile(
     r"^WARNING: there is a new pyright version available \(v[0-9.]+ -> v[0-9.]+\)\.$")

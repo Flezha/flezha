@@ -254,6 +254,17 @@ defmodule Flezha.Runner.FleetManager do
   end
 
   @doc """
+  What `factory_id` is established at in `namespace` for each of `attributes`,
+  read as placement reads it: the record, else the unanimous live
+  advertisements; `nil` for one nothing decides.
+  """
+  @spec established(String.t(), String.t(), [atom()]) :: map()
+  def established(namespace, factory_id, attributes) do
+    request = {:established, namespace, factory_id, attributes}
+    GenServer.call(__MODULE__, request, Durations.get(:runner_lookup_ms))
+  end
+
+  @doc """
   Close the session, live or in its handshake, of the runner process that
   `stable_id` and `incarnation` name, as one this controller asked to leave:
   its relays are re-placed without waiting out the grace. The runner is not
@@ -503,11 +514,17 @@ defmodule Flezha.Runner.FleetManager do
   def handle_call({:factory_run, namespace, factory_id}, _from, state) do
     reply =
       case placement_refusal_of(state, namespace, factory_id) do
-        :none -> {:ok, run_of(state, namespace, factory_id)}
+        :none -> {:ok, established_value(state, namespace, factory_id, :run)}
         refusal -> {:error, refusal}
       end
 
     {:reply, reply, state}
+  end
+
+  @impl true
+  def handle_call({:established, namespace, factory_id, attributes}, _from, state) do
+    {:reply, Map.new(attributes, &{&1, established_value(state, namespace, factory_id, &1)}),
+     state}
   end
 
   @impl true
@@ -550,7 +567,7 @@ defmodule Flezha.Runner.FleetManager do
         %{
           id: factory_id,
           description: info.description,
-          run: run_of(state, namespace, factory_id),
+          run: established_value(state, namespace, factory_id, :run),
           runners: candidates(state, namespace, factory_id)
         }
         |> Map.merge(Factories.announced_api(info, runner))
@@ -719,12 +736,13 @@ defmodule Flezha.Runner.FleetManager do
   defp refusal(_shape, :ambiguous), do: :ambiguous_run
   defp refusal(shape, {:ok, value}), do: {:run, "steps (#{shape}: #{value})"}
 
-  # The run a listed factory is established at, `nil` while nothing decides it.
-  defp run_of(state, namespace, factory_id) do
+  # What a factory is established at for `attribute`, `nil` while nothing
+  # decides it.
+  defp established_value(state, namespace, factory_id, attribute) do
     {info, advertising} = Factories.advertising_runners(state, namespace, factory_id)
 
-    case Factories.established(namespace, factory_id, :run, info, advertising) do
-      {:ok, run} -> run
+    case Factories.established(namespace, factory_id, attribute, info, advertising) do
+      {:ok, value} -> value
       _undecided -> nil
     end
   end

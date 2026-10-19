@@ -459,7 +459,7 @@ boots for real everywhere.
 
 The smoke tier binds one fixture per declaration key the controller reads and
 compares the decoded `AddRelayResponse` metadata — intercepted at
-`Flezha.Relay.ClassRegistry.decode_declarations/3`, the one place the wire
+`Flezha.Relay.ClassRegistry.decode_declarations/2`, the one place the wire
 form is decoded — against `test/fixtures/declarations/<fixture>.json`. One more
 snapshot pins the `flz.*` identity stamps on a keyed output. A key one SDK adds,
 drops or spells differently is a diff on every other.

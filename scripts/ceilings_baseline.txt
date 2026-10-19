@@ -53,7 +53,7 @@ lib/flezha/observability/counter_table.ex::__using__ 107
 lib/flezha/plugin/provider_behaviour.ex 807
 lib/flezha/relay/calls.ex 842
 lib/flezha/relay/handover.ex::absorb 65
-lib/flezha/relay/lifecycle.ex::complete_init 66
+lib/flezha/relay/lifecycle.ex::complete_init 65
 lib/flezha/relay/overwatch.ex 973
 lib/flezha/runner/stream_channel.ex::init 52
 lib/flezha/service/plugin_manager.ex 879

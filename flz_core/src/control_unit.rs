@@ -28,7 +28,7 @@ use serde::Serialize;
 use crate::error::{Code, Error};
 use crate::pb::command_request::Command;
 use crate::pb::Ping;
-use crate::runner::{ClientResponseMessage, RunnerMessage};
+use crate::runner::{ClientResponseMessage, Owed, RunnerMessage};
 use crate::util::nonce_suffix;
 
 /// The QUIC address this process last connected through.
@@ -80,7 +80,7 @@ struct ControlInitMessage {
 pub fn open(
     namespace: String,
     declared: Arc<RwLock<Vec<String>>>,
-    itx: Arc<Mutex<Sender<ClientResponseMessage>>>,
+    itx: Sender<ClientResponseMessage>,
     otx: Arc<Mutex<Sender<RunnerMessage>>>,
 ) -> Option<ControlConn> {
     // A starting runner is owed no wait for the refusals of the one before it.
@@ -108,7 +108,7 @@ pub fn open_reconnect(
 fn open_with_retry(
     namespace: String,
     declared: Arc<RwLock<Vec<String>>>,
-    itx: Option<Arc<Mutex<Sender<ClientResponseMessage>>>>,
+    itx: Option<Sender<ClientResponseMessage>>,
     otx: Arc<Mutex<Sender<RunnerMessage>>>,
     abandoned: &dyn Fn() -> bool,
 ) -> Option<ControlConn> {
@@ -213,7 +213,7 @@ impl OnceOnly {
 fn try_open(
     namespace: String,
     declared: Arc<RwLock<Vec<String>>>,
-    itx: Option<Arc<Mutex<Sender<ClientResponseMessage>>>>,
+    itx: Option<Sender<ClientResponseMessage>>,
     otx: Arc<Mutex<Sender<RunnerMessage>>>,
 ) -> Result<ControlConn, Error> {
     match get_transport_type() {
@@ -232,7 +232,7 @@ fn try_open(
 fn try_open_uds(
     namespace: String,
     declared: Arc<RwLock<Vec<String>>>,
-    itx: Option<Arc<Mutex<Sender<ClientResponseMessage>>>>,
+    itx: Option<Sender<ClientResponseMessage>>,
     otx: Arc<Mutex<Sender<RunnerMessage>>>,
 ) -> Result<(ConnectAnswered, Arc<FlezhaStream>), Error> {
     let socket_path = socket_dir::control_socket_path()?;
@@ -256,7 +256,7 @@ fn try_open_uds(
 fn try_open_quic(
     namespace: String,
     declared: Arc<RwLock<Vec<String>>>,
-    itx: Option<Arc<Mutex<Sender<ClientResponseMessage>>>>,
+    itx: Option<Sender<ClientResponseMessage>>,
     otx: Arc<Mutex<Sender<RunnerMessage>>>,
 ) -> Result<ControlConn, Error> {
     let ca_cert_path = transport_config::ca_cert_path();
@@ -313,7 +313,7 @@ pub(crate) fn sock_conn(
     namespace: String,
     declared: Arc<RwLock<Vec<String>>>,
     stream_box: Arc<FlezhaStream>,
-    itx: Option<Arc<Mutex<Sender<ClientResponseMessage>>>>,
+    itx: Option<Sender<ClientResponseMessage>>,
     otx: Arc<Mutex<Sender<RunnerMessage>>>,
 ) -> (ConnectAnswered, Arc<FlezhaStream>) {
     let stream_clone = Arc::clone(&stream_box);
@@ -346,7 +346,7 @@ pub(crate) fn sock_conn(
 
         // Only an initial connect is confirmed, and only once the controller
         // has answered it, or has let the grace pass without a word.
-        let start = PendingStart(Arc::new(Mutex::new(itx)));
+        let start = PendingStart(Owed::new(itx));
         start.confirm_after(CONNECT_ANSWER_GRACE);
 
         read_loop(&stream_clone, &otx, &mut live, &start);
@@ -364,22 +364,20 @@ const CONNECT_ANSWER_GRACE: Duration = Duration::from_secs(1);
 /// The starting caller's confirmation, owed once: by the controller's first
 /// frame, its refusal, or the grace running out, whichever comes first.
 #[derive(Clone)]
-struct PendingStart(Arc<Mutex<Option<StartConfirm>>>);
-
-type StartConfirm = Arc<Mutex<Sender<ClientResponseMessage>>>;
+struct PendingStart(Owed<Sender<ClientResponseMessage>>);
 
 impl PendingStart {
     /// Whether a starting caller was still waiting for this answer.
     fn answer(&self, message: ClientResponseMessage) -> bool {
-        let taken = self.0.lock().unwrap_or_else(|p| p.into_inner()).take();
+        let taken = self.0.claim();
         if let Some(itx) = &taken {
-            let _ = itx.lock().unwrap_or_else(|p| p.into_inner()).send(message);
+            let _ = itx.send(message);
         }
         taken.is_some()
     }
 
     fn confirm_after(&self, grace: Duration) {
-        if self.0.lock().unwrap_or_else(|p| p.into_inner()).is_none() {
+        if self.0.is_claimed() {
             return;
         }
         let start = self.clone();

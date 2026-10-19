@@ -87,18 +87,23 @@ pub fn clear_hook() {
     *HOOK.write().unwrap_or_else(|p| p.into_inner()) = None;
 }
 
-/// The writer used without a hook: `[flezha] ` then `warning: ` or `error: `
-/// for those levels, so a reader of the stream can tell the level.
+/// The writer used without a hook.
 fn write_stderr(level: Level, text: &str) {
+    let line = stderr_line(level, text);
+    // Through `eprintln!` rather than [`say`], so a test harness captures the
+    // line; the panic it raises on a closed standard error is caught here.
+    let _ = std::panic::catch_unwind(|| eprintln!("{line}"));
+}
+
+/// `[flezha] ` then `warning: ` or `error: ` for those levels, so a reader of
+/// the stream can tell the level.
+fn stderr_line(level: Level, text: &str) -> String {
     let marker = match level {
         Level::Warn => "warning: ",
         Level::Error => "error: ",
         Level::Info | Level::Always => "",
     };
-    let line = format!("[flezha] {marker}{text}");
-    // Through `eprintln!` rather than [`say`], so a test harness captures the
-    // line; the panic it raises on a closed standard error is caught here.
-    let _ = std::panic::catch_unwind(|| eprintln!("{line}"));
+    format!("[flezha] {marker}{text}")
 }
 
 /// A line to standard error that cannot take the caller down with it.
@@ -108,9 +113,9 @@ fn write_stderr(level: Level, text: &str) {
 /// `eprintln!` panics on that EPIPE, and a panicked watcher leaves the runner
 /// alive for ever. The lines said right before the process ends come here
 /// directly, past every hook: no host is left to drain them.
-pub fn say(line: &str) {
+pub fn say(level: Level, text: &str) {
     use std::io::Write;
-    let _ = writeln!(std::io::stderr(), "{line}");
+    let _ = writeln!(std::io::stderr(), "{}", stderr_line(level, text));
 }
 
 fn queue() -> &'static (Sender<Notice>, Receiver<Notice>) {

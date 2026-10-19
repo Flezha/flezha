@@ -15,25 +15,22 @@ use crate::test_support::host_class::steps_json;
 /// `UpdateFactories` it ships arrive on the receiver.
 fn live_session(node: Arc<Mutex<RunnerNode>>) -> (Session, Receiver<Vec<String>>) {
     let (runner_tx, runner_rx) = crossbeam::channel::unbounded::<RunnerMessage>();
-    let (reply_tx, replies) = crossbeam::channel::unbounded();
     let (sent_tx, sent) = crossbeam::channel::unbounded();
-    std::thread::spawn(move || coordinate(&node, &runner_rx, &reply_tx, &sent_tx));
+    std::thread::spawn(move || coordinate(&node, &runner_rx, &sent_tx));
     let session = Session::default();
-    *session.started() = Some(Started { runner_tx, replies });
+    *session.started() = Some(runner_tx);
     (session, sent)
 }
 
 fn coordinate(
     node: &Mutex<RunnerNode>,
     runner_rx: &Receiver<RunnerMessage>,
-    reply_tx: &Sender<ClientResponseMessage>,
     sent_tx: &Sender<Vec<String>>,
 ) {
     while let Ok(message) = runner_rx.recv() {
         match message {
-            RunnerMessage::RemoveFactory { factory_id } => {
-                let result = node.lock().unwrap().remove_factory(&factory_id);
-                let _ = reply_tx.send(ClientResponseMessage::RemoveFactoryResult(result));
+            RunnerMessage::RemoveFactory { factory_id, reply } => {
+                node.lock().unwrap().remove_factory(&factory_id, &reply);
             }
             RunnerMessage::EmitControlRequest { command, .. } => {
                 if let pb::command_request::Command::UpdateFactories(update) = *command {
@@ -119,6 +116,49 @@ fn an_undeclare_with_a_live_instance_is_refused_by_the_coordinator() {
         "a refused removal shipped a frame"
     );
     assert!(crate::relay::registry::get_class("session_live").is_some());
+}
+
+#[test]
+fn an_unanswered_removal_holds_no_lock_and_is_never_applied_after_it_gives_up() {
+    let _env = crate::runner::env_test_guard();
+    flz_transport::env::hand_over_connect_settings(vec![(START_WAIT_VAR, "2000".to_string())]);
+    // A coordinator that never answers: one reconnecting through an outage.
+    let (runner_tx, runner_rx) = crossbeam::channel::unbounded::<RunnerMessage>();
+    let session = Arc::new(Session::default());
+    *session.started() = Some(runner_tx);
+    declare(&session, "session_unanswered");
+
+    let (done_tx, done) = crossbeam::channel::unbounded();
+    let undeclaring = Arc::clone(&session);
+    std::thread::spawn(move || {
+        let _ = done_tx.send(undeclaring.undeclare("session_unanswered"));
+    });
+    let reply = loop {
+        match runner_rx.recv_timeout(Duration::from_secs(5)) {
+            Ok(RunnerMessage::RemoveFactory { reply, .. }) => break reply,
+            Ok(_) => {}
+            Err(e) => panic!("no removal reached the runner thread: {e}"),
+        }
+    };
+    declare(&session, "session_unanswered_other");
+    assert!(
+        done.try_recv().is_err(),
+        "the declare waited for the removal's answer"
+    );
+
+    let refused = done
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the wait is bounded");
+    flz_transport::env::hand_over_connect_settings(Vec::new());
+    assert_eq!(
+        refused.unwrap_err().to_error().code,
+        "runtime.runner_unavailable"
+    );
+    // The coordinator reaches the removal after its caller gave up.
+    RunnerNode::new("ns".into()).remove_factory("session_unanswered", &reply);
+    assert!(crate::relay::registry::get_class("session_unanswered").is_some());
+    let declared = session.declared.read().unwrap().clone();
+    assert_eq!(declared, ["session_unanswered", "session_unanswered_other"]);
 }
 
 #[test]

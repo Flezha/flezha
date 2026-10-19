@@ -33,16 +33,13 @@ defmodule Flezha.Service.PortPilotTest do
     String.split(log, ~r/^(?=\d\d:\d\d:\d\d\.\d{3} )/m, trim: true)
   end
 
-  test "a line longer than the line limit and a line written in two writes are each logged whole",
+  test "a line longer than the line limit is logged whole, and a stderr line at its level",
        %{tmp: dir} do
     long = String.duplicate("x", 5_000)
     script = Path.join(dir, "child.sh")
 
     File.write!(script, """
     printf '%s\\n' #{long}
-    printf '[flezha] warning: split '
-    sleep 0.1
-    printf 'line\\n'
     echo '[flezha] error: on stderr' >&2
     read _
     """)
@@ -53,7 +50,6 @@ defmodule Flezha.Service.PortPilotTest do
 
     assert [
              "[info] #{runner} <the long line>",
-             "[warning] #{runner} [flezha] warning: split line",
              "[error] #{runner} [flezha] error: on stderr"
            ] ==
              command

@@ -162,15 +162,21 @@ impl RunnerNode {
         Some(self.relay_registry.register(instance))
     }
 
-    /// Unregister a class with no live instance; `Err(n)` names how many
-    /// exist. MUST run on the coordinator loop, serialized with `AddRelay`.
-    pub fn remove_factory(&self, factory_id: &str) -> Result<(), usize> {
-        let live = self.relay_registry.count_by_factory(factory_id);
-        if live > 0 {
-            return Err(live);
-        }
-        crate::relay::registry::unregister_class(factory_id);
-        Ok(())
+    /// Unregister a class with no live instance and answer `reply`; `Err(n)`
+    /// names how many exist. Nothing applies once the caller stopped waiting.
+    /// MUST run on the coordinator loop, serialized with `AddRelay`.
+    pub fn remove_factory(&self, factory_id: &str, reply: &crate::runner::RemovalReply) {
+        let Some(answer) = reply.claim() else {
+            return;
+        };
+        let result = match self.relay_registry.count_by_factory(factory_id) {
+            0 => {
+                crate::relay::registry::unregister_class(factory_id);
+                Ok(())
+            }
+            live => Err(live),
+        };
+        let _ = answer.send(result);
     }
 
     pub fn stop_relay(&self, instance_id: &str) -> bool {
@@ -281,7 +287,6 @@ struct Coordinator {
     namespace: String,
     declared: Arc<RwLock<Vec<String>>>,
     otx_arc: Arc<Mutex<Sender<RunnerMessage>>>,
-    ctx_arc: Arc<Mutex<Sender<ClientResponseMessage>>>,
     shutdown_bridge: Arc<ShutdownBridge>,
 }
 
@@ -341,7 +346,6 @@ impl Coordinator {
         let mut runner = RunnerNode::new(namespace.clone());
         install_snapshot_fn(&shutdown_bridge, Arc::clone(&runner.relay_registry));
 
-        let ctx_arc = Arc::new(Mutex::new(ctx));
         // Expose the coordinator channel process-globally so the
         // cell-state sink can drive a reconnect on a broken-pipe
         // flood without a handle threaded through every layer.
@@ -350,7 +354,7 @@ impl Coordinator {
         let (answered, control_stream, quic_client) = control_unit::open(
             namespace.clone(),
             Arc::clone(&declared),
-            ctx_arc.clone(),
+            ctx,
             otx_arc.clone(),
         )?;
         runner.set_quic_client(quic_client);
@@ -364,7 +368,6 @@ impl Coordinator {
             namespace,
             declared,
             otx_arc,
-            ctx_arc,
             shutdown_bridge,
         };
         Some((coordinator, timers))
@@ -396,18 +399,11 @@ impl Coordinator {
                 reference_id,
                 command,
             } => self.write_control_request(reference_id, *command),
-            RunnerMessage::RemoveFactory { factory_id } => self.remove_factory(&factory_id),
+            RunnerMessage::RemoveFactory { factory_id, reply } => {
+                self.runner.remove_factory(&factory_id, &reply)
+            }
             RunnerMessage::Abandon => self.abandon(),
         }
-    }
-
-    fn remove_factory(&self, factory_id: &str) {
-        let result = self.runner.remove_factory(factory_id);
-        let _ = self
-            .ctx_arc
-            .lock()
-            .unwrap()
-            .send(ClientResponseMessage::RemoveFactoryResult(result));
     }
 
     /// Stop for good: every later reconnect is a no-op, the session this

@@ -27,6 +27,7 @@ defmodule Flezha.Relay.Lifecycle do
   alias Flezha.Relay.Replay
   alias Flezha.Process.Timer
   alias Flezha.Runner.ControlUnit
+  alias Flezha.Runner.FleetManager
   alias Flezha.Runner.FleetManager.Marks
   alias Flezha.Runner.StreamChannel.Gate
   alias Flezha.Runner.StreamPool
@@ -181,8 +182,7 @@ defmodule Flezha.Relay.Lifecycle do
          # The class's SDK-side declarations ride the AddRelay response;
          # resolve them BEFORE plugin activation so source adapters pick the
          # tier ingest mode (blocking call) from the env.
-         declarations =
-           ClassRegistry.decode_declarations(add_relay_raw, state.namespace, relay.factory_id),
+         declarations = declarations(add_relay_raw, state.namespace, relay.factory_id),
          :ok <- refuse_remote_without_backend(declarations, relay.factory_id),
          state =
            %{
@@ -220,6 +220,13 @@ defmodule Flezha.Relay.Lifecycle do
       {:error, reason, %Overwatch{} = halted} -> {:error, reason, halted}
       {:error, reason} -> {:error, reason, state}
     end
+  end
+
+  # The run, loop shape and failure mode are read as placement read them, so
+  # the bind runs what was placed.
+  defp declarations(add_relay_raw, namespace, factory_id) do
+    established = FleetManager.established(namespace, factory_id, [:run, :each, :on_failure])
+    ClassRegistry.decode_declarations(add_relay_raw, established)
   end
 
   # `durable: remote` is a promise the machine keeps only with a durability

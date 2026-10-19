@@ -299,10 +299,6 @@ pub struct RelayMessageResponse {
 /// Direction is reversed compared to most CommandRequest variants: SDK -> Controller.
 /// It travels as a `request` ControlFrame on the "control_command" payload_id,
 /// and the Controller's ControlChannel dispatches it by its oneof tag.
-///
-/// Older Controllers that do not recognise this opcode skip it via Protox's
-/// unknown-field handling; older SDKs that do not emit it fall back to the
-/// periodic-snapshot freshness shipped by heal-connections-on-restart.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct RunnerShutdownNotification {
     #[prost(string, tag = "1")]
@@ -694,8 +690,7 @@ pub struct PingResponse {
 /// so a finished steps relay is removed from the durable registry and
 /// never replayed on boot or misjudged by convergence. Direction is reversed
 /// like RunnerShutdownNotification: SDK -> Controller over the
-/// "control_command" payload_id; old Controllers ignore the unknown variant via
-/// Protox unknown-field handling.
+/// "control_command" payload_id.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct RelayCompleted {
     #[prost(string, tag = "1")]
@@ -867,8 +862,7 @@ pub struct ApiEntry {
 /// Controller does not ack (it gates no durability barrier — a stale
 /// placement fails at the SDK's AddRelay handler and convergence
 /// re-places). Direction is reversed like RunnerShutdownNotification:
-/// SDK -> Controller over the "control_command" payload_id; old Controllers
-/// ignore the unknown variant via Protox unknown-field handling.
+/// SDK -> Controller over the "control_command" payload_id.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct UpdateFactories {
     #[prost(message, repeated, tag = "1")]
@@ -879,8 +873,7 @@ pub struct UpdateFactories {
 /// SDK trips its cancellation token, lets in-flight work unwind, runs any saga
 /// compensation, then emits the normal `RelayCompleted` (status "cancelled")
 /// that drives the single teardown path. Rides the "control_command" payload_id
-/// like other CommandRequest variants; SDKs that do not recognise it skip it via
-/// the protobuf decoder (degrading to no cooperative stop).
+/// like other CommandRequest variants.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct StepsStop {
     #[prost(string, tag = "1")]
@@ -897,8 +890,7 @@ pub struct StepsStop {
 /// spawn, or one more inbox frame on a delivery; empty means "spawn only".
 /// `if_running` is "deliver" (default; empty reads as deliver) or "error".
 /// Rides the "control_command" payload_id like the other SDK-initiated
-/// variants; old Controllers ignore it via Protox unknown-field handling, so
-/// the requester simply times out. `identity` names where the request came
+/// variants. `identity` names where the request came
 /// from: the requesting instance, the input-log offset its tasklet was taking,
 /// the call's position in that invocation, the factory and a hash of the
 /// payload. A re-run of the invocation sends the same identity, and the
@@ -994,8 +986,7 @@ pub struct SpawnStepsResponse {
 /// binding.
 ///
 /// Rides the "control_command" payload_id like the other SDK-initiated
-/// variants; an old Controller ignores it via unknown-field handling, so the
-/// requester simply times out.
+/// variants.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct AdminRequest {
     #[prost(string, tag = "1")]

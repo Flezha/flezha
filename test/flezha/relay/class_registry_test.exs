@@ -223,12 +223,8 @@ defmodule FlezhaTest.Relay.ClassRegistryTest do
     refute ClassRegistry.sleeps?(class)
   end
 
-  test "the declarations decode from the metadata, and the run from the established record",
-       %{class: class} do
-    on_exit(fn -> ClassRegistry.delete_established("cr_ns", class) end)
-
-    for {attribute, value} <- [run: :steps, each: :per_input, on_failure: :keep_progress],
-        do: ClassRegistry.put_established("cr_ns", class, attribute, value)
+  test "the declarations decode from the metadata, and the run from what is established" do
+    established = %{run: :steps, each: :per_input, on_failure: :keep_progress}
 
     {:ok, raw, _size} =
       Protox.encode(%RunnerCommands.AddRelayResponse{
@@ -250,10 +246,10 @@ defmodule FlezhaTest.Relay.ClassRegistryTest do
              sleep_after_ms: 2_000,
              max_duration_ms: 60_000,
              effectively_once: false
-           } = ClassRegistry.decode_declarations(raw, "cr_ns", class)
+           } = ClassRegistry.decode_declarations(raw, established)
 
     assert %{run: :flow, durable: :local, sleep_after_ms: nil, persistent: true} =
-             ClassRegistry.decode_declarations(<<>>, "cr_ns", "unannounced")
+             ClassRegistry.decode_declarations(<<>>, %{run: nil, each: nil, on_failure: nil})
   end
 
   test "remote durability defaults false, survives eviction, and reverts when dropped",

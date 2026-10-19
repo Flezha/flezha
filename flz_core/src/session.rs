@@ -9,7 +9,7 @@ use std::time::Duration;
 use crossbeam::channel::{Receiver, Sender};
 use flz_transport::errors::{ErrorModel, FlezhaError};
 
-use crate::runner::{ClientResponseMessage, RunnerMessage};
+use crate::runner::{ClientResponseMessage, RemovalReply, RunnerMessage};
 use crate::{pb, Code};
 
 /// The setting naming how long a start waits for the controller's answer.
@@ -17,9 +17,10 @@ const START_WAIT_VAR: &str = "FLEZHA_RUNNER_START_WAIT_MS";
 
 const DEFAULT_START_WAIT_MS: u64 = 10_000;
 
-/// How long a start waits for the controller's answer: [`START_WAIT_VAR`] as
-/// the host handed it over, else as the environment holds it, 10 s by default;
-/// `None`, from `0`, waits for ever.
+/// How long a start waits for the controller's answer, and an undeclare after
+/// start for the coordinator's: [`START_WAIT_VAR`] as the host handed it over,
+/// else as the environment holds it, 10 s by default; `None`, from `0`, waits
+/// for ever.
 fn start_wait() -> Option<Duration> {
     let ms = flz_transport::env::connect_raw(START_WAIT_VAR)
         .and_then(|raw| flz_transport::env::parse_ms(&raw))
@@ -48,7 +49,7 @@ pub enum SessionError {
     Unconfirmed {
         wait_ms: u64,
     },
-    /// The runner thread is gone or answered out of turn.
+    /// The runner thread is gone or did not answer within the wait.
     Unavailable(&'static str),
 }
 
@@ -92,19 +93,12 @@ impl std::fmt::Display for SessionError {
 impl std::error::Error for SessionError {}
 
 /// One runner's session. The runner thread serializes `declared` into every
-/// connect and reconnect init frame, the resync of record.
+/// connect and reconnect init frame, the resync of record. `started` holds the
+/// runner thread's channel once a start was confirmed.
 #[derive(Default)]
 pub struct Session {
     declared: Arc<RwLock<Vec<String>>>,
-    started: Mutex<Option<Started>>,
-}
-
-/// The live runner thread's channels, present once a start was confirmed.
-/// Every exchange runs under the session's `started` lock, so a reply belongs
-/// to the request sent under it.
-struct Started {
-    runner_tx: Sender<RunnerMessage>,
-    replies: Receiver<ClientResponseMessage>,
+    started: Mutex<Option<Sender<RunnerMessage>>>,
 }
 
 impl Session {
@@ -144,8 +138,10 @@ impl Session {
         if !known {
             return Err(SessionError::NotDefined(id.to_string()));
         }
-        match self.started().as_ref() {
-            Some(live) => live.remove_factory(id)?,
+        // Cloned out, so no session lock is held while the coordinator answers.
+        let runner_tx = self.started().clone();
+        match runner_tx {
+            Some(runner_tx) => remove_factory(&runner_tx, id)?,
             None => crate::relay::registry::unregister_class(id),
         }
         self.declared
@@ -187,11 +183,17 @@ impl Session {
             let _ = runner_tx.send(RunnerMessage::Abandon);
             return Err(refused);
         }
-        *started = Some(Started { runner_tx, replies });
+        *started = Some(runner_tx);
         Ok(())
     }
 
-    fn started(&self) -> MutexGuard<'_, Option<Started>> {
+    /// End the session the host holds: an undeclare after it unregisters
+    /// locally. The runner thread is left to whoever stops it.
+    pub fn end(&self) {
+        self.started().take();
+    }
+
+    fn started(&self) -> MutexGuard<'_, Option<Sender<RunnerMessage>>> {
         self.started.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
@@ -200,39 +202,51 @@ impl Session {
     /// corrected by the next reconnect's init frame.
     fn sync_factories(&self) {
         let started = self.started();
-        let Some(live) = started.as_ref() else {
+        let Some(runner_tx) = started.as_ref() else {
             return;
         };
         let factories = crate::relay::registry::advertised(
             &self.declared.read().unwrap_or_else(PoisonError::into_inner),
         );
-        let _ = live.runner_tx.send(RunnerMessage::control_request(
+        let _ = runner_tx.send(RunnerMessage::control_request(
             format!("update-factories-{}", crate::util::nonce_suffix()),
             pb::command_request::Command::UpdateFactories(pb::UpdateFactories { factories }),
         ));
     }
 }
 
-impl Started {
-    fn remove_factory(&self, id: &str) -> Result<(), SessionError> {
-        const GONE: SessionError = SessionError::Unavailable("runner thread exited");
-        let removal = RunnerMessage::RemoveFactory {
-            factory_id: id.to_string(),
-        };
-        self.runner_tx.send(removal).map_err(|_| GONE)?;
-        match self.replies.recv().map_err(|_| GONE)? {
-            ClientResponseMessage::RemoveFactoryResult(Ok(())) => Ok(()),
-            ClientResponseMessage::RemoveFactoryResult(Err(live_instances)) => {
-                Err(SessionError::RelayTypeInUse {
-                    factory_id: id.to_string(),
-                    live_instances,
-                })
-            }
-            _ => Err(SessionError::Unavailable(
-                "unexpected reply from the runner thread",
-            )),
+/// Ask the coordinator to remove `id`, holding no session lock while it
+/// answers, for at most the start wait: a coordinator that stays busy (a
+/// controller outage it is reconnecting through) must not hold a host thread
+/// for as long. A caller that gives up claims the reply back first, so the
+/// removal it was refused is never applied after it.
+fn remove_factory(runner_tx: &Sender<RunnerMessage>, id: &str) -> Result<(), SessionError> {
+    const GONE: SessionError = SessionError::Unavailable("runner thread exited");
+    let (answer_tx, answer) = crossbeam::channel::bounded(1);
+    let reply = RemovalReply::new(Some(answer_tx));
+    let removal = RunnerMessage::RemoveFactory {
+        factory_id: id.to_string(),
+        reply: reply.clone(),
+    };
+    runner_tx.send(removal).map_err(|_| GONE)?;
+    let answered = match start_wait() {
+        Some(wait) => answer.recv_timeout(wait).ok(),
+        None => answer.recv().ok(),
+    };
+    let answered = match answered {
+        Some(result) => result,
+        None if reply.claim().is_some() => {
+            return Err(SessionError::Unavailable(
+                "no answer to the removal within FLEZHA_RUNNER_START_WAIT_MS",
+            ))
         }
-    }
+        // Claimed by the coordinator, which is answering now.
+        None => answer.recv().map_err(|_| GONE)?,
+    };
+    answered.map_err(|live_instances| SessionError::RelayTypeInUse {
+        factory_id: id.to_string(),
+        live_instances,
+    })
 }
 
 /// The runner thread's answer to a start, waiting `wait` (`None`: for ever).
@@ -251,9 +265,6 @@ fn await_confirmation(
     match reply {
         Ok(ClientResponseMessage::RunnerIdConfirmation) => Ok(()),
         Ok(ClientResponseMessage::ConnectRefused(error)) => Err(SessionError::Refused(error)),
-        Ok(_) => Err(SessionError::ConnectFailed(
-            "unexpected confirmation message from the runner thread",
-        )),
         Err(Some(wait)) => Err(SessionError::Unconfirmed {
             wait_ms: wait.as_millis() as u64,
         }),

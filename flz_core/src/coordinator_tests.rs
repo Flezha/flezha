@@ -292,7 +292,6 @@ fn coordinated_with(
         None,
         Arc::clone(&otx_arc),
     );
-    let (ctx, _) = crossbeam::channel::unbounded();
     let bridge = ShutdownBridge::new();
     bridge.set_control_stream(Some(Arc::clone(&control_stream)));
     let mut coordinator = Coordinator {
@@ -301,7 +300,6 @@ fn coordinated_with(
         namespace: "test-ns".to_string(),
         declared,
         otx_arc: Arc::clone(&otx_arc),
-        ctx_arc: Arc::new(Mutex::new(ctx)),
         shutdown_bridge: Arc::clone(&bridge),
     };
     thread::spawn(move || {

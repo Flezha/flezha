@@ -336,7 +336,7 @@ defmodule FlezhaTest.Runner.AddRelayResponseTest do
   defp declarations(metadata), do: decode(encode(metadata))
 
   defp decode(raw),
-    do: ClassRegistry.decode_declarations(raw, "add_relay_response", "unannounced")
+    do: ClassRegistry.decode_declarations(raw, %{run: nil, each: nil, on_failure: nil})
 
   test "tier declaration in the response metadata resolves true" do
     assert declarations(%{"exactly" => "effectively_once"}).effectively_once
@@ -447,18 +447,13 @@ defmodule FlezhaTest.Runner.AddRelayResponseTest do
   end
 
   test "a steps relay's run, loop shape and failure mode are its factory's established ones" do
-    namespace = "add_relay_response_#{System.unique_integer([:positive])}"
-    on_exit(fn -> ClassRegistry.delete_established(namespace, "loop") end)
     raw = encode(%{"run" => "steps", "each" => "once", "on_failure" => "keep_progress"})
+    established = %{run: :steps, each: :per_input, on_failure: :undo_all}
 
-    assert %{run: :flow, each: nil, on_failure: nil} =
-             ClassRegistry.decode_declarations(raw, namespace, "loop")
-
-    for {attribute, value} <- [run: :steps, each: :per_input, on_failure: :undo_all],
-        do: ClassRegistry.put_established(namespace, "loop", attribute, value)
+    assert %{run: :flow, each: nil, on_failure: nil} = decode(raw)
 
     assert %{run: :steps, each: :per_input, on_failure: :undo_all} =
-             ClassRegistry.decode_declarations(raw, namespace, "loop")
+             ClassRegistry.decode_declarations(raw, established)
   end
 
   test "leaf positions resolve to a list — the tree's completion rule" do

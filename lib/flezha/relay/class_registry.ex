@@ -130,21 +130,22 @@ defmodule Flezha.Relay.ClassRegistry do
   @doc """
   Resolve a class's settings and SDK-side declarations from the `AddRelay`
   response raw_data, an `AddRelayResponse` metadata map, and its run, loop
-  shape and failure mode from what `factory_id`'s announcement established in
-  `namespace`. The one place the wire form is decoded; `put_declarations/2` is
-  the one place it is persisted. A new declared capability is added in those
-  two and nowhere else. The sleep interval's default is the class's, announced
-  by its SDK: a class that announces none never sleeps.
+  shape and failure mode from `established`, what its factory is established
+  at as placement reads it (`FleetManager.established/3`). The one place the
+  wire form is decoded; `put_declarations/2` is the one place it is persisted.
+  A new declared capability is added in those two and nowhere else. The sleep
+  interval's default is the class's, announced by its SDK: a class that
+  announces none never sleeps.
   """
-  @spec decode_declarations(binary() | nil, binary(), binary()) :: declarations()
-  def decode_declarations(raw_data, namespace, factory_id) do
+  @spec decode_declarations(binary() | nil, map()) :: declarations()
+  def decode_declarations(raw_data, established) do
     metadata = decode_metadata(raw_data)
     durable = parse_durable(Map.get(metadata, "durable"))
 
     %{
-      run: established(namespace, factory_id, :run) || :flow,
-      each: established(namespace, factory_id, :each),
-      on_failure: established(namespace, factory_id, :on_failure),
+      run: established.run || :flow,
+      each: established.each,
+      on_failure: established.on_failure,
       durable: durable,
       sleep_after_ms: parse_window(Map.get(metadata, "sleep_after_ms")),
       max_duration_ms: parse_window(Map.get(metadata, "max_duration_ms")),
@@ -195,14 +196,14 @@ defmodule Flezha.Relay.ClassRegistry do
 
   @doc """
   Persist every SDK-declared capability for `relay_class`, as decoded from
-  the `AddRelay` response by `decode_declarations/3`.
+  the `AddRelay` response by `decode_declarations/2`.
 
   Each rides an ETS entry plus a durable sidecar, so a process-less `Retention`
   sweep — or a bind that happens while the instance is suspended — resolves it
   with no runner to ask. A declaration a class drops is cleared on its next
   bind, so the sidecar never outlives the claim.
 
-  Together with `decode_declarations/3` this is the whole recipe for a new
+  Together with `decode_declarations/2` this is the whole recipe for a new
   SDK-declared capability: decode it there, persist it here.
   """
   @spec put_declarations(binary(), map()) :: :ok

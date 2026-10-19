@@ -348,7 +348,7 @@ sequenceDiagram
 run, how many cell restores will follow, a steps relay's task-journal
 position, and, for a partition member, its index, the group size and the
 key-group range it owns. The response carries the class's settings as a map of
-strings, read in one place, `Flezha.Relay.ClassRegistry.decode_declarations/3`:
+strings, read in one place, `Flezha.Relay.ClassRegistry.decode_declarations/2`:
 `durable`, `sleep_after_ms`, `max_duration_ms`, `exactly`, `ack`,
 `correction_ms`, `compact_after_bytes`, `compensable_tasks`, `leaf_tasks` and
 `keyed`. How the class runs, and a steps class's `each` and `on_failure`, come
