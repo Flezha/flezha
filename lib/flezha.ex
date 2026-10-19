@@ -22,9 +22,7 @@ defmodule Flezha do
   # published-surface retirement and lands with the consumer that calls it.
   defdelegate list_namespaces(), to: HubManager, as: :get_running_namespaces
 
-  defdelegate list_runners(namespace),
-    to: Flezha.Runner.FleetManager,
-    as: :global_runners
+  defdelegate list_runners(namespace), to: Flezha.Runner.FleetManager.Cluster, as: :global_runners
 
   defdelegate list_relays(namespace), to: RelayManager, as: :get_relay_ids
 

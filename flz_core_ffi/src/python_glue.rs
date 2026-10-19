@@ -417,15 +417,9 @@ impl Core {
     /// derived declaration as JSON; raises the core's error document on a
     /// refusal, whose `details.issues` lists every issue.
     fn check_class<'py>(&self, py: Python<'py>, json: &[u8]) -> PyResult<Bound<'py, PyBytes>> {
-        let ctx = self.ptr()?;
-        match veneer::check_class(ctx, json) {
-            Ok(derived) => Ok(PyBytes::new(py, &derived)),
-            Err(refusal) => Err(refusal.into()),
-        }
+        Ok(PyBytes::new(py, &veneer::check_class(self.ptr()?, json)?))
     }
 
-    /// Connect to the controller and start the runner loop. Blocking: the ABI
-    /// call waits up to ten seconds for the connect confirmation.
     /// Undeclare a class; after start, waits for the runner's live-instance
     /// check.
     fn undeclare_class(&self, py: Python<'_>, factory_id: &str) -> PyResult<()> {
@@ -434,6 +428,8 @@ impl Core {
         Ok(py.detach(move || veneer::undeclare_class(ctx, &factory_id))?)
     }
 
+    /// Connect to the controller and start the runner loop. Blocking: the ABI
+    /// call waits up to `FLEZHA_RUNNER_START_WAIT_MS` for the confirmation.
     fn start(&self, py: Python<'_>, namespace: &str) -> PyResult<()> {
         let ctx = self.ptr()?;
         let namespace = veneer::c_string("namespace", namespace)?;

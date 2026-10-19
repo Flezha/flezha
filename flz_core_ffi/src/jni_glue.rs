@@ -123,9 +123,8 @@ pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_localOnSink(
     ctx: jlong,
     channel: JString,
 ) {
-    let ctx = ctx_of(ctx);
     let outcome = c_string(&mut env, "output channel", &channel)
-        .and_then(|channel| veneer::local_on_sink(ctx, &channel));
+        .and_then(|channel| veneer::local_on_sink(ctx_of(ctx), &channel));
     report(&mut env, outcome);
 }
 
@@ -155,8 +154,7 @@ pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_localNextOutput(
     ctx: jlong,
     timeout_ms: jlong,
 ) -> jbyteArray {
-    let ctx = ctx_of(ctx);
-    match veneer::local_next_output(ctx, timeout_ms.max(0) as u64) {
+    match veneer::local_next_output(ctx_of(ctx), timeout_ms.max(0) as u64) {
         Ok(Some(bytes)) => match env.byte_array_from_slice(&bytes) {
             Ok(array) => array.into_raw(),
             Err(e) => {
@@ -183,8 +181,7 @@ pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_localRunUntilIdle(
     ctx: jlong,
     timeout_ms: jlong,
 ) {
-    let ctx = ctx_of(ctx);
-    let outcome = veneer::local_run_until_idle(ctx, timeout_ms.max(0) as u64);
+    let outcome = veneer::local_run_until_idle(ctx_of(ctx), timeout_ms.max(0) as u64);
     report(&mut env, outcome);
 }
 
@@ -206,9 +203,8 @@ pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_declareClass(
     ctx: jlong,
     json: JByteArray,
 ) {
-    let ctx = ctx_of(ctx);
     let outcome = bytes_of(&mut env, "declaration bytes", &json)
-        .and_then(|bytes| veneer::declare_class(ctx, &bytes));
+        .and_then(|bytes| veneer::declare_class(ctx_of(ctx), &bytes));
     report(&mut env, outcome);
 }
 
@@ -221,9 +217,8 @@ pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_undeclareClass(
     ctx: jlong,
     factory_id: JString,
 ) {
-    let ctx = ctx_of(ctx);
     let outcome = c_string(&mut env, "factory id", &factory_id)
-        .and_then(|factory_id| veneer::undeclare_class(ctx, &factory_id));
+        .and_then(|factory_id| veneer::undeclare_class(ctx_of(ctx), &factory_id));
     report(&mut env, outcome);
 }
 
@@ -271,9 +266,8 @@ pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_start(
     ctx: jlong,
     namespace: JString,
 ) {
-    let ctx = ctx_of(ctx);
     let outcome = c_string(&mut env, "namespace", &namespace)
-        .and_then(|namespace| veneer::start(ctx, &namespace));
+        .and_then(|namespace| veneer::start(ctx_of(ctx), &namespace));
     report(&mut env, outcome);
 }
 

@@ -28,9 +28,7 @@ pub unsafe extern "C" fn flz_core_admin_call(
     result_out: *mut *mut u8,
     result_len_out: *mut usize,
 ) -> i32 {
-    let Some(ctx) = ctx.as_mut() else {
-        return FLZ_ERR;
-    };
+    live!(mut ctx);
     let (Ok(verb), Ok(args)) = (CStr::from_ptr(verb).to_str(), CStr::from_ptr(args).to_str())
     else {
         return ctx.fail(Error::Utf8("administration arguments"));
@@ -68,9 +66,7 @@ pub unsafe extern "C" fn flz_core_send_message(
     result_out: *mut *mut u8,
     result_len_out: *mut usize,
 ) -> i32 {
-    let Some(ctx) = ctx.as_ref() else {
-        return FLZ_ERR;
-    };
+    live!(ctx);
     let (Ok(relay), Ok(channel), Ok(msg_id), Ok(key)) = (
         CStr::from_ptr(relay).to_str(),
         CStr::from_ptr(channel).to_str(),

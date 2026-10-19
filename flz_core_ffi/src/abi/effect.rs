@@ -4,7 +4,7 @@ use std::ffi::{c_char, CStr};
 
 use crate::{
     hand_out, Counted, Error, FlzContext, Running, FLZ_EFFECT_KEPT, FLZ_EFFECT_RUN,
-    FLZ_EFFECT_UNRECORDED, FLZ_ERR, FLZ_OK,
+    FLZ_EFFECT_UNRECORDED, FLZ_OK,
 };
 
 /// Begin `ctx.effect(name)` in `item`, the index of a work item of the live
@@ -31,9 +31,7 @@ pub unsafe extern "C" fn flz_core_effect_begin(
     out_len: *mut usize,
 ) -> i32 {
     use flz_core::effect_result;
-    let Some(ctx) = ctx.as_ref() else {
-        return FLZ_ERR;
-    };
+    live!(ctx);
     let Ok(name) = CStr::from_ptr(name).to_str() else {
         return ctx.fail(Error::Utf8("effect name"));
     };
@@ -101,9 +99,7 @@ pub unsafe extern "C" fn flz_core_effect_end(
     out: *mut *mut u8,
     out_len: *mut usize,
 ) -> i32 {
-    let Some(ctx) = ctx.as_ref() else {
-        return FLZ_ERR;
-    };
+    live!(ctx);
     let taken = ctx.outstanding.get_mut(&token).and_then(|mut outstanding| {
         let running = outstanding.take_effect(item)?;
         Some((running, outstanding.activation.cell_identity().to_vec()))
@@ -144,9 +140,7 @@ pub unsafe extern "C" fn flz_core_effect_release(
     token: u64,
     item: u32,
 ) -> i32 {
-    let Some(ctx) = ctx.as_ref() else {
-        return FLZ_ERR;
-    };
+    live!(ctx);
     if let Some(mut outstanding) = ctx.outstanding.get_mut(&token) {
         outstanding.take_effect(item);
     }

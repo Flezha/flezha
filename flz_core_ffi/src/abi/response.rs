@@ -2,7 +2,7 @@
 //! one decoder, so a host keeps only its codecs and its `Response` type.
 
 use flz_core::call::Envelope;
-use flz_core::FlezhaError;
+use flz_core::{Code, FlezhaError};
 
 use crate::{hand_out, set_init_error, Error, FLZ_ERR, FLZ_OK};
 
@@ -23,11 +23,10 @@ fn encode(envelope: &Envelope) -> Result<Vec<u8>, String> {
         .result
         .as_deref()
         .map_err(|_| document.as_deref().unwrap_or_default());
-    let (target, request) = (envelope.target.as_str(), envelope.request.as_slice());
     let parts = ResponseParts {
-        target,
+        target: &envelope.target,
         created: envelope.created,
-        request,
+        request: &envelope.request,
         result,
     };
     postcard::to_allocvec(&parts).map_err(|e| e.to_string())
@@ -61,7 +60,8 @@ pub unsafe extern "C" fn flz_core_response_decode(
             FLZ_OK
         }
         Err(reason) => {
-            set_init_error(Error::MalformedResponse(reason));
+            let reason = [("reason", reason.into())];
+            set_init_error(Error::Refused(Code::MalformedResponse.with(reason)));
             FLZ_ERR
         }
     }

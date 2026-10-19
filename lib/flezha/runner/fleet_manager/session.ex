@@ -269,11 +269,7 @@ defmodule Flezha.Runner.FleetManager.Session do
     # rerouted here.
     Facts.declare({:runner_disconnected, {namespace, runner_id}, %{}})
 
-    EventManager.dispatch(
-      :runner_disconnected_event,
-      {namespace, runner_id},
-      %{members: :local}
-    )
+    EventManager.dispatch(:runner_disconnected_event, {namespace, runner_id}, %{members: :local})
 
     :telemetry.execute(
       [:flezha, :runner, :disconnected],
@@ -491,19 +487,19 @@ defmodule Flezha.Runner.FleetManager.Session do
   end
 
   @doc """
-  Everything one connect settled, in the shape `runner_connect` is served from:
-  the namespace and credential the proof answered (`Flezha.AuthZ.RunnerProof`),
-  and the factory set and stable identity the frame declared. The frame's own
-  shape is read here and nowhere else.
+  Everything one connect claims, in the shape `runner_connect` is served from:
+  the namespace the frame names, which the proof (`Flezha.AuthZ.RunnerProof`)
+  replaces with the proven one and its credential, and the factory set and
+  stable identity the frame declared. The frame's own shape is read here and
+  nowhere else.
   """
-  @spec connect_record(%{namespace: binary(), credential: binary() | nil}, map(), atom()) ::
-          map()
-  def connect_record(%{namespace: namespace, credential: credential}, init_payload, transport) do
+  @spec connect_record(binary(), map(), atom()) :: map()
+  def connect_record(namespace, init_payload, transport) do
     %{
       namespace: namespace,
       transport: transport,
-      credential: credential,
-      factories: parse_factories(init_payload),
+      credential: nil,
+      factories: Map.get(init_payload, "factories") || [],
       stable_id: non_empty(init_payload, "stable_id"),
       incarnation: non_empty(init_payload, "incarnation")
     }
@@ -519,10 +515,6 @@ defmodule Flezha.Runner.FleetManager.Session do
       value when is_binary(value) and value != "" -> value
       _ -> nil
     end
-  end
-
-  defp parse_factories(init_payload) do
-    Map.get(init_payload, "factories") || []
   end
 
   def catch_runner_connect(stream_ref, connect) do

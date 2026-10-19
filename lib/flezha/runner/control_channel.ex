@@ -37,13 +37,6 @@ defmodule Flezha.Runner.ControlChannel do
   # The rebinds one session may spend before its next data-plane loss ends it.
   @rebinds 3
 
-  # Control-plane liveness: the SDK keepalive ping (and every other inbound
-  # frame) re-arms `last_seen`; a jittered watchdog treats sustained silence
-  # past the window as a connection close — the same signal `{:flz_closed}`
-  # carries. Closes the UDS wedged-but-connected blind spot and makes UDS
-  # symmetric with QUIC's idle timeout. Mirrors the data-plane `StreamChannel`
-  # last_seen/threshold watchdog.
-
   def start_link({namespace, runner_id, stream_ref}) do
     GenServer.start_link(__MODULE__, {namespace, runner_id, stream_ref, nil},
       name: Identificator.control_channel(runner_id)
@@ -355,7 +348,7 @@ defmodule Flezha.Runner.ControlChannel do
   def handle_info(:liveness_tick, state) do
     silent_ms = System.monotonic_time(:millisecond) - state.last_seen
 
-    if silent_ms > liveness_window_ms() do
+    if silent_ms > Durations.get(:control_liveness_window_ms) do
       Logger.warning(
         "[control_channel] no inbound control frame for #{silent_ms}ms for " <>
           "#{state.runner_id} on #{state.namespace}; treating as connection close"
@@ -418,18 +411,12 @@ defmodule Flezha.Runner.ControlChannel do
   # A non-positive interval turns the check off: nothing is armed and the key
   # simply holds no timer.
   defp arm_liveness_check(state) do
-    interval = liveness_interval_ms()
+    interval = Durations.get(:control_liveness_interval_ms)
 
     if interval > 0,
       do: arm_timer(state, :liveness, jittered(interval), :liveness_tick),
       else: state
   end
-
-  defp liveness_window_ms,
-    do: Durations.get(:control_liveness_window_ms)
-
-  defp liveness_interval_ms,
-    do: Durations.get(:control_liveness_interval_ms)
 
   # Full jitter into [interval/2, interval] so a fleet's control channels do
   # not all wake in lockstep (mirrors the SDK's `liveness::jittered`).
@@ -473,12 +460,8 @@ defmodule Flezha.Runner.ControlChannel do
   # waiter on it). Best-effort: a dead stream is logged, never raised — the
   # SDK side owns the timeout.
   defp emit_control_request(state, reference_id, command, log_label) do
-    case write_control(state, encode_request(reference_id, command)) do
-      {:error, reason} ->
-        Logger.warning("[control_channel] failed to emit #{log_label}: #{inspect(reason)}")
-
-      _ok_or_unbound ->
-        :ok
+    with {:error, reason} <- write_control(state, encode_request(reference_id, command)) do
+      Logger.warning("[control_channel] failed to emit #{log_label}: #{inspect(reason)}")
     end
 
     :ok

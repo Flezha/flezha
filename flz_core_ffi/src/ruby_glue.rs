@@ -60,11 +60,11 @@ fn raise(ruby: &Ruby, refusal: Refusal) -> Error {
 }
 
 /// The live context, or an error naming what the caller skipped.
-fn context(ruby: &Ruby) -> Result<CtxPtr, Error> {
+fn context() -> Result<CtxPtr, Error> {
     let ptr = CONTEXT.load(Ordering::Acquire);
     if ptr.is_null() {
         return Err(native_error(
-            ruby,
+            &ruby(),
             "flz_core context not created: call Flezha::Native.context_new first",
         ));
     }
@@ -304,7 +304,7 @@ fn context_new(shim_schema_version: u32) -> Result<(), Error> {
             "flz_core context already created for this process",
         ));
     }
-    let ctx = veneer::context_new(shim_schema_version).map_err(|r| raise(&ruby, r))?;
+    let ctx = veneer::context_new(shim_schema_version)?;
     CONTEXT.store(ctx, Ordering::Release);
     Ok(())
 }
@@ -319,10 +319,9 @@ fn context_free() {
 
 /// Declare one host class from its JSON declaration. Raises the core's refusal.
 fn declare_class(json: RString) -> Result<(), Error> {
-    let ruby = ruby();
-    let ctx = context(&ruby)?;
+    let ctx = context()?;
     let json = unsafe { json.as_slice() }.to_vec();
-    veneer::declare_class(ctx, &json).map_err(|r| raise(&ruby, r))
+    veneer::declare_class(ctx, &json).map_err(Error::from)
 }
 
 /// Judge one host class declaration without registering it: the derived
@@ -330,74 +329,61 @@ fn declare_class(json: RString) -> Result<(), Error> {
 /// `details.issues` lists every issue. The gem's `Graph.validate` is this call
 /// and nothing else.
 fn check_class(json: RString) -> Result<String, Error> {
-    let ruby = ruby();
-    let ctx = context(&ruby)?;
+    let ctx = context()?;
     let json = unsafe { json.as_slice() }.to_vec();
-    match veneer::check_class(ctx, &json) {
-        Ok(derived) => Ok(String::from_utf8_lossy(&derived).into_owned()),
-        Err(refusal) => Err(raise(&ruby, refusal)),
-    }
+    let derived = veneer::check_class(ctx, &json)?;
+    Ok(String::from_utf8_lossy(&derived).into_owned())
+}
+
+/// Undeclare a class; after start, waits for the runner's live-instance check.
+fn undeclare_class(factory_id: String) -> Result<(), Error> {
+    let ctx = context()?;
+    let factory_id = veneer::c_string("factory id", &factory_id)?;
+    without_gvl(move || veneer::undeclare_class(ctx, &factory_id)).map_err(Error::from)
 }
 
 /// Connect to the controller and start the runner loop. Blocking: the ABI call
-/// waits up to ten seconds for the connect confirmation.
-/// Undeclare a class; after start, waits for the runner's live-instance check.
-fn undeclare_class(factory_id: String) -> Result<(), Error> {
-    let ruby = ruby();
-    let ctx = context(&ruby)?;
-    let refused = |r| raise(&ruby, r);
-    let factory_id = veneer::c_string("factory id", &factory_id).map_err(refused)?;
-    without_gvl(move || veneer::undeclare_class(ctx, &factory_id)).map_err(refused)
-}
-
+/// waits up to `FLEZHA_RUNNER_START_WAIT_MS` for the confirmation.
 fn start(namespace: String) -> Result<(), Error> {
-    let ruby = ruby();
-    let ctx = context(&ruby)?;
-    let refused = |r| raise(&ruby, r);
-    let namespace = veneer::c_string("namespace", &namespace).map_err(refused)?;
-    without_gvl(move || veneer::start(ctx, &namespace)).map_err(refused)
+    let ctx = context()?;
+    let namespace = veneer::c_string("namespace", &namespace)?;
+    without_gvl(move || veneer::start(ctx, &namespace)).map_err(Error::from)
 }
 
 /// Start the declared class as a local run: no controller, no socket. The
 /// alternative to [`start`], never an addition. The host keeps driving its own
 /// poll loop, which is what runs the tasklets.
 fn local_start(factory_id: String, relay_id: String) -> Result<(), Error> {
-    let ruby = ruby();
-    let ctx = context(&ruby)?;
-    let refused = |r| raise(&ruby, r);
-    let factory = veneer::c_string("factory id", &factory_id).map_err(refused)?;
-    let relay = veneer::c_string("relay id", &relay_id).map_err(refused)?;
-    veneer::local_start(ctx, &factory, &relay).map_err(refused)
+    let ctx = context()?;
+    let factory = veneer::c_string("factory id", &factory_id)?;
+    let relay = veneer::c_string("relay id", &relay_id)?;
+    veneer::local_start(ctx, &factory, &relay).map_err(Error::from)
 }
 
 /// Queue the declared sink `channel` for [`local_next_output`]. A channel the
 /// declaration does not carry is refused here, by name.
 fn local_on_sink(channel: String) -> Result<(), Error> {
-    let ruby = ruby();
-    let ctx = context(&ruby)?;
-    let refused = |r| raise(&ruby, r);
-    let channel = veneer::c_string("output channel", &channel).map_err(refused)?;
-    veneer::local_on_sink(ctx, &channel).map_err(refused)
+    let ctx = context()?;
+    let channel = veneer::c_string("output channel", &channel)?;
+    veneer::local_on_sink(ctx, &channel).map_err(Error::from)
 }
 
 /// Feed one value's wire bytes to a declared entry channel. Blocking: the
 /// entry path parks while the consumer's mailbox is full.
 fn local_feed(channel: String, payload: RString) -> Result<(), Error> {
     let ruby = ruby();
-    let ctx = context(&ruby)?;
-    let refused = |r| raise(&ruby, r);
-    let channel = veneer::c_string("entry channel", &channel).map_err(refused)?;
+    let ctx = context()?;
+    let channel = veneer::c_string("entry channel", &channel)?;
     let payload = read_bytes(&ruby, "payload", payload.as_value())?;
-    without_gvl(move || veneer::local_feed(ctx, &channel, &payload)).map_err(refused)
+    without_gvl(move || veneer::local_feed(ctx, &channel, &payload)).map_err(Error::from)
 }
 
 /// The next value a sink released as the output Hash this SDK already builds,
 /// or `nil` on timeout. Blocking for the whole timeout.
 fn local_next_output(timeout_ms: u64) -> Result<Value, Error> {
     let ruby = ruby();
-    let ctx = context(&ruby)?;
-    let released = without_gvl(move || veneer::local_next_output(ctx, timeout_ms))
-        .map_err(|r| raise(&ruby, r))?;
+    let ctx = context()?;
+    let released = without_gvl(move || veneer::local_next_output(ctx, timeout_ms))?;
     match released {
         Some(encoded) => {
             let output = flz_core::schema::decode_output(&encoded)
@@ -411,16 +397,14 @@ fn local_next_output(timeout_ms: u64) -> Result<Value, Error> {
 /// Park until the graph has nothing left to do. A timeout is a refusal, never
 /// a silent success.
 fn local_run_until_idle(timeout_ms: u64) -> Result<(), Error> {
-    let ruby = ruby();
-    let ctx = context(&ruby)?;
-    without_gvl(move || veneer::local_run_until_idle(ctx, timeout_ms)).map_err(|r| raise(&ruby, r))
+    let ctx = context()?;
+    without_gvl(move || veneer::local_run_until_idle(ctx, timeout_ms)).map_err(Error::from)
 }
 
 /// End the local run and release its Cells. A context holding none is a
 /// no-op, so a host's close path needs no test of its own.
 fn local_stop() -> Result<(), Error> {
-    let ruby = ruby();
-    veneer::local_stop(context(&ruby)?);
+    veneer::local_stop(context()?);
     Ok(())
 }
 
@@ -428,8 +412,8 @@ fn local_stop() -> Result<(), Error> {
 /// `nil` on timeout, or `:shutting_down` once every poller has been released.
 fn poll(timeout_ms: u64) -> Result<Value, Error> {
     let ruby = ruby();
-    let ctx = context(&ruby)?;
-    match without_gvl(move || veneer::poll(ctx, timeout_ms)).map_err(|r| raise(&ruby, r))? {
+    let ctx = context()?;
+    match without_gvl(move || veneer::poll(ctx, timeout_ms))? {
         Polled::Activation(act) => shape::activation(&Values(&ruby), act),
         Polled::Timeout => Ok(ruby.qnil().as_value()),
         Polled::ShuttingDown => Ok(ruby.sym_new("shutting_down").as_value()),
@@ -440,9 +424,8 @@ fn poll(timeout_ms: u64) -> Result<Value, Error> {
 /// ABI's three-way status directly (`1` observed, `0` timeout, `2` shutting
 /// down), so a supervisor loop allocates nothing per park.
 fn wait_starvation(timeout_ms: u64) -> Result<i32, Error> {
-    let ruby = ruby();
-    let ctx = context(&ruby)?;
-    without_gvl(move || veneer::wait_starvation(ctx, timeout_ms)).map_err(|r| raise(&ruby, r))
+    let ctx = context()?;
+    without_gvl(move || veneer::wait_starvation(ctx, timeout_ms)).map_err(Error::from)
 }
 
 /// Answer one activation. Blocking, and this is the entry point the GVL rule
@@ -451,32 +434,29 @@ fn wait_starvation(timeout_ms: u64) -> Result<i32, Error> {
 /// consumer drains only when its handler runs on another Ruby thread.
 fn complete(result: RHash) -> Result<(), Error> {
     let ruby = ruby();
-    let ctx = context(&ruby)?;
+    let ctx = context()?;
     let result = shape::result(&Values(&ruby), &result)?;
-    without_gvl(move || veneer::complete(ctx, &result)).map_err(|r| raise(&ruby, r))
+    without_gvl(move || veneer::complete(ctx, &result)).map_err(Error::from)
 }
 
 /// Abandon a polled activation: re-hand its untouched items and release its
 /// cell. Non-blocking by design — the dispatcher runs it from an `ensure`,
 /// where anything that can park is one more thing that can go wrong.
 fn abandon(token: u64) -> Result<(), Error> {
-    let ruby = ruby();
-    let ctx = context(&ruby)?;
-    veneer::abandon(ctx, token).map_err(|r| raise(&ruby, r))
+    let ctx = context()?;
+    veneer::abandon(ctx, token).map_err(Error::from)
 }
 
 /// Wake every blocked poller and stop the runner loop.
 fn shutdown() -> Result<(), Error> {
-    let ruby = ruby();
-    veneer::shutdown(context(&ruby)?);
+    veneer::shutdown(context()?);
     Ok(())
 }
 
 /// Watch standard input and end the process on end of file, on the core's own
 /// thread. The host reads descriptor 0 nowhere.
 fn watch_stdin_eof() -> Result<(), Error> {
-    let ruby = ruby();
-    context(&ruby)?;
+    context()?;
     veneer::watch_stdin_eof();
     Ok(())
 }
@@ -493,28 +473,25 @@ fn spawn_request(
     replay: bool,
     offset: Option<u64>,
 ) -> Result<u64, Error> {
-    let ruby = ruby();
-    let ctx = context(&ruby)?;
-    let refused = |r| raise(&ruby, r);
-    let factory = veneer::c_string("factory id", &factory_id).map_err(refused)?;
-    let id = veneer::c_string("id", &id).map_err(refused)?;
-    let mode = veneer::c_string("if_running", &if_running).map_err(refused)?;
+    let ctx = context()?;
+    let factory = veneer::c_string("factory id", &factory_id)?;
+    let id = veneer::c_string("id", &id)?;
+    let mode = veneer::c_string("if_running", &if_running)?;
     // SAFETY: the GVL is held for the whole call, so nothing can move or free
     // the string's bytes while the core copies them.
     let payload = unsafe { payload.as_slice() };
     veneer::spawn_request(ctx, token, &factory, &id, payload, &mode, replay, offset)
-        .map_err(refused)
+        .map_err(Error::from)
 }
 
 /// Send a part of the live activation `token`'s work item `item`. Never
 /// waits, so it holds the GVL.
 fn part(token: u64, item: u32, payload: RString) -> Result<(), Error> {
-    let ruby = ruby();
-    let ctx = context(&ruby)?;
+    let ctx = context()?;
     // SAFETY: the GVL is held for the whole call, so nothing can move or free
     // the string's bytes while the core copies them.
     let payload = unsafe { payload.as_slice() };
-    veneer::part(ctx, token, item, payload).map_err(|r| raise(&ruby, r))
+    veneer::part(ctx, token, item, payload).map_err(Error::from)
 }
 
 /// Begin `ctx.effect(name)` in the live activation `token`'s work item `item`:
@@ -522,18 +499,15 @@ fn part(token: u64, item: u32, payload: RString) -> Result<(), Error> {
 /// holds the GVL.
 fn effect_begin(token: u64, item: u32, name: String) -> Result<(Symbol, Option<RString>), Error> {
     let ruby = ruby();
-    let ctx = context(&ruby)?;
-    let refused = |r| raise(&ruby, r);
-    let name = veneer::c_string("effect name", &name).map_err(refused)?;
-    Ok(
-        match veneer::effect_begin(ctx, token, item, &name).map_err(refused)? {
-            veneer::EffectStart::Kept(result) => {
-                (ruby.to_symbol("kept"), Some(ruby.str_from_slice(&result)))
-            }
-            veneer::EffectStart::Run => (ruby.to_symbol("run"), None),
-            veneer::EffectStart::Unrecorded => (ruby.to_symbol("unrecorded"), None),
-        },
-    )
+    let ctx = context()?;
+    let name = veneer::c_string("effect name", &name)?;
+    Ok(match veneer::effect_begin(ctx, token, item, &name)? {
+        veneer::EffectStart::Kept(result) => {
+            (ruby.to_symbol("kept"), Some(ruby.str_from_slice(&result)))
+        }
+        veneer::EffectStart::Run => (ruby.to_symbol("run"), None),
+        veneer::EffectStart::Unrecorded => (ruby.to_symbol("unrecorded"), None),
+    })
 }
 
 /// Keep the encoded result of the function a `run` begin ran, waiting with the
@@ -541,32 +515,29 @@ fn effect_begin(token: u64, item: u32, name: String) -> Result<(Symbol, Option<R
 /// the result the controller kept first.
 fn effect_end(token: u64, item: u32, payload: RString) -> Result<Option<RString>, Error> {
     let ruby = ruby();
-    let ctx = context(&ruby)?;
+    let ctx = context()?;
     // Copied while the GVL is held: the wait below releases it.
     let payload = unsafe { payload.as_slice() }.to_vec();
-    let first = without_gvl(move || veneer::effect_end(ctx, token, item, &payload))
-        .map_err(|r| raise(&ruby, r))?;
+    let first = without_gvl(move || veneer::effect_end(ctx, token, item, &payload))?;
     Ok(first.map(|first| ruby.str_from_slice(&first)))
 }
 
 /// End a begun effect without keeping anything. Never waits.
 fn effect_release(token: u64, item: u32) -> Result<(), Error> {
-    let ruby = ruby();
-    veneer::effect_release(context(&ruby)?, token, item);
+    veneer::effect_release(context()?, token, item);
     Ok(())
 }
 
 /// Read a spawn handle: `nil` while pending, otherwise its answer as JSON. A
 /// nonzero timeout waits with the GVL released.
 fn spawn_result(handle: u64, timeout_ms: u64) -> Result<Option<String>, Error> {
-    let ruby = ruby();
-    let ctx = context(&ruby)?;
+    let ctx = context()?;
     let answer = if timeout_ms == 0 {
         veneer::spawn_result(ctx, handle, 0)
     } else {
         without_gvl(move || veneer::spawn_result(ctx, handle, timeout_ms))
     };
-    answer.map_err(|r| raise(&ruby, r))
+    answer.map_err(Error::from)
 }
 
 /// Administer the namespace this connection proved; answers the published
@@ -574,12 +545,10 @@ fn spawn_result(handle: u64, timeout_ms: u64) -> Result<Option<String>, Error> {
 /// so a further verb is Ruby and no native work. Blocking: the ABI call waits
 /// up to thirty seconds.
 fn admin_call(verb: String, args: String) -> Result<String, Error> {
-    let ruby = ruby();
-    let ctx = context(&ruby)?;
-    let refused = |r| raise(&ruby, r);
-    let verb = veneer::c_string("verb", &verb).map_err(refused)?;
-    let args = veneer::c_string("args", &args).map_err(refused)?;
-    without_gvl(move || veneer::admin_call(ctx, &verb, &args)).map_err(refused)
+    let ctx = context()?;
+    let verb = veneer::c_string("verb", &verb)?;
+    let args = veneer::c_string("args", &args)?;
+    without_gvl(move || veneer::admin_call(ctx, &verb, &args)).map_err(Error::from)
 }
 
 /// Send one message, through the controller or locally, answering as JSON:
@@ -595,23 +564,20 @@ fn send_message(
     local: bool,
 ) -> Result<String, Error> {
     let ruby = ruby();
-    let ctx = context(&ruby)?;
-    let refused = |r| raise(&ruby, r);
-    let relay = veneer::c_string("relay", &relay).map_err(refused)?;
-    let channel = veneer::c_string("entry channel", &channel).map_err(refused)?;
-    let msg_id =
-        veneer::c_string("message id", msg_id.as_deref().unwrap_or_default()).map_err(refused)?;
-    let key = veneer::c_string("key", key.as_deref().unwrap_or_default()).map_err(refused)?;
+    let ctx = context()?;
+    let relay = veneer::c_string("relay", &relay)?;
+    let channel = veneer::c_string("entry channel", &channel)?;
+    let msg_id = veneer::c_string("message id", msg_id.as_deref().unwrap_or_default())?;
+    let key = veneer::c_string("key", key.as_deref().unwrap_or_default())?;
     let message = read_bytes(&ruby, "message", message.as_value())?;
     without_gvl(move || veneer::send_message(ctx, &relay, &channel, &message, &msg_id, &key, local))
-        .map_err(refused)
+        .map_err(Error::from)
 }
 
 /// The ids of the relay instances bound on this runner.
 fn relays() -> Result<Vec<String>, Error> {
-    let ruby = ruby();
-    let ctx = context(&ruby)?;
-    veneer::relays(ctx).map_err(|r| raise(&ruby, r))
+    let ctx = context()?;
+    veneer::relays(ctx).map_err(Error::from)
 }
 
 /// The core's monotonic clock in nanoseconds.
@@ -622,7 +588,7 @@ fn monotonic_nanos() -> u64 {
 /// A knob's text parsed by the core's rule for `kind`; `nil` when it is no
 /// value of that kind.
 fn knob(kind: String, raw: String) -> Result<Option<i64>, Error> {
-    veneer::knob(&kind, &raw).map_err(|r| raise(&ruby(), r))
+    veneer::knob(&kind, &raw).map_err(Error::from)
 }
 
 /// The core's notices held since the last take, as `[level, target, text]`;
@@ -660,7 +626,7 @@ fn response_decode(payload: RString) -> Result<ResponseRow, Error> {
         let error = r.result.err().map(|error| ruby.str_new(error));
         (ruby.str_new(r.target), r.created, request, value, error)
     });
-    parts.map_err(|r| raise(&ruby, r))
+    parts.map_err(Error::from)
 }
 
 type ResponseRow = (RString, bool, RString, Option<RString>, Option<RString>);

@@ -25,7 +25,7 @@ defmodule Flezha.Service.Namespace do
   alias Flezha.AuthZ.Role
   alias Flezha.AuthZ.RoleStore
   alias Flezha.AuthZ.TokenStore
-  alias Flezha.Runner.FleetManager
+  alias Flezha.Runner.FleetManager.Cluster
   alias Flezha.Service.Admin
   alias Flezha.Service.CallerContext
   alias Flezha.Service.HubManager
@@ -288,7 +288,7 @@ defmodule Flezha.Service.Namespace do
   # plus those still in their handshake, which already run in the namespace.
   defp vacant(name) do
     relays = name |> HubManager.relay_rows() |> Enum.map(& &1.id)
-    {:ok, runners} = FleetManager.global_occupants(name)
+    {:ok, runners} = Cluster.global_occupants(name)
 
     case {relays, runners} do
       {[], []} -> :ok

@@ -50,10 +50,7 @@ defmodule Flezha.Runner.FleetManager do
     GenServer.call(__MODULE__, {:list_factories, namespace, runner}, manager_call_timeout())
   end
 
-  defdelegate global_factories(namespace), to: Cluster
-  defdelegate global_runners(namespace), to: Cluster
   defdelegate global_runner_rows(namespace), to: Cluster
-  defdelegate global_occupants(namespace), to: Cluster
   defdelegate find_session(namespace, runner_id), to: Cluster
 
   @doc "`factory_id`'s row of this node's `list_factories/2`, with `runner`'s API, or `nil`."
@@ -80,8 +77,7 @@ defmodule Flezha.Runner.FleetManager do
   `init_payload` is the decoded JSON from the initial frame.
   """
   def connect_handler(stream_ref, namespace, init_payload, transport) do
-    claimed =
-      Session.connect_record(%{namespace: namespace, credential: nil}, init_payload, transport)
+    claimed = Session.connect_record(namespace, init_payload, transport)
 
     context = %{stream_ref: stream_ref, init_payload: init_payload}
 
@@ -91,7 +87,7 @@ defmodule Flezha.Runner.FleetManager do
            GenServer.call(
              __MODULE__,
              {:runner_connect, stream_ref, connect},
-             runner_connect_timeout()
+             manager_call_timeout()
            ) do
       {:ok, session_token}
     end
@@ -349,7 +345,7 @@ defmodule Flezha.Runner.FleetManager do
     # returns immediately. The gate matters on a restart where the
     # supervisor brings a hub up before FleetManager
     # is asked to serve registry-touching calls.
-    case HubManager.await_recovery_complete(boot_recovery_timeout()) do
+    case HubManager.await_recovery_complete(Durations.get(:boot_replay_timeout_ms)) do
       :ok ->
         :ok
 
@@ -380,10 +376,6 @@ defmodule Flezha.Runner.FleetManager do
        # serves, so a sync announces only what moved.
        announced_groups: %{}
      })}
-  end
-
-  defp boot_recovery_timeout() do
-    Durations.get(:boot_replay_timeout_ms)
   end
 
   @impl true
@@ -417,8 +409,7 @@ defmodule Flezha.Runner.FleetManager do
 
     case Map.get(state.stable_sessions, stable_id) do
       {session, _credential, ^incarnation} ->
-        if Roster.runner_active?(state, session) and
-             match?({:active, _}, get_in(state.runner_namespaces, [namespace, session])) do
+        if match?({:active, _}, get_in(state.runner_namespaces, [namespace, session])) do
           Logger.info("Dropping runner #{session} (stable identity #{stable_id})")
           # Marked before the close, as `disconnect_runner` does, so the close
           # is torn down as one this controller asked for.
@@ -754,19 +745,11 @@ defmodule Flezha.Runner.FleetManager do
     Load.counts(HubManager.registry_dump(namespace), candidates(state, namespace, nil))
   end
 
-  # runner_connect/3 may block inside Orchestrator.await_cluster_ready/0
-  # (bounded by :cluster_formation_timeout_ms, default 15s) while the cluster
-  # forms after a restart. The connect call must outlast that window plus the
-  # rest of the connect work, or the caller's default 5s timeout fires and
-  # strands every runner that connects during formation.
-  # Every call lands on this one serialized process, and a connect is allowed to
-  # take `runner_connect_timeout/0` — so a caller waiting the `GenServer.call`
-  # default of 5 s times out whenever it arrives while a connect is in flight.
-  # That is not contention to ride out: the manager is permitted to be busy for
-  # longer than the caller was willing to wait. Every caller gets the same
-  # budget as the work the manager may be doing.
+  # A runner connect may block while the cluster forms after a restart, and
+  # every call lands on this one serialized process, so a caller waiting the
+  # `GenServer.call` default of 5 s would time out whenever a connect is in
+  # flight, stranding the runners that connect during formation. Every caller
+  # gets the same budget as the work the manager may be doing.
   @doc false
-  def manager_call_timeout, do: runner_connect_timeout()
-
-  defp runner_connect_timeout, do: Durations.get(:cluster_formation_wait_ms)
+  def manager_call_timeout, do: Durations.get(:cluster_formation_wait_ms)
 end

@@ -6,7 +6,7 @@ use std::sync::Mutex;
 
 use dashmap::DashMap;
 
-use crate::{hand_out, set_init_error, Error, FlzContext, FLZ_ERR, FLZ_OK, INIT_ERROR, RENDERED};
+use crate::{hand_out, set_init_error, Error, FlzContext, FLZ_OK, INIT_ERROR, RENDERED};
 
 /// The schema version this core speaks; a shim compares before connecting.
 #[no_mangle]
@@ -124,9 +124,7 @@ pub unsafe extern "C" fn flz_core_declare_class(
     json: *const u8,
     json_len: usize,
 ) -> i32 {
-    let Some(ctx) = ctx.as_mut() else {
-        return FLZ_ERR;
-    };
+    live!(mut ctx);
     let bytes = std::slice::from_raw_parts(json, json_len);
     let factory_id = serde_json::from_slice::<serde_json::Value>(bytes)
         .ok()
@@ -149,9 +147,7 @@ pub unsafe extern "C" fn flz_core_undeclare_class(
     ctx: *mut FlzContext,
     factory_id: *const c_char,
 ) -> i32 {
-    let Some(ctx) = ctx.as_mut() else {
-        return FLZ_ERR;
-    };
+    live!(mut ctx);
     let Ok(factory_id) = CStr::from_ptr(factory_id).to_str() else {
         return ctx.fail(Error::Utf8("factory_id"));
     };
@@ -182,9 +178,7 @@ pub unsafe extern "C" fn flz_core_check_class(
     buf_out: *mut *mut u8,
     len_out: *mut usize,
 ) -> i32 {
-    let Some(ctx) = ctx.as_mut() else {
-        return FLZ_ERR;
-    };
+    live!(mut ctx);
     let bytes = std::slice::from_raw_parts(json, json_len);
     match flz_core::host::check_class_json(bytes) {
         Ok(derived) => {

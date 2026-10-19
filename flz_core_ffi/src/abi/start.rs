@@ -3,7 +3,7 @@
 use std::ffi::{c_char, CStr};
 use std::time::Duration;
 
-use crate::{Error, FlzContext, FLZ_ERR};
+use crate::{Error, FlzContext};
 
 /// Connect to the controller and start the runner loop. Transport
 /// configuration (socket path, `FLEZHA_TRANSPORT`) rides the same
@@ -14,9 +14,7 @@ use crate::{Error, FlzContext, FLZ_ERR};
 /// `ctx` must be live; `namespace` must be a NUL-terminated string.
 #[no_mangle]
 pub unsafe extern "C" fn flz_core_start(ctx: *mut FlzContext, namespace: *const c_char) -> i32 {
-    let Some(ctx) = ctx.as_mut() else {
-        return FLZ_ERR;
-    };
+    live!(mut ctx);
     let Ok(namespace) = CStr::from_ptr(namespace).to_str() else {
         return ctx.fail(Error::Utf8("namespace"));
     };
@@ -41,9 +39,7 @@ pub unsafe extern "C" fn flz_core_start_with(
     settings: *const u8,
     settings_len: usize,
 ) -> i32 {
-    let Some(ctx) = ctx.as_mut() else {
-        return FLZ_ERR;
-    };
+    live!(mut ctx);
     let Ok(namespace) = CStr::from_ptr(namespace).to_str() else {
         return ctx.fail(Error::Utf8("namespace"));
     };

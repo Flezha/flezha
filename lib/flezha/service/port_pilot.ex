@@ -259,15 +259,7 @@ defmodule Flezha.Service.PortPilot do
 
   @impl true
   def init(_) do
-    ports = initialize_ports()
-
-    {:ok,
-     arm_counter_reset(%{
-       ports: ports,
-       response_refs: %{},
-       port_down_counter: 0,
-       partial: %{}
-     })}
+    {:ok, arm_counter_reset(%{ports: initialize_ports(), port_down_counter: 0, partial: %{}})}
   end
 
   @impl true
@@ -347,12 +339,7 @@ defmodule Flezha.Service.PortPilot do
     {:noreply, state}
   end
 
-  defp initialize_ports() do
-    external_processes = Config.get(:external_processes)
-
-    Enum.map(external_processes, &open_runner/1)
-    |> Map.new()
-  end
+  defp initialize_ports(), do: Map.new(Config.get(:external_processes), &open_runner/1)
 
   defp open_runner(command),
     do: open_port(command, port_opts: [:stderr_to_stdout, {:line, @line_bytes}])

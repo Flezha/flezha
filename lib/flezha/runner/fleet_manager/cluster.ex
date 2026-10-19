@@ -2,8 +2,7 @@ defmodule Flezha.Runner.FleetManager.Cluster do
   @moduledoc """
   The fleet reads that span the cluster: every node holding active runners in
   a namespace answers its own half over `:erpc`, and an unreachable peer
-  contributes nothing rather than failing the read. `Flezha.Runner.FleetManager`
-  delegates its public reads here.
+  contributes nothing rather than failing the read.
   """
 
   alias Flezha.Cluster.Directory
@@ -29,7 +28,6 @@ defmodule Flezha.Runner.FleetManager.Cluster do
   @doc """
   Runner ids across every cluster node holding active runners in `namespace`,
   resolved through the cluster directory. Serves `Flezha.list_runners/1`.
-  An unreachable peer contributes nothing rather than failing the read.
   """
   @spec global_runners(String.t()) :: {:ok, [binary()]}
   def global_runners(namespace),
@@ -113,8 +111,6 @@ defmodule Flezha.Runner.FleetManager.Cluster do
     end
   end
 
-  # Every node holding active runners in `namespace` answers `fun`; an
-  # unreachable peer contributes nothing rather than failing the read.
   defp across_runner_nodes(namespace, fun, args \\ []) do
     [node() | Directory.runner_nodes(namespace)]
     |> Parallel.map_nodes(&:erpc.call(&1, __MODULE__, fun, [namespace | args]),

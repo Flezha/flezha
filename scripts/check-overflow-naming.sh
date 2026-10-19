@@ -31,7 +31,6 @@ import naming_gate
 PATTERNS = [re.compile(p) for p in (
     # The enum, in every SDK's spelling — `::` Rust, `.` Java, `#` javadoc link.
     r"\bOverflowPolicy[:.#]+(Block|BLOCK)\b",
-    r"\bHostOverflow[:.#]+Block\b",
     # The variant standing alone where the enum is the subject: the Rust enum
     # body, the macro's expansion, Java's wire and annotation mappings.
     r"^\s*(#\[default\]\s*)?Block,\s*$",

@@ -79,13 +79,9 @@ defmodule Flezha.Runner.FleetManager.Factories do
   def announced(value), do: value
 
   def remove_ce_factories(state, namespace, runner_id) do
-    ns_factories = Map.get(state.namespace_factories, namespace, %{})
-
     ns_factories =
-      ns_factories
-      |> Map.new(fn {factory_id, info} ->
+      Map.new(Map.get(state.namespace_factories, namespace, %{}), fn {factory_id, info} ->
         info = factory_entry(info)
-
         {factory_id, %{info | adverts: Map.delete(info.adverts, runner_id)}}
       end)
 
@@ -339,13 +335,10 @@ defmodule Flezha.Runner.FleetManager.Factories do
   def dropped_factory_ids(state, namespace, runner_id, factories) do
     new_ids = MapSet.new(factories, & &1["id"])
 
-    state.namespace_factories
-    |> Map.get(namespace, %{})
-    |> Enum.filter(fn {factory_id, info} ->
-      Map.has_key?(factory_entry(info).adverts, runner_id) and
-        not MapSet.member?(new_ids, factory_id)
-    end)
-    |> Enum.map(fn {factory_id, _info} -> factory_id end)
+    for {factory_id, info} <- Map.get(state.namespace_factories, namespace, %{}),
+        Map.has_key?(factory_entry(info).adverts, runner_id),
+        not MapSet.member?(new_ids, factory_id),
+        do: factory_id
   end
 
   # Tripwire for the suspended-instance removal hole: a dropped factory with

@@ -519,11 +519,8 @@ fn refuse_tasklet(mode: CellMode, task_decl: &HostTaskletDecl, issues: &mut Vec<
             value: task_decl.mailbox_capacity,
         });
     }
-    let (floor, version) = (
-        task_decl.min_readable_schema_version,
-        task_decl.schema_version,
-    );
-    match floor {
+    let version = task_decl.schema_version;
+    match task_decl.min_readable_schema_version {
         Some(floor) if floor > version => issues.push(TopologyIssue::SchemaFloorAboveVersion {
             tasklet: task_decl.name.clone(),
             floor,

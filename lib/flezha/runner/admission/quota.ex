@@ -1,12 +1,8 @@
 defmodule Flezha.Runner.Admission.Quota do
   @moduledoc """
-  The runner principal is minted from the namespace the connection PROVED
-  (`Flezha.AuthZ.RunnerProof`), so both sides of the row's namespace rule read
-  the proven value and neither reads the frame. Cross-namespace action is
-  refused before this, at the proof; what this row judges is that the identity
-  holds `runner.connect` at all. Also the per-namespace `max_runners` quota
-  point — both refusals are observable through the authz denial event / the
-  quota telemetry below.
+  Refuse a connect whose runner principal, minted from the namespace the
+  connection proved, lacks `runner.connect`, or whose namespace is at its
+  `max_runners` quota: the authz denial event and the quota telemetry say which.
   """
   @behaviour Flezha.Runner.Admission.Check
 

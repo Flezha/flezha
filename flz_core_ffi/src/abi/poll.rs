@@ -25,9 +25,7 @@ pub unsafe extern "C" fn flz_core_poll(
     buf_out: *mut *mut u8,
     len_out: *mut usize,
 ) -> i32 {
-    let Some(ctx) = ctx.as_mut() else {
-        return FLZ_ERR;
-    };
+    live!(mut ctx);
     match flz_core::poll_core::global().poll(Duration::from_millis(timeout_ms)) {
         Polled::Timeout => FLZ_POLL_TIMEOUT,
         Polled::ShuttingDown => FLZ_POLL_SHUTTING_DOWN,
@@ -84,9 +82,7 @@ pub unsafe extern "C" fn flz_core_complete(
     buf: *const u8,
     len: usize,
 ) -> i32 {
-    let Some(ctx) = ctx.as_mut() else {
-        return FLZ_ERR;
-    };
+    live!(mut ctx);
     let bytes = std::slice::from_raw_parts(buf, len);
     let result = match schema::decode_result(bytes) {
         Ok(r) => r,
@@ -123,9 +119,7 @@ pub unsafe extern "C" fn flz_core_complete(
 /// `ctx` must be a live pointer from [`flz_core_context_new`].
 #[no_mangle]
 pub unsafe extern "C" fn flz_core_abandon(ctx: *mut FlzContext, token: u64) -> i32 {
-    let Some(ctx) = ctx.as_mut() else {
-        return FLZ_ERR;
-    };
+    live!(mut ctx);
     let act = match ctx.take_outstanding(token) {
         Ok(act) => act,
         Err(status) => return status,
@@ -153,9 +147,7 @@ pub unsafe extern "C" fn flz_core_part(
     payload: *const u8,
     payload_len: usize,
 ) -> i32 {
-    let Some(ctx) = ctx.as_ref() else {
-        return FLZ_ERR;
-    };
+    live!(ctx);
     let Some(mut outstanding) = ctx.outstanding.get_mut(&token) else {
         return ctx.fail(flz_core::part::outside_invocation(None).into());
     };
@@ -194,9 +186,7 @@ pub unsafe extern "C" fn flz_core_pending_timers(
     buf_out: *mut *mut u8,
     len_out: *mut usize,
 ) -> i32 {
-    let Some(ctx) = ctx.as_ref() else {
-        return FLZ_ERR;
-    };
+    live!(ctx);
     let ops = match ctx.outstanding.get(&token).as_deref() {
         Some(Outstanding {
             activation:

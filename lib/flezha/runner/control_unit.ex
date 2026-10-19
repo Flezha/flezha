@@ -381,8 +381,6 @@ defmodule Flezha.Runner.ControlUnit do
   end
 
   defp handle_payload(state, %RunnerCommands.CommandResponse{} = response, metadata) do
-    ref = response.reference_id
-
     reply =
       case response.status do
         "success" ->
@@ -398,9 +396,8 @@ defmodule Flezha.Runner.ControlUnit do
           {:error, error}
       end
 
-    new_refs = handle_refs(state[:response_refs], ref, reply, metadata)
-
-    Map.put(state, :response_refs, new_refs)
+    refs = handle_refs(state[:response_refs], response.reference_id, reply, metadata)
+    Map.put(state, :response_refs, refs)
   end
 
   # Register the caller against the control-channel reference so the matching
@@ -478,7 +475,7 @@ defmodule Flezha.Runner.ControlUnit do
     state = arm_reply_sweep(state)
 
     now = System.monotonic_time(:millisecond)
-    timeout_ms = pending_reply_timeout_ms()
+    timeout_ms = Durations.get(:control_unit_pending_reply_timeout_ms)
     stuck = stuck_reply_refs(state.response_refs, now, timeout_ms)
 
     if stuck == [] do
@@ -520,13 +517,7 @@ defmodule Flezha.Runner.ControlUnit do
   # A non-positive interval turns the reply sweep off: nothing is armed and the
   # key simply holds no timer.
   defp arm_reply_sweep(state) do
-    interval = reply_sweep_interval_ms()
+    interval = Durations.get(:control_unit_reply_sweep_interval_ms)
     if interval > 0, do: arm_timer(state, :reply_sweep, interval, :reply_sweep), else: state
   end
-
-  defp reply_sweep_interval_ms,
-    do: Durations.get(:control_unit_reply_sweep_interval_ms)
-
-  defp pending_reply_timeout_ms,
-    do: Durations.get(:control_unit_pending_reply_timeout_ms)
 end

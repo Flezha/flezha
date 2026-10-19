@@ -54,12 +54,6 @@ defmodule Flezha.AuthZ.RunnerProof do
   """
   @type t :: %{namespace: binary(), credential: binary() | nil}
 
-  @doc """
-  The namespace this connection is entitled to, or a refusal naming why.
-
-  `claimed` is the frame's namespace field and `init_payload` the frame's own
-  decoded JSON, which carries the secret under `"namespace_secret"`.
-  """
   @impl true
   def phase, do: :caller
 
@@ -69,6 +63,12 @@ defmodule Flezha.AuthZ.RunnerProof do
          do: {:ok, Map.merge(connect, proof)}
   end
 
+  @doc """
+  The namespace this connection is entitled to, or a refusal naming why.
+
+  `claimed` is the frame's namespace field and `init_payload` the frame's own
+  decoded JSON, which carries the secret under `"namespace_secret"`.
+  """
   @spec prove(TStream.handle(), binary() | nil, map(), transport()) ::
           {:ok, t()} | {:error, term()}
   def prove(handle, claimed, init_payload, transport) do

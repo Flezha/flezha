@@ -341,11 +341,7 @@ pub fn declare_class(json: Buffer) -> Result<()> {
 /// refusal, whose `details.issues` lists every issue.
 #[napi]
 pub fn check_class(json: Buffer) -> Result<Buffer> {
-    let ctx = context()?;
-    match veneer::check_class(ctx, &json) {
-        Ok(derived) => Ok(derived.into()),
-        Err(refusal) => Err(refusal.into()),
-    }
+    Ok(veneer::check_class(context()?, &json)?.into())
 }
 
 /// Undeclare a class. Asynchronous: after start it waits for the runner's

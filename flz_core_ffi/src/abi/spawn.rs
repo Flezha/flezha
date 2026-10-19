@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use flz_core::spawn::SpawnOptions;
 
-use crate::{hand_out, Counted, Error, FlzContext, FLZ_ERR, FLZ_OK, FLZ_SPAWN_PENDING};
+use crate::{hand_out, Counted, Error, FlzContext, FLZ_OK, FLZ_SPAWN_PENDING};
 
 /// Ask for a steps instance from the live activation `token`: start
 /// `factory_id` under `id`, or under an id the controller generates when `id`
@@ -37,9 +37,7 @@ pub unsafe extern "C" fn flz_core_spawn_request(
     offset: i64,
     handle_out: *mut u64,
 ) -> i32 {
-    let Some(ctx) = ctx.as_ref() else {
-        return FLZ_ERR;
-    };
+    live!(ctx);
     let (Ok(factory_id), Ok(id), Ok(if_running)) = (
         CStr::from_ptr(factory_id).to_str(),
         CStr::from_ptr(id).to_str(),
@@ -102,9 +100,7 @@ pub unsafe extern "C" fn flz_core_spawn_result(
     out: *mut *mut u8,
     out_len: *mut usize,
 ) -> i32 {
-    let Some(ctx) = ctx.as_ref() else {
-        return FLZ_ERR;
-    };
+    live!(ctx);
     let Some(spawn) = ctx.spawns.get(&handle).map(|entry| Arc::clone(&entry)) else {
         return ctx.fail(Error::SpawnReleased(handle));
     };

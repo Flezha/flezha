@@ -60,19 +60,13 @@ defmodule Flezha.Relay.ClassRegistry do
   @doc "Create the registry table if absent. Idempotent and race-tolerant."
   @spec ensure_table() :: :ok
   def ensure_table() do
-    case :ets.whereis(@table) do
-      :undefined ->
-        try do
-          :ets.new(@table, [:set, :public, :named_table, read_concurrency: true])
-        rescue
-          ArgumentError -> :ok
-        end
-
-        :ok
-
-      _ ->
-        :ok
+    if :ets.whereis(@table) == :undefined do
+      :ets.new(@table, [:set, :public, :named_table, read_concurrency: true])
     end
+
+    :ok
+  rescue
+    ArgumentError -> :ok
   end
 
   # ---------- writes ----------
@@ -137,11 +131,10 @@ defmodule Flezha.Relay.ClassRegistry do
   Resolve a class's settings and SDK-side declarations from the `AddRelay`
   response raw_data, an `AddRelayResponse` metadata map, and its run, loop
   shape and failure mode from what `factory_id`'s announcement established in
-  `namespace`. The one place
-  the wire form is decoded; `put_declarations/2` is the one place it is
-  persisted. A new declared capability is added in those two and nowhere
-  else. The sleep interval's default is the class's, announced by its SDK: a
-  class that announces none never sleeps.
+  `namespace`. The one place the wire form is decoded; `put_declarations/2` is
+  the one place it is persisted. A new declared capability is added in those
+  two and nowhere else. The sleep interval's default is the class's, announced
+  by its SDK: a class that announces none never sleeps.
   """
   @spec decode_declarations(binary() | nil, binary(), binary()) :: declarations()
   def decode_declarations(raw_data, namespace, factory_id) do
@@ -531,14 +524,10 @@ defmodule Flezha.Relay.ClassRegistry do
     put_declaration(relay_class, :compensable_tasks, @compensable_sidecar, tasks)
   end
 
-  @doc """
-  Record which of `relay_class`'s tree tasklets are **leaves** — the set
-  whose commits mean the relay is done (`steps-branching`). Same ETS +
-  durable-sidecar shape as the compensable set, and read on the same evidence:
-  the journal answers "complete?" with no runner to ask.
-  """
-  @spec put_leaf_ops(binary(), [non_neg_integer()] | nil) :: :ok
-  def put_leaf_ops(relay_class, tasks) when is_binary(relay_class) do
+  # Which of `relay_class`'s tree tasklets are leaves, whose commits mean the
+  # relay is done: kept like the compensable set, so the journal answers
+  # "complete?" with no runner to ask.
+  defp put_leaf_ops(relay_class, tasks) when is_binary(relay_class) do
     put_declaration(relay_class, :leaf_tasks, @leaf_sidecar, tasks)
   end
 
@@ -625,9 +614,7 @@ defmodule Flezha.Relay.ClassRegistry do
       :ets.delete(@table, relay_class)
       :ets.delete(@table, {relay_class, :overwatch})
 
-      for key <- @declaration_keys do
-        :ets.delete(@table, {relay_class, key})
-      end
+      Enum.each(@declaration_keys, &:ets.delete(@table, {relay_class, &1}))
     end
 
     :ok
@@ -693,9 +680,6 @@ defmodule Flezha.Relay.ClassRegistry do
 
   # ---------- internals ----------
 
-  # A declared boolean: ETS while the class is bound, a sidecar that exists
-  # only while the flag is on (so an undeclaring class's on-disk layout is
-  # unchanged, and one that drops the declaration reverts on the next bind).
   # ONE shape for every SDK declaration: an ETS entry plus a durable sidecar that
   # outlives the process. An undeclared capability — `false` for a flag, `nil` for
   # a tasklet set — CLEARS both, so a class that rebinds having dropped a
@@ -772,17 +756,13 @@ defmodule Flezha.Relay.ClassRegistry do
   # A declaration whose sidecar did not land is logged and kept in memory: the
   # next bind writes it again.
   defp write_sidecar_file(relay_class, filename, content) do
-    case install_sidecar(relay_class, filename, content) do
-      :ok ->
-        :ok
-
-      {:error, reason} ->
-        Logger.warning(
-          "[relay] #{filename} sidecar write failed for #{relay_class}: #{inspect(reason)}"
-        )
-
-        :ok
+    with {:error, reason} <- install_sidecar(relay_class, filename, content) do
+      Logger.warning(
+        "[relay] #{filename} sidecar write failed for #{relay_class}: #{inspect(reason)}"
+      )
     end
+
+    :ok
   end
 
   defp install_sidecar(relay_class, filename, content) do

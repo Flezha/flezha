@@ -24,6 +24,20 @@
 //! crate installs no `tracing` subscriber: a veneer is loaded into a process
 //! the application owns.
 
+/// Bind `ctx` to the context it points at, or return [`FLZ_ERR`] for NULL.
+macro_rules! live {
+    ($ctx:ident) => {
+        let Some($ctx) = $ctx.as_ref() else {
+            return crate::FLZ_ERR;
+        };
+    };
+    (mut $ctx:ident) => {
+        let Some($ctx) = $ctx.as_mut() else {
+            return crate::FLZ_ERR;
+        };
+    };
+}
+
 mod abi;
 mod error;
 #[cfg(feature = "fake-controller")]
@@ -160,9 +174,7 @@ fn error_document(error: &Error) -> CString {
 }
 
 fn set_init_error(error: Error) {
-    INIT_ERROR.with(|slot| {
-        *slot.borrow_mut() = Some(error_document(&error));
-    });
+    INIT_ERROR.with(|slot| *slot.borrow_mut() = Some(error_document(&error)));
 }
 
 /// Hand `bytes` to the caller through the out pointers; the caller frees

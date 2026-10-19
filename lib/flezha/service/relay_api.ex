@@ -10,7 +10,7 @@ defmodule Flezha.Service.RelayApi do
   """
 
   alias Flezha.Relay.PartitionGroup
-  alias Flezha.Runner.FleetManager
+  alias Flezha.Runner.FleetManager.Cluster
   alias Flezha.Service.HubManager
   alias Flezha.Service.RelayManager
 
@@ -35,7 +35,7 @@ defmodule Flezha.Service.RelayApi do
   @spec list(String.t()) :: [map()]
   def list(namespace) do
     namespace
-    |> FleetManager.global_factories()
+    |> Cluster.global_factories()
     |> Enum.group_by(& &1.id)
     |> Enum.map(fn {factory, rows} -> api_of(factory, rows) end)
     |> Enum.sort_by(& &1.factory)

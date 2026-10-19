@@ -104,18 +104,11 @@ pub(super) fn build_tasklets(
 ) -> (Vec<TaskletDescriptor>, HashMap<&'static str, u32>) {
     let mut tasklets = Vec::with_capacity(decl.tasklets.len());
     let mut name_to_id = HashMap::new();
-    for (task_id, task_decl) in decl.tasklets.iter().enumerate() {
+    for ((task_id, task_decl), &mode) in decl.tasklets.iter().enumerate().zip(modes) {
         let task_id = task_id as u32;
         let task_name: &'static str = Box::leak(task_decl.name.clone().into_boxed_str());
         tasklets.push(build_tasklet(
-            derived,
-            class,
-            channels,
-            task_id,
-            task_name,
-            task_decl,
-            decl,
-            modes[task_id as usize],
+            derived, class, channels, task_id, task_name, task_decl, decl, mode,
         ));
         name_to_id.insert(task_name, task_id);
     }
