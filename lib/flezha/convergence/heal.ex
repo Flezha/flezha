@@ -267,6 +267,13 @@ defmodule Flezha.Convergence.Heal do
       :unplaced ->
         :unmet
 
+      # The previous rebind's bind is still running: `runner_migrate` answers
+      # before its bind lands, so the next tick plans the same rebind. Every
+      # step of that bind is a bounded call and a failed one halts the relay,
+      # so a bind that never lands comes back as a `:halted` rebind.
+      {:ok, {:error, :busy}} ->
+        :unmet
+
       _ ->
         :error
     end

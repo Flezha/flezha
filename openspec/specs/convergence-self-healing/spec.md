@@ -676,7 +676,7 @@ A halt SHALL be declared to the convergence loop by the one halt funnel (`Flezha
 
 A runner connecting in a namespace SHALL release the cooldown keys of every relay in that namespace which is waiting for a runner, whatever phase it is in: parked, unbound, and misbound to a runner that is gone. The released set SHALL be **derived** from the same `Planner.key/1` that produced the op, never from a hand-written list of key shapes, so a rebind planned under a new reason cannot silently escape the release.
 
-The release SHALL be guarded so that a runner which cannot serve a relay does not wake it: a runner SHALL release only the keys of relays whose factory it advertises. Because that advertisement can change between the release and the plan, the guard SHALL NOT be the only protection — a rebind attempt that finds no runner able to serve the relay SHALL be treated as an unmet precondition and SHALL neither advance nor reset the ladder, so a wake that turns out to be useless costs a plan and not a rung. A failed bind that did have a capable runner is a failed repair and advances the ladder as before. No separate release counter, per-runner release cooldown or other site-local ladder SHALL be introduced: the `:on_success` reset of the one table is what bounds a flapping runner.
+The release SHALL be guarded so that a runner which cannot serve a relay does not wake it: a runner SHALL release only the keys of relays whose factory it advertises. Because that advertisement can change between the release and the plan, the guard SHALL NOT be the only protection — a rebind attempt that finds no runner able to serve the relay SHALL be treated as an unmet precondition and SHALL neither advance nor reset the ladder, so a wake that turns out to be useless costs a plan and not a rung. A rebind the Overwatch refuses because its previous bind is still running SHALL be unmet too: that bind has not failed, and every step of it is bounded, so one that never lands ends in a halt the loop plans again. A failed bind that did have a capable runner is a failed repair and advances the ladder as before. No separate release counter, per-runner release cooldown or other site-local ladder SHALL be introduced: the `:on_success` reset of the one table is what bounds a flapping runner.
 
 #### Scenario: A failed bind parks once and is retried by the loop
 - **GIVEN** a relay whose one bind attempt fails with a timeout-class reason
@@ -708,6 +708,11 @@ The release SHALL be guarded so that a runner which cannot serve a relay does no
 - **WHEN** a runner connects to that namespace advertising no factory the relay needs
 - **THEN** the relay's cooldown key SHALL NOT be released
 - **AND** if it is woken anyway, the resulting attempt SHALL neither advance nor reset its ladder
+
+#### Scenario: A rebind refused while the previous bind runs arms no rung
+- **GIVEN** a relay whose rebind was accepted and whose bind is still running
+- **WHEN** the next tick plans the same rebind and the Overwatch answers `{:error, :busy}`
+- **THEN** the attempt SHALL be unmet and SHALL neither advance nor reset the relay's ladder
 
 #### Scenario: A flapping runner does not defeat the ladder
 - **GIVEN** a relay waiting on a mid-ladder rung whose bind fails for its own reasons

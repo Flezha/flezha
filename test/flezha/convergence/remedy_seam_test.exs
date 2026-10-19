@@ -451,6 +451,7 @@ defmodule Flezha.Convergence.RemedySeamTest do
         {:reply, :ok, state}
       end
 
+      # The Overwatch's refusal while its previous bind still runs.
       def handle_call({:runner_migrate, _target}, _from, {_ow, :refuse} = state),
         do: {:reply, {:error, :busy}, state}
 
@@ -481,12 +482,13 @@ defmodule Flezha.Convergence.RemedySeamTest do
     end
 
     test "a timed-out, refused or unplaceable migrate leaves the registry binding unchanged" do
-      # The third row differs in its outcome and not in its effect: no runner
-      # advertises that factory, so the rebind never had a repair to attempt
-      # and answers the unmet precondition the loop charges no rung for.
+      # The last two rows differ in their outcome and not in their effect: a
+      # refusal while the previous bind still runs, and no runner advertising
+      # that factory, are not repairs that failed, so each answers the unmet
+      # precondition the loop charges no rung for.
       for {id, outcome, opts} <- [
             {"hanging_op", :error, [factory: "market", migrate: :hang]},
-            {"refusing_op", :error, [factory: "market", migrate: :refuse]},
+            {"refusing_op", :unmet, [factory: "market", migrate: :refuse]},
             {"unservable_op", :unmet, [factory: "factory_nobody_serves", migrate: :confirm]}
           ] do
         inject(id, opts)
