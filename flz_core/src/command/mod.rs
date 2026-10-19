@@ -7,7 +7,8 @@ use flz_transport::transport::FlezhaStream;
 use prost::Message;
 
 use crate::pb::command_request::Command;
-use crate::pb::{CommandRequest, CommandResponse};
+use crate::pb::control_frame::Frame;
+use crate::pb::{CommandRequest, CommandResponse, ControlFrame};
 use crate::runner::RunnerNode;
 use crate::{command, ErrorModel};
 
@@ -101,12 +102,14 @@ impl std::fmt::Debug for FrameOutcome {
     }
 }
 
-/// Why a frame did not decode; the reader drives a reconnect on either and
-/// never panics.
+/// Why a frame carries no command to run: it did not decode, it named none, or
+/// it is a `response`, which answers no request a runner sends. The reader
+/// drops it and never panics.
 #[derive(Debug)]
 pub enum CommandDecodeError {
     Malformed { stack: String },
     EmptyCommand,
+    Response { reference_id: String },
 }
 
 pub fn get_handler(_payload_id: &str, message: &[u8]) -> Result<FrameOutcome, CommandDecodeError> {
@@ -114,14 +117,48 @@ pub fn get_handler(_payload_id: &str, message: &[u8]) -> Result<FrameOutcome, Co
         return Ok(FrameOutcome::PeerClosed);
     }
 
-    let wrapper_command =
-        CommandRequest::decode(message).map_err(|e| CommandDecodeError::Malformed {
-            stack: format!("{:?}", e),
-        })?;
-
+    let wrapper_command = request_of(message)?;
     let reference_id = wrapper_command.reference_id;
     let command_handler = classify(wrapper_command.command)?;
     Ok(FrameOutcome::Command(command_handler, reference_id))
+}
+
+/// The request one inbound control payload carries; every reader of a
+/// runner's frames decodes through here.
+pub fn request_of(message: &[u8]) -> Result<CommandRequest, CommandDecodeError> {
+    let malformed = |e| CommandDecodeError::Malformed {
+        stack: format!("{e:?}"),
+    };
+    match ControlFrame::decode(message).map_err(malformed)?.frame {
+        Some(Frame::Request(request)) => Ok(request),
+        Some(Frame::Response(response)) => Err(CommandDecodeError::Response {
+            reference_id: response.reference_id,
+        }),
+        None => Err(CommandDecodeError::EmptyCommand),
+    }
+}
+
+/// The payload id every `ControlFrame` travels under.
+pub const CONTROL_COMMAND_PAYLOAD_ID: &str = "control_command";
+
+/// A `request` control frame under the caller's reference id: every request
+/// and typed reply a runner writes.
+pub fn framed_request(reference_id: String, command: Command) -> Vec<u8> {
+    let frame = request_bytes(reference_id, command);
+    payloader::build_without_metadata(CONTROL_COMMAND_PAYLOAD_ID, &frame)
+}
+
+/// The payload of a `request` control frame.
+pub fn request_bytes(reference_id: String, command: Command) -> Vec<u8> {
+    let request = CommandRequest {
+        reference_id,
+        command: Some(command),
+    };
+    frame_bytes(Frame::Request(request))
+}
+
+fn frame_bytes(frame: Frame) -> Vec<u8> {
+    ControlFrame { frame: Some(frame) }.encode_to_vec()
 }
 
 fn regular(handler: impl CommandAction + 'static) -> CommandActionType {
@@ -310,6 +347,14 @@ fn decode_frame(payload_id: &str, message: &[u8]) -> Option<(CommandActionType, 
             );
             None
         }
+        Err(CommandDecodeError::Response { reference_id }) => {
+            flz_transport::notice!(
+                Warn,
+                "the controller sent a CommandResponse (ref={reference_id}), which answers \
+                 no request a runner sends; dropping."
+            );
+            None
+        }
     }
 }
 
@@ -377,13 +422,14 @@ fn encode_response(
             .collect(),
         raw_data,
     };
-    payloader::build_from_binary(payload_id, &command_response.encode_to_vec(), metadata)
+    let frame = frame_bytes(Frame::Response(command_response));
+    payloader::build_from_binary(payload_id, &frame, metadata)
 }
 
 #[cfg(test)]
 mod tests {
     use flz_transport::errors::FlezhaError;
-    use prost::Message;
+    use flz_transport::notice::Level;
 
     use super::*;
 
@@ -417,21 +463,19 @@ mod tests {
             command: None,
         };
 
-        let bytes = request.encode_to_vec();
+        let bytes = frame_bytes(Frame::Request(request));
         let err = get_handler("payload", &bytes).expect_err("None command must error");
         assert!(matches!(err, CommandDecodeError::EmptyCommand));
     }
 
     #[test]
     fn well_formed_request_returns_command_variant() {
-        let request = CommandRequest {
-            reference_id: "ref-shutdown".to_string(),
-            command: Some(Command::RunnerShutdownAck(crate::pb::RunnerShutdownAck {
+        let bytes = crate::command::request_bytes(
+            "ref-shutdown".into(),
+            Command::RunnerShutdownAck(crate::pb::RunnerShutdownAck {
                 relay_id: "".to_string(),
-            })),
-        };
-
-        let bytes = request.encode_to_vec();
+            }),
+        );
         let out = get_handler("payload", &bytes).expect("well-formed request must decode");
 
         match out {
@@ -441,17 +485,48 @@ mod tests {
     }
 
     #[test]
+    fn a_response_reaching_the_runner_is_dropped_with_a_notice() {
+        const NAME: &str =
+            "command::tests::a_response_reaching_the_runner_is_dropped_with_a_notice";
+        if crate::test_support::passes_alone(NAME).is_some() {
+            return;
+        }
+        let seen: Arc<std::sync::Mutex<Vec<(Level, String)>>> = Arc::default();
+        let into = Arc::clone(&seen);
+        flz_transport::notice::set_hook(Box::new(move |level, _, text| {
+            into.lock().unwrap().push((level, text.to_string()));
+        }));
+        let response = CommandResponse {
+            reference_id: "ref-stray".to_string(),
+            status: "success".to_string(),
+            ..Default::default()
+        };
+
+        let handled = decode_frame("control_command", &frame_bytes(Frame::Response(response)));
+
+        assert!(handled.is_none(), "a response is dispatched to no handler");
+        assert_eq!(
+            *seen.lock().unwrap(),
+            [(
+                Level::Warn,
+                "the controller sent a CommandResponse (ref=ref-stray), which answers no \
+                 request a runner sends; dropping."
+                    .to_string()
+            )]
+        );
+    }
+
+    #[test]
     fn a_spawn_reply_wakes_the_requesters_handle_with_its_outcome_and_id() {
         let reply = |outcome: &str, error: Option<&FlezhaError>, instance_id: &str| {
-            let bytes = CommandRequest {
-                reference_id: "ref-spawn".to_string(),
-                command: Some(Command::SpawnStepsResponse(crate::pb::SpawnStepsResponse {
+            let bytes = crate::command::request_bytes(
+                "ref-spawn".into(),
+                Command::SpawnStepsResponse(crate::pb::SpawnStepsResponse {
                     outcome: outcome.to_string(),
                     error: error.map(crate::pb::Error::from),
                     instance_id: instance_id.to_string(),
-                })),
-            }
-            .encode_to_vec();
+                }),
+            );
 
             match get_handler("payload", &bytes).expect("spawn reply must decode") {
                 FrameOutcome::Command(CommandActionType::AckSignal(result), ref_id) => {

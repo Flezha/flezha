@@ -170,15 +170,11 @@ fn start_answer(frame: Vec<u8>) -> (ClientResponseMessage, Duration, Vec<RunnerM
 fn a_refused_connect_answers_the_start_with_the_controllers_error() {
     let refusal =
         flz_transport::errors::FlezhaError::new("runner.namespace_not_proven", Default::default());
-    let frame = payloader::build_without_metadata(
-        "control_command",
-        &pb::CommandRequest {
-            reference_id: String::new(),
-            command: Some(Command::ConnectRefused(pb::ConnectRefused {
-                error: Some(pb::Error::from(&refusal)),
-            })),
-        }
-        .encode_to_vec(),
+    let frame = crate::command::framed_request(
+        String::new(),
+        Command::ConnectRefused(crate::pb::ConnectRefused {
+            error: Some(crate::pb::Error::from(&refusal)),
+        }),
     );
 
     let (answer, waited, forwarded) = start_answer(frame);
@@ -199,13 +195,12 @@ fn a_refused_connect_answers_the_start_with_the_controllers_error() {
 
 #[test]
 fn an_answered_connect_confirms_the_start_before_the_grace() {
-    let assign = pb::CommandRequest {
-        reference_id: "ref-assign".to_string(),
-        command: Some(Command::AssignRunnerId(pb::AssignRunnerId {
+    let frame = crate::command::framed_request(
+        "ref-assign".to_string(),
+        Command::AssignRunnerId(crate::pb::AssignRunnerId {
             runner_id: "r1".to_string(),
-        })),
-    };
-    let frame = payloader::build_without_metadata("control_command", &assign.encode_to_vec());
+        }),
+    );
 
     let (answer, waited, forwarded) = start_answer(frame);
 

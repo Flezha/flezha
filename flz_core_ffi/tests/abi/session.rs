@@ -8,7 +8,6 @@ use std::ffi::CString;
 
 use flz_core::pb::command_request::Command;
 use flz_core_ffi::*;
-use prost::Message;
 
 use crate::harness::{last_document, last_error, Controller, Demanded};
 
@@ -33,15 +32,13 @@ fn shipped(controller: &Controller, nth: usize) -> Vec<String> {
         captured
             .iter()
             .filter(|(id, _)| id == "control_command")
-            .filter_map(
-                |(_, frame)| match flz_core::pb::CommandRequest::decode(&frame[..]) {
-                    Ok(flz_core::pb::CommandRequest {
-                        command: Some(Command::UpdateFactories(update)),
-                        ..
-                    }) => Some(update.factories.into_iter().map(|f| f.id).collect()),
-                    _ => None,
-                },
-            )
+            .filter_map(|(_, frame)| match flz_core::command::request_of(frame) {
+                Ok(flz_core::pb::CommandRequest {
+                    command: Some(Command::UpdateFactories(update)),
+                    ..
+                }) => Some(update.factories.into_iter().map(|f| f.id).collect()),
+                _ => None,
+            })
             .nth(nth)
     })
 }

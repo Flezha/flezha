@@ -12,9 +12,7 @@ use std::thread;
 use std::time::Duration;
 
 use flz_transport::notice::say;
-use flz_transport::service::payloader;
 use flz_transport::transport::FlezhaStream;
-use prost::Message;
 
 use crate::pb;
 
@@ -23,9 +21,6 @@ use crate::pb;
 /// Public so a controller can wait exactly as long as the runner does for the
 /// notification it is about to answer, rather than pick its own number.
 pub const ACK_TIMEOUT: Duration = Duration::from_secs(2);
-
-/// The bidirectional `CommandRequest` envelope's payload id.
-const SHUTDOWN_PAYLOAD_ID: &str = "control_command";
 
 /// `(instance_id, serialized state)` per live flow instance.
 pub type RelaySnapshotFn = Box<dyn Fn() -> Vec<(String, Vec<u8>)> + Send + Sync>;
@@ -111,18 +106,13 @@ fn ship_notification(
 ) -> Option<thread::JoinHandle<()>> {
     let reference_id = format!("shutdown-{}-{}", relay_id, crate::util::nonce_suffix());
 
-    let request = pb::CommandRequest {
-        reference_id: reference_id.clone(),
-        command: Some(pb::command_request::Command::RunnerShutdownNotification(
-            pb::RunnerShutdownNotification {
-                relay_id: relay_id.clone(),
-                serialized_state,
-            },
-        )),
-    };
-
-    let encoded = request.encode_to_vec();
-    let payload = payloader::build_without_metadata(SHUTDOWN_PAYLOAD_ID, &encoded);
+    let payload = crate::command::framed_request(
+        reference_id.clone(),
+        pb::command_request::Command::RunnerShutdownNotification(pb::RunnerShutdownNotification {
+            relay_id: relay_id.clone(),
+            serialized_state,
+        }),
+    );
 
     let rx = pending_ack_channel(reference_id.clone());
 
@@ -497,8 +487,6 @@ mod tests {
     use std::os::unix::net::UnixStream;
     use std::time::Instant;
 
-    use prost::Message;
-
     use super::*;
     use crate::pb;
     use crate::test_support::stream_pair;
@@ -537,10 +525,11 @@ mod tests {
         buf.truncate(n);
 
         let (payload_id, message, _meta) =
-            payloader::extract_payload(&buf[..]).expect("decode shutdown frame");
+            flz_transport::service::payloader::extract_payload(&buf[..])
+                .expect("decode shutdown frame");
         assert_eq!(payload_id, "control_command");
 
-        let request = pb::CommandRequest::decode(message.as_slice())
+        let request = crate::command::request_of(&message)
             .expect("decode CommandRequest from shutdown frame");
 
         let notif = match request.command.expect("oneof command set") {

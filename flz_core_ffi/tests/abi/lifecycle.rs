@@ -739,7 +739,7 @@ fn a_steps_tasklet_completes_through_the_abi(ctx: *mut FlzContext, controller: &
     controller.await_frame("RelayCompleted teardown", |captured| {
         captured.iter().find_map(|(id, m)| {
             (id == "control_command"
-                && flz_core::pb::CommandRequest::decode(m.as_slice()).is_ok_and(|r| {
+                && flz_core::command::request_of(m).is_ok_and(|r| {
                     matches!(
                         r.command,
                         Some(flz_core::pb::command_request::Command::RelayCompleted(ref c))

@@ -4,8 +4,6 @@
 
 use std::sync::Arc;
 
-use prost::Message;
-
 use super::activation_tests::work_and_effect;
 use crate::schema;
 use crate::test_support::spin_until;
@@ -204,17 +202,14 @@ fn a_start_of_an_id_whose_leave_is_pending_runs_once_the_host_answers_it() {
     let running = core.try_assemble(&slot).expect("the work is handed out");
     assert!(node.stop_relay("leave-5"));
 
-    let start = crate::pb::CommandRequest {
-        reference_id: "ref-restart".into(),
-        command: Some(crate::pb::command_request::Command::AddRelay(
-            crate::pb::AddRelay {
-                relay_id: "leave-5".into(),
-                factory_id: id.clone(),
-                ..Default::default()
-            },
-        )),
-    }
-    .encode_to_vec();
+    let start = crate::command::request_bytes(
+        "ref-restart".into(),
+        crate::pb::command_request::Command::AddRelay(crate::pb::AddRelay {
+            relay_id: "leave-5".into(),
+            factory_id: id.clone(),
+            ..Default::default()
+        }),
+    );
     let (stream, _controller) = crate::test_support::stream_pair();
     crate::command::handle_command(&mut node, &stream, "control_command", &start);
     assert!(

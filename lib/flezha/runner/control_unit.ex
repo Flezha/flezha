@@ -376,13 +376,12 @@ defmodule Flezha.Runner.ControlUnit do
   end
 
   @impl true
-  def handle_cast({:handle_payload, payload, metadata}, state) do
-    {:noreply, handle_payload(state, payload, metadata)}
+  def handle_cast({:handle_payload, response, metadata}, state) do
+    {:noreply, handle_payload(state, response, metadata)}
   end
 
-  defp handle_payload(state, payload, metadata) do
-    {:ok, response} = RunnerCommands.CommandResponse.decode(payload)
-    ref = Map.get(response, :reference_id, nil)
+  defp handle_payload(state, %RunnerCommands.CommandResponse{} = response, metadata) do
+    ref = response.reference_id
 
     reply =
       case response.status do

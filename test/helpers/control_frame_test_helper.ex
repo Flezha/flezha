@@ -1,6 +1,6 @@
 defmodule FlezhaTest.Helper.ControlFrameTestHelper do
   @moduledoc """
-  Encodes the `CommandRequest` an SDK writes on its control stream, decodes the
+  Encodes the `ControlFrame` an SDK writes on its control stream, decodes the
   one the controller hands its transport, and plays a runner on the
   controller's real UDS control socket.
 
@@ -17,16 +17,11 @@ defmodule FlezhaTest.Helper.ControlFrameTestHelper do
 
   @payload_id_len 32
 
-  @doc "Encode one `CommandRequest` the way an SDK writes it (raw protobuf)."
+  @doc "Encode one request `ControlFrame` the way an SDK writes it (raw protobuf)."
   @spec encode_request(binary(), tuple()) :: binary()
-  def encode_request(reference_id, command) do
-    {:ok, iodata, _size} =
-      Protox.encode(%RunnerCommands.CommandRequest{reference_id: reference_id, command: command})
+  defdelegate encode_request(reference_id, command), to: Flezha.Runner.ControlChannel
 
-    IO.iodata_to_binary(iodata)
-  end
-
-  @doc "Encode the `CommandResponse` a runner answers `reference_id` with."
+  @doc "Encode the response `ControlFrame` a runner answers `reference_id` with."
   @spec encode_response(binary(), binary(), [Flezha.SDK.Error.t()]) :: binary()
   def encode_response(reference_id, status, errors \\ []) do
     response = %RunnerCommands.CommandResponse{
@@ -44,7 +39,9 @@ defmodule FlezhaTest.Helper.ControlFrameTestHelper do
         end)
     }
 
-    {:ok, iodata, _size} = Protox.encode(response)
+    {:ok, iodata, _size} =
+      Protox.encode(%RunnerCommands.ControlFrame{frame: {:response, response}})
+
     IO.iodata_to_binary(iodata)
   end
 
@@ -53,8 +50,8 @@ defmodule FlezhaTest.Helper.ControlFrameTestHelper do
   """
   @spec decode_request(binary()) :: %RunnerCommands.CommandRequest{}
   def decode_request(message) do
-    {:ok, %RunnerCommands.CommandRequest{} = request} =
-      RunnerCommands.CommandRequest.decode(message)
+    {:ok, %RunnerCommands.ControlFrame{frame: {:request, request}}} =
+      RunnerCommands.ControlFrame.decode(message)
 
     request
   end

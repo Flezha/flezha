@@ -3,6 +3,16 @@ syntax = "proto3";
 
 package runner_commands;
 
+// Every `control_command` payload, in either direction. A `request` is a
+// command its sender initiated or a typed reply to one; a `response` answers a
+// request the reader sent.
+message ControlFrame {
+    oneof frame {
+        CommandRequest request = 1;
+        CommandResponse response = 2;
+    }
+}
+
 message CommandRequest {
     string reference_id = 1;
     // 11 was `CellApplyState`, 20 `RunnerReconnected`, 21 `ReassignRunnerId`
@@ -203,9 +213,8 @@ message RelayMessageResponse {
 // capability).
 //
 // Direction is reversed compared to most CommandRequest variants: SDK -> Controller.
-// Wire format reuses the same CommandRequest envelope and the
-// "control_command" payload_id; the Controller's ControlChannel inspects the
-// oneof tag to dispatch.
+// It travels as a `request` ControlFrame on the "control_command" payload_id,
+// and the Controller's ControlChannel dispatches it by its oneof tag.
 //
 // Older Controllers that do not recognise this opcode skip it via Protox's
 // unknown-field handling; older SDKs that do not emit it fall back to the

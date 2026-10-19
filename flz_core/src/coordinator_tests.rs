@@ -2,6 +2,8 @@
 //! heartbeat that reaches nothing arms, and the steps output a runner
 //! holds while it has no secondary.
 
+use prost::Message;
+
 use super::*;
 
 /// The whole key set, pinned. The controller's gate refuses a key it
@@ -244,7 +246,7 @@ const DEADLINE: std::time::Duration = std::time::Duration::from_secs(10);
 impl ControllerEnd {
     fn request(&mut self, reference_id: &str, command: Command) {
         use std::io::Write;
-        let frame = framed_request(reference_id.to_string(), command);
+        let frame = command::framed_request(reference_id.to_string(), command);
         self.0.write_all(&frame).expect("the request is written");
     }
 
@@ -253,8 +255,8 @@ impl ControllerEnd {
         loop {
             let (_, frame, _) = payloader::extract_payload(&self.0)
                 .unwrap_or_else(|e| panic!("no answer to {reference_id}: {e}"));
-            match crate::pb::CommandResponse::decode(frame.as_slice()) {
-                Ok(response) if response.reference_id == reference_id => return response,
+            match crate::test_support::response_in(&frame) {
+                Some(response) if response.reference_id == reference_id => return response,
                 _ => continue,
             }
         }
@@ -436,15 +438,15 @@ fn a_liveness_frame_leaves_while_a_compaction_waits(test: &str, payload_id: &str
         .store(true, std::sync::atomic::Ordering::Release);
     host_answering_snapshot(&slot);
     // Queued ahead of the timers' first tick, so the coordinator is held first.
-    let request = CommandRequest {
-        reference_id: "ref-compact".to_string(),
-        command: Some(Command::CompactCell(crate::pb::CompactCell { cell_id })),
-    };
+    let request = crate::command::request_bytes(
+        "ref-compact".into(),
+        Command::CompactCell(crate::pb::CompactCell { cell_id }),
+    );
     otx.lock()
         .unwrap()
         .send(RunnerMessage::HandleCommandAction(
             "control_command".to_string(),
-            request.encode_to_vec(),
+            request,
             HashMap::new(),
         ))
         .expect("the coordinator is up");

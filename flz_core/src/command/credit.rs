@@ -24,7 +24,7 @@ pub(crate) fn answer_credit(stream: &FlezhaStream, payload_id: &str, message: &[
     let Ok(CommandRequest {
         reference_id,
         command,
-    }) = CommandRequest::decode(message)
+    }) = super::request_of(message)
     else {
         return false;
     };

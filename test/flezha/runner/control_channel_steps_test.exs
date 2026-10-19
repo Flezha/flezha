@@ -397,9 +397,8 @@ defmodule FlezhaTest.Runner.ControlChannelShutdownNotificationTest do
   added by ship-fresh-state-on-sdk-shutdown to
   `Flezha.Runner.ControlChannel`.
 
-  The notification reuses the existing `CommandRequest` envelope and the
-  `"control_command"` payload_id, so the controller's dispatcher peeks at the
-  oneof tag to recognise it. Two scenarios:
+  The notification is a `request` `ControlFrame` on the `"control_command"`
+  payload_id, which the controller dispatches by its oneof tag. Two scenarios:
 
     * Present Overwatch — `HubManager.get_pid/2` returns `{:ok, pid}`. The
       ControlChannel SHALL cast `{:apply_external_snapshot, binary}` to

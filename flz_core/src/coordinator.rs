@@ -16,12 +16,11 @@ use flz_transport::service::payloader;
 use flz_transport::transport::liveness::{self, ConnectAnswered};
 use flz_transport::transport::quic::QuicClient;
 use flz_transport::transport::FlezhaStream;
-use prost::Message;
 
 use crate::channel::ChannelKind;
 use crate::error::{Code, Error};
 use crate::pb::command_request::Command;
-use crate::pb::{CommandRequest, RelayCompleted as PbRelayCompleted};
+use crate::pb::RelayCompleted as PbRelayCompleted;
 use crate::relay::instance::RelayInstance;
 use crate::relay::registry::{get_class as get_relay_class, RelayRegistry};
 use crate::routing::RelayDispatchHandle;
@@ -444,8 +443,8 @@ impl Coordinator {
         error: String,
         result: Vec<u8>,
     ) {
-        let frame = control_command_frame(
-            "steps-completed",
+        let frame = command::framed_request(
+            format!("steps-completed-{}", nonce_suffix()),
             Command::RelayCompleted(PbRelayCompleted {
                 relay_id: relay_id.clone(),
                 status,
@@ -461,7 +460,7 @@ impl Coordinator {
     /// An SDK-initiated request under the caller's reference id, which keys
     /// its waiter; a failed write is left to the waiter's timeout.
     fn write_control_request(&self, reference_id: String, command: Command) {
-        let frame = framed_request(reference_id, command);
+        let frame = command::framed_request(reference_id, command);
         if let Err(e) = self.write_control(frame) {
             flz_transport::notice!(Warn, "SDK-initiated control request write failed: {e}");
         }
@@ -474,20 +473,6 @@ impl Coordinator {
         let stream = Some(&*self.control_stream);
         crate::state_sink::write(crate::state_sink::Class::Control, stream, frame).refused()
     }
-}
-
-/// A `control_command` frame under a `<ref_prefix>-<nonce>` reference id.
-fn control_command_frame(ref_prefix: &str, command: Command) -> Vec<u8> {
-    framed_request(format!("{ref_prefix}-{}", nonce_suffix()), command)
-}
-
-/// A `CommandRequest` frame under the caller's own reference id.
-fn framed_request(reference_id: String, command: Command) -> Vec<u8> {
-    let request = CommandRequest {
-        reference_id,
-        command: Some(command),
-    };
-    payloader::build_without_metadata("control_command", &request.encode_to_vec())
 }
 
 /// The keepalive on the control stream and the heartbeat on every secondary.

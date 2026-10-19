@@ -17,7 +17,6 @@ use std::time::Duration;
 use flz_core_ffi::*;
 use flz_transport::service::payloader;
 use flz_transport::transport::FlezhaStream;
-use prost::Message;
 
 use crate::harness::{last_document, last_error, Controller};
 
@@ -139,9 +138,9 @@ fn a_refused_start_leaves_no_runner_dialling() {
             counted.fetch_add(1, Ordering::SeqCst);
             let stream = FlezhaStream::unix(stream);
             let _connect = payloader::extract_payload(&stream);
-            let refusal = flz_core::pb::CommandRequest {
-                reference_id: String::new(),
-                command: Some(flz_core::pb::command_request::Command::ConnectRefused(
+            let frame = flz_core::command::framed_request(
+                String::new(),
+                flz_core::pb::command_request::Command::ConnectRefused(
                     flz_core::pb::ConnectRefused {
                         error: Some(flz_core::pb::Error {
                             code: "runner.namespace_not_proven".into(),
@@ -151,10 +150,8 @@ fn a_refused_start_leaves_no_runner_dialling() {
                             hint: String::new(),
                         }),
                     },
-                )),
-            };
-            let frame =
-                payloader::build_without_metadata("control_command", &refusal.encode_to_vec());
+                ),
+            );
             let _ = stream.write_frame(&frame);
         }
     });

@@ -273,11 +273,10 @@ mod tests {
     use flz_transport::transport::liveness::ControlLiveness;
     use flz_transport::transport::quic::QuicClient;
     use flz_transport::transport::quic_pair::{cert_path, SocketPeer};
-    use prost::Message;
 
     use super::*;
     use crate::pb::command_request::Command;
-    use crate::pb::{CommandRequest, CommandResponse};
+    use crate::pb::CommandResponse;
     use crate::ErrorModel;
 
     /// A runner dialled at `peer`, ready to be handed a `ConnectSocket`.
@@ -422,11 +421,10 @@ mod tests {
         std::env::set_var("FLEZHA_SOCKET_FILES_PATH", socket_dir);
 
         let (stream, controller) = crate::test_support::stream_pair();
-        let frame = CommandRequest {
-            reference_id: "ref-connect".to_string(),
-            command: Some(Command::ConnectSocket(ConnectSocket { sockets_count: 1 })),
-        }
-        .encode_to_vec();
+        let frame = crate::command::request_bytes(
+            "ref-connect".into(),
+            Command::ConnectSocket(ConnectSocket { sockets_count: 1 }),
+        );
 
         let coordinator = thread::spawn(move || {
             let mut runner = RunnerNode::new("connect_test".to_string());
@@ -443,7 +441,7 @@ mod tests {
         );
 
         let (_, reply, _) = payloader::extract_payload(&controller).expect("an answer was written");
-        CommandResponse::decode(&reply[..]).expect("the answer decodes")
+        crate::test_support::response_in(&reply).expect("the answer decodes")
     }
 
     #[cfg(unix)]

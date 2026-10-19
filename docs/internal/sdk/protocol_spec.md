@@ -149,7 +149,7 @@ the logical id.
 | Payload ID | Direction | Context |
 |------------|-----------|---------|
 | `connect_control_channel` | runner → controller | Handshake init (JSON message) |
-| `control_command` | both | Protobuf `CommandRequest` / `CommandResponse` |
+| `control_command` | both | Protobuf `ControlFrame`: a `CommandRequest` or a `CommandResponse` |
 | `control_ping` | runner → controller → runner | Keep-alive; a bare `Ping` the controller echoes verbatim (§5) |
 | `data_heartbeat` | runner → controller | Data-channel liveness, empty message + counters in metadata |
 | `{relay_id}` | both | Relay input (primary) and output (secondary) |
@@ -339,6 +339,13 @@ decoder is `Flezha.Runner.CommandsProto` (Protox).
 
 ### Envelope
 
+Every `control_command` payload, in either direction, is one `ControlFrame`
+whose `frame` oneof says its direction: `request` (field 1, a `CommandRequest`:
+a command its sender initiated, or a typed reply to one) or `response` (field
+2, a `CommandResponse` to a request the reader sent). Each side decodes an
+inbound payload once and dispatches on that oneof; neither keeps a list of the
+commands the other side initiates.
+
 A `CommandRequest` carries an opaque `reference_id` and one variant of its
 `command` oneof (below). A `CommandResponse` echoes the request's
 `reference_id` and carries a `status` (`"success"` or `"error"`), the
@@ -353,7 +360,9 @@ there is none.
 ### The `command` oneof
 
 Tags 2 to 43 are the 42 tag numbers of the oneof; four of them are reserved
-and never reused.
+and never reused. Direction is the side that sends the variant, always in a
+`request` frame; a `CommandResponse` in the last column travels back in a
+`response` frame.
 
 | Tag | Variant | Direction | Reply |
 |-----|---------|-----------|-------|
@@ -402,20 +411,21 @@ and never reused.
 
 ### Request/response pattern
 
-- **Framing.** Both messages are protobuf-encoded and wrapped in a frame with
-  payload id `control_command` and (normally) empty metadata; a runner answers
-  under the payload id it received.
+- **Framing.** The `ControlFrame` is protobuf-encoded and wrapped in a frame
+  with payload id `control_command` and (normally) empty metadata; a runner
+  answers under the payload id it received.
 - **Correlation.** `reference_id` is opaque; the runner echoes it in its
   `CommandResponse`. A runner-initiated request (tags 12, 28, 30, 34, 36,
   40) is answered by a controller-initiated `CommandRequest` carrying the
   same `reference_id`.
 - **Runner-initiated variants.** Tags 12, 22, 28, 30, 32, 33, 34, 36 and 40
-  travel runner → controller in the same envelope. The controller decodes every
-  inbound `control_command` frame as a `CommandRequest` first and dispatches a
-  recognised runner-initiated tag there; anything else goes to the
-  `ControlUnit` as a `CommandResponse`.
+  travel runner → controller as `request` frames. The controller dispatches a
+  `request` by its tag and hands a `response` to the `ControlUnit` that issued
+  the request it answers.
 - **Unknown variants.** Both sides skip an unrecognised oneof tag via the
-  decoder's unknown-field handling.
+  decoder's unknown-field handling. A tag a side never receives is logged and
+  dropped, never answered, and a `response` reaching a runner is dropped with a
+  notice.
 - **Reply metadata.** A handler may attach metadata to the reply **frame**
   (`CellState` → `flz.change_seq`).
 
@@ -825,7 +835,7 @@ small.
 ### RunnerShutdownNotification
 
 `RunnerShutdownNotification { relay_id, serialized_state: bytes }` travels
-runner → controller in the `CommandRequest` envelope (tag 12) on graceful
+runner → controller in a `request` frame (tag 12) on graceful
 shutdown only — SIGTERM, drop of the SDK handle, explicit `disconnect()`;
 SIGKILL and panics cannot emit and fall back to the last persisted state. Per
 running instance the runner serializes through the same serializer
@@ -838,8 +848,8 @@ the controller's `cross_node_request_timeout` ceiling (10 s).
 
 ### RunnerShutdownAck
 
-`RunnerShutdownAck { relay_id }` travels controller → runner in the
-`CommandRequest` envelope (tag 13), emitted as soon as the snapshot cast is
+`RunnerShutdownAck { relay_id }` travels controller → runner in a `request`
+frame (tag 13), emitted as soon as the snapshot cast is
 enqueued on the Overwatch (not after it is applied) and unconditionally — a
 missing Overwatch (already migrated to a peer controller) still gets an ack so
 the runner can exit.
@@ -1066,28 +1076,29 @@ decides which of it lives below the poll seam is in
 
 ### 9.1 Control command frame (`AssignRunnerId`)
 
-`CommandRequest { reference_id: "#Ref<0.1.2.3>", assign_runner_id: { runner_id: "ce_001" } }`:
+`ControlFrame { request: CommandRequest { reference_id: "#Ref<0.1.2.3>", assign_runner_id: { runner_id: "ce_001" } } }`:
 
 ```text
-Protobuf (25 bytes):
-  0A 0D 23 52 65 66 3C 30 2E 31 2E 32 2E 33 3E     field 1 reference_id, len 13
-  12 08 0A 06 63 65 5F 30 30 31                     field 2 assign_runner_id, len 8
-                                                    └ field 1 runner_id, len 6
+Protobuf (27 bytes):
+  0A 19                                             field 1 request, len 25
+  0A 0D 23 52 65 66 3C 30 2E 31 2E 32 2E 33 3E     └ field 1 reference_id, len 13
+  12 08 0A 06 63 65 5F 30 30 31                     └ field 2 assign_runner_id, len 8
+                                                      └ field 1 runner_id, len 6
 
 Payload ID (32 bytes):
   63 6F 6E 74 72 6F 6C 5F 63 6F 6D 6D 61 6E 64 20   control_command.
   20 20 20 20 20 20 20 20 20 20 20 20 20 20 20 20   ................
 
-Payload Size (4): 4 + 25 + 2 + 0 = 31          00 00 00 1F
-Message Size (4): 25                           00 00 00 19
-Message (25 bytes): the protobuf bytes above
+Payload Size (4): 4 + 27 + 2 + 0 = 33          00 00 00 21
+Message Size (4): 27                           00 00 00 1B
+Message (27 bytes): the protobuf bytes above
 Metadata Size (2): 0                           00 00
 
-Total frame: 32 + 4 + 31 = 67 bytes
+Total frame: 32 + 4 + 33 = 69 bytes
 ```
 
-The runner answers `CommandResponse { reference_id: "#Ref<0.1.2.3>",
-status: "success" }` under the same payload id. The handshake frame (§5) is
+The runner answers `ControlFrame { response: CommandResponse { reference_id:
+"#Ref<0.1.2.3>", status: "success" } }` under the same payload id. The handshake frame (§5) is
 built the same way with payload id `connect_control_channel` and the JSON
 bytes as the message.
 

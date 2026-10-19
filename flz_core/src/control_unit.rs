@@ -27,7 +27,7 @@ use serde::Serialize;
 
 use crate::error::{Code, Error};
 use crate::pb::command_request::Command;
-use crate::pb::{self, Ping};
+use crate::pb::Ping;
 use crate::runner::{ClientResponseMessage, RunnerMessage};
 use crate::util::nonce_suffix;
 
@@ -392,7 +392,7 @@ impl PendingStart {
 
 /// The controller's refusal of this connect, when `frame` is one.
 fn connect_refusal(frame: &[u8]) -> Option<FlezhaError> {
-    match pb::CommandRequest::decode(frame).ok()?.command? {
+    match crate::command::request_of(frame).ok()?.command? {
         Command::ConnectRefused(refused) => Some(refused.error.map_or_else(
             || {
                 Code::UnreadableReply

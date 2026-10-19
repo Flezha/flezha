@@ -258,3 +258,80 @@ defmodule FlezhaTest.Runner.ControlChannelUpdateFactoriesTest do
     assert FleetManager.runners_for_factory(@namespace, "alpha") == []
   end
 end
+
+defmodule FlezhaTest.Runner.ControlChannelDirectionTest do
+  @moduledoc """
+  Every control payload is one `ControlFrame` whose `oneof` says its direction:
+  the channel decodes it once, dispatches a `request` by its tag and hands a
+  `response` to the runner's `ControlUnit` already decoded.
+  """
+  # async: false: the warnings asserted here need the global log level lowered.
+  use ExUnit.Case, async: false
+
+  alias Flezha.Identificator
+  alias Flezha.Runner.ControlChannel
+  alias FlezhaTest.Helper.ControlFrameTestHelper
+
+  import ExUnit.CaptureLog
+
+  # The test process stands in for the runner's ControlUnit.
+  setup do
+    on_exit(FlezhaTest.Helper.NodeTestHelper.override_log_level(:warning))
+    runner_id = "direction_#{System.unique_integer([:positive])}"
+    {:via, Registry, {registry, key}} = Identificator.control_unit(runner_id)
+    {:ok, _} = Registry.register(registry, key, nil)
+    test_pid = self()
+
+    write_fun = fn _ref, _payload_id, message, _metadata ->
+      send(test_pid, {:written, message})
+    end
+
+    {:ok, channel} = ControlChannel.start_link({"ns_direction", runner_id, :stream, write_fun})
+    on_exit(fn -> if Process.alive?(channel), do: GenServer.stop(channel) end)
+    %{channel: channel, runner_id: runner_id}
+  end
+
+  # fails when: the ControlUnit decodes the response a second time, so it is
+  # handed the frame's bytes instead of the `CommandResponse` they carry.
+  test "a response reaches the ControlUnit decoded", %{channel: channel} do
+    answer = ControlFrameTestHelper.encode_response("ref-add", "success")
+    send(channel, {:flz_data, :stream_id, "control_command", answer, %{"k" => "v"}})
+
+    assert_receive {:"$gen_cast",
+                    {:handle_payload,
+                     %RunnerCommands.CommandResponse{reference_id: "ref-add", status: "success"},
+                     %{"k" => "v"}}}
+  end
+
+  # fails when: a list of runner-initiated tags decides a request's direction,
+  # so a request whose tag the list does not name is taken for a response and
+  # handed to the ControlUnit.
+  test "a request whose tag no handler names is logged and dropped, never taken for a response",
+       %{channel: channel, runner_id: runner_id} do
+    frame = ControlFrameTestHelper.encode_request("ref-ping", {:ping, %RunnerCommands.Ping{}})
+
+    log =
+      capture_log([level: :warning], fn ->
+        send(channel, {:flz_data, :stream_id, "control_command", frame, %{}})
+        _ = :sys.get_state(channel)
+      end)
+
+    assert log =~
+             "[control_channel] #{runner_id} sent ping (ref=ref-ping), " <>
+               "a command only the controller sends; dropped"
+
+    refute_received {:"$gen_cast", {:handle_payload, _, _}}
+    refute_received {:written, _}
+  end
+
+  test "an unreadable frame is logged and dropped", %{channel: channel, runner_id: runner_id} do
+    log =
+      capture_log([level: :warning], fn ->
+        send(channel, {:flz_data, :stream_id, "control_command", <<0xFF>>, %{}})
+        _ = :sys.get_state(channel)
+      end)
+
+    assert log =~ "[control_channel] #{runner_id} sent an unreadable control frame: {:error,"
+    refute_received {:"$gen_cast", {:handle_payload, _, _}}
+  end
+end

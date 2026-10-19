@@ -6,6 +6,10 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use flz_transport::transport::FlezhaStream;
+use prost::Message;
+
+use crate::pb::control_frame::Frame;
+use crate::pb::{CommandResponse, ControlFrame};
 
 #[cfg(test)]
 use crate::mailbox::Mailbox;
@@ -40,6 +44,14 @@ pub(crate) fn spin_until(what: &str, done: impl Fn() -> bool) {
 pub fn stream_pair() -> (Arc<FlezhaStream>, UnixStream) {
     let (sdk_end, ctrl_end) = UnixStream::pair().expect("UnixStream::pair");
     (Arc::new(FlezhaStream::unix(sdk_end)), ctrl_end)
+}
+
+/// The response a control payload carries, if it carries one.
+pub fn response_in(message: &[u8]) -> Option<CommandResponse> {
+    match ControlFrame::decode(message).ok()?.frame? {
+        Frame::Response(response) => Some(response),
+        Frame::Request(_) => None,
+    }
 }
 
 /// Push `item` and assert the mailbox is now full.

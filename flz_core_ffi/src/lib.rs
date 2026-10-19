@@ -1207,7 +1207,6 @@ mod tests {
 
     use flz_core::pb;
     use flz_transport::errors::FlezhaError;
-    use prost::Message;
 
     use super::*;
 
@@ -1286,17 +1285,11 @@ mod tests {
         let listener = UnixListener::bind(path).expect("bind the control socket");
 
         let refusal = FlezhaError::new("runner.namespace_not_proven", Default::default());
-        let frame = flz_transport::service::payloader::build_without_metadata(
-            "control_command",
-            &pb::CommandRequest {
-                reference_id: String::new(),
-                command: Some(pb::command_request::Command::ConnectRefused(
-                    pb::ConnectRefused {
-                        error: Some(pb::Error::from(&refusal)),
-                    },
-                )),
-            }
-            .encode_to_vec(),
+        let frame = flz_core::command::framed_request(
+            String::new(),
+            pb::command_request::Command::ConnectRefused(pb::ConnectRefused {
+                error: Some(pb::Error::from(&refusal)),
+            }),
         );
         let controller = std::thread::spawn(move || {
             let (mut stream, _) = listener.accept().expect("the runner connects");

@@ -204,10 +204,8 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
     assert_receive {:test_writer_called, ^stream_ref, frame}, 1_000
     %{reference_id: ref, command: {:ping, %RunnerCommands.Ping{}}} = decode_reply(frame)
 
-    {:ok, iodata, _} =
-      Protox.encode(%RunnerCommands.CommandResponse{reference_id: ref, status: "success"})
-
-    send(channel, {:flz_data, :stream_id, "control_command", IO.iodata_to_binary(iodata), %{}})
+    answer = ControlFrameTestHelper.encode_response(ref, "success")
+    send(channel, {:flz_data, :stream_id, "control_command", answer, %{}})
   end
 
   # A durable steps relay Cell of `inst` whose writer holds one effect record at

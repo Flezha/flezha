@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Changed: every control frame says its direction
+
+The controller told a runner's request from its answer by trying one decode and checking the
+command against a list of the commands runners start, and decoded an answer a second time
+before matching it to its request. A command missing from that list crashed the controller's
+control unit.
+
+- **BREAKING:** every `control_command` payload is a `ControlFrame` whose oneof is a
+  `request` (`CommandRequest`) or a `response` (`CommandResponse`). Controllers and runners
+  upgrade together.
+- Each side decodes a control frame once. A command a side never receives is logged and
+  dropped, and a `response` reaching a runner is dropped with a notice.
+
 ### Changed: one factory announcement
 
 The connect frame described each factory with a struct of its own, `UpdateFactories` with

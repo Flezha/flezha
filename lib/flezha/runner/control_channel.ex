@@ -1,8 +1,8 @@
 defmodule Flezha.Runner.ControlChannel do
   @moduledoc """
   The controller side of one runner's control stream: a GenServer that owns
-  the socket, decodes every inbound `CommandRequest` and writes every outbound
-  one.
+  the socket, decodes every inbound `ControlFrame` once and writes every
+  outbound one.
 
   Requests the SDK initiates are recognised here and carried out by
   `Flezha.Runner.ControlChannel.Requests`; requests the controller initiates
@@ -130,9 +130,11 @@ defmodule Flezha.Runner.ControlChannel do
   def rebind_data_streams(runner_id),
     do: GenServer.cast(Identificator.control_channel(runner_id), :rebind_data_streams)
 
-  defp encode_request(reference_id, command) do
+  @doc "One controller-initiated request as the `ControlFrame` a runner reads."
+  @spec encode_request(binary(), tuple()) :: binary()
+  def encode_request(reference_id, command) do
     request = %RunnerCommands.CommandRequest{reference_id: reference_id, command: command}
-    {:ok, iodata, _size} = Protox.encode(request)
+    {:ok, iodata, _size} = Protox.encode(%RunnerCommands.ControlFrame{frame: {:request, request}})
     IO.iodata_to_binary(iodata)
   end
 
@@ -284,18 +286,9 @@ defmodule Flezha.Runner.ControlChannel do
     {:noreply, bump_last_seen(state)}
   end
 
-  # Unified NIF transport message — complete parsed frame
-  #
-  # Most inbound traffic on the control channel is `CommandResponse` from
-  # the SDK (replies to controller-initiated `CommandRequest`s) and is forwarded
-  # as-is to the `ControlUnit`. The exception is the SDK-initiated
-  # `RunnerShutdownNotification` introduced by ship-fresh-state-on-sdk-
-  # shutdown: it reuses the `CommandRequest` envelope and the same
-  # `"control_command"` payload_id, so the only way to tell it apart on
-  # the wire is to peek at the oneof tag. We attempt the
-  # `CommandRequest` decode first; if the message has a recognised
-  # SDK-initiated command, dispatch it here and skip the `ControlUnit`
-  # handover.
+  # Every inbound control payload is one `ControlFrame`, decoded once here: a
+  # request the runner initiated is carried out by its tag, and a response goes
+  # to the `ControlUnit` that issued the request it answers.
   #
   # This process does no disk I/O: a durability barrier is handed to the
   # runner's commit worker, so a commit storm never delays the ping, stop, park
@@ -304,34 +297,18 @@ defmodule Flezha.Runner.ControlChannel do
   def handle_info({:flz_data, _stream_id, _payload_id, message, metadata}, state) do
     state = bump_last_seen(state)
 
-    case decode_sdk_initiated(message) do
-      {:runner_shutdown_notification, %{} = notif, reference_id} ->
-        {ack, log_label} = Requests.runner_shutdown(state, notif)
-        emit_control_request(state, reference_id, ack, log_label)
+    case RunnerCommands.ControlFrame.decode(message) do
+      {:ok, %{frame: {:request, %{command: {tag, payload}, reference_id: ref}}}} ->
+        request(state, tag, payload, ref)
 
-      {:relay_completed, %{} = completed, _reference_id} ->
-        Requests.relay_completed(state, completed)
+      {:ok, %{frame: {:response, response}}} ->
+        GenServer.cast(state.control_unit, {:handle_payload, response, metadata})
 
-      {barrier, %{} = commit, reference_id} when barrier in [:task_commit, :iter_commit] ->
-        Requests.barrier(state, barrier, commit, reference_id)
-
-      {:iter_park, %{} = park, _reference_id} ->
-        Requests.iter_park(state, park)
-
-      {:update_factories, %{} = update, _reference_id} ->
-        Requests.update_factories(state, update)
-
-      {:spawn_steps_request, %{} = request, reference_id} ->
-        Requests.spawn_steps(state, request, reference_id)
-
-      {:effect_result, %{} = result, reference_id} ->
-        Requests.effect_result(state, result, reference_id)
-
-      {:admin_request, %{} = request, reference_id} ->
-        Requests.admin(state, request, reference_id)
-
-      :not_sdk_initiated ->
-        GenServer.cast(state.control_unit, {:handle_payload, message, metadata})
+      unreadable ->
+        Logger.warning(
+          "[control_channel] #{state.runner_id} sent an unreadable control frame: " <>
+            inspect(unreadable)
+        )
     end
 
     {:noreply, state}
@@ -469,37 +446,26 @@ defmodule Flezha.Runner.ControlChannel do
     |> List.to_string()
   end
 
-  # Inspect an inbound control-channel payload for an SDK-initiated
-  # `CommandRequest`. The controller's normal inbound flow is `CommandResponse`,
-  # so a successful `CommandRequest` decode with a recognised SDK-initiated
-  # oneof tag (e.g. `:runner_shutdown_notification`) is the discriminator.
-  # Anything else falls through to the existing `ControlUnit` path.
-  #
-  # Note: a `CommandResponse` will not decode cleanly as a `CommandRequest`
-  # because their field-2 wire types disagree (string vs nested message);
-  # Protox returns `{:error, _}` in that case, which maps to
-  # `:not_sdk_initiated`.
-  @sdk_initiated_commands [
-    :runner_shutdown_notification,
-    :relay_completed,
-    :task_commit,
-    :iter_commit,
-    :iter_park,
-    :update_factories,
-    :spawn_steps_request,
-    :effect_result,
-    :admin_request
-  ]
+  defp request(state, :runner_shutdown_notification, msg, ref) do
+    {ack, log_label} = Requests.runner_shutdown(state, msg)
+    emit_control_request(state, ref, ack, log_label)
+  end
 
-  defp decode_sdk_initiated(message) do
-    case RunnerCommands.CommandRequest.decode(message) do
-      {:ok, %RunnerCommands.CommandRequest{reference_id: ref, command: {tag, payload}}}
-      when tag in @sdk_initiated_commands ->
-        {tag, payload, ref}
+  defp request(state, kind, msg, ref) when kind in [:task_commit, :iter_commit],
+    do: Requests.barrier(state, kind, msg, ref)
 
-      _ ->
-        :not_sdk_initiated
-    end
+  defp request(state, :relay_completed, msg, _ref), do: Requests.relay_completed(state, msg)
+  defp request(state, :iter_park, msg, _ref), do: Requests.iter_park(state, msg)
+  defp request(state, :update_factories, msg, _ref), do: Requests.update_factories(state, msg)
+  defp request(state, :spawn_steps_request, msg, ref), do: Requests.spawn_steps(state, msg, ref)
+  defp request(state, :effect_result, msg, ref), do: Requests.effect_result(state, msg, ref)
+  defp request(state, :admin_request, msg, ref), do: Requests.admin(state, msg, ref)
+
+  defp request(state, tag, _payload, reference_id) do
+    Logger.warning(
+      "[control_channel] #{state.runner_id} sent #{tag} (ref=#{reference_id}), " <>
+        "a command only the controller sends; dropped"
+    )
   end
 
   # Reply to an SDK-initiated CommandRequest with a controller-emitted

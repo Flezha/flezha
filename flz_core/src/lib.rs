@@ -77,6 +77,9 @@ pub mod timer;
 pub mod util;
 
 /// The controller↔runner protobuf command surface (prost-generated).
+// A `ControlFrame` is decoded once per inbound frame and moved on, so its
+// request stays inline rather than paying a box on every frame.
+#[allow(clippy::large_enum_variant)]
 pub mod pb {
     include!("generated/runner_commands.rs");
 }

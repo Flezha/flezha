@@ -425,19 +425,18 @@ mod tests {
         controller
             .set_read_timeout(Some(Duration::from_secs(5)))
             .expect("timeout");
-        let frame = crate::pb::CommandRequest {
-            reference_id: "ref-activity".into(),
-            command: Some(Command::TaskletActivity(TaskletActivity {
+        let frame = crate::command::request_bytes(
+            "ref-activity".into(),
+            Command::TaskletActivity(TaskletActivity {
                 relay_id: relay_id.into(),
                 cells_of: cells_of.map(str::to_string),
                 limit: None,
-            })),
-        }
-        .encode_to_vec();
+            }),
+        );
         crate::command::handle_command(node, &stream, "control_command", &frame);
         let (_, message, _) =
             flz_transport::service::payloader::extract_payload(&mut controller).expect("a reply");
-        crate::pb::CommandResponse::decode(message.as_slice()).expect("a CommandResponse")
+        crate::test_support::response_in(&message).expect("a CommandResponse")
     }
 
     #[test]

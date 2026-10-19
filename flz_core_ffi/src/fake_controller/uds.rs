@@ -15,6 +15,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use flz_core::pb;
+use flz_core::pb::control_frame::Frame;
 use flz_transport::service::payloader;
 use flz_transport::transport::FlezhaStream;
 use flz_transport::utility::socket_dir;
@@ -31,10 +32,6 @@ type Frames = Arc<(Mutex<Vec<CapturedFrame>>, Condvar)>;
 /// otherwise. A scenario that drives a runner in another process passes its
 /// own.
 const DEFAULT_AWAIT: Duration = Duration::from_secs(5);
-
-/// The payload id the Elixir controller frames a command under, and therefore
-/// the one a runner's reply comes back under.
-const COMMAND_PAYLOAD_ID: &str = "control_command";
 
 /// The controller end of the control channel: accepts, captures every frame
 /// the runner writes, and holds the write half so a phase can push commands.
@@ -115,15 +112,7 @@ impl Controller {
         reference_id: &str,
         command: pb::command_request::Command,
     ) -> std::io::Result<()> {
-        let request = pb::CommandRequest {
-            reference_id: reference_id.to_string(),
-            command: Some(command),
-        };
-        let frame = payloader::build_from_binary(
-            COMMAND_PAYLOAD_ID,
-            &request.encode_to_vec(),
-            Default::default(),
-        )?;
+        let frame = flz_core::command::framed_request(reference_id.to_string(), command);
         let mut guard = self.writer.lock().unwrap();
         let stream = guard
             .as_mut()
@@ -177,9 +166,10 @@ impl Controller {
     ) -> Result<pb::CommandResponse, String> {
         self.try_await_frame(what, |captured| {
             captured.iter().find_map(|(_, m)| {
-                pb::CommandResponse::decode(m.as_slice())
-                    .ok()
-                    .filter(|r| r.reference_id == reference_id)
+                match pb::ControlFrame::decode(&m[..]).ok()?.frame? {
+                    Frame::Response(r) if r.reference_id == reference_id => Some(r),
+                    _ => None,
+                }
             })
         })
     }
@@ -281,10 +271,10 @@ pub fn effect_result(payload_id: &str, message: &[u8]) -> Option<(String, pb::Ef
 
 /// The command a runner→controller frame carries, with its reference id.
 fn command_in(payload_id: &str, message: &[u8]) -> Option<(String, pb::command_request::Command)> {
-    if payload_id != COMMAND_PAYLOAD_ID {
+    if payload_id != flz_core::command::CONTROL_COMMAND_PAYLOAD_ID {
         return None;
     }
-    let request = pb::CommandRequest::decode(message).ok()?;
+    let request = flz_core::command::request_of(message).ok()?;
     Some((request.reference_id, request.command?))
 }
 

@@ -460,7 +460,7 @@ defmodule Flezha.Transport.Server do
       command: {:connect_refused, %RunnerCommands.ConnectRefused{error: error}}
     }
 
-    {:ok, iodata, _size} = Protox.encode(request)
+    {:ok, iodata, _size} = Protox.encode(%RunnerCommands.ControlFrame{frame: {:request, request}})
     TStream.send_frame(stream_ref, "control_command", IO.iodata_to_binary(iodata), %{})
   rescue
     _ -> :ok
