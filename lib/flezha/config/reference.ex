@@ -16,10 +16,6 @@ defmodule Flezha.Config.Reference do
 
   @runner_runtimes [:elixir_sdk, :rust, :java, :node, :python, :ruby, :php]
 
-  @doc "The groups a page can carry, in the order the reference lists them."
-  @spec groups() :: [group()]
-  def groups(), do: [:environment, :application_env, :runner, :build]
-
   @doc "The Markdown table of `group`'s rows, ending in a newline."
   @spec render_table(group()) :: binary()
   def render_table(group) do
@@ -91,8 +87,7 @@ defmodule Flezha.Config.Reference do
   The default as a user reads it in the configuration pages: the one rendering,
   so a page and a row cannot disagree about a value's spelling.
   """
-  @spec render_default(Keys.name() | Keys.row()) :: binary()
-  def render_default(name) when is_atom(name), do: render_default(Keys.fetch!(name))
+  @spec render_default(Keys.row()) :: binary()
   def render_default(%{default: {:late, _}}), do: "derived at boot"
   def render_default(%{default: {:env, var, _}}), do: var
   def render_default(%{per_run: p, default: nil}) when p != nil, do: "derived per run"
