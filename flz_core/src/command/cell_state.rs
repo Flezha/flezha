@@ -278,10 +278,8 @@ fn collect(
         }
         Err(e) => flz_transport::notice!(
             Error,
-            "serialize_relay_state: tasklet `{}` key `{}` failed: {}",
-            tasklet_desc.name,
-            key,
-            e
+            "serialize_relay_state: tasklet `{}` key `{key}` failed: {e}",
+            tasklet_desc.name
         ),
     }
 }
@@ -367,8 +365,7 @@ fn apply_tasklet(instance: &RelayInstance, tasklet_name: &str, tasklet_value: Va
     let Some(&tasklet_id) = instance.topology.tasklet_name_to_id.get(tasklet_name) else {
         flz_transport::notice!(
             Warn,
-            "apply_init_values: ignoring unknown tasklet `{}`",
-            tasklet_name
+            "apply_init_values: ignoring unknown tasklet `{tasklet_name}`"
         );
         return;
     };
@@ -409,9 +406,8 @@ fn apply_static(
         other => {
             flz_transport::notice!(
                 Warn,
-                "apply_init_values: tasklet `{}` expected object of \
+                "apply_init_values: tasklet `{tasklet_name}` expected object of \
                  cell_keys, got {} — skipping",
-                tasklet_name,
                 value_kind(&other)
             );
             return;
@@ -428,9 +424,7 @@ fn apply_static(
                 flz_transport::notice!(
                     Warn,
                     "apply_init_values: ignoring unknown cell_key \
-                     `{}` for tasklet `{}`",
-                    key,
-                    tasklet_name
+                     `{key}` for tasklet `{tasklet_name}`"
                 );
                 continue;
             }

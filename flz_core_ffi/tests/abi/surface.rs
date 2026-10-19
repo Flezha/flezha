@@ -11,7 +11,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use flz_core_ffi::veneer::{Entry, SURFACE};
+use flz_core_ffi::veneer::{Entry, Reach, SURFACE};
 
 /// Every `flz_core_*` entry point the crate exports, from its own source.
 ///
@@ -113,7 +113,11 @@ fn the_fixture_is_the_table() {
 
 #[test]
 fn the_jni_rows_are_the_java_surface() {
-    let jni = || SURFACE.iter().filter(|entry| entry.jni());
+    let jni = || {
+        SURFACE
+            .iter()
+            .filter(|entry| matches!(entry.reach, Reach::Jni | Reach::Every))
+    };
     let rows = jni()
         .map(|entry| format!("{}|{}", entry.camel_name(), entry.abi))
         .collect();

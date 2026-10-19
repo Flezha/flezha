@@ -91,10 +91,7 @@ pub unsafe extern "C" fn flz_core_local_on_sink(
             }));
         }),
     );
-    match registered {
-        Ok(()) => FLZ_OK,
-        Err(e) => ctx.fail(Error::Core(e)),
-    }
+    ctx.status(registered)
 }
 
 /// Feed one value's wire bytes to a declared entry channel. Blocks while
@@ -167,10 +164,7 @@ pub unsafe extern "C" fn flz_core_local_run_until_idle(
         Ok(session) => session,
         Err(e) => return ctx.fail(e),
     };
-    match run.run_until_idle(Duration::from_millis(timeout_ms)) {
-        Ok(()) => FLZ_OK,
-        Err(e) => ctx.fail(Error::Core(e)),
-    }
+    ctx.status(run.run_until_idle(Duration::from_millis(timeout_ms)))
 }
 
 /// End the local run and release its Cells. A context with none is a

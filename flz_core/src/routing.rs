@@ -815,10 +815,9 @@ fn wrap_entry<V: EntryView>(
                 }),
                 None => flz_transport::notice!(
                     Warn,
-                    "relay {} channel `{}`: wrap_input failed: {}",
+                    "relay {} channel `{}`: wrap_input failed: {e}",
                     instance.instance_id(),
-                    channel.name,
-                    e
+                    channel.name
                 ),
             }
             None

@@ -206,6 +206,11 @@ impl FlzContext {
         FLZ_ERR
     }
 
+    /// [`FLZ_OK`], or the refusal recorded as by [`Self::fail`].
+    fn status<E: Into<Error>>(&self, result: Result<(), E>) -> i32 {
+        result.map_or_else(|error| self.fail(error.into()), |()| FLZ_OK)
+    }
+
     /// Take a polled activation by token, releasing the spawn handles it
     /// made. `Err` carries the status the entry point returns, with the reason
     /// already recorded for `last_error` — an unknown token means the veneer
@@ -362,10 +367,7 @@ pub unsafe extern "C" fn flz_core_declare_class(
         .and_then(|v| v.get("factory_id")?.as_str().map(str::to_string))
         .unwrap_or_default();
     let register = || flz_core::host::register_host_class_json(bytes).map_err(Error::from);
-    match ctx.session.declare(&factory_id, register) {
-        Ok(()) => FLZ_OK,
-        Err(refusal) => ctx.fail(refusal),
-    }
+    ctx.status(ctx.session.declare(&factory_id, register))
 }
 
 /// Undeclare the class registered under `factory_id`, the inverse of
@@ -387,10 +389,7 @@ pub unsafe extern "C" fn flz_core_undeclare_class(
     let Ok(factory_id) = CStr::from_ptr(factory_id).to_str() else {
         return ctx.fail(Error::Utf8("factory_id"));
     };
-    match ctx.session.undeclare(factory_id) {
-        Ok(()) => FLZ_OK,
-        Err(refusal) => ctx.fail(refusal.into()),
-    }
+    ctx.status(ctx.session.undeclare(factory_id))
 }
 
 /// Judge a host class declaration without registering it: the read-only half
@@ -521,10 +520,7 @@ fn start_runner(
     if flz_core::poll_core::global().is_shut_down() {
         return ctx.fail(Error::ShutDown);
     }
-    match ctx.session.start(namespace, handed_over) {
-        Ok(()) => FLZ_OK,
-        Err(refusal) => ctx.fail(refusal.into()),
-    }
+    ctx.status(ctx.session.start(namespace, handed_over))
 }
 
 /// Block for up to `timeout_ms` for one activation. On

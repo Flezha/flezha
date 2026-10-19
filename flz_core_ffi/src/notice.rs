@@ -1,10 +1,5 @@
-//! The core's notices over the C ABI: a warning, an error, a connect or retry
-//! line, the local-mode banner, for the host to write through its own log.
-//!
-//! A host takes them one of two ways. A callback it can take on any thread
-//! ([`flz_core_set_log_callback`]), or, when the core's threads must not call
-//! into it (an interpreter), a queue it drains on a thread of its own
-//! ([`flz_core_take_notices`]). With neither, a notice goes to standard error.
+//! The core's notices over the C ABI, for the host to write through its own
+//! log: a callback any thread may call, or a queue the host drains itself.
 
 use std::ffi::{c_char, CString};
 use std::sync::Once;

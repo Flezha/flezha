@@ -32,7 +32,7 @@ flz_core/src/poll_core/wake.rs::wake_target 52
 flz_core/src/relay/instance.rs::with_options 71
 flz_core/src/retry.rs::hand_edge_ladder 54
 flz_core/src/retry.rs::route_held 53
-flz_core/src/routing.rs 831
+flz_core/src/routing.rs 830
 flz_core/src/routing.rs::enter_channel 53
 flz_core/src/routing.rs::redeliver_edge 52
 flz_core/src/routing.rs::route_stream_frame 51
@@ -47,7 +47,7 @@ flz_core/src/steps/run.rs::stage_committed 59
 flz_core/src/steps/run.rs::stage_done 61
 flz_core/src/steps/run.rs::undo_step 62
 flz_core_ffi/src/bin/flz-fake-controller.rs::parse 91
-flz_core_ffi/src/lib.rs 1325
+flz_core_ffi/src/lib.rs 1321
 flz_nif/src/driver/mod.rs::handle_command 53
 flz_nif/src/driver/quic.rs::accept_streams 58
 flz_transport/src/transport/quic.rs 835

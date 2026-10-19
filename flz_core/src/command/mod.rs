@@ -238,7 +238,7 @@ pub fn handle_command(
                         respond_with(&stream, frame);
                     });
                 if let Err(e) = spawned {
-                    flz_transport::notice!(Error, "Failed to start an off-reader answer: {}", e);
+                    flz_transport::notice!(Error, "Failed to start an off-reader answer: {e}");
                 }
             }
             Err(refusal) => respond_with(
@@ -297,9 +297,8 @@ fn decode_frame(payload_id: &str, message: &[u8]) -> Option<(CommandActionType, 
         Err(CommandDecodeError::Malformed { stack }) => {
             flz_transport::notice!(
                 Warn,
-                "control-channel frame failed to decode (stack={}); \
-                 dropping and waiting for the read loop to drive reconnect.",
-                stack
+                "control-channel frame failed to decode (stack={stack}); \
+                 dropping and waiting for the read loop to drive reconnect."
             );
             None
         }
@@ -317,7 +316,7 @@ fn decode_frame(payload_id: &str, message: &[u8]) -> Option<(CommandActionType, 
 /// Write an encoded reply, logging a frame that could not be built or written.
 fn respond_with(stream: &FlezhaStream, frame: std::io::Result<Vec<u8>>) {
     if let Err(e) = frame.and_then(|reply| write_reply(stream, reply)) {
-        flz_transport::notice!(Error, "Failed to write command response: {}", e);
+        flz_transport::notice!(Error, "Failed to write command response: {e}");
     }
 }
 

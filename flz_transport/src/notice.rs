@@ -46,9 +46,7 @@ pub struct Notice {
 /// What a host registers: it takes the level, the target and the text.
 pub type HookFn = dyn Fn(Level, &'static str, &str) + Send + Sync;
 
-type Hook = Arc<HookFn>;
-
-static HOOK: RwLock<Option<Hook>> = RwLock::new(None);
+static HOOK: RwLock<Option<Arc<HookFn>>> = RwLock::new(None);
 
 /// Notices a full queue (or a host's own full callback queue) dropped, ever.
 pub static NOTICES_DROPPED_TOTAL: AtomicU64 = AtomicU64::new(0);

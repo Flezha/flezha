@@ -22,7 +22,6 @@
 //! firing and the callback would never run.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
@@ -44,20 +43,6 @@ pub const NON_DURABILITY_NOTICE: &str = "LOCAL MODE: state is held in memory and
 no write-ahead log, no snapshots, no dead-letter queue. Everything this run computes is gone when the process \
 exits. Durability, plugins, placement and migration, the dead-letter queue, observability export, authz and \
 multi-runner scale all need a controller.";
-
-static NOTICES_EMITTED: AtomicU64 = AtomicU64::new(0);
-static UNHANDLED_OUTPUTS: AtomicU64 = AtomicU64::new(0);
-
-/// Non-durability notices emitted in this process; one per started run.
-pub fn notices_emitted() -> u64 {
-    NOTICES_EMITTED.load(Ordering::Relaxed)
-}
-
-/// Values released on an output no callback claimed. Each is reported as it
-/// happens; the count is what a run can assert on afterwards.
-pub fn unhandled_outputs() -> u64 {
-    UNHANDLED_OUTPUTS.load(Ordering::Relaxed)
-}
 
 /// One value a graph released on a plugin-bound output, carrying the identity
 /// and metadata a deployed run would have put on the wire.
@@ -107,7 +92,6 @@ impl OutputTable {
                 metadata,
             }),
             None => {
-                UNHANDLED_OUTPUTS.fetch_add(1, Ordering::Relaxed);
                 flz_transport::notice!(
                     Warn,
                     "local mode: {} bytes were released on output `{channel}`, which has no \
@@ -143,7 +127,6 @@ impl LocalRun {
         crate::state_sink::install_discarding_sink();
         let registry = Arc::new(RelayRegistry::new());
         registry.register(Arc::clone(&instance));
-        NOTICES_EMITTED.fetch_add(1, Ordering::Relaxed);
         flz_transport::notice!(Always, "{NON_DURABILITY_NOTICE}");
         Ok(LocalRun {
             instance,

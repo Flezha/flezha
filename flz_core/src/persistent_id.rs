@@ -60,10 +60,8 @@ fn load_or_derive(path: &Path, namespace: &str, factory_ids: &[String]) -> Strin
         // continuity across restart, but the runner runs normally.
         flz_transport::notice!(
             Warn,
-            "runner stable-id persist failed at {:?}: {} — using a fresh per-boot id \
-             (no binding continuity across restart)",
-            path,
-            e
+            "runner stable-id persist failed at {path:?}: {e} — using a fresh per-boot id \
+             (no binding continuity across restart)"
         );
     }
 

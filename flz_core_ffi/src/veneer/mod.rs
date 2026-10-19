@@ -53,16 +53,6 @@ pub struct Entry {
 }
 
 impl Entry {
-    /// Whether the Python, Ruby and Node glue export this entry.
-    pub fn glue(&self) -> bool {
-        matches!(self.reach, Reach::Glue | Reach::Every)
-    }
-
-    /// Whether Java's `FlzCore` declares this entry.
-    pub fn jni(&self) -> bool {
-        matches!(self.reach, Reach::Jni | Reach::Every)
-    }
-
     /// The name in lower camel case, as Java and JavaScript spell it.
     pub fn camel_name(&self) -> String {
         let mut words = self.name.split('_');
@@ -142,7 +132,9 @@ pub const SURFACE: &[Entry] = surface![
 
 /// The rows the Python, Ruby and Node glue export.
 pub fn glue_entries() -> impl Iterator<Item = &'static Entry> {
-    SURFACE.iter().filter(|entry| entry.glue())
+    SURFACE
+        .iter()
+        .filter(|entry| matches!(entry.reach, Reach::Glue | Reach::Every))
 }
 
 /// What a binding can raise: the context's last error, a creation-time

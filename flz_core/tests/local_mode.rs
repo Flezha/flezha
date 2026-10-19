@@ -10,7 +10,7 @@
 //! draining Cells the crate's unit tests scheduled.
 
 use std::io::{Read, Write};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -24,6 +24,7 @@ use flz_core::schema::{
     TimerKind, TimerOp, Verdict, WorkError, WorkItem,
 };
 use flz_core::{host, ErrorModel};
+use flz_transport::notice::{self, Level};
 use flz_transport::service::payloader;
 use flz_transport::transport::FlezhaStream;
 
@@ -33,6 +34,21 @@ static ONE_RUN: Mutex<()> = Mutex::new(());
 
 fn one_run() -> MutexGuard<'static, ()> {
     ONE_RUN.lock().unwrap_or_else(|p| p.into_inner())
+}
+
+/// How many notices `body` provokes that `wanted` holds for, read through the
+/// notice hook. Under [`one_run`], so no other test's hook replaces it.
+fn notices_during(wanted: fn(Level, &str) -> bool, body: impl FnOnce()) -> usize {
+    static SAID: AtomicUsize = AtomicUsize::new(0);
+    SAID.store(0, Ordering::SeqCst);
+    notice::set_hook(Box::new(move |level, _target, text| {
+        if wanted(level, text) {
+            SAID.fetch_add(1, Ordering::SeqCst);
+        }
+    }));
+    body();
+    notice::clear_hook();
+    SAID.load(Ordering::SeqCst)
 }
 
 /// `entry → normalize → (inter-tasklet) → total → sink`, the graph every
@@ -404,15 +420,17 @@ fn a_value_released_on_a_sink_nobody_claimed_is_reported() {
     declare(TWO_STEP);
     let _host = Host::spawn(two_step_answer);
     let run = LocalRun::start("local_two_step", "two-step-4").expect("the run starts");
-    let before = local::unhandled_outputs();
+    let unclaimed =
+        |level, text: &str| level == Level::Warn && text.contains("no registered callback");
 
-    run.feed("lines", b"q1".to_vec()).expect("accepted");
-    run.run_until_idle(Duration::from_secs(10))
-        .expect("the graph settles");
+    let reported = notices_during(unclaimed, || {
+        run.feed("lines", b"q1".to_vec()).expect("accepted");
+        run.run_until_idle(Duration::from_secs(10))
+            .expect("the graph settles");
+    });
 
     assert_eq!(
-        local::unhandled_outputs(),
-        before + 1,
+        reported, 1,
         "an unclaimed sink value is reported, not discarded in silence"
     );
 }
@@ -421,16 +439,19 @@ fn a_value_released_on_a_sink_nobody_claimed_is_reported() {
 fn the_non_durability_notice_is_emitted_on_every_run() {
     let _serialized = one_run();
     declare(TWO_STEP);
-    let before = local::notices_emitted();
-    let first = LocalRun::start("local_two_step", "notice-1").expect("the run starts");
-    let second = LocalRun::start("local_two_step", "notice-2").expect("the run starts");
-    assert_eq!(local::notices_emitted(), before + 2, "one notice per run");
+    let banner = |level, text: &str| level == Level::Always && text == local::NON_DURABILITY_NOTICE;
+    let mut runs = Vec::new();
+    let said = notices_during(banner, || {
+        runs.push(LocalRun::start("local_two_step", "notice-1").expect("the run starts"));
+        runs.push(LocalRun::start("local_two_step", "notice-2").expect("the run starts"));
+    });
+    assert_eq!(said, 2, "one notice per run");
     assert!(
         local::NON_DURABILITY_NOTICE.contains("NOTHING is durable"),
         "the notice states the limitation plainly: {}",
         local::NON_DURABILITY_NOTICE
     );
-    drop((first, second));
+    drop(runs);
 }
 
 #[test]

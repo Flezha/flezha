@@ -154,11 +154,10 @@ impl CreditWindow {
                         warned = true;
                         flz_transport::notice!(
                             Warn,
-                            "sender parked on credit for {:?} (need {} bytes, {} available) — \
+                            "sender parked on credit for {:?} (need {need} bytes, {} available) — \
                              controller fsync stalled or grant lost",
                             since.elapsed(),
-                            need,
-                            st.available,
+                            st.available
                         );
                     }
                     st = self
