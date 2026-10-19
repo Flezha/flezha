@@ -11,4 +11,5 @@ rustler::atoms! {
     flz_stream,
     flz_refused,
     flz_send_gate,
+    flz_notice,
 }

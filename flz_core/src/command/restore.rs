@@ -161,8 +161,9 @@ fn reseat_restored(slot: &Arc<CellSlot>, terminal: u64, change_log_bytes: &[u8])
     // slot owns that rule.
     let discarded = slot.discard_queued_input_on_restore();
     if discarded > 0 {
-        eprintln!(
-            "[flezha] restore discarded {discarded} queued input(s) for cell {} \
+        flz_transport::notice!(
+            Info,
+            "restore discarded {discarded} queued input(s) for cell {} \
              — the controller re-forwards them from the durable input log",
             slot.dispatcher.cell_label()
         );

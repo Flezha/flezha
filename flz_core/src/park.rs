@@ -163,19 +163,22 @@ impl Park {
             return self.let_go();
         }
         if self.frame.is_none() && !state_sink::controller_attached() {
-            eprintln!(
-                "[flezha] DLQ park impossible without a controller transport; dropping poison \
-                 payload on channel `{}` after {} attempts: {}",
-                self.body.entry.channel, self.body.entry.attempts, self.body.entry.error
+            flz_transport::notice!(
+                Error,
+                "DLQ park impossible without a controller transport; dropping poison payload on \
+                 channel `{}` after {} attempts: {}",
+                self.body.entry.channel,
+                self.body.entry.attempts,
+                self.body.entry.error
             );
             return self.let_go();
         }
         if relay.removed() {
-            tracing::warn!(
-                target: "flezha::dlq",
-                park_id = %self.body.park_id,
-                channel = %self.body.entry.channel,
-                "dead-letter park dropped unacked: its relay left this runner"
+            flz_transport::notice!(
+                Warn,
+                "dead-letter park {} on channel `{}` dropped unacked: its relay left this runner",
+                self.body.park_id,
+                self.body.entry.channel
             );
             return self.let_go();
         }
@@ -204,12 +207,12 @@ impl Park {
     fn note_resend(&mut self) {
         self.resends += 1;
         if self.resends.is_multiple_of(WARN_EVERY_RESENDS) {
-            tracing::warn!(
-                target: "flezha::dlq",
-                park_id = %self.body.park_id,
-                channel = %self.body.entry.channel,
-                resends = self.resends,
-                "dead-letter park still unacked; cell held (re-sending)"
+            flz_transport::notice!(
+                Warn,
+                "dead-letter park {} on channel `{}` still unacked after {} re-sends; cell held",
+                self.body.park_id,
+                self.body.entry.channel,
+                self.resends
             );
         }
     }
@@ -449,8 +452,9 @@ fn serve(lane: Lane) {
 fn turn_contained(pending: Pending, acked: bool) -> Option<Pending> {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| pending.turn(acked))).unwrap_or_else(
         |panic| {
-            eprintln!(
-                "[flezha] a held payload's ladder unwound and was let go: {}",
+            flz_transport::notice!(
+                Error,
+                "a held payload's ladder unwound and was let go: {}",
                 crate::util::format_panic(panic)
             );
             None
@@ -520,7 +524,7 @@ pub(crate) fn hand_off<V: EntryView>(relay: &Arc<V>, work: Work) {
 
 fn stall(why: std::fmt::Arguments<'_>) {
     PARK_STALLS_TOTAL.fetch_add(1, Ordering::Relaxed);
-    eprintln!("[flezha] {why}; this hand-off waits");
+    flz_transport::notice!(Warn, "{why}; this hand-off waits");
 }
 
 /// Lower the bound for a test that drives the owner full.

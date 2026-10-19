@@ -111,6 +111,43 @@ defmodule Flezha.Transport.DriverParityTest do
     end)
   end
 
+  describe "notices" do
+    # The suite's primary level is `:error`, which drops a warning before any
+    # capture sees it.
+    setup do
+      on_exit(FlezhaTest.Helper.NodeTestHelper.override_log_level(:warning))
+    end
+
+    test "a frame the driver refuses is said in the controller's log" do
+      {_server, path} = start_server()
+      {_client, server_handle} = connect(path)
+
+      sinks =
+        for {{Flezha.Transport.Server, _}, pid, _, _} <-
+              Supervisor.which_children(Flezha.Supervisor),
+            is_pid(pid),
+            do: pid
+
+      for pid <- sinks, do: :erlang.trace(pid, true, [:receive])
+      on_exit(fn -> for pid <- sinks, do: :erlang.trace(pid, false, [:receive]) end)
+
+      {_, log} =
+        ExUnit.CaptureLog.with_log(fn ->
+          metadata = %{String.duplicate("k", 300) => "v"}
+          :ok = Native.send_frame(server_handle, "p-refused", "x", metadata)
+
+          assert_receive {:trace, sink, :receive,
+                          {:flz_notice, :warn, "flz_nif::driver",
+                           "frame refused for payload p-refused: " <> _}},
+                         5_000
+
+          :sys.get_state(sink)
+        end)
+
+      assert log =~ "[warning] [flz_nif::driver] frame refused for payload p-refused: "
+    end
+  end
+
   describe "uds" do
     test "a frame crosses in both directions", _ctx do
       {_server, path} = start_server()

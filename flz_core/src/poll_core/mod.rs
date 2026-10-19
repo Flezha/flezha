@@ -426,11 +426,9 @@ impl PollCore {
     /// because the second answer would release a cell the first re-armed.
     fn take_outstanding(&self, token: u64, answer: &'static str) -> Option<Arc<CellSlot>> {
         let Some((_, out)) = self.outstanding.remove(&token) else {
-            tracing::warn!(
-                target: "flezha::dispatch",
-                token,
-                answer,
-                "handout answered with an unknown or already-answered token"
+            flz_transport::notice!(
+                Warn,
+                "handout answered ({answer}) with an unknown or already-answered token {token}"
             );
             return None;
         };
@@ -783,10 +781,10 @@ impl PollCore {
             }
             if !warned && started.elapsed() > Duration::from_secs(5) {
                 warned = true;
-                tracing::warn!(
-                    target: "flezha::poll_core",
-                    cell = slot.dispatcher.cell_label(),
-                    "command interaction waiting >5s for an outstanding activation"
+                flz_transport::notice!(
+                    Warn,
+                    "cell {}: command interaction waiting >5s for an outstanding activation",
+                    slot.dispatcher.cell_label()
                 );
             }
             std::thread::sleep(Duration::from_millis(1));

@@ -54,6 +54,8 @@ struct StreamSlot {
     /// It is `write_buf` in the other direction: what the far end will not
     /// take yet waits in the slot, and the protocol carries the signal.
     held_chunk: Option<Bytes>,
+    /// This burst's refusal at the ceiling was said; an emptied buffer re-arms it.
+    ceiling_said: bool,
 }
 
 impl StreamSlot {
@@ -65,6 +67,7 @@ impl StreamSlot {
             pending_write_replies: Vec::new(),
             gate: SendGate::new(),
             held_chunk: None,
+            ceiling_said: false,
         }
     }
 
@@ -574,7 +577,7 @@ fn write_or_buffer(
         if slot.gate.offer(&mut slot.write_buf, &data) {
             slot.pending_write_replies.push((total_len, reply));
         } else {
-            let _ = reply.send(Err(refused_at_ceiling(slot.write_buf.len())));
+            let _ = reply.send(Err(refused_at_ceiling(slot)));
         }
         return;
     }
@@ -594,10 +597,7 @@ fn write_or_buffer(
             slot.pending_write_replies.push((total_len, reply));
         }
         Err(e) => {
-            let _ = reply.send(Err(io::Error::new(
-                io::ErrorKind::BrokenPipe,
-                format!("QUIC write error: {}", e),
-            )));
+            let _ = reply.send(Err(write_failed(&e)));
         }
     }
 }
@@ -622,24 +622,28 @@ fn write_or_refuse(
                 Ok(data.len())
             }
             Err(quinn_proto::WriteError::Blocked) => Err(io::ErrorKind::WouldBlock.into()),
-            Err(e) => Err(io::Error::new(
-                io::ErrorKind::BrokenPipe,
-                format!("QUIC write error: {}", e),
-            )),
+            Err(e) => Err(write_failed(&e)),
         }
     };
     let _ = reply.send(answer);
 }
 
+/// What a writer is told when the stream itself failed under it.
+fn write_failed(e: &quinn_proto::WriteError) -> io::Error {
+    io::Error::new(io::ErrorKind::BrokenPipe, format!("QUIC write error: {e}"))
+}
+
 /// The one answer a refused frame gets. `WouldBlock` and not `BrokenPipe`:
 /// the stream is healthy, the peer is behind, and the caller may try again.
-fn refused_at_ceiling(buffered: usize) -> io::Error {
-    tracing::warn!(
-        target: "flezha::transport",
-        transport = "quic",
-        buffered,
-        "QUIC send buffer at its ceiling; frame refused"
-    );
+/// Said once per burst: a caller retrying on `WouldBlock` would repeat it per frame.
+fn refused_at_ceiling(slot: &mut StreamSlot) -> io::Error {
+    if !std::mem::replace(&mut slot.ceiling_said, true) {
+        let buffered = slot.write_buf.len();
+        crate::notice!(
+            Warn,
+            "QUIC send buffer at its ceiling ({buffered} bytes); frames refused"
+        );
+    }
     io::Error::new(
         io::ErrorKind::WouldBlock,
         "QUIC send buffer at its ceiling; frame not written",
@@ -661,10 +665,9 @@ fn dispatch_stream_events(
                 flush_write_buffer(connection, id, streams);
             }
             Event::ConnectionLost { reason } => {
-                tracing::warn!(
-                    target: "flezha::transport",
-                    transport = "quic",
-                    "QUIC connection lost; driver thread exiting: {}", reason
+                crate::notice!(
+                    Warn,
+                    "QUIC connection lost; driver thread exiting: {reason}"
                 );
                 return true;
             }
@@ -692,9 +695,8 @@ fn drain_readable(
     id: StreamId,
     streams: &mut HashMap<StreamId, StreamSlot>,
 ) {
-    let slot = match streams.get_mut(&id) {
-        Some(s) => s,
-        None => return,
+    let Some(slot) = streams.get_mut(&id) else {
+        return;
     };
     // Whatever an earlier pass held goes first, or this stream's bytes arrive
     // out of the order the peer wrote them in.
@@ -719,11 +721,7 @@ fn drain_readable(
                 }
                 Err(quinn_proto::ReadError::Blocked) => break,
                 Err(e) => {
-                    tracing::warn!(
-                        target: "flezha::transport",
-                        transport = "quic", stream_id = ?id,
-                        "QUIC stream read error: {}", e
-                    );
+                    crate::notice!(Warn, "QUIC stream {id:?} read error: {e}");
                     ended = true; // A reset ends the stream as surely as a FIN
                     break;
                 }
@@ -760,9 +758,8 @@ fn flush_write_buffer(
     id: StreamId,
     streams: &mut HashMap<StreamId, StreamSlot>,
 ) {
-    let slot = match streams.get_mut(&id) {
-        Some(s) => s,
-        None => return,
+    let Some(slot) = streams.get_mut(&id) else {
+        return;
     };
 
     if slot.write_buf.is_empty() {
@@ -776,21 +773,17 @@ fn flush_write_buffer(
             // out, in the order they appended them — so every one is owed its
             // answer, not just the last.
             if slot.write_buf.is_empty() {
+                slot.ceiling_said = false;
                 for (total, reply) in slot.pending_write_replies.drain(..) {
                     let _ = reply.send(Ok(total));
                 }
             }
         }
-        Err(quinn_proto::WriteError::Blocked) => {
-            // Still blocked, keep buffer
-        }
+        Err(quinn_proto::WriteError::Blocked) => {} // Still blocked: keep the buffer.
         Err(e) => {
             slot.write_buf.clear();
             for (_, reply) in slot.pending_write_replies.drain(..) {
-                let _ = reply.send(Err(io::Error::new(
-                    io::ErrorKind::BrokenPipe,
-                    format!("QUIC write error: {}", e),
-                )));
+                let _ = reply.send(Err(write_failed(&e)));
             }
         }
     }

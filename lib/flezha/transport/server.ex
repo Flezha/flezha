@@ -170,6 +170,7 @@ defmodule Flezha.Transport.Server do
     # Only `terminate/2` releases the listening socket, and a supervisor's
     # shutdown reaches it only through a trapped exit.
     Process.flag(:trap_exit, true)
+    :ok = Native.set_notice_sink(self())
     warn_if_transport_auth_disabled()
     listen(transport)
   end
@@ -373,6 +374,13 @@ defmodule Flezha.Transport.Server do
         state = %{state | quic_conn_monitors: monitors}
         {:noreply, update_in(state, [:quic_conn_runners], &Map.drop(&1, conn_ids))}
     end
+  end
+
+  # What the transport core says for a reader: a driver error, a refused frame.
+  @impl true
+  def handle_info({:flz_notice, level, target, text}, state) do
+    Logger.log(Map.get(%{warn: :warning, always: :warning}, level, level), "[#{target}] #{text}")
+    {:noreply, state}
   end
 
   @impl true

@@ -281,12 +281,17 @@ cancelled and the money released:
 
 ### Rust
 
+Other orders' bookings can land between the tries, because the wait holds
+nothing else up:
+
 ```output
-[book] EUR/USD 120 as ord-26188e006a7df8374b811618b39c770a
-[flezha] tasklet confirm_fill attempt 1/3 failed (retrying in 45 ms): tasklet error: the exchange fills at most 100 a time, and this is 120
-[flezha] tasklet confirm_fill attempt 2/3 failed (retrying in 120 ms): tasklet error: the exchange fills at most 100 a time, and this is 120
-[undo] cancelled ord-26188e006a7df8374b811618b39c770a
-[undo] released res-9282a7ff442753844305a0393c154b6b
+[book] EUR/USD 117 as ord-9a51049763f9cd2b4f9a067bd231d938
+[flezha] warning: tasklet confirm_fill attempt 1/3 failed (retrying in 25 ms): the exchange fills at most 100 a time, and this is 117
+[book] EUR/USD 22 as ord-fc28f9f16e7db3667f4ece6adecd28f6
+[flezha] warning: tasklet confirm_fill attempt 2/3 failed (retrying in 105 ms): the exchange fills at most 100 a time, and this is 117
+[book] GBP/USD 22 as ord-6d201575a91b880ce5fc020f28947f61
+[undo] cancelled ord-9a51049763f9cd2b4f9a067bd231d938
+[undo] released res-6f8e70c84ccf712e4bdf5306208e40c1
 ```
 
 ### Node
@@ -338,12 +343,23 @@ away, so the undo comes about ten seconds after the booking:
 
 ### Elixir
 
+Other orders' bookings can land between the tries, because the wait holds
+nothing else up:
+
 ```output
-[book] EUR/USD 136 as ord-8d77f1d5e001f0e1d0ba82e0d52d23c2
-[flezha] tasklet confirm_fill attempt 1/3 failed (retrying in 47 ms): the exchange fills at most 100 a time, and this is 136
-[flezha] tasklet confirm_fill attempt 2/3 failed (retrying in 112 ms): the exchange fills at most 100 a time, and this is 136
-[undo] cancelled ord-8d77f1d5e001f0e1d0ba82e0d52d23c2
-[undo] released res-0074b24e42ff82a541af69e1e369de53
+[book] EUR/USD 107 as ord-58e3ac18a7fe8475163037e27b670fd4
+
+18:12:11.936 [warning] tasklet confirm_fill attempt 1/3 failed (retrying in 48 ms): the exchange fills at most 100 a time, and this is 107
+[book] USD/JPY 24 as ord-203543a68ad9aeb5541b9ab4518e73e5
+
+18:12:21.983 [warning] tasklet confirm_fill attempt 2/3 failed (retrying in 139 ms): the exchange fills at most 100 a time, and this is 107
+[book] USD/JPY 21 as ord-22577d9325a68a0a856ba57977031568
+[book] USD/JPY 27 as ord-3b39fc582055f91a642d663827ecb601
+[book] USD/JPY 30 as ord-53ae185a39600b8605e1c01546240960
+[book] USD/JPY 21 as ord-afab73de2f3f9eeb5631a75052684e43
+[book] USD/JPY 26 as ord-ede5ec420ad25a28e43b3ef7c91614dd
+[undo] cancelled ord-58e3ac18a7fe8475163037e27b670fd4
+[undo] released res-ba40dbe26a826d9b4abbabf1dda4c20d
 ```
 
 <!-- tabs-close -->

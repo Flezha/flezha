@@ -38,6 +38,7 @@ What each variable does is below; the type and default of every one is in
 - `FLEZHA_STEPS_ACK_TIMEOUT_MS`: How long one barrier send waits for its ack before it is re-sent (three sends in all), a deadline on the pass sheet; the controller reads the same value as its deadline for the effect records a barrier names to become durable, and fails the barrier with `record_not_durable` past it.
 - `FLEZHA_FIXTURE_SLEEP_AFTER_MS`: Test apps only: the `sleep_after` the reference runners' sleeping fixtures declare, so a drill or `mix bench.steps` can watch an instance sleep. A relay's sleep interval is its class's `durable` setting (`sleep_after`; by default a flow class never sleeps and a steps class sleeps after six hours), never the environment.
 - `FLEZHA_NATIVE_LIB_DIR`: Where the bundled `flz_core_ffi` library is extracted. Default: `java.io.tmpdir`.
+- `FLEZHA_LOG_LEVEL`: The lowest level a runner's log writes, the core's own notices included (a retry, a reconnect, a refusal); the local-mode banner is written at `error`, which no level hides. Rust: the filter `diag::init_default_tracing` installs when `RUST_LOG` is unset. Java: the default `ConsoleLogger`. Node: the default console logger. Python: the handler the SDK installs on the `flezha` logger when the application configured none. Ruby and PHP: the default logger. Elixir: the core notices it logs under the domain `[:flezha]`. Default: `warn`.
 
 ## Every variable
 

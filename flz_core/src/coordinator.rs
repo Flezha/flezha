@@ -17,7 +17,6 @@ use flz_transport::transport::liveness::{self, ConnectAnswered};
 use flz_transport::transport::quic::QuicClient;
 use flz_transport::transport::FlezhaStream;
 use prost::Message;
-use tracing::warn;
 
 use crate::channel::ChannelKind;
 use crate::error::{Code, Error};
@@ -455,10 +454,7 @@ impl Coordinator {
             }),
         );
         if let Err(e) = self.write_control(frame) {
-            warn!(
-                target: "flezha",
-                "[flezha] RelayCompleted write failed for {}: {}", relay_id, e
-            );
+            flz_transport::notice!(Warn, "RelayCompleted write failed for {relay_id}: {e}");
         }
     }
 
@@ -467,10 +463,7 @@ impl Coordinator {
     fn write_control_request(&self, reference_id: String, command: Command) {
         let frame = framed_request(reference_id, command);
         if let Err(e) = self.write_control(frame) {
-            warn!(
-                target: "flezha",
-                "[flezha] SDK-initiated control request write failed: {}", e
-            );
+            flz_transport::notice!(Warn, "SDK-initiated control request write failed: {e}");
         }
     }
 
@@ -552,10 +545,9 @@ fn send_data_heartbeat(io_streams: &RwLock<HashMap<u32, Arc<FlezhaStream>>>) -> 
     ) {
         Ok(frame) => frame,
         Err(error) => {
-            tracing::warn!(
-                target: "flezha::transport",
-                %error,
-                "self-report could not be framed; heartbeat tick skipped"
+            flz_transport::notice!(
+                Warn,
+                "self-report could not be framed; heartbeat tick skipped: {error}"
             );
             return false;
         }
@@ -650,11 +642,9 @@ fn handle_reconnect(
     reason: &str,
 ) {
     let previous_id = runner.get_runner_id();
-    warn!(
-        target: "flezha",
-        "[flezha] control-channel reconnect reason={} previous_id={}",
-        reason,
-        previous_id
+    flz_transport::notice!(
+        Warn,
+        "control-channel reconnect reason={reason} previous_id={previous_id}"
     );
 
     runner.set_status(RunnerStatus::Stopped);

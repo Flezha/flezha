@@ -207,12 +207,9 @@ fn run_data_reader(
             }
         }
     }
-    tracing::warn!(
-        target: "flezha::transport",
-        transport, stream_key = key, frames_seen = frames,
-        kind = ?exit_reason.kind(),
-        "data stream reader exiting: {}",
-        exit_reason
+    flz_transport::notice!(
+        Warn,
+        "{transport} data stream {key} reader exiting after {frames} frames: {exit_reason}"
     );
 }
 

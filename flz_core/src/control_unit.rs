@@ -144,10 +144,10 @@ fn open_with_retry(
     loop {
         if attempt > 0 {
             let backoff = reconnect_backoff(attempt);
-            eprintln!(
-                "[flezha] Control channel attempt {} in {:?}...",
-                attempt + 1,
-                backoff
+            flz_transport::notice!(
+                Info,
+                "Control channel attempt {} in {backoff:?}...",
+                attempt + 1
             );
             thread::sleep(backoff);
         }
@@ -171,9 +171,9 @@ fn open_with_retry(
                 // situations this is and what fixes it. Repeating it every
                 // backoff teaches the user to skip the line that matters.
                 if let Some(text) = diagnosis.first(connect_diagnosis) {
-                    eprintln!("[flezha] {}", text);
+                    flz_transport::notice!(Warn, "{text}");
                 }
-                eprintln!("[flezha] Connection attempt {} failed: {}", attempt, e);
+                flz_transport::notice!(Warn, "Connection attempt {attempt} failed: {e}");
             }
         }
     }
@@ -356,11 +356,9 @@ pub(crate) fn sock_conn(
     // frame as the handshake, and the caller may write (a queued keepalive)
     // the moment this returns.
     if let Err(e) = send_init_msg(namespace, &declared, stream_clone.clone()) {
-        tracing::warn!(
-            target: "flezha::transport",
-            kind = ?e.kind(),
-            "control channel init send failed (peer vanished mid-handshake); reconnecting: {}",
-            e
+        flz_transport::notice!(
+            Warn,
+            "control channel init send failed (peer vanished mid-handshake); reconnecting: {e}"
         );
         end_session(&otx, &stream_box, false, "write_error");
         return (answered, stream_box);
@@ -446,8 +444,9 @@ fn read_loop(
                 // session ends here; on a reconnect the controller closes the
                 // stream next, and that read error drives the next attempt.
                 if let Some(refusal) = (!admitted).then(|| connect_refusal(&message)).flatten() {
-                    eprintln!(
-                        "[flezha] the controller refused the connect: {}",
+                    flz_transport::notice!(
+                        Error,
+                        "the controller refused the connect: {}",
                         refusal.text()
                     );
                     if start.answer(ClientResponseMessage::ConnectRefused(refusal)) {
@@ -460,7 +459,7 @@ fn read_loop(
                 if !admitted && live.handshake_completed() {
                     let failed = FAILED_SESSIONS.load(Ordering::Relaxed);
                     if failed > 0 {
-                        eprintln!("[flezha] Connected after {} attempts", failed);
+                        flz_transport::notice!(Warn, "Connected after {failed} attempts");
                     }
                 }
                 let _ = stream.set_read_timeout(Some(live.current_deadline()));
@@ -480,18 +479,15 @@ fn read_loop(
                 ReadAction::Reconnect => {
                     let reason = classify_reconnect_reason(&e, live.acked());
                     if ack_window_elapsed(&e, live.acked()) {
-                        tracing::warn!(
-                            target: "flezha::transport",
-                            reason, idle_deadline = ?live.current_deadline(),
-                            "control channel: controller never acknowledged within ack window; reconnecting: {}",
-                            e
+                        flz_transport::notice!(
+                            Warn,
+                            "control channel: controller never acknowledged within ack window \
+                             ({reason}); reconnecting: {e}"
                         );
                     } else {
-                        tracing::warn!(
-                            target: "flezha::transport",
-                            reason, kind = ?e.kind(),
-                            "control channel went silent / disconnected; reconnecting: {}",
-                            e
+                        flz_transport::notice!(
+                            Warn,
+                            "control channel went silent / disconnected ({reason}); reconnecting: {e}"
                         );
                     }
                     end_session(otx, stream, live.handshake_completed(), reason);

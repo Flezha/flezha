@@ -618,6 +618,16 @@ instead of exiting the caller. `sdk_control_call_ms` bounds the calls into the r
 local run; `sdk_spawn_reply_ms` bounds the wait for a spawned relay's answer. A refusal is not
 a cancellation: the request is already in the target's mailbox and the work still runs.
 
+## Diagnostics
+
+The SDK logs through `Logger`. The core's notices (a retry, a reconnect, a
+refusal, the local-mode banner) reach it through one process the SDK starts on
+first use and keeps for the life of the VM, so a notice outlives the run that
+wrote it. The native library sends each from a thread of its own, never from
+a scheduler. That process logs them under the domain `[:flezha]` from the
+level `FLEZHA_LOG_LEVEL` names (`warn` when unset), and the local-mode banner
+at `:error`, which no level hides.
+
 ## See also
 
 - [`authoring_contract.md`](authoring_contract.md) — the cross-SDK authoring contract

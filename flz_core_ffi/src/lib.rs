@@ -18,23 +18,12 @@
 //! failure out through a buffer of its own; a caller branches on `code` and
 //! `class`, never on `message`.
 //!
-//! # Diagnostics: this crate installs no tracing subscriber
+//! # Notices: the host's own log
 //!
-//! Deliberate, and the reason is the shape of a veneer host. This crate is
-//! loaded into a Node, Python, Ruby or PHP process the application owns; a
-//! subscriber claims a process-global slot at load time, writes to that
-//! process's stderr and cannot be handed back. Two veneers in one process, or
-//! a veneer beside another Rust extension, would then contend for the same
-//! slot. So the kernel's `tracing` events are dropped in a veneer host unless
-//! the host installs a subscriber itself, and `RUST_LOG` alone changes
-//! nothing there.
-//!
-//! The Rust SDK's `flezha_runner::diag::init_default_tracing` is the opt-in a
-//! standalone application calls; this crate does not depend on the SDK, so a
-//! veneer cannot reach it. Giving the veneers an opt-in of their own means a
-//! new exported entry point and a call in each of the four hosts — a
-//! cross-SDK change, owed by every veneer at once, not a side effect of this
-//! one.
+//! The core's notices reach the host through [`flz_core_set_log_callback`] or
+//! [`flz_core_take_notices`]; with neither they go to standard error. This
+//! crate installs no `tracing` subscriber: a veneer is loaded into a process
+//! the application owns.
 
 mod error;
 #[cfg(feature = "fake-controller")]
@@ -42,6 +31,7 @@ pub mod fake_controller;
 #[cfg(feature = "jni")]
 pub mod jni_glue;
 mod local;
+mod notice;
 // `napi-derive` emits the module-registration constructor only outside
 // `cfg(test)`, so under the test harness every exported entry point looks
 // unreferenced. The allow is scoped to that build, and to these two modules,
@@ -73,6 +63,7 @@ use flz_core::{schema, ErrorModel};
 /// The local-mode entry points, exported from the crate root like every other
 /// C symbol: the module is a source-file split, not an ABI boundary.
 pub use local::*;
+pub use notice::*;
 
 /// Poll produced an activation; the out buffer holds its encoded bytes.
 pub const FLZ_POLL_ACTIVATION: i32 = 1;
@@ -712,7 +703,7 @@ pub unsafe extern "C" fn flz_core_shutdown(ctx: *mut FlzContext) {
         .spawn(sequence)
         .is_err()
     {
-        eprintln!("[flezha] could not start the shutdown thread; stopping without shipping state");
+        flz_transport::notice!(Error, "no shutdown thread: stopping without shipping state");
         flz_core::poll_core::global().shutdown();
     }
 }
@@ -1235,15 +1226,6 @@ pub unsafe extern "C" fn flz_core_context_free(ctx: *mut FlzContext) {
     }
 }
 
-/// Log-callback registration. The one host-function exception the contract
-/// allows; wiring the tracing bridge onto it lands with the first shim that
-/// consumes it — the entry point exists so the ABI surface is complete.
-#[no_mangle]
-pub extern "C" fn flz_core_set_log_callback(
-    _callback: Option<extern "C" fn(level: i32, message: *const c_char)>,
-) {
-}
-
 #[cfg(all(test, unix))]
 mod tests {
     use std::io::{Read, Write};
@@ -1305,6 +1287,16 @@ mod tests {
         unsafe { flz_core_context_free(ctx) };
     }
 
+    static NOTICES: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+    extern "C" fn noted(_level: i32, text: *const c_char) {
+        // SAFETY: the core hands a NUL-terminated text borrowed for the call.
+        let text = unsafe { CStr::from_ptr(text) }
+            .to_string_lossy()
+            .into_owned();
+        NOTICES.lock().unwrap().push(text);
+    }
+
     /// A connect the controller refuses fails the start with the
     /// controller's own error. The runner is process-global, so this is the
     /// only start this test binary makes.
@@ -1338,10 +1330,13 @@ mod tests {
             stream.write_all(&frame).expect("write the refusal");
         });
 
+        flz_core_set_log_callback(Some(noted));
         let ctx = flz_core_context_new(flz_core::SCHEMA_VERSION);
         let namespace = CString::new("unproven").expect("a namespace");
         let status = unsafe { flz_core_start(ctx, namespace.as_ptr()) };
         controller.join().expect("the controller answered");
+        let said = "the controller refused the connect: error: ";
+        assert!(NOTICES.lock().unwrap().iter().any(|n| n.starts_with(said)));
 
         assert_eq!(status, FLZ_ERR, "a refused connect is not a started runner");
         let document = unsafe { CStr::from_ptr(flz_core_last_error(ctx)) }

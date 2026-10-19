@@ -191,7 +191,7 @@ impl Quic {
                             );
                         }
                         Err(e) => {
-                            eprintln!("[flz_nif] QUIC accept error: {:?}", e);
+                            flz_transport::notice!(Warn, "QUIC accept error: {e:?}");
                         }
                     }
                 }
@@ -519,7 +519,7 @@ fn read_chunks(
     let mut chunks = match recv.read(true) {
         Ok(chunks) => chunks,
         Err(e) => {
-            eprintln!("[flz_nif] QUIC read error on nif_id={}: {:?}", nif_id, e);
+            flz_transport::notice!(Warn, "QUIC read error on nif_id={nif_id}: {e:?}");
             return Some(CloseReason::ReadError);
         }
     };

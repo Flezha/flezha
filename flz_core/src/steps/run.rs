@@ -1812,9 +1812,10 @@ impl Decide<'_, '_, '_> {
             }
             (BarrierFor::Undo, result) => {
                 if let Err(error) = result {
-                    eprintln!(
-                        "[flezha] steps {} compensation journaling failed: {error}",
-                        self.r.inst.instance_id
+                    let id = &self.r.inst.instance_id;
+                    flz_transport::notice!(
+                        Error,
+                        "steps {id} compensation journaling failed: {error}"
                     );
                 }
                 if let Some(undo) = self.s.undo.as_mut() {
@@ -1880,12 +1881,11 @@ impl Decide<'_, '_, '_> {
             Deadline::Ack(id) => self.ack_overdue(id),
             Deadline::RestoreGate => {
                 if self.s.phase == Phase::Gated {
-                    tracing::warn!(
-                        target: "flezha::steps",
-                        expected = self.s.expected,
-                        restored = self.s.restored,
-                        "steps crash-resume timed out waiting for Cell restores; \
-                         proceeding with partially-restored state"
+                    let (restored, expected) = (self.s.restored, self.s.expected);
+                    flz_transport::notice!(
+                        Warn,
+                        "steps crash-resume timed out waiting for Cell restores ({restored} of \
+                         {expected}); proceeding with partially-restored state"
                     );
                     self.open_gate();
                 }
@@ -2048,10 +2048,8 @@ impl Decide<'_, '_, '_> {
     fn undone(&mut self, node: usize, cell: CellPos, slot: &Arc<CellSlot>) {
         let attempt = self.s.attempts.remove(&(node, cell)).unwrap_or_default();
         if let Some(failure) = attempt.failure {
-            eprintln!(
-                "[flezha] steps {} compensation error: {}",
-                self.r.inst.instance_id, failure.error
-            );
+            let (id, error) = (&self.r.inst.instance_id, failure.error);
+            flz_transport::notice!(Error, "steps {id} compensation error: {error}");
         }
         let Some(undo) = self.s.undo.as_mut() else {
             return;

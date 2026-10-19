@@ -77,6 +77,39 @@ impl Client {
         }
         panic!("the peer's flow-control window never closed");
     }
+
+    /// Block the stream, then buffer up to the ceiling without crossing it.
+    fn fill_to_ceiling(&mut self, cap: usize) {
+        let _first_rx = self.block();
+        let filler = vec![b'c'; 512 * 1024];
+        let mut fills = 0;
+        while self.slot().write_buf.len() + filler.len() <= cap {
+            let (_rx, answer) = self.write(filler.clone());
+            assert!(
+                answer.is_none(),
+                "buffered writes defer, they do not answer"
+            );
+            fills += 1;
+            assert!(
+                fills <= 2 + cap / filler.len(),
+                "the buffer is not accumulating: {} bytes after {} appends of {}",
+                self.slot().write_buf.len(),
+                fills,
+                filler.len()
+            );
+        }
+    }
+
+    /// Drain passes against a reading peer until the buffer is empty.
+    fn drain_all(&mut self) {
+        for _ in 0..400 {
+            self.drain_pass();
+            if self.slot().write_buf.is_empty() {
+                return;
+            }
+        }
+        panic!("a reading peer drains the buffer");
+    }
 }
 
 /// A second writer must not evict the first's buffered remainder, and must not
@@ -124,16 +157,7 @@ fn a_second_blocked_write_appends_behind_the_first_and_leaves_it_answerable() {
         Err(channel::TryRecvError::Empty)
     ));
 
-    for _ in 0..400 {
-        c.drain_pass();
-        if c.slot().write_buf.is_empty() {
-            break;
-        }
-    }
-    assert!(
-        c.slot().write_buf.is_empty(),
-        "a reading peer drains the buffer"
-    );
+    c.drain_all();
     assert_eq!(first_rx.try_recv().unwrap().unwrap(), 256 * 1024);
     assert_eq!(second_rx.try_recv().unwrap().unwrap(), second.len());
 }
@@ -146,25 +170,7 @@ fn a_frame_refused_at_the_ceiling_is_reported_as_refused_not_as_written() {
     let cap = crate::transport::config::max_write_buffer_bytes();
     let mut c = Client::connected();
 
-    let _first_rx = c.block();
-    // Fill to the ceiling without crossing it, then offer one frame too many.
-    let filler = vec![b'c'; 512 * 1024];
-    let mut fills = 0;
-    while c.slot().write_buf.len() + filler.len() <= cap {
-        let (_rx, answer) = c.write(filler.clone());
-        assert!(
-            answer.is_none(),
-            "buffered writes defer, they do not answer"
-        );
-        fills += 1;
-        assert!(
-            fills <= 2 + cap / filler.len(),
-            "the buffer is not accumulating: {} bytes after {} appends of {}",
-            c.slot().write_buf.len(),
-            fills,
-            filler.len()
-        );
-    }
+    c.fill_to_ceiling(cap);
     let buffered = c.slot().write_buf.len();
 
     let (_rx, answer) = c.write(vec![b'd'; cap]);
@@ -178,6 +184,44 @@ fn a_frame_refused_at_the_ceiling_is_reported_as_refused_not_as_written() {
         "the refused frame left the buffer alone"
     );
     assert_eq!(c.slot().gate.refused(), 1, "and it was counted");
+}
+
+/// A sender retrying on `WouldBlock` is refused at frame rate; the notice is
+/// said once per burst, and a buffer that drained re-arms it.
+#[test]
+fn a_burst_refused_at_the_ceiling_is_said_once_and_a_drain_re_arms_it() {
+    let _turn = crate::notice::tests::TURN
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    let cap = crate::transport::config::max_write_buffer_bytes();
+    let this_test = std::thread::current().id();
+    let said = Arc::new(Mutex::new(Vec::new()));
+    let into = Arc::clone(&said);
+    crate::notice::set_hook(Box::new(move |_, _, text| {
+        if std::thread::current().id() == this_test {
+            into.lock().unwrap().push(text.to_string());
+        }
+    }));
+    let mut c = Client::connected();
+    let burst = |c: &mut Client| {
+        c.fill_to_ceiling(cap);
+        for _ in 0..5 {
+            let (_rx, answer) = c.write(vec![b'd'; cap]);
+            let refused = answer.expect("refused at once").expect_err("refused");
+            assert_eq!(refused.kind(), io::ErrorKind::WouldBlock);
+        }
+    };
+
+    burst(&mut c);
+    let after_first = said.lock().unwrap().len();
+    c.drain_all();
+    burst(&mut c);
+    let after_second = said.lock().unwrap().len();
+    crate::notice::clear_hook();
+
+    assert_eq!(c.slot().gate.refused(), 10, "every frame was still refused");
+    assert_eq!(after_first, 1, "one burst, one notice: {said:?}");
+    assert_eq!(after_second, 2, "the drain re-armed it: {said:?}");
 }
 
 /// The control: against a peer that reads, nothing is refused and every writer

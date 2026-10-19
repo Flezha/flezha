@@ -5,8 +5,8 @@
 //! `harness` is the fake controller and the poll/complete pair they drive
 //! them with; `shape` proves the mapping every binding shares, once, against
 //! a recording pair; `admin` holds the administration surface to one entry;
-//! `spawn` drives a tasklet's spawn and `part` a tasklet's part, each in a
-//! process of its own.
+//! `spawn` drives a tasklet's spawn and `part` a tasklet's part, and `notice`
+//! the core's notices, each in a process of its own.
 //!
 //! Each veneer arm hangs off that same shape and proves only what its own
 //! language contributes — how it builds and reads a value — so a veneer is
@@ -25,6 +25,8 @@ mod effect;
 mod harness;
 #[path = "abi/lifecycle.rs"]
 mod lifecycle;
+#[path = "abi/notice.rs"]
+mod notice;
 #[path = "abi/part.rs"]
 mod part;
 #[path = "abi/settings.rs"]

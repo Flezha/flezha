@@ -494,11 +494,14 @@ HRW placement spreads across, and the answer to CPU-bound handler bodies.
 
 ## Diagnostics
 
-Standard-library `logging`, under the `flezha` logger hierarchy. No handler is
-installed by default — a library that configures the root logger takes a
-decision that belongs to the application — and `flezha.configure_logging()` is
-the one opt-in that turns diagnostics on at a documented default
-(`FLEZHA_LOG_LEVEL`, or `warning`, to standard error).
+Standard-library `logging`, under the `flezha` logger hierarchy. The SDK never
+configures the root logger. When a runner or a local run starts and neither
+the `flezha` logger nor the root logger has a handler, it gives the `flezha`
+logger one writing to standard error at `FLEZHA_LOG_LEVEL` (`warn` when unset),
+the level every other SDK starts at; an application's own configuration wins.
+`flezha.configure_logging()` sets that default explicitly. The core's notices
+reach the `flezha.core` logger, written by the starvation supervisor on each
+wake and when a run stops; the local-mode banner at `ERROR`.
 
 No OpenTelemetry: no SDK ships spans, and adding them to one binding is the
 exact asymmetry the lockstep rule exists to prevent. When they land, they land

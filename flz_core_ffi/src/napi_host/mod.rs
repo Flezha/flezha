@@ -30,7 +30,7 @@ use napi_derive::napi;
 pub(crate) use pool::blocking_pool;
 
 use crate::napi_glue::{context, Values};
-use crate::veneer::{self, shape, CtxPtr, Polled, Refusal};
+use crate::veneer::{self, notice, shape, CtxPtr, Polled, Refusal};
 use crate::{FLZ_POLL_SHUTTING_DOWN, FLZ_STARVATION_OBSERVED};
 
 /// Poll timeout per turn. Bounds how fast a shutdown request is observed —
@@ -523,7 +523,8 @@ pub struct JsLogLine {
     pub message: String,
 }
 
-type LogFn = ThreadsafeFunction<JsLogLine, (), JsLogLine, Status, false>;
+type LogFn =
+    ThreadsafeFunction<JsLogLine, (), JsLogLine, Status, false, false, { notice::QUEUE_CAPACITY }>;
 static LOGGER: Mutex<Option<LogFn>> = Mutex::new(None);
 
 type DrainedFn = ThreadsafeFunction<(), (), (), Status, false>;
@@ -564,30 +565,38 @@ pub fn set_host_drained_callback(callback: Option<Function<(), ()>>) -> Result<(
 /// Route one native diagnostic to the registered logger. Native threads have
 /// no other way to reach the host's logger, and dropping the line when none is
 /// registered is deliberate: the SDK's own default logger installs one at
-/// runner construction.
+/// runner construction. Never waits: a full queue drops the line and counts it.
 fn log_line(level: i32, message: &str) {
     if let Some(logger) = LOGGER.lock().unwrap_or_else(|p| p.into_inner()).as_ref() {
-        logger.call(
-            JsLogLine {
-                level,
-                message: message.to_string(),
-            },
-            ThreadsafeFunctionCallMode::NonBlocking,
-        );
+        let line = JsLogLine {
+            level,
+            message: message.to_string(),
+        };
+        if logger.call(line, ThreadsafeFunctionCallMode::NonBlocking) == Status::QueueFull {
+            notice::count_dropped();
+        }
     }
 }
 
+/// Register the host's logger, and the core's notices with it; `None` sends
+/// the notices to standard error again.
 pub(crate) fn set_log_callback(callback: Option<Function<JsLogLine, ()>>) -> Result<()> {
     let next = match callback {
         Some(f) => Some(
             f.build_threadsafe_function()
-                .max_queue_size::<0>()
+                .max_queue_size::<{ notice::QUEUE_CAPACITY }>()
                 .build()?,
         ),
         None => None,
     };
+    let hooked = next.is_some();
     let previous = std::mem::replace(&mut *LOGGER.lock().unwrap_or_else(|p| p.into_inner()), next);
     drop(previous);
+    if hooked {
+        notice::set_hook(Box::new(|level, _target, text| log_line(level as i32, text)));
+    } else {
+        notice::clear_hook();
+    }
     Ok(())
 }
 

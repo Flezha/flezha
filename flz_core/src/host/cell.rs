@@ -126,10 +126,10 @@ impl TaskletDispatcher for HostDispatcher {
         _timers: &mut PendingTimers,
         _instance: &Weak<crate::relay::instance::RelayInstance>,
     ) -> ItemDisposition {
-        tracing::error!(
-            target: "flezha::host",
-            cell = %self.cell_label,
-            "in-process dispatch reached a host-run tasklet; item dropped"
+        flz_transport::notice!(
+            Error,
+            "cell {}: in-process dispatch reached a host-run tasklet; item dropped",
+            self.cell_label
         );
         ItemDisposition::Done { ops: Vec::new() }
     }

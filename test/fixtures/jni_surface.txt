@@ -37,5 +37,6 @@ adminCall|flz_core_admin_call
 sendMessage|flz_core_send_message
 relays|flz_core_relays
 monotonicNanos|flz_core_monotonic_nanos
+takeNotices|flz_core_take_notices
 shutdown|flz_core_shutdown
 contextFree|flz_core_context_free

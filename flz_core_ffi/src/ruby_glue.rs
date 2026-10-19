@@ -610,6 +610,13 @@ fn monotonic_nanos() -> u64 {
     crate::flz_core_monotonic_nanos()
 }
 
+/// The core's notices held since the last take, as `[level, target, text]`;
+/// the first take starts the holding.
+fn take_notices() -> Vec<(String, String, String)> {
+    let notices = veneer::take_notices().into_iter();
+    notices.map(|n| (n.level, n.target, n.text)).collect()
+}
+
 /// The context's last recorded error, or `nil`.
 fn last_error() -> Option<String> {
     let ptr = CONTEXT.load(Ordering::Acquire);
@@ -685,6 +692,7 @@ pub fn init(ruby: &Ruby) -> Result<(), Error> {
     native.define_module_function("send_message", function!(send_message, 6))?;
     native.define_module_function("relays", function!(relays, 0))?;
     native.define_module_function("monotonic_nanos", function!(monotonic_nanos, 0))?;
+    native.define_module_function("take_notices", function!(take_notices, 0))?;
     native.define_module_function("last_error", function!(last_error, 0))?;
     native.define_module_function("native_surface", function!(native_surface, 0))?;
     native.define_module_function("error_document", function!(error_document, 2))?;

@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+### Changed: the core's notices reach each SDK's own log
+
+A retry, a reconnect, a refused connect, the local-mode banner and every other line the core
+wrote for a reader went to standard error, past every host's log, and some were dropped. They
+now go through one notice seam that each host hooks.
+
+- Every SDK writes the core's notices through its own logger: Python's `flezha.core` logger,
+  the Java, Node, Ruby and PHP SDK loggers, Elixir's `Logger` under the domain `[:flezha]`,
+  and Rust's `tracing` target `flezha` once `diag::init_default_tracing` is called. The
+  local-mode banner is written at `error`, which no level hides.
+- The controller logs the core's transport notices, and each line a runner it started prints,
+  through `Logger`, naming the runner.
+- **BREAKING:** with no hook, a core notice on standard error reads `[flezha] warning: ...`
+  or `[flezha] error: ...` for those levels. `NON_DURABILITY_NOTICE` and
+  `QUIC_EXPERIMENTAL_NOTICE` no longer carry the `[flezha] ` prefix.
+- The C ABI gains `flz_core_take_notices`, and `flz_core_set_log_callback` now registers
+  its callback; it did nothing before.
+- The Python SDK logs at `warn` on standard error by default when the application configured
+  no handler, as every other SDK does; `configure_logging()` stays the explicit helper.
+- The Rust SDK's `diag::init_default_tracing` honours `FLEZHA_LOG_LEVEL` when `RUST_LOG` is
+  unset, and the Elixir SDK reads it for the core's notices.
+
 ### Changed: a relay a fault stopped is `halted`, and a planned sleep is `suspended` everywhere (breaking)
 
 "Parked" named both a relay stopped by a fault and, in places, a relay asleep at a committed

@@ -11,6 +11,7 @@ use std::sync::{mpsc, Arc, Mutex, Once, OnceLock};
 use std::thread;
 use std::time::Duration;
 
+use flz_transport::notice::say;
 use flz_transport::service::payloader;
 use flz_transport::transport::FlezhaStream;
 use prost::Message;
@@ -140,9 +141,7 @@ fn ship_notification(
     Some(thread::spawn(move || match rx.recv_timeout(ACK_TIMEOUT) {
         Ok(_) => {}
         Err(_) => {
-            say(&format!(
-                "[flezha] RunnerShutdownAck timeout for {relay_id}"
-            ));
+            flz_transport::notice!(Warn, "RunnerShutdownAck timeout for {relay_id}");
             drop_pending_ack(&reference_id);
         }
     }))
@@ -249,10 +248,10 @@ pub fn signal_result(reference_id: &str, result: AckResult) {
     match entry {
         Some(on_reply) => on_reply(result),
         None => {
-            eprintln!(
-                "[flezha] controller reply for unknown reference_id {} — \
-                 either timed out already or never registered.",
-                reference_id
+            flz_transport::notice!(
+                Warn,
+                "controller reply for unknown reference_id {reference_id} — either timed out \
+                 already or never registered."
             );
         }
     }
@@ -352,23 +351,13 @@ pub fn watch_stdin_eof(grace_ms: u32) {
                 end_gracefully("standard input reached end of file", grace_ms);
             })
         {
-            say(&format!(
-                "[flezha] Failed to start the standard-input watcher ({e}); a closed \
-                 standard input will not end this runner."
-            ));
+            flz_transport::notice!(
+                Error,
+                "Failed to start the standard-input watcher ({e}); a closed standard input will \
+                 not end this runner."
+            );
         }
     });
-}
-
-/// A line to standard error that cannot take the caller down with it.
-///
-/// A conformance harness stops a runner by closing its pipes, so the very
-/// thread that then has to end the process is writing to a pipe with no reader.
-/// `eprintln!` panics on that EPIPE, and a panicked watcher leaves the runner
-/// alive for ever — which is the outcome the watch exists to prevent.
-pub(crate) fn say(line: &str) {
-    use std::io::Write;
-    let _ = writeln!(std::io::stderr(), "{line}");
 }
 
 /// The one exit both facts lead to: ship every relay's final state, tell
@@ -453,10 +442,10 @@ fn install_sigterm_handler() {
                 });
             }
             Err(e) => {
-                eprintln!(
-                    "[flezha] Failed to install the termination-signal handler ({}); \
-                     graceful shutdown will rely on Drop only.",
-                    e
+                flz_transport::notice!(
+                    Warn,
+                    "Failed to install the termination-signal handler ({e}); graceful shutdown \
+                     will rely on Drop only."
                 );
             }
         }
@@ -544,7 +533,7 @@ mod tests {
         Some(
             stderr
                 .matches(&format!(
-                    "[flezha] RunnerShutdownAck timeout for {relay_id}\n"
+                    "[flezha] warning: RunnerShutdownAck timeout for {relay_id}\n"
                 ))
                 .count(),
         )

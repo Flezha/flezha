@@ -417,7 +417,8 @@ refused by name rather than decoded, and the reverse holds too.
 - `FLEZHA_WORKER_POOL_MAX`: Ceiling the pool and the fetcher set may grow to.
 - `FLEZHA_TRANSPORT`: `uds` (default) or `quic`.
 - `FLEZHA_NATIVE_BINARY`: An already-built addon, skipping resolution.
-- `FLEZHA_LOG_LEVEL`: `debug` / `info` / `warn` / `error` for the default logger.
+- `FLEZHA_LOG_LEVEL`: `debug` / `info` / `warn` / `error` for the default logger,
+  which also writes the core's notices; the local-mode banner at `error`.
 
 Their types and defaults are in [Runner environment variables](../../public/configuration/runner_environment.md#every-variable).
 

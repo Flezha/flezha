@@ -4,11 +4,13 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 use crossbeam::channel::{self, Receiver, Sender};
+use flz_transport::notice;
 use flz_transport::transport::tls;
-use rustler::{Encoder, Env, LocalPid, NifResult, ResourceArc, Term};
+use rustler::{Atom, Encoder, Env, LocalPid, NifResult, ResourceArc, Term};
 
 use crate::atoms;
 use crate::driver::{quic, uds, DriverReady, ServerCommand};
+use crate::driver_msg::send_notice_msg;
 use crate::driver_stats::{DriverStats, DriverStatsOut, StreamStatsOut};
 use crate::resources::{TransportServer, TransportServerArc};
 
@@ -114,6 +116,19 @@ fn start_quic_server(
             )
         },
     )
+}
+
+/// The processes core notices are sent to, oldest first.
+static NOTICE_SINKS: Mutex<Option<Vec<LocalPid>>> = Mutex::new(None);
+
+/// Send every later core notice to `sink` as `{:flz_notice, level, target,
+/// text}`. Sent from a thread of the core's own, never from a scheduler; with
+/// no live sink a notice goes to standard error.
+#[rustler::nif]
+fn set_notice_sink(sink: LocalPid) -> NifResult<Atom> {
+    notice::forward_to(&NOTICE_SINKS, sink, send_notice_msg)
+        .map_err(|e| rustler::Error::Term(Box::new(format!("spawn error: {e}"))))?;
+    Ok(atoms::ok())
 }
 
 /// Stop a running transport server; it has released its socket on return.

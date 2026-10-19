@@ -163,7 +163,7 @@ impl Uds {
                 Ok((stream, _addr)) => self.register_stream(stream, streams),
                 Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
                 Err(e) => {
-                    eprintln!("[flz_nif] Accept error: {}", e);
+                    flz_transport::notice!(Warn, "Accept error: {e}");
                     break;
                 }
             }
@@ -188,7 +188,7 @@ impl Uds {
             .registry()
             .register(&mut stream, token, Interest::READABLE)
         {
-            eprintln!("[flz_nif] Failed to register stream: {}", e);
+            flz_transport::notice!(Error, "Failed to register stream: {e}");
             return;
         }
 

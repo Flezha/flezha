@@ -17,8 +17,8 @@ use flz_transport::transport::FlezhaStream;
 use prost::Message;
 
 use crate::harness::{
-    abi_complete, abi_complete_mapped, abi_poll, last_document, ok_effect, through_veneers,
-    work_payloads, Controller, Demanded,
+    abi_complete, abi_complete_mapped, abi_poll, last_document, noticed, ok_effect, record_notices,
+    through_veneers, work_payloads, Controller, Demanded,
 };
 
 #[test]
@@ -39,6 +39,7 @@ fn c_abi_full_scenario() {
     #[cfg(feature = "python")]
     pyo3::Python::initialize();
 
+    record_notices();
     a_mismatched_schema_is_refused();
     let ctx = flz_core_context_new(flz_core::SCHEMA_VERSION);
     assert!(!ctx.is_null(), "matching schema creates a context");
@@ -67,6 +68,16 @@ fn c_abi_full_scenario() {
     crate::shutdown::shutdown_ships_state_then_wakes_the_poller(ctx, &controller);
 
     unsafe { flz_core_context_free(ctx) };
+    // The relays nobody acknowledged said so through the host's log.
+    for relay in ["abi_probe", "dyn-1"] {
+        let said = format!("RunnerShutdownAck timeout for {relay}");
+        assert!(
+            flz_core::test_support::wait_until(Duration::from_secs(10), Duration::ZERO, || {
+                noticed(&said)
+            }),
+            "never noticed: {said}"
+        );
+    }
 }
 
 /// Local mode is an alternative to `flz_core_start`, not an addition to it:

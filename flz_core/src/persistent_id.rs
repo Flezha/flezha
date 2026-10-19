@@ -58,11 +58,12 @@ fn load_or_derive(path: &Path, namespace: &str, factory_ids: &[String]) -> Strin
     if let Err(e) = persist_to(path, &id) {
         // Degradation per the runner-identity capability: no binding
         // continuity across restart, but the runner runs normally.
-        tracing::warn!(
-            target: "flezha",
+        flz_transport::notice!(
+            Warn,
             "runner stable-id persist failed at {:?}: {} — using a fresh per-boot id \
              (no binding continuity across restart)",
-            path, e
+            path,
+            e
         );
     }
 

@@ -276,9 +276,12 @@ fn collect(
             into.insert(key.to_string(), value);
             seqs.push(seq);
         }
-        Err(e) => eprintln!(
-            "[flezha] serialize_relay_state: tasklet `{}` key `{}` failed: {}",
-            tasklet_desc.name, key, e
+        Err(e) => flz_transport::notice!(
+            Error,
+            "serialize_relay_state: tasklet `{}` key `{}` failed: {}",
+            tasklet_desc.name,
+            key,
+            e
         ),
     }
 }
@@ -362,8 +365,9 @@ pub fn apply_init_values(instance: &RelayInstance, init_values: &str) -> Result<
 /// One `init_values` entry onto its tasklet's Cells.
 fn apply_tasklet(instance: &RelayInstance, tasklet_name: &str, tasklet_value: Value) {
     let Some(&tasklet_id) = instance.topology.tasklet_name_to_id.get(tasklet_name) else {
-        eprintln!(
-            "[flezha] apply_init_values: ignoring unknown tasklet `{}`",
+        flz_transport::notice!(
+            Warn,
+            "apply_init_values: ignoring unknown tasklet `{}`",
             tasklet_name
         );
         return;
@@ -403,8 +407,9 @@ fn apply_static(
     let inner = match tasklet_value {
         Value::Object(m) => m,
         other => {
-            eprintln!(
-                "[flezha] apply_init_values: tasklet `{}` expected object of \
+            flz_transport::notice!(
+                Warn,
+                "apply_init_values: tasklet `{}` expected object of \
                  cell_keys, got {} — skipping",
                 tasklet_name,
                 value_kind(&other)
@@ -420,10 +425,12 @@ fn apply_static(
         {
             Some(&i) => i,
             None => {
-                eprintln!(
-                    "[flezha] apply_init_values: ignoring unknown cell_key \
+                flz_transport::notice!(
+                    Warn,
+                    "apply_init_values: ignoring unknown cell_key \
                      `{}` for tasklet `{}`",
-                    key, tasklet_name
+                    key,
+                    tasklet_name
                 );
                 continue;
             }
@@ -443,22 +450,17 @@ fn apply_one(
     tasklet_name: &str,
     cell_key: Option<&str>,
 ) {
+    let at = || match cell_key {
+        Some(k) => format!("tasklet `{tasklet_name}` key `{k}`"),
+        None => format!("tasklet `{tasklet_name}`"),
+    };
     if slot.dispatcher.host_facts().is_some() {
         // Host-held state: the value crosses as an ApplyState activation
         // under the same handout gate the typed swap takes.
         let applied = crate::poll_core::global()
             .with_cell_exclusive(slot, || crate::host::apply_state_locked(slot, value));
         if let Err(e) = applied {
-            match cell_key {
-                Some(k) => eprintln!(
-                    "[flezha] apply_init_values: tasklet `{}` key `{}` apply failed: {}",
-                    tasklet_name, k, e
-                ),
-                None => eprintln!(
-                    "[flezha] apply_init_values: tasklet `{}` apply failed: {}",
-                    tasklet_name, e
-                ),
-            }
+            flz_transport::notice!(Error, "apply_init_values: {} apply failed: {e}", at());
         }
         return;
     }
@@ -470,16 +472,9 @@ fn apply_one(
                 *slot.state.lock_recover() = new_state;
             });
         }
-        Err(e) => match cell_key {
-            Some(k) => eprintln!(
-                "[flezha] apply_init_values: tasklet `{}` key `{}` deserialize failed: {}",
-                tasklet_name, k, e
-            ),
-            None => eprintln!(
-                "[flezha] apply_init_values: tasklet `{}` deserialize failed: {}",
-                tasklet_name, e
-            ),
-        },
+        Err(e) => {
+            flz_transport::notice!(Error, "apply_init_values: {} deserialize failed: {e}", at())
+        }
     }
 }
 

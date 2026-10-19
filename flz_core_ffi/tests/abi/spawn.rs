@@ -97,7 +97,7 @@ fn a_spawn_resolves_through_its_handle() {
     assert!(status.success(), "the spawn scenario failed:\n{log}");
     let warnings: Vec<&str> = log
         .lines()
-        .filter(|line| line.starts_with("[flezha] spawn_steps("))
+        .filter(|line| line.starts_with("[flezha] warning: spawn_steps("))
         .collect();
     assert_eq!(
         warnings.len(),

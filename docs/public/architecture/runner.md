@@ -51,10 +51,15 @@ flowchart TB
     CORE <-->|"the wire"| CTRL
 ```
 
-**The core never calls into SDK code and never owns an SDK thread.** The one
-exception is an optional log callback (`flz_core_set_log_callback`). That is
+**The core never calls into SDK code and never owns an SDK thread.** That is
 what lets Python keep asyncio and Java keep JVM threads without either
-negotiating with the other.
+negotiating with the other. The core's notices (a retry, a reconnect, a
+refusal, the local-mode banner) reach each SDK's own log without breaking
+that rule: Python, Ruby, PHP and Java take them from a queue
+(`flz_core_take_notices`) on a thread of their own; Node takes them through
+its log callback, Elixir through a process it registers and Rust through
+`tracing`. A C host may register `flz_core_set_log_callback`, which is called
+on whichever thread wrote the notice.
 
 The Rust SDK uses the kernel as a crate. The other five reach it through the
 C ABI in `flz_core_ffi`. A capability the crate reaches but the C ABI does not

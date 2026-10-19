@@ -113,10 +113,10 @@ impl SinkState {
             crate::cell::note_dropped_oldest();
             self.evicted_since_install += 1;
             if self.evicted_since_install == 1 {
-                tracing::warn!(
-                    target: "flezha::transport",
-                    capacity = ring_capacity(),
-                    "reconnect ring full; dropping the oldest outbound frame"
+                flz_transport::notice!(
+                    Warn,
+                    "reconnect ring full ({} frames); dropping the oldest outbound frame",
+                    ring_capacity()
                 );
             }
         }
@@ -127,12 +127,10 @@ impl SinkState {
     /// line to open the burst, the frame held, and the flood verdict back.
     fn hold_failed(&mut self, kind: &str, entry: Pending, error: &dyn std::fmt::Display) -> bool {
         if self.broken_pipe_at.is_empty() {
-            tracing::warn!(
-                target: "flezha::transport",
-                ring_len = self.ring.len() + 1,
-                "outbound {} write failed; buffering into reconnect ring: {}",
-                kind,
-                error
+            flz_transport::notice!(
+                Warn,
+                "outbound {kind} write failed; buffering into reconnect ring ({} frames): {error}",
+                self.ring.len() + 1
             );
         }
         self.push_ring(entry);
@@ -368,11 +366,11 @@ fn drive_reconnect_if(should_reconnect: bool) {
     }
     // Re-armed requests re-enter here, so a secondary that stays dead keeps
     // reporting every retry window instead of going silent after one line.
-    tracing::warn!(
-        target: "flezha::transport",
-        reason = RECONNECT_REASON,
-        ring_len = STATE.lock().map(|st| st.ring.len()).unwrap_or(0),
-        "outbound write-failure flood crossed threshold; requesting control reconnect"
+    flz_transport::notice!(
+        Warn,
+        "outbound write-failure flood crossed threshold ({} frames held); requesting control \
+         reconnect ({RECONNECT_REASON})",
+        STATE.lock().map(|st| st.ring.len()).unwrap_or(0)
     );
     if let Some(request_reconnect) = RECONNECT_HOOK.get() {
         request_reconnect(RECONNECT_REASON);
@@ -398,10 +396,10 @@ fn install(send_fn: SendFrameFn, discards: bool) {
     st.broken_pipe_at.clear();
     st.reconnect_requested_at = None;
     if st.evicted_since_install > 0 {
-        tracing::warn!(
-            target: "flezha::transport",
-            dropped = st.evicted_since_install,
-            "reconnect ring overflowed while the stream was down; those frames are lost"
+        flz_transport::notice!(
+            Warn,
+            "reconnect ring overflowed while the stream was down; {} frames are lost",
+            st.evicted_since_install
         );
         st.evicted_since_install = 0;
     }

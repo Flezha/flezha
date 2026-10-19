@@ -411,8 +411,8 @@ develop one and to test its graph.
 ### Nothing in local mode is durable
 
 Local mode holds state in memory. There is no write-ahead log, no snapshot, no
-dead-letter queue, and nothing survives the process. Every run prints that on
-stderr before it does any work, and the notice cannot be turned off.
+dead-letter queue, and nothing survives the process. Every run says so through
+the SDK's log, at `error`, before it does any work, and no log level hides it.
 
 Local mode is not a deployment. These need a controller:
 

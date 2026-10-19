@@ -92,12 +92,17 @@ defmodule FlezhaTest.System.EmbeddedRunnerE2ETest do
     rejected =
       ~r/\[Transport.Server\] Rejected runner connect: .*\(runner\.namespace_not_proven\)/
 
-    NodeTestHelper.with_only_logged([{rejected, :always}], fn ->
-      assert {:error, %Flezha.SDK.Error{code: "runner.namespace_not_proven"}} =
-               @ns
-               |> Flezha.SDK.create_runner()
-               |> Flezha.SDK.register_factory(Embedded)
-               |> Flezha.SDK.start()
+    # The runner's core says so too, through the SDK's own log.
+    refused = ~r/the controller refused the connect: .*\(runner\.namespace_not_proven\)/
+
+    NodeTestHelper.with_only_logged([{rejected, :always}, {refused, :always}], fn ->
+      NodeTestHelper.await_logged(refused, fn ->
+        assert {:error, %Flezha.SDK.Error{code: "runner.namespace_not_proven"}} =
+                 @ns
+                 |> Flezha.SDK.create_runner()
+                 |> Flezha.SDK.register_factory(Embedded)
+                 |> Flezha.SDK.start()
+      end)
     end)
 
     EventManager.add_handler(:runner_connected_event)

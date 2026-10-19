@@ -1,5 +1,6 @@
 pub mod env;
 pub mod errors;
+pub mod notice;
 pub mod service;
 pub mod transport;
 pub mod utility;

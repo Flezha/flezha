@@ -7,6 +7,9 @@
 //! runner→controller frame and wakes [`Controller::await_frame`] on each one,
 //! so a phase waits for the frame it needs rather than for a duration.
 
+use std::ffi::{c_char, CStr};
+use std::sync::Mutex;
+
 use flz_core::schema;
 pub use flz_core_ffi::fake_controller::Controller;
 use flz_core_ffi::veneer::{last_error_of, CtxPtr};
@@ -53,6 +56,32 @@ impl Demanded for Controller {
     fn await_success(&self, what: &str, reference_id: &str) {
         assert_eq!(self.await_reply(what, reference_id).status, "success");
     }
+}
+
+static NOTICES: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+extern "C" fn noted(_level: i32, text: *const c_char) {
+    // SAFETY: the core hands a NUL-terminated text borrowed for the call.
+    let text = unsafe { CStr::from_ptr(text) }
+        .to_string_lossy()
+        .into_owned();
+    NOTICES.lock().unwrap().push(text);
+}
+
+/// Take every later core notice through the C callback, as a C host does,
+/// rather than on standard error. The hook is process-wide: a test calling
+/// this records its neighbours' notices too.
+pub fn record_notices() {
+    flz_core_set_log_callback(Some(noted));
+}
+
+/// Whether a recorded notice starts with `prefix`.
+pub fn noticed(prefix: &str) -> bool {
+    NOTICES
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|n| n.starts_with(prefix))
 }
 
 /// Poll through the ABI, panicking on error; returns (status, decoded).

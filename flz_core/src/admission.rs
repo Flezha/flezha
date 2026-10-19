@@ -146,12 +146,13 @@ fn wait_for_room(slot: &Arc<CellSlot>, since: std::time::Instant, warned: &mut b
     }
     if !*warned && since.elapsed() >= BLOCK_WARN_AFTER {
         *warned = true;
-        tracing::warn!(
-            target: "flezha::mailbox",
-            tasklet_id = slot.tasklet_id,
-            cell_key = ?slot.cell_key,
-            "DropNothing-policy producer stalled >{:?} on a full cell mailbox; consumer tasklet wedged or far behind",
-            BLOCK_WARN_AFTER
+        flz_transport::notice!(
+            Warn,
+            "DropNothing-policy producer stalled >{:?} on a full cell mailbox (tasklet {}, key \
+             {:?}); consumer tasklet wedged or far behind",
+            BLOCK_WARN_AFTER,
+            slot.tasklet_id,
+            slot.cell_key
         );
     }
 }
@@ -356,11 +357,12 @@ fn report_holdback_full(producer: &Arc<CellSlot>, consumer: &Arc<CellSlot>) {
     {
         return;
     }
-    tracing::warn!(
-        target: "flezha::mailbox",
-        producer = producer.dispatcher.cell_label(),
-        consumer = consumer.dispatcher.cell_label(),
-        holdback_max = holdback_max(),
-        "producer filled its push holdback; falling back to parking until the consumer catches up"
+    flz_transport::notice!(
+        Warn,
+        "producer {} filled its push holdback of {} for {}; falling back to parking until the \
+         consumer catches up",
+        producer.dispatcher.cell_label(),
+        holdback_max(),
+        consumer.dispatcher.cell_label()
     );
 }

@@ -3,9 +3,10 @@
 
 use std::sync::{Arc, Mutex};
 
+use flz_transport::notice::Notice;
 use flz_transport::transport::close_reason::CloseReason;
 use flz_transport::transport::send_gate::{GateChange, Transition};
-use rustler::{Encoder, Env, LocalPid, OwnedEnv, ResourceArc, Term};
+use rustler::{Atom, Encoder, Env, LocalPid, OwnedEnv, ResourceArc, Term};
 
 use crate::atoms;
 use crate::frame_buffer::ParsedFrame;
@@ -18,6 +19,24 @@ fn send_tuple(owner: LocalPid, elements: impl for<'a> FnOnce(Env<'a>) -> Vec<Ter
     let _ = env.send_and_clear(&owner, |env| {
         rustler::types::tuple::make_tuple(env, &elements(env))
     });
+}
+
+/// Send one core notice as `{:flz_notice, level, target, text}`; `false`
+/// when `sink` is gone. Off every data path, so it answers what the shared
+/// sender above discards.
+pub(crate) fn send_notice_msg(sink: LocalPid, notice: &Notice) -> bool {
+    let mut env = OwnedEnv::new();
+    env.send_and_clear(&sink, |env| {
+        let level = Atom::from_str(env, notice.level.name()).expect("a level name is an atom");
+        (
+            atoms::flz_notice(),
+            level,
+            notice.target,
+            notice.text.as_str(),
+        )
+            .encode(env)
+    })
+    .is_ok()
 }
 
 pub(crate) fn send_data_msg(owner: LocalPid, stream_id: u64, frame: ParsedFrame) {

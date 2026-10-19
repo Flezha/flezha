@@ -696,6 +696,14 @@ fn monotonic_nanos() -> u64 {
     crate::flz_core_monotonic_nanos()
 }
 
+/// The core's notices held since the last take, as `(level, target, text)`;
+/// the first take starts the holding.
+#[pyfunction]
+fn take_notices() -> Vec<(String, String, String)> {
+    let notices = veneer::take_notices().into_iter();
+    notices.map(|n| (n.level, n.target, n.text)).collect()
+}
+
 /// The JSON error document the catalogue renders for `code` and `details`, a
 /// JSON object: the document `last_error` carries for a refusal the core
 /// makes, for one the package makes itself.
@@ -740,7 +748,9 @@ fn python_name(name: &str) -> String {
     match name {
         "context_new" => "Core".to_string(),
         "context_free" => "Core.free".to_string(),
-        "schema_version" | "monotonic_nanos" | "error_document" => name.to_string(),
+        "schema_version" | "monotonic_nanos" | "error_document" | "take_notices" => {
+            name.to_string()
+        }
         _ => format!("Core.{name}"),
     }
 }
@@ -755,6 +765,7 @@ pub fn init(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("SchemaMismatch", m.py().get_type::<SchemaMismatch>())?;
     m.add_function(wrap_pyfunction!(schema_version, m)?)?;
     m.add_function(wrap_pyfunction!(monotonic_nanos, m)?)?;
+    m.add_function(wrap_pyfunction!(take_notices, m)?)?;
     m.add_function(wrap_pyfunction!(free_threaded, m)?)?;
     m.add_function(wrap_pyfunction!(error_document, m)?)?;
     m.add_function(wrap_pyfunction!(native_surface, m)?)?;

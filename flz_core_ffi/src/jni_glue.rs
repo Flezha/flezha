@@ -625,6 +625,17 @@ pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_relays<'l>(
     string_or_throw(&mut env, ids)
 }
 
+/// The core's notices held since the last take, as a JSON array of
+/// `{"level", "target", "text"}`; the first take starts the holding.
+#[no_mangle]
+pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_takeNotices<'l>(
+    mut env: JNIEnv<'l>,
+    _class: JClass,
+) -> jstring {
+    let notices = serde_json::json!(veneer::take_notices()).to_string();
+    string_or_throw(&mut env, Ok(Some(notices)))
+}
+
 /// The core's monotonic clock in nanoseconds.
 #[no_mangle]
 pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_monotonicNanos(

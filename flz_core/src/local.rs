@@ -40,7 +40,7 @@ use crate::util::LockRecover;
 
 /// What every local run states before it does any work. Emitted by the core,
 /// so a host SDK cannot ship a local mode that looks durable.
-pub const NON_DURABILITY_NOTICE: &str = "[flezha] LOCAL MODE: state is held in memory and NOTHING is durable — \
+pub const NON_DURABILITY_NOTICE: &str = "LOCAL MODE: state is held in memory and NOTHING is durable — \
 no write-ahead log, no snapshots, no dead-letter queue. Everything this run computes is gone when the process \
 exits. Durability, plugins, placement and migration, the dead-letter queue, observability export, authz and \
 multi-runner scale all need a controller.";
@@ -108,9 +108,10 @@ impl OutputTable {
             }),
             None => {
                 UNHANDLED_OUTPUTS.fetch_add(1, Ordering::Relaxed);
-                eprintln!(
-                    "[flezha] local mode: {} bytes were released on output `{channel}`, \
-                     which has no registered callback",
+                flz_transport::notice!(
+                    Warn,
+                    "local mode: {} bytes were released on output `{channel}`, which has no \
+                     registered callback",
                     payload.len()
                 );
             }
@@ -143,7 +144,7 @@ impl LocalRun {
         let registry = Arc::new(RelayRegistry::new());
         registry.register(Arc::clone(&instance));
         NOTICES_EMITTED.fetch_add(1, Ordering::Relaxed);
-        eprintln!("{NON_DURABILITY_NOTICE}");
+        flz_transport::notice!(Always, "{NON_DURABILITY_NOTICE}");
         Ok(LocalRun {
             instance,
             dispatch: RelayDispatchHandle { registry },

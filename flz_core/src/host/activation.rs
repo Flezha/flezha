@@ -531,12 +531,10 @@ fn committed_timers(item: &CellItem, timers: Vec<TimerOp>, parked: bool) -> Vec<
 }
 
 fn park_entry(slot: &Arc<CellSlot>, item: &CellItem, error: String, attempts: u32) -> DlqEntryBody {
-    crate::park::PARKED_TOTAL.fetch_add(1, Ordering::Relaxed);
-    eprintln!(
-        "[flezha] tasklet {} parking poison payload to DLQ after {} attempt(s): {}",
-        slot.dispatcher.tasklet_name(),
+    crate::retry::note_parked(
+        &format!("tasklet {}", slot.dispatcher.tasklet_name()),
         attempts,
-        error
+        &error,
     );
     DlqEntryBody {
         channel: park_channel_of(slot),
@@ -608,10 +606,10 @@ fn route_edge_outputs(
             // them behind the held one rather than letting them
             // overtake it.
             Ok(_) => {}
-            Err(e) => tracing::warn!(
-                target: "flezha::host",
-                cell = slot.dispatcher.cell_label(),
-                "edge output dropped: {e}"
+            Err(e) => flz_transport::notice!(
+                Warn,
+                "cell {}: edge output dropped: {e}",
+                slot.dispatcher.cell_label()
             ),
         }
     }
@@ -700,11 +698,11 @@ fn ship_plugin_outputs(
                     &output.payload,
                     &metadata,
                 ) {
-                    tracing::error!(
-                        target: "flezha::host",
-                        instance_id = %slot.instance_id,
-                        %error,
-                        "plugin output refused; it is dropped and the fold carries on"
+                    flz_transport::notice!(
+                        Error,
+                        "relay {}: plugin output refused; it is dropped and the fold carries on: \
+                         {error}",
+                        slot.instance_id
                     );
                 }
             }

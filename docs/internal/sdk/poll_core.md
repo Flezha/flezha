@@ -350,7 +350,8 @@ Context lifecycle: `flz_core_context_new(shim_schema_version)` →
 | `flz_core_spawn_request`, `flz_core_spawn_result` | Tasklet-requested spawn: a request that answers a handle at once, and a read of that handle with a timeout (0 never waits) |
 | `flz_core_part` | A part of the invocation of work item `item` of the live activation `token`: numbered, stamped and written at once, never waited on. `FLZ_OK` for a part sent or dropped; `FLZ_ERR` with `part.no_output` or `part.outside_invocation` (a token no longer outstanding, an item it does not hold) |
 | `flz_core_monotonic_nanos`, `flz_core_entry_last_delivery_nanos` | Context-free reads |
-| `flz_core_set_log_callback` | The one host callback the core ever invokes |
+| `flz_core_take_notices` | The core's notices held since the last take, as JSON; the first take starts the holding, so a host writes them through its own log on a thread of its own |
+| `flz_core_set_log_callback` | The one host callback the core ever invokes, on whichever thread wrote the notice; for a C host that can take it there |
 
 - **Version negotiation happens at creation**: a shim built against a
   different `SCHEMA_VERSION` gets NULL and `flz_core_init_error()` names both

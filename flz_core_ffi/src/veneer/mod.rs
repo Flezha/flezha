@@ -15,6 +15,8 @@ use std::ffi::{c_char, CStr, CString};
 use std::fmt;
 
 use flz_core::schema;
+/// The core's notice seam, for a host that forwards notices itself.
+pub use flz_transport::notice;
 
 use crate::{
     FlzContext, FLZ_EFFECT_KEPT, FLZ_EFFECT_RUN, FLZ_EFFECT_UNRECORDED, FLZ_OK,
@@ -98,6 +100,7 @@ pub const SURFACE: &[Entry] = surface![
     (error_document, false, Glue),
     (buf_free, false, CAbi),
     (set_log_callback, false, CAbi),
+    (take_notices, false, Every),
     (declare_class, false, Every),
     (check_class, false, Every),
     (start, true, Every),
@@ -631,4 +634,24 @@ pub fn relays(ctx: CtxPtr) -> Result<Vec<String>, Refusal> {
     );
     verdict(ctx, status)?;
     Ok(ids.unwrap_or_default())
+}
+
+/// One core notice a host writes through its own log.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+pub struct Notice {
+    /// `info`, `warn`, `error` or `always`: the local-mode banner, written
+    /// whatever the host's level filter says.
+    pub level: String,
+    pub target: String,
+    pub text: String,
+}
+
+/// The notices held since the last take; the first take starts the holding.
+pub fn take_notices() -> Vec<Notice> {
+    let (_, notices) = with_buffer(
+        &[FLZ_OK],
+        |out, out_len| unsafe { crate::flz_core_take_notices(out, out_len) },
+        |bytes| serde_json::from_slice::<Vec<Notice>>(bytes).unwrap_or_default(),
+    );
+    notices.unwrap_or_default()
 }

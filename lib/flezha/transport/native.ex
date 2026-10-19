@@ -50,6 +50,14 @@ defmodule Flezha.Transport.Native do
   """
   def driver_stats(_server_ref), do: :erlang.nif_error(:not_loaded)
 
+  @doc """
+  Send every later core notice to `pid` as `{:flz_notice, level, target, text}`,
+  `level` one of `:info`, `:warn`, `:error`, `:always`. Several may register;
+  the oldest live one receives each notice, and with none live it goes to
+  standard error.
+  """
+  def set_notice_sink(_pid), do: :erlang.nif_error(:not_loaded)
+
   # --- Behaviour callbacks (flow tasklets) ---
 
   @impl true

@@ -458,7 +458,7 @@ impl RelayDispatchHandle {
         stream: Arc<FlezhaStream>,
     ) {
         let Some(instance) = self.registry.get(instance_id) else {
-            eprintln!("[flezha] relay instance {} not found", instance_id);
+            flz_transport::notice!(Warn, "relay instance {instance_id} not found");
             return;
         };
         route_stream_frame(&instance, payload, metadata, stream);
@@ -552,11 +552,11 @@ pub(crate) fn edge_record(
             payload,
         }),
         Err(error) => {
-            tracing::warn!(
-                target: "flezha::routing",
-                instance = %instance.instance_id,
-                channel = channel_id,
-                "an edge value the channel codec refused is not recorded: {error}"
+            flz_transport::notice!(
+                Warn,
+                "relay {} channel {channel_id}: an edge value the channel codec refused is not \
+                 recorded: {error}",
+                instance.instance_id
             );
             None
         }
@@ -592,11 +592,10 @@ fn redeliver_edge(
     let value = match (codec.decode)(payload) {
         Ok(value) => value,
         Err(error) => {
-            tracing::warn!(
-                target: "flezha::routing",
-                instance = %instance.instance_id,
-                channel = channel_id,
-                "a re-delivered edge value did not decode: {error}"
+            flz_transport::notice!(
+                Warn,
+                "relay {} channel {channel_id}: a re-delivered edge value did not decode: {error}",
+                instance.instance_id
             );
             return;
         }
@@ -612,11 +611,10 @@ fn redeliver_edge(
         false,
         &mut Destination::Redelivered,
     ) {
-        tracing::warn!(
-            target: "flezha::routing",
-            instance = %instance.instance_id,
-            channel = channel_id,
-            "a re-delivered edge value was not admitted: {error}"
+        flz_transport::notice!(
+            Warn,
+            "relay {} channel {channel_id}: a re-delivered edge value was not admitted: {error}",
+            instance.instance_id
         );
     }
 }
@@ -794,8 +792,9 @@ fn wrap_entry<V: EntryView>(
 ) -> Option<Arc<dyn Any + Send + Sync>> {
     let retry_bytes = channel.entry_parsed.then(|| payload.clone());
     let Some(wrap) = &channel.wrap_input else {
-        eprintln!(
-            "[flezha] relay {} channel `{}` has no entry wrapper",
+        flz_transport::notice!(
+            Error,
+            "relay {} channel `{}` has no entry wrapper",
             instance.instance_id(),
             channel.name
         );
@@ -814,8 +813,9 @@ fn wrap_entry<V: EntryView>(
                     call: call.cloned(),
                     deliver: deliver(),
                 }),
-                None => eprintln!(
-                    "[flezha] relay {} channel `{}`: wrap_input failed: {}",
+                None => flz_transport::notice!(
+                    Warn,
+                    "relay {} channel `{}`: wrap_input failed: {}",
                     instance.instance_id(),
                     channel.name,
                     e

@@ -492,7 +492,9 @@ hard runtime requirement, and the gem installs and runs without it.
 
 The default logger writes to standard error at `warn` and above; set
 `FLEZHA_LOG_LEVEL` or pass `runner.logger(your_logger)`. A logger needs only
-`debug` / `info` / `warn` / `error`.
+`debug` / `info` / `warn` / `error`. The core's notices reach the same logger,
+written by the starvation supervisor on each wake (by a thread of its own under
+the fiber executor) and when a run stops; the local-mode banner at `error`.
 
 The startup line reports the executor, the worker count and the resulting JIT
 state, so a measurement can never be ambiguous about which it was taken under.

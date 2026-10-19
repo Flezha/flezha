@@ -154,11 +154,10 @@ pub fn relay_left(instance: &RelayInstance) {
 /// A refused leave is only reported: the host may still hold the state.
 fn leave_answered(relay: &str, outcome: schema::ActivationOutcome) {
     if let schema::ActivationOutcome::Failed(err) = outcome {
-        tracing::warn!(
-            target: "flezha::host",
-            relay = %relay,
-            reason = %err.message,
-            "the host refused a leave; it may still hold the state"
+        flz_transport::notice!(
+            Warn,
+            "the host refused a leave of relay {relay}; it may still hold the state: {}",
+            err.message
         );
     }
 }

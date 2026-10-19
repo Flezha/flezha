@@ -238,7 +238,7 @@ pub fn handle_command(
                         respond_with(&stream, frame);
                     });
                 if let Err(e) = spawned {
-                    eprintln!("[flezha] Failed to start an off-reader answer: {}", e);
+                    flz_transport::notice!(Error, "Failed to start an off-reader answer: {}", e);
                 }
             }
             Err(refusal) => respond_with(
@@ -279,10 +279,9 @@ pub fn handle_command(
 
         CommandActionType::NotificationIgnore => {
             let _ = runner;
-            eprintln!(
-                "[flezha] Received an unexpected controller->SDK command the SDK does \
-                 not handle (ref={}); ignoring.",
-                reference_id
+            flz_transport::notice!(
+                Warn,
+                "Received an unexpected controller->SDK command (ref={reference_id}); ignoring."
             );
         }
     }
@@ -296,16 +295,18 @@ fn decode_frame(payload_id: &str, message: &[u8]) -> Option<(CommandActionType, 
         Ok(FrameOutcome::Command(handler, reference_id)) => Some((handler, reference_id)),
         Ok(FrameOutcome::PeerClosed) => None,
         Err(CommandDecodeError::Malformed { stack }) => {
-            eprintln!(
-                "[flezha] control-channel frame failed to decode (stack={}); \
+            flz_transport::notice!(
+                Warn,
+                "control-channel frame failed to decode (stack={}); \
                  dropping and waiting for the read loop to drive reconnect.",
                 stack
             );
             None
         }
         Err(CommandDecodeError::EmptyCommand) => {
-            eprintln!(
-                "[flezha] control-channel frame had `command: None`; dropping. \
+            flz_transport::notice!(
+                Warn,
+                "control-channel frame had `command: None`; dropping. \
                  The next frame on this connection will be processed normally."
             );
             None
@@ -319,7 +320,7 @@ fn decode_frame(payload_id: &str, message: &[u8]) -> Option<(CommandActionType, 
 /// Write an encoded reply, logging a frame that could not be built or written.
 fn respond_with(stream: &FlezhaStream, frame: std::io::Result<Vec<u8>>) {
     if let Err(e) = frame.and_then(|reply| write_reply(stream, reply)) {
-        eprintln!("[flezha] Failed to write command response: {}", e);
+        flz_transport::notice!(Error, "Failed to write command response: {}", e);
     }
 }
 

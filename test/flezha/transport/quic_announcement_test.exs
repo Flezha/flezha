@@ -17,8 +17,9 @@ defmodule Flezha.Transport.QuicAnnouncementTest do
   alias FlezhaTest.Helper.NodeTestHelper
 
   @controller "[Transport.Server] the QUIC transport is experimental"
-  # Every runner on `flz_core` says it the same way, the Elixir one included.
-  @runner "[flezha] the QUIC transport is experimental"
+  # Every runner on `flz_core` says it the same way, through its own log, the
+  # Elixir one included.
+  @runner "the QUIC transport is experimental"
 
   setup do
     ns = "quic_notice_#{System.unique_integer([:positive])}"

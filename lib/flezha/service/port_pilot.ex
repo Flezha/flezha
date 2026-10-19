@@ -8,6 +8,11 @@ defmodule Flezha.Service.PortPilot do
 
   @port_down_counter 10
 
+  # A runner's output is read a line at a time; a longer line arrives in
+  # pieces, joined up to `@joined_bytes` before what is held is logged as is.
+  @line_bytes 4096
+  @joined_bytes 65_536
+
   use GenServer
   use Flezha.Process.Timer, keys: [:counter_reset]
 
@@ -256,7 +261,13 @@ defmodule Flezha.Service.PortPilot do
   def init(_) do
     ports = initialize_ports()
 
-    {:ok, arm_counter_reset(%{ports: ports, response_refs: %{}, port_down_counter: 0})}
+    {:ok,
+     arm_counter_reset(%{
+       ports: ports,
+       response_refs: %{},
+       port_down_counter: 0,
+       partial: %{}
+     })}
   end
 
   @impl true
@@ -264,15 +275,30 @@ defmodule Flezha.Service.PortPilot do
     {:noreply, state |> arm_counter_reset() |> Map.put(:port_down_counter, 0)}
   end
 
+  # A runner's own output, logged a line at a time naming the runner.
   @impl true
-  def handle_info({_port, {:data, port_msg}}, state) do
-    Logger.warning("Received unexpected message from port: #{inspect(port_msg)}")
+  def handle_info({port, {:data, {:noeol, chunk}}}, state) do
+    held = [Map.get(state.partial, port, "") | chunk]
 
-    {:noreply, state}
+    if IO.iodata_length(held) >= @joined_bytes do
+      log_runner_line(state, port, held)
+      {:noreply, %{state | partial: Map.delete(state.partial, port)}}
+    else
+      {:noreply, put_in(state.partial[port], held)}
+    end
+  end
+
+  def handle_info({port, {:data, {:eol, line}}}, state) do
+    {held, partial} = Map.pop(state.partial, port, "")
+    log_runner_line(state, port, [held | line])
+    {:noreply, %{state | partial: partial}}
   end
 
   @impl true
   def handle_info({:DOWN, _ref, :port, port, :normal}, state) do
+    {held, partial} = Map.pop(state.partial, port)
+    if held, do: log_runner_line(state, port, held)
+    state = %{state | partial: partial}
     Logger.error("Port application down")
 
     counter = Map.get(state, :port_down_counter, 0) + 1
@@ -298,7 +324,7 @@ defmodule Flezha.Service.PortPilot do
 
             ports
           else
-            {new_port, _} = open_port(command)
+            {new_port, _} = open_runner(command)
             Map.put(ports, new_port, command)
           end
       end
@@ -309,7 +335,7 @@ defmodule Flezha.Service.PortPilot do
   @impl true
   def handle_info({:restart_port, command}, state) do
     Logger.info("Port application restarting after backoff")
-    {port, _} = open_port(command)
+    {port, _} = open_runner(command)
     ports = Map.put(state.ports, port, command)
     {:noreply, %{state | ports: ports, port_down_counter: 0}}
   end
@@ -324,10 +350,25 @@ defmodule Flezha.Service.PortPilot do
   defp initialize_ports() do
     external_processes = Config.get(:external_processes)
 
-    Enum.map(external_processes, fn command ->
-      open_port(command)
-    end)
+    Enum.map(external_processes, &open_runner/1)
     |> Map.new()
+  end
+
+  defp open_runner(command),
+    do: open_port(command, port_opts: [:stderr_to_stdout, {:line, @line_bytes}])
+
+  # The level the line's own prefix names, as the core writes it.
+  defp log_runner_line(state, port, line) do
+    line = IO.iodata_to_binary(line)
+
+    level =
+      case line do
+        "[flezha] warning: " <> _ -> :warning
+        "[flezha] error: " <> _ -> :error
+        _ -> :info
+      end
+
+    Logger.log(level, "[runner #{Map.get(state.ports, port, inspect(port))}] #{line}")
   end
 
   defp arm_counter_reset(state) do

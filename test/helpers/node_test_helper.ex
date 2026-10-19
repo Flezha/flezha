@@ -537,6 +537,29 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
   def occurrences(text, line), do: length(String.split(text, line)) - 1
 
   @doc """
+  Run `fun`, then wait until a line matching `pattern` is logged, by any
+  process, from the moment `fun` started; `fun`'s result. For a line another
+  process logs after `fun` returns, inside a `with_only_logged/2` capture.
+  """
+  def await_logged(pattern, fun, timeout_ms \\ 10_000) do
+    id = :"await_logged_#{System.unique_integer([:positive])}"
+    config = %{config: %{to: self(), pattern: pattern, id: id}}
+    :ok = :logger.add_handler(id, FlezhaTest.Helper.LogForward, config)
+
+    try do
+      result = fun.()
+
+      receive do
+        {^id, :logged} -> result
+      after
+        timeout_ms -> raise "#{inspect(pattern)} was never logged"
+      end
+    after
+      :logger.remove_handler(id)
+    end
+  end
+
+  @doc """
   Run `fun`, which provokes log lines on purpose, and return its result.
 
   Every entry logged meanwhile must match one of `expected`, so the capture
@@ -747,4 +770,14 @@ defmodule FlezhaTest.Helper.NodeTestHelper.PeerLog do
     # The node that started the peer is gone, and with it every reader.
     :error, {:erpc, _} -> :ok
   end
+end
+
+defmodule FlezhaTest.Helper.LogForward do
+  @moduledoc false
+  # A `:logger` handler telling a waiting test that a matching line was logged.
+  def log(%{msg: {:string, text}}, %{config: %{to: to, pattern: pattern, id: id}}) do
+    if IO.chardata_to_string(text) =~ pattern, do: send(to, {id, :logged})
+  end
+
+  def log(_event, _config), do: :ok
 end

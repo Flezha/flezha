@@ -188,7 +188,10 @@ reuses the SDK's substitution through `Logger.render(format, args)` rather than
 writing a second one. The output is JVM-wide and survives `close()`,
 because a runner's most interesting diagnostics are the ones it writes while
 shutting down. A write that fails is swallowed, so a standard error closed
-during a drain cannot turn a clean drain into a crash.
+during a drain cannot turn a clean drain into a crash. The core's notices reach
+the same logger, never from a core thread: the poll host's supervisor takes
+them (`FlzCore.takeNotices`) on each wake and when a run stops, and writes the
+local-mode banner at `ERROR`.
 
 ## The settings tree
 

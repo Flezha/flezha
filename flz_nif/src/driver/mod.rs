@@ -72,7 +72,7 @@ pub(crate) fn drive<T: Transport>(
 ) {
     match wire {
         Ok(wire) => DriverLoop::new(wire, stats).run(cmd_rx),
-        Err(e) => eprintln!("[flz_nif] {} driver fatal error: {}", name, e),
+        Err(e) => flz_transport::notice!(Error, "{name} driver fatal error: {e}"),
     }
 }
 
@@ -106,7 +106,7 @@ pub enum ServerCommand {
 /// than the wire can carry. The frame is dropped; the connection is not, because retrying a
 /// value that cannot be represented would refuse identically for ever.
 pub(crate) fn report_refused_frame(payload_id: &str, error: &std::io::Error) {
-    eprintln!("[flz_nif] frame refused for payload {payload_id}: {error}");
+    flz_transport::notice!(Warn, "frame refused for payload {payload_id}: {error}");
 }
 
 /// Start result passed back from a driver thread to the NIF via channel.

@@ -51,10 +51,8 @@ pub fn would_overflow_write_buffer(buffered: usize, incoming: usize, cap: usize)
     buffered != 0 && buffered + incoming > cap
 }
 
-/// What a process that selects QUIC states, once. Written to standard error
-/// rather than through `tracing`: no host SDK installs a subscriber of its
-/// own, so a `tracing` event would reach nobody in most runners.
-pub const QUIC_EXPERIMENTAL_NOTICE: &str = "[flezha] the QUIC transport is experimental: its \
+/// What a process that selects QUIC states, once.
+pub const QUIC_EXPERIMENTAL_NOTICE: &str = "the QUIC transport is experimental: its \
 settings and behaviour may change drastically or it may be removed without a compatibility \
 break. See docs/public/publishing/maturity.md#quic";
 
@@ -72,7 +70,7 @@ fn transport_type(raw: Option<&str>) -> TransportType {
             static ANNOUNCED: Once = Once::new();
             ANNOUNCED.call_once(|| {
                 QUIC_NOTICES.fetch_add(1, Ordering::Relaxed);
-                eprintln!("{QUIC_EXPERIMENTAL_NOTICE}");
+                crate::notice!(Warn, "{QUIC_EXPERIMENTAL_NOTICE}");
             });
             TransportType::Quic
         }

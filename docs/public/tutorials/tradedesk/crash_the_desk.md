@@ -129,7 +129,7 @@ trade before any tasklet sees it. The entry is `trade_watcher#p1/trades/...`
 in cell `_entry`, and its error is serde's reason, as the runner logs it:
 
 ```output
-[flezha] entry channel `trades` parking payload to DLQ after 3 attempt(s): entry channel: JSON deserialization failed: invalid type: string "one euro", expected f64 at line 1 column 71
+[flezha] warning: entry channel `trades` parking payload to DLQ after 3 attempt(s): entry channel: JSON deserialization failed: invalid type: string "one euro", expected f64 at line 1 column 71
 ```
 
 ### Node
@@ -171,7 +171,7 @@ trade_watcher#p1/track_prices/307bcbd6439a080f              EUR/USD         trad
 ### Elixir
 
 `track_prices` reads the trade as a map and refuses the price itself. The
-retries are logged at the `debug` level:
+runner logs each retry as a warning:
 
 ```output
 ENTRY                                                       CELL            CHANNEL     GEN  AGE       ERROR

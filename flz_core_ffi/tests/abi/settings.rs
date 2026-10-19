@@ -159,10 +159,14 @@ fn a_refused_start_leaves_no_runner_dialling() {
         }
     });
 
+    crate::harness::record_notices();
     let ctx = context();
     let settings = format!(r#"{{"socket_files_path": "{}"}}"#, dir.display());
     assert_eq!(start_with(ctx, &settings), FLZ_ERR);
     assert_eq!(last_document(ctx).code, "runner.namespace_not_proven");
+    assert!(crate::harness::noticed(
+        "the controller refused the connect: error: refused by the test"
+    ));
 
     // Past several rungs of the reconnect ladder a runner left behind would climb.
     std::thread::sleep(Duration::from_secs(3));

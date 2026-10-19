@@ -23,7 +23,7 @@ BENIGN = re.compile(
     r'|^PHP CS Fixer [0-9.]+ .* by |^PHP runtime: [0-9.]+$|^Loaded config \S+ from ".*"\.$'
     r"|^\s*[0-9]+/[0-9]+ \[[▓░]+\]\s+[0-9]+%$"
     # KB-854: core notices the hosts cannot capture yet; goes when the S-3 core notice hook lands.
-    r"|^\[flezha\] (LOCAL MODE: state is held in memory and NOTHING is durable — no write-ahead log, "
+    r"|^\[flezha\] (?:warning: |error: )?(LOCAL MODE: state is held in memory and NOTHING is durable — no write-ahead log, "
     r"no snapshots, no dead-letter queue\. Everything this run computes is gone when the process exits\. "
     r"Durability, plugins, placement and migration, the dead-letter queue, observability export, authz and "
     r"multi-runner scale all need a controller\."

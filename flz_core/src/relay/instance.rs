@@ -161,7 +161,7 @@ impl RelayInstance {
         // Started here, while threads can still be spawned, so a later park
         // never needs one; a hand-off retries the start if this one failed.
         if let Err(e) = crate::park::start_owner() {
-            eprintln!("[flezha] the park owner could not start yet: {e}");
+            flz_transport::notice!(Warn, "the park owner could not start yet: {e}");
         }
         Arc::new_cyclic(|weak: &Weak<RelayInstance>| {
             let background_stop = Arc::new(AtomicBool::new(false));

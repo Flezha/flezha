@@ -94,12 +94,22 @@ pub fn note_failed_attempt(
 ) -> Duration {
     let delay = backoff(policy.backoff_base_ms, attempt);
     RETRIES_TOTAL.fetch_add(1, Ordering::Relaxed);
-    eprintln!(
-        "[flezha] {label} attempt {attempt}/{} failed (retrying in {} ms): {error}",
+    flz_transport::notice!(
+        Warn,
+        "{label} attempt {attempt}/{} failed (retrying in {} ms): {error}",
         policy.max_attempts,
         delay.as_millis()
     );
     delay
+}
+
+/// Count and log one payload parked to the dead-letter queue.
+pub fn note_parked(label: &str, attempts: u32, error: &dyn Display) {
+    crate::park::PARKED_TOTAL.fetch_add(1, Ordering::Relaxed);
+    flz_transport::notice!(
+        Warn,
+        "{label} parking payload to DLQ after {attempts} attempt(s): {error}"
+    );
 }
 
 /// `base * 2^(attempt-1)` ±50 %, capped at
@@ -264,8 +274,7 @@ pub(crate) fn park_exhausted(
         cell_suffix,
         ..
     } = target;
-    crate::park::PARKED_TOTAL.fetch_add(1, Ordering::Relaxed);
-    eprintln!("[flezha] {label} parking payload to DLQ after {attempts} attempt(s): {error}");
+    note_parked(label, attempts, &error);
     Park::new(
         crate::flusher::encode_cell_identity(instance_id, &tasklet_id, cell_suffix),
         &format!("{instance_id}/{tasklet_id}/{cell_suffix}"),
@@ -421,7 +430,7 @@ pub(crate) fn hand_edge_ladder(
     error: String,
 ) {
     let Some(channel_id) = instance.topology.lookup_channel_id(&channel.name) else {
-        eprintln!("[flezha] edge transform failed on an unregistered channel: {error}");
+        flz_transport::notice!(Error, "no such channel for an edge transform: {error}");
         return;
     };
     let tasklet = (instance.topology.tasklet(edge.tasklet))

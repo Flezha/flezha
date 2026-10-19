@@ -617,7 +617,9 @@ the rest in `fixtures.php` and `fixtures_probe.php`.
 `FLEZHA_LOG_LEVEL` (`debug` | `info` | `warn` | `error`, default `warn`)
 selects what the default logger writes to standard error. A host that wants
 PSR-3, spans or structured fields passes its own `Flezha\Logger` subclass to
-`->logger(...)`; there is no logging dependency.
+`->logger(...)`; there is no logging dependency. The core's notices reach the
+same logger: the loop takes them on each poll timeout, the Swoole supervisor on
+each wake, and a run on its close; the local-mode banner at `error`.
 
 The runner observes shutdown three ways, because a harness, a user and the
 controller each have their own: end of file on standard input, `SIGINT` /

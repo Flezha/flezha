@@ -15,11 +15,11 @@ use flz_core_ffi::veneer::{Entry, SURFACE};
 
 /// Every `flz_core_*` entry point the crate exports, from its own source.
 ///
-/// Two files, because the C ABI is two: the general entry points and the
-/// local-mode ones. Reading only the first reports a name the crate does
-/// export as one it does not.
+/// Three files, because the C ABI is split three ways: the general entry
+/// points, the local-mode ones and the notice ones. Reading fewer reports a
+/// name the crate does export as one it does not.
 pub fn exported_entry_points() -> Vec<String> {
-    let mut names: Vec<String> = ["src/lib.rs", "src/local.rs"]
+    let mut names: Vec<String> = ["src/lib.rs", "src/local.rs", "src/notice.rs"]
         .iter()
         .flat_map(|relative| {
             let source = fs::read_to_string(crate_path(relative))

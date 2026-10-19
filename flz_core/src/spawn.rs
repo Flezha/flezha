@@ -334,10 +334,11 @@ fn interpret(instance_id: &str, reply: AckResult) -> Result<SpawnResult, SpawnEr
 }
 
 fn warn(instance_id: &str, factory_id: &str, error: &SpawnError) {
-    crate::shutdown::say(&format!(
-        "[flezha] spawn_steps(factory `{factory_id}`, id `{instance_id}`) failed ({}): {error}",
+    flz_transport::notice!(
+        Warn,
+        "spawn_steps(factory `{factory_id}`, id `{instance_id}`) failed ({}): {error}",
         error.code()
-    ));
+    );
 }
 
 /// Hand an unread pending handle to the reaper, which waits out what is left

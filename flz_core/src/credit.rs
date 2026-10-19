@@ -152,8 +152,8 @@ impl CreditWindow {
                     let since = *parked_since.get_or_insert_with(Instant::now);
                     if !warned && since.elapsed() >= WARN_AFTER {
                         warned = true;
-                        tracing::warn!(
-                            target: "flezha::credit",
+                        flz_transport::notice!(
+                            Warn,
                             "sender parked on credit for {:?} (need {} bytes, {} available) — \
                              controller fsync stalled or grant lost",
                             since.elapsed(),
