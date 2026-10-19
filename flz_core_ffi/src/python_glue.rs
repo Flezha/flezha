@@ -727,6 +727,16 @@ fn error_document(code: &str, details: &str) -> PyResult<String> {
     crate::render_error_document(code, details).map_err(native_error)
 }
 
+/// A `Response` payload as the core reads it: `(target, created, request, value, error)`.
+#[pyfunction]
+fn response_decode<'py>(py: Python<'py>, payload: &[u8]) -> PyResult<Bound<'py, PyTuple>> {
+    veneer::response_decode(payload, |r| {
+        let (request, value) = (PyBytes::new(py, r.request), r.result.ok());
+        let value = value.map(|value| PyBytes::new(py, value));
+        (r.target, r.created, request, value, r.result.err()).into_pyobject(py)
+    })?
+}
+
 /// Whether this extension was built for a free-threaded interpreter.
 ///
 /// Reported in the runner's startup line, so a benchmark can never be
@@ -763,9 +773,8 @@ fn python_name(name: &str) -> String {
     match name {
         "context_new" => "Core".to_string(),
         "context_free" => "Core.free".to_string(),
-        "schema_version" | "monotonic_nanos" | "error_document" | "take_notices" | "knob" => {
-            name.to_string()
-        }
+        "schema_version" | "monotonic_nanos" | "error_document" | "take_notices" | "knob"
+        | "response_decode" => name.to_string(),
         _ => format!("Core.{name}"),
     }
 }
@@ -785,6 +794,7 @@ pub fn init(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(take_notices, m)?)?;
     m.add_function(wrap_pyfunction!(free_threaded, m)?)?;
     m.add_function(wrap_pyfunction!(error_document, m)?)?;
+    m.add_function(wrap_pyfunction!(response_decode, m)?)?;
     m.add_function(wrap_pyfunction!(native_surface, m)?)?;
     Ok(())
 }

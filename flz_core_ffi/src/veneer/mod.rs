@@ -18,6 +18,7 @@ use flz_core::schema;
 /// The core's notice seam, for a host that forwards notices itself.
 pub use flz_transport::notice;
 
+pub use crate::ResponseParts;
 use crate::{
     FlzContext, FLZ_EFFECT_KEPT, FLZ_EFFECT_RUN, FLZ_EFFECT_UNRECORDED, FLZ_OK,
     FLZ_POLL_ACTIVATION, FLZ_POLL_SHUTTING_DOWN, FLZ_POLL_TIMEOUT, FLZ_SPAWN_PENDING,
@@ -87,7 +88,7 @@ pub const SURFACE: &[Entry] = surface![
     (context_free, false, Every),
     (init_error, false, CAbi),
     (last_error, false, Glue),
-    (error_document, false, Glue),
+    (error_document, false, Every),
     (buf_free, false, CAbi),
     (set_log_callback, false, CAbi),
     (take_notices, false, Every),
@@ -129,6 +130,7 @@ pub const SURFACE: &[Entry] = surface![
     (relays, false, Every),
     (monotonic_nanos, false, Every),
     (knob, false, Every),
+    (response_decode, false, Every),
 ];
 
 /// The rows the Python, Ruby and Node glue export.
@@ -647,6 +649,34 @@ pub fn knob(kind: &str, raw: &str) -> Result<Option<i64>, Refusal> {
         crate::FLZ_KNOB_UNSET => Ok(None),
         _ => Err(Refusal::Shape(format!("`{kind}` is not a knob kind"))),
     }
+}
+
+/// Decode a `Response` channel payload with the core's decoder, handing
+/// `read` the encoded [`ResponseParts`] before the buffer is freed: for a
+/// host that reads postcard on its own side. Context-free.
+pub fn response_bytes<T>(payload: &[u8], read: impl FnOnce(&[u8]) -> T) -> Result<T, Refusal> {
+    let (status, value) = with_buffer(
+        &[FLZ_OK],
+        |out, out_len| unsafe {
+            crate::flz_core_response_decode(payload.as_ptr(), payload.len(), out, out_len)
+        },
+        read,
+    );
+    match (status, value) {
+        (FLZ_OK, Some(value)) => Ok(value),
+        _ => Err(Refusal::Core(
+            read_c_str(crate::flz_core_init_error()).unwrap_or_default(),
+        )),
+    }
+}
+
+/// [`response_bytes`] read into its borrowed [`ResponseParts`].
+pub fn response_decode<T>(
+    payload: &[u8],
+    read: impl FnOnce(ResponseParts<'_>) -> T,
+) -> Result<T, Refusal> {
+    response_bytes(payload, |bytes| postcard::from_bytes(bytes).map(read))?
+        .map_err(|e| Refusal::Shape(format!("a decoded Response failed to read: {e}")))
 }
 
 /// One core notice a host writes through its own log.

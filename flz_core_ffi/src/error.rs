@@ -41,6 +41,8 @@ pub enum Error {
     Refused(FlezhaError),
     /// A shim built against another activation schema, refused at creation.
     SchemaMismatch { shim: u32, core: u32 },
+    /// A `Response` channel payload that is no call envelope.
+    MalformedResponse(String),
 }
 
 impl ErrorModel for Error {
@@ -69,6 +71,9 @@ impl ErrorModel for Error {
             Error::Refused(error) => error.clone(),
             Error::SchemaMismatch { shim, core } => {
                 Code::SchemaMismatch.with([("shim", (*shim).into()), ("core", (*core).into())])
+            }
+            Error::MalformedResponse(reason) => {
+                Code::MalformedResponse.with([("reason", reason.as_str().into())])
             }
         }
     }
@@ -156,6 +161,10 @@ mod tests {
             (
                 Error::SchemaMismatch { shim: 2, core: 3 },
                 "runtime.schema_mismatch",
+            ),
+            (
+                Error::MalformedResponse("no envelope".into()),
+                "call.malformed_response",
             ),
         ];
         for (error, code) in coded {

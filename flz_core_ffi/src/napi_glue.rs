@@ -649,6 +649,29 @@ pub fn error_document(code: String, details_json: String) -> Result<String> {
     crate::render_error_document(&code, &details_json).map_err(|e| Refusal::Shape(e).into())
 }
 
+/// A `Response` payload as the core reads it: `value`, or `error`, the JSON
+/// error document the call ended in.
+#[napi(object)]
+pub struct JsResponse {
+    pub target: String,
+    pub created: bool,
+    pub request: Buffer,
+    pub value: Option<Buffer>,
+    pub error: Option<String>,
+}
+
+/// Read a `Response` channel payload with the core's decoder; never waits.
+#[napi]
+pub fn response_decode(payload: Uint8Array) -> Result<JsResponse> {
+    Ok(veneer::response_decode(&payload, |r| JsResponse {
+        target: r.target.to_string(),
+        created: r.created,
+        request: r.request.into(),
+        value: r.result.ok().map(Buffer::from),
+        error: r.result.err().map(str::to_string),
+    })?)
+}
+
 /// The context's last recorded error, or `null`.
 #[napi]
 pub fn last_error() -> Option<String> {

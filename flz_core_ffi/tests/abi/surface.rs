@@ -15,21 +15,27 @@ use flz_core_ffi::veneer::{Entry, Reach, SURFACE};
 
 /// Every `flz_core_*` entry point the crate exports, from its own source.
 ///
-/// Three files, because the C ABI is split three ways: the general entry
-/// points, the local-mode ones and the notice ones. Reading fewer reports a
-/// name the crate does export as one it does not.
+/// Every file the C ABI is split across: the general entry points, then the
+/// knob, local-mode, notice and response ones. Reading fewer reports a name
+/// the crate does export as one it does not.
 pub fn exported_entry_points() -> Vec<String> {
-    let mut names: Vec<String> = ["src/lib.rs", "src/knob.rs", "src/local.rs", "src/notice.rs"]
-        .iter()
-        .flat_map(|relative| {
-            let source = fs::read_to_string(crate_path(relative))
-                .expect("a source of this crate is readable");
-            source
-                .lines()
-                .filter_map(entry_point_named)
-                .collect::<Vec<_>>()
-        })
-        .collect();
+    let mut names: Vec<String> = [
+        "src/lib.rs",
+        "src/knob.rs",
+        "src/local.rs",
+        "src/notice.rs",
+        "src/response.rs",
+    ]
+    .iter()
+    .flat_map(|relative| {
+        let source =
+            fs::read_to_string(crate_path(relative)).expect("a source of this crate is readable");
+        source
+            .lines()
+            .filter_map(entry_point_named)
+            .collect::<Vec<_>>()
+    })
+    .collect();
     names.sort();
     names
 }

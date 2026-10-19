@@ -162,6 +162,7 @@ SDK raises or returns its one error type carrying them.
 | `call.busy` | unavailable | 7 | relay '{relay}' already owes answers to {pending_max} waiting callers; nothing was sent, try again later | `raise FLEZHA_CALL_PENDING_MAX if the relay is meant to hold more waiting callers` |
 | `call.callee_ended` | unavailable | 7 | relay '{relay}' ended ({status}) before it answered the call |  |
 | `call.failed` | unavailable | 7 | relay '{relay}' dead-lettered the call's input as '{dlq_ref}': {error} | `flz dlq list {relay}` |
+| `call.malformed_response` | invalid | 2 | a Response channel payload is not a call outcome: {reason} |  |
 | `call.not_accepted` | conflict | 6 | relay '{relay}' runs once over one input and has already taken it, so it cannot take the call's input |  |
 | `call.target_unkeyed` | invalid | 2 | '{relay}' is a partition group; name the key whose member should take the input, or one of its members: {members} | `pass --key <key>` |
 | `call.timeout` | unavailable | 7 | relay '{relay}' did not answer within {deadline_ms} ms; the input stays accepted and its turn still runs |  |

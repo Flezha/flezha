@@ -93,6 +93,7 @@ codes! {
     CallWithoutKey => "topology.call_without_key",
     CallDeadlineZero => "topology.call_deadline_zero",
     CallResponseUnread => "topology.call_response_unread",
+    MalformedResponse => "call.malformed_response",
 
     EventTimeTimerWithoutEventTimeClock => "runtime.event_time_timer_without_event_time_clock",
     TimerCapExceeded => "runtime.timer_cap_exceeded",

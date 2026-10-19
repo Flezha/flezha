@@ -10,8 +10,9 @@
 # reason this file exists.
 #
 # Adding an entry point: the function in `flz_core_ffi/src/lib.rs`, `knob.rs`,
-# `local.rs` or `notice.rs`, its veneer function, its row in `veneer::SURFACE`, its line
-# here, and one wrapper in every host binding (docs/public/architecture/runner.md).
+# `local.rs`, `notice.rs` or `response.rs`, its veneer function, its row in
+# `veneer::SURFACE`, its line here, and one wrapper in every host binding
+# (docs/public/architecture/runner.md).
 flz_core_abandon
 flz_core_admin_call
 flz_core_buf_free
@@ -38,6 +39,7 @@ flz_core_part
 flz_core_pending_timers
 flz_core_poll
 flz_core_relays
+flz_core_response_decode
 flz_core_schema_version
 flz_core_send_message
 flz_core_set_log_callback

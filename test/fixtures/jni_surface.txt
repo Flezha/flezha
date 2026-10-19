@@ -39,6 +39,8 @@ sendMessage|flz_core_send_message
 relays|flz_core_relays
 monotonicNanos|flz_core_monotonic_nanos
 knob|flz_core_knob
+errorDocument|flz_core_error_document
+responseDecode|flz_core_response_decode
 takeNotices|flz_core_take_notices
 shutdown|flz_core_shutdown
 watchStdinEof|flz_core_watch_stdin_eof

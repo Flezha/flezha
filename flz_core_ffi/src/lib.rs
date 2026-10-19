@@ -14,9 +14,8 @@
 //! Every failing entry answers its failing status ([`FLZ_ERR`], or NULL from
 //! [`flz_core_context_new`]) and leaves the JSON error document
 //! `{"error":{"code","class","message","details","hint"}}` in
-//! [`flz_core_last_error`] (or [`flz_core_init_error`]). No entry hands a
-//! failure out through a buffer of its own; a caller branches on `code` and
-//! `class`, never on `message`.
+//! [`flz_core_last_error`], or [`flz_core_init_error`] for a context-free one;
+//! never in a buffer. A caller branches on `code` and `class`, never `message`.
 //!
 //! # Notices: the host's own log
 //!
@@ -45,6 +44,7 @@ pub mod napi_glue;
 mod napi_host;
 #[cfg(feature = "python")]
 pub mod python_glue;
+mod response;
 #[cfg(feature = "ruby")]
 pub mod ruby_glue;
 pub mod veneer;
@@ -62,7 +62,7 @@ use flz_core::spawn::{SpawnHandle, SpawnOptions};
 use flz_core::{schema, ErrorModel};
 /// The entry points the source-file splits hold, exported from the crate root
 /// like every other C symbol: a module is not an ABI boundary.
-pub use {knob::*, local::*, notice::*};
+pub use {knob::*, local::*, notice::*, response::*};
 
 /// Poll produced an activation; the out buffer holds its encoded bytes.
 pub const FLZ_POLL_ACTIVATION: i32 = 1;
@@ -274,9 +274,9 @@ pub extern "C" fn flz_core_context_new(shim_schema_version: u32) -> *mut FlzCont
     }))
 }
 
-/// The JSON error document of the failure that made the last
-/// [`flz_core_context_new`] on THIS thread return NULL, or NULL. Borrowed
-/// until the next failing creation.
+/// The JSON error document of the last context-free failure on THIS thread,
+/// a [`flz_core_context_new`] that returned NULL or a refused
+/// [`flz_core_response_decode`], or NULL. Borrowed until the next one.
 #[no_mangle]
 pub extern "C" fn flz_core_init_error() -> *const c_char {
     INIT_ERROR.with(|slot| {

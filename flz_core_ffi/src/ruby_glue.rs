@@ -648,6 +648,23 @@ fn error_document(code: String, details: String) -> Result<String, Error> {
     crate::render_error_document(&code, &details).map_err(|e| native_error(&ruby(), e))
 }
 
+/// A `Response` payload as the core reads it: `[target, created, request,
+/// value, error]`, exactly one of the binary `value` and the JSON error
+/// document `error` set.
+fn response_decode(payload: RString) -> Result<ResponseRow, Error> {
+    let ruby = ruby();
+    // SAFETY: the core reads the payload before `read` runs any Ruby.
+    let parts = veneer::response_decode(unsafe { payload.as_slice() }, |r| {
+        let (request, value) = (ruby.str_from_slice(r.request), r.result.ok());
+        let value = value.map(|value| ruby.str_from_slice(value));
+        let error = r.result.err().map(|error| ruby.str_new(error));
+        (ruby.str_new(r.target), r.created, request, value, error)
+    });
+    parts.map_err(|r| raise(&ruby, r))
+}
+
+type ResponseRow = (RString, bool, RString, Option<RString>, Option<RString>);
+
 /// Every function this extension exports, with the C ABI entry point behind
 /// it: `[name, abi_entry_point, blocking]`, rendered from
 /// [`crate::veneer::SURFACE`] under the entry's own name.
@@ -714,5 +731,6 @@ pub fn init(ruby: &Ruby) -> Result<(), Error> {
     native.define_module_function("last_error", function!(last_error, 0))?;
     native.define_module_function("native_surface", function!(native_surface, 0))?;
     native.define_module_function("error_document", function!(error_document, 2))?;
+    native.define_module_function("response_decode", function!(response_decode, 1))?;
     Ok(())
 }

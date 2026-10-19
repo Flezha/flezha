@@ -39,5 +39,10 @@ The Response channel is an entry channel named after the calling channel with `.
 
 On the wire a `Response` is one JSON document the controller writes, the request and the answer
 in base64: `{"call", "target", "created", "request", "value" | "error"}`, `error` being the
-error model's own document. `test/fixtures/call_response_envelope.json` holds the cases every
-SDK decodes identically.
+error model's own document. The core parses it, once: `flz_core::call::Envelope`, reached by the
+Rust SDK directly and by every other SDK through `flz_core_response_decode` (the C ABI, JNI
+`responseDecode`, the Python, Ruby and Node glue, the Elixir NIF), which hands back the target,
+`created`, the request's bytes and the answer's bytes or the error document. An SDK keeps only its
+codec calls and its `Response` type, and a payload that is no envelope is the core's
+`call.malformed_response` in every hosted SDK. `test/fixtures/call_response_envelope.json` holds
+the cases the core's decoder reads; each SDK round-trips one of them through its codec.

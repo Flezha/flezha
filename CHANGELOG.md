@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Changed: the core reads every call's Response, and renders Java's errors
+
+- **BREAKING:** a `Response` channel payload is read by the core's decoder in every SDK, through
+  the new C ABI entry `flz_core_response_decode` (JNI `responseDecode`, the Python, Ruby and Node
+  glue's `response_decode`, the Elixir NIF). A payload that is no call envelope is the new code
+  `call.malformed_response` in the SDK's one error type: Java threw `IllegalArgumentException`,
+  the Elixir SDK answered `{:error, :malformed_response_envelope}`, and the others raised their
+  JSON or base64 parser's error.
+- **BREAKING (Java):** `FlezhaException.of` renders through the core (JNI `errorDocument`), and
+  `flezha-sdk-api` no longer packages `errors.json` or its own renderer. With the API module
+  alone on the class path, an exception carries its code and details, its class is `internal`
+  and its message is the code.
+
 ### Changed: small rules live in the core
 
 - **BREAKING:** the activation schema is version 5. The activation kind `migration_serialize`

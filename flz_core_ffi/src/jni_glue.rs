@@ -677,6 +677,36 @@ pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_knob<'l>(
     string_or_throw(&mut env, answer)
 }
 
+/// The JSON error document the catalogue renders for `code` and the JSON
+/// object `detailsJson`: a refusal the SDK makes itself.
+#[no_mangle]
+pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_errorDocument<'l>(
+    mut env: JNIEnv<'l>,
+    _class: JClass,
+    code: JString,
+    details_json: JString,
+) -> jstring {
+    let read = |env: &mut JNIEnv, value: &JString| env.get_string(value).map(String::from);
+    let document = match (read(&mut env, &code), read(&mut env, &details_json)) {
+        (Ok(code), Ok(details)) => crate::render_error_document(&code, &details),
+        _ => Err("an error document argument is unreadable".into()),
+    };
+    string_or_throw(&mut env, document.map(Some).map_err(Refusal::Shape))
+}
+
+/// A `Response` channel payload as the core's decoder reads it: the postcard
+/// `ResponseParts` Java reads itself. Throws `call.malformed_response`.
+#[no_mangle]
+pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_responseDecode<'l>(
+    mut env: JNIEnv<'l>,
+    _class: JClass,
+    payload: JByteArray,
+) -> jbyteArray {
+    let parts = bytes_of(&mut env, "Response payload", &payload)
+        .and_then(|payload| veneer::response_bytes(&payload, <[u8]>::to_vec));
+    bytes_or_throw(&mut env, parts.map(Some))
+}
+
 /// Wake every blocked poller and stop the runner loop.
 #[no_mangle]
 pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_shutdown(
