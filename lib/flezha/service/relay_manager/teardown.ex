@@ -175,6 +175,22 @@ defmodule Flezha.Service.RelayManager.Teardown do
     end
   end
 
+  @doc """
+  `hub_stop_children/3` for one child, answering `:ok` also when the stop got
+  no answer or found nothing and the child has no row left: the stop's
+  precommit took it out of the declared set first, so it runs nowhere.
+  """
+  @spec hub_stop_child(binary(), term(), timeout()) :: :ok | {:error, term()}
+  def hub_stop_child(namespace, id, timeout) do
+    with {:error, [_ | _] = errors} <- hub_stop_children(namespace, [id], timeout) do
+      gone? =
+        Enum.all?(errors, &(elem(&1, 1) in [{:error, :no_response}, {:error, :not_found}])) and
+          ProcessHub.child_lookup(Identificator.hub(namespace), id, include_empty: true) == nil
+
+      if gone?, do: :ok, else: {:error, errors}
+    end
+  end
+
   # On explicit stop, delete the on-disk state directories owned by the
   # relay. The relay_id is used as the relay_class identifier — the SDK
   # convention is that each relay's cell frames carry the relay_id

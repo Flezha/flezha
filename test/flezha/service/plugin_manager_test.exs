@@ -335,7 +335,7 @@ defmodule Flezha.Service.PluginManagerTest do
       assert :ok = PluginManager.bind_plugin(@namespace, "listener_x", @relay_id)
       parent = self()
 
-      Mimic.stub(Teardown, :hub_stop_children, fn @namespace, [{:plugin, name}], _timeout ->
+      Mimic.stub(Teardown, :hub_stop_child, fn @namespace, {:plugin, name}, _timeout ->
         send(parent, {:stopped, name})
         :ok
       end)
@@ -357,6 +357,53 @@ defmodule Flezha.Service.PluginManagerTest do
 
       assert Listener.attachment(@namespace, "gone_op", "l") == :unknown
       assert Listener.attachment(@namespace, "grp", "l") == :unknown
+    end
+  end
+
+  describe "disable_plugin/2 when the hub stop answers an error" do
+    setup do
+      {:ok, copy} = Agent.start(fn -> :copy end)
+      Mimic.stub(Directory, :plugin_hosts, fn @namespace, "gone_home" -> [copy] end)
+
+      # The answer a stop forwarded to a start target that left gets.
+      Mimic.stub(ProcessHub, :stop_children, fn _hub, [id], _opts ->
+        %ProcessHub.StopResult{status: :error, errors: [{id, {:error, :no_response}}]}
+      end)
+
+      Mimic.stub(ProcessHub.Future, :await, & &1)
+
+      {:ok, copy: copy}
+    end
+
+    test "a home with no row is already stopped: its copies stop too", %{copy: copy} do
+      Mimic.stub(ProcessHub, :child_lookup, fn _hub, _id, [include_empty: true] -> nil end)
+
+      assert {:ok, "plugin disabled"} = PluginManager.disable_plugin(@namespace, "gone_home")
+      refute Process.alive?(copy)
+    end
+
+    test "a home still registered keeps its copies and answers the error", %{copy: copy} do
+      Mimic.stub(ProcessHub, :child_lookup, fn _hub, _id, [include_empty: true] -> {%{}, []} end)
+
+      assert {:error, [{{:plugin, "gone_home"}, {:error, :no_response}}]} =
+               PluginManager.disable_plugin(@namespace, "gone_home")
+
+      assert Process.alive?(copy)
+      Agent.stop(copy)
+    end
+
+    test "a stop refused for another reason answers its error even with no row", %{copy: copy} do
+      Mimic.stub(ProcessHub, :stop_children, fn _hub, [id], _opts ->
+        %ProcessHub.StopResult{status: :error, errors: [{id, :forward_loop}]}
+      end)
+
+      Mimic.stub(ProcessHub, :child_lookup, fn _hub, _id, [include_empty: true] -> nil end)
+
+      assert {:error, [{{:plugin, "gone_home"}, :forward_loop}]} =
+               PluginManager.disable_plugin(@namespace, "gone_home")
+
+      assert Process.alive?(copy)
+      Agent.stop(copy)
     end
   end
 

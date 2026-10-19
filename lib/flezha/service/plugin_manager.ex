@@ -599,7 +599,7 @@ defmodule Flezha.Service.PluginManager do
     timeout = Durations.get(:hub_start_child_ms)
 
     with {:ok, _entry} <- fetch_entry(namespace, name),
-         :ok <- Teardown.hub_stop_children(namespace, [{:plugin, name}], timeout) do
+         :ok <- Teardown.hub_stop_child(namespace, {:plugin, name}, timeout) do
       Enum.each(Directory.plugin_hosts(namespace, name), &Shared.stop/1)
 
       case reconverge(namespace, name, &Overwatch.plugin_subscribe(&1, &2, &3, :none)) do
