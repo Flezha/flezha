@@ -208,10 +208,11 @@ defmodule Flezha.Convergence.Loop do
   end
 
   # A cast, so a slow Overwatch never holds the loop; the Overwatch wakes only
-  # when its log owes input or its timer has passed.
+  # when its log owes input or its timer has passed. Only a runner known to
+  # serve the factory wakes a sleeper: the timer and the next message still do.
   defp wake_sleepers(namespace, sleeping, servable) do
     for {id, factory} <- sleeping,
-        release?(factory, servable),
+        is_struct(servable, MapSet) and MapSet.member?(servable, factory),
         {:ok, pid} <- [HubManager.get_pid(namespace, id)],
         do: GenServer.cast(pid, :rehydrate_if_pending)
   end

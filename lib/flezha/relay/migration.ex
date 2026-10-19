@@ -252,6 +252,19 @@ defmodule Flezha.Relay.Migration do
       else: state
   end
 
+  @doc """
+  The Overwatch's answer to a runner of its factory connecting: a suspended
+  relay owing work wakes, and one that stays asleep hibernates again.
+  """
+  @spec runner_available(Overwatch.t()) ::
+          {:noreply, Overwatch.t()} | {:noreply, Overwatch.t(), :hibernate}
+  def runner_available(%Overwatch{} = state) do
+    case rehydrate_if_pending(state) do
+      %Overwatch{suspended: true, migrate_task: nil} = asleep -> {:noreply, asleep, :hibernate}
+      state -> {:noreply, state}
+    end
+  end
+
   defp pending?(relay_class),
     do: Replay.owed_count(relay_class) > 0 or wake_due?(relay_class)
 

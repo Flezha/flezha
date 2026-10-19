@@ -251,7 +251,7 @@ defmodule FlezhaTest.Relay.OverwatchSuspensionTest do
     assert idle.migrate_task == nil, "a sleeper owing nothing was woken"
 
     {:ok, 0} = InputLog.append(inst, "kept while no runner served it", %{})
-    {:noreply, waking, :hibernate} = Overwatch.handle_cast(:rehydrate_if_pending, suspended)
+    {:noreply, waking} = Overwatch.handle_cast(:rehydrate_if_pending, suspended)
     assert waking.migrate_task != nil, "a sleeper owing input stayed asleep"
 
     :ok = await_migrate_task(waking)

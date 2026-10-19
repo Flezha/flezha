@@ -663,12 +663,12 @@ defmodule Flezha.Relay.Overwatch do
   @impl true
   # A sleeper hibernates: the bind's restore frames and plugin setup leave
   # megabytes of garbage on its heap until the next wake (2.5 MiB → 5 KiB per
-  # sleeper measured). A runner of its factory connecting wakes it if it owes work.
+  # sleeper measured).
   def handle_cast({:suspend, iter, park}, %__MODULE__{} = state),
     do: {:noreply, Migration.suspend_at(state, iter, park), :hibernate}
 
-  def handle_cast(:rehydrate_if_pending, state),
-    do: {:noreply, Migration.rehydrate_if_pending(state), :hibernate}
+  # A runner of its factory connected: a sleeper owing work wakes.
+  def handle_cast(:rehydrate_if_pending, state), do: Migration.runner_available(state)
 
   # Replaces `state.snapshot` with the SDK's final state on graceful shutdown.
   # A handover ships it and the next running migrate seeds from it, until a

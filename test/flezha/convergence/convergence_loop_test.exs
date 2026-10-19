@@ -222,6 +222,15 @@ defmodule Flezha.Convergence.LoopTest do
       refute_receive {:"$gen_cast", :rehydrate_if_pending}, 200
     end
 
+    test "a runner whose factories are not known yet wakes no sleeper" do
+      stub(FleetManager, :factories_for_runner, fn _ns, _runner -> MapSet.new() end)
+      sleeping_relay()
+
+      connect(@fresh)
+
+      refute_receive {:"$gen_cast", :rehydrate_if_pending}, 200
+    end
+
     defp sleeping_relay() do
       test_pid = self()
       stub(Probe, :snapshot, fn -> reality(%{suspended?: true, bound_runner: nil}) end)

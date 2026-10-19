@@ -425,7 +425,7 @@ Field-level detail: [`protocol_spec.md`](https://github.com/flezha/flezha/blob/m
 ```sh
 $ flz state journal <relay/instance>   # every journal entry, and whether the graph is complete
 $ flz state inbox <relay/instance>     # the input log, flow or steps, and how far it is consumed
-$ flz relay info                       # each relay's phase, suspended while asleep
+$ flz relay info                       # each relay's phase, suspended while it sleeps
 $ flz relay rewind <instance> --to-iteration N
 ```
 

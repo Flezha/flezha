@@ -167,7 +167,7 @@ input journal) and answers what happened.
 | `:ok` | forwarded to the bound runner, or durably journaled | done |
 | `{:ok, :absorbed}` | filtered by an `:on_input` plugin, or absorbed as a duplicate | done |
 | `{:ok, :suspended}` | durable in the target's input log; delivered when it rehydrates | done |
-| `{:error, :not_ready}` | target parked with an `init_error`, or unbound with no durable log | retry |
+| `{:error, :not_ready}` | target halted with an `init_error`, or unbound with no durable log | retry |
 | `{:error, :not_found}` | no pid registered for `(namespace, relay_id)` | retry |
 | `{:error, :refused}` | the durable log refused the append | retry |
 

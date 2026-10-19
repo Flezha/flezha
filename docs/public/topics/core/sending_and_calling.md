@@ -249,7 +249,7 @@ answer: the relay that took the message and its verdict.
 | --- | --- |
 | `delivered` | the relay took the message |
 | `absorbed` | a repeat of a message id the relay's input log still holds; the message is not handled again |
-| `suspended` | the relay is asleep or moving; its input log holds the message until it wakes |
+| `suspended` | the relay is suspended or moving; its input log holds the message until it wakes |
 
 Two options ride along:
 

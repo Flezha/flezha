@@ -182,7 +182,7 @@ many headers) keep Bandit's answer.
 For a stream answer the plugin attaches a listener to the named relay, in the host's
 namespace, before it writes a byte, so a refused attach is a plain error response. A
 relay that does not exist yet is attached again every 250 ms until `stream_wait_ms` has
-passed, then answered 404; a relay that is asleep is attached at once, and the next
+passed, then answered 404; a relay that is suspended is attached at once, and the next
 input wakes it. The response then carries `content-type: text/event-stream`,
 `cache-control: no-cache`, `x-accel-buffering: no` and the envelope's headers, and one
 event per frame:
@@ -266,7 +266,7 @@ events.addEventListener("ended", () => events.close());
 ## Limits in v1
 
 - A relay carrying the plugin must not declare a `sleep_after`: an instance found
-  asleep when a controller boots has no plugins until something wakes it, and its only
+  suspended when a controller boots has no plugins until something wakes it, and its only
   input is the port that is not bound.
 - A member of a partition group is refused: a group behind one port needs a router by key.
 - There is no drain: stopping the plugin closes every connection at once.
