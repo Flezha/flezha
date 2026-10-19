@@ -24,19 +24,38 @@ defmodule Flezha.Observability.OtpBackend.TransportSource do
     cardinality_budget: 40,
     default_poll_ms: 1_000,
     area: :machine,
+    title: "Message flow (low-level)",
     description:
-      "Runner transports and the data plane: connections, driver health and message counters.",
+      "Runner connections and the running totals of messages moving between runners and relays.",
     signals:
       [
-        open_connections: {:metric, "Connections open on a transport."},
-        driver_loop_iterations: {:metric, "Times the transport driver's loop ran."},
+        open_connections:
+          {:metric,
+           label: "Open connections",
+           meaning: "Runner connections open on one transport.",
+           sentence: "{value:connection} open over {transport}"},
+        driver_loop_iterations:
+          {:metric,
+           label: "Driver turns",
+           meaning: "Times the transport's driver went round its loop since it started."},
         driver_loop_age_ms:
-          {:metric, "Milliseconds since the driver's loop last ran; high means wedged."},
-        driver_cmd_queue_depth: {:metric, "Commands waiting for the driver."},
-        driver_write_buffer_bytes: {:metric, "Bytes waiting in the driver's write buffers."},
+          {:metric,
+           label: "Driver idle time",
+           meaning:
+             "Milliseconds since the transport's driver last went round its loop; a high value means it is stuck."},
+        driver_cmd_queue_depth:
+          {:metric,
+           label: "Driver backlog", meaning: "Commands waiting for the transport's driver."},
+        driver_write_buffer_bytes:
+          {:metric,
+           label: "Bytes waiting to send",
+           meaning: "Bytes waiting in the transport's send buffers."},
         driver_write_buffer_dropped:
-          {:metric, "Frames the driver lost; any non-zero value is a defect."},
-        driver_streams: {:metric, "Streams the driver holds open."}
+          {:metric,
+           label: "Messages lost",
+           meaning: "Messages the transport has lost; anything above zero is a defect."},
+        driver_streams:
+          {:metric, label: "Open streams", meaning: "Streams the transport's driver holds open."}
       ] ++ LivenessCounters.metric_signals()
 
   alias Flezha.Observability.{Bus, Signal}

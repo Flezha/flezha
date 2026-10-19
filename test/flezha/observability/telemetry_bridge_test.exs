@@ -415,7 +415,11 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
     @moduledoc false
     use Flezha.Plugin.ProviderBehaviour,
       name: "acme_sink",
-      telemetry: [rebalanced: {:event, "The sink moved its partitions."}, paused: :event]
+      telemetry: [
+        rebalanced: {:event, "The sink moved its partitions."},
+        paused: :event,
+        stalled: {:event, meaning: "The sink stalled.", label: "Stalled", outcome: :failure}
+      ]
   end
 
   # A provider compiled against a core whose declaration had no `telemetry`
@@ -488,14 +492,24 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
       {:ok, entry} = Registry.lookup_source(:flezha_acme_sink)
 
       assert entry.area == :plugins
+      assert entry.title == "Acme sink plugin"
       assert entry.description == "The acme_sink plugin, installed from a package."
 
-      meanings = Map.new(entry.signals, &{&1.name, &1.description})
-      assert meanings[:rebalanced] == "The sink moved its partitions."
-      assert meanings[:paused] == "No description from the plugin."
+      signals = Map.new(entry.signals, &{&1.name, &1})
 
-      assert meanings[:shipped] ==
-               Keyword.fetch!(Flezha.Plugin.ProviderBehaviour.verb_descriptions(), :shipped)
+      assert %{description: "The sink moved its partitions.", outcome: :normal} =
+               signals[:rebalanced]
+
+      assert %{description: "No description from the plugin.", label: "Paused"} = signals[:paused]
+
+      assert %{description: "The sink stalled.", label: "Stalled", outcome: :failure} =
+               signals[:stalled]
+
+      shipped = Keyword.fetch!(Flezha.Plugin.ProviderBehaviour.verb_descriptions(), :shipped)
+      assert signals[:shipped].description == Keyword.fetch!(shipped, :meaning)
+      assert signals[:failed].outcome == :failure
+      assert signals[:overflowed].outcome == :failure
+      assert signals[:retried].outcome == :normal
     end
 
     test "each derived event has a handler of its own carrying only its line" do

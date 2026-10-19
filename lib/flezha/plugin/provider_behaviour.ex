@@ -761,10 +761,26 @@ defmodule Flezha.Plugin.ProviderBehaviour do
   # ---------- telemetry vocabulary ----------
 
   @verb_descriptions [
-    shipped: "The plugin delivered items; count is how many.",
-    retried: "A delivery failed and will be tried again.",
-    failed: "A delivery or read failed.",
-    overflowed: "The plugin's queue was full and items were dropped."
+    shipped: [
+      label: "Delivered",
+      outcome: :normal,
+      meaning: "The plugin passed items on, into its relay or out to where it sends them."
+    ],
+    retried: [
+      label: "Retrying",
+      outcome: :normal,
+      meaning: "A delivery failed and will be tried again; nothing is lost yet."
+    ],
+    failed: [
+      label: "Failed",
+      outcome: :failure,
+      meaning: "A delivery or a read failed."
+    ],
+    overflowed: [
+      label: "Queue full",
+      outcome: :failure,
+      meaning: "The plugin's queue was full, so items were dropped."
+    ]
   ]
 
   @verbs Keyword.keys(@verb_descriptions)
@@ -773,8 +789,11 @@ defmodule Flezha.Plugin.ProviderBehaviour do
   @spec verbs() :: [atom()]
   def verbs(), do: @verbs
 
-  @doc "Each shared verb with what its signal says."
-  @spec verb_descriptions() :: keyword(String.t())
+  @doc """
+  Each shared verb with what its signal says: the words
+  `Flezha.Observability.Source.signals/1` takes beside a signal's kind.
+  """
+  @spec verb_descriptions() :: keyword(keyword())
   def verb_descriptions(), do: @verb_descriptions
 
   @doc """

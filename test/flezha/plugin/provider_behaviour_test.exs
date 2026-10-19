@@ -179,20 +179,33 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
       described = """
       defmodule Flezha.ProviderBehaviourTest.Described#{System.unique_integer([:positive])} do
         use Flezha.Plugin.ProviderBehaviour,
-          telemetry: [rebalanced: {:event, "Partitions moved."}, paused: :event]
+          telemetry: [
+            rebalanced: {:event, "Partitions moved."},
+            paused: :event,
+            stalled: {:event, meaning: "It stalled.", label: "Stalled", outcome: :failure}
+          ]
       end
       """
 
       [{module, _bytes}] = Code.compile_string(described)
 
       assert module.__provider__().telemetry ==
-               [rebalanced: {:event, "Partitions moved."}, paused: :event]
+               [
+                 rebalanced: {:event, "Partitions moved."},
+                 paused: :event,
+                 stalled: {:event, meaning: "It stalled.", label: "Stalled", outcome: :failure}
+               ]
 
       for bad <- [
             ~s|[rebalanced: {:event, ""}]|,
             ~s|[rebalanced: {:event, "  "}]|,
             "[rebalanced: :gauge]",
-            "[rebalanced: {:log, \"x\"}]"
+            "[rebalanced: {:log, \"x\"}]",
+            ~s|[rebalanced: {:event, label: "Moved"}]|,
+            ~s|[rebalanced: {:event, meaning: "Moved.", outcome: :warning}]|,
+            ~s|[rebalanced: {:event, meaning: "Moved.", label: " "}]|,
+            ~s|[rebalanced: {:event, meaning: "Moved.", sentence: "{topic"}]|,
+            ~s|[rebalanced: {:event, meaning: "Moved.", colour: :red}]|
           ] do
         source = """
         defmodule Flezha.ProviderBehaviourTest.BadVerb#{System.unique_integer([:positive])} do

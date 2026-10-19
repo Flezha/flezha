@@ -75,7 +75,7 @@ in; a project outside the Flezha repository depends on `flezha` by git or Hex in
 | `shareable:` | one running copy can serve every relay bound to the plugin on a controller | `false` |
 | `feeds:` | the provider's own worker injects records into the relay | `false` |
 | `name:` | the name in errors, help and telemetry | the module's last segment, underscored |
-| `telemetry:` | the verbs it emits beyond the shared ones, each `:metric` or `:event`, or `{kind, "what it says"}` | none |
+| `telemetry:` | the verbs it emits beyond the shared ones, each `:metric` or `:event`, `{kind, "what it says"}`, or `{kind, meaning: "what it says", label:, outcome:, sentence:}` | none |
 
 An option row takes `type` (`:int`, `:bool`, `:string`, `:names`, `:enum`, `:json`,
 `:map`, `:list`, `:pid`, `:any`), `default`, `required`, `min` and `max`, `values` for an
@@ -170,7 +170,22 @@ A provider reports what it did with `ProviderBehaviour.emit/4`: `shipped`, `retr
 declared on the `use`, `telemetry: [rebalanced: :event]`, as a `:metric` or an `:event`.
 Give it a meaning, `telemetry: [rebalanced: {:event, "The sink moved its partitions."}]`, and
 `flz observe sources` and the console show that sentence beside the signal; one declared with
-a bare kind reads "No description from the plugin". The controller exports both under the
+a bare kind reads "No description from the plugin". The long form adds a plain `label:`, an
+`outcome:` (`:failure` for a verb that reports something going wrong, else `:normal`, the
+default) and a `sentence:` template that names the labels and measurements the verb carries:
+
+```elixir
+telemetry: [
+  rebalanced: {:event,
+    meaning: "The sink moved its partitions.",
+    label: "Rebalanced",
+    sentence: "{plugin_id} moved {count:partition}"}
+]
+```
+
+`{key}` is filled from the signal's labels or measurements and `{key:noun}` with a count and
+its noun. A reader shows the label instead when a key is missing. Of the shared verbs,
+`failed` and `overflowed` are failures. The controller exports every declared verb under the
 provider's name, sourced `flezha_<name>`; a verb it does not declare reaches only handlers
 attached to it.
 

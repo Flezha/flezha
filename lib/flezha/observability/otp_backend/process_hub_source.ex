@@ -22,11 +22,25 @@ defmodule Flezha.Observability.OtpBackend.ProcessHubSource do
     cardinality_budget: 1_000,
     default_poll_ms: 1_000,
     area: :machine,
-    description: "Each namespace's process hub: registered processes, recovery and runner load.",
+    title: "Namespace hubs",
+    description:
+      "What each namespace's hub holds, whether it is recovering, and how relays spread over runners.",
     signals: [
-      registered_processes: {:metric, "Processes registered in a namespace's hub."},
-      pending_recoveries: {:metric, "1 while a namespace's hub is recovering, else 0."},
-      runner_bound_relays: {:metric, "Relays bound to one runner in a namespace."}
+      registered_processes:
+        {:metric,
+         label: "Processes held",
+         meaning: "Processes, relays among them, that a namespace's hub keeps track of.",
+         sentence: "{hub} holds {value:process}"},
+      pending_recoveries:
+        {:metric,
+         label: "Recovery pending",
+         meaning: "1 while a namespace's hub is bringing its relays back, otherwise 0.",
+         sentence: "{hub} has {value:recovery} pending"},
+      runner_bound_relays:
+        {:metric,
+         label: "Relays per runner",
+         meaning: "How many of a namespace's relays one runner serves.",
+         sentence: "{runner} serves {value:relay} in {hub}"}
     ]
 
   alias Flezha.Identificator

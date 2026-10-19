@@ -18,17 +18,50 @@ defmodule Flezha.Observability.OtpBackend.HostSource do
     cardinality_budget: 50,
     default_poll_ms: 5_000,
     area: :machine,
-    description: "The controller's operating-system process: CPU, memory, files and load.",
+    title: "Controller process",
+    description:
+      "The controller's process as the operating system sees it: CPU, memory, open files and host load.",
     signals: [
-      cpu_user_us: {:metric, "CPU time spent in user code since start, in microseconds."},
-      cpu_system_us: {:metric, "CPU time spent in the kernel since start, in microseconds."},
-      cpu_utilisation: {:metric, "Share of one CPU used since the last poll, 0 to 1."},
-      rss_bytes: {:metric, "Resident memory of the process, in bytes."},
-      open_fds: {:metric, "Open file descriptors."},
-      load_avg_1m: {:metric, "Host load average over 1 minute."},
-      load_avg_5m: {:metric, "Host load average over 5 minutes."},
-      load_avg_15m: {:metric, "Host load average over 15 minutes."},
-      host_source_degraded: {:event, "Host figures cannot be read on this platform; sent once."}
+      cpu_user_us:
+        {:metric,
+         label: "CPU in own code",
+         meaning:
+           "CPU time the controller spent in its own code since it started, in microseconds."},
+      cpu_system_us:
+        {:metric,
+         label: "CPU in the kernel",
+         meaning: "CPU time the controller spent in the kernel since it started, in microseconds."},
+      cpu_utilisation:
+        {:metric,
+         label: "CPU use",
+         meaning: "How much of one CPU the controller used since the last reading, from 0 to 1."},
+      rss_bytes:
+        {:metric,
+         label: "Memory in use",
+         meaning: "Memory the controller's process holds in RAM, in bytes.",
+         sentence: "The controller holds {value:byte} in memory"},
+      open_fds:
+        {:metric,
+         label: "Open files",
+         meaning: "Files and sockets the controller has open.",
+         sentence: "{value:file} open"},
+      load_avg_1m:
+        {:metric,
+         label: "Host load, 1 minute", meaning: "The host's load average over the last minute."},
+      load_avg_5m:
+        {:metric,
+         label: "Host load, 5 minutes",
+         meaning: "The host's load average over the last 5 minutes."},
+      load_avg_15m:
+        {:metric,
+         label: "Host load, 15 minutes",
+         meaning: "The host's load average over the last 15 minutes."},
+      host_source_degraded:
+        {:event,
+         label: "Cannot read host",
+         outcome: :failure,
+         meaning:
+           "This platform does not expose the host's figures, so none are reported; sent once."}
     ]
 
   alias Flezha.Observability.{Bus, Signal}

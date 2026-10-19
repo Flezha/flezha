@@ -470,9 +470,18 @@ defmodule Flezha.AuthZ.Verbs do
   def audit_signals(source) do
     for(
       %{audit: {_order, ^source}} = row <- all(),
-      do: {record_name(row), {:event, "A caller ran #{row.action}."}}
+      do: {record_name(row), audit_words(row)}
     )
     |> Enum.uniq_by(&elem(&1, 0))
     |> Source.signals()
+  end
+
+  defp audit_words(row) do
+    label = Source.humanize(record_name(row))
+
+    {:event,
+     label: label,
+     meaning:
+       "Someone asked to #{String.downcase(label)} (#{row.action}); the call is kept in the audit log."}
   end
 end

@@ -167,7 +167,7 @@ The system SHALL provide a `flz observe` CLI command tree exposing the observabi
 
 #### Scenario: `flz observe sources` lists registered sources
 - **WHEN** the user runs `flz observe sources` against a running Controller
-- **THEN** the command SHALL print one row per registered source with at minimum its name, status (`active` / `disabled`), declared kinds, cardinality budget and description
+- **THEN** the command SHALL print one row per registered source with at minimum its name, status (`active` / `disabled`), declared kinds, cardinality budget, title and description
 
 #### Scenario: `flz observe tail` streams live signals from a source
 - **WHEN** the user runs `flz observe tail beam_vm` and a `:metric` signal is emitted on `:beam_vm`

@@ -10,7 +10,7 @@ defmodule Flezha.Service.Cli.Observe do
 
   @doc "`flz observe sources`."
   def sources(sources, _args, _opts) do
-    IO.puts(Enum.join(["name", "status", "kinds", "budget", "description"], "\t"))
+    IO.puts(Enum.join(["name", "status", "kinds", "budget", "title", "description"], "\t"))
 
     Enum.each(sources, fn source ->
       IO.puts(
@@ -20,6 +20,7 @@ defmodule Flezha.Service.Cli.Observe do
             source.status,
             Enum.join(source.kinds, ","),
             source.cardinality_budget,
+            Map.get(source, :title),
             Map.get(source, :description)
           ],
           "\t",

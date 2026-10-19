@@ -2,7 +2,9 @@ defmodule Flezha.Observability.RegistryTest do
   # async: false: the observability registry.
   use ExUnit.Case, async: false
 
-  alias Flezha.Observability.Registry
+  alias Flezha.Observability.{Registry, Source}
+
+  doctest Source
 
   setup do
     # Use unique source/sink names per test so parallel teardown
@@ -64,7 +66,40 @@ defmodule Flezha.Observability.RegistryTest do
       :ok = Registry.register_source(%{name: name, kinds: [:metric], flavour: :declarative})
 
       entry = Enum.find(Registry.list_sources(), &(&1.name == name))
-      assert %{description: nil, area: nil, signals: []} = entry
+      assert %{title: nil, description: nil, area: nil, signals: []} = entry
+    end
+
+    test "keeps a title and a signal's label, outcome and sentence", %{name: name} do
+      signals =
+        Source.signals(
+          received:
+            {:metric,
+             label: "Received",
+             outcome: :normal,
+             meaning: "An order arrived.",
+             sentence: "{shop} received {count:order}"}
+        )
+
+      :ok =
+        Registry.register_source(%{
+          name: name,
+          kinds: [:metric],
+          flavour: :declarative,
+          title: "Orders",
+          signals: signals
+        })
+
+      assert %{title: "Orders", signals: [signal]} =
+               Enum.find(Registry.list_sources(), &(&1.name == name))
+
+      assert signal == %{
+               name: :received,
+               kind: :metric,
+               description: "An order arrived.",
+               label: "Received",
+               outcome: :normal,
+               sentence: "{shop} received {count:order}"
+             }
     end
 
     test "refuses a malformed description, area or signal list", %{name: name} do
@@ -76,7 +111,14 @@ defmodule Flezha.Observability.RegistryTest do
             {:area, :elsewhere, :invalid_area},
             {:signals, [%{name: :x, kind: :metric}], :invalid_signals},
             {:signals, [%{name: :x, kind: :nope, description: "x"}], :invalid_signals},
-            {:signals, :none, :invalid_signals}
+            {:signals, :none, :invalid_signals},
+            {:title, " ", :invalid_title},
+            {:title, :orders, :invalid_title},
+            {:signals, Source.signals(x: {:metric, meaning: "x", label: " "}), :invalid_signals},
+            {:signals, Source.signals(x: {:metric, meaning: "x", outcome: :warning}),
+             :invalid_signals},
+            {:signals, Source.signals(x: {:metric, meaning: "x", sentence: "{shop received"}),
+             :invalid_signals}
           ] do
         assert {:error, {^error, ^value}} = Registry.register_source(Map.put(base, key, value)),
                "#{key} #{inspect(value)} was accepted"
@@ -193,6 +235,48 @@ defmodule Flezha.Observability.RegistryTest do
     end
   end
 
+  describe "Source.signals/1" do
+    test "the short form takes the humanized name, a normal outcome and no sentence" do
+      assert [signal] = Source.signals(order_refused: {:event, "An order was refused."})
+
+      assert signal == %{
+               name: :order_refused,
+               kind: :event,
+               description: "An order was refused.",
+               label: "Order refused",
+               outcome: :normal
+             }
+    end
+
+    test "the long form keeps what it declares and defaults the rest" do
+      assert [%{label: "Refused", outcome: :failure, description: "No."} = signal] =
+               Source.signals(
+                 refused: {:event, meaning: "No.", label: "Refused", outcome: :failure}
+               )
+
+      refute Map.has_key?(signal, :sentence)
+
+      assert [%{label: "Flushed", outcome: :normal, sentence: "{n}"}] =
+               Source.signals(flushed: {:metric, meaning: "Saved.", sentence: "{n}"})
+    end
+  end
+
+  describe "Source.placeholders/1" do
+    test "reads keys and nouns in order" do
+      assert {:ok, [{"plugin_id", nil}, {"count", "record"}, {"path", nil}]} =
+               Source.placeholders("{plugin_id} saved {count:record} to {path}")
+
+      assert {:ok, []} = Source.placeholders("Nothing to fill.")
+      assert {:ok, [{"n", "dead letter"}]} = Source.placeholders("{n:dead letter}")
+    end
+
+    test "refuses any other brace" do
+      for bad <- ["{shop", "shop}", "{}", "{Shop}", "{a-b}", "{a:Noun}", "{a:}", "{{a}}", :text] do
+        assert Source.placeholders(bad) == :error, "#{inspect(bad)} parsed"
+      end
+    end
+  end
+
   describe "list_sources/0" do
     test "reads from ETS directly without going through the GenServer", %{name: name} do
       :ok = Registry.register_source(%{name: name, kinds: [:metric], flavour: :declarative})
@@ -206,10 +290,10 @@ defmodule Flezha.Observability.RegistryTest do
   end
 
   describe "the sources core registers" do
-    test "each has a description, an area and a meaning for every signal" do
+    test "each has a title, a description, an area, and words for every signal" do
       for entry <- core_registrations() do
-        assert is_binary(entry.description) and String.trim(entry.description) != "",
-               "#{entry.name} has no description"
+        assert text?(entry[:title]), "#{entry.name} has no title"
+        assert text?(entry.description), "#{entry.name} has no description"
 
         assert entry.area in Registry.areas(), "#{entry.name} has no area"
         assert entry.signals != [], "#{entry.name} declares no signal"
@@ -218,10 +302,27 @@ defmodule Flezha.Observability.RegistryTest do
           assert signal.kind in entry.kinds,
                  "#{entry.name}.#{signal.name} is a #{signal.kind}, which the source does not declare"
 
-          assert is_binary(signal.description) and String.trim(signal.description) != "",
-                 "#{entry.name}.#{signal.name} has no meaning"
+          assert text?(signal.description), "#{entry.name}.#{signal.name} has no meaning"
+          assert text?(signal[:label]), "#{entry.name}.#{signal.name} has no label"
+
+          assert signal[:outcome] in Source.outcomes(),
+                 "#{entry.name}.#{signal.name} has no outcome"
         end
       end
+    end
+
+    test "every sentence template they declare parses" do
+      unparsed =
+        for entry <- core_registrations(),
+            %{sentence: sentence} = signal <- entry.signals,
+            Source.placeholders(sentence) == :error,
+            do: "#{entry.name}.#{signal.name}: #{inspect(sentence)}"
+
+      assert unparsed == [], "templates that do not parse: #{Enum.join(unparsed, "; ")}"
+
+      assert Enum.count(core_registrations(), fn entry ->
+               Enum.any?(entry.signals, &Map.has_key?(&1, :sentence))
+             end) >= 10
     end
 
     test "every source the booted registry holds is described", %{name: own} do
@@ -249,6 +350,8 @@ defmodule Flezha.Observability.RegistryTest do
       assert Enum.filter(names, &(&1 in gone)) == []
     end
   end
+
+  defp text?(text), do: is_binary(text) and String.trim(text) != ""
 
   defp core_registrations() do
     Flezha.Observability.TelemetryBridge.registrations(%{}) ++

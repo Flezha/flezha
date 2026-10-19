@@ -11,6 +11,7 @@ defmodule Flezha.Plugin.ProviderBehaviour.Declaration do
   module.
   """
 
+  alias Flezha.Observability.Source
   alias Flezha.Plugin.ProviderBehaviour
   alias Flezha.Plugin.ProviderBehaviour.Options
 
@@ -319,7 +320,8 @@ defmodule Flezha.Plugin.ProviderBehaviour.Declaration do
   defp validate_type!(env, type),
     do: raise_row!(env, "type #{inspect(type)} must be :relay or :controller")
 
-  @verb_form "`verb: :metric | :event` or `verb: {:metric | :event, \"what it says\"}`"
+  @verb_form "`verb: :metric | :event`, `verb: {:metric | :event, \"what it says\"}` or " <>
+               "`verb: {:metric | :event, meaning: \"what it says\", label:, outcome:, sentence:}`"
 
   # An own verb that repeats a shared one would be a second account of the same
   # fact under a kind the vocabulary already fixes.
@@ -341,8 +343,15 @@ defmodule Flezha.Plugin.ProviderBehaviour.Declaration do
     do: raise_row!(env, "telemetry #{inspect(other)} is not a keyword list")
 
   # A verb's meaning is optional, so a package built before it existed loads.
-  defp declared_kind({kind, meaning}) when is_binary(meaning) do
-    if String.trim(meaning) == "", do: nil, else: kind
+  defp declared_kind({kind, meaning}) when is_binary(meaning),
+    do: if(Source.valid_word?(:meaning, meaning), do: kind)
+
+  defp declared_kind({kind, words}) when is_list(words) do
+    valid? =
+      Keyword.keyword?(words) and Keyword.has_key?(words, :meaning) and
+        Enum.all?(words, fn {key, value} -> Source.valid_word?(key, value) end)
+
+    if valid?, do: kind
   end
 
   defp declared_kind(kind) when is_atom(kind), do: kind

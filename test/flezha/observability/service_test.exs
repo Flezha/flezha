@@ -340,9 +340,13 @@ defmodule Flezha.Service.ObservabilityTest do
   end
 
   describe "the CLI renderers" do
-    test "observe sources prints each source's description, and --json its keys" do
+    test "observe sources prints each source's title and description, and --json its keys" do
       described = :"obs_svc_described_#{:erlang.unique_integer([:positive])}"
-      signals = [%{name: :said, kind: :event, description: "It said something."}]
+
+      signals =
+        Flezha.Observability.Source.signals(
+          said: {:event, label: "Said", outcome: :failure, meaning: "It said something."}
+        )
 
       :ok =
         Registry.register_source(%{
@@ -350,6 +354,7 @@ defmodule Flezha.Service.ObservabilityTest do
           kinds: [:event],
           flavour: :declarative,
           area: :relays,
+          title: "Probe",
           description: "A described probe.",
           signals: signals
         })
@@ -359,8 +364,8 @@ defmodule Flezha.Service.ObservabilityTest do
       text =
         ExUnit.CaptureIO.capture_io(fn -> Cli.call("Observability.list_sources", "[]", []) end)
 
-      assert text =~ "name\tstatus\tkinds\tbudget\tdescription"
-      assert text =~ "#{described}\tactive\tevent\t1000\tA described probe."
+      assert text =~ "name\tstatus\tkinds\tbudget\ttitle\tdescription"
+      assert text =~ "#{described}\tactive\tevent\t1000\tProbe\tA described probe."
 
       json =
         ExUnit.CaptureIO.capture_io(fn ->
@@ -368,9 +373,13 @@ defmodule Flezha.Service.ObservabilityTest do
         end)
 
       entry = json |> Jason.decode!() |> Enum.find(&(&1["name"] == to_string(described)))
+      assert entry["title"] == "Probe"
       assert entry["description"] == "A described probe."
       assert entry["area"] == "relays"
-      assert [%{"name" => "said", "kind" => "event"}] = entry["signals"]
+
+      assert [%{"name" => "said", "kind" => "event", "label" => "Said", "outcome" => "failure"}] =
+               entry["signals"]
+
       assert %{"window_ms" => _, "signals" => %{}} = entry["recent"]
     end
 

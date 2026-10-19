@@ -181,18 +181,22 @@ $ flz observe sources
 ```
 
 ```output
-name	status	kinds	budget	description
-flezha_http_push	active	metric,event	1000	The HTTP push plugin, which sends relay output to a URL.
-flezha_plugin	active	event	1000	Plugins entering and leaving their lifecycle phases.
-flezha_dlq	active	metric	1000	Dead-letter queues: messages parked and removed.
-flezha_correction	active	event	1000	Corrections the controller refused to apply.
-flezha_transport	active	metric	40	Runner transports and the data plane: connections, driver health and message counters.
+name	status	kinds	budget	title	description
+flezha_http_push	active	metric,event	1000	HTTP push plugin	The plugin that sends a relay's output to a URL.
+flezha_plugin	active	event	1000	Plugin lifecycle	Plugins moving between the phases of their life.
+flezha_dlq	active	metric	1000	Dead letters	Messages that failed and were set aside in dead-letter queues, and those that expired.
+flezha_correction	active	event	1000	Refused corrections	Corrections to a relay that the controller would not apply.
+flezha_transport	active	metric	40	Message flow (low-level)	Runner connections and the running totals of messages moving between runners and relays.
 ...
 ```
 
-`--json` answers each source with its `area`, every signal it can emit with its kind and
-meaning (`signals`), and what it said recently (`recent`): per signal name, how many the
-ring buffer holds within its window and how long ago the newest one arrived.
+`--json` answers each source with its `area`, every signal it can emit (`signals`), and
+what it said recently (`recent`): per signal name, how many the ring buffer holds within
+its window and how long ago the newest one arrived. Each signal carries its kind, its
+meaning (`description`), a plain `label`, an `outcome` (`normal`, or `failure` for a
+signal that reports something going wrong) and, for the signals that fire in normal
+operation, a `sentence` template such as `"{runner} connected to {namespace}"`, whose
+`{key}` names a label or measurement of the signal and `{key:noun}` a count.
 
 ## `flz reset`
 

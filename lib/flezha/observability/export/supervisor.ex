@@ -57,15 +57,26 @@ defmodule Flezha.Observability.Export.Supervisor do
       flavour: :declarative,
       cardinality_budget: 200,
       area: :controller,
-      description: "Exporting signals to Prometheus and OTLP.",
+      title: "Metric export",
+      description: "Signals handed to Prometheus and to an OTLP collector.",
       signals:
         Source.signals(
-          prometheus_scrape: {:event, "Prometheus scraped the metrics."},
+          prometheus_scrape:
+            {:event, label: "Scraped", meaning: "Prometheus collected the current metrics."},
           prometheus_label_truncated:
-            {:event, "A label value was too long for Prometheus and was cut."},
-          otlp_batch_flushed: {:event, "A batch was sent to the OTLP collector."},
+            {:event,
+             label: "Label cut short",
+             outcome: :failure,
+             meaning: "A label value was too long for Prometheus, so it was cut short."},
+          otlp_batch_flushed:
+            {:event,
+             label: "Batch sent", meaning: "A batch of signals was sent to the OTLP collector."},
           otlp_batch_dropped:
-            {:event, "A batch could not be sent to the OTLP collector and was dropped."}
+            {:event,
+             label: "Batch dropped",
+             outcome: :failure,
+             meaning:
+               "A batch of signals could not be sent to the OTLP collector and was dropped."}
         )
     }
   end

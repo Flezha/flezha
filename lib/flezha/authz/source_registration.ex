@@ -34,15 +34,25 @@ defmodule Flezha.AuthZ.SourceRegistration do
       flavour: :declarative,
       cardinality_budget: 256,
       area: :controller,
-      description: "Authorization: refused calls, tokens and the first-time bootstrap.",
+      title: "Access control",
+      description:
+        "Calls refused for lack of a role, tokens issued and revoked, and the first administrator's setup.",
       signals:
         Source.signals(
-          authorization_denied: {:event, "A call was refused for lack of a role."},
-          token_issued: {:event, "A token was issued."},
-          token_expiring: {:event, "A token is close to expiring."},
-          token_revoked: {:event, "A token was revoked."},
-          bootstrap_completed: {:event, "The first administrator was set up."},
-          rebootstrap_recovery: {:event, "Authorization was set up again to recover access."}
+          authorization_denied:
+            {:event,
+             label: "Access denied",
+             outcome: :failure,
+             meaning: "A call was refused because the caller lacks the role it needs."},
+          token_issued: {:event, label: "Token issued", meaning: "A token was issued."},
+          token_expiring: {:event, label: "Token expiring", meaning: "A token will expire soon."},
+          token_revoked: {:event, label: "Token revoked", meaning: "A token was revoked."},
+          bootstrap_completed:
+            {:event, label: "First admin set up", meaning: "The first administrator was set up."},
+          rebootstrap_recovery:
+            {:event,
+             label: "Access recovered",
+             meaning: "Access control was set up again to recover lost access."}
         )
     }
   end

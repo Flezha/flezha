@@ -22,7 +22,7 @@ The observability subsystem SHALL define exactly one signal envelope structure u
 
 ### Requirement: Source contract
 
-The observability subsystem SHALL define a `Source` contract under which any producer of signals can register itself. The contract SHALL support two registration flavours: a **declarative** flavour in which the producer calls a public emit function directly, and a **process-backed** flavour in which the producer is a GenServer started under the source supervisor. Every registered source SHALL declare its name, the set of signal kinds it emits, and a per-source cardinality budget. A registration MAY also declare a one-line `description`, an `area` (one of `:relays`, `:storage`, `:plugins`, `:controller`, `:machine`) and `signals`, a list of `%{name, kind, description}` naming each signal the source can emit; the registry SHALL refuse a malformed value for any of the three, SHALL keep them, and `list_sources/0` SHALL answer them.
+The observability subsystem SHALL define a `Source` contract under which any producer of signals can register itself. The contract SHALL support two registration flavours: a **declarative** flavour in which the producer calls a public emit function directly, and a **process-backed** flavour in which the producer is a GenServer started under the source supervisor. Every registered source SHALL declare its name, the set of signal kinds it emits, and a per-source cardinality budget. A registration MAY also declare a plain `title`, a one-line `description`, an `area` (one of `:relays`, `:storage`, `:plugins`, `:controller`, `:machine`) and `signals`, a list of `%{name, kind, description}` naming each signal the source can emit, where each signal MAY also carry a plain `label`, an `outcome` of `:normal` or `:failure`, and a `sentence` template. A template is text whose placeholders are `{key}`, interpolating a label or measurement, and `{key:noun}`, interpolating a count with a noun; a key is a lowercase identifier, and any other `{` or `}` makes the template malformed. The registry SHALL refuse a malformed value for any of these keys, a malformed title as `{:invalid_title, title}` and a malformed signal key as `{:invalid_signals, signals}`, SHALL keep them, and `list_sources/0` SHALL answer them. `Flezha.Observability.Source.signals/1` SHALL build the declarations from `name: {kind, meaning}`, whose label is the humanized name and whose outcome is `:normal`, or from `name: {kind, words}`, the words being `meaning:` and optionally `label:`, `outcome:` and `sentence:`.
 
 The `Flezha.Observability.Source` behaviour SHALL declare `config_schema/0` and no other callback. It SHALL NOT declare `init/1`: a declarative source owns no process and has no `init/1` to offer, and a process-backed source is a GenServer whose `init/1` is GenServer's — a module declaring both behaviours would name that callback twice, which the compiler refuses as conflicting behaviours. A behaviour a whole flavour cannot declare is not a contract that flavour can be held to.
 
@@ -48,6 +48,18 @@ The `Flezha.Observability.Source` behaviour SHALL declare `config_schema/0` and 
 
 #### Scenario: A malformed descriptive key is refused
 - **WHEN** code registers a source with `area: :elsewhere`, or a `signals` entry without a description, or a non-binary `description`
+- **THEN** `register_source/1` SHALL answer an error naming the key and no source SHALL be registered
+
+#### Scenario: A source registers a title and a signal's label, outcome and sentence
+- **WHEN** code registers `:my_source` with `title: "Orders"` and `signals: Source.signals(received: {:metric, label: "Received", outcome: :normal, meaning: "An order arrived.", sentence: "{shop} received {count:order}"})`
+- **THEN** `list_sources/0` SHALL answer the title, and the signal with that label, outcome, sentence and its meaning as `description`
+
+#### Scenario: The short form takes defaults
+- **WHEN** code declares `Source.signals(order_refused: {:event, "An order was refused."})`
+- **THEN** the declaration SHALL carry the label `"Order refused"`, the outcome `:normal` and no sentence
+
+#### Scenario: A malformed title, label, outcome or sentence is refused
+- **WHEN** code registers a source with a blank `title`, or a signal with a blank `label`, an `outcome` of `:warning`, or a `sentence` of `"{shop received"`
 - **THEN** `register_source/1` SHALL answer an error naming the key and no source SHALL be registered
 
 ### Requirement: Sink contract
@@ -452,15 +464,19 @@ against the controller's own clock.
 
 ### Requirement: Every source core registers is described
 
-Every observability source the controller registers itself SHALL declare a non-empty description, an area, and every signal it can emit with its kind and a non-empty meaning. A source that nothing in the controller can make emit SHALL NOT be registered. The suite SHALL assert both against every source the booted registry holds, and against the declared registration of every source a test boot does not start (the built-in pollers, the audit log, export and authorization).
+Every observability source the controller registers itself SHALL declare a non-empty title, a non-empty description, an area, and every signal it can emit with its kind, a non-empty label, an outcome and a non-empty meaning. A signal that reports something that did not happen as asked (a refusal, a failure or timeout, an overflow or drop, a damaged record, a stall, or a health detector's finding) SHALL declare the outcome `:failure`; retries, waits and resets SHALL declare `:normal`. The shared provider verbs `failed` and `overflowed` SHALL be failures and `shipped` and `retried` normal; a provider's own verb MAY declare its label, outcome and sentence, and one that does not SHALL be normal. Every sentence template a core source declares SHALL parse, and a bridged line's template SHALL name only keys that the line's emit sites write, which the suite SHALL check wherever it can read a site's keys. A source that nothing in the controller can make emit SHALL NOT be registered. The suite SHALL assert both against every source the booted registry holds, and against the declared registration of every source a test boot does not start (the built-in pollers, the audit log, export and authorization).
 
 #### Scenario: A booted controller's sources are described
 - **WHEN** the controller has booted with default configuration and `Registry.list_sources/0` is read
-- **THEN** every entry SHALL carry a non-empty description and an area, and every signal it declares SHALL carry a kind and a non-empty meaning
+- **THEN** every entry SHALL carry a non-empty title, a non-empty description and an area, and every signal it declares SHALL carry a kind, a non-empty label, an outcome and a non-empty meaning
 
 #### Scenario: Sources nothing writes are gone
 - **WHEN** `Registry.list_sources/0` is read after boot
 - **THEN** it SHALL NOT include `:flezha_reconcile`, `:flezha_leadership` or `:flezha_bounded_mailbox`
+
+#### Scenario: A template names a key its emit site does not write
+- **WHEN** a bridged line declares the sentence `"{runner} connected to {region}"` and its emit site writes `namespace` and `runner` but no `region`
+- **THEN** the suite SHALL fail naming the line and the missing key
 
 ### Requirement: The source listing carries recent activity
 

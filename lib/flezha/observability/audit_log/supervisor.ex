@@ -62,11 +62,16 @@ defmodule Flezha.Observability.AuditLog.Supervisor do
       flavour: :declarative,
       cardinality_budget: 200,
       area: :controller,
-      description: "The audit log: reads of it, and its files rotating and expiring.",
+      title: "Audit log",
+      description: "The audit log: who read it, and its files starting and expiring.",
       signals:
         Source.signals(
-          audit_rotated: {:event, "The audit log started a new file."},
-          audit_retention_sweep: {:event, "Audit files past their retention were deleted."}
+          audit_rotated:
+            {:event, label: "New file", meaning: "The audit log started a new file."},
+          audit_retention_sweep:
+            {:event,
+             label: "Old files deleted",
+             meaning: "Audit files older than the retention period were deleted."}
         ) ++ Verbs.audit_signals(@audit_source)
     }
   end

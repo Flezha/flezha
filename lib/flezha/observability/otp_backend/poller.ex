@@ -4,8 +4,9 @@ defmodule Flezha.Observability.OtpBackend.Poller do
   (`:beam_vm`, `:host`, `:processhub`, `:flezha_transport`).
 
   `use Flezha.Observability.OtpBackend.Poller, source: :name, kinds: [...],
-  cardinality_budget: N, default_poll_ms: N, area: :machine, description: "…",
-  signals: [name: {:metric, "what it says"}]` injects the whole lifecycle:
+  cardinality_budget: N, default_poll_ms: N, area: :machine, title: "…",
+  description: "…", signals: [name: {:metric, "what it says"}]` (or any form
+  `Flezha.Observability.Source.signals/1` takes) injects the whole lifecycle:
   `start_link/1`, `init/1` (registers the source and arms the first tick),
   `handle_info(:poll, …)` with its catch-all, `poll_interval_ms/0`
   (per-source override under `:flezha, :observability, :otp_backend,
@@ -39,6 +40,7 @@ defmodule Flezha.Observability.OtpBackend.Poller do
       @cardinality_budget unquote(Keyword.fetch!(opts, :cardinality_budget))
       @default_poll_ms unquote(Keyword.fetch!(opts, :default_poll_ms))
       @area unquote(Keyword.fetch!(opts, :area))
+      @title unquote(Keyword.fetch!(opts, :title))
       @description unquote(Keyword.fetch!(opts, :description))
       @signals Flezha.Observability.Source.signals(unquote(Keyword.fetch!(opts, :signals)))
 
@@ -95,6 +97,7 @@ defmodule Flezha.Observability.OtpBackend.Poller do
           flavour: :process_backed,
           cardinality_budget: @cardinality_budget,
           area: @area,
+          title: @title,
           description: @description,
           signals: @signals
         }

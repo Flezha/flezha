@@ -27,7 +27,12 @@ defmodule Flezha.Convergence.Probe.Table do
       id: :halt,
       kind: :relay,
       facts: &Readers.halt/1,
-      events: [{[:flezha, :relay, :halted], "A relay was halted after a failure."}]
+      events: [
+        {[:flezha, :relay, :halted],
+         label: "Halted",
+         outcome: :failure,
+         meaning: "A relay was halted after a failure and stays stopped until someone acts."}
+      ]
     },
     %{
       id: :suspension,
@@ -35,9 +40,12 @@ defmodule Flezha.Convergence.Probe.Table do
       facts: &Readers.suspension/1,
       events: [
         {[:flezha, :steps, :suspend_requested],
-         "A steps relay's runner asked to suspend it at a committed boundary."},
-        {[:flezha, :steps, :suspended], "A steps relay stopped at a committed boundary."},
-        {[:flezha, :steps, :failed], "A steps relay failed."}
+         label: "Pause asked",
+         meaning: "A steps relay's runner asked to pause it at the next safe point."},
+        {[:flezha, :steps, :suspended],
+         label: "Paused", meaning: "A steps relay paused at a safe point."},
+        {[:flezha, :steps, :failed],
+         label: "Steps relay failed", outcome: :failure, meaning: "A steps relay failed."}
       ]
     },
     %{
@@ -45,8 +53,14 @@ defmodule Flezha.Convergence.Probe.Table do
       kind: :relay,
       facts: &Readers.output_stall/1,
       events: [
-        {[:flezha, :state, :output_stall], "A Cell has produced no output for too long."},
-        {[:flezha, :state, :input_silence], "A relay has received no input for too long."}
+        {[:flezha, :state, :output_stall],
+         label: "No output",
+         outcome: :failure,
+         meaning: "A relay has produced no output for longer than allowed."},
+        {[:flezha, :state, :input_silence],
+         label: "No input",
+         outcome: :failure,
+         meaning: "A relay has received no input for longer than allowed."}
       ],
       thresholds: [:output_stall_timeout_ms, :input_silence_timeout_ms]
     },
@@ -54,7 +68,10 @@ defmodule Flezha.Convergence.Probe.Table do
       id: :progress,
       kind: :relay,
       facts: &Readers.progress/1,
-      events: [{[:flezha, :convergence, :relay_stuck], "A relay is making no progress."}],
+      events: [
+        {[:flezha, :convergence, :relay_stuck],
+         label: "Stuck", outcome: :failure, meaning: "A relay is making no progress."}
+      ],
       thresholds: [:convergence_output_stall_grace_ms]
     },
     %{
@@ -63,7 +80,10 @@ defmodule Flezha.Convergence.Probe.Table do
       facts: &Readers.plugin_health/1,
       events: [
         {[:flezha, :plugin, :health, :fail_open],
-         "A plugin's health probe failed or timed out, so it is treated as healthy."}
+         label: "Health check failed",
+         outcome: :failure,
+         meaning:
+           "A plugin's health check failed or timed out, so it is treated as healthy for now."}
       ],
       thresholds: [:probe_budget_ms]
     },
@@ -72,13 +92,24 @@ defmodule Flezha.Convergence.Probe.Table do
       kind: :runner,
       facts: &Readers.session/1,
       events: [
-        {[:flezha, :runner, :liveness_timeout], "A runner stopped answering its keepalive."},
-        {[:flezha, :runner, :restarted], "A runner restarted."},
-        {[:flezha, :runner, :reconnected], "A runner reconnected and kept its relays."},
+        {[:flezha, :runner, :liveness_timeout],
+         label: "Stopped answering",
+         outcome: :failure,
+         meaning: "A runner stopped answering the controller's keepalive."},
+        {[:flezha, :runner, :restarted],
+         label: "Restarted", outcome: :failure, meaning: "A runner restarted."},
+        {[:flezha, :runner, :reconnected],
+         label: "Reconnected", meaning: "A runner reconnected and kept its relays."},
         {[:flezha, :runner, :reconnected_reassigned],
-         "A runner reconnected after its relays were moved elsewhere."},
-        {[:flezha, :runner, :evicted], "A runner was evicted."},
-        {[:flezha, :transport, :connect_rejected], "A connection to the controller was rejected."}
+         label: "Reconnected too late",
+         outcome: :failure,
+         meaning: "A runner reconnected after its relays had already moved elsewhere."},
+        {[:flezha, :runner, :evicted],
+         label: "Evicted", outcome: :failure, meaning: "The controller removed a runner."},
+        {[:flezha, :transport, :connect_rejected],
+         label: "Connection rejected",
+         outcome: :failure,
+         meaning: "A connection to the controller was rejected."}
       ],
       thresholds: [:control_liveness_window_ms, :runner_keepalive]
     },
@@ -100,7 +131,9 @@ defmodule Flezha.Convergence.Probe.Table do
       facts: &Readers.data_plane/1,
       events: [
         {[:flezha, :data_plane, :stall_localized],
-         "A stalled message flow was traced to one driver, channel or Cell."}
+         label: "Stall traced",
+         outcome: :failure,
+         meaning: "A stalled message flow was traced to one connection, stream or relay."}
       ],
       thresholds: [:driver_freeze_ms, :stall_ms, :queue_high, :cell_stall_ms]
     },
@@ -112,9 +145,14 @@ defmodule Flezha.Convergence.Probe.Table do
       kind: :relay,
       facts: nil,
       events: [
-        {[:flezha, :convergence, :safe_call], "A bounded call probed whether a relay answers."},
-        {[:flezha, :convergence, :heal], "The controller ran a repair step."},
-        {[:flezha, :hub, :unavailable], "A namespace's hub was down when something asked for it."}
+        {[:flezha, :convergence, :safe_call],
+         label: "Probed", meaning: "A short call checked whether a relay answers."},
+        {[:flezha, :convergence, :heal],
+         label: "Repaired", meaning: "The controller ran a repair step."},
+        {[:flezha, :hub, :unavailable],
+         label: "Namespace down",
+         outcome: :failure,
+         meaning: "A namespace's hub was down when something asked for it."}
       ]
     },
     # The judge's own entry. Every state transition executes it, and the
@@ -123,7 +161,12 @@ defmodule Flezha.Convergence.Probe.Table do
       id: :verdict,
       kind: :any,
       facts: nil,
-      events: [{[:flezha, :health, :verdict], "A health verdict changed state."}]
+      events: [
+        {[:flezha, :health, :verdict],
+         label: "Health changed",
+         meaning: "The health of a relay, runner or plugin changed.",
+         sentence: "{id} is now {state}"}
+      ]
     }
   ]
 
@@ -135,8 +178,11 @@ defmodule Flezha.Convergence.Probe.Table do
   @spec events() :: [[atom()]]
   def events(), do: Enum.map(event_descriptions(), &elem(&1, 0))
 
-  @doc "Every declared event with what its signal says, once each."
-  @spec event_descriptions() :: [{[atom()], String.t()}]
+  @doc """
+  Every declared event with what its signal says, once each: the words
+  `Flezha.Observability.Source.signals/1` takes beside a signal's kind.
+  """
+  @spec event_descriptions() :: [{[atom()], keyword()}]
   def event_descriptions(),
     do: @detectors |> Enum.flat_map(& &1.events) |> Enum.uniq_by(&elem(&1, 0))
 
