@@ -22,6 +22,7 @@ because its finding is a set difference and not a line, but it shares the list
 format and the rule that goes with it: `load_baseline`.
 """
 
+import concurrent.futures
 import contextlib
 import io
 import os
@@ -511,13 +512,18 @@ def run_gate(row, report, logs=None):
         except OSError as exc:
             verdict = ("NO ANSWER", "errored", f"{label} — could not start: {exc}")
     word, bucket, entry = verdict
-    if bucket:
-        report[bucket].append(entry)
     line = f"{word} {label} ({round(time.monotonic() - started)}s)"
-    print(line, flush=True)
-    if logs:
-        with open(os.path.join(logs, "summary.txt"), "a", encoding="utf-8") as fh:
-            fh.write(line + "\n")
+    with _REPORTING:
+        if bucket:
+            report[bucket].append(entry)
+        print(line, flush=True)
+        if logs:
+            with open(os.path.join(logs, "summary.txt"), "a", encoding="utf-8") as fh:
+                fh.write(line + "\n")
+
+
+# Lanes running side by side file their verdicts one at a time.
+_REPORTING = threading.Lock()
 
 
 def _judge(row, status, out, err):
@@ -557,13 +563,39 @@ def _judge(row, status, out, err):
     return "NO ANSWER", "errored", f"{label} — exit {status}"
 
 
-def run_gates(rows, logs=None):
-    """Run `rows` in order and return the status the contract at the top says."""
+def lanes(rows):
+    """`rows` as lanes, one per group in first-seen order: a lane's rows keep
+    their order (an e2e runtime's build before its shards), lanes share nothing
+    a run does not derive for itself (state root, sockets, ports, node name)."""
+    by_group = {}
+    for row in rows:
+        by_group.setdefault(row["group"], []).append(row)
+    return list(by_group.values())
+
+
+def run_gates(rows, logs=None, jobs=1):
+    """Run `rows` and return the status the contract at the top says: in order,
+    or with `jobs` > 1 as lanes, `jobs` at a time. The dependency compile every
+    other lane builds on runs alone first, and the e2e lanes, the longest, start
+    first."""
     if logs:
         os.makedirs(logs, exist_ok=True)
     report = {"unavailable": [], "failed": [], "errored": []}
-    for row in rows:
-        run_gate(row, report, logs)
+    if jobs <= 1:
+        for row in rows:
+            run_gate(row, report, logs)
+    else:
+        rest = lanes(rows)
+        first = [lane for lane in rest if lane[0]["group"] == "deps"]
+        rest = sorted((lane for lane in rest if lane not in first),
+                      key=lambda lane: not lane[0]["group"].startswith("e2e"))
+        for lane in first:
+            for row in lane:
+                run_gate(row, report, logs)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
+            for done in [pool.submit(lambda lane=lane: [run_gate(row, report, logs)
+                                                        for row in lane]) for lane in rest]:
+                done.result()
 
     status = OK
     for key, code, heading in (
@@ -759,7 +791,7 @@ def _self_test():
 
 USAGE = """usage: naming_gate.py --self-test
        naming_gate.py --list [all|@<group>|<id>[,<id>...]]
-       naming_gate.py [--logs DIR] --run all|@<group>|<id>[,<id>...]"""
+       naming_gate.py [--logs DIR] [--jobs N] --run all|@<group>|<id>[,<id>...]"""
 
 
 def _command(row):
@@ -773,8 +805,11 @@ def _command(row):
 
 def _main(argv):
     logs = None
+    jobs = 1
     if argv[:1] == ["--logs"] and len(argv) > 2:
         logs, argv = argv[1], argv[2:]
+    if argv[:1] == ["--jobs"] and len(argv) > 2 and argv[1].isdigit():
+        jobs, argv = int(argv[1]), argv[2:]
     if argv == ["--self-test"]:
         return max(_self_test(), _contract_self_test(), _registry_self_test())
     if argv[:1] == ["--list"] and len(argv) <= 2 or argv[:1] == ["--run"] and len(argv) == 2:
@@ -785,7 +820,7 @@ def _main(argv):
             print(USAGE, file=sys.stderr)
             return NO_ANSWER
         if argv[0] == "--run" and rows is not None:
-            return run_gates(rows, logs)
+            return run_gates(rows, logs, jobs)
         for row in GATES if rows is None else rows:
             print(f"{row['id']:<26} {row['group']:<8} {_command(row)}")
         return OK

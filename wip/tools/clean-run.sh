@@ -15,4 +15,5 @@ ROOT=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
 cd "$ROOT" || exit 1
 LOGS=$ROOT/wip/tools/.cache/clean-run/$(date +%Y%m%d-%H%M%S)
 echo "logs: $LOGS"
-exec python3 scripts/naming_gate.py --logs "$LOGS" --run @clean
+# Lanes run four at a time (`naming_gate.py --jobs`): one at a time took an hour.
+exec python3 scripts/naming_gate.py --logs "$LOGS" --jobs 4 --run @clean
