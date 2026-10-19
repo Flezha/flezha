@@ -123,8 +123,11 @@ defmodule Flezha.Convergence.RunnerReturnLatencyTest do
   @tag :runner_return_latency
   test "a tick leaves the hub of a namespace whose only runner is still in its handshake" do
     {:ok, _} = start_supervised({Loop, tick_ms: @periodic_tick_ms})
-    # Spend the tick the Loop fires on start, before the hub exists.
-    :ok = Loop.tick_now()
+    # Let the tick the Loop fires on start run before the hub exists. A
+    # `tick_now/0` call can overtake it, and that tick would then see the new
+    # hub vacant and reclaim it.
+    assert NodeTestHelper.wait_until(fn -> not :sys.get_state(Loop).tick_pending? end, @budget_ms)
+    _ = :sys.get_state(FleetManager)
 
     :ok = HubManager.ensure_hub(@namespace)
     :ok = HubManager.await_recovery_complete()
