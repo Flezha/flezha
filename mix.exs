@@ -581,7 +581,7 @@ defmodule Flezha.MixProject do
       # Syntax highlighting for the guides' code blocks. Makeup ships lexers
       # for Elixir and Erlang only; this one carries the rest.
       {:makeup_syntect, "~> 0.1", only: :dev, runtime: false},
-      {:logger_file_backend, "~> 0.0.13"},
+      {:logger_file_backend, "~> 0.1.1"},
       {:logger_backends, "~> 1.0"},
       {:rustler, "~> 0.35"},
       {:recon, "~> 2.5"},

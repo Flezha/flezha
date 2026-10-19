@@ -132,3 +132,15 @@ Mimic.copy(Flezha.Convergence.Intent)
 Mimic.copy(Flezha.Convergence.Probe)
 Mimic.copy(Flezha.Convergence.RecoveryGate)
 Mimic.copy(Flezha.Shutdown.Coordinator)
+
+# Registered after every `Mimic.copy/1` above, so it runs before their own
+# after-suite resets: a reset purges a copied module's original code, which kills
+# any process still inside it, and an input log's sync companion is one. A log a
+# test left open is closed first, as a shutdown would. A repeated run keeps the
+# copies, and its logs.
+ExUnit.after_suite(fn _result ->
+  if ExUnit.configuration()[:repeat_until_failure] in [0, nil] do
+    for {class, :input_log} <- Flezha.State.Supervisor.registered_ids(),
+        do: Flezha.State.TestHelpers.close_input_log(class)
+  end
+end)

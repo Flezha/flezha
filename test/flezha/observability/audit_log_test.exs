@@ -431,12 +431,15 @@ defmodule Flezha.Observability.AuditLogTest do
       assert stats.current_file_bytes == byte_size(line)
       assert stats.current_record_count == 1
 
+      {:ok, tail} = Writer.subscribe_tail()
       {:ok, info} = Writer.rotate_now(System.system_time(:microsecond))
       assert String.starts_with?(info.rotated_to, "audit-")
       assert info.size_bytes == byte_size(line)
 
+      # The rotation's own event, sent after the reply, is the new file's first record.
+      assert_receive {:audit_record, ^tail, %{"name" => "audit_rotated"}}, 2_000
       stats2 = Writer.stats()
-      assert stats2.current_file_bytes == 0
+      assert stats2.current_record_count == 1
       assert stats2.catalog_count == 1
     end
 

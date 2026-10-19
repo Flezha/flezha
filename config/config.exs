@@ -29,6 +29,9 @@ config :logger, :console,
 # by `config/runtime.exs`. The format and the metadata are the logger's own.
 config :logger, :file_log,
   format: "$time $metadata[$level] $message\n",
-  metadata: [:request_id, :module, :function, :line]
+  metadata: [:request_id, :module, :function, :line],
+  # The backend cuts a line at 4096 characters by default; a crash report is
+  # often longer, and the file keeps it whole.
+  truncate: :infinity
 
 import_config "#{Mix.env()}.exs"

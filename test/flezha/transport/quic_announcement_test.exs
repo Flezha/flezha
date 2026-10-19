@@ -6,13 +6,14 @@ defmodule Flezha.Transport.QuicAnnouncementTest do
   QUIC, however often it reconnects. A UDS or in-node transport says nothing.
   """
   # async: false: restarts the controller's transport listeners; the primary Logger.
-  use ExUnit.Case, async: false
+  use FlezhaTest.Case, fixtures: [:tmp_dir], async: false
 
   import ExUnit.CaptureLog
 
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.EventManager
-  alias Flezha.Transport.Server
+  alias Flezha.State.TestHelpers
+  alias Flezha.Transport.{Native, Server}
   alias FlezhaTest.Helper.NodeTestHelper
 
   @controller "[Transport.Server] the QUIC transport is experimental"
@@ -77,11 +78,20 @@ defmodule Flezha.Transport.QuicAnnouncementTest do
       end
     end
 
-    test "a UDS listener announces nothing", %{ns: ns} do
+    # A second listener on a private directory: restarting the controller's own
+    # would drop the suite's runners onto a reconnect they print to stderr.
+    test "a UDS listener announces nothing", %{ns: ns, tmp: dir} do
+      restore = TestHelpers.override_env(:socket_files_path, dir)
+      on_exit(restore)
+
       {_, log} =
         with_log(fn ->
-          restart_listener(:uds)
+          {:ok, listener} = GenServer.start(Server, :uds)
+          restore.()
+          {:ok, socket} = Native.control_socket_path_in(dir)
+          assert File.exists?(socket)
           start_runner(ns, transport: :uds, runtime: :rust)
+          :ok = GenServer.stop(listener)
         end)
 
       assert NodeTestHelper.occurrences(log, @controller) == 0
