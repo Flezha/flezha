@@ -49,7 +49,7 @@ defmodule Flezha.Config.DurationRows do
     {:listen_port_call_ms, :ms, 1_000, []},
     {:stream_pool_bind_call_ms, :ms, 5_000, []},
     {:control_unit_reply_timeout_ms, :ms, 5_000, []},
-    {:control_unit_heartbeat_interval_ms, :ms, 15_000, key: true},
+    {:control_unit_reply_sweep_interval_ms, :ms, 15_000, key: true},
     {:control_unit_pending_reply_timeout_ms, :ms, 90_000, key: true},
     {:credit_handshake_timeout_ms, :ms, 10_000, []},
     {:drain_owed_ms, :ms, 60_000, []},

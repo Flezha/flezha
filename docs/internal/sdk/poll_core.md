@@ -35,7 +35,7 @@ the C ABI and where the code lives; the system-level picture is
 | `flz_core/src/flusher.rs`, `state_sink.rs`, `credit.rs`, `correction.rs`, `timer.rs`, `restore.rs`, `header.rs` | Durability: WAL framing + linger drain, the reliable output, credit windows, late-input machinery, timers, restore payloads, record headers |
 | `flz_core/src/coordinator.rs`, `control_unit.rs`, `runner.rs`, `command/` | RunnerNode, wire readers, control channel + reconnect, one handler module per controller command |
 | `flz_core/src/steps/`               | A steps instance's run: `instance.rs` (the pass sheet a journal resume fills), `run.rs` (the events that advance it), `commit.rs` (the barrier frames), `resume.rs` (the journal readers), `compensation.rs` (the undo plan), `spec.rs` (the spec/DAG kernel) |
-| `flz_core_ffi/src/lib.rs`              | The `flz_core_*` C entry points (crate types `cdylib`, `staticlib`, `rlib`) |
+| `flz_core_ffi/src/lib.rs`, `abi/`      | The context, and the `flz_core_*` C entry points in one `abi/` file per concern (crate types `cdylib`, `staticlib`, `rlib`) |
 | `flz_core_ffi/src/jni_glue.rs`         | `Java_com_flezha_sdk_native_1_FlzCore_*` exports behind the `jni` feature |
 | `flz_core_ffi/tests/abi_scenario.rs`   | The CI scenario that drives the whole runtime through the C ABI |
 | `flz_transport/`                       | The transport tier both the kernel and the controller NIF share: `transport/` (QUIC, TLS, config, liveness, `protocol.rs` stream constants `STREAM_TYPE_PRIMARY 0x01` / `STREAM_TYPE_SECONDARY 0x02`), `service/payloader.rs` (binary framing), `utility/socket_dir.rs` (socket paths), `utility/socket_probe.rs` (reachability) |

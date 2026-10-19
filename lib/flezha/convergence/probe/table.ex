@@ -111,7 +111,7 @@ defmodule Flezha.Convergence.Probe.Table do
          outcome: :failure,
          meaning: "A connection to the controller was rejected."}
       ],
-      thresholds: [:control_liveness_window_ms, :runner_keepalive]
+      thresholds: [:control_liveness_window_ms, :runner_removal_grace_ms]
     },
     # Two entries, because "what exists" and "what is wedged" are two reads: a
     # verdict the classifier could not compute leaves the population standing
@@ -202,7 +202,7 @@ defmodule Flezha.Convergence.Probe.Table do
 
   def threshold(:probe_budget_ms), do: ProviderBehaviour.probe_budget_ms()
   def threshold(:control_liveness_window_ms), do: Durations.get(:control_liveness_window_ms)
-  def threshold(:runner_keepalive), do: Durations.get(:runner_keepalive)
+  def threshold(:runner_removal_grace_ms), do: Durations.get(:runner_removal_grace_ms)
 
   def threshold(name) do
     case Map.fetch(StallClassifier.defaults(), name) do

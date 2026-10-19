@@ -30,7 +30,11 @@ defmodule Flezha.AuthZ.RunnerProof do
   under `:open` the frame's namespace is taken as it always was, so a
   deployment that has not turned authorization on is not asked for a credential
   it was never issued.
+
+  It is the first check of `Flezha.Runner.Admission`: the connect it hands on
+  carries the proven namespace and credential in place of the claimed ones.
   """
+  @behaviour Flezha.Runner.Admission.Check
 
   alias Flezha.AuthN.Cert
   alias Flezha.AuthZ
@@ -56,6 +60,15 @@ defmodule Flezha.AuthZ.RunnerProof do
   `claimed` is the frame's namespace field and `init_payload` the frame's own
   decoded JSON, which carries the secret under `"namespace_secret"`.
   """
+  @impl true
+  def phase, do: :caller
+
+  @impl true
+  def check(%{namespace: claimed, transport: transport} = connect, context) do
+    with {:ok, proof} <- prove(context.stream_ref, claimed, context.init_payload, transport),
+         do: {:ok, Map.merge(connect, proof)}
+  end
+
   @spec prove(TStream.handle(), binary() | nil, map(), transport()) ::
           {:ok, t()} | {:error, term()}
   def prove(handle, claimed, init_payload, transport) do

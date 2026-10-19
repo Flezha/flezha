@@ -9,10 +9,9 @@
 # source instead cannot run outside a checkout of it, which is the whole
 # reason this file exists.
 #
-# Adding an entry point: the function in `flz_core_ffi/src/lib.rs`, `knob.rs`,
-# `local.rs`, `notice.rs` or `response.rs`, its veneer function, its row in
-# `veneer::SURFACE`, its line here, and one wrapper in every host binding
-# (docs/public/architecture/runner.md).
+# Adding an entry point: the function in `flz_core_ffi/src/abi/<concern>.rs`,
+# its veneer function, its row in `veneer::SURFACE`, its line here, and one
+# wrapper in every host binding (docs/public/architecture/runner.md).
 flz_core_abandon
 flz_core_admin_call
 flz_core_buf_free

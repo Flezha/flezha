@@ -41,7 +41,7 @@ retry is a row of `lib/flezha/config/backoff.ex`, announced on
 
 ## Runner and relay lifecycle
 
-- `:runner_keepalive`: Default: `"30000"` (string or integer accepted).
+- `:runner_removal_grace_ms`: How long a disconnected runner is kept before removal, `0` removes at once.
 - `:migration_consent[:consent_timeout_ms]` / `:migration_consent[:retry_interval_ms]` / `:migration_consent[:max_defer_ms]`: Default: `5_000` / `2_000` / `:graceful_shutdown_timeout_ms` (derived).
 - `:call_pending_max`: The answers one relay owes the callers waiting on it.
 - `:call_grace_ms`: How long an outside caller waits past its call's deadline, so the relay's own `call.timeout` reaches it first.
@@ -132,8 +132,8 @@ retry is a row of `lib/flezha/config/backoff.ex`, announced on
 | `:concurrent_channel_count` | positive_int | derived at boot |
 | `:control_liveness_interval_ms` | ms | `15000` |
 | `:control_liveness_window_ms` | ms | derived |
-| `:control_unit_heartbeat_interval_ms` | ms | `15000` |
 | `:control_unit_pending_reply_timeout_ms` | ms | `90000` |
+| `:control_unit_reply_sweep_interval_ms` | ms | `15000` |
 | `:controller_enabled` | bool | `true` |
 | `:convergence_cell_stall_ms` | ms | `300000` |
 | `:convergence_fabric_503_polls` | int | `3` |
@@ -271,7 +271,7 @@ retry is a row of `lib/flezha/config/backoff.ex`, announced on
 | `:relay_completed_retention_hours` | term | `%{}` |
 | `:restore_await_timeout_ms` | ms | `15000` |
 | `:run_token` | string | unset |
-| `:runner_keepalive` | ms | `30000` |
+| `:runner_removal_grace_ms` | ms | `30000` |
 | `:runner_retiring_mark_ttl_ms` | ms | `30000` |
 | `:schedules[:application_managed]` | bool | `true` |
 | `:schedules[:dir]` | path | `app_data/schedules` |

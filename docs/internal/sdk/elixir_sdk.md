@@ -156,11 +156,11 @@ end
 - `max_duration_ms` is a wall-clock stop for either run: a steps instance unwinds and ends
   `cancelled`, a flow instance ends `cancelled` once its Cells hold nothing.
 
-A setting written under a parent that does not carry it (`each` under `:flow`, `ack` under
-`:steps`, `sleep_after` under `false`) is a `CompileError` naming the setting and the
-parent, and so is a value outside its choices. A hand-written `run/0` or `durable/0`
-answering the same tree meets the same check at `register_factory/2`, as
-`topology.unknown_field` or `topology.invalid_setting`. The one combination refused is
+The SDK forwards the tree as written and the core judges it at `register_factory/2`: a
+setting written under a parent that does not carry it (`each` under `:flow`, `ack` under
+`:steps`, `sleep_after` under `false`) is refused as `topology.unknown_field` naming the
+setting and the parent, and a value outside its choices as `topology.invalid_setting`,
+whether `use` or a hand-written `run/0` or `durable/0` answers the tree. The one combination refused is
 `:effectively_once` with `durable: false`, `topology.effectively_once_without_persistence`:
 the tier is durable state.
 

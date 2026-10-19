@@ -67,20 +67,20 @@ defmodule FlezhaTest.Deployment.K8sManifestTest do
       %{contents: File.read!(@configmap_path)}
     end
 
-    test "defines FLEZHA_RUNNER_KEEPALIVE as a positive integer string in milliseconds",
+    test "defines FLEZHA_RUNNER_REMOVAL_GRACE_MS as a positive integer string in milliseconds",
          %{contents: contents} do
-      keepalive_pattern = ~r/FLEZHA_RUNNER_KEEPALIVE:\s+"(\d+)"/
+      grace_pattern = ~r/FLEZHA_RUNNER_REMOVAL_GRACE_MS:\s+"(\d+)"/
 
-      case Regex.run(keepalive_pattern, contents) do
+      case Regex.run(grace_pattern, contents) do
         [_match, value_str] ->
           {value, ""} = Integer.parse(value_str)
 
           assert value > 0,
-                 "FLEZHA_RUNNER_KEEPALIVE must be a positive integer (got #{value_str})"
+                 "FLEZHA_RUNNER_REMOVAL_GRACE_MS must be a positive integer (got #{value_str})"
 
         nil ->
           flunk(
-            "missing FLEZHA_RUNNER_KEEPALIVE entry in configmap or value not quoted as a string"
+            "missing FLEZHA_RUNNER_REMOVAL_GRACE_MS entry in configmap or value not quoted as a string"
           )
       end
     end

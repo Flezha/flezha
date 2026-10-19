@@ -204,7 +204,7 @@ defmodule Flezha.Runner.FleetManagerHubLifecycleTest do
   defp fresh_ns(tag), do: "hub_lifecycle_#{tag}_#{System.unique_integer([:positive])}"
 
   defp cleanup_now() do
-    Application.put_env(:flezha, :runner_keepalive, "0")
+    Application.put_env(:flezha, :runner_removal_grace_ms, 0)
     :ok = GenServer.call(FleetManager, :runner_cleanup)
   end
 
@@ -519,7 +519,8 @@ defmodule FlezhaTest.Runner.FleetManagerSdkLangTest do
             :ok = FleetStateHelper.announce(ns, "r2", [steps.(unquote(advertised))])
           end)
 
-        assert log =~ "r2 on #{ns} advertises factory #{id} with #{attribute} #{unquote(advertised)}"
+        assert log =~
+                 "r2 on #{ns} advertises factory #{id} with #{attribute} #{unquote(advertised)}"
 
         assert_received {^event, ^ref, %{count: 1},
                          %{
@@ -656,6 +657,7 @@ defmodule FlezhaTest.Runner.FleetManagerSyncFactoriesTest do
 
     :ok = FleetStateHelper.announce(@namespace, "r1", [%{json | "description" => "the first"}])
     :ok = FleetStateHelper.announce(@namespace, "r2", [json, %{json | "id" => "untold"}])
+
     Requests.update_factories(
       %{namespace: @namespace, runner_id: "r3"},
       %RunnerCommands.UpdateFactories{factories: [decl]}
@@ -775,7 +777,7 @@ end
 
 defmodule FlezhaTest.Runner.FleetManagerKeepaliveClockTest do
   @moduledoc """
-  The keepalive is measured on one clock, and that clock is monotonic.
+  The removal grace is measured on one clock, and that clock is monotonic.
 
   The two halves are pinned separately, and neither depends on how a wall clock
   happens to be spelled. The writer's stamp must land inside the monotonic
@@ -786,7 +788,7 @@ defmodule FlezhaTest.Runner.FleetManagerKeepaliveClockTest do
   two sides are provably on the same monotonic clock.
   """
   # async: false: the live controller and its fleet; node-global tables.
-  # `:env` owns the `:runner_keepalive` two of these tests set. The
+  # `:env` owns the `:runner_removal_grace_ms` two of these tests set. The
   # FleetManager's own state is not the table's business, so it stays here — and
   # still goes back FIRST, because `on_exit` unwinds in reverse registration
   # order and this setup runs after the fixture's. That is the order the one
@@ -796,8 +798,8 @@ defmodule FlezhaTest.Runner.FleetManagerKeepaliveClockTest do
   alias Flezha.Runner.FleetManager
   alias FlezhaTest.Helper.FleetStateHelper
 
-  @namespace "keepalive_clock_#{System.unique_integer([:positive])}"
-  @keepalive_ms 60_000
+  @namespace "removal_grace_clock_#{System.unique_integer([:positive])}"
+  @grace_ms 60_000
 
   setup do
     original = :sys.get_state(FleetManager)
@@ -806,11 +808,20 @@ defmodule FlezhaTest.Runner.FleetManagerKeepaliveClockTest do
     :ok
   end
 
+  test "the removal grace is read from its own variable, never the former one" do
+    read = &Flezha.Config.Environment.runtime_config(&1, :prod)[:runner_removal_grace_ms]
+
+    assert read.(%{"FLEZHA_RUNNER_REMOVAL_GRACE_MS" => "0"}) == 0
+
+    assert read.(%{"FLEZHA_RUNNER_KEEPALIVE" => "0"}) ==
+             Flezha.Config.default(:runner_removal_grace_ms)
+  end
+
   test "the disconnect stamps the roster row on the monotonic clock" do
     seed_active("lone_runner")
 
     # The production writer stamps the row: the last runner of a namespace
-    # nobody else serves is held `:inactive` for the keepalive window.
+    # nobody else serves is held `:inactive` for the removal grace.
     before_ms = System.monotonic_time(:millisecond)
     :ok = FleetStateHelper.disconnected(@namespace, "lone_runner")
     after_ms = System.monotonic_time(:millisecond)
@@ -823,23 +834,23 @@ defmodule FlezhaTest.Runner.FleetManagerKeepaliveClockTest do
   end
 
   test "the reaper keeps a row stamped a moment ago on the monotonic clock" do
-    Application.put_env(:flezha, :runner_keepalive, to_string(@keepalive_ms))
+    Application.put_env(:flezha, :runner_removal_grace_ms, @grace_ms)
     seed_inactive("kept_runner", System.monotonic_time(:millisecond))
 
     :ok = GenServer.call(FleetManager, :runner_cleanup)
 
     assert Map.has_key?(roster(), "kept_runner"),
-           "a runner inactive for milliseconds was reaped inside its keepalive"
+           "a runner inactive for milliseconds was reaped inside its removal grace"
   end
 
-  test "a runner inactive past the keepalive is still reaped" do
-    Application.put_env(:flezha, :runner_keepalive, "0")
+  test "a runner inactive past the removal grace is still reaped" do
+    Application.put_env(:flezha, :runner_removal_grace_ms, 0)
     seed_inactive("stale_runner", System.monotonic_time(:millisecond) - 1)
 
     :ok = GenServer.call(FleetManager, :runner_cleanup)
 
     refute Map.has_key?(roster(), "stale_runner"),
-           "a keepalive of zero must still drop the inactive row"
+           "a removal grace of zero must still drop the inactive row"
   end
 
   defp seed_active(runner_id), do: seed(runner_id, {:active, System.monotonic_time(:millisecond)})
@@ -1060,7 +1071,7 @@ defmodule FlezhaTest.Runner.FleetManagerRunnerRowsTest do
                silent_ms: silent,
                late?: false
              }
-           ] = FleetManager.runner_rows(@namespace)
+           ] = FleetManager.Cluster.runner_rows(@namespace)
 
     assert node == node()
     assert_in_delta at, System.system_time(:second), 5
@@ -1071,13 +1082,14 @@ defmodule FlezhaTest.Runner.FleetManagerRunnerRowsTest do
     token = connect()
     stamp_control(token, 2 * Durations.get(:control_keepalive_ms) + 1_000)
 
-    assert [%{id: ^token, late?: true}] = FleetManager.runner_rows(@namespace)
+    assert [%{id: ^token, late?: true}] = FleetManager.Cluster.runner_rows(@namespace)
   end
 
   test "a runner with no control stamp is neither silent nor late" do
     token = connect()
 
-    assert [%{id: ^token, silent_ms: nil, late?: false}] = FleetManager.runner_rows(@namespace)
+    assert [%{id: ^token, silent_ms: nil, late?: false}] =
+             FleetManager.Cluster.runner_rows(@namespace)
   end
 
   test "the connect time is forgotten when the session is dropped or evicted" do
@@ -1096,7 +1108,7 @@ defmodule FlezhaTest.Runner.FleetManagerRunnerRowsTest do
     token = connect()
     :sys.replace_state(FleetManager, &put_in(&1, [:session_facts, token, :pid], 4_242))
 
-    assert [%{id: ^token, pid: 4_242}] = FleetManager.runner_rows(@namespace)
+    assert [%{id: ^token, pid: 4_242}] = FleetManager.Cluster.runner_rows(@namespace)
     assert %{pid: 4_242, node: node} = FleetManager.find_session(@namespace, token)
     assert node == node()
   end

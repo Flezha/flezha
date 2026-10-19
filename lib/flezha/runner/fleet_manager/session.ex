@@ -8,7 +8,7 @@ defmodule Flezha.Runner.FleetManager.Session do
   The connect's `incarnation` tells the two kinds of return apart: the same
   process reconnecting still runs its relays, a restarted one runs none.
   A `stable_id` held by a session admitted under another credential is refused
-  instead (`check_identity_pin/2`).
+  instead (`Flezha.Runner.Admission.IdentityPin`).
 
   A session is recorded only once its runner has answered both handshake
   frames. Until then it is pending, and every way it can end (a refusal, the
@@ -18,8 +18,8 @@ defmodule Flezha.Runner.FleetManager.Session do
   Invariant: a disconnect drops the runner from the active set unconditionally,
   whatever the roster holds, and is declared to the convergence loop, which
   decides what becomes of the relays it held. The one thing this module
-  keeps is the keepalive: the last runner of a namespace nobody else serves is
-  held `:inactive` for its window rather than dropped.
+  keeps is the removal grace: the last runner of a namespace nobody else
+  serves is held `:inactive` for its window rather than dropped.
 
   A session's opening and its end are dispatched on the event bus, which the
   convergence loop and the boot loader consume, and emitted as
@@ -28,9 +28,7 @@ defmodule Flezha.Runner.FleetManager.Session do
   `:flezha_runner` observability source for consumers on other nodes.
   """
 
-  alias Flezha.AuthZ.Quotas
   alias Flezha.AuthZ.RoleStore
-  alias Flezha.AuthZ.Verb
   alias Flezha.Config.Durations
   alias Flezha.Convergence.Facts
   alias Flezha.Identificator
@@ -45,7 +43,6 @@ defmodule Flezha.Runner.FleetManager.Session do
   alias Flezha.Runner.StreamPool
   alias Flezha.Service.EventManager
   alias Flezha.Service.HubManager
-  alias Flezha.Shutdown
 
   require Logger
 
@@ -73,52 +70,6 @@ defmodule Flezha.Runner.FleetManager.Session do
     end)
 
     :ok
-  end
-
-  def check_not_shutting_down(namespace) do
-    with {:error, :shutting_down} = refusal <- Shutdown.admit(:namespace, namespace) do
-      Logger.info("[shutdown] rejecting runner connect attempt for namespace=#{namespace}")
-      refusal
-    end
-  end
-
-  # The runner principal is minted from the namespace the connection PROVED
-  # (`Flezha.AuthZ.RunnerProof`), which is also what argument one carries, so
-  # both sides of the row's namespace rule read the proven value and neither
-  # reads the frame. Cross-namespace action is refused before this, at the
-  # proof; what this row judges is that the identity holds `runner.connect` at
-  # all. Also the per-namespace `max_runners` quota point — both refusals are
-  # observable through the authz denial event / the quota telemetry below.
-  def admit_runner(namespace, transport) do
-    runner_ctx = runner_caller_context(namespace)
-
-    case Verb.run(:runner_connect, runner_ctx, [namespace], fn _call ->
-           Quotas.check_allocation(namespace, :max_runners)
-         end) do
-      :ok ->
-        :ok
-
-      {:error, {:quota_exceeded, _kind, %{current: current, limit: limit}} = reason} ->
-        Logger.warning(
-          "[FleetManager] runner connect refused for namespace=#{namespace}: " <>
-            "max_runners quota reached (#{current}/#{limit})"
-        )
-
-        :telemetry.execute(
-          [:flezha, :runner, :quota_refused],
-          %{count: 1},
-          %{namespace: namespace, transport: transport, current: current, limit: limit}
-        )
-
-        {:error, reason}
-
-      {:error, reason} ->
-        Logger.warning(
-          "[FleetManager] runner connect refused for namespace=#{namespace}: #{inspect(reason)}"
-        )
-
-        {:error, reason}
-    end
   end
 
   @doc """
@@ -179,87 +130,6 @@ defmodule Flezha.Runner.FleetManager.Session do
       [:stable_sessions, stable_id],
       {session_token, credential, connect.incarnation}
     )
-  end
-
-  @doc """
-  Refuse a connect whose stable identity is held under another credential.
-
-  A relay is owned by its runner's stable identity, so presenting an
-  identity is the one door to another runner's relays. While the identity
-  has a session in the roster (live, or kept inactive for its keepalive) or a
-  handshake in flight, admitted under one credential, a connect presenting it
-  under a different credential is refused rather than taken over. The pin
-  lapses when the identity's last session leaves the roster. A connect that
-  carries no per-runner credential (certificate-proven, or posture off) is
-  neither pinned nor refused.
-  """
-  @spec check_identity_pin(map(), map()) :: :ok | {:error, {:identity_taken, binary()}}
-  def check_identity_pin(state, %{stable_id: stable_id, credential: credential})
-      when is_binary(stable_id) and is_binary(credential) do
-    if held_elsewhere?(state, stable_id, credential) do
-      Logger.warning(
-        "[FleetManager] runner connect refused: stable identity #{stable_id} is held " <>
-          "under another credential"
-      )
-
-      {:error, {:identity_taken, stable_id}}
-    else
-      :ok
-    end
-  end
-
-  def check_identity_pin(_state, _connect), do: :ok
-
-  @doc """
-  Refuse a connect from a runner process an operator dropped.
-
-  A standing mark (`Flezha.Runner.DropMarks`) on the connect's stable identity
-  refuses the incarnation it names, on every controller, and the refusal is
-  announced as `[:flezha, :runner, :drop_refused]` telemetry. Another
-  incarnation is a different process: it is admitted, and once it is, the mark
-  is lifted on every controller.
-  """
-  @spec check_not_dropped(map(), term()) :: :ok | {:error, {:runner_dropped, binary(), binary()}}
-  def check_not_dropped(%{namespace: namespace, stable_id: stable_id} = connect, stream_ref)
-      when is_binary(stable_id) do
-    connecting = connect.incarnation
-
-    case DropMarks.standing(namespace, stable_id) do
-      nil ->
-        :ok
-
-      %{incarnation: ^connecting = incarnation} ->
-        :telemetry.execute([:flezha, :runner, :drop_refused], %{count: 1}, %{
-          namespace: namespace,
-          stable_id: stable_id,
-          incarnation: incarnation,
-          pid: Flezha.Transport.Stream.peer_pid(stream_ref),
-          node: node()
-        })
-
-        {:error, {:runner_dropped, namespace, stable_id}}
-
-      _another_process ->
-        :ok
-    end
-  end
-
-  def check_not_dropped(_connect, _stream_ref), do: :ok
-
-  defp held_elsewhere?(state, stable_id, credential) do
-    pinned_live? =
-      case Map.get(state.stable_sessions, stable_id) do
-        {session, held, _incarnation} when is_binary(held) and held != credential ->
-          Roster.find_runner_namespace(state, session) != nil
-
-        _unpinned_or_same ->
-          false
-      end
-
-    pinned_live? or
-      Enum.any?(state.pending_handshakes, fn {_session, %{connect: connect}} ->
-        connect.stable_id == stable_id and connect.credential not in [nil, credential]
-      end)
   end
 
   # The write-path fence, in refusal order: mark the session superseded (the
@@ -377,7 +247,7 @@ defmodule Flezha.Runner.FleetManager.Session do
 
     other_nodes? = HubManager.get_hub_nodes(namespace) != []
 
-    # The keepalive: the last runner of a namespace nobody else serves is held
+    # The removal grace: the last runner of a namespace nobody else serves is held
     # `:inactive` for its window, so a reconnect swaps its bindings back rather
     # than re-placing them. Every other case simply drops it.
     state =

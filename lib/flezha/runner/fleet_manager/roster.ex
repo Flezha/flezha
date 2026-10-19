@@ -8,8 +8,8 @@ defmodule Flezha.Runner.FleetManager.Roster do
   it. Invariant: a runner is `:active` in at most one namespace.
 
   A row is `{status, stamp}`, and the stamp is `System.monotonic_time/1` in
-  milliseconds on both sides: the writers in `Session` and the keepalive reaper
-  in `FleetManager`. The age it measures is then elapsed time, so an NTP
+  milliseconds on both sides: the writers in `Session` and the removal-grace
+  reaper in `FleetManager.Removal`. The age it measures is then elapsed time, so an NTP
   correction, a container clock jump or a suspend/resume neither expires every
   live runner at once nor hides a dead one for the length of the step.
   """

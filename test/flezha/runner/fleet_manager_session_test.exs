@@ -349,8 +349,8 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
 
       # The proof answers the credential the payload names, as a credentialed
       # posture does.
-      stub(RunnerProof, :prove, fn _stream, claimed, payload, _transport ->
-        {:ok, %{namespace: claimed, credential: payload["credential"]}}
+      stub(RunnerProof, :check, fn connect, context ->
+        {:ok, %{connect | credential: context.init_payload["credential"]}}
       end)
 
       Telemetry.capture([:flezha, :transport, :connect_rejected], as: :rejected)

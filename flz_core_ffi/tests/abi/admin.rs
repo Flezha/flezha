@@ -31,7 +31,7 @@ fn no_verb_name_is_written_in_the_shared_bindings() {
     // A verb reaches the controller as data. If one were spelled here, adding
     // the next would mean touching this crate and every glue in it, which is
     // the cost the one entry exists to remove.
-    let sources = ["src/lib.rs", "src/veneer/mod.rs"];
+    let sources = ["src/abi/admin.rs", "src/veneer/mod.rs"];
 
     for relative in sources {
         let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(relative);

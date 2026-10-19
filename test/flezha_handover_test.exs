@@ -431,11 +431,11 @@ defmodule FlezhaTest.Handover do
     NodeTestHelper.stop_runner(namespace, runner_id_3)
 
     # Adjust the runner cleanup interval and trigger the cleanup.
-    Application.put_env(:flezha, :runner_keepalive, "0")
+    Application.put_env(:flezha, :runner_removal_grace_ms, 0)
     GenServer.call(FleetManager, :runner_cleanup)
 
-    # Reset the runner keepalive to its default value.
-    Application.put_env(:flezha, :runner_keepalive, "30000")
+    # Reset the removal grace to its default value.
+    Application.put_env(:flezha, :runner_removal_grace_ms, 30_000)
 
     # Cleanup reaps the dead runner ref but must NOT tear the hub down while it
     # still holds the 15 registered relays — they stay addressable and

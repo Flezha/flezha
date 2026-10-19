@@ -606,7 +606,7 @@ On the controller the reconnect is a **binding swap**: the re-presented
 and `AddRelay` is re-issued for every instance still bound to the runner;
 the runner's handler is idempotent on a duplicate `relay_id`, so existing
 Cell state survives. A runner that never returns is removed after
-`FLEZHA_RUNNER_KEEPALIVE` (default 30000 ms; `0` disables the grace).
+`FLEZHA_RUNNER_REMOVAL_GRACE_MS` (default 30000 ms; `0` disables the grace).
 
 ## 6. Command Reference
 
@@ -1139,7 +1139,7 @@ facts the message names. Every code, its class and its message are listed in
 
 **Connection close detection.** On the controller a closed control stream
 arrives as `{:flz_closed, ...}` from the NIF driver and the `ControlChannel`
-runs the disconnect handling (preservation for `FLEZHA_RUNNER_KEEPALIVE`,
+runs the disconnect handling (preservation for `FLEZHA_RUNNER_REMOVAL_GRACE_MS`,
 migration or re-placement); the §5 watchdog turns sustained silence into the
 same path. On the runner the control reader retries `Interrupted`; a timeout
 (`WouldBlock`/`TimedOut`) is fatal in both deadline states, and `BrokenPipe`,

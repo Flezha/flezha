@@ -264,7 +264,7 @@ What an instance costs at scale is measured in
 ## The C ABI
 
 An SDK other than Rust reaches the kernel through `flz_core_ffi`
-(`flz_core_ffi/src/lib.rs`). The life of a context:
+(`flz_core_ffi/src/abi/`, one file per concern). The life of a context:
 
 1. `flz_core_context_new(shim_schema_version)`: the version check happens
    here. An SDK built against a different schema version gets NULL, and

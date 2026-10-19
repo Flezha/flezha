@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Changed: names that say what they time
+
+- **BREAKING:** `FLEZHA_RUNNER_KEEPALIVE` is `FLEZHA_RUNNER_REMOVAL_GRACE_MS` and the application
+  key `:runner_keepalive` is `:runner_removal_grace_ms`, an integer of milliseconds (a string is
+  no longer read). The former name is not read: a deployment that sets it gets the 30 000 ms
+  default.
+- **BREAKING:** the application key `:control_unit_heartbeat_interval_ms` is
+  `:control_unit_reply_sweep_interval_ms`; no alias.
+
+### Changed: the core judges the Elixir settings tree
+
+- **BREAKING (Elixir):** `use Flezha.SDK.Relay` no longer reads the settings tree, and
+  `Flezha.SDK.Relay.parse/2` is removed. A setting under a parent that does not carry it, or a
+  value outside its choices, compiles and is refused at `register_factory/2` by the core, as
+  `topology.unknown_field` or `topology.invalid_setting`; it was a `CompileError`.
+
 ### Changed: the core reads every call's Response, and renders Java's errors
 
 - **BREAKING:** a `Response` channel payload is read by the core's decoder in every SDK, through

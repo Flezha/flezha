@@ -45,7 +45,6 @@ flz_core/src/steps/run.rs::stage_committed 59
 flz_core/src/steps/run.rs::stage_done 61
 flz_core/src/steps/run.rs::undo_step 62
 flz_core_ffi/src/bin/flz-fake-controller.rs::parse 91
-flz_core_ffi/src/lib.rs 1314
 flz_nif/src/driver/mod.rs::handle_command 53
 flz_nif/src/driver/quic.rs::accept_streams 58
 flz_transport/src/transport/quic.rs 835
@@ -57,7 +56,6 @@ lib/flezha/relay/class_registry.ex 810
 lib/flezha/relay/handover.ex::absorb 65
 lib/flezha/relay/lifecycle.ex::complete_init 66
 lib/flezha/relay/overwatch.ex 973
-lib/flezha/runner/fleet_manager.ex 949
 lib/flezha/runner/fleet_manager/session.ex::do_handle_runner_disconnect 53
 lib/flezha/runner/stream_channel.ex::init 52
 lib/flezha/service/plugin_manager.ex 879
@@ -89,4 +87,4 @@ sdk/rust/src/relay/dispatcher/emit_sink.rs::emit 61
 sdk/rust/src/relay/dispatcher/invocation.rs::call_contained 61
 sdk/rust/src/tasklet/ctx.rs 813
 xref cycles 4
-xref largest 143
+xref largest 148

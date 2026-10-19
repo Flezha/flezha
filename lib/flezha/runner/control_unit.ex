@@ -19,7 +19,7 @@ defmodule Flezha.Runner.ControlUnit do
   alias Flezha.SDK.SafeCall
 
   use GenServer
-  use Flezha.Process.Timer, keys: [:heartbeat]
+  use Flezha.Process.Timer, keys: [:reply_sweep]
 
   require Logger
 
@@ -238,7 +238,7 @@ defmodule Flezha.Runner.ControlUnit do
   def init({namespace, runner_id}) do
     {
       :ok,
-      arm_heartbeat(%{
+      arm_reply_sweep(%{
         namespace: namespace,
         runner_id: runner_id,
         response_refs: %{},
@@ -405,7 +405,7 @@ defmodule Flezha.Runner.ControlUnit do
 
   # Register the caller against the control-channel reference so the matching
   # `CommandResponse` (delivered later via `handle_payload/3`) is routed back.
-  # The monotonic timestamp lets the heartbeat report the age of the oldest
+  # The monotonic timestamp lets the reply sweep report the age of the oldest
   # outstanding reply — the backlog that grows silently on a dead transport.
   # `want_metadata` decides whether the reply also carries the reply frame's
   # metadata map.
@@ -474,8 +474,8 @@ defmodule Flezha.Runner.ControlUnit do
   # ref so `response_refs` cannot grow flow. Caller-timeout only — runner
   # liveness/eviction is the `ControlChannel` watchdog's job, not this sweep.
   @impl true
-  def handle_info(:heartbeat, state) do
-    state = arm_heartbeat(state)
+  def handle_info(:reply_sweep, state) do
+    state = arm_reply_sweep(state)
 
     now = System.monotonic_time(:millisecond)
     timeout_ms = pending_reply_timeout_ms()
@@ -517,15 +517,15 @@ defmodule Flezha.Runner.ControlUnit do
     end)
   end
 
-  # A non-positive interval turns the heartbeat off: nothing is armed and the
+  # A non-positive interval turns the reply sweep off: nothing is armed and the
   # key simply holds no timer.
-  defp arm_heartbeat(state) do
-    interval = heartbeat_interval_ms()
-    if interval > 0, do: arm_timer(state, :heartbeat, interval, :heartbeat), else: state
+  defp arm_reply_sweep(state) do
+    interval = reply_sweep_interval_ms()
+    if interval > 0, do: arm_timer(state, :reply_sweep, interval, :reply_sweep), else: state
   end
 
-  defp heartbeat_interval_ms,
-    do: Durations.get(:control_unit_heartbeat_interval_ms)
+  defp reply_sweep_interval_ms,
+    do: Durations.get(:control_unit_reply_sweep_interval_ms)
 
   defp pending_reply_timeout_ms,
     do: Durations.get(:control_unit_pending_reply_timeout_ms)

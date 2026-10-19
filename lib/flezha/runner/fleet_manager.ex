@@ -15,30 +15,27 @@ defmodule Flezha.Runner.FleetManager do
   unconditionally; what varies is only what becomes of its relays.
   """
 
-  alias Flezha.AuthZ.RunnerProof
-  alias Flezha.Cluster.Directory
-  alias Flezha.Config
   alias Flezha.Config.Durations
   alias Flezha.Identificator
-  alias Flezha.Parallel
+  alias Flezha.Runner.Admission
   alias Flezha.Runner.ControlChannel
   alias Flezha.Runner.ControlUnit
   alias Flezha.Runner.FleetManager.Announce
+  alias Flezha.Runner.FleetManager.Cluster
   alias Flezha.Runner.FleetManager.Factories
   alias Flezha.Runner.FleetManager.Load
   alias Flezha.Runner.FleetManager.Marks
+  alias Flezha.Runner.FleetManager.Removal
   alias Flezha.Runner.FleetManager.Roster
   alias Flezha.Runner.FleetManager.Session
   alias Flezha.Runner.StreamPool
   alias Flezha.SDK.SafeCall
   alias Flezha.Service.HubManager
   alias Flezha.Shutdown
-  alias Flezha.Transport.LivenessCounters
 
   require Logger
 
   use GenServer
-  use Flezha.Process.Timer, keys: [:runner_cleanup]
 
   def start_link(_) do
     GenServer.start_link(__MODULE__, nil, name: __MODULE__)
@@ -53,30 +50,22 @@ defmodule Flezha.Runner.FleetManager do
     GenServer.call(__MODULE__, {:list_factories, namespace, runner}, manager_call_timeout())
   end
 
-  @doc """
-  `list_factories/1` on every node holding active runners in `namespace`: one
-  row per node that advertises a factory.
-  """
-  @spec global_factories(String.t()) :: [map()]
-  def global_factories(namespace), do: across_runner_nodes(namespace, :factory_rows)
+  defdelegate global_factories(namespace), to: Cluster
+  defdelegate global_runners(namespace), to: Cluster
+  defdelegate global_runner_rows(namespace), to: Cluster
+  defdelegate global_occupants(namespace), to: Cluster
+  defdelegate find_session(namespace, runner_id), to: Cluster
 
   @doc "`factory_id`'s row of this node's `list_factories/2`, with `runner`'s API, or `nil`."
   @spec factory_row(String.t(), String.t(), String.t() | nil) :: map() | nil
   def factory_row(namespace, factory_id, runner \\ nil),
-    do: namespace |> factory_rows(runner) |> Enum.find(&(&1.id == factory_id))
+    do: namespace |> Cluster.factory_rows(runner) |> Enum.find(&(&1.id == factory_id))
 
   @doc "`factory_id`'s graph and `disagree` here, read as `factory_row/3` reads its API, or `nil`."
   @spec factory_graph(String.t(), String.t(), String.t() | nil) :: map() | nil
   def factory_graph(namespace, factory_id, runner \\ nil) do
     request = {:factory_graph, namespace, factory_id, runner}
     GenServer.call(__MODULE__, request, manager_call_timeout())
-  end
-
-  @doc false
-  # This node's rows, read over `:erpc` by `global_factories/1`.
-  def factory_rows(namespace, runner \\ nil) do
-    {:ok, rows} = list_factories(namespace, runner)
-    rows
   end
 
   @doc """
@@ -91,12 +80,13 @@ defmodule Flezha.Runner.FleetManager do
   `init_payload` is the decoded JSON from the initial frame.
   """
   def connect_handler(stream_ref, namespace, init_payload, transport) do
+    claimed =
+      Session.connect_record(%{namespace: namespace, credential: nil}, init_payload, transport)
+
+    context = %{stream_ref: stream_ref, init_payload: init_payload}
+
     # A refusal is logged where the runner is answered (`Flezha.Transport.Server`).
-    with {:ok, %{namespace: proven} = proof} <-
-           RunnerProof.prove(stream_ref, namespace, init_payload, transport),
-         :ok <- Session.check_not_shutting_down(proven),
-         :ok <- Session.admit_runner(proven, transport),
-         connect = Session.connect_record(proof, init_payload, transport),
+    with {:ok, connect} <- Admission.run(:caller, claimed, context),
          {:ok, {_namespace, session_token}} <-
            GenServer.call(
              __MODULE__,
@@ -268,89 +258,6 @@ defmodule Flezha.Runner.FleetManager do
   end
 
   @doc """
-  Runner ids across every cluster node holding active runners in `namespace`,
-  resolved through the cluster directory. Serves `Flezha.list_runners/1`.
-  An unreachable peer contributes nothing rather than failing the read.
-  """
-  @spec global_runners(String.t()) :: {:ok, [binary()]}
-  def global_runners(namespace),
-    do: {:ok, namespace |> across_runner_nodes(:active_runners) |> Enum.uniq()}
-
-  @doc """
-  Every active runner in `namespace` across the cluster, one row each: its
-  `id`, the `node` holding its session, `connected_at` (unix seconds, `nil`
-  for a session that predates the stamp), the runner's OS `pid` where its
-  transport says (a local socket), `nil` otherwise, `silent_ms` since its last control
-  frame (`nil` when none was stamped) and `late?`, true once that silence
-  outlasts two keepalive periods, so at least one keepalive was missed. Each
-  node answers for its own runners against its own clock. Serves
-  `flz runner list`.
-  """
-  @spec global_runner_rows(String.t()) :: {:ok, [map()]}
-  def global_runner_rows(namespace),
-    do: {:ok, namespace |> across_runner_nodes(:runner_rows) |> Enum.uniq_by(& &1.id)}
-
-  @doc false
-  # This node's half of `global_runner_rows/1`, reached over `:erpc`.
-  def runner_rows(namespace) do
-    connected =
-      GenServer.call(__MODULE__, {:runner_rows, namespace}, Durations.get(:runner_lookup_ms))
-
-    now = System.monotonic_time(:millisecond)
-    late_after = 2 * Durations.get(:control_keepalive_ms)
-
-    Enum.map(connected, fn {id, facts} ->
-      silent_ms = LivenessCounters.control_silent_ms(id, now)
-
-      %{
-        id: id,
-        node: node(),
-        connected_at: facts[:connected_at],
-        pid: facts[:pid],
-        silent_ms: silent_ms,
-        late?: is_integer(silent_ms) and silent_ms > late_after
-      }
-    end)
-  end
-
-  @doc """
-  Every runner attached to `namespace` across the cluster: the active ones and
-  those still in their handshake, whose hub is already up. Serves the
-  vacancy check of `flz namespace delete`.
-  """
-  @spec global_occupants(String.t()) :: {:ok, [binary()]}
-  def global_occupants(namespace),
-    do: {:ok, namespace |> across_runner_nodes(:occupants) |> Enum.uniq()}
-
-  @doc false
-  # This node's half of `global_occupants/1`, reached over `:erpc`.
-  def occupants(namespace),
-    do: GenServer.call(__MODULE__, {:occupants, namespace}, Durations.get(:runner_lookup_ms))
-
-  @doc """
-  The active session `runner_id` of `namespace`, wherever in the cluster it is
-  held: its stable identity and incarnation (`nil` where the runner presented
-  none), the process id of the runner on its socket where the transport can
-  say, and the node. `nil` when no node holds it.
-  """
-  @spec find_session(String.t(), binary()) :: map() | nil
-  def find_session(namespace, runner_id),
-    do: namespace |> across_runner_nodes(:session_rows, [runner_id]) |> List.first()
-
-  @doc false
-  # This node's half of `find_session/2`, reached over `:erpc`.
-  def session_rows(namespace, runner_id) do
-    case GenServer.call(
-           __MODULE__,
-           {:session_identity, namespace, runner_id},
-           manager_call_timeout()
-         ) do
-      nil -> []
-      identity -> [Map.put(identity, :node, node())]
-    end
-  end
-
-  @doc """
   Close the session, live or in its handshake, of the runner process that
   `stable_id` and `incarnation` name, as one this controller asked to leave:
   its relays are re-placed without waiting out the grace. The runner is not
@@ -366,19 +273,6 @@ defmodule Flezha.Runner.FleetManager do
       on_error: 0,
       log: false
     )
-  end
-
-  # Every node holding active runners in `namespace` answers `fun`; an
-  # unreachable peer contributes nothing rather than failing the read.
-  defp across_runner_nodes(namespace, fun, args \\ []) do
-    [node() | Directory.runner_nodes(namespace)]
-    |> Parallel.map_nodes(&:erpc.call(&1, __MODULE__, fun, [namespace | args]),
-      timeout: Durations.get(:runner_lookup_ms)
-    )
-    |> Enum.flat_map(fn
-      {_node, {:ok, rows}} -> rows
-      {_node, {:exit, _reason}} -> []
-    end)
   end
 
   def disconnect_runner(namespace, runner_id) do
@@ -468,11 +362,11 @@ defmodule Flezha.Runner.FleetManager do
     Marks.ensure_tables()
 
     {:ok,
-     arm_runner_cleanup(%{
+     Removal.arm_runner_cleanup(%{
        runner_namespaces: %{},
        namespace_factories: %{},
        # Each stable identity's latest session and the credential that admitted
-       # it (`Session.check_identity_pin/2`).
+       # it (`Flezha.Runner.Admission.IdentityPin`).
        stable_sessions: %{},
        session_credentials: %{},
        # Each live session's facts, read once at connect: `connected_at` (unix
@@ -690,8 +584,8 @@ defmodule Flezha.Runner.FleetManager do
     # manager serves every other runner on the node, so the connect is refused
     # rather than allowed to take the manager (and the transport server linked
     # to it) down.
-    with :ok <- Session.check_identity_pin(state, connect),
-         :ok <- Session.check_not_dropped(connect, stream_ref),
+    with {:ok, _connect} <-
+           Admission.run(:manager, connect, %{state: state, stream_ref: stream_ref}),
          {:ok, namespace, session_token} <- Session.catch_runner_connect(stream_ref, connect) do
       state = Session.await_handshake(state, session_token, stream_ref, connect)
       {:reply, {:ok, {namespace, session_token}}, state}
@@ -738,7 +632,7 @@ defmodule Flezha.Runner.FleetManager do
 
   @impl true
   def handle_call(:runner_cleanup, _from, state) do
-    {:reply, :ok, state |> runner_cleanup() |> Announce.sync()}
+    {:reply, :ok, state |> Removal.runner_cleanup() |> Announce.sync()}
   end
 
   @impl true
@@ -779,11 +673,12 @@ defmodule Flezha.Runner.FleetManager do
   end
 
   def handle_cast({:reclaim_vacant_hub, namespace}, state),
-    do: {:noreply, tap(state, &reclaim_vacant_hub(&1, namespace))}
+    do: {:noreply, tap(state, &Removal.reclaim_vacant_hub(&1, namespace))}
 
   @impl true
   def handle_info(:schedule_runner_cleanup, state) do
-    {:noreply, state |> arm_runner_cleanup() |> runner_cleanup() |> Announce.sync()}
+    {:noreply,
+     state |> Removal.arm_runner_cleanup() |> Removal.runner_cleanup() |> Announce.sync()}
   end
 
   # The grace elapsed with no runner for the factory back. Withdrawing it is
@@ -859,79 +754,6 @@ defmodule Flezha.Runner.FleetManager do
     Load.counts(HubManager.registry_dump(namespace), candidates(state, namespace, nil))
   end
 
-  defp arm_runner_cleanup(state) do
-    arm_timer(
-      state,
-      :runner_cleanup,
-      get_runner_keepalive() + Durations.get(:runner_cleanup_slack_ms),
-      :schedule_runner_cleanup
-    )
-  end
-
-  defp get_runner_keepalive() do
-    keepalive = Config.get(:runner_keepalive)
-
-    cond do
-      is_binary(keepalive) -> String.to_integer(keepalive)
-      is_integer(keepalive) -> keepalive
-    end
-  end
-
-  # `expired_runners/4` answers `nil` for a runner still inside its keepalive.
-  defp drop_runner_ids(runners, removal_runners) do
-    Enum.reduce(removal_runners, runners, fn
-      nil, acc -> acc
-      runner_id, acc -> Map.delete(acc, runner_id)
-    end)
-  end
-
-  # Which of `namespace`'s inactive runners have outlived the keepalive. The hub
-  # is reclaimed on the way past only when it is vacant.
-  defp expired_runners(state, namespace, now, keep_alive) do
-    state
-    |> Roster.get_runner_ids(namespace, :inactive)
-    |> Enum.map(fn runner_id ->
-      {_status, timestamp} = state.runner_namespaces[namespace][runner_id]
-
-      if timestamp + keep_alive <= now do
-        reclaim_vacant_hub(state, namespace)
-        runner_id
-      end
-    end)
-  end
-
-  defp reclaim_vacant_hub(state, namespace) do
-    if Roster.occupants(state, namespace) == [], do: HubManager.stop_hub_if_vacant(namespace)
-  end
-
-  defp runner_cleanup(state) do
-    Marks.prune()
-
-    now = System.monotonic_time(:millisecond)
-    keep_alive = get_runner_keepalive()
-
-    namespaces = Map.keys(state.runner_namespaces)
-
-    removal = Enum.map(namespaces, &{&1, expired_runners(state, &1, now, keep_alive)})
-
-    runner_namespaces =
-      Enum.reduce(removal, state.runner_namespaces, fn {namespace, removal_runners}, acc ->
-        Map.put(acc, namespace, drop_runner_ids(acc[namespace], removal_runners))
-      end)
-
-    state = %{state | runner_namespaces: runner_namespaces}
-
-    # Clean factory refs for removed CEs
-    Enum.reduce(removal, state, fn {namespace, removal_runners}, acc ->
-      removal_runners
-      |> Enum.reduce(acc, fn
-        nil, acc -> acc
-        ce_id, acc -> Factories.remove_ce_factories(acc, namespace, ce_id)
-      end)
-      |> Factories.prune_empty_factories(namespace)
-    end)
-  end
-
   # runner_connect/3 may block inside Orchestrator.await_cluster_ready/0
   # (bounded by :cluster_formation_timeout_ms, default 15s) while the cluster
   # forms after a restart. The connect call must outlast that window plus the
@@ -943,7 +765,8 @@ defmodule Flezha.Runner.FleetManager do
   # That is not contention to ride out: the manager is permitted to be busy for
   # longer than the caller was willing to wait. Every caller gets the same
   # budget as the work the manager may be doing.
-  defp manager_call_timeout, do: runner_connect_timeout()
+  @doc false
+  def manager_call_timeout, do: runner_connect_timeout()
 
   defp runner_connect_timeout, do: Durations.get(:cluster_formation_wait_ms)
 end

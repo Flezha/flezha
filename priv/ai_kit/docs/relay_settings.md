@@ -316,11 +316,9 @@ ignores it.
 - **A setting under the wrong parent** (`each` under `flow`, `ack` or
   `correction_ms` under `steps`, `sleep_after` under `durable: false`) does not
   compile in Rust and Java, because the type under that parent has no such
-  member, and is a `CompileError` naming the setting and its parent in an
-  Elixir `use`. Node, Python, Ruby and PHP pass the tree as written, and it is
-  refused when the runner registers the class, as `topology.unknown_field`
-  naming the setting and its parent. A hand-written Elixir `run/0` or
-  `durable/0` meets the same check.
+  member. Elixir, Node, Python, Ruby and PHP pass the tree as written, and it
+  is refused when the runner registers the class, as `topology.unknown_field`
+  naming the setting and its parent.
 - **A value outside its choices** is refused as `topology.invalid_setting`,
   naming the setting and the value. In a Java short form, two branches of a
   "one of" written at once are refused the same way.

@@ -71,6 +71,9 @@ lib/flezha/plugin/provider/monitored_io_forward.ex -> Flezha.Service.PluginManag
 lib/flezha/plugin/provider/relay_forward.ex -> Flezha.Service.HubManager
 lib/flezha/plugin/provider/relay_forward.ex -> Flezha.Service.RelayManager
 lib/flezha/plugin/provider/relay_forward/forward_worker.ex -> Flezha.Service.RelayManager
+lib/flezha/runner/admission.ex -> Flezha.AuthZ.RunnerProof
+lib/flezha/runner/admission/quota.ex -> Flezha.AuthZ.Quotas
+lib/flezha/runner/admission/quota.ex -> Flezha.AuthZ.Verb
 lib/flezha/runner/control_channel/commits.ex -> Flezha.State.DurabilityTier
 lib/flezha/runner/control_channel/commits.ex -> Flezha.State.TaskJournal
 lib/flezha/runner/control_channel/requests.ex -> Flezha.Relay.Migration
@@ -79,14 +82,12 @@ lib/flezha/runner/control_channel/requests.ex -> Flezha.Service.RelayManager
 lib/flezha/runner/control_channel/requests.ex -> Flezha.State.Completion
 lib/flezha/runner/control_channel/requests.ex -> Flezha.State.TaskJournal
 lib/flezha/runner/control_unit.ex -> Flezha.Partition
-lib/flezha/runner/fleet_manager.ex -> Flezha.AuthZ.RunnerProof
 lib/flezha/runner/fleet_manager.ex -> Flezha.Service.HubManager
 lib/flezha/runner/fleet_manager/announce.ex -> Flezha.AuthZ.QuotaCounters
 lib/flezha/runner/fleet_manager/factories.ex -> Flezha.Relay.ClassRegistry
 lib/flezha/runner/fleet_manager/factories.ex -> Flezha.Service.HubManager
-lib/flezha/runner/fleet_manager/session.ex -> Flezha.AuthZ.Quotas
+lib/flezha/runner/fleet_manager/removal.ex -> Flezha.Service.HubManager
 lib/flezha/runner/fleet_manager/session.ex -> Flezha.AuthZ.RoleStore
-lib/flezha/runner/fleet_manager/session.ex -> Flezha.AuthZ.Verb
 lib/flezha/runner/fleet_manager/session.ex -> Flezha.Convergence.Facts
 lib/flezha/runner/fleet_manager/session.ex -> Flezha.Service.EventManager
 lib/flezha/runner/fleet_manager/session.ex -> Flezha.Service.HubManager

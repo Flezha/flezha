@@ -719,8 +719,8 @@ under any other parent is refused at registration as `topology.unknown_field`,
 naming the setting and its parent; a value outside its choice is
 `topology.invalid_setting`, naming the setting and the value. Rust and Java
 make a misplaced setting a compile error, because the type under the wrong
-parent has no such member; Elixir's `use` raises a `CompileError` naming it;
-the five host SDKs pass the tree as written and the shared core judges it.
+parent has no such member; the five host SDKs pass the tree as written and the
+shared core judges it.
 Timers belong to a tasklet and work in either run; `compact_after_bytes`
 belongs to a tasklet and is accepted on either run.
 

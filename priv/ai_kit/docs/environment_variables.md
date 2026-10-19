@@ -98,7 +98,7 @@ Notes on the area's variables:
 
 ## Runner and relay lifecycle
 
-- `FLEZHA_RUNNER_KEEPALIVE`: How long a disconnected runner is kept before removal, `0` removes at once.
+- `FLEZHA_RUNNER_REMOVAL_GRACE_MS`: How long a disconnected runner is kept before removal, `0` removes at once.
 - `FLEZHA_RUNNER_RETIRING_MARK_TTL_MS`: How long a controller-initiated disconnect stays marked, so the close it produces is reported as expected rather than as an incident. A runner id is reused across reconnects, so the mark expires: past this window a close is diagnosed as unexpected again.
 - `FLEZHA_GROUP_WITHDRAW_GRACE_MS`: How long this controller keeps declaring a factory to the namespace hub after its last runner for it goes. A runner back inside the grace moves no relay; past it the hub reassigns them to a controller that still runs the factory. A disconnect the controller asked for skips the grace.
 - `FLEZHA_PLACEMENT_LOAD_CAP_PERCENT`: The fairness cap on runner selection, as a percentage of the candidate set's fair share. At `100` the cap is exactly the fair share, so a namespace holding fewer relays than it has runners still uses all of them; a value high enough that no candidate reaches the cap is plain rendezvous hashing.
@@ -286,7 +286,7 @@ skipped as a block.
 | `FLEZHA_RECONNECT_INTERVAL` | ms | `1000` |
 | `FLEZHA_RECONNECT_MAX_BACKOFF_MS` | ms | `30000` |
 | `FLEZHA_RETENTION_CHECK_INTERVAL_MS` | ms | `60000` |
-| `FLEZHA_RUNNER_KEEPALIVE` | ms | `30000` |
+| `FLEZHA_RUNNER_REMOVAL_GRACE_MS` | ms | `30000` |
 | `FLEZHA_RUNNER_RETIRING_MARK_TTL_MS` | ms | `30000` |
 | `FLEZHA_SCHEDULE_DIR` | path | `app_data/schedules` |
 | `FLEZHA_SCHEDULE_MISFIRE_GRACE_MS` | ms | `120000` |

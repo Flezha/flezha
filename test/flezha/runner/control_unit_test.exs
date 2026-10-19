@@ -85,7 +85,7 @@ defmodule FlezhaTest.Runner.ControlUnitHealthTest do
   with `:timeout` and drops the ref so `response_refs` cannot grow flow.
 
   Runner liveness/eviction is NOT this sweep's job — it is the
-  `ControlChannel` watchdog's. This heartbeat evicts nothing.
+  `ControlChannel` watchdog's. This reply sweep evicts nothing.
   """
   # async: false: the primary Logger; registered runner channels.
   use ExUnit.Case, async: false
@@ -101,7 +101,7 @@ defmodule FlezhaTest.Runner.ControlUnitHealthTest do
     on_exit(NodeTestHelper.override_log_level(:warning))
   end
 
-  test "heartbeat unblocks the stuck caller when a control reply is unacked past the threshold" do
+  test "the reply sweep unblocks the stuck caller when a control reply is unacked past the threshold" do
     now = System.monotonic_time(:millisecond)
     reply_ref = make_ref()
 
@@ -113,7 +113,7 @@ defmodule FlezhaTest.Runner.ControlUnitHealthTest do
       }
     }
 
-    assert {:noreply, %{response_refs: refs}} = ControlUnit.handle_info(:heartbeat, state)
+    assert {:noreply, %{response_refs: refs}} = ControlUnit.handle_info(:reply_sweep, state)
 
     # The stuck ref is dropped and its caller is unblocked with a clean error
     # (so a blocking caller never hangs forever on the dead runner).
@@ -121,7 +121,7 @@ defmodule FlezhaTest.Runner.ControlUnitHealthTest do
     assert_receive {^reply_ref, {:error, :timeout}}
   end
 
-  test "heartbeat leaves a fresh reply ref alone (no false eviction)" do
+  test "the reply sweep leaves a fresh reply ref alone (no false eviction)" do
     now = System.monotonic_time(:millisecond)
     ref = make_ref()
 
@@ -133,7 +133,7 @@ defmodule FlezhaTest.Runner.ControlUnitHealthTest do
       }
     }
 
-    assert {:noreply, %{response_refs: refs}} = ControlUnit.handle_info(:heartbeat, state)
+    assert {:noreply, %{response_refs: refs}} = ControlUnit.handle_info(:reply_sweep, state)
 
     assert Map.has_key?(refs, ref)
     refute_received {_ref, {:error, :timeout}}
@@ -335,7 +335,8 @@ defmodule FlezhaTest.Runner.AddRelayResponseTest do
 
   defp declarations(metadata), do: decode(encode(metadata))
 
-  defp decode(raw), do: ClassRegistry.decode_declarations(raw, "add_relay_response", "unannounced")
+  defp decode(raw),
+    do: ClassRegistry.decode_declarations(raw, "add_relay_response", "unannounced")
 
   test "tier declaration in the response metadata resolves true" do
     assert declarations(%{"exactly" => "effectively_once"}).effectively_once

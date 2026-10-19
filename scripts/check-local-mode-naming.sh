@@ -52,7 +52,7 @@ SURFACE = (
     "sdk/java/flezha-sdk-runtime/src/main/java/com/flezha/sdk/runtime/LocalImpl.java",
     "sdk/java/flezha-sdk-examples/src/main/java/com/flezha/examples/local/Main.java",
     "sdk/elixir/lib/flezha/sdk/local.ex",
-    "flz_core_ffi/src/local.rs",
+    "flz_core_ffi/src/abi/local.rs",
     "sdk/node/src/local.ts",
     "examples/node/local_word_count.mjs",
     "sdk/python/src/flezha/local.py",

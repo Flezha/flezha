@@ -85,7 +85,12 @@ defmodule Flezha.AuthZ.QuotaPointsTest do
                )
 
       {:ok, _} = NamespaceStore.create("team-later", quotas: %{})
-      assert :ok = FleetManager.Session.admit_runner("team-later", :uds)
+
+      assert :ok =
+               Flezha.Runner.Admission.Quota.check(
+                 %{namespace: "team-later", transport: :uds},
+                 %{}
+               )
     end
   end
 
