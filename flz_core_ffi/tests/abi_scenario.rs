@@ -23,6 +23,8 @@ mod admin;
 mod effect;
 #[path = "abi/harness.rs"]
 mod harness;
+#[path = "abi/knob.rs"]
+mod knob;
 #[path = "abi/lifecycle.rs"]
 mod lifecycle;
 #[path = "abi/notice.rs"]

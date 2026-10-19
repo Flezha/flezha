@@ -704,6 +704,13 @@ fn monotonic_nanos() -> u64 {
     crate::flz_core_monotonic_nanos()
 }
 
+/// A knob's text parsed by the core's rule for `kind`; `None` when it is no
+/// value of that kind.
+#[pyfunction]
+fn knob(kind: &str, raw: &str) -> PyResult<Option<i64>> {
+    Ok(veneer::knob(kind, raw)?)
+}
+
 /// The core's notices held since the last take, as `(level, target, text)`;
 /// the first take starts the holding.
 #[pyfunction]
@@ -751,12 +758,12 @@ fn native_surface<'py>(py: Python<'py>) -> PyResult<Bound<'py, PyList>> {
 }
 
 /// How Python spells a surface entry: a method of `Core`, except the context's
-/// constructor and `free`, and the three that need no context.
+/// constructor and `free`, and the ones that need no context.
 fn python_name(name: &str) -> String {
     match name {
         "context_new" => "Core".to_string(),
         "context_free" => "Core.free".to_string(),
-        "schema_version" | "monotonic_nanos" | "error_document" | "take_notices" => {
+        "schema_version" | "monotonic_nanos" | "error_document" | "take_notices" | "knob" => {
             name.to_string()
         }
         _ => format!("Core.{name}"),
@@ -773,6 +780,7 @@ pub fn init(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("SchemaMismatch", m.py().get_type::<SchemaMismatch>())?;
     m.add_function(wrap_pyfunction!(schema_version, m)?)?;
     m.add_function(wrap_pyfunction!(monotonic_nanos, m)?)?;
+    m.add_function(wrap_pyfunction!(knob, m)?)?;
     m.add_function(wrap_pyfunction!(take_notices, m)?)?;
     m.add_function(wrap_pyfunction!(free_threaded, m)?)?;
     m.add_function(wrap_pyfunction!(error_document, m)?)?;

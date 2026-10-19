@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+### Changed: the core derives what a declaration's chains already say
+
+- **BREAKING:** the declaration JSON's tasklet key `cell_mode` is removed: the core derives the
+  mode (static with cell keys, dynamic when a chain reaches the tasklet through `key` then
+  `into` or `merge`, single otherwise). A declaration that said `dynamic` with no keyed chain
+  now runs single. The derived answer of `flz_core_check_class` carries the `modes`.
+- **BREAKING:** the tasklet key `migrates` is added, and the core refuses a schema floor above
+  the version (`topology.schema_floor_above_version`) or below it with no migration
+  (`topology.schema_floor_without_migration`) in every SDK. The Java SDK did not check either
+  before.
+- A tasklet that declares no mailbox capacity gets `FLEZHA_MAILBOX_CAPACITY`, else 1024, in
+  every SDK; the Python, Ruby, Node and PHP SDKs ignored it before.
+- **BREAKING:** `flz_core::host::HostOverflow` and `HostCellModeDecl` are removed; a channel's
+  `overflow` deserializes into `OverflowPolicy`. The catalogue code
+  `topology.cell_keys_without_static_mode` is removed: nothing can raise it.
+- `flz_core_knob` parses a knob's text by the one rule every runtime shares; the Java, Node,
+  Python, Ruby and PHP SDKs read their knobs through it and keep no parse rule of their own.
+
 ### Changed: every control frame says its direction
 
 The controller told a runner's request from its answer by trying one decode and checking the

@@ -322,7 +322,7 @@ pub(crate) mod tests {
         let json = format!(
             r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","durable":false,"run":"flow",
                  "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"key"}},{{"link":"into","tasklet":0}}]]}}],
-                 "tasklets":[{{"name":"trades","cell_mode":"dynamic","mailbox_capacity":16}}]}}"#
+                 "tasklets":[{{"name":"trades","mailbox_capacity":16}}]}}"#
         );
         crate::host::register_host_class_json(json.as_bytes()).expect("class registers");
         let instance = RelayInstance::of_class(&id, &format!("{id}_inst")).expect("registered");

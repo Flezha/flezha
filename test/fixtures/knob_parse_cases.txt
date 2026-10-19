@@ -10,15 +10,13 @@
 # `<empty>` is the empty string. Inputs are trimmed before they are parsed, so
 # a value pasted with a stray space still means what it looks like.
 #
-# Every runtime's own suite feeds this file to its own reader:
+# Every reader of its own feeds this file to it:
 #   test/flezha/config/parse_test.exs          the controller
 #   sdk/elixir/test/flezha/sdk/knob_test.exs   the Elixir SDK
 #   flz_transport/src/env.rs                   the crates and the Rust SDK
-#   sdk/java/.../FlezhaEnvTest.java            Java
-#   sdk/node/test/env.test.mjs                 Node
-#   sdk/python/tests/test_env.py               Python
-#   sdk/ruby/test/env_test.rb                  Ruby
-#   sdk/php/tests/EnvTest.php                  PHP
+#   flz_core_ffi/tests/abi/knob.rs             `flz_core_knob`, which the
+#                                              Java, Node, Python, Ruby and
+#                                              PHP SDKs parse through
 
 positive_int|5|5
 positive_int| 7 |7

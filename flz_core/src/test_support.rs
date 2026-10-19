@@ -209,7 +209,7 @@ pub(crate) mod host_class {
                 .collect::<Vec<_>>()
                 .join(",");
             format!(
-                r#"{{"name":"p0","cell_mode":"static","cell_keys":[{key_list}],"cells_for_overridden":true}}"#
+                r#"{{"name":"p0","cell_keys":[{key_list}],"cells_for_overridden":true}}"#
             )
         };
         let tasks = std::iter::once(p0)

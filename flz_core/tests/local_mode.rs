@@ -58,10 +58,10 @@ const TWO_STEP: &str = r#"{
     "factory_id": "local_two_step", "sdk_lang": 1, "sdk_version": "0.1.0", "durable":{"local":{"sleep_after":false}},
     "channels": [{"name": "lines",  "kind": "entry",      "chains": [[{"link": "into", "tasklet": 0}]]},
                  {"name": "mid",    "kind": "inter_task", "producer": 0,
-                                    "chains": [[{"link": "into", "tasklet": 1}]]},
+                                    "chains": [[{"link": "key"}, {"link": "into", "tasklet": 1}]]},
                  {"name": "totals", "kind": "plugin",     "producer": 1, "keyed": true,
                                     "chains": [[{"link": "sink", "name": "totals"}]]}],
-    "tasklets": [{"name": "normalize"}, {"name": "total", "cell_mode": "dynamic"}]
+    "tasklets": [{"name": "normalize"}, {"name": "total"}]
 }"#;
 
 fn declare(json: &str) {

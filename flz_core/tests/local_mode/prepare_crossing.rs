@@ -8,20 +8,20 @@ use super::*;
 /// fixtures call `partition_pass` and `dynamic_cell`.
 const KEYED_ENTRY: &str = r#"{
     "factory_id": "local_keyed_entry", "sdk_lang": 1, "sdk_version": "0.1.0",
-    "channels": [{"name": "in",  "kind": "entry",  "chains": [[{"link": "into", "tasklet": 0}]]},
+    "channels": [{"name": "in",  "kind": "entry",  "chains": [[{"link": "key"}, {"link": "into", "tasklet": 0}]]},
                  {"name": "out", "kind": "plugin", "producer": 0, "keyed": true,
                                  "chains": [[{"link": "sink", "name": "out"}]]}],
-    "tasklets": [{"name": "forward", "cell_mode": "dynamic"}]
+    "tasklets": [{"name": "forward"}]
 }"#;
 
 /// `in → forward → out`, keyed on the way in, retried on a failed crossing.
 const KEYED_ENTRY_RETRIED: &str = r#"{
     "factory_id": "local_keyed_entry_retried", "sdk_lang": 1, "sdk_version": "0.1.0",
     "channels": [{"name": "in",  "kind": "entry", "retry_max": 3, "retry_backoff_ms": 40,
-                                 "chains": [[{"link": "into", "tasklet": 0}]]},
+                                 "chains": [[{"link": "key"}, {"link": "into", "tasklet": 0}]]},
                  {"name": "out", "kind": "plugin", "producer": 0, "keyed": true,
                                  "chains": [[{"link": "sink", "name": "out"}]]}],
-    "tasklets": [{"name": "forward", "cell_mode": "dynamic"}]
+    "tasklets": [{"name": "forward"}]
 }"#;
 
 /// The tasklet of both keyed classes: it releases what reaches it, under

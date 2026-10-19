@@ -39,7 +39,6 @@ channel.codec
 channel.schema
 channel.description
 tasklet.name
-tasklet.cell_mode
 tasklet.cell_keys
 tasklet.idle_ttl_ms
 tasklet.max_cells
@@ -50,3 +49,4 @@ tasklet.mailbox_capacity
 tasklet.change_is_nochange
 tasklet.schema_version
 tasklet.min_readable_schema_version
+tasklet.migrates

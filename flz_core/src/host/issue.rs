@@ -166,11 +166,14 @@ pub enum TopologyIssue {
     PluginChannelWithConsumers {
         channel: String,
     },
-    StaticTaskletWithoutCellKeys {
+    SchemaFloorAboveVersion {
         tasklet: String,
+        floor: u32,
+        version: u32,
     },
-    CellKeysWithoutStaticMode {
+    SchemaFloorWithoutMigration {
         tasklet: String,
+        floor: u32,
     },
     MaxCellsZero {
         tasklet: String,
@@ -270,8 +273,8 @@ impl TopologyIssue {
             Self::EntryChannelWithoutConsumer { .. } => Code::EntryChannelWithoutConsumer,
             Self::InterTaskChannelWithoutProducer { .. } => Code::InterTaskChannelWithoutProducer,
             Self::PluginChannelWithConsumers { .. } => Code::PluginChannelWithConsumers,
-            Self::StaticTaskletWithoutCellKeys { .. } => Code::StaticTaskletWithoutCellKeys,
-            Self::CellKeysWithoutStaticMode { .. } => Code::CellKeysWithoutStaticMode,
+            Self::SchemaFloorAboveVersion { .. } => Code::SchemaFloorAboveVersion,
+            Self::SchemaFloorWithoutMigration { .. } => Code::SchemaFloorWithoutMigration,
             Self::MaxCellsZero { .. } => Code::MaxCellsZero,
             Self::DeclarationUnreadable { .. } => Code::DeclarationUnreadable,
             Self::UnknownField { .. } => Code::UnknownField,
@@ -404,11 +407,8 @@ impl TopologyIssue {
             Self::PluginChannelWithConsumers { channel } => {
                 vec![("channel", channel.clone().into())]
             }
-            Self::StaticTaskletWithoutCellKeys { tasklet } => {
-                vec![("tasklet", tasklet.clone().into())]
-            }
-            Self::CellKeysWithoutStaticMode { tasklet } => {
-                vec![("tasklet", tasklet.clone().into())]
+            Self::SchemaFloorAboveVersion { .. } | Self::SchemaFloorWithoutMigration { .. } => {
+                self.floor_details()
             }
             Self::MaxCellsZero { tasklet } => vec![("tasklet", tasklet.clone().into())],
             Self::DeclarationUnreadable { reason } => vec![("reason", reason.clone().into())],
@@ -454,6 +454,28 @@ impl TopologyIssue {
             .into_iter()
             .map(|(key, value)| (key.to_string(), value))
             .collect()
+    }
+
+    /// A schema floor's tasklet and floor, and the version a floor above it passed.
+    fn floor_details(&self) -> Vec<(&'static str, Value)> {
+        match self {
+            Self::SchemaFloorAboveVersion {
+                tasklet,
+                floor,
+                version,
+            } => vec![
+                ("tasklet", tasklet.clone().into()),
+                ("floor", (*floor).into()),
+                ("version", (*version).into()),
+            ],
+            Self::SchemaFloorWithoutMigration { tasklet, floor } => {
+                vec![
+                    ("tasklet", tasklet.clone().into()),
+                    ("floor", (*floor).into()),
+                ]
+            }
+            _ => Vec::new(),
+        }
     }
 }
 

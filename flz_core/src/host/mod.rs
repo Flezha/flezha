@@ -41,8 +41,8 @@ pub use commands::{
     state_json_locked,
 };
 pub use decl::{
-    HostAckGranularity, HostCall, HostCellModeDecl, HostChannelDecl, HostChannelKind,
-    HostClassDecl, HostClock, HostCodec, HostLink, HostOverflow, HostTaskletDecl,
+    HostAckGranularity, HostCall, HostChannelDecl, HostChannelKind, HostClassDecl, HostClock,
+    HostCodec, HostLink, HostTaskletDecl,
 };
 pub use handout::to_schema;
 pub use issue::{render_issues, TopologyIssue};

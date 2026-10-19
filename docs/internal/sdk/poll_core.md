@@ -350,6 +350,7 @@ Context lifecycle: `flz_core_context_new(shim_schema_version)` →
 | `flz_core_spawn_request`, `flz_core_spawn_result` | Tasklet-requested spawn: a request that answers a handle at once, and a read of that handle with a timeout (0 never waits) |
 | `flz_core_part` | A part of the invocation of work item `item` of the live activation `token`: numbered, stamped and written at once, never waited on. `FLZ_OK` for a part sent or dropped; `FLZ_ERR` with `part.no_output` or `part.outside_invocation` (a token no longer outstanding, an item it does not hold) |
 | `flz_core_monotonic_nanos`, `flz_core_entry_last_delivery_nanos` | Context-free reads |
+| `flz_core_knob` | Context-free: the text a host looked up for a knob, parsed by the one rule of `test/fixtures/knob_parse_cases.txt` (`positive`, `ms`, `int`, `bool`); `FLZ_KNOB_UNSET` keeps the host's default |
 | `flz_core_take_notices` | The core's notices held since the last take, as JSON; the first take starts the holding, so a host writes them through its own log on a thread of its own |
 | `flz_core_set_log_callback` | The one host callback the core ever invokes, on whichever thread wrote the notice; for a C host that can take it there |
 
@@ -407,8 +408,12 @@ backlog item.
 (`flz_core::host::HostClassDecl`, JSON with `deny_unknown_fields` — a field
 the core never learned is a refusal, not a silent degrade): the channels graph
 (entry / inter-task / plugin, per-channel retry, overflow, plugin keying),
-cell modes (single, static with declared keys, dynamic with idle-TTL eviction
-and `max_cells`), clock kinds (wall, logical, event-time), the
+cell keys, idle-TTL eviction and `max_cells` (the core derives each tasklet's
+cell mode: static with declared keys, dynamic when a chain reaches it through
+`key` then `into` or `merge`, single otherwise), the schema version, its
+readable floor and whether the tasklet `migrates` (a floor above the version, or
+below it with no migration, is refused), the mailbox capacity (absent takes
+`FLEZHA_MAILBOX_CAPACITY`, else 1024), clock kinds (wall, logical, event-time), the
 effectively-once tier and checkpoint ack-granularity, the late-input correction
 window, the record-header lang/format bytes (`sdk_lang`, `change_format_id` — a
 Java host's durable records claim Kryo), and steps lifecycle facts

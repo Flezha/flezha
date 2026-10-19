@@ -619,6 +619,12 @@ fn monotonic_nanos() -> u64 {
     crate::flz_core_monotonic_nanos()
 }
 
+/// A knob's text parsed by the core's rule for `kind`; `nil` when it is no
+/// value of that kind.
+fn knob(kind: String, raw: String) -> Result<Option<i64>, Error> {
+    veneer::knob(&kind, &raw).map_err(|r| raise(&ruby(), r))
+}
+
 /// The core's notices held since the last take, as `[level, target, text]`;
 /// the first take starts the holding.
 fn take_notices() -> Vec<(String, String, String)> {
@@ -702,6 +708,7 @@ pub fn init(ruby: &Ruby) -> Result<(), Error> {
     native.define_module_function("send_message", function!(send_message, 6))?;
     native.define_module_function("relays", function!(relays, 0))?;
     native.define_module_function("monotonic_nanos", function!(monotonic_nanos, 0))?;
+    native.define_module_function("knob", function!(knob, 2))?;
     native.define_module_function("take_notices", function!(take_notices, 0))?;
     native.define_module_function("last_error", function!(last_error, 0))?;
     native.define_module_function("native_surface", function!(native_surface, 0))?;

@@ -14,15 +14,10 @@ use super::cell::{
     build_host_cell_slot, host_deserialize_unreachable, host_payload_codec,
     host_serialize_unreachable, HostPayload, HostTaskletFacts,
 };
-use super::decl::{
-    HostCellModeDecl, HostChannelDecl, HostChannelKind, HostClassDecl, HostClock, HostOverflow,
-    HostTaskletDecl,
-};
+use super::decl::{HostChannelDecl, HostChannelKind, HostClassDecl, HostClock, HostTaskletDecl};
 use super::issue::TopologyIssue;
 use super::register::DerivedChannel;
-use crate::channel::{
-    ChannelDescriptor, ChannelKind, EntryWrapFn, OverflowPolicy, RetryPolicy, TaskletId,
-};
+use crate::channel::{ChannelDescriptor, ChannelKind, EntryWrapFn, RetryPolicy, TaskletId};
 use crate::error::Error;
 use crate::relay::settings::{Exactly, Run};
 use crate::relay::topology::{
@@ -105,6 +100,7 @@ pub(super) fn build_tasklets(
     class: &ClassFacts,
     channels: &[ChannelDescriptor],
     derived: &[DerivedChannel],
+    modes: &[CellMode],
 ) -> (Vec<TaskletDescriptor>, HashMap<&'static str, u32>) {
     let mut tasklets = Vec::with_capacity(decl.tasklets.len());
     let mut name_to_id = HashMap::new();
@@ -112,7 +108,14 @@ pub(super) fn build_tasklets(
         let task_id = task_id as u32;
         let task_name: &'static str = Box::leak(task_decl.name.clone().into_boxed_str());
         tasklets.push(build_tasklet(
-            derived, class, channels, task_id, task_name, task_decl, decl,
+            derived,
+            class,
+            channels,
+            task_id,
+            task_name,
+            task_decl,
+            decl,
+            modes[task_id as usize],
         ));
         name_to_id.insert(task_name, task_id);
     }
@@ -155,11 +158,7 @@ fn build_channel(
         sink: derived.sink.is_some(),
         call: derived.call.as_ref().map(call_end),
         keyed: channel_decl.keyed,
-        overflow_policy: match channel_decl.overflow {
-            HostOverflow::DropNothing => OverflowPolicy::DropNothing,
-            HostOverflow::DropNewest => OverflowPolicy::DropNewest,
-            HostOverflow::DropOldest => OverflowPolicy::DropOldest,
-        },
+        overflow_policy: channel_decl.overflow,
         retry: RetryPolicy {
             max_attempts: channel_decl.retry_max,
             backoff_base_ms: channel_decl.retry_backoff_ms,
@@ -212,6 +211,7 @@ fn build_tasklet(
     task_name: &'static str,
     task_decl: &HostTaskletDecl,
     decl: &HostClassDecl,
+    mode: CellMode,
 ) -> TaskletDescriptor {
     let (input_channel_ids, output_channel_id) = tasklet_wiring(derived_channels, task_id);
     let retry = input_channel_ids
@@ -229,11 +229,7 @@ fn build_tasklet(
             .collect(),
         cells_for_overridden: task_decl.cells_for_overridden,
         compensate_overridden: task_decl.compensate_overridden,
-        mode: match task_decl.cell_mode {
-            HostCellModeDecl::Single => CellMode::Single,
-            HostCellModeDecl::Static => CellMode::Static,
-            HostCellModeDecl::Dynamic => CellMode::Dynamic,
-        },
+        mode,
         idle_ttl: task_decl.idle_ttl_ms.map(std::time::Duration::from_millis),
         max_cells: task_decl.max_cells.unwrap_or(usize::MAX),
         input_channel_ids,

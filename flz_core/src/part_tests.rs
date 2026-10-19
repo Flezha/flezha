@@ -31,7 +31,7 @@ fn slot_named(id: &str, instance: &str, end: &str, keys: &[&str]) -> Arc<crate::
     } else {
         let keys = keys.iter().map(|k| format!("\"{k}\"")).collect::<Vec<_>>();
         format!(
-            r#"{{"name":"p0","cell_mode":"static","cell_keys":[{}],"cells_for_overridden":true}}"#,
+            r#"{{"name":"p0","cell_keys":[{}],"cells_for_overridden":true}}"#,
             keys.join(",")
         )
     };

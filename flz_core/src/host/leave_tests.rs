@@ -63,8 +63,8 @@ fn leaving_relay(
     let ttl = ttl_ms.map_or(String::new(), |ms| format!(r#","idle_ttl_ms":{ms}"#));
     let json = format!(
         r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","durable":false,"run":"flow",
-             "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","tasklet":0}}]]}}],
-             "tasklets":[{{"name":"p0","cell_mode":"dynamic","cells_for_overridden":true{ttl}}}]}}"#
+             "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"key"}},{{"link":"into","tasklet":0}}]]}}],
+             "tasklets":[{{"name":"p0","cells_for_overridden":true{ttl}}}]}}"#
     );
     crate::host::register_host_class_json(json.as_bytes()).expect("class registers");
     let instance = node

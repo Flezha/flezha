@@ -19,7 +19,7 @@ use flz_core_ffi::veneer::{Entry, Reach, SURFACE};
 /// points, the local-mode ones and the notice ones. Reading fewer reports a
 /// name the crate does export as one it does not.
 pub fn exported_entry_points() -> Vec<String> {
-    let mut names: Vec<String> = ["src/lib.rs", "src/local.rs", "src/notice.rs"]
+    let mut names: Vec<String> = ["src/lib.rs", "src/knob.rs", "src/local.rs", "src/notice.rs"]
         .iter()
         .flat_map(|relative| {
             let source = fs::read_to_string(crate_path(relative))

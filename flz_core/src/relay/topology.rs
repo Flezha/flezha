@@ -12,7 +12,8 @@ use crate::channel::{
 
 /// How a Tasklet maps inputs to Cells: a declared keyset is `Static`, a
 /// keyed edge into it `Dynamic`, neither `Single`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum CellMode {
     Single,
     Static,

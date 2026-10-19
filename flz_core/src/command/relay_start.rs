@@ -349,11 +349,13 @@ mod partition_tests {
     use super::{partition_refusal, AddRelay, AddRelayResponse, KeyGroupRange, Message};
     use crate::ErrorModel;
 
-    fn register(id: &str, cell_mode: &str, cell_keys: &str) {
+    /// A keyed chain into `p` makes it dynamic; cell keys make it static.
+    fn register(id: &str, keyed: bool, cell_keys: &str) {
+        let key = if keyed { r#"{"link":"key"},"# } else { "" };
         let json = format!(
             r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","durable":{{"local":{{"sleep_after":false}}}},
-                 "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","tasklet":0}}]]}}],
-                 "tasklets":[{{"name":"p","cell_mode":"{cell_mode}","cells_for_overridden":true,
+                 "channels":[{{"name":"in","kind":"entry","chains":[[{key}{{"link":"into","tasklet":0}}]]}}],
+                 "tasklets":[{{"name":"p","cells_for_overridden":true,
                                  "cell_keys":[{cell_keys}]}}]}}"#
         );
         crate::host::register_host_class_json(json.as_bytes()).expect("class registers");
@@ -378,7 +380,7 @@ mod partition_tests {
     #[test]
     fn a_keyless_class_is_refused_with_the_contract_named() {
         let id = format!("part_keyless_{}", std::process::id());
-        register(&id, "single", "");
+        register(&id, false, "");
 
         let refusal =
             partition_refusal(&partitioned(&id, 3), &class_of(&id), &id).expect("refused");
@@ -389,7 +391,7 @@ mod partition_tests {
     #[test]
     fn a_keyless_class_declares_itself_so_the_controller_can_refuse_first() {
         let id = format!("part_declare_{}", std::process::id());
-        register(&id, "single", "");
+        register(&id, false, "");
 
         let encoded = super::metadata_response(crate::relay::registry::get_class(&id).as_deref());
         let decoded = AddRelayResponse::decode(encoded.as_slice()).expect("decodes");
@@ -402,7 +404,7 @@ mod partition_tests {
     #[test]
     fn a_keyed_class_is_accepted_and_says_nothing_extra() {
         let id = format!("part_dynamic_{}", std::process::id());
-        register(&id, "dynamic", "");
+        register(&id, true, "");
 
         assert!(partition_refusal(&partitioned(&id, 3), &class_of(&id), &id).is_none());
         let encoded = super::metadata_response(crate::relay::registry::get_class(&id).as_deref());
@@ -417,7 +419,7 @@ mod partition_tests {
     #[test]
     fn a_statically_keyed_class_partitions_normally() {
         let id = format!("part_static_{}", std::process::id());
-        register(&id, "static", r#""BTC-USD","ETH-USD""#);
+        register(&id, false, r#""BTC-USD","ETH-USD""#);
 
         assert!(partition_refusal(&partitioned(&id, 3), &class_of(&id), &id).is_none());
     }
@@ -425,7 +427,7 @@ mod partition_tests {
     #[test]
     fn an_unpartitioned_bind_is_never_refused_and_owns_the_whole_space() {
         let id = format!("part_none_{}", std::process::id());
-        register(&id, "single", "");
+        register(&id, false, "");
 
         let mut command = partitioned(&id, 3);
         command.partition_count = 0;
@@ -438,7 +440,7 @@ mod partition_tests {
     #[test]
     fn a_one_member_group_is_unpartitioned_too() {
         let id = format!("part_one_{}", std::process::id());
-        register(&id, "single", "");
+        register(&id, false, "");
 
         let mut command = partitioned(&id, 1);
         command.partition_count = 1;
@@ -449,7 +451,8 @@ mod partition_tests {
 
     /// A chained loop registers non-durable: a durable one needs a terminal
     /// handoff this one-tasklet class does not have.
-    fn register_steps(id: &str, cell_mode: &str, each: &str) {
+    fn register_steps(id: &str, keyed: bool, each: &str) {
+        let key = if keyed { r#"{"link":"key"},"# } else { "" };
         let durable = if each == "chained" {
             "false"
         } else {
@@ -457,8 +460,8 @@ mod partition_tests {
         };
         let json = format!(
             r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","durable":{durable},
-                 "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","tasklet":0}}]]}}],
-                 "tasklets":[{{"name":"p","cell_mode":"{cell_mode}"}}],
+                 "channels":[{{"name":"in","kind":"entry","chains":[[{key}{{"link":"into","tasklet":0}}]]}}],
+                 "tasklets":[{{"name":"p"}}],
                  "run":{{"steps":{{"each":"{each}"}}}}}}"#
         );
         crate::host::register_host_class_json(json.as_bytes()).expect("class registers");
@@ -468,7 +471,7 @@ mod partition_tests {
     fn a_steps_that_reads_one_message_is_refused_before_the_keyless_arm() {
         for each in ["once", "chained"] {
             let id = format!("part_steps_{each}_{}", std::process::id());
-            register_steps(&id, "dynamic", each);
+            register_steps(&id, false, each);
 
             let refusal =
                 partition_refusal(&partitioned(&id, 2), &class_of(&id), &id).expect("refused");
@@ -487,11 +490,11 @@ mod partition_tests {
     #[test]
     fn a_per_input_steps_partitions_when_keyed_and_is_refused_as_keyless_otherwise() {
         let keyed = format!("part_steps_keyed_{}", std::process::id());
-        register_steps(&keyed, "dynamic", "per_input");
+        register_steps(&keyed, true, "per_input");
         assert!(partition_refusal(&partitioned(&keyed, 2), &class_of(&keyed), &keyed).is_none());
 
         let keyless = format!("part_steps_keyless_{}", std::process::id());
-        register_steps(&keyless, "single", "per_input");
+        register_steps(&keyless, false, "per_input");
         let refusal = partition_refusal(&partitioned(&keyless, 2), &class_of(&keyless), &keyless)
             .expect("refused");
         assert_eq!(refusal.code(), "topology.partitions_without_keyed_tasklet");
@@ -500,7 +503,7 @@ mod partition_tests {
     #[test]
     fn a_partitioned_bind_carries_its_range_verbatim() {
         let id = format!("part_range_{}", std::process::id());
-        register(&id, "dynamic", "");
+        register(&id, true, "");
 
         let range = partitioned(&id, 3).key_group_range();
         assert_eq!(range.index, 1);

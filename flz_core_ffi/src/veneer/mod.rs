@@ -128,6 +128,7 @@ pub const SURFACE: &[Entry] = surface![
     (send_message, true, Every),
     (relays, false, Every),
     (monotonic_nanos, false, Every),
+    (knob, false, Every),
 ];
 
 /// The rows the Python, Ruby and Node glue export.
@@ -634,6 +635,18 @@ pub fn relays(ctx: CtxPtr) -> Result<Vec<String>, Refusal> {
     );
     verdict(ctx, status)?;
     Ok(ids.unwrap_or_default())
+}
+
+/// A knob's text parsed by the core's rule for `kind`: `None` when it is no
+/// value of that kind, so the host keeps its default.
+pub fn knob(kind: &str, raw: &str) -> Result<Option<i64>, Refusal> {
+    let (kind_c, raw) = (c_string("knob kind", kind)?, c_string("knob value", raw)?);
+    let mut out = 0;
+    match unsafe { crate::flz_core_knob(kind_c.as_ptr(), raw.as_ptr(), &mut out) } {
+        FLZ_OK => Ok(Some(out)),
+        crate::FLZ_KNOB_UNSET => Ok(None),
+        _ => Err(Refusal::Shape(format!("`{kind}` is not a knob kind"))),
+    }
 }
 
 /// One core notice a host writes through its own log.

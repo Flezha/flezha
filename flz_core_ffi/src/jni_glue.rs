@@ -660,6 +660,23 @@ pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_monotonicNanos(
     crate::flz_core_monotonic_nanos() as jlong
 }
 
+/// A knob's text parsed by the core's rule for `kind`, as its decimal text;
+/// null when it is no value of that kind.
+#[no_mangle]
+pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_knob<'l>(
+    mut env: JNIEnv<'l>,
+    _class: JClass,
+    kind: JString,
+    raw: JString,
+) -> jstring {
+    let read = |env: &mut JNIEnv, value: &JString| env.get_string(value).map(String::from);
+    let answer = match (read(&mut env, &kind), read(&mut env, &raw)) {
+        (Ok(kind), Ok(raw)) => veneer::knob(&kind, &raw).map(|v| v.map(|v| v.to_string())),
+        _ => Err(Refusal::Shape("a knob argument is unreadable".into())),
+    };
+    string_or_throw(&mut env, answer)
+}
+
 /// Wake every blocked poller and stop the runner loop.
 #[no_mangle]
 pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_shutdown(

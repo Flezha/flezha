@@ -262,9 +262,9 @@ mod overflow_literal_tests {
     //! drift. What that derivation gives is worth pinning: it is the only
     //! cross-SDK statement of the policy every host language has to emit.
 
-    use crate::host::HostOverflow;
+    use crate::channel::OverflowPolicy;
 
-    fn parse(literal: &str) -> Result<HostOverflow, String> {
+    fn parse(literal: &str) -> Result<OverflowPolicy, String> {
         serde_json::from_str(literal).map_err(|e| e.to_string())
     }
 
@@ -272,15 +272,15 @@ mod overflow_literal_tests {
     fn the_wire_literal_follows_the_variant() {
         assert_eq!(
             parse(r#""drop_nothing""#).unwrap(),
-            HostOverflow::DropNothing
+            OverflowPolicy::DropNothing
         );
-        assert_eq!(parse(r#""drop_newest""#).unwrap(), HostOverflow::DropNewest);
-        assert_eq!(parse(r#""drop_oldest""#).unwrap(), HostOverflow::DropOldest);
+        assert_eq!(parse(r#""drop_newest""#).unwrap(), OverflowPolicy::DropNewest);
+        assert_eq!(parse(r#""drop_oldest""#).unwrap(), OverflowPolicy::DropOldest);
     }
 
     #[test]
     fn a_channel_declaring_nothing_discards_nothing() {
-        assert_eq!(HostOverflow::default(), HostOverflow::DropNothing);
+        assert_eq!(OverflowPolicy::default(), OverflowPolicy::DropNothing);
     }
 
     #[test]
@@ -478,7 +478,6 @@ mod declaration_key_tests {
                 ("channel", "codec") => r#""json""#,
                 ("channel", "schema") => r#"{"type":"object"}"#,
                 ("channel", "description") => r#""pinned""#,
-                ("tasklet", "cell_mode") => r#""single""#,
                 ("tasklet", "cell_keys") => "[]",
                 ("tasklet", "clock") => r#""wall""#,
                 (_, k) if k.ends_with("_ms") || k.ends_with("_bytes") => "1000",

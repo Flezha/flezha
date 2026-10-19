@@ -3,7 +3,7 @@
 //! `test/fixtures/host_class_decl_keys.txt`; `deny_unknown_fields` makes a
 //! key the core never learned a refusal rather than a silent degrade.
 
-use crate::channel::RetryPolicy;
+use crate::channel::{OverflowPolicy, RetryPolicy};
 
 /// The declared clock; the core stamps `now` from it on every item.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
@@ -42,7 +42,7 @@ pub struct HostChannelDecl {
     #[serde(default = "channel_backoff_ms")]
     pub retry_backoff_ms: u64,
     #[serde(default)]
-    pub overflow: HostOverflow,
+    pub overflow: OverflowPolicy,
     #[serde(default)]
     pub keyed: bool,
     /// The payload format the channel declares, announced in its relay's
@@ -156,15 +156,6 @@ pub enum HostChannelKind {
     Plugin,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum HostOverflow {
-    #[default]
-    DropNothing,
-    DropNewest,
-    DropOldest,
-}
-
 fn default_retry_max() -> u32 {
     RetryPolicy::default().max_attempts
 }
@@ -172,15 +163,13 @@ fn channel_backoff_ms() -> u64 {
     RetryPolicy::default().backoff_base_ms
 }
 fn default_mailbox_capacity() -> usize {
-    1024
+    flz_transport::env::env_parse_positive("FLEZHA_MAILBOX_CAPACITY", 1024)
 }
 
 #[derive(Debug, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HostTaskletDecl {
     pub name: String,
-    #[serde(default)]
-    pub cell_mode: HostCellModeDecl,
     #[serde(default)]
     pub cell_keys: Vec<String>,
     #[serde(default)]
@@ -211,15 +200,10 @@ pub struct HostTaskletDecl {
     /// its own.
     #[serde(default)]
     pub min_readable_schema_version: Option<u32>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum HostCellModeDecl {
-    #[default]
-    Single,
-    Static,
-    Dynamic,
+    /// The tasklet supplies a migration, so a floor below its own version
+    /// can be read up to it.
+    #[serde(default)]
+    pub migrates: bool,
 }
 
 fn default_clock() -> HostClock {

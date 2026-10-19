@@ -588,7 +588,7 @@ fn keyed_dynamic_instance(id: &str) -> Arc<RelayInstance> {
         r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0",
              "channels":[{{"name":"in","kind":"entry",
                            "chains":[[{{"link":"key"}},{{"link":"into","tasklet":0}}]]}}],
-             "tasklets":[{{"name":"p0","cell_mode":"dynamic"}}]}}"#
+             "tasklets":[{{"name":"p0"}}]}}"#
     );
     crate::host::register_host_class_json(json.as_bytes()).expect("class registers");
     RelayInstance::of_class(id, &format!("{id}_inst")).expect("class registered")

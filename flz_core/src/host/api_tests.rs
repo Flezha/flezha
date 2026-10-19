@@ -176,8 +176,8 @@ fn a_host_class_announces_every_channel_with_its_ends() {
            {"name":"ask","kind":"plugin","producer":2,
             "chains":[[{"link":"call","factory":"pricing","deadline_ms":500,"response":"ask.response"}]]},
            {"name":"ask.response","kind":"entry","chains":[[{"link":"into","tasklet":3}]]}"#,
-        r#"{"name":"ohlc","cell_mode":"static","cell_keys":["a","b"],"cells_for_overridden":true},
-           {"name":"trades","cell_mode":"dynamic"},
+        r#"{"name":"ohlc","cell_keys":["a","b"],"cells_for_overridden":true},
+           {"name":"trades"},
            {"name":"atr","mailbox_capacity":64},
            {"name":"read"}"#,
     );

@@ -18,13 +18,11 @@ flz_core/src/effect_result.rs::keep 52
 flz_core/src/host/activation.rs::route_edge_outputs 61
 flz_core/src/host/activation.rs::settle_item 69
 flz_core/src/host/activation.rs::settle_items 60
-flz_core/src/host/build.rs::build_channel 51
 flz_core/src/host/commands.rs::restore_fold_exclusive 51
-flz_core/src/host/issue.rs::details 170
+flz_core/src/host/issue.rs::details 167
 flz_core/src/host/issue.rs::kind 67
 flz_core/src/host/leave.rs::relay_left 58
 flz_core/src/host/prepare.rs::re_cross 61
-flz_core/src/host/register.rs::refuse_channel 60
 flz_core/src/poll_core/assembly.rs::assemble_batch 64
 flz_core/src/poll_core/mod.rs 814
 flz_core/src/poll_core/mod.rs::host_command_within 53
@@ -70,7 +68,7 @@ lib/flezha/state/paths.ex 829
 lib/flezha/state/task_journal.ex 1008
 lib/flezha/state/wal_writer/epoch.ex::do_rewind 53
 sdk/elixir/lib/flezha/sdk/declaration.ex::channel 52
-sdk/elixir/lib/flezha/sdk/declaration.ex::from_record 61
+sdk/elixir/lib/flezha/sdk/declaration.ex::from_record 54
 sdk/elixir/native/flz_core_beam/src/threads.rs::poll_for 51
 sdk/java/flezha-sdk-runtime/src/main/java/com/flezha/sdk/runtime/core/RelayInstance.java::runItem 64
 sdk/node/src/definition.ts::defineTasklet 66
@@ -82,7 +80,7 @@ sdk/python/src/flezha/ctx.py::__init__#2 54
 sdk/python/src/flezha/dispatch.py::_prepare 51
 sdk/python/src/flezha/relay.py::relay 61
 sdk/rust/macros/src/relay.rs::parse 63
-sdk/rust/src/relay/builder.rs::build_topology_with_settings 69
+sdk/rust/src/relay/builder.rs::build_topology_with_settings 62
 sdk/rust/src/relay/builder.rs::channel_descriptor 52
 sdk/rust/src/relay/dispatcher.rs::dispatch_input 56
 sdk/rust/src/relay/dispatcher.rs::dispatch_item 66

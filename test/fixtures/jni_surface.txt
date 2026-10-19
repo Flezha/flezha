@@ -38,6 +38,7 @@ adminCall|flz_core_admin_call
 sendMessage|flz_core_send_message
 relays|flz_core_relays
 monotonicNanos|flz_core_monotonic_nanos
+knob|flz_core_knob
 takeNotices|flz_core_take_notices
 shutdown|flz_core_shutdown
 watchStdinEof|flz_core_watch_stdin_eof

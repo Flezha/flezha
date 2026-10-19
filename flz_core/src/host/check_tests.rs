@@ -15,6 +15,7 @@ use std::collections::HashMap;
 use super::decl::{HostAckGranularity, HostChannelKind, HostClassDecl};
 use super::issue::TopologyIssue;
 use super::register::{check, Derived};
+use crate::relay::topology::CellMode;
 use crate::ErrorModel;
 
 const FIXTURE: &str = "../test/fixtures/reference_topologies.txt";
@@ -75,10 +76,10 @@ fn unrowed() -> Vec<String> {
 /// core's "SDK" is the record, so a role IS its tasklet declaration.
 fn palette(role: &str) -> Option<&'static str> {
     Some(match role {
-        "plain" | "second" | "twin" => "",
-        "static" => r#""cell_mode":"static","cell_keys":["a","b"]"#,
-        "routed" => r#""cell_mode":"static","cell_keys":["a","b"],"cells_for_overridden":true"#,
-        "dynamic" => r#""cell_mode":"dynamic""#,
+        // A dynamic tasklet is one a keyed chain reaches: the row wires it.
+        "plain" | "second" | "twin" | "dynamic" => "",
+        "static" => r#""cell_keys":["a","b"]"#,
+        "routed" => r#""cell_keys":["a","b"],"cells_for_overridden":true"#,
         "nochange" => r#""clock":"logical","change_is_nochange":true"#,
         "eventtime" => r#""clock":"event_time""#,
         _ => return None,
@@ -542,6 +543,71 @@ mod derivation {
             steps: steps.into(),
             needs: "-".into(),
         }
+    }
+
+    #[test]
+    fn only_a_chain_that_keys_makes_its_target_dynamic() {
+        let fixture = std::fs::read_to_string("../test/fixtures/derived_cell_modes.txt")
+            .expect("the shared case");
+        let mut lines = fixture
+            .lines()
+            .filter(|line| !line.starts_with('#'))
+            .filter_map(|line| line.split_once('|'));
+        let (_, shape) = lines.next().expect("the shape comes first");
+        let derived = derive(shape);
+        let modes: Vec<(&str, &str)> = lines.collect();
+        assert_eq!(modes.len(), derived.decl.tasklets.len());
+        for (tasklet, mode) in modes {
+            let at = derived.decl.tasklets.iter().position(|t| t.name == tasklet);
+            assert_eq!(
+                derived.modes[at.expect("a tasklet the shape names")].as_str(),
+                mode
+            );
+        }
+    }
+
+    #[test]
+    fn cell_keys_make_a_tasklet_static() {
+        assert_eq!(
+            derive("entry(in); in.into(routed)").modes,
+            [CellMode::Static]
+        );
+    }
+
+    #[test]
+    fn a_schema_floor_is_judged_against_the_version_and_its_migration() {
+        let judge = |facts: &str| {
+            let json = format!(
+                r#"{{"factory_id":"floor","sdk_lang":1,"sdk_version":"0.1.0",
+                     "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","tasklet":0}}]]}}],
+                     "tasklets":[{{"name":"p",{facts}}}]}}"#
+            );
+            check(serde_json::from_str(&json).expect("a record")).err()
+        };
+        let tasklet = || "p".to_string();
+        assert_eq!(
+            judge(r#""schema_version":2,"min_readable_schema_version":3"#),
+            Some(vec![TopologyIssue::SchemaFloorAboveVersion {
+                tasklet: tasklet(),
+                floor: 3,
+                version: 2
+            }])
+        );
+        assert_eq!(
+            judge(r#""schema_version":3,"min_readable_schema_version":1"#),
+            Some(vec![TopologyIssue::SchemaFloorWithoutMigration {
+                tasklet: tasklet(),
+                floor: 1
+            }])
+        );
+        assert_eq!(
+            judge(r#""schema_version":3,"min_readable_schema_version":1,"migrates":true"#),
+            None
+        );
+        assert_eq!(
+            judge(r#""schema_version":3,"min_readable_schema_version":3"#),
+            None
+        );
     }
 
     #[test]

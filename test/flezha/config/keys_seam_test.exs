@@ -59,11 +59,7 @@ defmodule Flezha.Config.KeysSeamTest do
     "test/flezha/config/parse_test.exs",
     "sdk/elixir/test/flezha/sdk/knob_test.exs",
     "flz_transport/src/env.rs",
-    "sdk/java/flezha-sdk-runtime/src/test/java/com/flezha/sdk/runtime/config/KnobParseRuleTest.java",
-    "sdk/node/test/env.test.mjs",
-    "sdk/python/tests/test_env.py",
-    "sdk/ruby/test/env_test.rb",
-    "sdk/php/tests/EnvTest.php"
+    "flz_core_ffi/tests/abi/knob.rs"
   ]
 
   describe "nothing reads a knob outside the seam" do

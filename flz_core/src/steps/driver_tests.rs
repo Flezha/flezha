@@ -528,7 +528,7 @@ fn keyed_json(id: &str, mid_retry_max: u32) -> String {
                            "chains":[[{{"link":"key"}},{{"link":"into","tasklet":1}}]]}},
                          {{"name":"out","kind":"plugin","producer":1,
                            "chains":[[{{"link":"sink","name":"out"}}]]}}],
-             "tasklets":[{{"name":"p0"}},{{"name":"k1","cell_mode":"dynamic"}}],
+             "tasklets":[{{"name":"p0"}},{{"name":"k1"}}],
              "run":"steps"}}"#
     )
 }
@@ -773,7 +773,7 @@ fn a_host_flow_entry_crossing_mints_its_keyed_cells() {
                            "chains":[[{{"link":"key"}},{{"link":"into","tasklet":0}}]]}},
                          {{"name":"out","kind":"plugin","producer":0,
                            "chains":[[{{"link":"sink","name":"out"}}]]}}],
-             "tasklets":[{{"name":"k0","cell_mode":"dynamic"}}]}}"#
+             "tasklets":[{{"name":"k0"}}]}}"#
     );
     crate::host::register_host_class_json(json.as_bytes()).expect("class registers");
     let instance = crate::relay::instance::RelayInstance::of_class(&id, &format!("{id}_inst"))

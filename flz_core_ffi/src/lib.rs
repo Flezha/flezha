@@ -30,6 +30,7 @@ mod error;
 pub mod fake_controller;
 #[cfg(feature = "jni")]
 pub mod jni_glue;
+mod knob;
 mod local;
 mod notice;
 // `napi-derive` emits the module-registration constructor only outside
@@ -59,10 +60,9 @@ pub use error::Error;
 use flz_core::poll_core::{EngineActivation, Polled, Starvation};
 use flz_core::spawn::{IfRunning, SpawnHandle, SpawnOptions};
 use flz_core::{schema, ErrorModel};
-/// The local-mode entry points, exported from the crate root like every other
-/// C symbol: the module is a source-file split, not an ABI boundary.
-pub use local::*;
-pub use notice::*;
+/// The entry points the source-file splits hold, exported from the crate root
+/// like every other C symbol: a module is not an ABI boundary.
+pub use {knob::*, local::*, notice::*};
 
 /// Poll produced an activation; the out buffer holds its encoded bytes.
 pub const FLZ_POLL_ACTIVATION: i32 = 1;

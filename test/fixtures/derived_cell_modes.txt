@@ -1,0 +1,13 @@
+# The Cell mode the core derives from a declaration's chains; no host sends one.
+#
+# `shape` is a row in the step vocabulary of `reference_topologies.txt`: two
+# tasklets hang off the same entry channel, and only the one its chain reaches
+# through `key` is dynamic. Then `tasklet|mode`, one per tasklet.
+#
+# Two readers pin it: `flz_core/src/host/check_tests.rs` derives the shape, and
+# the Java SDK's `HostClassDeclarationTest` builds it and reads the modes the
+# core answered.
+
+shape|entry(in); in.key.into(second); in.into(plain)
+second|dynamic
+plain|single

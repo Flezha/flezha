@@ -681,8 +681,8 @@ fn declares_the_dynamic_class(ctx: *mut FlzContext, controller: &Controller) {
     let decl = br#"{
         "factory_id": "abi_dyn",
         "sdk_lang": 1,"sdk_version":"0.1.0",
-        "channels": [{"name": "din", "kind": "entry", "chains": [[{"link": "into", "tasklet": 0}]]}],
-        "tasklets": [{"name": "dyn_pass", "cell_mode": "dynamic"}]
+        "channels": [{"name": "din", "kind": "entry", "chains": [[{"link": "key"}, {"link": "into", "tasklet": 0}]]}],
+        "tasklets": [{"name": "dyn_pass"}]
     }"#;
     assert_eq!(
         unsafe { flz_core_declare_class(ctx, decl.as_ptr(), decl.len()) },

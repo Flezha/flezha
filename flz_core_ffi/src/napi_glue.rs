@@ -630,6 +630,13 @@ pub fn monotonic_nanos() -> BigInt {
     BigInt::from(crate::flz_core_monotonic_nanos())
 }
 
+/// A knob's text parsed by the core's rule for `kind`; `null` when it is no
+/// value of that kind.
+#[napi]
+pub fn knob(kind: String, raw: String) -> Result<Option<i64>> {
+    Ok(veneer::knob(&kind, &raw)?)
+}
+
 /// The JSON error document of `code` with its details filled from
 /// `details_json`, rendered by the one Rust renderer so a refusal the SDK
 /// makes itself reads exactly as the core's and the controller's own.

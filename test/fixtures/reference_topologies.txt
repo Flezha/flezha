@@ -246,8 +246,8 @@ unrowed | topology.entry_channel_with_producer
 unrowed | topology.entry_channel_without_consumer
 unrowed | topology.inter_task_channel_without_producer
 unrowed | topology.plugin_channel_with_consumers
-unrowed | topology.static_tasklet_without_cell_keys
-unrowed | topology.cell_keys_without_static_mode
+unrowed | topology.schema_floor_above_version
+unrowed | topology.schema_floor_without_migration
 unrowed | topology.max_cells_zero
 unrowed | topology.declaration_unreadable
 unrowed | topology.no_entry_channel

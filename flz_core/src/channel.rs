@@ -128,7 +128,8 @@ impl ChannelKind {
 
 /// What a channel discards when the consumer's mailbox is full. The default
 /// is `DropNothing` for every kind; a plugin-bound channel ignores it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum OverflowPolicy {
     /// Discards nothing; ordering is preserved.
     #[default]

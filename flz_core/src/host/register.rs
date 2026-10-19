@@ -15,15 +15,15 @@ use flz_transport::service::payloader::MAX_METADATA_FIELD_LEN;
 use super::build::{build_channels, build_host_dag, build_tasklets, resolve_class_facts};
 use super::chains::derive_channels;
 use super::decl::{
-    HostAckGranularity, HostCellModeDecl, HostChannelDecl, HostChannelKind, HostClassDecl,
-    HostClock, HostCodec, HostOverflow, HostTaskletDecl,
+    HostAckGranularity, HostChannelDecl, HostChannelKind, HostClassDecl, HostClock, HostCodec,
+    HostTaskletDecl,
 };
 use super::issue::{render_issues, TopologyIssue};
-use crate::channel::{ChannelId, TaskletId};
+use crate::channel::{ChannelId, OverflowPolicy, TaskletId};
 use crate::error::Error;
 use crate::relay::settings::{self, Durable, Each, Exactly, Run, SettingIssue};
 use crate::relay::topology::{
-    AckGranularity, BeyondWindowPolicy, ChannelApi, CheckpointOutputs, RelayTopology,
+    AckGranularity, BeyondWindowPolicy, CellMode, ChannelApi, CheckpointOutputs, RelayTopology,
 };
 use crate::steps::spec::{graph_order, GraphOrder, GraphSeed, StepsSpec, TaskDag};
 use crate::ErrorModel;
@@ -38,6 +38,8 @@ pub const MAX_MAILBOX_CAPACITY: usize = 1_048_576;
 #[derive(Debug, serde::Serialize)]
 pub struct Derived {
     pub channels: Vec<DerivedChannel>,
+    /// Each tasklet's Cell mode, in declaration order.
+    pub modes: Vec<CellMode>,
     pub ack_granularity: HostAckGranularity,
     /// How the class runs and where its work is kept, as its tree declared.
     #[serde(skip)]
@@ -133,8 +135,12 @@ pub fn check(decl: HostClassDecl) -> Result<Derived, Vec<TopologyIssue>> {
 
     let channels = derive_channels(&decl, &mut issues);
     refuse_names(&decl, &channels, &mut issues);
-    for task_decl in &decl.tasklets {
-        refuse_tasklet(task_decl, &mut issues);
+    let modes: Vec<CellMode> = (0..)
+        .zip(&decl.tasklets)
+        .map(|(task_id, task_decl)| cell_mode(task_id, task_decl, &channels))
+        .collect();
+    for (task_decl, mode) in decl.tasklets.iter().zip(&modes) {
+        refuse_tasklet(*mode, task_decl, &mut issues);
     }
     let responses = refuse_calls(&run, &channels, &mut issues);
     for channel in &channels {
@@ -153,6 +159,7 @@ pub fn check(decl: HostClassDecl) -> Result<Derived, Vec<TopologyIssue>> {
                 AckGranularity::Checkpoint(_) => HostAckGranularity::Checkpoint,
             },
             channels,
+            modes,
             run,
             durable,
             decl,
@@ -344,24 +351,14 @@ fn refuse_channel(
             channel: channel.name.clone(),
         });
     }
-    // Promising effectively-once and asking to shed is a contradiction, not a
-    // trade-off: a dropped input's offset is advanced past by a later item's
-    // watermark. A correction window needs the tier, so this one arm covers
-    // it too.
-    if effectively_once {
-        // The policy is named as the record spells it, so an author reads
-        // back the literal they wrote.
-        let policy = match channel_decl.overflow {
-            HostOverflow::DropNothing => None,
-            HostOverflow::DropNewest => Some("drop_newest"),
-            HostOverflow::DropOldest => Some("drop_oldest"),
-        };
-        if let Some(policy) = policy {
-            issues.push(TopologyIssue::DroppingPolicyUnderEffectivelyOnce {
-                channel: channel.name.clone(),
-                policy: policy.to_string(),
-            });
-        }
+    // Promising effectively-once and asking to shed is a contradiction: a dropped
+    // input's offset is advanced past by a later item's watermark. A correction
+    // window needs the tier, so this one arm covers it too.
+    if effectively_once && channel_decl.overflow != OverflowPolicy::DropNothing {
+        issues.push(TopologyIssue::DroppingPolicyUnderEffectivelyOnce {
+            channel: channel.name.clone(),
+            policy: channel_decl.overflow.as_str().to_string(),
+        });
     }
     if let Some(reason) = schema_refusal(channel_decl) {
         issues.push(TopologyIssue::SchemaInvalid {
@@ -470,26 +467,33 @@ fn refuse_channel_ends(channel: &DerivedChannel, issues: &mut Vec<TopologyIssue>
     });
 }
 
-/// What one tasklet's declaration may claim about its Cells, its clock
-/// and its mailbox.
-fn refuse_tasklet(task_decl: &HostTaskletDecl, issues: &mut Vec<TopologyIssue>) {
-    match task_decl.cell_mode {
-        HostCellModeDecl::Static if task_decl.cell_keys.is_empty() => {
-            issues.push(TopologyIssue::StaticTaskletWithoutCellKeys {
-                tasklet: task_decl.name.clone(),
-            });
-        }
-        HostCellModeDecl::Single | HostCellModeDecl::Dynamic if !task_decl.cell_keys.is_empty() => {
-            issues.push(TopologyIssue::CellKeysWithoutStaticMode {
-                tasklet: task_decl.name.clone(),
-            });
-        }
-        HostCellModeDecl::Dynamic if task_decl.max_cells == Some(0) => {
-            issues.push(TopologyIssue::MaxCellsZero {
-                tasklet: task_decl.name.clone(),
-            });
-        }
-        _ => {}
+/// A tasklet's Cell mode, read off what it declares and how it is wired:
+/// cell keys make it static, a chain that keys before it reaches the tasklet
+/// makes it dynamic, and anything else is single.
+fn cell_mode(task_id: u32, task_decl: &HostTaskletDecl, channels: &[DerivedChannel]) -> CellMode {
+    if !task_decl.cell_keys.is_empty() {
+        CellMode::Static
+    } else if reached_by_key(channels, task_id) {
+        CellMode::Dynamic
+    } else {
+        CellMode::Single
+    }
+}
+
+fn reached_by_key(channels: &[DerivedChannel], task_id: u32) -> bool {
+    channels
+        .iter()
+        .flat_map(|c| &c.consumers)
+        .any(|e| e.key && e.tasklet == task_id)
+}
+
+/// What one tasklet's declaration may claim about its Cells, its clock,
+/// its mailbox and the schema versions it reads.
+fn refuse_tasklet(mode: CellMode, task_decl: &HostTaskletDecl, issues: &mut Vec<TopologyIssue>) {
+    if mode == CellMode::Dynamic && task_decl.max_cells == Some(0) {
+        issues.push(TopologyIssue::MaxCellsZero {
+            tasklet: task_decl.name.clone(),
+        });
     }
     if !task_decl.cell_keys.is_empty() && !task_decl.cells_for_overridden {
         issues.push(TopologyIssue::CellsForMissing {
@@ -515,6 +519,24 @@ fn refuse_tasklet(task_decl: &HostTaskletDecl, issues: &mut Vec<TopologyIssue>) 
             value: task_decl.mailbox_capacity,
         });
     }
+    let (floor, version) = (
+        task_decl.min_readable_schema_version,
+        task_decl.schema_version,
+    );
+    match floor {
+        Some(floor) if floor > version => issues.push(TopologyIssue::SchemaFloorAboveVersion {
+            tasklet: task_decl.name.clone(),
+            floor,
+            version,
+        }),
+        Some(floor) if floor < version && !task_decl.migrates => {
+            issues.push(TopologyIssue::SchemaFloorWithoutMigration {
+                tasklet: task_decl.name.clone(),
+                floor,
+            })
+        }
+        _ => {}
+    }
 }
 
 /// What an edge may declare about its consumer's Cell mode. The mode is
@@ -525,12 +547,6 @@ fn refuse_edge_keying(
     channels: &[DerivedChannel],
     issues: &mut Vec<TopologyIssue>,
 ) {
-    let keyed: HashSet<u32> = channels
-        .iter()
-        .flat_map(|c| c.consumers.iter())
-        .filter(|e| e.key)
-        .map(|e| e.tasklet)
-        .collect();
     for channel in channels {
         for edge in &channel.consumers {
             let Some(task_decl) = decl.tasklets.get(edge.tasklet as usize) else {
@@ -542,7 +558,7 @@ fn refuse_edge_keying(
                     tasklet: task_decl.name.clone(),
                 });
             }
-            if !edge.key && keyed.contains(&edge.tasklet) {
+            if !edge.key && reached_by_key(channels, edge.tasklet) {
                 issues.push(TopologyIssue::UnkeyedEdgeIntoDynamicTasklet {
                     channel: channel.name.clone(),
                     tasklet: task_decl.name.clone(),
@@ -655,6 +671,7 @@ fn steps_shape_issue(
 fn register(derived: Derived) -> Result<(), Error> {
     let Derived {
         channels: derived_channels,
+        modes,
         run,
         durable,
         decl,
@@ -663,7 +680,7 @@ fn register(derived: Derived) -> Result<(), Error> {
     let class = resolve_class_facts(&decl, &run, durable.keeps());
     let (channels, name_to_id) = build_channels(&decl, &derived_channels);
     let (tasklets, tasklet_name_to_id) =
-        build_tasklets(&decl, &class, &channels, &derived_channels);
+        build_tasklets(&decl, &class, &channels, &derived_channels, &modes);
     let mut topology = RelayTopology {
         sdk_lang: decl.sdk_lang,
         channels,

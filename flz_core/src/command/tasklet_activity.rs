@@ -230,10 +230,10 @@ mod tests {
                    "chains":[[{{"link":"into","tasklet":0}}],[{{"link":"key"}},{{"link":"into","tasklet":1}}],
                              [{{"link":"into","tasklet":2}}],[{{"link":"key"}},{{"link":"into","tasklet":3}}]]}}],
                  "tasklets":[{{"name":"ohlc","mailbox_capacity":4}},
-                             {{"name":"trades","cell_mode":"dynamic","max_cells":2,"mailbox_capacity":16}},
-                             {{"name":"book","cell_mode":"static","cell_keys":["a","b","c","d"],
+                             {{"name":"trades","max_cells":2,"mailbox_capacity":16}},
+                             {{"name":"book","cell_keys":["a","b","c","d"],
                                "cells_for_overridden":true,"mailbox_capacity":64}},
-                             {{"name":"symbols","cell_mode":"dynamic","max_cells":200000,"mailbox_capacity":4}}]}}"#
+                             {{"name":"symbols","max_cells":200000,"mailbox_capacity":4}}]}}"#
         );
         crate::host::register_host_class_json(json.as_bytes()).expect("class registers");
         id
