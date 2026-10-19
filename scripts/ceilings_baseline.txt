@@ -6,8 +6,7 @@
 #
 # One `<file> <lines>`, `<file>::<function> <lines>` or `xref <measure> <n>`
 # per line, sorted.
-cli/src/args.rs::scan 64
-cli/src/help.rs 820
+cli/src/args.rs::scan 62
 cli/src/rpc.rs::child 59
 flz_core/src/admission.rs::admit_from_cell 53
 flz_core/src/command/mod.rs::classify 59
@@ -64,7 +63,7 @@ lib/flezha/relay/overwatch.ex 973
 lib/flezha/runner/fleet_manager.ex 950
 lib/flezha/runner/fleet_manager/session.ex::do_handle_runner_disconnect 53
 lib/flezha/runner/stream_channel.ex::init 52
-lib/flezha/service/plugin_manager.ex 881
+lib/flezha/service/plugin_manager.ex 879
 lib/flezha/service/relay_manager.ex 838
 lib/flezha/state/durability_tier/shipper.ex 812
 lib/flezha/state/input_log.ex 1225

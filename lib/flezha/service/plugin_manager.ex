@@ -786,11 +786,7 @@ defmodule Flezha.Service.PluginManager do
     {:ok, plugins(Map.get(caller_context, :namespace) || "default")}
   end
 
-  @doc """
-  Every plugin enabled in `namespace`.
-
-  Each is answered as `list/1` answers it for the caller's own namespace.
-  """
+  @doc "Every plugin enabled in `namespace`. Answered as `list/1` answers the caller's own."
   @spec enabled(String.t(), CallerContext.t()) :: {:ok, [map()]} | {:error, term()}
   verb enabled(namespace, caller_context),
     verb: :plugin_enabled,
@@ -799,12 +795,9 @@ defmodule Flezha.Service.PluginManager do
   end
 
   @doc """
-  Enable the plugin `name` built from `fields`.
-
-  `fields` carries `:provider`, `:opts`, `:namespace`, `:single`, and
-  `:relay_id`, `:hooks` and `:channel` to bind in the same call. Answers how it
-  was enabled and the controllers holding the namespace that lack its provider:
-  the plugin does not run there.
+  Enable the plugin `name` built from `fields`. `fields` carries `:provider`, `:opts`,
+  `:namespace`, `:single`, and `:relay_id`, `:hooks` and `:channel` to bind at once. Answers how
+  it was enabled and the namespace's controllers that lack its provider, where it does not run.
   """
   @spec enable(String.t(), keyword(), CallerContext.t()) :: {:ok, map()} | {:error, term()}
   verb enable(name, fields, caller_context) when is_binary(name) and is_list(fields),
@@ -826,11 +819,7 @@ defmodule Flezha.Service.PluginManager do
     end
   end
 
-  @doc """
-  Bind `fields[:relay_id]` to the plugin `name`.
-
-  The binding takes the `:hooks` and `:channel` of `fields`.
-  """
+  @doc "Bind `fields[:relay_id]` to the plugin `name`. `fields` may set `:hooks` and `:channel`."
   @spec bind(String.t(), keyword(), CallerContext.t()) :: term() | {:error, term()}
   verb bind(name, fields, caller_context) when is_binary(name) and is_list(fields),
     verb: :plugin_bind,
@@ -845,11 +834,7 @@ defmodule Flezha.Service.PluginManager do
            )
   end
 
-  @doc """
-  Unbind `fields[:relay_id]` from the plugin `name`.
-
-  The plugin stays enabled.
-  """
+  @doc "Unbind `fields[:relay_id]` from the plugin `name`. The plugin stays enabled."
   @spec unbind(String.t(), keyword(), CallerContext.t()) :: term() | {:error, term()}
   verb unbind(name, fields, caller_context) when is_binary(name) and is_list(fields),
     verb: :plugin_unbind,
@@ -860,11 +845,8 @@ defmodule Flezha.Service.PluginManager do
   end
 
   @doc """
-  Change the options and hooks of the plugin `name`.
-
-  It changes the options (`:opts`) and, for a controller plugin, its `:hooks`:
-  in place when every changed option is live, otherwise by restarting every
-  running copy.
+  Change the options and hooks of the plugin `name`. Changes `:opts` and a controller plugin's
+  `:hooks`: in place when every changed option is live, else by restarting every running copy.
   """
   @spec update(String.t(), keyword(), CallerContext.t()) :: {:ok, map()} | {:error, term()}
   verb update(name, fields, caller_context) when is_binary(name) and is_list(fields),
@@ -877,11 +859,7 @@ defmodule Flezha.Service.PluginManager do
     end
   end
 
-  @doc """
-  Disable the plugin `name`: every running copy stops.
-
-  Every binding stays.
-  """
+  @doc "Disable the plugin `name`: every running copy stops. Every binding stays."
   @spec disable(String.t(), keyword(), CallerContext.t()) :: term() | {:error, term()}
   verb disable(name, fields, caller_context) when is_binary(name) and is_list(fields),
     verb: :plugin_disable,

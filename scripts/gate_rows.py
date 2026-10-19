@@ -511,7 +511,7 @@ GATES += (
     # `mix docs` leaves its kit copy stale).
     _bar("openspec-validate", "item", "openspec", "validate", "--specs", "--strict",
          stderr_ok=True),
-    {"id": "item", "group": "item", "groups": "@naming,@deps,core-compile"},
+    {"id": "item", "group": "item", "groups": "@naming,@deps,core-compile,ceilings"},
     _mix_test("ai-kit", "item", "test/mix/tasks/flezha_ai_kit_test.exs",
               "test/flezha/mcp/knowledge_test.exs"),
     {"id": "clean", "group": "clean",
