@@ -309,14 +309,6 @@ impl PollCore {
         self.notify_waiters();
     }
 
-    /// Disarm an interval close that closed on its own. Idempotent.
-    pub fn disarm_interval_close(&self, cell: &Arc<Vec<u8>>, deadline_ms: u64) {
-        self.wakes.remove(&WakeKey {
-            due_at_ms: deadline_ms,
-            tiebreak: WakeTiebreak::Interval(Arc::clone(cell)),
-        });
-    }
-
     /// Disarm one timer. Idempotent; no notify, since dropping an entry can
     /// only lengthen a wait, never miss one.
     pub fn disarm_timer(&self, cell: &Arc<Vec<u8>>, scheduled_at: u64) {

@@ -372,8 +372,8 @@ pub fn apply_ops(slot: &Arc<CellSlot>, ops: &[TimerOp], stream: &Arc<FlezhaStrea
 }
 
 /// Arm the wake that closes an open checkpoint interval at `max_delay_ms`. A
-/// close leaves its spent entry armed: it comes due, finds nothing open, and
-/// does nothing.
+/// close leaves its spent entry armed, so the wake closes only an interval
+/// whose own delay passed.
 pub fn arm_interval_deadline(slot: &Arc<CellSlot>) {
     let deadline = {
         let mut buffer = slot.flush_buffer.lock_recover();

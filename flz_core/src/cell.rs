@@ -416,7 +416,7 @@ pub trait TaskletDispatcher: Send + Sync + 'static {
     }
 
     /// Close an open checkpoint interval whose `max_delay_ms` elapsed,
-    /// shipping its accumulation; `false` when an input already closed it.
+    /// shipping its accumulation; `false` when nothing open is due.
     fn close_interval(&self, flush_buffer: &mut Box<dyn crate::flusher::FlushableBuffer>) -> bool {
         let _ = flush_buffer;
         false

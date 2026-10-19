@@ -165,7 +165,7 @@ fn the_delay_closes_a_quiet_entitys_interval() {
     assert!(staged.delay_elapsed(policy, 1_050));
 
     let shipped = staged
-        .close_on_deadline()
+        .close_on_deadline(policy, 1_050)
         .expect("the deadline ships what the interval accumulated");
     assert_eq!(shipped.outputs.len(), 1);
     assert_eq!(
@@ -179,9 +179,114 @@ fn the_delay_closes_a_quiet_entitys_interval() {
     );
 
     assert!(
-        staged.close_on_deadline().is_none(),
+        staged.close_on_deadline(policy, 1_050).is_none(),
         "a spent deadline entry finds nothing open and does nothing"
     );
+}
+
+#[test]
+fn a_spent_delay_wake_leaves_the_next_interval_open_until_its_own_deadline() {
+    let mut staged: StagedInterval<u8> = StagedInterval::default();
+    let policy = at_checkpoint(None, Some(50));
+
+    assert!(staged
+        .fold(
+            Some(policy),
+            invocation(vec![1], vec![output("a")], Some(1)),
+            1_000
+        )
+        .is_none());
+    let mut closing = invocation(vec![2], Vec::new(), Some(2));
+    closing.checkpointed = true;
+    assert!(staged.fold(Some(policy), closing, 1_010).is_some());
+
+    // The next interval opens before the first one's deadline at 1_050.
+    assert!(staged
+        .fold(
+            Some(policy),
+            invocation(vec![3], vec![output("b")], Some(3)),
+            1_020
+        )
+        .is_none());
+    assert_eq!(staged.deadline_ms(policy), Some(1_070));
+
+    assert!(
+        staged.close_on_deadline(policy, 1_050).is_none(),
+        "the first interval's wake closed the next one early"
+    );
+    assert!(staged.is_open());
+    let shipped = staged
+        .close_on_deadline(policy, 1_070)
+        .expect("its own deadline closes the next interval");
+    assert_eq!(shipped.offset, Some(3));
+}
+
+#[test]
+fn a_close_refused_on_the_delay_leaves_a_deadline_after_the_clock_it_read() {
+    // A wake that closes nothing re-arms the open interval's deadline, so a
+    // refusal at `now` must leave that deadline after `now`, or the re-armed
+    // wake would come due at once and spin.
+    let mut staged: StagedInterval<u8> = StagedInterval::default();
+    let policy = at_checkpoint(None, Some(50));
+
+    assert!(staged
+        .fold(
+            Some(policy),
+            invocation(vec![1], vec![output("a")], Some(1)),
+            1_000
+        )
+        .is_none());
+    // 0 and 999: the wall clock stepped back below the open.
+    for now in [0, 999, 1_000, 1_049] {
+        assert!(staged.close_on_deadline(policy, now).is_none());
+        assert!(staged.deadline_ms(policy).is_some_and(|at| at > now));
+    }
+    assert!(staged.close_on_deadline(policy, 1_050).is_some());
+}
+
+#[test]
+fn a_spent_delay_wake_acknowledges_nothing_of_the_next_as_produced_interval() {
+    let mut staged: StagedInterval<u8> = StagedInterval::default();
+    let policy = CheckpointPolicy {
+        max_delay_ms: Some(50),
+        ..as_produced(None)
+    };
+
+    let flushed = staged
+        .fold(
+            Some(policy),
+            invocation(vec![1], vec![output("a")], Some(1)),
+            1_000,
+        )
+        .expect("an as-produced emit leaves at once");
+    assert_eq!(flushed.offset, None);
+    let mut closing = invocation(vec![2], Vec::new(), Some(2));
+    closing.checkpointed = true;
+    assert_eq!(
+        staged.fold(Some(policy), closing, 1_010).map(|r| r.offset),
+        Some(Some(2))
+    );
+
+    let flushed = staged
+        .fold(
+            Some(policy),
+            invocation(vec![3], vec![output("b")], Some(3)),
+            1_020,
+        )
+        .expect("an as-produced emit leaves at once");
+    assert_eq!(
+        flushed.offset, None,
+        "a mid-interval flush acknowledges nothing"
+    );
+
+    assert!(
+        staged.close_on_deadline(policy, 1_050).is_none(),
+        "the first interval's wake acknowledged the next one's input early"
+    );
+    let shipped = staged
+        .close_on_deadline(policy, 1_070)
+        .expect("its own deadline closes the next interval");
+    assert_eq!(shipped.offset, Some(3));
 }
 
 #[test]

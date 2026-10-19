@@ -140,13 +140,13 @@ impl TaskletDispatcher for HostDispatcher {
 
     fn close_interval(&self, flush_buffer: &mut Box<dyn crate::flusher::FlushableBuffer>) -> bool {
         // Only a checkpoint class has an interval to close.
-        if self.facts.checkpoint.is_none() {
+        let Some(policy) = self.facts.checkpoint else {
             return false;
-        }
+        };
         let Some(bytes) = flush_buffer.as_any_mut().downcast_mut::<BytesBuffer>() else {
             return false;
         };
-        bytes.close_interval()
+        bytes.close_interval(policy)
     }
 
     fn write_timer_ops(&self, slot: &Arc<CellSlot>, ops: Vec<crate::timer::TimerOp>) {

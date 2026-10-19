@@ -293,9 +293,14 @@ impl<C> StagedInterval<C> {
     }
 
     /// Close on the delay, with no invocation of its own; `None` when nothing
-    /// was open.
-    pub fn close_on_deadline(&mut self) -> Option<ShippedRecord<C>> {
-        self.is_open().then(|| self.close())
+    /// open is due, as when a checkpoint closed the interval a wake was armed
+    /// for and the next one opened since.
+    pub fn close_on_deadline(
+        &mut self,
+        policy: CheckpointPolicy,
+        now_ms: u64,
+    ) -> Option<ShippedRecord<C>> {
+        self.delay_elapsed(policy, now_ms).then(|| self.close())
     }
 
     /// Drop the interval: a restore re-seats the Cell on a past in which
@@ -373,9 +378,13 @@ impl<B: Bodies> Default for EffectBuffer<B> {
 }
 
 impl<B: Bodies> EffectBuffer<B> {
-    /// Close an open interval on its delay; `false` when nothing was open.
-    pub fn close_interval(&mut self) -> bool {
-        let Some(record) = self.staged.close_on_deadline() else {
+    /// Close an open interval whose delay passed; `false` when nothing open
+    /// is due.
+    pub fn close_interval(&mut self, policy: CheckpointPolicy) -> bool {
+        let Some(record) = self
+            .staged
+            .close_on_deadline(policy, crate::util::wall_now_ms())
+        else {
             return false;
         };
         self.effects.push(EffectEntry::from_shipped(record, None));

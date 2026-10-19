@@ -295,11 +295,16 @@ fn stage_timer(
     }
 }
 
-/// Ship an open interval's accumulation on its `max_delay_ms`; a no-op when
-/// an input already closed it.
+/// Ship an open interval's accumulation once its `max_delay_ms` passed. A wake
+/// whose interval an input already closed finds the open one not yet due, and
+/// arms that one's own deadline again in case its wake was spent.
 fn close_due_interval(slot: &Arc<CellSlot>) {
-    let mut buffer = slot.flush_buffer.lock_recover();
-    slot.dispatcher.close_interval(&mut buffer);
+    let closed = slot
+        .dispatcher
+        .close_interval(&mut slot.flush_buffer.lock_recover());
+    if !closed {
+        crate::timer::arm_interval_deadline(slot);
+    }
 }
 
 /// Admit and stage one input, preceded by the event-time deadlines its

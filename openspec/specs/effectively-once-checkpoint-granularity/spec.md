@@ -75,6 +75,13 @@ absorbs both.
 - **THEN** its interval closes within 50 ms and the output is flushed, with the
   consumed-offset acknowledged at that close
 
+#### Scenario: An interval opened after a checkpoint waits its own delay
+
+- **WHEN** a checkpoint closes an interval and the next input opens a new one
+  before the closed interval's `max_delay_ms` would have passed
+- **THEN** the new interval SHALL stay open until `max_delay_ms` has passed
+  since its own first input, unless a checkpoint or `every` closes it first
+
 #### Scenario: A crash before the checkpoint loses nothing and duplicates nothing durable
 
 - **WHEN** an `outputs: :at_checkpoint` Cell crashes after emitting but

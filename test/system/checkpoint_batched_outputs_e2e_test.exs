@@ -115,20 +115,47 @@ defmodule FlezhaTest.System.CheckpointBatchedOutputsE2ETest do
     # --- Phase 3: a quiet Cell closes on the delay alone -------------------
     # One input, then silence. Nothing will ever call `ctx.checkpoint()` again,
     # so only `max_delay_ms` can close this interval — and it must, or the
-    # output waits for an input that never comes.
+    # output waits for an input that never comes. The interval closed just
+    # before leaves its delay wake armed to come due while this one is open,
+    # and this one must still wait its own full delay.
+    offset = open_beside_a_spent_wake(relay_id, namespace, 4)
     sent_at = System.monotonic_time(:millisecond)
     send_inputs(relay_id, namespace, ["k4:a"])
 
-    assert_receive {:message_forward, msg, md}, @max_delay_ms * 4
+    assert_receive {:message_forward, msg, %{"flz.key" => "k4"}}, @max_delay_ms * 4
     held_ms = System.monotonic_time(:millisecond) - sent_at
 
-    assert held_ms >= @max_delay_ms - 500,
+    assert held_ms >= @max_delay_ms - 100,
            "the held output shipped #{held_ms} ms after its input, before the delay could close"
 
     assert to_string(msg) == "k4=a"
-    assert md["flz.key"] == "k4"
 
-    assert wait_until(fn -> InputLog.watermark(relay_id) == 4 end, 30_000),
+    assert wait_until(fn -> InputLog.watermark(relay_id) == offset end, 30_000),
            "the delay closed the interval without acknowledging its input"
+  end
+
+  # Open an interval at `offset` and checkpoint it, then return the next
+  # input's offset 700 ms after that interval opened. The close must land
+  # within 500 ms, so its spent wake comes due about 800 to 1 300 ms into the next
+  # interval; a slower close tries again with a fresh interval.
+  defp open_beside_a_spent_wake(relay_id, namespace, offset, attempts \\ 10)
+
+  defp open_beside_a_spent_wake(_relay_id, _namespace, _offset, 0),
+    do: flunk("no checkpoint landed within 500 ms of its interval opening in 10 tries")
+
+  defp open_beside_a_spent_wake(relay_id, namespace, offset, attempts) do
+    opened_at = System.monotonic_time(:millisecond)
+    send_inputs(relay_id, namespace, ["w#{offset}:a", "commit:#{offset}"])
+    closed = offset + 1
+
+    assert wait_until(fn -> InputLog.watermark(relay_id) == closed end, 30_000),
+           "the checkpoint never acknowledged its interval"
+
+    if System.monotonic_time(:millisecond) - opened_at <= 500 do
+      Process.sleep(opened_at + 700 - System.monotonic_time(:millisecond))
+      closed + 1
+    else
+      open_beside_a_spent_wake(relay_id, namespace, closed + 1, attempts - 1)
+    end
   end
 end
