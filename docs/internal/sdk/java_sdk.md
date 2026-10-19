@@ -8,6 +8,11 @@ effectively-once tier are one implementation, not two.
 **Support tier:** [tier 1](../../public/publishing/maturity.md#sdk-java), run by the maintainer in a
 live deployment, passes the full conformance run in CI and is permanently supported.
 
+Installing, the supported Java versions, how the native library reaches the host
+and the commands that test the SDK are in its [`README.md`](../../../sdk/java/README.md);
+[local mode](../../public/topics/core/running_and_testing.md#local-mode) and the
+[test harness](../../public/topics/core/running_and_testing.md#check-a-tasklet-on-its-own) are on the Running relays page.
+
 Authoring surface: one tasklet form, a class implementing
 `Tasklet<Input, State, Output>` and carrying `@Tasklet.Spec`, wired by a
 `Relay` in `channels(ChannelBuilder)` under the settings tree its `run()` and
@@ -383,19 +388,6 @@ Two profiles, two jobs:
 The e2e harness spawns `target/java_runner.jar`, falling back to `dist/` for a
 tree assembled by `scripts/build-dist.sh`. Both launch lines come from the
 manifest.
-
-## Testing
-
-```bash
-mvn -f sdk/java/pom.xml -P coverage,native-verify verify   # unit + JNI + coverage
-FLEZHA_E2E_RUNTIME=java mix test --include sdk_smoke       # the shared smoke tier
-FLEZHA_E2E_RUNTIME=java mix test --include system          # the full suite
-```
-
-The Java SDK's own repository runs the first on every pull request, and this
-repository's `.github/workflows/java-sdk.yml` runs the second on every pull
-request that touches the SDK pin, the kernel or the transport; the nightly
-matrix runs the third.
 
 ## See also
 

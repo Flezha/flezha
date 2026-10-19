@@ -11,7 +11,7 @@ The Python hello world, as a standalone project. Nothing here depends on the
 Flezha source tree: `requirements.txt` names one released version of `flezha`,
 the way your own project would. It needs Python 3.11 or later.
 
-Three files, one for each part the guides describe:
+Three files, one for each of the [building blocks](https://github.com/flezha/flezha/blob/main/docs/public/topics/core/building_blocks.md):
 
 | File | Part | What it does |
 |---|---|---|
@@ -22,7 +22,7 @@ Three files, one for each part the guides describe:
 ## Run it
 
 You need a controller running and reachable first
-([`docs/guides/controller_deployment.md`](../../../../docs/guides/controller_deployment.md)).
+([Up and running](https://github.com/flezha/flezha/blob/main/docs/public/getting_started/up_and_running.md)).
 From this folder:
 
 ```sh
@@ -72,9 +72,9 @@ Once the package is published, the step goes away.
 
 ## Where to go next
 
-[`docs/guides/runner_deployment.md`](../../../../docs/guides/runner_deployment.md)
+[Building blocks](https://github.com/flezha/flezha/blob/main/docs/public/topics/core/building_blocks.md)
 walks through what each of the three parts is and why the split is the way it
-is. [`docs/internal/sdk/python_sdk.md`](../../../../docs/internal/sdk/python_sdk.md) covers the
+is. The [Python SDK guide](https://github.com/flezha/flezha/blob/main/docs/internal/sdk/python_sdk.md) covers the
 rest of the SDK. [`examples/echo_deployment`](../echo_deployment)
 starts a controller and this runner together with Docker.
 ````

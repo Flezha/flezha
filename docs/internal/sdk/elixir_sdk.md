@@ -10,32 +10,8 @@ BEAM, on the same machine or on another.
 **Support tier:** [tier 1](../../public/publishing/maturity.md#sdk-elixir), run by the maintainer in
 a live deployment, passes the full conformance run in CI and is permanently supported.
 
-## Local mode: run a graph with no controller
-
-The shortest way to see a relay work is to run it with **no controller at all**.
-`Flezha.SDK.Local.start/2` takes the `Flezha.SDK.Relay` module you deploy, runs the graph its
-`channels/1` already declares on `flz_core`'s local run, and hands output to a function:
-
-```elixir
-{:ok, run} = Flezha.SDK.Local.start(WordCount)
-:ok = Flezha.SDK.Local.on_output(run, "counts", &IO.puts(&1.payload))
-:ok = Flezha.SDK.Local.feed(run, "lines", "the quick brown fox")
-:ok = Flezha.SDK.Local.run_until_idle(run, 5_000)
-:ok = Flezha.SDK.Local.stop(run)
-```
-
-`on_output/3` registers against the output's **channel** name, which is the
-producing tasklet's name unless the declaration named it. `feed/3` hands the bytes to
-the entry channel, whose declared parser reads them as a deployed run would. A worked
-two-tasklet example is in
-[`running_and_testing.md`](../../public/topics/core/running_and_testing.md#local-mode).
-
-**State is held in memory and nothing is durable**: no write-ahead log, no
-snapshots, no dead-letter queue. Every run says so on stderr and it is not
-suppressible. Durability, effectively-once delivery, plugins, placement and
-migration, the dead-letter queue, observability export, authz and multi-runner
-scale need a controller; a declaration asking for one of those is refused at
-startup, naming it. Local mode ships in every SDK, on the same core. Walk-through:
+Installing, the supported Elixir versions and how the native library reaches the host are in
+the package's [`README.md`](../../../sdk/elixir/README.md); local mode in
 [`running_and_testing.md`](../../public/topics/core/running_and_testing.md#local-mode).
 
 ## Where a runner runs
@@ -627,9 +603,9 @@ builder function this SDK does not carry fails registration naming the relay mod
 ## The package
 
 The SDK is the `flezha_sdk` mix package, developed in a repository of its own and carried
-here as a submodule at `sdk/elixir`. It is not published to Hex yet. It carries the native
-library `flz_core_beam`, built over `flz_core`'s ABI and fetched precompiled for the host's
-platform. It depends on no controller module, and the controller uses none of its runtime:
+here as a submodule at `sdk/elixir`. It carries the native library `flz_core_beam`, built over
+`flz_core`'s ABI (its [`README.md`](../../../sdk/elixir/README.md) says how it reaches the
+host). It depends on no controller module, and the controller uses none of its runtime:
 the controller depends on it only so a runner can be started in the controller's own BEAM.
 The package compiles with `--warnings-as-errors`, where a reference to a controller module is
 an undefined-module warning.

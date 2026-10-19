@@ -4,9 +4,9 @@ A runner that registered a factory runs nothing yet. A relay is one
 running instance of a factory, with its own id, its own state and its own place
 in the cluster, and it exists once something starts it: `flz relay start`,
 a schedule, a running tasklet, or application code. This page covers starting,
-watching and stopping relays, testing one in local mode, what comes back
-after a controller restart, and how to clear a controller back to a clean
-slate.
+watching and stopping relays, running one in local mode, checking a tasklet
+on its own, what comes back after a controller restart, and how to clear a
+controller back to a clean slate.
 
 The relation between a factory and its relays is a template and its
 instances ([`building_blocks.md`](building_blocks.md#factory-and-relay)):
@@ -27,10 +27,11 @@ factory can run as many relays as you need.
    2. [How it is used](#how-it-is-used)
    3. [Example: counting words](#example-counting-words)
    4. [What you run is what you deploy](#what-you-run-is-what-you-deploy)
-9. [After a controller restart](#after-a-controller-restart)
-10. [Start from a clean slate: `flz reset`](#start-from-a-clean-slate-flz-reset)
-11. [Limits and gotchas](#limits-and-gotchas)
-12. [See also](#see-also)
+9. [Check a tasklet on its own](#check-a-tasklet-on-its-own)
+10. [After a controller restart](#after-a-controller-restart)
+11. [Start from a clean slate: `flz reset`](#start-from-a-clean-slate-flz-reset)
+12. [Limits and gotchas](#limits-and-gotchas)
+13. [See also](#see-also)
 
 ## Start a relay
 
@@ -220,12 +221,12 @@ each with its code and the hint to act on:
 ```output
 WARNING  diagnose.dead_letters  relay 'turns' has dead letters: 3, the newest 42s old
          hint: flz dlq list turns
-NOTE     diagnose.asleep  relay 'turns' is suspended at a committed boundary; the next message wakes it on a runner
+NOTE     diagnose.suspended  relay 'turns' is suspended at a committed boundary; the next message wakes it on a runner
 ```
 
 - **`PROBLEM`** needs action: no runner announces the factory, the runner is
   gone, a bound plugin is unhealthy or missing, the outputs are not read.
-- **`WARNING`** is worth a look: dead letters, a parked relay, inputs that
+- **`WARNING`** is worth a look: dead letters, a halted relay, inputs that
   wait while nothing moves, a relay that did not answer for its own state.
 - **`NOTE`** is information: the relay sleeps, it is being bound again, it
   finished.
@@ -542,6 +543,35 @@ deploys unchanged:
 ```rust
 Flezha::create_runner("default")?.register_factory(WordCount)?.run()?;
 ```
+
+## Check a tasklet on its own
+
+Every SDK but Elixir ships a test harness. It drives one tasklet the way a
+runner does, with no relay, no runner and no controller, and holds what a
+runtime would otherwise own: the cell's state, the changes the tasklet
+recorded, what it emitted and the clock it reads. A unit suite feeds it inputs
+and checks what came out.
+
+Its replay check belongs in every suite. It folds the recorded changes into a
+fresh initial state and requires the result to equal the live state. A
+controller rebuilds a cell exactly that way after a restart, so a difference
+is what a restart would lose: a field written without a recorded change, or a
+change whose apply step is not a pure fold.
+
+| SDK | Harness | Replay check | Worked example |
+| --- | --- | --- | --- |
+| Rust | `flezha_runner::testing::TaskletTestHarness`, with the crate's `testing` feature | `replay_equals()`, `replay_emits_equal(inputs)` | [`examples/starter/src/count.rs`](https://github.com/flezha/flezha_rust_sdk/blob/main/examples/starter/src/count.rs) |
+| Java | `com.flezha.sdk.testing.TaskletTestHarness`, in the `flezha-sdk-testing` artifact | `replayEquals()`, `replayEmitsEqual(inputs)` | [`CountHitsTest.java`](https://github.com/flezha/flezha_java_sdk/blob/main/examples/starter/src/test/java/com/flezha/examples/starter/CountHitsTest.java) |
+| Node | `TaskletTestHarness`, from `@flezha/sdk/testing` | `replayEquals()` | [`examples/starter/count.test.mjs`](https://github.com/flezha/flezha_node_sdk/blob/main/examples/starter/count.test.mjs) |
+| Python | `flezha.testing.TaskletTestHarness` | `replay_equals()` | [`examples/starter/test_starter.py`](https://github.com/flezha/flezha_python_sdk/blob/main/examples/starter/test_starter.py) |
+| Ruby | `Flezha::Testing::Harness`, after `require "flezha/testing"` | `replay_equals!` | [`examples/starter/count_test.rb`](https://github.com/flezha/flezha_ruby_sdk/blob/main/examples/starter/count_test.rb) |
+| PHP | `Flezha\Testing\Harness` | `assertReplayEquals()` | [`examples/starter/tests/CountHitsTest.php`](https://github.com/flezha/flezha_php_sdk/blob/main/examples/starter/tests/CountHitsTest.php) |
+| Elixir | none yet | | |
+
+A call to anything outside the instance goes through `ctx.effect`, which
+keeps its result so a re-run reads it instead of calling again
+([`effectively_once.md`](effectively_once.md#recorded-effects)). A harness
+keeps each result of a live input and serves it to the replayed one.
 
 ## After a controller restart
 

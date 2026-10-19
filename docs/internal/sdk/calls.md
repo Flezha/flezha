@@ -5,8 +5,10 @@ For SDK implementers and contributors. How to use it is on
 
 ## The stamps
 
-The runner core stamps `flz.reply_to` on every output whose input carried a call's token,
-and on no other output: an output of an input nobody called carries no such key at all. A call end's request carries the target
+The runner core stamps `flz.reply_to` on every output whose input carried a call's token, and
+on no other output; how that token ties an input to its answer is
+[How a call finds its answer](../../public/topics/core/sending_and_calling.md#how-a-call-finds-its-answer).
+A call end's request carries the target
 (`flz.call`), the Response channel (`flz.call_response`), the deadline (`flz.deadline_at`), the
 callee's entry channel (`flz.call_channel`) and answer channel (`flz.call_answer_channel`) when
 the end names them, `flz.call_create` when it may not create its callee, and its key. A host

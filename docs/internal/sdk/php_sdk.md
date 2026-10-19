@@ -7,9 +7,10 @@ and reconnect all live in the core. This package brings the authoring surface,
 the codec for user types, the concurrency host and idiomatic errors.
 
 **Support tier:** [tier 2](../../public/publishing/maturity.md#sdk-php), passes the full conformance
-run in CI exactly as tier 1 does, with every capability present, and is permanently
-supported; it is not yet run by the maintainer in a live deployment, so a defect specific
-to it is likely to be found by its users first.
+run in CI exactly as tier 1 does, with every capability present but `local_send`, which its
+single-threaded serving defers, and is permanently supported; it is not yet run by the
+maintainer in a live deployment, so a defect specific to it is likely to be found by its
+users first.
 
 Everything here is reached through the C ABI (`flz_core_ffi`), the same one the
 Java SDK's JNI bridge consumes — so a capability the PHP SDK cannot reach is a
@@ -19,57 +20,14 @@ defect of the ABI rather than of this package.
 - The language-agnostic authoring contract → [`authoring_contract.md`](authoring_contract.md)
 - What proves this SDK still works → [`conformance.md`](conformance.md), and
   the manifest at `test/apps/php_runner/conformance.json`
-
-## Supported PHP versions
-
-`php >= 8.4` and `ext-ffi`, and nothing else. 8.4 is the supported line, not
-the minimum the code could parse: the authoring surface itself needs only 8.1 —
-enums, `never`, readonly properties, first-class callable syntax — and `ext-ffi`
-is stable from 8.0, but 8.4 is what this repository builds, tests and benchmarks
-the SDK on. CI runs the package's suite on the declared floor, which is also the
-newest release; the matrix regains a second entry when a newer line ships.
-
-`SwooleExecutor` declares its own, higher requirements, checked when it is
-selected rather than at install: see [Choosing an executor](#choosing-an-executor).
-
-## Installing
-
-```
-composer require flezha/sdk
-```
-
-Installation pulls no further packages. The package is also a Composer plugin:
-as Composer installs it, it downloads the one `libflz_core_ffi` binary the host
-needs from the release matching the package's version, checks it against that
-release's SHA-256 manifest, and places it in the package's `lib/<platform>/`.
-Releases publish it for `linux-x64`, `linux-arm64`, `macos-x64`, `macos-arm64`
-and `windows-x64`. A checksum mismatch or a failed download refuses the install
-rather than leave a package that cannot load.
-
-Composer asks once whether to trust the plugin. A non-interactive install needs
-it allowed in the project's `composer.json`:
-
-```json
-"config": { "allow-plugins": { "flezha/sdk": true } }
-```
-
-`FLEZHA_NATIVE_LIB_DIR` names a directory to load the binary from in preference
-to the package's own, on any platform. When it already holds the binary at
-install, nothing is downloaded, which is how an offline install works. This
-repository's own build script and test app use it too.
-
-An install that skipped the plugin, through `--no-plugins` or by not allowing
-it, has no binary, and the first call into the core refuses naming how to
-finish: allow the plugin and run `composer reinstall flezha/sdk`, or download
-the asset and manifest the message names, check the checksum, and put the
-binary where it says.
-
-The binaries are build output, not source: `scripts/build-dist.sh` cross-builds
-all five triples into `sdk/php/lib/<platform>/` from the same libraries the
-Java distribution embeds — the *same* library, which is the point of using
-`ext-ffi` rather than a compiled extension — and `scripts/build-php-sdk.sh`
-stages just the host's for a checkout. They are not committed, and a checkout
-that has them downloads nothing.
+- Installing, the supported PHP versions and how the native library reaches the
+  host → the package's [`README.md`](../../../sdk/php/README.md);
+  [local mode](../../public/topics/core/running_and_testing.md#local-mode) and the
+  [test harness](../../public/topics/core/running_and_testing.md#check-a-tasklet-on-its-own) are on the Running relays page.
+  The binaries are build output, never committed: `scripts/build-dist.sh`
+  cross-builds all five triples into `sdk/php/lib/<platform>/` from the same
+  libraries the Java distribution embeds, and `scripts/build-php-sdk.sh` stages
+  just the host's for a checkout.
 
 ## Authoring
 
@@ -415,30 +373,6 @@ learns at startup rather than at the first restore.
 The same encoding answers `flz state get` and a migration handover, because it
 already is JSON. There is no second form to convert between.
 
-### Testing a tasklet
-
-`Flezha\Testing\Harness` drives one tasklet without a controller, through the
-same dispatch and restore functions a runner uses:
-
-```php
-$harness = new Harness(Session::class, cellKey: 'alice');
-$harness->feed(['session' => 'alice']);
-$harness->assertReplayEquals();
-```
-
-`assertReplayEquals()` folds the recorded change log into a fresh initial state
-and requires the answer to equal the live one. In this SDK that catches **both**
-failures at once: a handler that mutated the state without recording a change,
-and an `applyChange` that is not a pure fold. PHP has no cheap deep read-only
-view of a value — the Node SDK's guard is a `Proxy`, which has no counterpart
-here that does not cost an allocation per field read — so this assertion is what
-makes the mutate-only-through-changes rule safe. Put it in your suite.
-
-A call to anything outside the instance goes through `$ctx->effect('name', fn () => $value)`,
-which keeps its result so a re-run reads it instead of calling again
-([`effectively_once.md`](../../public/topics/core/effectively_once.md#recorded-effects)). The harness keeps each
-result of a live `feed()` and serves it to a replayed one.
-
 ## One runner per process
 
 The SDK starts exactly one runner per process and never forks, spawns,
@@ -446,42 +380,6 @@ supervises or recycles. **N processes are N runners**, which is what the
 controller's placement already spreads relays across, and it keeps this
 layer agnostic between Kubernetes, systemd and a supervisor's own process
 management.
-
-## Local mode: run a graph with no controller
-
-`LocalRelay::start` takes the relay class you deploy and runs its
-declared graph in this process — no controller, no socket, no local-mode member
-on the class:
-
-```php
-$run = LocalRelay::start(WordCountRelay::class);
-
-try {
-    $run->onOutput('totals', static fn (LocalOutput $out) => print($out->payload . PHP_EOL));
-    $run->feed('lines', 'the quick brown fox');
-    $run->runUntilIdle(10_000);
-} finally {
-    $run->close();
-}
-```
-
-`onOutput` registers against the output's **channel** name, which is the producing
-tasklet's name unless the declaration named it.
-
-**This host has one thread, so `runUntilIdle` drives the loop rather than
-parking in the core.** Under the default `sync` executor the caller *is* the
-poll loop: one turn takes an activation if the core has one, answers it, and
-hands on whatever the outputs released; a turn that hands nothing back asks the
-core whether the graph has settled. A thread parked inside the core's own idle
-wait would be waiting on work it had stopped doing. Worked example:
-[`../../../sdk/php/examples/E07_LocalMode.php`](../../../sdk/php/examples/E07_LocalMode.php).
-
-**State is held in memory and nothing is durable** — no write-ahead log, no
-snapshots, no dead-letter queue. Durability, effectively-once delivery, plugins,
-placement and migration, the dead-letter queue, observability export, authz and
-multi-runner scale need a controller; a declaration asking for one of those is
-refused at startup, naming it. Walk-through:
-[`running_and_testing.md`](../../public/topics/core/running_and_testing.md#local-mode).
 
 ## Sizing, as arithmetic
 

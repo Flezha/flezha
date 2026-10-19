@@ -383,21 +383,11 @@ GC pause included) delays its records.
 
 ## Testing the replay
 
-The Rust and Java SDKs ship a test harness that runs a tasklet as the runtime
+Every SDK but Elixir ships a test harness that runs a tasklet as the runtime
 does and checks that replaying its recorded changes rebuilds the same state.
-
-| | Rust: `flezha_runner::testing::TaskletTestHarness` (feature `testing`) | Java: `TaskletTestHarness` in `flezha-sdk-testing` |
-| --- | --- | --- |
-| Construct | `new()`, `with_initial_state(state)`, `with_payload(key, payload)` (runs the real snapshot and log fold) | `of(tasklet)`, `withInitialState(state)`, `withPayload(cellKey, payload)` |
-| Configure | `with_keyed_channel()`, `with_cell_key(key)`, `with_wall_clock(ms)`, `with_wall_clock_script(vec)` | `withKeyedChannel()`, `withCellKey(key)`, `withWallClock(ms)`, `withWallClockScript(ms...)` |
-| Drive | `apply_inputs(iter)`; timers: `fire_timer`, `advance_event_time`, `pending_timers`, `recorded_timer_ops()` | `applyInputs(iterable)`; no timer methods |
-| Assert | `expect_changes`, `expect_emits`, `expect_state`, `recorded_changes()`, `emitted_meta()`, `state()` | `expectChanges`, `expectEmits`, `expectState`, `recordedChanges()`, `recordedEmits()`, `emitRecords()`, `state()` |
-| Replay gates | `replay_equals()`: folds the recorded changes, each encoded and decoded as the runtime stores it, and compares state and pending timers; `replay_emits_equal(inputs)`: two passes must emit the same bytes | `replayEquals()`: compares the Kryo bytes of the live and the replayed state; `replayEmitsEqual(inputs)` |
-
-A Rust downstream crate enables it with
-`flezha_runner = { ..., features = ["testing"] }`. The Elixir SDK has no replay
-harness yet: that `run/3`'s state equals the fold of its recorded changes is
-stated, not checked by a tool.
+[Check a tasklet on its own](running_and_testing.md#check-a-tasklet-on-its-own)
+names each one. The Elixir SDK has no replay harness yet: that `run/3`'s state
+equals the fold of its recorded changes is stated, not checked by a tool.
 
 ## Limits and gotchas
 
@@ -417,6 +407,6 @@ stated, not checked by a tool.
 - [`workflows.md`](workflows.md): why a step keeps its undo handle in state.
 - [`durability.md`](durability.md): what each `durable` level keeps through a crash.
 - [`timers.md`](timers.md), [`partitioning.md`](partitioning.md).
-- [`../../../internal/sdk/state_persistence.md`](https://github.com/flezha/flezha/blob/main/docs/internal/sdk/state_persistence.md): how the SDKs carry it out.
+- [The state persistence guide](https://github.com/flezha/flezha/blob/main/docs/internal/sdk/state_persistence.md): how the SDKs carry it out.
 - [`../../../internal/sdk/authoring_contract.md`](https://github.com/flezha/flezha/blob/main/docs/internal/sdk/authoring_contract.md): changing a deployed state type.
 - Tutorial: [`watch_the_trades.md`](tutorials/watch_the_trades.html) builds `track_prices`.

@@ -11,7 +11,7 @@ The PHP hello world, as a standalone project. Nothing here depends on the Flezha
 source tree: `composer.json` names one released version of `flezha/sdk`, the
 way your own project would. It needs PHP 8.4 or later with `ext-ffi`.
 
-Three files, one for each part the guides describe:
+Three files, one for each of the [building blocks](https://github.com/flezha/flezha/blob/main/docs/public/topics/core/building_blocks.md):
 
 | File | Part | What it does |
 |---|---|---|
@@ -22,7 +22,7 @@ Three files, one for each part the guides describe:
 ## Run it
 
 You need a controller running and reachable first
-([`docs/guides/controller_deployment.md`](../../../../docs/guides/controller_deployment.md)).
+([Up and running](https://github.com/flezha/flezha/blob/main/docs/public/getting_started/up_and_running.md)).
 From this folder:
 
 ```sh
@@ -74,9 +74,9 @@ entry then.
 
 ## Where to go next
 
-[`docs/guides/runner_deployment.md`](../../../../docs/guides/runner_deployment.md)
+[Building blocks](https://github.com/flezha/flezha/blob/main/docs/public/topics/core/building_blocks.md)
 walks through what each of the three parts is and why the split is the way it
-is. [`docs/internal/sdk/php_sdk.md`](../../../../docs/internal/sdk/php_sdk.md) covers the rest of the
+is. The [PHP SDK guide](https://github.com/flezha/flezha/blob/main/docs/internal/sdk/php_sdk.md) covers the rest of the
 SDK, including the threaded executor.
 ````
 

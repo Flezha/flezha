@@ -83,13 +83,9 @@ covers building and testing it. The controller release does not carry Kafka: a c
 produces to Kafka once the package is installed.
 
 Build the archive from the package (its README: `mix flezha.plugin.package`), then install
-it and restart the controller, or name it in `FLEZHA_PLUGINS`:
-
-```sh
-$ flz plugin install flezha_kafka-0.1.0.fpz
-$ flz controller stop && flz controller start
-$ flz plugin list --installed
-```
+`flezha_kafka-0.1.0.fpz` on the controller as
+[`installing_plugins.md`](../topics/plugins/installing_plugins.md#install-uninstall-and-sync)
+describes.
 
 The package bundles the `kafka_ex` client and starts none of that library's own workers; the
 checksum library the Kafka record format needs, `crc32cer`, is native code, which a package

@@ -5,30 +5,12 @@ For SDK implementers and contributors. How to use it is on
 
 ## Durability: timers are folded state
 
-A registration, a cancellation and a firing are each a record in the Cell's
-own change log, so the pending set is rebuilt by the ordinary restore fold —
-no side-file, no journal entry type, no crash marker. A crash before firing
-leaves the timer pending; a crash after firing does not re-fire; a replay
-reproduces the pending set; retention and compaction already cover it — a
-compaction re-states the full set at a seq above the snapshot's, so the
-truncation the snapshot authorizes cannot take the timers with it.
-
-The ops ride the wire two ways, both stored verbatim by the controller:
-outside the effectively-once tier as a `format_id = 3` record under the
-ordinary `cell_state_change` payload-id (body: postcard `Vec<TimerOp>`);
-inside the tier as `EffectRecordBody.timers`.
-
-Under `exactly: effectively_once` one firing writes ONE effect record carrying the
-Changes `on_timer` applied, the values it emitted and the fired timer's
-removal, so a crash between "fired" and "durable" replays the whole thing.
-That record's `consumed_offset` is absent — a firing consumes no input
-offset, so the input-log watermark does not advance on it. Without the tier,
-firing is at-least-once, exactly as input processing is; `on_timer` carries
-the same idempotence advice as `run`.
-
-A registration made during a replay **is** registered — the opposite of
-`ctx.spawn_steps`, which answers `SkippedOnReplay`. A timer is internal
-state; skipping it would rebuild a pending set the live run never had.
+Timers are records in the cell's own change log, rebuilt by the ordinary restore fold;
+[Durability](../../public/topics/core/timers.md#durability) on the Timers page says what a
+crash, a replay and the effectively-once tier do to them. On the wire the ops ride two ways,
+both stored verbatim by the controller: outside the effectively-once tier as a
+`format_id = 3` record under the ordinary `cell_state_change` payload-id (body: postcard
+`Vec<TimerOp>`); inside the tier as `EffectRecordBody.timers`.
 
 ## Where the code lives
 

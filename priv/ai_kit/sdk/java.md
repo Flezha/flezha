@@ -11,7 +11,7 @@ The Java hello world, as a standalone project. Nothing here depends on the
 Flezha source tree: the `pom.xml` names one released coordinate, the way your
 own project would. Open this folder in an IDE and it resolves.
 
-Three files, one for each part the guides describe:
+Three files, one for each of the [building blocks](https://github.com/flezha/flezha/blob/main/docs/public/topics/core/building_blocks.md):
 
 | File | Part | What it does |
 |---|---|---|
@@ -22,7 +22,7 @@ Three files, one for each part the guides describe:
 ## Run it
 
 You need a controller running and reachable first
-([`docs/guides/controller_deployment.md`](../../../../docs/guides/controller_deployment.md)).
+([Up and running](https://github.com/flezha/flezha/blob/main/docs/public/getting_started/up_and_running.md)).
 
 ```sh
 mvn -q package && java -jar target/echo.jar
@@ -60,7 +60,7 @@ above is all you need.
 
 ## Where to go next
 
-[`docs/guides/runner_deployment.md`](../../../../docs/guides/runner_deployment.md)
+[Building blocks](https://github.com/flezha/flezha/blob/main/docs/public/topics/core/building_blocks.md)
 walks through what each of the three parts is and why the split is the way it
 is. The other worked examples, covering state, keys, timers, steps relays and the
 rest, stay inside the SDK's own build at

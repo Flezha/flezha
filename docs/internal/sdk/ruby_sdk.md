@@ -14,31 +14,16 @@ defect specific to it is likely to be found by its users first.
 - **Gem**: `flezha`.
 - **Source**: `sdk/ruby/`; the native veneer is `flz_core_ffi/src/ruby_glue.rs`,
   behind that crate's `ruby` feature.
+- **Installing**: the supported Ruby versions and how the native library
+  reaches the host are in the gem's [`README.md`](../../../sdk/ruby/README.md);
+  [local mode](../../public/topics/core/running_and_testing.md#local-mode) and the
+  [test harness](../../public/topics/core/running_and_testing.md#check-a-tasklet-on-its-own) are on the Running relays page.
+  From a checkout, `scripts/build-ruby-sdk.sh` builds the veneer and installs it
+  where the gem loads it from.
 - **Scope**: `test/apps/ruby_runner/conformance.json` is the scope matrix — the
   capabilities this SDK carries and the ones it defers, checked against the
   Rust reference by `test/sdk_conformance/gate_test.exs`. This page does not
   restate it, because a restatement drifts.
-
-## Supported Ruby versions
-
-Ruby **3.3 or newer**. Two things fix the floor: `Process.warmup` is 3.3+ and
-the startup order below calls it unconditionally, and Ruby 3.2 is past end of
-life. YJIT is enabled where the running Ruby has it, and reported either way.
-
-## Installing
-
-```bash
-gem install flezha
-```
-
-A precompiled platform gem carries the native library, so installation needs no
-Rust toolchain, no cargo invocation and no network fetch of Rust dependencies.
-A platform with no prebuilt gem falls back to the source gem, which does need a
-stable Rust toolchain and fetches the core at the git tag
-`ext/flz_core_ffi/Cargo.toml` names.
-
-From a checkout, `scripts/build-ruby-sdk.sh` builds the veneer and installs it
-where the gem loads it from.
 
 ## Authoring
 
@@ -383,38 +368,6 @@ before it does work of its own, control calls for one, calls the two apart.
 
 The SDK spawns no processes. Process count is the orchestrator's decision, and
 each process is one runner — which is what HRW placement spreads across.
-
-## Local mode: run a graph with no controller
-
-`Flezha::LocalRelay.start` takes the relay class you deploy and runs
-its declared graph in this process — no controller, no socket, no local-mode
-member on the class:
-
-```ruby
-run = Flezha::LocalRelay.start(WordCount)
-begin
-  run.on_output("totals") { |output| puts output.payload }
-  run.feed("lines", "the quick brown fox")
-  run.run_until_idle(10_000)
-ensure
-  run.close
-end
-```
-
-`on_output` registers against the output's **channel** name, which is the producing
-tasklet's name unless the declaration named it. The run brings the same
-thread executor a booted runner brings, so the tasklets run on its workers
-while the caller waits in `run_until_idle`; `close` stops those workers on the
-executor's own flag rather than by shutting the core, so a process may start
-another local run afterwards. Worked example:
-[`sdk/ruby/examples/local_word_count.rb`](../../../sdk/ruby/examples/local_word_count.rb).
-
-**State is held in memory and nothing is durable** — no write-ahead log, no
-snapshots, no dead-letter queue. Durability, effectively-once delivery, plugins,
-placement and migration, the dead-letter queue, observability export, authz and
-multi-runner scale need a controller; a declaration asking for one of those is
-refused at startup, naming it. Walk-through:
-[`running_and_testing.md`](../../public/topics/core/running_and_testing.md#local-mode).
 
 ## Parallelism, as arithmetic
 

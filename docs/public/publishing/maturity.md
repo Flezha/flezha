@@ -86,8 +86,8 @@ their pages under `docs/internal/sdk/` and nowhere else.
 | <a id="sdk-elixir"></a>elixir | 1 | Run by the maintainer in a live deployment. Passes the full conformance run in CI and is permanently supported. | `sdk/elixir/README.md`, `docs/internal/sdk/elixir_sdk.md` |
 | <a id="sdk-node"></a>node | 2 | Passes the full conformance run in CI exactly as tier 1 does, with every capability present, and is permanently supported. Not yet run by the maintainer in a live deployment. | `sdk/node/README.md`, `docs/internal/sdk/node_sdk.md` |
 | <a id="sdk-python"></a>python | 2 | Passes the full conformance run in CI exactly as tier 1 does, with every capability present, and is permanently supported. Not yet run by the maintainer in a live deployment. | `sdk/python/README.md`, `docs/internal/sdk/python_sdk.md` |
-| <a id="sdk-ruby"></a>ruby | 2 | Passes the full conformance run in CI exactly as tier 1 does, with every capability present, and is permanently supported. Not yet run by the maintainer in a live deployment. | `docs/internal/sdk/ruby_sdk.md` |
-| <a id="sdk-php"></a>php | 2 | Passes the full conformance run in CI exactly as tier 1 does, with every capability present but `local_send`, which its single-threaded serving defers, and is permanently supported. Not yet run by the maintainer in a live deployment. | `docs/internal/sdk/php_sdk.md` |
+| <a id="sdk-ruby"></a>ruby | 2 | Passes the full conformance run in CI exactly as tier 1 does, with every capability present, and is permanently supported. Not yet run by the maintainer in a live deployment. | `sdk/ruby/README.md`, `docs/internal/sdk/ruby_sdk.md` |
+| <a id="sdk-php"></a>php | 2 | Passes the full conformance run in CI exactly as tier 1 does, with every capability present but `local_send`, which its single-threaded serving defers, and is permanently supported. Not yet run by the maintainer in a live deployment. | `sdk/php/README.md`, `docs/internal/sdk/php_sdk.md` |
 
 ## Changing this record
 

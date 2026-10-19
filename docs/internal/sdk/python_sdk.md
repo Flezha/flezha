@@ -14,49 +14,18 @@ defect specific to it is likely to be found by its users first.
 - **Package**: `flezha` (PyPI).
 - **Source**: `sdk/python/`; the native veneer is
   `flz_core_ffi/src/python_glue.rs`, behind that crate's `python` feature.
+- **Installing**: the supported Python versions, the wheel tiers and how the
+  native module reaches the host are in the package's
+  [`README.md`](../../../sdk/python/README.md);
+  [local mode](../../public/topics/core/running_and_testing.md#local-mode) and the
+  [test harness](../../public/topics/core/running_and_testing.md#check-a-tasklet-on-its-own) are on the Running relays page.
+  From a checkout, `scripts/build-python-sdk.sh` builds the veneer, installs it
+  where the package loads it from, and creates the virtual environment the e2e
+  app runs in.
 - **Scope**: `test/apps/python_runner/conformance.json` is the scope matrix —
   the capabilities this SDK carries and the ones it defers, checked against the
   Rust reference by `test/sdk_conformance/gate_test.exs`. This page does not
   restate it, because a restatement drifts.
-
-## Supported Python versions
-
-Python **3.11 or newer**, CPython only. The native module needs the CPython C
-API, so PyPy and GraalPy are out of scope — a constraint, not a gap waiting to
-be closed.
-
-Two wheel tiers ship from one source with one API and one set of semantics:
-
-| Tier | Wheels | What it is for |
-| --- | --- | --- |
-| Compatibility | one `abi3` wheel per platform, targeting 3.11 | every supported interpreter at or above the floor |
-| Performance | per-version free-threaded wheels, from `cp314t` | handler bodies that execute in parallel |
-
-`abi3` has no free-threaded form before CPython 3.15's `abi3t`, which is why the
-performance tier is per-version rather than one wheel. It starts at **3.14t**
-and not 3.13t: PyO3 refuses the free-threaded build of CPython below 3.14, so
-`cp313t` is not a target this SDK has. The runner reports which
-tier it is running in its startup line, so a benchmark or a bug report is never
-ambiguous about it.
-
-## Installing
-
-```bash
-pip install flezha
-```
-
-Prebuilt wheels carry the native library, so installation needs no Rust
-toolchain, no cargo invocation and no network fetch of Rust dependencies. A
-platform with no prebuilt wheel falls back to the source distribution, which
-does need a stable Rust toolchain and fetches the core at the git tag
-`native/Cargo.toml` names.
-
-From a checkout, `scripts/build-python-sdk.sh` builds the veneer, installs it
-where the package loads it from, and creates the checkout-local virtual
-environment the e2e app runs in.
-
-Optional extras: `flezha[pydantic]`, `flezha[attrs]`, `flezha[uvloop]`. The SDK
-imports none of them unconditionally.
 
 ## Authoring
 
@@ -534,63 +503,6 @@ the one opt-in that turns diagnostics on at a documented default
 No OpenTelemetry: no SDK ships spans, and adding them to one binding is the
 exact asymmetry the lockstep rule exists to prevent. When they land, they land
 everywhere in one change.
-
-## Local mode: run a graph with no controller
-
-`LocalRelay.start` takes the relay you deploy and runs its declared
-graph in this process — no controller, no socket, no local-mode member on the
-class:
-
-```python
-from flezha import LocalRelay
-
-with LocalRelay.start(word_count) as run:
-    run.on_output("totals", lambda out: print(out.payload.decode()))
-    run.feed("lines", "the quick brown fox")
-    run.run_until_idle(10_000)
-```
-
-`on_output` registers against the output's **channel** name, which is the producing
-tasklet's name unless the declaration named it. The run brings the same
-executor a started runner brings, so the tasklets run on its worker threads
-while the caller waits in `run_until_idle`. Worked example:
-[`sdk/python/examples/local_word_count.py`](../../../sdk/python/examples/local_word_count.py).
-
-**State is held in memory and nothing is durable** — no write-ahead log, no
-snapshots, no dead-letter queue. Durability, effectively-once delivery, plugins,
-placement and migration, the dead-letter queue, observability export, authz and
-multi-runner scale need a controller; a declaration asking for one of those is
-refused at startup, naming it. Walk-through:
-[`running_and_testing.md`](../../public/topics/core/running_and_testing.md#local-mode).
-
-## Testing your handlers
-
-A tasklet class is driven through `flezha.testing.TaskletTestHarness`, from
-[`sdk/python/examples/durable_agent/test_agent.py`](../../../sdk/python/examples/durable_agent/test_agent.py):
-
-```python
-def harness() -> TaskletTestHarness[Conversation]:
-    return TaskletTestHarness(agent, cell_key="user-1")
-
-
-def test_the_transcript_survives_a_restart() -> None:
-    """What the fold produces from the log IS what a restart produces."""
-    h = harness()
-    h.apply_inputs(["first", "second", "book table-9"])
-    assert h.replay_equals()
-    assert h.state.booked == ["table-9"]
-```
-
-The harness drives the same `invoke` every activation kind goes through, and
-`replay_equals()` folds through the same `fold_restore` a real restore calls —
-so what it proves is what the runner does, rather than something that agrees
-with it. A cell's state starts as the runtime starts it, from `init_state` or
-the state class, and `initial_state=` gives a test its own starting state.
-Each call answers an `Outcome` with the values passed to `ctx.emit` and the
-changes recorded, and a hook that returns a value raises the runner's
-`NonRetryableError`. It also drives `async def` handlers, so a test needs no
-event loop. A function short form's body needs no harness:
-`upcase.tasklet("a")` calls it.
 
 ## Deferred, by name
 

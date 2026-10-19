@@ -219,7 +219,8 @@ reach, because an FFI host's outputs are materialized as bytes before the core
 sees them. That host is also the one with a supervised worker pool behind it.
 
 A gated producer holds no handout, so `inflight` is blind to it; it is reported
-instead as `pending_pushes` and `pending_push_oldest_ms` on the data heartbeat.
+instead as `pending_pushes` and `pending_push_oldest_ms` on the data heartbeat
+([Heartbeat frames](protocol_spec.md#heartbeat-frames)).
 
 ### The host answers every activation exactly once
 
@@ -262,7 +263,8 @@ threshold that separates the two cases, so the core does not pretend there is
 one.
 
 What it does instead is **report**: `outstanding_count()` and
-`outstanding_oldest_age_ms()` ride the data-channel heartbeat as `inflight` and
+`outstanding_oldest_age_ms()` ride the data-channel heartbeat
+([Heartbeat frames](protocol_spec.md#heartbeat-frames)) as `inflight` and
 `inflight_oldest_ms`, the controller's classifier mints
 `cell_dispatch_stalled` from them, and the remedy is a relay rebind that
 resumes from durable state — the path that is already safe. Detection is the

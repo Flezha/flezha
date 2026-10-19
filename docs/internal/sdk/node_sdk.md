@@ -14,51 +14,14 @@ defect specific to it is likely to be found by its users first.
 - **Package**: `@flezha/sdk`, TypeScript-first and usable from plain JavaScript
   with no build step.
 - **Source**: `sdk/node/`.
+- **Installing**: the supported Node versions and how the native binary reaches
+  the host are in the package's [`README.md`](../../../sdk/node/README.md);
+  [local mode](../../public/topics/core/running_and_testing.md#local-mode) and the
+  [test harness](../../public/topics/core/running_and_testing.md#check-a-tasklet-on-its-own) are on the Running relays page.
 - **Scope**: `test/apps/node_runner/conformance.json` is the scope matrix — the
   capabilities this SDK carries and the ones it defers, checked against the
   Rust reference by `test/sdk_conformance/gate_test.exs`. This page does not
   restate it, because a restatement drifts.
-
-## Supported Node versions
-
-Node **20 or newer**. The binding targets N-API version 9, which every release
-in that window speaks. N-API is ABI-stable across Node versions, so one binary
-per platform serves every supported release — upgrading Node needs no rebuild.
-
-Both module systems are supported: `import` from an ECMAScript module and
-`require` from CommonJS resolve to the same surface.
-
-## Installing
-
-```bash
-npm install @flezha/sdk
-```
-
-The native binary ships as a per-platform package resolved through
-`optionalDependencies` — `@flezha/sdk-linux-x64-gnu`, `-linux-arm64-gnu`,
-`-darwin-x64`, `-darwin-arm64`, `-win32-x64-msvc`. One is installed, not five,
-and no Rust toolchain is needed. The five are published from one table,
-`sdk/node/src/platforms.ts`, which is also the table the loader resolves
-against, and the release refuses to pack the parent unless all five were built.
-
-The published package carries no binary of its own, so a platform with no
-prebuilt package is a source build. It needs a stable Rust toolchain and the
-package itself, not a checkout of this repository: `native/` is a wrapper crate
-whose one dependency is the core at a git tag.
-
-```bash
-cargo build --manifest-path native/Cargo.toml --release
-node scripts/install-native.mjs
-```
-
-`FLEZHA_NATIVE_BINARY` points the loader at an already-built addon from
-anywhere, which is what this repository's own suites use and what an installed
-package on an unsupported platform needs.
-
-npm treats an optional dependency it cannot resolve as a non-event: the install
-succeeds and says nothing. An installation that resolved no platform package
-therefore looks healthy until the core is first loaded, where the SDK refuses
-naming the host it detected, the package it looked for and the build above.
 
 ## Writing a relay
 
@@ -446,55 +409,6 @@ codec.
 
 Durable records are stamped `sdk_lang = 4`. A record another SDK wrote is
 refused by name rather than decoded, and the reverse holds too.
-
-## Local mode: run a graph with no controller
-
-`LocalRelay.start` takes the relay definition you deploy and runs its
-declared graph in this process — no controller, no socket, no local-mode member
-on the definition:
-
-```ts
-import { LocalRelay } from '@flezha/sdk';
-
-const run = LocalRelay.start(WordCount);
-try {
-  run.onOutput('totals', (out) => console.log(out.payload.toString('utf8')));
-  await run.feed('lines', 'the quick brown fox');
-  await run.runUntilIdle(10_000);
-} finally {
-  await run.close();
-}
-```
-
-`onOutput` registers against the output's **channel** name, which is the producing
-tasklet's name unless the declaration `named` it. `feed`, `runUntilIdle` and
-the output drain are promises because each parks in the core, and the fetchers
-that run the tasklets need this event loop free. Worked example:
-[`examples/node/local_word_count.mjs`](../../../examples/node/local_word_count.mjs).
-
-**State is held in memory and nothing is durable** — no write-ahead log, no
-snapshots, no dead-letter queue. Durability, effectively-once delivery, plugins,
-placement and migration, the dead-letter queue, observability export, authz and
-multi-runner scale need a controller; a declaration asking for one of those is
-refused at startup, naming it. Walk-through:
-[`running_and_testing.md`](../../public/topics/core/running_and_testing.md#local-mode).
-
-## Testing a tasklet
-
-```ts
-import { TaskletTestHarness } from '@flezha/sdk/testing';
-
-const harness = TaskletTestHarness.of(Ohlc, { cellKey: 'AAPL' });
-const applied = await harness.input({ symbol: 'AAPL', price: 10, at: 0 });
-assert.deepEqual(applied.emits, [{ symbol: 'AAPL', close: 10 }]);
-harness.replayEquals();
-```
-
-`replayEquals()` folds the recorded change log against a freshly constructed
-initial state and requires the result to equal the live one — the engine
-rebuilds a cell exactly that way on a warm restart, so a difference is what
-a restart would lose. A handler is also an ordinary function: a plain unit test
-can call it with no runner started and no controller running.
 
 ## Configuration
 
