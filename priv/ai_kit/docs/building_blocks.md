@@ -795,6 +795,6 @@ runs, the controller's own BEAM included.
 - [`streams.md`](streams.md) and [`workflows.md`](workflows.md): the two ways a relay runs.
 - [`connecting_a_runner.md`](../deploying/connecting_a_runner.md): reaching the controller, running a runner as a service.
 - [`running_and_testing.md`](running_and_testing.md): starting relays from a factory.
-- [`../../../internal/glossary.md`](https://github.com/flezha/flezha/blob/main/docs/internal/glossary.md): every term in one place.
-- [`../../../internal/sdk/authoring_contract.md`](https://github.com/flezha/flezha/blob/main/docs/internal/sdk/authoring_contract.md): what every SDK guarantees.
+- [The glossary](https://github.com/flezha/flezha/blob/main/docs/internal/glossary.md): every term in one place.
+- [The SDK authoring contract](https://github.com/flezha/flezha/blob/main/docs/internal/sdk/authoring_contract.md): what every SDK guarantees.
 - Up and running: [Write the echo runner](../../getting_started/up_and_running.md#write-the-echo-runner) builds the echo.

@@ -175,7 +175,7 @@ A call that exits (timeout, dead target) or a delivery process that dies
 without reporting is retryable too (`{:unreachable, _}`,
 `{:delivery_crashed, _}`). The verdicts and the ingest entry points they belong
 to are specified in
-[`rust_relay_architecture.md`](https://github.com/flezha/flezha/blob/main/docs/internal/sdk/rust_relay_architecture.md)
+[the Rust relay architecture](https://github.com/flezha/flezha/blob/main/docs/internal/sdk/rust_relay_architecture.md)
 "Ingest entry points".
 
 "Filtered" and "duplicate" are successes because the receiver has decided the

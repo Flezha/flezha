@@ -418,7 +418,7 @@ move ([the epoch rule](kernel.md#the-epoch-rule)). User view:
 | `IterCommitResponse` | 31 | controller to runner, after the journal fsync |
 | `IterPark` | 32 | runner to controller, when an instance goes to sleep, flow or steps (no answer) |
 
-Field-level detail: [`protocol_spec.md`](https://github.com/flezha/flezha/blob/main/docs/internal/sdk/protocol_spec.md).
+Field-level detail: [the SDK protocol specification](https://github.com/flezha/flezha/blob/main/docs/internal/sdk/protocol_spec.md).
 
 ## Commands
 
@@ -440,7 +440,7 @@ reaching a deadline all advance it. The core owns the journal exchange, the stag
 ranges, the undo plan, the loop, sleeping and rewind. The SDK supplies the tasklet bodies and the
 threads that run them: Rust runs an item on a pool worker, Java on a virtual thread. Neither owns
 the chain's position, so every SDK shares one resume and undo behaviour.
-Details of the split: [`poll_core.md`](https://github.com/flezha/flezha/blob/main/docs/internal/sdk/poll_core.md)
+Details of the split: [the poll core page](https://github.com/flezha/flezha/blob/main/docs/internal/sdk/poll_core.md)
 and [`runner.md`](runner.md).
 
 ## Limits and gotchas
@@ -462,4 +462,4 @@ and [`runner.md`](runner.md).
 - [`../topics/core/workflows.md`](../topics/core/workflows.md): steps, undo and crash recovery from the user's side.
 - [`relay_settings.md`](../configuration/relay_settings.md): `each`, `on_failure`, `durable` and `sleep_after`.
 - [`../topics/core/sessions.md`](../topics/core/sessions.md), [`sessions.md`](../topics/core/sessions.md#rewinding-a-turn), [`../topics/core/partitioning.md`](../topics/core/partitioning.md).
-- [`steps_relay.md`](https://github.com/flezha/flezha/blob/main/docs/internal/resilience/steps_relay.md): the mechanism in more depth.
+- [The steps relay internals](https://github.com/flezha/flezha/blob/main/docs/internal/resilience/steps_relay.md): the mechanism in more depth.

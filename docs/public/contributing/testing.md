@@ -29,7 +29,7 @@ carry. A capability the manifest leaves out is skipped by name, and everything
 else must pass. When the test app is not built yet, the run stops and names the
 command that builds it.
 
-[`docs/internal/sdk/conformance.md`](https://github.com/flezha/flezha/blob/main/docs/internal/sdk/conformance.md)
+[The cross-SDK conformance suite](https://github.com/flezha/flezha/blob/main/docs/internal/sdk/conformance.md)
 has the whole contract: every tier and what runs it, what the Ruby and PHP
 runs need on your machine, and what a new SDK owes.
 
@@ -102,7 +102,7 @@ $ scripts/bench.sh            # Rust over UDS, the defaults
 $ scripts/bench.sh --help
 ```
 
-[`docs/internal/operations/benchmarking.md`](https://github.com/flezha/flezha/blob/main/docs/internal/operations/benchmarking.md)
+[The benchmarking guide](https://github.com/flezha/flezha/blob/main/docs/internal/operations/benchmarking.md)
 covers every flag, the recorded floors, the CI gates and what to do when one
 fails.
 

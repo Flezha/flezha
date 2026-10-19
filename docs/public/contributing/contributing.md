@@ -13,7 +13,7 @@ rules a contribution follows. The pages after it cover the practical side:
 ## Before you start
 
 - **Report a security issue privately.** Never in a public issue:
-  [`SECURITY.md`](https://github.com/flezha/flezha/blob/main/SECURITY.md) says
+  [the security policy](https://github.com/flezha/flezha/blob/main/SECURITY.md) says
   where to send it.
 - **Open an issue before a large change.** A new feature, a change to the wire
   protocol or to what every SDK carries, or a rework of a part of the
@@ -40,7 +40,7 @@ rules a contribution follows. The pages after it cover the practical side:
 - **One change, every SDK.** Anything every SDK carries (declarations, the wire
   protocol, defaults, the shared test fixtures) changes in every SDK in the same
   change, or the change says what it leaves for later.
-  [`docs/public/architecture/runner.md`](https://github.com/flezha/flezha/blob/main/docs/public/architecture/runner.md#one-change-every-sdk)
+  [the runner architecture](https://github.com/flezha/flezha/blob/main/docs/public/architecture/runner.md#one-change-every-sdk)
   has the rule in full.
 - **No build output in git.** Native libraries, jars and release archives are
   built, never committed, and a gate fails a pull request that adds one.

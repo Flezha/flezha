@@ -84,7 +84,7 @@ the interval closes on whichever comes first of `every` inputs or
 `max_delay_ms`, so an output waits up to `max_delay_ms` longer, and the
 relay writes one log record per interval instead of one per input. Leave it
 out for the lowest latency
-([`operations/benchmarking.md`](https://github.com/flezha/flezha/blob/main/docs/internal/operations/benchmarking.md)
+([the benchmarking guide](https://github.com/flezha/flezha/blob/main/docs/internal/operations/benchmarking.md)
 shows how the numbers trade).
 
 ## Flow or steps

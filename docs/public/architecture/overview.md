@@ -356,7 +356,7 @@ only when it is false: such a class cannot be partitioned, and the controller
 uses that to refuse a partitioned start. Every SDK builds this
 map in the core, so a Java class and a Rust class with the same settings send
 the same map. Wire detail:
-[`protocol_spec.md`](https://github.com/flezha/flezha/blob/main/docs/internal/sdk/protocol_spec.md).
+[the SDK protocol specification](https://github.com/flezha/flezha/blob/main/docs/internal/sdk/protocol_spec.md).
 
 ## What is on disk
 

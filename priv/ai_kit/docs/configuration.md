@@ -117,5 +117,5 @@ hold one.
 - [`relay_settings.md`](configuration/relay_settings.md): choosing a relay's settings
 - [`topics/core/durability.md`](topics/core/durability.md): what the durability knobs mean for correctness
 - [`topics/core/authorization.md`](topics/core/authorization.md): the posture behind the authz keys
-- [`architecture/kernel.md`](https://github.com/flezha/flezha/blob/main/docs/public/architecture/kernel.md): where the WAL, outbox and fsync knobs sit in the data path
-- [`operations/benchmarking.md`](https://github.com/flezha/flezha/blob/main/docs/internal/operations/benchmarking.md): measuring the effect of a change to any of these
+- [The kernel architecture](https://github.com/flezha/flezha/blob/main/docs/public/architecture/kernel.md): where the WAL, outbox and fsync knobs sit in the data path
+- [The benchmarking guide](https://github.com/flezha/flezha/blob/main/docs/internal/operations/benchmarking.md): measuring the effect of a change to any of these

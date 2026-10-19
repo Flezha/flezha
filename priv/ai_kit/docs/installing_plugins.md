@@ -167,10 +167,10 @@ controller that has the package.
   `docker restart <c>`; or set `FLEZHA_PLUGINS`, which the entrypoint syncs before it
   starts the controller, exiting non-zero without starting it when the sync fails; or build
   a derived image that copies the archives into its plugin root, with no volume over it.
-  [`docker/prod/README.md`](https://github.com/flezha/flezha/blob/main/docker/prod/README.md) has the commands.
+  [The production Docker README](https://github.com/flezha/flezha/blob/main/docker/prod/README.md) has the commands.
 - **Kubernetes:** the reference ConfigMap puts `FLEZHA_PLUGIN_ROOT` on the recovery volume
   and declares `FLEZHA_PLUGINS`; a change is a `kubectl rollout restart`.
-  [`kubernetes/README.md`](https://github.com/flezha/flezha/blob/main/kubernetes/README.md) has the steps, and
+  [The Kubernetes README](https://github.com/flezha/flezha/blob/main/kubernetes/README.md) has the steps, and
   [`kubernetes.md`](../deploying/kubernetes.md) the deployment.
 
 ### Signed packages

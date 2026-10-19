@@ -1076,5 +1076,5 @@ its worker pool. `max_duration_ms` costs no thread either.
 - [`sessions.md`](sessions.md): a workflow that runs once per message, and rewinding a turn.
 - [`timers.md`](timers.md), [`authorization.md`](authorization.md): the `spawner` role.
 - [Relay settings](../../configuration/relay_settings.md#channel-and-edge-options): edge options, retry included.
-- [`../../../internal/resilience/steps_relay.md`](https://github.com/flezha/flezha/blob/main/docs/internal/resilience/steps_relay.md): how the controller and the runner carry it out.
+- [The steps relay internals](https://github.com/flezha/flezha/blob/main/docs/internal/resilience/steps_relay.md): how the controller and the runner carry it out.
 - Tutorial: [`place_orders.md`](tutorials/place_orders.html) builds `order_executor`.

@@ -258,7 +258,7 @@ explicitly:
 The pull is retried until a snapshot lands. A zero-byte WAL counts as no state
 (`Flezha.State.Restore.has_persisted_state?/1`), so the controller never pushes an empty
 restore that would reset a live cell. Deeper detail, with every setting:
-[`state_persistence.md`](https://github.com/flezha/flezha/blob/main/docs/internal/state_persistence.md).
+[the state persistence guide](https://github.com/flezha/flezha/blob/main/docs/internal/state_persistence.md).
 
 ## The input log and its watermark
 
@@ -378,7 +378,7 @@ runner refuses the relay at registration
 
 The guarantee does not depend on the language. Every runner builds the effect record in the
 shared runner core, `flz_core`. What a language supplies is its own change bytes and the context calls
-determinism needs (see [`poll_core.md`](https://github.com/flezha/flezha/blob/main/docs/internal/sdk/poll_core.md)).
+determinism needs (see [the poll core page](https://github.com/flezha/flezha/blob/main/docs/internal/sdk/poll_core.md)).
 
 ## Determinism
 
@@ -759,4 +759,4 @@ and has no setting of its own.
 - [`../topics/core/durability.md`](../topics/core/durability.md): what is kept and what a crash can cost, from the user's side.
 - [`../topics/core/effectively_once.md`](../topics/core/effectively_once.md): turning the tier on.
 - [`../configuration/application_env.md`](../configuration/application_env.md): the settings named on this page.
-- [`state_persistence.md`](https://github.com/flezha/flezha/blob/main/docs/internal/state_persistence.md): file formats and journal layouts.
+- [The state persistence guide](https://github.com/flezha/flezha/blob/main/docs/internal/state_persistence.md): file formats and journal layouts.

@@ -14,7 +14,7 @@ owns the mechanism; for concepts, [`architecture/`](https://github.com/flezha/fl
 - **Runner** — the SDK process (Rust, Java, Node, Ruby, PHP, Python or Elixir) where user code runs. It dials the
   controller, never the reverse, and is disposable because every state change is mirrored to the
   controller. A process holds one **runner slot**, claimed at `start()` by compare-and-set.
-  See [`architecture/runner.md`](https://github.com/flezha/flezha/blob/main/docs/public/architecture/runner.md).
+  See [the runner architecture](https://github.com/flezha/flezha/blob/main/docs/public/architecture/runner.md).
 - **Stable identity vs session token** — the SDK persists a **stable identity**
   (`FLEZHA_RUNNER_ID_PATH`, default `/var/lib/flezha-runner/id`) that survives restarts; the
   controller mints a **session token** per connection (`AssignRunnerId`) and routes on it, while a
@@ -61,7 +61,7 @@ owns the mechanism; for concepts, [`architecture/`](https://github.com/flezha/fl
   `flz relay rewind` takes passes back. `each` is the loop shape: `once` (the default),
   `per_input` or `chained`. It ends on chain completion, a tasklet's `ctx.complete(result)`, a
   loop that runs out of work, `max_duration_ms` or `flz relay stop`; a `per_input` loop may
-  never end. See [`architecture/steps_profile.md`](https://github.com/flezha/flezha/blob/main/docs/public/architecture/steps_profile.md).
+  never end. See [the steps profile](https://github.com/flezha/flezha/blob/main/docs/public/architecture/steps_profile.md).
 - **Bounded / unbounded (input)**: plain words for a finite and an endless input, as Flink
   uses them: a file against a live feed. Not a property of a relay.
 - **Tasklet** — a typed stage inside a relay, declaring `Input`, `Output`, `State`,
@@ -87,7 +87,7 @@ owns the mechanism; for concepts, [`architecture/`](https://github.com/flezha/fl
   `ctx.part(value)` (`part(ctx, value)` in Elixir) and delivered at once to the relay's
   listeners, and to nothing else. It carries its channel, a number from `0` within its attempt
   and the attempt; it is never durable, may be dropped, and never reaches an output plugin or a waiting
-  caller. The output is the answer. See [`sdk/protocol_spec.md`](https://github.com/flezha/flezha/blob/main/docs/internal/sdk/protocol_spec.md#data-stream-payload-id-output_part).
+  caller. The output is the answer. See [the SDK protocol specification](https://github.com/flezha/flezha/blob/main/docs/internal/sdk/protocol_spec.md#data-stream-payload-id-output_part).
 - **Listener**: a reader of a relay's frames, `flz relay listen` or a plugin through
   `Flezha.Service.Listener.listen/4`: its outputs, its parts and its dead-letter notices (or,
   with `--input`, its inputs). Bounded by `listener_pending_bytes` and
@@ -178,7 +178,7 @@ owns the mechanism; for concepts, [`architecture/`](https://github.com/flezha/fl
 ## Durability vocabulary
 
 - **WAL** — the per-cell append-only change log of framed, CRC-protected records, owned by one
-  `Flezha.State.WalWriter`; the input log and the task journal share the record format. See [`architecture/kernel.md`](https://github.com/flezha/flezha/blob/main/docs/public/architecture/kernel.md).
+  `Flezha.State.WalWriter`; the input log and the task journal share the record format. See [the kernel architecture](https://github.com/flezha/flezha/blob/main/docs/public/architecture/kernel.md).
 - **Snapshot / compaction** — on WAL size or age the controller asks the runner for a full state
   snapshot (`CompactCell`) and truncates the log beneath it; a restore (`RestoreInitState`)
   ships the latest snapshot plus the whole WAL tail.
@@ -243,7 +243,7 @@ owns the mechanism; for concepts, [`architecture/`](https://github.com/flezha/fl
 - **Live read vs time-travel read** — `flz state get <relay/tasklet[/cell_key]>` asks the
   runner holding the cell for its in-memory value (possibly ahead of what is durable, stamped
   with its `change_seq`) and refuses when nothing holds it; `flz state at <relay/tasklet/
-  cell_key> <seq|timestamp>` answers from the controller's WAL. See [`internals/state_persistence.md`](https://github.com/flezha/flezha/blob/main/docs/internal/state_persistence.md).
+  cell_key> <seq|timestamp>` answers from the controller's WAL. See [the state persistence guide](https://github.com/flezha/flezha/blob/main/docs/internal/state_persistence.md).
 - **Remote durability tier** — shipping durable artifacts to Postgres or S3 so a controller that
   dies with its disk is recoverable (`Flezha.State.DurabilityTier`); a production boot must choose
   a backend (`FLEZHA_DURABILITY_BACKEND`; `none` is local-only); local files stay authoritative
@@ -308,7 +308,7 @@ owns the mechanism; for concepts, [`architecture/`](https://github.com/flezha/fl
 - **Rewind** — `flz relay rewind <instance> --to-iteration N` appends a `rewound` marker at
   epoch + 1, compensates the tasklets above N in reverse and resumes waiting. It is
   undo-and-continue: inputs are not replayed, and a tasklet that wrote plugin output without a
-  `compensate` hook refuses it. See [`resilience/steps_relay.md`](https://github.com/flezha/flezha/blob/main/docs/internal/resilience/steps_relay.md).
+  `compensate` hook refuses it. See [the steps relay internals](https://github.com/flezha/flezha/blob/main/docs/internal/resilience/steps_relay.md).
 
 ## Runner internals
 
@@ -316,7 +316,7 @@ owns the mechanism; for concepts, [`architecture/`](https://github.com/flezha/fl
   `poll() → Activation` / `complete(ActivationResult)`: transport, per-cell ordering, effect
   records, the retry→park ladder, timers, credit, routing and steps runs. Rust consumes
   it as a crate; Java, Node, Ruby and Python through compiled veneers over the C ABI
-  (`flz_core_ffi`), Elixir through a Rustler library over the same veneer; PHP through that same ABI directly, with `ext-ffi` and no veneer of its own. See [`sdk/poll_core.md`](https://github.com/flezha/flezha/blob/main/docs/internal/sdk/poll_core.md).
+  (`flz_core_ffi`), Elixir through a Rustler library over the same veneer; PHP through that same ABI directly, with `ext-ffi` and no veneer of its own. See [the poll core page](https://github.com/flezha/flezha/blob/main/docs/internal/sdk/poll_core.md).
 - **Host class** — a relay class declared through the C ABI as data
   (`flz_core_declare_class`, JSON, unknown fields refused); its user code runs host-side and is
   reached only through activations. Java, Node, Ruby, PHP and Python classes are host classes; typed
@@ -349,7 +349,7 @@ owns the mechanism; for concepts, [`architecture/`](https://github.com/flezha/fl
 - **Control channel vs data streams** — a runner session holds one **control channel**
   (`Flezha.Runner.ControlChannel`: commands, commits, `control_ping`) and N pairs of **data
   streams** (`Flezha.Runner.StreamChannel`: primary `0x01` carries input to the runner, secondary
-  `0x02` carries state changes, outputs and the data heartbeat back). See [`sdk/protocol_spec.md`](https://github.com/flezha/flezha/blob/main/docs/internal/sdk/protocol_spec.md).
+  `0x02` carries state changes, outputs and the data heartbeat back). See [the SDK protocol specification](https://github.com/flezha/flezha/blob/main/docs/internal/sdk/protocol_spec.md).
 
 - **Served group** — a factory a controller declares to a namespace's hub because its own fleet
   can run it. A relay's group is its factory id, and the hub places the relay among the
@@ -430,7 +430,7 @@ owns the mechanism; for concepts, [`architecture/`](https://github.com/flezha/fl
 
 ## See also
 
-- [`architecture/overview.md`](https://github.com/flezha/flezha/blob/main/docs/public/architecture/overview.md) — roles, the workload model, the eight kernel invariants.
-- [`sdk/rust_relay_architecture.md`](https://github.com/flezha/flezha/blob/main/docs/internal/sdk/rust_relay_architecture.md) — Relay/Tasklet/Cell authoring.
-- [`sdk/protocol_spec.md`](https://github.com/flezha/flezha/blob/main/docs/internal/sdk/protocol_spec.md) — the wire protocol between Runners and the Controller.
+- [The architecture overview](https://github.com/flezha/flezha/blob/main/docs/public/architecture/overview.md) — roles, the workload model, the eight kernel invariants.
+- [The Rust relay architecture](https://github.com/flezha/flezha/blob/main/docs/internal/sdk/rust_relay_architecture.md) — Relay/Tasklet/Cell authoring.
+- [The SDK protocol specification](https://github.com/flezha/flezha/blob/main/docs/internal/sdk/protocol_spec.md) — the wire protocol between Runners and the Controller.
 - [`resilience/overview.md`](../public/architecture/overview.md) — what survives what.

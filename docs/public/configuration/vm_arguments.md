@@ -106,4 +106,4 @@ default.
 | `-env ERL_FULLSWEEP_AFTER` | A memory-drift remedy chosen against a measured series, not a default |
 
 The measurement protocol and the numbers behind every verdict here are in
-[`operations/benchmarking.md`](https://github.com/flezha/flezha/blob/main/docs/internal/operations/benchmarking.md).
+[the benchmarking guide](https://github.com/flezha/flezha/blob/main/docs/internal/operations/benchmarking.md).

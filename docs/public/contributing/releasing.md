@@ -21,7 +21,7 @@ They run the publication readiness gate
 libraries, assemble both jars, and publish them as GitHub Release assets with a
 SHA-256 manifest.
 
-[`docs/internal/publishing/readiness.md`](https://github.com/flezha/flezha/blob/main/docs/internal/publishing/readiness.md)
+[The publication readiness checklist](https://github.com/flezha/flezha/blob/main/docs/internal/publishing/readiness.md)
 lists what has to be settled before a release, and
 [Maturity](../publishing/maturity.md) what each part of Flezha promises.
 
@@ -73,7 +73,7 @@ it, so the release notes say so.
 
 The controller image is built per architecture and published as one
 multi-architecture image:
-[`docker/prod/README.md`](https://github.com/flezha/flezha/blob/main/docker/prod/README.md)
+[the production Docker README](https://github.com/flezha/flezha/blob/main/docker/prod/README.md)
 has the steps, the image size budget and the platforms. The development images
 are built with the `make` targets in
 [Setting up a checkout](setting_up.md#the-images), and published the same way.

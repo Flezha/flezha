@@ -522,5 +522,5 @@ allowed and wires one edge, not two.
 - [`durability.md`](durability.md): what a stream keeps through a crash.
 - [`plugins.md`](../plugins/plugins.md): what feeds an entry channel and what an output delivers to.
 - [`partitioning.md`](partitioning.md), [`timers.md`](timers.md), [`effectively_once.md`](effectively_once.md).
-- [`../../../internal/sdk/stream_transforms.md`](https://github.com/flezha/flezha/blob/main/docs/internal/sdk/stream_transforms.md): where the transform code lives, for contributors.
+- [The stream transform notes](https://github.com/flezha/flezha/blob/main/docs/internal/sdk/stream_transforms.md): where the transform code lives, for contributors.
 - Tutorial: [`watch_the_trades.md`](tutorials/watch_the_trades.html) builds `trade_watcher`.

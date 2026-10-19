@@ -408,5 +408,5 @@ equals the fold of its recorded changes is stated, not checked by a tool.
 - [`durability.md`](durability.md): what each `durable` level keeps through a crash.
 - [`timers.md`](timers.md), [`partitioning.md`](partitioning.md).
 - [The state persistence guide](https://github.com/flezha/flezha/blob/main/docs/internal/sdk/state_persistence.md): how the SDKs carry it out.
-- [`../../../internal/sdk/authoring_contract.md`](https://github.com/flezha/flezha/blob/main/docs/internal/sdk/authoring_contract.md): changing a deployed state type.
+- [The SDK authoring contract](https://github.com/flezha/flezha/blob/main/docs/internal/sdk/authoring_contract.md): changing a deployed state type.
 - Tutorial: [`watch_the_trades.md`](tutorials/watch_the_trades.html) builds `track_prices`.

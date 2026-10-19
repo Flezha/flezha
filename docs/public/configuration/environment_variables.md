@@ -121,7 +121,7 @@ Notes on the area's variables:
 - `FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS`: The orchestrator grace period is the `orchestrator_grace_ms` row — this + 15 s — and a test reads it back from the DaemonSet and both compose files.
 - `FLEZHA_USE_CONVERGENCE_HEALTH`: True only for `true`/`1`.
 - `FLEZHA_FABRIC_503_POLLS`: Consecutive classifier polls reporting `driver_loop_frozen` / `nif_queue_backing_up` before `/healthz` answers 503; `0` disables the fabric 503.
-- `FLEZHA_HEALTHZ_ENABLED`: True only for `true`/`1`. The endpoint folds the convergence loop's verdict records: `degraded` names every reason it folded (`halted`, `dead_runner`, `plugin_unhealthy`, `output_stalled`, `intent_mismatch`, `sensor_stale`, `data_plane_wedged`, joined with `+`), and the body carries `unknown_relays`.
+- `FLEZHA_HEALTHZ_ENABLED`: True only for `true`/`1`. The endpoint folds the convergence loop's verdict records: `degraded` names every reason it folded (`halted`, `dead_runner`, `relays_unbound`, `plugin_unhealthy`, `plugin_lagging`, `output_stalled`, `intent_mismatch`, `sensor_stale`, `data_plane_wedged`, joined with `+`), and the body carries `unknown_relays`.
 - `FLEZHA_DATA_PLANE_LIVENESS`: `false` drops the driver poll and the stall classifier, the counters stay.
 - `FLEZHA_MEMORY_REPORT_INTERVAL_MS`: Unset or non-positive starts no reporter.
 - `FLEZHA_TESTNET_WS_PORT`: The port `Flezha.Testnet` binds; the prod image entrypoint starts the daemon only when it is set explicitly. Default: `4500` (`:test` derives the port from the run).

@@ -75,9 +75,12 @@ it is not written.
 
 An option can go before or after the other arguments: `flz relay stop
 --token t op1` and `flz relay stop op1 --token t` are the same command.
-Most verbs ignore an option they do not know. `flz boot await` and `flz reset`
-stop with an error instead, because a typo there could make `flz` wait far too
-long or delete the wrong data.
+Most verbs ignore an option they do not know. The verbs where a misread word
+costs more than a refusal stop with an error instead: `flz boot await`,
+`flz relay listen` and `flz relay call`, which wait as long as their options
+say; `flz reset`, which deletes data; `flz relay start` and `flz schedule add`,
+which would run a relay without the setting meant; `flz mcp`;
+`flz template create`; and every `flz dlq` verb.
 
 ## When a verb fails
 

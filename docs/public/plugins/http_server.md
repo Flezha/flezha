@@ -60,9 +60,11 @@ $ flz plugin enable web http_server \
 
 ## Install and enable
 
+Install `flezha_http-0.1.0.fpz` on the controller and restart it, as
+[Installing plugins](../topics/plugins/installing_plugins.md#install-uninstall-and-sync)
+describes. Once it has loaded, the list names both of its providers:
+
 ```sh
-$ flz plugin install flezha_http-0.1.0.fpz
-$ flz controller stop && flz controller start
 $ flz plugin list --installed
 ```
 
