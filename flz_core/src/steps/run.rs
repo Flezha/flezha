@@ -287,8 +287,8 @@ pub fn hold_emit(
 /// Ship a steps relay Cell's just-settled effect record at once, ahead of the
 /// stage's barrier, and name it on the pass sheet with the plugin `channels`
 /// its outputs were written on, for the barrier to name in turn. The one step
-/// both settle sites take, the erased host's and the typed worker's; a settle
-/// that left nothing durable ships and names nothing.
+/// both settle sites take, under the buffer lock they settled under, or a drain
+/// between ships it unnamed; a settle leaving nothing durable ships and names nothing.
 pub fn ship_stage_record(
     slot: &Arc<CellSlot>,
     buffer: &mut dyn FlushableBuffer,

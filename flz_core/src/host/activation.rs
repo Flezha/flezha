@@ -16,7 +16,9 @@ use super::cell::{BytesBuffer, HostPayload, HostTaskletFacts};
 use super::prepare::apply_prepare_outcome;
 use crate::cell::{CellItem, CellSlot};
 use crate::error::{Code, Error};
-use crate::flusher::{DlqEntryBody, InvocationEffects, OutputRecord, SettlePolicy};
+use crate::flusher::{
+    DlqEntryBody, FlushableBuffer, InvocationEffects, OutputRecord, SettlePolicy,
+};
 use crate::poll_core::{EngineActivation, EnginePayload, ItemAttempt, PollCore};
 use crate::schema::{self, TimerOp};
 use crate::util::LockRecover;
@@ -242,12 +244,12 @@ pub(super) fn settle_item(
     }
     let parked = park.is_some();
     let timers = committed_timers(&work.item, effect.timers, parked);
-    // A failed attempt's captured outputs must not ship — the invocation did
-    // not complete.
+    // A failed attempt's captured outputs must not ship: it did not complete.
     let outputs = if parked { Vec::new() } else { effect.outputs };
-    let (edge_outputs, wire_outputs) = split_outputs(outputs);
+    let (edge_outputs, mut wire_outputs) = split_outputs(outputs);
     let consumed_offset = consumed_offset_of(&work.item);
     let call = call_of(&work.item);
+    super::stamp::stamp_plugin_ends(slot, call, &mut wire_outputs, crate::util::wall_now_ms);
     let dlq = park.map(|(error, attempts)| park_entry(slot, &work.item, error, attempts));
     let keeps_edges = slot.keeps_edges(consumed_offset);
     let edges = route_edge_outputs(
@@ -271,9 +273,9 @@ pub(super) fn settle_item(
     let (tier_off_dlq, plugin_outputs) = settle_into_buffer(
         slot,
         facts,
+        &mut **slot.flush_buffer.lock_recover(),
         effects,
         wire_outputs,
-        call,
         dlq,
         hold_of(&work.item),
     );
@@ -334,7 +336,7 @@ fn settle_steps_effects(
     changes: Vec<Vec<u8>>,
     timers: Vec<TimerOp>,
     event_time: u64,
-    wire_outputs: Vec<schema::Output>,
+    mut wire_outputs: Vec<schema::Output>,
     stream: &Arc<FlezhaStream>,
 ) {
     let channels: Vec<String> = wire_outputs
@@ -355,21 +357,27 @@ fn settle_steps_effects(
         parked: false,
     };
     let call = crate::steps::pass_call(slot);
+    super::stamp::stamp_plugin_ends(
+        slot,
+        call.as_ref(),
+        &mut wire_outputs,
+        crate::util::wall_now_ms,
+    );
+    let mut buffer = slot.flush_buffer.lock_recover();
     let (_park, plugin_outputs) = settle_into_buffer(
         slot,
         facts,
+        &mut **buffer,
         effects,
         wire_outputs,
-        call.as_ref(),
         None,
         None,
     );
-    ship_plugin_outputs(slot, stream, plugin_outputs);
-    if !slot.topology.records_effects(slot.keeps_state) {
-        return;
+    if slot.topology.records_effects(slot.keeps_state) {
+        crate::steps::ship_stage_record(slot, &mut **buffer, &facts.header(), channels);
     }
-    let mut buffer = slot.flush_buffer.lock_recover();
-    crate::steps::ship_stage_record(slot, &mut **buffer, &facts.header(), channels);
+    drop(buffer);
+    ship_plugin_outputs(slot, stream, plugin_outputs);
 }
 
 /// A steps relay Cell's item: its changes and plugin outputs settled into its
@@ -610,20 +618,18 @@ fn route_edge_outputs(
     recorded
 }
 
-/// Fold the invocation into the buffer per its Cell's policy; a Cell that
-/// records no effects hands its wire outputs and park back to ship after the
-/// buffer ops. Both routes leave from here, so the plugin ends are stamped here.
+/// Fold the invocation into the Cell's `buffer`, held by the caller, per its
+/// policy; a Cell that records no effects hands its stamped wire outputs and
+/// park back to ship after the buffer ops.
 fn settle_into_buffer(
     slot: &Arc<CellSlot>,
     facts: &HostTaskletFacts,
+    buffer: &mut dyn FlushableBuffer,
     mut effects: InvocationEffects<Vec<u8>>,
-    mut wire_outputs: Vec<schema::Output>,
-    call: Option<&Arc<str>>,
+    wire_outputs: Vec<schema::Output>,
     dlq: Option<DlqEntryBody>,
     hold: Option<Arc<crate::prefix::Hold>>,
 ) -> (Option<DlqEntryBody>, Vec<schema::Output>) {
-    super::stamp::stamp_plugin_ends(slot, call, &mut wire_outputs, crate::util::wall_now_ms);
-    let mut buffer = slot.flush_buffer.lock_recover();
     let Some(bytes) = buffer.as_any_mut().downcast_mut::<BytesBuffer>() else {
         return (None, Vec::new());
     };
