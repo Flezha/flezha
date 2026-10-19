@@ -50,19 +50,20 @@ defmodule Flezha.Process.Hub do
   (`[{node, pid}]`, with 0, 1, or many entries).
 
   Drops entries on nodes absent from the live cluster, prefers the local node's
-  pid (verified alive), and otherwise returns a pid on another live node.
-  Returns `nil` when no live pid remains.
+  pid (verified alive), and otherwise returns a pid on another live node: the
+  only one unchecked, the first still `running?/1` of several. Returns `nil`
+  when no live pid remains.
   """
   @spec live_pid([{node(), pid()}]) :: pid() | nil
   def live_pid(node_pids) when is_list(node_pids) do
-    local = node()
-    on_live_node = on_live_nodes(node_pids)
-
-    Enum.find_value(on_live_node, fn {n, pid} -> n == local and Process.alive?(pid) and pid end) ||
-      Enum.find_value(on_live_node, fn {n, pid} -> n != local and pid end)
+    {here, there} = node_pids |> on_live_nodes() |> Enum.split_with(&(elem(&1, 0) == node()))
+    Enum.find_value(here, fn {_n, pid} -> Process.alive?(pid) and pid end) || remote_pid(there)
   end
 
   def live_pid(_), do: nil
+
+  defp remote_pid([{_node, pid}]), do: pid
+  defp remote_pid(there), do: Enum.find_value(there, fn {_n, pid} = e -> running?(e) and pid end)
 
   @doc """
   Whether a `{node, pid}` registry entry's process still runs, asked of its own

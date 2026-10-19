@@ -192,8 +192,10 @@ defmodule FlezhaTest.Helper.ProviderPrepare do
   """
   @spec stub_outbox_owner(Paths.cell_id()) :: :ok
   def stub_outbox_owner(cell_id) do
+    # Unlinked, so the test that started it cannot take it down, with every
+    # test linked to it since, when it exits with `:shutdown`.
     case Registry.start_link(keys: :unique, name: StateSupervisor.registry_name()) do
-      {:ok, _} -> :ok
+      {:ok, registry} -> Process.unlink(registry)
       {:error, {:already_started, _}} -> :ok
     end
 

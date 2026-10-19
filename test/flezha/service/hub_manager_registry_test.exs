@@ -95,6 +95,19 @@ defmodule Flezha.Service.HubManagerRegistryTest do
       assert HubManager.get_pid(@namespace, "relay_left") == {:ok, self()}
     end
 
+    # The same row seen from a third node, where both copies are remote.
+    test "get_all_relays/1 skips a remote head whose process has exited" do
+      {_peer_pid, peer} = NodeTestHelper.start_bare_peer(:live_pid_remote)
+      gone = Node.spawn(peer, :erlang, :node, [])
+      ref = Process.monitor(gone)
+      assert_receive {:DOWN, ^ref, :process, ^gone, _}, 5_000
+      moved = Node.spawn(peer, :timer, :sleep, [:infinity])
+
+      inject_relay(@namespace, "relay_left_remote", [{peer, gone}, {peer, moved}])
+
+      assert {"relay_left_remote", moved} in HubManager.get_all_relays(@namespace)
+    end
+
     test "get_all_relays/1 omits a relay that has only dead-node entries" do
       inject_relay(@namespace, "relay_dead", [{:dead@nohost, spawn(fn -> :ok end)}])
 

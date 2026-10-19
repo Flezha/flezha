@@ -29,7 +29,7 @@ suspended relay it can take to wake if work is owed.
 For a moment after a relay moved to another controller, a controller that had not yet heard the
 old copy stop still resolved the relay to it, so `flz plugin disable` and every other call routed
 there failed with `undisabled` or no process. A registry row with more than one entry now skips
-an entry whose process has exited.
+an entry whose process has exited, for a call as for `flz relay list` and a runner's reconnect.
 
 ### Changed: the docs live in `docs/public/` and `docs/internal/` (breaking for links)
 
