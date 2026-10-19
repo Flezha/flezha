@@ -42,10 +42,18 @@ A row's default SHALL be the only default its key has: no read site SHALL carry 
 literal fallback, no environment SHALL skip the row so that a reader's own literal wins,
 and a per-environment value SHALL be declared on the row rather than in a per-environment
 config file. Where a knob is read by two roles with different needs, the row SHALL declare
-one default per role and the documentation SHALL state both. Every table in
-`docs/public/configuration/*.md`, `docs/internal/operations/*.md` and `docs/internal/*.md` that restates a
-default SHALL render the row's default, and the seam test SHALL fail on a default column that does
-not.
+one default per role and the documentation SHALL state both.
+
+The reference tables SHALL be rendered from the rows, not written by hand: the tables of
+`docs/public/configuration/environment_variables.md` (the variables a controller reads, and the
+build-time ones), `docs/public/configuration/application_env.md` (every row with an
+application-env key) and `docs/public/configuration/runner_environment.md` (every row a runner
+reads) SHALL each be one block between `config-keys` markers, giving each row's name, type and
+default, and a test SHALL fail when a page's block differs from its rendering, printing the
+block to paste. What a knob does SHALL stay prose in the pages; a row SHALL carry no
+description field. No other page under `docs/` SHALL carry a table with a default column whose rows
+name a `FLEZHA_*` variable: it SHALL link the reference instead, and the test SHALL fail naming
+such a table.
 
 #### Scenario: The health listener binds the documented address in every environment
 
@@ -55,9 +63,21 @@ not.
 
 #### Scenario: A documented default that drifts from the row fails the gate
 
-- **WHEN** `docs/public/configuration/environment_variables.md` states `FLEZHA_HEALTHZ_PORT` defaults to `9570` while the
-  row's default is `9569`
-- **THEN** the seam test fails naming the document line and the row
+- **WHEN** `docs/public/configuration/environment_variables.md` states `FLEZHA_HEALTHZ_PORT`
+  defaults to `9570` while the row's default is `9569`, whether the page was edited by hand or
+  the row changed and the page was not re-rendered
+- **THEN** the reference test fails naming the page and printing the block it should carry
+
+#### Scenario: A row read differently by two roles renders both
+
+- **WHEN** a row declares one default for the controller and another for a runner
+- **THEN** its rendered default states both values, each with its role
+
+#### Scenario: A default table on another page fails the gate
+
+- **WHEN** a page under `docs/` other than the three reference pages gains a table with a
+  `Default` column whose rows name `FLEZHA_*` variables
+- **THEN** the reference test fails naming the page and the line
 
 #### Scenario: A late default is evaluated when read, not when configured
 

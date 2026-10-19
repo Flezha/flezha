@@ -50,9 +50,9 @@ no such block and is not governed by this requirement.
 
 Each screen `flz` prints SHALL be captured from the binary and compared byte for byte
 by the test suite, so that any change to user-visible text is deliberate and
-visible in a diff. The screens are hand-aligned, so a renderer that computes a column
-would silently change what a user sees; the capture is what makes the text
-editable at all.
+visible in a diff. A screen is rendered from the verb rows and the catalogue, so a change to a
+row, to an operation's documentation or to the renderer changes what a user sees; the capture
+is what makes that change visible and reviewable.
 
 The set of captures and the set of screens SHALL be equal, so that a screen cannot
 stop being checked without the suite saying so.
@@ -61,6 +61,13 @@ stop being checked without the suite saying so.
 
 - **WHEN** a help screen's text changes and its capture does not
 - **THEN** the suite SHALL fail, naming the screen and the first line that differs
+
+#### Scenario: A changed operation description reaches the screen and fails its capture
+
+- **WHEN** the first sentence of a published operation's documentation changes and
+  `cli/catalogue.json` is regenerated
+- **THEN** the screen of the verb that calls that operation SHALL print the new sentence, and
+  the suite SHALL fail until that screen's capture is retaken
 
 #### Scenario: A screen without a capture fails
 
@@ -376,10 +383,11 @@ usage line for that verb SHALL be derived from that row rather than written besi
 verb that reads a word the row does not declare, or prints a word the row does not
 declare, is a grammar the user cannot discover from the surface that teaches it.
 
-The row is the only place a verb's grammar is written down. Help screens stay hand-aligned
-text pinned by their captures, and SHALL be checked against the row rather than generated
-from it: every option a screen or a usage line prints SHALL be declared by the row of the
-verb whose screen it is, and every option the row declares SHALL appear in that screen.
+The row is the only place a verb's grammar is written down, and a help screen SHALL be
+rendered from it: the usage line, the list of a command's verbs and the list of a verb's
+options SHALL each come from the rows, so a screen cannot print an option the row does not
+declare nor leave out one it does. Hand-written text on a screen SHALL be limited to examples
+and notes that only the CLI has.
 
 #### Scenario: A verb with no declaration does not ship
 
@@ -389,9 +397,15 @@ verb whose screen it is, and every option the row declares SHALL appear in that 
 
 #### Scenario: An option printed and not declared fails the suite
 
-- **WHEN** a help screen or a usage line prints an option spelling that the printing
-  verb's row does not declare
+- **WHEN** a help screen's hand text or a usage line prints an option spelling that the
+  printing verb's row does not declare
 - **THEN** the suite SHALL fail naming the verb, the text it came from and the spelling
+
+#### Scenario: An option added to a row appears on its screen
+
+- **WHEN** a verb's row gains an option
+- **THEN** the verb's help screen SHALL list it with no edit to the screen's hand text, and the
+  screen's capture SHALL fail until it is retaken
 
 #### Scenario: A usage line is the row rendered
 
@@ -715,4 +729,43 @@ other verb. `flz runner help` SHALL list the three verbs.
 
 - **WHEN** `flz runner readmit <stable_id> -n <namespace>` is run with an ops token
 - **THEN** it sends `Fleet.readmit_runner` with the namespace and the stable id
+
+### Requirement: A verb's description and argument help SHALL come from the operation it calls
+
+A verb that sends a published operation SHALL name that operation in its row, and its help
+SHALL describe it with the first sentence of the operation's documentation in the catalogue
+`flz` embeds, and each option that carries one of the operation's arguments with that
+argument's documentation. Only a verb that calls no operation, and an option that is the CLI's
+own (output format, credential, duration of a stream, a namespace the CLI defaults), SHALL
+carry its own one-line text in its row. A test SHALL fail when a row names an operation the embedded catalogue does not
+declare, or when a verb that sends an operation does not name it in its row.
+
+#### Scenario: A row naming an unknown operation fails
+
+- **WHEN** a verb row names `Relay.strat`
+- **THEN** the Rust test suite SHALL fail naming the verb and the name
+
+#### Scenario: The screen and the MCP tool describe a verb alike
+
+- **WHEN** `flz relay start --help` is printed and the MCP tool list is read
+- **THEN** the one-line description on the screen SHALL be the first sentence of the
+  `Relay.start` tool's description
+
+### Requirement: The command reference SHALL be rendered from the verb tables
+
+`docs/public/topics/cli/command_reference.md` SHALL list every `flz` verb by command, each with
+its usage line and one-line description, rendered by the same code that renders the help
+screens, between `flz-reference` markers, one block per command. A test SHALL fail when a block
+differs from its rendering, printing the block to paste. The topic pages of the CLI SHALL link
+the reference for the list of verbs and keep their examples.
+
+#### Scenario: A verb added to a table reaches the reference
+
+- **WHEN** a command table gains a verb and the reference page is not re-rendered
+- **THEN** the reference test SHALL fail naming the command and printing its block
+
+#### Scenario: The reference and the screen agree
+
+- **WHEN** the reference line of a verb and that verb's help screen are read
+- **THEN** both SHALL carry the same usage line and the same one-line description
 
