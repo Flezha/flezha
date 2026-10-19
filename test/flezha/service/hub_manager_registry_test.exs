@@ -89,6 +89,12 @@ defmodule Flezha.Service.HubManagerRegistryTest do
       assert HubManager.get_pid(@namespace, "relay_handover") == {:ok, parked}
     end
 
+    # The row a move leaves on a node its old copy's exit has not reached yet.
+    test "get_pid/2 skips a head whose process has exited" do
+      inject_relay(@namespace, "relay_left", [{node(), dead_pid()}, {node(), self()}])
+      assert HubManager.get_pid(@namespace, "relay_left") == {:ok, self()}
+    end
+
     test "get_all_relays/1 omits a relay that has only dead-node entries" do
       inject_relay(@namespace, "relay_dead", [{:dead@nohost, spawn(fn -> :ok end)}])
 

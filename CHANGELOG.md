@@ -24,6 +24,13 @@ The message was kept in its input log, but nothing woke the relay once a runner 
 connected, so it waited for the next message or its timer. A connecting runner now asks each
 suspended relay it can take to wake if work is owed.
 
+### Fixed: a plugin verb right after a relay moved reached the old copy
+
+For a moment after a relay moved to another controller, a controller that had not yet heard the
+old copy stop still resolved the relay to it, so `flz plugin disable` and every other call routed
+there failed with `undisabled` or no process. A registry row with more than one entry now skips
+an entry whose process has exited.
+
 ### Changed: the docs live in `docs/public/` and `docs/internal/` (breaking for links)
 
 Every page of the published site moves to `docs/public/` under its old sub-path, and every

@@ -13,6 +13,8 @@ defmodule Flezha.Process.Hub do
 
   require Logger
 
+  alias Flezha.Config.Durations
+
   @type hub_id :: atom()
 
   @doc "True while `hub_id`'s coordinator is registered."
@@ -61,6 +63,20 @@ defmodule Flezha.Process.Hub do
   end
 
   def live_pid(_), do: nil
+
+  @doc """
+  Whether a `{node, pid}` registry entry's process still runs, asked of its own
+  node under the Overwatch ping bound. A node that cannot answer in time keeps
+  the entry: only a definite exit drops it.
+  """
+  @spec running?({node(), pid()}) :: boolean()
+  def running?({_node, pid}) when node(pid) == node(), do: Process.alive?(pid)
+
+  def running?({_node, pid}) do
+    :erpc.call(node(pid), Process, :alive?, [pid], Durations.get(:overwatch_ping_timeout_ms))
+  catch
+    :error, {:erpc, _reason} -> true
+  end
 
   @doc "The `node_pids` entries on nodes in the live cluster, in their order."
   @spec on_live_nodes([{node(), pid()}]) :: [{node(), pid()}]
