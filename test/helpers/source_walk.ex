@@ -22,6 +22,8 @@ defmodule FlezhaTest.Helper.SourceWalk do
   alone walked `lib/flezha` six times, once per rule it judges.
   """
 
+  import ExUnit.Assertions, only: [assert: 2]
+
   @source_extensions ~w(.ex .exs .rs .java .ts .mjs .js .py .rb .php .toml .sh .eex)
 
   @build_output ~w(node_modules vendor target dist _build deps cover)
@@ -75,16 +77,23 @@ defmodule FlezhaTest.Helper.SourceWalk do
   def read(path), do: held({:read, path}, fn -> File.read!(path) end)
 
   @doc """
-  The generated block `page` carries between `<!-- marker:begin name -->` and
-  the next `<!-- marker:end -->`, for a test that compares it with its
-  rendering. A page carrying one block of the kind opens it with the bare
-  `<!-- marker:begin -->`, so `name` falls back to that. `""` when there is none.
+  Assert that the generated block `page` carries between
+  `<!-- marker:begin name -->` and the next `<!-- marker:end -->` is
+  `rendered`, failing with the text to paste. A page carrying one block of the
+  kind opens it with the bare `<!-- marker:begin -->`, so `name` falls back to
+  that.
   """
-  @spec block(binary(), binary(), binary() | nil) :: binary()
-  def block(page, marker, name \\ nil) do
+  @spec assert_block(binary(), binary(), binary(), binary()) :: true
+  def assert_block(page, marker, name, rendered) do
+    assert block(page, marker, name) == rendered,
+           "#{page}'s #{marker} block #{name} has drifted from its rendering.\n" <>
+             "Replace the block between its #{marker} markers with:\n\n" <> rendered
+  end
+
+  defp block(page, marker, name) do
     text = read(page)
     named = "<!-- #{marker}:begin #{name} -->\n"
-    open = if name && String.contains?(text, named), do: named, else: "<!-- #{marker}:begin -->\n"
+    open = if String.contains?(text, named), do: named, else: "<!-- #{marker}:begin -->\n"
 
     text
     |> String.split(open)

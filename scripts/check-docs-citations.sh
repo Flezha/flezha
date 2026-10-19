@@ -265,6 +265,11 @@ def line_count(path):
     return line_counts[path]
 
 
+def from_citing(rel, cited):
+    """The path `cited` names when read from the file `rel`."""
+    return os.path.normpath(os.path.join(os.path.dirname(rel), cited))
+
+
 def resolve(rel, cited):
     """The tracked path a citation names, or None."""
     if "..." in cited:
@@ -274,7 +279,7 @@ def resolve(rel, cited):
         return tail if tail and tail in SUFFIXES else None
     if cited in TRACKED:
         return cited
-    relative = os.path.normpath(os.path.join(os.path.dirname(rel), cited))
+    relative = from_citing(rel, cited)
     if relative in TRACKED:
         return relative
     return cited if cited in SUFFIXES else None
@@ -300,7 +305,7 @@ def check_paths(rel, line):
         if match.re is LINKED and "..." not in cited:
             # A link means the path from the citing file, so that is the only
             # resolution judged, wherever inside the repository it lands.
-            landed = os.path.normpath(os.path.join(os.path.dirname(rel), cited))
+            landed = from_citing(rel, cited)
             if landed.startswith("..") or (landed not in TRACKED and repo_ignores(landed)):
                 continue
             tally["citations"] += 1

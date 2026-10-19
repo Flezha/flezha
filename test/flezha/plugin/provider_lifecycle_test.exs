@@ -223,12 +223,12 @@ defmodule Flezha.Plugin.ProviderLifecycleTest do
         assert File.exists?(page),
                "provider `#{id}` has no page at #{page}; its options are documented nowhere"
 
-        rendered = ProviderOptions.render_options_table(provider)
-
-        assert SourceWalk.block(page, "provider-options", provider.__provider__().name) ==
-                 rendered,
-               "#{page}'s option table has drifted from #{inspect(provider)}'s declaration.\n" <>
-                 "Replace the block between the provider-options markers with:\n\n" <> rendered
+        SourceWalk.assert_block(
+          page,
+          "provider-options",
+          provider.__provider__().name,
+          ProviderOptions.render_options_table(provider)
+        )
       end
     end
   end

@@ -167,11 +167,12 @@ defmodule Flezha.Config.KeysSeamTest do
   describe "a default is written down once" do
     test "each reference table is its group's rendering of the rows" do
       for {page, groups} <- @reference, group <- groups do
-        rendered = Reference.render_table(group)
-
-        assert SourceWalk.block(page, "config-keys", to_string(group)) == rendered,
-               "#{page}'s #{group} table has drifted from the rows.\n" <>
-                 "Replace the block between its config-keys markers with:\n\n" <> rendered
+        SourceWalk.assert_block(
+          page,
+          "config-keys",
+          to_string(group),
+          Reference.render_table(group)
+        )
       end
     end
 

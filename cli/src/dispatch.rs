@@ -46,8 +46,8 @@ pub(crate) struct Verb {
     pub(crate) about: Option<&'static str>,
     /// Examples and notes only the CLI has, printed after the rendered screen.
     pub(crate) notes: Option<Help>,
-    /// Whether the bare word `help` after the verb asks for its screen, the
-    /// spelling `flz controller status help` has always used.
+    /// Whether the bare word `help` after the verb asks for its screen, as in
+    /// `flz controller status help`.
     pub(crate) help_word: bool,
 }
 
@@ -262,6 +262,7 @@ pub(crate) fn leaf_rows() -> Vec<(&'static Command, &'static Verb)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::args::{owned, Kind};
 
     /// Every leaf verb in the tree, with the path its usage line names.
     fn leaves() -> Vec<(&'static str, &'static Verb)> {
@@ -270,7 +271,6 @@ mod tests {
             .map(|(cmd, verb)| (cmd.path, verb))
             .collect()
     }
-    use crate::args::{owned, Kind};
 
     /// Everything this verb needs before a case about one option can be about
     /// that option: a word for every positional, and every required option but
