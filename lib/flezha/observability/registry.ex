@@ -35,7 +35,7 @@ defmodule Flezha.Observability.Registry do
     ]
 
   alias Flezha.AuthZ.Verbs
-  alias Flezha.Observability.{Signal, Source}
+  alias Flezha.Observability.{Signal, SignalWords, Source}
   alias Flezha.Process.Cspec
 
   @sources :flezha_observability_sources
@@ -541,10 +541,10 @@ defmodule Flezha.Observability.Registry do
       Map.merge(%{title: nil, description: nil, area: nil, signals: []}, entry)
 
     cond do
-      not (is_nil(title) or Source.text?(title)) ->
+      not (is_nil(title) or SignalWords.text?(title)) ->
         {:error, {:invalid_title, title}}
 
-      not (is_nil(description) or Source.text?(description)) ->
+      not (is_nil(description) or SignalWords.text?(description)) ->
         {:error, {:invalid_description, description}}
 
       area not in [nil | @areas] ->
@@ -575,7 +575,7 @@ defmodule Flezha.Observability.Registry do
     signal
     |> Map.take([:label, :outcome, :sentence])
     |> Map.put(:meaning, signal.description)
-    |> Enum.all?(fn {k, v} -> Source.valid_word?(k, v) end)
+    |> Enum.all?(fn {k, v} -> SignalWords.valid_word?(k, v) end)
   end
 
   defp validate_config(schema, config) when is_map(schema) and is_map(config) do

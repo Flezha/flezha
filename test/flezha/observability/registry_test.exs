@@ -2,9 +2,9 @@ defmodule Flezha.Observability.RegistryTest do
   # async: false: the observability registry.
   use ExUnit.Case, async: false
 
-  alias Flezha.Observability.{Registry, Source}
+  alias Flezha.Observability.{Registry, SignalWords, Source}
 
-  doctest Source
+  doctest SignalWords
 
   setup do
     # Use unique source/sink names per test so parallel teardown
@@ -261,18 +261,18 @@ defmodule Flezha.Observability.RegistryTest do
     end
   end
 
-  describe "Source.placeholders/1" do
+  describe "SignalWords.placeholders/1" do
     test "reads keys and nouns in order" do
       assert {:ok, [{"plugin_id", nil}, {"count", "record"}, {"path", nil}]} =
-               Source.placeholders("{plugin_id} saved {count:record} to {path}")
+               SignalWords.placeholders("{plugin_id} saved {count:record} to {path}")
 
-      assert {:ok, []} = Source.placeholders("Nothing to fill.")
-      assert {:ok, [{"n", "dead letter"}]} = Source.placeholders("{n:dead letter}")
+      assert {:ok, []} = SignalWords.placeholders("Nothing to fill.")
+      assert {:ok, [{"n", "dead letter"}]} = SignalWords.placeholders("{n:dead letter}")
     end
 
     test "refuses any other brace" do
       for bad <- ["{shop", "shop}", "{}", "{Shop}", "{a-b}", "{a:Noun}", "{a:}", "{{a}}", :text] do
-        assert Source.placeholders(bad) == :error, "#{inspect(bad)} parsed"
+        assert SignalWords.placeholders(bad) == :error, "#{inspect(bad)} parsed"
       end
     end
   end
@@ -305,7 +305,7 @@ defmodule Flezha.Observability.RegistryTest do
           assert text?(signal.description), "#{entry.name}.#{signal.name} has no meaning"
           assert text?(signal[:label]), "#{entry.name}.#{signal.name} has no label"
 
-          assert signal[:outcome] in Source.outcomes(),
+          assert signal[:outcome] in SignalWords.outcomes(),
                  "#{entry.name}.#{signal.name} has no outcome"
         end
       end
@@ -315,7 +315,7 @@ defmodule Flezha.Observability.RegistryTest do
       unparsed =
         for entry <- core_registrations(),
             %{sentence: sentence} = signal <- entry.signals,
-            Source.placeholders(sentence) == :error,
+            SignalWords.placeholders(sentence) == :error,
             do: "#{entry.name}.#{signal.name}: #{inspect(sentence)}"
 
       assert unparsed == [], "templates that do not parse: #{Enum.join(unparsed, "; ")}"

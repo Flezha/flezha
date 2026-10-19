@@ -11,7 +11,7 @@ defmodule Flezha.Plugin.ProviderBehaviour.Declaration do
   module.
   """
 
-  alias Flezha.Observability.Source
+  alias Flezha.Observability.SignalWords
   alias Flezha.Plugin.ProviderBehaviour
   alias Flezha.Plugin.ProviderBehaviour.Options
 
@@ -344,12 +344,12 @@ defmodule Flezha.Plugin.ProviderBehaviour.Declaration do
 
   # A verb's meaning is optional, so a package built before it existed loads.
   defp declared_kind({kind, meaning}) when is_binary(meaning),
-    do: if(Source.valid_word?(:meaning, meaning), do: kind)
+    do: if(SignalWords.valid_word?(:meaning, meaning), do: kind)
 
   defp declared_kind({kind, words}) when is_list(words) do
     valid? =
       Keyword.keyword?(words) and Keyword.has_key?(words, :meaning) and
-        Enum.all?(words, fn {key, value} -> Source.valid_word?(key, value) end)
+        Enum.all?(words, fn {key, value} -> SignalWords.valid_word?(key, value) end)
 
     if valid?, do: kind
   end

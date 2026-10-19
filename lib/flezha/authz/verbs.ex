@@ -27,7 +27,7 @@ defmodule Flezha.AuthZ.Verbs do
   """
 
   alias Flezha.AuthZ.Action
-  alias Flezha.Observability.Source
+  alias Flezha.Observability.{SignalWords, Source}
 
   @public [action: :public]
 
@@ -477,7 +477,7 @@ defmodule Flezha.AuthZ.Verbs do
   end
 
   defp audit_words(row) do
-    label = Source.humanize(record_name(row))
+    label = SignalWords.humanize(record_name(row))
 
     {:event,
      label: label,

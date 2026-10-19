@@ -505,7 +505,7 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
       assert %{description: "The sink stalled.", label: "Stalled", outcome: :failure} =
                signals[:stalled]
 
-      shipped = Keyword.fetch!(Flezha.Plugin.ProviderBehaviour.verb_descriptions(), :shipped)
+      shipped = Keyword.fetch!(TelemetryBridge.Lines.shared_verbs(), :shipped)
       assert signals[:shipped].description == Keyword.fetch!(shipped, :meaning)
       assert signals[:failed].outcome == :failure
       assert signals[:overflowed].outcome == :failure

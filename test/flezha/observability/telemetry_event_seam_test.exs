@@ -28,7 +28,7 @@ defmodule Flezha.Observability.TelemetryEventSeamTest do
   use ExUnit.Case, async: true
 
   alias Flezha.Convergence.Probe.Table
-  alias Flezha.Observability.{Source, TelemetryBridge}
+  alias Flezha.Observability.{SignalWords, TelemetryBridge}
   alias FlezhaTest.Helper.SourceWalk
 
   # Two files write `[:flezha, …]` names without emitting them: the detector
@@ -134,7 +134,7 @@ defmodule Flezha.Observability.TelemetryEventSeamTest do
       for {event, {source, name, _kind, words}} <- TelemetryBridge.lines(),
           is_list(words),
           sentence = Keyword.get(words, :sentence) do
-        {:ok, placeholders} = Source.placeholders(sentence)
+        {:ok, placeholders} = SignalWords.placeholders(sentence)
         needed = MapSet.new(placeholders, fn {key, _noun} -> String.to_atom(key) end)
         at_event = for {^event, keys, where} <- sites, do: {keys, where}
 

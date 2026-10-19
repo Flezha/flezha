@@ -760,41 +760,11 @@ defmodule Flezha.Plugin.ProviderBehaviour do
 
   # ---------- telemetry vocabulary ----------
 
-  @verb_descriptions [
-    shipped: [
-      label: "Delivered",
-      outcome: :normal,
-      meaning: "The plugin passed items on, into its relay or out to where it sends them."
-    ],
-    retried: [
-      label: "Retrying",
-      outcome: :normal,
-      meaning: "A delivery failed and will be tried again; nothing is lost yet."
-    ],
-    failed: [
-      label: "Failed",
-      outcome: :failure,
-      meaning: "A delivery or a read failed."
-    ],
-    overflowed: [
-      label: "Queue full",
-      outcome: :failure,
-      meaning: "The plugin's queue was full, so items were dropped."
-    ]
-  ]
-
-  @verbs Keyword.keys(@verb_descriptions)
+  @verbs [:shipped, :retried, :failed, :overflowed]
 
   @doc "The verbs that mean the same thing for every provider."
   @spec verbs() :: [atom()]
   def verbs(), do: @verbs
-
-  @doc """
-  Each shared verb with what its signal says: the words
-  `Flezha.Observability.Source.signals/1` takes beside a signal's kind.
-  """
-  @spec verb_descriptions() :: keyword(keyword())
-  def verb_descriptions(), do: @verb_descriptions
 
   @doc """
   Emit one provider event. The prefix is DERIVED from the provider's own

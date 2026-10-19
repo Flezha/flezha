@@ -171,6 +171,9 @@ MODULE_LAYERS = {
     "Flezha.State.Wire": 1,
     # a compile-time slot table that names nothing; transport counts with it
     "Flezha.Observability.CounterTable": 0,
+    # the checked words of a signal, naming nothing; a plugin's own telemetry
+    # verbs are checked with it exactly as a core source's signals are
+    "Flezha.Observability.SignalWords": 0,
 }
 
 DEFMODULE = re.compile(r"^\s*defmodule\s+([A-Z][\w.]*)\s+do", re.M)
