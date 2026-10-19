@@ -774,7 +774,8 @@ The factory and the payload come first; the id and the policy are optional:
 | Elixir | `spawn_steps(ctx, "triage", input)` | `spawn_steps(ctx, "triage", input, id: id, if_running: :deliver)` |
 
 Rust and Java build the options only from an id, so a policy without an id cannot be written
-there; the other five SDKs raise an argument error at the call and send nothing.
+there; in the other five the core refuses it at the call with `spawn.if_running_without_id`, and
+nothing is sent.
 
 What the call does:
 

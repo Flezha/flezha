@@ -1,5 +1,5 @@
 //! The command crossings of a host-run Cell: restore fold, compaction
-//! snapshot, live read / migration serialize and apply-state. Each runs under
+//! snapshot, state read (live or for a migration) and apply-state. Each runs under
 //! the cell gate and crosses one activation the host answers. The
 //! invariant: the schema-version decision is the core's — a host receives
 //! only bodies it can decode at its own version or migrate from a named one.
@@ -207,27 +207,20 @@ fn snapshot_state(outcome: schema::ActivationOutcome) -> Result<Vec<u8>, Error> 
     }
 }
 
-/// Live-read / migration serialize for a host-run Cell, waiting `wait` for
-/// the host's answer. MUST run under the cell gate (the caller's
-/// `with_cell_exclusive` closure).
+/// The state as JSON for a live read or a migration of a host-run Cell,
+/// waiting `wait` for the host's answer. MUST run under the cell gate (the
+/// caller's `with_cell_exclusive` closure).
 pub fn state_json_locked(
     slot: &Arc<CellSlot>,
-    migration: bool,
     wait: Duration,
 ) -> Result<(serde_json::Value, u64), Error> {
-    let (kind, command) = if migration {
-        (
-            schema::ActivationKind::MigrationSerialize,
-            "migration_serialize",
-        )
-    } else {
-        (schema::ActivationKind::LiveStateRead, "live_state_read")
-    };
+    let kind = schema::ActivationKind::LiveStateRead;
     let json = match crate::poll_core::global().host_command_within(slot, kind, wait, None)? {
-        schema::ActivationOutcome::StateJson { json }
-        | schema::ActivationOutcome::MigrationState { json } => json,
-        schema::ActivationOutcome::Failed(err) => return Err(host_failed(command, err.message)),
-        _ => return Err(wrong_outcome(command)),
+        schema::ActivationOutcome::StateJson { json } => json,
+        schema::ActivationOutcome::Failed(err) => {
+            return Err(host_failed("live_state_read", err.message))
+        }
+        _ => return Err(wrong_outcome("live_state_read")),
     };
     let value = serde_json::from_slice(&json).map_err(|e| {
         Error::HostCrossing(Code::HostStateUnreadable.with([("reason", e.to_string().into())]))

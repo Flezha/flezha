@@ -120,7 +120,6 @@ fn cases() -> BTreeMap<String, String> {
         command(ActivationKind::ApplyState {
             state_json: b"{}".to_vec(),
         }),
-        command(ActivationKind::MigrationSerialize),
         command(ActivationKind::KeyRequest(KeyRequest {
             channel: 2,
             payloads: vec![b"p".to_vec()],

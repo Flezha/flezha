@@ -175,7 +175,6 @@ pub mod word {
     pub const SNAPSHOT_REQUEST: &str = "snapshot_request";
     pub const LIVE_STATE_READ: &str = "live_state_read";
     pub const APPLY_STATE: &str = "apply_state";
-    pub const MIGRATION_SERIALIZE: &str = "migration_serialize";
     pub const KEY_REQUEST: &str = "key_request";
     pub const COMPENSATE_RUN: &str = "compensate_run";
     pub const LEAVE: &str = "leave";
@@ -193,7 +192,6 @@ pub mod word {
     pub const SNAPSHOT: &str = "snapshot";
     pub const STATE_JSON: &str = "state_json";
     pub const STATE_APPLIED: &str = "state_applied";
-    pub const MIGRATION_STATE: &str = "migration_state";
     pub const PREPARED: &str = "prepared";
     pub const FAILED: &str = "failed";
 }
@@ -328,7 +326,6 @@ fn kind_out<S: Sink>(
             let json = s.json(state_json)?;
             s.set(out, STATE_JSON, json)?;
         }
-        K::MigrationSerialize => set_word(s, out, KIND, word::MIGRATION_SERIALIZE)?,
         K::KeyRequest(request) => {
             set_word(s, out, KIND, word::KEY_REQUEST)?;
             let request = key_request(s, request)?;
@@ -581,9 +578,6 @@ pub fn result<S: Source>(s: &S, r: &S::Map) -> Result<schema::ActivationResult, 
             json: opt_bytes(s, r, JSON)?.unwrap_or_default(),
         },
         word::STATE_APPLIED => O::StateApplied,
-        word::MIGRATION_STATE => O::MigrationState {
-            json: opt_bytes(s, r, JSON)?.unwrap_or_default(),
-        },
         word::PREPARED => O::Prepared(read_all(s, opt_list(s, r, PREPARED)?, prepared)?),
         word::FAILED => O::Failed(schema::WorkError {
             message: opt_text(s, r, ERROR)?.unwrap_or_else(|| "activation failed".into()),

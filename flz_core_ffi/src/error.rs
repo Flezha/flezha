@@ -15,7 +15,6 @@ pub enum Error {
     UnknownToken(u64),
     /// An argument that is not UTF-8, named (`namespace`, `spawn arguments`).
     Utf8(&'static str),
-    SpawnIfRunning(String),
     /// A spawn handle read after it resolved, or after the activation that
     /// made it completed.
     SpawnReleased(u64),
@@ -37,13 +36,11 @@ pub enum Error {
     /// An administration call's refusal: the controller's own for a policy
     /// refusal, or the kernel's for a call that reached nothing.
     Admin(flz_core::admin::AdminError),
-    /// A `ctx.effect` the core refused or could not keep.
-    Effect(FlezhaError),
+    /// A refusal the core built in the catalogue's shape: a spawn's `id` and
+    /// `if_running` refused before sending, or a `ctx.effect` refused or not kept.
+    Refused(FlezhaError),
     /// A shim built against another activation schema, refused at creation.
-    SchemaMismatch {
-        shim: u32,
-        core: u32,
-    },
+    SchemaMismatch { shim: u32, core: u32 },
 }
 
 impl ErrorModel for Error {
@@ -57,9 +54,6 @@ impl ErrorModel for Error {
                 Code::UnknownActivationToken.with([("token", (*token).into())])
             }
             Error::Utf8(argument) => Code::ArgumentNotUtf8.with([("argument", (*argument).into())]),
-            Error::SpawnIfRunning(value) => {
-                Code::InvalidIfRunning.with([("value", value.as_str().into())])
-            }
             Error::SpawnReleased(handle) => {
                 Code::SpawnHandleReleased.with([("handle", (*handle).into())])
             }
@@ -72,7 +66,7 @@ impl ErrorModel for Error {
                 ("reason", (*reason).into()),
             ]),
             Error::Admin(error) => error.to_error(),
-            Error::Effect(error) => error.clone(),
+            Error::Refused(error) => error.clone(),
             Error::SchemaMismatch { shim, core } => {
                 Code::SchemaMismatch.with([("shim", (*shim).into()), ("core", (*core).into())])
             }
@@ -126,8 +120,8 @@ mod tests {
             (Error::UnknownToken(7), "runtime.unknown_activation_token"),
             (Error::Utf8("namespace"), "runtime.argument_not_utf8"),
             (
-                Error::SpawnIfRunning("later".into()),
-                "runtime.invalid_if_running",
+                Error::Refused(Code::SpawnIfRunningWithoutId.with([])),
+                "spawn.if_running_without_id",
             ),
             (Error::SpawnReleased(3), "runtime.spawn_handle_released"),
             (

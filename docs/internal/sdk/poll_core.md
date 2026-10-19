@@ -137,7 +137,7 @@ Two notes owed to whoever writes the next SDK:
 ## Activation / ActivationResult
 
 The boundary contract lives in `flz_core::schema` and is postcard-encoded;
-field order IS the wire contract and `SCHEMA_VERSION` (currently 4) gates it.
+field order IS the wire contract and `SCHEMA_VERSION` (currently 5) gates it.
 Every kind is pinned as bytes in `test/fixtures/postcard_bodies.txt`, which
 the core's tests encode and each shim must reproduce byte-identically.
 
@@ -146,7 +146,7 @@ An **Activation** targets one cell (a relay-wide `Leave`, one relay) and carries
 | Kind                                                                 | What the host does |
 | -------------------------------------------------------------------- | ------------------ |
 | `Work(items)`                                                        | An ordered per-cell batch of `Input` items (payload bytes, metadata, `consumed_offset`, replay flag, core-evaluated `now`) and `Timer` firings (kind, `scheduled_at`; its `now` IS `scheduled_at`, so a chained `timer_after` anchors replay-stably on the firing that woke it). Timer firings are validated against the pending set at assembly — a stale entry fires nothing. |
-| `RestoreFold`, `SnapshotRequest`, `LiveStateRead`, `ApplyState`, `MigrationSerialize` | The five host-participating command kinds, under the same per-cell exclusivity. No other controller command produces an activation (pinned: a `Ping` generates none). |
+| `RestoreFold`, `SnapshotRequest`, `LiveStateRead`, `ApplyState`                      | The four host-participating command kinds, under the same per-cell exclusivity; a live read and a migration both read the state as `LiveStateRead`. No other controller command produces an activation (pinned: a `Ping` generates none). |
 | `KeyRequest`                                                         | Batched keying for unkeyed entry payloads bound for a keyed edge, answered before anything reaches a cell mailbox. |
 | `CompensateRun`                                                      | An undo step of a steps chain. |
 | `Leave { whole_relay }`                                              | The target cell was evicted, or with `whole_relay` the relay stopped, finished or moved away: the host drops what it holds for it, so a cell started again under the same name begins at `init_state`. An eviction, made only once everything the cell settled has shipped, crosses it under the cell's gate and waits for the answer before the key is removed, so a cell minted again under the key is never handed work first, unless the relay stops before a host took it, when it is withdrawn and the relay's own leave covers the cell; a stop sends it once no activation handed out for the relay is still running, and an `AddRelay` for the same id is handled only after the host answered it. Answered `StateApplied`. |
@@ -422,12 +422,12 @@ a steps class declaring no tasklet is refused).
 
 At runtime the full contract crosses the boundary:
 
-- **The five command kinds are real activations.** `RestoreInitState` becomes
+- **The four command kinds are real activations.** `RestoreInitState` becomes
   a `RestoreFold` (the core walks the WAL records, folds cursors and timer ops
   itself, and hands the host only its own change bodies — effect records
   unwrapped, plain bodies verbatim); `CompactCell` a `SnapshotRequest` (the
   core drains, re-states the pending timer set, and frames the answer);
-  `CellState` a `LiveStateRead`; migration a `MigrationSerialize` /
+  `CellState` a `LiveStateRead`; migration a `LiveStateRead` /
   `ApplyState`. Each runs under the cell's handout gate
   (`PollCore::host_command`), so a fold completes before inputs flow.
 - **The prepare crossing** (`KeyRequest`, batched per entry channel) asks the

@@ -15,7 +15,7 @@ use crate::harness::{abi_complete_mapped, abi_poll, last_document, Controller, D
 
 /// `flz_core_shutdown` ships every live Cell's state as a
 /// `RunnerShutdownNotification` before the core reports shutting down: the
-/// poller blocked at that moment is handed the migration serializes first, the
+/// poller blocked at that moment is handed the state reads first, the
 /// controller sees the notification, and only then is the poller woken.
 pub(crate) fn shutdown_ships_state_then_wakes_the_poller(
     ctx: *mut FlzContext,
@@ -55,7 +55,7 @@ pub(crate) fn shutdown_ships_state_then_wakes_the_poller(
     );
 
     let (served, waited) = host.join().expect("host loop returns");
-    assert!(served >= 1, "the host was handed no migration serialize");
+    assert!(served >= 1, "the host was handed no state read");
     assert!(
         waited < Duration::from_secs(5),
         "shutdown must wake promptly, waited {waited:?}"
@@ -83,7 +83,7 @@ pub(crate) fn shutdown_ships_state_then_wakes_the_poller(
     unsafe { flz_core_context_free(again) };
 }
 
-/// The host during a shutdown: answer every migration serialize with a
+/// The host during a shutdown: answer every state read with a
 /// distinctive state, and report how many it answered and how long its poll
 /// took to be woken.
 fn serve_until_shutdown(ctx: *mut FlzContext) -> (usize, Duration) {
@@ -94,8 +94,8 @@ fn serve_until_shutdown(ctx: *mut FlzContext) -> (usize, Duration) {
             (FLZ_POLL_SHUTTING_DOWN, _) => return (served, started.elapsed()),
             (FLZ_POLL_ACTIVATION, Some(act)) => {
                 assert!(
-                    matches!(act.kind, schema::ActivationKind::MigrationSerialize),
-                    "expected a migration serialize during shutdown, got {:?}",
+                    matches!(act.kind, schema::ActivationKind::LiveStateRead),
+                    "expected a state read during shutdown, got {:?}",
                     act.kind
                 );
                 served += 1;
@@ -103,7 +103,7 @@ fn serve_until_shutdown(ctx: *mut FlzContext) -> (usize, Duration) {
                     ctx,
                     &schema::ActivationResult {
                         token: act.token,
-                        outcome: schema::ActivationOutcome::MigrationState {
+                        outcome: schema::ActivationOutcome::StateJson {
                             json: br#"{"n":9}"#.to_vec(),
                         },
                     },

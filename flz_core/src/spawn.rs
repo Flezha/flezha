@@ -44,7 +44,7 @@ impl IfRunning {
     }
 
     /// The policy a host named, where an empty word is the default.
-    pub fn from_wire(word: &str) -> Option<Self> {
+    fn from_wire(word: &str) -> Option<Self> {
         match word {
             "" | "deliver" => Some(IfRunning::Deliver),
             "error" => Some(IfRunning::Error),
@@ -63,6 +63,19 @@ pub struct SpawnOptions {
 }
 
 impl SpawnOptions {
+    /// The options a host named as words: an empty `id` asks for a generated
+    /// one and an empty `if_running` is the default. A policy without an id is
+    /// refused, because a spawn without one never finds a running instance.
+    pub fn from_wire(id: &str, if_running: &str) -> Result<Option<Self>, FlezhaError> {
+        let policy = IfRunning::from_wire(if_running)
+            .ok_or_else(|| Code::InvalidIfRunning.with([("value", if_running.into())]))?;
+        match (id.is_empty(), if_running.is_empty()) {
+            (false, _) => Ok(Some(Self::id(id).if_running(policy))),
+            (true, true) => Ok(None),
+            (true, false) => Err(Code::SpawnIfRunningWithoutId.with([])),
+        }
+    }
+
     pub fn id(id: impl Into<String>) -> Self {
         Self {
             id: id.into(),

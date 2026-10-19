@@ -778,6 +778,7 @@ pub fn init(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PayloadView>()?;
     m.add("NativeError", m.py().get_type::<NativeError>())?;
     m.add("SchemaMismatch", m.py().get_type::<SchemaMismatch>())?;
+    m.add("WAIT_CORE_BOUND", crate::FLZ_WAIT_CORE_BOUND)?;
     m.add_function(wrap_pyfunction!(schema_version, m)?)?;
     m.add_function(wrap_pyfunction!(monotonic_nanos, m)?)?;
     m.add_function(wrap_pyfunction!(knob, m)?)?;

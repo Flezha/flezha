@@ -5,7 +5,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Negotiated at context creation; a mismatch refuses to start.
-pub const SCHEMA_VERSION: u32 = 4;
+pub const SCHEMA_VERSION: u32 = 5;
 
 pub use crate::channel::{ChannelId, TaskletId};
 
@@ -38,12 +38,11 @@ pub enum ActivationKind {
     RestoreFold(RestoreFold),
     /// Encode the state for compaction; the core drained and stamps the seq.
     SnapshotRequest,
-    /// The state as JSON for a live read.
+    /// The state as JSON, for a live read or a migration.
     LiveStateRead,
     ApplyState {
         state_json: Vec<u8>,
     },
-    MigrationSerialize,
     /// The prepare crossing: one [`PrepareAnswer`] per payload, in order,
     /// before anything is enqueued.
     KeyRequest(KeyRequest),
@@ -138,9 +137,6 @@ pub enum ActivationOutcome {
         json: Vec<u8>,
     },
     StateApplied,
-    MigrationState {
-        json: Vec<u8>,
-    },
     /// One outcome per `KeyRequest` payload, in order.
     Prepared(Vec<Result<PrepareAnswer, WorkError>>),
     /// The whole activation failed before per-item processing.
@@ -228,7 +224,6 @@ impl ActivationKind {
             ActivationKind::SnapshotRequest => "snapshot_request",
             ActivationKind::LiveStateRead => "live_state_read",
             ActivationKind::ApplyState { .. } => "apply_state",
-            ActivationKind::MigrationSerialize => "migration_serialize",
             ActivationKind::KeyRequest(_) => "key_request",
             ActivationKind::CompensateRun { .. } => "compensate_run",
             ActivationKind::Leave { .. } => "leave",

@@ -292,20 +292,19 @@ fn serialize_slot(
 ) -> Result<(Value, u64), Error> {
     // A graceful ship is inside a grace period, so it waits for a host's
     // answer only as long as for the gate; a live read keeps the command wait.
-    let migration = purpose == StatePurpose::Migration;
-    let host_wait = if migration {
+    let host_wait = if purpose == StatePurpose::Migration {
         SERIALIZE_GATE_WAIT
     } else {
         crate::poll_core::HOST_COMMAND_TIMEOUT
     };
-    // Under the cell's handout exclusivity: a live read (or a migration
-    // serialize, which shares this seam) never observes a half-applied
+    // Under the cell's handout exclusivity: a live read or a migration
+    // never observes a half-applied
     // activation. A Cell still inside one at the gate wait has nothing
     // newer than its last completed activation, and is omitted.
     crate::poll_core::global()
         .try_with_cell_exclusive(slot, SERIALIZE_GATE_WAIT, || {
             if slot.dispatcher.host_facts().is_some() {
-                return crate::host::state_json_locked(slot, migration, host_wait);
+                return crate::host::state_json_locked(slot, host_wait);
             }
             let state_guard = slot.state.lock_recover();
             let value = (tasklet_desc.serialize_state)(&state_guard).map_err(|reason| {
@@ -510,7 +509,7 @@ mod tests {
             let _ = tx.send(serialize_relay_state(&instance));
         });
         // The wedged Cell costs the gate bound; the consumer, healthy but
-        // with no poller to answer its migration serialize, costs the host
+        // with no poller to answer its state read, costs the host
         // bound — the same figure, by design.
         let payload = rx
             .recv_timeout(2 * SERIALIZE_GATE_WAIT + Duration::from_secs(2))

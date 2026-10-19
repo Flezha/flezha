@@ -678,6 +678,7 @@ fn native_surface() -> Result<RArray, Error> {
 pub fn init(ruby: &Ruby) -> Result<(), Error> {
     let flezha = ruby.define_module("Flezha")?;
     let native = flezha.define_module("Native")?;
+    native.const_set("WAIT_CORE_BOUND", crate::FLZ_WAIT_CORE_BOUND)?;
 
     native.define_module_function("schema_version", function!(schema_version, 0))?;
     native.define_module_function("context_new", function!(context_new, 1))?;

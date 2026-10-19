@@ -58,7 +58,7 @@ use std::time::Duration;
 use dashmap::DashMap;
 pub use error::Error;
 use flz_core::poll_core::{EngineActivation, Polled, Starvation};
-use flz_core::spawn::{IfRunning, SpawnHandle, SpawnOptions};
+use flz_core::spawn::{SpawnHandle, SpawnOptions};
 use flz_core::{schema, ErrorModel};
 /// The entry points the source-file splits hold, exported from the crate root
 /// like every other C symbol: a module is not an ABI boundary.
@@ -78,6 +78,8 @@ pub const FLZ_ERR: i32 = -1;
 pub const FLZ_OK: i32 = 0;
 /// A spawn result read found no answer yet; the out buffer is untouched.
 pub const FLZ_SPAWN_PENDING: i32 = 1;
+/// A spawn read's wait that ends at the core's own bound for the request.
+pub const FLZ_WAIT_CORE_BOUND: u64 = u64::MAX;
 /// [`flz_core_effect_begin`]: run the function, then answer
 /// [`flz_core_effect_end`] or [`flz_core_effect_release`].
 pub const FLZ_EFFECT_RUN: i32 = 0;
@@ -708,9 +710,8 @@ pub extern "C" fn flz_core_watch_stdin_eof() {
 /// for none): with the Cell and the call's position it names the request, so
 /// a re-run of that item resolves to what the first run's request did.
 ///
-/// Never waits: `*handle_out` names the answer for [`flz_core_spawn_result`].
-/// A refusal reaches only that read. [`FLZ_ERR`] means an unreadable argument
-/// or a token that is not outstanding.
+/// Never waits: `*handle_out`'s answer, a controller's refusal too, is [`flz_core_spawn_result`]'s.
+/// [`FLZ_ERR`], sending nothing: bad UTF-8, `if_running` without `id`, or an unknown token.
 ///
 /// # Safety
 /// `ctx` must be live; strings NUL-terminated; `payload`/`payload_len`
@@ -738,8 +739,9 @@ pub unsafe extern "C" fn flz_core_spawn_request(
     ) else {
         return ctx.fail(Error::Utf8("spawn arguments"));
     };
-    let Some(if_running) = IfRunning::from_wire(if_running) else {
-        return ctx.fail(Error::SpawnIfRunning(if_running.to_string()));
+    let options = match SpawnOptions::from_wire(id, if_running) {
+        Ok(options) => options,
+        Err(refusal) => return ctx.fail(Error::Refused(refusal)),
     };
     // Held until the handle is recorded, so the activation cannot complete in
     // between and leave the handle unreleased.
@@ -751,7 +753,6 @@ pub unsafe extern "C" fn flz_core_spawn_request(
     } else {
         std::slice::from_raw_parts(payload, payload_len).to_vec()
     };
-    let options = (!id.is_empty()).then(|| SpawnOptions::id(id).if_running(if_running));
     let origin_position = outstanding.next_position(Counted::Spawn(offset));
     let origin = flz_core::origin::InvocationOrigin {
         cell_identity: outstanding.activation.cell_identity(),
@@ -803,20 +804,20 @@ pub unsafe extern "C" fn flz_core_effect_begin(
         return ctx.fail(Error::Utf8("effect name"));
     };
     if let Err(refusal) = effect_result::check_name(name) {
-        return ctx.fail(Error::Effect(refusal));
+        return ctx.fail(Error::Refused(refusal));
     }
     let Some(mut outstanding) = ctx.outstanding.get_mut(&token) else {
-        return ctx.fail(Error::Effect(effect_result::outside_invocation(name)));
+        return ctx.fail(Error::Refused(effect_result::outside_invocation(name)));
     };
     if outstanding
         .effects
         .iter()
         .any(|(running, _)| *running == item)
     {
-        return ctx.fail(Error::Effect(effect_result::nested(name)));
+        return ctx.fail(Error::Refused(effect_result::nested(name)));
     }
     let Some((offset, phase, attempt)) = outstanding.activation.invocation(item as usize) else {
-        return ctx.fail(Error::Effect(effect_result::outside_invocation(name)));
+        return ctx.fail(Error::Refused(effect_result::outside_invocation(name)));
     };
     let counted = Counted::Effect(item, name.to_string());
     let ordinal = outstanding.positions.get(&counted).copied().unwrap_or(0);
@@ -874,7 +875,7 @@ pub unsafe extern "C" fn flz_core_effect_end(
         Some((running, outstanding.activation.cell_identity().to_vec()))
     });
     let Some((running, cell)) = taken else {
-        return ctx.fail(Error::Effect(flz_core::effect_result::outside_invocation(
+        return ctx.fail(Error::Refused(flz_core::effect_result::outside_invocation(
             "",
         )));
     };
@@ -893,7 +894,7 @@ pub unsafe extern "C" fn flz_core_effect_end(
             hand_out(first, out, out_len);
             FLZ_EFFECT_KEPT
         }
-        Err(refusal) => ctx.fail(Error::Effect(refusal)),
+        Err(refusal) => ctx.fail(Error::Refused(refusal)),
     }
 }
 
@@ -1001,17 +1002,16 @@ pub unsafe extern "C" fn flz_core_pending_timers(
     FLZ_OK
 }
 
-/// Read a spawn handle, waiting up to `timeout_ms` for the controller's answer;
-/// a timeout of 0 never waits. [`FLZ_OK`]: `out` holds
-/// `{"id","outcome"}`, the id the request resolved to and one of `spawned`,
-/// `delivered`, `skipped_on_replay`; free it with [`flz_core_buf_free`].
-/// [`FLZ_SPAWN_PENDING`]: no answer yet, `out` untouched. [`FLZ_ERR`]: `out`
-/// untouched and [`flz_core_last_error`] holds the failure, whose code is the
-/// controller's (`relay.already_running`, `relay.factory_unknown`,
-/// `relay.factory_not_steps`, or any other refusal's own), the core's
-/// (`spawn.timeout`, `spawn.unavailable`), or `runtime.spawn_handle_released`
-/// for a handle whose activation was completed or abandoned. A resolved handle
-/// answers every later read the same.
+/// Read a spawn handle, waiting up to `timeout_ms` (0 never waits,
+/// [`FLZ_WAIT_CORE_BOUND`] to the request's deadline) for the controller's
+/// answer. [`FLZ_OK`]: `out` holds `{"id","outcome"}`, the id the request
+/// resolved to and `spawned`, `delivered` or `skipped_on_replay`; free it with
+/// [`flz_core_buf_free`]. [`FLZ_SPAWN_PENDING`]: no answer yet, `out` untouched.
+/// [`FLZ_ERR`]: `out` untouched and [`flz_core_last_error`] holds the
+/// controller's code (`relay.already_running` or any other refusal's own), the
+/// core's (`spawn.timeout`, `spawn.unavailable`) or `runtime.spawn_handle_released`
+/// once the handle's activation ended. A resolved handle answers every later
+/// read the same.
 ///
 /// # Safety
 /// `ctx` must be live; `out`/`out_len` must be valid writable pointers.

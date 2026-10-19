@@ -569,13 +569,17 @@ pub fn spawn_try_result(handle: BigInt) -> Result<Option<String>> {
     Ok(veneer::spawn_result(context()?, handle, 0)?)
 }
 
-/// Wait up to `timeoutMs` for a spawn handle's answer: its JSON, or `null` if
-/// it is still pending. Asynchronous: the read parks for the whole timeout.
+/// Wait for a spawn handle's answer, to the core's bound for the request: its
+/// JSON. Asynchronous: the read parks until the answer or the deadline.
 #[napi(ts_return_type = "Promise<string | null>")]
-pub fn spawn_wait<'a>(env: &'a Env, handle: BigInt, timeout_ms: u32) -> Result<Object<'a>> {
+pub fn spawn_wait<'a>(env: &'a Env, handle: BigInt) -> Result<Object<'a>> {
     let handle = from_big("handle", &handle)?;
     off_loop(env, context()?, move |ctx| {
-        Ok(veneer::spawn_result(ctx, handle, u64::from(timeout_ms))?)
+        Ok(veneer::spawn_result(
+            ctx,
+            handle,
+            crate::FLZ_WAIT_CORE_BOUND,
+        )?)
     })
 }
 

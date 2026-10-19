@@ -188,6 +188,11 @@ fn a_request_with_unreadable_arguments_is_refused(ctx: *mut FlzContext, token: u
         code_of(request(ctx, token, "w1", "later", false)),
         "runtime.invalid_if_running"
     );
+    // Nothing is sent: request #0 below is the first the controller sees.
+    assert_eq!(
+        code_of(request(ctx, token, "", "error", false)),
+        "spawn.if_running_without_id"
+    );
 }
 
 /// Request #0.

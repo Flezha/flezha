@@ -36,9 +36,10 @@ logic on the controller's behalf over two layers:
 | Control plane | Handshake, command dispatch, lifecycle, durability barriers | control channel (one per runner) | protobuf inside the binary frame |
 | Data plane | Relay input/output, heartbeats, per-Cell state records | N primary (controller → runner) + N secondary (runner → controller) streams | raw bytes inside the binary frame |
 
-Of the command surface, only five interactions reach host code in a `flz_core`
-runner (as `RestoreFold`, `SnapshotRequest`, `LiveStateRead`, `ApplyState`,
-`MigrationSerialize` activations); the kernel answers everything else. A relay
+Of the command surface, only four interactions reach host code in a `flz_core`
+runner (as `RestoreFold`, `SnapshotRequest`, `LiveStateRead` and `ApplyState`
+activations; a migration reads the state as a `LiveStateRead`); the kernel
+answers everything else. A relay
 leaving the runner and an evicted Cell reach it too, as a `Leave` activation
 that nothing waits on, so the host drops the state it holds for them.
 

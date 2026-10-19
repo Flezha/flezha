@@ -33,7 +33,7 @@ format_id|msgpack|5
 format_id|json|6
 format_id|etf|7
 
-schema_version|activation|4
+schema_version|activation|5
 
 payload_id|cell_state_change|cell_state_change
 payload_id|cell_effect_record|cell_effect_record

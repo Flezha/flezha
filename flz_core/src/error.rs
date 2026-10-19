@@ -165,6 +165,7 @@ codes! {
     EffectOutsideInvocation => "effect.outside_invocation",
     EffectTooLarge => "effect.too_large",
 
+    SpawnIfRunningWithoutId => "spawn.if_running_without_id",
     SpawnTimeout => "spawn.timeout",
     SpawnUnavailable => "spawn.unavailable",
     OptionsConflict => "usage.options_conflict",

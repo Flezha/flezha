@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Changed: small rules live in the core
+
+- **BREAKING:** the activation schema is version 5. The activation kind `migration_serialize`
+  and the outcome `migration_state` are removed: a migration reads the state as a
+  `live_state_read` answered `state_json`, as a live read does. Every SDK's schema literal
+  follows; a shim built against version 4 is refused at context creation.
+- **BREAKING:** `if_running` without an `id` is refused by the core at the call with the new
+  code `spawn.if_running_without_id`, and nothing is sent. The Python, Ruby, Node and PHP SDKs
+  raised their own argument error before; the Elixir SDK resolves the handle to the refusal
+  instead of raising `ArgumentError`. A testing harness does not check it.
+- **BREAKING (Java):** `SpawnHandle.RESULT_TIMEOUT_MS` is removed. A waiting spawn read in the
+  Java, Python, Ruby, Node and PHP SDKs waits to the core's own bound for the request, named by
+  the new C ABI constant `FLZ_WAIT_CORE_BOUND`; the Node addon's `spawnWait` takes no timeout.
+- The Elixir SDK's `Flezha.SDK.send/5` goes through the core's send for the controller path
+  too, as it did for `local: true`; its answers are unchanged.
+
 ### Changed: the core derives what a declaration's chains already say
 
 - **BREAKING:** the declaration JSON's tasklet key `cell_mode` is removed: the core derives the

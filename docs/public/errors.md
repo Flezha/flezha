@@ -660,6 +660,7 @@ SDK raises or returns its one error type carrying them.
 
 | Code | Class | Exit | Message | Hint |
 |---|---|---|---|---|
+| `spawn.if_running_without_id` | invalid | 2 | if_running applies only to a running instance named by an id; pass an id with if_running, or leave if_running out to start a new instance |  |
 | `spawn.outside_invocation` | invalid | 2 | spawn_steps of factory '{factory}' was called outside the invocation it belongs to: from another process, or after it returned |  |
 | `spawn.timeout` | unavailable | 7 | no spawn result arrived within {seconds}s |  |
 | `spawn.unavailable` | unavailable | 7 | there is no control plane to request a spawn on: the runner is closed or has no controller |  |

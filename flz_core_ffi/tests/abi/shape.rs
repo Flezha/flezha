@@ -425,9 +425,6 @@ fn assert_kind_maps(h: &Map<String, Value>, kind: &schema::ActivationKind) {
             assert_eq!(text(h, "kind"), "apply_state");
             assert_eq!(bytes_at(h, "state_json"), *state_json);
         }
-        schema::ActivationKind::MigrationSerialize => {
-            assert_eq!(text(h, "kind"), "migration_serialize")
-        }
         schema::ActivationKind::KeyRequest(request) => {
             assert_eq!(text(h, "kind"), "key_request");
             let mapped = obj(at(h, "key_request"));
@@ -505,10 +502,6 @@ fn record_result(r: &schema::ActivationResult) -> Map<String, Value> {
         }
         schema::ActivationOutcome::StateApplied => {
             say("state_applied");
-        }
-        schema::ActivationOutcome::MigrationState { json } => {
-            say("migration_state");
-            out.insert("json".into(), raw(json));
         }
         schema::ActivationOutcome::Prepared(answers) => {
             say("prepared");
