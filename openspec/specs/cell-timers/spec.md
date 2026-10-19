@@ -241,7 +241,7 @@ Every requirement of this capability SHALL hold for a tasklet of a steps relay a
 
 ### Requirement: A firing inside a steps relay is a trigger of the run
 
-A timer firing on a Cell of a steps instance SHALL be handled by the instance's pass bookkeeping before it reaches the Cell, at the point the firing is put in front of the Cell: the promotion of a processing-time deadline and the assembly of an event-time firing chained behind the high-water. When no pass is running and no trigger is queued ahead, the firing SHALL open a pass whose origin is that tasklet and that Cell: the tasklet's chain (every tasklet reachable from it, with in-chain parent counts) SHALL be the pass's chain, the stage SHALL be in flight owing the firing, and the firing's emits SHALL flow down the chain and commit stage by stage as any stage output does. When a pass is running and the firing's own stage is in flight, the firing SHALL join that stage: it SHALL be counted among the stage's owed items, its `on_timer` SHALL run on that Cell inside the stage and its emits SHALL be held with the stage's. Otherwise the firing SHALL wait in the instance's queue, in arrival order with messages, and SHALL be served at the next iteration boundary before the loop mode's own continuation, a `CHAINED` loop's carry included. An event-time firing generated ahead of an input SHALL join the stage that delivered the input. One pass SHALL run at a time. A firing SHALL never be handed to a Cell whose pass has failed or been cancelled.
+A timer firing on a Cell of a steps instance SHALL be handled by the instance's pass bookkeeping before it reaches the Cell, at the point the firing is put in front of the Cell: the promotion of a processing-time deadline and the assembly of an event-time firing chained behind the high-water. When no pass is running and no trigger is queued ahead, the firing SHALL open a pass whose origin is that tasklet and that Cell: the tasklet's chain (every tasklet reachable from it, with in-chain parent counts) SHALL be the pass's chain, the stage SHALL be in flight owing the firing, and the firing's emits SHALL flow down the chain and commit stage by stage as any stage output does. When a pass is running and the firing's own stage is in flight, the firing SHALL join that stage: it SHALL be counted among the stage's owed items, its `on_timer` SHALL run on that Cell inside the stage and its emits SHALL be held with the stage's. A processing-time timer that an item of a running stage registers SHALL enter its Cell's pending set and record at settle, as any timer op does, and SHALL be put on the deferred-wake list only once that stage has settled every item it owes, unless an item of the stage cancels it first, so a processing-time firing SHALL never join the stage that set it. Otherwise the firing SHALL wait in the instance's queue, in arrival order with messages, and SHALL be served at the next iteration boundary before the loop mode's own continuation, a `CHAINED` loop's carry included. An event-time firing generated ahead of an input SHALL join the stage that delivered the input. One pass SHALL run at a time. A firing SHALL never be handed to a Cell whose pass has failed or been cancelled.
 
 #### Scenario: A firing while the instance waits opens a pass at the tasklet that set it
 
@@ -255,8 +255,18 @@ A timer firing on a Cell of a steps instance SHALL be handled by the instance's 
 
 #### Scenario: A firing joins its own stage while that stage runs
 
-- **WHEN** `tick`'s timer comes due while `tick`'s Cell is still running over a message of the current pass
+- **WHEN** `tick`'s timer, registered in an earlier pass, comes due while `tick`'s Cell is still running over a message of the current pass
 - **THEN** `on_timer` SHALL run on that Cell after `run` returns, inside the same pass, its emits SHALL be released with the stage's on that stage's commit, and no second pass SHALL open for it
+
+#### Scenario: A timer a stage sets fires in a pass of its own after that stage
+
+- **WHEN** an item of `tick`'s stage registers a processing-time timer whose due time passes while that stage still owes another item
+- **THEN** the firing SHALL NOT join that stage, the stage SHALL settle its items and commit without it, and `on_timer` SHALL then run in a pass of its own whose root is `tick`
+
+#### Scenario: A timer a stage sets and cancels never fires
+
+- **WHEN** an item of `tick`'s stage registers a processing-time timer and an item of the same stage cancels it, its due time already past
+- **THEN** no firing SHALL run for it and no pass SHALL open for it after the stage commits
 
 #### Scenario: A chained loop's carry yields to a queued firing
 
