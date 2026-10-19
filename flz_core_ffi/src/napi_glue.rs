@@ -657,7 +657,9 @@ pub struct JsNativeExport {
     pub blocking: bool,
 }
 
-/// Every function this addon exports, with the C ABI entry point behind it.
+/// Every function this addon exports, with the C ABI entry point behind it:
+/// the rows of [`crate::veneer::SURFACE`] the glue exports, spelled by
+/// `spelled`, then the host's own exports.
 ///
 /// Two properties are asserted against this table rather than reviewed, so
 /// neither can lapse by omission when an export is added later:
@@ -669,65 +671,49 @@ pub struct JsNativeExport {
 ///   marked blocking returns a promise.
 #[napi]
 pub fn native_surface() -> Vec<JsNativeExport> {
-    // The veneer: one export, one C entry point, blocking as the ABI says.
-    fn veneer(name: &str, abi: &str) -> JsNativeExport {
-        host(
-            name,
-            Some(abi),
-            crate::veneer::BLOCKING_ENTRY_POINTS.contains(&abi),
-        )
-    }
-    fn host(name: &str, abi: Option<&str>, blocking: bool) -> JsNativeExport {
-        JsNativeExport {
-            name: name.to_string(),
-            abi: abi.map(str::to_string),
-            blocking,
-        }
-    }
-    vec![
-        veneer("schemaVersion", "flz_core_schema_version"),
-        veneer("contextNew", "flz_core_context_new"),
-        veneer("contextFree", "flz_core_context_free"),
-        veneer("declareClass", "flz_core_declare_class"),
-        veneer("checkClass", "flz_core_check_class"),
-        veneer("start", "flz_core_start"),
-        veneer("localStart", "flz_core_local_start"),
-        veneer("localOnSink", "flz_core_local_on_sink"),
-        veneer("localFeed", "flz_core_local_feed"),
-        veneer("localNextOutput", "flz_core_local_next_output"),
-        veneer("localRunUntilIdle", "flz_core_local_run_until_idle"),
-        veneer("localStop", "flz_core_local_stop"),
-        veneer("complete", "flz_core_complete"),
-        veneer("abandon", "flz_core_abandon"),
-        veneer("shutdown", "flz_core_shutdown"),
-        veneer("spawnRequest", "flz_core_spawn_request"),
-        veneer("part", "flz_core_part"),
-        veneer("effectBegin", "flz_core_effect_begin"),
-        veneer("effectEnd", "flz_core_effect_end"),
-        veneer("effectRelease", "flz_core_effect_release"),
-        // A read that always passes a timeout of zero never waits.
-        host("spawnTryResult", Some("flz_core_spawn_result"), false),
-        veneer("spawnWait", "flz_core_spawn_result"),
-        veneer("adminCall", "flz_core_admin_call"),
-        veneer("sendMessage", "flz_core_send_message"),
-        veneer("relays", "flz_core_relays"),
-        veneer("monotonicNanos", "flz_core_monotonic_nanos"),
-        veneer("lastError", "flz_core_last_error"),
-        host("setLogCallback", None, false),
-        veneer("errorDocument", "flz_core_error_document"),
-        // The host's threads. `startHost` is how `flz_core_poll` is reached at
-        // all: it is driven from native fetchers and never exported, because
-        // an event loop inside a blocking poll is an event loop running
-        // nothing else.
-        host("startHost", Some("flz_core_poll"), false),
-        host("stopFetching", Some("flz_core_poll"), false),
-        host("stopHost", Some("flz_core_poll"), true),
-        host("registerDispatch", None, false),
-        host("unregisterDispatch", None, false),
-        host("dispatchLoopCount", None, false),
-        host("hostStats", None, false),
-        host("setHostDrainedCallback", None, false),
-        host("watchStdinEof", Some("flz_core_watch_stdin_eof"), false),
-        host("nativeSurface", None, false),
-    ]
+    let veneer = crate::veneer::glue_entries().flat_map(spelled);
+    let host = HOST_EXPORTS
+        .iter()
+        .map(|&(name, abi, blocking)| export(name, abi, blocking));
+    veneer.chain(host).collect()
 }
+
+/// How JavaScript spells a surface entry: in camel case, with the event-loop
+/// rule applied. `poll` and the starvation wait are never exported, and the
+/// spawn result read is two exports, one per timeout.
+fn spelled(entry: &crate::veneer::Entry) -> Vec<JsNativeExport> {
+    match entry.name {
+        "poll" | "wait_starvation" => Vec::new(),
+        // A read that always passes a timeout of zero never waits.
+        "spawn_result" => vec![
+            export("spawnTryResult", Some(entry.abi), false),
+            export("spawnWait", Some(entry.abi), true),
+        ],
+        _ => vec![export(&entry.camel_name(), Some(entry.abi), entry.blocking)],
+    }
+}
+
+fn export(name: &str, abi: Option<&str>, blocking: bool) -> JsNativeExport {
+    JsNativeExport {
+        name: name.to_string(),
+        abi: abi.map(str::to_string),
+        blocking,
+    }
+}
+
+/// The host's own exports: `(name, entry point it reaches, blocking)`.
+const HOST_EXPORTS: &[(&str, Option<&str>, bool)] = &[
+    ("setLogCallback", None, false),
+    // The host's threads. `startHost` is how `flz_core_poll` is reached at
+    // all: it is driven from native fetchers and never exported, because an
+    // event loop inside a blocking poll is an event loop running nothing else.
+    ("startHost", Some("flz_core_poll"), false),
+    ("stopFetching", Some("flz_core_poll"), false),
+    ("stopHost", Some("flz_core_poll"), true),
+    ("registerDispatch", None, false),
+    ("unregisterDispatch", None, false),
+    ("dispatchLoopCount", None, false),
+    ("hostStats", None, false),
+    ("setHostDrainedCallback", None, false),
+    ("nativeSurface", None, false),
+];

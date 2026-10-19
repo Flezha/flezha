@@ -4,46 +4,22 @@
 //! mapping it feeds is `shape`'s.
 
 use flz_core_ffi::napi_glue::native_surface;
-/// The addon exports exactly what the surface table names, every blocking
-/// entry point is a promise, and neither `poll` nor `waitStarvation` is
-/// among them. Asserted here as well as from Node, because this is the
-/// side that can go wrong without anyone installing the package.
+
+/// Every blocking export is typed as a promise, so the event-loop rule is
+/// asserted rather than reviewed: a new blocking entry point exported as a
+/// synchronous call fails here.
 #[test]
-fn the_native_surface_is_the_declared_one() {
-    let surface = native_surface();
-    let blocking: Vec<&str> = surface
-        .iter()
-        .filter(|e| e.blocking)
-        .map(|e| e.name.as_str())
-        .collect();
+fn every_blocking_export_is_a_promise() {
+    let blocking = native_surface().iter().filter(|e| e.blocking).count();
+    let promised = [
+        include_str!("../../src/napi_glue.rs"),
+        include_str!("../../src/napi_host/mod.rs"),
+    ]
+    .iter()
+    .map(|source| source.matches("ts_return_type = \"Promise<").count())
+    .sum::<usize>();
     assert_eq!(
-        blocking,
-        [
-            "start",
-            "localFeed",
-            "localNextOutput",
-            "localRunUntilIdle",
-            "complete",
-            "effectEnd",
-            "spawnWait",
-            "adminCall",
-            "sendMessage",
-            "stopHost"
-        ]
+        promised, blocking,
+        "every blocking export returns a promise"
     );
-    for name in ["poll", "waitStarvation"] {
-        assert!(
-            !surface.iter().any(|e| e.name == name),
-            "{name} must not be exported to JavaScript"
-        );
-    }
-    for entry in &surface {
-        if let Some(abi) = &entry.abi {
-            assert!(
-                abi.starts_with("flz_core_"),
-                "{} names {abi}, which is not a C ABI entry point",
-                entry.name
-            );
-        }
-    }
 }

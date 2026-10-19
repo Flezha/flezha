@@ -627,64 +627,27 @@ fn error_document(code: String, details: String) -> Result<String, Error> {
 }
 
 /// Every function this extension exports, with the C ABI entry point behind
-/// it: `[name, abi_entry_point, blocking]`.
+/// it: `[name, abi_entry_point, blocking]`, rendered from
+/// [`crate::veneer::SURFACE`] under the entry's own name.
 ///
-/// Two properties are asserted against this table rather than reviewed, so
-/// neither can lapse by omission when an export is added later:
-///
-/// * the veneer adds no ABI surface — every export names an existing entry
-///   point, and this veneer has no host bookkeeping of its own because the
-///   Ruby host's threads are Ruby's;
-/// * every export marked blocking runs inside [`without_gvl`].
+/// The veneer adds no ABI surface: every export names an existing entry
+/// point, and this veneer has no host bookkeeping of its own because the Ruby
+/// host's threads are Ruby's. Every export marked blocking runs inside
+/// [`without_gvl`].
 fn native_surface() -> Result<RArray, Error> {
     let ruby = ruby();
-    let out = ruby.ary_new_capa(NATIVE_SURFACE.len());
-    for (name, abi) in NATIVE_SURFACE {
+    let out = ruby.ary_new();
+    let host = [("native_surface", "flz_core_schema_version", false)];
+    let veneer = crate::veneer::glue_entries().map(|e| (e.name, e.abi, e.blocking));
+    for (name, abi, blocking) in veneer.chain(host) {
         let row = ruby.ary_new_capa(3);
-        row.push(*name)?;
-        row.push(*abi)?;
-        row.push(crate::veneer::BLOCKING_ENTRY_POINTS.contains(abi))?;
+        row.push(name)?;
+        row.push(abi)?;
+        row.push(blocking)?;
         out.push(row)?;
     }
     Ok(out)
 }
-
-/// The table `native_surface` renders and the Rust-side test asserts against:
-/// `(name, abi_entry_point)`, blocking derived from
-/// [`crate::veneer::BLOCKING_ENTRY_POINTS`].
-pub const NATIVE_SURFACE: &[(&str, &str)] = &[
-    ("schema_version", "flz_core_schema_version"),
-    ("context_new", "flz_core_context_new"),
-    ("context_free", "flz_core_context_free"),
-    ("declare_class", "flz_core_declare_class"),
-    ("check_class", "flz_core_check_class"),
-    ("start", "flz_core_start"),
-    ("local_start", "flz_core_local_start"),
-    ("local_on_sink", "flz_core_local_on_sink"),
-    ("local_feed", "flz_core_local_feed"),
-    ("local_next_output", "flz_core_local_next_output"),
-    ("local_run_until_idle", "flz_core_local_run_until_idle"),
-    ("local_stop", "flz_core_local_stop"),
-    ("poll", "flz_core_poll"),
-    ("wait_starvation", "flz_core_wait_starvation"),
-    ("complete", "flz_core_complete"),
-    ("abandon", "flz_core_abandon"),
-    ("shutdown", "flz_core_shutdown"),
-    ("watch_stdin_eof", "flz_core_watch_stdin_eof"),
-    ("spawn_request", "flz_core_spawn_request"),
-    ("spawn_result", "flz_core_spawn_result"),
-    ("part", "flz_core_part"),
-    ("effect_begin", "flz_core_effect_begin"),
-    ("effect_end", "flz_core_effect_end"),
-    ("effect_release", "flz_core_effect_release"),
-    ("admin_call", "flz_core_admin_call"),
-    ("send_message", "flz_core_send_message"),
-    ("relays", "flz_core_relays"),
-    ("monotonic_nanos", "flz_core_monotonic_nanos"),
-    ("last_error", "flz_core_last_error"),
-    ("native_surface", "flz_core_schema_version"),
-    ("error_document", "flz_core_error_document"),
-];
 
 /// Define `Flezha::Native`. Named `Init_flz_core_ffi` so `require
 /// "flz_core_ffi"` finds it. Its failures raise `Flezha::Error`, which the gem

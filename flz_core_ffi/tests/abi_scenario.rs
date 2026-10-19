@@ -12,9 +12,10 @@
 //! language contributes — how it builds and reads a value — so a veneer is
 //! covered by the scenario that already covers the capability rather than by
 //! a suite of its own that has to be kept in step with this one. The arms are
-//! feature-gated: `jni` for the Java SDK's declared native surface, `napi` for
-//! the Node addon's surface, `ruby-embed` for an embedded CRuby VM, `python`
-//! for an embedded CPython interpreter.
+//! feature-gated: `napi` for the Node addon's surface, `ruby-embed` for an
+//! embedded CRuby VM, `python` for an embedded CPython interpreter. `surface`
+//! holds the one surface table to the exports and the fixtures every host
+//! declares against, Java's JNI rows included.
 
 #[path = "abi/admin.rs"]
 mod admin;
@@ -36,10 +37,6 @@ mod shutdown;
 mod spawn;
 #[path = "abi/surface.rs"]
 mod surface;
-
-#[cfg(feature = "jni")]
-#[path = "abi/veneer_jni.rs"]
-mod veneer_jni;
 
 #[cfg(feature = "napi")]
 #[path = "abi/veneer_napi.rs"]

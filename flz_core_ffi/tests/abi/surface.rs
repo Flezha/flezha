@@ -1,14 +1,17 @@
-//! The C ABI surface as data: `test/fixtures/abi_surface.txt` against what the
-//! crate exports.
+//! The native surface as data: `veneer::SURFACE` against what the crate
+//! exports, `test/fixtures/abi_surface.txt`, and, for the rows Java reaches,
+//! `test/fixtures/jni_surface.txt` and `jni_glue.rs`'s exports.
 //!
 //! A host binding that declares the surface in its own language (PHP's
-//! `cdef`, Node's addon declaration) asserts against that file rather than
-//! against this crate's source, so its suite runs from a tree that carries the
-//! fixtures and no Rust at all. This test is the other end of that: the file
-//! is only worth reading if it cannot drift from the crate.
+//! `cdef`, Java's `FlzCore`, each glue's loader) asserts against those files
+//! rather than against this crate's source, so its suite runs from a tree that
+//! carries the fixtures and no Rust at all. This test is the other end of
+//! that: the files are only worth reading if they cannot drift from the crate.
 
 use std::fs;
 use std::path::{Path, PathBuf};
+
+use flz_core_ffi::veneer::{Entry, SURFACE};
 
 /// Every `flz_core_*` entry point the crate exports, from its own source.
 ///
@@ -44,9 +47,8 @@ fn crate_path(relative: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join(relative)
 }
 
-/// One fixture's entries, in file order, comments and blanks dropped, as every
-/// SDK reads it.
-pub fn fixture_lines(name: &str) -> Vec<String> {
+/// One fixture's entries, comments and blanks dropped, as every SDK reads it.
+fn fixture_lines(name: &str) -> Vec<String> {
     let path = crate_path(&format!("../test/fixtures/{name}"));
     let text = fs::read_to_string(&path).unwrap_or_else(|e| {
         panic!(
@@ -61,38 +63,69 @@ pub fn fixture_lines(name: &str) -> Vec<String> {
         .collect()
 }
 
-fn fixture_entry_points() -> Vec<String> {
-    let mut names = fixture_lines("abi_surface.txt");
-    names.sort();
-    names
+/// Every JNI symbol `jni_glue.rs` exports, by its Java-side name. The mangling
+/// is `Java_com_flezha_sdk_native_1_FlzCore_<name>`; `native_1` is JNI's escape
+/// for the trailing underscore in the `native_` package.
+fn jni_exports() -> Vec<String> {
+    include_str!("../../src/jni_glue.rs")
+        .lines()
+        .filter_map(|line| line.strip_prefix("pub extern \"system\" fn "))
+        .filter_map(|rest| {
+            rest.split(['(', '<'])
+                .next()?
+                .strip_prefix("Java_com_flezha_sdk_native_1_FlzCore_")
+                .map(str::to_string)
+        })
+        .collect()
 }
 
-#[test]
-fn the_fixture_lists_every_entry_point_the_crate_exports() {
-    let listed = fixture_entry_points();
-    let missing: Vec<String> = exported_entry_points()
-        .into_iter()
-        .filter(|name| !listed.contains(name))
-        .collect();
-
+/// `left` and `right` name the same entries, each once; a failure names every
+/// entry one side has and the other lacks.
+fn assert_same((left, mut l): (&str, Vec<String>), (right, mut r): (&str, Vec<String>)) {
+    l.sort();
+    r.sort();
+    let only = |a: &[String], b: &[String]| -> Vec<String> {
+        a.iter().filter(|name| !b.contains(name)).cloned().collect()
+    };
     assert!(
-        missing.is_empty(),
-        "the crate exports {missing:?}, which test/fixtures/abi_surface.txt does not list; \
-         a host binding reading the file would never learn the entry point exists"
+        l == r,
+        "only in {left}: {:?}; only in {right}: {:?}",
+        only(&l, &r),
+        only(&r, &l)
     );
 }
 
-#[test]
-fn the_fixture_lists_nothing_the_crate_does_not_export() {
-    let exported = exported_entry_points();
-    let extra: Vec<String> = fixture_entry_points()
-        .into_iter()
-        .filter(|name| !exported.contains(name))
-        .collect();
+fn table() -> (&'static str, Vec<String>) {
+    let rows = SURFACE.iter().map(|entry| entry.abi.to_string()).collect();
+    ("veneer::SURFACE", rows)
+}
 
-    assert!(
-        extra.is_empty(),
-        "test/fixtures/abi_surface.txt lists {extra:?}, which the crate does not export; \
-         a host binding that declared one would fail at its first call rather than at load"
+#[test]
+fn the_table_is_every_entry_point_the_crate_exports() {
+    assert_same(table(), ("the crate's exports", exported_entry_points()));
+}
+
+#[test]
+fn the_fixture_is_the_table() {
+    let fixture = fixture_lines("abi_surface.txt");
+    assert_same(table(), ("test/fixtures/abi_surface.txt", fixture));
+}
+
+#[test]
+fn the_jni_rows_are_the_java_surface() {
+    let jni = || SURFACE.iter().filter(|entry| entry.jni());
+    let rows = jni()
+        .map(|entry| format!("{}|{}", entry.camel_name(), entry.abi))
+        .collect();
+    let fixture = fixture_lines("jni_surface.txt");
+    assert_same(
+        ("the JNI rows of veneer::SURFACE", rows),
+        ("test/fixtures/jni_surface.txt", fixture),
+    );
+
+    let methods = jni().map(Entry::camel_name).collect();
+    assert_same(
+        ("the JNI rows of veneer::SURFACE", methods),
+        ("jni_glue.rs's exports", jni_exports()),
     );
 }

@@ -2,7 +2,7 @@
 //! embedded CPython interpreter, and every primitive `veneer::shape` asks a
 //! language for built and read back. The mapping itself is `shape`'s.
 
-use flz_core_ffi::python_glue::{PayloadView, Values, NATIVE_SURFACE};
+use flz_core_ffi::python_glue::{PayloadView, Values};
 use flz_core_ffi::veneer::shape;
 use pyo3::prelude::*;
 
@@ -29,48 +29,18 @@ fn every_primitive_round_trips() {
     });
 }
 
-/// The extension exports exactly what the surface table names, every entry
-/// names a C ABI entry point, and every blocking one is a call the veneer
-/// runs with the GIL released. Asserted on this side because it is the
-/// side that can go wrong without anyone installing the wheel.
+/// Every blocking export is a `py.detach` call site, so the GIL rule is
+/// asserted rather than reviewed: a new blocking entry point that forgot to
+/// release the lock fails here.
 #[test]
-fn the_native_surface_is_the_declared_one() {
-    let blocking: Vec<&str> = NATIVE_SURFACE
-        .iter()
-        .filter(|(_, abi)| flz_core_ffi::veneer::BLOCKING_ENTRY_POINTS.contains(abi))
-        .map(|(name, _)| *name)
-        .collect();
-    assert_eq!(
-        blocking,
-        [
-            "Core.start",
-            "Core.local_feed",
-            "Core.local_next_output",
-            "Core.local_run_until_idle",
-            "Core.poll",
-            "Core.wait_starvation",
-            "Core.complete",
-            "Core.spawn_result",
-            "Core.effect_end",
-            "Core.admin_call",
-            "Core.send_message"
-        ]
-    );
-    for (name, abi) in NATIVE_SURFACE {
-        assert!(
-            abi.starts_with("flz_core_"),
-            "{name} names {abi}, which is not a C ABI entry point"
-        );
-    }
-
-    // Every blocking export is a `py.detach` call site, so the GIL rule is
-    // asserted rather than reviewed: a new blocking entry point that
-    // forgot to release the lock fails here.
+fn every_blocking_export_releases_the_gil() {
+    let blocking = flz_core_ffi::veneer::glue_entries()
+        .filter(|entry| entry.blocking)
+        .count();
     let source = include_str!("../../src/python_glue.rs");
-    let released = source.matches("py.detach(").count();
     assert_eq!(
-        released,
-        blocking.len(),
+        source.matches("py.detach(").count(),
+        blocking,
         "every blocking export releases the GIL exactly once"
     );
 }

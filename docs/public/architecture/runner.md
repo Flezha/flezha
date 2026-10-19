@@ -281,6 +281,16 @@ which is what a conformance run uses.
 Whoever allocates a buffer frees it; buffers the core hands out are freed with
 `flz_core_buf_free`.
 
+The surface is one table, `veneer::SURFACE` (`flz_core_ffi/src/veneer/mod.rs`):
+each row names an entry, its C symbol, whether it can block, and which bindings
+reach it. The Python, Ruby and Node bindings list their exports from it, and a
+test in the crate holds it equal to what the crate exports, to
+`test/fixtures/abi_surface.txt` and, for the rows Java reaches, to
+`test/fixtures/jni_surface.txt`. Each SDK keeps its own hand-written
+declaration and one test that compares it with the fixture. Adding an entry is
+the C function, its veneer function, one row, one fixture line and one wrapper
+per SDK.
+
 ## What stays per language
 
 The surface you write against (tasklets, the graph builder), the state and

@@ -1,15 +1,16 @@
-# Every `static native` method of the Java SDK's `FlzCore`, in declaration
-# order, paired with the C ABI entry point it reaches: `<method>|<entry point>`.
+# Every `static native` method of the Java SDK's `FlzCore`, paired with the C
+# ABI entry point it reaches: `<method>|<entry point>`.
 #
 # Java reaches the core through JNI, so its surface is two hand-written lists
 # that no compiler compares: the class's declarations and `jni_glue.rs`'s
 # exports. This file is the declared table both are held to: `flz_core_ffi`'s
-# `veneer_jni.rs` asserts `FlzCore.java` and the JNI exports against it, and the
-# Java SDK's `JniSurfaceTest` asserts the class declares exactly these methods,
-# which is the assertion its own repository can run.
+# surface test holds it equal to the JNI rows of `veneer::SURFACE` and to the
+# JNI exports, and the Java SDK's `JniSurfaceTest` asserts the class declares
+# exactly these methods, which is the assertion its own repository can run.
 #
-# Adding a native method: add the row, the export in `jni_glue.rs` and the
-# declaration in `FlzCore.java`.
+# Adding a native method: mark its `veneer::SURFACE` row as reached by JNI,
+# add the row here, the export in `jni_glue.rs` and the declaration in
+# `FlzCore.java`.
 schemaVersion|flz_core_schema_version
 contextNew|flz_core_context_new
 declareClass|flz_core_declare_class

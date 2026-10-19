@@ -715,62 +715,35 @@ fn free_threaded() -> bool {
 }
 
 /// Every function this extension exports, with the C ABI entry point behind
-/// it: `(name, abi_entry_point, blocking)`.
+/// it: `(name, abi_entry_point, blocking)`, rendered from
+/// [`crate::veneer::SURFACE`].
 ///
-/// Two properties are asserted against this table rather than reviewed, so
-/// neither can lapse by omission when an export is added later:
-///
-/// * the veneer adds no ABI surface — every export names an existing entry
-///   point, and this veneer has no host bookkeeping of its own because the
-///   Python host's threads are Python's;
-/// * every export marked blocking runs inside `Python::detach`.
+/// The veneer adds no ABI surface: every export names an existing entry
+/// point, and this veneer has no host bookkeeping of its own because the
+/// Python host's threads are Python's. Every export marked blocking runs
+/// inside `Python::detach`.
 #[pyfunction]
 fn native_surface<'py>(py: Python<'py>) -> PyResult<Bound<'py, PyList>> {
     let out = PyList::empty(py);
-    for (name, abi) in NATIVE_SURFACE {
-        let blocking = crate::veneer::BLOCKING_ENTRY_POINTS.contains(abi);
-        out.append((*name, *abi, blocking).into_bound_py_any(py)?)?;
+    for entry in crate::veneer::glue_entries() {
+        out.append((python_name(entry.name), entry.abi, entry.blocking).into_bound_py_any(py)?)?;
+    }
+    for name in ["free_threaded", "native_surface"] {
+        out.append((name, "flz_core_schema_version", false).into_bound_py_any(py)?)?;
     }
     Ok(out)
 }
 
-/// The table `native_surface` renders and the Rust-side test asserts against:
-/// `(name, abi_entry_point)`, blocking derived from
-/// [`crate::veneer::BLOCKING_ENTRY_POINTS`].
-pub const NATIVE_SURFACE: &[(&str, &str)] = &[
-    ("schema_version", "flz_core_schema_version"),
-    ("Core", "flz_core_context_new"),
-    ("Core.free", "flz_core_context_free"),
-    ("Core.declare_class", "flz_core_declare_class"),
-    ("Core.check_class", "flz_core_check_class"),
-    ("Core.start", "flz_core_start"),
-    ("Core.local_start", "flz_core_local_start"),
-    ("Core.local_on_sink", "flz_core_local_on_sink"),
-    ("Core.local_feed", "flz_core_local_feed"),
-    ("Core.local_next_output", "flz_core_local_next_output"),
-    ("Core.local_run_until_idle", "flz_core_local_run_until_idle"),
-    ("Core.local_stop", "flz_core_local_stop"),
-    ("Core.poll", "flz_core_poll"),
-    ("Core.wait_starvation", "flz_core_wait_starvation"),
-    ("Core.complete", "flz_core_complete"),
-    ("Core.abandon", "flz_core_abandon"),
-    ("Core.shutdown", "flz_core_shutdown"),
-    ("Core.watch_stdin_eof", "flz_core_watch_stdin_eof"),
-    ("Core.spawn_request", "flz_core_spawn_request"),
-    ("Core.spawn_result", "flz_core_spawn_result"),
-    ("Core.part", "flz_core_part"),
-    ("Core.effect_begin", "flz_core_effect_begin"),
-    ("Core.effect_end", "flz_core_effect_end"),
-    ("Core.effect_release", "flz_core_effect_release"),
-    ("Core.admin_call", "flz_core_admin_call"),
-    ("Core.send_message", "flz_core_send_message"),
-    ("Core.relays", "flz_core_relays"),
-    ("monotonic_nanos", "flz_core_monotonic_nanos"),
-    ("Core.last_error", "flz_core_last_error"),
-    ("free_threaded", "flz_core_schema_version"),
-    ("error_document", "flz_core_error_document"),
-    ("native_surface", "flz_core_schema_version"),
-];
+/// How Python spells a surface entry: a method of `Core`, except the context's
+/// constructor and `free`, and the three that need no context.
+fn python_name(name: &str) -> String {
+    match name {
+        "context_new" => "Core".to_string(),
+        "context_free" => "Core.free".to_string(),
+        "schema_version" | "monotonic_nanos" | "error_document" => name.to_string(),
+        _ => format!("Core.{name}"),
+    }
+}
 
 /// Define the `flezha.flz_core_ffi` extension module.
 #[pymodule]

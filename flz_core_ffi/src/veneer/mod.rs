@@ -22,30 +22,123 @@ use crate::{
     FLZ_STARVATION_OBSERVED,
 };
 
-/// The entry points that can park the calling thread. A host whose unit of
-/// concurrency is bound to one thread keeps every one of these off it.
-pub const BLOCKING_ENTRY_POINTS: &[&str] = &[
-    "flz_core_start",
-    "flz_core_start_with",
-    "flz_core_poll",
-    "flz_core_wait_starvation",
-    "flz_core_complete",
-    // With a nonzero timeout. A read with a timeout of 0 never waits, so a
-    // host may make that one on any thread.
-    "flz_core_spawn_result",
-    "flz_core_admin_call",
-    // For the controller to keep the result.
-    "flz_core_effect_end",
-    // For the controller's answer, or while a local consumer's mailbox is full.
-    "flz_core_send_message",
+/// Which bindings reach an entry beside a host that binds the C ABI itself,
+/// which reaches every one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reach {
+    /// The C ABI only: buffer, error and settings plumbing a veneer does itself.
+    CAbi,
+    /// The C ABI and the Python, Ruby and Node glue.
+    Glue,
+    /// The C ABI and JNI.
+    Jni,
+    /// Every binding.
+    Every,
+}
+
+/// One entry of the native surface.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Entry {
+    /// The entry's name, which each binding spells in its own language.
+    pub name: &'static str,
+    /// The C ABI symbol.
+    pub abi: &'static str,
+    /// Whether the entry can park the calling thread. A host whose unit of
+    /// concurrency is bound to one thread keeps every one of these off it.
+    pub blocking: bool,
+    /// Which bindings reach the entry.
+    pub reach: Reach,
+}
+
+impl Entry {
+    /// Whether the Python, Ruby and Node glue export this entry.
+    pub fn glue(&self) -> bool {
+        matches!(self.reach, Reach::Glue | Reach::Every)
+    }
+
+    /// Whether Java's `FlzCore` declares this entry.
+    pub fn jni(&self) -> bool {
+        matches!(self.reach, Reach::Jni | Reach::Every)
+    }
+
+    /// The name in lower camel case, as Java and JavaScript spell it.
+    pub fn camel_name(&self) -> String {
+        let mut words = self.name.split('_');
+        let first = words.next().unwrap_or_default().to_string();
+        words.fold(first, |mut out, word| {
+            let mut chars = word.chars();
+            out.extend(chars.next().map(|c| c.to_ascii_uppercase()));
+            out.push_str(chars.as_str());
+            out
+        })
+    }
+}
+
+macro_rules! surface {
+    ($(($name:ident, $blocking:literal, $reach:ident)),* $(,)?) => {
+        &[$(Entry {
+            name: stringify!($name),
+            abi: concat!("flz_core_", stringify!($name)),
+            blocking: $blocking,
+            reach: Reach::$reach,
+        }),*]
+    };
+}
+
+/// The native surface: one row per C ABI entry. The Python, Ruby and Node
+/// glue render their `native_surface` from it, and a crate test holds it equal
+/// to the exports, `test/fixtures/abi_surface.txt` and, for its JNI rows,
+/// `test/fixtures/jni_surface.txt`.
+pub const SURFACE: &[Entry] = surface![
+    (schema_version, false, Every),
+    (context_new, false, Every),
+    (context_free, false, Every),
+    (init_error, false, CAbi),
+    (last_error, false, Glue),
+    (error_document, false, Glue),
+    (buf_free, false, CAbi),
+    (set_log_callback, false, CAbi),
+    (declare_class, false, Every),
+    (check_class, false, Every),
+    (start, true, Every),
+    (start_with, true, CAbi),
+    (local_start, false, Every),
+    (local_on_sink, false, Every),
     // A local run parks the caller in all three: `feed` while the consumer's
     // mailbox is full, and the other two by their own budget. The host's poll
     // loop is what drains them, so a host that parked its only dispatch thread
     // in one of these would wait on work it has stopped doing.
-    "flz_core_local_feed",
-    "flz_core_local_next_output",
-    "flz_core_local_run_until_idle",
+    (local_feed, true, Every),
+    (local_next_output, true, Every),
+    (local_run_until_idle, true, Every),
+    (local_stop, false, Every),
+    (poll, true, Every),
+    (wait_starvation, true, Every),
+    (complete, true, Every),
+    (abandon, false, Every),
+    (shutdown, false, Every),
+    (watch_stdin_eof, false, Glue),
+    (spawn_request, false, Every),
+    // With a nonzero timeout. A read with a timeout of 0 never waits, so a
+    // host may make that one on any thread.
+    (spawn_result, true, Every),
+    (part, false, Every),
+    (effect_begin, false, Every),
+    // For the controller to keep the result.
+    (effect_end, true, Every),
+    (effect_release, false, Every),
+    (pending_timers, false, Jni),
+    (admin_call, true, Every),
+    // For the controller's answer, or while a local consumer's mailbox is full.
+    (send_message, true, Every),
+    (relays, false, Every),
+    (monotonic_nanos, false, Every),
 ];
+
+/// The rows the Python, Ruby and Node glue export.
+pub fn glue_entries() -> impl Iterator<Item = &'static Entry> {
+    SURFACE.iter().filter(|entry| entry.glue())
+}
 
 /// What a binding can raise: the context's last error, a creation-time
 /// schema mismatch, or a value the binding could not map. The first two carry

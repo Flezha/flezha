@@ -48,7 +48,6 @@ flz_core/src/steps/run.rs::stage_done 61
 flz_core/src/steps/run.rs::undo_step 62
 flz_core_ffi/src/bin/flz-fake-controller.rs::parse 91
 flz_core_ffi/src/lib.rs 1352
-flz_core_ffi/src/napi_glue.rs::native_surface 63
 flz_nif/src/driver/mod.rs::handle_command 53
 flz_nif/src/driver/quic.rs::accept_streams 58
 flz_transport/src/transport/quic.rs 842

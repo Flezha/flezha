@@ -328,7 +328,7 @@ def _rust():
         _bar("rust-test-macros", "rust", "cargo", "test", "--quiet", "-p", "flezha-macros"),
         _bar("rust-test-app", "rust", "cargo", "test", "--quiet", "-p", "rust_runner"),
         # The ABI scenario through each veneer, and the crate with none of them.
-        _bar("rust-test-ffi-jni", "rust", *ffi, "jni", "--test", "abi_scenario", "veneer_jni"),
+        _bar("rust-test-ffi-jni", "rust", *ffi, "jni", "--test", "abi_scenario", "surface"),
         _bar("rust-test-ffi-napi", "rust", *ffi, "napi"),
         # The embedded VM records the stack frame it boots from: one thread. Run
         # through the Ruby build, which points bindgen at builtin headers.

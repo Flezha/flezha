@@ -371,8 +371,9 @@ checkout without anyone noticing.
 
 `test/fixtures/abi_surface.txt` is the member that exists so that a host
 binding declaring the C surface in its own language asserts against data rather
-than against the crate's source. A `flz_core_ffi` test holds the file and the
-crate's exports equal in both directions.
+than against the crate's source. A `flz_core_ffi` test holds the file, the
+crate's exports and the surface table `veneer::SURFACE` equal in every
+direction.
 
 It also pins the half a fixture cannot express. `test/fixtures/runner_connect_env.txt`
 holds the environment contract every SDK's connect path reads — the
