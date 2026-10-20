@@ -205,8 +205,8 @@ defmodule Flezha.Service.ObservabilityTest do
         assert {:error, %Flezha.Error{code: "observability.disabled"}} =
                  Observability.query(%{source: :s}, %{source: :cli})
 
-        assert {:error, %Flezha.Error{code: "observability.disabled"}} =
-                 Observability.subscribe(:s)
+        # Not a catalogue operation: the bare reason the published ones render.
+        assert {:error, :observability_disabled} = Observability.subscribe(:s)
 
         assert {:error, %Flezha.Error{code: "observability.disabled"}} =
                  Observability.unsubscribe(:s, %{source: :cli})

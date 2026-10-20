@@ -100,7 +100,9 @@ defmodule Flezha.State.RestoreTest do
                     %{cell: ^pid, runner: "exec-absent"}}
 
     :telemetry.detach(handler)
-    assert refused_log =~ "leaving the relay unbound"
+
+    assert refused_log =~
+             ~r/\[flezha_state\] restore_refused .*reason=.*crc_mismatch.*runner=exec-absent/
   end
 
   test "a corrupt LAST record is the torn tail the writer repairs, and still ships",

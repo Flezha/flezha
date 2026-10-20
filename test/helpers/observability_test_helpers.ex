@@ -38,10 +38,20 @@ defmodule Flezha.Observability.TestSinks do
   def restart_after_registry() do
     sup = Flezha.Observability.Supervisor
     _ = Supervisor.restart_child(sup, Flezha.Observability.Registry)
-    for child <- Enum.reverse(@after_registry), do: :ok = Supervisor.terminate_child(sup, child)
-    for child <- @after_registry, do: {:ok, _} = Supervisor.restart_child(sup, child)
+
+    for child <- Enum.reverse(@after_registry),
+        child != Flezha.Observability.DefaultSinks,
+        do: :ok = Supervisor.terminate_child(sup, child)
+
+    for child <- @after_registry, do: {:ok, _} = start_again(sup, child)
     :ok
   end
+
+  # A `:temporary` one-shot leaves no child behind once it ran, so it is started anew.
+  defp start_again(sup, Flezha.Observability.DefaultSinks),
+    do: Supervisor.start_child(sup, Flezha.Observability.DefaultSinks)
+
+  defp start_again(sup, child), do: Supervisor.restart_child(sup, child)
 
   @doc """
   Wait for a signal the `Counting` sink forwarded to the calling process that

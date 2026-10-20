@@ -147,12 +147,14 @@ defmodule Flezha.Observability.Signal do
 
   @doc """
   The one log line a signal is written as: `[source] name`, then each metadata
-  and measurement as `key=value`, keys and values through `metadata_text/1`.
+  and each measurement as `key=value`, each group in key order, keys and values
+  through `metadata_text/1`. A map's own order of atom keys follows atom
+  creation, which differs between boots, so the line sorts.
   """
   @spec line(t()) :: String.t()
   def line(%__MODULE__{source: source, name: name} = signal) do
     pairs =
-      for {key, value} <- Enum.concat(signal.metadata, signal.measurements),
+      for {key, value} <- Enum.sort(signal.metadata) ++ Enum.sort(signal.measurements),
           do: [?\s, metadata_text(key), ?=, metadata_text(value)]
 
     IO.iodata_to_binary([?[, Atom.to_string(source), "] ", Atom.to_string(name) | pairs])

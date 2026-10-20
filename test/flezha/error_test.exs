@@ -103,7 +103,7 @@ defmodule Flezha.ErrorTest do
 
     assert [_, ref] = Regex.run(~r/names the cause \(ref (\w{8})\)$/, withheld.details["reason"])
     assert log =~ "log_ref=#{ref} | door: relay.start_failed "
-    assert log =~ ~s|"reason":"boom"} (ref #{ref})|
+    assert log =~ ~s|{"reason":"boom","relay":"o1"} (ref #{ref})|
   end
 
   test "a detail that is not plain data is carried as text" do

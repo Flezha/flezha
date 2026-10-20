@@ -284,7 +284,8 @@
 - **BREAKING:** nineteen warning and error lines that said again what a telemetry event
   already said (a restore refused, a refused or repaired record, a disk quota breach, a missed
   RPO, a compaction given up, a stuck relay, a runner restart, and others) are now written once,
-  by the telemetry bridge, as `[<source>] <name> key=value ...` at the same level. A log search
+  by the telemetry bridge, as `[<source>] <name> key=value ...` at the same level, the metadata
+  and then the measurements each in key order. A log search
   for the old sentences needs the new form; the facts a sentence carried and its event lacked
   (a schedule failure's reason, a refused correction's target, a hub call's answer, a factory
   conflict's attribute) are now in the event's metadata. A restore from remote storage that

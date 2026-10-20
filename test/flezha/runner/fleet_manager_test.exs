@@ -234,6 +234,7 @@ defmodule FlezhaTest.Runner.FleetManagerSdkLangTest do
   Rust class and a Java class is legitimate and must keep working.
   """
 
+  alias Flezha.Observability.TelemetryBridge
   alias Flezha.Relay.ClassRegistry
   alias Flezha.Runner.FleetManager
   alias Flezha.Runner.FleetManager.Factories
@@ -253,10 +254,11 @@ defmodule FlezhaTest.Runner.FleetManagerSdkLangTest do
 
   setup do
     original = :sys.get_state(FleetManager)
-    Logger.put_module_level([FleetManager, Factories], :warning)
+    # A conflict's warning is its event's bridge line, written by the bridge.
+    Logger.put_module_level([FleetManager, Factories, TelemetryBridge], :warning)
 
     on_exit(fn ->
-      Logger.delete_module_level([FleetManager, Factories])
+      Logger.delete_module_level([FleetManager, Factories, TelemetryBridge])
       :sys.replace_state(FleetManager, fn _ -> original end)
     end)
 
@@ -502,8 +504,8 @@ defmodule FlezhaTest.Runner.FleetManagerSdkLangTest do
           :ok = FleetStateHelper.sync(ns, "r2", [{id, @rust, :steps}])
         end)
 
-      assert log =~ "r2"
-      assert log =~ "to run as steps"
+      assert log =~ "[flezha_runner] factory_run_conflict advertised=steps"
+      assert log =~ "runner=r2"
 
       assert_received {^event, ^ref, %{count: 1},
                        %{factory: ^id, established: :flow, advertised: :steps}}

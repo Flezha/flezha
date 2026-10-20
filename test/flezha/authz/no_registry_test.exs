@@ -10,7 +10,13 @@ defmodule Flezha.AuthZ.NoRegistryTest do
     :ok =
       Supervisor.terminate_child(Flezha.Observability.Supervisor, Flezha.Observability.Registry)
 
-    on_exit(&TestSinks.restart_after_registry/0)
+    # The opt-out's warning is the line asserted on; the test config logs errors only.
+    Logger.put_module_level(Flezha.AuthZ.Supervisor, :warning)
+
+    on_exit(fn ->
+      Logger.delete_module_level(Flezha.AuthZ.Supervisor)
+      TestSinks.restart_after_registry()
+    end)
   end
 
   test "the authz supervisor starts and issues a token with no registry running" do

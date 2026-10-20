@@ -18,8 +18,11 @@ defmodule Flezha.MixProject do
       elixirc_paths: elixirc_paths(Mix.env()),
       # The test apps under test/apps/ are projects of their own with mix.exs
       # and lib/*.ex; keep `mix test`'s test-file scan from mistaking them for
-      # mis-named test files.
-      test_ignore_filters: [&String.starts_with?(&1, "test/apps/")],
+      # mis-named test files; a `*_golden.exs` is data a test reads, not a test.
+      test_ignore_filters: [
+        &String.starts_with?(&1, "test/apps/"),
+        &String.ends_with?(&1, "_golden.exs")
+      ],
       deps: deps(),
       aliases: aliases(),
       docs: docs()
