@@ -14,27 +14,44 @@ defmodule Flezha.Plugin.Provider.Batcher do
   (`Flezha.Process.Backlog.release_waiters/1`); a failed one arms the `:retry`
   timer on that row, which sends `retry`. Nothing is dropped.
 
-  What a batch commits stays the worker's, in private functions it defines:
-
-    * `commit_batch(state, records)`: `{:ok, state, confirmed}`, `confirmed`
-      the metadata whose holds the commit answers, or `{:error, reason, state}`;
-    * `batch_failed(state, reason, failures)`: the state once the failure is
-      logged and recorded;
-    * `before_batch(state)`, with `before_batch: true`: work every flush does
-      first, even with nothing buffered: `{:ok, state}` or
-      `{:error, reason, state}`, a failure retried as a batch's is.
-
+  What a batch commits stays the worker's, in the callbacks of this behaviour.
   The worker's state carries `buffer`, `buffer_len`, `max_batch`, `linger_ms`,
   `plugin_id`, `retry_backoff_ms`, `retry_max_backoff_ms`,
-  `consecutive_failures`, `last_error`, `queue_max` and `waiters`.
+  `consecutive_failures`, `last_error`, `queue_max`, `waiters` and `timers`.
   """
+
+  alias Flezha.Config.Backoff
+  alias Flezha.Process.Backlog
+  alias Flezha.Process.Timer
+
+  @doc """
+  Commit `records`: `{:ok, state, confirmed}`, `confirmed` the metadata whose
+  holds the commit answers, or `{:error, reason, state}`.
+  """
+  @callback commit_batch(state :: map(), records :: [term()]) ::
+              {:ok, map(), [map()]} | {:error, term(), map()}
+
+  @doc "The state once a failed batch, the `failures`th in a row, is logged and recorded."
+  @callback batch_failed(state :: map(), reason :: term(), failures :: pos_integer()) :: map()
+
+  @doc """
+  Work every flush does first, even with nothing buffered: `{:ok, state}` or
+  `{:error, reason, state}`, a failure retried as a batch's is. Nothing by default.
+  """
+  @callback before_batch(state :: map()) :: {:ok, map()} | {:error, term(), map()}
 
   defmacro __using__(opts) do
     ladder = Keyword.fetch!(opts, :ladder)
     retry = Keyword.fetch!(opts, :retry)
 
     quote do
+      @behaviour unquote(__MODULE__)
       @compile {:inline, batch: 2}
+
+      @impl unquote(__MODULE__)
+      def before_batch(state), do: {:ok, state}
+
+      defoverridable before_batch: 1
 
       defp batch(state, record) do
         state = %{
@@ -55,68 +72,61 @@ defmodule Flezha.Plugin.Provider.Batcher do
         end
       end
 
-      unquote(flush(Keyword.get(opts, :before_batch, false)))
-      unquote(loop(ladder, retry))
-    end
-  end
-
-  defp flush(true = _before_batch) do
-    quote do
+      # The worker names the outbox, so the loop joins no compile cycle through it.
       defp flush(state) do
-        case before_batch(state) do
-          {:ok, %{buffer_len: 0} = state} -> state
-          {:ok, state} -> commit_next(state)
-          {:error, reason, state} -> retry_batch(state, reason)
-        end
+        loop = {unquote(ladder), unquote(retry), &Flezha.State.Outbox.confirm_many/1}
+        unquote(__MODULE__).flush(state, __MODULE__, loop)
       end
     end
   end
 
-  defp flush(false) do
-    quote do
-      defp flush(%{buffer_len: 0} = state), do: state
-      defp flush(state), do: commit_next(state)
+  @doc false
+  @spec flush(map(), module(), {atom(), term(), ([map()] -> term())}) :: map()
+  def flush(state, worker, loop) do
+    case worker.before_batch(state) do
+      {:ok, %{buffer_len: 0} = state} -> state
+      {:ok, state} -> commit_next(state, worker, loop)
+      {:error, reason, state} -> retry_batch(state, reason, worker, loop)
     end
   end
 
-  defp loop(ladder, retry) do
-    quote do
-      defp commit_next(state) do
-        {taken, rest} = :queue.split(min(state.buffer_len, state.max_batch), state.buffer)
-        records = :queue.to_list(taken)
+  defp commit_next(state, worker, {ladder, _retry, confirm} = loop) do
+    {taken, rest} = :queue.split(min(state.buffer_len, state.max_batch), state.buffer)
+    records = :queue.to_list(taken)
 
-        case commit_batch(state, records) do
-          {:ok, state, confirmed} ->
-            Flezha.State.Outbox.confirm_many(confirmed)
+    case worker.commit_batch(state, records) do
+      {:ok, state, confirmed} ->
+        confirm.(confirmed)
 
-            %{
-              state
-              | buffer: rest,
-                buffer_len: state.buffer_len - length(records),
-                consecutive_failures:
-                  Flezha.Config.Backoff.reset(unquote(ladder), state.plugin_id),
-                last_error: nil
-            }
-            |> Flezha.Process.Backlog.release_waiters()
-            |> flush()
+        %{
+          state
+          | buffer: rest,
+            buffer_len: state.buffer_len - length(records),
+            consecutive_failures: Backoff.reset(ladder, state.plugin_id),
+            last_error: nil
+        }
+        |> Backlog.release_waiters()
+        |> flush(worker, loop)
 
-          {:error, reason, state} ->
-            retry_batch(state, reason)
-        end
-      end
-
-      defp retry_batch(state, reason) do
-        failures = state.consecutive_failures + 1
-        state = batch_failed(state, reason, failures)
-
-        delay =
-          Flezha.Config.Backoff.arm(unquote(ladder), failures, state.plugin_id,
-            base: state.retry_backoff_ms,
-            cap: state.retry_max_backoff_ms
-          )
-
-        arm_timer(%{state | consecutive_failures: failures}, :retry, delay, unquote(retry))
-      end
+      {:error, reason, state} ->
+        retry_batch(state, reason, worker, loop)
     end
+  end
+
+  defp retry_batch(state, reason, worker, {ladder, retry, _confirm}) do
+    failures = state.consecutive_failures + 1
+    state = worker.batch_failed(state, reason, failures)
+
+    delay =
+      Backoff.arm(ladder, failures, state.plugin_id,
+        base: state.retry_backoff_ms,
+        cap: state.retry_max_backoff_ms
+      )
+
+    %{
+      state
+      | consecutive_failures: failures,
+        timers: Timer.arm(state.timers, :retry, delay, retry)
+    }
   end
 end

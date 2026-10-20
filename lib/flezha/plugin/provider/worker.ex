@@ -1,16 +1,16 @@
 defmodule Flezha.Plugin.Provider.Worker do
   @moduledoc """
-  What every provider worker that answers a health probe shares:
-  `use Flezha.Plugin.Provider.Worker, facts: [...]` makes the module a
-  `GenServer` with
+  What every provider worker shares: `use Flezha.Plugin.Provider.Worker`
+  makes the module a `GenServer` with
 
     * `start_link/1`, registered under the spec's `:name`;
     * `args/1`, the start arguments from the plugin's prepared options (the
       options themselves unless the worker writes its own);
-    * `probe/1` and its answer: the state's `facts`, taken as they are, for the
-      provider's `health/1` to judge;
+    * with `facts:`, `probe/1` and its answer: the state's `facts`, taken as
+      they are, and `probe_verdict/2`, the provider's verdict over them, for its
+      `health/1`;
     * with `host: true` (the default), a stop when the relay the worker feeds
-      goes down, watched as `:host` in the state's `watch`.
+      goes down, watched as `:host` in the state's `watch` (`host/1`).
 
   `fields/1` is the state the kit reads: the host watch, the failure run
   (`consecutive_failures`, `last_error`), the time of the last settled read
@@ -22,7 +22,7 @@ defmodule Flezha.Plugin.Provider.Worker do
   alias Flezha.Process.Watch
 
   defmacro __using__(opts) do
-    facts = Keyword.fetch!(opts, :facts)
+    facts = Keyword.get(opts, :facts)
     host? = Keyword.get(opts, :host, true)
 
     quote do
@@ -41,11 +41,27 @@ defmodule Flezha.Plugin.Provider.Worker do
       @spec args(map()) :: map()
       def args(opts), do: opts
 
+      defoverridable args: 1
+
+      unquote(if facts, do: probe())
+    end
+  end
+
+  defp probe do
+    quote do
       @doc "The facts the provider's `health/1` judges; `:timeout` when the worker does not answer."
       @spec probe(pid()) :: {:ok, map()} | :timeout
       def probe(pid), do: Flezha.Plugin.ProviderBehaviour.ask(pid, :health_probe)
 
-      defoverridable args: 1
+      @doc "`verdict` over the worker's facts; `{:fail_open, :probe_timeout}` when it does not answer."
+      @spec probe_verdict(pid(), (map() -> verdict)) :: verdict | {:fail_open, :probe_timeout}
+            when verdict: Flezha.Plugin.ProviderBehaviour.probe_result()
+      def probe_verdict(pid, verdict) do
+        case probe(pid) do
+          {:ok, facts} -> verdict.(facts)
+          :timeout -> {:fail_open, :probe_timeout}
+        end
+      end
     end
   end
 
@@ -63,15 +79,21 @@ defmodule Flezha.Plugin.Provider.Worker do
         end
       end
 
+    answer =
+      if Module.get_attribute(env.module, :__worker_facts__) do
+        quote do
+          def handle_info({:health_probe, from, ref}, state) do
+            send(from, {ref, Map.take(state, @__worker_facts__)})
+            {:noreply, state}
+          end
+        end
+      end
+
     quote do
       defoverridable handle_info: 2
 
       @impl GenServer
-      def handle_info({:health_probe, from, ref}, state) do
-        send(from, {ref, Map.take(state, @__worker_facts__)})
-        {:noreply, state}
-      end
-
+      unquote(answer)
       unquote(host)
 
       def handle_info(message, state), do: super(message, state)
@@ -86,13 +108,17 @@ defmodule Flezha.Plugin.Provider.Worker do
   @spec fields(map()) :: map()
   def fields(opts) do
     %{
-      watch: Watch.watch(Watch.new(), Map.fetch!(opts, :overwatcher_pid), :host),
+      watch: host(opts),
       consecutive_failures: 0,
       last_error: nil,
       last_settled_at: now(),
       timers: %{}
     }
   end
+
+  @doc "The watch over the host the spec names, as `:host`."
+  @spec host(map()) :: Watch.t()
+  def host(opts), do: Watch.watch(Watch.new(), Map.fetch!(opts, :overwatcher_pid), :host)
 
   @doc "`state` after one more failure in a row, `error` the last."
   @spec failed(map(), term()) :: map()

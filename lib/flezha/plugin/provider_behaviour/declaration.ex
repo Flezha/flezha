@@ -399,12 +399,7 @@ defmodule Flezha.Plugin.ProviderBehaviour.Declaration do
             dead: unquote(Keyword.get(source, :dead, :reader_dead)),
             budget_ms: 2 * unquote(contract).probe_budget_ms()
           ],
-          fn pid ->
-            case unquote(worker).probe(pid) do
-              {:ok, facts} -> verdict(facts, opts)
-              :timeout -> {:fail_open, :probe_timeout}
-            end
-          end
+          fn pid -> unquote(worker).probe_verdict(pid, &verdict(&1, opts)) end
         )
       end
 

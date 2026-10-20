@@ -22,6 +22,7 @@ defmodule Flezha.Plugin.Provider.File.WriteWorker do
   alias Flezha.Config.Durations
   alias Flezha.Dlq.Entry, as: DlqEntry
   alias Flezha.Dlq.Store, as: DlqStore
+  alias Flezha.Plugin.Provider.Batcher
   alias Flezha.Plugin.Provider.File.Storage
   alias Flezha.Plugin.ProviderBehaviour
   alias Flezha.Process.Backlog
@@ -29,7 +30,7 @@ defmodule Flezha.Plugin.Provider.File.WriteWorker do
 
   use GenServer
   use Flezha.Process.Timer, keys: [:linger, :retry, :roll]
-  use Flezha.Plugin.Provider.Batcher, ladder: :file_flush, retry: :retry, before_batch: true
+  use Batcher, ladder: :file_flush, retry: :retry
 
   require Logger
 
@@ -210,15 +211,17 @@ defmodule Flezha.Plugin.Provider.File.WriteWorker do
 
   # A due roll is committed before another batch is written, so one roll is in
   # flight at a time: what lets the reconcile trust a part one ahead.
-  defp before_batch(%{roll: %{due?: true}} = state) do
+  @impl Batcher
+  def before_batch(%{roll: %{due?: true}} = state) do
     with {:ok, state} <- commit_roll(state), do: before_batch(state)
   end
 
-  defp before_batch(state), do: {:ok, state}
+  def before_batch(state), do: {:ok, state}
 
   # The sync is what these holds waited on: the batch answers them in one
   # report, and only then may their cursors advance.
-  defp commit_batch(state, records) do
+  @impl Batcher
+  def commit_batch(state, records) do
     with {:ok, state} <- reconciled(state),
          {lines, confirmed, rolled} = admit(state, records),
          {:ok, state} <- write(state, lines) do
@@ -281,7 +284,8 @@ defmodule Flezha.Plugin.Provider.File.WriteWorker do
 
   defp line({msg, _metadata}), do: [msg, ?\n]
 
-  defp batch_failed(state, reason, failures) do
+  @impl Batcher
+  def batch_failed(state, reason, failures) do
     Logger.warning(
       "[Plugin.Provider.File.Sink] write failed path=#{state.path} attempt=#{failures} " <>
         "pending=#{state.buffer_len}: #{inspect(reason)}"

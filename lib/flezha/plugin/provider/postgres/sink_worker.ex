@@ -15,13 +15,14 @@ defmodule Flezha.Plugin.Provider.Postgres.SinkWorker do
   """
 
   alias Flezha.Config.Durations
+  alias Flezha.Plugin.Provider.Batcher
   alias Flezha.Plugin.Provider.Postgres.Connection
   alias Flezha.Process.Backlog
   alias Flezha.State.Outbox
 
   use GenServer
   use Flezha.Process.Timer, keys: [:linger, :retry]
-  use Flezha.Plugin.Provider.Batcher, ladder: :postgres_flush, retry: :retry_flush
+  use Batcher, ladder: :postgres_flush, retry: :retry_flush
 
   require Logger
 
@@ -195,7 +196,8 @@ defmodule Flezha.Plugin.Provider.Postgres.SinkWorker do
 
   # The commit is the confirmation: every guaranteed record in the batch
   # answers its outbox hold, and only then may its cursor advance.
-  defp commit_batch(state, batch) do
+  @impl Batcher
+  def commit_batch(state, batch) do
     case transact(state, batch) do
       :ok ->
         now = System.monotonic_time(:millisecond)
@@ -206,7 +208,8 @@ defmodule Flezha.Plugin.Provider.Postgres.SinkWorker do
     end
   end
 
-  defp batch_failed(state, reason, failures) do
+  @impl Batcher
+  def batch_failed(state, reason, failures) do
     log_failure(state, "flush failed (attempt #{failures})", reason)
 
     %{
