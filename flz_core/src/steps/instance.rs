@@ -13,6 +13,7 @@ use flz_transport::transport::FlezhaStream;
 
 use super::commit::BARRIER_SENDS;
 use super::compensation::{CellRun, RecordSpan, StageRecord};
+use super::run::Decide;
 use super::spec::Chain;
 use super::StepsError;
 use crate::cell::{CellItem, CellSlot};
@@ -507,6 +508,80 @@ pub(crate) enum BarrierFor {
     Iteration,
     DeadLetter,
     Undo,
+}
+
+impl BarrierFor {
+    /// The controller acked the barrier, whose entry is gone.
+    pub(super) fn on_ack(self, d: &mut Decide<'_, '_, '_>) {
+        match self {
+            BarrierFor::Stage(node) => d.stage_committed(node),
+            BarrierFor::Iteration if d.s.phase == Phase::Sealing => d.iter_acked(),
+            BarrierFor::DeadLetter if d.s.phase == Phase::Sealing => d.undo_turn(),
+            BarrierFor::Iteration | BarrierFor::DeadLetter => {}
+            BarrierFor::Undo => d.undo_journaled(Ok(())),
+        }
+    }
+
+    /// The controller refused barrier `id`, whose entry is still on the
+    /// sheet. An undo's entry with sends left goes out again; any other
+    /// refusal drops the entry and fails the barrier.
+    pub(super) fn on_refusal(self, d: &mut Decide<'_, '_, '_>, id: u64, error: String) {
+        match self {
+            BarrierFor::Undo if d.resend_refused(id) => {}
+            target => {
+                d.s.barriers.remove(&id);
+                target.failed(d, error);
+            }
+        }
+    }
+
+    /// The last send's ack timed out, the entry gone: a stage fails on the
+    /// timeout as it stands, any other barrier as on a refusal.
+    pub(super) fn on_timeout(self, d: &mut Decide<'_, '_, '_>, error: String) {
+        match self {
+            BarrierFor::Stage(node) => d.stage_failed(node, error),
+            target => target.failed(d, error),
+        }
+    }
+
+    /// The barrier will not be journaled: refused, timed out, or its frame
+    /// not built.
+    pub(super) fn failed(self, d: &mut Decide<'_, '_, '_>, error: String) {
+        match self {
+            BarrierFor::Stage(node) => d.stage_failed(
+                node,
+                format!("commit {node} refused by controller: {error}"),
+            ),
+            BarrierFor::Iteration | BarrierFor::DeadLetter => {
+                let error = StepsError::from(format!(
+                    "iteration commit {} refused by controller: {error}",
+                    d.s.iter
+                ));
+                let (status, error) = d.abnormal(&error);
+                d.compensate(AfterUndo::Terminal(status, error));
+            }
+            BarrierFor::Undo => d.undo_journaled(Err(error)),
+        }
+    }
+
+    /// What a timed-out ack names.
+    pub(super) fn timeout_label(self, s: &PassSheet) -> String {
+        match self {
+            BarrierFor::Stage(node) => format!("commit {node}"),
+            BarrierFor::Iteration | BarrierFor::DeadLetter => {
+                format!("iteration commit {}", s.iter)
+            }
+            BarrierFor::Undo => "compensation".to_string(),
+        }
+    }
+
+    /// Whether the barrier is an iteration's commit, plain or dead-lettered.
+    pub(super) fn commits_iteration(self) -> bool {
+        match self {
+            BarrierFor::Iteration | BarrierFor::DeadLetter => true,
+            BarrierFor::Stage(_) | BarrierFor::Undo => false,
+        }
+    }
 }
 
 pub(crate) struct Barrier {

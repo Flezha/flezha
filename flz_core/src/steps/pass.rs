@@ -418,7 +418,7 @@ impl Decide<'_, '_, '_> {
     /// The stage's commit is durable: its held items go to its children,
     /// and a child whose producers in this chain have all committed runs. A
     /// leaf's output is the iteration's terminal batch.
-    fn stage_committed(&mut self, node: usize) {
+    pub(super) fn stage_committed(&mut self, node: usize) {
         let dead = self.cancelled();
         let dag = &self.r.spec.dag;
         let Some(pass) = self.s.pass.as_mut() else {
@@ -579,7 +579,7 @@ impl Decide<'_, '_, '_> {
 
     /// The failed turn's iteration is committed: what it ran is undone as a
     /// rewind undoes an iteration, and the loop waits for its next message.
-    fn undo_turn(&mut self) {
+    pub(super) fn undo_turn(&mut self) {
         let done = std::mem::take(&mut self.s.done);
         self.s.pass = None;
         self.s.iter += 1;
@@ -621,7 +621,7 @@ impl Decide<'_, '_, '_> {
         self.fx.frames.push((id, frame));
     }
 
-    fn iter_acked(&mut self) {
+    pub(super) fn iter_acked(&mut self) {
         let Some(pass) = self.s.pass.take() else {
             return;
         };
@@ -650,34 +650,5 @@ impl Decide<'_, '_, '_> {
             }
         }
         self.enter_waiting();
-    }
-
-    pub(super) fn barrier_answered(&mut self, target: BarrierFor, result: Result<(), String>) {
-        match (target, result) {
-            (BarrierFor::Stage(node), Ok(())) => self.stage_committed(node),
-            (BarrierFor::Stage(node), Err(error)) => self.stage_failed(
-                node,
-                format!("commit {node} refused by controller: {error}"),
-            ),
-            (BarrierFor::Iteration, Ok(())) => {
-                if self.s.phase == Phase::Sealing {
-                    self.iter_acked();
-                }
-            }
-            (BarrierFor::DeadLetter, Ok(())) => {
-                if self.s.phase == Phase::Sealing {
-                    self.undo_turn();
-                }
-            }
-            (BarrierFor::Iteration | BarrierFor::DeadLetter, Err(error)) => {
-                let error = StepsError::from(format!(
-                    "iteration commit {} refused by controller: {error}",
-                    self.s.iter
-                ));
-                let (status, error) = self.abnormal(&error);
-                self.compensate(AfterUndo::Terminal(status, error));
-            }
-            (BarrierFor::Undo, result) => self.undo_journaled(result),
-        }
     }
 }

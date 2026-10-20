@@ -460,14 +460,17 @@ pub(super) fn barrier_acked(inst: &Weak<RelayInstance>, id: u64, result: Result<
     let Some(inst) = inst.upgrade() else { return };
     let Some(r) = Run::of(&inst) else { return };
     r.decide(|d| {
-        if result.is_err() && d.resend_refused(id) {
-            return;
-        }
-        let Some(barrier) = d.s.barriers.remove(&id) else {
+        let Some(target) = d.s.barriers.get(&id).map(|barrier| barrier.target) else {
             return;
         };
         d.disarm(Deadline::Ack(id));
-        d.barrier_answered(barrier.target, result);
+        match result {
+            Ok(()) => {
+                d.s.barriers.remove(&id);
+                target.on_ack(d);
+            }
+            Err(error) => target.on_refusal(d, id, error),
+        }
     });
 }
 

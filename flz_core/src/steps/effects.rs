@@ -283,7 +283,7 @@ impl Run<'_> {
             Err(error) => {
                 return self.decide(|d| {
                     if let Some(barrier) = d.s.barriers.remove(&id) {
-                        d.barrier_answered(barrier.target, Err(error.message));
+                        barrier.target.failed(d, error.message);
                     }
                 });
             }

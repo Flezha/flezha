@@ -515,9 +515,7 @@ impl Decide<'_, '_, '_> {
                     .s
                     .barriers
                     .iter()
-                    .filter(|(_, b)| {
-                        matches!(b.target, BarrierFor::Iteration | BarrierFor::DeadLetter)
-                    })
+                    .filter(|(_, b)| b.target.commits_iteration())
                     .map(|(&id, _)| id)
                     .collect();
                 self.drop_barriers(owed);
@@ -580,17 +578,10 @@ impl Decide<'_, '_, '_> {
     /// the stored command is sent as a new frame, which registers another.
     /// Whether it was sent.
     pub(super) fn resend_refused(&mut self, id: u64) -> bool {
-        let Some(command) = self
-            .s
-            .barriers
-            .get_mut(&id)
-            .filter(|barrier| barrier.target == BarrierFor::Undo)
-            .and_then(Barrier::resend)
-        else {
+        let Some(command) = self.s.barriers.get_mut(&id).and_then(Barrier::resend) else {
             return false;
         };
         self.fx.frames.push((id, Frame::Built(Box::new(command))));
-        self.disarm(Deadline::Ack(id));
         true
     }
 
@@ -611,22 +602,13 @@ impl Decide<'_, '_, '_> {
             return;
         };
         self.fx.drop_acks.push(barrier.reference_id);
-        let what = match barrier.target {
-            BarrierFor::Stage(node) => format!("commit {node}"),
-            BarrierFor::Iteration | BarrierFor::DeadLetter => {
-                format!("iteration commit {}", self.s.iter)
-            }
-            BarrierFor::Undo => "compensation".to_string(),
-        };
         let error = format!(
-            "{what} ack timed out after {} attempt(s) of {}s",
+            "{} ack timed out after {} attempt(s) of {}s",
+            barrier.target.timeout_label(self.s),
             barrier.sends,
             ack_timeout().as_secs()
         );
-        match barrier.target {
-            BarrierFor::Stage(node) => self.stage_failed(node, error),
-            target => self.barrier_answered(target, Err(error)),
-        }
+        barrier.target.on_timeout(self, error);
     }
 }
 
