@@ -98,7 +98,7 @@ defmodule Flezha.Convergence.LoopTest do
     end
 
     defp connect(runner_id) do
-      send(Loop, {:runner_connected_event, {:ns, runner_id}})
+      send(Loop, {:declare, :runner_connected, {:ns, runner_id}, %{}})
       _ = :sys.get_state(Loop)
       :ok
     end

@@ -11,8 +11,6 @@ defmodule Flezha.Process.Hub do
   registry row.
   """
 
-  require Logger
-
   alias Flezha.Config.Durations
 
   @type hub_id :: atom()
@@ -34,12 +32,7 @@ defmodule Flezha.Process.Hub do
       :telemetry.execute(
         [:flezha, :hub, :unavailable],
         %{count: 1},
-        %{hub_id: hub_id, kind: kind, reason: reason}
-      )
-
-      Logger.warning(
-        "[hub_manager] hub #{inspect(hub_id)} went away mid-call " <>
-          "(#{kind} #{inspect(reason)}); answering #{inspect(on_dead)}"
+        %{hub_id: hub_id, kind: kind, reason: reason, answer: on_dead}
       )
 
       on_dead

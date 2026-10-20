@@ -350,11 +350,6 @@ defmodule Flezha.Runner.ControlChannel do
     silent_ms = System.monotonic_time(:millisecond) - state.last_seen
 
     if silent_ms > Durations.get(:control_liveness_window_ms) do
-      Logger.warning(
-        "[control_channel] no inbound control frame for #{silent_ms}ms for " <>
-          "#{state.runner_id} on #{state.namespace}; treating as connection close"
-      )
-
       :telemetry.execute(
         [:flezha, :runner, :liveness_timeout],
         %{count: 1, silent_ms: silent_ms},

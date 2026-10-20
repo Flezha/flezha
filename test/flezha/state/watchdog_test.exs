@@ -217,8 +217,8 @@ defmodule Flezha.State.WatchdogTest do
       end)
 
     # "Loudly" is half the contract: the user gets a named alarm.
-    assert log =~ "compaction GAVE UP after 4 failed attempts"
-    assert log =~ "key=#{key}"
+    assert log =~ "[flezha_state] compaction_gave_up key=#{key} "
+    assert log =~ "attempts=4"
 
     # The fourth crossing declares the give-up, with the runner the WalWriter
     # status held, to the loop — which plans the resync. The Watchdog itself
@@ -418,10 +418,7 @@ defmodule Flezha.State.WatchdogTest do
       end)
 
     # The positive control alarms by name; the exempt class never appears.
-    assert log =~ ~s(input silent for relay="#{per_input}")
-    # The line states what was seen, and claims nothing about a dead feed.
-    assert log =~ "having produced output earlier"
-    refute log =~ "data-flow stop"
+    assert log =~ "[flezha_health] input_silence relay_class=#{per_input} "
     refute log =~ checkpoint
   end
 
@@ -447,7 +444,7 @@ defmodule Flezha.State.WatchdogTest do
     log = ExUnit.CaptureLog.capture_log(fn -> :ok = Watchdog.sweep_now() end)
 
     refute_received {:input_silence, _, %{relay_class: ^class}}
-    refute log =~ "input silent"
+    refute log =~ "input_silence"
   end
 
   test "the latch reports once per episode and clears when input resumes", %{header: header} do
@@ -556,7 +553,7 @@ defmodule Flezha.State.WatchdogTest do
         :ok = Watchdog.sweep_now()
       end)
 
-    for r <- [ref, foreign], do: assert(log =~ "RPO exceeded for #{inspect(r)}")
+    for r <- [ref, foreign], do: assert(log =~ "rpo_exceeded ref=#{inspect(r)} ")
 
     # Pinned to THIS reference: the RPO sweep is node-global, so an unpinned
     # receive takes whatever reference another module left pending.

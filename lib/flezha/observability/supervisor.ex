@@ -7,9 +7,10 @@ defmodule Flezha.Observability.Supervisor do
   `LoggerHandler`, `TelemetryBridge`, and the one-shot `DefaultSinks`
   that registers the two built-in sinks.
 
-  Under `:observability` → `enabled: false` it starts **no children at
-  all** — no sinks, no logger handler, no telemetry bridge — and every
-  service-API call answers `{:error, :observability_disabled}`.
+  Under `:observability` → `enabled: false` it starts no sinks, no logger
+  handler and no bus: only the telemetry bridge's leveled lines, so an event
+  that is also a log line is still written. Every service-API call answers
+  `{:error, :observability_disabled}`.
   """
 
   use Supervisor
@@ -57,7 +58,7 @@ defmodule Flezha.Observability.Supervisor do
           AuditLogSupervisor
         ]
       else
-        []
+        [{TelemetryBridge, lines_only: true}]
       end
 
     Supervisor.init(children, strategy: :one_for_one)

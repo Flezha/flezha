@@ -731,7 +731,7 @@ defmodule Flezha.State.InputLogTest do
                       %{path: ^path, reason: :crc_mismatch, last_seq: 0, offset: ^second}}
 
       :telemetry.detach(handler)
-      assert log =~ "durable record refused (crc_mismatch)"
+      assert log =~ ~r/record_frame_refused .*reason=crc_mismatch/
       assert log =~ path
 
       # Nothing was cut, and the record after the corrupt one still decodes.

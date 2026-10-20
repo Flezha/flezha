@@ -27,7 +27,6 @@ defmodule Flezha.Convergence.Loop do
 
   alias Flezha.Convergence.Loop.{Liveness, Progress, State, Summary}
   alias Flezha.Runner.FleetManager
-  alias Flezha.Service.EventManager
   alias Flezha.Service.HubManager
 
   require Logger
@@ -79,9 +78,6 @@ defmodule Flezha.Convergence.Loop do
     _ =
       :telemetry.attach_many(@handler_id, @telemetry_subs, &__MODULE__.handle_telemetry/4, self())
 
-    # Shorten runner-takeover detection from `tick_ms` to ~ms.
-    _ = EventManager.add_handler(:runner_connected_event)
-
     # First tick immediately so the recovery gate + first publish happen
     # without waiting `tick_ms`.
     {:ok, request_tick(%State{tick_ms: tick_ms, fact_grace_ms: grace_ms})}
@@ -95,10 +91,6 @@ defmodule Flezha.Convergence.Loop do
 
   def handle_info({:declare, kind, target, args}, %State{} = state) do
     {:noreply, declared(state, kind, target, args)}
-  end
-
-  def handle_info({:runner_connected_event, {namespace, runner_id}}, %State{} = state) do
-    {:noreply, declared(state, :runner_connected, {namespace, runner_id}, %{})}
   end
 
   def handle_info(_msg, state), do: {:noreply, state}

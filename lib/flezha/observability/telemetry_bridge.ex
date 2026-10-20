@@ -12,6 +12,11 @@ defmodule Flezha.Observability.TelemetryBridge do
   Where halves name one event the hand-kept line wins, because its source, name
   and kind are a deliberate choice a derivation cannot know.
 
+  A line whose words carry a `level:` is also the event's log line: its handler
+  writes `Flezha.Observability.Signal.line/1` at that level in the emitting
+  process, marked `flezha_event: true` so `LoggerHandler` does not put the fact
+  on the bus twice. With observability disabled the bridge attaches only these.
+
   Every `[:flezha, …]` event NAME the tree writes must be a key of the merged
   mapping or a member of `unexported/0`, which carries the reason it reaches no
   exporter. The suite judges the name where it is written rather than at the
@@ -368,6 +373,16 @@ defmodule Flezha.Observability.TelemetryBridge do
   def handle_hook(event, measurements, metadata, line),
     do: emit_line(&Bus.emit_named/1, event, measurements, metadata, line)
 
+  # A leveled line's event, written as its log line and then emitted.
+  @doc false
+  def handle_logged(event, measurements, metadata, {source, name, kind, level}),
+    do: emit_line(&log_and_emit(level, &1), event, measurements, metadata, {source, name, kind})
+
+  defp log_and_emit(level, signal) do
+    Logger.log(level, fn -> Signal.line(signal) end, flezha_event: true)
+    Bus.emit(signal)
+  end
+
   defp emit_line(emit, event, measurements, metadata, {source, name, kind}) do
     emit.(
       Signal.new(%{
@@ -400,28 +415,23 @@ defmodule Flezha.Observability.TelemetryBridge do
   # ---------- GenServer ----------
 
   @impl true
-  def init(_opts) do
+  def init(opts) do
     Process.flag(:trap_exit, true)
 
     provider_lines = provider_lines()
-    providers = strip(provider_lines)
+    # A leveled line has a handler of its own carrying it, so the merged
+    # handler's events cost what they did.
+    logged = logged(Map.merge(@all_lines, provider_lines))
+    plain = Map.drop(provider_lines, Map.keys(logged))
 
-    # A refused registration leaves its signals unbudgeted and unlisted, so it
-    # is said rather than dropped.
-    for entry <- registrations(provider_lines),
-        {:error, reason} <- [Registry.register_source(entry)] do
-      Logger.error(
-        "[observability.telemetry_bridge] source #{inspect(entry.name)} not registered: " <>
-          inspect(reason)
-      )
-    end
-
-    compiled = Map.keys(@all_mapping) -- Map.keys(@hook_mapping)
-    :ok = :telemetry.attach_many(@handler_id, compiled, &__MODULE__.handle_event/4, nil)
+    handlers =
+      if Keyword.get(opts, :lines_only, false),
+        do: [handle_logged: logged],
+        else: attach_bus(provider_lines, plain, logged)
 
     # A handler's config is copied out of telemetry's table on every execute of
     # its events, so each of these carries only its own line.
-    for {handler, lines} <- [handle_line: providers, handle_hook: @hook_mapping],
+    for {handler, lines} <- handlers,
         {event, line} <- lines,
         do:
           :ok =
@@ -432,7 +442,35 @@ defmodule Flezha.Observability.TelemetryBridge do
               line
             )
 
-    {:ok, %{line_events: Map.keys(providers) ++ Map.keys(@hook_mapping)}}
+    {:ok, %{line_events: Enum.flat_map(handlers, fn {_handler, lines} -> Map.keys(lines) end)}}
+  end
+
+  defp attach_bus(provider_lines, plain, logged) do
+    # A refused registration leaves its signals unbudgeted and unlisted, so it
+    # is said rather than dropped.
+    for entry <- registrations(provider_lines),
+        {:error, reason} <- [Registry.register_source(entry)] do
+      Logger.error(
+        "[observability.telemetry_bridge] source #{inspect(entry.name)} not registered: " <>
+          inspect(reason)
+      )
+    end
+
+    compiled =
+      @all_mapping
+      |> Map.drop(Map.keys(@hook_mapping) ++ Map.keys(logged))
+      |> Map.keys()
+
+    :ok = :telemetry.attach_many(@handler_id, compiled, &__MODULE__.handle_event/4, nil)
+    [handle_line: strip(plain), handle_hook: @hook_mapping, handle_logged: logged]
+  end
+
+  defp logged(lines) do
+    for {event, {source, name, kind, words}} <- lines,
+        level = is_list(words) && words[:level],
+        level,
+        into: %{},
+        do: {event, {source, name, kind, level}}
   end
 
   @impl true

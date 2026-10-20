@@ -21,10 +21,10 @@ defmodule FlezhaTest.System.EmbeddedRunnerE2ETest do
   alias Flezha.AuthZ.NamespaceStore
   alias Flezha.Relay.Builder
   alias Flezha.Runner.FleetManager
-  alias Flezha.Service.{EventManager, RelayManager}
+  alias Flezha.Service.RelayManager
   alias Flezha.Socket.Support
   alias FlezhaTest.Fixtures.RelayFixture
-  alias FlezhaTest.Helper.{AuthTestHelper, NodeTestHelper}
+  alias FlezhaTest.Helper.{AuthTestHelper, NodeTestHelper, Telemetry}
 
   @ns "embedded-runner"
 
@@ -116,8 +116,10 @@ defmodule FlezhaTest.System.EmbeddedRunnerE2ETest do
       end)
     end)
 
-    EventManager.add_handler(:runner_connected_event)
-    on_exit(fn -> EventManager.rem_handler(:runner_connected_event) end)
+    Telemetry.capture([:flezha, :runner, :connected],
+      as: :connected,
+      filter: &(&1.namespace == @ns)
+    )
 
     runner =
       @ns
@@ -128,7 +130,7 @@ defmodule FlezhaTest.System.EmbeddedRunnerE2ETest do
     assert %Flezha.SDK{} = runner
     on_exit(fn -> Flezha.SDK.close(runner) end)
 
-    assert_receive {:runner_connected_event, {@ns, runner_id}}, 30_000
+    assert_receive {:connected, _, %{runner: runner_id}}, 30_000
     assert FleetManager.active_runners(@ns) == [runner_id]
 
     relay = start_relay()

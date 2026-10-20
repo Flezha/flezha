@@ -230,7 +230,8 @@ defmodule Flezha.Schedule.JobTest do
           _ = :sys.get_state(pid)
         end)
 
-      assert log =~ "job@2026-07-27T08:01:00Z not started (attempt 1): spawn failed"
+      assert log =~ "spawn_failed attempt=1 instance_id=job@2026-07-27T08:01:00Z"
+      assert log =~ "step=spawn"
       assert Process.alive?(pid)
     end
 
@@ -312,7 +313,7 @@ defmodule Flezha.Schedule.JobTest do
           _ = :sys.get_state(pid)
         end)
 
-      assert log =~ "not started (attempt 1)"
+      assert log =~ "spawn_failed attempt=1"
 
       state = :sys.get_state(pid)
       assert %{slot: ^slot, attempt: 2} = state.pending_retry

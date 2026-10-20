@@ -287,6 +287,7 @@ defmodule Flezha.Runner.FleetManager.Factories do
 
       established when established != advertised ->
         report_conflict(attribute, %{
+          attribute: attribute,
           namespace: namespace,
           runner: runner_id,
           factory: factory_id,
@@ -299,36 +300,14 @@ defmodule Flezha.Runner.FleetManager.Factories do
     end
   end
 
-  # How a disagreeing advertisement of each attribute is reported. Each event
-  # name is a literal here so the telemetry export seam can read it.
+  # How a disagreeing advertisement of each attribute is reported: durable
+  # bodies are per-SDK, and every instance of a factory runs the one way its
+  # class declares. Each event name is a literal so the export seam reads it.
   defp report_conflict(:sdk_lang, meta),
-    do:
-      conflict(
-        :factory_language_conflict,
-        "at sdk_lang",
-        "durable State/Change bodies are per-SDK and are never decoded across languages",
-        meta
-      )
+    do: :telemetry.execute([:flezha, :runner, :factory_language_conflict], %{count: 1}, meta)
 
-  defp report_conflict(attribute, meta),
-    do:
-      conflict(
-        :factory_run_conflict,
-        if(attribute == :run, do: "to run as", else: "with #{attribute}"),
-        "every instance of a factory runs the one way its class declares",
-        meta
-      )
-
-  defp conflict(event, phrase, reason, meta) do
-    Logger.warning(
-      "[fleet_manager] runner #{meta.runner} on #{meta.namespace} advertises factory " <>
-        "#{meta.factory} #{phrase} #{meta.advertised}, but the factory is established " <>
-        "#{phrase} #{meta.established}; it will not be a placement candidate for it — " <>
-        reason
-    )
-
-    :telemetry.execute([:flezha, :runner, event], %{count: 1}, meta)
-  end
+  defp report_conflict(_attribute, meta),
+    do: :telemetry.execute([:flezha, :runner, :factory_run_conflict], %{count: 1}, meta)
 
   # Factory ids this runner advertised before a sync that are absent from the
   # incoming full set.

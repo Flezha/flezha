@@ -163,7 +163,7 @@ defmodule FlezhaTest.System.SchemaEvolutionE2ETest do
     # this scenario proves, since a refused restore never makes the Cell
     # resident.
     refused =
-      ~r/\[Overwatch\] restore REFUSED cell=\{"#{relay_id}".*schema_version 2 is above the running tasklet's 1/
+      ~r/\[flezha_state\] restore_refused cell=\{"#{relay_id}".*schema_version 2 is above the running tasklet's 1/
 
     reason =
       NodeTestHelper.with_only_logged([{refused, :always}], fn ->

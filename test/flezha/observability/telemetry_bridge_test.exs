@@ -2,6 +2,8 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
   # async: false: writes Application env; a shared on-disk root; the observability registry.
   use ExUnit.Case, async: false
 
+  require Logger
+
   import FlezhaTest.Helper.MessageTestHelper, only: [flush_all: 0]
   alias Flezha.Dlq.Store, as: DlqStore
   alias Flezha.Observability.{Registry, Signal, TelemetryBridge}
@@ -419,7 +421,9 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
       telemetry: [
         rebalanced: {:event, "The sink moved its partitions."},
         paused: :event,
-        stalled: {:event, meaning: "The sink stalled.", label: "Stalled", outcome: :failure}
+        stalled:
+          {:event,
+           meaning: "The sink stalled.", label: "Stalled", outcome: :failure, level: :warning}
       ]
   end
 
@@ -520,6 +524,10 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
       [bridge] = :telemetry.list_handlers([:flezha, :state, :wal, :backpressure])
       assert bridge.id == TelemetryBridge.handler_id()
       assert bridge.config == nil
+
+      [stalled] = :telemetry.list_handlers([:flezha, :plugin, :acme_sink, :stalled])
+      assert stalled.function == (&TelemetryBridge.handle_logged/4)
+      assert stalled.config == {:flezha_acme_sink, :stalled, :event, :warning}
     end
 
     test "an own verb the provider does not declare is not exported" do
@@ -572,6 +580,85 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
     assert Registry.lookup_source(:flezha_blank_sink) == :error
   end
 
+  test "a leveled event writes one line at its level and rides the bus once",
+       %{sink_name: sink_name} do
+    ns = "lvl-#{System.unique_integer([:positive])}"
+    Registry.unregister_sink(sink_name)
+    sink = :"obs_tbridge_logged_sink_#{:erlang.unique_integer([:positive])}"
+
+    {:ok, _pid} =
+      Registry.register_sink(%{
+        name: sink,
+        module: Counting,
+        config: %{
+          counter_ref: :counters.new(1, [:atomics]),
+          parent: self(),
+          sources: [:flezha_state, :logger]
+        }
+      })
+
+    on_exit(fn -> Registry.unregister_sink(sink) end)
+    flush_all()
+
+    # Captured at `:error` only, so a line written at a lower level is not seen.
+    log =
+      ExUnit.CaptureLog.capture_log([level: :error], fn ->
+        :telemetry.execute(
+          [:flezha, :state, :disk_quota_breach],
+          %{bytes: 7, limit: 5},
+          %{namespace: ns}
+        )
+
+        # One sender's signals reach the sink in order: once this line's own
+        # signal is in, a twin of the event's line would already be too.
+        Logger.error("sentinel #{ns}")
+      end)
+
+    assert [_, _] =
+             String.split(log, "[flezha_state] disk_quota_breach namespace=#{ns} bytes=7 limit=5")
+
+    signals = receive_through(&(&1.kind == :log and &1.metadata.message == "sentinel #{ns}"))
+
+    assert [%Signal{kind: :event, metadata: %{namespace: ^ns}}] =
+             Enum.filter(signals, &(&1.name == :disk_quota_breach))
+
+    assert [_sentinel] = Enum.filter(signals, &(&1.kind == :log and &1.metadata.message =~ ns))
+  end
+
+  test "with observability disabled the bridge attaches only the leveled lines" do
+    sup = Flezha.Observability.Supervisor
+    :ok = Supervisor.terminate_child(sup, TelemetryBridge)
+
+    {:ok, lines_only} =
+      GenServer.start(TelemetryBridge, [lines_only: true], name: TelemetryBridge)
+
+    on_exit(fn ->
+      :ok = GenServer.stop(lines_only)
+      {:ok, _} = Supervisor.restart_child(sup, TelemetryBridge)
+    end)
+
+    assert :telemetry.list_handlers([:flezha, :state, :wal, :backpressure]) == []
+    assert [_logged] = :telemetry.list_handlers([:flezha, :state, :disk_quota_breach])
+
+    log =
+      ExUnit.CaptureLog.capture_log([level: :error], fn ->
+        :telemetry.execute([:flezha, :state, :disk_quota_breach], %{bytes: 7}, %{namespace: "off"})
+      end)
+
+    assert log =~ "[flezha_state] disk_quota_breach namespace=off bytes=7"
+  end
+
+  test "an own verb's level is one of Logger's, or the provider does not compile" do
+    source = """
+    defmodule FlezhaTest.LoudVerb do
+      use Flezha.Plugin.ProviderBehaviour,
+        telemetry: [stalled: {:event, meaning: "The sink stalled.", level: :loud}]
+    end
+    """
+
+    assert_raise CompileError, ~r/telemetry entry/, fn -> Code.compile_string(source) end
+  end
+
   test "an own verb that repeats the vocabulary fails the provider's compilation" do
     source = """
     defmodule FlezhaTest.RepeatsShipped do
@@ -586,6 +673,16 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
     sup = Flezha.Observability.Supervisor
     :ok = Supervisor.terminate_child(sup, TelemetryBridge)
     {:ok, _pid} = Supervisor.restart_child(sup, TelemetryBridge)
+  end
+
+  # Every counted signal up to and including the first `last?` accepts.
+  defp receive_through(last?, acc \\ []) do
+    receive do
+      {:counted, %Signal{} = sig} ->
+        if last?.(sig), do: Enum.reverse([sig | acc]), else: receive_through(last?, [sig | acc])
+    after
+      5_000 -> flunk("the closing signal never arrived; got #{inspect(Enum.reverse(acc))}")
+    end
   end
 
   defp receive_until(_pred, timeout) when timeout <= 0, do: nil

@@ -23,11 +23,6 @@ defmodule Flezha.Runner.Admission.Quota do
         :ok
 
       {:error, {:quota_exceeded, _kind, %{current: current, limit: limit}} = reason} ->
-        Logger.warning(
-          "[FleetManager] runner connect refused for namespace=#{namespace}: " <>
-            "max_runners quota reached (#{current}/#{limit})"
-        )
-
         :telemetry.execute(
           [:flezha, :runner, :quota_refused],
           %{count: 1},

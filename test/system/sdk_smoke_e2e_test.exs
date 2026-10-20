@@ -230,7 +230,7 @@ defmodule FlezhaTest.System.SdkSmokeE2ETest do
       end
 
       # QUIC's controller-side session teardown does not fire
-      # `:runner_disconnected_event` inside the helper's window; the failure is
+      # `[:flezha, :runner, :disconnected]` inside the helper's window; the failure is
       # identical for every runtime, so it is a transport gap rather than an
       # SDK one.
       if transport != :quic do

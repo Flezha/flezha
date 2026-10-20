@@ -227,12 +227,6 @@ defmodule Flezha.State.Watchdog do
                   %{bytes: bytes, limit: limit},
                   %{namespace: namespace}
                 )
-
-                Logger.error(
-                  "[watchdog] namespace #{namespace} exceeds max_state_bytes " <>
-                    "(#{bytes} > #{limit}); new relay allocation is refused, " <>
-                    "durable writes continue"
-                )
               end
 
               MapSet.put(acc, namespace)
@@ -287,11 +281,6 @@ defmodule Flezha.State.Watchdog do
   end
 
   defp flag_rpo_exceeded(ref, lag) do
-    Logger.error(
-      "[watchdog] remote durability RPO exceeded for #{inspect(ref)}: #{lag}ms of local " <>
-        "progress is not on the remote store — investigate the durability backend"
-    )
-
     :telemetry.execute(
       [:flezha, :state, :rpo_exceeded],
       %{lag_ms: lag, target_ms: DurabilityTier.rpo_target_ms()},
@@ -417,11 +406,6 @@ defmodule Flezha.State.Watchdog do
       %{timeout_ms: timeout},
       %{relay_class: rc, relay_instance: rc}
     )
-
-    Logger.warning(
-      "[watchdog] input silent for relay=#{inspect(rc)}: no Changes received for >= " <>
-        "#{timeout}ms, having produced output earlier"
-    )
   end
 
   defp sweep_output_staleness(state, now, statuses) do
@@ -514,12 +498,6 @@ defmodule Flezha.State.Watchdog do
   end
 
   defp emit_give_up({rc, sh, pk}, attempt) do
-    Logger.error(
-      "[watchdog] compaction GAVE UP after #{attempt} failed attempts relay=#{rc} " <>
-        "tasklet=#{sh} key=#{pk}; the Cell's WAL is not being reclaimed — investigate " <>
-        "the runner's snapshot path"
-    )
-
     :telemetry.execute(
       [:flezha, :state, :compaction_gave_up],
       %{attempts: attempt},

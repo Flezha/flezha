@@ -47,7 +47,10 @@ defmodule Flezha.Convergence.Probe.Table do
         {[:flezha, :steps, :suspended],
          label: "Paused", meaning: "A steps relay paused at a safe point."},
         {[:flezha, :steps, :failed],
-         label: "Steps relay failed", outcome: :failure, meaning: "A steps relay failed."}
+         label: "Steps relay failed",
+         outcome: :failure,
+         level: :warning,
+         meaning: "A steps relay failed."}
       ]
     },
     %{
@@ -62,6 +65,7 @@ defmodule Flezha.Convergence.Probe.Table do
         {[:flezha, :state, :input_silence],
          label: "No input",
          outcome: :failure,
+         level: :warning,
          meaning: "A relay has received no input for longer than allowed."}
       ],
       thresholds: [:output_stall_timeout_ms, :input_silence_timeout_ms]
@@ -72,7 +76,10 @@ defmodule Flezha.Convergence.Probe.Table do
       facts: &Readers.progress/1,
       events: [
         {[:flezha, :convergence, :relay_stuck],
-         label: "Stuck", outcome: :failure, meaning: "A relay is making no progress."}
+         label: "Stuck",
+         outcome: :failure,
+         level: :warning,
+         meaning: "A relay is making no progress."}
       ],
       thresholds: [:convergence_output_stall_grace_ms]
     },
@@ -97,9 +104,10 @@ defmodule Flezha.Convergence.Probe.Table do
         {[:flezha, :runner, :liveness_timeout],
          label: "Stopped answering",
          outcome: :failure,
+         level: :warning,
          meaning: "A runner stopped answering the controller's keepalive."},
         {[:flezha, :runner, :restarted],
-         label: "Restarted", outcome: :failure, meaning: "A runner restarted."},
+         label: "Restarted", outcome: :failure, level: :warning, meaning: "A runner restarted."},
         {[:flezha, :runner, :reconnected],
          label: "Reconnected", meaning: "A runner reconnected and kept its relays."},
         {[:flezha, :runner, :reconnected_reassigned],
@@ -135,6 +143,7 @@ defmodule Flezha.Convergence.Probe.Table do
         {[:flezha, :data_plane, :stall_localized],
          label: "Stall traced",
          outcome: :failure,
+         level: :warning,
          meaning: "A stalled message flow was traced to one connection, stream or relay."}
       ],
       thresholds: [:driver_freeze_ms, :stall_ms, :queue_high, :cell_stall_ms]
@@ -154,6 +163,7 @@ defmodule Flezha.Convergence.Probe.Table do
         {[:flezha, :hub, :unavailable],
          label: "Namespace down",
          outcome: :failure,
+         level: :warning,
          meaning: "A namespace's hub was down when something asked for it."}
       ]
     },

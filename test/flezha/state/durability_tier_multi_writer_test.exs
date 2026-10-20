@@ -839,7 +839,7 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
 
       log = capture_log(fn -> assert :not_landed = Adoption.adopt_newest(ctx.class, :backend) end)
 
-      assert log =~ "which the backend does not hold"
+      assert log =~ "[flezha_durability] artifact_missing artifact="
       assert log =~ "did not land whole; the local copy stays"
       assert File.read!(Paths.wal_path(ctx.cell_id)) == stale
       refute File.exists?(Paths.aside_path(ctx.class, :set_aside))
@@ -859,7 +859,7 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
       refute File.exists?(Paths.wal_path(ctx.cell_id))
       refute File.exists?(Paths.class_dir(ctx.class))
       refute File.exists?(Paths.aside_path(ctx.class, :set_aside))
-      assert log =~ "which the backend does not hold"
+      assert log =~ "[flezha_durability] artifact_missing artifact="
       assert log =~ "did not land whole"
     end
 

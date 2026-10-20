@@ -82,7 +82,7 @@ defmodule Flezha.State.RestoreTest do
         assert reason =~ "crc_mismatch"
       end)
 
-    assert log =~ "durable record refused (crc_mismatch)"
+    assert log =~ ~r/record_frame_refused .*reason=crc_mismatch/
     assert RecordFrame.file_size(path) == size
 
     # The one place the awaited restore's answer is read parks the relay on
@@ -403,7 +403,6 @@ defmodule Flezha.State.RetentionTest do
 
     on_exit(fn ->
       Application.delete_env(:flezha, :time_travel_retention_hours)
-      Application.delete_env(:flezha, :relay_completed_retention_hours)
       # A writer a test started runs under the application's supervisor and
       # still syncs after the body, so it is stopped before its root goes.
       TestHelpers.reset_all_cells()
@@ -523,8 +522,9 @@ defmodule Flezha.State.RetentionTest do
   describe "finished-job retention (steps)" do
     test "retains a completion record within the window, reclaims it after" do
       now = System.system_time(:second)
+      on_exit(TestHelpers.override_env(:default_relay_completed_retention_hours, 1))
 
-      # Within the (default 72h) window → retained.
+      # Within the one-hour window → retained.
       :ok =
         Completion.write("bnd_live", %{
           namespace: "ns",
@@ -534,16 +534,14 @@ defmodule Flezha.State.RetentionTest do
           finished_at: now
         })
 
-      # Past the window (0h retention for this class) → reclaimed wholesale.
-      Application.put_env(:flezha, :relay_completed_retention_hours, %{"bnd_old" => 0})
-
+      # Past it → reclaimed wholesale.
       :ok =
         Completion.write("bnd_old", %{
           namespace: "ns",
           status: "error",
           error: "boom",
           result: "",
-          finished_at: now - 10
+          finished_at: now - 7_200
         })
 
       :ok = Retention.sweep_now()

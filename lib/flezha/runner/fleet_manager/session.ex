@@ -41,7 +41,6 @@ defmodule Flezha.Runner.FleetManager.Session do
   alias Flezha.Runner.FleetSupervisor
   alias Flezha.Runner.RunnerSupervisor
   alias Flezha.Runner.StreamPool
-  alias Flezha.Service.EventManager
   alias Flezha.Service.HubManager
 
   require Logger
@@ -268,8 +267,6 @@ defmodule Flezha.Runner.FleetManager.Session do
     # HUB moves them to a controller that can still run them. Nothing is
     # rerouted here.
     Facts.declare({:runner_disconnected, {namespace, runner_id}, %{}})
-
-    EventManager.dispatch(:runner_disconnected_event, {namespace, runner_id}, %{members: :local})
 
     :telemetry.execute(
       [:flezha, :runner, :disconnected],
@@ -573,15 +570,11 @@ defmodule Flezha.Runner.FleetManager.Session do
     state = resolve_stable_identity(state, session_token, connect)
     lift_superseded_drop(connect)
 
-    # The convergence Loop subscribes to this and runs an immediate tick as a
-    # safety net; the binding swap above is the synchronous primary path.
-    EventManager.dispatch(
-      :runner_connected_event,
-      {namespace, session_token},
-      %{members: :local}
-    )
+    # The convergence Loop ticks at once on this fact as a safety net; the
+    # binding swap above is the synchronous primary path.
+    Facts.declare({:runner_connected, {namespace, session_token}, %{}})
 
-    # The bus above reaches local processes only; this signal is what a
+    # The fact above reaches the local loop only; this signal is what a
     # consumer on another node tails (`:flezha_runner` source).
     :telemetry.execute(
       [:flezha, :runner, :connected],

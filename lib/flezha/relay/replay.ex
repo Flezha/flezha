@@ -330,12 +330,6 @@ defmodule Flezha.Relay.Replay do
       # Refused, by the SDK or by the controller's own read of the records:
       # the reason is the refusal's text.
       {:error, reason} ->
-        Logger.error(
-          "[Overwatch] restore REFUSED cell=#{inspect(cell_id)} runner=#{runner_id}: " <>
-            "#{inspect(reason)}; leaving the relay unbound rather than folding new " <>
-            "inputs onto empty state"
-        )
-
         :telemetry.execute(
           [:flezha, :state, :restore_refused],
           %{count: 1},
@@ -552,7 +546,7 @@ defmodule Flezha.Relay.Replay do
     }
 
     case Map.fetch(calls, edge.origin) do
-      {:ok, token} -> {edge.payload, Token.entry_metadata(metadata, token)}
+      {:ok, token} -> {edge.payload, Map.put(metadata, Token.reply_to_key(), token)}
       :error -> {edge.payload, metadata}
     end
   end
@@ -766,21 +760,19 @@ defmodule Flezha.Relay.Replay do
   end
 
   defp log_correction(state, cell_id, target, {:error, reason}) do
-    Logger.warning(
-      "[Overwatch] correction refused cell=#{inspect(cell_id)} " <>
-        "target=#{target}: #{inspect(reason)}"
-    )
-
-    emit_correction(:refused, Overwatch.relay_class(state), cell_id, %{reason: reason})
+    emit_correction(:refused, Overwatch.relay_class(state), cell_id, %{
+      reason: reason,
+      target: target
+    })
   end
 
   defp emit_correction(event, relay_class, {_, tasklet, key}, measurements) do
-    {reason, measurements} = Map.pop(measurements, :reason)
+    {why, measurements} = Map.split(measurements, [:reason, :target])
 
     :telemetry.execute(
       [:flezha, :correction, event],
       Map.put_new(measurements, :count, 1),
-      %{relay: relay_class, tasklet: tasklet, key: key, reason: reason}
+      Map.merge(%{relay: relay_class, tasklet: tasklet, key: key, reason: nil}, why)
     )
   end
 end

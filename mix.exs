@@ -561,7 +561,6 @@ defmodule Flezha.MixProject do
       # every release. Declared here so the namespace hubs' leader election
       # reaches the assembled release.
       {:elector, "~> 0.3.4"},
-      {:blockade, "~> 0.2.2"},
       # fresh 0.4.4's released mix.exs declares charlist elixirc_paths,
       # which Mix >= 1.20 rejects; upstream is unresponsive. Pinned to the
       # PR branch carrying the fix. Pin the branch head, not a fork's default

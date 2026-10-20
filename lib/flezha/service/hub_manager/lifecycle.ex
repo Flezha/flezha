@@ -97,7 +97,6 @@ defmodule Flezha.Service.HubManager.Lifecycle do
       reason: inspect(reason)
     })
 
-    Logger.error("[hub] #{target} failed to start: #{inspect(reason)}; retrying")
     :error
   end
 

@@ -114,6 +114,7 @@ defmodule Flezha.Observability.TelemetryBridge.Lines do
       {:flezha_durability, :rpo_exceeded, :event,
        label: "Backups too far behind",
        outcome: :failure,
+       level: :error,
        meaning: "Remote copies fell further behind than the recovery point allows."},
     [:flezha, :state, :ship_failed] =>
       {:flezha_durability, :ship_failed, :event,
@@ -133,11 +134,13 @@ defmodule Flezha.Observability.TelemetryBridge.Lines do
       {:flezha_durability, :hydration_failed, :event,
        label: "Restore failed",
        outcome: :failure,
+       level: :error,
        meaning: "Restoring a relay's state from remote storage failed."},
     [:flezha, :state, :artifact_missing] =>
       {:flezha_durability, :artifact_missing, :event,
        label: "Copy missing",
        outcome: :failure,
+       level: :error,
        meaning: "Remote storage lacks a copy that a relay's saved state refers to."},
     [:flezha, :state, :durability_gc] =>
       {:flezha_durability, :durability_gc, :metric,
@@ -159,6 +162,7 @@ defmodule Flezha.Observability.TelemetryBridge.Lines do
       {:flezha_convergence, :intent_mismatch, :event,
        label: "Leftover state",
        outcome: :failure,
+       level: :warning,
        meaning: "Saved state exists for relays nobody asked to run."},
     [:flezha, :dlq, :parked] =>
       {:flezha_dlq, :dlq_parked_total, :metric,
@@ -348,6 +352,7 @@ defmodule Flezha.Observability.TelemetryBridge.Lines do
       {:flezha_boot, :hub_start_failed, :event,
        label: "Namespace failed to start",
        outcome: :failure,
+       level: :error,
        meaning: "A namespace's hub failed to start, so its relays are not running."},
     [:flezha, :boot, :pre_recovery_replay] =>
       {:flezha_boot, :pre_recovery_replay, :event,
@@ -375,6 +380,7 @@ defmodule Flezha.Observability.TelemetryBridge.Lines do
       {:flezha_correction, :refused, :event,
        label: "Correction refused",
        outcome: :failure,
+       level: :warning,
        meaning: "The controller refused to apply a correction to a relay."},
     [:flezha, :runner, :connected] =>
       {:flezha_runner, :runner_connected, :event,
@@ -402,17 +408,20 @@ defmodule Flezha.Observability.TelemetryBridge.Lines do
       {:flezha_runner, :factory_language_conflict, :event,
        label: "Language clash",
        outcome: :failure,
+       level: :warning,
        meaning:
          "A runner offered a factory that another runner already serves in another language."},
     [:flezha, :runner, :factory_run_conflict] =>
       {:flezha_runner, :factory_run_conflict, :event,
        label: "Factory clash",
        outcome: :failure,
+       level: :warning,
        meaning: "A runner offered a factory that conflicts with one already running."},
     [:flezha, :runner, :quota_refused] =>
       {:flezha_runner, :quota_refused, :event,
        label: "Runner quota full",
        outcome: :failure,
+       level: :warning,
        meaning: "A runner was turned away because its namespace has as many runners as allowed."},
     [:flezha, :runner, :admin_request] =>
       {:flezha_runner, :admin_request, :event,
@@ -426,6 +435,7 @@ defmodule Flezha.Observability.TelemetryBridge.Lines do
       {:flezha_schedule, :spawn_failed, :event,
        label: "Start failed",
        outcome: :failure,
+       level: :error,
        meaning: "A schedule came due, but its relay failed to start."},
     [:flezha, :stream, :fanout_warning] =>
       {:flezha_stream, :fanout_warning, :event,
@@ -445,11 +455,13 @@ defmodule Flezha.Observability.TelemetryBridge.Lines do
       {:flezha_state, :compaction_gave_up, :event,
        label: "Clean-up given up",
        outcome: :failure,
+       level: :error,
        meaning: "Shrinking a relay's saved state failed too often and was given up."},
     [:flezha, :state, :disk_quota_breach] =>
       {:flezha_state, :disk_quota_breach, :event,
        label: "Over disk quota",
        outcome: :failure,
+       level: :error,
        meaning: "A namespace's saved state grew past its disk quota."},
     [:flezha, :state, :inbox_duplicate] =>
       {:flezha_state, :inbox_duplicate, :event,
@@ -469,11 +481,13 @@ defmodule Flezha.Observability.TelemetryBridge.Lines do
       {:flezha_state, :record_frame_refused, :event,
        label: "Damaged record refused",
        outcome: :failure,
+       level: :error,
        meaning: "A damaged record at the end of a relay's saved log was refused."},
     [:flezha, :state, :restore_refused] =>
       {:flezha_state, :restore_refused, :event,
        label: "Restore refused",
        outcome: :failure,
+       level: :error,
        meaning: "A relay's saved state could not be restored."},
     [:flezha, :state, :wal_pull_failed] =>
       {:flezha_state, :wal_pull_failed, :event,
@@ -484,6 +498,7 @@ defmodule Flezha.Observability.TelemetryBridge.Lines do
       {:flezha_state, :record_frame_repaired, :event,
        label: "Torn record dropped",
        outcome: :failure,
+       level: :warning,
        meaning: "A half-written record at the end of a relay's saved log was dropped."},
     [:flezha, :state, :wal_rewind] =>
       {:flezha_state, :wal_rewind, :event,

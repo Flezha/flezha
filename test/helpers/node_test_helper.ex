@@ -16,7 +16,6 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
   alias Flezha.Process.Poll
   alias Flezha.Runner.FleetManager
   alias Flezha.Runner.StreamChannel
-  alias Flezha.Service.EventManager
   alias Flezha.Service.HubManager
   alias Flezha.Service.PluginManager
   alias Flezha.Service.PortPilot
@@ -366,28 +365,57 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
     command = PortPilot.launch_command(runtime, :test, namespace)
     connect_timeout = Keyword.get(opts, :connect_timeout, manifest(runtime)["connect_timeout_ms"])
 
-    EventManager.add_handler(:runner_connected_event)
+    {{port, _command}, runner_id} =
+      runner_event(:connected, namespace, nil, connect_timeout, fn ->
+        open_runner_port(command,
+          transport: transport,
+          env: Keyword.get(opts, :env, []),
+          port_opts: Keyword.get(opts, :port_opts, [])
+        )
+      end)
 
-    {port, _command} =
-      open_runner_port(command,
-        transport: transport,
-        env: Keyword.get(opts, :env, []),
-        port_opts: Keyword.get(opts, :port_opts, [])
-      )
-
-    runner_id =
-      receive do
-        {:runner_connected_event, {^namespace, runner_id}} -> runner_id
-      after
-        connect_timeout ->
-          raise "temporary test runner not connected; it printed:\n" <>
-                  read_port(port, fn _ -> false end, 100)
-      end
-
-    # Remove the handler to duplicate events.
-    EventManager.rem_handler(:runner_connected_event)
+    runner_id ||
+      raise "temporary test runner not connected; it printed:\n" <>
+              read_port(port, fn _ -> false end, 100)
 
     {port, runner_id}
+  end
+
+  @doc """
+  Run `fun`, then wait up to `timeout` ms for the `[:flezha, :runner, verb]`
+  event of `namespace` (and of `runner`, unless it is `nil`) that `fun` caused.
+  Answers `{fun's result, the event's runner}`, the runner `nil` when none came.
+  """
+  def runner_event(verb, namespace, runner, timeout, fun) do
+    id = {__MODULE__, verb, make_ref()}
+
+    :ok =
+      :telemetry.attach(
+        id,
+        [:flezha, :runner, verb],
+        &__MODULE__.forward_runner_event/4,
+        {self(), id, namespace, runner}
+      )
+
+    try do
+      result = fun.()
+
+      receive do
+        {^id, got} -> {result, got}
+      after
+        timeout -> {result, nil}
+      end
+    after
+      :telemetry.detach(id)
+    end
+  end
+
+  @doc false
+  def forward_runner_event(_event, _measurements, %{namespace: ns, runner: runner}, config) do
+    case config do
+      {pid, id, ^ns, want} when want == nil or want == runner -> send(pid, {id, runner})
+      _ -> :ok
+    end
   end
 
   @doc """
@@ -644,18 +672,12 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
     # UDS-only paths that should disconnect quickly.
     timeout = Keyword.get(opts, :timeout, 5_000)
 
-    EventManager.add_handler(:runner_disconnected_event)
-    FleetManager.disconnect_runner(namespace, runner_id)
+    {_, disconnected} =
+      runner_event(:disconnected, namespace, runner_id, timeout, fn ->
+        FleetManager.disconnect_runner(namespace, runner_id)
+      end)
 
-    receive do
-      {:runner_disconnected_event, {^namespace, ^runner_id}} -> :ok
-    after
-      timeout -> raise "temporary test runner not disconnected"
-    end
-
-    # Remove the handler to duplicate events.
-    EventManager.rem_handler(:runner_disconnected_event)
-
+    disconnected || raise "temporary test runner not disconnected"
     :ok
   end
 

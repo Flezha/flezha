@@ -127,11 +127,6 @@ defmodule Flezha.Runner.ControlChannel.Requests do
   end
 
   defp report_steps_failure(state, relay_id, error) do
-    Logger.warning(
-      "[control_channel] steps relay #{inspect(relay_id)} failed in namespace " <>
-        "#{inspect(state.namespace)}: #{inspect(error)}"
-    )
-
     :telemetry.execute(
       [:flezha, :steps, :failed],
       %{count: 1},

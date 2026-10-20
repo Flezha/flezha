@@ -146,6 +146,19 @@ defmodule Flezha.Observability.Signal do
   def metadata_json(term), do: inspect_term(term)
 
   @doc """
+  The one log line a signal is written as: `[source] name`, then each metadata
+  and measurement as `key=value`, keys and values through `metadata_text/1`.
+  """
+  @spec line(t()) :: String.t()
+  def line(%__MODULE__{source: source, name: name} = signal) do
+    pairs =
+      for {key, value} <- Enum.concat(signal.metadata, signal.measurements),
+          do: [?\s, metadata_text(key), ?=, metadata_text(value)]
+
+    IO.iodata_to_binary([?[, Atom.to_string(source), "] ", Atom.to_string(name) | pairs])
+  end
+
+  @doc """
   Is `name` legal in the Prometheus text exposition — `[a-zA-Z_][a-zA-Z0-9_]*`,
   and outside the reserved `__` namespace?
 

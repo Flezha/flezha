@@ -79,7 +79,6 @@ lib/flezha/runner/fleet_manager/factories.ex -> Flezha.Service.HubManager
 lib/flezha/runner/fleet_manager/removal.ex -> Flezha.Service.HubManager
 lib/flezha/runner/fleet_manager/session.ex -> Flezha.AuthZ.RoleStore
 lib/flezha/runner/fleet_manager/session.ex -> Flezha.Convergence.Facts
-lib/flezha/runner/fleet_manager/session.ex -> Flezha.Service.EventManager
 lib/flezha/runner/fleet_manager/session.ex -> Flezha.Service.HubManager
 lib/flezha/runner/fleet_manager/session.ex -> Flezha.Shutdown.Step
 lib/flezha/runner/stream_channel.ex -> Flezha.State.CreditLedger

@@ -20,7 +20,6 @@ defmodule Mix.Tasks.Bench.Fleet do
   alias Flezha.Config
   alias Flezha.Layout.Table, as: Layout
   alias Flezha.Runner.FleetManager
-  alias Flezha.Service.EventManager
   alias Flezha.Service.RelayManager
   alias Flezha.Service.PortPilot
   alias Flezha.State.Paths
@@ -289,7 +288,18 @@ defmodule Mix.Tasks.Bench.Fleet do
 
     connect_timeout = PortPilot.manifest(runtime)["connect_timeout_ms"]
 
-    EventManager.add_handler(:runner_connected_event)
+    handler = {__MODULE__, make_ref()}
+    bench = self()
+
+    :ok =
+      :telemetry.attach(
+        handler,
+        [:flezha, :runner, :connected],
+        fn _event, _measurements, metadata, _config ->
+          if metadata.namespace == namespace, do: send(bench, {handler, metadata.runner})
+        end,
+        nil
+      )
 
     # Every runner is spawned before the first hand-shake is awaited: the
     # processes boot side by side, and the wait is one connect, not N.
@@ -307,13 +317,13 @@ defmodule Mix.Tasks.Bench.Fleet do
     runner_ids =
       for i <- 1..count do
         receive do
-          {:runner_connected_event, {^namespace, id}} -> id
+          {^handler, id} -> id
         after
           connect_timeout -> raise "Performance test compute engine #{i} failed to connect"
         end
       end
 
-    EventManager.rem_handler(:runner_connected_event)
+    :telemetry.detach(handler)
     runner_ids
   end
 end

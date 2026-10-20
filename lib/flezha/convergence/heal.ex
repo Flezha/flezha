@@ -328,11 +328,6 @@ defmodule Flezha.Convergence.Heal do
   # A runner restarting on a schedule must be visible rather than mysterious:
   # the verdict that proved the wedge and the ladder rung both ride the event.
   defp emit_restart(runner_id, layer) do
-    Logger.warning(
-      "[convergence] restarting runner #{runner_id} terminally — still proved wedged " <>
-        "(#{inspect(layer)}) after eviction"
-    )
-
     :telemetry.execute(
       [:flezha, :runner, :restarted],
       %{count: 1},

@@ -104,14 +104,9 @@ defmodule Flezha.Convergence.Loop.Liveness do
 
   defp maybe_emit_stall(:ok, nil), do: :ok
 
+  # The event's bridge line is also its log line, what a user greps during an
+  # incident: a freeze that reached the logs only at recovery is why.
   defp maybe_emit_stall({layer, ctx}, last) when layer != last do
-    # Telemetry feeds the bus; the log line is what a user greps during
-    # an incident. A data-plane freeze that reaches the logs only at recovery
-    # is the case this line exists for.
-    Logger.warning(
-      "[convergence] data-plane stall localized: layer=#{inspect(layer)} #{inspect(ctx)}"
-    )
-
     :telemetry.execute(
       [:flezha, :data_plane, :stall_localized],
       %{count: 1},

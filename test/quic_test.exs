@@ -1,7 +1,6 @@
 defmodule FlezhaQuicTest do
   alias Flezha.Payloader
   alias Flezha.Runner.FleetManager
-  alias Flezha.Service.EventManager
   alias Flezha.Service.PortPilot
   alias Flezha.Service.RelayManager
   alias Flezha.State.Paths
@@ -138,7 +137,11 @@ defmodule FlezhaQuicTest do
   # manifest's connect bound, a build behind another cargo included.
   test "a QUIC peer without a client certificate is refused" do
     refused_namespace = "quic_refused_namespace"
-    EventManager.add_handler(:runner_connected_event)
+
+    Telemetry.capture([:flezha, :runner, :connected],
+      as: :connected,
+      filter: &(&1.namespace == refused_namespace)
+    )
 
     Telemetry.capture([:flezha, :transport, :connect_rejected], as: :refused)
 
@@ -161,10 +164,9 @@ defmodule FlezhaQuicTest do
       assert_receive {:refused, %{count: 1}, %{stage: :handshake}},
                      NodeTestHelper.manifest(:rust)["connect_timeout_ms"]
 
-      refute_receive {:runner_connected_event, {^refused_namespace, _}}, 100
+      refute_receive {:connected, _, _}, 100
       assert FleetManager.active_runners(refused_namespace) == []
     after
-      EventManager.rem_handler(:runner_connected_event)
       if port_alive?(port), do: Port.close(port)
     end
   end

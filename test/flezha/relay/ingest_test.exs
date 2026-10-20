@@ -81,6 +81,27 @@ defmodule FlezhaTest.Relay.IngestTest do
              Overwatch.handle_call({:ingest, "drop-me now", %{}}, self(), state)
   end
 
+  describe "the keys only the controller sets" do
+    setup :set_mimic_global_until_exit
+
+    @controller_keys ["flz.reply_to", "flz.replay", "flz.replay_end", "flz.edge", "flz.offset"]
+
+    test "no inject sets them, a call's included, which rides only the token its entry minted" do
+      inst = instance_id()
+      {:ok, host} = start_supervised({Host, state(inst, channel: fake_channel(:ok))})
+      forged = Map.new(@controller_keys, &{&1, "true"}) |> Map.put("k", "v")
+
+      assert :ok = PluginHost.inject(host, "x", forged, :confirming, 1_000)
+      assert_receive {:channel_got, ^inst, {"x", %{"k" => "v"} = metadata}}
+      assert Map.take(metadata, @controller_keys) == %{}
+
+      caller = Task.async(fn -> PluginHost.inject(host, "c", forged, :call, 1_000) end)
+      assert_receive {:channel_got, ^inst, {"c", %{"flz.reply_to" => "w:" <> _} = metadata}}
+      assert Map.take(metadata, tl(@controller_keys)) == %{}
+      Task.shutdown(caller, :brutal_kill)
+    end
+  end
+
   describe "a durable steps relay's input log" do
     setup :set_mimic_global_until_exit
 
@@ -111,10 +132,12 @@ defmodule FlezhaTest.Relay.IngestTest do
       inst = instance_id()
       state = state(inst, durable_steps: true, channel: fake_channel(:ok))
       {:ok, host} = start_supervised({Host, state})
-      sent_once = %{"flz.msg_id" => "m-again"}
+      sent_once = %{"flz.msg_id" => "m-again", "flz.replay" => "true"}
 
       assert :ok = GenServer.call(host, {:ingest, "again", sent_once})
-      assert_receive {:channel_got, ^inst, {"again", %{"flz.offset" => "0"}}}
+      assert_receive {:channel_got, ^inst, {"again", %{"flz.offset" => "0"} = metadata}}
+      assert metadata["flz.msg_id"] == "m-again"
+      refute Map.has_key?(metadata, "flz.replay")
 
       assert {:ok, :absorbed} = GenServer.call(host, {:ingest, "again", sent_once})
       refute_received {:channel_got, _, _}
@@ -159,7 +182,7 @@ defmodule FlezhaTest.Relay.IngestTest do
 
       # append-before-forward: nothing moved, and the refusal is told once, by
       # the log that refused its file, however many inputs it then refuses.
-      assert [_, _] = String.split(log, "durable record refused (crc_mismatch)")
+      assert [_, _] = String.split(log, "record_frame_refused")
       assert log =~ path
       refute_received {:channel_got, _, _}
     end
@@ -179,7 +202,7 @@ defmodule FlezhaTest.Relay.IngestTest do
         end)
 
       assert_received {:started, {:error, %Flezha.Error{code: ^code}}}
-      assert log =~ "durable record refused (crc_mismatch)"
+      assert log =~ ~r/record_frame_refused .*reason=crc_mismatch/
       refute_received {:channel_got, _, _}
       assert GenServer.call(host, :get_overwatch_state).calls.rows == %{}
     end

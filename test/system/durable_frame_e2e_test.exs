@@ -143,7 +143,7 @@ defmodule FlezhaTest.System.DurableFrameE2ETest do
         assert reason =~ path
       end)
 
-    assert log =~ "durable record refused (crc_mismatch)"
+    assert log =~ ~r/record_frame_refused .*reason=crc_mismatch/
     assert_receive {:refused, %{count: 1}, %{reason: :crc_mismatch, path: ^path}}, 5_000
 
     # The bytes are still there: a refusal leaves the log alone, which is the

@@ -116,8 +116,6 @@ defmodule Flezha.Convergence.Loop.Progress do
     cleared = Map.keys(prev) -- Map.keys(new)
 
     Enum.each(fresh, fn {id, %{detail: detail, cell: cell}} ->
-      Logger.warning("[convergence] relay stuck: #{id} #{detail} cell=#{cell}")
-
       :telemetry.execute(
         [:flezha, :convergence, :relay_stuck],
         %{count: 1},

@@ -130,10 +130,6 @@ defmodule Flezha.Convergence.Intent do
   end
 
   def note_intent_mismatch_transition(_prev, mismatch) do
-    Logger.warning(
-      "[convergence] intent mismatch — durable state evidence without live intent: #{inspect(mismatch)}"
-    )
-
     :telemetry.execute(
       [:flezha, :convergence, :intent_mismatch],
       %{count: length(mismatch)},

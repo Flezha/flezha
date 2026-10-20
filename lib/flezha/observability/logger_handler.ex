@@ -37,7 +37,11 @@ defmodule Flezha.Observability.LoggerHandler do
   @doc false
   def removing_handler(_config), do: :ok
 
+  # A bridge line written from an event: its fact already rode the bus as that
+  # event's signal.
   @doc false
+  def log(%{meta: %{flezha_event: true}}, _config), do: :ok
+
   def log(%{level: level, msg: msg, meta: meta} = _event, _config) do
     try do
       signal =

@@ -295,7 +295,7 @@ defmodule Flezha.AuthZ.QuotaPointsTest do
           assert bytes > 100
         end)
 
-      assert log =~ "namespace team-alarm exceeds max_state_bytes"
+      assert log =~ "[flezha_state] disk_quota_breach namespace=team-alarm bytes="
 
       # Latched: a second sweep with the breach still standing does not
       # re-alarm.

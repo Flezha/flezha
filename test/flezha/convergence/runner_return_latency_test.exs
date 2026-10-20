@@ -7,7 +7,7 @@ defmodule Flezha.Convergence.RunnerReturnLatencyTest do
   then checks the health a rebound relay reports.
   """
 
-  # async: false: real runners, the global EventManager, a shared on-disk root.
+  # async: false: real runners, the global convergence loop, a shared on-disk root.
   use ExUnit.Case, async: false
 
   alias Flezha.Config.Backoff

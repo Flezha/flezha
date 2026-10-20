@@ -294,7 +294,7 @@ defmodule FlezhaTest.System.RemedyDrillTest do
     # --- a compaction request never answered for four sweeps ----------------
     on_exit(TestHelpers.override_env(:compaction_timeout_ms, 50))
 
-    gave_up = ~r/\[watchdog\] compaction GAVE UP after 4 failed attempts relay=#{id} /
+    gave_up = ~r/\[flezha_state\] compaction_gave_up key=\S* relay=#{id} .*attempts=4/
 
     with_only_logged([{gave_up, :always}], fn ->
       for _ <- 1..4 do

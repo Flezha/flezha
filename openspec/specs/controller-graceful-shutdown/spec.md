@@ -96,7 +96,7 @@ Quiesce and drain SHALL be bounded by `:flezha, :graceful_shutdown_timeout_ms` (
 
 ### Requirement: SIGTERM SHALL trigger graceful shutdown in every BEAM run mode
 
-`Flezha.Shutdown.SignalHandler` is a GenServer started **first** in `Flezha.Application.start/2`'s children list (before `Flezha.Service.EventManager`). Its `init/1` SHALL return `{:ok, state, {:continue, :install_signal_handler}}`.
+`Flezha.Shutdown.SignalHandler` is a GenServer started **first** in `Flezha.Application.start/2`'s children list (before every other child). Its `init/1` SHALL return `{:ok, state, {:continue, :install_signal_handler}}`.
 
 **SIGTERM.** `handle_continue/2` SHALL call `:os.set_signal(:sigterm, :handle)` as an explicit, idempotent assertion of the platform default, and SHALL register itself with the `erl_signal_server` `gen_event` so signal notifications reach it. Registration SHALL replace kernel's `erl_signal_handler`, because that handler calls `init:stop()` on `sigterm` independently: with both registered the shutdown is driven by `Flezha.Application.prep_stop/1` and recorded as `reason: :prep_stop`, which contradicts the dispatch contract below.
 

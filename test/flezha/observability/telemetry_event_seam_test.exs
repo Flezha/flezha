@@ -16,6 +16,8 @@ defmodule Flezha.Observability.TelemetryEventSeamTest do
        that declaration, with no line in the hand-kept half.
     4. **Sentences** - a bridged line's sentence template names only keys the
        line's emit sites write, wherever this walk can read a site's keys.
+    5. **Levels** - a line that is also its event's log line names one of
+       `Logger`'s levels.
 
   The name is judged where it is WRITTEN, not only at the `:telemetry.execute`
   call. Three names are assembled into a tuple in one module and executed in
@@ -154,7 +156,21 @@ defmodule Flezha.Observability.TelemetryEventSeamTest do
     end
   end
 
+  describe "clause 5: a leveled line names a Logger level" do
+    test "every line's level is one of Logger's" do
+      offenders =
+        for {event, {_source, _name, _kind, words}} <- TelemetryBridge.lines(),
+            is_list(words),
+            Keyword.has_key?(words, :level),
+            not SignalWords.valid_word?(:level, words[:level]),
+            do: "#{inspect(event)} #{inspect(words[:level])}"
+
+      assert offenders == [], "levels Logger does not have: " <> Enum.join(offenders, "; ")
+    end
+  end
+
   # Every emit site with the keys it writes, as `{event, {known, complete?}, where}`:
+
   # each `:telemetry.execute` and each provider-family `ProviderBehaviour.emit`.
   # A site inside a function whose parameters carry the event or the keys is read
   # once per call of that function, with the call's arguments in place of the

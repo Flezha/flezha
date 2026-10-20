@@ -68,7 +68,7 @@ defmodule Flezha.Schedule.Job do
         start(entry, instance_id, plugins, attempt)
 
       {:error, reason} ->
-        failed(entry, instance_id, reason, "plugin spec did not decode", attempt)
+        failed(entry, instance_id, reason, :decode_plugin_spec, attempt)
     end
   end
 
@@ -116,21 +116,19 @@ defmodule Flezha.Schedule.Job do
         :duplicate
 
       {:error, reason} ->
-        failed(entry, instance_id, reason, "spawn failed", attempt)
+        failed(entry, instance_id, reason, :spawn, attempt)
     end
   end
 
   # The one place a slot attempt that produced no instance is reported.
-  defp failed(entry, instance_id, reason, what, attempt) do
+  defp failed(entry, instance_id, reason, step, attempt) do
     :telemetry.execute([:flezha, :schedule, :spawn_failed], %{count: 1}, %{
       schedule: entry.name,
       instance_id: instance_id,
-      attempt: attempt
+      attempt: attempt,
+      step: step,
+      reason: reason
     })
-
-    Logger.error(
-      "[schedule] #{instance_id} not started (attempt #{attempt}): #{what}: #{inspect(reason)}"
-    )
 
     {:error, reason}
   end

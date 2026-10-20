@@ -11,10 +11,9 @@ defmodule Flezha.Transport.QuicAnnouncementTest do
   import ExUnit.CaptureLog
 
   alias Flezha.Runner.FleetManager
-  alias Flezha.Service.EventManager
   alias Flezha.State.TestHelpers
   alias Flezha.Transport.{Native, Server}
-  alias FlezhaTest.Helper.NodeTestHelper
+  alias FlezhaTest.Helper.{NodeTestHelper, Telemetry}
 
   @controller "[Transport.Server] the QUIC transport is experimental"
   # Every runner on `flz_core` says it the same way, through its own log, the
@@ -103,11 +102,14 @@ defmodule Flezha.Transport.QuicAnnouncementTest do
     test "an Elixir runner over QUIC announces once across a reconnect", %{ns: ns} do
       port = start_runner(ns, transport: :quic, runtime: :elixir)
 
-      EventManager.add_handler(:runner_connected_event)
+      Telemetry.capture([:flezha, :runner, :connected],
+        as: :connected,
+        filter: &(&1.namespace == ns)
+      )
+
       # The listener's shutdown closes every connection it holds.
       restart_listener(:quic)
-      assert_receive {:runner_connected_event, {^ns, _}}, 60_000
-      EventManager.rem_handler(:runner_connected_event)
+      assert_receive {:connected, _, _}, 60_000
 
       out = stop_and_read(port)
       assert NodeTestHelper.occurrences(out, @runner) == 1

@@ -66,7 +66,7 @@ The Java reference test app at `test/apps/java_runner/` SHALL implement its fixt
 
 #### Scenario: The environment selects the Java test app
 - **WHEN** `FLEZHA_E2E_RUNTIME=java` is set and a test calls `start_runner("my_app")`
-- **THEN** the helper SHALL invoke the command rendered from the Java manifest and return the assigned `runner_id` after the `:runner_connected_event` fires
+- **THEN** the helper SHALL invoke the command rendered from the Java manifest and return the assigned `runner_id` after the `[:flezha, :runner, :connected]` event for it is executed
 
 #### Scenario: Java runtime works over both transports
 - **WHEN** tests call `start_runner(ns, transport: :uds)` and `start_runner(ns, transport: :quic)` under `FLEZHA_E2E_RUNTIME=java`

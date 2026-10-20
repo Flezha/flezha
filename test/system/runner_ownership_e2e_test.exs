@@ -24,7 +24,7 @@ defmodule FlezhaTest.System.RunnerOwnershipE2ETest do
   @moduletag reference_runtime: true
   @moduletag timeout: 180_000
 
-  import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
+  import FlezhaTest.Helper.NodeTestHelper, only: [runner_event: 5, wait_until: 2]
 
   import FlezhaTest.Helper.TierE2EHarness,
     only: [
@@ -41,7 +41,7 @@ defmodule FlezhaTest.System.RunnerOwnershipE2ETest do
   alias Flezha.Relay.Builder
   alias FlezhaTest.Helper.FleetStateHelper
   alias Flezha.Runner.StreamPool
-  alias Flezha.Service.{EventManager, HubManager, RelayManager}
+  alias Flezha.Service.{HubManager, RelayManager}
   alias Flezha.State.{Paths, WalWriter}
   alias Flezha.Transport.LivenessCounters
   alias FlezhaTest.Fixtures.RelayFixture
@@ -107,17 +107,12 @@ defmodule FlezhaTest.System.RunnerOwnershipE2ETest do
 
     # A resumes: it reconnects under a fresh session token and the same stable
     # identity, still holding its copy, whose timer fires.
-    EventManager.add_handler(:runner_connected_event)
-    signal(os_pid(port_a), "-CONT")
+    {_, runner_a2} =
+      runner_event(:connected, namespace, nil, 30_000, fn ->
+        signal(os_pid(port_a), "-CONT")
+      end)
 
-    runner_a2 =
-      receive do
-        {:runner_connected_event, {^namespace, runner}} -> runner
-      after
-        30_000 -> flunk("runner A never reconnected")
-      end
-
-    EventManager.rem_handler(:runner_connected_event)
+    runner_a2 || flunk("runner A never reconnected")
     assert runner_a2 != runner_a
 
     assert wait_until(fn -> refusals(runner_a2) != [] end, 30_000),

@@ -299,7 +299,7 @@ defmodule Flezha.State.WalWriterTest do
 
       :telemetry.detach(handler)
 
-      assert log =~ "durable record refused (crc_mismatch)"
+      assert log =~ ~r/record_frame_refused .*reason=crc_mismatch/
       assert log =~ path
 
       # Not one byte gone, and the record after the corrupt one still decodes.
@@ -414,7 +414,7 @@ defmodule Flezha.State.WalWriterTest do
 
       assert capture_log(fn ->
                assert {:error, {:crc_mismatch, 0, ^second}} = WalWriter.rewind_to(srv, 3, 1)
-             end) =~ "durable record refused"
+             end) =~ "[flezha_state] record_frame_refused"
 
       assert RecordFrame.file_size(path) == size
     end
@@ -434,7 +434,7 @@ defmodule Flezha.State.WalWriterTest do
       # matched; a refused boundary is the second way it answers one.
       assert capture_log(fn ->
                assert {:error, {:crc_mismatch, 0, ^second}} = WalWriter.truncate_up_to(srv, 3)
-             end) =~ "durable record refused"
+             end) =~ "[flezha_state] record_frame_refused"
 
       assert RecordFrame.file_size(path) == size
 
@@ -490,7 +490,7 @@ defmodule Flezha.State.WalWriterTest do
                       %{path: ^path, reason: :short_read, last_seq: 0, offset: ^kept}}
 
       :telemetry.detach(handler)
-      assert log =~ "durable record log repaired"
+      assert log =~ ~r/record_frame_repaired .*reason=short_read.* bytes=5/
       assert RecordFrame.file_size(path) == kept
     end
 

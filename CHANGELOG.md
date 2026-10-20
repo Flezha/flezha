@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Changed: a log line that repeated an event is rendered from the event
+
+- **BREAKING:** twenty-one warning and error lines that said again what a telemetry event
+  already said (a restore refused, a refused or repaired record, a disk quota breach, a missed
+  RPO, a compaction given up, a stuck relay, a runner restart, and others) are now written once,
+  by the telemetry bridge, as `[<source>] <name> key=value ...` at the same level. A log search
+  for the old sentences needs the new form; the facts a sentence carried and its event lacked
+  (a schedule failure's reason, a refused correction's target, a hub call's answer, a factory
+  conflict's attribute) are now in the event's metadata.
+- A bridge line, a detector event and a plugin's own verb may declare `level:` beside
+  `meaning:`; such an event is also its log line. With `FLEZHA_OBSERVABILITY_ENABLED=false`
+  the bridge still writes these lines and nothing else.
+- `Flezha.Service.EventManager` is gone, and `blockade` is no longer a direct dependency: a
+  runner connect reaches the convergence loop as its `runner_connected` fact, and code that
+  waited on `:runner_connected_event` waits on `[:flezha, :runner, :connected]`.
+
 ### Changed: a source is one declaration, and every provider worker is one kit
 
 - **BREAKING:** a provider declares a source with `source: [partitioned: :refuse | :own_copy,

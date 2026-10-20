@@ -12,18 +12,31 @@ config :flezha,
       end
     end,
     fn ->
-      Flezha.Service.EventManager.add_handler(:runner_connected_event)
+      boot = self()
+
+      :ok =
+        :telemetry.attach(
+          :flezha_test_boot_runners,
+          [:flezha, :runner, :connected],
+          fn _event, _measurements, metadata, _config ->
+            if metadata.namespace == "default",
+              do: send(boot, {:runner_connected, "default", metadata.runner})
+          end,
+          nil
+        )
     end
   ],
   post_hooks: [
     fn ->
       for _x <- 1..2 do
         receive do
-          {:runner_connected_event, {"default", _}} -> :ok
+          {:runner_connected, "default", _} -> :ok
         after
           20_000 -> raise "Runner not connected"
         end
       end
+
+      :telemetry.detach(:flezha_test_boot_runners)
     end
   ]
 

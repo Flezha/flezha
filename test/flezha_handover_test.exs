@@ -365,7 +365,7 @@ defmodule FlezhaTest.Handover do
     # are migrated onto the freshly-connected runner) is driven by
     # `Flezha.Convergence.Loop`, which is OFF in the default test config
     # to avoid global-tick races. Start it locally for this test, gated
-    # on `:runner_connected_event` so the rebind fires within ~ms of
+    # on the `:runner_connected` fact so the rebind fires within ~ms of
     # `runner_id_3` connecting.
     # The Loop's recovery gate (`Probe.await_recovery_complete/2`) requires
     # every hub the always-on Snapshot has ever observed to be settled. That
@@ -375,8 +375,8 @@ defmodule FlezhaTest.Handover do
     ConvergenceSnapshot.reset_recovery_states()
 
     # Short periodic tick so the reseat reconciles within the assertion
-    # budget even if the single `:runner_connected_event` is missed under
-    # in-suite contention (other tests also drive the global EventManager).
+    # budget even if the single `:runner_connected` fact is missed under
+    # in-suite contention.
     {:ok, _} =
       start_supervised({Flezha.Convergence.Loop, tick_ms: 1_000})
 
@@ -410,7 +410,7 @@ defmodule FlezhaTest.Handover do
 
     # The convergence Loop reseats every relay tagged to a dead runner
     # onto `runner_id_3`. In production a periodic tick + the
-    # `:runner_connected_event` drive this; in-suite, async tick delivery
+    # `:runner_connected` fact drive this; in-suite, async tick delivery
     # and the global recovery gate are non-deterministic, so drive the real
     # reconcile path synchronously via `tick_now/0` on each poll and wait
     # for the reseat to land.

@@ -1,7 +1,7 @@
 defmodule Flezha.Observability.SignalWords do
   @moduledoc """
   The words a reader is told about a signal, checked: its meaning, label,
-  outcome and sentence template, and a name said in plain words.
+  outcome, sentence template and log level, and a name said in plain words.
 
   It names no other Flezha module, so every layer may use it: a plugin's own
   telemetry verbs are checked here exactly as a core source's signals are.
@@ -20,12 +20,14 @@ defmodule Flezha.Observability.SignalWords do
 
   @doc """
   Whether `value` is valid for the signal word `key`: a non-blank `meaning`
-  or `label`, an `outcome` from `outcomes/0`, or a `sentence` that parses.
-  Any other key is not a word.
+  or `label`, an `outcome` from `outcomes/0`, a `sentence` that parses, or a
+  `level` of `Logger`'s, at which the signal's event is also written as a log
+  line. Any other key is not a word.
   """
   @spec valid_word?(atom(), term()) :: boolean()
   def valid_word?(key, value) when key in [:meaning, :label], do: text?(value)
   def valid_word?(:outcome, value), do: value in @outcomes
+  def valid_word?(:level, value), do: value in Logger.levels()
   def valid_word?(:sentence, value), do: text?(value) and placeholders(value) != :error
   def valid_word?(_key, _value), do: false
 

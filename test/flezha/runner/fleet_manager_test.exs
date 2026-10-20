@@ -542,8 +542,9 @@ defmodule FlezhaTest.Runner.FleetManagerSdkLangTest do
             :ok = FleetStateHelper.announce(ns, "r2", [steps.(unquote(advertised))])
           end)
 
-        assert log =~
-                 "r2 on #{ns} advertises factory #{id} with #{attribute} #{unquote(advertised)}"
+        assert log =~ "[flezha_runner] factory_run_conflict advertised=#{unquote(advertised)}"
+        assert log =~ "attribute=#{attribute}"
+        assert log =~ "factory=#{id}"
 
         assert_received {^event, ^ref, %{count: 1},
                          %{

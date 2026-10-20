@@ -24,7 +24,6 @@ defmodule Flezha.Boot.ApplicationChildrenTest do
 
   @order [
     Flezha.Shutdown.SignalHandler,
-    Flezha.Service.EventManager,
     Flezha.Boot.Loader,
     Flezha.Identificator,
     Flezha.Convergence.Snapshot,

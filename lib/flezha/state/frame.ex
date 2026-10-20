@@ -16,8 +16,6 @@ defmodule Flezha.State.Frame do
   device is the controller's.
   """
 
-  require Logger
-
   @header_size 16
 
   # The Elixir mirror of `flz_core`'s header allocation table: the writing SDK at
@@ -188,8 +186,10 @@ defmodule Flezha.State.Frame do
   Report a refused record and shape the refusal every reader of this framing
   answers with.
 
-  The one place a refusal's telemetry event and its error line are written, so a further reader of the framing reports by calling this rather than
-  by writing a second log line of its own.
+  The one place a refusal's telemetry event is written, and with it its error
+  line (the event's bridge line), so a further reader of the framing reports by
+  calling this rather than by writing a second log line of its own.
+
   """
   @spec refuse(Path.t(), atom(), integer(), non_neg_integer()) :: {:error, refusal()}
   def refuse(path, reason, last_seq, offset) do
@@ -201,7 +201,6 @@ defmodule Flezha.State.Frame do
       %{path: path, reason: reason, last_seq: last_seq, offset: offset}
     )
 
-    Logger.error(refusal_message(path, refusal))
     {:error, refusal}
   end
 

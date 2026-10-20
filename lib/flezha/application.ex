@@ -115,7 +115,6 @@ defmodule Flezha.Application do
       {{Flezha.Testnet, []}, &testnet?/0},
       # Before any other service can observe a SIGTERM.
       {Flezha.Shutdown.SignalHandler, :always},
-      {Flezha.Service.EventManager, :always},
       {Loader, :always},
       {Flezha.Identificator, :always},
       # Owns the recovery-state cache, up before any hub fires recovery telemetry.

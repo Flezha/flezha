@@ -23,8 +23,6 @@ defmodule Flezha.State.RecordFrame do
   alias Flezha.State.Durable
   alias Flezha.State.SeqIndex
 
-  require Logger
-
   @header_size Frame.header_size()
 
   @doc """
@@ -73,11 +71,6 @@ defmodule Flezha.State.RecordFrame do
       [:flezha, :state, :record_frame, :repaired],
       %{bytes: discarded},
       %{path: path, reason: reason, last_seq: last_seq, offset: offset}
-    )
-
-    Logger.warning(
-      "[State] durable record log repaired (#{reason}) in #{path}: torn tail of " <>
-        "#{discarded} byte(s) at offset #{offset} discarded, last seq #{last_seq}"
     )
   end
 

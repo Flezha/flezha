@@ -245,7 +245,8 @@ defmodule FlezhaTest.Relay.RestoreRefusalTest do
   end
 
   defp assert_refusal_logged(log, cell_id) do
-    assert log =~ "restore REFUSED"
+    assert log =~ "[flezha_state] restore_refused"
+
     assert log =~ inspect(cell_id)
     assert log =~ @refusal
   end
@@ -421,8 +422,8 @@ defmodule FlezhaTest.Relay.RestoreRefusalTest do
       {result, log} = with_log(fn -> Replay.run_replay(tier_state(id), id, 4) end)
 
       assert {:error, {:crc_mismatch, 1, ^corrupt}} = result
-      assert log =~ "durable record refused (crc_mismatch)"
-      assert log =~ "correction refused"
+      assert log =~ ~r/record_frame_refused .*reason=crc_mismatch/
+      assert log =~ "[flezha_correction] refused"
       assert RecordFrame.file_size(path) == size
     end
   end

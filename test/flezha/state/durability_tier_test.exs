@@ -425,7 +425,7 @@ defmodule Flezha.State.DurabilityTierTest do
         TestHelpers.wipe_cell(ctx.cell_id)
         log = AuthTestHelper.capture_log_at(:error, fn -> assert :ok = land.() end)
 
-        assert log =~ "which the backend does not hold"
+        assert log =~ "[flezha_durability] artifact_missing artifact="
         refute File.exists?(Paths.lineage_path(ctx.cell_id))
         refute File.exists?(Paths.outbox_dedup_path(ctx.cell_id))
       end
