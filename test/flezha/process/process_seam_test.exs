@@ -32,16 +32,19 @@ defmodule Flezha.Process.SeamTest do
     "lib/flezha/relay/lookup/hub.ex"
   ]
 
-  defp sources do
-    ["lib/flezha"]
+  # A plugin package's processes keep timers too, so the timer clauses read it.
+  defp timer_roots, do: ["lib/flezha" | Path.wildcard("plugins/*/lib")]
+
+  defp sources(roots) do
+    roots
     |> SourceWalk.files([".ex"])
     |> Enum.reject(&(&1 in @seam_files))
   end
 
   # `SourceWalk` holds the walk and the comment strip for the run: six clauses
   # asking six questions of one tree is one read, not six.
-  defp hits(pattern, allow \\ []) do
-    for {path, line, n} <- SourceWalk.code_lines(sources()),
+  defp hits(pattern, allow \\ [], roots \\ ["lib/flezha"]) do
+    for {path, line, n} <- SourceWalk.code_lines(sources(roots)),
         path not in allow,
         Regex.match?(pattern, line),
         do: "#{path}:#{n}"
@@ -83,12 +86,13 @@ defmodule Flezha.Process.SeamTest do
   # ---------- clause 2: a timer is declared, not hand-rolled ----------
 
   test "no module outside the seam arms a timer without declaring it" do
-    # fails when: a module calls `Process.send_after/3` without
-    # `use Flezha.Process.Timer` — a timer nobody wrote down, with its own
-    # field name, its own cancel guard and its own stale-fire hazard.
+    # fails when: a module calls `Process.send_after/3` or `Process.cancel_timer/1`
+    # without `use Flezha.Process.Timer` — a timer nobody wrote down, with its
+    # own field name, its own cancel guard and its own stale-fire hazard.
+    raw = hits(~r/Process\.(send_after|cancel_timer)\(/, timer_allow(), timer_roots())
+
     undeclared =
-      for path <-
-            hits(~r/Process\.send_after\(/, timer_allow()) |> Enum.map(&file_of/1) |> Enum.uniq(),
+      for path <- raw |> Enum.map(&file_of/1) |> Enum.uniq(),
           not String.contains?(SourceWalk.read(path), "use Flezha.Process.Timer"),
           do: path
 
@@ -104,8 +108,17 @@ defmodule Flezha.Process.SeamTest do
       # a per-relay retry send-later from a pure helper; nothing is kept
       "lib/flezha/runner/control_channel/commits.ex",
       # a table of per-subscription timers across plugins, keyed by ref so the
-      # host's `:DOWN` can find the record the timer belongs to
-      "lib/flezha/plugin/extension/table/subscription.ex"
+      # host's `:DOWN` can find the record the timer belongs to; `health.ex`
+      # holds the cancel the table's teardown calls over that same table
+      "lib/flezha/plugin/extension/table/subscription.ex",
+      "lib/flezha/plugin/extension/table/health.ex",
+      # a per-batch dispatch timer held in the batch, a per-caller block timer
+      # whose message names the caller, and the linger timer read per record
+      "plugins/flezha_kafka_plugin/lib/flezha_kafka/producer_worker/window.ex",
+      # a retry send-later that keeps nothing; its message carries the
+      # registry ref or attempt that makes a stale one harmless
+      "plugins/flezha_kafka_plugin/lib/flezha_kafka/producer_worker/client.ex",
+      "plugins/flezha_kafka_plugin/lib/flezha_kafka/producer_worker.ex"
     ]
   end
 
@@ -192,7 +205,7 @@ defmodule Flezha.Process.SeamTest do
   end
 
   test "every armed timer key is declared by its module" do
-    for path <- SourceWalk.files(["lib/flezha"], [".ex"]),
+    for path <- SourceWalk.files(timer_roots(), [".ex"]),
         src = SourceWalk.read(path),
         [_, declared] <- Regex.scan(~r/use Flezha\.Process\.Timer, keys: \[([^\]]*)\]/, src) do
       keys = declared |> String.split(",") |> Enum.map(&String.trim/1)

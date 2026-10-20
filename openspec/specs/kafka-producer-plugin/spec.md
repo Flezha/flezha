@@ -247,7 +247,7 @@ The producer SHALL learn of the worker's death through a typed `{:kafka_worker_d
 
 On receiving `{:kafka_worker_dead, registry_ref, reason}` whose `registry_ref` matches `state.registry_ref`, the producer SHALL:
 
-1. In every partition lane, cancel the lane's `linger_timer` and `retry_timer` if either is set (`Process.cancel_timer/1`), so no stale `:flush_batch` or `:retry_batch` fires between the swap and the next `maybe_kick_batch/1`.
+1. In every partition lane, cancel the lane's `linger_timer` and its `:retry` timer (`Flezha.Process.Timer`) if either is set, so no stale `:flush_batch` or `:retry_batch` fires between the swap and the next `maybe_kick_batch/1`.
 2. In every partition lane, move every in-flight batch back to the head of the lane's `queue`, oldest first and in order, each with its `attempt` field incremented by 1 and `last_error` set to `{:worker_died, reason}`. The records of an in-flight batch SHALL NOT be replied to or marked failed.
 3. Call `WorkerRegistry.swap(state.registry_ref)` to obtain a fresh `{:ok, new_pid, new_ref}` for the same identity. On `{:error, reason}` (the broker is genuinely unreachable), schedule a retry of the swap using the existing `retry_backoff_ms(state, attempt)` curve and leave the queue untouched.
 4. On successful swap, set `state.worker_pid = new_pid`, `state.registry_ref = new_ref`, and in every lane `producer_id = nil`, `producer_epoch = nil`, `sequence = 0` and an empty in-flight window, and re-enter `handle_continue(:maybe_init_producer_id, state)` so the next batch acquires a fresh idempotent producer-id against the new worker.

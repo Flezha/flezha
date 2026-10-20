@@ -110,6 +110,28 @@ defmodule Flezha.Schedule.JobTest do
       assert builder.id =~ ~r/^job@\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:00Z$/
     end
 
+    test "a job restarted within the grace re-fires the slot whose instance completed" do
+      # fails when: the grace look-back refuses a late fire, so a takeover
+      # inside the window drops the slot instead of re-firing it under the
+      # same id and message id the input log absorbs.
+      test_pid = self()
+      stub_spawn(test_pid)
+
+      # A daily slot 30-90 s back: inside the 120 s grace, and the next one is
+      # a day away, so only the start look-back can fire it.
+      slot = DateTime.utc_now() |> DateTime.add(-30, :second)
+      entry = Helper.entry(%{cron: "#{slot.minute} #{slot.hour} * * *", text: "hello"})
+
+      start_supervised!({Job, entry})
+      assert_receive {:spawned, %{id: id, opts: opts}}, 2_000
+      assert {"hello", %{"flz.msg_id" => ^id}} = Keyword.get(opts, :seed_input)
+
+      :ok = stop_supervised(entry.name)
+      start_supervised!({Job, entry})
+
+      assert_receive {:spawned, %{id: ^id, opts: ^opts}}, 2_000
+    end
+
     test "a fired instance receives the stored first message on its channel" do
       test_pid = self()
 

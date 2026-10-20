@@ -19,7 +19,7 @@ defmodule Flezha.Runner.ControlUnit do
   alias Flezha.SDK.SafeCall
 
   use GenServer
-  use Flezha.Process.Timer, keys: [:reply_sweep]
+  use Flezha.Process.Timer, keys: [:reply_sweep, :ping]
 
   require Logger
 
@@ -282,13 +282,10 @@ defmodule Flezha.Runner.ControlUnit do
 
     case ControlChannel.send_control(state.runner_id, command) do
       {:ok, ref} ->
-        timer =
-          Process.send_after(self(), {:ping_timeout, ref}, timeout_ms)
+        state =
+          Map.put(state, :response_refs, Map.put(state.response_refs, ref, {:ping, from, nonce}))
 
-        refs =
-          Map.put(state.response_refs, ref, {:ping, from, timer, nonce})
-
-        {:noreply, Map.put(state, :response_refs, refs)}
+        {:noreply, arm_timer(state, {:ping, ref}, timeout_ms, {:ping_timeout, ref})}
 
       {:error, reason} ->
         {:reply, {:error, reason}, state}
@@ -397,8 +394,7 @@ defmodule Flezha.Runner.ControlUnit do
           {:error, error}
       end
 
-    refs = handle_refs(state[:response_refs], response.reference_id, reply, metadata)
-    Map.put(state, :response_refs, refs)
+    handle_refs(state, response.reference_id, reply, metadata)
   end
 
   # What is left of the run's window on this controller's clock, so the runner
@@ -437,24 +433,22 @@ defmodule Flezha.Runner.ControlUnit do
     Map.put(state, :response_refs, Map.put(state.response_refs, ref, entry))
   end
 
-  defp handle_refs(refs, ref, reply, metadata) do
-    case Map.get(refs, ref, nil) do
-      nil ->
-        refs
+  defp handle_refs(state, ref, reply, metadata) do
+    case Map.pop(state.response_refs, ref) do
+      {nil, _refs} ->
+        state
 
-      {:ping, from, timer, _nonce} ->
-        _ = Process.cancel_timer(timer)
-
+      {{:ping, from, _nonce}, refs} ->
         case reply do
           {:ok, _raw_data} -> GenServer.reply(from, {:ok, :pong})
           {:error, _} = err -> GenServer.reply(from, err)
         end
 
-        Map.delete(refs, ref)
+        cancel_timer(%{state | response_refs: refs}, {:ping, ref})
 
-      {:reply, from, _inserted_at, want_metadata} ->
+      {{:reply, from, _inserted_at, want_metadata}, refs} ->
         GenServer.reply(from, with_metadata(reply, metadata, want_metadata))
-        Map.delete(refs, ref)
+        %{state | response_refs: refs}
     end
   end
 
@@ -463,8 +457,10 @@ defmodule Flezha.Runner.ControlUnit do
 
   @impl true
   def handle_info({:ping_timeout, ref}, state) do
+    state = timer_fired(state, {:ping, ref})
+
     case Map.get(state.response_refs, ref) do
-      {:ping, from, _timer, _nonce} ->
+      {:ping, from, _nonce} ->
         GenServer.reply(from, {:error, :timeout})
         {:noreply, Map.put(state, :response_refs, Map.delete(state.response_refs, ref))}
 
