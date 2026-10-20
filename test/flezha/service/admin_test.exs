@@ -190,12 +190,12 @@ defmodule Flezha.Service.AdminTest do
     end
 
     test "the proven namespace is inserted where the row declares it, so there is no slot" do
-      # `list_relays` takes (namespace, context). The wire array holds the
+      # `list` takes (namespace, context). The wire array holds the
       # arguments after the namespace, so naming one is an argument too many.
-      assert {:ok, _json} = door("Relay.list_relays", "[]")
+      assert {:ok, _json} = door("Relay.list", "[]")
 
       assert {:error, %Flezha.Error{code: "control.wrong_arity"}} =
-               door("Relay.list_relays", ~s(["#{@other}"]))
+               door("Relay.list", ~s(["#{@other}"]))
     end
 
     test "a row-scoped verb's namespace field is stamped, not read from the caller" do
@@ -251,7 +251,7 @@ defmodule Flezha.Service.AdminTest do
     end
 
     test "a read the app role grants is authorized" do
-      assert {:ok, json} = door("Relay.list_relays", "[]")
+      assert {:ok, json} = door("Relay.list", "[]")
       assert {:ok, _list} = Jason.decode(json)
     end
 
@@ -355,22 +355,22 @@ defmodule Flezha.Service.AdminTest do
 
     defp as(source), do: %{source: source, principal: @principal, namespace: @ns, role: :app}
 
-    # Fails when: an HTTP or MCP caller is answered an internal failure's raw
-    # term, or the operator's log loses it.
-    test "a caller over HTTP reads the code, and the log the reason" do
-      for {failure, code} <- internal_failures() do
+    # Fails when: an HTTP or console caller is answered an internal failure's
+    # raw term, or the operator's log loses it.
+    test "a caller over HTTP or from the console reads the code, and the log the reason" do
+      for source <- [:http, :ui], {failure, code} <- internal_failures() do
         failing_with(failure)
 
         log =
           capture_log(fn ->
             assert {:error, %Flezha.Error{code: ^code} = error} =
-                     Admin.call("Relay.api", ~s(["#{@ns}", "o1"]), as(:http), :given)
+                     Admin.call("Relay.api", ~s(["#{@ns}", "o1"]), as(source), :given)
 
             assert error.details["reason"] =~ "the controller's log names the cause (ref "
             refute Flezha.Error.object(error) =~ "s3cr3t"
           end)
 
-        assert log =~ "Relay.api failed for a http caller"
+        assert log =~ "Relay.api failed for a #{source} caller"
         assert log =~ "s3cr3t-7f3a"
       end
     end
@@ -462,7 +462,7 @@ defmodule Flezha.Service.AdminTest do
     test "a read writes no audit record, matching its row's declaration" do
       boundary = System.monotonic_time(:microsecond)
 
-      assert {:ok, _json} = door("Relay.list_relays", "[]")
+      assert {:ok, _json} = door("Relay.list", "[]")
       TestSinks.settle(RingBufferSink)
 
       assert RingBufferSink.query(:relay_service, boundary) == []
@@ -523,6 +523,27 @@ defmodule Flezha.Service.AdminTest do
       assert record.metadata.principal == "alice"
       assert record.metadata.caller_source == :http
       assert record.metadata.action == :"relay.start"
+    end
+  end
+
+  describe "the web console" do
+    # Fails when: the console reaches an operation its row keeps off the network.
+    test "reaches no operation that is not remote, Controller.stop included" do
+      refute Enum.any?(Admin.reachable(as(:ui)), &(not &1.remote))
+
+      assert {:error, %Flezha.Error{code: "control.unknown_function"}} =
+               Admin.call("Controller.stop", "[]", as(:ui), :given)
+    end
+
+    # Fails when: the console loses the streams it renders.
+    test "tails the audit log into an :emit pid" do
+      assert Enum.any?(Admin.reachable(as(:ui)), &(&1.name == "AuditLog.tail"))
+      context = Map.merge(as(:ui), %{emit: self(), window_ms: 10})
+
+      refute match?(
+               {:error, %Flezha.Error{code: "control.unknown_function"}},
+               Admin.run("AuditLog.tail", "[]", context, :given)
+             )
     end
   end
 

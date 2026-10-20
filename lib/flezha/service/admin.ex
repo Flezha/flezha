@@ -24,7 +24,8 @@ defmodule Flezha.Service.Admin do
   slot to write one into. `:given` is a caller whose namespace is an ordinary
   argument, judged by the row's scope. An operation whose row is not `remote`,
   or one that streams, is not reachable by a caller over the network
-  (`Flezha.Service.CallerContext.networked?/1`).
+  (`Flezha.Service.CallerContext.networked?/1`); the web console alone reaches
+  a `remote` operation that streams.
 
   ## The wire form
 
@@ -40,8 +41,8 @@ defmodule Flezha.Service.Admin do
   `call/4` answers the published function's value as JSON, and a failure as
   its `%Flezha.Error{}`; `run/4` answers the value itself, for a surface that
   renders terms. A request the door cannot place is refused with a `control.*`
-  code. A failure reaches a caller over HTTP or MCP as `Flezha.Error.withheld/2`
-  leaves it, and a runner as it crosses the wire.
+  code. A failure reaches a caller over HTTP, MCP or the console as
+  `Flezha.Error.withheld/2` leaves it, and a runner as it crosses the wire.
   """
 
   alias Flezha.AuthZ
@@ -155,9 +156,12 @@ defmodule Flezha.Service.Admin do
   # An operation that is not `remote` stays off the network. Nor does a
   # stream reach it: a networked caller gets one reply per request, and a
   # stream would hold its task, and whatever it attached, for as long as it
-  # runs.
+  # runs. The console is the exception for streams: it holds its process
+  # open to render them.
   defp reachable?(%{remote: true, stream: stream}, _caller_context) when stream != true,
     do: true
+
+  defp reachable?(%{remote: true}, %{source: :ui}), do: true
 
   defp reachable?(_entry, caller_context), do: not CallerContext.networked?(caller_context)
 

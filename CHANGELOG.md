@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Changed: the console's reach at the door
+
+- **BREAKING (flezha_ui):** a caller from the web console (`source: :ui`) reaches what the
+  HTTP API reaches, plus the operations that stream. `Controller.stop`, `Namespace.issue_token`,
+  `bootstrap`, `bind_role`, `unbind_role`, `revoke_token` and `delete` are answered
+  `control.unknown_function`, and an internal failure reaches the console as its code, the
+  reason in the controller's log.
+
 ### Changed: one operation per concept; only called operations in the catalogue
 
 - **BREAKING:** `Flezha.Service.Relay.list_relays/2` and `Flezha.Service.PluginManager.list/1`

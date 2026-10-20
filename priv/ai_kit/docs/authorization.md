@@ -522,6 +522,11 @@ again with the older `flz`; one holding a single role behaves as before.
   at a file holding an `admin@_system` token, or every stop skips the drain.
 - **A partition accepts writes on both sides.** They merge on reconnect by
   the controllers' clocks, so keep them in sync (NTP).
+- **The web console reaches what the HTTP API reaches, and the streams.** Whatever
+  its token, it cannot stop the controller, issue or revoke tokens, bind or
+  unbind roles, delete a namespace or claim the admin: run those with `flz`.
+  It may hold a stream open, such as the audit tail, and an internal failure
+  reaches it as a code, its reason in the controller's log.
 
 ## See also
 
