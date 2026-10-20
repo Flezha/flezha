@@ -1,6 +1,7 @@
 defmodule Mix.Tasks.Bench do
   use Mix.Task
   alias Flezha.Config
+  alias Flezha.Plugin.Host
   alias Flezha.Service.RelayManager
   alias Flezha.Service.PluginManager
   alias Mix.Tasks.Bench.Fleet
@@ -45,6 +46,11 @@ defmodule Mix.Tasks.Bench do
     * `--hook-url` - Enable the `hook_webhook` controller plugin, with every
       hook, against this URL in the bench namespace before the relays
       start, so the run carries the hook path's cost.
+    * `--via` - How each input reaches its relay: `cast` (default; an
+      `{:io_in, ...}` cast to the relay's Overwatch) or `host_inject` (a
+      `Flezha.Plugin.Host.inject/5` in `:verdict` mode carrying a `flz.msg_id`,
+      the path a plugin source takes; each relay is fed by its own caller,
+      since a verdict waits for its relay).
 
   ## Comparing SDKs
 
@@ -81,7 +87,8 @@ defmodule Mix.Tasks.Bench do
     shape: :string,
     pool_sizes: :string,
     warmup: :integer,
-    hook_url: :string
+    hook_url: :string,
+    via: :string
   ]
 
   @aliases [
@@ -98,13 +105,15 @@ defmodule Mix.Tasks.Bench do
     shape = parse_shape(opts[:shape])
     pool_sizes = parse_pool_sizes(opts[:pool_sizes])
     warmup = max(opts[:warmup] || 10, 0)
+    via = parse_via(opts[:via])
 
     {num_relays, messages_per_relay} = dimensions_for_shape(shape, opts)
 
     Process.put(:bench_runtime, runtime)
     Process.put(:bench_hook_url, opts[:hook_url])
+    Process.put(:bench_via, via)
 
-    open_report(runtime, shape, pool_sizes, warmup, {num_relays, messages_per_relay})
+    open_report(runtime, shape, pool_sizes, warmup, {num_relays, messages_per_relay}, via)
 
     # A run killed mid-flight (a timeout, Ctrl-C) never reaches the `after`
     # block, so its relays stay in the hub's declared set and their state
@@ -127,7 +136,7 @@ defmodule Mix.Tasks.Bench do
     end
   end
 
-  defp open_report(runtime, shape, pool_sizes, warmup, {num_relays, messages_per_relay}) do
+  defp open_report(runtime, shape, pool_sizes, warmup, {num_relays, messages_per_relay}, via) do
     Report.open(
       "mix bench",
       [
@@ -141,6 +150,7 @@ defmodule Mix.Tasks.Bench do
         {"warmup/relay", to_string(warmup)}
       ] ++
         if(shape == :cell, do: [{"pool sizes", Enum.join(pool_sizes, ",")}], else: []) ++
+        if(via == :cast, do: [], else: [{"via", to_string(via)}]) ++
         [{"mix env", to_string(Mix.env())}]
     )
   end
@@ -257,6 +267,13 @@ defmodule Mix.Tasks.Bench do
     raise "Unknown --shape value: #{inspect(other)}. Expected \"regression\", \"cell\", " <>
             "\"dynamic\", \"tier\", or \"sleeping\"."
   end
+
+  defp parse_via(nil), do: :cast
+  defp parse_via("cast"), do: :cast
+  defp parse_via("host_inject"), do: :host_inject
+
+  defp parse_via(other),
+    do: raise("Unknown --via value: #{inspect(other)}. Expected \"cast\" or \"host_inject\".")
 
   defp parse_pool_sizes(nil), do: [1, 8]
 
@@ -530,7 +547,10 @@ defmodule Mix.Tasks.Bench do
     )
   end
 
-  defp send_inputs(relay_infos, shape, messages_per_relay) do
+  defp send_inputs(relay_infos, shape, messages_per_relay),
+    do: send_inputs(Process.get(:bench_via), relay_infos, shape, messages_per_relay)
+
+  defp send_inputs(:cast, relay_infos, shape, messages_per_relay) do
     Enum.each(relay_infos, fn {relay_id, %{pid: relay_pid}} ->
       for msg_num <- 1..messages_per_relay do
         GenServer.cast(
@@ -539,6 +559,23 @@ defmodule Mix.Tasks.Bench do
         )
       end
     end)
+  end
+
+  defp send_inputs(:host_inject, relay_infos, shape, messages_per_relay) do
+    Flezha.Parallel.each(
+      relay_infos,
+      fn {relay_id, %{pid: relay_pid}} ->
+        for msg_num <- 1..messages_per_relay do
+          # Unique across the warmup and the measured pass, which repeat `msg_num`.
+          metadata = %{"flz.msg_id" => "#{relay_id}:#{System.unique_integer([:positive])}"}
+          input = input_for_shape(shape, relay_id, msg_num)
+
+          with {:error, reason} <- Host.inject(relay_pid, input, metadata, :verdict),
+               do: Mix.raise("#{relay_id} refused an input: #{inspect(reason)}")
+        end
+      end,
+      max_concurrency: max(length(relay_infos), 1)
+    )
   end
 
   defp await_responses(expected, _phase) when expected <= 0, do: []

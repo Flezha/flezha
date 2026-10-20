@@ -54,6 +54,7 @@ POOL_SIZES=""
 NUM_RELAYS=100
 MESSAGES_PER_RELAY=100
 WARMUP=""
+VIA=""
 MIX_ENV_OVERRIDE="${MIX_ENV:-prod}"
 
 usage() {
@@ -77,6 +78,8 @@ Options:
                                      (default: 100)
   -w, --warmup <N>                   Untimed warmup messages per relay before
                                      the measured phase (default: 10, 0 disables)
+      --via <cast|host_inject>       How inputs reach a relay (default: cast);
+                                     host_inject goes through Plugin.Host.inject/5
   -h, --help                         Show this help
 
 Environment:
@@ -103,6 +106,7 @@ while [[ $# -gt 0 ]]; do
         -n|--num-relays)      NUM_RELAYS="$2"; shift 2 ;;
         -m|--messages-per-relay) MESSAGES_PER_RELAY="$2"; shift 2 ;;
         -w|--warmup)          WARMUP="$2"; shift 2 ;;
+        --via)                VIA="$2"; shift 2 ;;
         -h|--help)            usage; exit 0 ;;
         *) echo "Unknown option: $1"; usage; exit 1 ;;
     esac
@@ -131,6 +135,7 @@ fi
 ARGS=(--runtime "$RUNTIME")
 [[ -n "$SHAPE" ]] && ARGS+=(--shape "$SHAPE")
 [[ -n "$WARMUP" ]] && ARGS+=(--warmup "$WARMUP")
+[[ -n "$VIA" ]] && ARGS+=(--via "$VIA")
 
 if [[ "$SHAPE" == "cell" ]]; then
     [[ -n "$POOL_SIZES" ]] && ARGS+=(--pool-sizes "$POOL_SIZES")

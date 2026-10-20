@@ -53,6 +53,7 @@ environment and forwards them.
 | `-m` / `--messages-per-relay`  | int (default 100)                           | Messages per relay, `regression` and `dynamic`.                                                                                                                                                                                                                         |
 | `--pool-sizes`                     | comma list (default `1,8`)                  | Worker-pool sizes to sweep, `cell` only; each spawns fresh runners with `FLEZHA_WORKER_POOL_SIZE=<N>`.                                                                                                                                                                     |
 | `-w` / `--warmup`                  | int (default 10, `0` disables)              | Untimed messages per relay drained before the measured phase, so runner cold start (class loading, JIT, lazy codec init) stays out of the numbers.                                                                                                                      |
+| `--via`                            | `cast` (default), `host_inject`             | How each input reaches its relay: an `{:io_in, ...}` cast, or `Flezha.Plugin.Host.inject/5` in `:verdict` mode with a `flz.msg_id`, the path a plugin source takes (one caller per relay). |
 
 Runner placement: the Rust runtime reuses runners already connected in the
 `default` namespace, otherwise (and always for every other runtime) two runners
@@ -252,6 +253,16 @@ No CI workflow runs the `state` bench; the ceilings are checked by hand.
 # Plugin hook hot path (`Extension.run/3` at 0/1/5 hooked plugins) plus the
 # Kafka chain mailbox-depth check (depth must stay <= 1). Default 200_000 iterations.
 mix bench.extension [--iterations N]
+
+# One real sink path each, one `[bench] extension case=...` line: http_push's
+# dispatch into an HttpSend worker against a local 200 origin, the file sink's
+# enqueue into a write worker, the relay_forward `shipped` event through the
+# telemetry bridge with no sink.
+mix bench.extension --case admission:http_push|admission:file_sink|telemetry [--iterations N]
+
+# The Kafka producer's admission over two partition lanes, no broker
+# (from plugins/flezha_kafka_plugin).
+mix run --no-start bench/admission.exs [records]
 
 # Observability bus emit against zero interested sinks (ns per emit, default 1_000_000).
 mix flezha.bench.observability [iterations]
