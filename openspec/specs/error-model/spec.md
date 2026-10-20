@@ -113,7 +113,7 @@ The Elixir controller SHALL hold the model in `Flezha.Error` alone: the struct, 
 
 #### Scenario: No second printer
 
-- **WHEN** `lib/flezha/cli/` (which also holds the door, `Flezha.Service.Admin`) and `cli/src/` are searched for a function that turns a reason into caller-facing text
+- **WHEN** `lib/flezha/cli/`, the door (`lib/flezha/service/admin.ex`) and `cli/src/` are searched for a function that turns a reason into caller-facing text
 - **THEN** none SHALL exist outside `Flezha.Error` and `flz_transport::errors`
 
 #### Scenario: One catchable type per SDK

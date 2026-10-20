@@ -163,8 +163,6 @@ MODULE_LAYERS = {
     "Flezha.Service.Dlq": 5,
     # the runner drop marks: a store replicated with the authz stores
     "Flezha.Runner.DropMarks": 5,
-    # `whoami/1` answers which of the whole surface's operations a caller holds
-    "Flezha.Service.Namespace": 6,
     "Flezha.Service.Steps": 5,
     # the cell-frame codec the runner channels decode with, naming only the
     # record header beside it
