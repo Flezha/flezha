@@ -33,7 +33,9 @@ pub(crate) mod leave_tests;
 #[cfg(feature = "bench-internals")]
 pub(crate) use activation::empty_effect;
 pub(crate) use activation::settle_steps_undo;
-pub use activation::{abandon_activation, apply_result};
+pub use activation::{
+    abandon_activation, apply_result, park_entry, ship_plugin_output, stream_of, ShipAt,
+};
 pub use build::call_end;
 pub use cell::{cell_ref_of, BytesBuffer, HostPayload, HostTaskletFacts};
 pub use commands::{
@@ -55,3 +57,4 @@ pub use register::{
     check, check_class_json, register_host_class, register_host_class_json, Derived, DerivedCall,
     DerivedChannel, DerivedEdge, MAX_MAILBOX_CAPACITY,
 };
+pub use stamp::end_stamps;

@@ -7,8 +7,8 @@ use std::sync::Arc;
 
 use crate::cell::CellSlot;
 use crate::channel::{
-    CALL_ANSWER_CHANNEL_KEY, CALL_CHANNEL_KEY, CALL_CREATE_KEY, CALL_RESPONSE_KEY, CALL_TARGET_KEY,
-    DEADLINE_AT_KEY,
+    ChannelDescriptor, CALL_ANSWER_CHANNEL_KEY, CALL_CHANNEL_KEY, CALL_CREATE_KEY,
+    CALL_RESPONSE_KEY, CALL_TARGET_KEY, DEADLINE_AT_KEY,
 };
 use crate::routing::REPLY_TO_KEY;
 use crate::schema;
@@ -48,19 +48,30 @@ pub(super) fn stamp_plugin_ends(
         else {
             continue;
         };
-        if let Some(token) = call {
-            if descriptor.sink {
-                output
-                    .metadata
-                    .push((REPLY_TO_KEY.to_string(), token.to_string()));
-            }
-        }
-        if let Some(end) = &descriptor.call {
+        if descriptor.call.is_some() {
             output.metadata.retain(|(key, _)| key != "flz.key");
-            let now_ms = *now_ms.get_or_insert_with(&mut clock);
-            let stamps = end.stamps(output.key.as_deref(), now_ms);
-            output.metadata.extend(stamps);
         }
+        let key = output.key.as_deref();
+        let read_once = || *now_ms.get_or_insert_with(&mut clock);
+        end_stamps(descriptor, call, key, read_once, &mut output.metadata);
+    }
+}
+
+/// The stamps one plugin output of `descriptor` leaves with: the answer
+/// token on a sink's whose input carried a call, the end's facts on a call
+/// end's, its deadline read off `now_ms` only there.
+pub fn end_stamps(
+    descriptor: &ChannelDescriptor,
+    call: Option<&Arc<str>>,
+    key: Option<&str>,
+    now_ms: impl FnOnce() -> u64,
+    metadata: &mut impl Extend<(String, String)>,
+) {
+    if let Some(token) = call.filter(|_| descriptor.sink) {
+        metadata.extend([(REPLY_TO_KEY.to_string(), token.to_string())]);
+    }
+    if let Some(end) = &descriptor.call {
+        metadata.extend(end.stamps(key, now_ms()));
     }
 }
 

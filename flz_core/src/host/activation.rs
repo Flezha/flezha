@@ -250,7 +250,7 @@ pub(super) fn settle_item(
     let consumed_offset = consumed_offset_of(&work.item);
     let call = call_of(&work.item);
     super::stamp::stamp_plugin_ends(slot, call, &mut wire_outputs, crate::util::wall_now_ms);
-    let dlq = park.map(|(error, attempts)| park_entry(slot, &work.item, error, attempts));
+    let dlq = park.map(|(error, tries)| park_entry(slot, host_bytes(&work.item), error, tries));
     let keeps_edges = slot.keeps_edges(consumed_offset);
     let edges = route_edge_outputs(
         slot,
@@ -420,14 +420,7 @@ fn settle_steps_item(
             } else {
                 crate::steps::StepsError::non_retryable(error)
             };
-            let payload = match &work.item {
-                CellItem::Input(p) => p
-                    .value
-                    .downcast_ref::<HostPayload>()
-                    .map(|hp| hp.bytes.clone()),
-                CellItem::Timer(_) | CellItem::CloseInterval => None,
-            };
-            crate::steps::note_failure(slot, error, payload, attempts);
+            crate::steps::note_failure(slot, error, host_bytes(&work.item), attempts);
         }
         None => hold_steps_edges(slot, stream, edge_outputs, effect.complete),
     }
@@ -468,7 +461,7 @@ fn hold_steps_edges(
 
 /// The connection an item's outputs and park ride; a close takes the live
 /// secondary.
-fn stream_of(item: &CellItem) -> Option<Arc<FlezhaStream>> {
+pub fn stream_of(item: &CellItem) -> Option<Arc<FlezhaStream>> {
     match item {
         CellItem::Input(p) => Some(Arc::clone(&p.stream)),
         CellItem::Timer(f) => Some(Arc::clone(&f.stream)),
@@ -530,7 +523,26 @@ fn committed_timers(item: &CellItem, timers: Vec<TimerOp>, parked: bool) -> Vec<
     }
 }
 
-fn park_entry(slot: &Arc<CellSlot>, item: &CellItem, error: String, attempts: u32) -> DlqEntryBody {
+/// A host input's bytes, what a park or a failed stage records; a firing
+/// carries none.
+fn host_bytes(item: &CellItem) -> Option<Vec<u8>> {
+    match item {
+        CellItem::Input(p) => p
+            .value
+            .downcast_ref::<HostPayload>()
+            .map(|hp| hp.bytes.clone()),
+        CellItem::Timer(_) | CellItem::CloseInterval => None,
+    }
+}
+
+/// The dead-letter entry a park records: the input channel that fed the
+/// poison, the attempts it exhausted, and the payload bytes its driver read.
+pub fn park_entry(
+    slot: &CellSlot,
+    payload: Option<Vec<u8>>,
+    error: String,
+    attempts: u32,
+) -> DlqEntryBody {
     crate::retry::note_parked(
         &format!("tasklet {}", slot.dispatcher.tasklet_name()),
         attempts,
@@ -540,13 +552,7 @@ fn park_entry(slot: &Arc<CellSlot>, item: &CellItem, error: String, attempts: u3
         channel: park_channel_of(slot),
         error,
         attempts,
-        payload: match item {
-            CellItem::Input(p) => p
-                .value
-                .downcast_ref::<HostPayload>()
-                .map(|hp| hp.bytes.clone()),
-            CellItem::Timer(_) | CellItem::CloseInterval => None,
-        },
+        payload,
     }
 }
 
@@ -679,38 +685,53 @@ fn commit_timers(slot: &Arc<CellSlot>, timers: &[TimerOp], stream: &Arc<FlezhaSt
     crate::timer::apply_ops(slot, timers, stream);
 }
 
-/// Ship the tier-off plugin outputs. The frame's payload id is the RELAY
-/// ID — what the controller routes `:on_output` by.
+/// Ship the tier-off plugin outputs at settle.
 fn ship_plugin_outputs(
     slot: &Arc<CellSlot>,
     stream: &Arc<FlezhaStream>,
     plugin_outputs: Vec<schema::Output>,
 ) {
     for output in plugin_outputs {
-        match output.target {
-            schema::OutputTarget::Plugin { channel } => {
-                let mut metadata: HashMap<String, String> = output.metadata.into_iter().collect();
-                metadata.insert("channel".to_string(), channel);
-                if let Err(error) = crate::routing::send_plugin_frame(
-                    stream,
-                    &slot.instance_id,
-                    &output.payload,
-                    &metadata,
-                ) {
-                    flz_transport::notice!(
-                        Error,
-                        "relay {}: plugin output refused; it is dropped and the fold carries on: \
-                         {error}",
-                        slot.instance_id
-                    );
-                }
-            }
-            schema::OutputTarget::Edge { .. } => unreachable!("edge outputs partitioned above"),
-        }
+        let schema::OutputTarget::Plugin { channel } = output.target else {
+            unreachable!("edge outputs partitioned above")
+        };
+        let meta = output.metadata.into_iter().collect();
+        let _ = ship_plugin_output(slot, stream, channel, &output.payload, meta, ShipAt::Settle);
     }
 }
 
-fn park_channel_of(slot: &Arc<CellSlot>) -> String {
+/// When a plugin output leaves. `Emit`: the typed sink ships it as the
+/// tasklet emits, after the flush that emit triggered, and a refusal fails
+/// the emit. `Settle`: a host item's outputs leave after its edges land and
+/// its record folds, and a refusal is logged while the fold carries on.
+pub enum ShipAt {
+    Emit,
+    Settle,
+}
+
+/// Write one plugin output on `stream` under its `channel`. The frame's
+/// payload id is the RELAY ID — what the controller routes `:on_output` by.
+pub fn ship_plugin_output(
+    slot: &CellSlot,
+    stream: &Arc<FlezhaStream>,
+    channel: String,
+    payload: &[u8],
+    mut metadata: HashMap<String, String>,
+    at: ShipAt,
+) -> std::io::Result<()> {
+    metadata.insert("channel".to_string(), channel);
+    let shipped = crate::routing::send_plugin_frame(stream, &slot.instance_id, payload, &metadata);
+    if let (Err(error), ShipAt::Settle) = (&shipped, at) {
+        flz_transport::notice!(
+            Error,
+            "relay {}: plugin output refused; it is dropped and the fold carries on: {error}",
+            slot.instance_id
+        );
+    }
+    shipped
+}
+
+fn park_channel_of(slot: &CellSlot) -> String {
     slot.topology
         .tasklet(slot.tasklet_id)
         .and_then(|d| d.input_channel_ids.first())

@@ -234,6 +234,50 @@ fn outside_the_tier_the_record_carrying_the_offset_keeps_the_edge_value() {
     crate::state_sink::reset_for_test();
 }
 
+/// Off the tier a host item's plugin outputs leave at settle, after its edge
+/// values reached their consumers: the plugin frame's write finds the edge
+/// value already queued.
+#[test]
+fn a_host_items_plugin_outputs_leave_after_its_edges_land() {
+    use std::sync::Mutex;
+
+    let id = format!("ship_after_edges_{}", std::process::id());
+    let instance = host_class::instance_of(&id, &["in"], &[], &[1], false);
+    let producer = Arc::clone(&instance.cells[0][0]);
+    let consumer = Arc::clone(&instance.cells[1][0]);
+    assert!(
+        consumer.mailbox.claim_inflight(),
+        "nothing drains the consumer"
+    );
+    let queued_at_write: Arc<Mutex<Vec<usize>>> = Arc::default();
+    let probe: flz_transport::transport::LocalFrameSink = {
+        let (seen, consumer) = (Arc::clone(&queued_at_write), Arc::clone(&consumer));
+        Arc::new(move |_frame: &[u8]| {
+            seen.lock().unwrap().push(consumer.mailbox.len());
+            Ok(())
+        })
+    };
+    let (mut work, mut effect) = work_and_effect(7, &[1]);
+    if let CellItem::Input(payload) = &mut work.item {
+        payload.stream = Arc::new(flz_transport::transport::FlezhaStream::Local(probe));
+    }
+    effect.outputs.push(schema::Output {
+        target: schema::OutputTarget::Plugin {
+            channel: "out".to_string(),
+        },
+        payload: b"out".to_vec(),
+        key: Some("k".to_string()),
+        metadata: Vec::new(),
+        event_time: None,
+    });
+    settle_item(&producer, &work, effect, None);
+    assert_eq!(
+        *queued_at_write.lock().unwrap(),
+        vec![1],
+        "the plugin frame leaves once the edge value is in the consumer's mailbox"
+    );
+}
+
 // ---- a called input's answers ------------------------------------------------
 
 /// `p0` feeds `p1`, whose channel `ans` ends in a keyed sink, and `p2`, whose
