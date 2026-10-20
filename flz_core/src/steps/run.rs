@@ -29,12 +29,12 @@ use crate::cell::{make_cell_payload, CellItem, CellSlot};
 use crate::channel::{ChannelDescriptor, ChannelId, ChannelKind, ConsumerEdge, OverflowPolicy};
 use crate::flusher::FlushableBuffer;
 use crate::header::HeaderTemplate;
-use crate::host::HostPayload;
+use crate::host::{Crossed, HostPayload};
 use crate::pb::command_request::Command;
 use crate::relay::instance::RelayInstance;
 use crate::relay::sleep::{iter_park, OWED_INBOX_WAIT};
 use crate::relay::topology::{CellMode, TaskletDescriptor};
-use crate::routing::Destination;
+use crate::routing::{Destination, Entering, Routed};
 use crate::state_sink::{COMPENSATION_DONE_PAYLOAD_ID, COMPENSATION_INTENT_PAYLOAD_ID};
 use crate::timer::{TimerFire, TimerKind, TimerOp};
 
@@ -183,10 +183,10 @@ pub fn removed(inst: &RelayInstance) {
 /// queue. A message this instance already took is dropped. An entry edge
 /// that unwinds, or a key this partition member does not own, rides the
 /// channel's ladder off the reader and opens no pass.
-pub fn message(
+pub(crate) fn message<V: Entering>(
     inst: &RelayInstance,
     channel: &ChannelDescriptor,
-    value: &Value,
+    value: &V,
     d: &crate::routing::Delivery<'_>,
 ) {
     let (stream, offset, call) = (d.stream, d.consumed_offset, d.call);
@@ -197,7 +197,7 @@ pub fn message(
     if !r.run.take(offset) {
         return;
     }
-    match r.address(channel, &channel.consumers, value, stream, None) {
+    match r.address(channel, value.each(channel), stream, None) {
         Ok(roots) => r.decide(|d| {
             d.arrived(Message {
                 channel: channel_id,
@@ -257,7 +257,7 @@ pub fn hold_emit(
     let addressed = match channel {
         _ if plugin_bound => Ok(Vec::new()),
         _ if r.spec.dag.children[node].is_empty() => Ok(r.carry_of(value, stream, producer)),
-        Some(channel) => r.address(channel, &channel.consumers, value, stream, Some(producer)),
+        Some(channel) => r.address(channel, value.each(channel), stream, Some(producer)),
         None => Ok(Vec::new()),
     };
     r.decide(|d| {
@@ -527,10 +527,11 @@ pub(crate) fn reap_holds(inst: &RelayInstance) -> Option<ReapHolds> {
 pub(crate) fn crossed(
     inst: &RelayInstance,
     node: usize,
-    answer: Result<(Value, Arc<FlezhaStream>), String>,
+    answer: Result<(ChannelId, Crossed, Arc<FlezhaStream>), String>,
 ) {
     let Some(r) = Run::of(inst) else { return };
-    let items = answer.and_then(|(value, stream)| r.address_crossed(node, &value, &stream));
+    let items = answer
+        .and_then(|(channel, crossed, stream)| r.address_crossed(node, channel, &crossed, &stream));
     r.decide(|d| d.crossed(node, items));
 }
 
@@ -602,10 +603,10 @@ fn undo_answered(
 
 /// A message whose entry edge unwound, re-attempted off the reader as a
 /// stream's edge is; parked under the channel when it never enters.
-fn entry_ladder(
+fn entry_ladder<V: Entering>(
     inst: &RelayInstance,
     channel_id: ChannelId,
-    value: &Value,
+    value: &V,
     stream: &Arc<FlezhaStream>,
     offset: Option<u64>,
     call: Option<&Arc<str>>,
@@ -620,13 +621,13 @@ fn entry_ladder(
     let label = format!("entry channel `{}` into its chain", channel.name);
     let target = crate::retry::ParkTarget::edge(channel);
     let held = Arc::clone(&owner);
-    let (value, stream, call) = (Arc::clone(value), Arc::clone(stream), call.cloned());
+    let (value, stream, call) = (value.clone(), Arc::clone(stream), call.cloned());
     let retried_call = call.clone();
     let step = move || {
         let (Some(r), Some(channel)) = (Run::of(&held), held.topology.channel(channel_id)) else {
             return crate::retry::Attempt::Delivered(Vec::new());
         };
-        let roots = match r.address(channel, &channel.consumers, &value, &stream, None) {
+        let roots = match r.address(channel, value.each(channel), &stream, None) {
             Ok(roots) => roots,
             Err(e) => return crate::retry::Attempt::Failed(e),
         };
@@ -648,13 +649,12 @@ fn entry_ladder(
 // ---- addressing, off the lock ------------------------------------------------
 
 impl Run<'_> {
-    /// A value through `edges` of `channel`: the transform and `cells_for`
-    /// run here, and each item is addressed to its Cell.
+    /// Each value through its edge of `channel`: the transform and
+    /// `cells_for` run here, and each item is addressed to its Cell.
     pub(super) fn address<'e>(
         &self,
         channel: &ChannelDescriptor,
-        edges: impl IntoIterator<Item = &'e ConsumerEdge>,
-        value: &Value,
+        routed: impl IntoIterator<Item = Routed<'e>>,
         stream: &Arc<FlezhaStream>,
         producer: Option<&Arc<CellSlot>>,
     ) -> Result<Vec<Release>, String> {
@@ -666,7 +666,7 @@ impl Run<'_> {
             call: None,
             replay: false,
         };
-        for edge in edges {
+        for (edge, value) in routed {
             if self.asks_host_for_keys(channel, edge, value) {
                 if let Some(node) = self.spec.dag.node_of(edge.tasklet) {
                     keyless.push(Release {
@@ -710,25 +710,22 @@ impl Run<'_> {
     }
 
     /// An answered host value through the edge into `node`'s tasklet, to the
-    /// Cells its keys name; none when the host named none.
+    /// Cells its answer named; none when the host named none.
     fn address_crossed(
         &self,
         node: usize,
-        value: &Value,
+        channel: ChannelId,
+        crossed: &Crossed,
         stream: &Arc<FlezhaStream>,
     ) -> Result<Vec<Release>, String> {
-        let Some(payload) = value.downcast_ref::<HostPayload>() else {
+        let tasklet = self.spec.dag.order[node];
+        let Some(channel) = self.inst.topology.channel(channel) else {
             return Ok(Vec::new());
         };
-        let tasklet = self.spec.dag.order[node];
-        let channel = self.inst.topology.channel(payload.channel);
-        let edge = channel.and_then(|c| c.consumers.iter().find(|e| e.tasklet == tasklet));
-        match (channel, edge) {
-            (Some(channel), Some(edge)) if !payload.keys.is_empty() => {
-                self.address(channel, [edge], value, stream, None)
-            }
-            _ => Ok(Vec::new()),
-        }
+        let routed = crossed
+            .each(channel)
+            .filter(|(edge, _)| edge.tasklet == tasklet);
+        self.address(channel, routed, stream, None)
     }
 
     /// A chained loop's leaf value addressed to the roots of the chain the

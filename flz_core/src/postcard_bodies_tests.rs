@@ -41,7 +41,7 @@ fn work_activation() -> Activation {
                 consumed_offset: Some(7),
                 replay: true,
                 now: 1_000,
-                form: InputForm::Transformed,
+                form: InputForm::Prepared(vec![vec![0x0C]]),
             }),
             WorkItem::Timer(TimerItem {
                 kind: TimerKind::EventTime,
@@ -146,6 +146,26 @@ fn cases() -> BTreeMap<String, String> {
     }
     pin("result|work", pinned(result(None)));
     pin("result|completing", pinned(result(Some(b"done"))));
+    pin(
+        "result|prepared",
+        pinned(ActivationResult {
+            token: 42,
+            outcome: ActivationOutcome::Prepared(vec![
+                Ok(PrepareAnswer {
+                    values: vec![PreparedValue {
+                        consumer: 1,
+                        keys: vec!["a".into()],
+                        bytes: vec![0x0B],
+                    }],
+                    event_time: Some(5),
+                }),
+                Err(WorkError {
+                    message: "no".into(),
+                    non_retryable: true,
+                }),
+            ]),
+        }),
+    );
     pin(
         "effect|outputs_edges_timer_register",
         pinned(EffectRecordBody {

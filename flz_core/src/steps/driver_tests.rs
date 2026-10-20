@@ -564,11 +564,16 @@ fn keyed_host(mid: u32, crossings: Arc<Crossings>, refuse: bool) -> FakeHost {
     })
 }
 
-/// Each payload's own bytes as its key, or `refuse` for every one.
+/// Each payload's own bytes as its key and its one value for every consumer,
+/// or `refuse` for every one.
 fn keyed_by_bytes(
     crossing: &crate::host::PrepareCrossing,
     refuse: bool,
 ) -> schema::ActivationOutcome {
+    let channel = crossing.instance.topology.channel(crossing.channel);
+    let consumers: Vec<u32> = channel.map_or(Vec::new(), |c| {
+        c.consumers.iter().map(|edge| edge.tasklet).collect()
+    });
     schema::ActivationOutcome::Prepared(
         crossing
             .entries
@@ -579,7 +584,13 @@ fn keyed_by_bytes(
                     non_retryable: true,
                 }),
                 false => Ok(schema::PrepareAnswer {
-                    keys: vec![String::from_utf8_lossy(&entry.bytes).to_string()],
+                    values: (consumers.iter())
+                        .map(|&consumer| schema::PreparedValue {
+                            consumer,
+                            keys: vec![String::from_utf8_lossy(&entry.bytes).to_string()],
+                            bytes: entry.bytes.clone(),
+                        })
+                        .collect(),
                     event_time: None,
                 }),
             })
@@ -830,7 +841,7 @@ fn timed_host(nows: Arc<Mutex<Vec<Option<u64>>>>) -> FakeHost {
                 .iter()
                 .map(|entry| {
                     Ok(schema::PrepareAnswer {
-                        keys: Vec::new(),
+                        values: Vec::new(),
                         event_time: String::from_utf8_lossy(&entry.bytes).parse().ok(),
                     })
                 })

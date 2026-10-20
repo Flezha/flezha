@@ -5,7 +5,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Negotiated at context creation; a mismatch refuses to start.
-pub const SCHEMA_VERSION: u32 = 7;
+pub const SCHEMA_VERSION: u32 = 8;
 
 pub use crate::channel::{ChannelId, TaskletId};
 
@@ -83,11 +83,14 @@ pub struct InputItem {
 
 /// Whether the consuming edge's chain still applies to an input's payload:
 /// an entry payload and a steps stage's released value come untransformed,
-/// a stream producer's edge output already transformed.
+/// a stream producer's edge output already transformed, and a keyed
+/// consumer's crossed payload as the values its prepare answer named for this
+/// Cell, each encoded as an inter-tasklet value.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum InputForm {
     Untransformed,
     Transformed,
+    Prepared(Vec<Vec<u8>>),
 }
 
 impl InputForm {
@@ -95,6 +98,7 @@ impl InputForm {
         match self {
             InputForm::Untransformed => "untransformed",
             InputForm::Transformed => "transformed",
+            InputForm::Prepared(_) => "prepared",
         }
     }
 }
@@ -127,17 +131,26 @@ pub struct RestoreBody {
 pub struct KeyRequest {
     pub channel: ChannelId,
     pub payloads: Vec<Vec<u8>>,
-    /// The host answers routing keys.
+    /// The host answers its keyed consumers' values and their Cell keys.
     pub want_keys: bool,
     pub want_event_time: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PrepareAnswer {
-    /// One for a dynamic consumer, any number for a static fan-out (empty =
-    /// every declared cell).
-    pub keys: Vec<String>,
+    /// Every value a keyed consumer's edge yields for the payload; none when
+    /// its chain filtered them all.
+    pub values: Vec<PreparedValue>,
     pub event_time: Option<u64>,
+}
+
+/// One value of a crossed payload for one keyed consumer, and the Cells it
+/// reaches: one key for a dynamic consumer, any number for a static fan-out.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PreparedValue {
+    pub consumer: TaskletId,
+    pub keys: Vec<String>,
+    pub bytes: Vec<u8>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

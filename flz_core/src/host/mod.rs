@@ -30,6 +30,8 @@ mod decl_tests;
 #[cfg(test)]
 pub(crate) mod leave_tests;
 #[cfg(test)]
+mod prepare_tests;
+#[cfg(test)]
 mod timer_settle_tests;
 
 #[cfg(feature = "bench-internals")]
@@ -48,6 +50,7 @@ pub use decl::{
 pub use handout::to_schema;
 pub use issue::{render_issues, TopologyIssue};
 pub use leave::{cell_left_locked, pending_leave, relay_left, PendingLeave};
+pub(crate) use prepare::Crossed;
 pub use prepare::{
     deferred_end_replay_slice, prepare_wants, stage_prepare, HostPrepareState, PrepareCrossing,
     StagedEntry,

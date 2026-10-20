@@ -132,7 +132,7 @@ pub(super) fn resumed_seed(
             };
             let mut items = Vec::new();
             for value in &values {
-                items.extend(r.address(descriptor, [edge], value, &stream, None)?);
+                items.extend(r.address(descriptor, [(edge, value)], &stream, None)?);
             }
             by_parent.insert(parent, items);
         }

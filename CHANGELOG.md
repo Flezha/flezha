@@ -29,6 +29,21 @@
 - The shutdown drain no longer counts plugin homes among the relays it reports as locally
   hosted or still local.
 
+### Changed: a keyed entry payload is decoded and transformed once
+
+- **BREAKING:** a prepare answer carries, per keyed consumer, every value its edge yields with
+  the Cell keys it names, in place of one key set for the whole payload; an input item's form
+  may be `prepared`, carrying the values its Cell runs; the activation schema is version 8.
+  Node's exported `ACTIVATION_SCHEMA_VERSION`, Python's and Ruby's read 8; a runner built
+  against 7 is refused when its context is created.
+- The Python, Ruby, PHP, Node, Java and Elixir SDKs decode and transform a keyed entry payload
+  once, at the prepare crossing, instead of again in every Cell it reaches; each Cell runs
+  only its own values. A keyed entry value must therefore be one the SDK can carry between
+  tasklets, as an emitted value must; one it cannot is refused at the crossing and climbs the
+  entry channel's retry ladder.
+- Two keyed consumers of one entry channel are each routed by their own edge's keys. Before,
+  both were routed by the first keyed consumer's.
+
 ### Changed: an input's form comes from the core
 
 - **BREAKING:** each input item of an activation carries its form, `untransformed` for an

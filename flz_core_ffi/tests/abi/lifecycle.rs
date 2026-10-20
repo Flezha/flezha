@@ -602,7 +602,11 @@ fn answers_the_prepare_crossing(ctx: *mut FlzContext) {
         &schema::ActivationResult {
             token: act.token,
             outcome: schema::ActivationOutcome::Prepared(vec![Ok(schema::PrepareAnswer {
-                keys: vec!["k1".to_string()],
+                values: vec![schema::PreparedValue {
+                    consumer: 0,
+                    keys: vec!["k1".to_string()],
+                    bytes: b"v".to_vec(),
+                }],
                 event_time: None,
             })]),
         },
@@ -619,6 +623,14 @@ fn the_keyed_input_reaches_its_own_cell(ctx: *mut FlzContext) {
         Some("k1"),
         "the prepare answer's key selected the lazily-created cell"
     );
+    let schema::ActivationKind::Work(items) = &act.kind else {
+        panic!("expected work, got {:?}", act.kind);
+    };
+    let [schema::WorkItem::Input(input)] = items.as_slice() else {
+        panic!("expected one input, got {items:?}");
+    };
+    assert_eq!(input.payload, b"k1:v", "the item keeps the entry payload");
+    assert_eq!(input.form, schema::InputForm::Prepared(vec![b"v".to_vec()]));
     abi_complete(
         ctx,
         &schema::ActivationResult {

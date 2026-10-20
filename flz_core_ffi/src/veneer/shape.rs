@@ -63,6 +63,7 @@ pub const CONSUMED_OFFSET: Key = Key::of("consumed_offset", "consumedOffset");
 pub const REPLAY: Key = Key::flat("replay");
 pub const NOW: Key = Key::flat("now");
 pub const FORM: Key = Key::flat("form");
+pub const VALUES: Key = Key::flat("values");
 pub const TIMER_KIND: Key = Key::of("timer_kind", "timerKind");
 pub const SCHEDULED_AT: Key = Key::of("scheduled_at", "scheduledAt");
 pub const BYTES: Key = Key::flat("bytes");
@@ -126,6 +127,7 @@ pub mod record {
         REPLAY,
         NOW,
         FORM,
+        VALUES,
         TIMER_KIND,
         SCHEDULED_AT,
     ];
@@ -166,7 +168,8 @@ pub mod record {
     ];
     pub const TIMER_OP: &[Key] = &[KIND, SCHEDULED_AT, REGISTER];
     pub const DLQ_ENTRY: &[Key] = &[CHANNEL, ERROR, ATTEMPTS, PAYLOAD];
-    pub const PREPARE_ANSWER: &[Key] = &[KEYS, EVENT_TIME, ERROR, NON_RETRYABLE];
+    pub const PREPARE_ANSWER: &[Key] = &[VALUES, EVENT_TIME, ERROR, NON_RETRYABLE];
+    pub const PREPARED_VALUE: &[Key] = &[CONSUMER, KEYS, BYTES];
 }
 
 /// The vocabulary a discriminator carries. Spelled the same in every
@@ -209,12 +212,14 @@ mod what {
     pub const A_TIMER_OP: &str = "a timer op";
     pub const A_DLQ_ENTRY: &str = "a dlq entry";
     pub const A_PREPARE_ANSWER: &str = "a prepare answer";
+    pub const A_PREPARED_VALUE: &str = "a prepared value";
     pub const OUTPUT: &str = "output";
     pub const EDGE_OUTPUT: &str = "edge output";
     pub const PLUGIN_OUTPUT: &str = "plugin output";
     pub const ITEM_EFFECT: &str = "item effect";
     pub const TIMER_OP: &str = "timer op";
     pub const DLQ_ENTRY: &str = "dlq entry";
+    pub const PREPARED_VALUE: &str = "prepared value";
     pub const ACTIVATION_RESULT: &str = "activation result";
     pub const CHANGE: &str = "change";
 
@@ -485,6 +490,10 @@ fn input_item<S: Sink>(s: &S, i: schema::InputItem) -> Result<S::Value, S::Error
     let now = s.u64(i.now)?;
     s.set(&mut out, NOW, now)?;
     set_word(s, &mut out, FORM, i.form.as_str())?;
+    if let schema::InputForm::Prepared(values) = i.form {
+        let values = byte_list(s, values)?;
+        s.set(&mut out, VALUES, values)?;
+    }
     s.finish_map(out)
 }
 
@@ -715,12 +724,22 @@ fn prepared<S: Source>(
             non_retryable: opt_bool(s, &h, NON_RETRYABLE)?,
         }));
     }
+    Ok(Ok(schema::PrepareAnswer {
+        values: read_all(s, opt_list(s, &h, VALUES)?, prepared_value)?,
+        event_time: opt_u64_as(s, &h, EVENT_TIME, what::PREPARE_EVENT_TIME.spell(S::CAMEL))?,
+    }))
+}
+
+/// One value a keyed consumer's edge yielded, with the Cells it reaches.
+fn prepared_value<S: Source>(s: &S, value: &S::Value) -> Result<schema::PreparedValue, S::Error> {
+    let h = s.map(value, what::A_PREPARED_VALUE)?;
     let mut keys = Vec::new();
     for key in opt_list(s, &h, KEYS)? {
         keys.push(s.text(&key)?);
     }
-    Ok(Ok(schema::PrepareAnswer {
+    Ok(schema::PreparedValue {
+        consumer: s.u32(&req(s, &h, CONSUMER, what::PREPARED_VALUE)?)?,
         keys,
-        event_time: opt_u64_as(s, &h, EVENT_TIME, what::PREPARE_EVENT_TIME.spell(S::CAMEL))?,
-    }))
+        bytes: opt_bytes(s, &h, BYTES)?.unwrap_or_default(),
+    })
 }

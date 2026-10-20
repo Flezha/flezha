@@ -21,7 +21,7 @@ use flz_core::relay::instance::KeyGroupRange;
 use flz_core::runner::RunnerNode;
 use flz_core::schema::{
     Activation, ActivationKind, ActivationOutcome, ItemEffect, Output, OutputTarget, PrepareAnswer,
-    TimerKind, TimerOp, Verdict, WorkError, WorkItem,
+    PreparedValue, TimerKind, TimerOp, Verdict, WorkError, WorkItem,
 };
 use flz_core::{host, ErrorModel};
 use flz_transport::notice::{self, Level};
@@ -157,16 +157,17 @@ impl Drop for Host {
     }
 }
 
-/// A crossing's answer for one payload: the key is its first byte, which is
-/// this suite's own convention and the one its classes declare.
+/// A crossing's answer for one payload: the payload as tasklet 0's one value,
+/// keyed by its first byte, which is this suite's own convention and the one
+/// its classes declare.
 fn prepared(payload: &[u8], want_keys: bool) -> Result<PrepareAnswer, WorkError> {
-    let keys = if want_keys {
-        vec![String::from_utf8_lossy(&payload[..1]).to_string()]
-    } else {
-        Vec::new()
-    };
+    let values = want_keys.then(|| PreparedValue {
+        consumer: 0,
+        keys: vec![String::from_utf8_lossy(&payload[..1]).to_string()],
+        bytes: payload.to_vec(),
+    });
     Ok(PrepareAnswer {
-        keys,
+        values: values.into_iter().collect(),
         event_time: event_time_in(payload),
     })
 }

@@ -16,7 +16,7 @@ use crate::cell::{CellItem, CellSlot};
 use crate::channel::{ChannelDescriptor, RetryPolicy};
 use crate::park::{Park, Then, Work, RETRIES_TOTAL};
 use crate::relay::instance::RelayInstance;
-use crate::routing::{deliver_edge, Delivery, EntryView};
+use crate::routing::{deliver_edge, Delivery, Entering, EntryView};
 
 /// What a park is attributed to, and how hard the ladder tries first.
 ///
@@ -329,18 +329,18 @@ pub fn hand_entry_parse_ladder<V: EntryView>(ladder: EntryParseLadder<V>) {
 /// the entry form, for the lane to admit as room appears, and an edge that
 /// unwinds climbs its own ladder; a steps relay's value enters its run,
 /// which never waits either.
-pub(crate) fn route_held(
+pub(crate) fn route_held<V: Entering>(
     instance: &Arc<RelayInstance>,
     channel: &ChannelDescriptor,
-    value: &Arc<dyn Any + Send + Sync>,
+    value: &V,
     d: &Delivery<'_>,
 ) -> Vec<Held> {
     if instance.steps.is_some() {
-        crate::routing::route_to_consumers(instance, channel, value, d, None);
+        crate::steps::message(instance, channel, value, d);
         return Vec::new();
     }
     let mut held = Vec::new();
-    for edge in &channel.consumers {
+    for (edge, value) in value.each(channel) {
         let to = &mut crate::routing::Destination::Held(&mut held);
         if let Err(e) = deliver_edge(instance, channel, edge, value, d, to) {
             hand_edge_ladder(instance, channel, edge, value, d, e.to_string());

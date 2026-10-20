@@ -25,9 +25,10 @@
 # Command activations are all token 1 addressed to relay `o`, tasklet 0, no
 # key, change seq 0, factory `f` and no identity, so each starts `01016f0000` and
 # ends `00016600`. The work activation carries the identity `id` and its input
-# the form `transformed`.
+# the form `prepared` with one value `0c`. The prepared result answers one
+# value for consumer 1 under key `a` with event time 5, then a refusal.
 
-activation|work|2a046f702d310301016b0002000102aabb010a666c7a2e6f66667365740137010701e807010100d00f09016601026964
+activation|work|2a046f702d310301016b0002000102aabb010a666c7a2e6f66667365740137010701e8070201010c0100d00f09016601026964
 activation|restore_fold|01016f00000101010f00020101000102010100016600
 activation|snapshot_request|01016f00000200016600
 activation|live_state_read|01016f00000300016600
@@ -37,6 +38,7 @@ activation|compensate_run|01016f00000601010a00016600
 activation|leave|01016f0000070100016600
 result|work|2a0001000101010101036f757401026b32000001020107e8070101d00f00010000
 result|completing|2a0001000101010101036f757401026b32000001020107e8070101d00f0001000104646f6e65
+result|prepared|2a0502000101010161010b010501026e6f01
 effect|outputs_edges_timer_register|0101aa01036f7574016b010161016202010201e72400fbd095ffbc31010198f2010101020101e7240109
 effect|dead_letter_timer_cancel|000001090102696e04626f6f6d0300050100d00f0000
 park|parked|03732330010702696e04626f6f6d03010201020103773a74

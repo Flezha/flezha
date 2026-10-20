@@ -21,13 +21,12 @@ use std::fmt;
 
 pub use instance::{Deadline, Resume, StepsRun};
 pub use run::{
-    attempt_failed, complete, entry_parked, hold_emit, item_settled, message, note_failure, open,
-    pass_call, pass_offset, removed, restore_landed, results_landed, ship_stage_record, stop,
-    unwired_stream,
+    attempt_failed, complete, entry_parked, hold_emit, item_settled, note_failure, open, pass_call,
+    pass_offset, removed, restore_landed, results_landed, ship_stage_record, stop, unwired_stream,
 };
 pub(crate) use run::{
     committed_firings, crossed, deadline_due, firing_assembled, firing_promoted, firings_joined,
-    held_removals, hold_arm, hold_removal, items_dropped, pass_dead, reap_holds,
+    held_removals, hold_arm, hold_removal, items_dropped, message, pass_dead, reap_holds,
 };
 
 pub use crate::relay::settings::{Each, OnFailure};

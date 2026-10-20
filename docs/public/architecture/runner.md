@@ -107,7 +107,7 @@ An **activation** targets one cell, or for a relay-wide leave one relay. The typ
 | `SnapshotRequest` | encode the state for compaction |
 | `LiveStateRead` | return the state as JSON, for a live read or a move |
 | `ApplyState` | install a state |
-| `KeyRequest` | compute keys (and event times) for entry payloads bound for a keyed edge, in one batch |
+| `KeyRequest` | decode and transform entry payloads bound for a keyed edge once, answering each keyed consumer's values with their keys (and event times), in one batch |
 | `CompensateRun` | run a steps relay's undo over the outputs a cell recorded |
 | `Leave` | drop what it holds for a cell that was evicted, or with `whole_relay` for every cell of a relay that stopped, finished or moved away, so a cell started again under the same name begins at `init_state`; an evicted cell's answer is waited for up to 30 s, by the eviction and by a stop behind it, unless the stop withdraws a leave no host took yet; nothing waits on a relay's |
 

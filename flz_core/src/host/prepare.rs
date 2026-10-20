@@ -5,7 +5,6 @@
 //! The invariant: an end-of-slice broadcast never overtakes a slice member
 //! still waiting on its answer.
 
-use std::any::Any;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
@@ -15,7 +14,9 @@ use crate::channel::ChannelDescriptor;
 use crate::poll_core::EnginePayload;
 use crate::relay::instance::RelayInstance;
 use crate::relay::topology::{CellMode, TaskletDescriptor};
-use crate::schema;
+use crate::routing::{Entering, Routed};
+use crate::schema::{self, InputForm};
+use crate::steps::instance::Value;
 use crate::util::LockRecover;
 
 /// Per-instance staging for the prepare crossing, plus the deferred
@@ -95,16 +96,15 @@ pub fn prepare_wants(tasklets: &[TaskletDescriptor], channel: &ChannelDescriptor
         let Some(facts) = desc.host_facts.as_ref() else {
             continue;
         };
-        match desc.mode {
-            CellMode::Dynamic => want_keys = true,
-            CellMode::Static if desc.cells_for_overridden => want_keys = true,
-            _ => {}
-        }
-        if facts.clock == HostClock::EventTime {
-            want_event_time = true;
-        }
+        want_keys |= keyed_by_host(desc);
+        want_event_time |= facts.clock == HostClock::EventTime;
     }
     (want_keys, want_event_time)
+}
+
+/// Whether a host tasklet's Cells are named by its host at the crossing.
+fn keyed_by_host(desc: &TaskletDescriptor) -> bool {
+    desc.mode == CellMode::Dynamic || (desc.mode == CellMode::Static && desc.cells_for_overridden)
 }
 
 /// Stage payloads for one crossing on `channel`, or hand them all back when
@@ -202,7 +202,13 @@ pub(super) fn apply_prepare_outcome(
             replay_resolved += 1;
         }
         match answer {
-            Ok(ans) => deliver_prepared(&instance, channel, channel_desc, entry, ans),
+            Ok(ans) => {
+                for (slot, item, policy) in
+                    deliver_answered(&instance, channel, channel_desc, &entry, ans)
+                {
+                    crate::admission::admit_from_reader(&slot, item, policy);
+                }
+            }
             Err(e) => hand_prepare_ladder(Arc::clone(&instance), channel, entry, e),
         }
     }
@@ -247,35 +253,92 @@ fn answers_for(
     answers
 }
 
-fn deliver_prepared(
+/// An answered payload onto its consumers: a steps stage's value into the
+/// stage that owes it, anything else through every edge, its items held for
+/// the caller to admit.
+fn deliver_answered(
     instance: &Arc<RelayInstance>,
     channel_id: u32,
     channel: &ChannelDescriptor,
-    mut entry: StagedEntry,
+    entry: &StagedEntry,
     answer: schema::PrepareAnswer,
-) {
-    let value = answered(std::mem::take(&mut entry.bytes), channel_id, answer);
+) -> Vec<crate::admission::Held> {
+    let crossed = answered(instance, channel_id, channel, &entry.bytes, answer);
     if let Some(node) = entry.stage {
-        return crate::steps::crossed(instance, node, Ok((value, entry.stream)));
+        let stream = Arc::clone(&entry.stream);
+        crate::steps::crossed(instance, node, Ok((channel_id, crossed, stream)));
+        return Vec::new();
     }
-    crate::routing::route_to_consumers(instance, channel, &value, &entry.delivery(), None);
+    crate::retry::route_held(instance, channel, &crossed, &entry.delivery())
 }
 
-/// A staged payload with what its crossing answered; no producer ran an
-/// edge on it.
+/// A crossed payload as each consumer edge of its channel receives it, by edge
+/// index: a keyed consumer one payload per Cell its host named, carrying that
+/// Cell's values in answer order, and any other consumer the payload
+/// untransformed.
+pub(crate) type Crossed = Vec<(usize, Value)>;
+
+impl Entering for Crossed {
+    fn each<'a>(&'a self, channel: &'a ChannelDescriptor) -> impl Iterator<Item = Routed<'a>> {
+        (self.iter()).filter_map(|(index, value)| Some((channel.consumers.get(*index)?, value)))
+    }
+}
+
+/// What a crossing answered for one payload, as each consumer receives it.
 fn answered(
-    bytes: Vec<u8>,
-    channel: u32,
-    answer: schema::PrepareAnswer,
-) -> Arc<dyn Any + Send + Sync> {
-    Arc::new(HostPayload {
-        bytes,
-        channel,
-        keys: answer.keys,
-        event_time: answer.event_time,
-        metadata: Vec::new(),
-        form: schema::InputForm::Untransformed,
-    })
+    instance: &RelayInstance,
+    channel_id: u32,
+    channel: &ChannelDescriptor,
+    bytes: &[u8],
+    mut answer: schema::PrepareAnswer,
+) -> Crossed {
+    let payload = |keys, form| -> Value {
+        Arc::new(HostPayload {
+            bytes: bytes.to_vec(),
+            channel: channel_id,
+            keys,
+            event_time: answer.event_time,
+            metadata: Vec::new(),
+            form,
+        })
+    };
+    let mut plain = None;
+    let mut crossed = Vec::with_capacity(channel.consumers.len());
+    for (index, edge) in channel.consumers.iter().enumerate() {
+        let consumer = instance.topology.tasklet(edge.tasklet);
+        if !consumer.is_some_and(keyed_by_host) {
+            let value = plain.get_or_insert_with(|| payload(Vec::new(), InputForm::Untransformed));
+            crossed.push((index, Arc::clone(value)));
+            continue;
+        }
+        let mine = answer
+            .values
+            .extract_if(.., |value| value.consumer == edge.tasklet);
+        for (key, values) in per_cell(mine) {
+            crossed.push((index, payload(vec![key], InputForm::Prepared(values))));
+        }
+    }
+    crossed
+}
+
+/// One consumer's values grouped per Cell key, each Cell's in answer order; a
+/// value naming no key reaches no Cell.
+fn per_cell(values: impl Iterator<Item = schema::PreparedValue>) -> Vec<(String, Vec<Vec<u8>>)> {
+    let mut cells: Vec<(String, Vec<Vec<u8>>)> = Vec::new();
+    for mut value in values {
+        let last = value.keys.len().saturating_sub(1);
+        for (i, key) in value.keys.drain(..).enumerate() {
+            let bytes = match i == last {
+                true => std::mem::take(&mut value.bytes),
+                false => value.bytes.clone(),
+            };
+            match cells.iter_mut().find(|(cell, _)| *cell == key) {
+                Some((_, joined)) => joined.push(bytes),
+                None => cells.push((key, vec![bytes])),
+            }
+        }
+    }
+    cells
 }
 
 /// A failed prepare climbs its channel's ladder on the park owner, one
@@ -357,18 +420,14 @@ fn re_cross(
         })),
     };
     *asked = None;
-    let value = match answer {
-        Some(Ok(answer)) => answered(staged.bytes.clone(), channel_id, answer),
-        Some(Err(e)) => return Attempt::Failed(e.message),
-        None => return Attempt::Failed("prepare re-attempt answered nothing".to_string()),
-    };
-    if let Some(node) = staged.stage {
-        crate::steps::crossed(instance, node, Ok((value, Arc::clone(&staged.stream))));
-        return Attempt::Delivered(Vec::new());
-    }
     let channel = (instance.topology.channel(channel_id)).expect("prepare channel present");
-    let d = staged.delivery();
-    Attempt::Delivered(crate::retry::route_held(instance, channel, &value, &d))
+    match answer {
+        Some(Ok(answer)) => Attempt::Delivered(deliver_answered(
+            instance, channel_id, channel, staged, answer,
+        )),
+        Some(Err(e)) => Attempt::Failed(e.message),
+        None => Attempt::Failed("prepare re-attempt answered nothing".to_string()),
+    }
 }
 
 /// Release the inflight gate, re-arm the next batch, fire a deferred

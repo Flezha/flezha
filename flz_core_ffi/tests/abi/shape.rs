@@ -373,6 +373,18 @@ fn assert_item_maps(recorded: &Value, item: &schema::WorkItem) {
             assert_eq!(at(h, "replay").as_bool(), Some(i.replay));
             assert_eq!(num(h, "now"), i.now);
             assert_eq!(text(h, "form"), i.form.as_str());
+            if let schema::InputForm::Prepared(values) = &i.form {
+                let mapped: Vec<Vec<u8>> = (rows(h, "values").iter())
+                    .map(|v| {
+                        v.as_array()
+                            .unwrap()
+                            .iter()
+                            .map(|b| b.as_u64().unwrap() as u8)
+                            .collect()
+                    })
+                    .collect();
+                assert_eq!(&mapped, values);
+            }
         }
         schema::WorkItem::Timer(t) => {
             assert_eq!(text(h, "kind"), "timer");
@@ -572,7 +584,12 @@ fn record_output(o: &schema::Output) -> Value {
 
 fn record_prepared(a: &Result<schema::PrepareAnswer, schema::WorkError>) -> Value {
     match a {
-        Ok(answer) => json!({ "keys": answer.keys, "event_time": answer.event_time }),
+        Ok(answer) => {
+            let values: Vec<Value> = (answer.values.iter())
+                .map(|v| json!({ "consumer": v.consumer, "keys": v.keys, "bytes": raw(&v.bytes) }))
+                .collect();
+            json!({ "values": values, "event_time": answer.event_time })
+        }
         Err(e) => json!({ "error": e.message, "non_retryable": e.non_retryable }),
     }
 }

@@ -22,6 +22,7 @@ use crate::relay::instance::RelayInstance;
 use crate::relay::registry::RelayRegistry;
 use crate::relay::topology::{CellMode, ChannelLookup, RelayTopology, TaskletDescriptor};
 use crate::retry::{hand_edge_ladder, hand_entry_parse_ladder, EntryDeliver, EntryParseLadder};
+use crate::steps::instance::Value;
 
 /// What the entrance reads off an instance of either kind: the topology the
 /// channel name resolves against, the id a park is filed under and the
@@ -72,6 +73,21 @@ pub struct Delivery<'a> {
     pub consumed_offset: Option<u64>,
     pub call: Option<&'a Arc<str>>,
     pub replay: bool,
+}
+
+/// A value entering through a channel, as each consumer edge receives it: the
+/// same value through every edge, or a crossed payload's own values.
+pub(crate) trait Entering: Clone + Send + Sync + 'static {
+    fn each<'a>(&'a self, channel: &'a ChannelDescriptor) -> impl Iterator<Item = Routed<'a>>;
+}
+
+/// One consumer edge and the value it receives.
+pub(crate) type Routed<'a> = (&'a ConsumerEdge, &'a Value);
+
+impl Entering for Value {
+    fn each<'a>(&'a self, channel: &'a ChannelDescriptor) -> impl Iterator<Item = Routed<'a>> {
+        channel.consumers.iter().map(move |edge| (edge, self))
+    }
 }
 
 /// Route one channel value to every consumer through its own edge — the one
