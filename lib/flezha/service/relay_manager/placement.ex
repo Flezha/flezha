@@ -11,6 +11,7 @@ defmodule Flezha.Service.RelayManager.Placement do
 
   alias Flezha.Config.Durations
   alias Flezha.Identificator
+  alias Flezha.Process.Poll
   alias Flezha.Runner.FleetManager
   alias Flezha.Runner.FleetManager.Load
 
@@ -86,32 +87,22 @@ defmodule Flezha.Service.RelayManager.Placement do
 
   def await_runner(namespace, factory_id, relay_id, timeout_ms, ready_fun) do
     deadline = System.monotonic_time(:millisecond) + timeout_ms
-    do_await_runner(namespace, factory_id, relay_id, deadline, ready_fun)
+    attempt = fn -> attempt(namespace, factory_id, relay_id, deadline, ready_fun) end
+    Poll.until(deadline, Durations.get(:runner_poll_interval_ms), attempt, &pause/1)
   end
 
-  # Every branch hands `poll_again` the reason its own attempt produced, so the
-  # returned error always describes the last attempt.
-  defp do_await_runner(namespace, factory_id, relay_id, deadline, ready_fun) do
+  # Every refusal is the reason its own attempt produced, so the returned error
+  # always describes the last attempt.
+  defp attempt(namespace, factory_id, relay_id, deadline, ready_fun) do
     case resolve_runner(namespace, factory_id, relay_id, call_timeout(deadline)) do
       {:ok, runner_id} when is_binary(runner_id) ->
-        if ready_fun.(runner_id),
-          do: {:ok, runner_id},
-          else: poll_again(namespace, factory_id, relay_id, deadline, ready_fun, :timeout)
+        if ready_fun.(runner_id), do: {:ok, runner_id}, else: {:error, :timeout}
 
       {:ok, nil} ->
-        poll_again(namespace, factory_id, relay_id, deadline, ready_fun, :timeout)
+        {:error, :timeout}
 
       {:error, :unavailable} ->
-        poll_again(namespace, factory_id, relay_id, deadline, ready_fun, :unavailable)
-    end
-  end
-
-  defp poll_again(namespace, factory_id, relay_id, deadline, ready_fun, last_reason) do
-    if System.monotonic_time(:millisecond) + Durations.get(:runner_poll_interval_ms) >= deadline do
-      {:error, last_reason}
-    else
-      pause(Durations.get(:runner_poll_interval_ms))
-      do_await_runner(namespace, factory_id, relay_id, deadline, ready_fun)
+        {:error, :unavailable}
     end
   end
 

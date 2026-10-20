@@ -27,6 +27,7 @@ defmodule Flezha.Plugin.Extension.TableProviderRestartTest do
   alias Flezha.Plugin.Host
   alias Flezha.Plugin.Provider.WorkerSup
   alias Flezha.Plugin.ProviderBehaviour
+  alias FlezhaTest.Helper.NodeTestHelper
 
   @catalog Host.build_catalog(
              [
@@ -175,5 +176,29 @@ defmodule Flezha.Plugin.Extension.TableProviderRestartTest do
     {{:ok, table}, _log} = with_log(fn -> Table.handle_down(table, ref, pid, :killed) end)
 
     assert Table.uptimes(table) == %{}
+  end
+
+  test "a worker stopped orderly is logged at info, never as a crash, and is still recorded down" do
+    on_exit(NodeTestHelper.override_log_level(:info))
+    plugin_id = "stopped_ws"
+
+    {:ok, table} =
+      Table.bulk_subscribe(Table.new(@catalog), [{plugin_id, plugin(plugin_id, FakeProvider)}])
+
+    {table, []} = Table.bulk_activate(table)
+    {pid, ref} = worker_ref(table, plugin_id)
+    Process.exit(pid, :shutdown)
+    assert_receive {:DOWN, ^ref, :process, ^pid, :shutdown}, 1_000
+
+    {{:ok, down}, errors} =
+      with_log([level: :error], fn -> Table.handle_down(table, ref, pid, :shutdown) end)
+
+    refute errors =~ "crashed"
+    assert Table.phase(down, plugin_id) == {:down, :shutdown}
+
+    {{:ok, _down}, log} =
+      with_log([level: :info], fn -> Table.handle_down(table, ref, pid, :shutdown) end)
+
+    assert [_one] = Regex.scan(~r/\[info\].*subscriber #{plugin_id} stopped: :shutdown/, log)
   end
 end

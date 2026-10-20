@@ -18,9 +18,11 @@ defmodule Flezha.Convergence.RecoveryGate do
       written here and nowhere else.
   """
 
+  alias Flezha.Config.Durations
   alias Flezha.Convergence.{Intent, Snapshot}
   alias Flezha.Identificator
   alias Flezha.Process.Hub
+  alias Flezha.Process.Poll
   alias Flezha.Service.HubManager
   alias ProcessHub.Service.Recovery, as: HubRecovery
 
@@ -145,19 +147,16 @@ defmodule Flezha.Convergence.RecoveryGate do
   end
 
   defp poll_recovery(hub_id, deadline) do
-    case Snapshot.recovery_state(hub_id) do
-      s when s in [:normal, :skipped] ->
-        :ok
+    recovered = fn ->
+      case Snapshot.recovery_state(hub_id) do
+        s when s in [:normal, :skipped] -> {:ok, s}
+        _recovering -> {:error, :timeout}
+      end
+    end
 
-      _ ->
-        remaining = deadline - System.monotonic_time(:millisecond)
-
-        if remaining <= 0 do
-          :timeout
-        else
-          Process.sleep(min(remaining, 50))
-          poll_recovery(hub_id, deadline)
-        end
+    case Poll.until(deadline, Durations.get(:hub_recovery_poll_ms), recovered) do
+      {:ok, _state} -> :ok
+      {:error, :timeout} -> :timeout
     end
   end
 

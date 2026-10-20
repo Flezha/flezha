@@ -33,6 +33,7 @@ defmodule Flezha.Service.Controller do
   alias Flezha.Identificator
   alias Flezha.Relay.ClassRegistry
   alias Flezha.Plugin.Provider.File.Storage
+  alias Flezha.Process.Poll
   alias Flezha.Service.CallerContext
   alias Flezha.Service.Controller.MemTop
   alias Flezha.Service.HubManager
@@ -348,21 +349,17 @@ defmodule Flezha.Service.Controller do
   defp stopped({:exit, reason}, _force), do: {:error, {:coordinator_exited, reason}}
   defp stopped(other, _force), do: {:error, {:coordinator_exited, other}}
 
+  # The last verdict, ready or not.
   defp poll_ready(deadline) do
-    case Readiness.verdict() do
-      {:ready, _rows} = ready ->
-        ready
-
-      unready ->
-        poll_ms = Durations.get(:boot_await_poll_ms)
-
-        if System.monotonic_time(:millisecond) + poll_ms > deadline do
-          unready
-        else
-          Process.sleep(poll_ms)
-          poll_ready(deadline)
-        end
+    ready = fn ->
+      case Readiness.verdict() do
+        {:ready, _rows} = ready -> {:ok, ready}
+        unready -> {:error, unready}
+      end
     end
+
+    {_ready?, verdict} = Poll.until(deadline, Durations.get(:boot_await_poll_ms), ready)
+    verdict
   end
 
   # A hub can be torn down between the listing and the read; a status table

@@ -17,6 +17,7 @@ defmodule Flezha.Cluster.Orchestrator do
   alias Flezha.Config
   alias Flezha.Config.Durations
   alias Flezha.Config.Backoff
+  alias Flezha.Process.Poll
 
   require Logger
 
@@ -53,20 +54,12 @@ defmodule Flezha.Cluster.Orchestrator do
   """
   @spec await_cluster_ready(non_neg_integer()) :: :ok | :timeout
   def await_cluster_ready(timeout_ms \\ formation_timeout_ms()) do
-    do_await_cluster_ready(System.monotonic_time(:millisecond) + timeout_ms)
-  end
+    deadline = System.monotonic_time(:millisecond) + timeout_ms
+    ready = fn -> if cluster_ready?(), do: {:ok, :ready}, else: {:error, :timeout} end
 
-  defp do_await_cluster_ready(deadline) do
-    cond do
-      cluster_ready?() ->
-        :ok
-
-      System.monotonic_time(:millisecond) >= deadline ->
-        :timeout
-
-      true ->
-        Process.sleep(50)
-        do_await_cluster_ready(deadline)
+    case Poll.until(deadline, Durations.get(:cluster_ready_poll_ms), ready) do
+      {:ok, :ready} -> :ok
+      {:error, :timeout} -> :timeout
     end
   end
 

@@ -13,6 +13,7 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
   alias Flezha.Config
   alias Flezha.Config.Environment
   alias Flezha.Identificator
+  alias Flezha.Process.Poll
   alias Flezha.Runner.FleetManager
   alias Flezha.Runner.StreamChannel
   alias Flezha.Service.EventManager
@@ -673,28 +674,22 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
 
   @doc """
   Poll `fun` every `interval_ms` until it returns a truthy value (returned) or
-  `timeout_ms` elapses (returns the last falsy result). The one polling loop in
-  the suite: a state read is the settle signal of last resort, and its interval
-  is the suite's one deliberate sleep.
+  `timeout_ms` elapses (returns the last falsy result). The suite's polling loop,
+  on `Flezha.Process.Poll.until/4`: a state read is the settle signal of last
+  resort, and its interval is the suite's one deliberate sleep.
   """
   def wait_until(fun, timeout_ms, interval_ms \\ 50) do
     deadline = System.monotonic_time(:millisecond) + timeout_ms
-    do_wait_until(fun, deadline, interval_ms)
-  end
 
-  defp do_wait_until(fun, deadline, interval_ms) do
-    case fun.() do
-      falsy when falsy in [nil, false] ->
-        if System.monotonic_time(:millisecond) >= deadline do
-          falsy
-        else
-          Process.sleep(interval_ms)
-          do_wait_until(fun, deadline, interval_ms)
-        end
-
-      truthy ->
-        truthy
+    settled = fn ->
+      case fun.() do
+        falsy when falsy in [nil, false] -> {:error, falsy}
+        truthy -> {:ok, truthy}
+      end
     end
+
+    {_settled?, value} = Poll.until(deadline, interval_ms, settled)
+    value
   end
 
   @doc """

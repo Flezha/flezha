@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Changed: one judgement of an orderly exit, and an orderly plugin worker stop is no crash
+
+- `Flezha.SDK.SafeCall` gains `orderly?/1` (`:normal`, `:shutdown`, `{:shutdown, _}`, and a
+  call's exit judged on its own reason) and a public `classify/1`. The observability bus and the
+  WAL writer judge an exit through them.
+- A plugin worker that stops orderly (a `:shutdown`, say) is logged at info as
+  `subscriber <id> stopped: <reason>` instead of at error as `crashed`; its plugin is still
+  recorded down and restarted as before.
+
 ### Changed: retries and deadlines run on the monotonic clock, and the idle sweep has no thread
 
 - A retry backoff, a push re-arm, a checkpoint interval's `max_delay_ms` close, a relay's

@@ -17,6 +17,7 @@ defmodule Flezha.Service.HubManager.Lifecycle do
   alias Flezha.Parallel
   alias Flezha.Plugin.Shared
   alias Flezha.Process.Hub
+  alias Flezha.Process.Poll
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.HubManager
   alias Flezha.Service.HubManager.Rows
@@ -159,20 +160,11 @@ defmodule Flezha.Service.HubManager.Lifecycle do
   # claimed.
   def wait_until_hub_alive(hub_id, deadline_ms \\ 5_000) do
     deadline = System.monotonic_time(:millisecond) + deadline_ms
-    do_wait_until_hub_alive(hub_id, deadline)
-  end
+    alive = fn -> if Hub.alive?(hub_id), do: {:ok, :alive}, else: {:error, :timeout} end
 
-  defp do_wait_until_hub_alive(hub_id, deadline) do
-    cond do
-      Hub.alive?(hub_id) ->
-        :ok
-
-      System.monotonic_time(:millisecond) >= deadline ->
-        :timeout
-
-      true ->
-        Process.sleep(10)
-        do_wait_until_hub_alive(hub_id, deadline)
+    case Poll.until(deadline, Durations.get(:hub_alive_poll_ms), alive) do
+      {:ok, :alive} -> :ok
+      {:error, :timeout} -> :timeout
     end
   end
 

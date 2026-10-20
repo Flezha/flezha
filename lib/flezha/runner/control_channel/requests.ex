@@ -22,6 +22,7 @@ defmodule Flezha.Runner.ControlChannel.Requests do
 
   alias Flezha.Config.Durations
   alias Flezha.Process.DurableTasks
+  alias Flezha.Process.Poll
   alias Flezha.Relay.Suspend
   alias Flezha.Runner.ControlChannel.Commits
   alias Flezha.Runner.FleetManager
@@ -181,29 +182,24 @@ defmodule Flezha.Runner.ControlChannel.Requests do
 
   defp drain_owed_outputs(runner_id, relay_id) do
     StreamPool.flush_channels(runner_id)
+    deadline = System.monotonic_time(:millisecond) + Durations.get(:drain_owed_ms)
 
-    await_owed_outboxes(
-      relay_id,
-      System.monotonic_time(:millisecond) + Durations.get(:drain_owed_ms)
-    )
-  end
+    settled = fn ->
+      case TaskJournal.Records.owed_outputs(relay_id) do
+        0 -> {:ok, 0}
+        owed -> {:error, owed}
+      end
+    end
 
-  defp await_owed_outboxes(relay_id, deadline) do
-    owed = TaskJournal.Records.owed_outputs(relay_id)
-
-    cond do
-      owed == 0 ->
+    case Poll.until(deadline, Durations.get(:drain_owed_poll_ms), settled) do
+      {:ok, 0} ->
         :ok
 
-      System.monotonic_time(:millisecond) >= deadline ->
+      {:error, owed} ->
         Logger.warning(
           "[control_channel] steps relay #{inspect(relay_id)} completed with " <>
             "#{owed} outbox entries still owed"
         )
-
-      true ->
-        Process.sleep(50)
-        await_owed_outboxes(relay_id, deadline)
     end
   end
 

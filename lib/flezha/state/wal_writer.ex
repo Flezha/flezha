@@ -622,7 +622,7 @@ defmodule Flezha.State.WalWriter do
     _ = if synced == :ok, do: RemoteGate.close(state), else: RemoteGate.reset(state)
     _ = Settlement.persist_dedup(state)
 
-    if synced == :ok and clean_exit?(reason), do: reply_synced(state)
+    if synced == :ok and SafeCall.orderly?(reason), do: reply_synced(state)
 
     :ok
   end
@@ -631,8 +631,6 @@ defmodule Flezha.State.WalWriter do
     _ = RemoteGate.reset(state)
     :ok
   end
-
-  defp clean_exit?(reason), do: reason in [:normal, :shutdown] or match?({:shutdown, _}, reason)
 
   defp do_fsync(state) do
     t0 = System.monotonic_time(:microsecond)

@@ -36,6 +36,7 @@ defmodule Flezha.Service.Dlq do
   alias Flezha.Dlq.Store
   alias Flezha.Relay.Lookup
   alias Flezha.Plugin.Host
+  alias Flezha.Process.Poll
   alias Flezha.Service.CallerContext
   alias Flezha.Service.RelayManager
 
@@ -177,24 +178,29 @@ defmodule Flezha.Service.Dlq do
 
   # Poll for the re-park (generation bump) until the grace window closes; no
   # re-park within it means the replay processed cleanly.
-  defp await_replay_outcome(entry_ref, _generation_before, remaining_ms)
-       when remaining_ms <= 0 do
-    :ok = Store.resolve(entry_ref)
-    :removed
-  end
+  defp await_replay_outcome(entry_ref, generation_before, grace_ms) do
+    deadline = System.monotonic_time(:millisecond) + grace_ms
 
-  defp await_replay_outcome(entry_ref, generation_before, remaining_ms) do
-    Process.sleep(100)
+    settled = fn ->
+      case Store.get(entry_ref) do
+        {:ok, %{"status" => "parked", "generation" => generation}, _payload}
+        when generation > generation_before ->
+          {:ok, {:re_parked, generation}}
 
-    case Store.get(entry_ref) do
-      {:ok, %{"status" => "parked", "generation" => generation}, _payload}
-      when generation > generation_before ->
-        {:re_parked, generation}
+        {:ok, _entry, _payload} ->
+          {:error, :timeout}
 
-      {:ok, _entry, _payload} ->
-        await_replay_outcome(entry_ref, generation_before, remaining_ms - 100)
+        {:error, :not_found} ->
+          {:ok, :removed}
+      end
+    end
 
-      {:error, :not_found} ->
+    case Poll.until(deadline, Durations.get(:dlq_replay_poll_ms), settled) do
+      {:ok, outcome} ->
+        outcome
+
+      {:error, :timeout} ->
+        :ok = Store.resolve(entry_ref)
         :removed
     end
   end

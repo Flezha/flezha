@@ -39,6 +39,7 @@ defmodule Flezha.Plugin.Extension.Table do
   alias Flezha.Plugin.Provider.WorkerSup
   alias Flezha.Plugin.ProviderBehaviour
   alias Flezha.Plugin.ProviderBehaviour.Options, as: ProviderOptions
+  alias Flezha.SDK.SafeCall
 
   require Logger
 
@@ -83,17 +84,9 @@ defmodule Flezha.Plugin.Extension.Table do
   """
   @spec new(map(), keyword()) :: t()
   def new(catalog, opts \\ []) when is_map(catalog) do
-    subs =
-      Enum.reduce(catalog, %{}, fn
-        {name, %{kind: :request}}, acc -> Map.put(acc, name, [])
-        {name, _entry}, acc -> Map.put(acc, name, [])
-      end)
+    subs = Map.new(catalog, fn {name, _entry} -> {name, []} end)
 
-    request_subs =
-      Enum.reduce(catalog, %{}, fn
-        {name, %{kind: :request}}, acc -> Map.put(acc, name, %{})
-        _, acc -> acc
-      end)
+    request_subs = for {name, %{kind: :request}} <- catalog, into: %{}, do: {name, %{}}
 
     %__MODULE__{
       catalog: catalog,
@@ -528,10 +521,10 @@ defmodule Flezha.Plugin.Extension.Table do
   defdelegate fire_timer(table, name, plugin_id), to: Subscription
 
   @doc """
-  Handle a `{:DOWN, ref, :process, pid, reason}` from the host. A worker that
-  exited `:normal` unsubscribes its plugin; one that crashed records it
-  `{:down, reason}` for the host to declare, because the table restarts nothing.
-  Returns `{:ok, table}` or `:ignore`.
+  Handle a host's `{:DOWN, ref, :process, pid, reason}`. A worker that exited
+  `:normal` unsubscribes its plugin; any other exit records it `{:down, reason}`
+  for the host to declare (the table restarts nothing), logged as a crash unless
+  orderly (`SafeCall.orderly?/1`). Returns `{:ok, table}` or `:ignore`.
   """
   @spec handle_down(t(), reference(), pid(), term(), keyword()) ::
           {:ok, t()} | :ignore
@@ -559,7 +552,12 @@ defmodule Flezha.Plugin.Extension.Table do
             {:ok, rejoin(table, plugin_id, plugin, reason)}
 
           _ ->
-            Logger.error("[Extension.Table] subscriber #{plugin_id} crashed: #{inspect(reason)}")
+            down = "[Extension.Table] subscriber #{plugin_id}"
+
+            if SafeCall.orderly?(reason),
+              do: Logger.info("#{down} stopped: #{inspect(reason)}"),
+              else: Logger.error("#{down} crashed: #{inspect(reason)}")
+
             {:ok, put_phase(table, plugin_id, {:down, reason}, reason)}
         end
     end

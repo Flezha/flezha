@@ -18,6 +18,7 @@ defmodule Flezha.Observability.Bus do
   require Logger
 
   alias Flezha.Observability.{Counters, Registry, Signal}
+  alias Flezha.SDK.SafeCall
 
   @sinks :flezha_observability_sinks
   @system_source :observability_registry
@@ -227,10 +228,8 @@ defmodule Flezha.Observability.Bus do
     end
   end
 
-  defp benign_sink_exit?({:exit, reason}), do: benign_exit_reason?(reason)
-  defp benign_sink_exit?(_), do: false
+  defp benign_sink_exit?({:exit, reason}),
+    do: SafeCall.orderly?(reason) or SafeCall.classify(reason) == :noproc
 
-  defp benign_exit_reason?(reason) when reason in [:noproc, :normal, :shutdown], do: true
-  defp benign_exit_reason?({reason, _}) when reason in [:noproc, :normal, :shutdown], do: true
-  defp benign_exit_reason?(_), do: false
+  defp benign_sink_exit?(_), do: false
 end

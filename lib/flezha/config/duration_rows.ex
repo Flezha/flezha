@@ -30,6 +30,7 @@ defmodule Flezha.Config.DurationRows do
      key: true, env: "FLEZHA_CLUSTER_FORMATION_TIMEOUT_MS"},
     {:cluster_formation_wait_ms, :ms, nil,
      derived: {:headroom, :cluster_formation_timeout_ms, 5_000}},
+    {:cluster_ready_poll_ms, :ms, 50, []},
     {:k8s_discovery_request_ms, :ms, 15_000, []},
     # One authorization write or snapshot exchanged with another controller.
     {:authz_replica_call_ms, :ms, 5_000, []},
@@ -54,6 +55,7 @@ defmodule Flezha.Config.DurationRows do
     {:control_unit_pending_reply_timeout_ms, :ms, 90_000, key: true},
     {:credit_handshake_timeout_ms, :ms, 10_000, []},
     {:drain_owed_ms, :ms, 60_000, []},
+    {:drain_owed_poll_ms, :ms, 50, []},
     {:io_stream_liveness_interval_ms, :ms, 10_000, key: true},
     {:io_stream_liveness_threshold_ms, :ms, nil,
      key: true, derived: {:factor, :io_stream_liveness_interval_ms, 3}},
@@ -95,6 +97,8 @@ defmodule Flezha.Config.DurationRows do
 
     # ---- relays: the calls the loop and the manager make ----------------
     {:hub_await_recovery_ms, :ms, 60_000, []},
+    {:hub_alive_poll_ms, :ms, 10, []},
+    {:hub_recovery_poll_ms, :ms, 50, []},
     # The hub kills a request at this bound, a relay stop's included, so it
     # outwaits the Overwatch's shutdown bound.
     {:hub_cross_node_request_ms, :ms, nil, derived: {:headroom, :overwatch_shutdown_ms, 1_000}},
@@ -210,6 +214,7 @@ defmodule Flezha.Config.DurationRows do
     {:compaction_timeout_ms, :ms, 30_000, key: true},
     {:correction_debounce_ms, :ms, 200, key: true},
     {:dlq_replay_grace_ms, :ms, 5_000, key: {:dlq, :replay_grace_ms}},
+    {:dlq_replay_poll_ms, :ms, 100, []},
     {:dlq_sweep_interval_ms, :ms, 3_600_000, key: {:dlq, :retention_check_interval_ms}},
     {:input_log_hold_window_ms, :ms, 0, key: true, env: "FLEZHA_INPUT_LOG_HOLD_WINDOW_MS"},
     {:outbox_resettle_ms, :ms, 60_000, key: true},

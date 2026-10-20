@@ -24,6 +24,7 @@ defmodule Flezha.Relay.PartitionGroup do
   alias Flezha.Partition
   alias Flezha.Plugin
   alias Flezha.Plugin.SpecDecoder
+  alias Flezha.Process.Poll
   alias Flezha.Relay.KeyGroup
   alias Flezha.Service.HubManager
   alias Flezha.Service.RelayManager
@@ -467,17 +468,19 @@ defmodule Flezha.Relay.PartitionGroup do
   end
 
   defp await_consumed(members, run, deadline) do
-    case Enum.find(members, &(not consumed?(&1.id))) do
-      nil ->
+    consumed = fn ->
+      case Enum.find(members, &(not consumed?(&1.id))) do
+        nil -> {:ok, :consumed}
+        laggard -> {:error, laggard}
+      end
+    end
+
+    case Poll.until(deadline, Durations.get(:partition_quiesce_poll_ms), consumed) do
+      {:ok, :consumed} ->
         :ok
 
-      laggard ->
-        if System.monotonic_time(:millisecond) >= deadline do
-          {:error, {:quiesce_timeout, laggard.id, run, input_log_progress(laggard.id)}}
-        else
-          Process.sleep(Durations.get(:partition_quiesce_poll_ms))
-          await_consumed(members, run, deadline)
-        end
+      {:error, laggard} ->
+        {:error, {:quiesce_timeout, laggard.id, run, input_log_progress(laggard.id)}}
     end
   end
 
@@ -588,17 +591,16 @@ defmodule Flezha.Relay.PartitionGroup do
   end
 
   defp await_ids_released(namespace, ids, deadline) do
-    case Enum.find(ids, &(Validator.relay_unique(namespace, &1) != :ok)) do
-      nil ->
-        :ok
+    released = fn ->
+      case Enum.find(ids, &(Validator.relay_unique(namespace, &1) != :ok)) do
+        nil -> {:ok, :released}
+        held -> {:error, held}
+      end
+    end
 
-      held ->
-        if System.monotonic_time(:millisecond) >= deadline do
-          {:error, {:member_id_held, held, Shutdown.stop_timeout_ms()}}
-        else
-          Process.sleep(Durations.get(:partition_quiesce_poll_ms))
-          await_ids_released(namespace, ids, deadline)
-        end
+    case Poll.until(deadline, Durations.get(:partition_quiesce_poll_ms), released) do
+      {:ok, :released} -> :ok
+      {:error, held} -> {:error, {:member_id_held, held, Shutdown.stop_timeout_ms()}}
     end
   end
 
