@@ -16,6 +16,8 @@ defmodule Mix.Tasks.Bench do
       mix bench --num-relays 1000 --messages-per-relay 1000
       mix bench --runtime java -n 100 -m 1000
       mix bench --runtime rust --shape cell --pool-sizes 1,8
+      mix bench --runtime java --shape timer
+      mix bench --shape send
 
   ## Options
 
@@ -33,8 +35,13 @@ defmodule Mix.Tasks.Bench do
       `--pool-sizes`), `dynamic` (the dynamic cell-mode shape, factory
       `dynamic_cell`, lazy per-key Cells with 8 keys/relay,
       dimensions from `-n` / `-m`), `tier` (the effectively-once tier, factory
-      `tier_store`, keyed like `dynamic`), or `sleeping` (a persistent stream
-      that sleeps when idle, factory `sleeping_counter`, keyed like `dynamic`).
+      `tier_store`, keyed like `dynamic`), `sleeping` (a persistent stream
+      that sleeps when idle, factory `sleeping_counter`, keyed like `dynamic`),
+      `timer` (factory `timer_churn`: per input a processing-time timer one
+      millisecond ahead, cancelling the previous input's; the firings are not
+      counted), or `send` (Rust only; factory `send_forward`, whose runner sends
+      each input through the controller to its own `do_nothing` relay, the one
+      the responses are counted from).
     * `--pool-sizes` - Comma-separated worker-pool sizes (default: `"1,8"`),
       only honored when `--shape cell`. Each value spawns a fresh
       Rust runner binary with `FLEZHA_WORKER_POOL_SIZE=<N>` and
@@ -162,9 +169,10 @@ defmodule Mix.Tasks.Bench do
   # inputs (see `input_for_shape/3`).
 
   defp run_default_shape(runtime, num_relays, messages_per_relay, shape, warmup) do
+    # `:send` grants its runners a role, which only the scratch namespace takes.
     namespace =
       cond do
-        runtime != :rust ->
+        runtime != :rust or shape == :send ->
           Fleet.setup(@bench_namespace, 2, [])
           @bench_namespace
 
@@ -262,10 +270,12 @@ defmodule Mix.Tasks.Bench do
   defp parse_shape("dynamic"), do: :dynamic
   defp parse_shape("tier"), do: :tier
   defp parse_shape("sleeping"), do: :sleeping
+  defp parse_shape("timer"), do: :timer
+  defp parse_shape("send"), do: :send
 
   defp parse_shape(other) do
     raise "Unknown --shape value: #{inspect(other)}. Expected \"regression\", \"cell\", " <>
-            "\"dynamic\", \"tier\", or \"sleeping\"."
+            "\"dynamic\", \"tier\", \"sleeping\", \"timer\", or \"send\"."
   end
 
   defp parse_via(nil), do: :cast
@@ -296,6 +306,8 @@ defmodule Mix.Tasks.Bench do
   defp factory_for_shape(:dynamic), do: "dynamic_cell"
   defp factory_for_shape(:tier), do: "tier_store"
   defp factory_for_shape(:sleeping), do: "sleeping_counter"
+  defp factory_for_shape(:timer), do: "timer_churn"
+  defp factory_for_shape(:send), do: "send_forward"
 
   defp dimensions_for_shape(:cell, opts) do
     if opts[:num_relays] || opts[:messages_per_relay] do
@@ -318,8 +330,8 @@ defmodule Mix.Tasks.Bench do
     IO.puts("Starting #{num_relays} relays (factory=#{factory})...")
 
     enable_hooks(namespace, Process.get(:bench_hook_url))
-    {creation_us, relay_infos} = start_relays(namespace, factory, num_relays)
-    plugin_setup_us = enable_forwarders(namespace, relay_infos)
+    {creation_us, relay_infos, counted} = start_shape(namespace, shape, num_relays)
+    plugin_setup_us = enable_forwarders(namespace, counted)
     warmup_us = warmup_pass(relay_infos, shape, warmup)
 
     total_messages = length(relay_infos) * test_messages_per_relay
@@ -332,7 +344,7 @@ defmodule Mix.Tasks.Bench do
     expected_responses = expected_responses(shape, total_messages)
 
     {receive_us, _} =
-      :timer.tc(fn -> await_responses(expected_responses, "message") end)
+      :timer.tc(fn -> await_responses(expected_responses, "message", shape) end)
 
     metrics =
       metrics(%{
@@ -357,11 +369,26 @@ defmodule Mix.Tasks.Bench do
     metrics
   end
 
-  defp start_relays(namespace, factory, num_relays) do
+  # The relays the inputs go to, and the ones whose outputs are counted: the
+  # same relays, except under `:send`, whose relay `flow_test_<i>` sends each
+  # input on to its own `do_nothing` relay `flow_test_<i>_sink`.
+  defp start_shape(namespace, :send, num_relays) do
+    Fleet.grant_send(namespace)
+    {sinks_us, sinks} = start_relays(namespace, "do_nothing", num_relays, "_sink")
+    {senders_us, senders} = start_relays(namespace, factory_for_shape(:send), num_relays)
+    {sinks_us + senders_us, senders, sinks}
+  end
+
+  defp start_shape(namespace, shape, num_relays) do
+    {elapsed, infos} = start_relays(namespace, factory_for_shape(shape), num_relays)
+    {elapsed, infos, infos}
+  end
+
+  defp start_relays(namespace, factory, num_relays, suffix \\ "") do
     {elapsed, infos} =
       :timer.tc(fn ->
         Flezha.Parallel.map(1..num_relays, fn i ->
-          relay_id = "flow_test_#{i}"
+          relay_id = "flow_test_#{i}#{suffix}"
 
           relay = %Flezha.Relay.Builder{
             id: relay_id,
@@ -454,7 +481,7 @@ defmodule Mix.Tasks.Bench do
     {elapsed, _} =
       :timer.tc(fn ->
         send_inputs(relay_infos, shape, warmup)
-        await_responses(expected_responses(shape, warmup_total), "warmup")
+        await_responses(expected_responses(shape, warmup_total), "warmup", shape)
       end)
 
     elapsed
@@ -578,18 +605,25 @@ defmodule Mix.Tasks.Bench do
     )
   end
 
-  defp await_responses(expected, _phase) when expected <= 0, do: []
+  defp await_responses(expected, _phase, _shape) when expected <= 0, do: []
 
-  defp await_responses(expected, phase) do
-    for x <- 1..expected//1 do
-      receive do
-        {:message_forward, _msg} ->
-          :ok
-      after
-        10_000 ->
-          IO.puts("Timeout waiting for #{phase} #{x}/#{expected}")
-          exit("Timeout waiting for messages")
-      end
+  defp await_responses(expected, phase, shape) do
+    for x <- 1..expected//1, do: await_response(x, expected, phase, shape)
+  end
+
+  # A `timer_churn` firing lands whenever its timer was not cancelled in time,
+  # so its count is not the inputs'; it is drained and not counted.
+  defp await_response(x, expected, phase, shape) do
+    receive do
+      {:message_forward, "fired:" <> _} when shape == :timer ->
+        await_response(x, expected, phase, shape)
+
+      {:message_forward, _msg} ->
+        :ok
+    after
+      10_000 ->
+        IO.puts("Timeout waiting for #{phase} #{x}/#{expected}")
+        exit("Timeout waiting for messages")
     end
   end
 
@@ -613,6 +647,9 @@ defmodule Mix.Tasks.Bench do
   defp input_for_shape(shape, relay_id, msg_num) when shape in [:dynamic, :tier] do
     "k#{rem(msg_num, 8)}:test_msg_#{relay_id}_#{msg_num}"
   end
+
+  defp input_for_shape(:send, relay_id, msg_num),
+    do: "#{relay_id}_sink:test_msg_#{relay_id}_#{msg_num}"
 
   defp input_for_shape(_shape, relay_id, msg_num) do
     "test_msg_#{relay_id}_#{msg_num}"

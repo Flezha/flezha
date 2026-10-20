@@ -16,6 +16,7 @@ defmodule Mix.Tasks.Bench.Fleet do
 
   alias Flezha.AuthZ
   alias Flezha.AuthZ.NamespaceStore
+  alias Flezha.AuthZ.RoleStore
   alias Flezha.AuthZ.TokenStore
   alias Flezha.Config
   alias Flezha.Layout.Table, as: Layout
@@ -211,6 +212,22 @@ defmodule Mix.Tasks.Bench.Fleet do
                     "against a stale artifact. Its output is above.\n\n#{command}"
         end
     end
+  end
+
+  @doc """
+  Let `namespace`'s runners send to its relays, as runner code does, by
+  binding their principal the `spawner` role, the narrowest one granting
+  `relay.send`. Nothing is written when nothing will be enforced.
+  """
+  @spec grant_send(binary()) :: :ok
+  def grant_send(namespace) do
+    if AuthZ.enabled?() do
+      with {:error, reason} <-
+             RoleStore.bind("runner@#{namespace}", namespace, :spawner, bound_by: "bench"),
+           do: Mix.raise("could not let #{namespace}'s runners send: #{inspect(reason)}")
+    end
+
+    :ok
   end
 
   @doc "The runtime this bench run is measuring, set once by the calling task."

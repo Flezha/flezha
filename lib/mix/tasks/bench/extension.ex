@@ -12,6 +12,10 @@ defmodule Mix.Tasks.Bench.Extension do
   alias Flezha.Plugin.Provider.HttpSend
   alias Flezha.Plugin.Provider.WorkerSup
   alias Flezha.Plugin.ProviderBehaviour.Options
+  alias Flezha.Runner.FleetManager
+  alias Flezha.Service.Admin
+  alias Flezha.Service.RelayManager
+  alias Mix.Tasks.Bench.Fleet
   alias Mix.Tasks.Flezha.Bench.Observability
 
   @shortdoc "Microbenchmark for Flezha.Plugin.Extension.run/3 and the sink paths"
@@ -43,6 +47,11 @@ defmodule Mix.Tasks.Bench.Extension do
     * `telemetry` - `--iterations` executes (default 200000) of
       `[:flezha, :plugin, :relay_forward, :shipped]` with the telemetry bridge
       attached and no sink registered.
+    * `door` - `--iterations` sends (default 20000) through the door a runner
+      reaches the controller by, `Flezha.Service.Admin.run("Relay.send", ...)`
+      with a runner's caller context, each to a running `do_nothing` relay on
+      a Rust runner in the scratch namespace `bench`. This case starts the
+      controller.
   """
 
   @record "bench-record-0123456789abcdef"
@@ -126,6 +135,7 @@ defmodule Mix.Tasks.Bench.Extension do
       "admission:http_push" -> http_push(iterations.(20_000))
       "admission:file_sink" -> file_sink(iterations.(20_000))
       "telemetry" -> telemetry(iterations.(200_000))
+      "door" -> door(iterations.(20_000))
       other -> Mix.raise("Unknown --case #{inspect(other)}")
     end
   end
@@ -223,6 +233,30 @@ defmodule Mix.Tasks.Bench.Extension do
 
     execute.(10_000)
     timed("telemetry", executes, fn -> execute.(executes) end)
+  end
+
+  defp door(sends) do
+    namespace = "bench"
+    Fleet.reset_namespace(namespace)
+    Mix.Task.run("app.start")
+    Fleet.setup(namespace, 1, [])
+
+    try do
+      Fleet.grant_send(namespace)
+      relay = %Flezha.Relay.Builder{id: "door_sink", factory_id: "do_nothing"}
+      {:ok, _info} = RelayManager.start_relay(namespace, relay)
+      caller = FleetManager.runner_caller_context(namespace)
+
+      send = fn _ ->
+        {:ok, _verdict} =
+          Admin.run("Relay.send", ["door_sink", @record, "input"], caller, {:proven, namespace})
+      end
+
+      Enum.each(1..1_000, send)
+      timed("door", sends, fn -> Enum.each(1..sends, send) end)
+    after
+      Fleet.cleanup(namespace)
+    end
   end
 
   # A provider's declared defaults with the host's identity, as a table

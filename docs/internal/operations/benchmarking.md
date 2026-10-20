@@ -170,6 +170,30 @@ Cell per key.
 ./scripts/bench.sh --shape dynamic -n 100 -m 10000
 ```
 
+### `timer` (timer churn)
+
+The `regression` harness with factory `timer_churn`: each input arms a
+processing-time timer one millisecond ahead, cancels the one the previous
+input armed, and is echoed. A timer that fires before its cancel emits
+`fired:<at>`; how many do depends on timing, so the run drains them and counts
+only the echoes. Every runtime's test app carries the factory.
+
+```sh
+mix bench --shape timer --runtime rust
+```
+
+### `send` (runner send, Rust only)
+
+`-n` relays of factory `send_forward`, each beside its own `do_nothing` relay
+`flow_test_<i>_sink`. Each input is sent on by the runner's own send, through
+the controller, to its sink relay, and the sinks' echoes are counted. The shape
+always runs in the scratch `bench` namespace. With authorization enforced, the
+bench binds `runner@bench` the `spawner` role, which the send needs.
+
+```sh
+mix bench --shape send
+```
+
 ### Elixir runtime
 
 The `elixir` runtime runs all three shapes over UDS and QUIC. Against
@@ -259,6 +283,11 @@ mix bench.extension [--iterations N]
 # enqueue into a write worker, the relay_forward `shipped` event through the
 # telemetry bridge with no sink.
 mix bench.extension --case admission:http_push|admission:file_sink|telemetry [--iterations N]
+
+# The door a runner reaches the controller by: `Admin.run("Relay.send", ...)`
+# with a runner's caller context, to a running `do_nothing` relay. Unlike the
+# cases above, it starts the controller and one Rust runner in `bench`.
+mix bench.extension --case door [--iterations N]
 
 # The Kafka producer's admission over two partition lanes, no broker
 # (from plugins/flezha_kafka_plugin).
