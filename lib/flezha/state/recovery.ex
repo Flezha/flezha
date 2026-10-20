@@ -78,6 +78,8 @@ defmodule Flezha.State.Recovery do
     |> Enum.reduce_while({:ok, %{}}, fn namespace, {:ok, bound} ->
       case HubManager.get_registry(namespace) do
         {:ok, registry} -> {:cont, {:ok, bound_in(registry, bound)}}
+        # Stopped since the listing: it binds no runner.
+        {:error, {:hub_down, ^namespace}} -> {:cont, {:ok, bound}}
         error -> {:halt, error}
       end
     end)

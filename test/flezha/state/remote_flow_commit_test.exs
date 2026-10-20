@@ -427,6 +427,24 @@ defmodule Flezha.State.RemoteFlowCommitTest do
       assert_received {:remote_commit, _, %{status: :ok}}
       assert Manifest.shipped_through(Stub.stored_manifest({:cell, ctx.cell_id})) == 1
     end
+
+    test "a fence ends for a writer-less Cell whose owned entry no bind has adopted", ctx do
+      # fails when: the fence retries a refusal that waiting never clears, so it
+      # never answers and no marker of the stream is confirmed.
+      ref = {:cell, ctx.cell_id}
+      Shipper.release(ctx.rc, :moved)
+      own = %{Manifest.new(ref) | owner: DurabilityTier.writer_id(), claim: 1}
+      :ok = Stub.put_if(Manifest.key(ref), Manifest.encode(own), {:claim, 1}, [])
+      unshipped_tail(ctx)
+      capture_commits(ctx.cell_id)
+
+      fence = Task.async(fn -> RemoteGate.await_held(nil) end)
+
+      assert Task.yield(fence, 5_000) == {:ok, :ok}
+      assert_received {:remote_commit, _, %{status: :error}}
+      refute_received {:remote_commit, _, _}
+      refute Manifest.shipped_through(Stub.stored_manifest(ref)) == 1
+    end
   end
 
   # Records 0 and 1 of the Cell on this disk alone, with no writer, after a

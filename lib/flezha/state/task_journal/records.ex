@@ -82,7 +82,7 @@ defmodule Flezha.State.TaskJournal.Records do
   def unflushed?(records) do
     Enum.any?(records, fn {id, _first, seq} ->
       case Wire.decode_cell_id(id) do
-        {:ok, cell} -> seq > Lineage.dedup(cell).outbox_flushed_seq
+        {:ok, cell} -> seq > Lineage.progress(cell).outbox_flushed_seq
         {:error, _} -> false
       end
     end)

@@ -155,6 +155,21 @@ defmodule Flezha.State.RecoveryTest do
       assert Recovery.resolve_runner({"desk", "0", "p1"}) == {:ok, "exec_b"}
     end
 
+    test "a namespace that stops after the listing binds no runner and fails no other" do
+      # fails when: one namespace torn down between the two reads fails the
+      # whole answer, so recovery resolves no runner in any namespace.
+      relay = %Builder{id: "bob", factory_id: "f", opts: [relay_class: "desk"]}
+
+      stub(HubManager, :get_running_namespaces, fn -> ["gone", "team-b"] end)
+
+      stub(HubManager, :get_registry, fn
+        "gone" -> {:error, {:hub_down, "gone"}}
+        "team-b" -> {:ok, %{"bob" => entry(relay, "exec_b", "team-b")}}
+      end)
+
+      assert Recovery.resolve_runner({"desk", "0", "p1"}) == {:ok, "exec_b"}
+    end
+
     test "surfaces a registry error" do
       stub(HubManager, :get_registry, fn "default" -> {:error, "hub not alive"} end)
 

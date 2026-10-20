@@ -231,10 +231,20 @@ defmodule Flezha.State.WalWriter.RemoteGate do
         do: cell_id
   end
 
+  # An unadopted or superseded Cell waits on a bind or another controller, not
+  # on a retry: it is not owed here, so the fence stops waiting on it.
   defp ship_until_landed(cell_id, attempt \\ 1) do
-    with {:error, _} <- DurabilityTier.commit_sync(cell_id) do
-      Backoff.wait(:durability_ship, attempt, cell_id)
-      ship_until_landed(cell_id, attempt + 1)
+    case DurabilityTier.commit_sync(cell_id) do
+      {:error, {:sync_ship_failed, _relay, reason}}
+      when reason in [:not_adopted, :superseded] or elem(reason, 0) == :superseded ->
+        :ok
+
+      {:error, _} ->
+        Backoff.wait(:durability_ship, attempt, cell_id)
+        ship_until_landed(cell_id, attempt + 1)
+
+      :ok ->
+        :ok
     end
   end
 

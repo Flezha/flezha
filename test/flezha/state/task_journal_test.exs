@@ -695,6 +695,19 @@ defmodule FlezhaTest.State.TaskJournalTest do
     :ok = Lineage.put_dedup(cell, %{last_persisted_seq: 9, outbox_flushed_seq: flushed, epoch: 0})
   end
 
+  test "a record of an epoch the dedup file has not reached is still owed" do
+    # fails when: the flush cursor is read off the dedup file alone, so after a
+    # bump whose dedup write was lost the new epoch's records read as flushed
+    # and the cut drops the entry naming them.
+    inst = instance_id()
+    cell = {inst, "TaskA", "s0"}
+    confirm_through(cell, 5)
+    record = %{id: nil, trail: [], landed: false, epoch: 1, folded_offset: -1, cut: nil}
+    :ok = Lineage.put(cell, record)
+
+    assert Records.unflushed?([{seg_identity(inst, "TaskA", "s0"), 0, 3}])
+  end
+
   test "an entry whose record is still owed holds the cut, and goes once the cursor passes it" do
     inst = instance_id()
     cuttable(inst)

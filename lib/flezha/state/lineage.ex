@@ -27,10 +27,14 @@ defmodule Flezha.State.Lineage do
   @head <<"FLZL", 1>>
   @none %{id: nil, trail: [], landed: false, epoch: nil, folded_offset: -1, cut: nil}
   @keys Map.keys(@none)
+  # The dedup cursors that re-drive every effect record.
+  @fresh_cursors %{last_persisted_seq: 0, outbox_flushed_seq: -1}
 
   @doc """
   Both files merged: the higher epoch with its file's folded offset (the lineage
-  file's on a tie), the cut pending only while the dedup epoch is below it.
+  file's on a tie), the cut pending only while the dedup epoch is below it. A
+  dedup file behind the lineage record holds an older epoch's cursors, so they
+  read as an empty log's: every record re-drives, which the sinks dedup.
   """
   @spec read(Paths.cell_id()) :: t()
   def read(cell_id) do
@@ -38,8 +42,10 @@ defmodule Flezha.State.Lineage do
     dedup = dedup(cell_id)
 
     if is_integer(record.epoch) and record.epoch >= dedup.epoch do
+      behind? = record.epoch > dedup.epoch
       progress = %{dedup | epoch: record.epoch, folded_offset: record.folded_offset}
-      %{record: record, progress: progress, cut: if(record.epoch > dedup.epoch, do: record.cut)}
+      progress = if behind?, do: Map.merge(progress, @fresh_cursors), else: progress
+      %{record: record, progress: progress, cut: if(behind?, do: record.cut)}
     else
       %{record: record, progress: dedup, cut: nil}
     end
@@ -80,7 +86,7 @@ defmodule Flezha.State.Lineage do
   defp arrived(cell_id, facts) do
     with :ok <- put(cell_id, Map.merge(@none, facts)),
          :ok <-
-           put_dedup(cell_id, Map.merge(facts, %{last_persisted_seq: 0, outbox_flushed_seq: -1})) do
+           put_dedup(cell_id, Map.merge(facts, @fresh_cursors)) do
       for {kind, true} <- facts.markers || %{}, do: Paths.write_compensation_marker(cell_id, kind)
       :ok
     end

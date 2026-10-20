@@ -89,6 +89,26 @@ defmodule Flezha.State.LineageTest do
     assert %{progress: %{epoch: 1, folded_offset: 2}, cut: :all} = Lineage.read(ctx.cell_id)
   end
 
+  # fails when: a bump whose cut-clearing record landed and whose dedup file did
+  # not pairs the new epoch with the old epoch's flush cursor, so the new
+  # epoch's records up to it read as flushed and their outputs are never sent.
+  test "a lineage record ahead of the dedup file reads no cursor of the older epoch", ctx do
+    write_records(ctx.cell_id, 0..3)
+    progress = %{last_persisted_seq: 600, outbox_flushed_seq: 500, epoch: 2, folded_offset: 9}
+    :ok = Lineage.put_dedup(ctx.cell_id, progress)
+    :ok = Lineage.put(ctx.cell_id, %{stored(ctx.cell_id) | epoch: 3, folded_offset: -1, cut: nil})
+
+    assert %{
+             progress: %{
+               epoch: 3,
+               folded_offset: -1,
+               last_persisted_seq: 0,
+               outbox_flushed_seq: -1
+             },
+             cut: nil
+           } = Lineage.read(ctx.cell_id)
+  end
+
   # fails when: a Cell from before the lineage file never gets one, or reads
   # anything but its dedup file's epoch and folded offset until then.
   test "a Cell with no lineage file serves its dedup file and gets one at its next write",

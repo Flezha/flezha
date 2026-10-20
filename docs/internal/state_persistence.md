@@ -269,7 +269,10 @@ it refuses the record, gives back its stream credit and stops without a restart.
 lineage file's on a tie); a
 dedup file ahead means a build without lineage records ran since, and the lineage record is
 rewritten before the next dedup write. Its pending `cut` counts only while the dedup file's epoch
-is below its own. A realign (`cut: :all`) and a rewind (`{:above, seq}`) write it with the next
+is below its own, and a dedup file behind it reads with an empty log's cursors
+(`last_persisted_seq` 0, `outbox_flushed_seq` -1): a power loss can keep the record whose cut
+was cleared and lose the dedup write after it, and the older epoch's flush cursor would count the
+new epoch's records as flushed. A realign (`cut: :all`) and a rewind (`{:above, seq}`) write it with the next
 epoch before their disk step, then clear the cut in it before the dedup file is written (the dedup
 file is not synced, so only the lineage record can end the cut); a writer that boots with the cut
 still pending runs that disk step again before it serves. A prefix cut writes its folded offset to
