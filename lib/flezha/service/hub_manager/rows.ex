@@ -5,7 +5,7 @@ defmodule Flezha.Service.HubManager.Rows do
 
   **This module MUST NOT be added to `test/test_helper.exs`'s `Mimic.copy`
   list.** `RegistryUpdate` ships transform closures that reach
-  `rewrite_cspec_plugins/2` on every peer's registry; a closure bound to a
+  its cspec rewrites on every peer's registry; a closure bound to a
   Mimic-copied module names `<Mod>.Mimic.Original.Module`, an in-memory test
   artifact that does not exist on peers, and crashes the remote registry with
   `UndefinedFunctionError`.
@@ -180,6 +180,15 @@ defmodule Flezha.Service.HubManager.Rows do
          do: {:ok, normalize_plugins(Keyword.get(relay.opts, :bindings, []))}
   end
 
+  @doc "The relay `relay_id`'s option `key` as its registry row carries it, or `nil`."
+  @spec relay_opt(String.t(), String.t(), atom()) :: term()
+  def relay_opt(namespace, relay_id, key) do
+    case relay_spec(namespace, relay_id) do
+      {:ok, relay, _host} -> relay |> Map.get(:opts, []) |> Keyword.get(key)
+      {:error, _unreadable} -> nil
+    end
+  end
+
   @doc """
   The relay `relay_id` as its start declared it (its factory id, its
   options), and where it runs, as `relay_rows/1` names it. Read from the one
@@ -294,26 +303,34 @@ defmodule Flezha.Service.HubManager.Rows do
   """
   @spec rewrite_cspec_plugins(map(), ([{binary(), Plugin.t()}] -> [{binary(), Plugin.t()}])) ::
           map()
-  def rewrite_cspec_plugins(%{start: {m, f, [arg]}} = cspec, update_fn) do
+  def rewrite_cspec_plugins(
+        %{start: {m, f, [{namespace, %Plugin{id: id} = plugin}]}} = cspec,
+        update_fn
+      ) do
+    [{^id, rewritten}] = update_fn.([{id, plugin}])
+    Map.put(cspec, :start, {m, f, [{namespace, rewritten}]})
+  end
+
+  def rewrite_cspec_plugins(cspec, update_fn) do
+    rewrite_cspec_opts(cspec, fn opts ->
+      current = normalize_plugins(Keyword.get(opts, :bindings, []))
+      Keyword.put(opts, :bindings, update_fn.(current))
+    end)
+  end
+
+  @doc """
+  Apply `opts_fn` to the options a relay child spec's start args carry and
+  return the rewritten spec.
+  """
+  @spec rewrite_cspec_opts(map(), (keyword() -> keyword())) :: map()
+  def rewrite_cspec_opts(%{start: {m, f, [arg]}} = cspec, opts_fn) do
     new_arg =
       case arg do
-        {namespace, %Plugin{id: id} = plugin} ->
-          [{^id, rewritten}] = update_fn.([{id, plugin}])
-          {namespace, rewritten}
-
-        {namespace, relay} ->
-          {namespace, rewrite_relay_bindings(relay, update_fn)}
-
-        {namespace, runner_id, relay} ->
-          {namespace, runner_id, rewrite_relay_bindings(relay, update_fn)}
+        {namespace, relay} -> {namespace, %{relay | opts: opts_fn.(relay.opts)}}
+        {namespace, runner, relay} -> {namespace, runner, %{relay | opts: opts_fn.(relay.opts)}}
       end
 
     Map.put(cspec, :start, {m, f, [new_arg]})
-  end
-
-  defp rewrite_relay_bindings(relay, update_fn) do
-    current = normalize_plugins(Keyword.get(relay.opts, :bindings, []))
-    %{relay | opts: Keyword.put(relay.opts, :bindings, update_fn.(current))}
   end
 
   defp normalize_plugins(plugins) when is_list(plugins) do

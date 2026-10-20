@@ -2,7 +2,8 @@
 //! iteration `0` once every Cell has been idle for that long, and not while a
 //! Cell still holds work; one whose `sleep_after` is `false` never parks. One
 //! that ends from inside (a tasklet's `complete`, or `max_duration_ms`) reports
-//! its end once, after its Cells have run what they held. The deadline is promoted as a waiting poller
+//! its end once, after its Cells have run what they held; a bind arms the stop
+//! as far out as the window it carries. The deadline is promoted as a waiting poller
 //! promotes it, by a thread that takes no activation, so the Cells other
 //! tests hold are never drained here.
 
@@ -15,7 +16,7 @@ use crossbeam::channel::{unbounded, Receiver};
 
 use crate::relay::instance::RelayInstance;
 use crate::runner::{RunnerMessage, RunnerNode};
-use crate::test_support::host_class;
+use crate::steps::Deadline;
 use crate::ErrorModel;
 
 const WINDOW_MS: u64 = 150;
@@ -69,10 +70,27 @@ impl Drop for Promoter {
 
 /// Bind `instance` of `factory` and answer it with the control channel.
 fn bound(factory: &str, instance: &str) -> (RunnerNode, Receiver<RunnerMessage>) {
+    bound_with(factory, instance, None)
+}
+
+/// [`bound`], the bind carrying `window_ms` of the run's `max_duration`.
+fn bound_with(
+    factory: &str,
+    instance: &str,
+    window_ms: Option<u64>,
+) -> (RunnerNode, Receiver<RunnerMessage>) {
+    use crate::command::CommandAction;
     let (tx, rx) = unbounded::<RunnerMessage>();
     crate::runner::install_reconnect_trigger(tx);
     let mut node = RunnerNode::new("test-ns".to_string());
-    let errors = host_class::bind(&mut node, factory, instance, "", 0);
+    let mut errors = Vec::new();
+    crate::pb::AddRelay {
+        relay_id: instance.to_string(),
+        factory_id: factory.to_string(),
+        max_duration_remaining_ms: window_ms,
+        ..Default::default()
+    }
+    .handle(&mut node, "", &mut errors);
     assert!(errors.is_empty(), "{errors:?}");
     (node, rx)
 }
@@ -272,17 +290,22 @@ fn a_flow_that_completes_from_inside_ends_once_its_cells_are_done() {
     );
 }
 
-#[test]
-fn a_flow_with_a_wall_clock_stop_ends_cancelled() {
-    let _env = crate::runner::env_test_guard();
-    let factory = format!("stop_flow_{}", std::process::id());
+/// A flow class kept locally whose run stops after `window_ms`.
+fn stop_class(factory: &str, window_ms: u64) {
     let json = format!(
-        r#"{{"factory_id":"{factory}","sdk_lang":1,"sdk_version":"0.1.0","max_duration_ms":{WINDOW_MS},
+        r#"{{"factory_id":"{factory}","sdk_lang":1,"sdk_version":"0.1.0","max_duration_ms":{window_ms},
              "durable":{{"local":{{"sleep_after":false}}}},
              "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","tasklet":0}}]]}}],
              "tasklets":[{{"name":"p0"}}]}}"#
     );
     crate::host::register_host_class_json(json.as_bytes()).expect("class registers");
+}
+
+#[test]
+fn a_flow_with_a_wall_clock_stop_ends_cancelled() {
+    let _env = crate::runner::env_test_guard();
+    let factory = format!("stop_flow_{}", std::process::id());
+    stop_class(&factory, WINDOW_MS);
     let _promoter = Promoter::start();
     let started = Instant::now();
     let (_node, rx) = bound(&factory, "stop-flow-1");
@@ -291,4 +314,45 @@ fn a_flow_with_a_wall_clock_stop_ends_cancelled() {
         completion_of(&rx, "stop-flow-1", Duration::from_secs(5)).expect("the stop ended it");
     assert_eq!((status.as_str(), result.len()), ("cancelled", 0));
     assert!(started.elapsed() >= Duration::from_millis(WINDOW_MS));
+}
+
+#[test]
+fn a_bind_arms_what_is_left_of_the_window_it_carries() {
+    let _env = crate::runner::env_test_guard();
+    let factory = format!("window_flow_{}", std::process::id());
+    stop_class(&factory, 60_000);
+    let due = |id: &str, window_ms: Option<u64>| {
+        let (node, _rx) = bound_with(&factory, id, window_ms);
+        let (instance, _) = only_cell(&node, id);
+        let core = crate::poll_core::global();
+        let (_, due) = core
+            .instance_deadlines(instance.seq)
+            .into_iter()
+            .find(|(deadline, _)| *deadline == Deadline::MaxDuration)
+            .expect("max_duration armed");
+        core.disarm_instance(instance.seq, Deadline::MaxDuration, due);
+        due
+    };
+
+    let whole = due("window-whole", None);
+    let left = due("window-left", Some(500));
+
+    assert!(
+        whole.abs_diff(left + 59_500) < 1_000,
+        "500 left arms about 0.5 s out, the whole window 60 s: {whole} vs {left}"
+    );
+}
+
+#[test]
+fn a_spent_window_ends_the_flow_at_once() {
+    let _env = crate::runner::env_test_guard();
+    let factory = format!("spent_flow_{}", std::process::id());
+    stop_class(&factory, 60_000);
+    let _promoter = Promoter::start();
+    let (_node, rx) = bound_with(&factory, "spent-flow-1", Some(0));
+
+    // Far inside the class's whole window of 60 s.
+    let (status, _) = completion_of(&rx, "spent-flow-1", Duration::from_secs(5))
+        .expect("the spent window ended it");
+    assert_eq!(status, "cancelled");
 }

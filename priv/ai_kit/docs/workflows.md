@@ -77,7 +77,7 @@ The class declares the run and its two members
 | --- | --- | --- |
 | `each` | `once`: one pass over the first message, then the instance is over. `per_input`: one pass, an iteration, per message, for as long as the instance lives. `chained`: each pass's last handoff feeds the next pass, and the loop ends on an empty one. | `once` |
 | `on_failure` | `undo_all`: every finished step is undone. `keep_progress`: committed iterations are kept, and only the one in flight is undone. | `undo_all` |
-| `max_duration_ms` | a wall-clock stop; the instance unwinds and ends `cancelled` | none |
+| `max_duration_ms` | a wall-clock stop, counted from the run's first bind, so a sleep, a restart or a move does not restart it; the instance unwinds and ends `cancelled` | none |
 | `durable` | `local`, `remote` or `false` (in memory: a crash starts over) | `local` |
 | `sleep_after` | an idle instance sleeps after this long | six hours |
 

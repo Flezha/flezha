@@ -254,7 +254,7 @@ defmodule Flezha.Relay.Lifecycle do
     with {:ok, state} <- Plugins.prepare(state, declared_bindings(state, relay)),
          {:ok, state, relay} <- Plugins.resolve_init_state(state, relay),
          relay =
-           with_resume_state(relay, Overwatch.relay_class(state)),
+           with_resume_state(relay, Overwatch.relay_class(state), state.namespace),
          # Before the runner starts: its Cell writers learn their commit unit
          # from the run, and a live one drops what the journal never named.
          :ok <- ClassRegistry.put(Overwatch.relay_class(state), state.builder.run || :flow),
@@ -350,6 +350,7 @@ defmodule Flezha.Relay.Lifecycle do
     # started).
     relay_class = Overwatch.relay_class(state)
     _ = ClassRegistry.put_declarations(relay_class, declarations)
+    _ = RelayManager.stamp_window_end(state.namespace, relay, declarations.max_duration_ms)
     # Partitionability is a class-code fact, so it is recorded against the
     # factory: a later `--partitions N` start of a known-keyless class, or of
     # a steps relay that reads one message, is then refused before a runner is
@@ -437,17 +438,18 @@ defmodule Flezha.Relay.Lifecycle do
   end
 
   # Stamp everything a resuming bind carries onto the relay's opts so
-  # `control_unit` can set the `AddRelay` fields: how many Cell restores
-  # to wait for, the task-journal the run resumes its iteration from, how
-  # many inputs the bind's re-forward owes it, for any instance whose input is
-  # journaled, and how many kept effect results it ships. A class without a journal or an input log reads `nil` and `0`.
-  defp with_resume_state(relay, relay_class) do
+  # `control_unit` can set the `AddRelay` fields: the Cell restores to wait
+  # for, the task-journal the run resumes from, the inputs the re-forward owes
+  # it, the kept effect results it ships and when its run window ends. A class
+  # without a journal or an input log reads `nil` and `0`.
+  defp with_resume_state(relay, relay_class, namespace) do
     opts =
       relay.opts
       |> Keyword.put(:resume_cell_count, Replay.resume_cell_count(relay_class))
       |> Keyword.put(:task_journal, Commands.task_journal_state(relay_class))
       |> Keyword.put(:inbox_tail_count, Replay.owed_count(relay_class))
       |> Keyword.put(:effect_results, Commands.effect_results(relay_class))
+      |> Keyword.put(:max_duration_ends_at, RelayManager.window_end(namespace, relay.id))
 
     %{relay | opts: opts}
   end

@@ -48,6 +48,7 @@ defmodule Flezha.Service.HubManager do
   defdelegate relay_bindings(arg1), to: Rows
   defdelegate declared_bindings(arg1), to: Rows
   defdelegate relay_bindings(arg1, arg2), to: Rows
+  defdelegate relay_opt(arg1, arg2, arg3), to: Rows
   defdelegate plugin_entries(arg1), to: Rows
   defdelegate plugin_row(arg1, arg2), to: Rows
   defdelegate plugin_entry(arg1, arg2), to: Rows
@@ -62,6 +63,7 @@ defmodule Flezha.Service.HubManager do
   @doc false
   defdelegate registry_backend_config(arg1), to: Lifecycle
   defdelegate rewrite_cspec_plugins(arg1, arg2), to: Rows
+  defdelegate rewrite_cspec_opts(arg1, arg2), to: Rows
   defdelegate runner_relays(arg1, arg2), to: Placement
   defdelegate with_live_hub_id(arg1, arg2, arg3), to: Rows
 

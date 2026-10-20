@@ -318,7 +318,8 @@ defmodule Flezha.Runner.ControlUnit do
       resume_cell_count: Keyword.get(relay.opts, :resume_cell_count, 0),
       inbox_tail_count: Keyword.get(relay.opts, :inbox_tail_count, 0),
       effect_result_count: length(Keyword.get(relay.opts, :effect_results, [])),
-      task_journal: Keyword.get(relay.opts, :task_journal)
+      task_journal: Keyword.get(relay.opts, :task_journal),
+      max_duration_remaining_ms: window_left(Keyword.get(relay.opts, :max_duration_ends_at))
     }
 
     command = with_partition_identity(command, relay.opts)
@@ -399,6 +400,12 @@ defmodule Flezha.Runner.ControlUnit do
     refs = handle_refs(state[:response_refs], response.reference_id, reply, metadata)
     Map.put(state, :response_refs, refs)
   end
+
+  # What is left of the run's window on this controller's clock, so the runner
+  # never compares a controller time with its own; unset until the first bind
+  # records the end, which leaves the class's whole window.
+  defp window_left(nil), do: nil
+  defp window_left(ends_at), do: max(0, ends_at - System.os_time(:millisecond))
 
   # Register the caller against the control-channel reference so the matching
   # `CommandResponse` (delivered later via `handle_payload/3`) is routed back.

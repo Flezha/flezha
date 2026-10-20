@@ -1,7 +1,8 @@
 defmodule FlezhaTest.Runner.ControlUnitAddRelayTest do
   @moduledoc """
-  The resuming bind's two instance-scoped fields on `AddRelay`, both stamped
-  onto the relay's opts by `Flezha.Relay.Lifecycle`.
+  The resuming bind's instance-scoped fields on `AddRelay`, each stamped
+  onto the relay's opts by `Flezha.Relay.Lifecycle`, and what is left of the
+  run's window, counted on the controller's clock.
 
   `task_journal` rides the bind rather than a per-Cell `RestoreInitState`
   because it is instance-scoped: a durable steps class with no per-Cell
@@ -75,6 +76,25 @@ defmodule FlezhaTest.Runner.ControlUnitAddRelayTest do
     assert_receive {:sent, {:add_relay, add}}, 500
     assert add.resume_cell_count == 0
     assert add.task_journal == nil
+    assert add.max_duration_remaining_ms == nil, "no window end yet: the class's whole window"
+  end
+
+  # Fails when: a later bind arms the class's whole window again, so a run
+  # that sleeps, restarts or moves never reaches its `max_duration_ms`.
+  test "a bind carries what is left of the run's window", %{runner_id: runner_id} do
+    started_at = System.os_time(:millisecond) - 1_500
+    start_relay(runner_id, max_duration_ends_at: started_at + 2_000)
+
+    assert_receive {:sent, {:add_relay, add}}, 500
+    assert add.max_duration_remaining_ms in 300..500
+  end
+
+  test "a bind past its window carries 0, not a negative", %{runner_id: runner_id} do
+    started_at = System.os_time(:millisecond) - 3_000
+    start_relay(runner_id, max_duration_ends_at: started_at + 2_000)
+
+    assert_receive {:sent, {:add_relay, add}}, 500
+    assert add.max_duration_remaining_ms == 0
   end
 end
 

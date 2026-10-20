@@ -3,6 +3,7 @@ defmodule FlezhaTest.Convergence.CrossControllerBinding do
 
   alias Flezha.Convergence.Snapshot, as: ConvergenceSnapshot
   alias Flezha.Service.RelayManager
+  alias Flezha.Service.RelayManager.Init
   alias Flezha.State.TestHelpers
   alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.Helper.StepsResumeHarness
@@ -54,6 +55,40 @@ defmodule FlezhaTest.Convergence.CrossControllerBinding do
                {{:relay, {_ns, ^op}}, verdict} -> verdict
                _ -> nil
              end)
+
+    NodeTestHelper.stop_peer_node(peer_pid, peer)
+  end
+
+  # Fails when: the bind this controller sends after the move arms the class's
+  # whole window again, or reads a window end only the peer holds.
+  # `keyed_loop_steps` declares 600 s, so the run ends here only because the
+  # window counts from its first bind, on the peer.
+  @tag :multi_node
+  @tag timeout: 240_000
+  test "a move whose new bind this controller sends keeps the window" do
+    {peer_pid, peer} = NodeTestHelper.start_healing_peer(:window_move)
+    :erpc.call(peer, Application, :put_env, [:flezha, :group_withdraw_grace_ms, 500])
+    _local_runner = NodeTestHelper.start_runner(@ns)
+    {_peer_runner, os_pid} = NodeTestHelper.start_runner_remote_with_pid(peer, @ns)
+    collector = spawn_link(fn -> StepsResumeHarness.collect_loop([]) end)
+    op = StepsResumeHarness.start_steps_on_peer(peer, @ns, "keyed_loop_steps", collector)
+
+    send_trade(op, "SOL-USD:1")
+
+    assert NodeTestHelper.wait_until(
+             fn -> StepsResumeHarness.committed_iters(op, peer) == [0] end,
+             30_000
+           )
+
+    assert NodeTestHelper.wait_until(fn -> Init.window_end(@ns, op) != nil end, 10_000),
+           "the peer's first bind recorded no window end"
+
+    ends_at = Init.window_end(@ns, op)
+    assert :erpc.call(peer, Init, :window_end, [@ns, op]) == ends_at
+
+    StepsResumeHarness.spend_window(@ns, op)
+    {_, 0} = System.cmd("kill", ["-KILL", Integer.to_string(os_pid)], stderr_to_stdout: true)
+    StepsResumeHarness.await_status(op, "cancelled", 150_000)
 
     NodeTestHelper.stop_peer_node(peer_pid, peer)
   end

@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Fixed: `max_duration_ms` counts from the run's first bind
+
+- A run's `max_duration_ms` window now counts from its first bind. A sleep and wake, a runner
+  restart, or a move to another runner or controller no longer starts the window again; a run
+  that comes back past its window ends `cancelled` at once. A stop and a new start of the same
+  id open a new window. Before, every bind armed the class's whole window.
+- Wire: `AddRelay` gains `optional uint64 max_duration_remaining_ms` (field 14), the window
+  still left as the controller counts it on its own clock. A runner that gets no field arms the
+  class's whole window, as before.
+
 ### Fixed: a steps relay whose Cell restores do not all land fails instead of running
 
 - A resumed steps relay whose announced Cell restores have not all landed within 30 s now ends

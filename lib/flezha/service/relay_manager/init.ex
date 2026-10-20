@@ -12,9 +12,11 @@ defmodule Flezha.Service.RelayManager.Init do
   alias Flezha.Config.Durations
   alias Flezha.Config.Backoff
   alias Flezha.Identificator
+  alias Flezha.Process.DurableTasks
   alias Flezha.Process.Hub
   alias Flezha.SDK.SafeCall
   alias Flezha.Service.HubManager
+  alias Flezha.Service.RegistryUpdate
   alias Flezha.Service.RelayManager
   alias Flezha.Service.RelayManager.Teardown
   alias ProcessHub.Service.DeclaredChildren
@@ -58,9 +60,9 @@ defmodule Flezha.Service.RelayManager.Init do
 
   @doc """
   Make `child_id`'s declared child spec carry the plugins its registry row
-  carries — a relay's bindings, or a plugin child's own entry — so a
-  restart-driven start builds it from its current set rather than the one it
-  was created with.
+  carries — a relay's bindings, or a plugin child's own entry — and a relay's
+  run window end, so a restart-driven start builds it from its current set
+  rather than the one it was created with.
 
   The row is the source, not the caller. `ProcessRegistry.update/4` applies its
   transform inside the registry, so concurrent plugin writes for one relay
@@ -87,9 +89,10 @@ defmodule Flezha.Service.RelayManager.Init do
   @doc """
   Apply `transform` to `child_id`'s registry row on every node, then make its
   declared entry carry the result (`redeclare/2`): two records, one mutation,
-  and every plugin write goes through here. The row is what `flz relay info`
-  and the convergence backstop read while the child runs; the declared set is
-  what a restart rebuilds it from, and it is the ONLY one a restart reads.
+  and every plugin write and the run window's end go through here. The row is
+  what `flz relay info` and the convergence backstop read while the child runs;
+  the declared set is what a restart rebuilds it from, and it is the ONLY one a
+  restart reads.
 
   The row goes first and is the source the declared write copies from: its
   transform runs inside the registry, so concurrent writes for one child merge
@@ -99,6 +102,34 @@ defmodule Flezha.Service.RelayManager.Init do
   def write_plugins(namespace, child_id, transform) do
     with :ok <- write_row(namespace, child_id, transform, 0), do: redeclare(namespace, child_id)
   end
+
+  @doc """
+  Record, at the first bind of `relay` that succeeds, when its run window of
+  `max_duration_ms` ends on this controller's clock. The row and the declared
+  entry keep it through a sleep, a restart and a move, and a stop removes both,
+  so the next start opens a new window. A class with no window, or a bind that
+  already carried an end, writes nothing.
+
+  The write runs off the caller: a first bind can finish before the start has
+  written the row, and the write waits for it on the `:no_response` ladder.
+  """
+  @spec stamp_window_end(binary(), map(), pos_integer() | nil) :: :ok
+  def stamp_window_end(_namespace, _relay, nil), do: :ok
+
+  def stamp_window_end(namespace, relay, max_duration_ms) do
+    if Keyword.get(relay.opts, :max_duration_ends_at) do
+      :ok
+    else
+      transform = RegistryUpdate.put_window_end(System.os_time(:millisecond) + max_duration_ms)
+      {:ok, _pid} = DurableTasks.start(fn -> write_plugins(namespace, relay.id, transform) end)
+      :ok
+    end
+  end
+
+  @doc "When `relay_id`'s run window ends, as its registry row records it, or `nil`."
+  @spec window_end(binary(), binary()) :: integer() | nil
+  def window_end(namespace, relay_id),
+    do: HubManager.relay_opt(namespace, relay_id, :max_duration_ends_at)
 
   defp write_row(namespace, child_id, transform, attempt) do
     hub_id = Identificator.hub(namespace)
@@ -161,7 +192,10 @@ defmodule Flezha.Service.RelayManager.Init do
     with {:ok, hub} <- hub_state(hub_id),
          {:ok, spec} <- declared_spec(hub_id, child_id),
          {:ok, row_plugins} <- row_plugins(namespace, child_id) do
-      case HubManager.rewrite_cspec_plugins(spec, fn _ -> row_plugins end) do
+      spec
+      |> HubManager.rewrite_cspec_plugins(fn _ -> row_plugins end)
+      |> with_window_end(namespace, child_id)
+      |> case do
         ^spec ->
           :ok
 
@@ -172,6 +206,18 @@ defmodule Flezha.Service.RelayManager.Init do
       end
     end
   end
+
+  defp with_window_end(spec, namespace, relay_id) when is_binary(relay_id) do
+    case window_end(namespace, relay_id) do
+      nil ->
+        spec
+
+      ends_at ->
+        HubManager.rewrite_cspec_opts(spec, &Keyword.put(&1, :max_duration_ends_at, ends_at))
+    end
+  end
+
+  defp with_window_end(spec, _namespace, {:plugin, _name}), do: spec
 
   defp row_plugins(namespace, relay_id) when is_binary(relay_id),
     do: HubManager.relay_bindings(namespace, relay_id)

@@ -42,6 +42,18 @@ defmodule Flezha.Service.RegistryUpdate do
     end
   end
 
+  @doc """
+  Registry transform that records when a relay's run window ends, unless its
+  row already records it: the first bind's end is the one kept.
+  """
+  @spec put_window_end(integer()) :: (map(), keyword(), map() -> {map(), keyword(), map()})
+  def put_window_end(ends_at) do
+    fn cspec, node_pids, metadata ->
+      put = &Keyword.put_new(&1, :max_duration_ends_at, ends_at)
+      {HubManager.rewrite_cspec_opts(cspec, put), node_pids, metadata}
+    end
+  end
+
   @doc "Plugin-list transform that adds (or replaces) a plugin entry."
   @spec add_plugin(binary(), Plugin.t()) ::
           ([{binary(), Plugin.t()}] -> [{binary(), Plugin.t()}])

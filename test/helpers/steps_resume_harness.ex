@@ -19,6 +19,7 @@ defmodule FlezhaTest.Helper.StepsResumeHarness do
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.HubManager
   alias Flezha.Service.RelayManager
+  alias Flezha.Service.RelayManager.Init
   alias Flezha.State.Completion
   alias Flezha.State.Paths
   alias Flezha.State.TaskJournal
@@ -204,6 +205,19 @@ defmodule FlezhaTest.Helper.StepsResumeHarness do
              timeout_ms
            ),
            "run never completed with status #{inspect(status)}"
+  end
+
+  # Move the run window's recorded end into the past, as if the window ran out
+  # while nothing ran it: the next bind carries 0 and the run ends at once. The
+  # transform is built here so a peer's registry can resolve it.
+  def spend_window(namespace, relay_id) do
+    spent = System.os_time(:millisecond) - 1
+    put = &Keyword.put(&1, :max_duration_ends_at, spent)
+
+    assert :ok =
+             Init.write_plugins(namespace, relay_id, fn cspec, node_pids, metadata ->
+               {HubManager.rewrite_cspec_opts(cspec, put), node_pids, metadata}
+             end)
   end
 
   # Asleep: evicted from its runner, its Overwatch kept.

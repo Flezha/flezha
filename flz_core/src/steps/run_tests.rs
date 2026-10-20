@@ -116,3 +116,33 @@ fn a_stop_at_the_restore_gate_ends_the_run_cancelled() {
         ("cancelled".to_string(), String::new(), Vec::new())
     );
 }
+
+#[test]
+fn the_bind_arms_max_duration_as_far_out_as_its_window() {
+    let id = "wake_window";
+    let json = crate::test_support::host_class::steps_json(id, &["in"], 1).replacen(
+        r#""sdk_version":"0.1.0","#,
+        r#""sdk_version":"0.1.0","max_duration_ms":60000,"#,
+        1,
+    );
+    crate::host::register_host_class_json(json.as_bytes()).expect("class registers");
+    let due = |remaining: Option<u64>| {
+        let inst = RelayInstance::of_class(id, &format!("{id}_{remaining:?}")).expect("registered");
+        inst.bind_window(remaining);
+        crate::steps::open(&inst);
+        let run = inst.steps.as_ref().expect("a steps run");
+        let due = armed(run, Deadline::MaxDuration).expect("max_duration armed");
+        crate::poll_core::global().disarm_instance(inst.seq, Deadline::MaxDuration, due);
+        due
+    };
+
+    let whole = due(None);
+    let left = due(Some(500));
+    let spent = due(Some(0));
+
+    assert!(
+        whole.abs_diff(left + 59_500) < 1_000,
+        "500 left arms about 0.5 s out, the whole window 60 s: {whole} vs {left}"
+    );
+    assert!(spent < left, "a spent window is due at once");
+}

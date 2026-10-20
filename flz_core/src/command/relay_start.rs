@@ -72,6 +72,7 @@ impl AddRelay {
         ) else {
             return;
         };
+        instance.bind_window(self.max_duration_remaining_ms);
         if let Err(e) = crate::command::cell_state::apply_init_values(&instance, &self.init_values)
         {
             errors.push(e);

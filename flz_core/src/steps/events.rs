@@ -26,7 +26,7 @@ use crate::timer::{TimerFire, TimerKind, TimerOp};
 pub fn open(inst: &RelayInstance) {
     let Some(r) = Run::of(inst) else { return };
     r.decide(|d| {
-        if let Some(limit) = d.r.inst.topology.max_duration {
+        if let Some(limit) = d.r.inst.max_duration() {
             d.arm(Deadline::MaxDuration, limit);
         }
         d.s.bound = true;

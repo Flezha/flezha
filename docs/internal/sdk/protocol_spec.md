@@ -648,13 +648,14 @@ none), `resume_cell_count` (the `RestoreInitState` frames to expect on this
 bind), `task_journal` (steps crash-resume state, §11), the partition identity
 (below), `inbox_tail_count` (the input-log records the bind re-forwards) and
 `effect_result_count` (the effect results shipped as `EffectResults` after the
-bind). Fields 4 and 12 are reserved: the runner runs a class as the class
-declares, and every controller parks a failed turn sent as
-`IterCommit.dead_letter`.
+bind) and `max_duration_remaining_ms` (what is left of the run's window, which
+the controller counts from the run's first bind on its own clock). Fields 4 and
+12 are reserved: the runner runs a class as the class declares, and every
+controller parks a failed turn sent as `IterCommit.dead_letter`.
 
 | Field | Value |
 |-------|-------|
-| Behaviour | Create an instance of `factory_id` under `relay_id`. A flow class: a flow relay whose non-empty `init_values` JSON is applied as initial state in the tasklet-keyed shape of "Relay state JSON shape" above. A steps class: a steps instance, whose run is a pass sheet its events advance, its non-empty `init_values` applied as initial state in the same shape, its input the messages that arrive on its entry channels; a durable instance holds its first tasklet until `resume_cell_count` restores and `effect_result_count` effect results have landed. For either run, while any of its `inbox_tail_count` owed input-log records has not arrived its idle deadline is 60 s instead of its class's `sleep_after` |
+| Behaviour | Create an instance of `factory_id` under `relay_id`. A flow class: a flow relay whose non-empty `init_values` JSON is applied as initial state in the tasklet-keyed shape of "Relay state JSON shape" above. A steps class: a steps instance, whose run is a pass sheet its events advance, its non-empty `init_values` applied as initial state in the same shape, its input the messages that arrive on its entry channels; a durable instance holds its first tasklet until `resume_cell_count` restores and `effect_result_count` effect results have landed. For either run, while any of its `inbox_tail_count` owed input-log records has not arrived its idle deadline is 60 s instead of its class's `sleep_after`; a class with `max_duration_ms` arms its stop `max_duration_remaining_ms` out, or its whole window when the field is absent, and a 0 is due at once |
 | Idempotency | A duplicate `relay_id` (a reconnect re-issue) is answered `success` without re-registering |
 | Reply | `raw_data` = `AddRelayResponse { map<string,string> metadata }` — empty when the class declares nothing |
 | Errors | factory not found; JSON parse / deserialization failure; `PartitionsWithoutPerInputLoop: ...`; `PartitionsWithoutKeyedTasklet: ...` |
@@ -671,7 +672,7 @@ announcements:
 |-----|-------|---------|
 | `durable` | `"memory"` / `"local"` / `"remote"` | where an instance keeps its work; `remote` withholds barrier acks until the remote backend holds them |
 | `sleep_after_ms` | ms | how long an idle instance waits before it sleeps (absent: it never sleeps) |
-| `max_duration_ms` | ms | the wall-clock stop, when the class declares one |
+| `max_duration_ms` | ms | the wall-clock stop, when the class declares one; the controller counts it from the run's first bind and sends what is left as `AddRelay.max_duration_remaining_ms` |
 | `exactly` | `"effectively_once"` | flow only: the class runs on the effectively-once tier |
 | `keyed` | `"false"` | flow class with no keyed entry-fed tasklet (sent only when false) |
 | `correction_ms` | ms | late-input correction window |

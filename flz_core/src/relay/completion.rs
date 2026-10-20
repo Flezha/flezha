@@ -5,7 +5,7 @@
 //! checked from one deadline on the poll core's deferred-wake list.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use crate::cell::CellSlot;
@@ -16,13 +16,15 @@ use crate::util::LockRecover;
 /// How long a completing instance waits before it looks at its Cells again.
 const DRAIN_RECHECK: Duration = Duration::from_millis(5);
 
-/// The end a flow instance asked for, until it is reported.
+/// The end a flow instance asked for, until it is reported, and for either
+/// run what is left of its `max_duration` window, as its bind carried it.
 #[derive(Default)]
 pub struct FlowEnd {
     /// `(status, result)`: `completed` from a tasklet, `cancelled` from
     /// `max_duration`. A later `complete` replaces the result.
     asked: Mutex<Option<(&'static str, Vec<u8>)>>,
     reported: AtomicBool,
+    window_left: OnceLock<Duration>,
 }
 
 #[cfg(test)]
@@ -41,12 +43,29 @@ pub fn complete(slot: &Arc<CellSlot>, result: Vec<u8>) {
     }
 }
 
+impl RelayInstance {
+    /// What is left of the run's `max_duration` window, which the controller
+    /// counts from the run's first bind; `None` leaves the class's whole one.
+    pub(crate) fn bind_window(&self, remaining_ms: Option<u64>) {
+        if let Some(ms) = remaining_ms {
+            let _ = self.end.window_left.set(Duration::from_millis(ms));
+        }
+    }
+
+    /// How far out this bind arms `MaxDuration`: the window the bind carried,
+    /// else the class's whole one; `None` for a class with no stop.
+    pub(crate) fn max_duration(&self) -> Option<Duration> {
+        let whole = self.topology.max_duration?;
+        Some(self.end.window_left.get().copied().unwrap_or(whole))
+    }
+}
+
 /// The bind is complete: a class with a wall-clock stop arms it.
 pub fn bound(inst: &Arc<RelayInstance>) {
     if inst.steps.is_some() {
         return;
     }
-    if let Some(limit) = inst.topology.max_duration {
+    if let Some(limit) = inst.max_duration() {
         arm(inst, Deadline::MaxDuration, limit);
     }
 }

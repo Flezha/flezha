@@ -33,6 +33,8 @@ defmodule Flezha.Service.RelayManager do
   @doc false
   defdelegate pick_runner(arg1, arg2), to: Placement
   defdelegate redeclare(arg1, arg2), to: Init
+  defdelegate stamp_window_end(arg1, arg2, arg3), to: Init
+  defdelegate window_end(arg1, arg2), to: Init
   defdelegate runner_registered?(arg1), to: Placement
 
   # How many ids a start without one draws before it is refused.

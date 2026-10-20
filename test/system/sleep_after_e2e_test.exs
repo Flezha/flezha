@@ -27,6 +27,7 @@ defmodule FlezhaTest.System.SleepAfterE2ETest do
   alias Flezha.Relay.{ClassRegistry, Replay, Suspend}
   alias Flezha.Dlq.Store, as: DlqStore
   alias Flezha.Service.RelayManager
+  alias Flezha.Service.RelayManager.Init
   alias Flezha.State.InputLog
   alias Flezha.State.Paths
   alias FlezhaTest.Helper.NodeTestHelper
@@ -225,6 +226,46 @@ defmodule FlezhaTest.System.SleepAfterE2ETest do
       refute ClassRegistry.sleeps?(id), "an opted-out steps does not sleep"
       assert Paths.cells_of(id) == []
       refute File.exists?(Paths.journal_path(id))
+    end
+  end
+
+  describe "a run's window across a sleep (uds)" do
+    @describetag transport: :uds
+
+    # Fails when: the wake binds with the class's whole window, so a loop that
+    # sleeps between turns never reaches its `max_duration_ms`.
+    @tag capability: :steps, skip: FlezhaTest.SystemCase.deferral(:steps)
+    test "A sleep does not restart the window", ctx do
+      namespace = unique("window_sleep")
+      id = unique("chat_loop_steps")
+      id_path = unique_id_path()
+      on_exit(fn -> cleanup(namespace, id, id_path) end)
+
+      boot_runner(namespace, ctx, id_path,
+        release?: false,
+        extra_env: [{"FLEZHA_FIXTURE_SLEEP_AFTER_MS", "700"}]
+      )
+
+      start_steps(namespace, id, "chat_loop_steps", first_message: nil)
+      send_turn(namespace, id, "hello")
+      assert NodeTestHelper.wait_until(fn -> committed_iters(id) == [0] end, 30_000)
+
+      assert NodeTestHelper.wait_until(fn -> Init.window_end(namespace, id) != nil end, 10_000),
+             "the first bind recorded no window end"
+
+      ends_at = Init.window_end(namespace, id)
+
+      assert NodeTestHelper.wait_until(fn -> suspended?(namespace, id) end, 20_000)
+      send_turn(namespace, id, "again")
+      assert NodeTestHelper.wait_until(fn -> committed_iters(id) == [0, 1] end, 60_000)
+      assert Init.window_end(namespace, id) == ends_at, "the wake recorded a window of its own"
+
+      # The class's window is 600 s: only a wake that counts from the first
+      # bind ends the run here.
+      assert NodeTestHelper.wait_until(fn -> suspended?(namespace, id) end, 20_000)
+      spend_window(namespace, id)
+      send_turn(namespace, id, "late")
+      await_status(id, "cancelled", 60_000)
     end
   end
 

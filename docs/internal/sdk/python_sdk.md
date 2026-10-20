@@ -247,8 +247,8 @@ def orders(c: flezha.Channels) -> None:
 - `durable` is `False`, `"local"` (the default) or `"remote"`, and
   `{"local": {"sleep_after": ...}}` or `{"remote": {...}}` with milliseconds or
   `False`. A kept instance sleeps after six idle hours by default.
-- `max_duration_ms` stops an instance that long after it starts;
-  `description` is free text.
+- `max_duration_ms` stops an instance that long after its first bind, a sleep,
+  a restart or a move included; `description` is free text.
 
 The `Run` and `Durable` type aliases spell the tree with `Literal` unions for a
 type checker. The core judges the tree when the runner declares its relays,

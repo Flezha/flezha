@@ -153,8 +153,9 @@ end
   and wakes on its next message with its
   Cells restored. `:remote` acknowledges each commit point (a stage, an input, a checkpoint)
   only once the durability backend holds it.
-- `max_duration_ms` is a wall-clock stop for either run: a steps instance unwinds and ends
-  `cancelled`, a flow instance ends `cancelled` once its Cells hold nothing.
+- `max_duration_ms` is a wall-clock stop for either run, counted from the run's first bind:
+  a steps instance unwinds and ends `cancelled`, a flow instance ends `cancelled` once its
+  Cells hold nothing.
 
 The SDK forwards the tree as written and the core judges it at `register_factory/2`: a
 setting written under a parent that does not carry it (`each` under `:flow`, `ack` under

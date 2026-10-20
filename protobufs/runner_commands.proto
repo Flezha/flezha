@@ -143,6 +143,13 @@ message AddRelay {
     // driver holds its first Tasklet until they have landed, as it does for
     // `resume_cell_count`; a flow relay's re-forwarded input follows them.
     uint32 effect_result_count = 13;
+    // What is left of the run's `max_duration_ms` window, counted by the
+    // controller from the run's first bind on its own clock: the runner arms
+    // the stop this far out instead of the class's whole window, so a sleep, a
+    // runner restart or a move does not restart it. 0 is a window already
+    // spent. Absent before the first bind, or for a class with no window: the
+    // whole window.
+    optional uint64 max_duration_remaining_ms = 14;
 }
 
 // SDK -> Controller, as the CommandResponse raw_data of AddRelay.

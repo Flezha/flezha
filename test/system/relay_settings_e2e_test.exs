@@ -4,8 +4,9 @@ defmodule FlezhaTest.System.RelaySettingsE2ETest do
   against a live runner of the selected SDK runtime: a flow instance that
   completes itself, a chained steps loop that ends itself, a steps loop that
   never ends until stopped, a `durable: remote` class refused on a controller
-  with no durability backend, and a two-second `sleep_after` on a flow
-  instance and on a steps instance.
+  with no durability backend, a two-second `sleep_after` on a flow
+  instance and on a steps instance, and a `max_duration_ms` window that a
+  runner restart or a live move does not restart.
 
   Tagged `:system` (boots real subprocesses); run with:
 
@@ -19,6 +20,7 @@ defmodule FlezhaTest.System.RelaySettingsE2ETest do
 
   alias Flezha.Relay.Builder
   alias Flezha.Service.RelayManager
+  alias Flezha.Service.RelayManager.Init
   alias Flezha.State.Completion
   alias FlezhaTest.Helper.NodeTestHelper
 
@@ -154,6 +156,61 @@ defmodule FlezhaTest.System.RelaySettingsE2ETest do
                "#{id} never slept"
       end
     end
+  end
+
+  # `chat_loop_steps` declares a 600 s window, so a run that ends here ends only
+  # because its rebind counted the window from the first bind.
+  describe "max_duration_ms across a rebind (uds)" do
+    @describetag transport: :uds
+
+    # Fails when: the replacement runner arms the class's whole window again.
+    @tag capability: :runner_lifecycle,
+         skip: FlezhaTest.SystemCase.deferral(:runner_lifecycle)
+    test "a runner restart past the window ends the run", ctx do
+      {namespace, id, id_path} = window_run()
+      runner = boot_runner(namespace, ctx, id_path, release?: false)
+      first_turn(namespace, id)
+
+      spend_window(namespace, id)
+      replace_runner(namespace, ctx, runner, id_path)
+      await_status(id, "cancelled", 60_000)
+    end
+
+    # Fails when: the bind a live move runs arms the class's whole window again.
+    test "a live move keeps the window", ctx do
+      {namespace, id, id_path} = window_run()
+
+      runners =
+        for path <- [id_path, unique_id_path()],
+            do: namespace |> boot_runner(ctx, path, release?: false) |> elem(1)
+
+      info = first_turn(namespace, id)
+      target = Enum.find(runners, &(&1 != info.runner_id))
+
+      spend_window(namespace, id)
+      {:ok, pid} = RelayManager.get_relay_pid(namespace, id)
+      assert :ok = GenServer.call(pid, {:rebind, target}, 60_000)
+      await_status(id, "cancelled", 60_000)
+    end
+  end
+
+  defp window_run do
+    namespace = unique("steps_window")
+    id = unique("chat_loop_steps")
+    id_path = unique_id_path()
+    on_exit(fn -> cleanup(namespace, id, id_path) end)
+    {namespace, id, id_path}
+  end
+
+  defp first_turn(namespace, id) do
+    info = start_steps(namespace, id, "chat_loop_steps", first_message: nil)
+    send_turn(namespace, id, "hello")
+    assert NodeTestHelper.wait_until(fn -> committed_iters(id) == [0] end, 30_000)
+
+    assert NodeTestHelper.wait_until(fn -> Init.window_end(namespace, id) != nil end, 10_000),
+           "the first bind recorded no window end"
+
+    info
   end
 
   defp passes(seen), do: for([_, n] <- Regex.scan(~r/^chained_pass (\d+)$/m, seen), do: n)

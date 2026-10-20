@@ -210,6 +210,14 @@ pub struct AddRelay {
     /// `resume_cell_count`; a flow relay's re-forwarded input follows them.
     #[prost(uint32, tag = "13")]
     pub effect_result_count: u32,
+    /// What is left of the run's `max_duration_ms` window, counted by the
+    /// controller from the run's first bind on its own clock: the runner arms
+    /// the stop this far out instead of the class's whole window, so a sleep, a
+    /// runner restart or a move does not restart it. 0 is a window already
+    /// spent. Absent before the first bind, or for a class with no window: the
+    /// whole window.
+    #[prost(uint64, optional, tag = "14")]
+    pub max_duration_remaining_ms: ::core::option::Option<u64>,
 }
 /// SDK -> Controller, as the CommandResponse raw_data of AddRelay.
 /// Carries the relay class's settings and SDK-side declarations (relay

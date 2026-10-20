@@ -3,7 +3,8 @@ defmodule Flezha.Service.DeclaredMutateContractTest do
   Pins the one piece of `process_hub` Flezha reaches for that is not part of its
   public API: the coordinator's `{:declared_mutate, {:add, [spec]}}` call, which
   `Flezha.Service.RelayManager.Init.redeclare/2` uses to rewrite a
-  relay's declared child spec in place.
+  relay's declared child spec in place: its bindings, and when its run
+  window ends.
 
   Flezha needs it because the declared set is written at start and at stop and
   has no update path, while a relay is bound to a plugin between the two. The registry
@@ -28,7 +29,11 @@ defmodule Flezha.Service.DeclaredMutateContractTest do
   alias Flezha.Service.HubManager
   alias Flezha.Service.RelayManager
   alias Flezha.Service.PluginManager
+  alias Flezha.Service.RegistryUpdate
+  alias Flezha.Service.RelayManager.Init
+  alias Flezha.Service.RelayManager.Teardown
   alias FlezhaTest.Helper.HubRegistryTestHelper
+  alias FlezhaTest.Helper.NodeTestHelper
   alias ProcessHub.Service.DeclaredChildren
 
   @namespace "declared_mutate_contract_ns"
@@ -134,6 +139,60 @@ defmodule Flezha.Service.DeclaredMutateContractTest do
     assert [] = declared_binding_ids(hub_id)
   end
 
+  # Fails when: the run window's end lives anywhere a move, a restart or a
+  # second bind does not read, or a later write replaces it, so the window
+  # restarts and the run never reaches its `max_duration_ms`.
+  test "the first bind's window end is kept by the row and the declared entry",
+       %{hub_id: hub_id} do
+    assert :ok = Init.stamp_window_end(@namespace, unstamped(), 2_000)
+    ends_at = await_declared_end(hub_id)
+    assert Init.window_end(@namespace, @relay_id) == ends_at
+
+    later = RegistryUpdate.put_window_end(ends_at + 60_000)
+    assert :ok = Init.write_plugins(@namespace, @relay_id, later)
+    assert Init.window_end(@namespace, @relay_id) == ends_at, "a second end replaced the first"
+    assert declared_opt(hub_id, :max_duration_ends_at) == ends_at
+
+    bind("window_plugin")
+    assert declared_opt(hub_id, :max_duration_ends_at) == ends_at, "a bind dropped the end"
+  end
+
+  test "a class with no window records no end", %{hub_id: hub_id} do
+    assert :ok = Init.stamp_window_end(@namespace, unstamped(), nil)
+    assert Init.window_end(@namespace, @relay_id) == nil
+    assert declared_opt(hub_id, :max_duration_ends_at) == nil
+  end
+
+  # Fails when: a stop leaves the end behind, so a new run of the same id
+  # starts with its predecessor's window already spent.
+  test "a stop then a start of the same id opens a new window", %{hub_id: hub_id} do
+    assert :ok = Init.stamp_window_end(@namespace, unstamped(), 1)
+    first = await_declared_end(hub_id)
+
+    assert :ok = Teardown.hub_stop_children(@namespace, [@relay_id], 5_000)
+
+    :ok =
+      HubRegistryTestHelper.start_durable(@namespace, @relay_id, recorded_runner: nil, opts: [])
+
+    assert Init.window_end(@namespace, @relay_id) == nil
+
+    assert :ok = Init.stamp_window_end(@namespace, unstamped(), 60_000)
+    assert await_declared_end(hub_id) > first
+  end
+
+  # The stamp is written off the caller.
+  defp await_declared_end(hub_id) do
+    assert NodeTestHelper.wait_until(
+             fn -> declared_opt(hub_id, :max_duration_ends_at) != nil end,
+             5_000
+           ),
+           "no window end reached the declared entry"
+
+    declared_opt(hub_id, :max_duration_ends_at)
+  end
+
+  defp unstamped, do: %{id: @relay_id, opts: [max_duration_ends_at: nil]}
+
   defp enable(name) do
     plugin = Plugin.new(id: name, provider: __MODULE__.NoopProvider, namespace: @namespace)
     assert {:ok, _} = PluginManager.enable_plugin(name, plugin)
@@ -150,7 +209,10 @@ defmodule Flezha.Service.DeclaredMutateContractTest do
         :ok = PluginManager.bind_plugin(@namespace, name, @relay_id, hooks: [{:on_output, []}])
       )
 
-  defp declared_binding_ids(hub_id) do
+  defp declared_binding_ids(hub_id),
+    do: hub_id |> declared_opt(:bindings) |> List.wrap() |> Enum.map(&elem(&1, 0)) |> Enum.sort()
+
+  defp declared_opt(hub_id, key) do
     %{children: children} = DeclaredChildren.declared_children(hub_id)
     {:ok, arg} = children |> Enum.find(&(&1.id == @relay_id)) |> Cspec.start_arg()
 
@@ -160,7 +222,7 @@ defmodule Flezha.Service.DeclaredMutateContractTest do
         {_ns, _runner, relay} -> relay
       end
 
-    relay.opts |> Keyword.get(:bindings, []) |> Enum.map(&elem(&1, 0)) |> Enum.sort()
+    Keyword.get(relay.opts, key)
   end
 
   defp declared_ids(hub_id) do
