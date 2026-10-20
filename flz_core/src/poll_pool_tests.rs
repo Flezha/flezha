@@ -156,6 +156,36 @@ fn a_stopped_pool_answers_stop_while_the_core_runs_on() {
     assert_eq!(governor.supervise(&core), Supervise::Stop);
 }
 
+/// A spawn the host refuses is reported, unless the host stopped the pool
+/// first, as the BEAM's does when the pool's owner is gone; either frees the
+/// seat.
+#[test]
+fn a_spawn_refused_by_a_stopping_host_is_not_reported() {
+    const NAME: &str = "poll_pool::tests::a_spawn_refused_by_a_stopping_host_is_not_reported";
+    if crate::test_support::passes_alone(NAME).is_some() {
+        return;
+    }
+    let seen: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
+    let into = Arc::clone(&seen);
+    flz_transport::notice::set_hook(Box::new(move |_, _, text| {
+        into.lock().unwrap().push(text.to_string());
+    }));
+    let governor = Governor::new(2, 2, RETIRE_AFTER);
+    let refuse = |_grown: bool| Err(std::io::Error::other("refused"));
+    governor.spawn_or_leave(&refuse, false);
+    assert_eq!(seen.lock().unwrap().len(), 1, "a plain refusal is reported");
+
+    let stopping = Arc::clone(&governor);
+    let stop_then_refuse = move |_grown: bool| {
+        stopping.stop();
+        Err(std::io::Error::other("the pool process is gone"))
+    };
+    governor.spawn_or_leave(&stop_then_refuse, false);
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.len(), 1, "{seen:?}");
+    assert_eq!(governor.live(), 0);
+}
+
 /// A seat given back with none taken, as a stray release after its pool
 /// ended, changes nothing: a wrapped count would refuse every later seat.
 #[test]

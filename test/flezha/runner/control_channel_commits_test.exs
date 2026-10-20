@@ -574,7 +574,10 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
     test "a park the journal refuses is acked without the controller's term", ctx do
       set_mimic_global_until_exit()
       refused = {:error, {:shutdown, "vault key s3cr3t-7f3a"}}
-      Mimic.stub(TaskJournal, :park_turn_async, fn _id, _turn, _reqids, _label -> refused end)
+
+      Mimic.stub(TaskJournal.Turns, :park_turn_async, fn _id, _turn, _reqids, _label ->
+        refused
+      end)
 
       log =
         ExUnit.CaptureLog.capture_log(fn ->
@@ -658,9 +661,9 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
       {:ok, 0} = InputLog.append(inst, "boom", %{"flz.reply_to" => "w:caller"})
       set_mimic_global_until_exit()
 
-      Mimic.stub(TaskJournal, :announce_turn, fn id, turn, entry_ref ->
+      Mimic.stub(TaskJournal.Turns, :announce_turn, fn id, turn, entry_ref ->
         send(test_pid, {:journal_when_announced, TaskJournal.read(id)})
-        Mimic.call_original(TaskJournal, :announce_turn, [id, turn, entry_ref])
+        Mimic.call_original(TaskJournal.Turns, :announce_turn, [id, turn, entry_ref])
       end)
 
       ExUnit.CaptureLog.capture_log(fn ->

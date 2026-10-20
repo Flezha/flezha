@@ -396,10 +396,11 @@ defmodule Flezha.Service.RelayManager.Init do
     # `:exit` catch covers older failure modes (timeout, kill).
     # Started, then exited cleanly before we could read its binding — a
     # run-once steps relay that already completed, or a concurrent
-    # stop. A clean exit is a successful start, not a failure; no live
-    # binding remains, so `runner_id` is nil.
+    # stop, which ends it `:shutdown` when it lands before this call. A clean
+    # exit is a successful start, not a failure; no live binding remains, so
+    # `runner_id` is nil.
     on_exit = fn
-      {reason, _} when reason in [:normal, :noproc] ->
+      {reason, _} when reason in [:normal, :shutdown, :noproc] ->
         {:ok, %{relay_id: relay.id, runner_id: nil, node: relay_node, pid: pid}}
 
       reason ->

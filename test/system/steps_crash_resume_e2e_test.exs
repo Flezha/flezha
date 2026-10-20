@@ -654,8 +654,17 @@ defmodule FlezhaTest.System.StepsCrashResumeE2ETest do
 
       await_status(relay_id, "error", 30_000)
 
-      assert [{_seq, %{outputs: [%{channel: "mid"}]}}] =
-               effect_records(relay_id, "failed_stage"),
+      # The record rides the stream channel and the failure the control
+      # channel, so the failure can land first.
+      assert NodeTestHelper.wait_until(
+               fn ->
+                 match?(
+                   [{_seq, %{outputs: [%{channel: "mid"}]}}],
+                   effect_records(relay_id, "failed_stage")
+                 )
+               end,
+               10_000
+             ),
              "the failed stage's Cell never wrote the record whose output must not leave"
 
       refute 1 in committed_tasks(relay_id)

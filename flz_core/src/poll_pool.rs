@@ -116,10 +116,14 @@ impl Governor {
             .expect("spawn poll supervisor");
     }
 
+    // A host that stopped the pool before refusing the spawn ended the pool:
+    // that refusal is its stop, not a failure to report.
     fn spawn_or_leave(&self, spawner: &impl Spawner, grown: bool) {
         if let Err(e) = spawner.spawn(grown) {
             self.left();
-            flz_transport::notice!(Warn, "could not spawn a poll worker: {e}");
+            if !self.stopped() {
+                flz_transport::notice!(Warn, "could not spawn a poll worker: {e}");
+            }
         }
     }
 
