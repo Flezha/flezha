@@ -62,6 +62,7 @@ pub const METADATA: Key = Key::flat("metadata");
 pub const CONSUMED_OFFSET: Key = Key::of("consumed_offset", "consumedOffset");
 pub const REPLAY: Key = Key::flat("replay");
 pub const NOW: Key = Key::flat("now");
+pub const FORM: Key = Key::flat("form");
 pub const TIMER_KIND: Key = Key::of("timer_kind", "timerKind");
 pub const SCHEDULED_AT: Key = Key::of("scheduled_at", "scheduledAt");
 pub const BYTES: Key = Key::flat("bytes");
@@ -124,6 +125,7 @@ pub mod record {
         CONSUMED_OFFSET,
         REPLAY,
         NOW,
+        FORM,
         TIMER_KIND,
         SCHEDULED_AT,
     ];
@@ -482,6 +484,7 @@ fn input_item<S: Sink>(s: &S, i: schema::InputItem) -> Result<S::Value, S::Error
     s.set(&mut out, REPLAY, replay)?;
     let now = s.u64(i.now)?;
     s.set(&mut out, NOW, now)?;
+    set_word(s, &mut out, FORM, i.form.as_str())?;
     s.finish_map(out)
 }
 

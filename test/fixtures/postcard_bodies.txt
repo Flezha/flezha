@@ -24,9 +24,10 @@
 #
 # Command activations are all token 1 addressed to relay `o`, tasklet 0, no
 # key, change seq 0, factory `f` and no identity, so each starts `01016f0000` and
-# ends `00016600`. The work activation carries the identity `id`.
+# ends `00016600`. The work activation carries the identity `id` and its input
+# the form `transformed`.
 
-activation|work|2a046f702d310301016b0002000102aabb010a666c7a2e6f66667365740137010701e8070100d00f09016601026964
+activation|work|2a046f702d310301016b0002000102aabb010a666c7a2e6f66667365740137010701e807010100d00f09016601026964
 activation|restore_fold|01016f00000101010f00020101000102010100016600
 activation|snapshot_request|01016f00000200016600
 activation|live_state_read|01016f00000300016600

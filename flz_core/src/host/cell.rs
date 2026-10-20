@@ -18,7 +18,7 @@ use crate::schema;
 use crate::timer::PendingTimers;
 use crate::util::LockRecover;
 
-/// An entry payload as the host layer carries it — the bytes plus what the
+/// A payload as the host layer carries it — the bytes plus what the
 /// core resolved about them; the erased value inside a host class's
 /// `CellPayload`.
 pub struct HostPayload {
@@ -28,6 +28,7 @@ pub struct HostPayload {
     pub keys: Vec<String>,
     pub event_time: Option<u64>,
     pub metadata: Vec<(String, String)>,
+    pub form: schema::InputForm,
 }
 
 /// The per-tasklet facts a [`HostDispatcher`] answers with; `Some` from
@@ -247,8 +248,12 @@ pub(super) fn host_deserialize_unreachable(
 }
 
 /// The journal codec of a host inter-task channel: the payload's routing
-/// facts, so a re-seed rebuilds the exact `HostPayload`.
-pub(super) fn host_payload_codec(channel_id: u32) -> crate::channel::ChannelCodec {
+/// facts, so a re-seed rebuilds the exact `HostPayload`. Every value of one
+/// channel has the same `form`, so the record does not carry it.
+pub(super) fn host_payload_codec(
+    channel_id: u32,
+    input_form: schema::InputForm,
+) -> crate::channel::ChannelCodec {
     #[derive(serde::Serialize, serde::Deserialize)]
     struct JournalForm {
         bytes: Vec<u8>,
@@ -275,6 +280,7 @@ pub(super) fn host_payload_codec(channel_id: u32) -> crate::channel::ChannelCode
                 keys: form.keys,
                 event_time: form.event_time,
                 metadata: Vec::new(),
+                form: input_form.clone(),
             }) as Arc<dyn Any + Send + Sync>)
         }),
     }

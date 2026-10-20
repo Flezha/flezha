@@ -250,6 +250,7 @@ fn a_steps_frame_naming_no_channel_enters_the_first_entry_channel() {
         .expect("the entry wrapper's value, addressed to the root");
     assert_eq!(host.bytes, b"payload-bytes");
     assert_eq!(host.channel, 0);
+    assert_eq!(host.form, crate::schema::InputForm::Untransformed);
     state_sink::reset_for_test();
 }
 
@@ -605,6 +606,7 @@ fn a_host_payload_fanned_across_keys_reaches_every_keyed_cell() {
         keys: vec!["A".to_string(), "B".to_string()],
         event_time: None,
         metadata: Vec::new(),
+        form: crate::schema::InputForm::Transformed,
     });
 
     let stream = dead_stream();
@@ -644,6 +646,7 @@ fn host_value(bytes: &[u8]) -> Arc<dyn Any + Send + Sync> {
         keys: Vec::new(),
         event_time: None,
         metadata: Vec::new(),
+        form: crate::schema::InputForm::Transformed,
     })
 }
 

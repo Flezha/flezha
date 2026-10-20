@@ -23,6 +23,7 @@ use crate::relay::settings::{Exactly, Run};
 use crate::relay::topology::{
     AckGranularity, CellMode, CorrectionPolicy, RelayTopology, TaskletDescriptor,
 };
+use crate::schema::InputForm;
 use crate::steps::spec::{graph_order, GraphSeed, TaskDag};
 use crate::timer::TimerPolicy;
 use crate::ErrorModel;
@@ -77,7 +78,14 @@ pub(super) fn resolve_class_facts(decl: &HostClassDecl, run: &Run, persistent: b
 pub(super) fn build_channels(
     decl: &HostClassDecl,
     derived: &[DerivedChannel],
+    run: &Run,
 ) -> (Vec<ChannelDescriptor>, HashMap<&'static str, u32>) {
+    // A steps stage releases its values untransformed; a stream producer
+    // applies the consumer's edge before its output crosses.
+    let inter_form = match run {
+        Run::Steps { .. } => InputForm::Untransformed,
+        Run::Flow { .. } => InputForm::Transformed,
+    };
     let mut channels = Vec::with_capacity(derived.len());
     let mut name_to_id = HashMap::new();
     for (channel_id, derived_channel) in derived.iter().enumerate() {
@@ -88,6 +96,7 @@ pub(super) fn build_channels(
             name,
             &decl.channels[channel_id as usize],
             derived_channel,
+            &inter_form,
         ));
         name_to_id.insert(name, channel_id);
     }
@@ -121,6 +130,7 @@ fn build_channel(
     name: &'static str,
     channel_decl: &HostChannelDecl,
     derived: &DerivedChannel,
+    inter_form: &InputForm,
 ) -> ChannelDescriptor {
     let kind = match derived.kind {
         HostChannelKind::Entry => ChannelKind::Entry,
@@ -159,10 +169,10 @@ fn build_channel(
         },
         // Known once the tasklets are built.
         prepare_wants: (false, false),
-        // Host inter-task values are bytes already; the journal codec is
-        // the lossless HostPayload wrapper, so a durable chained loop
-        // can re-seed exactly what the live handoff carried.
-        codec: (derived.kind == HostChannelKind::InterTask).then(|| host_payload_codec(channel_id)),
+        // Host inter-task values are bytes already; the lossless journal codec
+        // lets a durable chained loop re-seed exactly what the live handoff carried.
+        codec: (derived.kind == HostChannelKind::InterTask)
+            .then(|| host_payload_codec(channel_id, inter_form.clone())),
     }
 }
 
@@ -194,6 +204,7 @@ fn entry_wrap(channel_id: u32) -> EntryWrapFn {
             keys: Vec::new(),
             event_time: None,
             metadata: Vec::new(),
+            form: InputForm::Untransformed,
         }) as Arc<dyn Any + Send + Sync>)
     })
 }

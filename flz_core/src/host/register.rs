@@ -675,7 +675,7 @@ fn register(derived: Derived) -> Result<(), Error> {
         ..
     } = derived;
     let class = resolve_class_facts(&decl, &run, durable.keeps());
-    let (mut channels, name_to_id) = build_channels(&decl, &derived_channels);
+    let (mut channels, name_to_id) = build_channels(&decl, &derived_channels, &run);
     let (tasklets, tasklet_name_to_id) =
         build_tasklets(&decl, &class, &channels, &derived_channels, &modes);
     for channel in &mut channels {

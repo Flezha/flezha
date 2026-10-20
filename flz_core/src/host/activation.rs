@@ -505,18 +505,28 @@ fn hold_steps_edges(
         let Some(descriptor) = instance.topology.channel(channel) else {
             continue;
         };
-        let value: Arc<dyn Any + Send + Sync> = Arc::new(HostPayload {
-            bytes: output.payload,
-            channel,
-            keys: output.key.into_iter().collect(),
-            event_time: output.event_time,
-            metadata: output.metadata,
-        });
+        let value = edge_value(output, channel, schema::InputForm::Untransformed);
         crate::steps::hold_emit(&instance, Some(descriptor), &value, stream, slot);
     }
     if let Some(result) = complete {
         crate::steps::complete(slot, result);
     }
+}
+
+/// A host edge output as the value its consumer receives.
+fn edge_value(
+    output: schema::Output,
+    channel: u32,
+    form: schema::InputForm,
+) -> Arc<dyn Any + Send + Sync> {
+    Arc::new(HostPayload {
+        bytes: output.payload,
+        channel,
+        keys: output.key.into_iter().collect(),
+        event_time: output.event_time,
+        metadata: output.metadata,
+        form,
+    })
 }
 
 /// The connection an item's outputs and park ride; a close takes the live
@@ -647,13 +657,7 @@ fn route_edge_outputs(
         let schema::OutputTarget::Edge { channel, consumer } = output.target else {
             continue;
         };
-        let value: Arc<dyn Any + Send + Sync> = Arc::new(HostPayload {
-            bytes: output.payload,
-            channel,
-            keys: output.key.into_iter().collect(),
-            event_time: output.event_time,
-            metadata: output.metadata,
-        });
+        let value = edge_value(output, channel, schema::InputForm::Transformed);
         if record {
             recorded.extend(crate::routing::edge_record(
                 &instance,

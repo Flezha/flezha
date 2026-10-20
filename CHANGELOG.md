@@ -29,6 +29,16 @@
 - The shutdown drain no longer counts plugin homes among the relays it reports as locally
   hosted or still local.
 
+### Changed: an input's form comes from the core
+
+- **BREAKING:** each input item of an activation carries its form, `untransformed` for an
+  entry payload or a steps stage's released value and `transformed` for a stream producer's
+  edge output, and the activation schema is version 7. Node's exported
+  `ACTIVATION_SCHEMA_VERSION`, Python's and Ruby's read 7; a runner built against 6 is refused
+  when its context is created.
+- The Python, Ruby, PHP, Node, Java and Elixir SDKs apply the consuming edge's chain to an
+  `untransformed` input only, instead of deciding it from the channel kind and the relay's run.
+
 ### Changed: a Cell's identity comes from the core
 
 - **BREAKING:** the activation carries the Cell's identity bytes on its first activation since

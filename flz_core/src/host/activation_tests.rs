@@ -44,6 +44,7 @@ pub(super) fn work_and_effect(offset: u64, consumers: &[u32]) -> (ItemAttempt, s
                 keys: Vec::new(),
                 event_time: None,
                 metadata: Vec::new(),
+                form: crate::schema::InputForm::Transformed,
             }) as Arc<dyn Any + Send + Sync>,
             stream: stream_pair().0,
             consumed_offset: Some(offset),
@@ -161,6 +162,15 @@ fn no_record_carries_the_offset_until_the_edge_push_lands() {
         "the edge value reached the consumer's mailbox"
     );
     assert!(shipped(&producer) > before, "the record follows the push");
+    let Some(CellItem::Input(delivered)) = consumer.mailbox.pop() else {
+        panic!("the edge value is an input");
+    };
+    let delivered = delivered.value.downcast_ref::<HostPayload>();
+    assert_eq!(
+        delivered.map(|p| &p.form),
+        Some(&schema::InputForm::Transformed),
+        "a stream producer's output crosses transformed"
+    );
 }
 
 #[test]

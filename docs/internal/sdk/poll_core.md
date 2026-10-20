@@ -137,7 +137,7 @@ Two notes owed to whoever writes the next SDK:
 ## Activation / ActivationResult
 
 The boundary contract lives in `flz_core::schema` and is postcard-encoded;
-field order IS the wire contract and `SCHEMA_VERSION` (currently 6) gates it.
+field order IS the wire contract and `SCHEMA_VERSION` (currently 7) gates it.
 Every kind is pinned as bytes in `test/fixtures/postcard_bodies.txt`, which
 the core's tests encode and each shim must reproduce byte-identically.
 
@@ -150,7 +150,7 @@ derives `ctx.stable_id()` from them, and never builds the layout itself.
 
 | Kind                                                                 | What the host does |
 | -------------------------------------------------------------------- | ------------------ |
-| `Work(items)`                                                        | An ordered per-cell batch of `Input` items (payload bytes, metadata, `consumed_offset`, replay flag, core-evaluated `now`) and `Timer` firings (kind, `scheduled_at`; its `now` IS `scheduled_at`, so a chained `timer_after` anchors replay-stably on the firing that woke it). Timer firings are validated against the pending set at assembly — a stale entry fires nothing. |
+| `Work(items)`                                                        | An ordered per-cell batch of `Input` items (payload bytes, metadata, `consumed_offset`, replay flag, core-evaluated `now`, and `form`: `untransformed` for an entry payload or a steps stage's released value, `transformed` for a stream producer's edge output; the host applies the consuming edge's chain to an `untransformed` one only) and `Timer` firings (kind, `scheduled_at`; its `now` IS `scheduled_at`, so a chained `timer_after` anchors replay-stably on the firing that woke it). Timer firings are validated against the pending set at assembly — a stale entry fires nothing. |
 | `RestoreFold`, `SnapshotRequest`, `LiveStateRead`, `ApplyState`                      | The four host-participating command kinds, under the same per-cell exclusivity; a live read and a migration both read the state as `LiveStateRead`. No other controller command produces an activation (pinned: a `Ping` generates none). |
 | `KeyRequest`                                                         | Batched keying for unkeyed entry payloads bound for a keyed edge, answered before anything reaches a cell mailbox. |
 | `CompensateRun`                                                      | An undo step of a steps chain. |

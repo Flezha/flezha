@@ -607,10 +607,11 @@ mod journal_codec_tests {
     use crate::host::build::build_channels;
     use crate::host::issue::render_issues;
     use crate::host::register::check_class_json;
+    use crate::relay::settings::Run;
 
     fn channels(json: &str) -> Vec<(ChannelKind, bool)> {
         let derived = check_class_json(json.as_bytes()).expect("the class is well formed");
-        build_channels(&derived.decl, &derived.channels)
+        build_channels(&derived.decl, &derived.channels, &Run::default())
             .0
             .into_iter()
             .map(|c| (c.kind, c.codec.is_some()))
@@ -732,7 +733,7 @@ mod journal_codec_tests {
                 .as_bytes(),
         )
         .expect("the class is well formed");
-        let built = build_channels(&derived.decl, &derived.channels).0;
+        let built = build_channels(&derived.decl, &derived.channels, &Run::default()).0;
         let end = built[1].call.as_ref().expect("the call end");
         assert_eq!(built[1].kind, ChannelKind::PluginBound);
         assert!(!built[1].sink);

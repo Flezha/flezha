@@ -372,6 +372,7 @@ fn assert_item_maps(recorded: &Value, item: &schema::WorkItem) {
             );
             assert_eq!(at(h, "replay").as_bool(), Some(i.replay));
             assert_eq!(num(h, "now"), i.now);
+            assert_eq!(text(h, "form"), i.form.as_str());
         }
         schema::WorkItem::Timer(t) => {
             assert_eq!(text(h, "kind"), "timer");

@@ -5,7 +5,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Negotiated at context creation; a mismatch refuses to start.
-pub const SCHEMA_VERSION: u32 = 6;
+pub const SCHEMA_VERSION: u32 = 7;
 
 pub use crate::channel::{ChannelId, TaskletId};
 
@@ -78,6 +78,25 @@ pub struct InputItem {
     pub replay: bool,
     /// The declared clock's value; the host never reads ambient time.
     pub now: u64,
+    pub form: InputForm,
+}
+
+/// Whether the consuming edge's chain still applies to an input's payload:
+/// an entry payload and a steps stage's released value come untransformed,
+/// a stream producer's edge output already transformed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum InputForm {
+    Untransformed,
+    Transformed,
+}
+
+impl InputForm {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            InputForm::Untransformed => "untransformed",
+            InputForm::Transformed => "transformed",
+        }
+    }
 }
 
 /// A validated firing; its `now` IS `scheduled_at`, so a chained
@@ -324,6 +343,7 @@ mod tests {
                     consumed_offset: Some(41),
                     replay: false,
                     now: 1000,
+                    form: InputForm::Transformed,
                 }),
                 WorkItem::Timer(TimerItem {
                     kind: TimerKind::ProcessingTime,

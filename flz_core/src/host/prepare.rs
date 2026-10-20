@@ -254,17 +254,28 @@ fn deliver_prepared(
     mut entry: StagedEntry,
     answer: schema::PrepareAnswer,
 ) {
-    let value: Arc<dyn Any + Send + Sync> = Arc::new(HostPayload {
-        bytes: std::mem::take(&mut entry.bytes),
-        channel: channel_id,
-        keys: answer.keys,
-        event_time: answer.event_time,
-        metadata: Vec::new(),
-    });
+    let value = answered(std::mem::take(&mut entry.bytes), channel_id, answer);
     if let Some(node) = entry.stage {
         return crate::steps::crossed(instance, node, Ok((value, entry.stream)));
     }
     crate::routing::route_to_consumers(instance, channel, &value, &entry.delivery(), None);
+}
+
+/// A staged payload with what its crossing answered; no producer ran an
+/// edge on it.
+fn answered(
+    bytes: Vec<u8>,
+    channel: u32,
+    answer: schema::PrepareAnswer,
+) -> Arc<dyn Any + Send + Sync> {
+    Arc::new(HostPayload {
+        bytes,
+        channel,
+        keys: answer.keys,
+        event_time: answer.event_time,
+        metadata: Vec::new(),
+        form: schema::InputForm::Untransformed,
+    })
 }
 
 /// A failed prepare climbs its channel's ladder on the park owner, one
@@ -346,14 +357,8 @@ fn re_cross(
         })),
     };
     *asked = None;
-    let value: Arc<dyn Any + Send + Sync> = match answer {
-        Some(Ok(answer)) => Arc::new(HostPayload {
-            bytes: staged.bytes.clone(),
-            channel: channel_id,
-            keys: answer.keys,
-            event_time: answer.event_time,
-            metadata: Vec::new(),
-        }),
+    let value = match answer {
+        Some(Ok(answer)) => answered(staged.bytes.clone(), channel_id, answer),
         Some(Err(e)) => return Attempt::Failed(e.message),
         None => return Attempt::Failed("prepare re-attempt answered nothing".to_string()),
     };

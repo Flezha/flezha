@@ -102,8 +102,8 @@ fn work_items_to_schema(slot: &CellSlot, items: &[ItemAttempt]) -> Vec<schema::W
     crate::poll_core::host_items(items)
         .map(|work| match &work.item {
             CellItem::Input(payload) => {
-                let (channel, bytes, metadata) =
-                    host_input_parts(payload.value.downcast_ref::<HostPayload>(), slot);
+                let host = payload.value.downcast_ref::<HostPayload>();
+                let (channel, bytes, metadata) = host_input_parts(host, slot);
                 schema::WorkItem::Input(schema::InputItem {
                     channel,
                     payload: bytes,
@@ -111,6 +111,7 @@ fn work_items_to_schema(slot: &CellSlot, items: &[ItemAttempt]) -> Vec<schema::W
                     consumed_offset: payload.consumed_offset,
                     replay: payload.replay,
                     now: work.now.unwrap_or(now_fallback),
+                    form: host.map_or(schema::InputForm::Untransformed, |p| p.form.clone()),
                 })
             }
             CellItem::Timer(fire) => schema::WorkItem::Timer(schema::TimerItem {

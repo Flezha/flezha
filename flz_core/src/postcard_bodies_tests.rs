@@ -41,6 +41,7 @@ fn work_activation() -> Activation {
                 consumed_offset: Some(7),
                 replay: true,
                 now: 1_000,
+                form: InputForm::Transformed,
             }),
             WorkItem::Timer(TimerItem {
                 kind: TimerKind::EventTime,

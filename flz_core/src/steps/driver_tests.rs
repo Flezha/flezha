@@ -691,9 +691,16 @@ fn a_resumed_host_steps_crosses_its_journaled_handoff() {
             keys: Vec::new(),
             event_time: None,
             metadata: Vec::new(),
+            form: crate::schema::InputForm::Untransformed,
         })
         .expect("encodes"),
     };
+    let reseeded = (codec.decode)(released(b"x").payload).expect("decodes");
+    assert_eq!(
+        reseeded.downcast_ref::<HostPayload>().map(|p| &p.form),
+        Some(&crate::schema::InputForm::Untransformed),
+        "a steps release re-seeds untransformed"
+    );
     let mut node = RunnerNode::new("test-ns".to_string());
     let wire = Wire::new();
     // The journal's handoff re-seeds on the secondary stream, which is where
