@@ -175,7 +175,8 @@ input to its input log before forwarding it, one append per message, so a
 flow class that never sleeps pays nothing for it. A message sent to a sleeping
 instance wakes it and is delivered once, across a controller restart too. A
 user's stop wakes a sleeping workflow to end `cancelled`; a sleeping flow
-instance's stop removes it.
+instance's stop removes it. The mechanism is in
+[the relay lifecycle](https://github.com/flezha/flezha/blob/main/docs/internal/architecture/relay_lifecycle.md).
 
 ### Relay to relay
 

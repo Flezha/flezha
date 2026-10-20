@@ -75,18 +75,12 @@ be left with nothing to do.
 
 ## How a partition finds its runner
 
-Once a partition exists, the controller places it in two steps:
-
-1. **A controller.** Among the controllers whose runners registered the relay's factory,
-   one is picked by hashing the partition's name. A controller with no such runner is never
-   picked.
-2. **A runner on that controller.** Among its runners that registered the factory, one is
-   picked by hashing again, with a cap so that no runner takes more than its fair share of the
-   relays already bound.
-
-Both steps are hashes, so the answer is the same every time it is worked out. With one runner,
-all partitions share it; with as many runners as partitions, each partition usually gets one
-of its own.
+A partition is placed like any relay: a hash of its name picks a controller among those whose
+runners serve the relay's factory, and a second hash, capped so no runner takes more than its
+fair share, picks a runner there. Both are hashes, so the answer is the same every time it is
+worked out. With one runner, all partitions share it; with as many runners as partitions, each
+partition usually gets one of its own. Who decides what is in
+[placement](https://github.com/flezha/flezha/blob/main/docs/internal/architecture/placement.md).
 
 ```mermaid
 flowchart LR

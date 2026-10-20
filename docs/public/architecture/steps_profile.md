@@ -324,41 +324,12 @@ runner** once it has waited that long between iterations. Its Overwatch (the con
 that owns the instance) and its registry entry stay, so a new message still has somewhere to
 land. A flow instance whose class sets `sleep_after` sleeps the same way, at iteration 0.
 
-```mermaid
-sequenceDiagram
-    participant U as user
-    participant C as controller
-    participant R1 as old runner
-    participant R2 as new runner
-
-    Note over R1: iteration N committed, the wait elapsed
-    R1->>C: IterPark (iteration N, earliest pending timer)
-    C->>C: write the park record, durable first
-    C->>R1: RemRelay
-    Note over C: hours pass, and a controller restart re-arms the wake timer from the record
-    U->>C: a new message
-    C->>C: append to the input log
-    C->>R2: bind with the journal state, restore the cells
-    C->>R2: re-send the log above the floor
-    R2->>R2: iteration N+1
-```
-
-Waking is **the ordinary bind**. Crash recovery, moving to another runner and waking all take
-the same path. The journal state rides in the bind (`AddRelay.task_journal`) rather than in a
-cell restore, because it belongs to the instance: a relay whose tasklets keep no state has
-no cell to restore, and would otherwise wake at iteration 0 every time.
-
-The wake deadline is the instance's earliest pending processing-time timer. When it passes, the
-controller binds the instance without a message; the restored cell re-arms its timer, and the
-timer firing starts the pass. A message and the deadline arriving together cause one wake, since
-waking an instance that is already bound does nothing.
-
-The park record is written before the instance is removed from the runner, and cleared by the
-bind that wakes it. At boot, an instance with a park record and no waiting input starts asleep,
-without binding; waiting input, or a deadline already passed, wakes it. A sleeping instance holds
-no pass in flight, so it is ready to move to another runner at once. Stopping a sleeping steps
-relay wakes it with the stop, so it ends `cancelled` as it would awake. The code is
-`Flezha.Relay.Suspend`.
+It wakes on its next message or at its earliest pending processing-time timer, and waking is
+**the ordinary bind**: the journal state rides in the bind and the cells are restored, as after
+a crash or a move to another runner. The sleep is written to disk before the instance leaves its
+runner, so a controller restart keeps it. Stopping a sleeping steps relay wakes it with the
+stop, so it ends `cancelled` as it would awake. How the controller moves an instance through
+these phases is in [the relay lifecycle](https://github.com/flezha/flezha/blob/main/docs/internal/architecture/relay_lifecycle.md).
 
 ## Rewind
 

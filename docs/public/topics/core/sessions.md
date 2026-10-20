@@ -260,6 +260,8 @@ $ flz relay call anna --namespace agents --text 'Are you still there?'
 {"text":"Message 3: you said \"Are you still there?\". I am a demo model.","tokens":13}
 ```
 
+How an instance sleeps and wakes: [the relay lifecycle](https://github.com/flezha/flezha/blob/main/docs/internal/architecture/relay_lifecycle.md).
+
 ## Rewinding a turn
 
 A conversation sometimes has to go back. A user edits a message sent a while ago, or an

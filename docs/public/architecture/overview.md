@@ -286,16 +286,22 @@ plane. There is one per relay instance, as a ProcessHub child: it binds a
 runner, starts the relay's plugins, writes every incoming input to the
 input log when there is one, and receives every output on its way to an output plugin.
 `Flezha.State.WalWriter` writes one cell's log and its outbox position.
-`Flezha.Convergence.Loop` is the only process that repairs the fleet: every
-5 seconds (`FLEZHA_CONVERGENCE_TICK_MS`), and at once when something reports a
-problem, it compares what should run with what does and acts on the
-difference.
+`Flezha.Convergence.Loop` repairs the fleet: every 5 seconds
+(`FLEZHA_CONVERGENCE_TICK_MS`), and at once when something reports a problem,
+it compares what should run with what does and acts on the difference. Two
+repairs run beside it. Each namespace hub's orphan reconcile, a ProcessHub
+recovery round, starts a declared child that runs nowhere and stops one whose
+declared entry was removed. And a hub this controller no longer needs is left
+by `Flezha.Service.HubManager.stop_hub_if_vacant/1`, asked by the loop and by
+the runner fleet's cleanup once no runner of the namespace is left here.
 
 Placement is two choices. ProcessHub picks the **controller node** that hosts
 the Overwatch, by hashing over the nodes whose runners registered the
 relay's factory. Then a rendezvous hash of the relay id, capped so no
 runner takes more than its fair share, picks the **runner**
-(`Flezha.Service.RelayManager.Placement`).
+(`Flezha.Service.RelayManager.Placement`). Who decides what, and how two
+deciders acting at once are kept apart, is in
+[placement](https://github.com/flezha/flezha/blob/main/docs/internal/architecture/placement.md).
 
 ## How a runner connects
 

@@ -707,7 +707,8 @@ Full file: [`lib/agentdesk/gateway_relay.ex`](https://github.com/flezha/flezha_e
 <!-- tabs-close -->
 
 Effectively once written with no members, as every gateway above writes it,
-takes each member at its default: `ack: per_input`, no correction window.
+takes each member at its default: `ack: per_input`, no correction window. How a
+sleeping instance leaves its runner and wakes: [the relay lifecycle](https://github.com/flezha/flezha/blob/main/docs/internal/architecture/relay_lifecycle.md).
 
 ## Channel and edge options
 

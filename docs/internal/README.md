@@ -9,6 +9,11 @@ published page links one of these by its GitHub URL.
 - [`glossary.md`](glossary.md): The vocabulary: one entry per term, with where the code for it lives
 - [`state_persistence.md`](state_persistence.md): The controller's WAL/snapshot store, flow control, `flz state`
 
+## Architecture
+
+- [`architecture/relay_lifecycle.md`](architecture/relay_lifecycle.md): A relay's phases and causes, the shutdown walk's rows in its five scopes, the guards, and how to add a transition
+- [`architecture/placement.md`](architecture/placement.md): Who decides where a relay, a plugin home and a hub run, the evidence each reads, and the guards between deciders that can act at once
+
 ## The consumer API
 
 - [`api/README.md`](api/README.md): The published consumer surface, its three guards, and the manifest that keeps a consumer's calls resolving

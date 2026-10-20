@@ -993,11 +993,10 @@ when it is stopped. While it sleeps:
 | the input-silence check | does not flag it |
 | removing its factory from the runner | succeeds, because the runner cannot see a sleeping instance; the instance then cannot wake until a runner registers the factory again, and the controller logs `dropped factory ... that still has controller-known relays` |
 
-An instance with undelivered input is not left asleep, and a wake that finds
-no runner is retried. `flz state journal <relay/instance>` shows the
-journal, and `flz state inbox <relay/instance>` the input log's records.
-`flz relay replay` is refused for a workflow's cell; `flz relay rewind`
-is a loop's way back.
+`flz state journal <relay/instance>` shows the journal, and
+`flz state inbox <relay/instance>` the input log's records. `flz relay replay`
+is refused for a workflow's cell; `flz relay rewind` is a loop's way back. How
+an instance sleeps and wakes: [the relay lifecycle](https://github.com/flezha/flezha/blob/main/docs/internal/architecture/relay_lifecycle.md).
 
 ## After it ends
 
