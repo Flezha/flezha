@@ -533,22 +533,20 @@ impl BarrierFor {
     /// not built.
     pub(super) fn failed(self, d: &mut Decide<'_, '_, '_>, error: String) {
         match self {
-            BarrierFor::Stage(node) => d.stage_failed(
-                node,
-                format!("commit {node} refused by controller: {error}"),
-            ),
+            BarrierFor::Stage(node) => {
+                let error = format!("{} refused by controller: {error}", self.label(d.s));
+                d.stage_failed(node, error)
+            }
             BarrierFor::Iteration | BarrierFor::DeadLetter => {
-                d.compensate_on(StepsError::from(format!(
-                    "iteration commit {} refused by controller: {error}",
-                    d.s.iter
-                )));
+                let error = format!("{} refused by controller: {error}", self.label(d.s));
+                d.compensate_on(StepsError::from(error))
             }
             BarrierFor::Undo => d.undo_journaled(Err(error)),
         }
     }
 
-    /// What a timed-out ack names.
-    pub(super) fn timeout_label(self, s: &PassSheet) -> String {
+    /// What an error about the barrier names it by.
+    pub(super) fn label(self, s: &PassSheet) -> String {
         match self {
             BarrierFor::Stage(node) => format!("commit {node}"),
             BarrierFor::Iteration | BarrierFor::DeadLetter => {

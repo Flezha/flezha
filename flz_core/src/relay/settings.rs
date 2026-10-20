@@ -127,7 +127,8 @@ impl Each {
         }
     }
 
-    /// Whether a pass's leaf batch seeds the next pass.
+    /// Whether a pass's leaf batch seeds the next pass, so a chain must end
+    /// in one leaf that hands off.
     #[inline]
     pub fn carries_leaf(self) -> bool {
         match self {
@@ -152,16 +153,6 @@ impl Each {
         match self {
             Each::PerInput => true,
             Each::Once | Each::Chained => false,
-        }
-    }
-
-    /// Whether the chain must end in one leaf that hands off, since that
-    /// leaf's batch is the next pass's input.
-    #[inline]
-    pub fn single_leaf_rules(self) -> bool {
-        match self {
-            Each::Chained => true,
-            Each::Once | Each::PerInput => false,
         }
     }
 }
@@ -581,20 +572,19 @@ mod tests {
     #[test]
     fn each_rules_per_variant() {
         // (variant, message_fed(0), message_fed(1), ends_after_first,
-        //  carries_leaf, calls_allowed, partitionable, single_leaf_rules)
+        //  carries_leaf, calls_allowed, partitionable)
         let table = [
-            (Each::Once, true, false, true, false, false, false, false),
-            (Each::PerInput, true, true, false, false, true, true, false),
-            (Each::Chained, true, false, false, true, false, false, true),
+            (Each::Once, true, false, true, false, false, false),
+            (Each::PerInput, true, true, false, false, true, true),
+            (Each::Chained, true, false, false, true, false, false),
         ];
-        for (each, first, later, ends, carries, calls, partitions, single_leaf) in table {
+        for (each, first, later, ends, carries, calls, partitions) in table {
             assert_eq!(each.message_fed(0), first, "{each:?}");
             assert_eq!(each.message_fed(1), later, "{each:?}");
             assert_eq!(each.ends_after_first(), ends, "{each:?}");
             assert_eq!(each.carries_leaf(), carries, "{each:?}");
             assert_eq!(each.calls_allowed(), calls, "{each:?}");
             assert_eq!(each.partitionable(), partitions, "{each:?}");
-            assert_eq!(each.single_leaf_rules(), single_leaf, "{each:?}");
         }
     }
 

@@ -105,11 +105,18 @@ pub fn plan_compensation<'a>(
 ) -> Vec<&'a StageRecord> {
     let mut plan: Vec<&StageRecord> = in_flight.iter().rev().collect();
     if !mode.keeps_committed() {
-        for iteration in committed.iter().rev() {
-            plan.extend(iteration.iter().rev());
-        }
+        plan.extend(reversed(committed));
     }
     plan
+}
+
+/// Every record of `iterations`, the last iteration first and each in
+/// reverse completion order.
+fn reversed(iterations: &[Vec<StageRecord>]) -> impl Iterator<Item = &StageRecord> {
+    iterations
+        .iter()
+        .rev()
+        .flat_map(|iteration| iteration.iter().rev())
 }
 
 /// The saga's undo per [`plan_compensation`], once per Cell that ran;
@@ -149,7 +156,7 @@ pub(super) fn rewind_steps(r: &Run<'_>, unwound: &[CommittedTask]) -> VecDeque<U
 /// outstanding.
 pub(super) fn unwind_steps(r: &Run<'_>, iterations: &[Vec<StageRecord>]) -> VecDeque<UndoStep> {
     let mut steps = VecDeque::new();
-    for record in plan_compensation(OnFailure::UndoAll, iterations, &[]) {
+    for record in reversed(iterations) {
         if r.task(record.stage_idx).compensate_overridden {
             for run in &record.cells {
                 steps.push_back(UndoStep::cell(record.iter, run, false));

@@ -602,7 +602,7 @@ impl Decide<'_, '_, '_> {
         self.fx.drop_acks.push(barrier.reference_id);
         let error = format!(
             "{} ack timed out after {} attempt(s) of {}s",
-            barrier.target.timeout_label(self.s),
+            barrier.target.label(self.s),
             barrier.sends,
             ack_timeout().as_secs()
         );

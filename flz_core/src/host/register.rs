@@ -614,7 +614,7 @@ fn refuse_graph_shape(
 /// handoff, and only an inter-tasklet channel carries one: the journal codec
 /// rides that kind and no other (`build::build_channel`). A terminal that owns
 /// no output channel, or one whose only wiring is a plugin sink, would ship an
-/// empty handoff at the iteration commit, and `resume::seed_for_mode` reads an
+/// empty handoff at the iteration commit, and `steps::run`'s seed reads an
 /// empty seed as convergence: the loop stops and the run reports completed,
 /// truncated and silent.
 fn steps_shape_issue(
@@ -632,7 +632,7 @@ fn steps_shape_issue(
             tasklet: name(task),
         });
     }
-    if !each.single_leaf_rules() {
+    if !each.carries_leaf() {
         return None;
     }
     let dag = TaskDag::from_walk(walk, entries);
