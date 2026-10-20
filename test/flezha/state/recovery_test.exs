@@ -92,6 +92,11 @@ defmodule Flezha.State.RecoveryTest do
   end
 
   describe "resolve_runner/1" do
+    setup do
+      stub(HubManager, :get_running_namespaces, fn -> ["default"] end)
+      :ok
+    end
+
     test "resolves the runner tag for a relay whose :relay_class opt matches" do
       relay = %Builder{id: "btc_feed", factory_id: "f", opts: [relay_class: "market"]}
 

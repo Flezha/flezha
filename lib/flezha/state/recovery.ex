@@ -67,25 +67,31 @@ defmodule Flezha.State.Recovery do
   end
 
   @doc """
-  The runner every relay_class is bound to now, from the ProcessHub registry's
-  tags. A Cell's writer names the runner that last wrote it, which an idle Cell
-  keeps naming after that runner has reconnected; this is the one to ask.
+  The runner every relay_class is bound to now, from the tags in every running
+  namespace's ProcessHub registry. A Cell's writer names the runner that last
+  wrote it, which an idle Cell keeps naming after that runner has reconnected;
+  this is the one to ask.
   """
   @spec bound_runners() :: {:ok, %{binary() => binary()}} | {:error, term()}
   def bound_runners() do
-    with {:ok, registry} <- HubManager.get_registry("default") do
-      bound =
-        for {_relay_id, entry} <- registry,
-            {cspec, _node_pids, metadata} = normalize_entry(entry),
-            tag = Map.get(metadata, :tag),
-            is_binary(tag),
-            rc = relay_class(cspec),
-            rc != nil,
-            into: %{},
-            do: {rc, tag}
+    HubManager.get_running_namespaces()
+    |> Enum.reduce_while({:ok, %{}}, fn namespace, {:ok, bound} ->
+      case HubManager.get_registry(namespace) do
+        {:ok, registry} -> {:cont, {:ok, bound_in(registry, bound)}}
+        error -> {:halt, error}
+      end
+    end)
+  end
 
-      {:ok, bound}
-    end
+  defp bound_in(registry, bound) do
+    for {_relay_id, entry} <- registry,
+        {cspec, _node_pids, metadata} = normalize_entry(entry),
+        tag = Map.get(metadata, :tag),
+        is_binary(tag),
+        rc = relay_class(cspec),
+        rc != nil,
+        into: bound,
+        do: {rc, tag}
   end
 
   defp do_resync(cell_id, opts) do

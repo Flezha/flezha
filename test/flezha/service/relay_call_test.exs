@@ -18,8 +18,10 @@ defmodule Flezha.Service.RelayCallTest do
   alias Flezha.Observability.{RingBufferSink, TestSinks}
   alias Flezha.Relay.PartitionGroup
   alias Flezha.Partition
+  alias Flezha.Runner.StreamChannel
   alias Flezha.Service.{Cli, HubManager, Relay, RelayManager}
-  alias FlezhaTest.Helper.CliCapture
+  alias Flezha.State.TestHelpers
+  alias FlezhaTest.Helper.{CliCapture, OverwatchHost}
 
   setup :set_mimic_global_until_exit
 
@@ -270,6 +272,21 @@ defmodule Flezha.Service.RelayCallTest do
 
       assert err =~ "(usage.invalid_number)"
       refute_received {:called, _, _, _, _}
+    end
+
+    # The callee is a real Overwatch, so the timeout is its own answer at the
+    # deadline: the caller's wait would end `call.unavailable`.
+    test "without a deadline the controller's call_channel_deadline_ms bounds the call" do
+      on_exit(TestHelpers.override_env(:call_channel_deadline_ms, 200))
+      stub(StreamChannel, :io_in, fn _channel, _id, _payload -> :ok end)
+      host = start_supervised!({OverwatchHost, OverwatchHost.state("echo", channel: :fake)})
+      stub(HubManager, :get_pid, fn _namespace, "echo" -> {:ok, host} end)
+      started = System.monotonic_time(:millisecond)
+
+      assert {:error, %Error{code: "call.timeout", details: %{"deadline_ms" => 200}}} =
+               Relay.call_channel("default", "echo", "", "x", [payload: "text"], @context)
+
+      assert System.monotonic_time(:millisecond) - started >= 200
     end
   end
 

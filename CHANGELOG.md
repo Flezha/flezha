@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### Changed: `flz relay call` without `--timeout` takes the controller's call deadline
+
+- `flz relay call` sends a deadline only when `--timeout` is given; without it the controller's
+  `call_channel_deadline_ms` (30000 unless set) applies, where the CLI sent its own 30000 before.
+  A `--timeout 0` is still refused.
+
+### Fixed: an HTTP relay call that is not answered in time answers `call.timeout`
+
+- `POST /v1/relays/<id>/<channel>` gives the call a deadline `call_grace_ms` below the listener's
+  `deadline_ms`, or half of it when that is longer, so a relay that does not answer is
+  `call.timeout` instead of the listener's `control.timeout`.
+
+### Fixed: a Cell outside the `default` namespace is compacted by the runner its relay is bound to
+
+- A Cell's compaction and `flz state rotate` find the runner a relay is bound to in every running
+  namespace, not only in `default`.
+
 ### Changed: one pool policy for every SDK's poll workers
 
 - The core's pool governor sizes every SDK's poll workers: the base and the ceiling from

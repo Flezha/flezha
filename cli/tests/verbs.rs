@@ -77,11 +77,11 @@ const CASES: &[(&[&str], &str)] = &[
         &["relay", "send", "op1", "-n", "prod", "--text", "a\"b\\cä"],
         r#"Flezha.Service.Cli.call("Relay.send", "[\"prod\",\"op1\",\"a\\\"b\\\\cä\",\"\",{}]", [])"#,
     ),
-    // `call`'s deadline defaults and has no short spelling: `-t` is `--text`,
-    // the payload as written.
+    // `call` sends a deadline only with `--timeout`, so the controller's
+    // default holds without it; `-t` is `--text`, the payload as written.
     (
         &["relay", "call", "echo", "-t", "hello"],
-        r#"Flezha.Service.Cli.call("Relay.call_channel", "[\"default\",\"echo\",\"\",\"hello\",{\"deadline_ms\":30000,\"payload\":\"text\"}]", [])"#,
+        r#"Flezha.Service.Cli.call("Relay.call_channel", "[\"default\",\"echo\",\"\",\"hello\",{\"payload\":\"text\"}]", [])"#,
     ),
     (
         &[
@@ -108,7 +108,7 @@ const CASES: &[(&[&str], &str)] = &[
             "--answer-channel",
             "quotes",
         ],
-        r#"Flezha.Service.Cli.call("Relay.call_channel", "[\"default\",\"quoter\",\"\",\"EUR/USD\",{\"answer_channel\":\"quotes\",\"deadline_ms\":30000,\"payload\":\"text\"}]", [])"#,
+        r#"Flezha.Service.Cli.call("Relay.call_channel", "[\"default\",\"quoter\",\"\",\"EUR/USD\",{\"answer_channel\":\"quotes\",\"payload\":\"text\"}]", [])"#,
     ),
     // Each `--arg` is one field, still text: the controller types it by the
     // channel's schema, which `coerce` asks it to read first.
@@ -124,7 +124,7 @@ const CASES: &[(&[&str], &str)] = &[
             "--arg",
             "amount=1000",
         ],
-        r#"Flezha.Service.Cli.call("Relay.call_channel", "[\"default\",\"orders-eu\",\"place\",{\"amount\":\"1000\",\"pair\":\"EUR/USD\"},{\"deadline_ms\":30000}]", [coerce: true])"#,
+        r#"Flezha.Service.Cli.call("Relay.call_channel", "[\"default\",\"orders-eu\",\"place\",{\"amount\":\"1000\",\"pair\":\"EUR/USD\"},{}]", [coerce: true])"#,
     ),
     // With a relay id, `info` reads that relay's API.
     (
@@ -174,7 +174,8 @@ fn an_option_reads_the_same_wherever_it_is_written() {
 }
 
 /// `--text` and `--arg` are the two ways to give a call its value: one of
-/// them, never both, and an `--arg` names its field.
+/// them, never both, and an `--arg` names its field. A zero `--timeout` is
+/// refused before anything is sent.
 #[test]
 fn a_call_takes_its_value_one_way() {
     let shim = Shim::new(FLZ_BIN, ECHOING);
@@ -189,6 +190,10 @@ fn a_call_takes_its_value_one_way() {
             "usage.options_conflict",
         ),
         (&["relay", "call", "op"][..], "usage.option_required"),
+        (
+            &["relay", "call", "op", "-t", "x", "--timeout", "0"][..],
+            "usage.invalid_number",
+        ),
         (
             &["relay", "call", "op", "--arg", "amount"][..],
             "api.input_invalid",

@@ -1,3 +1,5 @@
+use std::num::NonZeroU64;
+
 use flz_transport::errors::FlezhaError;
 use serde_json::{Map, Value};
 
@@ -56,9 +58,9 @@ const ARG: OptSpec = OptSpec::text("--arg", "--arg", "<name=value>")
     .repeated()
     .doc("One field of a JSON input, typed by the channel's schema; repeat it for each field.");
 /// `call`'s deadline: no short spelling, since `-t` is `--text`.
-const CALL_TIMEOUT: OptSpec = OptSpec::number("--timeout", "--timeout", "<ms>")
-    .doc("How long the relay has to answer, in ms (default 30000).");
-const CALL_TIMEOUT_DEFAULT_MS: u64 = 30_000;
+const CALL_TIMEOUT: OptSpec = OptSpec::number("--timeout", "--timeout", "<ms>").doc(
+    "How long the relay has to answer, in ms (default: the controller's call_channel_deadline_ms).",
+);
 
 pub(crate) const TABLE: Command = Command {
     path: "flz relay",
@@ -311,21 +313,12 @@ fn handle_info(read: &Reading) {
 /// is the payload as written; each `--arg` is one field, which the
 /// controller coerces by the channel's schema.
 fn handle_call(read: &Reading) {
-    let deadline_ms = read
-        .num::<u64>(CALL_TIMEOUT.long)
-        .unwrap_or(CALL_TIMEOUT_DEFAULT_MS);
-    if deadline_ms == 0 {
-        rpc::fail(FlezhaError::with(
-            "usage.invalid_number",
-            [
-                ("option", Value::from("--timeout")),
-                ("value", Value::from("0")),
-            ],
-        ));
-    }
-
     let mut fields = key_fields(read);
-    fields.insert("deadline_ms".into(), Value::from(deadline_ms));
+    if let Some(written) = read.opt(CALL_TIMEOUT.long) {
+        let deadline_ms: NonZeroU64 =
+            args::or_refuse(args::read_number(CALL_TIMEOUT.long, written));
+        fields.insert("deadline_ms".into(), Value::from(deadline_ms.get()));
+    }
     if let Some(channel) = read.opt(ANSWER_CHANNEL.long) {
         fields.insert("answer_channel".into(), Value::from(channel));
     }

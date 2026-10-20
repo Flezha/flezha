@@ -114,6 +114,8 @@ defmodule Flezha.Service.Calls.Router do
       source_namespace: namespace,
       source_relay_id: source,
       target_relay_id: target,
+      # Bounded upstream: requests by the caller's outbox window and their
+      # deadlines, answers by the callee's `call_pending_max`.
       queue_max: :infinity,
       retry_backoff_ms: 50,
       retry_max_backoff_ms: 2_000,

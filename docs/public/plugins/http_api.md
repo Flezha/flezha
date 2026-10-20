@@ -195,6 +195,8 @@ controller's machine for those ([cli.md](../topics/cli/cli.md)).
   `_system` read, so a namespace token passes the relay: `dlq_list` with
   `relay_class`.
 - **A call past `deadline_ms` answers `control.timeout`.** The operation itself carries on.
+  A relay channel call carries a deadline `call_grace_ms` below `deadline_ms`, or half of
+  it when that is longer, so a relay that does not answer in time answers `call.timeout`.
 - **Tool lists are kept for a minute.** A client may keep the tool list it read for 60
   seconds, so a role changed since shows within the minute. Every call is still judged
   by the role the token holds now.

@@ -12,7 +12,8 @@ OPTIONS:
     --key <key>                   The key whose member of a partition group
                                   takes the input.
     --timeout <ms>                How long the relay has to answer, in ms
-                                  (default 30000).
+                                  (default: the controller's
+                                  call_channel_deadline_ms).
     --namespace | -n <namespace>  The namespace (default: default).
     --token <token>               The caller's token (default: FLEZHA_TOKEN).
     --help | -h                   Print this help.
