@@ -167,6 +167,7 @@ fn driver_stats(env: Env, server: TransportServerArc) -> NifResult<Term> {
         loop_iterations: stats.loop_iterations.load(Ordering::Relaxed),
         last_loop_ms: stats.last_loop_ms.load(Ordering::Relaxed),
         cmd_queue_depth: stats.cmd_queue_depth.load(Ordering::Relaxed),
+        malformed_frames: stats.malformed_frames.load(Ordering::Relaxed),
         streams,
     };
 

@@ -55,6 +55,8 @@ pub struct DriverStats {
     pub loop_iterations: AtomicU64,
     pub last_loop_ms: AtomicU64,
     pub cmd_queue_depth: AtomicU64,
+    /// Streams closed because a payload did not decode, since the driver started.
+    pub malformed_frames: AtomicU64,
     pub streams: Mutex<HashMap<u64, StreamSnapshot>>,
 }
 
@@ -65,6 +67,7 @@ impl DriverStats {
             loop_iterations: AtomicU64::new(0),
             last_loop_ms: AtomicU64::new(0),
             cmd_queue_depth: AtomicU64::new(0),
+            malformed_frames: AtomicU64::new(0),
             streams: Mutex::new(HashMap::new()),
         }
     }
@@ -106,6 +109,7 @@ pub struct DriverStatsOut {
     pub loop_iterations: u64,
     pub last_loop_ms: u64,
     pub cmd_queue_depth: u64,
+    pub malformed_frames: u64,
     pub streams: Vec<StreamStatsOut>,
 }
 

@@ -45,33 +45,27 @@ fn check_payload_length(payload_length: usize) -> io::Result<()> {
     Ok(())
 }
 
-/// Parse a payload body: message_size (4) + message + metadata_size (2) + metadata.
-fn parse_payload_body(payload_buf: &[u8]) -> io::Result<(Vec<u8>, PayloadMetadata)> {
+/// Decode a payload body: message_size (4) + message + metadata_size (2) +
+/// metadata. The one body decoder: the runner's reader and the controller's
+/// `FrameBuffer` both read a frame through it.
+pub fn parse_payload_body(payload_buf: &[u8]) -> io::Result<(Vec<u8>, PayloadMetadata)> {
     let mut payload_reader = payload_buf;
 
-    // Read the message size (4 bytes), bounded by the enclosing payload so a
-    // hostile inner prefix cannot force an allocation the payload can't fill.
+    // Bounded by the enclosing payload so a hostile inner prefix cannot force
+    // an allocation the payload can't fill.
     let message_length = payload_reader.read_u32::<BigEndian>()? as usize;
     let max_message = payload_buf.len().saturating_sub(4 + 2);
     if message_length > max_message {
         return Err(reject_oversized("message", message_length, max_message));
     }
+    let (message, mut payload_reader) = payload_reader.split_at(message_length);
 
-    // Read the actual message
-    let mut message_buf = vec![0; message_length];
-    payload_reader.read_exact(&mut message_buf)?;
-
-    // Read the metadata size (2 bytes)
     let metadata_length = payload_reader.read_u16::<BigEndian>()? as usize;
+    let metadata_buf = payload_reader
+        .get(..metadata_length)
+        .ok_or(io::ErrorKind::UnexpectedEof)?;
 
-    // Read the metadata
-    let mut metadata_buf = vec![0; metadata_length];
-    payload_reader.read_exact(&mut metadata_buf)?;
-
-    // Deserialize metadata
-    let metadata = deserialize_metadata(&metadata_buf)?;
-
-    Ok((message_buf, metadata))
+    Ok((message.to_vec(), deserialize_metadata(metadata_buf)?))
 }
 
 pub fn extract_payload<R: Read>(

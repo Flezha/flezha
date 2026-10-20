@@ -231,6 +231,7 @@ conformance!(
     the_snapshot_carries_what_the_driver_did,
     a_peer_ending_the_stream_reads_the_same,
     bytes_the_peer_sent_are_framed,
+    a_body_that_does_not_decode_is_malformed_frame,
 );
 
 /// The `SendFrame` arm: the frame is built once by the loop, the wire takes it
@@ -416,18 +417,7 @@ fn bytes_the_peer_sent_are_framed<W: Wire>(wire: &mut W) {
     .unwrap();
     wire.peer_writes(&frame);
 
-    let mut buf = ReadBuf::new();
-    let mut taken = Vec::new();
-    for _ in 0..200 {
-        let reason = read_once(wire, &mut buf);
-        taken.extend_from_slice(buf.taken());
-        assert_eq!(reason, None, "a live stream reports no close");
-        if taken.len() >= frame.len() {
-            break;
-        }
-        wire.carry();
-    }
-
+    let taken = take_from_peer(wire, frame.len());
     assert_eq!(taken, frame, "the loop reads exactly what the peer sent");
     let frames = wire
         .state()
@@ -437,4 +427,34 @@ fn bytes_the_peer_sent_are_framed<W: Wire>(wire: &mut W) {
     assert_eq!(frames.len(), 1);
     assert_eq!(frames[0].payload_id, "p-2");
     assert_eq!(frames[0].message, b"from the peer");
+}
+
+/// The close the loop takes for a payload the decoder refuses is one word on
+/// every wire: an inner message length overrunning its payload is
+/// `malformed_frame`, never a frame skipped.
+fn a_body_that_does_not_decode_is_malformed_frame<W: Wire>(wire: &mut W) {
+    use flz_transport::service::payloader::{build_without_metadata, HEADER_LEN};
+    let mut frame = build_without_metadata("p-3", b"body");
+    frame[HEADER_LEN..HEADER_LEN + 4].copy_from_slice(&100u32.to_be_bytes());
+    wire.peer_writes(&frame);
+
+    let taken = take_from_peer(wire, frame.len());
+    let refused = wire.state().frame_buffer.feed(&taken).unwrap_err();
+    assert_eq!(refused.close_reason(), CloseReason::MalformedFrame);
+}
+
+/// What the peer sent, read the way the loop reads it until `len` bytes came.
+fn take_from_peer<W: Wire>(wire: &mut W, len: usize) -> Vec<u8> {
+    let mut buf = ReadBuf::new();
+    let mut taken = Vec::new();
+    for _ in 0..200 {
+        let reason = read_once(wire, &mut buf);
+        taken.extend_from_slice(buf.taken());
+        assert_eq!(reason, None, "a live stream reports no close");
+        if taken.len() >= len {
+            break;
+        }
+        wire.carry();
+    }
+    taken
 }

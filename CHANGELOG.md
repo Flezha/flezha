@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Changed: one frame decoder
+
+- **BREAKING:** the controller reads a frame's body with the runner's own decoder. A body that
+  does not decode, an inner message length that overruns its payload or a metadata table cut
+  inside a pair, closes the stream with the new reason `malformed_frame` and adds one to the new
+  `malformed_frames` count in `driver_stats`. The controller skipped such a frame, and kept the
+  pairs before a cut one.
+
 ### Changed: names that say what they time
 
 - **BREAKING:** `FLEZHA_RUNNER_KEEPALIVE` is `FLEZHA_RUNNER_REMOVAL_GRACE_MS` and the application

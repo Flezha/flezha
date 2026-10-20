@@ -29,7 +29,8 @@ defmodule Flezha.Transport.DriverParityTest do
     "stream_reset",
     "read_error",
     "write_error",
-    "frame_too_large"
+    "frame_too_large",
+    "malformed_frame"
   ]
 
   defp declared?("connection_lost: " <> _), do: true
@@ -283,6 +284,21 @@ defmodule Flezha.Transport.DriverParityTest do
       :ok = :gen_tcp.send(socket, header)
 
       assert_receive {:flz_closed, ^server_id, "frame_too_large"}, 5_000
+      :gen_tcp.close(socket)
+    end
+
+    test "a body that does not decode closes the stream and is counted" do
+      {server, path} = start_server()
+      {socket, server_id} = raw_peer(path)
+
+      # The header is honest about the 11-byte body; the body's own message
+      # length overruns it.
+      body = <<100::32, "short", 0::16>>
+      id = String.pad_trailing("bad-body", 32)
+      :ok = :gen_tcp.send(socket, [id, <<byte_size(body)::32>>, body])
+
+      assert_receive {:flz_closed, ^server_id, "malformed_frame"}, 5_000
+      assert Native.driver_stats(server).malformed_frames == 1
       :gen_tcp.close(socket)
     end
 

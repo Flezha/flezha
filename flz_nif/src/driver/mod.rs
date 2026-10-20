@@ -14,6 +14,7 @@
 
 use std::collections::HashMap;
 use std::io;
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 
 use crossbeam::channel::{Receiver, Sender};
@@ -24,7 +25,7 @@ use rustler::{LocalPid, ResourceArc};
 
 use crate::driver_msg::{report_gate, send_closed_msg};
 use crate::driver_stats::{DriverStats, StreamCounters, StreamSnapshot};
-use crate::frame_buffer::{FrameBuffer, Inbox};
+use crate::frame_buffer::{FrameBuffer, FrameError, Inbox};
 use crate::resources::StreamHandle;
 
 pub(crate) mod quic;
@@ -464,6 +465,7 @@ impl<T: Transport> DriverLoop<T> {
                     streams,
                     read_buf,
                     now_ms,
+                    stats,
                     ..
                 } = self;
                 let Some(state) = streams.get_mut(&id) else {
@@ -483,7 +485,12 @@ impl<T: Transport> DriverLoop<T> {
                             state.inbox.deliver(owner, id, frames);
                             (true, closed)
                         }
-                        Err(_) => (false, Some(CloseReason::FrameTooLarge)),
+                        Err(e) => {
+                            if e == FrameError::Malformed {
+                                stats.malformed_frames.fetch_add(1, Ordering::Relaxed);
+                            }
+                            (false, Some(e.close_reason()))
+                        }
                     }
                 }
             };

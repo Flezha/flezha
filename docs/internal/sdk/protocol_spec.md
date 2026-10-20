@@ -139,7 +139,9 @@ Total frame  = 36 + Payload Size
 ```
 
 `PAYLOAD_ID_LEN` (32) and `HEADER_LEN` (36) are exported by
-`flz_transport::service::payloader`.
+`flz_transport::service::payloader`, and so is the one body decoder,
+`parse_payload_body`, which the runner's reader and the controller's NIF
+`FrameBuffer` both call: the two sides cannot read one body two ways.
 
 ### Payload ID
 
@@ -182,6 +184,13 @@ header, so there is no resync. The runner surfaces
 `io::ErrorKind::InvalidData` (stream-fatal, §10); the controller's
 `FrameBuffer` enters `Poisoned` and the driver closes the stream with reason
 `frame_too_large`.
+
+A header within the limit whose body does not decode is as fatal: an inner
+`Message Size` overrunning the payload, or a metadata table cut inside a pair.
+The runner's reader ends on the decoder's error; the controller's
+`FrameBuffer` poisons, the driver closes the stream with reason
+`malformed_frame` and counts it in `driver_stats` as `malformed_frames`. No
+frame is skipped and no partial metadata table is kept.
 
 ### Metadata serialization
 
@@ -1144,13 +1153,14 @@ runs the disconnect handling (preservation for `FLEZHA_RUNNER_REMOVAL_GRACE_MS`,
 migration or re-placement); the §5 watchdog turns sustained silence into the
 same path. On the runner the control reader retries `Interrupted`; a timeout
 (`WouldBlock`/`TimedOut`) is fatal in both deadline states, and `BrokenPipe`,
-`UnexpectedEof`, `ConnectionReset` and `InvalidData` (a frame-limit violation)
-are stream-fatal — every fatal error drives the §5 reconnect unless the status
+`UnexpectedEof`, `ConnectionReset` and `InvalidData` (a frame-limit violation
+or a malformed body) are stream-fatal — every fatal error drives the §5 reconnect unless the status
 is `Stopped`.
 
 **Malformed frames.** A reader MUST NOT discard partial data (§3 "Frame
-buffering"). A frame whose declared length exceeds the limit poisons the stream
-— no resync; the stream is closed and re-established. Any other decode failure
+buffering"). A frame whose declared length exceeds the limit, or whose body's
+inner lengths do not fit it (§3 "Frame limits"), poisons the stream — no
+resync; the stream is closed and re-established. Any other decode failure
 (a bad protobuf body, an undecodable persistence body) is logged and the frame
 dropped; the stream stays open because the outer framing was intact.
 

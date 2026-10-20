@@ -1,6 +1,5 @@
-use std::collections::HashMap;
-
 use flz_transport::service::payloader;
+use flz_transport::transport::close_reason::CloseReason;
 use rustler::LocalPid;
 
 use crate::driver_msg::send_data_msg;
@@ -13,7 +12,7 @@ const HEADER_SIZE: usize = payloader::HEADER_LEN;
 pub struct ParsedFrame {
     pub payload_id: String,
     pub message: Vec<u8>,
-    pub metadata: HashMap<String, String>,
+    pub metadata: payloader::PayloadMetadata,
 }
 
 /// Where one stream's parsed frames go: to the owner as `{:flz_data, …}`
@@ -70,21 +69,25 @@ impl Default for Inbox {
     }
 }
 
-/// A header declared a payload length above the configured maximum. The byte
-/// stream cannot resync past it, so the owner must close the stream.
-#[derive(Debug)]
-pub struct FrameError {
-    pub declared: usize,
-    pub max: usize,
+/// Bytes that cannot be framed. The byte stream cannot resync past either, so
+/// the owner must close the stream.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FrameError {
+    /// A header declared a payload length above the configured maximum.
+    TooLarge,
+    /// A payload the wire format's decoder refused: an inner length overran
+    /// it, or its metadata table was cut inside a pair.
+    Malformed,
 }
 
-impl std::fmt::Display for FrameError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "declared {} > max {}", self.declared, self.max)
+impl FrameError {
+    pub fn close_reason(self) -> CloseReason {
+        match self {
+            FrameError::TooLarge => CloseReason::FrameTooLarge,
+            FrameError::Malformed => CloseReason::MalformedFrame,
+        }
     }
 }
-
-impl std::error::Error for FrameError {}
 
 /// Stateful frame parser that accumulates bytes and yields complete frames.
 ///
@@ -92,7 +95,7 @@ impl std::error::Error for FrameError {}
 ///   Empty          — waiting for the next frame's header
 ///   PartialHeader  — have < HEADER_SIZE bytes of header
 ///   PartialPayload — have header, waiting for payload_size bytes
-///   Poisoned       — an over-limit header was seen; feeds keep failing
+///   Poisoned       — a frame could not be read; feeds keep failing
 pub struct FrameBuffer {
     state: BufferState,
     max_frame_bytes: usize,
@@ -108,10 +111,8 @@ enum BufferState {
         payload_size: usize,
         buf: Vec<u8>,
     },
-    /// An over-limit header was seen; every further feed repeats the error.
-    Poisoned {
-        declared: usize,
-    },
+    /// A frame could not be read; every further feed repeats the error.
+    Poisoned(FrameError),
 }
 
 impl FrameBuffer {
@@ -128,31 +129,23 @@ impl FrameBuffer {
 
     /// Feed incoming bytes into the parser. Returns 0 or more complete frames,
     /// or a stream-fatal `FrameError` if a header declares an over-limit
-    /// payload length (checked BEFORE allocating for it).
+    /// payload length (checked BEFORE allocating for it) or a payload does
+    /// not decode.
     pub fn feed(&mut self, data: &[u8]) -> Result<Vec<ParsedFrame>, FrameError> {
         let mut frames = Vec::new();
         let mut remaining = data;
 
         loop {
-            if let BufferState::Poisoned { declared } = &self.state {
-                return Err(FrameError {
-                    declared: *declared,
-                    max: self.max_frame_bytes,
-                });
+            if let BufferState::Poisoned(e) = self.state {
+                return Err(e);
             }
             if remaining.is_empty() {
                 break;
             }
             let state = std::mem::replace(&mut self.state, BufferState::Empty);
-            match self.step(state, &mut remaining, &mut frames) {
-                Ok(state) => self.state = state,
-                Err(e) => {
-                    self.state = BufferState::Poisoned {
-                        declared: e.declared,
-                    };
-                    return Err(e);
-                }
-            }
+            self.state = self
+                .step(state, &mut remaining, &mut frames)
+                .unwrap_or_else(BufferState::Poisoned);
         }
 
         Ok(frames)
@@ -192,9 +185,7 @@ impl FrameBuffer {
                 mut buf,
             } => {
                 if fill(&mut buf, payload_size, remaining) {
-                    if let Some(frame) = parse_payload(&payload_id, &buf) {
-                        frames.push(frame);
-                    }
+                    frames.push(decode(payload_id, &buf)?);
                     Ok(BufferState::Empty)
                 } else {
                     Ok(BufferState::PartialPayload {
@@ -204,7 +195,7 @@ impl FrameBuffer {
                     })
                 }
             }
-            BufferState::Poisoned { .. } => unreachable!("poison returns before a step"),
+            BufferState::Poisoned(_) => unreachable!("poison returns before a step"),
         }
     }
 
@@ -218,17 +209,12 @@ impl FrameBuffer {
     ) -> Result<BufferState, FrameError> {
         let (payload_id, payload_size) = parse_header(&header[..HEADER_SIZE]);
         if payload_size > self.max_frame_bytes {
-            return Err(FrameError {
-                declared: payload_size,
-                max: self.max_frame_bytes,
-            });
+            return Err(FrameError::TooLarge);
         }
 
         let cur = *remaining;
         Ok(if cur.len() >= payload_size {
-            if let Some(frame) = parse_payload(&payload_id, &cur[..payload_size]) {
-                frames.push(frame);
-            }
+            frames.push(decode(payload_id, &cur[..payload_size])?);
             *remaining = &cur[payload_size..];
             BufferState::Empty
         } else {
@@ -262,60 +248,15 @@ fn parse_header(header: &[u8]) -> (String, usize) {
     (payload_id, payload_size)
 }
 
-/// Parse payload body: message_size(4) + message + metadata_size(2) + metadata.
-fn parse_payload(payload_id: &str, data: &[u8]) -> Option<ParsedFrame> {
-    if data.len() < 6 {
-        return None; // Need at least message_size(4) + metadata_size(2)
-    }
-
-    let message_size = u32::from_be_bytes([data[0], data[1], data[2], data[3]]) as usize;
-
-    if data.len() < 4 + message_size + 2 {
-        return None;
-    }
-
-    let message = data[4..4 + message_size].to_vec();
-
-    let meta_offset = 4 + message_size;
-    let metadata_size = u16::from_be_bytes([data[meta_offset], data[meta_offset + 1]]) as usize;
-
-    let meta_start = meta_offset + 2;
-    if data.len() < meta_start + metadata_size {
-        return None;
-    }
-
-    let metadata = deserialize_metadata(&data[meta_start..meta_start + metadata_size]);
-
-    Some(ParsedFrame {
-        payload_id: payload_id.to_string(),
+/// One whole payload through the wire format's own decoder.
+fn decode(payload_id: String, body: &[u8]) -> Result<ParsedFrame, FrameError> {
+    let (message, metadata) =
+        payloader::parse_payload_body(body).map_err(|_| FrameError::Malformed)?;
+    Ok(ParsedFrame {
+        payload_id,
         message,
         metadata,
     })
-}
-
-/// Deserialize flat metadata format: [key_len(1)] [val_len(1)] [key] [value] ...
-fn deserialize_metadata(data: &[u8]) -> HashMap<String, String> {
-    let mut metadata = HashMap::new();
-    let mut offset = 0;
-
-    while offset + 2 <= data.len() {
-        let key_len = data[offset] as usize;
-        let val_len = data[offset + 1] as usize;
-        offset += 2;
-
-        if offset + key_len + val_len > data.len() {
-            break;
-        }
-
-        let key = String::from_utf8_lossy(&data[offset..offset + key_len]).to_string();
-        offset += key_len;
-        let value = String::from_utf8_lossy(&data[offset..offset + val_len]).to_string();
-        offset += val_len;
-
-        metadata.insert(key, value);
-    }
-
-    metadata
 }
 
 #[cfg(test)]
@@ -323,23 +264,6 @@ mod tests {
     use flz_transport::service::payloader;
 
     use super::*;
-
-    #[test]
-    fn test_single_complete_frame() {
-        let mut metadata = HashMap::new();
-        metadata.insert("key1".to_string(), "val1".to_string());
-
-        let frame_bytes =
-            payloader::build_from_binary("test_payload", b"hello world", metadata.clone()).unwrap();
-
-        let mut fb = FrameBuffer::new();
-        let frames = fb.feed(&frame_bytes).unwrap();
-
-        assert_eq!(frames.len(), 1);
-        assert_eq!(frames[0].payload_id, "test_payload");
-        assert_eq!(frames[0].message, b"hello world");
-        assert_eq!(frames[0].metadata.get("key1").unwrap(), "val1");
-    }
 
     #[test]
     fn test_partial_header() {
@@ -398,10 +322,54 @@ mod tests {
         assert_eq!(frames.len(), 0);
     }
 
-    fn oversized_header(payload_size: u32) -> Vec<u8> {
+    fn header(payload_size: u32) -> Vec<u8> {
         let mut bytes = vec![b' '; 32];
         bytes.extend_from_slice(&payload_size.to_be_bytes());
         bytes
+    }
+
+    /// A frame whose header is honest about `body`, whatever `body` says inside.
+    fn frame_around(body: &[u8]) -> Vec<u8> {
+        let mut bytes = header(body.len() as u32);
+        bytes.extend_from_slice(body);
+        bytes
+    }
+
+    /// Fed whole and split inside the payload, so both the in-place and the
+    /// accumulated path reach the decoder.
+    fn refused_whole_and_split(bytes: &[u8]) {
+        for split_at in [bytes.len(), 38] {
+            let mut fb = FrameBuffer::new();
+            let first = fb.feed(&bytes[..split_at]);
+            let err = if split_at == bytes.len() {
+                first.unwrap_err()
+            } else {
+                assert_eq!(first.unwrap().len(), 0);
+                fb.feed(&bytes[split_at..]).unwrap_err()
+            };
+            assert_eq!(err, FrameError::Malformed);
+            assert_eq!(err.close_reason().to_string(), "malformed_frame");
+
+            let good = payloader::build_without_metadata("id", b"data");
+            assert_eq!(fb.feed(&good).unwrap_err(), FrameError::Malformed);
+        }
+    }
+
+    #[test]
+    fn a_body_whose_message_length_overruns_its_payload_is_refused() {
+        let mut body = 100u32.to_be_bytes().to_vec();
+        body.extend_from_slice(b"short\0\0");
+        refused_whole_and_split(&frame_around(&body));
+    }
+
+    #[test]
+    fn a_metadata_table_cut_inside_a_value_is_refused() {
+        let table = [1, 5, b'k', b'v', b'a'];
+        let mut body = 1u32.to_be_bytes().to_vec();
+        body.push(b'm');
+        body.extend_from_slice(&(table.len() as u16).to_be_bytes());
+        body.extend_from_slice(&table);
+        refused_whole_and_split(&frame_around(&body));
     }
 
     /// An over-limit header is refused the moment it completes — arriving
@@ -410,37 +378,26 @@ mod tests {
     fn an_oversized_header_is_refused_whole_or_split() {
         for (declared, split_at) in [(u32::MAX, None), (2048, Some(20))] {
             let mut fb = FrameBuffer::with_limit(1024);
-            let header = oversized_header(declared);
+            let bytes = header(declared);
             let err = match split_at {
-                None => fb.feed(&header).unwrap_err(),
+                None => fb.feed(&bytes).unwrap_err(),
                 Some(at) => {
-                    assert_eq!(fb.feed(&header[..at]).unwrap().len(), 0);
-                    fb.feed(&header[at..]).unwrap_err()
+                    assert_eq!(fb.feed(&bytes[..at]).unwrap().len(), 0);
+                    fb.feed(&bytes[at..]).unwrap_err()
                 }
             };
-            assert_eq!(err.declared, declared as usize);
-            assert_eq!(err.max, 1024);
+            assert_eq!(err, FrameError::TooLarge);
         }
     }
 
     #[test]
     fn poisoned_buffer_keeps_erroring() {
         let mut fb = FrameBuffer::with_limit(1024);
-        assert!(fb.feed(&oversized_header(4096)).is_err());
+        assert!(fb.feed(&header(4096)).is_err());
 
         // A later feed of otherwise-valid bytes must not resync.
         let good = payloader::build_without_metadata("id", b"data");
-        let err = fb.feed(&good).unwrap_err();
-        assert_eq!(err.declared, 4096);
-    }
-
-    #[test]
-    fn a_frame_error_renders_the_declared_length_against_the_limit() {
-        let err = FrameError {
-            declared: 4096,
-            max: 1024,
-        };
-        assert_eq!(err.to_string(), "declared 4096 > max 1024");
+        assert_eq!(fb.feed(&good).unwrap_err(), FrameError::TooLarge);
     }
 
     #[test]
@@ -453,21 +410,5 @@ mod tests {
         let frames = fb.feed(&frame_bytes).unwrap();
         assert_eq!(frames.len(), 1);
         assert_eq!(frames[0].message, b"payload");
-    }
-
-    #[test]
-    fn test_frame_with_metadata() {
-        let mut metadata = HashMap::new();
-        metadata.insert("foo".to_string(), "bar".to_string());
-        metadata.insert("baz".to_string(), "qux".to_string());
-
-        let frame_bytes = payloader::build_from_binary("meta_test", b"body", metadata).unwrap();
-
-        let mut fb = FrameBuffer::new();
-        let frames = fb.feed(&frame_bytes).unwrap();
-
-        assert_eq!(frames.len(), 1);
-        assert_eq!(frames[0].metadata.get("foo").unwrap(), "bar");
-        assert_eq!(frames[0].metadata.get("baz").unwrap(), "qux");
     }
 }

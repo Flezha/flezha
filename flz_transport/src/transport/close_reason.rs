@@ -22,6 +22,9 @@ pub enum CloseReason {
     /// A frame declared a length above the configured maximum, so the byte
     /// stream cannot resync. Every transport produces it.
     FrameTooLarge,
+    /// A frame's payload did not decode: an inner length overran it, or its
+    /// metadata table was cut inside a pair. Every transport produces it.
+    MalformedFrame,
     /// The whole connection died, carrying the wire's own account of it. QUIC
     /// only: a UDS connection IS its stream, so it closes rather than is lost.
     ConnectionLost(String),
@@ -48,6 +51,7 @@ impl fmt::Display for CloseReason {
             CloseReason::ReadError => f.write_str("read_error"),
             CloseReason::WriteError => f.write_str("write_error"),
             CloseReason::FrameTooLarge => f.write_str("frame_too_large"),
+            CloseReason::MalformedFrame => f.write_str("malformed_frame"),
             CloseReason::ConnectionLost(e) => write!(f, "connection_lost: {}", e),
         }
     }
@@ -68,6 +72,7 @@ mod tests {
             CloseReason::ReadError,
             CloseReason::WriteError,
             CloseReason::FrameTooLarge,
+            CloseReason::MalformedFrame,
             CloseReason::ConnectionLost("aborted by peer".into()),
         ]
         .iter()
@@ -82,6 +87,7 @@ mod tests {
                 "read_error",
                 "write_error",
                 "frame_too_large",
+                "malformed_frame",
                 "connection_lost: aborted by peer",
             ]
         );
