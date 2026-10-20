@@ -1,9 +1,12 @@
 defmodule Flezha.Service.RelayManager.Admission do
   @moduledoc """
-  The checks a start must clear before a relay is created: the three
-  quotas, the factory's placement validity and run, and the refusals a
-  partition group's base id earns.
+  The checks a start must clear before a relay is created: the factory's
+  placement validity and run, the refusals a partition group's base id earns,
+  and the `:start` steps of the shutdown plan that take what the start holds
+  (its quota, the disk check, the namespace claim) before the declared start.
   """
+
+  @behaviour Flezha.Shutdown.Step
 
   alias Flezha.AuthZ.Quotas
   alias Flezha.Identificator
@@ -118,40 +121,68 @@ defmodule Flezha.Service.RelayManager.Admission do
     end
   end
 
-  @doc "Whether `namespace` has room for `needed` more relays, counted from the cluster's live relays."
-  def check_relay_quota(namespace, needed \\ 1) do
+  @impl Flezha.Shutdown.Step
+  def shutdown_steps do
+    [
+      %{scope: :start, order: 10, name: :reserve, run: &reserve_step/2},
+      %{scope: :start, order: 20, name: :disk, run: &disk_step/2},
+      %{scope: :start, order: 30, name: :namespace_claim, run: &namespace_claim_step/2}
+    ]
+  end
+
+  @doc """
+  Whether `namespace` has room for `needed` more relays, counted from the
+  cluster's live relays; `admit` is the check, or the take a start makes.
+  """
+  def check_relay_quota(namespace, needed \\ 1, admit \\ &Quotas.check_allocation/3) do
     if Flezha.AuthZ.enabled?(),
       do: _ = Quotas.refresh_relays(namespace, fn -> live_relays(namespace) end)
 
-    check_quota(namespace, :max_relays, needed)
+    check_quota(namespace, :max_relays, needed, admit)
   end
 
-  defp live_relays(namespace), do: length(HubManager.get_all_relays(namespace))
+  defp live_relays(namespace), do: Enum.map(HubManager.get_all_relays(namespace), &elem(&1, 0))
+
+  @doc "Close a start's quota take: kept once its relay runs, else given back."
+  @spec settle_start(String.t(), boolean()) :: :ok
+  def settle_start(namespace, kept?) do
+    Enum.each(
+      [:max_relays, :max_cells_per_relay],
+      &Quotas.settle_allocation(namespace, &1, kept?)
+    )
+  end
+
+  # The relay and its Cells, each checked and counted in one step, so two
+  # concurrent starts cannot both fit in the last unit.
+  defp reserve_step(%{namespace: namespace, relay: relay}, _budget) do
+    with :ok <- check_relay_quota(namespace, [relay.id], &Quotas.record_allocation/3) do
+      case cell_count(relay) do
+        0 -> :ok
+        cells -> check_quota(namespace, :max_cells_per_relay, cells, &Quotas.record_allocation/3)
+      end
+    end
+  end
 
   # A namespace over its disk quota refuses NEW allocation — running
   # relays and their in-flight durable writes are never interrupted
   # (the Watchdog raises the alarm for those).
-  def check_disk_quota(namespace) do
+  defp disk_step(%{namespace: namespace}, _budget) do
     if Flezha.AuthZ.enabled?() do
       _ = Quotas.refresh_disk_bytes(namespace)
-      check_quota(namespace, :max_state_bytes, 0)
+      check_quota(namespace, :max_state_bytes, 0, &Quotas.check_allocation/3)
     else
       :ok
     end
   end
 
-  def check_cell_quota(namespace, relay) do
-    case cell_count(relay) do
-      0 -> :ok
-      requested -> check_quota(namespace, :max_cells_per_relay, requested)
-    end
-  end
+  defp namespace_claim_step(%{namespace: namespace, relay: relay}, _budget),
+    do: Paths.claim_namespace(relay.id, namespace)
 
   # An unregistered namespace streams: quotas gate registered tenants, and
   # refusing every legacy/implicit namespace here would brick starts the
   # moment enforcement flips on.
-  defp check_quota(namespace, kind, requested) do
-    case Quotas.check_allocation(namespace, kind, requested) do
+  defp check_quota(namespace, kind, requested, admit) do
+    case admit.(namespace, kind, requested) do
       :ok -> :ok
       {:error, {:namespace_unknown, _}} -> :ok
       {:error, _} = err -> err

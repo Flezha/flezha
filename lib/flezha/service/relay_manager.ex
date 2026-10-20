@@ -3,7 +3,6 @@ defmodule Flezha.Service.RelayManager do
   Manages the relay startings and stoppings.
   """
 
-  alias Flezha.AuthZ.Quotas
   alias Flezha.Cluster.Directory
   alias Flezha.Config
   alias Flezha.Config.Durations
@@ -234,35 +233,31 @@ defmodule Flezha.Service.RelayManager do
          :ok <- Admission.validate_relay(namespace, relay),
          :ok <- Admission.refuse_group_base_claim(namespace, relay),
          {:ok, relay} <- Admission.resolve_factory(namespace, relay),
-         :ok <- Admission.check_relay_quota(namespace),
-         :ok <- Admission.check_cell_quota(namespace, relay),
-         :ok <- Admission.check_disk_quota(namespace),
-         :ok <- Paths.claim_namespace(relay.id, namespace) do
-      case Init.init_relay(&exist?/2, namespace, relay, Keyword.get(opts, :announce, true)) do
-        {:ok, _} = ok ->
-          _ = Quotas.record_allocation(namespace, :max_relays, 1)
-          seg_count = Admission.cell_count(relay)
-
-          if seg_count > 0 do
-            _ =
-              Quotas.record_allocation(
-                namespace,
-                :max_cells_per_relay,
-                seg_count
-              )
-          end
-
-          ok
-
-        other ->
-          other
-      end
+         {:ok, answer} <- start_walk(namespace, relay, Keyword.get(opts, :announce, true)) do
+      answer
     else
       {:error, reason} ->
         if Init.claim_loss?(reason),
           do: Init.claim_lost(&exist?/2, namespace, relay.id),
           else: {:error, reason}
     end
+  end
+
+  # The `:start` steps take what the start holds, the declared start last; the
+  # quota take is then kept or given back by what the start answered.
+  defp start_walk(namespace, relay, announce?) do
+    target = %{namespace: namespace, relay: relay, announce?: announce?}
+    {_, report} = Shutdown.run(:start, target, Durations.get(:hub_start_child_ms))
+
+    walked =
+      case report do
+        %{errors: [{_step, reason} | _]} -> {:error, reason}
+        %{results: %{declared_start: answer}} -> {:ok, answer}
+        %{skipped: skipped} -> {:error, {:start_failed, relay.id, {:not_run, skipped}}}
+      end
+
+    Admission.settle_start(namespace, match?({:ok, {:ok, _}}, walked))
+    walked
   end
 
   @doc """

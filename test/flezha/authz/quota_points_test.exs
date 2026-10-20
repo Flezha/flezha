@@ -16,11 +16,14 @@ defmodule Flezha.AuthZ.QuotaPointsTest do
   alias Flezha.AuthZ.{NamespaceStore, QuotaCounters, Quotas, TokenStore}
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.HubManager
+  alias Flezha.Service.RelayManager
   alias Flezha.Service.RelayManager.Admission
   alias Flezha.State.Paths
   alias Flezha.State.PersistenceResolver
   alias Flezha.State.Watchdog
   alias FlezhaTest.Helper.AuthTestHelper
+  alias FlezhaTest.Helper.FakeStartRegistry
+  alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.Helper.Telemetry
 
   setup :set_mimic_global_until_exit
@@ -113,7 +116,87 @@ defmodule Flezha.AuthZ.QuotaPointsTest do
       assert {:error, {:quota_exceeded, :max_relays, %{current: 2, limit: 2}}} =
                Admission.check_relay_quota("team-full")
     end
+
+    # fails when: two starts that race in one namespace both pass the
+    # max_relays check, because the count is read before either start records it.
+    test "two concurrent starts under max_relays 1 admit exactly one" do
+      ns = "team-race"
+      real_relay_takes(ns)
+
+      outcomes =
+        ["a", "b"]
+        |> Task.async_stream(&RelayManager.start_relay(ns, relay(&1)),
+          max_concurrency: 2,
+          timeout: 10_000
+        )
+        |> Enum.map(fn {:ok, outcome} -> outcome end)
+
+      started = Enum.count(outcomes, &match?({:ok, _}, &1))
+      refused = Enum.count(outcomes, &match?({:error, {:quota_exceeded, :max_relays, _}}, &1))
+
+      _ = :sys.get_state(QuotaCounters)
+
+      assert {started, refused} == {1, 1},
+             "outcomes: #{inspect(outcomes)}, counter: #{QuotaCounters.get(ns, :relays)}"
+
+      assert QuotaCounters.get(ns, :relays) == 1
+    end
+
+    # fails when: a start whose caller dies between its quota take and the
+    # start's end keeps the unit, so the namespace stays full of a relay that never ran.
+    test "a start killed mid-way gives its unit back" do
+      ns = "team-killed"
+      real_relay_takes(ns)
+      test_pid = self()
+
+      stub(Paths, :claim_namespace, fn _class, _ns ->
+        send(test_pid, {:taken, self()})
+        Process.sleep(:infinity)
+      end)
+
+      spawn(fn -> RelayManager.start_relay(ns, relay("a")) end)
+      assert_receive {:taken, caller}, 5_000
+      Process.exit(caller, :kill)
+
+      assert NodeTestHelper.wait_until(fn -> QuotaCounters.get(ns, :relays) == 0 end, 2_000)
+      stub(Paths, :claim_namespace, &Mimic.call_original(Paths, :claim_namespace, [&1, &2]))
+      assert {:ok, _} = RelayManager.start_relay(ns, relay("b"))
+    end
+
+    # fails when: a start kept between a refresh's claim and its truth read is
+    # counted twice, once by the read that sees its relay and once as kept.
+    test "a start kept across a refresh is counted once" do
+      {:ok, _} = NamespaceStore.create("team-kept", quotas: %{max_relays: 5})
+
+      assert QuotaCounters.claim_refresh("team-kept", :relays, 60) == :claimed
+      :ok = Quotas.record_allocation("team-kept", :max_relays, ["a"])
+      :ok = Quotas.settle_allocation("team-kept", :max_relays, true)
+      :ok = QuotaCounters.set("team-kept", :relays, ["a"])
+
+      assert QuotaCounters.get("team-kept", :relays) == 1
+    end
   end
+
+  # Starts in `ns` (max_relays 1) through the fake hub, taking from the real
+  # quota engine rather than the harness's always-:ok stand-in.
+  defp real_relay_takes(ns) do
+    {:ok, _} = NamespaceStore.create(ns, quotas: %{max_relays: 1})
+    registry = FakeStartRegistry.install(runners: ["runner-1"])
+
+    stub(Quotas, :check_allocation, &Mimic.call_original(Quotas, :check_allocation, [&1, &2, &3]))
+
+    stub(
+      Quotas,
+      :record_allocation,
+      &Mimic.call_original(Quotas, :record_allocation, [&1, &2, &3])
+    )
+
+    stub(HubManager, :get_all_relays, fn _ns ->
+      for {id, pid, _b} <- :ets.tab2list(registry), do: {id, pid}
+    end)
+  end
+
+  defp relay(id), do: %Flezha.Relay.Builder{id: id, factory_id: "worker", init_values: %{}}
 
   describe "max_state_bytes accounting (§6.2)" do
     test "the counter is rebuilt from the on-disk truth", %{state_root: state_root} do

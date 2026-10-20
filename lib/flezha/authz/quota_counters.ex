@@ -19,6 +19,11 @@ defmodule Flezha.AuthZ.QuotaCounters do
   behind it. `claim_refresh/3` reads that stamp so concurrent callers rebuild a
   counter once between them rather than once each; `set/3` writes it, being the
   write that establishes a counter from its source.
+
+  `reserve/4` checks and counts in one step and holds the take for its caller
+  until `settle/3` or the caller's exit, which gives it back. A take of ids is
+  counted once by a `set/3` of the ids a truth read answers, joined with the
+  ids held and kept since the last claim, which that read may not show yet.
   """
 
   use GenServer
@@ -61,10 +66,25 @@ defmodule Flezha.AuthZ.QuotaCounters do
     incr(namespace, kind, -delta)
   end
 
-  @doc "Overwrite the counter with `value` (used by the disk-footprint refresh)."
-  @spec set(binary(), atom(), non_neg_integer()) :: :ok
+  @doc """
+  Take `units` of `(namespace, kind)` within `limit` (`nil`: none), or answer
+  the count that refused it. `units` is a count, or ids taking one unit each.
+  """
+  @spec reserve(binary(), atom(), non_neg_integer() | [binary()], non_neg_integer() | nil) ::
+          :ok | {:error, non_neg_integer()}
+  def reserve(namespace, kind, units, limit) when is_binary(namespace) and is_atom(kind),
+    do: GenServer.call(__MODULE__, {:reserve, {namespace, kind}, units, limit})
+
+  @doc "Close the caller's `reserve/4` of `(namespace, kind)`: kept, or given back."
+  @spec settle(binary(), atom(), boolean()) :: :ok
+  def settle(namespace, kind, kept?) when is_binary(namespace) and is_boolean(kept?),
+    do: GenServer.cast(__MODULE__, {:settle, self(), {namespace, kind}, kept?})
+
+  @doc "Overwrite the counter with `value`, a count, or ids counted once with the held and kept ones."
+  @spec set(binary(), atom(), non_neg_integer() | [binary()]) :: :ok
   def set(namespace, kind, value)
-      when is_binary(namespace) and is_atom(kind) and is_integer(value) and value >= 0 do
+      when is_binary(namespace) and is_atom(kind) and
+             ((is_integer(value) and value >= 0) or is_list(value)) do
     GenServer.call(__MODULE__, {:set, namespace, kind, value})
   end
 
@@ -115,10 +135,34 @@ defmodule Flezha.AuthZ.QuotaCounters do
     {:noreply, do_adjust(namespace, kind, delta, state)}
   end
 
+  def handle_cast({:settle, pid, key, kept?}, state) do
+    case Enum.find(holds(state), &match?({_ref, {^pid, ^key, _n, _ids}}, &1)) do
+      {ref, _hold} -> {:noreply, release(state, ref, kept?)}
+      nil -> {:noreply, state}
+    end
+  end
+
+  @impl true
+  def handle_info({:DOWN, ref, :process, _pid, _reason}, state),
+    do: {:noreply, release(state, ref, false)}
+
   @impl true
   def handle_call({:set, namespace, kind, value}, _from, state) do
-    :ok = DetsStore.put(@table, @cache, {namespace, kind}, value)
-    {:reply, :ok, stamp(state, {namespace, kind}, System.monotonic_time(:second))}
+    key = {namespace, kind}
+    :ok = DetsStore.put(@table, @cache, key, count(value, key, state))
+    {:reply, :ok, stamp(state, key, System.monotonic_time(:second))}
+  end
+
+  def handle_call({:reserve, {namespace, kind} = key, units, limit}, {pid, _tag}, state) do
+    {n, ids} = if is_list(units), do: {length(units), units}, else: {units, []}
+    current = get(namespace, kind)
+
+    if is_nil(limit) or current + n <= limit do
+      holds = Map.put(holds(state), Process.monitor(pid), {pid, key, n, ids})
+      {:reply, :ok, Map.put(do_adjust(namespace, kind, n, state), :holds, holds)}
+    else
+      {:reply, {:error, current}, state}
+    end
   end
 
   def handle_call({:claim_refresh, namespace, kind, ttl_seconds}, _from, state) do
@@ -129,8 +173,12 @@ defmodule Flezha.AuthZ.QuotaCounters do
     # "never stamped" has to be the absent key rather than a 0 default, which
     # would read as freshly written.
     case Map.get(stamps(state), key) do
-      at when is_integer(at) and now - at < ttl_seconds -> {:reply, :fresh, state}
-      _ -> {:reply, :claimed, stamp(state, key, now)}
+      at when is_integer(at) and now - at < ttl_seconds ->
+        {:reply, :fresh, state}
+
+      _ ->
+        {:reply, :claimed,
+         state |> stamp(key, now) |> Map.put(:kept, Map.delete(kept(state), key))}
     end
   end
 
@@ -140,9 +188,14 @@ defmodule Flezha.AuthZ.QuotaCounters do
       :ok = DetsStore.delete(@table, @cache, key)
     end)
 
-    kept = Map.reject(stamps(state), fn {{ns, _kind}, _at} -> ns == namespace end)
+    other? = fn {{ns, _kind}, _} -> ns != namespace end
 
-    {:reply, :ok, Map.put(state, :refreshed_at, kept)}
+    others = %{
+      refreshed_at: Map.filter(stamps(state), other?),
+      kept: Map.filter(kept(state), other?)
+    }
+
+    {:reply, :ok, Map.merge(state, others)}
   end
 
   ## ----- private -----
@@ -153,6 +206,35 @@ defmodule Flezha.AuthZ.QuotaCounters do
   defp stamps(state), do: Map.get(state, :refreshed_at, %{})
 
   defp stamp(state, key, at), do: Map.put(state, :refreshed_at, Map.put(stamps(state), key, at))
+
+  defp holds(state), do: Map.get(state, :holds, %{})
+
+  defp kept(state), do: Map.get(state, :kept, %{})
+
+  defp release(state, ref, kept?) do
+    Process.demonitor(ref, [:flush])
+
+    case Map.pop(holds(state), ref) do
+      {nil, _holds} -> state
+      {hold, holds} -> state |> Map.put(:holds, holds) |> close(hold, kept?)
+    end
+  end
+
+  defp close(state, {_pid, _key, _n, []}, true), do: state
+
+  defp close(state, {_pid, key, _n, ids}, true),
+    do: Map.put(state, :kept, Map.update(kept(state), key, ids, &(ids ++ &1)))
+
+  defp close(state, {_pid, {namespace, kind}, n, _ids}, false),
+    do: do_adjust(namespace, kind, -n, state)
+
+  # A truth read can miss a start held or kept since its claim; each id counts once.
+  defp count(value, _key, _state) when is_integer(value), do: value
+
+  defp count(ids, key, state) do
+    held = for {_ref, {_pid, ^key, _n, held}} <- holds(state), id <- held, do: id
+    MapSet.size(MapSet.new(ids ++ held ++ Map.get(kept(state), key, [])))
+  end
 
   defp do_adjust(namespace, kind, delta, state) do
     key = {namespace, kind}

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Fixed: concurrent starts stay within a namespace's quotas
+
+- Two relay starts that ran at once in one namespace could both pass the `max_relays` or
+  `max_cells_per_relay` check and both start. A start now takes its units before the relay is
+  created, checked and counted in one step, and gives them back when the start fails or its
+  caller exits before it ends.
+
 ### Changed: the core stamps every SDK's output identity
 
 - The `flz.cell`, `flz.seq` and `flz.key` stamps on a keyed output come from one function in

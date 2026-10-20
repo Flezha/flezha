@@ -354,7 +354,7 @@ defmodule Flezha.Convergence.RemedySeamTest do
     steps = Shutdown.all_steps()
     assert steps != []
 
-    for scope <- [:process, :relay, :namespace, :node] do
+    for scope <- [:start, :process, :relay, :namespace, :node] do
       orders = steps |> Enum.filter(&(&1.scope == scope)) |> Enum.map(& &1.order)
       assert orders != [], "scope #{scope} declares no step"
       assert orders == Enum.uniq(orders), "scope #{scope} has a duplicate order"
@@ -371,10 +371,11 @@ defmodule Flezha.Convergence.RemedySeamTest do
     {"lib/flezha/relay/lifecycle.ex", :process},
     {"lib/flezha/service/relay_manager/teardown.ex", :relay},
     {"lib/flezha/runner/fleet_manager.ex", :namespace},
-    {"lib/flezha/shutdown/coordinator.ex", :node}
+    {"lib/flezha/shutdown/coordinator.ex", :node},
+    {"lib/flezha/service/relay_manager.ex", :start}
   ]
 
-  test "clause 5: the four stop entry points reach Shutdown.run/3" do
+  test "clause 5: every walk's entry point reaches Shutdown.run/3" do
     calls = remote_calls("lib/**/*.ex") |> Map.new()
 
     for {file, scope} <- @stop_entry_points do

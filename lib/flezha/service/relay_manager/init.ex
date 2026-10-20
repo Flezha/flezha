@@ -2,8 +2,10 @@ defmodule Flezha.Service.RelayManager.Init do
   @moduledoc """
   Creating the relay under the hub and settling what the start returned —
   the `:no_response` retry ladder, the claim-loss concession, and the stop of
-  a start that failed.
+  a start that failed. The declared start is the last `:start` step.
   """
+
+  @behaviour Flezha.Shutdown.Step
 
   require Logger
 
@@ -13,6 +15,7 @@ defmodule Flezha.Service.RelayManager.Init do
   alias Flezha.Process.Hub
   alias Flezha.SDK.SafeCall
   alias Flezha.Service.HubManager
+  alias Flezha.Service.RelayManager
   alias Flezha.Service.RelayManager.Teardown
   alias ProcessHub.Service.DeclaredChildren
   alias ProcessHub.Service.ProcessRegistry
@@ -238,6 +241,14 @@ defmodule Flezha.Service.RelayManager.Init do
   rescue
     error -> {:error, {:declared_mutate_failed, error}}
   end
+
+  @impl Flezha.Shutdown.Step
+  def shutdown_steps,
+    do: [%{scope: :start, order: 40, name: :declared_start, run: &declared_start_step/2}]
+
+  # Its answer, a refusal or a conceded claim included, is the start's own.
+  defp declared_start_step(%{namespace: namespace, relay: relay, announce?: announce?}, _budget),
+    do: {:ok, init_relay(&RelayManager.exist?/2, namespace, relay, announce?)}
 
   def init_relay(exist?, namespace, relay, announce? \\ true) do
     child_spec = %{

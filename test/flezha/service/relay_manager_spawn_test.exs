@@ -142,7 +142,7 @@ defmodule FlezhaTest.Service.RelayManagerSpawnTest do
   end
 
   test "an exhausted quota refuses the spawn with the reason attached" do
-    stub(Quotas, :check_allocation, fn _ns, key, _n ->
+    stub(Quotas, :record_allocation, fn _ns, key, _n ->
       {:error, {:quota_exceeded, key, %{limit: 1}}}
     end)
 
@@ -431,7 +431,7 @@ defmodule FlezhaTest.Service.RelayManagerSpawnTest do
     end
 
     test "a refusal that is not about the id is answered, not redrawn" do
-      stub(Quotas, :check_allocation, fn _ns, key, _n ->
+      stub(Quotas, :record_allocation, fn _ns, key, _n ->
         {:error, {:quota_exceeded, key, %{limit: 1}}}
       end)
 

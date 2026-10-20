@@ -16,12 +16,12 @@ defmodule Flezha.AuthZ.Quotas do
     * `Flezha.State.Watchdog`                → disk-quota breach ALARM for a
       running namespace (never a write-path kill)
 
-  Allocation order: caller asks `check_allocation/3` BEFORE touching
-  the resource; on success the caller increments the counter via
-  `record_allocation/3`. On dealloc the caller calls
-  `record_deallocation/3`. The split lets the caller skip the
-  counter touch entirely when the allocation itself fails for an
-  unrelated reason.
+  Allocation order: `check_allocation/3` only reads the counter. A
+  caller about to create the resource takes it with
+  `record_allocation/3`, which checks and counts in one step so two
+  concurrent callers cannot both fit in the last unit, and closes the
+  take with `settle_allocation/3` once the resource exists or failed
+  to. On dealloc the caller calls `record_deallocation/3`.
 
   While `:authn_authz, :enabled` is `false`, every check returns
   `:ok` and no counter is touched.
@@ -69,39 +69,45 @@ defmodule Flezha.AuthZ.Quotas do
   end
 
   defp do_check(namespace, kind, requested) do
-    case NamespaceStore.get(namespace) do
-      :error ->
+    case limit(namespace, kind) do
+      :unknown ->
         {:error, {:namespace_unknown, namespace}}
 
-      {:ok, %{quotas: quotas}} ->
-        case Map.get(quotas, kind) do
-          # No quota configured for this kind → stream.
-          nil ->
-            :ok
+      # No quota configured for this kind → stream.
+      nil ->
+        :ok
 
-          limit when is_integer(limit) ->
-            current = QuotaCounters.get(namespace, counter_for(kind))
-
-            if current + requested <= limit do
-              :ok
-            else
-              {:error, {:quota_exceeded, kind, %{current: current, limit: limit}}}
-            end
-        end
+      limit ->
+        current = QuotaCounters.get(namespace, counter_for(kind))
+        if current + requested <= limit, do: :ok, else: exceeded(kind, current, limit)
     end
   end
 
   @doc """
-  Record an allocation against the counter for `kind`. Called by the
-  caller AFTER the resource has actually been created.
+  Take `units` of `kind` BEFORE the resource is created, refused as
+  `check_allocation/3` refuses it; a namespace without a record is not
+  limited. `units` is a count, or ids taking one unit each, which the
+  relay count's refresh counts once. The take is held until
+  `settle_allocation/3` or the caller's exit, which gives it back.
   """
-  @spec record_allocation(binary(), atom(), non_neg_integer()) :: :ok
-  def record_allocation(namespace, kind, n \\ 1) do
+  @spec record_allocation(binary(), atom(), non_neg_integer() | [binary()]) :: :ok | quota_error()
+  def record_allocation(namespace, kind, units \\ 1) do
     if AuthZ.enabled?() do
-      QuotaCounters.incr(namespace, counter_for(kind), n)
+      limit = with :unknown <- limit(namespace, kind), do: nil
+
+      case QuotaCounters.reserve(namespace, counter_for(kind), units, limit) do
+        :ok -> :ok
+        {:error, current} -> exceeded(kind, current, limit)
+      end
     else
       :ok
     end
+  end
+
+  @doc "Close the caller's `record_allocation/3` of `kind`: kept, or given back."
+  @spec settle_allocation(binary(), atom(), boolean()) :: :ok
+  def settle_allocation(namespace, kind, kept?) do
+    if AuthZ.enabled?(), do: QuotaCounters.settle(namespace, counter_for(kind), kept?), else: :ok
   end
 
   @doc """
@@ -145,15 +151,15 @@ defmodule Flezha.AuthZ.Quotas do
       end)
 
   @doc """
-  Re-derive the relay counter for `namespace` from `count_live`, the cluster's
-  live relay count, at most once per window. The counter alone drifts: a start
+  Re-derive the relay counter for `namespace` from `live_ids`, the cluster's
+  live relay ids, at most once per window. The counter alone drifts: a start
   counts on the node that admitted it, while the stop releases on whichever node
   hosts the relay's hub child, and a release on a counter already at 0 is lost.
   """
-  @spec refresh_relays(binary(), (-> non_neg_integer())) :: non_neg_integer()
-  def refresh_relays(namespace, count_live)
-      when is_binary(namespace) and is_function(count_live, 0),
-      do: refresh(namespace, :relays, @relays_window_seconds, count_live)
+  @spec refresh_relays(binary(), (-> [binary()])) :: non_neg_integer()
+  def refresh_relays(namespace, live_ids)
+      when is_binary(namespace) and is_function(live_ids, 0),
+      do: refresh(namespace, :relays, @relays_window_seconds, live_ids)
 
   ## ----- private -----
 
@@ -168,8 +174,18 @@ defmodule Flezha.AuthZ.Quotas do
 
   defp store(namespace, counter, value) do
     :ok = QuotaCounters.set(namespace, counter, value)
-    value
+    QuotaCounters.get(namespace, counter)
   end
+
+  defp limit(namespace, kind) do
+    case NamespaceStore.get(namespace) do
+      {:ok, %{quotas: quotas}} -> Map.get(quotas, kind)
+      :error -> :unknown
+    end
+  end
+
+  defp exceeded(kind, current, limit),
+    do: {:error, {:quota_exceeded, kind, %{current: current, limit: limit}}}
 
   # Map quota fields → counter kinds. Naming kept distinct so the
   # quota field reads natural in the namespace catalog while the

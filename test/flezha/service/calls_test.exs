@@ -364,7 +364,7 @@ defmodule FlezhaTest.Service.CallsTest do
     end
 
     test "a creation past the namespace's max_relays is quota.exceeded" do
-      stub(Flezha.AuthZ.Quotas, :check_allocation, fn _ns, key, _n ->
+      stub(Flezha.AuthZ.Quotas, :record_allocation, fn _ns, key, _n ->
         {:error, {:quota_exceeded, key, %{limit: 0}}}
       end)
 

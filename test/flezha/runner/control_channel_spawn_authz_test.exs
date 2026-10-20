@@ -130,7 +130,7 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnAuthzTest do
   test "a spawn without an id refused by its act is recorded with no id", ctx do
     :ok = RoleStore.bind(@principal, @ns, :spawner)
 
-    stub(Flezha.AuthZ.Quotas, :check_allocation, fn _ns, key, _n ->
+    stub(Flezha.AuthZ.Quotas, :record_allocation, fn _ns, key, _n ->
       {:error, {:quota_exceeded, key, %{limit: 0}}}
     end)
 

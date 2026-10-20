@@ -4,7 +4,8 @@ defmodule Flezha.Shutdown do
   implementations of a scope in their declared order, each once, each bounded,
   stopping at the budget and naming the steps that did not run. The user's
   relay stop, the Overwatch's own terminate, the namespace stop and the
-  node drain are the four callers.
+  node drain are its teardown callers; a relay start walks the `:start` steps
+  that take what it holds.
 
   It also answers `quiesced?/2` — whether a scope is being torn down — from
   the one table the coordinator and the namespace walk both write, so a
@@ -76,7 +77,7 @@ defmodule Flezha.Shutdown do
             else: apply_step(acc, step, target, remaining)
         end
       )
-      |> finish()
+      |> finish(scope)
 
     release(scope, target)
 
@@ -108,8 +109,9 @@ defmodule Flezha.Shutdown do
 
   defp skip(acc, step), do: %{acc | skipped: [step.name | acc.skipped]}
 
-  defp finish(acc) do
-    if acc.skipped != [] do
+  # A `:start` walk's caller answers what did not run.
+  defp finish(acc, scope) do
+    if acc.skipped != [] and scope != :start do
       Logger.warning("[shutdown] steps not run: #{inspect(Enum.reverse(acc.skipped))}")
     end
 

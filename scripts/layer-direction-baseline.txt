@@ -107,6 +107,8 @@ lib/flezha/runner/stream_channel/records.ex -> Flezha.State.Watchdog
 lib/flezha/service/hub_manager/lifecycle.ex -> Flezha.Boot.RecoveryHooks
 lib/flezha/service/hub_manager/lifecycle.ex -> Flezha.Shutdown.Coordinator
 lib/flezha/service/hub_manager/lifecycle.ex -> Flezha.Shutdown.Step
+lib/flezha/service/relay_manager/admission.ex -> Flezha.Shutdown.Step
+lib/flezha/service/relay_manager/init.ex -> Flezha.Shutdown.Step
 lib/flezha/service/relay_manager/teardown.ex -> Flezha.Shutdown.Step
 lib/flezha/shutdown.ex -> (no directory owns it)
 lib/flezha/state/persistence_resolver.ex -> Flezha.AuthZ.NamespaceStore

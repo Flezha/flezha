@@ -237,14 +237,14 @@ defmodule FlezhaTest.Relay.PartitionGroupTest do
       # order — one unit passes, the next fails, whichever arrives first.
       priced = :atomics.new(1, [])
 
-      stub(Quotas, :check_allocation, fn
-        _ns, :max_relays, 2 ->
-          :ok
-
-        _ns, :max_relays, 1 ->
+      stub(Quotas, :record_allocation, fn
+        _ns, :max_relays, [_id] ->
           if :atomics.add_get(priced, 1, 1) == 1,
             do: :ok,
             else: {:error, {:quota_exceeded, :max_relays, 1}}
+
+        _ns, _cells, _n ->
+          :ok
       end)
 
       assert {:error, {:quota_exceeded, :max_relays, 1}} =
