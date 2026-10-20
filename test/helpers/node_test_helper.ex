@@ -69,6 +69,12 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
 
     :erpc.call(node_name, :code, :add_paths, [:code.get_path()])
 
+    # The peer's console holds to this node's level. The Logger application
+    # restores the level it found when it stops, so without this the reports of
+    # a failed boot rolling back its applications print on the run's output.
+    level = :logger.get_primary_config().level
+    :ok = :erpc.call(node_name, :logger, :set_primary_config, [:level, level])
+
     # A test that fails mid-way must not leak the peer BEAM; `stop_peer_node`
     # already checks liveness, so an explicit stop makes this a no-op.
     ExUnit.Callbacks.on_exit(fn -> stop_bare_peer(peer_pid) end)

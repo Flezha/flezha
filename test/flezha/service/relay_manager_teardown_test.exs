@@ -113,7 +113,7 @@ defmodule FlezhaTest.Service.RelayManagerTeardownTest do
     :ok = :erpc.call(peer_node, TaskJournal, :append_iter_committed, [instance, 0, 0, []])
     assert [_writer] = :erpc.call(peer_node, Supervisor, :live_writers, [instance])
 
-    stop(instance, true, Node.spawn(peer_node, fn -> :ok end))
+    stop(instance, true, Node.spawn(peer_node, :erlang, :node, []))
 
     assert wait_until(
              fn -> :erpc.call(peer_node, Supervisor, :live_writers, [instance]) == [] end,

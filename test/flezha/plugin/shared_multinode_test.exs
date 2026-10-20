@@ -10,6 +10,7 @@ defmodule FlezhaTest.Plugin.SharedMultinodeTest do
   use FlezhaTest.Case, fixtures: [:env], async: false
 
   alias Flezha.Cluster.Directory
+  alias Flezha.Convergence.Snapshot, as: ConvergenceSnapshot
   alias Flezha.Identificator
   alias Flezha.Plugin
   alias Flezha.Plugin.Extension.Table
@@ -266,6 +267,9 @@ defmodule FlezhaTest.Plugin.SharedMultinodeTest do
   test "a single plugin whose controller dies comes up elsewhere and serves again",
        %{p1: p1, p2: p2, server: server} = ctx do
     {:ok, _} = start_supervised({Flezha.Convergence.Loop, tick_ms: 1_000})
+    # The loop heals only a namespace whose hub reads recovered, and a test that
+    # clears the recovery rows leaves this running hub without one.
+    ConvergenceSnapshot.observe_recovery(Identificator.hub(@namespace), :normal)
 
     name = single_home_on(p1, "lost", server)
 
