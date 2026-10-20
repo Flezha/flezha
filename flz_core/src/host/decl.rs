@@ -204,10 +204,17 @@ pub struct HostTaskletDecl {
     /// can be read up to it.
     #[serde(default)]
     pub migrates: bool,
+    /// The pending timers one Cell may hold; the core refuses an item whose
+    /// registrations pass it.
+    #[serde(default = "default_max_timers_per_cell")]
+    pub max_timers_per_cell: usize,
 }
 
 fn default_clock() -> HostClock {
     HostClock::Wall
+}
+fn default_max_timers_per_cell() -> usize {
+    crate::timer::DEFAULT_MAX_TIMERS_PER_CELL
 }
 
 /// A host class declaration; what the core cannot honour is refused naming

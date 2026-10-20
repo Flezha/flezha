@@ -489,7 +489,7 @@ mod declaration_key_tests {
                 (_, k) if k.ends_with("_ms") || k.ends_with("_bytes") => "1000",
                 (_, k) if k.ends_with("_every") || k.ends_with("_attempts") => "1",
                 (_, k) if k.ends_with("_max") || k.ends_with("_capacity") => "1",
-                (_, k) if k.ends_with("_cells") => "1",
+                (_, k) if k.ends_with("_cells") || k.ends_with("_per_cell") => "1",
                 _ => "true",
             }
         };

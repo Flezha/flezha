@@ -50,3 +50,4 @@ tasklet.change_is_nochange
 tasklet.schema_version
 tasklet.min_readable_schema_version
 tasklet.migrates
+tasklet.max_timers_per_cell

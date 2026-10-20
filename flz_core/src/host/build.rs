@@ -24,6 +24,7 @@ use crate::relay::topology::{
     AckGranularity, CellMode, CorrectionPolicy, RelayTopology, TaskletDescriptor,
 };
 use crate::steps::spec::{graph_order, GraphSeed, TaskDag};
+use crate::timer::TimerPolicy;
 use crate::ErrorModel;
 
 /// The class facts every tasklet and the topology read, resolved once so
@@ -285,6 +286,7 @@ fn host_facts(
         } else {
             None
         },
+        timers: TimerPolicy::new(task_decl.max_timers_per_cell, task_name, task_decl.clock),
     }
 }
 

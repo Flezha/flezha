@@ -51,6 +51,8 @@ pub struct HostTaskletFacts {
     pub sdk_version: u32,
     pub change_format_id: u8,
     pub correction: Option<CorrectionPolicy>,
+    /// The cap and clock the settle judges an item's timer ops by.
+    pub timers: crate::timer::TimerPolicy,
 }
 
 impl HostTaskletFacts {

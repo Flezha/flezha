@@ -398,8 +398,11 @@ fn off_the_tier_every_sink_output_of_a_called_input_carries_the_call() {
     );
 }
 
-/// The two outputs of the effect record `settle` writes under the tier.
-fn recorded_outputs(settle: impl FnOnce()) -> Vec<crate::effect::OutputRecord> {
+/// The first effect record `settle` writes under the tier that `pick` takes.
+pub(super) fn recorded(
+    settle: impl FnOnce(),
+    pick: impl Fn(&crate::effect::EffectRecordBody) -> bool,
+) -> crate::effect::EffectRecordBody {
     use std::sync::Mutex;
 
     let _guard = crate::state_sink::test_guard();
@@ -424,11 +427,16 @@ fn recorded_outputs(settle: impl FnOnce()) -> Vec<crate::effect::OutputRecord> {
             let at = 2 + id_len + 8 + 16 + 4;
             postcard::from_bytes::<crate::effect::EffectRecordBody>(&frame[at..frame.len() - 4])
                 .ok()
-                .filter(|body| body.outputs.len() == 2)
+                .filter(&pick)
         })
-        .expect("the record carrying both outputs");
+        .expect("the record asked for");
     crate::state_sink::reset_for_test();
-    body.outputs
+    body
+}
+
+/// The two outputs of the effect record `settle` writes under the tier.
+fn recorded_outputs(settle: impl FnOnce()) -> Vec<crate::effect::OutputRecord> {
+    recorded(settle, |body| body.outputs.len() == 2).outputs
 }
 
 /// Under the tier the outputs ride the effect record with the same stamps.

@@ -25,6 +25,14 @@ pub struct FlowEnd {
     reported: AtomicBool,
 }
 
+#[cfg(test)]
+impl FlowEnd {
+    /// An end was asked for, whether or not it was reported yet.
+    pub(crate) fn requested(&self) -> bool {
+        self.asked.lock_recover().is_some() || self.reported.load(Ordering::Acquire)
+    }
+}
+
 /// A flow tasklet's `complete`: the instance ends with `result` once its
 /// Cells hold nothing.
 pub fn complete(slot: &Arc<CellSlot>, result: Vec<u8>) {

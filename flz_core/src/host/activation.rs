@@ -22,6 +22,7 @@ use crate::flusher::{
 use crate::poll_core::{EngineActivation, EnginePayload, ItemAttempt, PollCore};
 use crate::schema::{self, TimerOp};
 use crate::util::LockRecover;
+use crate::ErrorModel;
 
 /// Apply a host completion to its outstanding activation, then drive the
 /// engine's completion protocol (release, ladder, or park).
@@ -128,7 +129,7 @@ fn settle_items(
             }
             verdict => verdict,
         };
-        match verdict {
+        match judged(slot, &work, &mut effect, verdict) {
             schema::Verdict::Ok => {
                 settle_item(slot, &work, effect, None);
                 crate::cell::DISPATCHES_COMPLETED.fetch_add(1, Ordering::Relaxed);
@@ -162,6 +163,31 @@ fn settle_items(
     }
     finish_batch(core, token, queue);
     Ok(())
+}
+
+/// An `Ok` item's timer ops, the firing's removal first, judged against the
+/// Cell's live set before its verdict is matched; a refusal fails the item as
+/// non-retryable, down the path every failed item takes.
+fn judged(
+    slot: &CellSlot,
+    work: &ItemAttempt,
+    effect: &mut schema::ItemEffect,
+    verdict: schema::Verdict,
+) -> schema::Verdict {
+    if effect.timers.is_empty() || !matches!(verdict, schema::Verdict::Ok) {
+        return verdict;
+    }
+    let Some(facts) = slot.dispatcher.host_facts() else {
+        return verdict;
+    };
+    effect.timers = committed_timers(&work.item, std::mem::take(&mut effect.timers), false);
+    let live = slot.timers.lock_recover();
+    match crate::timer::TimerSession::judge(&facts.timers, &live, &effect.timers) {
+        Ok(()) => verdict,
+        Err(refusal) => schema::Verdict::NonRetryableError {
+            message: refusal.to_error().text(),
+        },
+    }
 }
 
 /// Each item's plugin outputs stamped at the activation's `change_seq`, with
@@ -277,14 +303,13 @@ pub(super) fn settle_item(
     let consumed_offset = consumed_offset_of(&work.item);
     let call = call_of(&work.item);
     let dlq = park.map(|(error, tries)| park_entry(slot, host_bytes(&work.item), error, tries));
-    let keeps_edges = slot.keeps_edges(consumed_offset);
     let edges = route_edge_outputs(
         slot,
         &stream,
         consumed_offset,
         call,
         edge_outputs,
-        keeps_edges,
+        slot.keeps_edges(consumed_offset),
     );
     let effects = InvocationEffects {
         changes: effect.changes,
@@ -305,7 +330,8 @@ pub(super) fn settle_item(
         dlq,
         hold_of(&work.item),
     );
-    commit_timers(slot, &timers, &stream);
+    let firing = firing_of(&work.item);
+    facts.timers.commit(slot, &timers, firing, &stream);
     crate::timer::arm_interval_deadline(slot);
     ship_plugin_outputs(slot, &stream, plugin_outputs);
     // A Cell whose relay is gone parks nothing: its input is the new owner's.
@@ -428,9 +454,10 @@ fn settle_steps_item(
 ) {
     let unreadable = matches!(effect.verdict, schema::Verdict::Unreadable { .. });
     let timers = committed_timers(&work.item, effect.timers, park.is_some());
-    commit_timers(slot, &timers, stream);
+    let firing = firing_of(&work.item);
+    facts.timers.commit(slot, &timers, firing, stream);
     let mut durable = timers;
-    crate::timer::hold_firing_removal(slot, &mut durable, firing_of(&work.item));
+    crate::timer::hold_firing_removal(slot, &mut durable, firing);
     let outputs = if park.is_some() {
         Vec::new()
     } else {
@@ -703,19 +730,6 @@ fn output_records(wire_outputs: Vec<schema::Output>) -> Vec<OutputRecord> {
             schema::OutputTarget::Edge { .. } => None,
         })
         .collect()
-}
-
-fn commit_timers(slot: &Arc<CellSlot>, timers: &[TimerOp], stream: &Arc<FlezhaStream>) {
-    if timers.is_empty() {
-        return;
-    }
-    {
-        let mut pending = slot.timers.lock_recover();
-        for op in timers {
-            pending.apply(op);
-        }
-    }
-    crate::timer::apply_ops(slot, timers, stream);
 }
 
 /// Ship the tier-off plugin outputs at settle.
