@@ -5,12 +5,17 @@
 //! either wholly committed or wholly in flight.
 
 use std::collections::{BTreeMap, HashMap};
+use std::sync::Arc;
 
-use super::compensation::{CellRun, StageRecord};
-use super::instance::{CommittedTask, Completion, JournalResume, MidResume, Release, Value};
-use super::run::{unwired_stream, Run};
+use super::address::{unwired_stream, Source};
+use super::compensation::{rewind_steps, stages_from_intents, CellRun, StageRecord};
+use super::instance::{
+    AfterUndo, CommittedTask, Completion, Deadline, JournalResume, MidResume, PassOrigin, Phase,
+    Release, Value,
+};
+use super::run::{Decide, Run};
 use super::spec::Chain;
-use super::{OnFailure, StepsError};
+use super::{Each, OnFailure, StepsError};
 use crate::channel::{ChannelId, ChannelKind};
 use crate::relay::topology::RelayTopology;
 
@@ -212,4 +217,122 @@ fn stage_record(
         iter,
         cells,
     })
+}
+
+impl Decide<'_, '_, '_> {
+    // -- the restore gate and the journal's resume point --------------------
+
+    /// `count` more of what the bind announced has landed: open the gate once
+    /// all of it has.
+    pub(super) fn landed(&mut self, count: usize) {
+        self.s.restored += count;
+        if self.s.bound && self.s.phase == Phase::Gated && self.s.restored >= self.s.expected {
+            self.disarm(Deadline::RestoreGate);
+            self.open_gate();
+        }
+    }
+
+    /// The journal's plan, as the bind's state and markers describe it.
+    pub(super) fn open_gate(&mut self) {
+        let journal = self.s.journal.take();
+        let intents = stages_from_intents(self.r, &self.s.compensation_intents);
+        if !intents.is_empty() && (journal.is_none() || !self.s.compensation_done.is_empty()) {
+            // With a journal only a compensation-done marker proves an undo
+            // was in flight: intent markers accumulate during forward
+            // progress too.
+            self.s.done = intents;
+            return self.compensate(AfterUndo::Terminal(
+                "error".to_string(),
+                "resumed compensation after crash".to_string(),
+            ));
+        }
+        let journal = journal.unwrap_or_default();
+        // The last committed iteration asked to end the instance: its commit
+        // is durable, so the run ends as it would have before the crash.
+        if let Some(result) = journal.completion.clone() {
+            return self.terminal("ok", String::new(), result);
+        }
+        let (committed, in_flight) = journaled_stages(self.r, &journal);
+        self.s.committed = committed;
+        self.s.done = in_flight;
+        self.s.iter = journal.iter;
+        if !journal.entry_channel.is_empty() {
+            self.s.entry = Some((carried_channel(self.r, &journal), journal.consumed_offset));
+        }
+        // A committed root of some chain IS "this is a mid-iteration resume",
+        // and a journal that records a child without its parent re-runs the
+        // whole iteration rather than trusting the fragment. A timer-fed
+        // pass's root is whichever tasklet's commit carries the firing.
+        let root_committed = journal.in_flight_trigger().is_some()
+            || journal
+                .committed_task_idxs
+                .iter()
+                .any(|&i| self.r.spec.dag.is_root(i as usize));
+        let committed_nodes = if root_committed {
+            journal
+                .committed_task_idxs
+                .iter()
+                .map(|&i| i as usize)
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let rewind = rewind_steps(self.r, &journal.rewind_undo);
+        self.s.resume_point = Some(MidResume {
+            journal,
+            committed_nodes,
+        });
+        // A rewind unwinds the iterations above its target before the loop
+        // resumes at it; the journal already folded the forward state back.
+        if !rewind.is_empty() {
+            return self.begin_undo(rewind, AfterUndo::Resume);
+        }
+        self.resume();
+    }
+
+    /// Where the journal says the chain goes on: a pass the crash interrupted
+    /// resumes with its committed tasklets skipped, else the loop's shape
+    /// decides the next seed.
+    pub(super) fn resume(&mut self) {
+        let Some(point) = self.s.resume_point.take() else {
+            return self.enter_waiting();
+        };
+        let carried = Source::Journal {
+            channel: carried_channel(self.r, &point.journal),
+            handoff: point.journal.handoff.clone(),
+        };
+        if !point.committed_nodes.is_empty() {
+            let timer = point
+                .journal
+                .in_flight_trigger()
+                .map(|(node, firing)| PassOrigin::Timer {
+                    node,
+                    firing: firing.clone(),
+                });
+            let fed = timer.is_none() && self.message_fed();
+            self.s.resume_mid = Some(Arc::new(point));
+            if fed {
+                // The pass took its message before the crash; the controller
+                // re-forwards it, and that message's pass resumes.
+                return self.enter_waiting();
+            }
+            self.s.phase = Phase::Starting;
+            self.fx.start = Some(match timer {
+                Some(origin) => Source::Resumed {
+                    origin,
+                    channel: self.entry_point().0,
+                },
+                None => carried,
+            });
+            return;
+        }
+        match self.r.spec.each {
+            Each::Once if self.s.iter > 0 => self.finish_clean(),
+            Each::Chained if self.s.iter > 0 => {
+                self.s.phase = Phase::Starting;
+                self.fx.start = Some(carried);
+            }
+            _ => self.enter_waiting(),
+        }
+    }
 }

@@ -5,6 +5,7 @@
 use std::time::Duration;
 
 use super::*;
+use crate::steps::events::deadline_due;
 use crate::test_support::host_class;
 
 fn armed(run: &StepsRun, deadline: Deadline) -> Option<u64> {

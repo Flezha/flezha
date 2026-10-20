@@ -3,13 +3,19 @@
 //! and the undo steps a run takes, one event at a time, to carry it out.
 
 use std::collections::{BTreeMap, HashSet, VecDeque};
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
-use super::instance::{CellPos, CommittedTask, UndoStep, Value};
+use super::commit::undo_frame;
+use super::effects::Frame;
+use super::instance::{
+    AfterUndo, BarrierFor, CellPos, CommittedTask, Phase, Undo, UndoStep, Value,
+};
 use super::resume::stages_by_iter;
-use super::run::Run;
-use super::OnFailure;
+use super::run::{Decide, Run};
+use super::{OnFailure, StepsError};
 use crate::cell::CellSlot;
+use crate::state_sink::COMPENSATION_DONE_PAYLOAD_ID;
 use crate::timer::TimerOp;
 
 /// The effect records one Cell wrote in a stage or an undo: its first and last
@@ -199,6 +205,150 @@ pub(super) fn stages_from_intents(r: &Run<'_>, intents: &HashSet<Vec<u8>>) -> Ve
             cells: cells.into_values().collect(),
         })
         .collect()
+}
+
+impl Decide<'_, '_, '_> {
+    // -- compensation ------------------------------------------------------------
+
+    /// Undo what the run completed, in reverse completion order, then `then`.
+    pub(super) fn compensate(&mut self, then: AfterUndo) {
+        self.r.run.pass_dead.store(true, Ordering::Release);
+        self.s.pass = None;
+        let steps = saga_steps(
+            self.r,
+            &self.s.committed,
+            &self.s.done,
+            &self.s.compensation_done,
+        );
+        self.begin_undo(steps, then);
+    }
+
+    /// Carry out `steps`, one event at a time, then `then`.
+    pub(super) fn begin_undo(&mut self, steps: VecDeque<UndoStep>, then: AfterUndo) {
+        self.s.phase = Phase::Compensating;
+        self.s.undo = Some(Undo {
+            steps,
+            cells: Vec::new(),
+            then,
+        });
+        self.undo_step();
+    }
+
+    /// A pass that could not be seeded: undo what is outstanding.
+    pub(super) fn compensate_on(&mut self, error: StepsError) {
+        let (status, error) = self.abnormal(&error);
+        self.compensate(AfterUndo::Terminal(status, error));
+    }
+
+    /// The next step of the undo plan, or what follows its end.
+    pub(super) fn undo_step(&mut self) {
+        let r = self.r;
+        loop {
+            let Some(undo) = self.s.undo.as_mut() else {
+                return;
+            };
+            let next = match undo.steps.front() {
+                None => None,
+                Some(UndoStep::Cell { cell, outputs, .. }) => {
+                    let offset = match &self.s.pass {
+                        Some(pass) => pass.effect_offset(),
+                        None => self.s.entry.and_then(|(_, offset)| offset),
+                    };
+                    self.fx.run_undo = Some((Arc::clone(cell), outputs.clone(), offset));
+                    return;
+                }
+                Some(UndoStep::Record {
+                    node,
+                    iter,
+                    cells_ran,
+                }) => Some((*node, *iter, cells_ran.clone())),
+                Some(UndoStep::Mark { identity }) => {
+                    if r.inst.keeps_state() {
+                        self.fx
+                            .markers
+                            .push((COMPENSATION_DONE_PAYLOAD_ID, Arc::clone(identity)));
+                    }
+                    undo.steps.pop_front();
+                    continue;
+                }
+            };
+            let Some((node, iter, cells_ran)) = next else {
+                let finished = self.s.undo.take().expect("undo checked above");
+                return match finished.then {
+                    AfterUndo::Terminal(status, error) => self.terminal(&status, error, Vec::new()),
+                    AfterUndo::Resume => self.resume(),
+                };
+            };
+            if !r.journaling() {
+                undo.steps.pop_front();
+                continue;
+            }
+            let written = std::mem::take(&mut undo.cells);
+            let cells = cells_ran
+                .into_iter()
+                .map(|cell_id| {
+                    written
+                        .iter()
+                        .find(|cell| cell.cell_id == cell_id)
+                        .cloned()
+                        .unwrap_or(crate::pb::CommittedCell {
+                            cell_id,
+                            ..Default::default()
+                        })
+                })
+                .collect();
+            let command = undo_frame(r, node, iter, cells);
+            let id = self.barrier(BarrierFor::Undo);
+            self.fx.frames.push((id, Frame::Built(Box::new(command))));
+            return;
+        }
+    }
+
+    /// One Cell's undo answered. A saga journals the record the hook wrote
+    /// before the done marker: the marker stops the hook re-running on
+    /// resume, so a crash between the two must fall on the side that re-runs
+    /// the (idempotent) hook. A rewind collects it into its tasklet's entry.
+    pub(super) fn undone(&mut self, node: usize, cell: CellPos, slot: &Arc<CellSlot>) {
+        let attempt = self.s.attempts.remove(&(node, cell)).unwrap_or_default();
+        if let Some(failure) = attempt.failure {
+            let (id, error) = (&self.r.inst.instance_id, failure.error);
+            flz_transport::notice!(Error, "steps {id} compensation error: {error}");
+        }
+        let Some(undo) = self.s.undo.as_mut() else {
+            return;
+        };
+        let Some(UndoStep::Cell { iter, marks, .. }) = undo.steps.pop_front() else {
+            return;
+        };
+        let written = attempt
+            .record
+            .map(|span| RecordSpan::committed_cell(slot, Some(&span)));
+        if !marks {
+            undo.cells.extend(written);
+            return self.undo_step();
+        }
+        let identity = Arc::clone(&slot.cell_identity);
+        undo.steps.push_front(UndoStep::Mark {
+            identity: Arc::clone(&identity),
+        });
+        if let Some(written) = written {
+            undo.cells = vec![written];
+            undo.steps.push_front(UndoStep::Record {
+                node,
+                iter,
+                cells_ran: vec![identity.as_ref().clone()],
+            });
+        }
+        self.undo_step();
+    }
+}
+
+/// The completion one tasklet asked for: its greatest cell key's.
+pub(super) fn node_completion(runs: &[CellRun]) -> Option<Vec<u8>> {
+    runs.iter()
+        .filter_map(|run| Some((&run.cell.cell_key, run.completion.as_ref()?)))
+        .max_by(|a, b| a.0.cmp(b.0))
+        .map(|(_, result)| result.clone())
 }
 
 #[cfg(test)]
