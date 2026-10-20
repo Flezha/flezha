@@ -86,12 +86,11 @@ A new rule or kind goes into the type that owns it; no trait sits in front of th
 
 - **A loop-shape or failure-mode rule** is one inherent method on `Each` or `OnFailure` in
   `flz_core/src/relay/settings.rs`, one `match` each. Today `Each` answers `as_str`,
-  `message_fed(iter)`, `ends_after_first`, `carries_leaf`, `calls_allowed`, `partitionable` and
-  `single_leaf_rules`, and `OnFailure` answers `as_str`, `keeps_committed` and
-  `fails_turn(each)`. A site outside that file calls a method rather than matching a variant.
+  `message_fed(iter)`, `ends_after_first`, `carries_leaf`, `calls_allowed` and `partitionable`,
+  and `OnFailure` answers `as_str`, `keeps_committed` and `fails_turn(each)`. A site outside that file calls a method rather than matching a variant.
 - **A barrier step** is one method on `impl BarrierFor` in `flz_core/src/steps/instance.rs`,
   beside the enum (`Stage(node)`, `Iteration`, `DeadLetter`, `Undo`): today `on_ack`,
-  `on_refusal`, `on_timeout`, `failed`, `timeout_label` and `commits_iteration`. Outside that
+  `on_refusal`, `on_timeout`, `failed`, `label` and `commits_iteration`. Outside that
   file a `BarrierFor` is only constructed, never matched.
 - **The graph order** is `TaskDag::of` in `flz_core/src/steps/spec.rs`, over `graph_order` in
   `flz_core/src/relay/topology.rs`. A change to the walk changes every journal's `task_idx`, so
