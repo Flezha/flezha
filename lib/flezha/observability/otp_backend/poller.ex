@@ -68,9 +68,9 @@ defmodule Flezha.Observability.OtpBackend.Poller do
         {:noreply, state |> poll() |> arm_poll()}
       end
 
-      defp arm_poll(state), do: arm_timer(state, :poll, state.interval, :poll)
-
       def handle_info(_msg, state), do: {:noreply, state}
+
+      defp arm_poll(state), do: arm_timer(state, :poll, state.interval, :poll)
     end
   end
 

@@ -137,7 +137,7 @@ SOURCE_EXT_SKIP = {".md"}
 NAME = re.compile(r"\bFlezha(?:\.[A-Z][A-Za-z0-9_]*)+")
 DEFMODULE = re.compile(r"^\s*defmodule\s+([A-Za-z0-9_.]+)")
 # `verb` is `Flezha.AuthZ.Verb`'s binding macro: a `verb name(...)` line defines `name`.
-DEF = re.compile(r"^\s*(?:def|defp|defmacro|defmacrop|defdelegate|verb)\s+([a-z_][A-Za-z0-9_?!]*)")
+DEF = re.compile(r"^\s*(?:def|defp|defmacro|defmacrop|defguard|defguardp|defdelegate|verb)\s+([a-z_][A-Za-z0-9_?!]*)")
 ATOM = re.compile(r":([a-z_][A-Za-z0-9_]*)")
 ENV = re.compile(r"\bFLEZHA_[A-Z0-9_]+\b")
 EVENT = re.compile(r"\[\s*:flezha(?:\s*,\s*:?[A-Za-z0-9_]+)*\s*\]")

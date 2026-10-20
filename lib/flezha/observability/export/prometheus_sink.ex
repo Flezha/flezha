@@ -32,11 +32,6 @@ defmodule Flezha.Observability.Export.PrometheusSink do
 
   @impl GenServer
   def init(_opts) do
-    # The foundation Registry's `register_sink/1` starts the sink
-    # under SinkSupervisor; here we're already a child of Export.
-    # Insert ourselves into the sink ETS table directly so the Bus
-    # routes to us, mirroring what `do_register_sink/1` would have
-    # done.
     :ok = register_self()
 
     {:ok, %{}}

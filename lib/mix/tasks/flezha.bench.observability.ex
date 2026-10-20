@@ -12,7 +12,7 @@ defmodule Mix.Tasks.Flezha.Bench.Observability do
 
   use Mix.Task
 
-  alias Flezha.Observability.{Bus, Registry, Signal}
+  alias Flezha.Observability.{Bus, Registry, Signal, Source}
 
   @ns_per_emit_threshold 1_000
   @default_iterations 1_000_000
@@ -64,12 +64,13 @@ defmodule Mix.Tasks.Flezha.Bench.Observability do
 
   defp bench_signal(source) do
     :ok =
-      Registry.register_source(%{
-        name: source,
-        kinds: [:metric],
-        flavour: :declarative,
-        cardinality_budget: 1_000_000
-      })
+      Registry.register_source(
+        Source.registration(
+          name: source,
+          signals: [bench: {:metric, "One emit of the benchmark."}],
+          cardinality_budget: 1_000_000
+        )
+      )
 
     Signal.new(%{
       kind: :metric,

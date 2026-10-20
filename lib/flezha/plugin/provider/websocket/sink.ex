@@ -23,6 +23,7 @@ defmodule Flezha.Plugin.Provider.Websocket.Sink do
   """
 
   alias Flezha.Config.Backoff
+  alias Flezha.Error
   alias Flezha.Plugin.Provider.Websocket.Subscription
   alias Flezha.Plugin.ProviderBehaviour
   alias Flezha.Process.Backlog
@@ -334,7 +335,7 @@ defmodule Flezha.Plugin.Provider.Websocket.Sink do
 
   defp park(state, {{_type, body}, metadata, _req_id}, attempts) do
     emit(:failed, %{parked: 1}, state)
-    error = Flezha.Error.new("websocket.unacknowledged", %{attempts: attempts})
+    error = Error.new("websocket.unacknowledged", %{attempts: attempts})
     Outbox.park(metadata, body, error, attempts)
   end
 

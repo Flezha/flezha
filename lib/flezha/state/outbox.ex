@@ -17,8 +17,8 @@ defmodule Flezha.State.Outbox do
   require Logger
 
   alias Flezha.Dlq.Entry, as: DlqEntry
-  alias Flezha.Error
   alias Flezha.Dlq.Store, as: DlqStore
+  alias Flezha.Error
   alias Flezha.State.Wire
   alias Flezha.State.{Paths, WriterRegistry}
 
