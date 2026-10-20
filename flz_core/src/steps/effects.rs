@@ -126,7 +126,8 @@ pub(super) struct Effects {
     pub(super) control: Vec<(String, Command)>,
     pub(super) drop_acks: Vec<String>,
     pub(super) disarm: Vec<(Deadline, u64)>,
-    pub(super) arm: Vec<(Deadline, u64)>,
+    /// A deadline's re-arm: the due it replaces, then its new one.
+    pub(super) arm: Vec<(Deadline, Option<u64>, u64)>,
     pub(super) admit: Vec<Release>,
     pub(super) cancel_retries: Vec<Arc<CellSlot>>,
     pub(super) parked: Option<MessagePark>,
@@ -220,7 +221,7 @@ impl Run<'_> {
     fn schedule(
         &self,
         disarm: Vec<(Deadline, u64)>,
-        arm: Vec<(Deadline, u64)>,
+        arm: Vec<(Deadline, Option<u64>, u64)>,
         arms: Vec<HeldArm>,
         admit: Vec<Release>,
         ready: Vec<Arc<CellSlot>>,
@@ -230,8 +231,8 @@ impl Run<'_> {
         for (deadline, due) in disarm {
             core.disarm_instance(self.inst.seq, deadline, due);
         }
-        for (deadline, due) in arm {
-            core.arm_instance(self.weak(), self.inst.seq, deadline, due);
+        for (deadline, old, due) in arm {
+            core.rearm_instance(self.weak(), self.inst.seq, deadline, old, due);
         }
         for (slot, at, stream) in arms {
             core.arm_timer(&slot, at, stream);

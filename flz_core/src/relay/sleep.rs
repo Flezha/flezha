@@ -101,13 +101,7 @@ pub fn bound(inst: &Arc<RelayInstance>) {
 }
 
 fn arm(inst: &Arc<RelayInstance>, after: Duration) {
-    let due = crate::util::wall_now_ms().saturating_add(after.as_millis() as u64);
-    let old = inst.idle.due.swap(due, Ordering::AcqRel);
-    let core = crate::poll_core::global();
-    if old != 0 && old != due {
-        core.disarm_instance(inst.seq, Deadline::ParkIdle, old);
-    }
-    core.arm_instance(Arc::downgrade(inst), inst.seq, Deadline::ParkIdle, due);
+    crate::relay::rearm(inst, Deadline::ParkIdle, &inst.idle.due, after);
 }
 
 /// A deadline the deferred-wake list promoted, whichever way the instance

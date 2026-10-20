@@ -4,7 +4,7 @@
 //! finished steps relay. Nothing here is on the input path: the end is
 //! checked from one deadline on the poll core's deferred-wake list.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
@@ -25,6 +25,8 @@ pub struct FlowEnd {
     asked: Mutex<Option<(&'static str, Vec<u8>)>>,
     reported: AtomicBool,
     window_left: OnceLock<Duration>,
+    /// Due time of the armed `MaxDuration`, `0` when none is armed.
+    max_due: AtomicU64,
 }
 
 #[cfg(test)]
@@ -66,7 +68,7 @@ pub fn bound(inst: &Arc<RelayInstance>) {
         return;
     }
     if let Some(limit) = inst.max_duration() {
-        arm(inst, Deadline::MaxDuration, limit);
+        crate::relay::rearm(inst, Deadline::MaxDuration, &inst.end.max_due, limit);
     }
 }
 

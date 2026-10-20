@@ -338,6 +338,22 @@ impl PollCore {
         self.notify_waiters();
     }
 
+    /// Move one instance deadline from `old` to `due_at_ms`: the entry armed
+    /// for `old` goes, so a re-arm leaves one entry.
+    pub fn rearm_instance(
+        &self,
+        instance: Weak<crate::relay::instance::RelayInstance>,
+        seq: u64,
+        deadline: Deadline,
+        old: Option<u64>,
+        due_at_ms: u64,
+    ) {
+        if let Some(old) = old.filter(|&old| old != due_at_ms) {
+            self.disarm_instance(seq, deadline, old);
+        }
+        self.arm_instance(instance, seq, deadline, due_at_ms);
+    }
+
     /// Disarm one instance deadline armed for `due_at_ms`. Idempotent.
     pub fn disarm_instance(&self, seq: u64, deadline: Deadline, due_at_ms: u64) {
         self.wakes.remove(&WakeKey {

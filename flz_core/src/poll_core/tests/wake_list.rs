@@ -9,6 +9,7 @@ use super::fixtures::{build_slot, unix_stream, wait_until};
 use super::support::*;
 use crate::cell::CellItem;
 use crate::poll_core::{PollCore, Polled, Starvation};
+use crate::relay::Deadline;
 use crate::timer::{TimerKind, TimerOp};
 
 // ------------------------------------------------ the deferred-wake list
@@ -271,4 +272,23 @@ fn the_wake_list_arms_disarms_and_discards_by_cell() {
     );
     core.discard_cell_timers(&b.cell_identity);
     assert_eq!(core.timers_armed(), 0);
+}
+
+/// An instance deadline re-armed again and again keeps one entry: each
+/// re-arm takes the due it replaces off the list.
+#[test]
+fn re_arming_an_instance_deadline_leaves_one_entry() {
+    let core = PollCore::new();
+    let seq = 7;
+    let base = crate::util::wall_now_ms() + 600_000;
+    let mut old = None;
+    for step in 0..5 {
+        let due = base + step * 10;
+        core.rearm_instance(std::sync::Weak::new(), seq, Deadline::Complete, old, due);
+        old = Some(due);
+    }
+    assert_eq!(
+        core.instance_deadlines(seq),
+        vec![(Deadline::Complete, base + 40)]
+    );
 }

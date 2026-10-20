@@ -412,12 +412,8 @@ impl Decide<'_, '_, '_> {
 
     pub(super) fn arm(&mut self, deadline: Deadline, after: Duration) {
         let due = crate::util::wall_now_ms().saturating_add(after.as_millis() as u64);
-        if let Some(old) = self.s.armed.insert(deadline, due) {
-            if old != due {
-                self.fx.disarm.push((deadline, old));
-            }
-        }
-        self.fx.arm.push((deadline, due));
+        let old = self.s.armed.insert(deadline, due);
+        self.fx.arm.push((deadline, old, due));
     }
 
     pub(super) fn disarm(&mut self, deadline: Deadline) {
