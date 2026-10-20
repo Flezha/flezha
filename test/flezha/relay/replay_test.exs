@@ -457,9 +457,15 @@ defmodule FlezhaTest.Relay.BindReforwardTest do
       state = overwatch(ctx, effectively_once: true)
 
       # The cast path: nobody is told anything, so the journal's `:ok` is the
-      # only record of what happened to this input.
+      # only record of what happened to this input. The log answers after a real
+      # fsync, which a loaded disk does not finish within any fixed window.
       assert {:pending, state} = Ingest.confirming_ingest(state, "m0", %{}, :cast)
-      assert_receive log_reply
+
+      log_reply =
+        receive do
+          reply -> reply
+        end
+
       assert {:ok, state} = Ingest.journal_reply(state, log_reply)
 
       # Accepted: the input log holds it.

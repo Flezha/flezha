@@ -58,8 +58,7 @@ defmodule FlezhaTest.System.BootReadinessDrillTest do
     {:ok, port: port}
   end
 
-  @tag :tmp_dir
-  test "no surface reports ready before the last precondition is met", %{port: port, tmp_dir: tmp} do
+  test "no surface reports ready before the last precondition is met", %{port: port} do
     # 1. The boot sequence has not finished. This is the window the readiness
     #    probe used to read `200 healthy` through `/healthz`.
     assert_all_refuse(port, "booting", "boot_sequence_complete")
@@ -82,6 +81,7 @@ defmodule FlezhaTest.System.BootReadinessDrillTest do
     # 4. Hubs are back, but a durable registry on disk has not been reloaded:
     #    a hub this boot never started left one, and auto-restore is on.
     Snapshot.observe_recovery(hub_id, :normal)
+    %{tmp: tmp} = FlezhaTest.Case.install([:tmp_dir])
     on_exit(TestHelpers.override_env(:auto_restore_enabled, true))
     on_exit(TestHelpers.override_env(:process_hub_registry_root, tmp))
     registry = HubRegistryTestHelper.registry_file("drill-unloaded")
@@ -109,11 +109,13 @@ defmodule FlezhaTest.System.BootReadinessDrillTest do
   end
 
   # Real hub, shipped recovery config: a node with nobody to wait for must not
-  # sit at `recovering` for the whole grace.
-  @tag :tmp_dir
-  test "a controller with no peers is ready in seconds, hub recovery met last", %{tmp_dir: tmp} do
+  # sit at `recovering` for the whole grace. The registry root is claimed, not
+  # ExUnit's `:tmp_dir`: that path is the same in every BEAM on the checkout, so
+  # a second suite running this test would add its hub's registry to ours.
+  test "a controller with no peers is ready in seconds, hub recovery met last" do
     assert Node.list() == [], "this boot needs a node with no peers: #{inspect(Node.list())}"
 
+    %{tmp: tmp} = FlezhaTest.Case.install([:tmp_dir])
     on_exit(TestHelpers.override_env(:auto_restore_enabled, true))
     on_exit(TestHelpers.override_env(:process_hub_registry_root, tmp))
 
