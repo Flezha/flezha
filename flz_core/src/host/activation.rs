@@ -569,6 +569,14 @@ fn route_edge_outputs(
     let Some(instance) = slot.instance.upgrade() else {
         return recorded;
     };
+    // An inter-tasklet value is never a replay member: the downstream
+    // Tasklet receives corrected outputs already in order.
+    let d = &crate::routing::Delivery {
+        stream,
+        consumed_offset,
+        call,
+        replay: false,
+    };
     for output in edge_outputs {
         let schema::OutputTarget::Edge { channel, consumer } = output.target else {
             continue;
@@ -589,16 +597,7 @@ fn route_edge_outputs(
                 &value,
             ));
         }
-        match crate::routing::deliver_host_output(
-            &instance,
-            channel,
-            consumer,
-            &value,
-            stream,
-            consumed_offset,
-            call,
-            slot,
-        ) {
+        match crate::routing::deliver_host_output(&instance, channel, consumer, &value, d, slot) {
             // A push this Cell could not deliver is HELD, not lost:
             // it sits in the producer's holdback and the Cell is
             // handed no further work until it lands. The remaining

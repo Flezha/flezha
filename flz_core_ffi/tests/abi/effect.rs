@@ -18,7 +18,7 @@ use flz_core_ffi::*;
 use flz_transport::errors::FlezhaError;
 use flz_transport::transport::FlezhaStream;
 
-use crate::harness::{abi_complete, abi_poll, ok_effect, Controller, Demanded};
+use crate::harness::{abi_complete, abi_poll, ok_effect, route_entry, Controller, Demanded};
 
 const CHILD: &str = "FLZ_ABI_EFFECT_CHILD";
 
@@ -91,9 +91,7 @@ fn deliver(
     let wrap = entry.wrap_input.as_ref().expect("entry wrapper");
     for offset in offsets {
         let value = wrap(b"input".to_vec()).expect("bytes passthrough cannot fail");
-        flz_core::routing::route_to_consumers(
-            &instance, entry, &value, stream, *offset, None, false, None,
-        );
+        route_entry(&instance, entry, &value, stream, *offset);
     }
     let (status, act) = abi_poll(ctx, 2_000);
     assert_eq!(status, FLZ_POLL_ACTIVATION, "queued inputs hand out");

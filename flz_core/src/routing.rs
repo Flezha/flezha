@@ -63,56 +63,44 @@ impl EntryView for RelayInstance {
     }
 }
 
+/// What one routed message carries to every consumer it reaches: the stream
+/// it came on, the input-log offset the controller stamped, the call waiting
+/// on it and whether it is a replay slice member.
+#[derive(Clone, Copy)]
+pub struct Delivery<'a> {
+    pub stream: &'a Arc<FlezhaStream>,
+    pub consumed_offset: Option<u64>,
+    pub call: Option<&'a Arc<str>>,
+    pub replay: bool,
+}
+
 /// Route one channel value to every consumer through its own edge — the one
 /// seam live delivery, the replay slice and an inter-tasklet emit share. A
 /// closure that unwinds sends the value up the channel's ladder; the other
 /// consumers are still served. A steps relay's value is not admitted here: a
 /// message starts or queues a pass, a stage's output is held for its commit.
-#[allow(clippy::too_many_arguments)]
 pub fn route_to_consumers(
     instance: &Arc<RelayInstance>,
     channel: &ChannelDescriptor,
     value: &Arc<dyn Any + Send + Sync>,
-    stream: &Arc<FlezhaStream>,
-    consumed_offset: Option<u64>,
-    call: Option<&Arc<str>>,
-    replay: bool,
+    d: &Delivery<'_>,
     producer: Option<&Arc<CellSlot>>,
 ) -> bool {
     if instance.steps.is_some() {
         match producer {
             Some(producer) => {
-                crate::steps::hold_emit(instance, Some(channel), value, stream, producer)
+                crate::steps::hold_emit(instance, Some(channel), value, d.stream, producer)
             }
-            None => crate::steps::message(instance, channel, value, stream, consumed_offset, call),
+            None => crate::steps::message(instance, channel, value, d),
         }
         return false;
     }
     let mut deferred = false;
     for edge in &channel.consumers {
-        match deliver_edge(
-            instance,
-            channel,
-            edge,
-            value,
-            stream,
-            consumed_offset,
-            call,
-            replay,
-            &mut Destination::Mailbox(producer),
-        ) {
+        let to = &mut Destination::Mailbox(producer);
+        match deliver_edge(instance, channel, edge, value, d, to) {
             Ok(held) => deferred |= held,
-            Err(e) => hand_edge_ladder(
-                instance,
-                channel,
-                edge,
-                value,
-                stream,
-                consumed_offset,
-                call,
-                replay,
-                e.to_string(),
-            ),
+            Err(e) => hand_edge_ladder(instance, channel, edge, value, d, e.to_string()),
         }
     }
     deferred
@@ -132,58 +120,30 @@ pub(crate) enum Destination<'a> {
 /// One value through one edge's transform and into the mailbox — the ONE
 /// place an edge's closures become pushes, for live routing and the ladder's
 /// re-attempt alike.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn deliver_edge(
     instance: &RelayInstance,
     channel: &ChannelDescriptor,
     edge: &ConsumerEdge,
     value: &Arc<dyn Any + Send + Sync>,
-    stream: &Arc<FlezhaStream>,
-    consumed_offset: Option<u64>,
-    call: Option<&Arc<str>>,
-    replay: bool,
+    d: &Delivery<'_>,
     to: &mut Destination<'_>,
 ) -> Result<bool, Error> {
     match edge.transform_value(value).map_err(Error::Routing)? {
-        None => deliver_to_consumer(
-            instance,
-            channel,
-            edge,
-            value,
-            stream,
-            consumed_offset,
-            call,
-            replay,
-            to,
-        ),
+        None => deliver_to_consumer(instance, channel, edge, value, d, to),
         Some(yielded) => yielded.into_iter().try_fold(false, |held, v| {
-            deliver_to_consumer(
-                instance,
-                channel,
-                edge,
-                &v,
-                stream,
-                consumed_offset,
-                call,
-                replay,
-                to,
-            )
-            .map(|d| held | d)
+            deliver_to_consumer(instance, channel, edge, &v, d, to).map(|more| held | more)
         }),
     }
 }
 
 /// One host completion's edge value to its named consumer; the host already
 /// ran the edge's transforms and key.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn deliver_host_output(
     instance: &Arc<RelayInstance>,
     channel_id: u32,
     consumer: u32,
     value: &Arc<dyn Any + Send + Sync>,
-    stream: &Arc<FlezhaStream>,
-    consumed_offset: Option<u64>,
-    call: Option<&Arc<str>>,
+    d: &Delivery<'_>,
     producer: &Arc<CellSlot>,
 ) -> Result<bool, Error> {
     let channel = instance.topology.channel(channel_id).ok_or_else(|| {
@@ -199,17 +159,12 @@ pub(crate) fn deliver_host_output(
                 ("channel", channel.name.as_ref().into()),
             ]))
         })?;
-    // An inter-tasklet value is never a replay member: the downstream
-    // Tasklet receives corrected outputs already in order.
     deliver_to_consumer(
         instance,
         channel,
         edge,
         value,
-        stream,
-        consumed_offset,
-        call,
-        false,
+        d,
         &mut Destination::Mailbox(Some(producer)),
     )
 }
@@ -217,16 +172,12 @@ pub(crate) fn deliver_host_output(
 /// One post-transform value to one consumer's Cell. `Err` is an unwinding
 /// key closure; an absent registry or an unmapped static key is a silent
 /// skip.
-#[allow(clippy::too_many_arguments)]
 fn deliver_to_consumer(
     instance: &RelayInstance,
     channel: &ChannelDescriptor,
     edge: &ConsumerEdge,
     value: &Arc<dyn Any + Send + Sync>,
-    stream: &Arc<FlezhaStream>,
-    consumed_offset: Option<u64>,
-    call: Option<&Arc<str>>,
-    replay: bool,
+    d: &Delivery<'_>,
     to: &mut Destination<'_>,
 ) -> Result<bool, Error> {
     let policy = channel.overflow_policy;
@@ -236,16 +187,16 @@ fn deliver_to_consumer(
     // producing Cell withholds work from it, a value from the entry path (or
     // a replay member, which only the entry path produces) parks the reader.
     let mut admit = |consumer: &Arc<CellSlot>| {
-        let mut payload = make_cell_payload(value, stream, consumed_offset, replay);
+        let mut payload = make_cell_payload(value, d.stream, d.consumed_offset, d.replay);
         payload.forwarded = forwarded;
-        payload.call = call.cloned();
-        payload.hold = consumed_offset
+        payload.call = d.call.cloned();
+        payload.hold = (d.consumed_offset)
             .zip(instance.prefix.as_ref())
             .map(|(offset, prefix)| prefix.hold(offset));
         let item = CellItem::Input(payload);
         match to {
             Destination::Held(held) => held.push((Arc::clone(consumer), item)),
-            Destination::Mailbox(Some(p)) if !replay => {
+            Destination::Mailbox(Some(p)) if !d.replay => {
                 deferred |= admit_from_cell(p, consumer, item, policy, nonparking_enabled())
             }
             Destination::Mailbox(_) | Destination::Redelivered => {
@@ -477,44 +428,31 @@ fn route_stream_frame(
     }
 
     let (consumed_offset, call, replay) = frame_facts(metadata);
+    let call = call.as_ref();
+    let d = Delivery {
+        stream: &stream,
+        consumed_offset,
+        call,
+        replay,
+    };
     if let Some(edge) = metadata.get("flz.edge") {
-        return redeliver_edge(instance, edge, payload, stream, consumed_offset, call);
+        return redeliver_edge(instance, edge, payload, &d);
     }
     if consumed_offset.is_some() {
         instance.owed_arrived();
     }
     let Some((channel_id, channel)) =
-        entry_channel_or_park(instance, &payload, metadata, consumed_offset, call.as_ref())
+        entry_channel_or_park(instance, &payload, metadata, consumed_offset, call)
     else {
         return;
     };
-
-    let Some(typed_payload) = enter_channel(
-        instance,
-        channel_id,
-        channel,
-        payload,
-        &stream,
-        consumed_offset,
-        call.as_ref(),
-        replay,
-    ) else {
+    let Some(typed_payload) = enter_channel(instance, channel_id, channel, payload, &d) else {
         return;
     };
-
     // The entry path has no producing Cell to withhold work from, so a
     // `DropNothing` push here parks this reader — the one park the core
     // keeps, and what carries ingress backpressure to the controller.
-    route_to_consumers(
-        instance,
-        channel,
-        &typed_payload,
-        &stream,
-        consumed_offset,
-        call.as_ref(),
-        replay,
-        None,
-    );
+    route_to_consumers(instance, channel, &typed_payload, &d, None);
 }
 
 /// The records of `value`, emitted on `channel_id` for the input at `origin`,
@@ -565,15 +503,9 @@ pub(crate) fn edge_record(
 
 /// An edge value a restore delivers again (`flz.edge` names its channel and
 /// consumer): decoded through the channel's codec and admitted to that one
-/// consumer, whose floor drops it when its own records acknowledge `origin`.
-fn redeliver_edge(
-    instance: &Arc<RelayInstance>,
-    edge: &str,
-    payload: Vec<u8>,
-    stream: Arc<FlezhaStream>,
-    origin: Option<u64>,
-    call: Option<Arc<str>>,
-) {
+/// consumer, whose floor drops it when its own records acknowledge the
+/// offset `d` carries. It is never a replay member.
+fn redeliver_edge(instance: &Arc<RelayInstance>, edge: &str, payload: Vec<u8>, d: &Delivery<'_>) {
     let named = edge
         .split_once(':')
         .and_then(|(c, t)| Some((c.parse::<ChannelId>().ok()?, t.parse::<u32>().ok()?)));
@@ -600,17 +532,14 @@ fn redeliver_edge(
             return;
         }
     };
-    if let Err(error) = deliver_edge(
-        instance,
-        channel,
-        edge,
-        &value,
-        &stream,
-        origin,
-        call.as_ref(),
-        false,
+    let (d, to) = (
+        &Delivery {
+            replay: false,
+            ..*d
+        },
         &mut Destination::Redelivered,
-    ) {
+    );
+    if let Err(error) = deliver_edge(instance, channel, edge, &value, d, to) {
         flz_transport::notice!(
             Warn,
             "relay {} channel {channel_id}: a re-delivered edge value was not admitted: {error}",
@@ -709,9 +638,7 @@ fn park_unresolved_entry<V: EntryView>(
         // The budget of one, and the identity slot a frame-controlled name
         // never reaches, are the target's to decide.
         crate::retry::ParkTarget::unresolved(requested),
-        consumed_offset,
-        call.cloned(),
-        Some(payload.to_vec()),
+        (consumed_offset, call.cloned(), Some(payload.to_vec())),
         error,
         // Unreachable at a budget of one, and the truth at any other:
         // the name is a fact of the frame.
@@ -723,23 +650,19 @@ fn park_unresolved_entry<V: EntryView>(
 /// The value a frame becomes on its entry channel, or `None` when it left
 /// the reader's hands — staged for a prepare crossing, or a failing parse on
 /// the ladder.
-#[allow(clippy::too_many_arguments)]
 fn enter_channel(
     instance: &Arc<RelayInstance>,
     channel_id: u32,
     channel: &ChannelDescriptor,
     payload: Vec<u8>,
-    stream: &Arc<FlezhaStream>,
-    consumed_offset: Option<u64>,
-    call: Option<&Arc<str>>,
-    replay: bool,
+    d: &Delivery<'_>,
 ) -> Option<Arc<dyn Any + Send + Sync>> {
     let entry = crate::host::StagedEntry {
         bytes: payload,
-        consumed_offset,
-        call: call.cloned(),
-        replay,
-        stream: Arc::clone(stream),
+        consumed_offset: d.consumed_offset,
+        call: d.call.cloned(),
+        replay: d.replay,
+        stream: Arc::clone(d.stream),
         stage: None,
     };
     let payload = crate::host::stage_prepare(instance, channel_id, channel, vec![entry])
@@ -749,33 +672,23 @@ fn enter_channel(
     // in hand, so it takes the entry form of delivery, without waiting.
     let deliver = || {
         let instance = Arc::clone(instance);
-        let stream = Arc::clone(stream);
-        let call = call.cloned();
+        let (stream, call) = (Arc::clone(d.stream), d.call.cloned());
+        let (consumed_offset, replay) = (d.consumed_offset, d.replay);
         Box::new(move |value: Arc<dyn Any + Send + Sync>| {
             let channel = instance
                 .topology
                 .channel(channel_id)
                 .ok_or_else(|| format!("entry channel {channel_id} left the topology"))?;
-            Ok(crate::retry::route_held(
-                &instance,
-                channel,
-                &value,
-                &stream,
+            let d = Delivery {
+                stream: &stream,
                 consumed_offset,
-                call.as_ref(),
+                call: call.as_ref(),
                 replay,
-            ))
+            };
+            Ok(crate::retry::route_held(&instance, channel, &value, &d))
         }) as EntryDeliver
     };
-    wrap_entry(
-        instance,
-        channel_id,
-        channel,
-        payload,
-        consumed_offset,
-        call,
-        deliver,
-    )
+    wrap_entry(instance, channel_id, channel, payload, d, deliver)
 }
 
 /// The wire bytes through `wrap_input`. A parsed entry's failure rides the
@@ -786,8 +699,7 @@ fn wrap_entry<V: EntryView>(
     channel_id: u32,
     channel: &ChannelDescriptor,
     payload: Vec<u8>,
-    consumed_offset: Option<u64>,
-    call: Option<&Arc<str>>,
+    d: &Delivery<'_>,
     deliver: impl FnOnce() -> EntryDeliver,
 ) -> Option<Arc<dyn Any + Send + Sync>> {
     let retry_bytes = channel.entry_parsed.then(|| payload.clone());
@@ -809,8 +721,8 @@ fn wrap_entry<V: EntryView>(
                     channel_id,
                     bytes,
                     first_error: e,
-                    consumed_offset,
-                    call: call.cloned(),
+                    consumed_offset: d.consumed_offset,
+                    call: d.call.cloned(),
                     deliver: deliver(),
                 }),
                 None => flz_transport::notice!(

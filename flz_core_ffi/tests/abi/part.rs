@@ -18,7 +18,7 @@ use flz_transport::errors::FlezhaError;
 use flz_transport::service::payloader;
 use flz_transport::transport::FlezhaStream;
 
-use crate::harness::{abi_complete, abi_poll, ok_effect};
+use crate::harness::{abi_complete, abi_poll, ok_effect, route_entry};
 
 const CHILD: &str = "FLZ_ABI_PART_CHILD";
 
@@ -62,9 +62,7 @@ fn scenario() {
     let entry = instance.topology.channel(0).expect("entry channel");
     for payload in [b"alpha".to_vec(), b"beta".to_vec()] {
         let value = entry.wrap_input.as_ref().expect("entry wrapper")(payload).unwrap();
-        flz_core::routing::route_to_consumers(
-            &instance, entry, &value, &stream, None, None, false, None,
-        );
+        route_entry(&instance, entry, &value, &stream, None);
     }
     let (status, act) = abi_poll(ctx, 2_000);
     assert_eq!(status, FLZ_POLL_ACTIVATION);

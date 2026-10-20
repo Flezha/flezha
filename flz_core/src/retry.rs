@@ -11,14 +11,12 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use flz_transport::transport::FlezhaStream;
-
 use crate::admission::Held;
 use crate::cell::{CellItem, CellSlot};
 use crate::channel::{ChannelDescriptor, RetryPolicy};
 use crate::park::{Park, Then, Work, RETRIES_TOTAL};
 use crate::relay::instance::RelayInstance;
-use crate::routing::{deliver_edge, EntryView};
+use crate::routing::{deliver_edge, Delivery, EntryView};
 
 /// What a park is attributed to, and how hard the ladder tries first.
 ///
@@ -202,16 +200,13 @@ impl Ladder {
 /// Hand a payload whose first attempt failed to the park owner, re-attempted
 /// per `target`'s budget. Once the budget is spent, `end` takes the last
 /// error and the attempts when given; otherwise the payload parks under
-/// `target`, and `instance` is told once the park is let go of (a flow
-/// relay takes no notice).
-#[allow(clippy::too_many_arguments)]
+/// `target` with its `origin`, and `instance` is told once the park is let go
+/// of (a flow relay takes no notice).
 pub(crate) fn hand_ladder<V: EntryView>(
     instance: &Arc<V>,
     label: String,
     target: ParkTarget,
-    consumed_offset: Option<u64>,
-    call: Option<Arc<str>>,
-    payload: Option<Vec<u8>>,
+    origin: Origin,
     first_error: String,
     step: impl FnMut() -> Attempt + Send + 'static,
     end: Option<End>,
@@ -221,8 +216,8 @@ pub(crate) fn hand_ladder<V: EntryView>(
         let (told, park_label) = (Arc::clone(instance), label.clone());
         Box::new(move |error, attempts| {
             let instance_id = Arc::clone(told.instance_id());
-            let then: Option<Then> = Some(Box::new(move || told.entry_parked(consumed_offset)));
-            let origin = (consumed_offset, call, payload);
+            let offset = origin.0;
+            let then: Option<Then> = Some(Box::new(move || told.entry_parked(offset)));
             let park = park_exhausted(
                 &park_label,
                 target,
@@ -250,14 +245,12 @@ pub(crate) fn hand_ladder<V: EntryView>(
 
 /// The park of what could not be delivered after `attempts`, under the
 /// target's identity: the tail every exhausted ladder ends in, whether it
-/// climbed on the park owner or at a steps stage's barrier. `origin` is the
-/// offset the controller stamped, the outside call waiting on the input,
-/// which the controller can then answer, and the input's bytes.
+/// climbed on the park owner or at a steps stage's barrier.
 pub(crate) fn park_exhausted(
     label: &str,
     target: ParkTarget,
     instance_id: &str,
-    (consumed_offset, call, payload): (Option<u64>, Option<Arc<str>>, Option<Vec<u8>>),
+    (consumed_offset, call, payload): Origin,
     error: String,
     attempts: u32,
     then: Option<Then>,
@@ -283,6 +276,11 @@ pub(crate) fn park_exhausted(
         then,
     )
 }
+
+/// What a park names of the input it holds: the offset the controller
+/// stamped, the outside call waiting on the input, which the controller can
+/// then answer, and the input's bytes.
+pub(crate) type Origin = (Option<u64>, Option<Arc<str>>, Option<Vec<u8>>);
 
 /// Where a re-parsed entry value goes: a flow relay's consumers, a steps relay's
 /// inbox. The one place the two kinds differ on the entry ladder.
@@ -321,18 +319,9 @@ pub fn hand_entry_parse_ladder<V: EntryView>(ladder: EntryParseLadder<V>) {
     // A parser violating the determinism contract may succeed on a
     // re-attempt; deliver rather than drop.
     let step = move || wrap(retried.clone()).and_then(&deliver).into();
-    let (target, payload) = (ParkTarget::entry(channel), Some(bytes));
-    hand_ladder(
-        &instance,
-        label,
-        target,
-        consumed_offset,
-        call,
-        payload,
-        first_error,
-        step,
-        None,
-    );
+    let target = ParkTarget::entry(channel);
+    let origin = (consumed_offset, call, Some(bytes));
+    hand_ladder(&instance, label, target, origin, first_error, step, None);
 }
 
 /// A value onto `channel`'s consumers from the park owner's ladder lane,
@@ -340,56 +329,21 @@ pub fn hand_entry_parse_ladder<V: EntryView>(ladder: EntryParseLadder<V>) {
 /// the entry form, for the lane to admit as room appears, and an edge that
 /// unwinds climbs its own ladder; a steps relay's value enters its run,
 /// which never waits either.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn route_held(
     instance: &Arc<RelayInstance>,
     channel: &ChannelDescriptor,
     value: &Arc<dyn Any + Send + Sync>,
-    stream: &Arc<FlezhaStream>,
-    consumed_offset: Option<u64>,
-    call: Option<&Arc<str>>,
-    replay: bool,
+    d: &Delivery<'_>,
 ) -> Vec<Held> {
     if instance.steps.is_some() {
-        crate::routing::route_to_consumers(
-            instance,
-            channel,
-            value,
-            stream,
-            consumed_offset,
-            call,
-            replay,
-            None,
-        );
+        crate::routing::route_to_consumers(instance, channel, value, d, None);
         return Vec::new();
     }
     let mut held = Vec::new();
     for edge in &channel.consumers {
-        let mut to = crate::routing::Destination::Held(&mut held);
-        let delivered = deliver_edge(
-            instance,
-            channel,
-            edge,
-            value,
-            stream,
-            consumed_offset,
-            call,
-            replay,
-            &mut to,
-        );
-        if let Err(e) = delivered {
-            let error = e.to_string();
-            hand_edge_ladder(
-                instance,
-                channel,
-                edge,
-                value,
-                stream,
-                consumed_offset,
-                call,
-                replay,
-                error,
-            );
+        let to = &mut crate::routing::Destination::Held(&mut held);
+        if let Err(e) = deliver_edge(instance, channel, edge, value, d, to) {
+            hand_edge_ladder(instance, channel, edge, value, d, e.to_string());
         }
     }
     entry_form(held, channel)
@@ -411,16 +365,12 @@ fn entry_form(held: Vec<(Arc<CellSlot>, CellItem)>, channel: &ChannelDescriptor)
 
 /// The ladder for an edge whose transform or key unwound, so the failure is
 /// parked and observable rather than a dead thread.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn hand_edge_ladder(
     instance: &Arc<RelayInstance>,
     channel: &ChannelDescriptor,
     edge: &crate::channel::ConsumerEdge,
     value: &Arc<dyn Any + Send + Sync>,
-    stream: &Arc<FlezhaStream>,
-    consumed_offset: Option<u64>,
-    call: Option<&Arc<str>>,
-    replay: bool,
+    d: &Delivery<'_>,
     error: String,
 ) {
     let Some(channel_id) = instance.topology.lookup_channel_id(&channel.name) else {
@@ -432,35 +382,29 @@ pub(crate) fn hand_edge_ladder(
         .unwrap_or_default();
     let label = format!("channel `{}` edge into `{}`", channel.name, tasklet);
     let (held, edge, value) = (Arc::clone(instance), edge.clone(), Arc::clone(value));
-    let (stream, retried_call) = (Arc::clone(stream), call.cloned());
+    let (stream, retried_call) = (Arc::clone(d.stream), d.call.cloned());
+    let (consumed_offset, replay) = (d.consumed_offset, d.replay);
     let step = move || {
         let channel = (held.topology.channel(channel_id)).expect("channel present in topology");
         let mut items = Vec::new();
-        let mut to = crate::routing::Destination::Held(&mut items);
-        let call = retried_call.as_ref();
-        match deliver_edge(
-            &held,
-            channel,
-            &edge,
-            &value,
-            &stream,
+        let to = &mut crate::routing::Destination::Held(&mut items);
+        let d = Delivery {
+            stream: &stream,
             consumed_offset,
-            call,
+            call: retried_call.as_ref(),
             replay,
-            &mut to,
-        ) {
+        };
+        match deliver_edge(&held, channel, &edge, &value, &d, to) {
             Ok(_) => Attempt::Delivered(entry_form(items, channel)),
             Err(e) => Attempt::Failed(e.to_string()),
         }
     };
-    let target = ParkTarget::edge(channel);
+    let origin = (consumed_offset, d.call.cloned(), None);
     hand_ladder(
         instance,
         label,
-        target,
-        consumed_offset,
-        call.cloned(),
-        None,
+        ParkTarget::edge(channel),
+        origin,
         error,
         step,
         None,
@@ -512,9 +456,7 @@ mod tests {
             &instance,
             label,
             late(),
-            Some(9),
-            call,
-            payload,
+            (Some(9), call, payload),
             first,
             step,
             None,

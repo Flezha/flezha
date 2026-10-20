@@ -15,26 +15,20 @@ flz_core/src/control_unit.rs::read_loop 68
 flz_core/src/coordinator.rs::heartbeat_metadata 59
 flz_core/src/effect.rs::fold 76
 flz_core/src/effect_result.rs::keep 52
-flz_core/src/host/activation.rs::route_edge_outputs 61
+flz_core/src/host/activation.rs::route_edge_outputs 60
 flz_core/src/host/activation.rs::settle_item 69
 flz_core/src/host/activation.rs::settle_items 60
 flz_core/src/host/commands.rs::restore_fold_exclusive 51
 flz_core/src/host/issue.rs::details 167
 flz_core/src/host/issue.rs::kind 67
 flz_core/src/host/leave.rs::relay_left 58
-flz_core/src/host/prepare.rs::re_cross 61
+flz_core/src/host/prepare.rs::re_cross 51
 flz_core/src/poll_core/assembly.rs::assemble_batch 64
 flz_core/src/poll_core/mod.rs::host_command_within 53
 flz_core/src/poll_core/wake.rs::wake_target 52
 flz_core/src/relay/instance.rs::with_options 71
-flz_core/src/retry.rs::hand_edge_ladder 54
-flz_core/src/retry.rs::route_held 53
-flz_core/src/routing.rs 830
-flz_core/src/routing.rs::enter_channel 53
-flz_core/src/routing.rs::redeliver_edge 52
-flz_core/src/routing.rs::route_stream_frame 51
 flz_core/src/steps/resume.rs::resumed_seed 74
-flz_core/src/steps/run.rs 2523
+flz_core/src/steps/run.rs 2520
 flz_core/src/steps/run.rs::act 73
 flz_core/src/steps/run.rs::admit 55
 flz_core/src/steps/run.rs::open_gate 56
@@ -79,7 +73,6 @@ sdk/rust/src/relay/builder.rs::channel_descriptor 52
 sdk/rust/src/relay/dispatcher.rs::dispatch_input 56
 sdk/rust/src/relay/dispatcher.rs::dispatch_item 66
 sdk/rust/src/relay/dispatcher.rs::run_activation 51
-sdk/rust/src/relay/dispatcher/emit_sink.rs::emit 61
 sdk/rust/src/relay/dispatcher/invocation.rs::call_contained 61
 sdk/rust/src/tasklet/ctx.rs 813
 xref cycles 4

@@ -18,7 +18,7 @@ use prost::Message;
 
 use crate::harness::{
     abi_complete, abi_complete_mapped, abi_poll, last_document, noticed, ok_effect, record_notices,
-    through_veneers, work_payloads, Controller, Demanded,
+    route_entry, through_veneers, work_payloads, Controller, Demanded,
 };
 
 #[test]
@@ -202,9 +202,7 @@ pub(crate) fn routes_two_entry_payloads(
         // The channel's own entry wrapper — the same one the wire path runs.
         let wrap = entry.wrap_input.as_ref().expect("entry wrapper");
         let value = wrap(payload).expect("bytes passthrough cannot fail");
-        flz_core::routing::route_to_consumers(
-            &instance, entry, &value, stream, None, None, false, None,
-        );
+        route_entry(&instance, entry, &value, stream, None);
     }
 
     let (status, act) = abi_poll(ctx, 2_000);
@@ -494,16 +492,7 @@ fn the_restored_floor_skips_applied_inputs(ctx: *mut FlzContext, stream: &Arc<Fl
     let wrap = entry.wrap_input.as_ref().expect("entry wrapper");
 
     let below = wrap(b"dup".to_vec()).unwrap();
-    flz_core::routing::route_to_consumers(
-        &instance,
-        entry,
-        &below,
-        stream,
-        Some(7),
-        None,
-        false,
-        None,
-    );
+    route_entry(&instance, entry, &below, stream, Some(7));
     let (status, _) = abi_poll(ctx, 300);
     assert_eq!(
         status, FLZ_POLL_TIMEOUT,
@@ -511,16 +500,7 @@ fn the_restored_floor_skips_applied_inputs(ctx: *mut FlzContext, stream: &Arc<Fl
     );
 
     let above = wrap(b"new".to_vec()).unwrap();
-    flz_core::routing::route_to_consumers(
-        &instance,
-        entry,
-        &above,
-        stream,
-        Some(8),
-        None,
-        false,
-        None,
-    );
+    route_entry(&instance, entry, &above, stream, Some(8));
     let (status, act) = abi_poll(ctx, 2_000);
     assert_eq!(status, FLZ_POLL_ACTIVATION, "offset 8 dispatches");
     let act = act.unwrap();

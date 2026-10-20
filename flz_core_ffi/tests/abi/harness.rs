@@ -8,7 +8,7 @@
 //! so a phase waits for the frame it needs rather than for a duration.
 
 use std::ffi::{c_char, CStr};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use flz_core::schema;
 pub use flz_core_ffi::fake_controller::Controller;
@@ -156,4 +156,22 @@ pub fn ok_effect(consumed_offset: Option<u64>, timers: Vec<schema::TimerOp>) -> 
         dlq: None,
         complete: None,
     }
+}
+
+/// One entry value routed as the wire path routes it: no call, not a replay
+/// member, no producing Cell.
+pub fn route_entry(
+    instance: &Arc<flz_core::relay::instance::RelayInstance>,
+    entry: &flz_core::channel::ChannelDescriptor,
+    value: &Arc<dyn std::any::Any + Send + Sync>,
+    stream: &Arc<flz_transport::transport::FlezhaStream>,
+    consumed_offset: Option<u64>,
+) {
+    let d = flz_core::routing::Delivery {
+        stream,
+        consumed_offset,
+        call: None,
+        replay: false,
+    };
+    flz_core::routing::route_to_consumers(instance, entry, value, &d, None);
 }

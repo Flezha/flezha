@@ -57,6 +57,17 @@ pub struct StagedEntry {
     pub stage: Option<usize>,
 }
 
+impl StagedEntry {
+    fn delivery(&self) -> crate::routing::Delivery<'_> {
+        crate::routing::Delivery {
+            stream: &self.stream,
+            consumed_offset: self.consumed_offset,
+            call: self.call.as_ref(),
+            replay: self.replay,
+        }
+    }
+}
+
 /// A batched prepare crossing, handed to the host as a
 /// [`schema::ActivationKind::KeyRequest`].
 pub struct PrepareCrossing {
@@ -251,11 +262,11 @@ fn deliver_prepared(
     instance: &Arc<RelayInstance>,
     channel_id: u32,
     channel: &ChannelDescriptor,
-    entry: StagedEntry,
+    mut entry: StagedEntry,
     answer: schema::PrepareAnswer,
 ) {
     let value: Arc<dyn Any + Send + Sync> = Arc::new(HostPayload {
-        bytes: entry.bytes,
+        bytes: std::mem::take(&mut entry.bytes),
         channel: channel_id,
         keys: answer.keys,
         event_time: answer.event_time,
@@ -264,16 +275,7 @@ fn deliver_prepared(
     if let Some(node) = entry.stage {
         return crate::steps::crossed(instance, node, Ok((value, entry.stream)));
     }
-    crate::routing::route_to_consumers(
-        instance,
-        channel,
-        &value,
-        &entry.stream,
-        entry.consumed_offset,
-        entry.call.as_ref(),
-        entry.replay,
-        None,
-    );
+    crate::routing::route_to_consumers(instance, channel, &value, &entry.delivery(), None);
 }
 
 /// A failed prepare climbs its channel's ladder on the park owner, one
@@ -300,13 +302,16 @@ fn hand_prepare_ladder(
             None
         }) as crate::retry::End
     });
+    let origin = (
+        entry.consumed_offset,
+        entry.call.clone(),
+        Some(entry.bytes.clone()),
+    );
     crate::retry::hand_ladder(
         &instance,
         label,
         crate::retry::ParkTarget::entry(channel),
-        entry.consumed_offset,
-        entry.call.clone(),
-        Some(entry.bytes.clone()),
+        origin,
         first_error.message,
         attempt,
         end,
@@ -370,18 +375,8 @@ fn re_cross(
         return Attempt::Delivered(Vec::new());
     }
     let channel = (instance.topology.channel(channel_id)).expect("prepare channel present");
-    let (offset, call) = (staged.consumed_offset, staged.call.as_ref());
-    let stream = &staged.stream;
-    let routed = crate::retry::route_held(
-        instance,
-        channel,
-        &value,
-        stream,
-        offset,
-        call,
-        staged.replay,
-    );
-    Attempt::Delivered(routed)
+    let d = staged.delivery();
+    Attempt::Delivered(crate::retry::route_held(instance, channel, &value, &d))
 }
 
 /// Release the inflight gate, re-arm the next batch, fire a deferred

@@ -149,10 +149,12 @@ fn a_ladder_into_a_full_mailbox_does_not_hold_up_another_relays_park() {
         channel,
         &channel.consumers[0],
         &host_value(b"retried"),
-        &stream,
-        None,
-        None,
-        false,
+        &crate::routing::Delivery {
+            stream: &stream,
+            consumed_offset: None,
+            call: None,
+            replay: false,
+        },
         "the first attempt's failure".to_string(),
     );
     let blocked_pushes =
@@ -249,9 +251,7 @@ fn a_park_whose_ladder_once_waited_counts_against_the_bound() {
             &instance,
             "prepare for channel `prices`".to_string(),
             crate::retry::ParkTarget::entry(channel),
-            None,
-            None,
-            None,
+            (None, None, None),
             "the first crossing's failure".to_string(),
             step,
             None,

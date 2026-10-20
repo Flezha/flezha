@@ -606,16 +606,14 @@ fn a_host_payload_fanned_across_keys_reaches_every_keyed_cell() {
         metadata: Vec::new(),
     });
 
-    route_to_consumers(
-        &instance,
-        channel,
-        &value,
-        &dead_stream(),
-        None,
-        None,
-        false,
-        None,
-    );
+    let stream = dead_stream();
+    let d = Delivery {
+        stream: &stream,
+        consumed_offset: None,
+        call: None,
+        replay: false,
+    };
+    route_to_consumers(&instance, channel, &value, &d, None);
 
     let registry = instance.dynamic_registries[0]
         .as_ref()
@@ -656,16 +654,20 @@ fn a_held_destination_collects_the_addressed_item_instead_of_admitting_it() {
         .channel(1)
         .expect("the inter-tasklet channel");
     let mut held = Vec::new();
+    let stream = dead_stream();
+    let d = Delivery {
+        stream: &stream,
+        consumed_offset: None,
+        call: None,
+        replay: false,
+    };
 
     let deferred = deliver_edge(
         &instance,
         channel,
         &channel.consumers[0],
         &host_value(b"staged"),
-        &dead_stream(),
-        None,
-        None,
-        false,
+        &d,
         &mut Destination::Held(&mut held),
     )
     .expect("the edge delivers");
@@ -726,17 +728,15 @@ fn an_inputs_call_rides_its_entry_item_and_every_value_derived_from_it() {
 
     let mid = instance.topology.lookup_channel_id("mid").expect("`mid`");
     let token: Arc<str> = Arc::from("w:t");
-    deliver_host_output(
-        &instance,
-        mid,
-        1,
-        &host_value(b"derived"),
-        &dead_stream(),
-        Some(1),
-        Some(&token),
-        &producer,
-    )
-    .expect("the edge delivers");
+    let stream = dead_stream();
+    let d = Delivery {
+        stream: &stream,
+        consumed_offset: Some(1),
+        call: Some(&token),
+        replay: false,
+    };
+    deliver_host_output(&instance, mid, 1, &host_value(b"derived"), &d, &producer)
+        .expect("the edge delivers");
     assert_eq!(queued_call(&consumer).as_deref(), Some("w:t"));
 }
 

@@ -187,10 +187,9 @@ pub fn message(
     inst: &RelayInstance,
     channel: &ChannelDescriptor,
     value: &Value,
-    stream: &Arc<FlezhaStream>,
-    offset: Option<u64>,
-    call: Option<&Arc<str>>,
+    d: &crate::routing::Delivery<'_>,
 ) {
+    let (stream, offset, call) = (d.stream, d.consumed_offset, d.call);
     let Some(r) = Run::of(inst) else { return };
     let Some(channel_id) = inst.topology.lookup_channel_id(&channel.name) else {
         return;
@@ -641,7 +640,8 @@ fn entry_ladder(
         });
         crate::retry::Attempt::Delivered(Vec::new())
     };
-    crate::retry::hand_ladder(&owner, label, target, offset, call, None, error, step, None);
+    let origin = (offset, call, None);
+    crate::retry::hand_ladder(&owner, label, target, origin, error, step, None);
 }
 
 // ---- addressing, off the lock ------------------------------------------------
@@ -659,6 +659,12 @@ impl Run<'_> {
     ) -> Result<Vec<Release>, String> {
         let mut items = Vec::new();
         let mut keyless = Vec::new();
+        let d = &crate::routing::Delivery {
+            stream,
+            consumed_offset: None,
+            call: None,
+            replay: false,
+        };
         for edge in edges {
             if self.asks_host_for_keys(channel, edge, value) {
                 if let Some(node) = self.spec.dag.node_of(edge.tasklet) {
@@ -671,18 +677,9 @@ impl Run<'_> {
                 }
                 continue;
             }
-            crate::routing::deliver_edge(
-                self.inst,
-                channel,
-                edge,
-                value,
-                stream,
-                None,
-                None,
-                false,
-                &mut Destination::Held(&mut items),
-            )
-            .map_err(|e| e.to_string())?;
+            let to = &mut Destination::Held(&mut items);
+            crate::routing::deliver_edge(self.inst, channel, edge, value, d, to)
+                .map_err(|e| e.to_string())?;
         }
         let mut releases = self.releases(items, producer);
         releases.extend(keyless);
