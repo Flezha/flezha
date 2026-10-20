@@ -20,6 +20,9 @@ use crate::host::{apply_result, HostPayload};
 use crate::poll_core::{EnginePayload, Polled};
 use crate::runner::{RunnerMessage, RunnerNode};
 use crate::steps::instance::{PassOrigin, Phase};
+use crate::test_support::steps::{
+    ack_control_request, assert_no_completion, await_completion, await_park, feed_at, feed_with,
+};
 use crate::test_support::{capture_parks, host_class, spin_until, stream_pair};
 use crate::timer::{TimerKind, TimerOp};
 use crate::{schema, state_sink, ErrorModel};
@@ -193,100 +196,6 @@ impl Wire {
     }
 }
 
-/// One message into steps relay `id` on its first entry channel.
-fn feed(wire: &Wire, node: &RunnerNode, id: &str, message: &[u8]) {
-    node.relay_dispatch_handle().dispatch(
-        id,
-        message.to_vec(),
-        &Default::default(),
-        Arc::clone(&wire.stream),
-    );
-}
-
-/// One message into relay `id` on its first entry channel, called by the
-/// outside call `token`.
-fn feed_call(wire: &Wire, node: &RunnerNode, id: &str, message: &[u8], token: &str) {
-    let metadata = HashMap::from([("flz.reply_to".to_string(), token.to_string())]);
-    node.relay_dispatch_handle().dispatch(
-        id,
-        message.to_vec(),
-        &metadata,
-        Arc::clone(&wire.stream),
-    );
-}
-
-/// One message into steps relay `id` naming `channel`, at input-log `offset`.
-fn feed_at(node: &RunnerNode, id: &str, channel: &str, offset: u64, message: &[u8]) {
-    let metadata = HashMap::from([
-        ("channel".to_string(), channel.to_string()),
-        ("flz.offset".to_string(), offset.to_string()),
-    ]);
-    node.relay_dispatch_handle()
-        .dispatch(id, message.to_vec(), &metadata, stream_pair().0);
-}
-
-/// The `IterPark` steps relay `id`'s run shipped when it suspended.
-fn await_park(rx: &Receiver<RunnerMessage>, id: &str) -> crate::pb::IterPark {
-    loop {
-        match rx
-            .recv_timeout(Duration::from_secs(5))
-            .unwrap_or_else(|_| panic!("steps {id} never parked"))
-        {
-            RunnerMessage::EmitControlRequest { command, .. } => {
-                if let crate::pb::command_request::Command::IterPark(park) = *command {
-                    if park.relay_id == id {
-                        return park;
-                    }
-                }
-            }
-            RunnerMessage::EmitRelayCompleted {
-                relay_id, status, ..
-            } if relay_id == id => panic!("the run ended with `{status}` instead of parking"),
-            _ => {}
-        }
-    }
-}
-
-/// The outputs and the completion `(status, error, result)` of steps relay `id`.
-fn drain(
-    rx: &Receiver<RunnerMessage>,
-    wire: &Wire,
-    id: &str,
-) -> (Vec<Vec<u8>>, (String, String, Vec<u8>)) {
-    loop {
-        match rx
-            .recv_timeout(Duration::from_secs(5))
-            .unwrap_or_else(|_| panic!("timed out waiting for steps {id}"))
-        {
-            RunnerMessage::EmitRelayCompleted {
-                relay_id,
-                status,
-                error,
-                result,
-            } if relay_id == id => return (wire.outputs_of(id), (status, error, result)),
-            _ => {}
-        }
-    }
-}
-
-/// A completion for `id` within `wait` is a failure of the scenario.
-fn assert_no_completion(rx: &Receiver<RunnerMessage>, id: &str, wait: Duration) {
-    let deadline = std::time::Instant::now() + wait;
-    while let Ok(message) =
-        rx.recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))
-    {
-        if let RunnerMessage::EmitRelayCompleted {
-            relay_id, status, ..
-        } = message
-        {
-            assert!(
-                relay_id != id,
-                "the run ended with status `{status}` instead of waiting"
-            );
-        }
-    }
-}
-
 #[test]
 fn a_host_steps_takes_init_values_as_state_before_its_first_message() {
     let _env = crate::runner::env_test_guard();
@@ -303,8 +212,9 @@ fn a_host_steps_takes_init_values_as_state_before_its_first_message() {
     // The state crossed before the bind was answered, and nothing else did.
     assert_eq!(host.applied(), vec![r#"{"budget":100}"#.to_string()]);
 
-    feed(&wire, &node, "host-init-1", b"ticket");
-    let (outs, done) = drain(&rx, &wire, "host-init-1");
+    feed_with(&node, "host-init-1", b"ticket", &[], &wire.stream);
+    let done = await_completion(&rx, "host-init-1");
+    let outs = wire.outputs_of("host-init-1");
     assert_eq!(
         outs,
         vec![b"ticket".to_vec()],
@@ -360,7 +270,13 @@ fn a_message_the_host_cannot_read_parks_under_the_entry_channel_and_the_run_wait
     let wire = Wire::new();
     assert!(start(&mut node, &id, "host-unread-1", "", 0).is_empty());
 
-    feed_call(&wire, &node, "host-unread-1", b"bad", "w:unread");
+    feed_with(
+        &node,
+        "host-unread-1",
+        b"bad",
+        &[("flz.reply_to", "w:unread")],
+        &wire.stream,
+    );
     spin_until("the unreadable message to be parked", || {
         !parks.lock().expect("park capture poisoned").is_empty()
     });
@@ -380,8 +296,9 @@ fn a_message_the_host_cannot_read_parks_under_the_entry_channel_and_the_run_wait
     assert_eq!(park.identity.1, "in");
     assert_no_completion(&rx, "host-unread-1", Duration::from_millis(300));
 
-    feed(&wire, &node, "host-unread-1", b"good");
-    let (outs, done) = drain(&rx, &wire, "host-unread-1");
+    feed_with(&node, "host-unread-1", b"good", &[], &wire.stream);
+    let done = await_completion(&rx, "host-unread-1");
+    let outs = wire.outputs_of("host-unread-1");
     assert_eq!(
         outs,
         vec![b"good".to_vec()],
@@ -412,7 +329,7 @@ fn a_durable_run_releases_what_it_parked_unread_when_it_suspends() {
 
     // The host's decoder refuses the message, so the stage parks it.
     assert!(start(&mut node, &id, "host-release-1", "", 0).is_empty());
-    feed_at(&node, "host-release-1", "in", 3, b"bad");
+    feed_at(&node.get_relay("host-release-1").expect("bound"), b"bad", 3);
     let park = await_park(&rx, "host-release-1");
     assert_eq!((park.iter, park.consumed_offset), (0, Some(3)));
 
@@ -420,7 +337,13 @@ fn a_durable_run_releases_what_it_parked_unread_when_it_suspends() {
     // owed that message, and still suspends on the idle window rather than
     // holding out for a message that will never reach it.
     assert!(start(&mut node, &id, "host-release-2", "", 1).is_empty());
-    feed_at(&node, "host-release-2", "refunds", 4, b"bad");
+    feed_with(
+        &node,
+        "host-release-2",
+        b"bad",
+        &[("channel", "refunds"), ("flz.offset", "4")],
+        &stream_pair().0,
+    );
     let park = await_park(&rx, "host-release-2");
     assert_eq!(park.consumed_offset, Some(4));
 
@@ -456,11 +379,12 @@ fn a_message_the_instance_already_took_starts_no_pass() {
     .handle(&mut node, "", &mut errors);
     assert!(errors.is_empty(), "{errors:?}");
 
-    feed_at(&node, "host-taken-1", "in", 5, b"released");
+    let taken = node.get_relay("host-taken-1").expect("bound");
+    feed_at(&taken, b"released", 5);
     assert_no_completion(&rx, "host-taken-1", Duration::from_millis(300));
 
-    feed_at(&node, "host-taken-1", "in", 6, b"fresh");
-    let (_outs, done) = drain(&rx, &Wire::new(), "host-taken-1");
+    feed_at(&taken, b"fresh", 6);
+    let done = await_completion(&rx, "host-taken-1");
     assert_eq!(done.0, "ok", "offset 6 ran its pass: {done:?}");
     state_sink::reset_for_test();
 }
@@ -666,8 +590,9 @@ fn a_host_steps_released_values_cross_once_for_their_keys() {
     let wire = Wire::new();
 
     assert!(start(&mut node, &id, "host-keyed-1", "", 0).is_empty());
-    feed(&wire, &node, "host-keyed-1", b"a,b,c");
-    let (mut outs, done) = drain(&rx, &wire, "host-keyed-1");
+    feed_with(&node, "host-keyed-1", b"a,b,c", &[], &wire.stream);
+    let done = await_completion(&rx, "host-keyed-1");
+    let mut outs = wire.outputs_of("host-keyed-1");
     outs.sort();
     assert_eq!(done.0, "ok");
     assert_eq!(
@@ -741,8 +666,9 @@ fn a_resumed_host_steps_crosses_its_journaled_handoff() {
     assert!(errors.is_empty(), "{errors:?}");
 
     // The committed root is skipped; the re-forwarded message resumes the pass.
-    feed(&wire, &node, "host-keyed-resume", b"ignored");
-    let (mut outs, done) = drain(&rx, &wire, "host-keyed-resume");
+    feed_with(&node, "host-keyed-resume", b"ignored", &[], &wire.stream);
+    let done = await_completion(&rx, "host-keyed-resume");
+    let mut outs = wire.outputs_of("host-keyed-resume");
     outs.sort();
     assert_eq!(done.0, "ok");
     assert_eq!(outs, [b"k:x:x".to_vec(), b"k:y:y".to_vec()]);
@@ -767,8 +693,9 @@ fn a_crossing_the_host_refuses_fails_the_stage_and_parks_nothing() {
     let wire = Wire::new();
 
     assert!(start(&mut node, &id, "host-keyed-refused", "", 0).is_empty());
-    feed(&wire, &node, "host-keyed-refused", b"a");
-    let (outs, done) = drain(&rx, &wire, "host-keyed-refused");
+    feed_with(&node, "host-keyed-refused", b"a", &[], &wire.stream);
+    let done = await_completion(&rx, "host-keyed-refused");
+    let outs = wire.outputs_of("host-keyed-refused");
     assert!(outs.is_empty());
     assert_eq!(done.0, "error");
     assert!(done.1.contains("no key for that"), "{}", done.1);
@@ -907,7 +834,7 @@ fn a_host_steps_entry_crosses_for_its_event_time_and_is_dispatched_at_it() {
     let wire = Wire::new();
 
     assert!(start(&mut node, &id, "host-et-1", "", 0).is_empty());
-    feed(&wire, &node, "host-et-1", b"1234");
+    feed_with(&node, "host-et-1", b"1234", &[], &wire.stream);
     assert_eq!(outputs(&wire, "host-et-1", 1), [b"1234".to_vec()]);
     assert_eq!(
         *nows.lock().unwrap(),
@@ -929,7 +856,7 @@ fn a_host_steps_tasklets_timer_fires_into_a_pass_of_its_own() {
     let wire = Wire::new();
 
     assert!(start(&mut node, &id, "host-timer-1", "", 0).is_empty());
-    feed(&wire, &node, "host-timer-1", b"arm");
+    feed_with(&node, "host-timer-1", b"arm", &[], &wire.stream);
     assert_eq!(
         outputs(&wire, "host-timer-1", 2),
         [b"arm".to_vec(), b"fired".to_vec()],
@@ -1038,7 +965,7 @@ fn a_timer_its_own_stage_set_fires_in_a_pass_of_its_own_after_that_stage_commits
     let wire = Wire::new();
     assert!(start(&mut node, &id, "host-own-timer-1", "", 0).is_empty());
 
-    feed(&wire, &node, "host-own-timer-1", b"a,b");
+    feed_with(&node, "host-own-timer-1", b"a,b", &[], &wire.stream);
     host.serve_until(|host| host.armed && host.held.is_some());
     crate::poll_core::global().promote_due_wakes();
     let b = host.held.take().expect("`b` is held");
@@ -1076,7 +1003,7 @@ fn a_timer_its_own_stage_set_and_cancelled_never_fires() {
     let wire = Wire::new();
     assert!(start(&mut node, &id, "host-own-cancel-1", "", 0).is_empty());
 
-    feed(&wire, &node, "host-own-cancel-1", b"a");
+    feed_with(&node, "host-own-cancel-1", b"a", &[], &wire.stream);
     host.serve_until(|host| host.armed);
     assert_eq!(outputs(&wire, "host-own-cancel-1", 1), [b"k:a:a".to_vec()]);
     crate::poll_core::global().promote_due_wakes();
@@ -1253,22 +1180,22 @@ fn pump_turns(
                 reference_id,
                 command,
             }) => {
-                let answer = if refuse(&command) {
-                    Err(crate::FlezhaError::with(
-                        "commit.not_owner",
-                        [("relay", id.into())],
-                    ))
-                } else {
-                    Ok(String::new())
-                };
-                match *command {
-                    Command::IterCommit(commit) if commit.relay_id == id => seen.iters.push(commit),
+                match &*command {
+                    Command::IterCommit(commit) if commit.relay_id == id => {
+                        seen.iters.push(commit.clone())
+                    }
                     Command::TaskCommit(commit) if commit.relay_id == id && commit.compensating => {
                         seen.undone.push((commit.task_idx, commit.iter))
                     }
                     _ => {}
                 }
-                crate::shutdown::signal_result(&reference_id, answer);
+                if refuse(&command) {
+                    let refusal =
+                        crate::FlezhaError::with("commit.not_owner", [("relay", id.into())]);
+                    crate::shutdown::signal_result(&reference_id, Err(refusal));
+                } else {
+                    ack_control_request(reference_id, *command);
+                }
             }
             Ok(RunnerMessage::EmitRelayCompleted {
                 relay_id,
@@ -1310,8 +1237,9 @@ fn a_failed_turn_is_dead_lettered_undone_once_and_the_next_message_is_the_next_i
     bind_turns(&mut node, &id, "turn-1", None);
     let mut seen = Seen::default();
 
+    let turn = node.get_relay("turn-1").expect("bound");
     for (offset, message) in [(0, &b"hello"[..]), (1, b"boom"), (2, b"again")] {
-        feed_at(&node, "turn-1", "in", offset, message);
+        feed_at(&turn, message, offset);
     }
     pump_turns(&rx, "turn-1", &mut seen, never, |s| s.iters.len() == 3);
 
@@ -1376,7 +1304,11 @@ fn a_resume_owing_a_failed_turns_undo_runs_it_once_and_waits() {
     assert_eq!(seen.undone, [(0, 1)]);
     assert_eq!(undos.load(Ordering::SeqCst), 1);
 
-    feed_at(&node, "turn-resume-1", "in", 2, b"again");
+    feed_at(
+        &node.get_relay("turn-resume-1").expect("bound"),
+        b"again",
+        2,
+    );
     pump_turns(&rx, "turn-resume-1", &mut seen, never, |s| {
         !s.iters.is_empty()
     });
@@ -1404,8 +1336,9 @@ fn ends_on_failure(
     let mut node = RunnerNode::new("test-ns".to_string());
     bind_turns(&mut node, &factory, id, None);
     let mut seen = Seen::default();
+    let turn = node.get_relay(id).expect("bound");
     for (offset, message) in messages.iter().enumerate() {
-        feed_at(&node, id, "in", offset as u64, message);
+        feed_at(&turn, message, offset as u64);
     }
     pump_turns(&rx, id, &mut seen, refuse, |_| false);
     state_sink::reset_for_test();
@@ -1487,7 +1420,7 @@ fn a_stop_during_a_turn_ends_it_cancelled() {
     bind_turns(&mut node, &id, "turn-stop-1", None);
     let mut seen = Seen::default();
 
-    feed_at(&node, "turn-stop-1", "in", 0, b"hello");
+    feed_at(&node.get_relay("turn-stop-1").expect("bound"), b"hello", 0);
     pump_turns(&rx, "turn-stop-1", &mut seen, never, |s| {
         !s.iters.is_empty()
     });
@@ -1509,7 +1442,13 @@ fn a_run_that_journals_nothing_parks_its_failed_turn_and_answers_the_next() {
     let wire = Wire::new();
     bind_turns(&mut node, &id, "turn-optout-1", None);
 
-    feed_call(&wire, &node, "turn-optout-1", b"boom", "w:boom");
+    feed_with(
+        &node,
+        "turn-optout-1",
+        b"boom",
+        &[("flz.reply_to", "w:boom")],
+        &wire.stream,
+    );
     spin_until("the failed turn to be parked", || {
         !parks.lock().expect("park capture poisoned").is_empty()
     });
@@ -1540,7 +1479,7 @@ fn a_run_that_journals_nothing_parks_its_failed_turn_and_answers_the_next() {
     );
     spin_until("p0's undo", || undos.load(Ordering::SeqCst) == 1);
 
-    feed(&wire, &node, "turn-optout-1", b"again");
+    feed_with(&node, "turn-optout-1", b"again", &[], &wire.stream);
     assert_eq!(outputs(&wire, "turn-optout-1", 1), [b"re:again".to_vec()]);
     assert_no_completion(&rx, "turn-optout-1", Duration::from_millis(200));
     state_sink::reset_for_test();
@@ -1563,8 +1502,14 @@ fn a_per_input_pass_answers_its_call_from_its_last_stage() {
     let wire = Wire::new();
     bind_turns(&mut node, &id, "turn-answer-1", None);
 
-    feed_call(&wire, &node, "turn-answer-1", b"hello", "w:one");
-    feed(&wire, &node, "turn-answer-1", b"plain");
+    feed_with(
+        &node,
+        "turn-answer-1",
+        b"hello",
+        &[("flz.reply_to", "w:one")],
+        &wire.stream,
+    );
+    feed_with(&node, "turn-answer-1", b"plain", &[], &wire.stream);
     let mut answers = Vec::new();
     while answers.len() < 2 {
         let (payload_id, payload, metadata) = wire

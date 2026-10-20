@@ -13,6 +13,8 @@ use crate::mailbox::Mailbox;
 use crate::pb::control_frame::Frame;
 use crate::pb::{CommandResponse, ControlFrame};
 
+pub mod steps;
+
 /// Poll `done` every `interval` (a yield when zero) until it holds, or `false`
 /// once `timeout` has passed. The one polling loop of the Rust tests.
 pub fn wait_until(timeout: Duration, interval: Duration, mut done: impl FnMut() -> bool) -> bool {
@@ -156,18 +158,37 @@ pub fn passes_alone(test: &str) -> Option<String> {
     Some(stderr)
 }
 
-/// The identity and `ParkBody` inside a frame `build_cell_frame` wrote:
-/// `[id_len(2)][identity][seq(8)][header(16)][body_len(4)][body][crc(4)]`. The
-/// identity is read back with the flusher's own inverse, so a capture cannot
-/// disagree with what the controller decodes.
+/// A cell frame split back into its parts: the inverse of
+/// `build_cell_frame`, for tests that read what a run shipped.
+pub struct CellFrame<'a> {
+    pub identity: &'a [u8],
+    pub seq: u64,
+    pub header: &'a [u8],
+    pub body: &'a [u8],
+}
+
+/// `[id_len(2)][identity][seq(8)][header(16)][body_len(4)][body][crc(4)]`.
+pub fn split_cell_frame(frame: &[u8]) -> Option<CellFrame<'_>> {
+    let id_len = u16::from_be_bytes(frame.get(..2)?.try_into().ok()?) as usize;
+    let at = 2 + id_len;
+    let body_len = u32::from_be_bytes(frame.get(at + 24..at + 28)?.try_into().ok()?) as usize;
+    Some(CellFrame {
+        identity: frame.get(2..at)?,
+        seq: u64::from_be_bytes(frame.get(at..at + 8)?.try_into().ok()?),
+        header: frame.get(at + 8..at + 24)?,
+        body: frame.get(at + 28..at + 28 + body_len)?,
+    })
+}
+
+/// The identity and `ParkBody` inside a park frame. The identity is read back
+/// with the flusher's own inverse, so a capture cannot disagree with what the
+/// controller decodes.
 #[cfg(test)]
 fn decode_park(frame: &[u8]) -> CapturedPark {
-    let id_len = u16::from_be_bytes([frame[0], frame[1]]) as usize;
-    let identity = crate::flusher::decode_cell_identity(&frame[2..2 + id_len])
+    let split = split_cell_frame(frame).expect("a park frame is a cell frame");
+    let identity = crate::flusher::decode_cell_identity(split.identity)
         .expect("a park frame carries an encoded cell identity");
-    let rest = &frame[2 + id_len + 8 + 16..];
-    let body_len = u32::from_be_bytes(rest[..4].try_into().expect("a 4-byte length")) as usize;
-    let body = postcard::from_bytes(&rest[4..4 + body_len]).expect("a postcard ParkBody");
+    let body = postcard::from_bytes(split.body).expect("a postcard ParkBody");
     CapturedPark { identity, body }
 }
 

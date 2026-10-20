@@ -28,7 +28,7 @@ fn a_per_input_pass_calls_from_its_last_stage_and_reads_the_outcome_next() {
     bind_turns(&mut node, &id, "turn-call-1", None);
 
     let before = crate::util::wall_now_ms();
-    feed(&wire, &node, "turn-call-1", b"hello");
+    feed_with(&node, "turn-call-1", b"hello", &[], &wire.stream);
     let request = next_output(&wire, "turn-call-1");
     assert_eq!(request.0, b"re:hello".to_vec());
     assert_eq!(
@@ -43,13 +43,8 @@ fn a_per_input_pass_calls_from_its_last_stage_and_reads_the_outcome_next() {
     assert!(deadline >= before + 30_000 && deadline <= crate::util::wall_now_ms() + 30_000);
 
     // The outcome is an ordinary message on the Response channel: the next turn.
-    let response = HashMap::from([("channel".to_string(), "out.response".to_string())]);
-    node.relay_dispatch_handle().dispatch(
-        "turn-call-1",
-        b"outcome".to_vec(),
-        &response,
-        Arc::clone(&wire.stream),
-    );
+    let response = [("channel", "out.response")];
+    feed_with(&node, "turn-call-1", b"outcome", &response, &wire.stream);
     assert_eq!(next_output(&wire, "turn-call-1").0, b"re:outcome".to_vec());
     assert_no_completion(&rx, "turn-call-1", Duration::from_millis(200));
     state_sink::reset_for_test();
