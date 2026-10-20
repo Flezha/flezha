@@ -59,6 +59,8 @@ defmodule Flezha.State.WalWriter.State do
     :folded_offset,
     # The lineage file as stored; `nil` until the open loaded the Cell's files.
     :lineage,
+    # Whether the next window's first record mints a lineage id (`Epoch.open_window/1`).
+    :mint?,
     :timers,
     # Dispatched but not yet confirmed by the sinks: the per-entry tallies
     # (`Flezha.State.Outbox` keys) and, for a flow relay writer, the dispatch-order
@@ -123,6 +125,7 @@ defmodule Flezha.State.WalWriter.State do
           outbox_epoch: non_neg_integer(),
           folded_offset: integer(),
           lineage: Flezha.State.Lineage.stored() | nil,
+          mint?: boolean() | nil,
           timers: Flezha.Process.Timer.timers(),
           outbox_awaiting: %{optional(Outbox.key()) => map()},
           outbox_inflight: :queue.queue({Outbox.key(), integer()}),

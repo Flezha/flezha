@@ -18,7 +18,7 @@ defmodule Flezha.State.WalWriter do
   alias Flezha.Config.Durations
   alias Flezha.State.Frame
   alias Flezha.SDK.SafeCall
-  alias Flezha.State.{FsyncBatcher, Metrics, Paths, RecordFrame, SeqIndex, WriterRegistry}
+  alias Flezha.State.{Metrics, Paths, RecordFrame, SeqIndex, WriterRegistry}
   alias Flezha.State.WalWriter.{Admission, Boot, Epoch, RemoteGate, Settlement, State}
 
   @type t :: State.t()
@@ -743,6 +743,9 @@ defmodule Flezha.State.WalWriter do
   # ---------- Append / realign ----------
 
   defp write_record(state, seq, header, change_bytes, runner_id, now) do
+    # One open per fsync window: `pending_since_us` is nil exactly when
+    # nothing written since the last sync is waiting on the batcher.
+    state = if state.pending_since_us == nil, do: Epoch.open_window(state), else: state
     record = Frame.encode_record(seq, header, change_bytes)
     :ok = :file.write(state.file_handle, record)
     size = byte_size(record)
@@ -756,11 +759,6 @@ defmodule Flezha.State.WalWriter do
     # is a rebuildable cache advanced at fsync-batch cadence (and repaired
     # from the WAL scan on boot).
     state = Settlement.maybe_queue_effect(state, seq, header, change_bytes)
-
-    # One mark per fsync window: `pending_since_us` is nil exactly when nothing
-    # written since the last sync is waiting on the batcher.
-    if state.pending_since_us == nil, do: FsyncBatcher.mark_dirty(state.cell_id)
-
     new_pending = state.pending_bytes + size
 
     new_state = %{

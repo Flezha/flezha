@@ -13,7 +13,7 @@ defmodule Flezha.State.WalWriter.Epoch do
 
   alias Flezha.Runner.FleetManager.Marks
   alias Flezha.State.Wire
-  alias Flezha.State.{InputLog, Lineage, Metrics, Paths, RecordFrame, SeqIndex}
+  alias Flezha.State.{FsyncBatcher, InputLog, Lineage, Metrics, Paths, RecordFrame, SeqIndex}
   alias Flezha.State.WalWriter.{Admission, RemoteGate, Settlement, State}
 
   # Only a frame from a *different* session than the epoch owner consults the
@@ -105,6 +105,18 @@ defmodule Flezha.State.WalWriter.Epoch do
     with :ok <- Lineage.put(state.cell_id, lineage),
          do: {:ok, %{state | lineage: lineage, folded_offset: lineage.folded_offset}}
   end
+
+  # The first record of a window marks the Cell dirty; while `mint?` (a landed
+  # copy, or no lineage id yet) a new id is installed first. A failed install raises:
+  # a refusal would be a result on every append; the restart mints at the resent record.
+  def open_window(%{mint?: true, lineage: lineage} = state) do
+    fork = %{lineage | epoch: state.outbox_epoch, folded_offset: state.folded_offset}
+    minted = Lineage.mint(fork, state.last_persisted_seq)
+    :ok = Lineage.put(state.cell_id, minted)
+    open_window(%{state | lineage: minted, mint?: false})
+  end
+
+  def open_window(state), do: tap(state, &FsyncBatcher.mark_dirty(&1.cell_id))
 
   # The half a realign and a rewind share: re-seat the outbox cursors on the
   # lineage record's epoch, which keys an output regenerated above the boundary

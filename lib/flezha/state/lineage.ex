@@ -18,7 +18,7 @@ defmodule Flezha.State.Lineage do
   @type cut :: nil | :all | {:above, non_neg_integer()}
   @type stored :: %{
           id: binary() | nil,
-          trail: [{binary(), non_neg_integer()}],
+          trail: [{binary(), integer()}],
           landed: boolean(),
           epoch: non_neg_integer() | nil,
           folded_offset: integer(),
@@ -55,6 +55,13 @@ defmodule Flezha.State.Lineage do
     body = :erlang.term_to_binary(Map.take(record, @keys))
     bytes = [@head, <<Frame.crc32(@head, body)::32>>, body]
     Paths.atomic_install(Paths.lineage_path(cell_id), &:file.write(&1, bytes), :lineage)
+  end
+
+  @doc "`record` under a new id, its old one pushed on the trail at `fork_seq` (16 kept)."
+  @spec mint(stored(), integer()) :: stored()
+  def mint(%{id: id, trail: trail} = record, fork_seq) do
+    trail = if id, do: Enum.take([{id, fork_seq} | trail], 16), else: trail
+    %{record | id: :crypto.strong_rand_bytes(16), trail: trail, landed: false}
   end
 
   defp record(cell_id) do

@@ -136,14 +136,14 @@ defmodule Flezha.State.WalWriter.Boot do
     # Restart re-drive (effectively-once): every durable effect record above
     # the flush cursor re-enters the outbox queue with identical identity —
     # a stale cursor widens the re-drive (sink dedup absorbs), never skips.
+    {rc, _sh, key} = state.cell_id
     %{record: lineage, progress: dedup, cut: cut} = Lineage.read(state.cell_id)
-    state = %{state | folded_offset: dedup.folded_offset, lineage: lineage}
+    mint? = key not in Paths.reserved_cell_keys() and (lineage.landed or lineage.id == nil)
+    state = %{state | folded_offset: dedup.folded_offset, lineage: lineage, mint?: mint?}
     durable = RemoteGate.durable_through(state, last_seq, dedup.outbox_flushed_seq)
 
     {redrive, max_consumed} =
       Epoch.scan_effect_records_above(state, file, dedup.outbox_flushed_seq, durable)
-
-    {rc, _sh, _pk} = state.cell_id
 
     if max_consumed >= 0 and cut == nil,
       do: InputLog.record_consumed(rc, state.cell_id, max_consumed)

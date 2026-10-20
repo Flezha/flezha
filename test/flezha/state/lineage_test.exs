@@ -8,6 +8,7 @@ defmodule Flezha.State.LineageTest do
   use FlezhaTest.StateCase, async: false
 
   import ExUnit.CaptureLog
+  import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
 
   alias Flezha.State.{InputLog, Lineage, Paths, Snapshot, Supervisor, TestHelpers, WalWriter}
   alias Flezha.State.WalWriter.Epoch
@@ -25,6 +26,8 @@ defmodule Flezha.State.LineageTest do
   end
 
   defp stored(cell_id), do: Lineage.read(cell_id).record
+
+  defp append(pid, seq), do: WalWriter.append(pid, seq, TestHelpers.stub_header(), "x#{seq}")
 
   # A Cell of its own relay class (no Overwatch, no other reporter), its
   # records 0..`last` each consuming input `n` and owing one output.
@@ -208,5 +211,90 @@ defmodule Flezha.State.LineageTest do
     assert records(cell_id) == 4
     assert %{folded_offset: 3} = stored(cell_id)
     TestHelpers.close_and_await(pid, cell_id)
+  end
+
+  describe "the mint" do
+    # fails when: the boot no longer marks a Cell without a lineage id for a mint.
+    test "a new Cell mints its lineage id at its first record, not at its writer's open", ctx do
+      {:ok, pid} = Supervisor.find_or_start(ctx.cell_id)
+      assert WalWriter.last_persisted_seq(pid) == -1
+      refute File.exists?(Paths.lineage_path(ctx.cell_id))
+
+      :ok = append(pid, 0)
+
+      assert %{id: <<_::128>>, trail: [], landed: false} = stored(ctx.cell_id)
+      TestHelpers.close_and_await(pid, ctx.cell_id)
+    end
+
+    test "a landed Cell mints once, at its first record, naming the landed id and its fork",
+         ctx do
+      write_records(ctx.cell_id, 0..3)
+      %{id: landed_id} = landed = stored(ctx.cell_id)
+      :ok = Lineage.put(ctx.cell_id, %{landed | landed: true})
+      {:ok, pid} = Supervisor.find_or_start(ctx.cell_id)
+
+      :ok = append(pid, 4)
+      assert %{id: id, trail: [{^landed_id, 3}], landed: false} = stored(ctx.cell_id)
+      refute id == landed_id
+
+      :ok = WalWriter.fsync(pid)
+      :ok = append(pid, 5)
+      assert %{id: ^id, trail: [{^landed_id, 3}]} = stored(ctx.cell_id)
+      TestHelpers.close_and_await(pid, ctx.cell_id)
+    end
+
+    test "a writer restarted on the same node mints nothing", ctx do
+      write_records(ctx.cell_id, 0..3)
+      %{id: id, trail: trail} = stored(ctx.cell_id)
+
+      write_records(ctx.cell_id, [4])
+
+      assert %{id: ^id, trail: ^trail} = stored(ctx.cell_id)
+    end
+
+    # E2 row "mint": the new id installed, its record not appended.
+    test "a boot after a mint whose record was lost keeps the minted id for the resent record",
+         ctx do
+      write_records(ctx.cell_id, 0..3)
+      minted = Lineage.mint(stored(ctx.cell_id), 3)
+      :ok = Lineage.put(ctx.cell_id, minted)
+
+      write_records(ctx.cell_id, [4])
+
+      assert %{id: id, trail: trail} = stored(ctx.cell_id)
+      assert {id, trail} == {minted.id, minted.trail}
+    end
+
+    # E2 row "mint fails": the append fails with no record written, and the
+    # restarted writer mints at the resent record.
+    test "a failed mint fails the append and the restarted writer mints again", ctx do
+      {:ok, pid} = Supervisor.find_or_start(ctx.cell_id)
+      assert WalWriter.last_persisted_seq(pid) == -1
+      File.mkdir_p!(Paths.lineage_path(ctx.cell_id))
+      ref = Process.monitor(pid)
+
+      log =
+        capture_log(fn ->
+          assert {:error, _} = append(pid, 0)
+          assert_receive {:DOWN, ^ref, :process, ^pid, _reason}
+        end)
+
+      assert log =~ "MatchError"
+      assert records(ctx.cell_id) == 0
+
+      File.rmdir!(Paths.lineage_path(ctx.cell_id))
+
+      assert wait_until(
+               fn -> match?({:ok, p} when p != pid, Supervisor.lookup(ctx.cell_id)) end,
+               2_000
+             )
+
+      {:ok, restarted} = Supervisor.lookup(ctx.cell_id)
+      :ok = append(restarted, 0)
+
+      assert %{id: <<_::128>>} = stored(ctx.cell_id)
+      assert records(ctx.cell_id) == 1
+      TestHelpers.close_and_await(restarted, ctx.cell_id)
+    end
   end
 end

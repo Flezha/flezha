@@ -256,8 +256,12 @@ crc32 of the body, then the term-encoded record (`id`, `trail`, `landed`, `epoch
 `folded_offset`, `cut`). It is installed through `.tmp`, fsynced, renamed, and its directory
 fsynced (durability `:inline_dir`), always before the dedup file carries a new epoch or folded
 offset, so a power loss cannot keep the dedup file's copy and lose it. A Cell without one gets it
-at its writer's next dedup write; an unreadable one reads as none. `Lineage.read/1` takes the
-higher epoch of the two files with that file's folded offset (the lineage file's on a tie); a
+at its writer's next dedup write; an unreadable one reads as none. The first record a writer
+appends to a Cell with no `id`, or to a landed copy, first installs a new random `id` (the mint,
+`Epoch.open_window/1`): the old id goes on the `trail` with the seq it forked at (16 kept) and
+`landed` is cleared; a failed install fails that append and restarts the writer.
+`Lineage.read/1` takes the higher epoch of the two files with that file's folded offset (the
+lineage file's on a tie); a
 dedup file ahead means a build without lineage records ran since, and the lineage record is
 rewritten before the next dedup write. Its pending `cut` counts only while the dedup file's epoch
 is below its own. A realign (`cut: :all`) and a rewind (`{:above, seq}`) write it with the next
