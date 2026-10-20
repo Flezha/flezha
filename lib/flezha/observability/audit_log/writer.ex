@@ -53,7 +53,8 @@ defmodule Flezha.Observability.AuditLog.Writer do
 
   @doc "Synchronously append a pre-encoded record line."
   @spec write(binary(), timeout()) :: :ok | {:error, term()}
-  def write(record_bin, timeout \\ 30_000) when is_binary(record_bin) do
+  def write(record_bin, timeout \\ Durations.get(:audit_log_write_ms))
+      when is_binary(record_bin) do
     GenServer.call(__MODULE__, {:write, record_bin}, timeout)
   end
 
@@ -63,7 +64,7 @@ defmodule Flezha.Observability.AuditLog.Writer do
   returns `true`. Idempotent.
   """
   @spec close(timeout()) :: :ok
-  def close(timeout \\ 5_000) do
+  def close(timeout \\ Durations.get(:audit_log_writer_call_ms)) do
     SafeCall.bounded(__MODULE__, :close, timeout, on_error: :ok)
   end
 
@@ -80,31 +81,31 @@ defmodule Flezha.Observability.AuditLog.Writer do
 
   @doc "Rotate the active file. Returns `{:ok, %{rotated_to, size, count, sha256}}`."
   @spec rotate_now(integer() | nil, timeout()) :: {:ok, map()} | {:error, term()}
-  def rotate_now(ts_us \\ nil, timeout \\ 10_000) do
+  def rotate_now(ts_us \\ nil, timeout \\ Durations.get(:audit_log_rotate_ms)) do
     GenServer.call(__MODULE__, {:rotate_now, ts_us}, timeout)
   end
 
   @doc "Snapshot of writer state for `Flezha.Service.AuditLog.stats/1`."
   @spec stats() :: map()
   def stats() do
-    GenServer.call(__MODULE__, :stats)
+    call(:stats)
   end
 
   @doc "Current catalog (rotated files), used by `list_files/1`."
   @spec catalog() :: [Index.entry()]
   def catalog() do
-    GenServer.call(__MODULE__, :catalog)
+    call(:catalog)
   end
 
   @doc "Subscribe the calling pid to live record messages."
   @spec subscribe_tail() :: {:ok, reference()}
   def subscribe_tail() do
-    GenServer.call(__MODULE__, {:subscribe_tail, self()})
+    call({:subscribe_tail, self()})
   end
 
   @spec unsubscribe_tail(reference()) :: :ok
   def unsubscribe_tail(ref) when is_reference(ref) do
-    GenServer.call(__MODULE__, {:unsubscribe_tail, ref})
+    call({:unsubscribe_tail, ref})
   end
 
   @doc "True if the writer has been closed (e.g. during shutdown)."
@@ -539,4 +540,7 @@ defmodule Flezha.Observability.AuditLog.Writer do
       list -> Enum.max(list) + 1
     end
   end
+
+  defp call(request),
+    do: GenServer.call(__MODULE__, request, Durations.get(:audit_log_writer_call_ms))
 end

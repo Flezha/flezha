@@ -28,6 +28,7 @@ defmodule Flezha.Transport.Server do
   """
 
   alias Flezha.Config
+  alias Flezha.Config.Durations
   alias Flezha.Identificator
   alias Flezha.Payloader
   alias Flezha.Process.Watch
@@ -108,7 +109,9 @@ defmodule Flezha.Transport.Server do
   def get_stats(transport) when transport in [:uds, :quic] do
     case Process.whereis(name(transport)) do
       pid when is_pid(pid) ->
-        SafeCall.bounded(pid, :get_stats, 1_000, on_error: {:error, :not_running})
+        SafeCall.bounded(pid, :get_stats, Durations.get(:transport_stats_call_ms),
+          on_error: {:error, :not_running}
+        )
 
       _ ->
         {:error, :not_running}

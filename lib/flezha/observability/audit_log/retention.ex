@@ -17,6 +17,7 @@ defmodule Flezha.Observability.AuditLog.Retention do
   use Flezha.Process.Timer, keys: [:tick]
 
   alias Flezha.Config
+  alias Flezha.Config.Durations
   alias Flezha.Layout.Table, as: Layout
   alias Flezha.Observability.{Bus, Signal}
   alias Flezha.Observability.AuditLog.{Index, Writer}
@@ -30,7 +31,7 @@ defmodule Flezha.Observability.AuditLog.Retention do
   @doc "Force an immediate sweep — primarily for tests and user-driven cleanup."
   @spec sweep_now() :: {:ok, map()}
   def sweep_now() do
-    GenServer.call(__MODULE__, :sweep_now, 30_000)
+    GenServer.call(__MODULE__, :sweep_now, Durations.get(:audit_log_sweep_call_ms))
   end
 
   @impl true

@@ -158,7 +158,8 @@ defmodule Flezha.Runner.FleetManager do
   def evict_runner(runner_id, opts \\ []) when is_binary(runner_id) do
     GenServer.call(
       __MODULE__,
-      {:evict_runner, runner_id, Keyword.get(opts, :proved_wedged, false)}
+      {:evict_runner, runner_id, Keyword.get(opts, :proved_wedged, false)},
+      Durations.get(:runner_evict_call_ms)
     )
   end
 

@@ -49,6 +49,7 @@ defmodule Flezha.Config.DurationRows do
      derived: {:factor, :control_liveness_interval_ms, 3}},
     {:control_call_timeout_ms, :ms, 5_000, []},
     {:listen_port_call_ms, :ms, 1_000, []},
+    {:transport_stats_call_ms, :ms, 1_000, []},
     {:stream_pool_bind_call_ms, :ms, 5_000, []},
     {:control_unit_reply_timeout_ms, :ms, 5_000, []},
     {:control_unit_reply_sweep_interval_ms, :ms, 15_000, key: true},
@@ -65,6 +66,9 @@ defmodule Flezha.Config.DurationRows do
 
     # ---- runners: lookup, marks, replay ------------------------------------
     {:boot_replay_timeout_ms, :ms, 60_000, key: true, env: "FLEZHA_BOOT_REPLAY_TIMEOUT_MS"},
+    # How long a caller waits for the boot sequence to finish, so a wedged
+    # hook is a named exit rather than a hang.
+    {:boot_sequence_await_ms, :ms, 30_000, []},
     {:boot_await_poll_ms, :ms, 200, []},
     # How long a controller-side `flz` verb waits for the caller's node to
     # name its `:standard_error`, before it writes to the controller's own.
@@ -73,6 +77,8 @@ defmodule Flezha.Config.DurationRows do
     # How long a streaming verb runs when its request names no window.
     {:cli_stream_window_ms, :ms, 30_000, []},
     {:runner_lookup_ms, :ms, 5_000, []},
+    {:runner_evict_call_ms, :ms, 5_000, []},
+    {:drop_marks_call_ms, :ms, 5_000, []},
     {:runner_cleanup_slack_ms, :ms, 10_000, []},
     {:runner_min_call_ms, :ms, 25, []},
     {:runner_poll_call_ms, :ms, 250, []},
@@ -98,6 +104,12 @@ defmodule Flezha.Config.DurationRows do
     # ---- relays: the calls the loop and the manager make ----------------
     {:hub_await_recovery_ms, :ms, 60_000, []},
     {:hub_alive_poll_ms, :ms, 10, []},
+    {:hub_alive_wait_ms, :ms, 5_000, []},
+    # A relay's start on its runner: a cold SDK (a JVM's warmup and the AddRelay
+    # round trip) takes seconds, and a genuine stall still ends.
+    {:relay_start_call_ms, :ms, 30_000, []},
+    {:replay_call_ms, :ms, 60_000, []},
+    {:rewind_call_ms, :ms, 30_000, []},
     {:hub_recovery_poll_ms, :ms, 50, []},
     # The hub kills a request at this bound, a relay stop's included, so it
     # outwaits the Overwatch's shutdown bound.
@@ -153,6 +165,7 @@ defmodule Flezha.Config.DurationRows do
     {:convergence_output_stall_grace_ms, :ms, 60_000,
      key: true, env: "FLEZHA_CONVERGENCE_OUTPUT_STALL_GRACE_MS"},
     {:convergence_tick_ms, :ms, 5_000, key: true, env: "FLEZHA_CONVERGENCE_TICK_MS"},
+    {:convergence_tick_call_ms, :ms, 30_000, []},
     {:convergence_unmet_intent_grace_ms, :ms, 120_000,
      key: true, env: "FLEZHA_CONVERGENCE_UNMET_INTENT_GRACE_MS"},
     {:plugin_stable_uptime_ms, :ms, 60_000, key: true},
@@ -171,6 +184,15 @@ defmodule Flezha.Config.DurationRows do
     {:http_listener_idle_ms, :ms, 5_000, []},
     {:http_poll_min_interval_ms, :ms, 1_000, []},
     {:plugin_call_timeout_ms, :ms, 2_000, []},
+    # A call into a provider's own worker: its counters, a hand-over, a stop.
+    {:plugin_worker_call_ms, :ms, 5_000, []},
+    # Whether a running worker may be handed to a new user, asked of the worker.
+    {:worker_reuse_probe_ms, :ms, 1_000, []},
+    # A call that opens, swaps or replaces a plugin's shared broker client,
+    # which waits on the broker.
+    {:plugin_client_call_ms, :ms, 30_000, []},
+    # A record handed to a producing worker that answers once it is delivered.
+    {:plugin_enqueue_call_ms, :ms, 35_000, []},
     # Strictly inside `route_call_timeout_ms`, which bounds a plugin verb run
     # on another controller, and strictly outside `plugin_call_timeout_ms`: an
     # inner bound equal to the outer one is no bound at all — both give up at
@@ -203,6 +225,7 @@ defmodule Flezha.Config.DurationRows do
     {:schedule_reassert_interval_ms, :ms, 60_000, []},
     {:schedule_retract_timeout_ms, :ms, 5_000, []},
     {:schedule_status_call_ms, :ms, 1_000, []},
+    {:schedule_store_call_ms, :ms, 5_000, []},
 
     # ---- state: logs, watchdogs, retention ---------------------------------
     {:agent_fsync_interval_ms, :ms, 5, key: true},
@@ -216,6 +239,9 @@ defmodule Flezha.Config.DurationRows do
     {:dlq_replay_grace_ms, :ms, 5_000, key: {:dlq, :replay_grace_ms}},
     {:dlq_replay_poll_ms, :ms, 100, []},
     {:dlq_sweep_interval_ms, :ms, 3_600_000, key: {:dlq, :retention_check_interval_ms}},
+    {:dlq_store_call_ms, :ms, 30_000, []},
+    {:dlq_sweep_call_ms, :ms, 60_000, []},
+    {:state_sweep_call_ms, :ms, 5_000, []},
     {:input_log_hold_window_ms, :ms, 0, key: true, env: "FLEZHA_INPUT_LOG_HOLD_WINDOW_MS"},
     {:outbox_resettle_ms, :ms, 60_000, key: true},
     # The user key keeps the `default_` prefix it was published under; the
@@ -229,6 +255,8 @@ defmodule Flezha.Config.DurationRows do
     {:input_log_call_ms, :ms, 5_000, []},
     {:wal_transfer_call_ms, :ms, 30_000, []},
     {:wal_writer_call_ms, :ms, 5_000, []},
+    # A drain syncs each dirty writer through its own bounded call.
+    {:fsync_batcher_call_ms, :ms, nil, derived: {:headroom, :wal_writer_call_ms, 1_000}},
     {:outbox_retry_ms, :ms, 1_000, []},
 
     # ---- durability tier ---------------------------------------------------
@@ -257,6 +285,9 @@ defmodule Flezha.Config.DurationRows do
      runtimes: [:shell], derived: {:headroom, :graceful_shutdown_timeout_ms, 15_000}},
     {:shutdown_finalise_call_ms, :ms, 5_000, []},
     {:signal_handler_status_call_ms, :ms, 5_000, []},
+    # A call to the coordinator, whose status reads the signal handler's inside it.
+    {:shutdown_coordinator_call_ms, :ms, nil,
+     derived: {:headroom, :signal_handler_status_call_ms, 1_000}},
     {:stop_release_timeout_ms, :ms, 15_000, []},
     # Nested 1 s apart: a relay stop's hub stop, after its flush of at most 1 s,
     # outwaits the Overwatch's shutdown bound, which outwaits its teardown.
@@ -264,6 +295,7 @@ defmodule Flezha.Config.DurationRows do
     {:stop_process_budget_ms, :ms, nil, derived: {:headroom, :stop_release_timeout_ms, -3_000}},
 
     # ---- authentication and authorization ----------------------------------
+    {:authz_store_call_ms, :ms, 5_000, []},
     # How far ahead of an expiry a token is announced as expiring, and how often
     # the registry looks. A lapse is then a monitoring alert rather than the
     # moment a user discovers they cannot issue another credential.
@@ -275,9 +307,17 @@ defmodule Flezha.Config.DurationRows do
     # ---- observability -----------------------------------------------------
     {:audit_log_block_timeout_ms, :ms, 30_000, []},
     {:audit_log_writer_call_ms, :ms, 5_000, []},
+    {:audit_log_write_ms, :ms, 30_000, []},
+    {:audit_log_rotate_ms, :ms, 10_000, []},
+    # A rotation on request waits on the writer's own rotation.
+    {:audit_log_rotate_call_ms, :ms, nil, derived: {:headroom, :audit_log_rotate_ms, 1_000}},
+    {:audit_log_sweep_call_ms, :ms, 30_000, []},
+    {:observability_registry_call_ms, :ms, 5_000, []},
     {:observability_sweep_interval_ms, :ms, 5_000,
      key: {:observability, :retention_check_interval_ms}},
     {:otlp_request_timeout_ms, :ms, 10_000, []},
+    # A post waits for every attempt of its backoff schedule.
+    {:otlp_post_call_ms, :ms, 60_000, []},
     {:port_counter_reset_ms, :ms, 30_000, []},
 
     # ---- the Elixir SDK ----------------------------------------------------

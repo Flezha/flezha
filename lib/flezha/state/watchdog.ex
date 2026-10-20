@@ -63,7 +63,7 @@ defmodule Flezha.State.Watchdog do
 
   @doc "Run both sweeps synchronously. Used by tests and ops tooling."
   @spec sweep_now() :: :ok
-  def sweep_now(), do: GenServer.call(__MODULE__, :sweep_now)
+  def sweep_now(), do: GenServer.call(__MODULE__, :sweep_now, Durations.get(:state_sweep_call_ms))
 
   @doc """
   Stall/advance evidence (`WalWriter.stall_status/1`) for every Cell with

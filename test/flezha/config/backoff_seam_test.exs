@@ -1,10 +1,12 @@
 defmodule Flezha.Config.BackoffSeamTest do
   @moduledoc """
   The two tables are the only place in `lib/flezha` a wait or a duration is
-  written.
+  written, and every call bound in `lib`, `plugins/*/lib` and `sdk/elixir/lib`
+  names one of their rows.
 
-  Eight clauses: the tree carries no ladder arithmetic and no millisecond
-  literal beside them; every row is read; every derivation holds; the
+  Nine clauses: the tree carries no ladder arithmetic and no millisecond
+  literal beside them; no call, sleep or timeout default carries a bound of its
+  own; every row is read; every derivation holds; the
   environment translates each row once; the SDK's rows equal the constants
   `flz_core` compiles; the ladder's own arithmetic behaves; and the deployment
   manifests carry the grace the table derives.
@@ -15,6 +17,99 @@ defmodule Flezha.Config.BackoffSeamTest do
   no shared default, and nothing observes it across SDKs.
   """
   use ExUnit.Case, async: true
+
+  defmodule CallBounds do
+    @moduledoc false
+    # Every wait in the three roots whose bound is no row: a call left to its
+    # implicit 5 s, a literal or attribute bound, a literal sleep, a literal
+    # timeout default. Read from the code itself, so a pipe, a line break or a
+    # comment cannot hide one.
+
+    alias FlezhaTest.Helper.SourceWalk
+
+    @roots ["lib", "sdk/elixir/lib"]
+    # A bench's pacing is how it measures, not a wait a deployment tunes.
+    @paced "lib/mix/tasks/bench/"
+
+    # Each bounded call and the position of its bound.
+    @bounded %{
+      {[:GenServer], :call} => 3,
+      {:gen_server, :call} => 3,
+      {[:SafeCall], :bounded} => 3,
+      {[:Flezha, :SDK, :SafeCall], :bounded} => 3,
+      {[:Task], :await} => 2,
+      {[:Task], :yield} => 2
+    }
+
+    @spec offences() :: [binary()]
+    def offences do
+      for path <- SourceWalk.files(@roots ++ Path.wildcard("plugins/*/lib"), [".ex"]),
+          offence <- offences(path),
+          do: offence
+    end
+
+    defp offences(path) do
+      {:ok, ast} = Code.string_to_quoted(File.read!(path))
+      {_ast, found} = Macro.prewalk(ast, [], &shape(&1, &2, path))
+      for {line, what} <- Enum.reverse(found), do: "#{path}:#{line} #{what}"
+    end
+
+    # A piped call's first argument is the pipe's left side; its own arguments
+    # are still walked.
+    defp shape({:|>, meta, [left, {{:., _, _} = call, call_meta, args}]}, found, path)
+         when is_list(args),
+         do:
+           {{:|>, meta, [left, {:__block__, [], args}]},
+            call(call, call_meta, [:piped | args], found, path)}
+
+    defp shape({{:., _, _} = call, meta, args} = node, found, path) when is_list(args),
+      do: {node, call(call, meta, args, found, path)}
+
+    defp shape({:\\, meta, [{name, _, ctx}, ms]} = node, found, _path)
+         when is_atom(name) and is_atom(ctx) and is_integer(ms) do
+      if timing?(name),
+        do: {node, [{meta[:line], "#{name} \\\\ #{ms}"} | found]},
+        else: {node, found}
+    end
+
+    defp shape(node, found, _path), do: {node, found}
+
+    defp call({:., _, [module, fun]}, meta, args, found, path) do
+      key = {module_name(module), fun}
+
+      cond do
+        key == {[:Process], :sleep} and match?([ms] when is_integer(ms), args) and
+            not String.starts_with?(path, @paced) ->
+          [{meta[:line], "Process.sleep(#{hd(args)})"} | found]
+
+        key == {[:Keyword], :get} and match?([_, :timeout, ms] when is_integer(ms), args) ->
+          [{meta[:line], "Keyword.get(_, :timeout, #{List.last(args)})"} | found]
+
+        position = @bounded[key] ->
+          case bound(Enum.at(args, position - 1)) do
+            :named -> found
+            unnamed -> [{meta[:line], "#{inspect(key)} #{unnamed}"} | found]
+          end
+
+        true ->
+          found
+      end
+    end
+
+    defp call(_call, _meta, _args, found, _path), do: found
+
+    defp bound(nil), do: "with no bound"
+    defp bound(ms) when is_integer(ms), do: "bound #{ms}"
+    defp bound({:@, _, [{name, _, _}]}), do: "bound @#{name}"
+    defp bound({{:., _, [:timer, _]}, _, [n]}) when is_integer(n), do: "bound :timer #{n}"
+    defp bound(_named), do: :named
+
+    defp module_name({:__aliases__, _, parts}), do: parts
+    defp module_name(atom) when is_atom(atom), do: atom
+    defp module_name(_expression), do: nil
+
+    defp timing?(name), do: Atom.to_string(name) =~ ~r/(^|_)ms$|timeout/
+  end
 
   alias Flezha.Config.Backoff
   alias Flezha.Config.Durations
@@ -48,6 +143,13 @@ defmodule Flezha.Config.BackoffSeamTest do
     test "a millisecond literal outside the duration table fails, naming file and line" do
       assert offences(@duration_shape, @duration_seam) == []
     end
+
+    # fails when: a call in `lib`, `plugins/*/lib` or `sdk/elixir/lib` is left
+    # to the implicit 5 s or bounded by a literal, or a sleep or a timeout
+    # default is a literal: each names a row, a parameter or `:infinity`.
+    test "every call bound, sleep and timeout default in the three roots names a row" do
+      assert CallBounds.offences() == []
+    end
   end
 
   describe "every row is read" do
@@ -58,10 +160,11 @@ defmodule Flezha.Config.BackoffSeamTest do
       assert unread == []
     end
 
-    test "every duration row is named by a site, a derivation or the config that fills it" do
+    test "every duration row is named by a site in the three roots, a derivation or the config" do
       readers =
         read_text(
           (lib_files() -- [@duration_seam]) ++
+            SourceWalk.files(["sdk/elixir/lib" | Path.wildcard("plugins/*/lib")], [".ex"]) ++
             SourceWalk.files(["config"], [".exs"]) ++ [__ENV__.file]
         )
 
@@ -116,6 +219,18 @@ defmodule Flezha.Config.BackoffSeamTest do
           end
 
         assert Durations.get(name) == expected
+      end
+    end
+
+    # fails when: an outer call's bound is no longer than the call it makes while
+    # it is served, so the outer caller times out first and blames the wrong process.
+    test "a call made while serving another call is strictly inside the outer bound" do
+      for {outer, inner} <- [
+            fsync_batcher_call_ms: :wal_writer_call_ms,
+            shutdown_coordinator_call_ms: :signal_handler_status_call_ms,
+            audit_log_rotate_call_ms: :audit_log_rotate_ms
+          ] do
+        assert Durations.get(outer) > Durations.get(inner), "#{outer} does not outwait #{inner}"
       end
     end
 

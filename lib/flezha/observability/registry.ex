@@ -35,6 +35,7 @@ defmodule Flezha.Observability.Registry do
     ]
 
   alias Flezha.AuthZ.Verbs
+  alias Flezha.Config.Durations
   alias Flezha.Observability.{Signal, SignalWords, Source}
   alias Flezha.Process.Cspec
 
@@ -104,7 +105,7 @@ defmodule Flezha.Observability.Registry do
   """
   @spec register_source(map()) :: :ok | {:error, term()}
   def register_source(%{name: _, kinds: _, flavour: _} = entry) do
-    GenServer.call(__MODULE__, {:register_source, entry})
+    call({:register_source, entry})
   end
 
   @doc "The areas a source may declare."
@@ -158,17 +159,17 @@ defmodule Flezha.Observability.Registry do
 
   @spec unregister_source(atom()) :: :ok
   def unregister_source(name) when is_atom(name) do
-    GenServer.call(__MODULE__, {:unregister_source, name})
+    call({:unregister_source, name})
   end
 
   @spec enable_source(atom()) :: :ok | {:error, :not_found}
   def enable_source(name) when is_atom(name) do
-    GenServer.call(__MODULE__, {:set_source_status, name, :active})
+    call({:set_source_status, name, :active})
   end
 
   @spec disable_source(atom()) :: :ok | {:error, :not_found}
   def disable_source(name) when is_atom(name) do
-    GenServer.call(__MODULE__, {:set_source_status, name, :disabled})
+    call({:set_source_status, name, :disabled})
   end
 
   @spec list_sources() :: [source_entry()]
@@ -209,7 +210,7 @@ defmodule Flezha.Observability.Registry do
   """
   @spec register_sink(map()) :: {:ok, pid()} | {:error, term()}
   def register_sink(%{name: _, module: _} = entry) do
-    GenServer.call(__MODULE__, {:register_sink, entry})
+    call({:register_sink, entry})
   end
 
   @doc """
@@ -223,12 +224,12 @@ defmodule Flezha.Observability.Registry do
   @spec register_external_sink(map()) :: :ok
   def register_external_sink(%{name: name, module: _module, pid: pid} = entry)
       when is_atom(name) and is_pid(pid) do
-    GenServer.call(__MODULE__, {:register_external_sink, entry})
+    call({:register_external_sink, entry})
   end
 
   @spec unregister_sink(atom()) :: :ok
   def unregister_sink(name) when is_atom(name) do
-    GenServer.call(__MODULE__, {:unregister_sink, name})
+    call({:unregister_sink, name})
   end
 
   @spec list_sinks() :: [sink_entry()]
@@ -299,7 +300,7 @@ defmodule Flezha.Observability.Registry do
         if MapSet.member?(shapes, shape) do
           :ok
         else
-          GenServer.call(__MODULE__, {:add_shape, source, shape})
+          call({:add_shape, source, shape})
         end
     end
   end
@@ -615,4 +616,7 @@ defmodule Flezha.Observability.Registry do
   defp default_budget() do
     Config.get(:observability_cardinality_budget_per_source)
   end
+
+  defp call(request),
+    do: GenServer.call(__MODULE__, request, Durations.get(:observability_registry_call_ms))
 end

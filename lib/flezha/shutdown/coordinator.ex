@@ -117,7 +117,7 @@ defmodule Flezha.Shutdown.Coordinator do
   """
   @spec status() :: map()
   def status() do
-    GenServer.call(__MODULE__, :status)
+    GenServer.call(__MODULE__, :status, Durations.get(:shutdown_coordinator_call_ms))
   end
 
   @doc """
@@ -130,7 +130,7 @@ defmodule Flezha.Shutdown.Coordinator do
 
   @doc false
   def __reset_for_tests__() do
-    GenServer.call(__MODULE__, :__reset_for_tests__)
+    GenServer.call(__MODULE__, :__reset_for_tests__, Durations.get(:shutdown_coordinator_call_ms))
   end
 
   # ---------- GenServer ----------

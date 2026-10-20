@@ -655,11 +655,7 @@ defmodule Flezha.Relay.Lifecycle do
       GenServer.call(
         Identificator.control_unit(runner_id),
         {:start_relay, relay},
-        # 8s wasn't enough when the SDK is on the Java side — Spring/JPA
-        # warmup plus the AddRelay control-channel round-trip easily
-        # exceeds that during a cold start. 30s gives Spring time to breathe
-        # without masking genuine stalls.
-        30_000
+        Durations.get(:relay_start_call_ms)
       )
     end)
   end

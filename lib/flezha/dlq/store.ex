@@ -55,7 +55,7 @@ defmodule Flezha.Dlq.Store do
   """
   @spec append(pid() | atom(), Entry.t()) ::
           {:ok | :existing, String.t()} | {:error, term()}
-  def append(server \\ __MODULE__, entry), do: GenServer.call(server, {:append, entry}, 30_000)
+  def append(server \\ __MODULE__, entry), do: call(server, {:append, entry})
 
   @doc """
   Tell the relay serving `relay_class` that one of its inputs is durably
@@ -122,16 +122,16 @@ defmodule Flezha.Dlq.Store do
   """
   @spec list(pid() | atom(), String.t() | nil) :: [map()]
   def list(server \\ __MODULE__, relay_class),
-    do: GenServer.call(server, {:list, relay_class}, 30_000)
+    do: call(server, {:list, relay_class})
 
   @doc "Fetch one entry (with payload bytes) by `<class>/<tasklet>/<id>` ref."
   @spec get(pid() | atom(), String.t()) :: {:ok, map(), binary() | nil} | {:error, term()}
-  def get(server \\ __MODULE__, entry_ref), do: GenServer.call(server, {:get, entry_ref}, 30_000)
+  def get(server \\ __MODULE__, entry_ref), do: call(server, {:get, entry_ref})
 
   @doc "Delete one entry and its payload blob. Idempotent."
   @spec drop(pid() | atom(), String.t()) :: :ok | {:error, term()}
   def drop(server \\ __MODULE__, entry_ref),
-    do: GenServer.call(server, {:drop, entry_ref}, 30_000)
+    do: call(server, {:drop, entry_ref})
 
   @doc """
   Mark an entry as being replayed. A subsequent re-park of the same origin
@@ -139,7 +139,7 @@ defmodule Flezha.Dlq.Store do
   """
   @spec mark_replaying(pid() | atom(), String.t()) :: :ok | {:error, term()}
   def mark_replaying(server \\ __MODULE__, entry_ref),
-    do: GenServer.call(server, {:mark_replaying, entry_ref}, 30_000)
+    do: call(server, {:mark_replaying, entry_ref})
 
   @doc "Remove an entry whose replay succeeded."
   @spec resolve(pid() | atom(), String.t()) :: :ok | {:error, term()}
@@ -147,11 +147,12 @@ defmodule Flezha.Dlq.Store do
 
   @doc "Per-tasklet usage: `[%{relay_class, tasklet_id, entries, bytes}]`."
   @spec stats(pid() | atom()) :: [map()]
-  def stats(server \\ __MODULE__), do: GenServer.call(server, :stats, 30_000)
+  def stats(server \\ __MODULE__), do: call(server, :stats)
 
   @doc "Run a retention sweep now (tests / CLI)."
   @spec sweep(pid() | atom()) :: :ok
-  def sweep(server \\ __MODULE__), do: GenServer.call(server, :sweep, 60_000)
+  def sweep(server \\ __MODULE__),
+    do: GenServer.call(server, :sweep, Durations.get(:dlq_sweep_call_ms))
 
   @doc """
   Every `{relay_class, tasklet_id}` with a parked-failure directory on
@@ -623,4 +624,7 @@ defmodule Flezha.Dlq.Store do
       :file.close(io)
     end
   end
+
+  defp call(server, request),
+    do: GenServer.call(server, request, Durations.get(:dlq_store_call_ms))
 end

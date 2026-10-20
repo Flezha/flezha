@@ -14,6 +14,7 @@ defmodule Flezha.Observability.AuditLog.Rotation do
   use Flezha.Process.Timer, keys: [:tick]
 
   alias Flezha.Config
+  alias Flezha.Config.Durations
   alias Flezha.Observability.AuditLog.Writer
 
   def start_link(opts \\ []) do
@@ -23,7 +24,7 @@ defmodule Flezha.Observability.AuditLog.Rotation do
   @doc "Trigger an immediate rotation regardless of size/age."
   @spec rotate_now() :: {:ok, map()} | {:error, term()}
   def rotate_now() do
-    GenServer.call(__MODULE__, :rotate_now, 10_000)
+    GenServer.call(__MODULE__, :rotate_now, Durations.get(:audit_log_rotate_call_ms))
   end
 
   @impl true

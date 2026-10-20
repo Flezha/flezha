@@ -47,7 +47,7 @@ defmodule Flezha.State.Retention do
 
   @doc "Run a sweep tick synchronously. Used by tests and `flz state` ops."
   @spec sweep_now() :: :ok
-  def sweep_now(), do: GenServer.call(__MODULE__, :sweep_now)
+  def sweep_now(), do: GenServer.call(__MODULE__, :sweep_now, Durations.get(:state_sweep_call_ms))
 
   # ---------- GenServer ----------
 

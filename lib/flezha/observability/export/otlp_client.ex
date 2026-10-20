@@ -40,7 +40,11 @@ defmodule Flezha.Observability.Export.OtlpClient do
   def post(kind, body) do
     case Process.whereis(__MODULE__) do
       pid when is_pid(pid) ->
-        GenServer.call(pid, {:post, kind, IO.iodata_to_binary(body)}, 60_000)
+        GenServer.call(
+          pid,
+          {:post, kind, IO.iodata_to_binary(body)},
+          Durations.get(:otlp_post_call_ms)
+        )
 
       _ ->
         {:error, :client_not_running}

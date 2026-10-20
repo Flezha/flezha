@@ -24,6 +24,7 @@ defmodule Flezha.Runner.DropMarks do
   @behaviour Flezha.AuthZ.Replica
 
   alias Flezha.AuthZ.Replica
+  alias Flezha.Config.Durations
   alias Flezha.DetsStore
   alias Flezha.Runner.FleetManager
 
@@ -51,7 +52,7 @@ defmodule Flezha.Runner.DropMarks do
   @spec put(mark()) :: {:ok, mark()}
   def put(%{namespace: namespace, stable_id: stable_id, incarnation: incarnation} = mark) do
     key = {namespace, stable_id}
-    :ok = __MODULE__ |> GenServer.call({:put, key, mark}) |> Replica.published(__MODULE__, key)
+    :ok = call({:put, key, mark}) |> Replica.published(__MODULE__, key)
     :telemetry.execute([:flezha, :runner, :dropped], %{count: 1}, signalled(mark))
     _closed = FleetManager.drop_matching(namespace, stable_id, incarnation)
     {:ok, mark}
@@ -81,8 +82,7 @@ defmodule Flezha.Runner.DropMarks do
     key = {namespace, stable_id}
 
     with {:ok, mark} <-
-           __MODULE__
-           |> GenServer.call({:clear, key, incarnation})
+           call({:clear, key, incarnation})
            |> Replica.published(__MODULE__, key) do
       :telemetry.execute([:flezha, :runner, :readmitted], %{count: 1}, signalled(mark))
       {:ok, mark}
@@ -156,4 +156,6 @@ defmodule Flezha.Runner.DropMarks do
     do: {:reply, Replica.merge(__MODULE__, rows), state}
 
   defp signalled(mark), do: Map.take(mark, [:namespace, :stable_id, :incarnation, :pid, :node])
+
+  defp call(request), do: GenServer.call(__MODULE__, request, Durations.get(:drop_marks_call_ms))
 end

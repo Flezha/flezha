@@ -21,6 +21,7 @@ defmodule Flezha.AuthZ.AuthState do
   @behaviour Flezha.AuthZ.Replica
 
   alias Flezha.AuthZ.{Bootstrap, Config, Replica}
+  alias Flezha.Config.Durations
   alias Flezha.DetsStore
 
   @table :flz_authz_state
@@ -141,7 +142,11 @@ defmodule Flezha.AuthZ.AuthState do
   defp write(enabled, principal),
     do:
       Replica.published(
-        GenServer.call(__MODULE__, {:write, enabled, principal}),
+        GenServer.call(
+          __MODULE__,
+          {:write, enabled, principal},
+          Durations.get(:authz_store_call_ms)
+        ),
         __MODULE__,
         @key
       )

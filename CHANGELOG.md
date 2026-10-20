@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Changed: every call bound is a named duration row
+
+- Every bounded call in the controller and the plugin packages now waits on a named duration
+  row instead of a literal or the implicit 5 s. Three waits that run while serving another call
+  now outwait it by a second: the fsync batcher's flush (5 s to 6 s), the shutdown
+  coordinator's status (5 s to 6 s) and an audit log rotation on request (10 s to 11 s).
+- `RelayManager.send_io_confirming/5` and `send_io_confirming_many/5` default to
+  `overwatch_call_timeout_ms` (5 s unless configured).
+
 ### Changed: options several plugins take are declared once, and one credential row
 
 - **BREAKING:** the Kafka option `sasl_password_env` is now `password_env`; an enable naming

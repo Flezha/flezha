@@ -119,7 +119,7 @@ defmodule Flezha.Relay.Suspend do
   """
   @spec rewind(pid(), non_neg_integer()) :: :ok | {:error, term()}
   def rewind(overwatch_pid, to_iter) when is_pid(overwatch_pid),
-    do: GenServer.call(overwatch_pid, {:rewind, to_iter}, 30_000)
+    do: GenServer.call(overwatch_pid, {:rewind, to_iter}, Durations.get(:rewind_call_ms))
 
   # Refuse a rewind before it changes anything: an uncommitted target, or an
   # unwound tasklet whose plugin output cannot be undone.

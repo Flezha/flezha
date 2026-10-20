@@ -16,6 +16,7 @@ defmodule Flezha.AuthZ.NamespaceStore do
   @behaviour Flezha.AuthZ.Replica
 
   alias Flezha.AuthZ.{Config, Namespace, Replica}
+  alias Flezha.Config.Durations
   alias Flezha.DetsStore
 
   @table :flz_authz_namespaces
@@ -40,7 +41,7 @@ defmodule Flezha.AuthZ.NamespaceStore do
     with :ok <- Namespace.validate_name(name),
          {:ok, quotas} <- build_full_quotas(name, Keyword.get(opts, :quotas, %{})) do
       by = Keyword.get(opts, :created_by_principal)
-      Replica.published(GenServer.call(__MODULE__, {:create, name, quotas, by}), __MODULE__, name)
+      Replica.published(call({:create, name, quotas, by}), __MODULE__, name)
     end
   end
 
@@ -49,7 +50,7 @@ defmodule Flezha.AuthZ.NamespaceStore do
     if Namespace.system?(name) do
       {:error, :cannot_delete_system_namespace}
     else
-      Replica.published(GenServer.call(__MODULE__, {:delete, name}), __MODULE__, name)
+      Replica.published(call({:delete, name}), __MODULE__, name)
     end
   end
 
@@ -62,7 +63,7 @@ defmodule Flezha.AuthZ.NamespaceStore do
   @spec set_quotas(binary(), map()) :: {:ok, entry()} | {:error, term()}
   def set_quotas(name, overrides) when is_binary(name) and is_map(overrides) do
     with {:ok, quotas} <- build_full_quotas(name, overrides) do
-      Replica.published(GenServer.call(__MODULE__, {:set_quotas, name, quotas}), __MODULE__, name)
+      Replica.published(call({:set_quotas, name, quotas}), __MODULE__, name)
     end
   end
 
@@ -162,4 +163,6 @@ defmodule Flezha.AuthZ.NamespaceStore do
     config_overrides = Config.namespace_quota_overrides() |> Map.get(name, %{})
     Namespace.build_quotas(Map.merge(config_overrides, user_overrides))
   end
+
+  defp call(request), do: GenServer.call(__MODULE__, request, Durations.get(:authz_store_call_ms))
 end

@@ -17,6 +17,7 @@ defmodule Flezha.Boot.Loader do
   use GenServer
 
   alias Flezha.Config
+  alias Flezha.Config.Durations
   alias Flezha.Plugin.Provider.File.Storage
   alias Flezha.Socket.Support
   alias Flezha.State.Paths
@@ -47,11 +48,12 @@ defmodule Flezha.Boot.Loader do
   Block until the boot continuation has run. The call queues behind that
   continuation in this process's mailbox, and that ordering is the whole
   guarantee: it is the only fact that says the sequence finished, and the
-  30 s allowance is what turns a wedged hook into a named exit rather than a
-  hang.
+  allowance (`:boot_sequence_await_ms`) is what turns a wedged hook into a
+  named exit rather than a hang.
   """
   @spec await_sequence() :: :ok
-  def await_sequence(), do: GenServer.call(__MODULE__, :await_sequence, 30_000)
+  def await_sequence(),
+    do: GenServer.call(__MODULE__, :await_sequence, Durations.get(:boot_sequence_await_ms))
 
   @impl true
   def handle_continue(:boot, state) do
@@ -130,11 +132,6 @@ defmodule Flezha.Boot.Loader do
       ])
 
     if parts != [], do: "[flezha] " <> Enum.join(parts, "; ")
-  end
-
-  @impl true
-  def handle_info({:runner_connected_event, _}, state) do
-    {:noreply, state}
   end
 
   @impl true

@@ -9,6 +9,7 @@ defmodule Mix.Tasks.Bench.Steps.Run do
   attribute cannot cross a module boundary.
   """
 
+  alias Flezha.Config.Durations
   alias Flezha.Identificator
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.RelayManager
@@ -369,7 +370,7 @@ defmodule Mix.Tasks.Bench.Steps.Run do
           case RelayManager.get_relay_pid(@namespace, id) do
             {:ok, pid} ->
               pid
-              |> GenServer.call(:get_overwatch_state, 5_000)
+              |> GenServer.call(:get_overwatch_state, Durations.get(:overwatch_call_timeout_ms))
               |> Map.take([:phase, :runner_id, :bind_task, :halt_reason])
 
             other ->

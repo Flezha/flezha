@@ -95,8 +95,7 @@ defmodule Flezha.AuthZ.TokenStore do
       }
 
       with :ok <-
-             __MODULE__
-             |> GenServer.call({:insert, entry.token_hash, entry})
+             call({:insert, entry.token_hash, entry})
              |> Replica.published(__MODULE__, entry.token_hash) do
         emit_issued(entry)
         {:ok, raw, entry}
@@ -163,7 +162,7 @@ defmodule Flezha.AuthZ.TokenStore do
   @spec revoke(binary(), keyword()) :: {:ok, entry()} | {:error, term()}
   def revoke(id, opts \\ []) when is_binary(id) do
     case Identificator.validate(:token, id) do
-      :ok -> publish_revoke(GenServer.call(__MODULE__, {:revoke, id, opts}))
+      :ok -> publish_revoke(call({:revoke, id, opts}))
       {:error, _refusal} -> {:error, {:token_not_found, id}}
     end
   end
@@ -175,7 +174,7 @@ defmodule Flezha.AuthZ.TokenStore do
   @spec revoke_by_token(binary()) :: {:ok, entry()} | {:error, term()}
   def revoke_by_token(token) when is_binary(token) do
     hash = hash_token(token)
-    publish_revoke(GenServer.call(__MODULE__, {:revoke_by_hash, hash}))
+    publish_revoke(call({:revoke_by_hash, hash}))
   end
 
   @doc """
@@ -199,7 +198,7 @@ defmodule Flezha.AuthZ.TokenStore do
   can be asserted without waiting for it.
   """
   @spec check_expiring_now() :: [binary()]
-  def check_expiring_now(), do: GenServer.call(__MODULE__, :check_expiring_now)
+  def check_expiring_now(), do: call(:check_expiring_now)
 
   ## ----- store declaration -----
 
@@ -473,4 +472,6 @@ defmodule Flezha.AuthZ.TokenStore do
   rescue
     _ -> :ok
   end
+
+  defp call(request), do: GenServer.call(__MODULE__, request, Durations.get(:authz_store_call_ms))
 end

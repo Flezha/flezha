@@ -383,7 +383,13 @@ defmodule Flezha.Service.RelayManager do
   yet.
   """
   @spec send_io_confirming(String.t(), String.t(), binary(), map(), timeout()) :: ingest_verdict()
-  def send_io_confirming(relay_id, namespace, message, metadata, timeout \\ 5_000) do
+  def send_io_confirming(
+        relay_id,
+        namespace,
+        message,
+        metadata,
+        timeout \\ Durations.get(:overwatch_call_timeout_ms)
+      ) do
     with {:ok, relay_pid} <- get_relay_pid(namespace, relay_id) do
       relay_pid
       |> GenServer.call({:ingest, message, metadata}, timeout)
@@ -463,7 +469,7 @@ defmodule Flezha.Service.RelayManager do
         relay_id,
         namespace,
         payloads,
-        timeout \\ 5_000,
+        timeout \\ Durations.get(:overwatch_call_timeout_ms),
         window \\ Config.get(:plugin_ingest_window)
       )
 

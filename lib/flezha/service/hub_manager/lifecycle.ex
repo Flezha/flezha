@@ -158,7 +158,7 @@ defmodule Flezha.Service.HubManager.Lifecycle do
   # registration completes raises :noproc and cascades the FleetManager
   # crash. Spin briefly until ProcessHub.is_alive? confirms the name is
   # claimed.
-  def wait_until_hub_alive(hub_id, deadline_ms \\ 5_000) do
+  def wait_until_hub_alive(hub_id, deadline_ms \\ Durations.get(:hub_alive_wait_ms)) do
     deadline = System.monotonic_time(:millisecond) + deadline_ms
     alive = fn -> if Hub.alive?(hub_id), do: {:ok, :alive}, else: {:error, :timeout} end
 

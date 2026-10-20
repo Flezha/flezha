@@ -21,6 +21,7 @@ defmodule Flezha.Convergence.Loop do
 
   alias Flezha.Config
   alias Flezha.Config.Backoff
+  alias Flezha.Config.Durations
   alias Flezha.Convergence.{Diff, Facts, Heal, Intent, Planner, Probe, RecoveryGate}
   alias Flezha.Convergence.Verdict
 
@@ -50,7 +51,8 @@ defmodule Flezha.Convergence.Loop do
 
   @doc "Run a single tick synchronously; for tests + debugging."
   @spec tick_now() :: :ok
-  def tick_now(), do: GenServer.call(__MODULE__, :tick_now, 30_000)
+  def tick_now(),
+    do: GenServer.call(__MODULE__, :tick_now, Durations.get(:convergence_tick_call_ms))
 
   # ---------- GenServer ----------
 
@@ -64,15 +66,7 @@ defmodule Flezha.Convergence.Loop do
       )
 
     grace_ms =
-      Keyword.get(
-        opts,
-        :output_stall_grace_ms,
-        Application.get_env(
-          :flezha,
-          :convergence_output_stall_grace_ms,
-          State.default_output_stall_grace_ms()
-        )
-      )
+      Keyword.get(opts, :output_stall_grace_ms, Config.get(:convergence_output_stall_grace_ms))
 
     # Detach first: `terminate/2` only runs when the Loop is trapping exits, so
     # a supervisor restart otherwise leaves the previous incarnation's handler

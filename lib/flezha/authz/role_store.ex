@@ -29,6 +29,7 @@ defmodule Flezha.AuthZ.RoleStore do
   @behaviour Flezha.AuthZ.Replica
 
   alias Flezha.AuthZ.{Namespace, Policy, Replica, Role}
+  alias Flezha.Config.Durations
   alias Flezha.DetsStore
 
   @table :flz_authz_roles
@@ -73,8 +74,7 @@ defmodule Flezha.AuthZ.RoleStore do
          :ok <- Namespace.validate_name(namespace) do
       bound_by = Keyword.get(opts, :bound_by)
 
-      __MODULE__
-      |> GenServer.call({:bind, principal, namespace, role, bound_by})
+      call({:bind, principal, namespace, role, bound_by})
       |> Replica.published(__MODULE__, principal)
     end
   end
@@ -82,7 +82,7 @@ defmodule Flezha.AuthZ.RoleStore do
   @doc "Remove a principal's whole binding, whatever it holds. Idempotent."
   @spec unbind(binary()) :: :ok
   def unbind(principal) when is_binary(principal) do
-    Replica.published(GenServer.call(__MODULE__, {:unbind, principal}), __MODULE__, principal)
+    Replica.published(call({:unbind, principal}), __MODULE__, principal)
   end
 
   @doc """
@@ -92,8 +92,7 @@ defmodule Flezha.AuthZ.RoleStore do
   @spec unbind(binary(), Role.t()) :: :ok | {:error, {:unknown_role, atom()}}
   def unbind(principal, role) when is_binary(principal) and is_atom(role) do
     with :ok <- Role.validate(role) do
-      __MODULE__
-      |> GenServer.call({:unbind, principal, role})
+      call({:unbind, principal, role})
       |> Replica.published(__MODULE__, principal)
     end
   end
@@ -265,4 +264,6 @@ defmodule Flezha.AuthZ.RoleStore do
   # `Role.all/0` order, deduplicated, and anything the enumeration does not name
   # dropped: equality, idempotence and every rendering are then deterministic.
   defp order(roles), do: Enum.filter(Role.all(), &(&1 in roles))
+
+  defp call(request), do: GenServer.call(__MODULE__, request, Durations.get(:authz_store_call_ms))
 end

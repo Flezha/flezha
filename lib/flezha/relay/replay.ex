@@ -53,7 +53,12 @@ defmodule Flezha.Relay.Replay do
   """
   @spec replay_from(pid(), tuple(), non_neg_integer()) :: :ok | {:error, term()}
   def replay_from(overwatch, cell_id, baseline_seq),
-    do: GenServer.call(overwatch, {:replay_from, cell_id, baseline_seq}, 60_000)
+    do:
+      GenServer.call(
+        overwatch,
+        {:replay_from, cell_id, baseline_seq},
+        Durations.get(:replay_call_ms)
+      )
 
   @doc """
   External trigger for the bind-driven per-Cell replay. Called from

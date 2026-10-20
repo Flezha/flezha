@@ -277,7 +277,7 @@ defmodule Flezha.State.WalWriter do
   those in the plugin chain awaiting confirmation (`awaiting`).
   """
   @spec outbox_status(GenServer.server(), timeout()) :: map()
-  def outbox_status(server, timeout \\ 5_000),
+  def outbox_status(server, timeout \\ Durations.get(:wal_writer_call_ms)),
     do: call(server, :outbox_status, timeout)
 
   @spec stall_status(GenServer.server()) :: stall_status()

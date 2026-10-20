@@ -29,6 +29,7 @@ defmodule Flezha.AuthZ.QuotaCounters do
   use GenServer
   use Flezha.State.Store
 
+  alias Flezha.Config.Durations
   alias Flezha.DetsStore
   alias Flezha.Process.Watch
 
@@ -74,7 +75,7 @@ defmodule Flezha.AuthZ.QuotaCounters do
   @spec reserve(binary(), atom(), non_neg_integer() | [binary()], non_neg_integer() | nil) ::
           :ok | {:error, non_neg_integer()}
   def reserve(namespace, kind, units, limit) when is_binary(namespace) and is_atom(kind),
-    do: GenServer.call(__MODULE__, {:reserve, {namespace, kind}, units, limit})
+    do: call({:reserve, {namespace, kind}, units, limit})
 
   @doc "Close the caller's `reserve/4` of `(namespace, kind)`: kept, or given back."
   @spec settle(binary(), atom(), boolean()) :: :ok
@@ -86,7 +87,7 @@ defmodule Flezha.AuthZ.QuotaCounters do
   def set(namespace, kind, value)
       when is_binary(namespace) and is_atom(kind) and
              ((is_integer(value) and value >= 0) or is_list(value)) do
-    GenServer.call(__MODULE__, {:set, namespace, kind, value})
+    call({:set, namespace, kind, value})
   end
 
   @doc """
@@ -102,13 +103,13 @@ defmodule Flezha.AuthZ.QuotaCounters do
   def claim_refresh(namespace, kind, ttl_seconds)
       when is_binary(namespace) and is_atom(kind) and is_integer(ttl_seconds) and
              ttl_seconds >= 0 do
-    GenServer.call(__MODULE__, {:claim_refresh, namespace, kind, ttl_seconds})
+    call({:claim_refresh, namespace, kind, ttl_seconds})
   end
 
   @doc "Drop every counter for a namespace (used by `flz ns delete`)."
   @spec drop_namespace(binary()) :: :ok
   def drop_namespace(namespace) when is_binary(namespace) do
-    GenServer.call(__MODULE__, {:drop_namespace, namespace})
+    call({:drop_namespace, namespace})
   end
 
   @doc "Documented counter kinds."
@@ -268,4 +269,6 @@ defmodule Flezha.AuthZ.QuotaCounters do
 
     state
   end
+
+  defp call(request), do: GenServer.call(__MODULE__, request, Durations.get(:authz_store_call_ms))
 end

@@ -61,7 +61,7 @@ defmodule Flezha.State.FsyncBatcher do
   """
   @spec flush_now(GenServer.server()) :: :ok
   def flush_now(server \\ __MODULE__) do
-    GenServer.call(server, :flush_now)
+    GenServer.call(server, :flush_now, Durations.get(:fsync_batcher_call_ms))
   end
 
   @doc """
@@ -70,7 +70,7 @@ defmodule Flezha.State.FsyncBatcher do
   what it is.
   """
   @spec flush_all(GenServer.server(), timeout()) :: :ok
-  def flush_all(server \\ __MODULE__, timeout \\ 5_000) do
+  def flush_all(server \\ __MODULE__, timeout \\ Durations.get(:fsync_batcher_call_ms)) do
     GenServer.call(server, :flush_all, timeout)
   end
 
@@ -86,7 +86,8 @@ defmodule Flezha.State.FsyncBatcher do
   end
 
   @spec dirty_set(GenServer.server()) :: MapSet.t()
-  def dirty_set(server \\ __MODULE__), do: GenServer.call(server, :dirty_set)
+  def dirty_set(server \\ __MODULE__),
+    do: GenServer.call(server, :dirty_set, Durations.get(:fsync_batcher_call_ms))
 
   # ---------- GenServer ----------
 

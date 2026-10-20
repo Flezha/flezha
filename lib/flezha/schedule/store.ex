@@ -12,6 +12,7 @@ defmodule Flezha.Schedule.Store do
   use GenServer
   use Flezha.State.Store
 
+  alias Flezha.Config.Durations
   alias Flezha.DetsStore
   alias Flezha.Identificator
   alias Flezha.Relay.Builder
@@ -74,13 +75,13 @@ defmodule Flezha.Schedule.Store do
         created_at: DateTime.to_iso8601(DateTime.utc_now())
       }
 
-      GenServer.call(__MODULE__, {:add, entry})
+      GenServer.call(__MODULE__, {:add, entry}, Durations.get(:schedule_store_call_ms))
     end
   end
 
   @spec remove(binary()) :: :ok | {:error, :not_found}
   def remove(name) when is_binary(name) do
-    GenServer.call(__MODULE__, {:remove, name})
+    GenServer.call(__MODULE__, {:remove, name}, Durations.get(:schedule_store_call_ms))
   end
 
   @spec get(binary()) :: {:ok, entry()} | :error
